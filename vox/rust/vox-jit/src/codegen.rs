@@ -44,7 +44,7 @@ use vox_postcard::ir::{
 
 /// Map of nested `&'static Shape` pointers to already-compiled encoders.
 ///
-/// Populated by the runtime (`JitRuntime::prepare_encode_stub`) before it
+/// Populated by the runtime (`JitRuntime::prepare_encoder`) before it
 /// calls `compile_encode`. The key is the shape pointer address — two shapes
 /// with the same address are the same `Facet` type within the process.
 ///
@@ -59,7 +59,7 @@ use vox_postcard::ir::{
 ///     the map at all (runtime fallback path).
 pub type ChildEncoderMap = std::collections::HashMap<
     &'static facet_core::Shape,
-    std::sync::Arc<crate::cache::CompiledEncoder>,
+    &'static crate::cache::CompiledEncoder,
 >;
 
 /// Walk an `EncodeProgram` and collect every distinct `WriteShape` child
@@ -3531,12 +3531,12 @@ fn emit_encode_op(
         }
 
         EncodeOp::WriteShape { shape, src_offset } => {
-            if let Some(child_stub) = ectx.child_encoders.get(shape).cloned() {
+            if let Some(&child_encoder) = ectx.child_encoders.get(shape) {
                 let in_cycle = ectx.inlining_stack.iter().any(|s| *s == *shape);
                 if in_cycle {
-                    emit_encode_direct_child(ectx, child_stub.encode_fn, *src_offset);
+                    emit_encode_direct_child(ectx, child_encoder.encode_fn, *src_offset);
                 } else {
-                    emit_inline_child_program(ectx, &child_stub, *src_offset)?;
+                    emit_inline_child_program(ectx, child_encoder, *src_offset)?;
                 }
             } else {
                 emit_encode_helper_shape_op(
@@ -3875,7 +3875,7 @@ fn emit_encode_helper_shape_op(
 /// child's body (skipping the flush + three-load reload around each call).
 fn emit_inline_child_program(
     ectx: &mut EncodeCtx_<'_, '_>,
-    child: &std::sync::Arc<crate::cache::CompiledEncoder>,
+    child: &'static crate::cache::CompiledEncoder,
     src_offset: usize,
 ) -> Result<(), CodegenError> {
     let child_program = child.program.as_ref();

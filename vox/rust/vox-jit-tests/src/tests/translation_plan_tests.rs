@@ -6,6 +6,8 @@
 //! - Unknown enum variants produce `UnknownVariant` errors at decode time.
 //! - Nested type mismatches are caught at plan-build time (not decode time).
 
+use std::sync::Arc;
+
 use facet::Facet;
 use vox_postcard::{
     SchemaSet, build_plan, from_slice_with_plan, plan::PlanInput, serialize::to_vec,

@@ -6,6 +6,11 @@
 //! The cache owns the Cranelift `JITModule` which holds the memory maps for
 //! all compiled functions. They are identified by stable function IDs
 //! obtained from the module.
+//!
+//! Compiled entries are leaked at insertion time: `Box::leak` mints a
+//! `&'static CompiledEncoder` / `&'static CompiledDecoder` that lives for
+//! the process lifetime. Entries are never evicted, so reference counting
+//! would only buy us atomic-clone overhead on every hot-path lookup.
 
 use std::collections::HashMap;
 use std::sync::atomic::AtomicUsize;
@@ -37,7 +42,6 @@ struct FastDecodeKey {
 // ---------------------------------------------------------------------------
 
 /// A JIT-compiled decoder that can be called via the JIT ABI.
-#[derive(Clone)]
 pub struct CompiledDecoder {
     /// The owned-mode function pointer (or None if only borrowed mode was compiled).
     pub owned_fn: Option<OwnedDecodeFn>,
@@ -73,12 +77,12 @@ pub struct CompiledEncoder {
 ///
 /// The structural (slow-path) maps live behind a `Mutex`; the shape-keyed
 /// fast paths live behind `ArcSwap` so the steady-state lookup is one atomic
-/// load + one Arc clone, no locking. Entries are never evicted — the cache
-/// lives for the process lifetime.
+/// load + one pointer copy, no locking. Entries are never evicted — they're
+/// `Box::leak`ed at insertion time and live for the process lifetime.
 pub struct CompiledCache {
     slow: Mutex<CompiledCacheSlow>,
-    encode_fast: ArcSwap<HashMap<&'static Shape, Arc<CompiledEncoder>>>,
-    decode_fast: ArcSwap<HashMap<FastDecodeKey, Arc<CompiledDecoder>>>,
+    encode_fast: ArcSwap<HashMap<&'static Shape, &'static CompiledEncoder>>,
+    decode_fast: ArcSwap<HashMap<FastDecodeKey, &'static CompiledDecoder>>,
 }
 
 impl Default for CompiledCache {
@@ -93,8 +97,8 @@ impl Default for CompiledCache {
 
 #[derive(Default)]
 struct CompiledCacheSlow {
-    decoders: HashMap<DecodeCacheKey, Arc<CompiledDecoder>>,
-    encoders: HashMap<EncodeCacheKey, Arc<CompiledEncoder>>,
+    decoders: HashMap<DecodeCacheKey, &'static CompiledDecoder>,
+    encoders: HashMap<EncodeCacheKey, &'static CompiledEncoder>,
 }
 
 impl CompiledCache {
@@ -104,69 +108,71 @@ impl CompiledCache {
 
     /// Look up a compiled decoder by key.
     ///
-    /// Returns a cloned Arc if found. Returns None if the decoder is not yet
-    /// compiled or if the cache key's calibration generation is stale.
-    pub fn get_decode(&self, key: &DecodeCacheKey) -> Option<Arc<CompiledDecoder>> {
+    /// Returns None if the decoder is not yet compiled or if the cache key's
+    /// calibration generation is stale.
+    pub fn get_decode(&self, key: &DecodeCacheKey) -> Option<&'static CompiledDecoder> {
         let guard = self.slow.lock().unwrap();
-        guard.decoders.get(key).cloned()
+        guard.decoders.get(key).copied()
     }
 
-    /// Insert a compiled decoder.
+    /// Insert a compiled decoder. The entry is leaked (`Box::leak`) and the
+    /// resulting `&'static` is stored both here and returned to the caller.
     ///
     /// If a decoder already exists for this key, it is replaced (should not
     /// happen in normal operation — callers check first).
     pub fn insert_decode(
         &self,
         key: DecodeCacheKey,
-        stub: CompiledDecoder,
-    ) -> Arc<CompiledDecoder> {
-        let arc = Arc::new(stub);
+        decoder: CompiledDecoder,
+    ) -> &'static CompiledDecoder {
+        let leaked: &'static CompiledDecoder = Box::leak(Box::new(decoder));
         let mut guard = self.slow.lock().unwrap();
-        guard.decoders.insert(key, arc.clone());
-        arc
+        guard.decoders.insert(key, leaked);
+        leaked
     }
 
     /// Look up a compiled encoder by key.
-    pub fn get_encode(&self, key: &EncodeCacheKey) -> Option<Arc<CompiledEncoder>> {
+    pub fn get_encode(&self, key: &EncodeCacheKey) -> Option<&'static CompiledEncoder> {
         let guard = self.slow.lock().unwrap();
-        guard.encoders.get(key).cloned()
+        guard.encoders.get(key).copied()
     }
 
-    /// Insert a compiled encoder.
+    /// Insert a compiled encoder. The entry is leaked (`Box::leak`) and the
+    /// resulting `&'static` is stored both here and returned to the caller.
     pub fn insert_encode(
         &self,
         key: EncodeCacheKey,
-        stub: CompiledEncoder,
-    ) -> Arc<CompiledEncoder> {
-        let arc = Arc::new(stub);
+        encoder: CompiledEncoder,
+    ) -> &'static CompiledEncoder {
+        let leaked: &'static CompiledEncoder = Box::leak(Box::new(encoder));
         let mut guard = self.slow.lock().unwrap();
-        guard.encoders.insert(key, arc.clone());
-        arc
+        guard.encoders.insert(key, leaked);
+        leaked
     }
 
     /// Fast-path encoder lookup by shape identity (ConstTypeId). One atomic
-    /// load and (on hit) one Arc clone — no locking.
-    pub fn get_encode_fast(&self, shape: &'static Shape) -> Option<Arc<CompiledEncoder>> {
-        self.encode_fast.load().get(shape).cloned()
+    /// load and (on hit) one pointer copy — no locking.
+    pub fn get_encode_fast(&self, shape: &'static Shape) -> Option<&'static CompiledEncoder> {
+        self.encode_fast.load().get(shape).copied()
     }
 
     /// Record a compiled encoder in the fast path.
-    pub fn insert_encode_fast(&self, shape: &'static Shape, stub: Arc<CompiledEncoder>) {
+    pub fn insert_encode_fast(&self, shape: &'static Shape, encoder: &'static CompiledEncoder) {
         self.encode_fast.rcu(|cur| {
             let mut next = (**cur).clone();
-            next.insert(shape, stub.clone());
+            next.insert(shape, encoder);
             next
         });
     }
 
     /// Fast-path decoder lookup keyed on shape identity + borrow mode +
-    /// remote schema id. One atomic load and (on hit) one Arc clone.
+    /// remote schema id. One atomic load and (on hit) one pointer copy.
     pub fn get_decode_fast(
         &self,
         shape: &'static Shape,
         borrow_mode: BorrowMode,
         remote_schema_id: u64,
-    ) -> Option<Arc<CompiledDecoder>> {
+    ) -> Option<&'static CompiledDecoder> {
         self.decode_fast
             .load()
             .get(&FastDecodeKey {
@@ -174,7 +180,7 @@ impl CompiledCache {
                 borrow_mode,
                 remote_schema_id,
             })
-            .cloned()
+            .copied()
     }
 
     /// Record a compiled decoder in the fast path.
@@ -183,7 +189,7 @@ impl CompiledCache {
         shape: &'static Shape,
         borrow_mode: BorrowMode,
         remote_schema_id: u64,
-        stub: Arc<CompiledDecoder>,
+        decoder: &'static CompiledDecoder,
     ) {
         let key = FastDecodeKey {
             shape,
@@ -192,7 +198,7 @@ impl CompiledCache {
         };
         self.decode_fast.rcu(|cur| {
             let mut next = (**cur).clone();
-            next.insert(key, stub.clone());
+            next.insert(key, decoder);
             next
         });
     }

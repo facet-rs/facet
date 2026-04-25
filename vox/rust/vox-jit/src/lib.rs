@@ -151,12 +151,12 @@ impl JitRuntime {
         plan: &TranslationPlan,
         registry: &SchemaRegistry,
         borrow_mode: BorrowMode,
-    ) -> Option<Arc<cache::CompiledDecoder>> {
-        if let Some(stub) = self
+    ) -> Option<&'static cache::CompiledDecoder> {
+        if let Some(decoder) = self
             .cache
             .get_decode_fast(local_shape, borrow_mode, remote_schema_id)
         {
-            return Some(stub);
+            return Some(decoder);
         }
 
         if Self::force_fallback() {
@@ -173,10 +173,10 @@ impl JitRuntime {
             descriptor_handle,
         );
 
-        if let Some(stub) = self.cache.get_decode(&key) {
+        if let Some(decoder) = self.cache.get_decode(&key) {
             self.cache
-                .insert_decode_fast(local_shape, borrow_mode, remote_schema_id, stub.clone());
-            return Some(stub);
+                .insert_decode_fast(local_shape, borrow_mode, remote_schema_id, decoder);
+            return Some(decoder);
         }
 
         let program = match lower_with_cal(plan, local_shape, registry, Some(&cal), borrow_mode) {
@@ -198,7 +198,7 @@ impl JitRuntime {
             );
         }
         let mut backend = self.backend.lock().unwrap();
-        let stub = if borrow_mode == BorrowMode::Borrowed {
+        let decoder = if borrow_mode == BorrowMode::Borrowed {
             let borrowed_fn = match backend.compile_decode_borrowed(local_shape, &program, &cal) {
                 Ok(f) => f,
                 Err(err) => {
@@ -235,18 +235,18 @@ impl JitRuntime {
                 key: key.clone(),
             }
         };
-        let stub = self.cache.insert_decode(key.clone(), stub);
+        let decoder = self.cache.insert_decode(key.clone(), decoder);
         self.cache
-            .insert_decode_fast(local_shape, borrow_mode, remote_schema_id, stub.clone());
-        Some(stub)
+            .insert_decode_fast(local_shape, borrow_mode, remote_schema_id, decoder);
+        Some(decoder)
     }
 
-    fn prepare_encoder(&self, shape: &'static Shape) -> Option<Arc<cache::CompiledEncoder>> {
+    fn prepare_encoder(&self, shape: &'static Shape) -> Option<&'static cache::CompiledEncoder> {
         // Fast path: pointer-identity lookup. No shape-tree walk, no cal
         // mutex, no structural hashing. This is the hot path for repeated
         // encode calls of the same type (i.e., every benchmark iteration).
-        if let Some(stub) = self.cache.get_encode_fast(shape) {
-            return Some(stub);
+        if let Some(encoder) = self.cache.get_encode_fast(shape) {
+            return Some(encoder);
         }
 
         if Self::force_fallback() {
@@ -275,9 +275,9 @@ impl JitRuntime {
                 descriptor_handle,
             };
 
-            if let Some(stub) = self.cache.get_encode(&key) {
-                self.cache.insert_encode_fast(shape, stub.clone());
-                return Some(stub);
+            if let Some(encoder) = self.cache.get_encode(&key) {
+                self.cache.insert_encode_fast(shape, encoder);
+                return Some(encoder);
             }
 
             let program = match lower_encode(shape, Some(&cal)) {
@@ -311,8 +311,8 @@ impl JitRuntime {
             if child == shape {
                 continue;
             }
-            if let Some(child_stub) = self.prepare_encoder(child) {
-                child_encoders.insert(child, child_stub);
+            if let Some(child_encoder) = self.prepare_encoder(child) {
+                child_encoders.insert(child, child_encoder);
             }
         }
         let child_encoders = Arc::new(child_encoders);
@@ -335,7 +335,7 @@ impl JitRuntime {
                 return None;
             }
         };
-        let stub = self.cache.insert_encode(
+        let encoder = self.cache.insert_encode(
             key.clone(),
             cache::CompiledEncoder {
                 key: key.clone(),
@@ -345,8 +345,8 @@ impl JitRuntime {
                 child_encoders,
             },
         );
-        self.cache.insert_encode_fast(shape, stub.clone());
-        Some(stub)
+        self.cache.insert_encode_fast(shape, encoder);
+        Some(encoder)
     }
 
     pub fn try_decode_owned<T: Facet<'static>>(
@@ -430,14 +430,14 @@ impl JitRuntime {
         ptr: facet::PtrConst,
         shape: &'static Shape,
     ) -> Option<Result<Vec<u8>, SerializeError>> {
-        let stub = self.prepare_encoder(shape)?;
-        let hint = stub.size_hint.load(Ordering::Relaxed);
+        let encoder = self.prepare_encoder(shape)?;
+        let hint = encoder.size_hint.load(Ordering::Relaxed);
         let mut ctx = vox_jit_abi::EncodeCtx::with_capacity(hint);
-        let ok = unsafe { (stub.encode_fn)(&mut ctx as *mut _, ptr.as_ptr()) };
+        let ok = unsafe { (encoder.encode_fn)(&mut ctx as *mut _, ptr.as_ptr()) };
         if ok {
             let bytes = ctx.into_vec();
             if bytes.len() > hint {
-                stub.size_hint.store(bytes.len(), Ordering::Relaxed);
+                encoder.size_hint.store(bytes.len(), Ordering::Relaxed);
             }
             Some(Ok(bytes))
         } else {
@@ -453,9 +453,9 @@ impl JitRuntime {
 // ---------------------------------------------------------------------------
 //
 // `try_encode_ptr` / `try_decode_*` look the compiled encoder/decoder up in
-// the global `StubCache` on every call: ArcSwap load + HashMap lookup keyed
-// on the shape's ConstTypeId, plus an Arc clone. That's ~10% of bench time
-// across the 4 codec calls per echo round-trip.
+// the global `CompiledCache` on every call: ArcSwap load + HashMap lookup
+// keyed on the shape's ConstTypeId. That's ~10% of bench time across the 4
+// codec calls per echo round-trip.
 //
 // Most call sites know the type statically (generated dispatchers/handlers,
 // conduits, schema-deser). For those, the `vox_jit::encode!` /
@@ -472,10 +472,10 @@ impl JitRuntime {
 
 #[doc(hidden)]
 pub fn __encode_with_slot<'a, T: Facet<'a>>(
-    slot: &'static OnceLock<Arc<cache::CompiledEncoder>>,
+    slot: &'static OnceLock<&'static cache::CompiledEncoder>,
     value: &T,
 ) -> Result<Vec<u8>, SerializeError> {
-    let encoder = slot.get_or_init(|| {
+    let encoder = *slot.get_or_init(|| {
         global_runtime()
             .prepare_encoder(T::SHAPE)
             .expect("JIT encode unavailable for T")
@@ -499,7 +499,7 @@ pub fn __encode_with_slot<'a, T: Facet<'a>>(
 /// Per-`(call site, BorrowMode)` slot mapping `remote_schema_id` to a
 /// compiled decoder. Steady-state for one peer holds a single entry.
 #[doc(hidden)]
-pub type DecoderSlot = OnceLock<ArcSwap<HashMap<u64, Arc<cache::CompiledDecoder>>>>;
+pub type DecoderSlot = OnceLock<ArcSwap<HashMap<u64, &'static cache::CompiledDecoder>>>;
 
 #[doc(hidden)]
 pub fn __decode_owned_with_slot<T: Facet<'static>>(
@@ -556,20 +556,20 @@ fn lookup_or_insert_decoder<'a, T: Facet<'a>>(
     plan: &TranslationPlan,
     registry: &SchemaRegistry,
     borrow_mode: BorrowMode,
-) -> Arc<cache::CompiledDecoder> {
+) -> &'static cache::CompiledDecoder {
     let cache = slot.get_or_init(|| ArcSwap::from_pointee(HashMap::new()));
-    if let Some(stub) = cache.load().get(&remote_schema_id).cloned() {
-        return stub;
+    if let Some(&decoder) = cache.load().get(&remote_schema_id) {
+        return decoder;
     }
-    let stub = global_runtime()
+    let decoder = global_runtime()
         .prepare_decoder(remote_schema_id, T::SHAPE, plan, registry, borrow_mode)
         .expect("JIT decode unavailable for T");
     cache.rcu(|cur| {
         let mut next = (**cur).clone();
-        next.insert(remote_schema_id, stub.clone());
+        next.insert(remote_schema_id, decoder);
         next
     });
-    stub
+    decoder
 }
 
 /// Encode a typed value via the JIT, caching the compiled encoder at the
@@ -578,7 +578,7 @@ fn lookup_or_insert_decoder<'a, T: Facet<'a>>(
 #[macro_export]
 macro_rules! encode {
     ($value:expr) => {{
-        static SLOT: ::std::sync::OnceLock<::std::sync::Arc<$crate::cache::CompiledEncoder>> =
+        static SLOT: ::std::sync::OnceLock<&'static $crate::cache::CompiledEncoder> =
             ::std::sync::OnceLock::new();
         $crate::__encode_with_slot(&SLOT, $value)
     }};
@@ -590,7 +590,7 @@ macro_rules! encode {
 #[macro_export]
 macro_rules! decode_owned {
     ($input:expr, $remote_schema_id:expr, $plan:expr, $registry:expr $(,)?) => {{
-        static SLOT: $crate::DecodeStubSlot = ::std::sync::OnceLock::new();
+        static SLOT: $crate::DecoderSlot = ::std::sync::OnceLock::new();
         $crate::__decode_owned_with_slot(&SLOT, $input, $remote_schema_id, $plan, $registry)
     }};
 }
@@ -600,7 +600,7 @@ macro_rules! decode_owned {
 #[macro_export]
 macro_rules! decode_borrowed {
     ($input:expr, $remote_schema_id:expr, $plan:expr, $registry:expr $(,)?) => {{
-        static SLOT: $crate::DecodeStubSlot = ::std::sync::OnceLock::new();
+        static SLOT: $crate::DecoderSlot = ::std::sync::OnceLock::new();
         $crate::__decode_borrowed_with_slot(&SLOT, $input, $remote_schema_id, $plan, $registry)
     }};
 }
@@ -608,7 +608,7 @@ macro_rules! decode_borrowed {
 thread_local! {
     /// Shapes currently being compiled on this thread (DFS stack).
     ///
-    /// Used to short-circuit cyclic recursion when `prepare_encode_stub`
+    /// Used to short-circuit cyclic recursion when `prepare_encoder`
     /// walks a shape's nested `WriteShape` children. A child that's
     /// already on the stack would deadlock / loop if we tried to
     /// pre-compile it; instead we return `None` for that child so the
