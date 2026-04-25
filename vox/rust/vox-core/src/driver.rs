@@ -451,14 +451,8 @@ impl ReplySink for DriverReplySink {
             let root_type = extract_root_type_ref(&response.schemas);
 
             let schemas_for_wire = std::mem::take(&mut response.schemas);
-            let response_shape =
-                <vox_types::RequestResponse<'_> as facet::Facet<'_>>::SHAPE;
-            let response_ptr =
-                facet::PtrConst::new((&raw const response).cast::<u8>());
-            let encoded_bytes: Vec<u8> = vox_jit::global_runtime()
-                .try_encode_ptr(response_ptr, response_shape)
-                .expect("JIT encode unavailable for RequestResponse")
-                .expect("JIT encode failed for response store");
+            let encoded_bytes: Vec<u8> =
+                vox_jit::encode!(&response).expect("JIT encode failed for response store");
             let encoded_for_store: PostcardPayload = encoded_bytes.into();
             response.schemas = schemas_for_wire;
 

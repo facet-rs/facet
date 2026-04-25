@@ -670,11 +670,7 @@ fn encode_frame_bytes(
         ack,
         item: Payload::PostcardBytes(item_bytes),
     };
-    let ptr = PtrConst::new((&raw const frame).cast::<u8>());
-    vox_jit::global_runtime()
-        .try_encode_ptr(ptr, <Frame<'static> as Facet<'static>>::SHAPE)
-        .expect("JIT encode unavailable for Frame")
-        .map_err(StableConduitError::Encode)
+    vox_jit::encode!(&frame).map_err(StableConduitError::Encode)
 }
 
 pub struct StablePreparedMessage {
