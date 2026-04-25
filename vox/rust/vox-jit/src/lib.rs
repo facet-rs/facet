@@ -294,7 +294,7 @@ impl JitRuntime {
                 );
             }
             let children = codegen::collect_write_shape_children(&program);
-            (program, children, key)
+            (Arc::new(program), children, key)
         };
 
         // Phase 2: recurse for each nested WriteShape child with cal+backend
@@ -307,16 +307,17 @@ impl JitRuntime {
                 continue;
             }
             if let Some(child_stub) = self.prepare_encode_stub(child) {
-                child_encoders.insert(child as *const _, child_stub.encode_fn);
+                child_encoders.insert(cache::ShapePtr(child), child_stub);
             }
         }
+        let child_encoders = Arc::new(child_encoders);
 
         // Phase 3: reacquire locks and emit machine code for this shape,
         // embedding child fn pointers directly into the generated call
         // sites.
         let cal = self.cal.lock().unwrap();
         let mut backend = self.backend.lock().unwrap();
-        let encode_fn = match backend.compile_encode(shape, &program, &cal, &child_encoders) {
+        let encode_fn = match backend.compile_encode(shape, &program, &cal, child_encoders.clone()) {
             Ok(f) => f,
             Err(err) => {
                 if require_pure_jit() {
@@ -334,6 +335,8 @@ impl JitRuntime {
                 key: key.clone(),
                 encode_fn,
                 size_hint: std::sync::atomic::AtomicUsize::new(0),
+                program: program.clone(),
+                child_encoders,
             },
         );
         self.cache.insert_encode_fast(shape, stub.clone());

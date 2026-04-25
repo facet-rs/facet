@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex};
 use facet_core::Shape;
 use vox_jit_abi::{BorrowedDecodeFn, DecodeCacheKey, EncodeCacheKey, EncodeFn, OwnedDecodeFn};
 use vox_jit_cal::BorrowMode;
+use vox_postcard::ir::EncodeProgram;
 
 /// Pointer-identity key for a `&'static Shape`.
 ///
@@ -24,7 +25,12 @@ use vox_jit_cal::BorrowMode;
 /// pointer address uniquely identifies the type within a process. Hashing the
 /// pointer is ~one instruction; hashing the content is thousands.
 #[derive(Clone, Copy)]
-struct ShapePtr(&'static Shape);
+pub struct ShapePtr(pub &'static Shape);
+
+// SAFETY: `&'static Shape` is Send + Sync because Shape is Sync; the
+// wrapper exists only to customize Hash/PartialEq to use pointer identity.
+unsafe impl Send for ShapePtr {}
+unsafe impl Sync for ShapePtr {}
 
 impl std::hash::Hash for ShapePtr {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
@@ -73,6 +79,13 @@ pub struct CompiledEncodeStub {
     /// initial `EncodeCtx` capacity so the hot path avoids `realloc`
     /// churn after the first encode of a given shape.
     pub size_hint: AtomicUsize,
+    /// Lowered IR kept alive so parent compiles can inline this encoder's
+    /// body instead of emitting a `call_indirect` to `encode_fn`.
+    pub program: Arc<EncodeProgram>,
+    /// Stubs for this shape's direct child shapes (the `WriteShape` ops in
+    /// `program`). Swapped into `EncodeCtx_.child_encoders` when this
+    /// shape is inlined into a parent, so its grandchildren resolve too.
+    pub child_encoders: Arc<crate::codegen::ChildEncoderMap>,
 }
 
 // ---------------------------------------------------------------------------

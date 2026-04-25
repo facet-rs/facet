@@ -45,16 +45,20 @@ use vox_postcard::ir::{
 /// Map of nested `&'static Shape` pointers to already-compiled encode stubs.
 ///
 /// Populated by the runtime (`JitRuntime::prepare_encode_stub`) before it
-/// calls `compile_encode`. The key is the raw pointer address — two shapes
+/// calls `compile_encode`. The key is the shape pointer address — two shapes
 /// with the same address are the same `Facet` type within the process.
 ///
-/// Consulted by `EncodeOp::WriteShape` handling to choose between emitting
-/// a direct `call_indirect(child_fn_ptr, [ctx, src_ptr])` (no cache, no
-/// alloc) and falling through to `vox_jit_encode_shape` (the legacy helper
-/// that looks up the stub in the runtime cache and returns a fresh
-/// `Vec<u8>` that then has to be copied into the outer buffer).
+/// Consulted by `EncodeOp::WriteShape` handling to choose between:
+///   - inlining the child stub's IR directly into the parent (no call, no
+///     prologue/epilogue, `buf_len` stays in a register across the child's
+///     ops) — when the cycle guard allows it;
+///   - emitting a direct `call_indirect(child_fn_ptr, [ctx, src_ptr])` —
+///     when inlining would recurse into a shape already on the inlining
+///     stack;
+///   - falling through to `vox_jit_encode_shape` — when the child isn't in
+///     the map at all (runtime fallback path).
 pub type ChildEncoderMap =
-    std::collections::HashMap<*const facet_core::Shape, vox_jit_abi::EncodeFn>;
+    std::collections::HashMap<crate::cache::ShapePtr, std::sync::Arc<crate::cache::CompiledEncodeStub>>;
 
 /// Walk an `EncodeProgram` and collect every distinct `WriteShape` child
 /// shape. Used by the runtime to pre-compile nested stubs before the
@@ -366,7 +370,7 @@ impl CraneliftBackend {
         shape: &'static facet_core::Shape,
         program: &EncodeProgram,
         descriptors: &CalibrationRegistry,
-        child_encoders: &ChildEncoderMap,
+        child_encoders: std::sync::Arc<ChildEncoderMap>,
     ) -> Result<EncodeFn, CodegenError> {
         let sig = self.encode_signature();
         let func_name = format!("vox_encode_{}_{}", shape_symbol_fragment(shape), next_id());
@@ -391,6 +395,7 @@ impl CraneliftBackend {
                 descriptors,
                 self.ptr_ty,
                 child_encoders,
+                Some(shape),
             )?;
             builder.finalize();
         }
@@ -2934,16 +2939,33 @@ fn shape_symbol_fragment(shape: &'static facet_core::Shape) -> String {
 // Encode function emission
 // ---------------------------------------------------------------------------
 
+/// When a child encoder's body is being inlined into the parent, this holds
+/// the outer blocks that `return_ok` / `return_fail` must jump to instead of
+/// emitting a real `return`. `None` at top level.
+#[derive(Clone, Copy)]
+struct InlineFrame {
+    /// Target for `return_ok` — parent continues emitting after the inlined
+    /// child. `buf_{ptr,len,cap}` stay live in their Cranelift `Variable`s
+    /// across this jump, which is the whole point of inlining.
+    cont_block: Block,
+    /// Target for `return_fail` — a parent-owned block that itself calls
+    /// `return_fail()` in the outer frame (which may redirect again, or
+    /// emit the real return).
+    fail_block: Block,
+}
+
 /// State threaded through the Cranelift encode function builder.
 struct EncodeCtx_<'a, 'b> {
     b: &'a mut FunctionBuilder<'b>,
     /// `*mut EncodeCtx` argument.
     enc_ctx: Value,
     /// `*const u8` source pointer argument (base of the value being encoded).
+    /// Swapped to the child's src while inlining a `WriteShape` body.
     src_ptr: Value,
     ptr_ty: Type,
     descriptors: &'a CalibrationRegistry,
-    /// Mapping from EncodeProgram block index to Cranelift Block.
+    /// Mapping from EncodeProgram block index to Cranelift Block. Swapped
+    /// to a child's block_map while inlining — saved/restored on the stack.
     block_map: Vec<Option<Block>>,
     /// Block indices inlined into the parent (element loops).
     inlined_blocks: std::collections::HashSet<usize>,
@@ -2956,9 +2978,17 @@ struct EncodeCtx_<'a, 'b> {
     /// Local SSA cache of `ctx.buf_cap`. Reloaded after grow / helper calls.
     var_buf_cap: Variable,
     /// Compile-time-resolved encode stubs for nested shapes. Consulted by
-    /// `EncodeOp::WriteShape` to emit a direct `call_indirect` instead of
-    /// dispatching through `vox_jit_encode_shape`.
-    child_encoders: &'a ChildEncoderMap,
+    /// `EncodeOp::WriteShape` to decide between inlining, direct indirect
+    /// call, or helper fallback. Swapped to the child's map while inlining
+    /// so grandchildren resolve.
+    child_encoders: std::sync::Arc<ChildEncoderMap>,
+    /// When `Some`, `return_ok`/`return_fail` redirect to these blocks
+    /// instead of emitting a real return. Set while inlining a child.
+    inline_frame: Option<InlineFrame>,
+    /// Shapes whose encoders are currently on the inlining stack (including
+    /// the top-level shape being compiled). A `WriteShape` whose child is
+    /// on this stack falls back to `call_indirect` to break the cycle.
+    inlining_stack: Vec<*const facet_core::Shape>,
 }
 
 impl<'a, 'b> EncodeCtx_<'a, 'b> {
@@ -2975,18 +3005,29 @@ impl<'a, 'b> EncodeCtx_<'a, 'b> {
         }
     }
 
-    /// Return `true` (success). Flushes the buf_len cache to ctx so the caller
-    /// observes the final write offset.
+    /// Return `true` (success), or — when inlining — jump to the parent's
+    /// continuation block. In inlined mode we deliberately skip the flush:
+    /// the parent will keep `buf_len` in its Cranelift Variable and only
+    /// flush at its own real return / helper-call boundary.
     fn return_ok(&mut self) {
+        if let Some(frame) = self.inline_frame {
+            self.b.ins().jump(frame.cont_block, &[]);
+            return;
+        }
         self.flush_buf_len_to_ctx();
         let ok = self.b.ins().iconst(types::I8, 1);
         self.b.ins().return_(&[ok]);
     }
 
-    /// Return `false` (failure — OOM). Does NOT flush buf_len: on failure paths
-    /// the authoritative value is whatever the last helper/grow wrote into ctx,
-    /// and our local cache may be stale.
+    /// Return `false` (failure — OOM), or — when inlining — jump to the
+    /// parent's fail block, which itself propagates the failure up its own
+    /// frame. Does NOT flush buf_len: on failure paths the authoritative
+    /// value is whatever the last helper/grow wrote into ctx.
     fn return_fail(&mut self) {
+        if let Some(frame) = self.inline_frame {
+            self.b.ins().jump(frame.fail_block, &[]);
+            return;
+        }
         let fail = self.b.ins().iconst(types::I8, 0);
         self.b.ins().return_(&[fail]);
     }
@@ -3354,7 +3395,8 @@ fn emit_encode_function(
     program: &EncodeProgram,
     descriptors: &CalibrationRegistry,
     ptr_ty: Type,
-    child_encoders: &ChildEncoderMap,
+    child_encoders: std::sync::Arc<ChildEncoderMap>,
+    top_shape: Option<&'static facet_core::Shape>,
 ) -> Result<(), CodegenError> {
     let entry = builder.create_block();
     builder.append_block_params_for_function_params(entry);
@@ -3402,6 +3444,8 @@ fn emit_encode_function(
         var_buf_len,
         var_buf_cap,
         child_encoders,
+        inline_frame: None,
+        inlining_stack: top_shape.map(|s| vec![s as *const _]).unwrap_or_default(),
     };
 
     emit_encode_block(&mut ectx, program, 0)?;
@@ -3462,8 +3506,15 @@ fn emit_encode_op(
         }
 
         EncodeOp::WriteShape { shape, src_offset } => {
-            if let Some(&child_fn) = ectx.child_encoders.get(&(*shape as *const _)) {
-                emit_encode_direct_child(ectx, child_fn, *src_offset);
+            let key = crate::cache::ShapePtr(*shape);
+            if let Some(child_stub) = ectx.child_encoders.get(&key).cloned() {
+                let shape_ptr = *shape as *const _;
+                let in_cycle = ectx.inlining_stack.contains(&shape_ptr);
+                if in_cycle {
+                    emit_encode_direct_child(ectx, child_stub.encode_fn, *src_offset);
+                } else {
+                    emit_inline_child_program(ectx, &child_stub, *src_offset)?;
+                }
             } else {
                 emit_encode_helper_shape_op(
                     ectx,
@@ -3790,6 +3841,95 @@ fn emit_encode_helper_shape_op(
 /// The child stub writes directly into `ctx.buf_*`, so we flush the cached
 /// `buf_len` before the call and reload all three fields afterwards, exactly
 /// like we do around any other helper that mutates the buffer.
+/// Inline the child stub's IR body into the current parent function.
+///
+/// Saves the parent's per-program state (`block_map`, `inlined_blocks`,
+/// `src_ptr`, `child_encoders`, `inline_frame`), allocates a fresh block
+/// map for the child's program, redirects `return_ok`/`return_fail` to
+/// parent-owned cont/fail blocks, walks the child's blocks, then restores
+/// parent state. The key win vs `emit_encode_direct_child`: no call
+/// prologue/epilogue, and `var_buf_{ptr,len,cap}` stay live across the
+/// child's body (skipping the flush + three-load reload around each call).
+fn emit_inline_child_program(
+    ectx: &mut EncodeCtx_<'_, '_>,
+    child: &std::sync::Arc<crate::cache::CompiledEncodeStub>,
+    src_offset: usize,
+) -> Result<(), CodegenError> {
+    let child_program = child.program.as_ref();
+    let child_shape = child.key.local_shape as *const _;
+
+    let inner_src = ectx.src_at(src_offset);
+    let cont_block = ectx.b.create_block();
+    let fail_block = ectx.b.create_block();
+
+    let child_block_map: Vec<Option<Block>> = (0..child_program.blocks.len())
+        .map(|_| Some(ectx.b.create_block()))
+        .collect();
+
+    // Jump into the child's entry block, closing out the parent's current
+    // Cranelift block. The child then controls flow until one of its
+    // return_ok/return_fail terminators jumps to cont/fail.
+    let child_entry = child_block_map[0].unwrap();
+    ectx.b.ins().jump(child_entry, &[]);
+
+    // Save outer state.
+    let saved_src_ptr = ectx.src_ptr;
+    let saved_block_map = std::mem::replace(&mut ectx.block_map, child_block_map);
+    let saved_inlined_blocks = std::mem::take(&mut ectx.inlined_blocks);
+    let saved_inline_frame = ectx.inline_frame.replace(InlineFrame {
+        cont_block,
+        fail_block,
+    });
+    let saved_child_encoders =
+        std::mem::replace(&mut ectx.child_encoders, child.child_encoders.clone());
+    ectx.src_ptr = inner_src;
+    ectx.inlining_stack.push(child_shape);
+
+    // Emit the child's entry block.
+    ectx.b.switch_to_block(child_entry);
+    ectx.b.seal_block(child_entry);
+    emit_encode_block(ectx, child_program, 0)?;
+
+    // Emit the rest of the child's blocks (matching emit_encode_function's
+    // remaining-blocks loop). Blocks that `emit_inline_block` already sealed
+    // are skipped; pre-created but never-entered blocks are stubbed out.
+    for block_idx in 1..child_program.blocks.len() {
+        if ectx.inlined_blocks.contains(&block_idx) {
+            let clif_block = ectx.block_map[block_idx].unwrap();
+            ectx.b.switch_to_block(clif_block);
+            ectx.b.seal_block(clif_block);
+            ectx.return_ok();
+            continue;
+        }
+        let clif_block = ectx.block_map[block_idx].unwrap();
+        ectx.b.switch_to_block(clif_block);
+        ectx.b.seal_block(clif_block);
+        emit_encode_block(ectx, child_program, block_idx)?;
+    }
+
+    // Restore outer state before emitting the fail/cont blocks — they run
+    // in the parent's frame, so their return_fail() (and any further ops
+    // in cont_block) use the parent's redirect/return behavior.
+    ectx.inlining_stack.pop();
+    ectx.child_encoders = saved_child_encoders;
+    ectx.inline_frame = saved_inline_frame;
+    ectx.inlined_blocks = saved_inlined_blocks;
+    ectx.block_map = saved_block_map;
+    ectx.src_ptr = saved_src_ptr;
+
+    // Parent fail path: propagate failure up (may be another jump if the
+    // parent is itself inlined, or a real return if we're at the top).
+    ectx.b.switch_to_block(fail_block);
+    ectx.b.seal_block(fail_block);
+    ectx.return_fail();
+
+    // Parent continues here.
+    ectx.b.switch_to_block(cont_block);
+    ectx.b.seal_block(cont_block);
+
+    Ok(())
+}
+
 fn emit_encode_direct_child(
     ectx: &mut EncodeCtx_<'_, '_>,
     child_fn: vox_jit_abi::EncodeFn,
@@ -4606,8 +4746,8 @@ mod tests {
         let program = lower_encode(T::SHAPE, Some(cal))
             .map_err(|e| CodegenError::UnsupportedOp(format!("encode lowering failed: {e}")))?;
         let mut backend = CraneliftBackend::new()?;
-        let child_encoders = ChildEncoderMap::new();
-        backend.compile_encode(T::SHAPE, &program, cal, &child_encoders)?;
+        let child_encoders = std::sync::Arc::new(ChildEncoderMap::new());
+        backend.compile_encode(T::SHAPE, &program, cal, child_encoders)?;
         Ok(())
     }
 
@@ -5113,8 +5253,8 @@ mod tests {
         let program = lower_encode(T::SHAPE, Some(&cal))
             .map_err(|e| CodegenError::UnsupportedOp(format!("encode lowering failed: {e}")))?;
         let mut backend = CraneliftBackend::new()?;
-        let child_encoders = ChildEncoderMap::new();
-        backend.compile_encode(T::SHAPE, &program, &cal, &child_encoders)?;
+        let child_encoders = std::sync::Arc::new(ChildEncoderMap::new());
+        backend.compile_encode(T::SHAPE, &program, &cal, child_encoders)?;
         Ok(())
     }
 
@@ -5169,8 +5309,8 @@ mod tests {
         let program = lower_encode(T::SHAPE, Some(&cal))
             .map_err(|e| CodegenError::UnsupportedOp(format!("encode lowering failed: {e}")))?;
         let mut backend = CraneliftBackend::new()?;
-        let child_encoders = ChildEncoderMap::new();
-        let encode_fn = backend.compile_encode(T::SHAPE, &program, &cal, &child_encoders)?;
+        let child_encoders = std::sync::Arc::new(ChildEncoderMap::new());
+        let encode_fn = backend.compile_encode(T::SHAPE, &program, &cal, child_encoders)?;
 
         let mut ctx = EncodeCtx::with_capacity(64);
         let src_ptr = value as *const T as *const u8;
