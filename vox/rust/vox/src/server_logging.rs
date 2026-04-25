@@ -290,6 +290,7 @@ mod tests {
             args_shape: <() as facet::Facet<'static>>::SHAPE,
             args: &[],
             return_shape: <() as facet::Facet<'static>>::SHAPE,
+            args_have_channels: false,
             retry: crate::RetryPolicy::VOLATILE,
             doc: None,
         };
@@ -373,6 +374,7 @@ mod tests {
             args_shape: <(Vec<u32>, String) as facet::Facet<'static>>::SHAPE,
             args: &[],
             return_shape: <Vec<u32> as facet::Facet<'static>>::SHAPE,
+            args_have_channels: false,
             retry: crate::RetryPolicy::VOLATILE,
             doc: None,
         };

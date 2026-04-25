@@ -88,19 +88,13 @@ where
     }
     fn args_have_channels(&self, method_id: ::vox::MethodId) -> bool {
         if method_id == word_lab_service_descriptor().methods[0usize].id {
-            return ::vox::hash::shape_contains_channel(
-                word_lab_service_descriptor().methods[0usize].args_shape,
-            );
+            return word_lab_service_descriptor().methods[0usize].args_have_channels;
         }
         if method_id == word_lab_service_descriptor().methods[1usize].id {
-            return ::vox::hash::shape_contains_channel(
-                word_lab_service_descriptor().methods[1usize].args_shape,
-            );
+            return word_lab_service_descriptor().methods[1usize].args_have_channels;
         }
         if method_id == word_lab_service_descriptor().methods[2usize].id {
-            return ::vox::hash::shape_contains_channel(
-                word_lab_service_descriptor().methods[2usize].args_shape,
-            );
+            return word_lab_service_descriptor().methods[2usize].args_have_channels;
         }
         false
     }

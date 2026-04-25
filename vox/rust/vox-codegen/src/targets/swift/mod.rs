@@ -175,6 +175,7 @@ mod tests {
             args_shape: base.args_shape,
             args: base.args,
             return_shape: base.return_shape,
+            args_have_channels: base.args_have_channels,
             retry: RetryPolicy::PERSIST_IDEM,
             doc: None,
         }));

@@ -492,9 +492,7 @@ fn generate_dispatcher(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream
         .map(|(i, _m)| {
             quote! {
                 if method_id == #descriptor_fn_name().methods[#i].id {
-                    return #vox::hash::shape_contains_channel(
-                        #descriptor_fn_name().methods[#i].args_shape,
-                    );
+                    return #descriptor_fn_name().methods[#i].args_have_channels;
                 }
             }
         })

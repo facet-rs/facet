@@ -105,14 +105,10 @@ where
     }
     fn args_have_channels(&self, method_id: ::vox::MethodId) -> bool {
         if method_id == audit_service_descriptor().methods[0usize].id {
-            return ::vox::hash::shape_contains_channel(
-                audit_service_descriptor().methods[0usize].args_shape,
-            );
+            return audit_service_descriptor().methods[0usize].args_have_channels;
         }
         if method_id == audit_service_descriptor().methods[1usize].id {
-            return ::vox::hash::shape_contains_channel(
-                audit_service_descriptor().methods[1usize].args_shape,
-            );
+            return audit_service_descriptor().methods[1usize].args_have_channels;
         }
         false
     }

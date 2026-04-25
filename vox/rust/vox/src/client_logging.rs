@@ -224,6 +224,7 @@ mod tests {
             args_shape: <() as facet::Facet<'static>>::SHAPE,
             args: &[],
             return_shape: <() as facet::Facet<'static>>::SHAPE,
+            args_have_channels: false,
             retry: crate::RetryPolicy::VOLATILE,
             doc: None,
         };

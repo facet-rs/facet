@@ -44,6 +44,12 @@ pub struct MethodDescriptor {
     /// Return type shape.
     pub return_shape: &'static Shape,
 
+    /// Whether `args_shape` reaches a channel (Tx/Rx) anywhere in its tree.
+    /// Computed once via `shape_contains_channel` when the descriptor is
+    /// built, so the driver's cancel/failure paths can short-circuit
+    /// instead of re-walking the shape per request.
+    pub args_have_channels: bool,
+
     /// Static retry policy for this method.
     pub retry: RetryPolicy,
 

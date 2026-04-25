@@ -49,7 +49,6 @@ struct InFlightHandler {
     abort: AbortHandle,
     method_id: vox_types::MethodId,
     retry: vox_types::RetryPolicy,
-    has_channels: bool,
     operation_id: Option<OperationId>,
 }
 
@@ -1325,7 +1324,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
 
     fn abort_channel_handlers(&mut self) {
         for in_flight in self.in_flight_handlers.values() {
-            if in_flight.has_channels {
+            if self.handler.args_have_channels(in_flight.method_id) {
                 if let Some(operation_id) = in_flight.operation_id {
                     self.shared.operations.remove(operation_id);
                     self.live_operations.lock().release(operation_id);
@@ -1490,9 +1489,11 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                         .in_flight_handlers
                         .get(&req_id)
                         .map(|in_flight| {
-                            if in_flight.has_channels && !in_flight.retry.idem {
+                            let has_channels =
+                                self.handler.args_have_channels(in_flight.method_id);
+                            if has_channels && !in_flight.retry.idem {
                                 Some(FailureDisposition::Indeterminate)
-                            } else if in_flight.has_channels && in_flight.retry.idem {
+                            } else if has_channels && in_flight.retry.idem {
                                 None
                             } else {
                                 Some(disposition)
@@ -1824,7 +1825,6 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 binder: self.internal_binder(),
                 handler_response_shape: handler.response_wire_shape(call_ref.method_id),
             };
-            let has_channels = handler.args_have_channels(call_ref.method_id);
             let (abort, abort_reg) = AbortHandle::new_pair();
             let handler_fut: Pin<Box<dyn Future<Output = RequestId> + Send + 'static>> =
                 Box::pin(async move {
@@ -1848,7 +1848,6 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                     abort,
                     method_id,
                     retry,
-                    has_channels,
                     operation_id,
                 },
             );

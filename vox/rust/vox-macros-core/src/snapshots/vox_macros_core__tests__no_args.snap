@@ -82,9 +82,7 @@ where
     }
     fn args_have_channels(&self, method_id: ::vox::MethodId) -> bool {
         if method_id == ping_service_descriptor().methods[0usize].id {
-            return ::vox::hash::shape_contains_channel(
-                ping_service_descriptor().methods[0usize].args_shape,
-            );
+            return ping_service_descriptor().methods[0usize].args_have_channels;
         }
         false
     }

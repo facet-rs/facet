@@ -50,8 +50,9 @@ pub fn method_descriptor_with_retry<'a, 'r, A: Facet<'a>, R: Facet<'r>>(
         !shape_contains_channel(R::SHAPE),
         "channels are not allowed in return types: {service_name}.{method_name}"
     );
+    let args_have_channels = shape_contains_channel(A::SHAPE);
     assert!(
-        !(retry.persist && shape_contains_channel(A::SHAPE)),
+        !(retry.persist && args_have_channels),
         "persist methods cannot carry channels: {service_name}.{method_name}"
     );
 
@@ -87,6 +88,7 @@ pub fn method_descriptor_with_retry<'a, 'r, A: Facet<'a>, R: Facet<'r>>(
         args_shape: A::SHAPE,
         args,
         return_shape: R::SHAPE,
+        args_have_channels,
         retry,
         doc,
     }))
