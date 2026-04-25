@@ -335,12 +335,11 @@ pub unsafe extern "C" fn vox_jit_alloc(size: usize, align: usize) -> *mut u8 {
 /// (opcode `ff 25`), following the displacement to the GOT slot, and
 /// dereferencing once.
 ///
-/// Returns `None` on platforms where the byte-scan is not implemented
-/// (anything but x86_64-linux today). Callers should fall back to the
-/// `vox_jit_alloc` helper itself in that case — adds the shim cost but
-/// keeps working.
+/// Returns `None` on platforms where the byte-scan is not implemented.
+/// Callers should fall back to the `vox_jit_alloc` helper itself in that
+/// case — adds the shim cost but keeps working.
 ///
-/// Panics if the scan finds zero or more than one `ff 25` pattern, or if
+/// Panics if the scanned bytes don't match the expected pattern, or if
 /// the resolved GOT entry is null. Either case means our model of
 /// `vox_jit_alloc`'s code layout is wrong and we'd rather fail loud than
 /// return a wrong pointer.
@@ -348,12 +347,15 @@ pub fn rust_alloc_fn_addr() -> Option<usize> {
     #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
     {
         static CACHED: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-        Some(*CACHED.get_or_init(scan_rust_alloc_x86_64_linux))
+        return Some(*CACHED.get_or_init(scan_rust_alloc_x86_64_linux));
     }
-    #[cfg(not(all(target_arch = "x86_64", target_os = "linux")))]
+    #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
     {
-        None
+        static CACHED: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        return Some(*CACHED.get_or_init(scan_rust_alloc_aarch64_darwin));
     }
+    #[allow(unreachable_code)]
+    None
 }
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
@@ -403,6 +405,135 @@ fn scan_rust_alloc_x86_64_linux() -> usize {
              vox_jit_alloc body within first {SCAN_LEN} bytes; \
              cannot extract __rust_alloc address. Either the compiler \
              changed code layout, or vox_jit_alloc was unexpectedly inlined."
+        )
+    })
+}
+
+#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+fn scan_rust_alloc_aarch64_darwin() -> usize {
+    // aarch64 is fixed-width 32-bit instructions. The expected tail-call
+    // sequence to `__rust_alloc` (a non-local symbol) is the standard
+    // GOT-relative thunk:
+    //
+    //     adrp x16, GOT_PAGE       ; load page-aligned GOT entry address
+    //     ldr  x16, [x16, #imm12]  ; load actual __rust_alloc address
+    //     br   x16                 ; tail-branch to it
+    //
+    // The compiler may emit this triplet inside `vox_jit_alloc` directly,
+    // or emit `b <stub>` with the triplet living at the stub address. We
+    // handle both: scan up to 64 instructions of `vox_jit_alloc`, find a
+    // `br x16`, and walk back two instructions for the adrp/ldr pair.
+    // If no `br x16` shows up, panic with enough context for the user to
+    // tell us what the actual layout is.
+    //
+    // BLIND IMPLEMENTATION: this has not yet been validated on a real
+    // mac. If the panic fires, the message includes the offending bytes
+    // and instruction offsets so we can adjust the model.
+    const SCAN_INSNS: usize = 64;
+    let body = vox_jit_alloc as *const u32;
+
+    // Encoding constants.
+    // br x16 = 0b1101_0110_0001_1111_0000_0010_0000_0000 = 0xD61F0200
+    const BR_X16: u32 = 0xD61F0200;
+    // adrp x16, ... has fixed bits: top bit 1, bits 28-24 = 10000, Rd = 16.
+    //   mask:    0b1001_1111_0000_0000_0000_0000_0001_1111 = 0x9F00001F
+    //   pattern: 0b1001_0000_0000_0000_0000_0000_0001_0000 = 0x90000010
+    const ADRP_X16_MASK: u32 = 0x9F00001F;
+    const ADRP_X16_PAT: u32 = 0x90000010;
+    // ldr x16, [x16, #imm12] (64-bit unsigned offset):
+    //   encoding: 1111_1001_01.. .... .... .... .... ....
+    //   with Rt = 10000 and Rn = 10000:
+    //   mask:    0b1111_1111_1100_0000_0000_0011_1111_1111 = 0xFFC003FF
+    //   pattern: 0b1111_1001_0100_0000_0000_0010_0001_0000 = 0xF9400210
+    const LDR_X16_MASK: u32 = 0xFFC003FF;
+    const LDR_X16_PAT: u32 = 0xF9400210;
+
+    let mut found: Option<usize> = None;
+    for i in 0..SCAN_INSNS {
+        let insn = unsafe { body.add(i).read() };
+        if insn != BR_X16 {
+            continue;
+        }
+        assert!(
+            i >= 2,
+            "vox_jit_abi: aarch64-darwin: found `br x16` at insn offset {i} \
+             with fewer than two preceding instructions; can't decode \
+             adrp/ldr GOT load"
+        );
+        let ldr = unsafe { body.add(i - 1).read() };
+        let adrp = unsafe { body.add(i - 2).read() };
+
+        assert!(
+            (ldr & LDR_X16_MASK) == LDR_X16_PAT,
+            "vox_jit_abi: aarch64-darwin: instruction before `br x16` at \
+             offset {} is 0x{ldr:08x}, not the expected \
+             `ldr x16, [x16, #imm12]` (mask 0x{LDR_X16_MASK:08x} expected \
+             pattern 0x{LDR_X16_PAT:08x}). Compiler layout has diverged \
+             from the model — please report.",
+            i - 1
+        );
+        assert!(
+            (adrp & ADRP_X16_MASK) == ADRP_X16_PAT,
+            "vox_jit_abi: aarch64-darwin: instruction two before `br x16` \
+             at offset {} is 0x{adrp:08x}, not the expected \
+             `adrp x16, ...` (mask 0x{ADRP_X16_MASK:08x} expected \
+             pattern 0x{ADRP_X16_PAT:08x}). Compiler layout has diverged \
+             from the model — please report.",
+            i - 2
+        );
+
+        // Decode adrp imm21 (signed, in pages of 4096 bytes).
+        let immlo = ((adrp >> 29) & 0x3) as u64;
+        let immhi = ((adrp >> 5) & 0x7_FFFF) as u64;
+        let imm21 = (immhi << 2) | immlo;
+        // Sign-extend 21 bits to 64.
+        let sign_bit = 1u64 << 20;
+        let imm21_se = if imm21 & sign_bit != 0 {
+            (imm21 | !((1u64 << 21) - 1)) as i64
+        } else {
+            imm21 as i64
+        };
+        let page_offset_bytes: i64 = imm21_se << 12;
+
+        let adrp_pc = unsafe { body.add(i - 2) } as usize;
+        let page_addr = (adrp_pc & !0xFFF).wrapping_add_signed(page_offset_bytes as isize);
+
+        // Decode ldr imm12 (scaled by 8 for 64-bit Xt).
+        let imm12 = ((ldr >> 10) & 0xFFF) as usize;
+        let load_offset = imm12 * 8;
+
+        let got_entry = page_addr.wrapping_add(load_offset);
+        let addr = unsafe { (got_entry as *const usize).read() };
+
+        assert!(
+            addr != 0,
+            "vox_jit_abi: aarch64-darwin: GOT entry pointed to by adrp/ldr \
+             pair at insn offsets {}/{} is null",
+            i - 2,
+            i - 1
+        );
+        assert!(
+            found.is_none(),
+            "vox_jit_abi: aarch64-darwin: more than one `br x16` in \
+             vox_jit_alloc body — compiler layout has diverged"
+        );
+
+        found = Some(addr);
+    }
+
+    found.unwrap_or_else(|| {
+        // Dump the first 16 instructions for diagnostic.
+        let mut dump = String::new();
+        for i in 0..SCAN_INSNS.min(16) {
+            let insn = unsafe { body.add(i).read() };
+            dump.push_str(&format!("  [{i:2}] 0x{insn:08x}\n"));
+        }
+        panic!(
+            "vox_jit_abi: aarch64-darwin: no `br x16` instruction found in \
+             vox_jit_alloc body within first {SCAN_INSNS} instructions. \
+             Either the compiler emitted a `b <stub>` direct branch (we \
+             don't yet follow stubs on aarch64) or vox_jit_alloc was \
+             inlined. First 16 instructions:\n{dump}"
         )
     })
 }
