@@ -2437,8 +2437,13 @@ fn run_block(
                 dst_offset: _,
                 descriptor: _,
             } => {
-                // Without calibrated descriptors the interpreter defers list
-                // handling to SlowPath.  This op is a no-op here.
+                // No-op in the interpreter: by the time `inner_block` runs,
+                // `base` is the element pointer (not the container header),
+                // so `dst_offset` here would be wrong. The interpreter's
+                // `AllocBacking` handler commits the running len directly
+                // against the outer base after each iteration. The op
+                // remains in the program because the JIT also skips it
+                // inline (`emit_alloc_backing`'s loop tail does the store).
             }
 
             DecodeOp::DecodeArray {
@@ -2483,13 +2488,86 @@ fn run_block(
             }
 
             DecodeOp::AllocBacking {
-                dst_offset: _,
-                descriptor: _,
-                body_block: _,
-                elem_size: _,
+                dst_offset,
+                descriptor,
+                body_block,
+                elem_size,
             } => {
-                // Reserve/commit is deferred to the Cranelift backend (task #9).
-                // The IR interpreter falls back to SlowPath for non-empty lists.
+                // Allocate the backing store, write the container header,
+                // then drive the element loop. Mirrors the JIT codegen in
+                // `emit_alloc_backing` so the two paths produce identical
+                // values for the same input bytes.
+                let cal = cal.ok_or_else(|| {
+                    DeserializeError::Custom("AllocBacking requires a calibration registry".into())
+                })?;
+                let desc = cal
+                    .get(vox_jit_cal::DescriptorHandle(descriptor.0))
+                    .ok_or_else(|| {
+                        DeserializeError::Custom(
+                            "AllocBacking: descriptor handle not found".into(),
+                        )
+                    })?;
+
+                let list_len = state.list_len;
+                let backing_ptr: *mut u8 = if desc.elem_size == 0 || list_len == 0 {
+                    desc.elem_align as *mut u8
+                } else {
+                    let layout = std::alloc::Layout::from_size_align(
+                        list_len * desc.elem_size,
+                        desc.elem_align,
+                    )
+                    .map_err(|_| {
+                        DeserializeError::Custom("AllocBacking: invalid layout".into())
+                    })?;
+                    let p = unsafe { std::alloc::alloc(layout) };
+                    if p.is_null() {
+                        return Err(DeserializeError::Custom(
+                            "AllocBacking: allocation failed (OOM)".into(),
+                        ));
+                    }
+                    p
+                };
+
+                // Write ptr/len/cap into the container header. Start `len`
+                // at zero — `CommitListLen` bumps it after each element so
+                // a mid-loop error leaves a valid partial container.
+                let dst = unsafe { base.add(*dst_offset) };
+                unsafe {
+                    std::ptr::write(
+                        dst.add(desc.ptr_offset as usize) as *mut *mut u8,
+                        backing_ptr,
+                    );
+                    if desc.len_offset != vox_jit_cal::OFFSET_ABSENT {
+                        std::ptr::write(dst.add(desc.len_offset as usize) as *mut usize, 0);
+                    }
+                    if desc.cap_offset != vox_jit_cal::OFFSET_ABSENT {
+                        std::ptr::write(
+                            dst.add(desc.cap_offset as usize) as *mut usize,
+                            list_len,
+                        );
+                    }
+                }
+
+                // Save outer loop state so nested ReadListLen/AllocBacking
+                // (e.g. Vec<Vec<u8>>) can use their own list_len without
+                // corrupting ours.
+                let outer_list_len = state.list_len;
+                let len_slot = if desc.len_offset != vox_jit_cal::OFFSET_ABSENT {
+                    Some(unsafe { dst.add(desc.len_offset as usize) as *mut usize })
+                } else {
+                    None
+                };
+                for i in 0..list_len {
+                    let elem_ptr = unsafe { backing_ptr.add(i * elem_size) };
+                    run_block(program, *body_block, state, elem_ptr, registry, cal.into())?;
+                    // Commit len after each element: a mid-loop error then
+                    // leaves a valid partial container (drop runs on the
+                    // initialized prefix only).
+                    if let Some(ptr) = len_slot {
+                        unsafe { std::ptr::write(ptr, i + 1) };
+                    }
+                }
+                state.list_len = outer_list_len;
             }
 
             DecodeOp::AllocBoxed {
