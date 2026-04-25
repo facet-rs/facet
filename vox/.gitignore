@@ -63,3 +63,4 @@ build/
 dhat-heap.json
 
 *.data
+*.nperf
