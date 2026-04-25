@@ -31,7 +31,7 @@ use cranelift_module::{Linkage, Module};
 use vox_jit_abi::{
     BorrowedDecodeFn, DecodeCtx, DecodeStatus, EncodeCtx, EncodeFn, OwnedDecodeFn,
     vox_jit_box_alloc, vox_jit_box_slice_alloc, vox_jit_buf_grow, vox_jit_string_alloc,
-    vox_jit_utf8_validate, vox_jit_vec_alloc,
+    vox_jit_utf8_validate, vox_jit_validate_bools, vox_jit_vec_alloc,
 };
 use vox_jit_cal::{
     CalibrationRegistry, ContainerKind, DescriptorHandle, OFFSET_ABSENT,
@@ -181,6 +181,10 @@ impl CraneliftBackend {
         jit_builder.symbol("vox_jit_vec_alloc", vox_jit_vec_alloc as *const u8);
         jit_builder.symbol("vox_jit_string_alloc", vox_jit_string_alloc as *const u8);
         jit_builder.symbol("vox_jit_utf8_validate", vox_jit_utf8_validate as *const u8);
+        jit_builder.symbol(
+            "vox_jit_validate_bools",
+            vox_jit_validate_bools as *const u8,
+        );
         jit_builder.symbol("vox_jit_box_alloc", vox_jit_box_alloc as *const u8);
         jit_builder.symbol(
             "vox_jit_box_slice_alloc",
@@ -951,8 +955,9 @@ fn emit_op(
             dst_offset,
             descriptor,
             elem_size,
+            validate_bool,
         } => {
-            emit_read_fixed_vec(ctx, *dst_offset, *descriptor, *elem_size)?;
+            emit_read_fixed_vec(ctx, *dst_offset, *descriptor, *elem_size, *validate_bool)?;
         }
 
         DecodeOp::ReadString {
@@ -1338,6 +1343,7 @@ fn emit_read_fixed_vec(
     dst_offset: usize,
     descriptor: OpaqueDescriptorId,
     elem_size: usize,
+    validate_bool: bool,
 ) -> Result<(), CodegenError> {
     let desc = ctx
         .descriptors
@@ -1418,6 +1424,34 @@ fn emit_read_fixed_vec(
     emit_memcpy(ctx, src, data_ptr, byte_count, desc.elem_size);
 
     ctx.skip_bytes_val(byte_count);
+
+    // Bool validation: bytes are now in `data_ptr[0..byte_count]`. The helper
+    // OR-reduces them — anything > 1 fails.
+    if validate_bool {
+        let validate_sig = make_utf8_validate_sig(ctx);
+        let validate_fn = ctx
+            .b
+            .ins()
+            .iconst(ctx.ptr_ty, vox_jit_validate_bools as *const () as i64);
+        let call = ctx
+            .b
+            .ins()
+            .call_indirect(validate_sig, validate_fn, &[data_ptr, byte_count]);
+        let status = ctx.b.inst_results(call)[0];
+        let ok_val = ctx.b.ins().iconst(types::I32, DecodeStatus::Ok as i64);
+        let is_ok = ctx.b.ins().icmp(IntCC::Equal, status, ok_val);
+
+        let bool_ok = ctx.fresh_block();
+        let bool_err = ctx.fresh_block();
+        ctx.b.ins().brif(is_ok, bool_ok, &[], bool_err, &[]);
+
+        ctx.b.switch_to_block(bool_err);
+        ctx.b.seal_block(bool_err);
+        ctx.return_err(DecodeStatus::InvalidBool);
+
+        ctx.b.switch_to_block(bool_ok);
+        ctx.b.seal_block(bool_ok);
+    }
 
     emit_len_store(ctx, dst, desc, len_ptr);
 

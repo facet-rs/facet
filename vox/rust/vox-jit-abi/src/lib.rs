@@ -366,6 +366,29 @@ pub unsafe extern "C" fn vox_jit_utf8_validate(bytes: *const u8, len: usize) -> 
     }
 }
 
+/// Validate a bulk-copied `Vec<bool>` backing: every byte must be 0 or 1.
+///
+/// LLVM auto-vectorizes the OR-reduce; the cost is one read per byte after
+/// the memcpy already brought the bytes into cache.
+///
+/// Returns `Ok` if every byte is `0x00` or `0x01`, `InvalidBool` otherwise.
+///
+/// # Safety
+/// `bytes` must point to at least `len` readable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vox_jit_validate_bools(bytes: *const u8, len: usize) -> DecodeStatus {
+    let slice = unsafe { core::slice::from_raw_parts(bytes, len) };
+    let mut acc: u8 = 0;
+    for &b in slice {
+        acc |= b;
+    }
+    if acc > 1 {
+        DecodeStatus::InvalidBool
+    } else {
+        DecodeStatus::Ok
+    }
+}
+
 
 // ---------------------------------------------------------------------------
 // Encode context

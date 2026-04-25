@@ -174,12 +174,18 @@ pub enum DecodeOp {
     /// calibrated descriptor for allocation). Used for element types whose
     /// postcard wire format is bit-identical to the in-memory representation:
     /// `u8`/`i8` (any endian, 1 byte), `f32`/`f64` (postcard-spec'd as fixed
-    /// little-endian, so identical on LE hosts). Replaces the per-element
-    /// decode loop with a single bulk memcpy.
+    /// little-endian, so identical on LE hosts), `bool` (1 byte, validated to
+    /// be 0 or 1). Replaces the per-element decode loop with a single bulk
+    /// memcpy plus, for bools, a vectorizable bitwise-OR scan to reject any
+    /// byte > 1.
     ReadFixedVec {
         dst_offset: usize,
         descriptor: OpaqueDescriptorId,
         elem_size: usize,
+        /// When true, after the memcpy validate every byte is 0 or 1 and
+        /// fail with an `InvalidValue` error otherwise. Required for
+        /// `Vec<bool>` since postcard rejects bytes >= 2.
+        validate_bool: bool,
     },
 
     /// Read a varint-length-prefixed UTF-8 string into `String` at
@@ -1665,13 +1671,16 @@ fn lower_list(
     // - `u8`/`i8`: 1 byte raw, always eligible.
     // - `f32`/`f64`: postcard-spec'd as fixed little-endian (NOT varint), so
     //   identical to `[f32]` / `[f64]` memory layout on LE hosts only.
+    // - `bool`: 1 byte, but must be 0 or 1 — memcpy then bitwise-OR scan to
+    //   reject any byte >= 2.
     //
     // Integer types `u16`/`u32`/`u64` and signed counterparts use varint, so
     // they're NOT eligible here — fall through to the per-element path.
     let is_byte_elem = list_def.t.is_type::<u8>() || list_def.t.is_type::<i8>();
+    let is_bool_elem = list_def.t.is_type::<bool>();
     let is_float_elem_le = cfg!(target_endian = "little")
         && (list_def.t.is_type::<f32>() || list_def.t.is_type::<f64>());
-    if is_byte_elem || is_float_elem_le {
+    if is_byte_elem || is_bool_elem || is_float_elem_le {
         if let Some(cal) = cal
             && let Some(descriptor) = cal.lookup_by_shape(shape)
         {
@@ -1682,6 +1691,7 @@ fn lower_list(
                     dst_offset,
                     descriptor,
                     elem_size,
+                    validate_bool: is_bool_elem,
                 },
             );
             return Ok(());
@@ -2132,6 +2142,7 @@ fn run_block(
                 dst_offset,
                 descriptor,
                 elem_size,
+                validate_bool,
             } => {
                 // Bulk-copy decode for `Vec<T>` where T's wire format is
                 // bit-identical to its in-memory representation: read the
@@ -2179,6 +2190,18 @@ fn run_block(
                             backing_ptr,
                             byte_count,
                         );
+                    }
+                    if *validate_bool {
+                        let mut acc: u8 = 0;
+                        for &b in src_bytes {
+                            acc |= b;
+                        }
+                        if acc > 1 {
+                            unsafe { std::alloc::dealloc(backing_ptr, layout) };
+                            return Err(DeserializeError::Custom(
+                                "ReadFixedVec: invalid bool byte (must be 0 or 1)".into(),
+                            ));
+                        }
                     }
                     let dst = unsafe { base.add(*dst_offset) };
                     unsafe {
@@ -3651,11 +3674,14 @@ fn lower_encode_list(
     // Bulk-copy encode fast path: skip the per-element loop and emit
     // `varint(len) + memcpy(len * elem_size)` for `Vec<T>` where T's wire
     // format is bit-identical to its in-memory representation. Mirrors the
-    // decode-side `ReadFixedVec` eligibility (u8/i8 always, f32/f64 on LE).
+    // decode-side `ReadFixedVec` eligibility (u8/i8 always, f32/f64 on LE,
+    // bool — Rust guarantees the byte is 0 or 1 already, so encode skips
+    // validation).
     let is_byte_elem = elem_shape.is_type::<u8>() || elem_shape.is_type::<i8>();
+    let is_bool_elem = elem_shape.is_type::<bool>();
     let is_float_elem_le = cfg!(target_endian = "little")
         && (elem_shape.is_type::<f32>() || elem_shape.is_type::<f64>());
-    if is_byte_elem || is_float_elem_le {
+    if is_byte_elem || is_bool_elem || is_float_elem_le {
         program.emit(
             block,
             EncodeOp::WriteFixedList {
