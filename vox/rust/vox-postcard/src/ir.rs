@@ -169,11 +169,17 @@ pub enum DecodeOp {
         dst_offset: usize,
     },
 
-    /// Read a varint-length-prefixed byte slice and copy the bytes to
-    /// `Vec<u8>` at `dst_offset` (uses opaque descriptor for allocation).
-    ReadByteVec {
+    /// Read a varint length prefix followed by `len * elem_size` raw bytes
+    /// and copy them directly into a `Vec<T>` at `dst_offset` (using the
+    /// calibrated descriptor for allocation). Used for element types whose
+    /// postcard wire format is bit-identical to the in-memory representation:
+    /// `u8`/`i8` (any endian, 1 byte), `f32`/`f64` (postcard-spec'd as fixed
+    /// little-endian, so identical on LE hosts). Replaces the per-element
+    /// decode loop with a single bulk memcpy.
+    ReadFixedVec {
         dst_offset: usize,
         descriptor: OpaqueDescriptorId,
+        elem_size: usize,
     },
 
     /// Read a varint-length-prefixed UTF-8 string into `String` at
@@ -1651,66 +1657,33 @@ fn lower_list(
     };
     let elem_size = elem_layout.size();
 
-    // Vec<u8> scalar fast path: ReadByteVec copies bytes directly.
-    if list_def.t.is_type::<u8>() {
+    // Bulk-copy fast path: `Vec<T>` where T's postcard wire format is
+    // bit-identical to its in-memory representation. Skips the per-element
+    // decode loop entirely and emits a single `memcpy(len * elem_size)` from
+    // the input cursor into the freshly-allocated backing.
+    //
+    // - `u8`/`i8`: 1 byte raw, always eligible.
+    // - `f32`/`f64`: postcard-spec'd as fixed little-endian (NOT varint), so
+    //   identical to `[f32]` / `[f64]` memory layout on LE hosts only.
+    //
+    // Integer types `u16`/`u32`/`u64` and signed counterparts use varint, so
+    // they're NOT eligible here — fall through to the per-element path.
+    let is_byte_elem = list_def.t.is_type::<u8>() || list_def.t.is_type::<i8>();
+    let is_float_elem_le = cfg!(target_endian = "little")
+        && (list_def.t.is_type::<f32>() || list_def.t.is_type::<f64>());
+    if is_byte_elem || is_float_elem_le {
         if let Some(cal) = cal
             && let Some(descriptor) = cal.lookup_by_shape(shape)
         {
             let descriptor = OpaqueDescriptorId(descriptor.0);
-            let empty_block = program.new_block();
-            let body_block = program.new_block();
             program.emit(
                 block,
-                DecodeOp::ReadListLen {
-                    descriptor,
-                    dst_offset,
-                    empty_block,
-                    body_block,
-                },
-            );
-            program.emit(
-                empty_block,
-                DecodeOp::MaterializeEmpty {
+                DecodeOp::ReadFixedVec {
                     dst_offset,
                     descriptor,
-                },
-            );
-            program.emit(empty_block, DecodeOp::Return);
-            // Vec<u8> body: AllocBacking then a single bulk copy (elem decode is ReadScalar<U8>).
-            let inner_block = program.new_block();
-            program.emit(
-                body_block,
-                DecodeOp::AllocBacking {
-                    dst_offset,
-                    descriptor,
-                    body_block: inner_block,
                     elem_size,
                 },
             );
-            program.emit(body_block, DecodeOp::Return);
-            // Element body: read one byte into out_ptr[0].
-            let element_plan = match plan {
-                TranslationPlan::List { element } => element.as_ref(),
-                _ => &TranslationPlan::Identity,
-            };
-            lower_value(
-                element_plan,
-                elem_shape,
-                registry,
-                Some(cal),
-                borrow_mode,
-                program,
-                inner_block,
-                0,
-            )?;
-            program.emit(
-                inner_block,
-                DecodeOp::CommitListLen {
-                    dst_offset,
-                    descriptor,
-                },
-            );
-            program.emit(inner_block, DecodeOp::Return);
             return Ok(());
         }
         program.emit(
@@ -2155,16 +2128,73 @@ fn run_block(
                 exec_read_scalar(state, *prim, dst)?;
             }
 
-            DecodeOp::ReadByteVec {
+            DecodeOp::ReadFixedVec {
                 dst_offset,
-                descriptor: _,
+                descriptor,
+                elem_size,
             } => {
-                // Without calibrated descriptors, fall back to Vec<u8> via
-                // standard allocation.
-                let bytes = state.read_byte_slice()?;
-                let vec: Vec<u8> = bytes.to_vec();
-                unsafe {
-                    std::ptr::write(base.add(*dst_offset) as *mut Vec<u8>, vec);
+                // Bulk-copy decode for `Vec<T>` where T's wire format is
+                // bit-identical to its in-memory representation: read the
+                // varint length, alloc an aligned backing of `len * elem_size`
+                // bytes, memcpy from input, write the container header.
+                let cal = cal.ok_or_else(|| {
+                    DeserializeError::Custom("ReadFixedVec requires a calibration registry".into())
+                })?;
+                let desc = cal
+                    .get(vox_jit_cal::DescriptorHandle(descriptor.0))
+                    .ok_or_else(|| {
+                        DeserializeError::Custom(
+                            "ReadFixedVec: descriptor handle not found".into(),
+                        )
+                    })?;
+                let list_len = state.read_varint()? as usize;
+                let byte_count = list_len * *elem_size;
+
+                if list_len == 0 {
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(
+                            desc.empty_bytes.as_ptr(),
+                            base.add(*dst_offset),
+                            desc.empty_bytes.len(),
+                        );
+                    }
+                } else {
+                    let layout = std::alloc::Layout::from_size_align(
+                        byte_count,
+                        desc.elem_align,
+                    )
+                    .map_err(|_| {
+                        DeserializeError::Custom("ReadFixedVec: invalid layout".into())
+                    })?;
+                    let backing_ptr = unsafe { std::alloc::alloc(layout) };
+                    if backing_ptr.is_null() {
+                        return Err(DeserializeError::Custom(
+                            "ReadFixedVec: allocation failed (OOM)".into(),
+                        ));
+                    }
+                    let src_bytes = state.read_bytes(byte_count)?;
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(
+                            src_bytes.as_ptr(),
+                            backing_ptr,
+                            byte_count,
+                        );
+                    }
+                    let dst = unsafe { base.add(*dst_offset) };
+                    unsafe {
+                        std::ptr::write(
+                            dst.add(desc.ptr_offset as usize) as *mut *mut u8,
+                            backing_ptr,
+                        );
+                        std::ptr::write(
+                            dst.add(desc.len_offset as usize) as *mut usize,
+                            list_len,
+                        );
+                        std::ptr::write(
+                            dst.add(desc.cap_offset as usize) as *mut usize,
+                            list_len,
+                        );
+                    }
                 }
             }
 
@@ -3178,13 +3208,18 @@ pub enum EncodeOp {
         elem_size: usize,
     },
 
-    /// Fast path for `Vec<u8>` / `String` (any calibrated container whose
-    /// element size is 1): write the varint length then a single memcpy of the
-    /// raw bytes into the output buffer. No per-element loop, no scalar
-    /// dispatch.
-    WriteByteList {
+    /// Bulk-copy fast path for any calibrated container whose elements are
+    /// stored in their wire-format-equivalent representation: write the
+    /// varint length then a single memcpy of `len * elem_size` raw bytes into
+    /// the output buffer. No per-element loop, no scalar dispatch.
+    ///
+    /// Eligible elements: `u8`/`i8` (1 byte raw, also covers `String`),
+    /// `f32`/`f64` (postcard-spec'd as fixed LE; matches in-memory layout on
+    /// LE hosts).
+    WriteFixedList {
         src_offset: usize,
         descriptor: OpaqueDescriptorId,
+        elem_size: usize,
     },
 
     /// Encode a fixed-size array at `src_offset`.
@@ -3324,9 +3359,10 @@ fn lower_encode_value(
                 {
                     program.emit(
                         block,
-                        EncodeOp::WriteByteList {
+                        EncodeOp::WriteFixedList {
                             src_offset,
                             descriptor: OpaqueDescriptorId(h.0),
+                            elem_size: 1,
                         },
                     );
                     return Ok(());
@@ -3612,13 +3648,20 @@ fn lower_encode_list(
         )));
     };
 
-    // Vec<u8>: skip the per-element loop; write varint(len) + a single memcpy.
-    if elem_shape.is_type::<u8>() {
+    // Bulk-copy encode fast path: skip the per-element loop and emit
+    // `varint(len) + memcpy(len * elem_size)` for `Vec<T>` where T's wire
+    // format is bit-identical to its in-memory representation. Mirrors the
+    // decode-side `ReadFixedVec` eligibility (u8/i8 always, f32/f64 on LE).
+    let is_byte_elem = elem_shape.is_type::<u8>() || elem_shape.is_type::<i8>();
+    let is_float_elem_le = cfg!(target_endian = "little")
+        && (elem_shape.is_type::<f32>() || elem_shape.is_type::<f64>());
+    if is_byte_elem || is_float_elem_le {
         program.emit(
             block,
-            EncodeOp::WriteByteList {
+            EncodeOp::WriteFixedList {
                 src_offset,
                 descriptor,
+                elem_size,
             },
         );
         return Ok(());

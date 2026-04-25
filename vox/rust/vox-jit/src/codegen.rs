@@ -947,11 +947,12 @@ fn emit_op(
             emit_read_scalar(ctx, *prim, *dst_offset)?;
         }
 
-        DecodeOp::ReadByteVec {
+        DecodeOp::ReadFixedVec {
             dst_offset,
             descriptor,
+            elem_size,
         } => {
-            emit_read_byte_vec(ctx, *dst_offset, *descriptor)?;
+            emit_read_fixed_vec(ctx, *dst_offset, *descriptor, *elem_size)?;
         }
 
         DecodeOp::ReadString {
@@ -1328,13 +1329,15 @@ fn emit_read_scalar(
 }
 
 // ---------------------------------------------------------------------------
-// Vec<u8> decode
+// Bulk-copy `Vec<T>` decode for fixed-size POD elements (u8/i8 always; f32/f64
+// on LE hosts). Replaces the per-element decode loop with a single memcpy.
 // ---------------------------------------------------------------------------
 
-fn emit_read_byte_vec(
+fn emit_read_fixed_vec(
     ctx: &mut EmitCtx<'_, '_>,
     dst_offset: usize,
     descriptor: OpaqueDescriptorId,
+    elem_size: usize,
 ) -> Result<(), CodegenError> {
     let desc = ctx
         .descriptors
@@ -1401,14 +1404,20 @@ fn emit_read_byte_vec(
     let zero = zero_ptr(ctx);
     emit_container_header(ctx, dst, desc, data_ptr, zero, len_ptr);
 
-    // Memcpy: copy len bytes from input cursor to data_ptr.
+    // Memcpy: copy `len * elem_size` bytes from input cursor to data_ptr,
+    // then advance the cursor by the same amount. For elem_size == 1 the
+    // multiply folds away.
+    let byte_count = if elem_size == 1 {
+        len_ptr
+    } else {
+        ctx.b.ins().imul_imm(len_ptr, elem_size as i64)
+    };
     let consumed = ctx.consumed();
     let input_ptr = ctx.ctx_input_ptr();
     let src = ctx.b.ins().iadd(input_ptr, consumed);
-    emit_memcpy(ctx, src, data_ptr, len_ptr, desc.elem_size);
+    emit_memcpy(ctx, src, data_ptr, byte_count, desc.elem_size);
 
-    // Advance consumed.
-    ctx.skip_bytes_val(len_ptr);
+    ctx.skip_bytes_val(byte_count);
 
     emit_len_store(ctx, dst, desc, len_ptr);
 
@@ -2651,43 +2660,31 @@ fn emit_len_store(ctx: &mut EmitCtx<'_, '_>, dst: Value, desc: &CalDescriptor, l
     emit_usize_store(ctx, dst, desc.len_offset as usize, len);
 }
 
-/// Emit a byte-by-byte memcpy from `src` to `dst` for `len` bytes.
+/// Emit a `libc.memcpy(dst, src, len)` call on the decode-side. Replaces a
+/// per-byte loop that was the historical implementation; with this change a
+/// `Vec<u8>` (or any future fixed-size-LE bulk-copy decoder) actually pays
+/// memcpy speed instead of a counted byte loop.
+///
+/// The `_elem_size` parameter is unused — `len` is in bytes, the caller is
+/// responsible for any `count * elem_size` arithmetic.
 fn emit_memcpy(ctx: &mut EmitCtx<'_, '_>, src: Value, dst: Value, len: Value, _elem_size: usize) {
-    // For the minimal subset, use a simple counted byte loop.
-    // TODO: use Cranelift bulk_memory or call libc memcpy for large copies.
-    let var_i = ctx.b.declare_var(ctx.ptr_ty);
-    let zero = ctx.b.ins().iconst(ctx.ptr_ty, 0);
-    ctx.b.def_var(var_i, zero);
-
-    let header = ctx.b.create_block();
-    let body = ctx.b.create_block();
-    let exit = ctx.b.create_block();
-
-    ctx.b.ins().jump(header, &[]);
-
-    ctx.b.switch_to_block(header);
-    // Do NOT seal header yet — its back-edge predecessor (body) is added below.
-    let i = ctx.b.use_var(var_i);
-    let done = ctx.b.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, i, len);
-    ctx.b.ins().brif(done, exit, &[], body, &[]);
-
-    ctx.b.switch_to_block(body);
-    ctx.b.seal_block(body); // only one predecessor: header
-    let src_addr = ctx.b.ins().iadd(src, i);
-    let dst_addr = ctx.b.ins().iadd(dst, i);
-    let byte = ctx
-        .b
-        .ins()
-        .load(types::I8, MemFlags::trusted(), src_addr, 0);
-    ctx.b.ins().store(MemFlags::trusted(), byte, dst_addr, 0);
-    let one = ctx.b.ins().iconst(ctx.ptr_ty, 1);
-    let next_i = ctx.b.ins().iadd(i, one);
-    ctx.b.def_var(var_i, next_i);
-    ctx.b.ins().jump(header, &[]);
-    ctx.b.seal_block(header); // now both predecessors (entry + back-edge) are known
-
-    ctx.b.switch_to_block(exit);
-    ctx.b.seal_block(exit);
+    let call_conv = ctx.b.func.signature.call_conv;
+    let sig = ctx.b.func.import_signature(Signature {
+        params: vec![
+            AbiParam::new(ctx.ptr_ty), // dst
+            AbiParam::new(ctx.ptr_ty), // src
+            AbiParam::new(ctx.ptr_ty), // len
+        ],
+        returns: vec![AbiParam::new(ctx.ptr_ty)],
+        call_conv,
+    });
+    let callee = ctx.b.func.import_function(ExtFuncData {
+        name: ExternalName::LibCall(LibCall::Memcpy),
+        signature: sig,
+        colocated: false,
+        patchable: false,
+    });
+    ctx.b.ins().call(callee, &[dst, src, len]);
 }
 
 /// Emit a call to `vox_jit_slow_path` for a `SlowPath` IR op.
@@ -3706,11 +3703,12 @@ fn emit_encode_op(
             Ok(false)
         }
 
-        EncodeOp::WriteByteList {
+        EncodeOp::WriteFixedList {
             src_offset,
             descriptor,
+            elem_size,
         } => {
-            emit_encode_byte_list(ectx, *src_offset, descriptor)?;
+            emit_encode_fixed_list(ectx, *src_offset, descriptor, *elem_size)?;
             Ok(false)
         }
 
@@ -4605,15 +4603,15 @@ fn emit_encode_array(
 
 /// Emit encode for a Vec-family list.
 ///
-/// Reads ptr and len from the calibrated descriptor offsets, writes varint len,
-/// then loops over elements calling the body block.
-/// Fast-path encode for `Vec<u8>` / `String`: read `ptr` + `len` from the
-/// calibrated container offsets, write the varint length, then a single
-/// memcpy of the backing bytes into the output buffer.
-fn emit_encode_byte_list(
+/// Bulk-copy encode for any container whose elements have wire-format-equal
+/// in-memory layout (Vec<u8>/Vec<i8> always; Vec<f32>/Vec<f64> on LE; String).
+/// Reads `ptr` + `len` from the calibrated container offsets, writes the
+/// varint length, then a single bulk push of `len * elem_size` raw bytes.
+fn emit_encode_fixed_list(
     ectx: &mut EncodeCtx_<'_, '_>,
     src_offset: usize,
     descriptor: &OpaqueDescriptorId,
+    elem_size: usize,
 ) -> Result<(), CodegenError> {
     let desc = ectx.descriptors.get((*descriptor).into()).ok_or_else(|| {
         CodegenError::UnsupportedOp(format!("opaque descriptor {:?} not found", descriptor))
@@ -4640,7 +4638,15 @@ fn emit_encode_byte_list(
         ectx.b.ins().uextend(types::I64, len)
     };
     ectx.call_write_varint(len64);
-    ectx.call_push_bytes(data_ptr, len);
+
+    // For non-byte elements, scale the byte count by elem_size before pushing.
+    // The multiply folds away when elem_size == 1.
+    let byte_count = if elem_size == 1 {
+        len
+    } else {
+        ectx.b.ins().imul_imm(len, elem_size as i64)
+    };
+    ectx.call_push_bytes(data_ptr, byte_count);
     Ok(())
 }
 
