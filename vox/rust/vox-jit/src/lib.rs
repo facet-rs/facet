@@ -1,14 +1,16 @@
 //! Cranelift JIT backend for vox.
 //!
 //! Replaces the reflective interpreter on the hot decode path with
-//! Cranelift-generated stubs. Falls back to the interpreter for unsupported
-//! shapes, unsupported opaque types, or when calibration is unavailable.
+//! Cranelift-generated encoders/decoders. Falls back to the interpreter for
+//! unsupported shapes, unsupported opaque types, or when calibration is
+//! unavailable.
 //!
 //! # Architecture
 //!
 //! - `vox_postcard::ir` — canonical IR types + pure interpreter (ir-architect)
 //! - `codegen` — Cranelift backend that lowers `DecodeProgram` to machine code
-//! - `cache` — in-memory stub cache (keyed by shape value + calibration generation)
+//! - `cache` — in-memory cache of compiled encoders/decoders (keyed by shape
+//!   value + calibration generation)
 //!
 //! Entry point for callers: `JitRuntime`.
 
@@ -19,7 +21,7 @@ pub mod codegen;
 pub mod helpers;
 pub(crate) mod jitdump;
 
-pub use cache::StubCache;
+pub use cache::CompiledCache;
 pub use codegen::{ChildEncoderMap, CodegenError, CraneliftBackend, host_isa_name};
 pub use vox_jit_abi as abi;
 pub use vox_jit_cal as cal;
@@ -85,13 +87,13 @@ impl CodecMode {
 
 /// Process-local JIT runtime.
 ///
-/// Holds the calibration registry, the Cranelift backend, and the stub cache.
-/// Thread-safe via internal mutexes.
+/// Holds the calibration registry, the Cranelift backend, and the cache of
+/// compiled encoders/decoders. Thread-safe via internal mutexes.
 #[allow(dead_code)]
 pub struct JitRuntime {
     cal: Mutex<CalibrationRegistry>,
     backend: Mutex<CraneliftBackend>,
-    cache: StubCache,
+    cache: CompiledCache,
 }
 
 impl JitRuntime {
@@ -100,12 +102,12 @@ impl JitRuntime {
         Ok(Self {
             cal: Mutex::new(CalibrationRegistry::new()),
             backend: Mutex::new(CraneliftBackend::new()?),
-            cache: StubCache::new(),
+            cache: CompiledCache::new(),
         })
     }
 
-    /// Get the in-memory stub cache.
-    pub fn cache(&self) -> &StubCache {
+    /// Get the in-memory cache of compiled encoders/decoders.
+    pub fn cache(&self) -> &CompiledCache {
         &self.cache
     }
 
@@ -119,9 +121,9 @@ impl JitRuntime {
     /// Build a `DecodeCacheKey` for the given parameters.
     ///
     /// Per §Caching: if `descriptor_handle` is `None` (required calibration
-    /// unavailable), the caller should NOT insert a stub — fall back to the
-    /// IR interpreter instead. This method still builds the key for lookup
-    /// purposes, but insert is the caller's responsibility to gate.
+    /// unavailable), the caller should NOT insert a decoder — fall back to
+    /// the IR interpreter instead. This method still builds the key for
+    /// lookup purposes, but insert is the caller's responsibility to gate.
     ///
     /// The `local_shape` field uses `Shape`'s own `PartialEq`/`Hash` impls —
     /// not the pointer address. Two shapes at different addresses for the same
@@ -142,14 +144,14 @@ impl JitRuntime {
         }
     }
 
-    fn prepare_decode_stub(
+    fn prepare_decoder(
         &self,
         remote_schema_id: u64,
         local_shape: &'static Shape,
         plan: &TranslationPlan,
         registry: &SchemaRegistry,
         borrow_mode: BorrowMode,
-    ) -> Option<Arc<cache::CompiledDecodeStub>> {
+    ) -> Option<Arc<cache::CompiledDecoder>> {
         if let Some(stub) = self
             .cache
             .get_decode_fast(local_shape, borrow_mode, remote_schema_id)
@@ -209,7 +211,7 @@ impl JitRuntime {
                     return None;
                 }
             };
-            cache::CompiledDecodeStub {
+            cache::CompiledDecoder {
                 owned_fn: None,
                 borrowed_fn: Some(borrowed_fn),
                 key: key.clone(),
@@ -227,7 +229,7 @@ impl JitRuntime {
                     return None;
                 }
             };
-            cache::CompiledDecodeStub {
+            cache::CompiledDecoder {
                 owned_fn: Some(owned_fn),
                 borrowed_fn: None,
                 key: key.clone(),
@@ -239,7 +241,7 @@ impl JitRuntime {
         Some(stub)
     }
 
-    fn prepare_encode_stub(&self, shape: &'static Shape) -> Option<Arc<cache::CompiledEncodeStub>> {
+    fn prepare_encoder(&self, shape: &'static Shape) -> Option<Arc<cache::CompiledEncoder>> {
         // Fast path: pointer-identity lookup. No shape-tree walk, no cal
         // mutex, no structural hashing. This is the hot path for repeated
         // encode calls of the same type (i.e., every benchmark iteration).
@@ -254,7 +256,7 @@ impl JitRuntime {
         // Cycle guard: if we're already compiling this shape higher up the
         // stack (recursive type), bail so the caller falls back to the
         // runtime helper for that one nested reference. The outer frame
-        // will complete and cache the stub; subsequent encodes hit the
+        // will complete and cache the encoder; subsequent encodes hit the
         // fast path directly.
         if !encode_in_progress_insert(shape) {
             return None;
@@ -309,7 +311,7 @@ impl JitRuntime {
             if child == shape {
                 continue;
             }
-            if let Some(child_stub) = self.prepare_encode_stub(child) {
+            if let Some(child_stub) = self.prepare_encoder(child) {
                 child_encoders.insert(child, child_stub);
             }
         }
@@ -320,7 +322,8 @@ impl JitRuntime {
         // sites.
         let cal = self.cal.lock().unwrap();
         let mut backend = self.backend.lock().unwrap();
-        let encode_fn = match backend.compile_encode(shape, &program, &cal, child_encoders.clone()) {
+        let encode_fn = match backend.compile_encode(shape, &program, &cal, child_encoders.clone())
+        {
             Ok(f) => f,
             Err(err) => {
                 if require_pure_jit() {
@@ -334,7 +337,7 @@ impl JitRuntime {
         };
         let stub = self.cache.insert_encode(
             key.clone(),
-            cache::CompiledEncodeStub {
+            cache::CompiledEncoder {
                 key: key.clone(),
                 encode_fn,
                 size_hint: std::sync::atomic::AtomicUsize::new(0),
@@ -362,7 +365,7 @@ impl JitRuntime {
             CodecMode::Jit => {}
         }
 
-        let stub = self.prepare_decode_stub(
+        let stub = self.prepare_decoder(
             remote_schema_id,
             T::SHAPE,
             plan,
@@ -404,7 +407,7 @@ impl JitRuntime {
             CodecMode::Jit => {}
         }
 
-        let stub = self.prepare_decode_stub(
+        let stub = self.prepare_decoder(
             remote_schema_id,
             T::SHAPE,
             plan,
@@ -427,7 +430,7 @@ impl JitRuntime {
         ptr: facet::PtrConst,
         shape: &'static Shape,
     ) -> Option<Result<Vec<u8>, SerializeError>> {
-        let stub = self.prepare_encode_stub(shape)?;
+        let stub = self.prepare_encoder(shape)?;
         let hint = stub.size_hint.load(Ordering::Relaxed);
         let mut ctx = vox_jit_abi::EncodeCtx::with_capacity(hint);
         let ok = unsafe { (stub.encode_fn)(&mut ctx as *mut _, ptr.as_ptr()) };
@@ -449,38 +452,38 @@ impl JitRuntime {
 // Per-call-site typed entry points (macro form)
 // ---------------------------------------------------------------------------
 //
-// `try_encode_ptr` / `try_decode_*` look the compiled stub up in the global
-// `StubCache` on every call: ArcSwap load + HashMap lookup keyed on the
-// shape's ConstTypeId, plus an Arc clone. That's ~10% of bench time across
-// the 4 codec calls per echo round-trip.
+// `try_encode_ptr` / `try_decode_*` look the compiled encoder/decoder up in
+// the global `StubCache` on every call: ArcSwap load + HashMap lookup keyed
+// on the shape's ConstTypeId, plus an Arc clone. That's ~10% of bench time
+// across the 4 codec calls per echo round-trip.
 //
 // Most call sites know the type statically (generated dispatchers/handlers,
 // conduits, schema-deser). For those, the `vox_jit::encode!` /
 // `vox_jit::decode_owned!` / `vox_jit::decode_borrowed!` macros expand to a
-// fresh `static OnceLock` at the call site, capturing the stub for that
-// site's type on first call. The hot path is then one acquire load + one
-// indirect call — no shape hashing, no global cache traffic.
+// fresh `static OnceLock` at the call site, capturing the encoder/decoder
+// for that site's type on first call. The hot path is then one acquire load
+// + one indirect call — no shape hashing, no global cache traffic.
 //
 // Why a macro and not a generic function? `static` items inside a generic
 // function are *shared across all monomorphizations*, not duplicated per
 // instantiation — so a generic helper would silently use the first call
-// site's stub for every subsequent T. Macro expansion gives a literal
-// per-call-site item, which is correct.
+// site's encoder/decoder for every subsequent T. Macro expansion gives a
+// literal per-call-site item, which is correct.
 
 #[doc(hidden)]
 pub fn __encode_with_slot<'a, T: Facet<'a>>(
-    slot: &'static OnceLock<Arc<cache::CompiledEncodeStub>>,
+    slot: &'static OnceLock<Arc<cache::CompiledEncoder>>,
     value: &T,
 ) -> Result<Vec<u8>, SerializeError> {
-    let stub = slot.get_or_init(|| {
+    let encoder = slot.get_or_init(|| {
         global_runtime()
-            .prepare_encode_stub(T::SHAPE)
+            .prepare_encoder(T::SHAPE)
             .expect("JIT encode unavailable for T")
     });
-    let hint = stub.size_hint.load(Ordering::Relaxed);
+    let hint = encoder.size_hint.load(Ordering::Relaxed);
     let mut ctx = vox_jit_abi::EncodeCtx::with_capacity(hint);
     let ptr = facet::PtrConst::new((value as *const T).cast::<u8>());
-    let ok = unsafe { (stub.encode_fn)(&mut ctx as *mut _, ptr.as_ptr()) };
+    let ok = unsafe { (encoder.encode_fn)(&mut ctx as *mut _, ptr.as_ptr()) };
     if !ok {
         return Err(SerializeError::ReflectError(
             "JIT encode returned false (OOM)".into(),
@@ -488,32 +491,29 @@ pub fn __encode_with_slot<'a, T: Facet<'a>>(
     }
     let bytes = ctx.into_vec();
     if bytes.len() > hint {
-        stub.size_hint.store(bytes.len(), Ordering::Relaxed);
+        encoder.size_hint.store(bytes.len(), Ordering::Relaxed);
     }
     Ok(bytes)
 }
 
 /// Per-`(call site, BorrowMode)` slot mapping `remote_schema_id` to a
-/// compiled decode stub. Steady-state for one peer holds a single entry.
+/// compiled decoder. Steady-state for one peer holds a single entry.
 #[doc(hidden)]
-pub type DecodeStubSlot = OnceLock<ArcSwap<HashMap<u64, Arc<cache::CompiledDecodeStub>>>>;
+pub type DecoderSlot = OnceLock<ArcSwap<HashMap<u64, Arc<cache::CompiledDecoder>>>>;
 
 #[doc(hidden)]
 pub fn __decode_owned_with_slot<T: Facet<'static>>(
-    slot: &'static DecodeStubSlot,
+    slot: &'static DecoderSlot,
     input: &[u8],
     remote_schema_id: u64,
     plan: &TranslationPlan,
     registry: &SchemaRegistry,
 ) -> Result<T, DeserializeError> {
-    let stub = lookup_or_insert_decode_stub::<T>(
-        slot,
-        remote_schema_id,
-        plan,
-        registry,
-        BorrowMode::Owned,
-    );
-    let decode_fn = stub.owned_fn.expect("owned decode_fn missing on owned stub");
+    let decoder =
+        lookup_or_insert_decoder::<T>(slot, remote_schema_id, plan, registry, BorrowMode::Owned);
+    let decode_fn = decoder
+        .owned_fn
+        .expect("owned decode_fn missing on owned decoder");
     let mut ctx = DecodeCtx::new(input);
     let mut out = MaybeUninit::<T>::uninit();
     let status = unsafe { decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8) };
@@ -526,7 +526,7 @@ pub fn __decode_owned_with_slot<T: Facet<'static>>(
 
 #[doc(hidden)]
 pub fn __decode_borrowed_with_slot<'input, 'facet, T: Facet<'facet>>(
-    slot: &'static DecodeStubSlot,
+    slot: &'static DecoderSlot,
     input: &'input [u8],
     remote_schema_id: u64,
     plan: &TranslationPlan,
@@ -535,16 +535,11 @@ pub fn __decode_borrowed_with_slot<'input, 'facet, T: Facet<'facet>>(
 where
     'input: 'facet,
 {
-    let stub = lookup_or_insert_decode_stub::<T>(
-        slot,
-        remote_schema_id,
-        plan,
-        registry,
-        BorrowMode::Borrowed,
-    );
-    let decode_fn = stub
+    let decoder =
+        lookup_or_insert_decoder::<T>(slot, remote_schema_id, plan, registry, BorrowMode::Borrowed);
+    let decode_fn = decoder
         .borrowed_fn
-        .expect("borrowed decode_fn missing on borrowed stub");
+        .expect("borrowed decode_fn missing on borrowed decoder");
     let mut ctx = DecodeCtx::new(input);
     let mut out = MaybeUninit::<T>::uninit();
     let status = unsafe { decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8) };
@@ -555,19 +550,19 @@ where
     }
 }
 
-fn lookup_or_insert_decode_stub<'a, T: Facet<'a>>(
-    slot: &'static DecodeStubSlot,
+fn lookup_or_insert_decoder<'a, T: Facet<'a>>(
+    slot: &'static DecoderSlot,
     remote_schema_id: u64,
     plan: &TranslationPlan,
     registry: &SchemaRegistry,
     borrow_mode: BorrowMode,
-) -> Arc<cache::CompiledDecodeStub> {
+) -> Arc<cache::CompiledDecoder> {
     let cache = slot.get_or_init(|| ArcSwap::from_pointee(HashMap::new()));
     if let Some(stub) = cache.load().get(&remote_schema_id).cloned() {
         return stub;
     }
     let stub = global_runtime()
-        .prepare_decode_stub(remote_schema_id, T::SHAPE, plan, registry, borrow_mode)
+        .prepare_decoder(remote_schema_id, T::SHAPE, plan, registry, borrow_mode)
         .expect("JIT decode unavailable for T");
     cache.rcu(|cur| {
         let mut next = (**cur).clone();
@@ -577,49 +572,36 @@ fn lookup_or_insert_decode_stub<'a, T: Facet<'a>>(
     stub
 }
 
-/// Encode a typed value via the JIT, caching the compiled stub at the
+/// Encode a typed value via the JIT, caching the compiled encoder at the
 /// call-site `static`. The first invocation compiles the encoder; every
 /// subsequent invocation is one atomic load + one indirect call.
 #[macro_export]
 macro_rules! encode {
     ($value:expr) => {{
-        static SLOT: ::std::sync::OnceLock<
-            ::std::sync::Arc<$crate::cache::CompiledEncodeStub>,
-        > = ::std::sync::OnceLock::new();
+        static SLOT: ::std::sync::OnceLock<::std::sync::Arc<$crate::cache::CompiledEncoder>> =
+            ::std::sync::OnceLock::new();
         $crate::__encode_with_slot(&SLOT, $value)
     }};
 }
 
-/// Decode an owned typed value via the JIT, caching the stub at the
-/// call-site `static`. Stub is keyed on `remote_schema_id`; one call site
-/// typically sees a single id per peer.
+/// Decode an owned typed value via the JIT, caching the decoder at the
+/// call-site `static`. The decoder is keyed on `remote_schema_id`; one call
+/// site typically sees a single id per peer.
 #[macro_export]
 macro_rules! decode_owned {
     ($input:expr, $remote_schema_id:expr, $plan:expr, $registry:expr $(,)?) => {{
         static SLOT: $crate::DecodeStubSlot = ::std::sync::OnceLock::new();
-        $crate::__decode_owned_with_slot(
-            &SLOT,
-            $input,
-            $remote_schema_id,
-            $plan,
-            $registry,
-        )
+        $crate::__decode_owned_with_slot(&SLOT, $input, $remote_schema_id, $plan, $registry)
     }};
 }
 
-/// Decode a borrowed typed value via the JIT, caching the stub at the
+/// Decode a borrowed typed value via the JIT, caching the decoder at the
 /// call-site `static`.
 #[macro_export]
 macro_rules! decode_borrowed {
     ($input:expr, $remote_schema_id:expr, $plan:expr, $registry:expr $(,)?) => {{
         static SLOT: $crate::DecodeStubSlot = ::std::sync::OnceLock::new();
-        $crate::__decode_borrowed_with_slot(
-            &SLOT,
-            $input,
-            $remote_schema_id,
-            $plan,
-            $registry,
-        )
+        $crate::__decode_borrowed_with_slot(&SLOT, $input, $remote_schema_id, $plan, $registry)
     }};
 }
 
@@ -816,13 +798,13 @@ fn read_varint_at(input: &[u8], pos: usize) -> Option<u64> {
 
 /// Result of a JIT decode attempt.
 pub enum JitDecodeResult {
-    /// The stub ran and produced `ctx.consumed` bytes consumed.
+    /// The decoder ran and produced `ctx.consumed` bytes consumed.
     Ok { bytes_consumed: usize },
-    /// The stub ran but failed; `ctx` holds error position and init_count.
+    /// The decoder ran but failed; `ctx` holds error position and init_count.
     Err {
         status: DecodeStatus,
         ctx: DecodeCtx,
     },
-    /// No stub is compiled for this key; caller must use the IR interpreter.
+    /// No decoder is compiled for this key; caller must use the IR interpreter.
     FallBack,
 }

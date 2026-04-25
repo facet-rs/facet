@@ -1,7 +1,7 @@
 //! JIT runtime helpers that require both `vox-jit-abi` and `vox-postcard`.
 //!
 //! These are registered in the JITBuilder and called via `call_indirect` from
-//! generated stubs.
+//! generated encoders/decoders.
 
 use facet::{PtrConst, PtrMut, PtrUninit};
 use vox_jit_abi::{
@@ -37,7 +37,7 @@ pub unsafe extern "C" fn vox_jit_result_init_raw(
 }
 
 /// SlowPath helper: decode one field via the reflective interpreter and update
-/// `ctx.consumed`. Called by generated stubs when a `SlowPath` IR op is hit.
+/// `ctx.consumed`. Called by generated decoders when a `SlowPath` IR op is hit.
 ///
 /// # Safety
 /// - `ctx` must be a valid, non-null `DecodeCtx`.

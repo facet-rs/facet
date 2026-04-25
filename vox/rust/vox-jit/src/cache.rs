@@ -1,11 +1,11 @@
-//! In-memory stub cache.
+//! In-memory cache of JIT-compiled encoders and decoders.
 //!
-//! Compiled stubs are stored in a process-local hash map keyed by
-//! `DecodeCacheKey` / `EncodeCacheKey`. No persistence across restarts.
+//! Entries are stored in a process-local hash map keyed by `DecodeCacheKey`
+//! / `EncodeCacheKey`. No persistence across restarts.
 //!
 //! The cache owns the Cranelift `JITModule` which holds the memory maps for
-//! all compiled stubs. Stubs are identified by stable function IDs obtained
-//! from the module.
+//! all compiled functions. They are identified by stable function IDs
+//! obtained from the module.
 
 use std::collections::HashMap;
 use std::sync::atomic::AtomicUsize;
@@ -33,22 +33,22 @@ struct FastDecodeKey {
 }
 
 // ---------------------------------------------------------------------------
-// Compiled stub entries
+// Compiled encoder/decoder entries
 // ---------------------------------------------------------------------------
 
-/// A compiled decode stub that can be called via the JIT ABI.
+/// A JIT-compiled decoder that can be called via the JIT ABI.
 #[derive(Clone)]
-pub struct CompiledDecodeStub {
+pub struct CompiledDecoder {
     /// The owned-mode function pointer (or None if only borrowed mode was compiled).
     pub owned_fn: Option<OwnedDecodeFn>,
     /// The borrowed-mode function pointer (or None if only owned mode was compiled).
     pub borrowed_fn: Option<BorrowedDecodeFn>,
-    /// The key that produced this stub (for debugging / cache validation).
+    /// The key that produced this decoder (for debugging / cache validation).
     pub key: DecodeCacheKey,
 }
 
-/// A compiled encode stub — reserved for task #17 (deferred).
-pub struct CompiledEncodeStub {
+/// A JIT-compiled encoder for one shape.
+pub struct CompiledEncoder {
     pub key: EncodeCacheKey,
     pub encode_fn: EncodeFn,
     /// Largest encoded output observed for this shape. Used to seed the
@@ -58,32 +58,33 @@ pub struct CompiledEncodeStub {
     /// Lowered IR kept alive so parent compiles can inline this encoder's
     /// body instead of emitting a `call_indirect` to `encode_fn`.
     pub program: Arc<EncodeProgram>,
-    /// Stubs for this shape's direct child shapes (the `WriteShape` ops in
-    /// `program`). Swapped into `EncodeCtx_.child_encoders` when this
-    /// shape is inlined into a parent, so its grandchildren resolve too.
+    /// Compiled encoders for this shape's direct child shapes (the
+    /// `WriteShape` ops in `program`). Swapped into
+    /// `EncodeCtx_.child_encoders` when this shape is inlined into a parent,
+    /// so its grandchildren resolve too.
     pub child_encoders: Arc<crate::codegen::ChildEncoderMap>,
 }
 
 // ---------------------------------------------------------------------------
-// Stub cache
+// Compiled-encoder/decoder cache
 // ---------------------------------------------------------------------------
 
-/// Process-local, in-memory stub cache.
+/// Process-local, in-memory cache of compiled encoders and decoders.
 ///
-/// The structural (slow-path) maps live behind a `Mutex`; the pointer-identity
+/// The structural (slow-path) maps live behind a `Mutex`; the shape-keyed
 /// fast paths live behind `ArcSwap` so the steady-state lookup is one atomic
-/// load + one Arc clone, no locking. Stubs are never evicted — the cache lives
-/// for the process lifetime.
-pub struct StubCache {
-    slow: Mutex<StubCacheSlow>,
-    encode_fast: ArcSwap<HashMap<&'static Shape, Arc<CompiledEncodeStub>>>,
-    decode_fast: ArcSwap<HashMap<FastDecodeKey, Arc<CompiledDecodeStub>>>,
+/// load + one Arc clone, no locking. Entries are never evicted — the cache
+/// lives for the process lifetime.
+pub struct CompiledCache {
+    slow: Mutex<CompiledCacheSlow>,
+    encode_fast: ArcSwap<HashMap<&'static Shape, Arc<CompiledEncoder>>>,
+    decode_fast: ArcSwap<HashMap<FastDecodeKey, Arc<CompiledDecoder>>>,
 }
 
-impl Default for StubCache {
+impl Default for CompiledCache {
     fn default() -> Self {
         Self {
-            slow: Mutex::new(StubCacheSlow::default()),
+            slow: Mutex::new(CompiledCacheSlow::default()),
             encode_fast: ArcSwap::from_pointee(HashMap::new()),
             decode_fast: ArcSwap::from_pointee(HashMap::new()),
         }
@@ -91,66 +92,66 @@ impl Default for StubCache {
 }
 
 #[derive(Default)]
-struct StubCacheSlow {
-    decode_stubs: HashMap<DecodeCacheKey, Arc<CompiledDecodeStub>>,
-    encode_stubs: HashMap<EncodeCacheKey, Arc<CompiledEncodeStub>>,
+struct CompiledCacheSlow {
+    decoders: HashMap<DecodeCacheKey, Arc<CompiledDecoder>>,
+    encoders: HashMap<EncodeCacheKey, Arc<CompiledEncoder>>,
 }
 
-impl StubCache {
+impl CompiledCache {
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Look up a decode stub by key.
+    /// Look up a compiled decoder by key.
     ///
-    /// Returns a cloned Arc if found. Returns None if the stub is not yet
+    /// Returns a cloned Arc if found. Returns None if the decoder is not yet
     /// compiled or if the cache key's calibration generation is stale.
-    pub fn get_decode(&self, key: &DecodeCacheKey) -> Option<Arc<CompiledDecodeStub>> {
+    pub fn get_decode(&self, key: &DecodeCacheKey) -> Option<Arc<CompiledDecoder>> {
         let guard = self.slow.lock().unwrap();
-        guard.decode_stubs.get(key).cloned()
+        guard.decoders.get(key).cloned()
     }
 
-    /// Insert a compiled decode stub.
+    /// Insert a compiled decoder.
     ///
-    /// If a stub already exists for this key, it is replaced (should not
+    /// If a decoder already exists for this key, it is replaced (should not
     /// happen in normal operation — callers check first).
     pub fn insert_decode(
         &self,
         key: DecodeCacheKey,
-        stub: CompiledDecodeStub,
-    ) -> Arc<CompiledDecodeStub> {
+        stub: CompiledDecoder,
+    ) -> Arc<CompiledDecoder> {
         let arc = Arc::new(stub);
         let mut guard = self.slow.lock().unwrap();
-        guard.decode_stubs.insert(key, arc.clone());
+        guard.decoders.insert(key, arc.clone());
         arc
     }
 
-    /// Look up an encode stub by key.
-    pub fn get_encode(&self, key: &EncodeCacheKey) -> Option<Arc<CompiledEncodeStub>> {
+    /// Look up a compiled encoder by key.
+    pub fn get_encode(&self, key: &EncodeCacheKey) -> Option<Arc<CompiledEncoder>> {
         let guard = self.slow.lock().unwrap();
-        guard.encode_stubs.get(key).cloned()
+        guard.encoders.get(key).cloned()
     }
 
-    /// Insert a compiled encode stub.
+    /// Insert a compiled encoder.
     pub fn insert_encode(
         &self,
         key: EncodeCacheKey,
-        stub: CompiledEncodeStub,
-    ) -> Arc<CompiledEncodeStub> {
+        stub: CompiledEncoder,
+    ) -> Arc<CompiledEncoder> {
         let arc = Arc::new(stub);
         let mut guard = self.slow.lock().unwrap();
-        guard.encode_stubs.insert(key, arc.clone());
+        guard.encoders.insert(key, arc.clone());
         arc
     }
 
-    /// Fast-path encode lookup by shape identity (ConstTypeId). One atomic
+    /// Fast-path encoder lookup by shape identity (ConstTypeId). One atomic
     /// load and (on hit) one Arc clone — no locking.
-    pub fn get_encode_fast(&self, shape: &'static Shape) -> Option<Arc<CompiledEncodeStub>> {
+    pub fn get_encode_fast(&self, shape: &'static Shape) -> Option<Arc<CompiledEncoder>> {
         self.encode_fast.load().get(shape).cloned()
     }
 
-    /// Record a compiled encode stub in the fast path.
-    pub fn insert_encode_fast(&self, shape: &'static Shape, stub: Arc<CompiledEncodeStub>) {
+    /// Record a compiled encoder in the fast path.
+    pub fn insert_encode_fast(&self, shape: &'static Shape, stub: Arc<CompiledEncoder>) {
         self.encode_fast.rcu(|cur| {
             let mut next = (**cur).clone();
             next.insert(shape, stub.clone());
@@ -158,14 +159,14 @@ impl StubCache {
         });
     }
 
-    /// Fast-path decode lookup keyed on shape identity + borrow mode +
+    /// Fast-path decoder lookup keyed on shape identity + borrow mode +
     /// remote schema id. One atomic load and (on hit) one Arc clone.
     pub fn get_decode_fast(
         &self,
         shape: &'static Shape,
         borrow_mode: BorrowMode,
         remote_schema_id: u64,
-    ) -> Option<Arc<CompiledDecodeStub>> {
+    ) -> Option<Arc<CompiledDecoder>> {
         self.decode_fast
             .load()
             .get(&FastDecodeKey {
@@ -176,13 +177,13 @@ impl StubCache {
             .cloned()
     }
 
-    /// Record a compiled decode stub in the fast path.
+    /// Record a compiled decoder in the fast path.
     pub fn insert_decode_fast(
         &self,
         shape: &'static Shape,
         borrow_mode: BorrowMode,
         remote_schema_id: u64,
-        stub: Arc<CompiledDecodeStub>,
+        stub: Arc<CompiledDecoder>,
     ) {
         let key = FastDecodeKey {
             shape,
@@ -196,8 +197,8 @@ impl StubCache {
         });
     }
 
-    /// Number of decode stubs currently cached.
-    pub fn decode_stub_count(&self) -> usize {
-        self.slow.lock().unwrap().decode_stubs.len()
+    /// Number of compiled decoders currently cached.
+    pub fn decoder_count(&self) -> usize {
+        self.slow.lock().unwrap().decoders.len()
     }
 }

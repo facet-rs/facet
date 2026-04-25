@@ -4,7 +4,7 @@
 //! `linux/tools/perf/Documentation/jitdump-specification.txt`. Together with an
 //! executable `mmap` of the file, this lets `perf record -k mono` capture the
 //! mapping and `perf inject --jit` extract per-function ELF objects so
-//! `perf annotate` can show disassembly of Cranelift-compiled stubs.
+//! `perf annotate` can show disassembly of Cranelift-compiled functions.
 //!
 //! Activated by `VOX_JIT_PERF=1`. No-op on non-Linux targets.
 

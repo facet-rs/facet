@@ -42,16 +42,16 @@ use vox_postcard::ir::{
     DecodeOp, DecodeProgram, EncodeOp, EncodeProgram, OpaqueDescriptorId, TagWidth, WirePrimitive,
 };
 
-/// Map of nested `&'static Shape` pointers to already-compiled encode stubs.
+/// Map of nested `&'static Shape` pointers to already-compiled encoders.
 ///
 /// Populated by the runtime (`JitRuntime::prepare_encode_stub`) before it
 /// calls `compile_encode`. The key is the shape pointer address — two shapes
 /// with the same address are the same `Facet` type within the process.
 ///
 /// Consulted by `EncodeOp::WriteShape` handling to choose between:
-///   - inlining the child stub's IR directly into the parent (no call, no
-///     prologue/epilogue, `buf_len` stays in a register across the child's
-///     ops) — when the cycle guard allows it;
+///   - inlining the child encoder's IR directly into the parent (no call,
+///     no prologue/epilogue, `buf_len` stays in a register across the
+///     child's ops) — when the cycle guard allows it;
 ///   - emitting a direct `call_indirect(child_fn_ptr, [ctx, src_ptr])` —
 ///     when inlining would recurse into a shape already on the inlining
 ///     stack;
@@ -59,12 +59,12 @@ use vox_postcard::ir::{
 ///     the map at all (runtime fallback path).
 pub type ChildEncoderMap = std::collections::HashMap<
     &'static facet_core::Shape,
-    std::sync::Arc<crate::cache::CompiledEncodeStub>,
+    std::sync::Arc<crate::cache::CompiledEncoder>,
 >;
 
 /// Walk an `EncodeProgram` and collect every distinct `WriteShape` child
-/// shape. Used by the runtime to pre-compile nested stubs before the
-/// parent stub is emitted so the parent can call them directly.
+/// shape. Used by the runtime to pre-compile nested encoders before the
+/// parent encoder is emitted so the parent can call them directly.
 pub fn collect_write_shape_children(program: &EncodeProgram) -> Vec<&'static facet_core::Shape> {
     let mut out = Vec::new();
     let mut seen = std::collections::HashSet::<*const facet_core::Shape>::new();
@@ -152,7 +152,8 @@ pub struct CraneliftBackend {
     ptr_ty: Type,
     isa_name: &'static str,
     /// Programs kept alive for the lifetime of the backend so that raw pointers
-    /// to plans embedded by `SlowPath` ops remain valid when the stubs are called.
+    /// to plans embedded by `SlowPath` ops remain valid when the compiled
+    /// decoders are called.
     retained_programs: Vec<DecodeProgram>,
 }
 
@@ -263,7 +264,7 @@ impl CraneliftBackend {
         self.isa_name
     }
 
-    /// Compile an owned decode stub.
+    /// Compile an owned decoder.
     pub fn compile_decode_owned(
         &mut self,
         shape: &'static facet_core::Shape,
@@ -274,7 +275,7 @@ impl CraneliftBackend {
         Ok(unsafe { core::mem::transmute(fn_ptr) })
     }
 
-    /// Compile a borrowed decode stub.
+    /// Compile a borrowed decoder.
     pub fn compile_decode_borrowed(
         &mut self,
         shape: &'static facet_core::Shape,
@@ -291,8 +292,9 @@ impl CraneliftBackend {
         program: &DecodeProgram,
         descriptors: &CalibrationRegistry,
     ) -> Result<(*const u8, u32), CodegenError> {
-        // Retain an owned copy of the program. The emitted stub embeds raw
-        // pointers into `SlowPath` op plans; those plans must outlive the stub.
+        // Retain an owned copy of the program. The emitted decoder embeds
+        // raw pointers into `SlowPath` op plans; those plans must outlive
+        // the decoder.
         self.retained_programs.push(program.clone());
         let program = self.retained_programs.last().unwrap();
 
@@ -332,7 +334,7 @@ impl CraneliftBackend {
 
     /// Like `compile_decode` but also returns the machine-code size in bytes.
     ///
-    /// Used by benchmarks to measure stub size per root type.
+    /// Used by benchmarks to measure compiled decoder size per root type.
     pub fn compile_decode_with_size(
         &mut self,
         shape: &'static facet_core::Shape,
@@ -1631,9 +1633,7 @@ fn emit_read_str_ref(ctx: &mut EmitCtx<'_, '_>, dst_offset: usize) -> Result<(),
 
     let _ = call_conv; // unused now that we're not building a call signature
     let dst = ctx.dst_at(dst_offset);
-    ctx.b
-        .ins()
-        .store(MemFlags::trusted(), data, dst, 0);
+    ctx.b.ins().store(MemFlags::trusted(), data, dst, 0);
     ctx.b
         .ins()
         .store(MemFlags::trusted(), len, dst, ctx.ptr_ty.bytes() as i32);
@@ -3001,7 +3001,7 @@ struct EncodeCtx_<'a, 'b> {
     var_buf_len: Variable,
     /// Local SSA cache of `ctx.buf_cap`. Reloaded after grow / helper calls.
     var_buf_cap: Variable,
-    /// Compile-time-resolved encode stubs for nested shapes. Consulted by
+    /// Compile-time-resolved encoders for nested shapes. Consulted by
     /// `EncodeOp::WriteShape` to decide between inlining, direct indirect
     /// call, or helper fallback. Swapped to the child's map while inlining
     /// so grandchildren resolve.
@@ -3856,15 +3856,15 @@ fn emit_encode_helper_shape_op(
     emit_encode_shape_ptr_with_helper(ectx, src_ptr, shape, helper);
 }
 
-/// Emit a direct `call_indirect` to a pre-compiled child encode stub.
+/// Emit a direct `call_indirect` to a pre-compiled child encoder.
 ///
 /// Signature of the callee matches `EncodeFn`:
 ///   `unsafe extern "C" fn(ctx: *mut EncodeCtx, src_ptr: *const u8) -> bool`
 ///
-/// The child stub writes directly into `ctx.buf_*`, so we flush the cached
-/// `buf_len` before the call and reload all three fields afterwards, exactly
-/// like we do around any other helper that mutates the buffer.
-/// Inline the child stub's IR body into the current parent function.
+/// The child encoder writes directly into `ctx.buf_*`, so we flush the
+/// cached `buf_len` before the call and reload all three fields afterwards,
+/// exactly like we do around any other helper that mutates the buffer.
+/// Inline the child encoder's IR body into the current parent function.
 ///
 /// Saves the parent's per-program state (`block_map`, `inlined_blocks`,
 /// `src_ptr`, `child_encoders`, `inline_frame`), allocates a fresh block
@@ -3875,7 +3875,7 @@ fn emit_encode_helper_shape_op(
 /// child's body (skipping the flush + three-load reload around each call).
 fn emit_inline_child_program(
     ectx: &mut EncodeCtx_<'_, '_>,
-    child: &std::sync::Arc<crate::cache::CompiledEncodeStub>,
+    child: &std::sync::Arc<crate::cache::CompiledEncoder>,
     src_offset: usize,
 ) -> Result<(), CodegenError> {
     let child_program = child.program.as_ref();
