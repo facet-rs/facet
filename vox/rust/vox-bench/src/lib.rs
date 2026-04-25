@@ -5,6 +5,8 @@ pub mod pb {
 
 use facet::Facet;
 use spec_proto::{GnarlyAttr, GnarlyEntry, GnarlyKind, GnarlyPayload};
+use vox_jit::cache::{CompiledDecoder, CompiledEncoder};
+use vox_jit::cal::BorrowMode;
 
 pub fn jit_encode<T>(value: &T) -> Vec<u8>
 where
@@ -29,6 +31,49 @@ where
         .try_decode_owned::<T>(bytes, 0, plan, registry)
         .expect("JIT decode unsupported")
         .expect("JIT decode failed")
+}
+
+/// Resolve a pre-compiled JIT decoder for `T`. The returned reference has
+/// `'static` lifetime (entries live for the process lifetime). Bench code
+/// holds this outside the timed loop so the in-loop work is just an indirect
+/// function call — comparable to serde's monomorphized `from_bytes`.
+pub fn prepare_jit_decoder<T: Facet<'static>>(
+    plan: &vox_postcard::plan::TranslationPlan,
+    registry: &vox_types::SchemaRegistry,
+) -> &'static CompiledDecoder {
+    vox_jit::global_runtime()
+        .prepare_decoder(0, T::SHAPE, plan, registry, BorrowMode::Owned)
+        .expect("JIT decoder unsupported for shape")
+}
+
+/// Same as `prepare_jit_decoder` but for borrowed-mode decoders.
+pub fn prepare_jit_decoder_borrowed<T: Facet<'static>>(
+    plan: &vox_postcard::plan::TranslationPlan,
+    registry: &vox_types::SchemaRegistry,
+) -> &'static CompiledDecoder {
+    vox_jit::global_runtime()
+        .prepare_decoder(0, T::SHAPE, plan, registry, BorrowMode::Borrowed)
+        .expect("JIT borrowed decoder unsupported for shape")
+}
+
+/// Resolve a pre-compiled JIT encoder for `T`.
+pub fn prepare_jit_encoder<T: Facet<'static>>() -> &'static CompiledEncoder {
+    vox_jit::global_runtime()
+        .prepare_encoder(T::SHAPE)
+        .expect("JIT encoder unsupported for shape")
+}
+
+/// Decode `bytes` via a pre-resolved JIT decoder. Skips the global cache
+/// lookup that `jit_decode` performs on every call — fair comparison vs
+/// `postcard::from_bytes` which has zero per-call dispatch overhead.
+pub fn jit_decode_pre<T: Facet<'static>>(decoder: &'static CompiledDecoder, bytes: &[u8]) -> T {
+    vox_jit::decode_owned_with::<T>(decoder, bytes).expect("JIT decode failed")
+}
+
+/// Encode `value` via a pre-resolved JIT encoder.
+pub fn jit_encode_pre<T: Facet<'static>>(encoder: &'static CompiledEncoder, value: &T) -> Vec<u8> {
+    let ptr = facet::PtrConst::new((value as *const T).cast::<u8>());
+    vox_jit::encode_with(encoder, ptr).expect("JIT encode failed")
 }
 
 pub fn make_gnarly_payload(entry_count: usize, seq: usize) -> GnarlyPayload {
