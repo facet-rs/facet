@@ -8,25 +8,39 @@
 //!
 //! Encoders are keyed by `&'static Shape` alone — `Shape: Hash + Eq` via
 //! its compiler-issued `ConstTypeId`, so the same Rust type collapses to
-//! one entry across all callers. Decoders also need `borrow_mode` and the
-//! `remote_schema_id` (the content-addressed `SchemaHash` of the peer's
-//! root type) so two peers with different remote schemas get distinct
-//! compiled programs sharing the same local shape.
+//! one entry across all callers. Decoders also need the `remote_schema_id`
+//! (the content-addressed `SchemaHash` of the peer's root type) so two
+//! peers with different remote schemas get distinct compiled programs
+//! sharing the same local shape. Owned and borrowed compile outputs share
+//! one entry per `(shape, schema_id)` and lazy-fill `OnceLock` slots.
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::sync::atomic::AtomicUsize;
 
 use arc_swap::ArcSwap;
 use facet_core::Shape;
+use museair::FixedState;
 use vox_jit_abi::{BorrowedDecodeFn, EncodeFn, OwnedDecodeFn};
-use vox_jit_cal::BorrowMode;
 use vox_postcard::ir::EncodeProgram;
+
+/// Hasher used by `CompiledCache`'s HashMaps. The cache is process-local, never
+/// receives untrusted input, and keys are stable code-segment pointers + small
+/// integers — cryptographic resistance buys nothing here, so we ditch
+/// `RandomState` (SipHash13) for `museair::FixedState`. Visible in nperf
+/// profiles: SipHash on a `(&'static Shape, u64)` key was ~34% of every
+/// `try_decode_owned` call.
+type CacheHasher = FixedState;
+type CacheMap<K, V> = HashMap<K, V, CacheHasher>;
+
+fn new_cache_map<K, V>() -> CacheMap<K, V> {
+    HashMap::with_hasher(FixedState::new(0))
+}
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
 struct DecodeKey {
     shape: &'static Shape,
-    borrow_mode: BorrowMode,
     remote_schema_id: u64,
 }
 
@@ -35,13 +49,26 @@ struct DecodeKey {
 // ---------------------------------------------------------------------------
 
 /// A JIT-compiled decoder that can be called via the JIT ABI.
+///
+/// Owned and borrowed function pointers are filled lazily — both share one
+/// entry per `(shape, remote_schema_id)`. A caller asking for owned only
+/// triggers compilation of `owned_fn`; a later borrowed call fills
+/// `borrowed_fn` in the same entry.
 pub struct CompiledDecoder {
-    /// The owned-mode function pointer (or None if only borrowed mode was compiled).
-    pub owned_fn: Option<OwnedDecodeFn>,
-    /// The borrowed-mode function pointer (or None if only owned mode was compiled).
-    pub borrowed_fn: Option<BorrowedDecodeFn>,
     /// Local Rust shape this decoder produces values for.
     pub local_shape: &'static Shape,
+    pub owned_fn: OnceLock<OwnedDecodeFn>,
+    pub borrowed_fn: OnceLock<BorrowedDecodeFn>,
+}
+
+impl CompiledDecoder {
+    fn new_empty(local_shape: &'static Shape) -> Self {
+        Self {
+            local_shape,
+            owned_fn: OnceLock::new(),
+            borrowed_fn: OnceLock::new(),
+        }
+    }
 }
 
 /// A JIT-compiled encoder for one shape.
@@ -74,15 +101,15 @@ pub struct CompiledEncoder {
 /// via `ArcSwap::rcu`, so they're rare-path operations only (one per
 /// distinct shape ever seen by this process).
 pub struct CompiledCache {
-    encoders: ArcSwap<HashMap<&'static Shape, &'static CompiledEncoder>>,
-    decoders: ArcSwap<HashMap<DecodeKey, &'static CompiledDecoder>>,
+    encoders: ArcSwap<CacheMap<&'static Shape, &'static CompiledEncoder>>,
+    decoders: ArcSwap<CacheMap<DecodeKey, &'static CompiledDecoder>>,
 }
 
 impl Default for CompiledCache {
     fn default() -> Self {
         Self {
-            encoders: ArcSwap::from_pointee(HashMap::new()),
-            decoders: ArcSwap::from_pointee(HashMap::new()),
+            encoders: ArcSwap::from_pointee(new_cache_map()),
+            decoders: ArcSwap::from_pointee(new_cache_map()),
         }
     }
 }
@@ -114,50 +141,57 @@ impl CompiledCache {
         leaked
     }
 
-    /// Look up a compiled decoder keyed on `(local_shape, borrow_mode,
-    /// remote_schema_id)`. One atomic load and (on hit) one pointer copy.
+    /// Look up the consolidated decoder entry for `(shape, remote_schema_id)`.
+    /// One atomic load and (on hit) one pointer copy. Returns `None` if no
+    /// entry exists yet — call `get_or_insert_decode_entry` to create one
+    /// before lazy-filling owned/borrowed slots.
     pub fn get_decode(
         &self,
         shape: &'static Shape,
-        borrow_mode: BorrowMode,
         remote_schema_id: u64,
     ) -> Option<&'static CompiledDecoder> {
         self.decoders
             .load()
             .get(&DecodeKey {
                 shape,
-                borrow_mode,
                 remote_schema_id,
             })
             .copied()
     }
 
-    /// Insert a compiled decoder. `Box::leak`s it and returns the resulting
-    /// `&'static`. The entry lives for the process lifetime.
-    pub fn insert_decode(
+    /// Look up or create the consolidated decoder entry for
+    /// `(shape, remote_schema_id)`. The returned `&'static CompiledDecoder`
+    /// has empty `owned_fn`/`borrowed_fn` slots when freshly created;
+    /// callers fill them via `OnceLock::set` / `get_or_init`.
+    pub fn get_or_insert_decode_entry(
         &self,
         shape: &'static Shape,
-        borrow_mode: BorrowMode,
         remote_schema_id: u64,
-        decoder: CompiledDecoder,
     ) -> &'static CompiledDecoder {
-        let leaked: &'static CompiledDecoder = Box::leak(Box::new(decoder));
+        if let Some(entry) = self.get_decode(shape, remote_schema_id) {
+            return entry;
+        }
+        let leaked: &'static CompiledDecoder =
+            Box::leak(Box::new(CompiledDecoder::new_empty(shape)));
+        let mut inserted = leaked;
         self.decoders.rcu(|cur| {
+            let key = DecodeKey {
+                shape,
+                remote_schema_id,
+            };
+            if let Some(&existing) = cur.get(&key) {
+                inserted = existing;
+                return (**cur).clone();
+            }
             let mut next = (**cur).clone();
-            next.insert(
-                DecodeKey {
-                    shape,
-                    borrow_mode,
-                    remote_schema_id,
-                },
-                leaked,
-            );
+            next.insert(key, leaked);
+            inserted = leaked;
             next
         });
-        leaked
+        inserted
     }
 
-    /// Number of compiled decoders currently cached.
+    /// Number of compiled decoder entries currently cached.
     pub fn decoder_count(&self) -> usize {
         self.decoders.load().len()
     }

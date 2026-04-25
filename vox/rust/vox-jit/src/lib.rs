@@ -130,11 +130,15 @@ impl JitRuntime {
         registry: &SchemaRegistry,
         borrow_mode: BorrowMode,
     ) -> Option<&'static cache::CompiledDecoder> {
-        if let Some(decoder) = self
-            .cache
-            .get_decode(local_shape, borrow_mode, remote_schema_id)
-        {
-            return Some(decoder);
+        // Hot path: entry exists *and* the requested mode's fn is already filled.
+        if let Some(entry) = self.cache.get_decode(local_shape, remote_schema_id) {
+            let already_filled = match borrow_mode {
+                BorrowMode::Owned => entry.owned_fn.get().is_some(),
+                BorrowMode::Borrowed => entry.borrowed_fn.get().is_some(),
+            };
+            if already_filled {
+                return Some(entry);
+            }
         }
 
         if Self::force_fallback() {
@@ -163,44 +167,43 @@ impl JitRuntime {
             );
         }
         let mut backend = self.backend.lock().unwrap();
-        let decoder = if borrow_mode == BorrowMode::Borrowed {
-            let borrowed_fn = match backend.compile_decode_borrowed(local_shape, &program, &cal) {
-                Ok(f) => f,
-                Err(err) => {
-                    if require_pure_jit() {
-                        panic!(
-                            "VOX_JIT_REQUIRE_PURE=1 and decode compile failed for '{}': {}",
-                            local_shape, err
-                        );
+        let entry = self
+            .cache
+            .get_or_insert_decode_entry(local_shape, remote_schema_id);
+        match borrow_mode {
+            BorrowMode::Borrowed => {
+                let borrowed_fn = match backend.compile_decode_borrowed(local_shape, &program, &cal)
+                {
+                    Ok(f) => f,
+                    Err(err) => {
+                        if require_pure_jit() {
+                            panic!(
+                                "VOX_JIT_REQUIRE_PURE=1 and decode compile failed for '{}': {}",
+                                local_shape, err
+                            );
+                        }
+                        return None;
                     }
-                    return None;
-                }
-            };
-            cache::CompiledDecoder {
-                owned_fn: None,
-                borrowed_fn: Some(borrowed_fn),
-                local_shape,
+                };
+                let _ = entry.borrowed_fn.set(borrowed_fn);
             }
-        } else {
-            let owned_fn = match backend.compile_decode_owned(local_shape, &program, &cal) {
-                Ok(f) => f,
-                Err(err) => {
-                    if require_pure_jit() {
-                        panic!(
-                            "VOX_JIT_REQUIRE_PURE=1 and decode compile failed for '{}': {}",
-                            local_shape, err
-                        );
+            BorrowMode::Owned => {
+                let owned_fn = match backend.compile_decode_owned(local_shape, &program, &cal) {
+                    Ok(f) => f,
+                    Err(err) => {
+                        if require_pure_jit() {
+                            panic!(
+                                "VOX_JIT_REQUIRE_PURE=1 and decode compile failed for '{}': {}",
+                                local_shape, err
+                            );
+                        }
+                        return None;
                     }
-                    return None;
-                }
-            };
-            cache::CompiledDecoder {
-                owned_fn: Some(owned_fn),
-                borrowed_fn: None,
-                local_shape,
+                };
+                let _ = entry.owned_fn.set(owned_fn);
             }
-        };
-        Some(self.cache.insert_decode(local_shape, borrow_mode, remote_schema_id, decoder))
+        }
+        Some(entry)
     }
 
     /// Compile (or look up) the encoder for `shape`, returning a `&'static`
@@ -324,7 +327,7 @@ impl JitRuntime {
             plan,
             registry,
             BorrowMode::Owned,
-        ) && let Some(decode_fn) = stub.owned_fn
+        ) && let Some(&decode_fn) = stub.owned_fn.get()
         {
             let mut ctx = DecodeCtx::new(input);
             let mut out = MaybeUninit::<T>::uninit();
@@ -370,7 +373,7 @@ impl JitRuntime {
             plan,
             registry,
             BorrowMode::Borrowed,
-        ) && let Some(decode_fn) = stub.borrowed_fn
+        ) && let Some(&decode_fn) = stub.borrowed_fn.get()
         {
             let mut ctx = DecodeCtx::new(input);
             let mut out = MaybeUninit::<T>::uninit();
@@ -431,8 +434,9 @@ pub fn decode_owned_with<T: Facet<'static>>(
     decoder: &cache::CompiledDecoder,
     input: &[u8],
 ) -> Result<T, DeserializeError> {
-    let decode_fn = decoder
+    let decode_fn = *decoder
         .owned_fn
+        .get()
         .expect("owned decode_fn missing on owned decoder");
     let mut ctx = DecodeCtx::new(input);
     let mut out = MaybeUninit::<T>::uninit();
@@ -452,8 +456,9 @@ pub fn decode_borrowed_with<'input, 'facet, T: Facet<'facet>>(
 where
     'input: 'facet,
 {
-    let decode_fn = decoder
+    let decode_fn = *decoder
         .borrowed_fn
+        .get()
         .expect("borrowed decode_fn missing on borrowed decoder");
     let mut ctx = DecodeCtx::new(input);
     let mut out = MaybeUninit::<T>::uninit();

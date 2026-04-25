@@ -22,6 +22,7 @@ vox-jit-cal = { workspace = true }
 vox-postcard = { workspace = true }
 vox-schema = { workspace = true }
 arc-swap = { workspace = true }
+museair = { workspace = true }
 facet = { workspace = true }
 facet-core = { workspace = true }
 cranelift-codegen = "0.131"

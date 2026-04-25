@@ -75,6 +75,7 @@ moire = { version = "1.0.0", git = "https://github.com/bearcove/moire", rev = "c
 moire-types = { version = "1.0.0", git = "https://github.com/bearcove/moire", rev = "cf162e7" }
 
 arc-swap = "1"
+museair = "0.4"
 bitflags = "2.11.0"
 structstruck = "0.5.1"
 bytes = "1"
