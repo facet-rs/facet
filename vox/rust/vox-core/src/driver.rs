@@ -25,7 +25,7 @@ use crate::session::{
 };
 use crate::{InMemoryOperationStore, OperationStore};
 use moire::sync::mpsc;
-use vox_types::{OperationId, PostcardPayload, SchemaHash, TypeRef};
+use vox_types::{OperationId, PostcardPayload};
 
 /// A pending response for one outbound request attempt.
 ///
@@ -373,6 +373,10 @@ pub struct DriverReplySink {
     operations: Option<Arc<dyn OperationStore>>,
     live_operations: Option<Arc<SyncMutex<LiveOperationTracker>>>,
     binder: DriverChannelBinder,
+    /// Static `&'static Shape` of the method's response type. Used on
+    /// replay to derive the schemas to attach to the wire response —
+    /// the same source of truth that fresh responses use.
+    handler_response_shape: Option<&'static facet_core::Shape>,
 }
 
 /// Replay a sealed response from the operation store.
@@ -385,23 +389,16 @@ async fn replay_sealed_response(
     request_id: RequestId,
     method_id: vox_types::MethodId,
     encoded_response: &[u8],
-    root_type: TypeRef,
-    operations: &dyn OperationStore,
+    response_shape: Option<&'static facet_core::Shape>,
 ) -> Result<(), ()> {
     let mut response: RequestResponse<'_> =
         vox_postcard::from_slice_borrowed(encoded_response).map_err(|_| ())?;
-    sender.prepare_replay_schemas(request_id, method_id, &root_type, operations, &mut response);
-    sender.send_response(request_id, response).await
-}
-
-/// Extract the root TypeRef from a response's schema CBOR payload.
-fn extract_root_type_ref(schemas_cbor: &vox_types::CborPayload) -> TypeRef {
-    if schemas_cbor.is_empty() {
-        return TypeRef::concrete(SchemaHash(0));
+    if let Some(shape) = response_shape {
+        sender.prepare_replay_schemas(request_id, method_id, shape, &mut response);
+    } else {
+        response.schemas = Default::default();
     }
-    let payload =
-        vox_types::SchemaPayload::from_cbor(&schemas_cbor.0).expect("schema CBOR must be valid");
-    payload.root
+    sender.send_response(request_id, response).await
 }
 
 fn incoming_args_bytes<'a>(call: &'a RequestCall<'a>) -> &'a [u8] {
@@ -447,9 +444,6 @@ impl ReplySink for DriverReplySink {
             let mut response = response;
             sender.prepare_response_for_method(self.request_id, self.method_id, &mut response);
 
-            // Extract the root type ref before we strip schemas for storage.
-            let root_type = extract_root_type_ref(&response.schemas);
-
             let schemas_for_wire = std::mem::take(&mut response.schemas);
             let encoded_bytes: Vec<u8> =
                 vox_jit::encode!(&response).expect("JIT encode failed for response store");
@@ -468,9 +462,9 @@ impl ReplySink for DriverReplySink {
                 sender.mark_failure(self.request_id, FailureDisposition::Cancelled);
             }
 
-            // Seal in the persistent store (payload without schemas).
-            let registry = sender.schema_registry();
-            operations.seal(operation_id, &encoded_for_store, &root_type, &registry);
+            // Seal: just the (op_id, method_id, bytes) tuple. No schemas
+            // — they come from the running code at replay time.
+            operations.seal(operation_id, self.method_id, &encoded_for_store);
 
             // Get waiters from the live tracker and replay to them.
             let waiters = self
@@ -478,6 +472,7 @@ impl ReplySink for DriverReplySink {
                 .as_ref()
                 .map(|lo| lo.lock().seal(operation_id))
                 .unwrap_or_default();
+            let response_shape = self.handler_response_shape;
             for waiter in waiters {
                 if waiter == self.request_id {
                     continue;
@@ -487,8 +482,7 @@ impl ReplySink for DriverReplySink {
                     waiter,
                     self.method_id,
                     encoded_for_store.as_bytes(),
-                    root_type.clone(),
-                    operations.as_ref(),
+                    response_shape,
                 )
                 .await
                 .is_err()
@@ -1726,7 +1720,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                         if let Some(sealed) = self.shared.operations.get_sealed(operation_id) {
                             let sender = self.sender.clone();
                             let method_id = call_ref.method_id;
-                            let operations = Arc::clone(&self.shared.operations);
+                            let response_shape = self.handler.response_wire_shape(method_id);
                             // Remove from live tracker — we're replaying, not running a handler.
                             self.live_operations.lock().seal(operation_id);
                             moire::task::spawn(
@@ -1736,8 +1730,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                                         req_id,
                                         method_id,
                                         sealed.response.as_bytes(),
-                                        sealed.root_type,
-                                        operations.as_ref(),
+                                        response_shape,
                                     )
                                     .await
                                     .is_err()
@@ -1791,6 +1784,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 operations: operation_id.map(|_| Arc::clone(&self.shared.operations)),
                 live_operations: operation_id.map(|_| Arc::clone(&self.live_operations)),
                 binder: self.internal_binder(),
+                handler_response_shape: handler.response_wire_shape(call_ref.method_id),
             };
             let has_channels = handler.args_have_channels(call_ref.method_id);
             let local_control_tx = self.local_control_tx.clone();

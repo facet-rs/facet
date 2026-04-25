@@ -391,19 +391,14 @@ impl OperationStore for CountingOperationStore {
     fn seal(
         &self,
         operation_id: vox_types::OperationId,
+        method_id: vox_types::MethodId,
         response: &vox_types::PostcardPayload,
-        root_type: &vox_types::TypeRef,
-        registry: &vox_types::SchemaRegistry,
     ) {
-        self.inner.seal(operation_id, response, root_type, registry)
+        self.inner.seal(operation_id, method_id, response)
     }
 
     fn remove(&self, operation_id: vox_types::OperationId) {
         self.inner.remove(operation_id)
-    }
-
-    fn schema_source(&self) -> &dyn vox_types::SchemaSource {
-        self.inner.schema_source()
     }
 }
 

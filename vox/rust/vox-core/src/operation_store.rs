@@ -1,17 +1,21 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use moire::sync::SyncMutex;
-use vox_types::{
-    MaybeSend, MaybeSync, OperationId, PostcardPayload, Schema, SchemaHash, SchemaRegistry,
-    SchemaSource, TypeRef,
-};
+use vox_types::{MaybeSend, MaybeSync, MethodId, OperationId, PostcardPayload};
 
 /// A sealed response stored in the operation store.
+///
+/// The store is in-process and same-version: the running code's static
+/// `SHAPE` for `method_id` is the source of truth for the response's
+/// schemas, both at admission time and at replay time. The store does
+/// not freeze schemas alongside payloads — that would only matter for
+/// cross-process / cross-version replay, and we don't promise that.
 pub struct SealedResponse {
     /// Postcard-encoded response payload (without schemas).
     pub response: PostcardPayload,
-    /// Root type ref for rebuilding the schema payload on replay.
-    pub root_type: TypeRef,
+    /// Method this response was produced for. Replay derives the
+    /// response's static `&'static Shape` from this.
+    pub method_id: MethodId,
 }
 
 /// State of an operation in the store.
@@ -24,12 +28,14 @@ pub enum OperationState {
     Sealed,
 }
 
-/// Operation state backing for exactly-once delivery across session resumption.
+/// Operation state backing for exactly-once delivery across session
+/// resumption within a single process.
 ///
-/// The default implementation is in-memory. Applications that want durability
-/// can implement this trait backed by a database.
-///
-/// Schemas are stored separately from payloads, deduplicated by SchemaHash.
+/// The default implementation is in-memory. Schemas are NOT stored —
+/// they come from the running code on replay. Cross-process /
+/// cross-version durability is the responsibility of `persist` methods,
+/// which would require a separate store implementation that grapples
+/// with schema migration; that contract is out of scope here.
 pub trait OperationStore: MaybeSend + MaybeSync + 'static {
     /// Record that we're starting to process this operation.
     fn admit(&self, operation_id: OperationId);
@@ -40,23 +46,19 @@ pub trait OperationStore: MaybeSend + MaybeSync + 'static {
     /// Retrieve a sealed response.
     fn get_sealed(&self, operation_id: OperationId) -> Option<SealedResponse>;
 
-    /// Store the sealed response for an operation.
-    ///
-    /// `response` is the postcard-encoded payload WITHOUT schemas.
-    /// The store pulls needed schemas from `registry`, deduplicated by SchemaHash.
+    /// Store the sealed response for an operation. `response` is the
+    /// postcard-encoded payload without schemas; `method_id` is needed
+    /// at replay time to look up the response shape from the running
+    /// code.
     fn seal(
         &self,
         operation_id: OperationId,
+        method_id: MethodId,
         response: &PostcardPayload,
-        root_type: &TypeRef,
-        registry: &SchemaRegistry,
     );
 
     /// Remove an admitted (but not sealed) operation, e.g. after handler failure.
     fn remove(&self, operation_id: OperationId);
-
-    /// Access the store's schema source for looking up schemas by hash.
-    fn schema_source(&self) -> &dyn SchemaSource;
 }
 
 // ============================================================================
@@ -67,7 +69,7 @@ enum InMemoryState {
     Admitted,
     Sealed {
         response: PostcardPayload,
-        root_type: TypeRef,
+        method_id: MethodId,
     },
 }
 
@@ -79,7 +81,6 @@ pub struct InMemoryOperationStore {
 #[derive(Default)]
 struct InMemoryRegistry {
     operations: BTreeMap<OperationId, InMemoryState>,
-    schemas: HashMap<SchemaHash, Schema>,
 }
 
 impl InMemoryOperationStore {
@@ -96,12 +97,6 @@ impl Default for InMemoryOperationStore {
     }
 }
 
-impl SchemaSource for InMemoryOperationStore {
-    fn get_schema(&self, id: SchemaHash) -> Option<Schema> {
-        self.inner.lock().schemas.get(&id).cloned()
-    }
-}
-
 impl OperationStore for InMemoryOperationStore {
     fn admit(&self, operation_id: OperationId) {
         let mut inner = self.inner.lock();
@@ -112,7 +107,6 @@ impl OperationStore for InMemoryOperationStore {
         tracing::trace!(
             %operation_id,
             operations = inner.operations.len(),
-            schemas = inner.schemas.len(),
             "operation store admit"
         );
     }
@@ -131,10 +125,10 @@ impl OperationStore for InMemoryOperationStore {
         match inner.operations.get(&operation_id) {
             Some(InMemoryState::Sealed {
                 response,
-                root_type,
+                method_id,
             }) => Some(SealedResponse {
                 response: response.clone(),
-                root_type: root_type.clone(),
+                method_id: *method_id,
             }),
             _ => None,
         }
@@ -143,41 +137,21 @@ impl OperationStore for InMemoryOperationStore {
     fn seal(
         &self,
         operation_id: OperationId,
+        method_id: MethodId,
         response: &PostcardPayload,
-        root_type: &TypeRef,
-        registry: &SchemaRegistry,
     ) {
         let mut inner = self.inner.lock();
-        // Store schemas the store doesn't have yet.
-        let mut queue = Vec::new();
-        root_type.collect_ids(&mut queue);
-        let mut visited = std::collections::HashSet::new();
-        while let Some(id) = queue.pop() {
-            if !visited.insert(id) {
-                continue;
-            }
-            if inner.schemas.contains_key(&id) {
-                continue;
-            }
-            if let Some(schema) = registry.get(&id) {
-                for child_id in vox_types::schema_child_ids(&schema.kind) {
-                    queue.push(child_id);
-                }
-                inner.schemas.insert(id, schema.clone());
-            }
-        }
         inner.operations.insert(
             operation_id,
             InMemoryState::Sealed {
                 response: response.clone(),
-                root_type: root_type.clone(),
+                method_id,
             },
         );
         tracing::trace!(
             %operation_id,
             response_bytes = response.as_bytes().len(),
             operations = inner.operations.len(),
-            schemas = inner.schemas.len(),
             "operation store seal"
         );
     }
@@ -192,13 +166,8 @@ impl OperationStore for InMemoryOperationStore {
             tracing::trace!(
                 %operation_id,
                 operations = inner.operations.len(),
-                schemas = inner.schemas.len(),
                 "operation store remove admitted"
             );
         }
-    }
-
-    fn schema_source(&self) -> &dyn SchemaSource {
-        self
     }
 }

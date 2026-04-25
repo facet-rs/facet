@@ -106,9 +106,6 @@ pub struct SchemaSendTracker {
 
     /// SchemaHashes already sent on this connection.
     sent_schemas: HashSet<SchemaHash>,
-
-    /// All extracted schemas, kept for the operation store to pull from.
-    registry: SchemaRegistry,
 }
 
 /// Structured schema plan computed before send ordering is known.
@@ -131,23 +128,15 @@ impl PreparedSchemaPlan {
 impl SchemaSendTracker {
     pub fn new() -> Self {
         SchemaSendTracker {
-            registry: HashMap::new(),
             sent_bindings: HashSet::new(),
             sent_schemas: HashSet::new(),
         }
     }
 
     /// Reset connection-scoped state — call on reconnection.
-    /// The registry is preserved (schemas don't change across connections).
     pub fn reset(&mut self) {
         self.sent_bindings.clear();
         self.sent_schemas.clear();
-    }
-
-    /// Borrow the schema registry. Used by the operation store to pull
-    /// schemas it hasn't stored yet.
-    pub fn registry(&self) -> &SchemaRegistry {
-        &self.registry
     }
 
     /// Whether this method+direction binding has already been sent on the wire.
@@ -191,14 +180,6 @@ impl SchemaSendTracker {
         }
     }
 
-    fn register_prepared_plan(&mut self, prepared: &PreparedSchemaPlan) {
-        for schema in &prepared.schemas {
-            self.registry
-                .entry(schema.id)
-                .or_insert_with(|| schema.clone());
-        }
-    }
-
     fn unsent_schemas_for_prepared_plan(&self, prepared: &PreparedSchemaPlan) -> Vec<Schema> {
         prepared
             .schemas
@@ -220,9 +201,6 @@ impl SchemaSendTracker {
         if self.sent_bindings.contains(&key) {
             return CborPayload::default();
         }
-
-        self.register_prepared_plan(prepared);
-
         let schema_payload = SchemaPayload {
             schemas: self.unsent_schemas_for_prepared_plan(prepared),
             root: prepared.root.clone(),
@@ -241,9 +219,6 @@ impl SchemaSendTracker {
         if self.sent_bindings.contains(&key) {
             return;
         }
-
-        self.register_prepared_plan(prepared);
-
         for schema in &prepared.schemas {
             self.sent_schemas.insert(schema.id);
         }
