@@ -459,11 +459,20 @@ impl CraneliftBackend {
 struct EmitCtx<'a, 'b> {
     b: &'a mut FunctionBuilder<'b>,
     ctx_ptr: Value,
-    out_ptr: Value,
+    /// Variable holding the current `out_ptr`. Read via `out_ptr()`, set via
+    /// `set_out_ptr()`. A Variable (rather than a fixed Value) so
+    /// `DecodeOp::TailCallSelf` can update it before jumping back to the
+    /// function's body entry, reusing the current frame.
+    var_out_ptr: Variable,
     ptr_ty: Type,
     /// FuncRef to the function currently being compiled. Used by
     /// `DecodeOp::CallSelf` for direct self-recursive calls.
     self_func: cranelift_codegen::ir::FuncRef,
+    /// Top of the function body — the jump target for `DecodeOp::TailCallSelf`.
+    /// Distinct from the Cranelift entry block (which holds the
+    /// function-arg-bearing prologue); this block is the start of the
+    /// program's block 0 and can be re-entered on tail-call.
+    body_entry: Block,
     /// Variable tracking bytes consumed (written back to ctx on return).
     var_consumed: Variable,
     /// Variable tracking partially-initialized element count (committed len).
@@ -577,12 +586,25 @@ impl<'a, 'b> EmitCtx<'a, 'b> {
         self.b.ins().bor(status_shifted, consumed_masked)
     }
 
+    /// Read the current `out_ptr` value out of `var_out_ptr`.
+    fn out_ptr(&mut self) -> Value {
+        self.b.use_var(self.var_out_ptr)
+    }
+
+    /// Update `var_out_ptr`. Used both for save/restore around inline body
+    /// blocks (e.g. `AllocBoxed`) and for `TailCallSelf` redirecting the
+    /// destination before jumping back to `body_entry`.
+    fn set_out_ptr(&mut self, v: Value) {
+        self.b.def_var(self.var_out_ptr, v);
+    }
+
     /// Compute a pointer to `out_ptr + offset`.
     fn dst_at(&mut self, offset: usize) -> Value {
+        let out = self.out_ptr();
         if offset == 0 {
-            self.out_ptr
+            out
         } else {
-            self.b.ins().iadd_imm(self.out_ptr, offset as i64)
+            self.b.ins().iadd_imm(out, offset as i64)
         }
     }
 
@@ -706,33 +728,44 @@ fn emit_decode_function(
     builder.seal_block(entry);
 
     let ctx_ptr = builder.block_params(entry)[0];
-    let out_ptr = builder.block_params(entry)[1];
+    let init_out = builder.block_params(entry)[1];
     let init_consumed = builder.block_params(entry)[2];
 
     let var_consumed = builder.declare_var(ptr_ty);
     let var_init_count = builder.declare_var(ptr_ty);
     let var_list_len = builder.declare_var(ptr_ty);
     let var_discriminant = builder.declare_var(types::I64);
+    let var_out_ptr = builder.declare_var(ptr_ty);
 
-    // Initial `consumed` arrives in a register (3rd param) — no memory load.
+    // Initial `consumed` and `out_ptr` arrive in registers (function args)
+    // — no memory load.
     builder.def_var(var_consumed, init_consumed);
+    builder.def_var(var_out_ptr, init_out);
     let zero = builder.ins().iconst(ptr_ty, 0);
     builder.def_var(var_init_count, zero);
     builder.def_var(var_list_len, zero);
     let zero64 = builder.ins().iconst(types::I64, 0);
     builder.def_var(var_discriminant, zero64);
 
-    // Pre-create Cranelift blocks for all program blocks.
+    // Pre-create Cranelift blocks for all program blocks. Block 0 is mapped
+    // to a fresh `body_entry` block (NOT the entry block) so
+    // `DecodeOp::TailCallSelf` can jump back to it from within the function
+    // body — the entry block holds the function-arg prologue and is only
+    // entered once.
+    let body_entry = builder.create_block();
     let mut block_map: Vec<Option<Block>> = (0..program.blocks.len())
         .map(|_| Some(builder.create_block()))
         .collect();
-    // The entry program block (block 0) maps to the already-active entry block.
-    block_map[0] = Some(entry);
+    block_map[0] = Some(body_entry);
+
+    // From entry, jump straight into body_entry.
+    builder.ins().jump(body_entry, &[]);
 
     let mut ctx = EmitCtx {
         b: builder,
         ctx_ptr,
-        out_ptr,
+        var_out_ptr,
+        body_entry,
         ptr_ty,
         self_func,
         var_consumed,
@@ -745,7 +778,10 @@ fn emit_decode_function(
         sealed_inlined_blocks: std::collections::HashSet::new(),
     };
 
-    // Emit block 0 (entry) first, then the rest.
+    // Switch into body_entry and emit block 0 there. body_entry stays
+    // UNSEALED until the function is fully emitted: `TailCallSelf` may
+    // jump back to it from anywhere in the body.
+    ctx.b.switch_to_block(body_entry);
     emit_block(&mut ctx, program, 0)?;
 
     // Emit remaining blocks (skip any that were inlined by emit_alloc_backing).
@@ -768,6 +804,10 @@ fn emit_decode_function(
         ctx.b.seal_block(clif_block);
         emit_block(&mut ctx, program, block_idx)?;
     }
+
+    // Now that all `TailCallSelf` jumps to body_entry are in, we can seal
+    // it (along with any other still-unsealed blocks).
+    ctx.b.seal_all_blocks();
 
     Ok(())
 }
@@ -1211,6 +1251,22 @@ fn emit_op(
 
         DecodeOp::CallSelf { dst_offset } => {
             emit_call_self(ctx, *dst_offset)?;
+        }
+
+        DecodeOp::TailCallSelf { dst_offset } => {
+            // Reuse the current frame: redirect `out_ptr` to the new slot
+            // and jump back to the function's body entry. Unlike CallSelf,
+            // there is no call/ret pair and no packed-return unpack — the
+            // loop simply re-enters block 0 with the updated state.
+            let new_out = ctx.dst_at(*dst_offset);
+            ctx.set_out_ptr(new_out);
+            // init_count is local to each "activation"; reset before the
+            // loop body re-runs since we're starting a fresh decode.
+            let zero = ctx.b.ins().iconst(ctx.ptr_ty, 0);
+            ctx.b.def_var(ctx.var_init_count, zero);
+            let body = ctx.body_entry;
+            ctx.b.ins().jump(body, &[]);
+            return Ok(true);
         }
     }
     Ok(false)
@@ -2009,6 +2065,10 @@ fn emit_decode_option(
     let invalid_block = ctx.fresh_block();
     let after_block = ctx.fresh_block();
 
+    // Snapshot the outer `out_ptr` before any branch may rewrite it for
+    // the Some inner decode; restored at the merge `after_block`.
+    let saved_outer_out = ctx.out_ptr();
+
     let is_zero = ctx.b.ins().icmp_imm(IntCC::Equal, tag_i32, 0);
     ctx.b
         .ins()
@@ -2050,16 +2110,18 @@ fn emit_decode_option(
 
         // Inline the some_block using emit_inline_block so nested multi-block
         // element bodies (e.g. Option<Vec<T>>) are handled correctly.
-        let saved_out_ptr = ctx.out_ptr;
-        ctx.out_ptr = inner_ptr;
+        ctx.set_out_ptr(inner_ptr);
         emit_inline_block(ctx, program, some_block_ir, after_block)?;
-        ctx.out_ptr = saved_out_ptr;
         // emit_inline_block jumps to after_block — do NOT emit jump here.
     }
 
-    // Merge: None and Some (inner done) both land here.
+    // Merge: None and Some (inner done) both land here. Restore var_out_ptr
+    // at the start of after_block (not after emit_inline_block, since
+    // def_var on a terminated block pollutes downstream phis — visible if
+    // the body contains TailCallSelf jumps to body_entry).
     ctx.b.switch_to_block(after_block);
     ctx.b.seal_block(after_block);
+    ctx.set_out_ptr(saved_outer_out);
 
     Ok(())
 }
@@ -2087,6 +2149,8 @@ fn emit_decode_result(
     let invalid = ctx.fresh_block();
     let after_block = ctx.fresh_block();
 
+    let saved_outer_out = ctx.out_ptr();
+
     ctx.b
         .ins()
         .brif(is_ok_variant, ok_case, &[], check_err, &[]);
@@ -2111,10 +2175,8 @@ fn emit_decode_result(
         } else {
             ctx.b.ins().iadd_imm(result_ptr, ok_offset as i64)
         };
-        let saved_out = ctx.out_ptr;
-        ctx.out_ptr = payload_ptr;
+        ctx.set_out_ptr(payload_ptr);
         emit_inline_block(ctx, program, ok_block_ir, after_block)?;
-        ctx.out_ptr = saved_out;
     }
 
     ctx.b.switch_to_block(err_case);
@@ -2127,14 +2189,13 @@ fn emit_decode_result(
         } else {
             ctx.b.ins().iadd_imm(result_ptr, err_offset as i64)
         };
-        let saved_out = ctx.out_ptr;
-        ctx.out_ptr = payload_ptr;
+        ctx.set_out_ptr(payload_ptr);
         emit_inline_block(ctx, program, err_block_ir, after_block)?;
-        ctx.out_ptr = saved_out;
     }
 
     ctx.b.switch_to_block(after_block);
     ctx.b.seal_block(after_block);
+    ctx.set_out_ptr(saved_outer_out);
 
     Ok(())
 }
@@ -2164,6 +2225,8 @@ fn emit_decode_result_init(
     let invalid = ctx.fresh_block();
     let after_block = ctx.fresh_block();
 
+    let saved_outer_out = ctx.out_ptr();
+
     ctx.b
         .ins()
         .brif(is_ok_variant, ok_case, &[], check_err, &[]);
@@ -2184,13 +2247,12 @@ fn emit_decode_result_init(
         let ok_init = ctx.fresh_block();
         let ok_slot = create_payload_stack_slot(ctx, ok_size, ok_align)?;
         let ok_ptr = ctx.b.ins().stack_addr(ctx.ptr_ty, ok_slot, 0);
-        let saved_out = ctx.out_ptr;
-        ctx.out_ptr = ok_ptr;
+        ctx.set_out_ptr(ok_ptr);
         emit_inline_block(ctx, program, ok_block_ir, ok_init)?;
-        ctx.out_ptr = saved_out;
 
         ctx.b.switch_to_block(ok_init);
         ctx.b.seal_block(ok_init);
+        ctx.set_out_ptr(saved_outer_out);
         emit_result_init_call(ctx, dst_offset, ok_ptr, init_ok_fn as *const ());
         ctx.b.ins().jump(after_block, &[]);
     }
@@ -2201,13 +2263,12 @@ fn emit_decode_result_init(
         let err_init = ctx.fresh_block();
         let err_slot = create_payload_stack_slot(ctx, err_size, err_align)?;
         let err_ptr = ctx.b.ins().stack_addr(ctx.ptr_ty, err_slot, 0);
-        let saved_out = ctx.out_ptr;
-        ctx.out_ptr = err_ptr;
+        ctx.set_out_ptr(err_ptr);
         emit_inline_block(ctx, program, err_block_ir, err_init)?;
-        ctx.out_ptr = saved_out;
 
         ctx.b.switch_to_block(err_init);
         ctx.b.seal_block(err_init);
+        ctx.set_out_ptr(saved_outer_out);
         emit_result_init_call(ctx, dst_offset, err_ptr, init_err_fn as *const ());
         ctx.b.ins().jump(after_block, &[]);
     }
@@ -2290,11 +2351,12 @@ fn emit_decode_array(
         let elem_off = dst_offset + i * elem_size;
         // Adjust out_ptr for this element, emit body ops.
         // The body_block ops reference dst_offset=0 relative to their base.
-        // We need to add elem_off to ctx.out_ptr temporarily.
-        let saved_out_ptr = ctx.out_ptr;
-        ctx.out_ptr = ctx.b.ins().iadd_imm(saved_out_ptr, elem_off as i64);
+        // We need to add elem_off to ctx.out_ptr() temporarily.
+        let saved_out_ptr = ctx.out_ptr();
+        let elem_ptr = ctx.b.ins().iadd_imm(saved_out_ptr, elem_off as i64);
+        ctx.set_out_ptr(elem_ptr);
         emit_block(ctx, program, body_block)?;
-        ctx.out_ptr = saved_out_ptr;
+        ctx.set_out_ptr(saved_out_ptr);
     }
     Ok(())
 }
@@ -2454,10 +2516,10 @@ fn emit_alloc_backing(
 
     // Inline-emit the element body, replacing Return with jump(loop_tail).
     // All transitively-referenced blocks are also inlined (handles nested Vecs).
-    let saved_out_ptr = ctx.out_ptr;
-    ctx.out_ptr = elem_ptr;
+    let saved_out_ptr = ctx.out_ptr();
+    ctx.set_out_ptr(elem_ptr);
     emit_inline_block(ctx, program, body_block, loop_tail)?;
-    ctx.out_ptr = saved_out_ptr;
+    ctx.set_out_ptr(saved_out_ptr);
 
     // Loop tail: all element body paths converge here.
     // Increment init_count, commit the new len, jump back to loop_header.
@@ -2568,13 +2630,16 @@ fn emit_alloc_box_owned(
     // body contains nested Vecs (or other multi-block ops), all paths converge
     // back into the caller's block sequence.
     let continuation = ctx.fresh_block();
-    let saved_out_ptr = ctx.out_ptr;
-    ctx.out_ptr = alloc_ptr;
+    let saved_out_ptr = ctx.out_ptr();
+    ctx.set_out_ptr(alloc_ptr);
     emit_inline_block(ctx, program, body_block, continuation)?;
-    ctx.out_ptr = saved_out_ptr;
 
     ctx.b.switch_to_block(continuation);
     ctx.b.seal_block(continuation);
+    // Restore inside continuation, not in the body's terminated block —
+    // a def_var on a block whose terminator has already been emitted ends
+    // up in the body_entry phi for `TailCallSelf` and corrupts the value.
+    ctx.set_out_ptr(saved_out_ptr);
 
     Ok(())
 }
@@ -2688,10 +2753,10 @@ fn emit_alloc_box_slice(
         ctx.b.ins().iadd(backing_ptr, offset)
     };
 
-    let saved_out_ptr = ctx.out_ptr;
-    ctx.out_ptr = elem_ptr;
+    let saved_out_ptr = ctx.out_ptr();
+    ctx.set_out_ptr(elem_ptr);
     emit_inline_block(ctx, program, body_block, loop_tail)?;
-    ctx.out_ptr = saved_out_ptr;
+    ctx.set_out_ptr(saved_out_ptr);
 
     // Loop tail: all element body paths converge here.
     ctx.b.switch_to_block(loop_tail);
@@ -2838,6 +2903,7 @@ fn emit_slow_path(
         ctx.ptr_ty,
         crate::helpers::vox_jit_slow_path as *const () as i64,
     );
+    let out = ctx.out_ptr();
     let call = ctx.b.ins().call_indirect(
         sig,
         fn_ptr,
@@ -2845,7 +2911,7 @@ fn emit_slow_path(
             ctx.ctx_ptr,
             shape_ptr,
             plan_ptr,
-            ctx.out_ptr,
+            out,
             dst_offset_val,
         ],
     );
@@ -2907,10 +2973,11 @@ fn emit_decode_opaque(
         ctx.ptr_ty,
         crate::helpers::vox_jit_decode_opaque as *const () as i64,
     );
+    let out = ctx.out_ptr();
     let call = ctx.b.ins().call_indirect(
         sig,
         fn_ptr,
-        &[ctx.ctx_ptr, shape_ptr, ctx.out_ptr, dst_offset_val],
+        &[ctx.ctx_ptr, shape_ptr, out, dst_offset_val],
     );
     let status = ctx.b.inst_results(call)[0];
 
@@ -2959,10 +3026,11 @@ fn emit_write_default(
         ctx.ptr_ty,
         crate::helpers::vox_jit_write_default as *const () as i64,
     );
+    let out = ctx.out_ptr();
     let call = ctx
         .b
         .ins()
-        .call_indirect(sig, fn_ptr, &[shape_ptr, ctx.out_ptr, dst_offset_val]);
+        .call_indirect(sig, fn_ptr, &[shape_ptr, out, dst_offset_val]);
     let status = ctx.b.inst_results(call)[0];
 
     let ok_val = ctx.b.ins().iconst(types::I32, DecodeStatus::Ok as i64);

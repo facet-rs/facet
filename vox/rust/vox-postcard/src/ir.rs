@@ -442,6 +442,20 @@ pub enum DecodeOp {
     /// adjusted by `dst_offset`. JIT: emits a self-recursive call to the
     /// same function being compiled.
     CallSelf { dst_offset: usize },
+
+    /// Tail-position equivalent of `CallSelf`: the recursive call is the
+    /// last work the function does, so we can reuse the current stack
+    /// frame instead of pushing a new one. Both interpreter and JIT
+    /// implement it as "update `out_ptr` to the new slot and jump back
+    /// to block 0" rather than a real call/return pair.
+    ///
+    /// Lowering only emits this when it can statically prove tail
+    /// position (e.g. the last `Box<Self>` field of an enum variant
+    /// whose enclosing block has nothing after it but `Return`). For
+    /// branching recursion like `enum Tree { Node(Box<Self>, Box<Self>) }`
+    /// only the trailing `Box<Self>` becomes `TailCallSelf`; the leading
+    /// one stays as a regular `CallSelf`.
+    TailCallSelf { dst_offset: usize },
 }
 
 // ---------------------------------------------------------------------------
@@ -569,7 +583,103 @@ pub fn lower_with_cal(
     program.emit(entry, DecodeOp::Return);
     debug_assert!(program.lowering_in_progress.is_empty());
 
+    mark_tail_calls(&mut program);
+
     Ok(program)
+}
+
+/// Post-lowering pass: rewrite `CallSelf` ops that are statically in tail
+/// position to `TailCallSelf`. The JIT lowers `TailCallSelf` to
+/// `out_ptr = new_dst; jump body_entry`, reusing the current frame instead
+/// of pushing a new one.
+///
+/// A block is "tail-context" if reaching its last non-Return op means the
+/// only remaining work is to return up the stack. Block 0 is tail-context
+/// by definition. From any tail-context block, the last non-Return op's
+/// child blocks (variant blocks of `BranchOnVariant`, body of `AllocBoxed`,
+/// empty block of `ReadListLen`, ...) are also tail-context. List/array
+/// loop bodies are never tail-context.
+///
+/// A `CallSelf` is rewritten to `TailCallSelf` iff it's the last non-Return
+/// op of a tail-context block. For `enum Tree { Node(Box<Self>, Box<Self>) }`
+/// only the trailing `Box<Self>` recursion gets the tail rewrite — the
+/// leading one stays a regular call so its caller can continue with the
+/// second `AllocBoxed`.
+fn mark_tail_calls(program: &mut DecodeProgram) {
+    let mut tail_blocks: HashSet<usize> = HashSet::new();
+    tail_blocks.insert(0);
+
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for block_idx in 0..program.blocks.len() {
+            if !tail_blocks.contains(&block_idx) {
+                continue;
+            }
+            // Find the last non-Return op.
+            let last_real = program.blocks[block_idx]
+                .ops
+                .iter()
+                .rposition(|op| !matches!(op, DecodeOp::Return));
+            let Some(pos) = last_real else { continue };
+            let op = program.blocks[block_idx].ops[pos].clone();
+            match op {
+                DecodeOp::AllocBoxed { body_block, .. } => {
+                    if tail_blocks.insert(body_block) {
+                        changed = true;
+                    }
+                }
+                DecodeOp::BranchOnVariant {
+                    variant_blocks, ..
+                } => {
+                    for (_, vb) in variant_blocks.iter() {
+                        if tail_blocks.insert(*vb) {
+                            changed = true;
+                        }
+                    }
+                }
+                DecodeOp::ReadListLen { empty_block, .. } => {
+                    if tail_blocks.insert(empty_block) {
+                        changed = true;
+                    }
+                }
+                DecodeOp::DecodeOption { some_block, .. } => {
+                    if tail_blocks.insert(some_block) {
+                        changed = true;
+                    }
+                }
+                DecodeOp::DecodeResult {
+                    ok_block, err_block, ..
+                }
+                | DecodeOp::DecodeResultInit {
+                    ok_block, err_block, ..
+                } => {
+                    if tail_blocks.insert(ok_block) {
+                        changed = true;
+                    }
+                    if tail_blocks.insert(err_block) {
+                        changed = true;
+                    }
+                }
+                DecodeOp::Jump { block_id } => {
+                    if tail_blocks.insert(block_id) {
+                        changed = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    for &block_idx in &tail_blocks {
+        let ops = &mut program.blocks[block_idx].ops;
+        let Some(pos) = ops.iter().rposition(|op| !matches!(op, DecodeOp::Return)) else {
+            continue;
+        };
+        if let DecodeOp::CallSelf { dst_offset } = ops[pos] {
+            ops[pos] = DecodeOp::TailCallSelf { dst_offset };
+        }
+    }
 }
 
 fn lower_value(
@@ -2789,7 +2899,7 @@ fn run_block(
                 return Ok(());
             }
 
-            DecodeOp::CallSelf { dst_offset } => {
+            DecodeOp::CallSelf { dst_offset } | DecodeOp::TailCallSelf { dst_offset } => {
                 let new_base = unsafe { base.add(*dst_offset) };
                 run_block(program, 0, state, new_base, registry, cal)?;
             }
