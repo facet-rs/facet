@@ -528,6 +528,140 @@ mod codec {
             });
         }
     }
+
+    /// 64-field flat struct of primitives. Tests per-field decode dispatch
+    /// with no allocations. Shape stresses the long straight-line decoder
+    /// emitted by both JIT and serde-monomorphized path.
+    mod wide_struct {
+        use super::*;
+        use vox_bench::shapes::{WideStruct, make_wide};
+
+        #[divan::bench]
+        fn jit_encode(bencher: Bencher) {
+            let fixture = CodecFixture::new(make_wide(0xDEAD_BEEF));
+            bencher.bench_local(|| black_box(super::super::jit_encode(black_box(&fixture.value))));
+        }
+
+        #[divan::bench]
+        fn serde_encode(bencher: Bencher) {
+            let value = make_wide(0xDEAD_BEEF);
+            bencher
+                .bench_local(|| black_box(postcard::to_allocvec(black_box(&value)).unwrap()));
+        }
+
+        #[divan::bench]
+        fn jit_decode(bencher: Bencher) {
+            let fixture = CodecFixture::<WideStruct>::new(make_wide(0xDEAD_BEEF));
+            bencher.bench_local(|| {
+                black_box(super::super::jit_decode::<WideStruct>(
+                    black_box(&fixture.bytes),
+                    &fixture.plan,
+                    &fixture.registry,
+                ))
+            });
+        }
+
+        #[divan::bench]
+        fn serde_decode(bencher: Bencher) {
+            let fixture = CodecFixture::<WideStruct>::new(make_wide(0xDEAD_BEEF));
+            bencher.bench_local(|| {
+                black_box(postcard::from_bytes::<WideStruct>(black_box(&fixture.bytes)).unwrap())
+            });
+        }
+    }
+
+    /// 16-variant enum with mixed primitive payloads. Tests enum dispatch
+    /// (varint variant-index read + branch-on-variant) at scale. The bench
+    /// arg picks which variant to encode/decode (0..15).
+    mod many_variants {
+        use super::*;
+        use vox_bench::shapes::{ManyVariants, make_many_variants};
+
+        #[divan::bench(args = [0u32, 1, 7, 9, 11, 15])]
+        fn jit_encode(bencher: Bencher, variant: u32) {
+            let fixture = CodecFixture::new(make_many_variants(variant));
+            bencher.bench_local(|| black_box(super::super::jit_encode(black_box(&fixture.value))));
+        }
+
+        #[divan::bench(args = [0u32, 1, 7, 9, 11, 15])]
+        fn serde_encode(bencher: Bencher, variant: u32) {
+            let value = make_many_variants(variant);
+            bencher
+                .bench_local(|| black_box(postcard::to_allocvec(black_box(&value)).unwrap()));
+        }
+
+        #[divan::bench(args = [0u32, 1, 7, 9, 11, 15])]
+        fn jit_decode(bencher: Bencher, variant: u32) {
+            let fixture = CodecFixture::<ManyVariants>::new(make_many_variants(variant));
+            bencher.bench_local(|| {
+                black_box(super::super::jit_decode::<ManyVariants>(
+                    black_box(&fixture.bytes),
+                    &fixture.plan,
+                    &fixture.registry,
+                ))
+            });
+        }
+
+        #[divan::bench(args = [0u32, 1, 7, 9, 11, 15])]
+        fn serde_decode(bencher: Bencher, variant: u32) {
+            let fixture = CodecFixture::<ManyVariants>::new(make_many_variants(variant));
+            bencher.bench_local(|| {
+                black_box(postcard::from_bytes::<ManyVariants>(black_box(&fixture.bytes)).unwrap())
+            });
+        }
+    }
+
+    // Tree (recursive `Box<Tree>`) bench removed: vox-postcard's `lower_pointer`
+    // recursively inlines the pointee shape with no cycle detection, so a
+    // recursive type causes infinite recursion in the lowerer (stack overflow
+    // before any decode runs). Supporting recursive types requires a named
+    // block per shape + back-edge "call self" semantics in the IR — its own
+    // work item. See `rust/vox-bench/src/lib.rs::shapes::Tree` for the type;
+    // re-enable here once the lowerer learns recursion.
+
+    /// Audio-shaped numerical buffers: large `Vec<f32>`, `Vec<f64>`, and
+    /// `Vec<bool>`. f32/f64 wire format is fixed LE bytes, identical to the
+    /// in-memory `[f32]` / `[f64]` layout on LE hosts — eligible for bulk
+    /// memcpy. The current per-element decode loop is a pessimization; this
+    /// bench will be the regression target when we land the memcpy fast
+    /// path. `Vec<bool>` is also memcpy-eligible with bulk validation.
+    mod numeric_buffer {
+        use super::*;
+        use vox_bench::shapes::{NumericBuffer, make_numeric_buffer};
+
+        #[divan::bench(args = [64usize, 256, 1024])]
+        fn jit_encode(bencher: Bencher, n: usize) {
+            let fixture = CodecFixture::new(make_numeric_buffer(n, 0));
+            bencher.bench_local(|| black_box(super::super::jit_encode(black_box(&fixture.value))));
+        }
+
+        #[divan::bench(args = [64usize, 256, 1024])]
+        fn serde_encode(bencher: Bencher, n: usize) {
+            let value = make_numeric_buffer(n, 0);
+            bencher
+                .bench_local(|| black_box(postcard::to_allocvec(black_box(&value)).unwrap()));
+        }
+
+        #[divan::bench(args = [64usize, 256, 1024])]
+        fn jit_decode(bencher: Bencher, n: usize) {
+            let fixture = CodecFixture::<NumericBuffer>::new(make_numeric_buffer(n, 0));
+            bencher.bench_local(|| {
+                black_box(super::super::jit_decode::<NumericBuffer>(
+                    black_box(&fixture.bytes),
+                    &fixture.plan,
+                    &fixture.registry,
+                ))
+            });
+        }
+
+        #[divan::bench(args = [64usize, 256, 1024])]
+        fn serde_decode(bencher: Bencher, n: usize) {
+            let fixture = CodecFixture::<NumericBuffer>::new(make_numeric_buffer(n, 0));
+            bencher.bench_local(|| {
+                black_box(postcard::from_bytes::<NumericBuffer>(black_box(&fixture.bytes)).unwrap())
+            });
+        }
+    }
 }
 
 fn bench_echo_u64(bencher: Bencher, mode: RpcCodecMode, harness: fn() -> RpcHarness) {
