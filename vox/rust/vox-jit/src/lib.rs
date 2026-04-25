@@ -25,9 +25,12 @@ pub use vox_jit_abi as abi;
 pub use vox_jit_cal as cal;
 
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::mem::MaybeUninit;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, Once, OnceLock};
+
+use arc_swap::ArcSwap;
 
 use facet_core::{Def, Facet, Shape, Type, UserType};
 use vox_jit_abi::DescriptorHandle;
@@ -369,12 +372,6 @@ impl JitRuntime {
         let decode_fn = stub.owned_fn?;
         let mut ctx = DecodeCtx::new(input);
         let mut out = MaybeUninit::<T>::uninit();
-        let layout = T::SHAPE.layout.sized_layout().ok()?;
-        if layout.size() != 0 {
-            unsafe {
-                std::ptr::write_bytes(out.as_mut_ptr() as *mut u8, 0, layout.size());
-            }
-        }
         let status = unsafe { decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8) };
         if status == DecodeStatus::Ok {
             Some(Ok(unsafe { out.assume_init() }))
@@ -417,12 +414,6 @@ impl JitRuntime {
         let decode_fn = stub.borrowed_fn?;
         let mut ctx = DecodeCtx::new(input);
         let mut out = MaybeUninit::<T>::uninit();
-        let layout = T::SHAPE.layout.sized_layout().ok()?;
-        if layout.size() != 0 {
-            unsafe {
-                std::ptr::write_bytes(out.as_mut_ptr() as *mut u8, 0, layout.size());
-            }
-        }
         let status = unsafe { decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8) };
         if status == DecodeStatus::Ok {
             Some(Ok(unsafe { out.assume_init() }))
@@ -436,8 +427,6 @@ impl JitRuntime {
         ptr: facet::PtrConst,
         shape: &'static Shape,
     ) -> Option<Result<Vec<u8>, SerializeError>> {
-        use std::sync::atomic::Ordering;
-
         let stub = self.prepare_encode_stub(shape)?;
         let hint = stub.size_hint.load(Ordering::Relaxed);
         let mut ctx = vox_jit_abi::EncodeCtx::with_capacity(hint);
@@ -454,6 +443,184 @@ impl JitRuntime {
             )))
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Per-call-site typed entry points (macro form)
+// ---------------------------------------------------------------------------
+//
+// `try_encode_ptr` / `try_decode_*` look the compiled stub up in the global
+// `StubCache` on every call: ArcSwap load + HashMap lookup keyed on the
+// shape's ConstTypeId, plus an Arc clone. That's ~10% of bench time across
+// the 4 codec calls per echo round-trip.
+//
+// Most call sites know the type statically (generated dispatchers/handlers,
+// conduits, schema-deser). For those, the `vox_jit::encode!` /
+// `vox_jit::decode_owned!` / `vox_jit::decode_borrowed!` macros expand to a
+// fresh `static OnceLock` at the call site, capturing the stub for that
+// site's type on first call. The hot path is then one acquire load + one
+// indirect call — no shape hashing, no global cache traffic.
+//
+// Why a macro and not a generic function? `static` items inside a generic
+// function are *shared across all monomorphizations*, not duplicated per
+// instantiation — so a generic helper would silently use the first call
+// site's stub for every subsequent T. Macro expansion gives a literal
+// per-call-site item, which is correct.
+
+#[doc(hidden)]
+pub fn __encode_with_slot<'a, T: Facet<'a>>(
+    slot: &'static OnceLock<Arc<cache::CompiledEncodeStub>>,
+    value: &T,
+) -> Result<Vec<u8>, SerializeError> {
+    let stub = slot.get_or_init(|| {
+        global_runtime()
+            .prepare_encode_stub(T::SHAPE)
+            .expect("JIT encode unavailable for T")
+    });
+    let hint = stub.size_hint.load(Ordering::Relaxed);
+    let mut ctx = vox_jit_abi::EncodeCtx::with_capacity(hint);
+    let ptr = facet::PtrConst::new((value as *const T).cast::<u8>());
+    let ok = unsafe { (stub.encode_fn)(&mut ctx as *mut _, ptr.as_ptr()) };
+    if !ok {
+        return Err(SerializeError::ReflectError(
+            "JIT encode returned false (OOM)".into(),
+        ));
+    }
+    let bytes = ctx.into_vec();
+    if bytes.len() > hint {
+        stub.size_hint.store(bytes.len(), Ordering::Relaxed);
+    }
+    Ok(bytes)
+}
+
+/// Per-`(call site, BorrowMode)` slot mapping `remote_schema_id` to a
+/// compiled decode stub. Steady-state for one peer holds a single entry.
+#[doc(hidden)]
+pub type DecodeStubSlot = OnceLock<ArcSwap<HashMap<u64, Arc<cache::CompiledDecodeStub>>>>;
+
+#[doc(hidden)]
+pub fn __decode_owned_with_slot<T: Facet<'static>>(
+    slot: &'static DecodeStubSlot,
+    input: &[u8],
+    remote_schema_id: u64,
+    plan: &TranslationPlan,
+    registry: &SchemaRegistry,
+) -> Result<T, DeserializeError> {
+    let stub = lookup_or_insert_decode_stub::<T>(
+        slot,
+        remote_schema_id,
+        plan,
+        registry,
+        BorrowMode::Owned,
+    );
+    let decode_fn = stub.owned_fn.expect("owned decode_fn missing on owned stub");
+    let mut ctx = DecodeCtx::new(input);
+    let mut out = MaybeUninit::<T>::uninit();
+    let status = unsafe { decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8) };
+    if status == DecodeStatus::Ok {
+        Ok(unsafe { out.assume_init() })
+    } else {
+        Err(decode_status_to_error(status, &ctx, input))
+    }
+}
+
+#[doc(hidden)]
+pub fn __decode_borrowed_with_slot<'input, 'facet, T: Facet<'facet>>(
+    slot: &'static DecodeStubSlot,
+    input: &'input [u8],
+    remote_schema_id: u64,
+    plan: &TranslationPlan,
+    registry: &SchemaRegistry,
+) -> Result<T, DeserializeError>
+where
+    'input: 'facet,
+{
+    let stub = lookup_or_insert_decode_stub::<T>(
+        slot,
+        remote_schema_id,
+        plan,
+        registry,
+        BorrowMode::Borrowed,
+    );
+    let decode_fn = stub
+        .borrowed_fn
+        .expect("borrowed decode_fn missing on borrowed stub");
+    let mut ctx = DecodeCtx::new(input);
+    let mut out = MaybeUninit::<T>::uninit();
+    let status = unsafe { decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8) };
+    if status == DecodeStatus::Ok {
+        Ok(unsafe { out.assume_init() })
+    } else {
+        Err(decode_status_to_error(status, &ctx, input))
+    }
+}
+
+fn lookup_or_insert_decode_stub<'a, T: Facet<'a>>(
+    slot: &'static DecodeStubSlot,
+    remote_schema_id: u64,
+    plan: &TranslationPlan,
+    registry: &SchemaRegistry,
+    borrow_mode: BorrowMode,
+) -> Arc<cache::CompiledDecodeStub> {
+    let cache = slot.get_or_init(|| ArcSwap::from_pointee(HashMap::new()));
+    if let Some(stub) = cache.load().get(&remote_schema_id).cloned() {
+        return stub;
+    }
+    let stub = global_runtime()
+        .prepare_decode_stub(remote_schema_id, T::SHAPE, plan, registry, borrow_mode)
+        .expect("JIT decode unavailable for T");
+    cache.rcu(|cur| {
+        let mut next = (**cur).clone();
+        next.insert(remote_schema_id, stub.clone());
+        next
+    });
+    stub
+}
+
+/// Encode a typed value via the JIT, caching the compiled stub at the
+/// call-site `static`. The first invocation compiles the encoder; every
+/// subsequent invocation is one atomic load + one indirect call.
+#[macro_export]
+macro_rules! encode {
+    ($value:expr) => {{
+        static SLOT: ::std::sync::OnceLock<
+            ::std::sync::Arc<$crate::cache::CompiledEncodeStub>,
+        > = ::std::sync::OnceLock::new();
+        $crate::__encode_with_slot(&SLOT, $value)
+    }};
+}
+
+/// Decode an owned typed value via the JIT, caching the stub at the
+/// call-site `static`. Stub is keyed on `remote_schema_id`; one call site
+/// typically sees a single id per peer.
+#[macro_export]
+macro_rules! decode_owned {
+    ($input:expr, $remote_schema_id:expr, $plan:expr, $registry:expr $(,)?) => {{
+        static SLOT: $crate::DecodeStubSlot = ::std::sync::OnceLock::new();
+        $crate::__decode_owned_with_slot(
+            &SLOT,
+            $input,
+            $remote_schema_id,
+            $plan,
+            $registry,
+        )
+    }};
+}
+
+/// Decode a borrowed typed value via the JIT, caching the stub at the
+/// call-site `static`.
+#[macro_export]
+macro_rules! decode_borrowed {
+    ($input:expr, $remote_schema_id:expr, $plan:expr, $registry:expr $(,)?) => {{
+        static SLOT: $crate::DecodeStubSlot = ::std::sync::OnceLock::new();
+        $crate::__decode_borrowed_with_slot(
+            &SLOT,
+            $input,
+            $remote_schema_id,
+            $plan,
+            $registry,
+        )
+    }};
 }
 
 thread_local! {
