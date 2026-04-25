@@ -1268,6 +1268,48 @@ fn calibrate_option_layout(
         none_probes.push(probe_option_none(shape, opt_def, opt_layout, fill)?.0);
     }
 
+    // Niche-optimized fast path. When `size_of::<Option<T>>() == size_of::<T>()`,
+    // the layout has no separate discriminator slot — Rust packs the tag into a
+    // forbidden bit pattern of T (e.g. null-pointer niche of `&T`/`&str`/`Box<T>`
+    // /`Vec<T>`/`String`, or zero-niche of `NonZero*`). This means:
+    //   1. T sits at offset 0 inside the option.
+    //   2. `init_none` writes bytes that include the niche value (typically 0).
+    //   3. When the inner decode runs into the same slot for Some, it overwrites
+    //      whatever bytes the niche occupies with non-niche values.
+    //
+    // The standard probe-Some path requires `T: Default` via facet's vtable to
+    // construct a Some value; reference types (`&T`, `&str`, `&[T]`) explicitly
+    // set `default_in_place: None` in their vtable, so probe-Some fails for them.
+    // For niche-optimized Options we don't actually need to probe Some — we can
+    // derive `tag_bytes` from the None probe alone (any byte init_none
+    // consistently zeros must be a niche byte, since the niche must contain a
+    // forbidden Some pattern by definition).
+    if opt_layout.size() == inner_layout.size() {
+        let mut tag_bytes: Vec<(usize, u8)> = Vec::new();
+        for i in 0..opt_layout.size() {
+            let val = none_probes[0][i];
+            let consistent = none_probes.iter().all(|p| p[i] == val);
+            if consistent && val == 0 {
+                tag_bytes.push((i, 0));
+            }
+        }
+        if tag_bytes.is_empty() {
+            return None;
+        }
+        let none_bytes = none_probes.into_iter().next().unwrap();
+        // For niche-optimized layouts the inner decode at offset 0 fully
+        // overwrites the niche bytes, so `some_bytes` and `none_bytes` can be
+        // identical — the JIT writes `some_bytes` first, then the inner decode
+        // emits the actual value on top.
+        let some_bytes = none_bytes.clone();
+        return Some(CalibratedOptionLayout {
+            inner_offset: 0,
+            none_bytes,
+            some_bytes,
+            tag_bytes: tag_bytes.into_boxed_slice(),
+        });
+    }
+
     let mut some_probes: Vec<Box<[u8]>> = Vec::with_capacity(FILLS.len());
     let mut inner_offset: Option<usize> = None;
     for &fill in &FILLS {
