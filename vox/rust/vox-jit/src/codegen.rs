@@ -401,6 +401,7 @@ impl CraneliftBackend {
         }
 
         let mut func_ctx = FunctionBuilderContext::new();
+        let self_func = self.module.declare_func_in_func(func_id, &mut ctx.func);
         {
             let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
             emit_encode_function(
@@ -410,6 +411,7 @@ impl CraneliftBackend {
                 self.ptr_ty,
                 child_encoders,
                 Some(shape),
+                self_func,
             )?;
             builder.finalize();
         }
@@ -3241,6 +3243,9 @@ struct EncodeCtx_<'a, 'b> {
     /// on this stack falls back to `call_indirect` to break the cycle.
     /// Compared via `Shape: Eq` (i.e. `ConstTypeId`).
     inlining_stack: Vec<&'static facet_core::Shape>,
+    /// Cranelift FuncRef pointing at the function currently being emitted.
+    /// Used by `EncodeOp::CallSelf` to emit a direct self-recursive call.
+    self_func: cranelift_codegen::ir::FuncRef,
 }
 
 impl<'a, 'b> EncodeCtx_<'a, 'b> {
@@ -3649,6 +3654,7 @@ fn emit_encode_function(
     ptr_ty: Type,
     child_encoders: std::sync::Arc<ChildEncoderMap>,
     top_shape: Option<&'static facet_core::Shape>,
+    self_func: cranelift_codegen::ir::FuncRef,
 ) -> Result<(), CodegenError> {
     let entry = builder.create_block();
     builder.append_block_params_for_function_params(entry);
@@ -3698,6 +3704,7 @@ fn emit_encode_function(
         child_encoders,
         inline_frame: None,
         inlining_stack: top_shape.map(|s| vec![s]).unwrap_or_default(),
+        self_func,
     };
 
     emit_encode_block(&mut ectx, program, 0)?;
@@ -3817,6 +3824,14 @@ fn emit_encode_op(
             borrow_fn,
         } => {
             emit_encode_borrow_pointer(ectx, program, *src_offset, *body_block, *borrow_fn)?;
+            Ok(false)
+        }
+
+        EncodeOp::DerefPointer {
+            src_offset,
+            body_block,
+        } => {
+            emit_encode_deref_pointer(ectx, program, *src_offset, *body_block)?;
             Ok(false)
         }
 
@@ -3948,11 +3963,43 @@ fn emit_encode_op(
             Ok(true)
         }
 
+        EncodeOp::CallSelf { src_offset } => {
+            emit_encode_call_self(ectx, *src_offset);
+            Ok(false)
+        }
+
         EncodeOp::Return => {
             ectx.return_ok();
             Ok(true)
         }
     }
+}
+
+fn emit_encode_call_self(ectx: &mut EncodeCtx_<'_, '_>, src_offset: usize) {
+    // Encode signature is (enc_ctx, src_ptr) -> i8 (bool). We have
+    // enc_ctx in `ectx.enc_ctx`; src ptr comes from src_at(src_offset).
+    // Buffer state must be flushed before the recursive call so the callee
+    // sees current buf_len/cap, and reloaded after so we keep our local
+    // SSA cache in sync.
+    let src_ptr = ectx.src_at(src_offset);
+    ectx.flush_buf_len_to_ctx();
+    let call = ectx
+        .b
+        .ins()
+        .call(ectx.self_func, &[ectx.enc_ctx, src_ptr]);
+    let ok = ectx.b.inst_results(call)[0];
+    ectx.reload_buf_state();
+
+    let fail_block = ectx.fresh_block();
+    let cont_block = ectx.fresh_block();
+    ectx.b.ins().brif(ok, cont_block, &[], fail_block, &[]);
+
+    ectx.b.switch_to_block(fail_block);
+    ectx.b.seal_block(fail_block);
+    ectx.return_fail();
+
+    ectx.b.switch_to_block(cont_block);
+    ectx.b.seal_block(cont_block);
 }
 
 /// Write one scalar primitive from `src_offset` to the encode buffer.
@@ -4707,6 +4754,38 @@ fn emit_encode_block_with_src(
     }
     ectx.src_ptr = saved_src;
     Ok(terminated)
+}
+
+fn emit_encode_deref_pointer(
+    ectx: &mut EncodeCtx_<'_, '_>,
+    program: &EncodeProgram,
+    src_offset: usize,
+    body_block_ir: usize,
+) -> Result<(), CodegenError> {
+    // The pointer-typed source value lives at `src_ptr + src_offset` and its
+    // in-memory layout is exactly `*const T`. Single load.
+    let src_ptr = ectx.src_at(src_offset);
+    let inner_ptr = ectx
+        .b
+        .ins()
+        .load(ectx.ptr_ty, MemFlags::trusted(), src_ptr, 0);
+
+    let saved_src = ectx.src_ptr;
+    ectx.src_ptr = inner_ptr;
+    ectx.inlined_blocks.insert(body_block_ir);
+    for op in &program.blocks[body_block_ir].ops {
+        match op {
+            EncodeOp::Return => break,
+            _ => {
+                let term = emit_encode_op(ectx, program, op)?;
+                if term {
+                    break;
+                }
+            }
+        }
+    }
+    ectx.src_ptr = saved_src;
+    Ok(())
 }
 
 fn emit_encode_borrow_pointer(

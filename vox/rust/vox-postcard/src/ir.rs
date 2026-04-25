@@ -3321,6 +3321,16 @@ pub enum EncodeOp {
         borrow_fn: facet_core::BorrowFn,
     },
 
+    /// Like `BorrowPointer` but for pointer types whose in-memory layout is
+    /// exactly a `*const T` (e.g. `Box<T>` for sized `T`). Codegen emits a
+    /// single load instead of an indirect call to a vtable `borrow_fn`. The
+    /// body block is emitted inline with the loaded pointer as the new
+    /// `src_ptr` base.
+    DerefPointer {
+        src_offset: usize,
+        body_block: usize,
+    },
+
     /// Write a varint-length-prefixed byte slice from a slice-like value.
     WriteByteSlice {
         src_offset: usize,
@@ -3446,6 +3456,12 @@ pub enum EncodeOp {
     /// Unconditional jump to `block_id`.
     Jump { block_id: usize },
 
+    /// Recursively encode the program's top shape from `src_offset` (relative
+    /// to the current source pointer). JIT emits a direct self-call; emitted
+    /// only when lowering hits a cycle back to the program's root (e.g.
+    /// `enum Tree { Node(Box<Self>, Box<Self>), ... }`).
+    CallSelf { src_offset: usize },
+
     /// End of the current block.
     Return,
 }
@@ -3466,6 +3482,13 @@ pub struct EncodeProgram {
     pub root_size: usize,
     /// Alignment of the root value.
     pub root_align: usize,
+    /// The shape this program encodes — set once at the start of lowering.
+    /// Used to identify direct self-recursion and emit `CallSelf`.
+    pub top_shape: Option<&'static Shape>,
+    /// Shapes whose lowering is currently in progress on this stack — used
+    /// for cycle detection. When `lower_encode_value` is called with a shape
+    /// already in this set, recursion is detected.
+    pub lowering_in_progress: HashSet<&'static Shape>,
 }
 
 impl EncodeProgram {
@@ -3517,13 +3540,42 @@ pub fn lower_encode(
         blocks: vec![EncodeBlock::default()],
         root_size: layout.size(),
         root_align: layout.align(),
+        top_shape: Some(shape),
+        lowering_in_progress: HashSet::new(),
     };
     lower_encode_value(shape, cal, &mut program, 0, 0)?;
     program.emit(0, EncodeOp::Return);
+    debug_assert!(program.lowering_in_progress.is_empty());
     Ok(program)
 }
 
 fn lower_encode_value(
+    shape: &'static Shape,
+    cal: Option<&CalibrationRegistry>,
+    program: &mut EncodeProgram,
+    block: usize,
+    src_offset: usize,
+) -> Result<(), EncodeLowerError> {
+    // Cycle detection: if `shape` is already being lowered higher up the
+    // stack we're at recursion (`Box<Self>` or similar). If it's recursion
+    // back to the program's root, emit `CallSelf` — the JIT will recurse
+    // through the function being compiled. Mutual recursion (in progress
+    // but not the root) falls back to `SlowPath`, mirroring decode.
+    if program.lowering_in_progress.contains(&shape) {
+        if program.top_shape == Some(shape) {
+            program.emit(block, EncodeOp::CallSelf { src_offset });
+        } else {
+            program.emit(block, EncodeOp::SlowPath { shape, src_offset });
+        }
+        return Ok(());
+    }
+    program.lowering_in_progress.insert(shape);
+    let result = lower_encode_value_inner(shape, cal, program, block, src_offset);
+    program.lowering_in_progress.remove(&shape);
+    result
+}
+
+fn lower_encode_value_inner(
     shape: &'static Shape,
     cal: Option<&CalibrationRegistry>,
     program: &mut EncodeProgram,
@@ -3639,7 +3691,7 @@ fn lower_encode_value(
 fn lower_encode_pointer(
     shape: &'static Shape,
     ptr_def: facet_core::PointerDef,
-    _cal: Option<&CalibrationRegistry>,
+    cal: Option<&CalibrationRegistry>,
     program: &mut EncodeProgram,
     block: usize,
     src_offset: usize,
@@ -3659,6 +3711,46 @@ fn lower_encode_pointer(
         && slice_def.t().is_type::<u8>()
     {
         program.emit(block, EncodeOp::WriteBytesLike { shape, src_offset });
+        return Ok(());
+    }
+
+    // Fast path for `Box<T>`/`SharedReference<T>` for sized T — the pointer's
+    // in-memory layout is exactly a `*const T`, so codegen can emit a single
+    // load instead of an indirect call to a vtable `borrow_fn`.
+    let is_thin_pointer = matches!(
+        ptr_def.known,
+        Some(facet_core::KnownPointer::Box | facet_core::KnownPointer::SharedReference)
+    );
+    if is_thin_pointer {
+        let body_block = program.new_block();
+        program.emit(
+            block,
+            EncodeOp::DerefPointer {
+                src_offset,
+                body_block,
+            },
+        );
+        lower_encode_value(pointee_shape, cal, program, body_block, 0)?;
+        program.emit(body_block, EncodeOp::Return);
+        return Ok(());
+    }
+
+    // General pointer-with-borrow_fn (Arc<T>, Rc<T>, Pin<P>, ...): emit
+    // BorrowPointer to dereference, then lower the pointee inline at
+    // src_offset = 0. lower_encode_value handles cycle detection — if the
+    // pointee shape is the program's top, recursion becomes CallSelf.
+    if let Some(borrow_fn) = ptr_def.vtable.borrow_fn {
+        let body_block = program.new_block();
+        program.emit(
+            block,
+            EncodeOp::BorrowPointer {
+                src_offset,
+                body_block,
+                borrow_fn,
+            },
+        );
+        lower_encode_value(pointee_shape, cal, program, body_block, 0)?;
+        program.emit(body_block, EncodeOp::Return);
         return Ok(());
     }
 

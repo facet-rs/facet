@@ -207,23 +207,6 @@ where
         }
     }
 
-    /// Like `new`, but skips the `jit_encode` parity check and warmup. For
-    /// shapes whose JIT encoder is not yet implemented (e.g. recursive
-    /// `Box<Self>`) we still want a `jit_decode` bench fixture — the wire
-    /// bytes from the reflective encoder are the same and that's all decode
-    /// needs.
-    fn new_decode_only(value: T) -> Self {
-        let bytes = vox_postcard::to_vec(&value).expect("reflective encode fixture");
-        let plan = vox_postcard::build_identity_plan(T::SHAPE);
-        let registry = vox_types::SchemaRegistry::new();
-        let _: T = jit_decode(&bytes, &plan, &registry);
-        Self {
-            value,
-            bytes,
-            plan,
-            registry,
-        }
-    }
 }
 
 
@@ -654,20 +637,16 @@ mod codec {
 
     /// Recursive binary tree (`enum Tree { Leaf(u64), Node(Box<Tree>, Box<Tree>) }`).
     /// Direct self-recursion via `Box<Tree>` — every internal node forces the
-    /// JIT/interpreter to recurse into the same decoder. Stresses cycle
-    /// detection in the lowerer and the self-recursive call path in codegen.
-    /// At depth 8 the tree has 511 nodes → 510 Box allocations.
-    ///
-    /// Decode-only for now: the JIT encode lowerer still needs a `Box<T>`
-    /// path (encode of `Box<T>` = deref + encode T); decode handles it
-    /// already via `CallSelf`.
+    /// JIT to recurse into the same encoder/decoder. Stresses cycle detection
+    /// in the lowerer and self-recursive `CallSelf` codegen on both sides.
+    /// At depth 8 the tree has 511 nodes → 510 Box allocations on decode.
     mod tree {
         use super::*;
         use vox_bench::shapes::{Tree, make_tree};
 
         #[divan::bench(args = [4u32, 6, 8])]
         fn jit_decode(bencher: Bencher, depth: u32) {
-            let fixture = CodecFixture::<Tree>::new_decode_only(make_tree(depth, 0xC0FFEE));
+            let fixture = CodecFixture::<Tree>::new(make_tree(depth, 0xC0FFEE));
             let decoder = vox_bench::prepare_jit_decoder::<Tree>(&fixture.plan, &fixture.registry);
             bencher.bench_local(|| {
                 black_box(vox_bench::jit_decode_pre::<Tree>(
@@ -679,9 +658,29 @@ mod codec {
 
         #[divan::bench(args = [4u32, 6, 8])]
         fn serde_decode(bencher: Bencher, depth: u32) {
-            let fixture = CodecFixture::<Tree>::new_decode_only(make_tree(depth, 0xC0FFEE));
+            let fixture = CodecFixture::<Tree>::new(make_tree(depth, 0xC0FFEE));
             bencher.bench_local(|| {
                 black_box(postcard::from_bytes::<Tree>(black_box(&fixture.bytes)).unwrap())
+            });
+        }
+
+        #[divan::bench(args = [4u32, 6, 8])]
+        fn jit_encode(bencher: Bencher, depth: u32) {
+            let fixture = CodecFixture::new(make_tree(depth, 0xC0FFEE));
+            let encoder = vox_bench::prepare_jit_encoder::<Tree>();
+            bencher.bench_local(|| {
+                black_box(vox_bench::jit_encode_pre::<Tree>(
+                    encoder,
+                    black_box(&fixture.value),
+                ))
+            });
+        }
+
+        #[divan::bench(args = [4u32, 6, 8])]
+        fn serde_encode(bencher: Bencher, depth: u32) {
+            let value = make_tree(depth, 0xC0FFEE);
+            bencher.bench_local(|| {
+                black_box(postcard::to_allocvec(black_box(&value)).unwrap())
             });
         }
     }
