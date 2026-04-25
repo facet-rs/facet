@@ -639,8 +639,14 @@ struct VecFamilyLayout {
 /// Process-local registry of calibrated opaque descriptors.
 ///
 /// Created once per process; never persisted.
+///
+/// Descriptors are leaked at insertion (`Box::leak`) and stored as
+/// `&'static OpaqueDescriptor`. The JIT embeds raw `*const OpaqueDescriptor`
+/// pointers into compiled code, so the descriptors must live at stable
+/// addresses for the lifetime of every compiled function. A bare
+/// `Vec<OpaqueDescriptor>` would invalidate those pointers on Vec growth.
 pub struct CalibrationRegistry {
-    descriptors: Vec<OpaqueDescriptor>,
+    descriptors: Vec<&'static OpaqueDescriptor>,
     /// Shape value → descriptor handle.
     ///
     /// `&'static Shape` as a key uses Shape's own `Hash`/`PartialEq` via the
@@ -670,9 +676,14 @@ impl CalibrationRegistry {
     }
 
     /// Register a successfully calibrated descriptor and return its handle.
+    ///
+    /// The descriptor is leaked (`Box::leak`) so it lives at a stable
+    /// `&'static` address — JIT-compiled code embeds `*const OpaqueDescriptor`
+    /// immediates that must remain valid for the process lifetime.
     pub fn register(&mut self, desc: OpaqueDescriptor) -> DescriptorHandle {
         let id = self.descriptors.len() as u32;
-        self.descriptors.push(desc);
+        let leaked: &'static OpaqueDescriptor = Box::leak(Box::new(desc));
+        self.descriptors.push(leaked);
         DescriptorHandle(id)
     }
 
@@ -721,8 +732,8 @@ impl CalibrationRegistry {
     ///
     /// Returns `None` if the handle is unknown (should not happen in correct
     /// usage — handles come from `register`).
-    pub fn get(&self, handle: DescriptorHandle) -> Option<&OpaqueDescriptor> {
-        self.descriptors.get(handle.0 as usize)
+    pub fn get(&self, handle: DescriptorHandle) -> Option<&'static OpaqueDescriptor> {
+        self.descriptors.get(handle.0 as usize).copied()
     }
 
     /// Return the number of registered descriptors.
@@ -736,11 +747,11 @@ impl CalibrationRegistry {
     }
 
     /// Iterate over all registered descriptors.
-    pub fn iter(&self) -> impl Iterator<Item = (DescriptorHandle, &OpaqueDescriptor)> {
+    pub fn iter(&self) -> impl Iterator<Item = (DescriptorHandle, &'static OpaqueDescriptor)> {
         self.descriptors
             .iter()
             .enumerate()
-            .map(|(i, d)| (DescriptorHandle(i as u32), d))
+            .map(|(i, d)| (DescriptorHandle(i as u32), *d))
     }
 
     /// Calibrate `Vec<T>` if not already done and return the handle, or

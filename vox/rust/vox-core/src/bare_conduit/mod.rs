@@ -1,6 +1,8 @@
 use std::marker::PhantomData;
 
-use facet_core::{PtrConst, Shape};
+use facet_core::PtrConst;
+use vox_jit::cache::{CompiledDecoder, CompiledEncoder};
+use vox_jit::cal::BorrowMode;
 
 use vox_types::{Conduit, ConduitRx, ConduitTx, Link, LinkTx, MaybeSend, MsgFamily, SelfRef};
 
@@ -19,28 +21,49 @@ use crate::MessagePlan;
 // r[impl zerocopy.framing.conduit.bare]
 pub struct BareConduit<F: MsgFamily, L: Link> {
     link: L,
-    shape: &'static Shape,
-    message_plan: Option<MessagePlan>,
+    encoder: &'static CompiledEncoder,
+    decoder: &'static CompiledDecoder,
     _phantom: PhantomData<fn(F) -> F>,
 }
 
 impl<F: MsgFamily, L: Link> BareConduit<F, L> {
     /// Create a new BareConduit (identity plan — no schema translation).
     pub fn new(link: L) -> Self {
-        Self {
-            link,
-            shape: F::shape(),
-            message_plan: None,
-            _phantom: PhantomData,
-        }
+        let runtime = vox_jit::global_runtime();
+        let identity_plan = vox_postcard::build_identity_plan(F::shape());
+        let registry = vox_types::SchemaRegistry::new();
+        Self::resolve(link, runtime, 0, &identity_plan, &registry)
     }
 
     /// Create a new BareConduit with a pre-built message translation plan.
     pub fn with_message_plan(link: L, message_plan: MessagePlan) -> Self {
+        let runtime = vox_jit::global_runtime();
+        Self::resolve(
+            link,
+            runtime,
+            message_plan.remote_schema_id,
+            &message_plan.plan,
+            &message_plan.registry,
+        )
+    }
+
+    fn resolve(
+        link: L,
+        runtime: &vox_jit::JitRuntime,
+        remote_schema_id: u64,
+        plan: &vox_postcard::plan::TranslationPlan,
+        registry: &vox_types::SchemaRegistry,
+    ) -> Self {
+        let encoder = runtime
+            .prepare_encoder(F::shape())
+            .expect("JIT encode unavailable for message shape");
+        let decoder = runtime
+            .prepare_decoder(remote_schema_id, F::shape(), plan, registry, BorrowMode::Owned)
+            .expect("JIT decode unavailable for message shape");
         Self {
             link,
-            shape: F::shape(),
-            message_plan: Some(message_plan),
+            encoder,
+            decoder,
             _phantom: PhantomData,
         }
     }
@@ -60,12 +83,12 @@ where
         (
             BareConduitTx {
                 link_tx: tx,
-                shape: self.shape,
+                encoder: self.encoder,
                 _phantom: PhantomData,
             },
             BareConduitRx {
                 link_rx: rx,
-                message_plan: self.message_plan,
+                decoder: self.decoder,
                 _phantom: PhantomData,
             },
         )
@@ -78,7 +101,7 @@ where
 
 pub struct BareConduitTx<F: MsgFamily, LTx: LinkTx> {
     link_tx: LTx,
-    shape: &'static Shape,
+    encoder: &'static CompiledEncoder,
     _phantom: PhantomData<fn(F)>,
 }
 
@@ -87,8 +110,16 @@ impl<F: MsgFamily, LTx: LinkTx + MaybeSend + 'static> ConduitTx for BareConduitT
     type Prepared = Vec<u8>;
     type Error = BareConduitError;
 
+    // r[impl zerocopy.framing.single-pass]
+    // r[impl zerocopy.framing.no-double-serialize]
+    // r[impl zerocopy.scatter]
+    // r[impl zerocopy.scatter.plan]
+    // r[impl zerocopy.scatter.plan.size]
+    // r[impl zerocopy.scatter.write]
+    // r[impl zerocopy.scatter.lifetime]
     fn prepare_send(&self, item: F::Msg<'_>) -> Result<Self::Prepared, Self::Error> {
-        encode_message::<F>(self.shape, item)
+        let ptr = PtrConst::new((&raw const item).cast::<u8>());
+        vox_jit::encode_with(self.encoder, ptr).map_err(BareConduitError::Encode)
     }
 
     async fn send_prepared(&self, prepared: Self::Prepared) -> Result<(), Self::Error> {
@@ -103,31 +134,13 @@ impl<F: MsgFamily, LTx: LinkTx + MaybeSend + 'static> ConduitTx for BareConduitT
     }
 }
 
-// r[impl zerocopy.framing.single-pass]
-// r[impl zerocopy.framing.no-double-serialize]
-// r[impl zerocopy.scatter]
-// r[impl zerocopy.scatter.plan]
-// r[impl zerocopy.scatter.plan.size]
-// r[impl zerocopy.scatter.write]
-// r[impl zerocopy.scatter.lifetime]
-fn encode_message<F: MsgFamily>(
-    shape: &'static Shape,
-    item: F::Msg<'_>,
-) -> Result<Vec<u8>, BareConduitError> {
-    let ptr = PtrConst::new((&raw const item).cast::<u8>());
-    vox_jit::global_runtime()
-        .try_encode_ptr(ptr, shape)
-        .expect("JIT encode unavailable for message shape")
-        .map_err(BareConduitError::Encode)
-}
-
 // ---------------------------------------------------------------------------
 // Rx
 // ---------------------------------------------------------------------------
 
 pub struct BareConduitRx<F: MsgFamily, LRx> {
     link_rx: LRx,
-    message_plan: Option<MessagePlan>,
+    decoder: &'static CompiledDecoder,
     _phantom: PhantomData<fn() -> F>,
 }
 
@@ -148,17 +161,9 @@ where
             None => return Ok(None),
         };
 
-        match &self.message_plan {
-            Some(plan) => crate::deserialize_postcard_with_jit_key::<F::Msg<'static>>(
-                backing,
-                plan.remote_schema_id,
-                &plan.plan,
-                &plan.registry,
-            ),
-            None => crate::deserialize_postcard::<F::Msg<'static>>(backing),
-        }
-        .map_err(BareConduitError::Decode)
-        .map(Some)
+        crate::deserialize_postcard_with_decoder::<F::Msg<'static>>(backing, self.decoder)
+            .map_err(BareConduitError::Decode)
+            .map(Some)
     }
 }
 

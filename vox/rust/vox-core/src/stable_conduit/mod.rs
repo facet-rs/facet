@@ -4,6 +4,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use facet::Facet;
 use facet_core::PtrConst;
+use vox_jit::cache::{CompiledDecoder, CompiledEncoder};
+use vox_jit::cal::BorrowMode;
 use vox_types::{
     Conduit, ConduitRx, ConduitTx, Link, LinkRx, LinkTx, MaybeSend, MsgFamily, Payload, SelfRef,
 };
@@ -528,14 +530,53 @@ where
     type Rx = StableConduitRx<F, LS>;
 
     fn split(self) -> (Self::Tx, Self::Rx) {
+        let runtime = vox_jit::global_runtime();
+        let msg_encoder = runtime
+            .prepare_encoder(F::shape())
+            .expect("JIT encode unavailable for message family shape");
+        let frame_encoder = runtime
+            .prepare_encoder(<Frame<'static> as Facet<'static>>::SHAPE)
+            .expect("JIT encode unavailable for Frame");
+        let frame_decoder = {
+            let shape = <Frame<'static> as Facet<'static>>::SHAPE;
+            let plan = vox_postcard::build_identity_plan(shape);
+            let registry = vox_types::SchemaRegistry::new();
+            runtime
+                .prepare_decoder(0, shape, &plan, &registry, BorrowMode::Owned)
+                .expect("JIT decode unavailable for Frame")
+        };
+        let msg_decoder = {
+            let shape = F::shape();
+            match self.message_plan {
+                Some(plan) => runtime
+                    .prepare_decoder(
+                        plan.remote_schema_id,
+                        shape,
+                        &plan.plan,
+                        &plan.registry,
+                        BorrowMode::Owned,
+                    )
+                    .expect("JIT decode unavailable for message family shape"),
+                None => {
+                    let identity_plan = vox_postcard::build_identity_plan(shape);
+                    let registry = vox_types::SchemaRegistry::new();
+                    runtime
+                        .prepare_decoder(0, shape, &identity_plan, &registry, BorrowMode::Owned)
+                        .expect("JIT decode unavailable for message family shape")
+                }
+            }
+        };
         (
             StableConduitTx {
                 shared: Arc::clone(&self.shared),
+                msg_encoder,
+                frame_encoder,
                 _phantom: PhantomData,
             },
             StableConduitRx {
                 shared: Arc::clone(&self.shared),
-                message_plan: self.message_plan,
+                frame_decoder,
+                msg_decoder,
                 _phantom: PhantomData,
             },
         )
@@ -548,6 +589,8 @@ where
 
 pub struct StableConduitTx<F: MsgFamily, LS: LinkSource> {
     shared: Arc<Shared<LS>>,
+    msg_encoder: &'static CompiledEncoder,
+    frame_encoder: &'static CompiledEncoder,
     _phantom: PhantomData<fn(F)>,
 }
 
@@ -561,8 +604,22 @@ where
     type Prepared = StablePreparedMessage;
     type Error = StableConduitError;
 
+    // r[impl zerocopy.framing.single-pass]
+    // r[impl zerocopy.framing.no-double-serialize]
+    // r[impl zerocopy.scatter]
+    // r[impl zerocopy.scatter.plan]
+    // r[impl zerocopy.scatter.plan.size]
+    // r[impl zerocopy.scatter.write]
+    // r[impl zerocopy.scatter.lifetime]
+    // r[impl zerocopy.scatter.replay]
     fn prepare_send(&self, item: F::Msg<'_>) -> Result<Self::Prepared, Self::Error> {
-        prepare_frame::<F, LS>(&self.shared, item)
+        let ptr = PtrConst::new((&raw const item).cast::<u8>());
+        let item_bytes =
+            vox_jit::encode_with(self.msg_encoder, ptr).map_err(StableConduitError::Encode)?;
+        Ok(StablePreparedMessage {
+            item_bytes,
+            framed: None,
+        })
     }
 
     async fn send_prepared(&self, mut prepared: Self::Prepared) -> Result<(), Self::Error> {
@@ -607,7 +664,8 @@ where
                     let ack = inner
                         .last_received
                         .map(|max_delivered| PacketAck { max_delivered });
-                    let frame_bytes = encode_frame_bytes(seq, ack, &prepared.item_bytes)?;
+                    let frame_bytes =
+                        encode_frame_bytes(self.frame_encoder, seq, ack, &prepared.item_bytes)?;
                     (seq, frame_bytes)
                 };
                 prepared.framed = Some(framed);
@@ -661,6 +719,7 @@ where
 }
 
 fn encode_frame_bytes(
+    frame_encoder: &'static CompiledEncoder,
     seq: PacketSeq,
     ack: Option<PacketAck>,
     item_bytes: &[u8],
@@ -670,7 +729,8 @@ fn encode_frame_bytes(
         ack,
         item: Payload::PostcardBytes(item_bytes),
     };
-    vox_jit::encode!(&frame).map_err(StableConduitError::Encode)
+    let ptr = PtrConst::new((&raw const frame).cast::<u8>());
+    vox_jit::encode_with(frame_encoder, ptr).map_err(StableConduitError::Encode)
 }
 
 pub struct StablePreparedMessage {
@@ -680,36 +740,14 @@ pub struct StablePreparedMessage {
 
 // r[impl zerocopy.framing.single-pass]
 // r[impl zerocopy.framing.no-double-serialize]
-// r[impl zerocopy.scatter]
-// r[impl zerocopy.scatter.plan]
-// r[impl zerocopy.scatter.plan.size]
-// r[impl zerocopy.scatter.write]
-// r[impl zerocopy.scatter.lifetime]
-// r[impl zerocopy.scatter.replay]
-fn prepare_frame<F: MsgFamily, LS: LinkSource>(
-    shared: &Arc<Shared<LS>>,
-    item: F::Msg<'_>,
-) -> Result<StablePreparedMessage, StableConduitError> {
-    let _ = shared;
-    let item_bytes = {
-        let ptr = PtrConst::new((&raw const item).cast::<u8>());
-        vox_jit::global_runtime()
-            .try_encode_ptr(ptr, F::shape())
-            .expect("JIT encode unavailable for message family shape")
-            .map_err(StableConduitError::Encode)?
-    };
-    Ok(StablePreparedMessage {
-        item_bytes,
-        framed: None,
-    })
-}
 // ---------------------------------------------------------------------------
 // Rx
 // ---------------------------------------------------------------------------
 
 pub struct StableConduitRx<F: MsgFamily, LS: LinkSource> {
     shared: Arc<Shared<LS>>,
-    message_plan: Option<MessagePlan>,
+    frame_decoder: &'static CompiledDecoder,
+    msg_decoder: &'static CompiledDecoder,
     _phantom: PhantomData<fn() -> F>,
 }
 
@@ -763,7 +801,8 @@ where
 
             // Phase 2: deserialize the frame envelope (seq/ack + opaque payload bytes).
             let frame: SelfRef<Frame<'static>> =
-                crate::deserialize_postcard(backing).map_err(StableConduitError::Decode)?;
+                crate::deserialize_postcard_with_decoder(backing, self.frame_decoder)
+                    .map_err(StableConduitError::Decode)?;
 
             // Phase 3: update shared state; skip duplicates.
             // r[impl stable.seq.monotonic]
@@ -787,23 +826,19 @@ where
                 continue;
             }
 
-            // Phase 4: deserialize the message from the payload bytes
-            // using the message plan for schema-aware translation.
+            // Phase 4: deserialize the message from the payload bytes using
+            // the pre-resolved decoder (which already incorporates the message
+            // plan for schema-aware translation, set at split time).
             let frame = frame.get();
             let item_bytes = match &frame.item {
                 Payload::PostcardBytes(bytes) => bytes,
                 _ => unreachable!("deserialized Payload should always be Incoming"),
             };
             let item_backing = vox_types::Backing::Boxed(item_bytes.to_vec().into());
-            let msg = match &self.message_plan {
-                Some(plan) => crate::deserialize_postcard_with_jit_key::<F::Msg<'static>>(
-                    item_backing,
-                    plan.remote_schema_id,
-                    &plan.plan,
-                    &plan.registry,
-                ),
-                None => crate::deserialize_postcard::<F::Msg<'static>>(item_backing),
-            }
+            let msg = crate::deserialize_postcard_with_decoder::<F::Msg<'static>>(
+                item_backing,
+                self.msg_decoder,
+            )
             .map_err(StableConduitError::Decode)?;
 
             return Ok(Some(msg));

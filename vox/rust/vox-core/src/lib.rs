@@ -85,41 +85,43 @@ impl MessagePlan {
     }
 }
 
-/// Deserialize postcard-encoded `backing` bytes into `T` in place, returning a
-/// [`vox_types::SelfRef`] that keeps the backing storage alive for the value.
+/// Deserialize postcard-encoded `backing` bytes into `T` in place, returning
+/// a [`vox_types::SelfRef`] that keeps the backing storage alive for the
+/// value. Uses the identity plan; for plan-aware decoding, use
+/// [`deserialize_postcard_with_plan`].
 // r[impl zerocopy.framing.value]
 pub(crate) fn deserialize_postcard<T: facet::Facet<'static>>(
     backing: Backing,
 ) -> Result<SelfRef<T>, vox_postcard::DeserializeError> {
     let plan = vox_postcard::build_identity_plan(T::SHAPE);
     let registry = vox_types::SchemaRegistry::new();
-    deserialize_postcard_with_jit_key(backing, 0, &plan, &registry)
+    deserialize_postcard_with_plan(backing, &plan, &registry)
 }
 
 /// Deserialize postcard-encoded `backing` bytes into `T` using a pre-built
 /// translation plan and schema registry for the remote peer's type layout.
 // r[impl zerocopy.framing.value]
-#[cfg(test)]
 pub(crate) fn deserialize_postcard_with_plan<T: facet::Facet<'static>>(
     backing: Backing,
     plan: &vox_postcard::plan::TranslationPlan,
     registry: &vox_types::SchemaRegistry,
 ) -> Result<SelfRef<T>, vox_postcard::DeserializeError> {
-    deserialize_postcard_with_jit_key(backing, 0, plan, registry)
-}
-
-pub(crate) fn deserialize_postcard_with_jit_key<T: facet::Facet<'static>>(
-    backing: Backing,
-    remote_schema_id: u64,
-    plan: &vox_postcard::plan::TranslationPlan,
-    registry: &vox_types::SchemaRegistry,
-) -> Result<SelfRef<T>, vox_postcard::DeserializeError> {
-    // SAFETY: backing is heap-allocated with a stable address.
-    // The SelfRef::try_new contract guarantees value is dropped before backing.
     SelfRef::try_new(backing, |bytes| {
         vox_jit::global_runtime()
-            .try_decode_owned::<T>(bytes, remote_schema_id, plan, registry)
+            .try_decode_owned::<T>(bytes, 0, plan, registry)
             .expect("JIT decode unavailable for type")
+    })
+}
+
+/// Like [`deserialize_postcard`] but uses an already-resolved JIT decoder,
+/// skipping the global cache lookup. Used by conduits that resolved their
+/// decoder at construction.
+pub(crate) fn deserialize_postcard_with_decoder<T: facet::Facet<'static>>(
+    backing: Backing,
+    decoder: &'static vox_jit::cache::CompiledDecoder,
+) -> Result<SelfRef<T>, vox_postcard::DeserializeError> {
+    SelfRef::try_new(backing, |bytes| {
+        vox_jit::decode_owned_with::<T>(decoder, bytes)
     })
 }
 

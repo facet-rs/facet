@@ -144,7 +144,11 @@ impl JitRuntime {
         }
     }
 
-    fn prepare_decoder(
+    /// Compile (or look up) the encoder/decoder for `local_shape` and the
+    /// given remote schema, returning a `&'static` reference owned by this
+    /// runtime's process-wide cache. Conduits call this once at construction
+    /// to skip the global cache lookup on every hot-path encode/decode.
+    pub fn prepare_decoder(
         &self,
         remote_schema_id: u64,
         local_shape: &'static Shape,
@@ -241,7 +245,11 @@ impl JitRuntime {
         Some(decoder)
     }
 
-    fn prepare_encoder(&self, shape: &'static Shape) -> Option<&'static cache::CompiledEncoder> {
+    /// Compile (or look up) the encoder for `shape`, returning a `&'static`
+    /// reference owned by this runtime's process-wide cache. Conduits call
+    /// this once at construction to skip the global cache lookup on every
+    /// hot-path encode.
+    pub fn prepare_encoder(&self, shape: &'static Shape) -> Option<&'static cache::CompiledEncoder> {
         // Fast path: pointer-identity lookup. No shape-tree walk, no cal
         // mutex, no structural hashing. This is the hot path for repeated
         // encode calls of the same type (i.e., every benchmark iteration).
@@ -431,20 +439,76 @@ impl JitRuntime {
         shape: &'static Shape,
     ) -> Option<Result<Vec<u8>, SerializeError>> {
         let encoder = self.prepare_encoder(shape)?;
-        let hint = encoder.size_hint.load(Ordering::Relaxed);
-        let mut ctx = vox_jit_abi::EncodeCtx::with_capacity(hint);
-        let ok = unsafe { (encoder.encode_fn)(&mut ctx as *mut _, ptr.as_ptr()) };
-        if ok {
-            let bytes = ctx.into_vec();
-            if bytes.len() > hint {
-                encoder.size_hint.store(bytes.len(), Ordering::Relaxed);
-            }
-            Some(Ok(bytes))
-        } else {
-            Some(Err(SerializeError::ReflectError(
-                "JIT encode returned false (OOM)".into(),
-            )))
+        Some(encode_with(encoder, ptr))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Direct-call helpers — for callers that hold a pre-resolved `&'static`
+// encoder/decoder (e.g. conduits that resolved once at construction).
+//
+// These bypass `prepare_*` entirely: no cache lookup, no codec-mode check,
+// no `Option`. The caller already decided to use the JIT and proved it can
+// by holding a reference.
+// ---------------------------------------------------------------------------
+
+/// Run a pre-resolved compiled encoder against `ptr`.
+pub fn encode_with(
+    encoder: &cache::CompiledEncoder,
+    ptr: facet::PtrConst,
+) -> Result<Vec<u8>, SerializeError> {
+    let hint = encoder.size_hint.load(Ordering::Relaxed);
+    let mut ctx = vox_jit_abi::EncodeCtx::with_capacity(hint);
+    let ok = unsafe { (encoder.encode_fn)(&mut ctx as *mut _, ptr.as_ptr()) };
+    if ok {
+        let bytes = ctx.into_vec();
+        if bytes.len() > hint {
+            encoder.size_hint.store(bytes.len(), Ordering::Relaxed);
         }
+        Ok(bytes)
+    } else {
+        Err(SerializeError::ReflectError(
+            "JIT encode returned false (OOM)".into(),
+        ))
+    }
+}
+
+/// Run a pre-resolved owned-mode decoder against `input`.
+pub fn decode_owned_with<T: Facet<'static>>(
+    decoder: &cache::CompiledDecoder,
+    input: &[u8],
+) -> Result<T, DeserializeError> {
+    let decode_fn = decoder
+        .owned_fn
+        .expect("owned decode_fn missing on owned decoder");
+    let mut ctx = DecodeCtx::new(input);
+    let mut out = MaybeUninit::<T>::uninit();
+    let status = unsafe { decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8) };
+    if status == DecodeStatus::Ok {
+        Ok(unsafe { out.assume_init() })
+    } else {
+        Err(decode_status_to_error(status, &ctx, input))
+    }
+}
+
+/// Run a pre-resolved borrowed-mode decoder against `input`.
+pub fn decode_borrowed_with<'input, 'facet, T: Facet<'facet>>(
+    decoder: &cache::CompiledDecoder,
+    input: &'input [u8],
+) -> Result<T, DeserializeError>
+where
+    'input: 'facet,
+{
+    let decode_fn = decoder
+        .borrowed_fn
+        .expect("borrowed decode_fn missing on borrowed decoder");
+    let mut ctx = DecodeCtx::new(input);
+    let mut out = MaybeUninit::<T>::uninit();
+    let status = unsafe { decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8) };
+    if status == DecodeStatus::Ok {
+        Ok(unsafe { out.assume_init() })
+    } else {
+        Err(decode_status_to_error(status, &ctx, input))
     }
 }
 
@@ -480,20 +544,8 @@ pub fn __encode_with_slot<'a, T: Facet<'a>>(
             .prepare_encoder(T::SHAPE)
             .expect("JIT encode unavailable for T")
     });
-    let hint = encoder.size_hint.load(Ordering::Relaxed);
-    let mut ctx = vox_jit_abi::EncodeCtx::with_capacity(hint);
     let ptr = facet::PtrConst::new((value as *const T).cast::<u8>());
-    let ok = unsafe { (encoder.encode_fn)(&mut ctx as *mut _, ptr.as_ptr()) };
-    if !ok {
-        return Err(SerializeError::ReflectError(
-            "JIT encode returned false (OOM)".into(),
-        ));
-    }
-    let bytes = ctx.into_vec();
-    if bytes.len() > hint {
-        encoder.size_hint.store(bytes.len(), Ordering::Relaxed);
-    }
-    Ok(bytes)
+    encode_with(encoder, ptr)
 }
 
 /// Per-`(call site, BorrowMode)` slot mapping `remote_schema_id` to a
@@ -511,17 +563,7 @@ pub fn __decode_owned_with_slot<T: Facet<'static>>(
 ) -> Result<T, DeserializeError> {
     let decoder =
         lookup_or_insert_decoder::<T>(slot, remote_schema_id, plan, registry, BorrowMode::Owned);
-    let decode_fn = decoder
-        .owned_fn
-        .expect("owned decode_fn missing on owned decoder");
-    let mut ctx = DecodeCtx::new(input);
-    let mut out = MaybeUninit::<T>::uninit();
-    let status = unsafe { decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8) };
-    if status == DecodeStatus::Ok {
-        Ok(unsafe { out.assume_init() })
-    } else {
-        Err(decode_status_to_error(status, &ctx, input))
-    }
+    decode_owned_with::<T>(decoder, input)
 }
 
 #[doc(hidden)]
@@ -537,17 +579,7 @@ where
 {
     let decoder =
         lookup_or_insert_decoder::<T>(slot, remote_schema_id, plan, registry, BorrowMode::Borrowed);
-    let decode_fn = decoder
-        .borrowed_fn
-        .expect("borrowed decode_fn missing on borrowed decoder");
-    let mut ctx = DecodeCtx::new(input);
-    let mut out = MaybeUninit::<T>::uninit();
-    let status = unsafe { decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8) };
-    if status == DecodeStatus::Ok {
-        Ok(unsafe { out.assume_init() })
-    } else {
-        Err(decode_status_to_error(status, &ctx, input))
-    }
+    decode_borrowed_with::<T>(decoder, input)
 }
 
 fn lookup_or_insert_decoder<'a, T: Facet<'a>>(
