@@ -19,6 +19,13 @@ protobuf = [
     "dep:tokio-stream",
     "dep:tonic-prost-build",
 ]
+# Run codec benches with mimalloc as the global allocator. Use to measure how
+# much of decode time is malloc-floor vs codegen.
+mimalloc = ["dep:mimalloc"]
+# dhat heap profiler — used by `examples/decode_dhat.rs`. Builds a custom
+# global_allocator into the example so the resulting `dhat-heap.json` can be
+# opened in dh_view.html for per-call-site allocation breakdown.
+dhat-heap = ["dep:dhat"]
 
 [dependencies]
 vox.workspace = true
@@ -36,6 +43,7 @@ futures-util.workspace = true
 
 tarpc.workspace = true
 serde.workspace = true
+postcard = { version = "1", features = ["alloc"] }
 tonic = { workspace = true, optional = true }
 tonic-prost = { workspace = true, optional = true }
 prost = { workspace = true, optional = true }
@@ -45,6 +53,8 @@ tokio-stream = { workspace = true, optional = true }
 
 tempfile.workspace = true
 divan.workspace = true
+mimalloc = { version = "0.1", optional = true, default-features = false }
+dhat = { version = "0.3", optional = true }
 
 [build-dependencies]
 tonic-prost-build = { workspace = true, optional = true }
@@ -52,3 +62,7 @@ tonic-prost-build = { workspace = true, optional = true }
 [[bench]]
 name = "rpc"
 harness = false
+
+[[example]]
+name = "decode_dhat"
+required-features = ["dhat-heap"]

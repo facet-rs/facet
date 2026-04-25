@@ -4,9 +4,7 @@ use std::sync::{Mutex, MutexGuard};
 
 use divan::{Bencher, black_box};
 use facet::Facet;
-use spec_proto::{
-    GnarlyAttr, GnarlyEntry, GnarlyKind, GnarlyPayload, TestbedClient, TestbedDispatcher,
-};
+use spec_proto::{GnarlyPayload, TestbedClient, TestbedDispatcher};
 use subject_rust::TestbedService;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::runtime::{Builder, Runtime};
@@ -14,7 +12,12 @@ use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use vox::transport::tcp::StreamLink;
 use vox::{TransportMode, initiator_on, memory_link_pair};
+use vox_bench::{jit_decode, jit_encode, make_gnarly_payload};
 use vox_types::VoxError;
+
+#[cfg(feature = "mimalloc")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() {
     divan::main();
@@ -205,32 +208,60 @@ where
     }
 }
 
-fn jit_encode<T>(value: &T) -> Vec<u8>
-where
-    T: Facet<'static>,
-{
-    let ptr = facet::PtrConst::new((value as *const T).cast::<u8>());
-    vox_jit::global_runtime()
-        .try_encode_ptr(ptr, T::SHAPE)
-        .expect("JIT encode unsupported")
-        .expect("JIT encode failed")
+
+mod serde_mirror {
+    //! Mirror of `spec_proto::GnarlyPayload` with `serde` derives, so the
+    //! codec benches can compare `vox-postcard` (reflective via Facet) and
+    //! `vox-jit` (Cranelift-compiled) against the upstream `postcard` crate
+    //! on equivalent data. Wire format is the same — verified by the
+    //! fixture below.
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Clone, Serialize, Deserialize)]
+    pub struct GnarlyAttr {
+        pub key: String,
+        pub value: String,
+    }
+
+    #[derive(Clone, Serialize, Deserialize)]
+    pub enum GnarlyKind {
+        File {
+            mime: String,
+            tags: Vec<String>,
+        },
+        Directory {
+            child_count: u32,
+            children: Vec<String>,
+        },
+        Symlink {
+            target: String,
+            hops: Vec<u32>,
+        },
+    }
+
+    #[derive(Clone, Serialize, Deserialize)]
+    pub struct GnarlyEntry {
+        pub id: u64,
+        pub parent: Option<u64>,
+        pub name: String,
+        pub path: String,
+        pub attrs: Vec<GnarlyAttr>,
+        pub chunks: Vec<Vec<u8>>,
+        pub kind: GnarlyKind,
+    }
+
+    #[derive(Clone, Serialize, Deserialize)]
+    pub struct GnarlyPayload {
+        pub revision: u64,
+        pub mount: String,
+        pub entries: Vec<GnarlyEntry>,
+        pub footer: Option<String>,
+        pub digest: Vec<u8>,
+    }
 }
 
-fn jit_decode<T>(
-    bytes: &[u8],
-    plan: &vox_postcard::plan::TranslationPlan,
-    registry: &vox_types::SchemaRegistry,
-) -> T
-where
-    T: Facet<'static>,
-{
-    vox_jit::global_runtime()
-        .try_decode_owned::<T>(bytes, 0, plan, registry)
-        .expect("JIT decode unsupported")
-        .expect("JIT decode failed")
-}
-
-fn make_gnarly_payload(entry_count: usize, seq: usize) -> GnarlyPayload {
+fn make_gnarly_payload_serde(entry_count: usize, seq: usize) -> serde_mirror::GnarlyPayload {
+    use serde_mirror::*;
     let entries = (0..entry_count)
         .map(|i| {
             let attrs = vec![
@@ -321,6 +352,22 @@ mod codec {
         }
 
         #[divan::bench(args = [1, 4, 16])]
+        fn serde_encode(bencher: Bencher, n: usize) {
+            let value = (make_gnarly_payload_serde(n, 0),);
+            // Sanity: serde-postcard bytes match vox-postcard bytes for the
+            // same logical payload. If this ever drifts, the codec
+            // comparison stops being apples-to-apples.
+            let serde_bytes = postcard::to_allocvec(&value).unwrap();
+            let vox_bytes = vox_postcard::to_vec(&(make_gnarly_payload(n, 0),)).unwrap();
+            assert_eq!(
+                serde_bytes, vox_bytes,
+                "serde-postcard and vox-postcard wire bytes diverged"
+            );
+            bencher
+                .bench_local(|| black_box(postcard::to_allocvec(black_box(&value)).unwrap()));
+        }
+
+        #[divan::bench(args = [1, 4, 16])]
         fn reflective_decode(bencher: Bencher, n: usize) {
             let fixture = CodecFixture::<GnarlyArgs>::new((make_gnarly_payload(n, 0),));
             bencher.bench_local(|| {
@@ -344,6 +391,67 @@ mod codec {
                     &fixture.plan,
                     &fixture.registry,
                 ))
+            });
+        }
+
+        #[divan::bench(args = [1, 4, 16])]
+        fn serde_decode(bencher: Bencher, n: usize) {
+            let fixture = CodecFixture::<GnarlyArgs>::new((make_gnarly_payload(n, 0),));
+            bencher.bench_local(|| {
+                black_box(
+                    postcard::from_bytes::<(serde_mirror::GnarlyPayload,)>(black_box(
+                        &fixture.bytes,
+                    ))
+                    .unwrap(),
+                )
+            });
+        }
+
+        // ---- Borrowed-decode benches: zero-copy strings + byte slices ------
+        // Wire format matches the owned variant byte-for-byte; we encode the
+        // owned payload once for the fixture, then decode into the borrowed
+        // mirror type (`&'a str` / `&'a [u8]` slicing the input). At n=16 this
+        // skips ~222 of 272 per-decode allocations (all leaf strings + chunk
+        // bytes); only the structural Vec backings remain.
+
+        #[divan::bench(args = [1, 4, 16])]
+        fn jit_decode_borrowed(bencher: Bencher, n: usize) {
+            type BorrowedArgs<'a> = (vox_bench::borrowed::GnarlyPayload<'a>,);
+            let bytes = vox_postcard::to_vec(&(make_gnarly_payload(n, 0),)).unwrap();
+            let plan =
+                vox_postcard::build_identity_plan(<BorrowedArgs<'_> as Facet<'_>>::SHAPE);
+            let registry = vox_types::SchemaRegistry::new();
+            // Warm the JIT cache for borrowed-mode decoder.
+            let _: BorrowedArgs<'_> = vox_jit::global_runtime()
+                .try_decode_borrowed::<BorrowedArgs<'_>>(&bytes, 0, &plan, &registry)
+                .expect("borrowed JIT decode unsupported")
+                .expect("borrowed JIT decode failed");
+            bencher.bench_local(|| {
+                black_box(
+                    vox_jit::global_runtime()
+                        .try_decode_borrowed::<BorrowedArgs<'_>>(
+                            black_box(&bytes),
+                            0,
+                            &plan,
+                            &registry,
+                        )
+                        .unwrap()
+                        .unwrap(),
+                )
+            });
+        }
+
+        #[divan::bench(args = [1, 4, 16])]
+        fn serde_decode_borrowed(bencher: Bencher, n: usize) {
+            type BorrowedArgs<'a> = (vox_bench::borrowed::GnarlyPayload<'a>,);
+            let bytes = vox_postcard::to_vec(&(make_gnarly_payload(n, 0),)).unwrap();
+            // Sanity: confirm the borrowed serde decode actually parses the
+            // same bytes (i.e. wire format compat between owned and borrowed).
+            let _: BorrowedArgs<'_> = postcard::from_bytes(&bytes).unwrap();
+            bencher.bench_local(|| {
+                black_box(
+                    postcard::from_bytes::<BorrowedArgs<'_>>(black_box(&bytes)).unwrap(),
+                )
             });
         }
     }
@@ -370,6 +478,17 @@ mod codec {
         }
 
         #[divan::bench(args = [1, 4, 16])]
+        fn serde_encode(bencher: Bencher, n: usize) {
+            // Mirror of `Result<GnarlyPayload, VoxError<Infallible>>` — Ok
+            // variant only, no error payload, so we just wrap in a 2-arm
+            // enum that reproduces postcard's variant-index wire layout.
+            let value: Result<serde_mirror::GnarlyPayload, ()> =
+                Ok(make_gnarly_payload_serde(n, 0));
+            bencher
+                .bench_local(|| black_box(postcard::to_allocvec(black_box(&value)).unwrap()));
+        }
+
+        #[divan::bench(args = [1, 4, 16])]
         fn reflective_decode(bencher: Bencher, n: usize) {
             let fixture = CodecFixture::<GnarlyResponse>::new(Ok(make_gnarly_payload(n, 0)));
             bencher.bench_local(|| {
@@ -393,6 +512,19 @@ mod codec {
                     &fixture.plan,
                     &fixture.registry,
                 ))
+            });
+        }
+
+        #[divan::bench(args = [1, 4, 16])]
+        fn serde_decode(bencher: Bencher, n: usize) {
+            let fixture = CodecFixture::<GnarlyResponse>::new(Ok(make_gnarly_payload(n, 0)));
+            bencher.bench_local(|| {
+                black_box(
+                    postcard::from_bytes::<Result<serde_mirror::GnarlyPayload, ()>>(black_box(
+                        &fixture.bytes,
+                    ))
+                    .unwrap(),
+                )
             });
         }
     }

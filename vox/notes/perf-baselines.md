@@ -53,6 +53,30 @@ Expected wins came from (roughly): killing the `Stage<F, Output>`
 registration path, and shrinking per-request alloc to one `Box` + one
 `Arc<Task>` (no `Cell<T, S>` overhead).
 
+## 4edda21c — args_have_channels cached + JIT cache simplified + IR fallback
+
+Branch: cranelift. Three landed:
+
+- `MethodDescriptor::args_have_channels` precomputed once per method
+  (was: `shape_contains_channel` walk per in-flight request).
+- `vox-jit` `CompiledCache` collapsed: dropped the `Mutex<HashMap>`
+  slow path. Encoders keyed by `&'static Shape` (peer-independent),
+  decoders by `(shape, borrow_mode, remote_schema_id)`. All reads go
+  through `ArcSwap`.
+- `try_decode_owned`/`try_decode_borrowed` fall back to the IR
+  interpreter when the lowered program contains an op the JIT can't
+  emit (e.g. `SkipValue` for unknown remote fields). The interpreter
+  itself learned to actually allocate + loop on `AllocBacking` —
+  before that, `Vec<T>` of complex `T` came back empty when the JIT
+  declined.
+
+```
+mem::jit::echo_gnarly                  prev      now      Δ
+  n=1   median                       11.58 µs   9.45 µs  -18.4%
+  n=4   median                       17.27 µs  15.39 µs  -10.9%
+  n=16  median                       45.39 µs  42.63 µs   -6.1%
+```
+
 ## Next planned change
 
 Run a fresh nperf profile to see what the new top hotspot is. Allocator

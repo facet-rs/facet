@@ -148,64 +148,55 @@ If you don't pass `--jitdump`, JIT'd frames show as
 
 ## libc (and other system-library) symbols
 
-Stock `nperf collate` symbolicates exported `dynsym` entries in
-system libraries (so you'll see `malloc`, `__libc_free`), but
-non-exported internals like `__memcpy_avx512_unaligned_erms`,
-`_int_malloc`, etc., come back as raw `0x00007F...` addresses inside
-`[libc.so.6]`. That's where the actual time often lives — memcpy
-variants alone can be ~8% of a hot bench.
+Non-exported internals like `__memcpy_avx512_unaligned_erms`,
+`_int_malloc`, `malloc_consolidate`, etc., live in the `.symtab` of the
+detached debug file (Debian ships them in `libc6-dbg`); the `.dynsym`
+that the recorder ships only carries exported names like `malloc` /
+`__libc_free`. Stock upstream `nperf` only loaded debug-file symbols
+when the recorded `.dynsym` was empty, so those internals always came
+back as raw `0x00007F…` addresses.
 
-Debian ships the detached debug info, but only by build-id, not at the
-path nperf looks for:
+We fixed this in our fork
+(`fasterthanlime/not-perf`, branch `libc-debug`):
 
-```sh
-sudo apt install libc6-dbg                  # already installed on this box
-# debug file lives at:
-ls /usr/lib/debug/.build-id/<2>/<rest>.debug
-```
+- `Load symbols from both the original binary and its debug file`
+  (`nwind::address_space`) — load `.symtab` from the debug file in
+  addition to the recorded `.dynsym`.
+- `Add tracing for debug-symbol auto-load and packet-stream stats` —
+  permanent `trace!` coverage in `nwind::debug_info_index::try_auto_load`,
+  `Binary::load_debug_info`, and the `data_reader` reload callback, so
+  next time something goes silently wrong you can run with
+  `RUST_LOG=…debug_info_index=trace,…data_reader=trace` and see why.
 
-`nperf` does *not* follow `.build-id` even when given
-`--debug-symbols /usr/lib/debug`. It logs warnings like
-`Missing external debug symbols for '/usr/lib/x86_64-linux-gnu/...':
-'<truncated>.debug'` and falls back to addresses.
-
-Symlinking the debug file under the original library name does not help
-for collate output either — same warning, same raw addresses.
-
-**Practical workflow: post-resolve the top offenders with `addr2line`.**
-Before the bench exits, snapshot `/proc/<PID>/maps` so you have the
-ASLR-randomized load base:
+Build that branch:
 
 ```sh
-cp /proc/$BENCH_PID/maps /tmp/proc-maps.txt
-grep libc /tmp/proc-maps.txt | head -1
-# 7ff81433e000-7ff814366000 r--p 00000000 ... libc.so.6
-#                ^^^^^^^^^^^^ this is the load base
+( cd ~/bearcove/not-perf && git checkout libc-debug \
+  && cargo build --release --manifest-path cli/Cargo.toml )
 ```
 
-Then resolve any unresolved address `0x7FF8...` to a symbol:
+Prereq on the host (already done on this box):
 
 ```sh
-DEBUG=/usr/lib/debug/.build-id/$(readelf -n /lib/x86_64-linux-gnu/libc.so.6 \
-  | awk '/Build ID/ {print substr($3,1,2) "/" substr($3,3) ".debug"}')
-BASE=0x7ff81433e000   # from /proc/<pid>/maps, libc.so.6's first segment
-ADDR=0x00007FF8144B9A4F
-addr2line -fipe "$DEBUG" $(printf '0x%x\n' $((ADDR - BASE)))
-# __memcpy_avx512_unaligned_erms at .../memmove-vec-unaligned-erms.S:266
+sudo apt install libc6-dbg
+ls /usr/lib/debug/.build-id/<2>/<rest>.debug   # confirm path exists
 ```
 
-Resolve a batch in one shot:
+With those in place, `collate` resolves libc internals natively — e.g.
+`__memmove_avx512_unaligned_erms` (~8% in a typical run), `_int_malloc`,
+`malloc_consolidate`, `__internal_syscall_cancel`, `_int_free_chunk`,
+`unlink_chunk.isra.0` all show up by name. No more `addr2line` dance.
+
+If something *doesn't* resolve, re-run with:
 
 ```sh
-for ADDR in 0x7FF8144B9A4F 0x7FF8144B9C66 0x7FF8144B9C5F; do
-  off=$(printf '0x%x' $((ADDR - BASE)))
-  addr2line -fipe "$DEBUG" $off
-done
+RUST_LOG=info,nperf_core::data_reader=trace,nwind::debug_info_index=trace \
+  ~/bearcove/not-perf/target/release/nperf collate \
+  --jitdump "$JITDUMP" --merge-threads /tmp/nperf.dat > /tmp/stacks.folded
 ```
 
-Save yourself time: the addresses that cluster within ~256 bytes of
-each other are almost always inside one big asm helper (memcpy /
-memmove / memset variant). Resolve the first one, you have all of them.
+Look for `try_auto_load(...)` traces and the `Packet kinds consumed:`
+debug line at the end of the run.
 
 ## Color-code leakage
 
