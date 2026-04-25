@@ -20,6 +20,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [dependencies]
 bitflags.workspace = true
 blake3.workspace = true
+bytes.workspace = true
 facet.workspace = true
 facet-core.workspace = true
 facet-reflect.workspace = true
