@@ -170,6 +170,9 @@ eyre = "0.6"
 [profile.release]
 debug = 1
 
+[profile.bench]
+debug = 1
+
 [profile.samply]
 inherits = "release"
 debug = true
