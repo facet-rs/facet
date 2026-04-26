@@ -93,25 +93,11 @@ pub fn generate_dispatcher_class(service: &ServiceDescriptor) -> String {
         );
 
         // Build typed arg list from args array
-        let arg_names: Vec<_> = method
-            .args
-            .iter()
-            .map(|a| a.name.to_lower_camel_case())
-            .collect();
         let typed_args: Vec<_> = method
             .args
             .iter()
             .enumerate()
             .map(|(i, a)| format!("args[{i}] as {}", ts_type_server_arg(a.shape)))
-            .collect();
-
-        // Find Tx arg indices for closing after handler returns
-        let tx_arg_indices: Vec<usize> = method
-            .args
-            .iter()
-            .enumerate()
-            .filter(|(_, a)| matches!(classify_shape(a.shape), ShapeKind::Tx { .. }))
-            .map(|(i, _)| i)
             .collect();
 
         let keyword = if first { "if" } else { "} else if" };
@@ -126,14 +112,6 @@ pub fn generate_dispatcher_class(service: &ServiceDescriptor) -> String {
             "        const result = await this.handler.{method_name}({});\n",
             typed_args.join(", ")
         ));
-
-        // Close Tx args before replying (ensures Close messages precede Response)
-        for i in &tx_arg_indices {
-            let arg_name = &arg_names[*i];
-            out.push_str(&format!(
-                "        (args[{i}] as {{ close(): void }}).close(); // close {arg_name} before reply\n"
-            ));
-        }
 
         if is_fallible {
             out.push_str("        if (result.ok) call.reply(result.value); else call.replyErr(result.error);\n");

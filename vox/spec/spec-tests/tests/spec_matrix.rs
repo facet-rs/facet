@@ -144,6 +144,14 @@ mod lang_rust_transport_tcp {
             channeling::run_channeling_generate_server_to_client(SPEC);
         }
         #[test]
+        fn channeling_post_reply_generate_server_to_client() {
+            channeling::run_channeling_post_reply_generate_server_to_client(SPEC);
+        }
+        #[test]
+        fn channeling_post_reply_sum_client_to_server() {
+            channeling::run_channeling_post_reply_sum_client_to_server(SPEC);
+        }
+        #[test]
         fn binary_payload_sizes() {
             binary_payloads::run_subject_process_message_binary_payload_sizes(SPEC);
         }
@@ -281,6 +289,14 @@ mod lang_rust_transport_tcp {
         #[test]
         fn subject_calls_transform_bidi() {
             testbed::run_subject_calls_transform_bidi(SPEC);
+        }
+        #[test]
+        fn subject_calls_post_reply_generate() {
+            channeling::run_subject_calls_post_reply_generate(SPEC);
+        }
+        #[test]
+        fn subject_calls_post_reply_sum() {
+            channeling::run_subject_calls_post_reply_sum(SPEC);
         }
     }
     mod direction_bidirectional {
@@ -417,6 +433,14 @@ mod lang_typescript_transport_tcp {
             channeling::run_channeling_generate_server_to_client(SPEC);
         }
         #[test]
+        fn channeling_post_reply_generate_server_to_client() {
+            channeling::run_channeling_post_reply_generate_server_to_client(SPEC);
+        }
+        #[test]
+        fn channeling_post_reply_sum_client_to_server() {
+            channeling::run_channeling_post_reply_sum_client_to_server(SPEC);
+        }
+        #[test]
         fn binary_payload_sizes() {
             binary_payloads::run_subject_process_message_binary_payload_sizes(SPEC);
         }
@@ -554,6 +578,14 @@ mod lang_typescript_transport_tcp {
         #[test]
         fn subject_calls_transform_bidi() {
             testbed::run_subject_calls_transform_bidi(SPEC);
+        }
+        #[test]
+        fn subject_calls_post_reply_generate() {
+            channeling::run_subject_calls_post_reply_generate(SPEC);
+        }
+        #[test]
+        fn subject_calls_post_reply_sum() {
+            channeling::run_subject_calls_post_reply_sum(SPEC);
         }
     }
     mod direction_bidirectional {
@@ -690,6 +722,14 @@ mod lang_typescript_transport_ws {
             channeling::run_channeling_generate_server_to_client(SPEC);
         }
         #[test]
+        fn channeling_post_reply_generate_server_to_client() {
+            channeling::run_channeling_post_reply_generate_server_to_client(SPEC);
+        }
+        #[test]
+        fn channeling_post_reply_sum_client_to_server() {
+            channeling::run_channeling_post_reply_sum_client_to_server(SPEC);
+        }
+        #[test]
         fn binary_payload_sizes() {
             binary_payloads::run_subject_process_message_binary_payload_sizes(SPEC);
         }
@@ -827,6 +867,14 @@ mod lang_typescript_transport_ws {
         #[test]
         fn subject_calls_transform_bidi() {
             testbed::run_subject_calls_transform_bidi(SPEC);
+        }
+        #[test]
+        fn subject_calls_post_reply_generate() {
+            channeling::run_subject_calls_post_reply_generate(SPEC);
+        }
+        #[test]
+        fn subject_calls_post_reply_sum() {
+            channeling::run_subject_calls_post_reply_sum(SPEC);
         }
     }
     mod direction_bidirectional {
@@ -994,6 +1042,16 @@ mod lang_swift_transport_tcp {
         }
         #[ignore]
         #[test]
+        fn channeling_post_reply_generate_server_to_client() {
+            channeling::run_channeling_post_reply_generate_server_to_client(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn channeling_post_reply_sum_client_to_server() {
+            channeling::run_channeling_post_reply_sum_client_to_server(SPEC);
+        }
+        #[ignore]
+        #[test]
         fn binary_payload_sizes() {
             binary_payloads::run_subject_process_message_binary_payload_sizes(SPEC);
         }
@@ -1164,6 +1222,16 @@ mod lang_swift_transport_tcp {
         #[test]
         fn subject_calls_transform_bidi() {
             testbed::run_subject_calls_transform_bidi(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_post_reply_generate() {
+            channeling::run_subject_calls_post_reply_generate(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_post_reply_sum() {
+            channeling::run_subject_calls_post_reply_sum(SPEC);
         }
     }
     mod direction_bidirectional {

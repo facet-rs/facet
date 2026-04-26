@@ -65,6 +65,16 @@ pub trait Testbed {
     /// Tests: bidirectional streaming. Server receives via `Rx<T>`, sends via `Tx<T>`.
     async fn transform(&self, input: Rx<String>, output: Tx<String>);
 
+    /// Server returns before streaming numbers back to the client.
+    ///
+    /// Tests: callee-held `Tx<T>` outlives the unary method response.
+    async fn post_reply_generate(&self, output: Tx<i32>);
+
+    /// Server returns before receiving numbers from the client, then reports their sum.
+    ///
+    /// Tests: callee-held `Rx<T>` outlives the unary method response.
+    async fn post_reply_sum(&self, input: Rx<i32>, result: Tx<i64>);
+
     // ========================================================================
     // Complex type methods
     // ========================================================================

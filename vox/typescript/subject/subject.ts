@@ -121,7 +121,31 @@ class TestbedService implements TestbedHandler {
     for await (const s of input) {
       await output.send(s);
     }
-    // Note: output.close() is called by the generated handler after this returns
+    output.close();
+  }
+
+  async postReplyGenerate(output: Tx<number>): Promise<void> {
+    setTimeout(() => {
+      void (async () => {
+        for (let i = 0; i < 5; i++) {
+          await output.send(i);
+        }
+        output.close();
+      })();
+    }, 10);
+  }
+
+  async postReplySum(input: Rx<number>, result: Tx<bigint>): Promise<void> {
+    setTimeout(() => {
+      void (async () => {
+        let total = 0n;
+        for await (const n of input) {
+          total += BigInt(n);
+        }
+        await result.send(total);
+        result.close();
+      })();
+    }, 0);
   }
 
   // Complex type methods
@@ -709,6 +733,47 @@ async function runClient() {
         throw new Error(`transform_bidi: expected ${JSON.stringify(messages)}, got ${JSON.stringify(received)}`);
       }
       console.error(`transform_bidi OK`);
+      break;
+    }
+    case "post_reply_generate": {
+      const [tx, rx] = channel<number>();
+
+      await client.postReplyGenerate(tx);
+
+      const received: number[] = [];
+      for await (const n of rx) {
+        received.push(n);
+      }
+
+      const expected = [0, 1, 2, 3, 4];
+      if (received.length !== expected.length || expected.some((value, idx) => received[idx] !== value)) {
+        throw new Error(`post_reply_generate: expected ${JSON.stringify(expected)}, got ${JSON.stringify(received)}`);
+      }
+      console.error(`post_reply_generate OK`);
+      break;
+    }
+    case "post_reply_sum": {
+      const [inputTx, inputRx] = channel<number>();
+      const [resultTx, resultRx] = channel<bigint>();
+
+      await client.postReplySum(inputRx, resultTx);
+
+      for (const n of [1, 2, 3, 4, 5]) {
+        await inputTx.send(n);
+      }
+      inputTx.close();
+
+      const total = await resultRx.recv();
+      if (total !== 15n) {
+        throw new Error(`post_reply_sum: expected 15n, got ${String(total)}`);
+      }
+
+      const extra = await resultRx.recv();
+      if (extra !== null) {
+        throw new Error(`post_reply_sum: expected result channel close, got extra value ${String(extra)}`);
+      }
+
+      console.error(`post_reply_sum OK`);
       break;
     }
     default:

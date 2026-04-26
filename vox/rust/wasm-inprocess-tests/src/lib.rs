@@ -105,6 +105,26 @@ impl Testbed for TestbedService {
         let _ = output.close(Default::default()).await;
     }
 
+    async fn post_reply_generate(&self, output: Tx<i32>) {
+        wasm_bindgen_futures::spawn_local(async move {
+            for value in 0..5 {
+                let _ = output.send(value).await;
+            }
+            let _ = output.close(Default::default()).await;
+        });
+    }
+
+    async fn post_reply_sum(&self, mut input: Rx<i32>, result: Tx<i64>) {
+        wasm_bindgen_futures::spawn_local(async move {
+            let mut total = 0_i64;
+            while let Ok(Some(value)) = input.recv().await {
+                total += *value.get() as i64;
+            }
+            let _ = result.send(total).await;
+            let _ = result.close(Default::default()).await;
+        });
+    }
+
     async fn echo_point(&self, point: Point) -> Point {
         point
     }

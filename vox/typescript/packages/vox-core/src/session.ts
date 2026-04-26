@@ -1187,11 +1187,16 @@ export class ConnectionHandle {
           };
         }
       : undefined;
-    const initial = prepareRetry
+    const initial = request.channels !== undefined
+      ? {
+          payload: encodeCurrentArgs(),
+          channels: request.channels,
+        }
+      : prepareRetry
       ? prepareRetry()
       : {
           payload: encodeCurrentArgs(),
-          channels: request.channels ?? [],
+          channels: [],
         };
     const metadataCarrier = request.metadata ? request.metadata.clone() : new ClientMetadata();
     if (this.peerSupportsRetry) {
@@ -1344,7 +1349,7 @@ export class ConnectionHandle {
     voxLogger()?.debug(
       `[vox:session] resolveResponse: req=${requestId} payload=${payload.length}`,
     );
-    this.clearPendingState(state);
+    this.clearPendingState(state, { finalizeChannels: false });
     state.resolve(payload);
   }
 
@@ -1427,7 +1432,10 @@ export class ConnectionHandle {
     }
   }
 
-  private clearPendingState(state: PendingResponse): void {
+  private clearPendingState(
+    state: PendingResponse,
+    options: { finalizeChannels?: boolean } = {},
+  ): void {
     if (state.settled) {
       return;
     }
@@ -1437,7 +1445,9 @@ export class ConnectionHandle {
       this.pendingResponses.delete(requestId);
     }
     state.requestIds.clear();
-    state.finalizeChannels?.();
+    if (options.finalizeChannels !== false) {
+      state.finalizeChannels?.();
+    }
   }
 
   private async sendPendingRequest(

@@ -27,6 +27,30 @@ async fn stream_retry_probe_values(count: u32, output: Tx<i32>) {
     let _ = output.close(Default::default()).await;
 }
 
+async fn stream_post_reply_values(output: Tx<i32>) {
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        for i in 0..5 {
+            if output.send(i).await.is_err() {
+                break;
+            }
+        }
+        let _ = output.close(Default::default()).await;
+    });
+}
+
+async fn sum_post_reply_values(mut input: Rx<i32>, result: Tx<i64>) {
+    tokio::spawn(async move {
+        let mut total: i64 = 0;
+        while let Ok(Some(n)) = input.recv().await {
+            let n = n.get();
+            total += *n as i64;
+        }
+        let _ = result.send(total).await;
+        let _ = result.close(Default::default()).await;
+    });
+}
+
 impl Testbed for TestbedService {
     async fn echo(&self, message: String) -> String {
         if message == "__vox_reconnect__" {
@@ -95,6 +119,14 @@ impl Testbed for TestbedService {
             let _ = output.send(s.clone()).await;
         }
         let _ = output.close(Default::default()).await;
+    }
+
+    async fn post_reply_generate(&self, output: Tx<i32>) {
+        stream_post_reply_values(output).await;
+    }
+
+    async fn post_reply_sum(&self, input: Rx<i32>, result: Tx<i64>) {
+        sum_post_reply_values(input, result).await;
     }
 
     async fn echo_point(&self, point: Point) -> Point {

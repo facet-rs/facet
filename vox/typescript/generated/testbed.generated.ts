@@ -177,6 +177,15 @@ export type TransformRequest = [
 ];
 export type TransformResponse = void;
 
+export type PostReplyGenerateRequest = [Tx<number>];
+export type PostReplyGenerateResponse = void;
+
+export type PostReplySumRequest = [
+  Rx<number>, // input
+  Tx<bigint>, // result
+];
+export type PostReplySumResponse = void;
+
 export type EchoPointRequest = [Point];
 export type EchoPointResponse = Point;
 
@@ -320,6 +329,18 @@ export interface TestbedCaller {
    * Tests: bidirectional streaming. Server receives via `Rx<T>`, sends via `Tx<T>`.
    */
   transform(input: Rx<string>, output: Tx<string>): Promise<void>;
+  /**
+   * Server returns before streaming numbers back to the client.
+   *
+   * Tests: callee-held `Tx<T>` outlives the unary method response.
+   */
+  postReplyGenerate(output: Tx<number>): Promise<void>;
+  /**
+   * Server returns before receiving numbers from the client, then reports their sum.
+   *
+   * Tests: callee-held `Rx<T>` outlives the unary method response.
+   */
+  postReplySum(input: Rx<number>, result: Tx<bigint>): Promise<void>;
   /** Echo a point back. */
   echoPoint(point: Point): Promise<Point>;
   /** Create a person and return it. */
@@ -490,13 +511,11 @@ export class TestbedClient implements TestbedCaller {
       const payload = new Uint8Array(0);
       return { payload, channels };
     };
-    const { channels } = prepareRetry();
     const value = await this.caller.call({
       method: "Testbed.sum",
       args: { numbers },
       descriptor,
       sendSchemas,
-      channels,
       prepareRetry,
       finalizeChannels: () => finalizeBoundChannelsForTypeRefs(argTypeRefs, [numbers], sendSchemas.schemas),
     });
@@ -523,13 +542,11 @@ export class TestbedClient implements TestbedCaller {
       const payload = new Uint8Array(0);
       return { payload, channels };
     };
-    const { channels } = prepareRetry();
     const value = await this.caller.call({
       method: "Testbed.generate",
       args: { count, output },
       descriptor,
       sendSchemas,
-      channels,
       prepareRetry,
       finalizeChannels: () => finalizeBoundChannelsForTypeRefs(argTypeRefs, [count, output], sendSchemas.schemas),
     });
@@ -556,13 +573,11 @@ export class TestbedClient implements TestbedCaller {
       const payload = new Uint8Array(0);
       return { payload, channels };
     };
-    const { channels } = prepareRetry();
     const value = await this.caller.call({
       method: "Testbed.generateRetryNonIdem",
       args: { count, output },
       descriptor,
       sendSchemas,
-      channels,
       prepareRetry,
       finalizeChannels: () => finalizeBoundChannelsForTypeRefs(argTypeRefs, [count, output], sendSchemas.schemas),
     });
@@ -589,13 +604,11 @@ export class TestbedClient implements TestbedCaller {
       const payload = new Uint8Array(0);
       return { payload, channels };
     };
-    const { channels } = prepareRetry();
     const value = await this.caller.call({
       method: "Testbed.generateRetryIdem",
       args: { count, output },
       descriptor,
       sendSchemas,
-      channels,
       prepareRetry,
       finalizeChannels: () => finalizeBoundChannelsForTypeRefs(argTypeRefs, [count, output], sendSchemas.schemas),
     });
@@ -622,15 +635,75 @@ export class TestbedClient implements TestbedCaller {
       const payload = new Uint8Array(0);
       return { payload, channels };
     };
-    const { channels } = prepareRetry();
     const value = await this.caller.call({
       method: "Testbed.transform",
       args: { input, output },
       descriptor,
       sendSchemas,
-      channels,
       prepareRetry,
       finalizeChannels: () => finalizeBoundChannelsForTypeRefs(argTypeRefs, [input, output], sendSchemas.schemas),
+    });
+    return value as void;
+  }
+
+  /**
+   * Server returns before streaming numbers back to the client.
+   *
+   * Tests: callee-held `Tx<T>` outlives the unary method response.
+   */
+  async postReplyGenerate(output: Tx<number>): Promise<void> {
+    const descriptor = testbed_postReplyGenerate_method;
+    const sendSchemas = testbed_descriptor.send_schemas;
+    const argTypeRefs = argElementRefsForMethod(descriptor.id, sendSchemas);
+    const prepareRetry = () => {
+      const channels = bindChannelsForTypeRefs(
+        argTypeRefs,
+        [output],
+        this.caller.getChannelAllocator(),
+        this.caller.getChannelRegistry(),
+        sendSchemas.schemas,
+      );
+      const payload = new Uint8Array(0);
+      return { payload, channels };
+    };
+    const value = await this.caller.call({
+      method: "Testbed.postReplyGenerate",
+      args: { output },
+      descriptor,
+      sendSchemas,
+      prepareRetry,
+      finalizeChannels: () => finalizeBoundChannelsForTypeRefs(argTypeRefs, [output], sendSchemas.schemas),
+    });
+    return value as void;
+  }
+
+  /**
+   * Server returns before receiving numbers from the client, then reports their sum.
+   *
+   * Tests: callee-held `Rx<T>` outlives the unary method response.
+   */
+  async postReplySum(input: Rx<number>, result: Tx<bigint>): Promise<void> {
+    const descriptor = testbed_postReplySum_method;
+    const sendSchemas = testbed_descriptor.send_schemas;
+    const argTypeRefs = argElementRefsForMethod(descriptor.id, sendSchemas);
+    const prepareRetry = () => {
+      const channels = bindChannelsForTypeRefs(
+        argTypeRefs,
+        [input, result],
+        this.caller.getChannelAllocator(),
+        this.caller.getChannelRegistry(),
+        sendSchemas.schemas,
+      );
+      const payload = new Uint8Array(0);
+      return { payload, channels };
+    };
+    const value = await this.caller.call({
+      method: "Testbed.postReplySum",
+      args: { input, result },
+      descriptor,
+      sendSchemas,
+      prepareRetry,
+      finalizeChannels: () => finalizeBoundChannelsForTypeRefs(argTypeRefs, [input, result], sendSchemas.schemas),
     });
     return value as void;
   }
@@ -837,13 +910,11 @@ export class TestbedClient implements TestbedCaller {
       const payload = new Uint8Array(0);
       return { payload, channels };
     };
-    const { channels } = prepareRetry();
     const value = await this.caller.call({
       method: "Testbed.sumLarge",
       args: { numbers },
       descriptor,
       sendSchemas,
-      channels,
       prepareRetry,
       finalizeChannels: () => finalizeBoundChannelsForTypeRefs(argTypeRefs, [numbers], sendSchemas.schemas),
     });
@@ -870,13 +941,11 @@ export class TestbedClient implements TestbedCaller {
       const payload = new Uint8Array(0);
       return { payload, channels };
     };
-    const { channels } = prepareRetry();
     const value = await this.caller.call({
       method: "Testbed.generateLarge",
       args: { count, output },
       descriptor,
       sendSchemas,
-      channels,
       prepareRetry,
       finalizeChannels: () => finalizeBoundChannelsForTypeRefs(argTypeRefs, [count, output], sendSchemas.schemas),
     });
@@ -1068,6 +1137,8 @@ export interface TestbedHandler {
   generateRetryNonIdem(count: number, output: Tx<number>): Promise<void> | void;
   generateRetryIdem(count: number, output: Tx<number>): Promise<void> | void;
   transform(input: Rx<string>, output: Tx<string>): Promise<void> | void;
+  postReplyGenerate(output: Tx<number>): Promise<void> | void;
+  postReplySum(input: Rx<number>, result: Tx<bigint>): Promise<void> | void;
   echoPoint(point: Point): Promise<Point> | Point;
   createPerson(name: string, age: number, email: string | null): Promise<Person> | Person;
   rectangleArea(rect: Rectangle): Promise<number> | number;
@@ -1150,7 +1221,6 @@ export class TestbedDispatcher implements Dispatcher {
     } else if (method.id === 0x239e5b99b1f8207an) {
       try {
         const result = await this.handler.generate(args[0] as number, args[1] as Tx<number>);
-        (args[1] as { close(): void }).close(); // close output before reply
         call.reply(result);
       } catch (error) {
         call.replyInternalError(error instanceof Error ? error.message : String(error));
@@ -1158,7 +1228,6 @@ export class TestbedDispatcher implements Dispatcher {
     } else if (method.id === 0x34419529478cc7b8n) {
       try {
         const result = await this.handler.generateRetryNonIdem(args[0] as number, args[1] as Tx<number>);
-        (args[1] as { close(): void }).close(); // close output before reply
         call.reply(result);
       } catch (error) {
         call.replyInternalError(error instanceof Error ? error.message : String(error));
@@ -1166,7 +1235,6 @@ export class TestbedDispatcher implements Dispatcher {
     } else if (method.id === 0xe2d27fd9098c6ea2n) {
       try {
         const result = await this.handler.generateRetryIdem(args[0] as number, args[1] as Tx<number>);
-        (args[1] as { close(): void }).close(); // close output before reply
         call.reply(result);
       } catch (error) {
         call.replyInternalError(error instanceof Error ? error.message : String(error));
@@ -1174,7 +1242,20 @@ export class TestbedDispatcher implements Dispatcher {
     } else if (method.id === 0xcb469cff8d798febn) {
       try {
         const result = await this.handler.transform(args[0] as Rx<string>, args[1] as Tx<string>);
-        (args[1] as { close(): void }).close(); // close output before reply
+        call.reply(result);
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
+      }
+    } else if (method.id === 0xec36e84751a897ben) {
+      try {
+        const result = await this.handler.postReplyGenerate(args[0] as Tx<number>);
+        call.reply(result);
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
+      }
+    } else if (method.id === 0xc1ce3c397e4ca6e7n) {
+      try {
+        const result = await this.handler.postReplySum(args[0] as Rx<number>, args[1] as Tx<bigint>);
         call.reply(result);
       } catch (error) {
         call.replyInternalError(error instanceof Error ? error.message : String(error));
@@ -1287,7 +1368,6 @@ export class TestbedDispatcher implements Dispatcher {
     } else if (method.id === 0x8edfbd65d162f685n) {
       try {
         const result = await this.handler.generateLarge(args[0] as number, args[1] as Tx<number>);
-        (args[1] as { close(): void }).close(); // close output before reply
         call.reply(result);
       } catch (error) {
         call.replyInternalError(error instanceof Error ? error.message : String(error));
@@ -2127,6 +2207,50 @@ export const testbed_send_schemas: import("@bearcove/vox-core").ServiceSendSchem
         }],
       },
     }],
+    [0xec36e84751a897ben, {
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0x6847ab90feda71c1n,
+        args: [{
+          tag: "concrete",
+          type_id: 0xc886545a493d06ebn,
+          args: [{ tag: "concrete", type_id: 0x361f4536eee9f991n, args: [] }],
+        }],
+      },
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }, {
+          tag: "concrete",
+          type_id: 0x4cf4b2aeb98a1939n,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
+        }],
+      },
+    }],
+    [0xc1ce3c397e4ca6e7n, {
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0xba0496aa8cee7a4cn,
+        args: [{
+          tag: "concrete",
+          type_id: 0x967a48ac345e2f5en,
+          args: [{ tag: "concrete", type_id: 0x361f4536eee9f991n, args: [] }],
+        }, {
+          tag: "concrete",
+          type_id: 0xc886545a493d06ebn,
+          args: [{ tag: "concrete", type_id: 0xc6eb8c46f1e17fban, args: [] }],
+        }],
+      },
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }, {
+          tag: "concrete",
+          type_id: 0x4cf4b2aeb98a1939n,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
+        }],
+      },
+    }],
     [0x81f5386d589dfbe4n, {
       argsRootRef: {
         tag: "concrete",
@@ -2673,6 +2797,18 @@ export const testbed_transform_method: MethodDescriptor = {
   retry: { persist: false, idem: false },
 };
 
+export const testbed_postReplyGenerate_method: MethodDescriptor = {
+  name: "postReplyGenerate",
+  id: 0xec36e84751a897ben,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_postReplySum_method: MethodDescriptor = {
+  name: "postReplySum",
+  id: 0xc1ce3c397e4ca6e7n,
+  retry: { persist: false, idem: false },
+};
+
 export const testbed_echoPoint_method: MethodDescriptor = {
   name: "echoPoint",
   id: 0x81f5386d589dfbe4n,
@@ -2849,6 +2985,8 @@ export const testbed_descriptor: ServiceDescriptor = {
     [testbed_generateRetryNonIdem_method.id, testbed_generateRetryNonIdem_method],
     [testbed_generateRetryIdem_method.id, testbed_generateRetryIdem_method],
     [testbed_transform_method.id, testbed_transform_method],
+    [testbed_postReplyGenerate_method.id, testbed_postReplyGenerate_method],
+    [testbed_postReplySum_method.id, testbed_postReplySum_method],
     [testbed_echoPoint_method.id, testbed_echoPoint_method],
     [testbed_createPerson_method.id, testbed_createPerson_method],
     [testbed_rectangleArea_method.id, testbed_rectangleArea_method],

@@ -95,6 +95,36 @@ impl Testbed for FuzzService {
         call.ok(()).await;
     }
 
+    async fn post_reply_generate(&self, call: impl Call<(), Infallible>, output: vox::Tx<i32>) {
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            for i in 0..5 {
+                if output.send(i).await.is_err() {
+                    break;
+                }
+            }
+            let _ = output.close(Default::default()).await;
+        });
+        call.ok(()).await;
+    }
+
+    async fn post_reply_sum(
+        &self,
+        call: impl Call<(), Infallible>,
+        mut input: vox::Rx<i32>,
+        result: vox::Tx<i64>,
+    ) {
+        tokio::spawn(async move {
+            let mut total: i64 = 0;
+            while let Ok(Some(n)) = input.recv().await {
+                total += i64::from(*n);
+            }
+            let _ = result.send(total).await;
+            let _ = result.close(Default::default()).await;
+        });
+        call.ok(()).await;
+    }
+
     async fn echo_point(&self, call: impl Call<Point, Infallible>, point: Point) {
         call.ok(point).await;
     }

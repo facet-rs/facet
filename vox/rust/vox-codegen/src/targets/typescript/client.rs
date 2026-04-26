@@ -161,7 +161,6 @@ pub fn generate_client_impl(service: &ServiceDescriptor) -> String {
             out.push_str("      const payload = new Uint8Array(0);\n");
             out.push_str("      return { payload, channels };\n");
             out.push_str("    };\n");
-            out.push_str("    const { channels } = prepareRetry();\n");
         }
 
         let is_fallible = matches!(
@@ -180,7 +179,6 @@ pub fn generate_client_impl(service: &ServiceDescriptor) -> String {
             out.push_str("          descriptor,\n");
             out.push_str("          sendSchemas,\n");
             if has_streaming_args {
-                out.push_str("          channels,\n");
                 out.push_str("          prepareRetry,\n");
                 out.push_str(&format!(
                     "          finalizeChannels: () => finalizeBoundChannelsForTypeRefs(argTypeRefs, [{}], sendSchemas.schemas),\n",
@@ -209,7 +207,6 @@ pub fn generate_client_impl(service: &ServiceDescriptor) -> String {
             out.push_str("        descriptor,\n");
             out.push_str("        sendSchemas,\n");
             if has_streaming_args {
-                out.push_str("        channels,\n");
                 out.push_str("        prepareRetry,\n");
                 out.push_str(&format!(
                     "        finalizeChannels: () => finalizeBoundChannelsForTypeRefs(argTypeRefs, [{}], sendSchemas.schemas),\n",

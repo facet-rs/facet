@@ -636,6 +636,14 @@ fn generate_spec_matrix(
             call: "channeling::run_channeling_generate_server_to_client",
         },
         TestCase {
+            name: "channeling_post_reply_generate_server_to_client",
+            call: "channeling::run_channeling_post_reply_generate_server_to_client",
+        },
+        TestCase {
+            name: "channeling_post_reply_sum_client_to_server",
+            call: "channeling::run_channeling_post_reply_sum_client_to_server",
+        },
+        TestCase {
             name: "binary_payload_sizes",
             call: "binary_payloads::run_subject_process_message_binary_payload_sizes",
         },
@@ -772,6 +780,14 @@ fn generate_spec_matrix(
         TestCase {
             name: "subject_calls_transform_bidi",
             call: "testbed::run_subject_calls_transform_bidi",
+        },
+        TestCase {
+            name: "subject_calls_post_reply_generate",
+            call: "channeling::run_subject_calls_post_reply_generate",
+        },
+        TestCase {
+            name: "subject_calls_post_reply_sum",
+            call: "channeling::run_subject_calls_post_reply_sum",
         },
     ];
     let bidirectional = [TestCase {

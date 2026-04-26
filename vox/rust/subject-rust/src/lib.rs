@@ -24,6 +24,35 @@ pub async fn stream_retry_probe_values(count: u32, output: Tx<i32>) {
     output.close(Default::default()).await.ok();
 }
 
+pub async fn stream_post_reply_values(output: Tx<i32>) {
+    let _ = moire::task::spawn(async move {
+        moire::time::sleep(std::time::Duration::from_millis(10)).await;
+        for i in 0..5 {
+            debug!(i, "post-reply sending value");
+            if let Err(e) = output.send(i).await {
+                error!(i, ?e, "post-reply send failed");
+                break;
+            }
+        }
+        output.close(Default::default()).await.ok();
+    });
+}
+
+pub async fn sum_post_reply_values(mut input: Rx<i32>, result: Tx<i64>) {
+    let _ = moire::task::spawn(async move {
+        let mut total: i64 = 0;
+        while let Ok(Some(n)) = input.recv().await {
+            let n = n.get();
+            debug!(n = *n, total, "post-reply received number");
+            total += *n as i64;
+        }
+        if let Err(e) = result.send(total).await {
+            error!(total, ?e, "post-reply result send failed");
+        }
+        result.close(Default::default()).await.ok();
+    });
+}
+
 impl Testbed for TestbedService {
     #[instrument(skip(self))]
     async fn echo(&self, message: String) -> String {
@@ -111,6 +140,18 @@ impl Testbed for TestbedService {
             let _ = output.send(s.clone()).await;
         }
         output.close(Default::default()).await.ok();
+    }
+
+    #[instrument(skip(self, output))]
+    async fn post_reply_generate(&self, output: Tx<i32>) {
+        info!("post_reply_generate called");
+        stream_post_reply_values(output).await;
+    }
+
+    #[instrument(skip(self, input, result))]
+    async fn post_reply_sum(&self, input: Rx<i32>, result: Tx<i64>) {
+        info!("post_reply_sum called");
+        sum_post_reply_values(input, result).await;
     }
 
     async fn echo_point(&self, point: Point) -> Point {

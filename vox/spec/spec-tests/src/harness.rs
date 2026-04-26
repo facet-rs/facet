@@ -474,6 +474,30 @@ impl Testbed for TestbedService {
         output.close(Default::default()).await.ok();
     }
 
+    async fn post_reply_generate(&self, output: Tx<i32>) {
+        spawn_loud(async move {
+            moire::time::sleep(Duration::from_millis(10)).await;
+            for i in 0..5 {
+                if output.send(i).await.is_err() {
+                    break;
+                }
+            }
+            output.close(Default::default()).await.ok();
+        });
+    }
+
+    async fn post_reply_sum(&self, mut input: Rx<i32>, result: Tx<i64>) {
+        spawn_loud(async move {
+            let mut total: i64 = 0;
+            while let Ok(Some(n)) = input.recv().await {
+                let n = n.get();
+                total += *n as i64;
+            }
+            let _ = result.send(total).await;
+            result.close(Default::default()).await.ok();
+        });
+    }
+
     async fn echo_point(&self, point: Point) -> Point {
         point
     }

@@ -497,6 +497,67 @@ async fn run_client() -> Result<(), String> {
             }
             info!("transform_bidi OK");
         }
+        "post_reply_generate" => {
+            let (tx, mut rx) = vox::channel::<i32>();
+
+            client
+                .post_reply_generate(tx)
+                .await
+                .map_err(|e| format!("post_reply_generate failed: {e:?}"))?;
+
+            let mut received = Vec::new();
+            while let Ok(Some(n)) = rx.recv().await {
+                let n = n.get();
+                received.push(*n);
+            }
+
+            let expected: Vec<i32> = (0..5).collect();
+            if received != expected {
+                return Err(format!(
+                    "post_reply_generate: expected {expected:?}, got {received:?}"
+                ));
+            }
+            info!("post_reply_generate OK");
+        }
+        "post_reply_sum" => {
+            let (input_tx, input_rx) = vox::channel::<i32>();
+            let (result_tx, mut result_rx) = vox::channel::<i64>();
+
+            client
+                .post_reply_sum(input_rx, result_tx)
+                .await
+                .map_err(|e| format!("post_reply_sum failed: {e:?}"))?;
+
+            for n in [1i32, 2, 3, 4, 5] {
+                input_tx.send(n).await.unwrap();
+            }
+            input_tx.close(Default::default()).await.unwrap();
+
+            let total = match result_rx.recv().await {
+                Ok(Some(total)) => *total.get(),
+                Ok(None) => {
+                    return Err("post_reply_sum: result channel closed without a value".to_string());
+                }
+                Err(e) => return Err(format!("post_reply_sum result recv failed: {e}")),
+            };
+
+            if total != 15 {
+                return Err(format!("post_reply_sum: expected 15, got {total}"));
+            }
+
+            match result_rx.recv().await {
+                Ok(None) => {}
+                Ok(Some(extra)) => {
+                    return Err(format!(
+                        "post_reply_sum: expected result channel close, got extra value {}",
+                        *extra.get()
+                    ));
+                }
+                Err(e) => return Err(format!("post_reply_sum result close recv failed: {e}")),
+            }
+
+            info!("post_reply_sum OK");
+        }
         "shape_area" => {
             use spec_proto::Shape;
             let area = client
