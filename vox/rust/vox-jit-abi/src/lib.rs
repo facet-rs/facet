@@ -167,20 +167,14 @@ impl DecodeReturn {
 /// [`DecodeReturn`]). The stub does NOT update `ctx.consumed` itself on the
 /// fast path; the caller is responsible for storing the returned consumed
 /// back into `ctx` if any helper that reads `ctx.consumed` is invoked next.
-pub type OwnedDecodeFn = unsafe extern "C" fn(
-    ctx: *mut DecodeCtx,
-    out_ptr: *mut u8,
-    consumed: usize,
-) -> DecodeReturn;
+pub type OwnedDecodeFn =
+    unsafe extern "C" fn(ctx: *mut DecodeCtx, out_ptr: *mut u8, consumed: usize) -> DecodeReturn;
 
 /// Borrowed-decode stub type: same as owned but the written value may contain
 /// pointers into `ctx.input_ptr`. Lifetime correctness is the caller's
 /// responsibility via surrounding Rust wrapper types.
-pub type BorrowedDecodeFn = unsafe extern "C" fn(
-    ctx: *mut DecodeCtx,
-    out_ptr: *mut u8,
-    consumed: usize,
-) -> DecodeReturn;
+pub type BorrowedDecodeFn =
+    unsafe extern "C" fn(ctx: *mut DecodeCtx, out_ptr: *mut u8, consumed: usize) -> DecodeReturn;
 
 // ---------------------------------------------------------------------------
 // Runtime helpers — called by generated stubs via stable extern "C" symbols
@@ -391,9 +385,10 @@ fn scan_rust_alloc_x86_64_linux() -> usize {
              {} and {i}); compiler layout must have changed and \
              we can no longer reliably extract __rust_alloc",
             // Re-scan for the previous offset to include in the message.
-            (0..i).rev().find(|&j| unsafe {
-                body.add(j).read() == 0xff && body.add(j + 1).read() == 0x25
-            }).unwrap_or(0)
+            (0..i)
+                .rev()
+                .find(|&j| unsafe { body.add(j).read() == 0xff && body.add(j + 1).read() == 0x25 })
+                .unwrap_or(0)
         );
 
         found = Some(addr);
@@ -422,9 +417,10 @@ fn scan_rust_alloc_aarch64_darwin() -> usize {
     // The compiler may emit this triplet inside `vox_jit_alloc` directly,
     // or emit `b <stub>` with the triplet living at the stub address. We
     // handle both: scan up to 64 instructions of `vox_jit_alloc`, find a
-    // `br x16`, and walk back two instructions for the adrp/ldr pair.
-    // If no `br x16` shows up, panic with enough context for the user to
-    // tell us what the actual layout is.
+    // `br x16`, and walk back two instructions for the adrp/ldr pair. If
+    // the body contains a direct unconditional tail `b` out of the scanned
+    // function body, follow it once and scan the branch target as the
+    // allocator stub.
     //
     // BLIND IMPLEMENTATION: this has not yet been validated on a real
     // mac. If the panic fires, the message includes the offending bytes
@@ -435,6 +431,9 @@ fn scan_rust_alloc_aarch64_darwin() -> usize {
     // Encoding constants.
     // br x16 = 0b1101_0110_0001_1111_0000_0010_0000_0000 = 0xD61F0200
     const BR_X16: u32 = 0xD61F0200;
+    // b imm26 has fixed top six bits 000101.
+    const B_MASK: u32 = 0xFC00_0000;
+    const B_PAT: u32 = 0x1400_0000;
     // adrp x16, ... has fixed bits: top bit 1, bits 28-24 = 10000, Rd = 16.
     //   mask:    0b1001_1111_0000_0000_0000_0000_0001_1111 = 0x9F00001F
     //   pattern: 0b1001_0000_0000_0000_0000_0000_0001_0000 = 0x90000010
@@ -448,94 +447,137 @@ fn scan_rust_alloc_aarch64_darwin() -> usize {
     const LDR_X16_MASK: u32 = 0xFFC003FF;
     const LDR_X16_PAT: u32 = 0xF9400210;
 
-    let mut found: Option<usize> = None;
-    for i in 0..SCAN_INSNS {
-        let insn = unsafe { body.add(i).read() };
-        if insn != BR_X16 {
-            continue;
+    let scan_region = |region_base: *const u32, region_name: &str| -> Option<usize> {
+        let mut found: Option<usize> = None;
+        for i in 0..SCAN_INSNS {
+            let insn = unsafe { region_base.add(i).read() };
+            if insn != BR_X16 {
+                continue;
+            }
+            assert!(
+                i >= 2,
+                "vox_jit_abi: aarch64-darwin: found `br x16` in {region_name} \
+                 at insn offset {i} with fewer than two preceding instructions; \
+                 can't decode adrp/ldr GOT load"
+            );
+            let ldr = unsafe { region_base.add(i - 1).read() };
+            let adrp = unsafe { region_base.add(i - 2).read() };
+
+            assert!(
+                (ldr & LDR_X16_MASK) == LDR_X16_PAT,
+                "vox_jit_abi: aarch64-darwin: instruction before `br x16` in \
+                 {region_name} at offset {} is 0x{ldr:08x}, not the expected \
+                 `ldr x16, [x16, #imm12]` (mask 0x{LDR_X16_MASK:08x} expected \
+                 pattern 0x{LDR_X16_PAT:08x}). Compiler layout has diverged \
+                 from the model — please report.",
+                i - 1
+            );
+            assert!(
+                (adrp & ADRP_X16_MASK) == ADRP_X16_PAT,
+                "vox_jit_abi: aarch64-darwin: instruction two before `br x16` \
+                 in {region_name} at offset {} is 0x{adrp:08x}, not the expected \
+                 `adrp x16, ...` (mask 0x{ADRP_X16_MASK:08x} expected \
+                 pattern 0x{ADRP_X16_PAT:08x}). Compiler layout has diverged \
+                 from the model — please report.",
+                i - 2
+            );
+
+            // Decode adrp imm21 (signed, in pages of 4096 bytes).
+            let immlo = ((adrp >> 29) & 0x3) as u64;
+            let immhi = ((adrp >> 5) & 0x7_FFFF) as u64;
+            let imm21 = (immhi << 2) | immlo;
+            // Sign-extend 21 bits to 64.
+            let sign_bit = 1u64 << 20;
+            let imm21_se = if imm21 & sign_bit != 0 {
+                (imm21 | !((1u64 << 21) - 1)) as i64
+            } else {
+                imm21 as i64
+            };
+            let page_offset_bytes: i64 = imm21_se << 12;
+
+            let adrp_pc = unsafe { region_base.add(i - 2) } as usize;
+            let page_addr = (adrp_pc & !0xFFF).wrapping_add_signed(page_offset_bytes as isize);
+
+            // Decode ldr imm12 (scaled by 8 for 64-bit Xt).
+            let imm12 = ((ldr >> 10) & 0xFFF) as usize;
+            let load_offset = imm12 * 8;
+
+            let got_entry = page_addr.wrapping_add(load_offset);
+            let addr = unsafe { (got_entry as *const usize).read() };
+
+            assert!(
+                addr != 0,
+                "vox_jit_abi: aarch64-darwin: GOT entry pointed to by adrp/ldr \
+                 pair in {region_name} at insn offsets {}/{} is null",
+                i - 2,
+                i - 1
+            );
+            assert!(
+                found.is_none(),
+                "vox_jit_abi: aarch64-darwin: more than one `br x16` in \
+                 {region_name} — compiler layout has diverged"
+            );
+
+            found = Some(addr);
         }
-        assert!(
-            i >= 2,
-            "vox_jit_abi: aarch64-darwin: found `br x16` at insn offset {i} \
-             with fewer than two preceding instructions; can't decode \
-             adrp/ldr GOT load"
-        );
-        let ldr = unsafe { body.add(i - 1).read() };
-        let adrp = unsafe { body.add(i - 2).read() };
 
-        assert!(
-            (ldr & LDR_X16_MASK) == LDR_X16_PAT,
-            "vox_jit_abi: aarch64-darwin: instruction before `br x16` at \
-             offset {} is 0x{ldr:08x}, not the expected \
-             `ldr x16, [x16, #imm12]` (mask 0x{LDR_X16_MASK:08x} expected \
-             pattern 0x{LDR_X16_PAT:08x}). Compiler layout has diverged \
-             from the model — please report.",
-            i - 1
-        );
-        assert!(
-            (adrp & ADRP_X16_MASK) == ADRP_X16_PAT,
-            "vox_jit_abi: aarch64-darwin: instruction two before `br x16` \
-             at offset {} is 0x{adrp:08x}, not the expected \
-             `adrp x16, ...` (mask 0x{ADRP_X16_MASK:08x} expected \
-             pattern 0x{ADRP_X16_PAT:08x}). Compiler layout has diverged \
-             from the model — please report.",
-            i - 2
-        );
+        found
+    };
 
-        // Decode adrp imm21 (signed, in pages of 4096 bytes).
-        let immlo = ((adrp >> 29) & 0x3) as u64;
-        let immhi = ((adrp >> 5) & 0x7_FFFF) as u64;
-        let imm21 = (immhi << 2) | immlo;
-        // Sign-extend 21 bits to 64.
-        let sign_bit = 1u64 << 20;
-        let imm21_se = if imm21 & sign_bit != 0 {
-            (imm21 | !((1u64 << 21) - 1)) as i64
-        } else {
-            imm21 as i64
-        };
-        let page_offset_bytes: i64 = imm21_se << 12;
-
-        let adrp_pc = unsafe { body.add(i - 2) } as usize;
-        let page_addr = (adrp_pc & !0xFFF).wrapping_add_signed(page_offset_bytes as isize);
-
-        // Decode ldr imm12 (scaled by 8 for 64-bit Xt).
-        let imm12 = ((ldr >> 10) & 0xFFF) as usize;
-        let load_offset = imm12 * 8;
-
-        let got_entry = page_addr.wrapping_add(load_offset);
-        let addr = unsafe { (got_entry as *const usize).read() };
-
-        assert!(
-            addr != 0,
-            "vox_jit_abi: aarch64-darwin: GOT entry pointed to by adrp/ldr \
-             pair at insn offsets {}/{} is null",
-            i - 2,
-            i - 1
-        );
-        assert!(
-            found.is_none(),
-            "vox_jit_abi: aarch64-darwin: more than one `br x16` in \
-             vox_jit_alloc body — compiler layout has diverged"
-        );
-
-        found = Some(addr);
+    if let Some(addr) = scan_region(body, "vox_jit_alloc body") {
+        return addr;
     }
 
-    found.unwrap_or_else(|| {
-        // Dump the first 16 instructions for diagnostic.
-        let mut dump = String::new();
-        for i in 0..SCAN_INSNS.min(16) {
-            let insn = unsafe { body.add(i).read() };
-            dump.push_str(&format!("  [{i:2}] 0x{insn:08x}\n"));
+    for i in 0..SCAN_INSNS {
+        let insn = unsafe { body.add(i).read() };
+        if (insn & B_MASK) != B_PAT {
+            continue;
         }
-        panic!(
-            "vox_jit_abi: aarch64-darwin: no `br x16` instruction found in \
-             vox_jit_alloc body within first {SCAN_INSNS} instructions. \
-             Either the compiler emitted a `b <stub>` direct branch (we \
-             don't yet follow stubs on aarch64) or vox_jit_alloc was \
-             inlined. First 16 instructions:\n{dump}"
-        )
-    })
+
+        // Decode b imm26 (signed, in words of 4 bytes), relative to this insn.
+        let imm26 = (insn & 0x03FF_FFFF) as u64;
+        let sign_bit = 1u64 << 25;
+        let imm26_se = if imm26 & sign_bit != 0 {
+            (imm26 | !((1u64 << 26) - 1)) as i64
+        } else {
+            imm26 as i64
+        };
+        let branch_offset_bytes = imm26_se << 2;
+        let branch_pc = unsafe { body.add(i) } as usize;
+        let target_addr = branch_pc.wrapping_add_signed(branch_offset_bytes as isize);
+        let body_start = body as usize;
+        let body_end = body_start + SCAN_INSNS * core::mem::size_of::<u32>();
+
+        // Ignore local control-flow branches inside `vox_jit_alloc` itself.
+        // Only an out-of-body direct branch can be the allocator tail call.
+        if (body_start..body_end).contains(&target_addr) {
+            continue;
+        }
+
+        let target = target_addr as *const u32;
+
+        if let Some(addr) = scan_region(target, "vox_jit_alloc direct branch target") {
+            return addr;
+        }
+
+        // On Darwin the linker may encode the tail call as a direct branch to
+        // `__rust_alloc` itself rather than a branch to a GOT-loading stub. In
+        // that case the branch target is already the allocator entry.
+        return target as usize;
+    }
+
+    // Dump the first 16 instructions for diagnostic.
+    let mut dump = String::new();
+    for i in 0..SCAN_INSNS.min(16) {
+        let insn = unsafe { body.add(i).read() };
+        dump.push_str(&format!("  [{i:2}] 0x{insn:08x}\n"));
+    }
+    panic!(
+        "vox_jit_abi: aarch64-darwin: no `br x16` instruction found in \
+         vox_jit_alloc body or direct branch target within first {SCAN_INSNS} \
+         instructions. Either the compiler changed code layout, or \
+         vox_jit_alloc was inlined. First 16 instructions:\n{dump}"
+    )
 }
 
 /// Allocate a single `T`-sized heap slot for a `Box<T>` and write the pointer
@@ -664,7 +706,6 @@ pub unsafe extern "C" fn vox_jit_validate_bools(bytes: *const u8, len: usize) ->
         DecodeStatus::Ok
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // Encode context

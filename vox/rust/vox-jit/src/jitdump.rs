@@ -1,28 +1,37 @@
-//! Jitdump emitter for `perf` integration.
+//! Jitdump emitter for profiler integration.
 //!
 //! Writes `/tmp/jit-<pid>.dump` in the format documented by
-//! `linux/tools/perf/Documentation/jitdump-specification.txt`. Together with an
-//! executable `mmap` of the file, this lets `perf record -k mono` capture the
-//! mapping and `perf inject --jit` extract per-function ELF objects so
-//! `perf annotate` can show disassembly of Cranelift-compiled functions.
+//! `linux/tools/perf/Documentation/jitdump-specification.txt`.
 //!
-//! Activated by `VOX_JIT_PERF=1`. No-op on non-Linux targets.
+//! On Linux, we also keep an executable `mmap` of the jitdump file alive. This
+//! is the marker `perf record -k mono` uses to associate the dump with the
+//! process.
+//!
+//! On macOS, `nperf`'s preload detects the file directly, so we only emit the
+//! file and records. We intentionally do *not* try to `mmap(PROT_EXEC)` the
+//! jitdump file on Darwin: hardened-runtime / code-signing policy can reject
+//! arbitrary executable mappings from `/tmp`, and the mapping is unnecessary
+//! for nperf's file-interposition path.
+//!
+//! Activated by `VOX_JIT_PERF=1`. Emits jitdump records on Linux and macOS;
+//! no-op elsewhere.
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub fn record_load(_name: &str, _code_addr: *const u8, _code_size: u32) {}
 
-#[cfg(target_os = "linux")]
-pub use linux::record_load;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use platform::record_load;
 
-#[cfg(target_os = "linux")]
-mod linux {
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod platform {
     use std::ffi::CString;
     use std::fs::{File, OpenOptions};
     use std::io::Write;
+    #[cfg(target_os = "linux")]
     use std::os::unix::io::AsRawFd;
     use std::sync::{Mutex, OnceLock};
 
-    const JITDUMP_MAGIC: u32 = 0x4A695444; // "JiTD"
+    const JITDUMP_MAGIC: u32 = 0x4A69_5444; // "JiTD"
     const JITDUMP_VERSION: u32 = 1;
     const JIT_CODE_LOAD: u32 = 0;
 
@@ -35,16 +44,17 @@ mod linux {
 
     struct Dump {
         file: File,
-        // mmap kept alive for the lifetime of the process; perf needs the
-        // executable mmap event in its recording to associate the file with
-        // this pid.
+        // Linux perf needs this executable mmap event to associate the jitdump
+        // file with the process. macOS nperf discovers the file directly.
+        #[cfg(target_os = "linux")]
         _mmap_addr: *mut libc::c_void,
+        #[cfg(target_os = "linux")]
         _mmap_len: usize,
         code_index: u64,
     }
 
-    // SAFETY: the raw mmap pointer is never dereferenced from Rust; it's only
-    // held to keep the mapping alive (and thus visible to perf).
+    // SAFETY: the raw mmap pointer is never dereferenced from Rust; on Linux it
+    // is only held to keep the mapping alive for perf.
     unsafe impl Send for Dump {}
 
     impl Dump {
@@ -69,27 +79,38 @@ mod linux {
             // flags = 0
             (&file).write_all(&hdr)?;
 
-            let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
-            let addr = unsafe {
-                libc::mmap(
-                    std::ptr::null_mut(),
-                    page,
-                    libc::PROT_READ | libc::PROT_EXEC,
-                    libc::MAP_PRIVATE,
-                    file.as_raw_fd(),
-                    0,
-                )
-            };
-            if addr == libc::MAP_FAILED {
-                return Err(std::io::Error::last_os_error());
+            #[cfg(target_os = "linux")]
+            {
+                let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
+                let addr = unsafe {
+                    libc::mmap(
+                        std::ptr::null_mut(),
+                        page,
+                        libc::PROT_READ | libc::PROT_EXEC,
+                        libc::MAP_PRIVATE,
+                        file.as_raw_fd(),
+                        0,
+                    )
+                };
+                if addr == libc::MAP_FAILED {
+                    return Err(std::io::Error::last_os_error());
+                }
+
+                return Ok(Self {
+                    file,
+                    _mmap_addr: addr,
+                    _mmap_len: page,
+                    code_index: 0,
+                });
             }
 
-            Ok(Self {
-                file,
-                _mmap_addr: addr,
-                _mmap_len: page,
-                code_index: 0,
-            })
+            #[cfg(target_os = "macos")]
+            {
+                Ok(Self {
+                    file,
+                    code_index: 0,
+                })
+            }
         }
 
         fn record_load(
@@ -100,10 +121,11 @@ mod linux {
         ) -> std::io::Result<()> {
             let cname = CString::new(name).unwrap_or_else(|_| CString::new("vox_jit").unwrap());
             let name_bytes = cname.as_bytes_with_nul();
-            // 16-byte record prefix + 40-byte load fields + name + code
+
+            // 16-byte record prefix + 40-byte load fields + name + code.
             let total = 16 + 40 + name_bytes.len() + code_size as usize;
             let pid = unsafe { libc::getpid() } as u32;
-            let tid = unsafe { libc::syscall(libc::SYS_gettid) } as u32;
+            let tid = current_tid();
 
             let mut buf = Vec::with_capacity(total);
             buf.extend_from_slice(&JIT_CODE_LOAD.to_ne_bytes());
@@ -116,12 +138,29 @@ mod linux {
             buf.extend_from_slice(&code_size.to_ne_bytes());
             buf.extend_from_slice(&self.code_index.to_ne_bytes());
             buf.extend_from_slice(name_bytes);
-            let code_slice = unsafe {
-                std::slice::from_raw_parts(code_addr as *const u8, code_size as usize)
-            };
+
+            let code_slice =
+                unsafe { std::slice::from_raw_parts(code_addr as *const u8, code_size as usize) };
             buf.extend_from_slice(code_slice);
+
             self.code_index += 1;
             (&self.file).write_all(&buf)
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn current_tid() -> u32 {
+        unsafe { libc::syscall(libc::SYS_gettid) as u32 }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn current_tid() -> u32 {
+        let mut tid = 0u64;
+        let rc = unsafe { libc::pthread_threadid_np(0, &mut tid) };
+        if rc == 0 {
+            u32::try_from(tid).unwrap_or_else(|_| unsafe { libc::getpid() as u32 })
+        } else {
+            unsafe { libc::getpid() as u32 }
         }
     }
 
@@ -157,6 +196,7 @@ mod linux {
         if code_size == 0 || code_addr.is_null() {
             return;
         }
+
         if let Some(m) = dump() {
             if let Ok(mut d) = m.lock() {
                 let _ = d.record_load(name, code_addr as u64, code_size as u64);
