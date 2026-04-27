@@ -278,6 +278,17 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
         self
     }
 
+    /// Disable session resumability. Useful for IPC transports where
+    /// the peer is a process: when the process exits the connection
+    /// is gone for good, there's nothing to resume against, and
+    /// keeping the session alive in recovery mode just leaks
+    /// per-channel state (e.g. server-side `Tx<T>`s never observing
+    /// that the client disconnected).
+    pub fn non_resumable(mut self) -> Self {
+        self.config.resumable = false;
+        self
+    }
+
     pub fn operation_store(mut self, operation_store: Arc<dyn OperationStore>) -> Self {
         self.config.operation_store = Some(operation_store);
         self
