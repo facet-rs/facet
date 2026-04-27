@@ -8,8 +8,8 @@ use vox_types::{
     Backing, ChannelBody, ChannelClose, ChannelGrantCredit, ChannelId, ChannelItem, ChannelMessage,
     ChannelSink, ConnectionSettings, HandshakeResult, IncomingChannelMessage, Message,
     MessagePayload, Metadata, MetadataEntry, MethodId, Parity, Payload, RequestBody, RequestCall,
-    RequestCancel, RequestMessage, RequestResponse, RetryPolicy, SelfRef, SessionRole, VoxError,
-    channel, ensure_operation_id,
+    RequestCancel, RequestMessage, RequestResponse, RetryPolicy, Rx, SelfRef, SessionRole, Tx,
+    VoxError, channel, ensure_operation_id,
 };
 
 use super::utils::*;
@@ -1502,6 +1502,69 @@ async fn grant_credit_unblocks_driver_created_tx_channel() {
     assert!(
         send_result.is_ok(),
         "send should succeed after credit grant"
+    );
+}
+
+// r[verify rpc.channel.reset]
+#[tokio::test]
+async fn dropping_bound_rx_makes_peer_tx_send_fail() {
+    let (client_conduit, server_conduit) = message_conduit_pair();
+
+    let server_task = moire::task::spawn(
+        async move {
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
+                .establish::<NoopClient>()
+                .await
+                .expect("server handshake failed")
+        }
+        .named("server_setup"),
+    );
+
+    let client_caller = initiator_conduit(client_conduit, test_initiator_handshake())
+        .establish::<NoopClient>()
+        .await
+        .expect("client handshake failed");
+
+    let server_caller = server_task.await.expect("server setup failed");
+    let (channel_id, sink) = server_caller.caller.driver().create_tx_channel();
+
+    let mut server_tx = Tx::<u32>::unbound();
+    let sink: Arc<dyn ChannelSink> = sink;
+    server_tx.bind(sink);
+
+    let mut client_rx: Rx<u32> =
+        vox_types::channel::with_channel_binder(client_caller.caller.driver(), || {
+            channel_id.try_into().expect("bind client rx")
+        });
+
+    server_tx
+        .send(1_u32)
+        .await
+        .expect("initial send should succeed");
+    let received = client_rx
+        .recv()
+        .await
+        .expect("recv should succeed")
+        .expect("expected initial item");
+    assert_eq!(*received.get(), 1);
+
+    drop(client_rx);
+
+    let mut observed_error = false;
+    for i in 0_u32..100 {
+        match tokio::time::timeout(Duration::from_millis(500), server_tx.send(i)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => {
+                observed_error = true;
+                break;
+            }
+            Err(_) => panic!("send timed out instead of observing dropped Rx"),
+        }
+    }
+
+    assert!(
+        observed_error,
+        "server Tx should fail after peer Rx is dropped"
     );
 }
 

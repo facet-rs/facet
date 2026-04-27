@@ -77,6 +77,8 @@ pub type ChannelLivenessHandle = Arc<dyn ChannelLiveness>;
 
 pub trait ChannelCreditReplenisher: crate::MaybeSend + crate::MaybeSync + 'static {
     fn on_item_consumed(&self);
+
+    fn on_receiver_dropped(&self) {}
 }
 
 pub type ChannelCreditReplenisherHandle = Arc<dyn ChannelCreditReplenisher>;
@@ -96,6 +98,7 @@ pub struct BoundChannelReceiver {
 struct LogicalReceiverState {
     generation: u64,
     liveness: Option<ChannelLivenessHandle>,
+    replenisher: Option<ChannelCreditReplenisherHandle>,
     sender: Option<mpsc::Sender<LogicalIncomingChannelMessage>>,
     receiver: Option<mpsc::Receiver<LogicalIncomingChannelMessage>>,
 }
@@ -168,12 +171,14 @@ impl ChannelCore {
             LogicalReceiverState {
                 generation: 0,
                 liveness: None,
+                replenisher: None,
                 sender: Some(tx),
                 receiver: Some(rx),
             }
         });
         state.generation = state.generation.wrapping_add(1);
         state.liveness = bound.liveness.clone();
+        state.replenisher = bound.replenisher.clone();
         let generation = state.generation;
 
         let Some(sender) = state.sender.clone() else {
@@ -218,6 +223,7 @@ impl ChannelCore {
     ) -> Option<(
         mpsc::Receiver<LogicalIncomingChannelMessage>,
         Option<ChannelLivenessHandle>,
+        Option<ChannelCreditReplenisherHandle>,
     )> {
         self.logical_receiver
             .lock()
@@ -227,7 +233,7 @@ impl ChannelCore {
                 state
                     .receiver
                     .take()
-                    .map(|receiver| (receiver, state.liveness.clone()))
+                    .map(|receiver| (receiver, state.liveness.clone(), state.replenisher.clone()))
             })
     }
 
@@ -687,6 +693,8 @@ pub struct Rx<T> {
     pub(crate) liveness: LivenessSlot,
     pub(crate) replenisher: ReplenisherSlot,
     #[facet(opaque)]
+    closed: AtomicBool,
+    #[facet(opaque)]
     _marker: PhantomData<T>,
 }
 
@@ -700,6 +708,7 @@ impl<T> Rx<T> {
             core: CoreSlot::empty(),
             liveness: LivenessSlot::empty(),
             replenisher: ReplenisherSlot::empty(),
+            closed: AtomicBool::new(false),
             _marker: PhantomData,
         }
     }
@@ -713,6 +722,7 @@ impl<T> Rx<T> {
             core: CoreSlot { inner: Some(core) },
             liveness: LivenessSlot::empty(),
             replenisher: ReplenisherSlot::empty(),
+            closed: AtomicBool::new(false),
             _marker: PhantomData,
         }
     }
@@ -734,10 +744,11 @@ impl<T> Rx<T> {
         loop {
             if self.logical_receiver.inner.is_none()
                 && let Some(core) = &self.core.inner
-                && let Some((receiver, liveness)) = core.take_logical_receiver()
+                && let Some((receiver, liveness, replenisher)) = core.take_logical_receiver()
             {
                 self.logical_receiver.inner = Some(receiver);
                 self.liveness.inner = liveness;
+                self.replenisher.inner = replenisher;
             }
 
             if let Some(receiver) = self.logical_receiver.inner.as_mut() {
@@ -746,11 +757,17 @@ impl<T> Rx<T> {
                         msg: IncomingChannelMessage::Close(_),
                         ..
                     })
-                    | None => return Ok(None),
+                    | None => {
+                        self.closed.store(true, Ordering::Release);
+                        return Ok(None);
+                    }
                     Some(LogicalIncomingChannelMessage {
                         msg: IncomingChannelMessage::Reset(_),
                         ..
-                    }) => return Err(RxError::Reset),
+                    }) => {
+                        self.closed.store(true, Ordering::Release);
+                        return Err(RxError::Reset);
+                    }
                     Some(LogicalIncomingChannelMessage {
                         msg: IncomingChannelMessage::Item(msg),
                         replenisher,
@@ -787,8 +804,14 @@ impl<T> Rx<T> {
 
             if let Some(receiver) = self.receiver.inner.as_mut() {
                 return match receiver.recv().await {
-                    Some(IncomingChannelMessage::Close(_)) | None => Ok(None),
-                    Some(IncomingChannelMessage::Reset(_)) => Err(RxError::Reset),
+                    Some(IncomingChannelMessage::Close(_)) | None => {
+                        self.closed.store(true, Ordering::Release);
+                        Ok(None)
+                    }
+                    Some(IncomingChannelMessage::Reset(_)) => {
+                        self.closed.store(true, Ordering::Release);
+                        Err(RxError::Reset)
+                    }
                     Some(IncomingChannelMessage::Item(msg)) => {
                         let value = msg
                             .try_repack(|item, _backing_bytes| {
@@ -833,6 +856,29 @@ impl<T> Rx<T> {
         self.logical_receiver.inner = None;
         self.liveness.inner = liveness;
         self.replenisher.inner = None;
+        self.closed.store(false, Ordering::Release);
+    }
+}
+
+impl<T> Drop for Rx<T> {
+    fn drop(&mut self) {
+        if self.closed.swap(true, Ordering::AcqRel) {
+            return;
+        }
+
+        if self.replenisher.inner.is_none()
+            && let Some(core) = &self.core.inner
+        {
+            if let Some((_receiver, _liveness, replenisher)) = core.take_logical_receiver() {
+                self.replenisher.inner = replenisher;
+            } else if let Some(bound) = core.take_receiver() {
+                self.replenisher.inner = bound.replenisher;
+            }
+        }
+
+        if let Some(replenisher) = &self.replenisher.inner {
+            replenisher.on_receiver_dropped();
+        }
     }
 }
 
@@ -988,12 +1034,14 @@ mod tests {
 
     struct CountingReplenisher {
         calls: AtomicUsize,
+        dropped: AtomicUsize,
     }
 
     impl CountingReplenisher {
         fn new() -> Self {
             Self {
                 calls: AtomicUsize::new(0),
+                dropped: AtomicUsize::new(0),
             }
         }
     }
@@ -1001,6 +1049,10 @@ mod tests {
     impl ChannelCreditReplenisher for CountingReplenisher {
         fn on_item_consumed(&self) {
             self.calls.fetch_add(1, Ordering::AcqRel);
+        }
+
+        fn on_receiver_dropped(&self) {
+            self.dropped.fetch_add(1, Ordering::AcqRel);
         }
     }
 
@@ -1151,6 +1203,60 @@ mod tests {
             .expect("expected item");
         assert_eq!(*value.get(), 123_u32);
         assert_eq!(replenisher.calls.load(Ordering::Acquire), 1);
+    }
+
+    #[test]
+    fn rx_drop_notifies_replenisher() {
+        let (_tx, rx_inner) = mpsc::channel("vox_types.channel.test.rx_drop", 1);
+        let replenisher = Arc::new(CountingReplenisher::new());
+        let mut rx = Rx::<u32>::unbound();
+        rx.bind(rx_inner);
+        rx.replenisher.inner = Some(replenisher.clone());
+
+        drop(rx);
+
+        assert_eq!(replenisher.dropped.load(Ordering::Acquire), 1);
+    }
+
+    #[tokio::test]
+    async fn rx_drop_after_close_does_not_notify_replenisher() {
+        let (tx, rx_inner) = mpsc::channel("vox_types.channel.test.rx_drop_closed", 1);
+        let replenisher = Arc::new(CountingReplenisher::new());
+        let mut rx = Rx::<u32>::unbound();
+        rx.bind(rx_inner);
+        rx.replenisher.inner = Some(replenisher.clone());
+
+        let close = SelfRef::owning(
+            Backing::Boxed(Box::<[u8]>::default()),
+            ChannelClose {
+                metadata: Metadata::default(),
+            },
+        );
+        tx.send(IncomingChannelMessage::Close(close))
+            .await
+            .expect("send close");
+
+        assert!(rx.recv().await.expect("recv should succeed").is_none());
+        drop(rx);
+
+        assert_eq!(replenisher.dropped.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn logical_rx_drop_notifies_replenisher() {
+        let (_tx, rx_inner) = mpsc::channel("vox_types.channel.test.logical_rx_drop", 1);
+        let replenisher = Arc::new(CountingReplenisher::new());
+        let core = Arc::new(ChannelCore::new());
+        core.bind_retryable_receiver(BoundChannelReceiver {
+            receiver: rx_inner,
+            liveness: None,
+            replenisher: Some(replenisher.clone()),
+        });
+
+        let rx = Rx::<u32>::paired(core);
+        drop(rx);
+
+        assert_eq!(replenisher.dropped.load(Ordering::Acquire), 1);
     }
 
     #[tokio::test]
