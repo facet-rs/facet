@@ -29,9 +29,8 @@ use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module};
 
 use vox_jit_abi::{
-    BorrowedDecodeFn, DecodeCtx, DecodeStatus, EncodeCtx, EncodeFn, OwnedDecodeFn,
-    vox_jit_alloc, vox_jit_box_alloc, vox_jit_box_slice_alloc, vox_jit_buf_grow,
-    vox_jit_string_alloc,
+    BorrowedDecodeFn, DecodeCtx, DecodeStatus, EncodeCtx, EncodeFn, OwnedDecodeFn, vox_jit_alloc,
+    vox_jit_box_alloc, vox_jit_box_slice_alloc, vox_jit_buf_grow, vox_jit_string_alloc,
     vox_jit_utf8_validate, vox_jit_validate_bools, vox_jit_vec_alloc,
 };
 use vox_jit_cal::{
@@ -58,10 +57,8 @@ use vox_postcard::ir::{
 ///     stack;
 ///   - falling through to `vox_jit_encode_shape` — when the child isn't in
 ///     the map at all (runtime fallback path).
-pub type ChildEncoderMap = std::collections::HashMap<
-    &'static facet_core::Shape,
-    &'static crate::cache::CompiledEncoder,
->;
+pub type ChildEncoderMap =
+    std::collections::HashMap<&'static facet_core::Shape, &'static crate::cache::CompiledEncoder>;
 
 /// Walk an `EncodeProgram` and collect every distinct `WriteShape` child
 /// shape. Used by the runtime to pre-compile nested encoders before the
@@ -560,10 +557,7 @@ impl<'a, 'b> EmitCtx<'a, 'b> {
     /// Build the packed `DecodeReturn` u64: `(status << 56) | (consumed & 0x00FF_FFFF_FFFF_FFFF)`.
     fn pack_decode_return(&mut self, status: i64, consumed: Value) -> Value {
         let status_v = self.b.ins().iconst(types::I64, status << 56);
-        let mask = self
-            .b
-            .ins()
-            .iconst(types::I64, 0x00FF_FFFF_FFFF_FFFF);
+        let mask = self.b.ins().iconst(types::I64, 0x00FF_FFFF_FFFF_FFFF);
         let consumed64 = if self.ptr_ty == types::I64 {
             consumed
         } else {
@@ -576,10 +570,7 @@ impl<'a, 'b> EmitCtx<'a, 'b> {
     fn pack_decode_return_values(&mut self, status: Value, consumed: Value) -> Value {
         let status64 = self.b.ins().uextend(types::I64, status);
         let status_shifted = self.b.ins().ishl_imm(status64, 56);
-        let mask = self
-            .b
-            .ins()
-            .iconst(types::I64, 0x00FF_FFFF_FFFF_FFFF);
+        let mask = self.b.ins().iconst(types::I64, 0x00FF_FFFF_FFFF_FFFF);
         let consumed64 = if self.ptr_ty == types::I64 {
             consumed
         } else {
@@ -643,19 +634,44 @@ impl<'a, 'b> EmitCtx<'a, 'b> {
 
     /// Read a postcard unsigned varint; return as I64.
     ///
-    /// Unrolled 10-byte varint decode. Each byte either terminates the varint
-    /// (MSB clear) or continues to the next byte (MSB set). All early-exit
-    /// paths jump to a single merge block that carries the result.
+    /// Unrolled 10-byte varint decode. Load `ctx.input_ptr` and
+    /// `ctx.input_len` once, use fixed offsets from the starting cursor, and
+    /// update `var_consumed` once when the varint terminates.
     fn read_varint_u64(&mut self) -> Result<Value, CodegenError> {
         let merge = self.fresh_block();
         self.b.append_block_param(merge, types::I64);
+        self.b.append_block_param(merge, self.ptr_ty);
 
+        let input_ptr = self.ctx_input_ptr();
+        let input_len = self.ctx_input_len();
+        let start = self.consumed();
+        let cursor = self.b.ins().iadd(input_ptr, start);
+        let remaining = self.b.ins().isub(input_len, start);
+
+        // Hot path: if at least the maximum u64 varint width remains, all byte
+        // loads below are in-bounds. This removes the per-byte EOF checks from
+        // the common full-buffer case; malformed/truncated tails still take the
+        // checked slow path.
+        let unchecked_block = self.fresh_block();
+        let checked_block = self.fresh_block();
+        let has_full_width =
+            self.b
+                .ins()
+                .icmp_imm(IntCC::UnsignedGreaterThanOrEqual, remaining, 10);
+        self.b
+            .ins()
+            .brif(has_full_width, unchecked_block, &[], checked_block, &[]);
+
+        self.b.switch_to_block(unchecked_block);
+        self.b.seal_block(unchecked_block);
         let zero = self.b.ins().iconst(types::I64, 0);
         let mut acc = zero;
 
         for shift in 0u32..10 {
-            let byte = self.read_byte()?;
-            let byte64 = self.b.ins().uextend(types::I64, byte);
+            let byte64 = self
+                .b
+                .ins()
+                .uload8(types::I64, MemFlags::trusted(), cursor, shift as i32);
             let low7 = self.b.ins().band_imm(byte64, 0x7F);
             let shifted = if shift == 0 {
                 low7
@@ -664,30 +680,110 @@ impl<'a, 'b> EmitCtx<'a, 'b> {
             };
             acc = self.b.ins().bor(acc, shifted);
 
+            let next_consumed = self.b.ins().iadd_imm(start, (shift + 1) as i64);
             let cont_bit = self.b.ins().band_imm(byte64, 0x80);
-            let has_more = self.b.ins().icmp_imm(IntCC::NotEqual, cont_bit, 0);
 
             if shift < 9 {
                 let cont_block = self.fresh_block();
-                // MSB clear → varint done, jump to merge with accumulated value.
-                // MSB set → read next byte.
+                self.b.ins().brif(
+                    cont_bit,
+                    cont_block,
+                    &[],
+                    merge,
+                    &[BlockArg::Value(acc), BlockArg::Value(next_consumed)],
+                );
+                self.b.switch_to_block(cont_block);
+                self.b.seal_block(cont_block);
+            } else {
+                let overflow_block = self.fresh_block();
+                self.b.ins().brif(
+                    cont_bit,
+                    overflow_block,
+                    &[],
+                    merge,
+                    &[BlockArg::Value(acc), BlockArg::Value(next_consumed)],
+                );
+                self.b.switch_to_block(overflow_block);
+                self.b.seal_block(overflow_block);
+                self.b.def_var(self.var_consumed, next_consumed);
+                self.return_err(DecodeStatus::VarintOverflow);
+            }
+        }
+
+        self.b.switch_to_block(checked_block);
+        self.b.seal_block(checked_block);
+        let zero = self.b.ins().iconst(types::I64, 0);
+        let mut acc = zero;
+
+        for shift in 0u32..10 {
+            let eof = if shift == 0 {
                 self.b
                     .ins()
-                    .brif(has_more, cont_block, &[], merge, &[BlockArg::Value(acc)]);
+                    .icmp(IntCC::UnsignedGreaterThanOrEqual, start, input_len)
+            } else {
+                self.b
+                    .ins()
+                    .icmp_imm(IntCC::UnsignedLessThanOrEqual, remaining, shift as i64)
+            };
+
+            let eof_block = self.fresh_block();
+            let ok_block = self.fresh_block();
+            self.b.ins().brif(eof, eof_block, &[], ok_block, &[]);
+
+            self.b.switch_to_block(eof_block);
+            self.b.seal_block(eof_block);
+            let eof_consumed = if shift == 0 {
+                start
+            } else {
+                self.b.ins().iadd_imm(start, shift as i64)
+            };
+            self.b.def_var(self.var_consumed, eof_consumed);
+            self.return_err(DecodeStatus::UnexpectedEof);
+
+            self.b.switch_to_block(ok_block);
+            self.b.seal_block(ok_block);
+
+            let byte64 = self
+                .b
+                .ins()
+                .uload8(types::I64, MemFlags::trusted(), cursor, shift as i32);
+            let low7 = self.b.ins().band_imm(byte64, 0x7F);
+            let shifted = if shift == 0 {
+                low7
+            } else {
+                self.b.ins().ishl_imm(low7, (shift * 7) as i64)
+            };
+            acc = self.b.ins().bor(acc, shifted);
+
+            let next_consumed = self.b.ins().iadd_imm(start, (shift + 1) as i64);
+            let cont_bit = self.b.ins().band_imm(byte64, 0x80);
+
+            if shift < 9 {
+                let cont_block = self.fresh_block();
+                // Branch directly on the continuation bit so AArch64 can select
+                // tbnz/tbz instead of materializing an extra compare.
+                self.b.ins().brif(
+                    cont_bit,
+                    cont_block,
+                    &[],
+                    merge,
+                    &[BlockArg::Value(acc), BlockArg::Value(next_consumed)],
+                );
                 self.b.switch_to_block(cont_block);
                 self.b.seal_block(cont_block);
             } else {
                 // Byte 10: any continuation bit is an overflow.
                 let overflow_block = self.fresh_block();
                 self.b.ins().brif(
-                    has_more,
+                    cont_bit,
                     overflow_block,
                     &[],
                     merge,
-                    &[BlockArg::Value(acc)],
+                    &[BlockArg::Value(acc), BlockArg::Value(next_consumed)],
                 );
                 self.b.switch_to_block(overflow_block);
                 self.b.seal_block(overflow_block);
+                self.b.def_var(self.var_consumed, next_consumed);
                 self.return_err(DecodeStatus::VarintOverflow);
             }
         }
@@ -696,6 +792,8 @@ impl<'a, 'b> EmitCtx<'a, 'b> {
         self.b.switch_to_block(merge);
         self.b.seal_block(merge);
         let result = self.b.block_params(merge)[0];
+        let consumed = self.b.block_params(merge)[1];
+        self.b.def_var(self.var_consumed, consumed);
         Ok(result)
     }
 
@@ -896,6 +994,28 @@ fn emit_ops(
                 if loop_tail.is_none() {
                     emit_commit_list_len(ctx, *dst_offset, *descriptor)?;
                 }
+                i += 1;
+                continue;
+            }
+
+            DecodeOp::ReadDiscriminant
+                if matches!(
+                    ops.get(i + 1),
+                    Some(DecodeOp::BranchOnVariant {
+                        tag_width: TagWidth::U8,
+                        ..
+                    })
+                ) =>
+            {
+                // Fast path for small enum discriminants. `BranchOnVariant`
+                // already tells us the local tag storage is one byte wide,
+                // and all currently generated postcard enum tags for these
+                // cases are single-byte variant indices. Avoid the generic
+                // ten-byte varint ladder before the dispatch chain.
+                let byte = ctx.read_byte()?;
+                let disc = ctx.b.ins().uextend(types::I64, byte);
+                ctx.b.def_var(ctx.var_discriminant, disc);
+
                 i += 1;
                 continue;
             }
@@ -1275,10 +1395,7 @@ fn emit_op(
     Ok(false)
 }
 
-fn emit_call_self(
-    ctx: &mut EmitCtx<'_, '_>,
-    dst_offset: usize,
-) -> Result<(), CodegenError> {
+fn emit_call_self(ctx: &mut EmitCtx<'_, '_>, dst_offset: usize) -> Result<(), CodegenError> {
     // Pass `consumed` directly as the third arg — no memory flush. The
     // callee returns a packed `(status, consumed)` u64 we unpack into the
     // current `var_consumed`.
@@ -2624,23 +2741,24 @@ fn emit_alloc_box_owned(
         // adds. Elsewhere, fall back to `vox_jit_alloc` (one extra call/ret
         // each but functionally equivalent).
         let alloc_sig = make_global_alloc_sig(ctx);
-        let alloc_addr = vox_jit_abi::rust_alloc_fn_addr()
-            .unwrap_or(vox_jit_alloc as *const () as usize);
+        let alloc_addr =
+            vox_jit_abi::rust_alloc_fn_addr().unwrap_or(vox_jit_alloc as *const () as usize);
         let alloc_fn_addr = ctx.b.ins().iconst(ctx.ptr_ty, alloc_addr as i64);
         let size_val = ctx.b.ins().iconst(ctx.ptr_ty, desc.elem_size as i64);
         let align_val = ctx.b.ins().iconst(ctx.ptr_ty, desc.elem_align as i64);
-        let call = ctx.b.ins().call_indirect(
-            alloc_sig,
-            alloc_fn_addr,
-            &[size_val, align_val],
-        );
+        let call = ctx
+            .b
+            .ins()
+            .call_indirect(alloc_sig, alloc_fn_addr, &[size_val, align_val]);
         let raw_ptr = ctx.b.inst_results(call)[0];
 
         let zero = ctx.b.ins().iconst(ctx.ptr_ty, 0);
         let is_null = ctx.b.ins().icmp(IntCC::Equal, raw_ptr, zero);
 
         let alloc_err = ctx.fresh_block();
-        ctx.b.ins().brif(is_null, alloc_err, &[], alloc_ok, &[raw_ptr.into()]);
+        ctx.b
+            .ins()
+            .brif(is_null, alloc_err, &[], alloc_ok, &[raw_ptr.into()]);
 
         ctx.b.switch_to_block(alloc_err);
         ctx.b.seal_block(alloc_err);
@@ -2653,7 +2771,9 @@ fn emit_alloc_box_owned(
 
     // Write alloc_ptr into the Box header at ptr_offset (unaligned-safe via
     // MemFlags::trusted with explicit byte offset).
-    ctx.b.ins().store(MemFlags::trusted(), alloc_ptr, dst, ptr_off);
+    ctx.b
+        .ins()
+        .store(MemFlags::trusted(), alloc_ptr, dst, ptr_off);
 
     // Inline the pointee decode. Use a continuation block so that if the
     // body contains nested Vecs (or other multi-block ops), all paths converge
@@ -2936,13 +3056,7 @@ fn emit_slow_path(
     let call = ctx.b.ins().call_indirect(
         sig,
         fn_ptr,
-        &[
-            ctx.ctx_ptr,
-            shape_ptr,
-            plan_ptr,
-            out,
-            dst_offset_val,
-        ],
+        &[ctx.ctx_ptr, shape_ptr, plan_ptr, out, dst_offset_val],
     );
     let status = ctx.b.inst_results(call)[0];
 
@@ -3003,11 +3117,10 @@ fn emit_decode_opaque(
         crate::helpers::vox_jit_decode_opaque as *const () as i64,
     );
     let out = ctx.out_ptr();
-    let call = ctx.b.ins().call_indirect(
-        sig,
-        fn_ptr,
-        &[ctx.ctx_ptr, shape_ptr, out, dst_offset_val],
-    );
+    let call =
+        ctx.b
+            .ins()
+            .call_indirect(sig, fn_ptr, &[ctx.ctx_ptr, shape_ptr, out, dst_offset_val]);
     let status = ctx.b.inst_results(call)[0];
 
     let ok_val = ctx.b.ins().iconst(types::I32, DecodeStatus::Ok as i64);
@@ -3983,10 +4096,7 @@ fn emit_encode_call_self(ectx: &mut EncodeCtx_<'_, '_>, src_offset: usize) {
     // SSA cache in sync.
     let src_ptr = ectx.src_at(src_offset);
     ectx.flush_buf_len_to_ctx();
-    let call = ectx
-        .b
-        .ins()
-        .call(ectx.self_func, &[ectx.enc_ctx, src_ptr]);
+    let call = ectx.b.ins().call(ectx.self_func, &[ectx.enc_ctx, src_ptr]);
     let ok = ectx.b.inst_results(call)[0];
     ectx.reload_buf_state();
 

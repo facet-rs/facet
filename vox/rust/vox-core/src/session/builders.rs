@@ -447,6 +447,17 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
         self
     }
 
+    /// Disable session resumability. Useful for IPC transports where
+    /// the peer is a process: when the process exits the connection
+    /// is gone for good, there's nothing to resume against, and
+    /// keeping the session alive in recovery mode just leaks
+    /// per-channel state (e.g. server-side `Tx<T>`s never observing
+    /// that the client disconnected).
+    pub fn non_resumable(mut self) -> Self {
+        self.config.resumable = false;
+        self
+    }
+
     pub fn operation_store(mut self, operation_store: Arc<dyn OperationStore>) -> Self {
         self.config.operation_store = Some(operation_store);
         self
@@ -630,6 +641,17 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
 
     pub fn resumable(mut self) -> Self {
         self.config.resumable = true;
+        self
+    }
+
+    /// Disable session resumability. Useful for IPC transports where
+    /// the peer is a process: when the process exits the connection
+    /// is gone for good, there's nothing to resume against, and
+    /// keeping the session alive in recovery mode just leaks
+    /// per-channel state (e.g. server-side `Tx<T>`s never observing
+    /// that the client disconnected).
+    pub fn non_resumable(mut self) -> Self {
+        self.config.resumable = false;
         self
     }
 
@@ -947,6 +969,17 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
         self
     }
 
+    /// Disable session resumability. Useful for IPC transports where
+    /// the peer is a process: when the process exits the connection
+    /// is gone for good, there's nothing to resume against, and
+    /// keeping the session alive in recovery mode just leaks
+    /// per-channel state (e.g. server-side `Tx<T>`s never observing
+    /// that the client disconnected).
+    pub fn non_resumable(mut self) -> Self {
+        self.config.resumable = false;
+        self
+    }
+
     pub fn session_registry(mut self, session_registry: SessionRegistry) -> Self {
         self.config.session_registry = Some(session_registry);
         self
@@ -1131,6 +1164,17 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
 
     pub fn resumable(mut self) -> Self {
         self.config.resumable = true;
+        self
+    }
+
+    /// Disable session resumability. Useful for IPC transports where
+    /// the peer is a process: when the process exits the connection
+    /// is gone for good, there's nothing to resume against, and
+    /// keeping the session alive in recovery mode just leaks
+    /// per-channel state (e.g. server-side `Tx<T>`s never observing
+    /// that the client disconnected).
+    pub fn non_resumable(mut self) -> Self {
+        self.config.resumable = false;
         self
     }
 
