@@ -114,6 +114,8 @@ pub fn generate_common_types(services: &[&ServiceDescriptor]) -> String {
     out.push_str(&generate_named_types(&deduped));
     out.push_str("// MARK: - Shared Encoders\n\n");
     out.push_str(&generate_named_type_encode_fns(&deduped));
+    out.push_str("// MARK: - Shared Decoders\n\n");
+    out.push_str(&decode::generate_named_type_decode_fns(&deduped));
     out
 }
 
@@ -156,6 +158,9 @@ fn generate_service_inner(
         // Generate named-type encode functions (one per named struct/enum)
         out.push_str(&format!("// MARK: - {service_name} Encoders\n\n"));
         out.push_str(&generate_named_type_encode_fns(&named_types));
+
+        out.push_str(&format!("// MARK: - {service_name} Decoders\n\n"));
+        out.push_str(&decode::generate_named_type_decode_fns(&named_types));
     }
 
     match bindings {
