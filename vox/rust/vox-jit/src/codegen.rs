@@ -632,6 +632,39 @@ impl<'a, 'b> EmitCtx<'a, 'b> {
         Ok(byte)
     }
 
+    /// Read one byte from the input as an unsigned I64; generates an EOF guard.
+    fn read_byte_u64(&mut self) -> Result<Value, CodegenError> {
+        let consumed = self.consumed();
+        let input_len = self.ctx_input_len();
+        let eof = self
+            .b
+            .ins()
+            .icmp(IntCC::UnsignedGreaterThanOrEqual, consumed, input_len);
+
+        let eof_block = self.fresh_block();
+        let ok_block = self.fresh_block();
+        self.b.ins().brif(eof, eof_block, &[], ok_block, &[]);
+
+        self.b.switch_to_block(eof_block);
+        self.b.seal_block(eof_block);
+        self.return_err(DecodeStatus::UnexpectedEof);
+
+        self.b.switch_to_block(ok_block);
+        self.b.seal_block(ok_block);
+
+        let input_ptr = self.ctx_input_ptr();
+        let addr = self.b.ins().iadd(input_ptr, consumed);
+        let byte = self
+            .b
+            .ins()
+            .uload8(types::I64, MemFlags::trusted(), addr, 0);
+        let one = self.b.ins().iconst(self.ptr_ty, 1);
+        let new_consumed = self.b.ins().iadd(consumed, one);
+        self.b.def_var(self.var_consumed, new_consumed);
+
+        Ok(byte)
+    }
+
     /// Read a postcard unsigned varint; return as I64.
     ///
     /// Unrolled 10-byte varint decode. Load `ctx.input_ptr` and
@@ -645,7 +678,14 @@ impl<'a, 'b> EmitCtx<'a, 'b> {
         let input_ptr = self.ctx_input_ptr();
         let input_len = self.ctx_input_len();
         let start = self.consumed();
-        let cursor = self.b.ins().iadd(input_ptr, start);
+        let cursor_raw = self.b.ins().iadd(input_ptr, start);
+        // Same-type GPR bitcasts lower to no instruction, but keep AArch64
+        // address-mode selection from reassociating every `uload8(cursor, k)`
+        // into `[input_ptr + k, start]`.
+        let cursor = self
+            .b
+            .ins()
+            .bitcast(self.ptr_ty, MemFlags::new(), cursor_raw);
         let remaining = self.b.ins().isub(input_len, start);
 
         // Hot path: if at least the maximum u64 varint width remains, all byte
@@ -653,17 +693,40 @@ impl<'a, 'b> EmitCtx<'a, 'b> {
         // the common full-buffer case; malformed/truncated tails still take the
         // checked slow path.
         let unchecked_block = self.fresh_block();
+        self.b.append_block_param(unchecked_block, self.ptr_ty);
         let checked_block = self.fresh_block();
-        let has_full_width =
-            self.b
-                .ins()
-                .icmp_imm(IntCC::UnsignedGreaterThanOrEqual, remaining, 10);
-        self.b
+        self.b.append_block_param(checked_block, self.ptr_ty);
+        let width_check_block = self.fresh_block();
+
+        let start_after_len = self
+            .b
             .ins()
-            .brif(has_full_width, unchecked_block, &[], checked_block, &[]);
+            .icmp(IntCC::UnsignedGreaterThan, start, input_len);
+        self.b.ins().brif(
+            start_after_len,
+            checked_block,
+            &[BlockArg::Value(cursor)],
+            width_check_block,
+            &[],
+        );
+
+        self.b.switch_to_block(width_check_block);
+        self.b.seal_block(width_check_block);
+        let fewer_than_full_width = self
+            .b
+            .ins()
+            .icmp_imm(IntCC::UnsignedLessThan, remaining, 10);
+        self.b.ins().brif(
+            fewer_than_full_width,
+            checked_block,
+            &[BlockArg::Value(cursor)],
+            unchecked_block,
+            &[BlockArg::Value(cursor)],
+        );
 
         self.b.switch_to_block(unchecked_block);
         self.b.seal_block(unchecked_block);
+        let cursor = self.b.block_params(unchecked_block)[0];
         let zero = self.b.ins().iconst(types::I64, 0);
         let mut acc = zero;
 
@@ -712,6 +775,7 @@ impl<'a, 'b> EmitCtx<'a, 'b> {
 
         self.b.switch_to_block(checked_block);
         self.b.seal_block(checked_block);
+        let cursor = self.b.block_params(checked_block)[0];
         let zero = self.b.ins().iconst(types::I64, 0);
         let mut acc = zero;
 
@@ -760,17 +824,17 @@ impl<'a, 'b> EmitCtx<'a, 'b> {
 
             if shift < 9 {
                 let cont_block = self.fresh_block();
-                // Branch directly on the continuation bit so AArch64 can select
-                // tbnz/tbz instead of materializing an extra compare.
+                self.b.append_block_param(cont_block, types::I64);
                 self.b.ins().brif(
                     cont_bit,
                     cont_block,
-                    &[],
+                    &[BlockArg::Value(acc)],
                     merge,
                     &[BlockArg::Value(acc), BlockArg::Value(next_consumed)],
                 );
                 self.b.switch_to_block(cont_block);
                 self.b.seal_block(cont_block);
+                acc = self.b.block_params(cont_block)[0];
             } else {
                 // Byte 10: any continuation bit is an overflow.
                 let overflow_block = self.fresh_block();
@@ -1003,17 +1067,16 @@ fn emit_ops(
                     ops.get(i + 1),
                     Some(DecodeOp::BranchOnVariant {
                         tag_width: TagWidth::U8,
+                        variant_table,
                         ..
-                    })
+                    }) if variant_table.len() <= 128
                 ) =>
             {
-                // Fast path for small enum discriminants. `BranchOnVariant`
-                // already tells us the local tag storage is one byte wide,
-                // and all currently generated postcard enum tags for these
-                // cases are single-byte variant indices. Avoid the generic
-                // ten-byte varint ladder before the dispatch chain.
-                let byte = ctx.read_byte()?;
-                let disc = ctx.b.ins().uextend(types::I64, byte);
+                // Fast path for canonical small enum discriminants. All known
+                // remote variants in this table fit in one postcard byte, so a
+                // single unsigned byte load is enough for the hot path and keeps
+                // the recursive Tree decoder small.
+                let disc = ctx.read_byte_u64()?;
                 ctx.b.def_var(ctx.var_discriminant, disc);
 
                 i += 1;
