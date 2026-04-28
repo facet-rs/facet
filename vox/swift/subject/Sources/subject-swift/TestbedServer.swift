@@ -17,6 +17,8 @@ public enum TestbedMethodId {
   public static let generateRetryNonIdem: UInt64 = 0x3441_9529_478c_c7b8
   public static let generateRetryIdem: UInt64 = 0xe2d2_7fd9_098c_6ea2
   public static let transform: UInt64 = 0xcb46_9cff_8d79_8feb
+  public static let postReplyGenerate: UInt64 = 0xec36_e847_51a8_97be
+  public static let postReplySum: UInt64 = 0xc1ce_3c39_7e4c_a6e7
   public static let echoPoint: UInt64 = 0x81f5_386d_589d_fbe4
   public static let createPerson: UInt64 = 0x68ff_a90b_7728_bde7
   public static let rectangleArea: UInt64 = 0x223f_e028_2d26_3107
@@ -58,7 +60,7 @@ public struct Person: Codable, Sendable {
   public var age: UInt8
   public var email: String?
 
-  public init(name: String, age: UInt8, email: String?) {
+  nonisolated public init(name: String, age: UInt8, email: String?) {
     self.name = name
     self.age = age
     self.email = email
@@ -74,7 +76,7 @@ public struct Point: Codable, Sendable {
   public var x: Int32
   public var y: Int32
 
-  public init(x: Int32, y: Int32) {
+  nonisolated public init(x: Int32, y: Int32) {
     self.x = x
     self.y = y
   }
@@ -85,7 +87,7 @@ public struct Rectangle: Codable, Sendable {
   public var bottomRight: Point
   public var label: String?
 
-  public init(topLeft: Point, bottomRight: Point, label: String?) {
+  nonisolated public init(topLeft: Point, bottomRight: Point, label: String?) {
     self.topLeft = topLeft
     self.bottomRight = bottomRight
     self.label = label
@@ -109,7 +111,7 @@ public struct Canvas: Codable, Sendable {
   public var shapes: [Shape]
   public var background: Color
 
-  public init(name: String, shapes: [Shape], background: Color) {
+  nonisolated public init(name: String, shapes: [Shape], background: Color) {
     self.name = name
     self.shapes = shapes
     self.background = background
@@ -120,7 +122,7 @@ public struct GnarlyAttr: Codable, Sendable {
   public var key: String
   public var value: String
 
-  public init(key: String, value: String) {
+  nonisolated public init(key: String, value: String) {
     self.key = key
     self.value = value
   }
@@ -141,7 +143,7 @@ public struct GnarlyEntry: Codable, Sendable {
   public var chunks: [Data]
   public var kind: GnarlyKind
 
-  public init(
+  nonisolated public init(
     id: UInt64, parent: UInt64?, name: String, path: String, attrs: [GnarlyAttr], chunks: [Data],
     kind: GnarlyKind
   ) {
@@ -162,7 +164,7 @@ public struct GnarlyPayload: Codable, Sendable {
   public var footer: String?
   public var digest: Data
 
-  public init(
+  nonisolated public init(
     revision: UInt64, mount: String, entries: [GnarlyEntry], footer: String?, digest: Data
   ) {
     self.revision = revision
@@ -185,7 +187,7 @@ public struct TaggedPoint: Codable, Sendable {
   public var y: Int32
   public var active: Bool
 
-  public init(label: String, x: Int32, y: Int32, active: Bool) {
+  nonisolated public init(label: String, x: Int32, y: Int32, active: Bool) {
     self.label = label
     self.x = x
     self.y = y
@@ -203,7 +205,7 @@ public struct Tag: Codable, Sendable {
   public var priority: UInt32
   public var note: String
 
-  public init(label: String, priority: UInt32, note: String) {
+  nonisolated public init(label: String, priority: UInt32, note: String) {
     self.label = label
     self.priority = priority
     self.note = note
@@ -214,7 +216,7 @@ public struct Profile: Codable, Sendable {
   public var name: String
   public var bio: String
 
-  public init(name: String, bio: String) {
+  nonisolated public init(name: String, bio: String) {
     self.name = name
     self.bio = bio
   }
@@ -225,7 +227,7 @@ public struct Record: Codable, Sendable {
   public var beta: String
   public var gamma: Double
 
-  public init(alpha: Int32, beta: String, gamma: Double) {
+  nonisolated public init(alpha: Int32, beta: String, gamma: Double) {
     self.alpha = alpha
     self.beta = beta
     self.gamma = gamma
@@ -236,7 +238,7 @@ public struct Measurement: Codable, Sendable {
   public var unit: String
   public var value: Double
 
-  public init(unit: String, value: Double) {
+  nonisolated public init(unit: String, value: Double) {
     self.unit = unit
     self.value = value
   }
@@ -246,7 +248,7 @@ public struct Config: Codable, Sendable {
   public var key: String
   public var value: String
 
-  public init(key: String, value: String) {
+  nonisolated public init(key: String, value: String) {
     self.key = key
     self.value = value
   }
@@ -254,7 +256,7 @@ public struct Config: Codable, Sendable {
 
 // MARK: - Testbed Encoders
 
-internal func encodeMathError(_ value: MathError, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeMathError(_ value: MathError, into buffer: inout ByteBuffer) {
   switch value {
   case .divisionByZero:
     encodeVarint(UInt64(0), into: &buffer)
@@ -263,13 +265,13 @@ internal func encodeMathError(_ value: MathError, into buffer: inout ByteBuffer)
   }
 }
 
-internal func encodePerson(_ value: Person, into buffer: inout ByteBuffer) {
+nonisolated internal func encodePerson(_ value: Person, into buffer: inout ByteBuffer) {
   encodeString(value.name, into: &buffer)
   encodeU8(value.age, into: &buffer)
   encodeOption(value.email, into: &buffer, encoder: { val, buf in encodeString(val, into: &buf) })
 }
 
-internal func encodeLookupError(_ value: LookupError, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeLookupError(_ value: LookupError, into buffer: inout ByteBuffer) {
   switch value {
   case .notFound:
     encodeVarint(UInt64(0), into: &buffer)
@@ -278,18 +280,18 @@ internal func encodeLookupError(_ value: LookupError, into buffer: inout ByteBuf
   }
 }
 
-internal func encodePoint(_ value: Point, into buffer: inout ByteBuffer) {
+nonisolated internal func encodePoint(_ value: Point, into buffer: inout ByteBuffer) {
   encodeI32(value.x, into: &buffer)
   encodeI32(value.y, into: &buffer)
 }
 
-internal func encodeRectangle(_ value: Rectangle, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeRectangle(_ value: Rectangle, into buffer: inout ByteBuffer) {
   encodePoint(value.topLeft, into: &buffer)
   encodePoint(value.bottomRight, into: &buffer)
   encodeOption(value.label, into: &buffer, encoder: { val, buf in encodeString(val, into: &buf) })
 }
 
-internal func encodeColor(_ value: Color, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeColor(_ value: Color, into buffer: inout ByteBuffer) {
   switch value {
   case .red:
     encodeVarint(UInt64(0), into: &buffer)
@@ -300,7 +302,7 @@ internal func encodeColor(_ value: Color, into buffer: inout ByteBuffer) {
   }
 }
 
-internal func encodeShape(_ value: Shape, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeShape(_ value: Shape, into buffer: inout ByteBuffer) {
   switch value {
   case .circle(let radius):
     encodeVarint(UInt64(0), into: &buffer)
@@ -314,18 +316,18 @@ internal func encodeShape(_ value: Shape, into buffer: inout ByteBuffer) {
   }
 }
 
-internal func encodeCanvas(_ value: Canvas, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeCanvas(_ value: Canvas, into buffer: inout ByteBuffer) {
   encodeString(value.name, into: &buffer)
   encodeVec(value.shapes, into: &buffer, encoder: { val, buf in encodeShape(val, into: &buf) })
   encodeColor(value.background, into: &buffer)
 }
 
-internal func encodeGnarlyAttr(_ value: GnarlyAttr, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeGnarlyAttr(_ value: GnarlyAttr, into buffer: inout ByteBuffer) {
   encodeString(value.key, into: &buffer)
   encodeString(value.value, into: &buffer)
 }
 
-internal func encodeGnarlyKind(_ value: GnarlyKind, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeGnarlyKind(_ value: GnarlyKind, into buffer: inout ByteBuffer) {
   switch value {
   case .file(let mime, let tags):
     encodeVarint(UInt64(0), into: &buffer)
@@ -342,7 +344,7 @@ internal func encodeGnarlyKind(_ value: GnarlyKind, into buffer: inout ByteBuffe
   }
 }
 
-internal func encodeGnarlyEntry(_ value: GnarlyEntry, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeGnarlyEntry(_ value: GnarlyEntry, into buffer: inout ByteBuffer) {
   encodeVarint(value.id, into: &buffer)
   encodeOption(value.parent, into: &buffer, encoder: { val, buf in encodeVarint(val, into: &buf) })
   encodeString(value.name, into: &buffer)
@@ -352,7 +354,8 @@ internal func encodeGnarlyEntry(_ value: GnarlyEntry, into buffer: inout ByteBuf
   encodeGnarlyKind(value.kind, into: &buffer)
 }
 
-internal func encodeGnarlyPayload(_ value: GnarlyPayload, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeGnarlyPayload(_ value: GnarlyPayload, into buffer: inout ByteBuffer)
+{
   encodeVarint(value.revision, into: &buffer)
   encodeString(value.mount, into: &buffer)
   encodeVec(
@@ -361,7 +364,7 @@ internal func encodeGnarlyPayload(_ value: GnarlyPayload, into buffer: inout Byt
   encodeByteSeq(value.digest, into: &buffer)
 }
 
-internal func encodeMessage(_ value: Message, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeMessage(_ value: Message, into buffer: inout ByteBuffer) {
   switch value {
   case .text(let val):
     encodeVarint(UInt64(0), into: &buffer)
@@ -375,14 +378,14 @@ internal func encodeMessage(_ value: Message, into buffer: inout ByteBuffer) {
   }
 }
 
-internal func encodeTaggedPoint(_ value: TaggedPoint, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeTaggedPoint(_ value: TaggedPoint, into buffer: inout ByteBuffer) {
   encodeString(value.label, into: &buffer)
   encodeI32(value.x, into: &buffer)
   encodeI32(value.y, into: &buffer)
   encodeBool(value.active, into: &buffer)
 }
 
-internal func encodeStatus(_ value: Status, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeStatus(_ value: Status, into buffer: inout ByteBuffer) {
   switch value {
   case .active:
     encodeVarint(UInt64(0), into: &buffer)
@@ -391,29 +394,29 @@ internal func encodeStatus(_ value: Status, into buffer: inout ByteBuffer) {
   }
 }
 
-internal func encodeTag(_ value: Tag, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeTag(_ value: Tag, into buffer: inout ByteBuffer) {
   encodeString(value.label, into: &buffer)
   encodeU32(value.priority, into: &buffer)
   encodeString(value.note, into: &buffer)
 }
 
-internal func encodeProfile(_ value: Profile, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeProfile(_ value: Profile, into buffer: inout ByteBuffer) {
   encodeString(value.name, into: &buffer)
   encodeString(value.bio, into: &buffer)
 }
 
-internal func encodeRecord(_ value: Record, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeRecord(_ value: Record, into buffer: inout ByteBuffer) {
   encodeI32(value.alpha, into: &buffer)
   encodeString(value.beta, into: &buffer)
   encodeF64(value.gamma, into: &buffer)
 }
 
-internal func encodeMeasurement(_ value: Measurement, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeMeasurement(_ value: Measurement, into buffer: inout ByteBuffer) {
   encodeString(value.unit, into: &buffer)
   encodeF64(value.value, into: &buffer)
 }
 
-internal func encodeConfig(_ value: Config, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeConfig(_ value: Config, into buffer: inout ByteBuffer) {
   encodeString(value.key, into: &buffer)
   encodeString(value.value, into: &buffer)
 }
@@ -455,6 +458,14 @@ public protocol TestbedHandler: Sendable {
   ///
   ///  Tests: bidirectional streaming. Server receives via `Rx<T>`, sends via `Tx<T>`.
   func transform(input: Rx<String>, output: Tx<String>) async throws
+  ///  Server returns before streaming numbers back to the client.
+  ///
+  ///  Tests: callee-held `Tx<T>` outlives the unary method response.
+  func postReplyGenerate(output: Tx<Int32>) async throws
+  ///  Server returns before receiving numbers from the client, then reports their sum.
+  ///
+  ///  Tests: callee-held `Rx<T>` outlives the unary method response.
+  func postReplySum(input: Rx<Int32>, result: Tx<Int64>) async throws
   ///  Echo a point back.
   func echoPoint(point: Point) async throws -> Point
   ///  Create a person and return it.
@@ -572,6 +583,14 @@ public final class TestbedDispatcher: ServiceDispatcher {
         taskSender: taskSender)
     case 0xcb46_9cff_8d79_8feb:
       await dispatch_transform(
+        methodId: methodId, requestId: requestId, buffer: &buffer, registry: registry,
+        taskSender: taskSender)
+    case 0xec36_e847_51a8_97be:
+      await dispatch_postReplyGenerate(
+        methodId: methodId, requestId: requestId, buffer: &buffer, registry: registry,
+        taskSender: taskSender)
+    case 0xc1ce_3c39_7e4c_a6e7:
+      await dispatch_postReplySum(
         methodId: methodId, requestId: requestId, buffer: &buffer, registry: registry,
         taskSender: taskSender)
     case 0x81f5_386d_589d_fbe4:
@@ -707,6 +726,10 @@ public final class TestbedDispatcher: ServiceDispatcher {
       return .idem
     case 0xcb46_9cff_8d79_8feb:
       return .volatile
+    case 0xec36_e847_51a8_97be:
+      return .volatile
+    case 0xc1ce_3c39_7e4c_a6e7:
+      return .volatile
     case 0x81f5_386d_589d_fbe4:
       return .volatile
     case 0x68ff_a90b_7728_bde7:
@@ -809,6 +832,20 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         return
       }
+    case 0xec36_e847_51a8_97be:
+      do {
+        _ = try decodeVarint(from: &buffer)
+      } catch {
+        return
+      }
+    case 0xc1ce_3c39_7e4c_a6e7:
+      do {
+        let inputChannelId = try decodeVarint(from: &buffer)
+        await registry.markKnown(inputChannelId)
+        _ = try decodeVarint(from: &buffer)
+      } catch {
+        return
+      }
     case 0x9a7b_ed54_5e08_8054:
       do {
         let numbersChannelId = try decodeVarint(from: &buffer)
@@ -851,13 +888,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -885,13 +924,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -912,17 +953,17 @@ public final class TestbedDispatcher: ServiceDispatcher {
       do {
         let result = try await handler.divide(dividend: dividend, divisor: divisor)
         let _encoded: [UInt8] = {
-          var buf = ByteBufferAllocator().buffer(capacity: 64)
+          var buffer = ByteBufferAllocator().buffer(capacity: 64)
           switch result {
           case .success(let v):
-            encodeVarint(UInt64(0), into: &buf)
-            { val, buf in encodeI64(val, into: &buf) }(v, &buf)
+            encodeVarint(UInt64(0), into: &buffer)
+            encodeI64(v, into: &buffer)
           case .failure(let e):
-            encodeVarint(UInt64(1), into: &buf)
-            encodeU8(0, into: &buf)
-            { val, buf in encodeMathError(val, into: &buf) }(e, &buf)
+            encodeVarint(UInt64(1), into: &buffer)
+            encodeU8(0, into: &buffer)
+            encodeMathError(e, into: &buffer)
           }
-          return buf.readBytes(length: buf.readableBytes) ?? []
+          return buffer.readBytes(length: buffer.readableBytes) ?? []
         }()
         taskSender(
           .response(
@@ -931,13 +972,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -957,17 +1000,17 @@ public final class TestbedDispatcher: ServiceDispatcher {
       do {
         let result = try await handler.lookup(id: id)
         let _encoded: [UInt8] = {
-          var buf = ByteBufferAllocator().buffer(capacity: 64)
+          var buffer = ByteBufferAllocator().buffer(capacity: 64)
           switch result {
           case .success(let v):
-            encodeVarint(UInt64(0), into: &buf)
-            { val, buf in encodePerson(val, into: &buf) }(v, &buf)
+            encodeVarint(UInt64(0), into: &buffer)
+            encodePerson(v, into: &buffer)
           case .failure(let e):
-            encodeVarint(UInt64(1), into: &buf)
-            encodeU8(0, into: &buf)
-            { val, buf in encodeLookupError(val, into: &buf) }(e, &buf)
+            encodeVarint(UInt64(1), into: &buffer)
+            encodeU8(0, into: &buffer)
+            encodeLookupError(e, into: &buffer)
           }
-          return buf.readBytes(length: buf.readableBytes) ?? []
+          return buffer.readBytes(length: buffer.readableBytes) ?? []
         }()
         taskSender(
           .response(
@@ -976,13 +1019,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -1017,13 +1062,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -1054,13 +1101,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -1091,13 +1140,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -1128,13 +1179,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -1173,13 +1226,100 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
+          schemaPayload: responseSchemaPayload))
+    }
+  }
+
+  private func dispatch_postReplyGenerate(
+    methodId: UInt64, requestId: UInt64, buffer: inout ByteBuffer,
+    registry: IncomingChannelRegistry, taskSender: @escaping TaskSender
+  ) async {
+    guard let methodInfo = methodSchemas[methodId] else {
+      taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
+      return
+    }
+    let responseSchemaPayload = methodInfo.buildPayload(
+      direction: .response, registry: schemaRegistry)
+    do {
+      let outputChannelId = try decodeVarint(from: &buffer)
+      let output = await createServerTx(
+        channelId: outputChannelId, taskSender: taskSender, registry: registry, initialCredit: 16,
+        serialize: { val, buf in encodeI32(val, into: &buf) })
+      do {
+        try await handler.postReplyGenerate(output: output)
+        output.close()
+        taskSender(
+          .response(
+            requestId: requestId, payload: encodeResultOkUnit(), methodId: methodId,
+            schemaPayload: responseSchemaPayload))
+      } catch {
+        taskSender(
+          .response(
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
+      }
+    } catch {
+      taskSender(
+        .response(
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
+          schemaPayload: responseSchemaPayload))
+    }
+  }
+
+  private func dispatch_postReplySum(
+    methodId: UInt64, requestId: UInt64, buffer: inout ByteBuffer,
+    registry: IncomingChannelRegistry, taskSender: @escaping TaskSender
+  ) async {
+    guard let methodInfo = methodSchemas[methodId] else {
+      taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
+      return
+    }
+    let responseSchemaPayload = methodInfo.buildPayload(
+      direction: .response, registry: schemaRegistry)
+    do {
+      let inputChannelId = try decodeVarint(from: &buffer)
+      let inputReceiver = await registry.register(
+        inputChannelId, initialCredit: 16,
+        onConsumed: { [taskSender] additional in
+          taskSender(.grantCredit(channelId: inputChannelId, bytes: additional))
+        })
+      let input = createServerRx(
+        channelId: inputChannelId, receiver: inputReceiver,
+        deserialize: { buf in try decodeI32(from: &buf) })
+      let resultChannelId = try decodeVarint(from: &buffer)
+      let result = await createServerTx(
+        channelId: resultChannelId, taskSender: taskSender, registry: registry, initialCredit: 16,
+        serialize: { val, buf in encodeI64(val, into: &buf) })
+      do {
+        try await handler.postReplySum(input: input, result: result)
+        result.close()
+        taskSender(
+          .response(
+            requestId: requestId, payload: encodeResultOkUnit(), methodId: methodId,
+            schemaPayload: responseSchemaPayload))
+      } catch {
+        taskSender(
+          .response(
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
+      }
+    } catch {
+      taskSender(
+        .response(
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -1208,13 +1348,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -1244,13 +1386,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -1286,13 +1430,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -1323,13 +1469,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -1370,13 +1518,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -1437,13 +1587,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -1481,8 +1633,14 @@ public final class TestbedDispatcher: ServiceDispatcher {
                 })
             })(&buf)
           let _chunks = try
-            ({ buf in try decodeVec(from: &buf, decoder: { buf in try decodeBytes(from: &buf) }) })(
-              &buf)
+            ({ buf in
+              try decodeVec(
+                from: &buf,
+                decoder: { buf in
+                  var _b = try decodeBytes(from: &buf)
+                  return Data(_b.readBytes(length: _b.readableBytes) ?? [])
+                })
+            })(&buf)
           let _kind = try
             ({ buf in
               let disc = try decodeVarint(from: &buf)
@@ -1519,7 +1677,9 @@ public final class TestbedDispatcher: ServiceDispatcher {
         })
       let _payload_footer = try decodeOption(
         from: &buffer, decoder: { buf in try decodeString(from: &buf) })
-      let _payload_digest = try decodeBytes(from: &buffer)
+      var __payload_digest_buf = try decodeBytes(from: &buffer)
+      let _payload_digest = Data(
+        __payload_digest_buf.readBytes(length: __payload_digest_buf.readableBytes) ?? [])
       let payload = GnarlyPayload(
         revision: _payload_revision, mount: _payload_mount, entries: _payload_entries,
         footer: _payload_footer, digest: _payload_digest)
@@ -1534,13 +1694,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -1566,7 +1728,8 @@ public final class TestbedDispatcher: ServiceDispatcher {
         let _msg_val = try decodeI64(from: &buffer)
         msg = .number(_msg_val)
       case 2:
-        let _msg_val = try decodeBytes(from: &buffer)
+        var __msg_val_buf = try decodeBytes(from: &buffer)
+        let _msg_val = Data(__msg_val_buf.readBytes(length: __msg_val_buf.readableBytes) ?? [])
         msg = .data(_msg_val)
       default:
         throw VoxError.decodeError("unknown enum variant")
@@ -1582,13 +1745,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -1619,13 +1784,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -1649,8 +1816,8 @@ public final class TestbedDispatcher: ServiceDispatcher {
         let _encoded = encodeResultOk(
           result,
           encoder: { val, buf in
-            { val, buf in encodeString(val, into: &buf) }(val.0, &buf)
-            { val, buf in encodeI32(val, into: &buf) }(val.1, &buf)
+            encodeString(val.0, into: &buf)
+            encodeI32(val.1, into: &buf)
           })
         taskSender(
           .response(
@@ -1659,13 +1826,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -1681,7 +1850,8 @@ public final class TestbedDispatcher: ServiceDispatcher {
     let responseSchemaPayload = methodInfo.buildPayload(
       direction: .response, registry: schemaRegistry)
     do {
-      let data = try decodeBytes(from: &buffer)
+      var _data_buf = try decodeBytes(from: &buffer)
+      let data = Data(_data_buf.readBytes(length: _data_buf.readableBytes) ?? [])
       do {
         let result = try await handler.echoBytes(data: data)
         let _encoded = encodeResultOk(
@@ -1693,13 +1863,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -1726,13 +1898,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -1760,13 +1934,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -1797,13 +1973,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -1838,13 +2016,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -1875,13 +2055,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -1911,13 +2093,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -1948,13 +2132,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -1995,13 +2181,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -2038,13 +2226,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -2074,13 +2264,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -2110,13 +2302,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -2147,13 +2341,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -2190,13 +2386,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -2226,13 +2424,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -2262,13 +2462,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -2298,13 +2500,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -2312,93 +2516,6 @@ public final class TestbedDispatcher: ServiceDispatcher {
 }
 
 // MARK: - Testbed Schemas
-
-public let testbed_schemas: [String: MethodBindingSchema] = [
-  "echo": MethodBindingSchema(args: [.string]),
-  "reverse": MethodBindingSchema(args: [.string]),
-  "divide": MethodBindingSchema(args: [.i64, .i64]),
-  "lookup": MethodBindingSchema(args: [.u32]),
-  "sum": MethodBindingSchema(args: [.rx(element: .i32)]),
-  "generate": MethodBindingSchema(args: [.u32, .tx(element: .i32)]),
-  "generateRetryNonIdem": MethodBindingSchema(args: [.u32, .tx(element: .i32)]),
-  "generateRetryIdem": MethodBindingSchema(args: [.u32, .tx(element: .i32)]),
-  "transform": MethodBindingSchema(args: [.rx(element: .string), .tx(element: .string)]),
-  "echoPoint": MethodBindingSchema(args: [.struct(fields: [("x", .i32), ("y", .i32)])]),
-  "createPerson": MethodBindingSchema(args: [.string, .u8, .option(inner: .string)]),
-  "rectangleArea": MethodBindingSchema(args: [
-    .struct(fields: [
-      ("top_left", .struct(fields: [("x", .i32), ("y", .i32)])),
-      ("bottom_right", .struct(fields: [("x", .i32), ("y", .i32)])),
-      ("label", .option(inner: .string)),
-    ])
-  ]),
-  "parseColor": MethodBindingSchema(args: [.string]),
-  "shapeArea": MethodBindingSchema(args: [
-    .enum(variants: [("Circle", [.f64]), ("Rectangle", [.f64, .f64]), ("Point", [])])
-  ]),
-  "createCanvas": MethodBindingSchema(args: [
-    .string,
-    .vec(
-      element: .enum(variants: [("Circle", [.f64]), ("Rectangle", [.f64, .f64]), ("Point", [])])),
-    .enum(variants: [("Red", []), ("Green", []), ("Blue", [])]),
-  ]),
-  "echoGnarly": MethodBindingSchema(args: [
-    .struct(fields: [
-      ("revision", .u64), ("mount", .string),
-      (
-        "entries",
-        .vec(
-          element: .struct(fields: [
-            ("id", .u64), ("parent", .option(inner: .u64)), ("name", .string), ("path", .string),
-            ("attrs", .vec(element: .struct(fields: [("key", .string), ("value", .string)]))),
-            ("chunks", .vec(element: .bytes)),
-            (
-              "kind",
-              .enum(variants: [
-                ("File", [.string, .vec(element: .string)]),
-                ("Directory", [.u32, .vec(element: .string)]),
-                ("Symlink", [.string, .vec(element: .u32)]),
-              ])
-            ),
-          ]))
-      ), ("footer", .option(inner: .string)), ("digest", .bytes),
-    ])
-  ]),
-  "processMessage": MethodBindingSchema(args: [
-    .enum(variants: [("Text", [.string]), ("Number", [.i64]), ("Data", [.bytes])])
-  ]),
-  "getPoints": MethodBindingSchema(args: [.u32]),
-  "swapPair": MethodBindingSchema(args: [.bytes]),
-  "echoBytes": MethodBindingSchema(args: [.bytes]),
-  "echoBool": MethodBindingSchema(args: [.bool]),
-  "echoU64": MethodBindingSchema(args: [.u64]),
-  "echoOptionString": MethodBindingSchema(args: [.option(inner: .string)]),
-  "sumLarge": MethodBindingSchema(args: [.rx(element: .i32)]),
-  "generateLarge": MethodBindingSchema(args: [.u32, .tx(element: .i32)]),
-  "allColors": MethodBindingSchema(args: []),
-  "describePoint": MethodBindingSchema(args: [.string, .i32, .i32, .bool]),
-  "echoShape": MethodBindingSchema(args: [
-    .enum(variants: [("Circle", [.f64]), ("Rectangle", [.f64, .f64]), ("Point", [])])
-  ]),
-  "echoStatusV1": MethodBindingSchema(args: [.enum(variants: [("Active", []), ("Inactive", [])])]),
-  "echoTagV1": MethodBindingSchema(args: [
-    .struct(fields: [("label", .string), ("priority", .u32), ("note", .string)])
-  ]),
-  "echoProfile": MethodBindingSchema(args: [.struct(fields: [("name", .string), ("bio", .string)])]
-  ),
-  "echoRecord": MethodBindingSchema(args: [
-    .struct(fields: [("alpha", .i32), ("beta", .string), ("gamma", .f64)])
-  ]),
-  "echoStatus": MethodBindingSchema(args: [.enum(variants: [("Active", []), ("Inactive", [])])]),
-  "echoTag": MethodBindingSchema(args: [
-    .struct(fields: [("label", .string), ("priority", .u32), ("note", .string)])
-  ]),
-  "echoMeasurement": MethodBindingSchema(args: [
-    .struct(fields: [("unit", .string), ("value", .f64)])
-  ]),
-  "echoConfig": MethodBindingSchema(args: [.struct(fields: [("key", .string), ("value", .string)])]
-  ),
-]
 
 /// Global schema registry containing all schemas for this service.
 nonisolated(unsafe) public let testbed_schema_registry: [UInt64: Schema] = [
@@ -2870,6 +2987,44 @@ nonisolated(unsafe) public let testbed_method_schemas: [UInt64: MethodSchemaInfo
         .generic(0x4cf4_b2ae_b98a_1939, args: [.concrete(0x5db7_0a39_4660_f3e6)]),
       ])
   ),
+  0xec36_e847_51a8_97be: MethodSchemaInfo(
+    argsSchemaIds: [0x361f_4536_eee9_f991, 0xc886_545a_493d_06eb, 0x6847_ab90_feda_71c1],
+    argsRoot: .generic(
+      0x6847_ab90_feda_71c1,
+      args: [.generic(0xc886_545a_493d_06eb, args: [.concrete(0x361f_4536_eee9_f991)])]),
+    responseSchemaIds: [
+      0x1783_67a8_7f66_fb46, 0x281c_5be4_f2ee_63b4, 0x4204_6de6_63be_eef0, 0x5db7_0a39_4660_f3e6,
+      0x6d7d_ce91_4ee1_50e8, 0x4cf4_b2ae_b98a_1939, 0xbc5c_3324_9a2d_c720,
+    ],
+    responseRoot: .generic(
+      0x4204_6de6_63be_eef0,
+      args: [
+        .concrete(0xbc5c_3324_9a2d_c720),
+        .generic(0x4cf4_b2ae_b98a_1939, args: [.concrete(0x5db7_0a39_4660_f3e6)]),
+      ])
+  ),
+  0xc1ce_3c39_7e4c_a6e7: MethodSchemaInfo(
+    argsSchemaIds: [
+      0x361f_4536_eee9_f991, 0x967a_48ac_345e_2f5e, 0xc6eb_8c46_f1e1_7fba, 0xc886_545a_493d_06eb,
+      0xba04_96aa_8cee_7a4c,
+    ],
+    argsRoot: .generic(
+      0xba04_96aa_8cee_7a4c,
+      args: [
+        .generic(0x967a_48ac_345e_2f5e, args: [.concrete(0x361f_4536_eee9_f991)]),
+        .generic(0xc886_545a_493d_06eb, args: [.concrete(0xc6eb_8c46_f1e1_7fba)]),
+      ]),
+    responseSchemaIds: [
+      0x1783_67a8_7f66_fb46, 0x281c_5be4_f2ee_63b4, 0x4204_6de6_63be_eef0, 0x5db7_0a39_4660_f3e6,
+      0x6d7d_ce91_4ee1_50e8, 0x4cf4_b2ae_b98a_1939, 0xbc5c_3324_9a2d_c720,
+    ],
+    responseRoot: .generic(
+      0x4204_6de6_63be_eef0,
+      args: [
+        .concrete(0xbc5c_3324_9a2d_c720),
+        .generic(0x4cf4_b2ae_b98a_1939, args: [.concrete(0x5db7_0a39_4660_f3e6)]),
+      ])
+  ),
   0x81f5_386d_589d_fbe4: MethodSchemaInfo(
     argsSchemaIds: [0x361f_4536_eee9_f991, 0xb923_32c6_7187_108f, 0x6847_ab90_feda_71c1],
     argsRoot: .generic(0x6847_ab90_feda_71c1, args: [.concrete(0xb923_32c6_7187_108f)]),
@@ -3319,95 +3474,3 @@ nonisolated(unsafe) public let testbed_method_schemas: [UInt64: MethodSchemaInfo
       ])
   ),
 ]
-
-public struct TestbedSerializers: BindingSerializers {
-  public init() {}
-
-  public func txSerializer(for schema: BindingSchema) -> @Sendable (Any) -> [UInt8] {
-    switch schema {
-    case .bool: return { encodeBool($0 as! Bool) }
-    case .u8: return { encodeU8($0 as! UInt8) }
-    case .i8: return { encodeI8($0 as! Int8) }
-    case .u16: return { encodeU16($0 as! UInt16) }
-    case .i16: return { encodeI16($0 as! Int16) }
-    case .u32: return { encodeU32($0 as! UInt32) }
-    case .i32: return { encodeI32($0 as! Int32) }
-    case .u64: return { encodeVarint($0 as! UInt64) }
-    case .i64: return { encodeI64($0 as! Int64) }
-    case .f32: return { encodeF32($0 as! Float) }
-    case .f64: return { encodeF64($0 as! Double) }
-    case .string: return { encodeString($0 as! String) }
-    case .bytes: return { [UInt8]($0 as! Data) }
-    case .tx(_, _), .rx(_, _): fatalError("Channel schemas are not serialized directly")
-    default: fatalError("Unsupported schema for Tx serialization: \(schema)")
-    }
-  }
-
-  public func rxDeserializer(for schema: BindingSchema) -> @Sendable ([UInt8]) throws -> Any {
-    switch schema {
-    case .bool:
-      return {
-        var o = 0
-        return try decodeBool(from: Data($0), offset: &o)
-      }
-    case .u8:
-      return {
-        var o = 0
-        return try decodeU8(from: Data($0), offset: &o)
-      }
-    case .i8:
-      return {
-        var o = 0
-        return try decodeI8(from: Data($0), offset: &o)
-      }
-    case .u16:
-      return {
-        var o = 0
-        return try decodeU16(from: Data($0), offset: &o)
-      }
-    case .i16:
-      return {
-        var o = 0
-        return try decodeI16(from: Data($0), offset: &o)
-      }
-    case .u32:
-      return {
-        var o = 0
-        return try decodeU32(from: Data($0), offset: &o)
-      }
-    case .i32:
-      return {
-        var o = 0
-        return try decodeI32(from: Data($0), offset: &o)
-      }
-    case .u64:
-      return {
-        var o = 0
-        return try decodeVarint(from: Data($0), offset: &o)
-      }
-    case .i64:
-      return {
-        var o = 0
-        return try decodeI64(from: Data($0), offset: &o)
-      }
-    case .f32:
-      return {
-        var o = 0
-        return try decodeF32(from: Data($0), offset: &o)
-      }
-    case .f64:
-      return {
-        var o = 0
-        return try decodeF64(from: Data($0), offset: &o)
-      }
-    case .string:
-      return {
-        var o = 0
-        return try decodeString(from: Data($0), offset: &o)
-      }
-    case .bytes: return { Data($0) }
-    case .tx(_, _), .rx(_, _): fatalError("Channel schemas are not deserialized directly")
-    default: fatalError("Unsupported schema for Rx deserialization: \(schema)")
-    }
-  }
-}

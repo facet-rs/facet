@@ -287,73 +287,128 @@ public typealias TaskSender = @Sendable (TaskMessage) -> Void
 /// Type alias for incoming channel registry.
 public typealias IncomingChannelRegistry = ChannelRegistry
 
+// MARK: - Resolve helpers
+
+/// Resolve a TypeRef to a SchemaKind via the registry.
+private func resolveKind(_ typeRef: TypeRef, _ registry: [UInt64: Schema]) -> SchemaKind? {
+    guard case .concrete(let typeId, _) = typeRef,
+        let schema = registry[typeId]
+    else {
+        return nil
+    }
+    return schema.kind
+}
+
 // MARK: - Bind Channels
 
 /// Bind channels from method arguments using schema.
+///
+/// - Parameters:
+///   - argsRoot: TypeRef for the args tuple schema (must resolve to `.tuple`).
+///   - schemaRegistry: Global schema registry for this service.
+///   - args: Array of argument values, one per tuple element.
 public func bindChannels(
-    schemas: [BindingSchema],
+    argsRoot: TypeRef,
+    schemaRegistry: [UInt64: Schema],
     args: [Any],
     allocator: ChannelIdAllocator,
     incomingRegistry: ChannelRegistry,
-    taskSender: @escaping TaskSender,
-    serializers: any BindingSerializers
+    taskSender: @escaping TaskSender
 ) async {
-    for (schema, arg) in zip(schemas, args) {
+    guard let kind = resolveKind(argsRoot, schemaRegistry),
+        case .tuple(let elements) = kind
+    else {
+        fatalError("argsRoot must resolve to a tuple schema")
+    }
+    for (typeRef, arg) in zip(elements, args) {
         await bindValue(
-            schema: schema,
+            typeRef: typeRef,
+            schemaRegistry: schemaRegistry,
             value: arg,
             allocator: allocator,
             incomingRegistry: incomingRegistry,
-            taskSender: taskSender,
-            serializers: serializers
+            taskSender: taskSender
         )
     }
 }
 
+/// Finalize bound channels after a call completes.
 public func finalizeBoundChannels(
-    schemas: [BindingSchema],
+    argsRoot: TypeRef,
+    schemaRegistry: [UInt64: Schema],
     args: [Any]
 ) {
-    for (schema, arg) in zip(schemas, args) {
-        finalizeValue(schema: schema, value: arg)
+    guard let kind = resolveKind(argsRoot, schemaRegistry),
+        case .tuple(let elements) = kind
+    else {
+        return
+    }
+    for (typeRef, arg) in zip(elements, args) {
+        finalizeValue(typeRef: typeRef, schemaRegistry: schemaRegistry, value: arg)
     }
 }
 
 /// Collect bound channel IDs in argument declaration order.
-public func collectChannelIds(schemas: [BindingSchema], args: [Any]) -> [UInt64] {
+public func collectChannelIds(
+    argsRoot: TypeRef,
+    schemaRegistry: [UInt64: Schema],
+    args: [Any]
+) -> [UInt64] {
     var channelIds: [UInt64] = []
-    for (schema, arg) in zip(schemas, args) {
-        collectChannelIdsFromValue(schema: schema, value: arg, out: &channelIds)
+    guard let kind = resolveKind(argsRoot, schemaRegistry),
+        case .tuple(let elements) = kind
+    else {
+        return channelIds
+    }
+    for (typeRef, arg) in zip(elements, args) {
+        collectChannelIdsFromValue(
+            typeRef: typeRef, schemaRegistry: schemaRegistry, value: arg, out: &channelIds)
     }
     return channelIds
 }
 
-private func collectChannelIdsFromValue(schema: BindingSchema, value: Any, out: inout [UInt64]) {
-    switch schema {
-    case .rx(_, _):
+private func collectChannelIdsFromValue(
+    typeRef: TypeRef,
+    schemaRegistry: [UInt64: Schema],
+    value: Any,
+    out: inout [UInt64]
+) {
+    guard let kind = resolveKind(typeRef, schemaRegistry) else { return }
+    switch kind {
+    case .channel:
         if let rx = value as? AnyUnboundRx {
             out.append(rx.channelIdForSchema())
         }
-    case .tx(_, _):
         if let tx = value as? AnyUnboundTx {
             out.append(tx.channelIdForSchema())
         }
-    case .vec(let element):
+    case .list(let element):
         if let arr = value as? [Any] {
             for item in arr {
-                collectChannelIdsFromValue(schema: element, value: item, out: &out)
+                collectChannelIdsFromValue(
+                    typeRef: element, schemaRegistry: schemaRegistry, value: item, out: &out)
             }
         }
-    case .option(let inner):
+    case .option(let element):
         let mirror = Mirror(reflecting: value)
         if mirror.displayStyle == .optional, let (_, unwrapped) = mirror.children.first {
-            collectChannelIdsFromValue(schema: inner, value: unwrapped, out: &out)
+            collectChannelIdsFromValue(
+                typeRef: element, schemaRegistry: schemaRegistry, value: unwrapped, out: &out)
         }
-    case .struct(let fields):
+    case .struct(_, let fields):
         let mirror = Mirror(reflecting: value)
-        for (fieldName, fieldSchema) in fields {
-            if let child = mirror.children.first(where: { $0.label == fieldName }) {
-                collectChannelIdsFromValue(schema: fieldSchema, value: child.value, out: &out)
+        for field in fields {
+            if let child = mirror.children.first(where: { $0.label == field.name }) {
+                collectChannelIdsFromValue(
+                    typeRef: field.typeRef, schemaRegistry: schemaRegistry, value: child.value,
+                    out: &out)
+            }
+        }
+    case .tuple(let elements):
+        if let arr = value as? [Any] {
+            for (element, item) in zip(elements, arr) {
+                collectChannelIdsFromValue(
+                    typeRef: element, schemaRegistry: schemaRegistry, value: item, out: &out)
             }
         }
     default:
@@ -362,81 +417,92 @@ private func collectChannelIdsFromValue(schema: BindingSchema, value: Any, out: 
 }
 
 private func bindValue(
-    schema: BindingSchema,
+    typeRef: TypeRef,
+    schemaRegistry: [UInt64: Schema],
     value: Any,
     allocator: ChannelIdAllocator,
     incomingRegistry: ChannelRegistry,
-    taskSender: @escaping TaskSender,
-    serializers: any BindingSerializers
+    taskSender: @escaping TaskSender
 ) async {
-    switch schema {
-    case .rx(let initialCredit, _):
-        // Schema Rx = client passes Rx to method, sends via paired Tx
-        // Need to bind Tx for outgoing
-        // The value is the Rx; find its paired Tx
-        if let rx = value as? AnyUnboundRx {
-            let channelId = allocator.allocate()
-            let credit = await incomingRegistry.registerOutgoing(
-                channelId, initialCredit: initialCredit)
-            rx.bindForSchema(channelId: channelId, taskSender: taskSender, credit: credit)
+    guard let kind = resolveKind(typeRef, schemaRegistry) else { return }
+    switch kind {
+    case .channel(let direction, _):
+        if direction == .rx {
+            // Schema Rx = client passes Rx to method, sends via paired Tx
+            if let rx = value as? AnyUnboundRx {
+                let channelId = allocator.allocate()
+                let credit = await incomingRegistry.registerOutgoing(
+                    channelId, initialCredit: 16)
+                rx.bindForSchema(channelId: channelId, taskSender: taskSender, credit: credit)
+            }
+        } else {
+            // Schema Tx = client passes Tx to method, receives via paired Rx
+            if let tx = value as? AnyUnboundTx {
+                let channelId = allocator.allocate()
+                traceLog(.driver, "bindChannels: registering incoming channelId=\(channelId)")
+                let receiver = await incomingRegistry.register(
+                    channelId,
+                    initialCredit: 16,
+                    onConsumed: { additional in
+                        taskSender(.grantCredit(channelId: channelId, bytes: additional))
+                    }
+                )
+                tx.bindForSchema(channelId: channelId, receiver: receiver)
+            }
         }
 
-    case .tx(let initialCredit, _):
-        // Schema Tx = client passes Tx to method, receives via paired Rx
-        // Need to bind Rx for incoming
-        if let tx = value as? AnyUnboundTx {
-            let channelId = allocator.allocate()
-            traceLog(.driver, "bindChannels: registering incoming channelId=\(channelId)")
-            let receiver = await incomingRegistry.register(
-                channelId,
-                initialCredit: initialCredit,
-                onConsumed: { additional in
-                    taskSender(.grantCredit(channelId: channelId, bytes: additional))
-                }
-            )
-            tx.bindForSchema(channelId: channelId, receiver: receiver)
-        }
-
-    case .vec(let element):
+    case .list(let element):
         if let arr = value as? [Any] {
             for item in arr {
                 await bindValue(
-                    schema: element,
+                    typeRef: element,
+                    schemaRegistry: schemaRegistry,
                     value: item,
                     allocator: allocator,
                     incomingRegistry: incomingRegistry,
-                    taskSender: taskSender,
-                    serializers: serializers
+                    taskSender: taskSender
                 )
             }
         }
 
-    case .option(let inner):
-        // Use Mirror to check if value is Some(x) vs None
+    case .option(let element):
         let mirror = Mirror(reflecting: value)
         if mirror.displayStyle == .optional, let (_, unwrapped) = mirror.children.first {
             await bindValue(
-                schema: inner,
+                typeRef: element,
+                schemaRegistry: schemaRegistry,
                 value: unwrapped,
                 allocator: allocator,
                 incomingRegistry: incomingRegistry,
-                taskSender: taskSender,
-                serializers: serializers
+                taskSender: taskSender
             )
         }
 
-    case .struct(let fields):
-        // Use Mirror for struct field access
+    case .struct(_, let fields):
         let mirror = Mirror(reflecting: value)
-        for (fieldName, fieldSchema) in fields {
-            if let child = mirror.children.first(where: { $0.label == fieldName }) {
+        for field in fields {
+            if let child = mirror.children.first(where: { $0.label == field.name }) {
                 await bindValue(
-                    schema: fieldSchema,
+                    typeRef: field.typeRef,
+                    schemaRegistry: schemaRegistry,
                     value: child.value,
                     allocator: allocator,
                     incomingRegistry: incomingRegistry,
-                    taskSender: taskSender,
-                    serializers: serializers
+                    taskSender: taskSender
+                )
+            }
+        }
+
+    case .tuple(let elements):
+        if let arr = value as? [Any] {
+            for (element, item) in zip(elements, arr) {
+                await bindValue(
+                    typeRef: element,
+                    schemaRegistry: schemaRegistry,
+                    value: item,
+                    allocator: allocator,
+                    incomingRegistry: incomingRegistry,
+                    taskSender: taskSender
                 )
             }
         }
@@ -447,28 +513,38 @@ private func bindValue(
     }
 }
 
-private func finalizeValue(schema: BindingSchema, value: Any) {
-    switch schema {
-    case .rx:
+private func finalizeValue(
+    typeRef: TypeRef,
+    schemaRegistry: [UInt64: Schema],
+    value: Any
+) {
+    guard let kind = resolveKind(typeRef, schemaRegistry) else { return }
+    switch kind {
+    case .channel:
         (value as? AnyRetryFinalizableChannel)?.finishRetryBinding()
-    case .tx:
-        (value as? AnyRetryFinalizableChannel)?.finishRetryBinding()
-    case .vec(let element):
+    case .list(let element):
         if let arr = value as? [Any] {
             for item in arr {
-                finalizeValue(schema: element, value: item)
+                finalizeValue(typeRef: element, schemaRegistry: schemaRegistry, value: item)
             }
         }
-    case .option(let inner):
+    case .option(let element):
         let mirror = Mirror(reflecting: value)
         if mirror.displayStyle == .optional, let (_, unwrapped) = mirror.children.first {
-            finalizeValue(schema: inner, value: unwrapped)
+            finalizeValue(typeRef: element, schemaRegistry: schemaRegistry, value: unwrapped)
         }
-    case .struct(let fields):
+    case .struct(_, let fields):
         let mirror = Mirror(reflecting: value)
-        for (fieldName, fieldSchema) in fields {
-            if let child = mirror.children.first(where: { $0.label == fieldName }) {
-                finalizeValue(schema: fieldSchema, value: child.value)
+        for field in fields {
+            if let child = mirror.children.first(where: { $0.label == field.name }) {
+                finalizeValue(
+                    typeRef: field.typeRef, schemaRegistry: schemaRegistry, value: child.value)
+            }
+        }
+    case .tuple(let elements):
+        if let arr = value as? [Any] {
+            for (element, item) in zip(elements, arr) {
+                finalizeValue(typeRef: element, schemaRegistry: schemaRegistry, value: item)
             }
         }
     default:

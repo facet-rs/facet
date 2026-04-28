@@ -17,6 +17,8 @@ public enum TestbedMethodId {
   public static let generateRetryNonIdem: UInt64 = 0x3441_9529_478c_c7b8
   public static let generateRetryIdem: UInt64 = 0xe2d2_7fd9_098c_6ea2
   public static let transform: UInt64 = 0xcb46_9cff_8d79_8feb
+  public static let postReplyGenerate: UInt64 = 0xec36_e847_51a8_97be
+  public static let postReplySum: UInt64 = 0xc1ce_3c39_7e4c_a6e7
   public static let echoPoint: UInt64 = 0x81f5_386d_589d_fbe4
   public static let createPerson: UInt64 = 0x68ff_a90b_7728_bde7
   public static let rectangleArea: UInt64 = 0x223f_e028_2d26_3107
@@ -456,6 +458,14 @@ public protocol TestbedCaller {
   ///
   ///  Tests: bidirectional streaming. Server receives via `Rx<T>`, sends via `Tx<T>`.
   func transform(input: UnboundRx<String>, output: UnboundTx<String>) async throws
+  ///  Server returns before streaming numbers back to the client.
+  ///
+  ///  Tests: callee-held `Tx<T>` outlives the unary method response.
+  func postReplyGenerate(output: UnboundTx<Int32>) async throws
+  ///  Server returns before receiving numbers from the client, then reports their sum.
+  ///
+  ///  Tests: callee-held `Rx<T>` outlives the unary method response.
+  func postReplySum(input: UnboundRx<Int32>, result: UnboundTx<Int64>) async throws
   ///  Echo a point back.
   func echoPoint(point: Point) async throws -> Point
   ///  Create a person and return it.
@@ -631,12 +641,12 @@ public final class TestbedClient: TestbedCaller, Sendable {
       schemaRegistry: testbed_schema_registry)
     let prepareRetry: @Sendable () async -> PreparedRetryRequest = { [connection] in
       await bindChannels(
-        schemas: testbed_schemas["sum"]!.args,
+        argsRoot: testbed_method_schemas[0x51f9_cfd8_e865_77c9]!.argsRoot,
+        schemaRegistry: testbed_schema_registry,
         args: [numbers],
         allocator: connection.channelAllocator,
         incomingRegistry: connection.incomingChannelRegistry,
         taskSender: connection.taskSender,
-        serializers: TestbedSerializers()
       )
 
       var buffer = ByteBufferAllocator().buffer(capacity: 64)
@@ -650,7 +660,9 @@ public final class TestbedClient: TestbedCaller, Sendable {
       methodId: 0x51f9_cfd8_e865_77c9, metadata: [], payload: prepared.payload, retry: .volatile,
       timeout: timeout, prepareRetry: prepareRetry,
       finalizeChannels: {
-        finalizeBoundChannels(schemas: testbed_schemas["sum"]!.args, args: [numbers])
+        finalizeBoundChannels(
+          argsRoot: testbed_method_schemas[0x51f9_cfd8_e865_77c9]!.argsRoot,
+          schemaRegistry: testbed_schema_registry, args: [numbers])
       }, schemaInfo: schemaInfo)
     return try decodeInfallibleResponse(response) { buf in
       let result = try decodeI64(from: &buf)
@@ -664,12 +676,12 @@ public final class TestbedClient: TestbedCaller, Sendable {
       schemaRegistry: testbed_schema_registry)
     let prepareRetry: @Sendable () async -> PreparedRetryRequest = { [connection] in
       await bindChannels(
-        schemas: testbed_schemas["generate"]!.args,
+        argsRoot: testbed_method_schemas[0x239e_5b99_b1f8_207a]!.argsRoot,
+        schemaRegistry: testbed_schema_registry,
         args: [count, output],
         allocator: connection.channelAllocator,
         incomingRegistry: connection.incomingChannelRegistry,
         taskSender: connection.taskSender,
-        serializers: TestbedSerializers()
       )
 
       var buffer = ByteBufferAllocator().buffer(capacity: 64)
@@ -684,7 +696,9 @@ public final class TestbedClient: TestbedCaller, Sendable {
       methodId: 0x239e_5b99_b1f8_207a, metadata: [], payload: prepared.payload, retry: .volatile,
       timeout: timeout, prepareRetry: prepareRetry,
       finalizeChannels: {
-        finalizeBoundChannels(schemas: testbed_schemas["generate"]!.args, args: [count, output])
+        finalizeBoundChannels(
+          argsRoot: testbed_method_schemas[0x239e_5b99_b1f8_207a]!.argsRoot,
+          schemaRegistry: testbed_schema_registry, args: [count, output])
       }, schemaInfo: schemaInfo)
     try decodeInfallibleResponse(response) { _ in }
   }
@@ -695,12 +709,12 @@ public final class TestbedClient: TestbedCaller, Sendable {
       schemaRegistry: testbed_schema_registry)
     let prepareRetry: @Sendable () async -> PreparedRetryRequest = { [connection] in
       await bindChannels(
-        schemas: testbed_schemas["generateRetryNonIdem"]!.args,
+        argsRoot: testbed_method_schemas[0x3441_9529_478c_c7b8]!.argsRoot,
+        schemaRegistry: testbed_schema_registry,
         args: [count, output],
         allocator: connection.channelAllocator,
         incomingRegistry: connection.incomingChannelRegistry,
         taskSender: connection.taskSender,
-        serializers: TestbedSerializers()
       )
 
       var buffer = ByteBufferAllocator().buffer(capacity: 64)
@@ -716,7 +730,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
       timeout: timeout, prepareRetry: prepareRetry,
       finalizeChannels: {
         finalizeBoundChannels(
-          schemas: testbed_schemas["generateRetryNonIdem"]!.args, args: [count, output])
+          argsRoot: testbed_method_schemas[0x3441_9529_478c_c7b8]!.argsRoot,
+          schemaRegistry: testbed_schema_registry, args: [count, output])
       }, schemaInfo: schemaInfo)
     try decodeInfallibleResponse(response) { _ in }
   }
@@ -727,12 +742,12 @@ public final class TestbedClient: TestbedCaller, Sendable {
       schemaRegistry: testbed_schema_registry)
     let prepareRetry: @Sendable () async -> PreparedRetryRequest = { [connection] in
       await bindChannels(
-        schemas: testbed_schemas["generateRetryIdem"]!.args,
+        argsRoot: testbed_method_schemas[0xe2d2_7fd9_098c_6ea2]!.argsRoot,
+        schemaRegistry: testbed_schema_registry,
         args: [count, output],
         allocator: connection.channelAllocator,
         incomingRegistry: connection.incomingChannelRegistry,
         taskSender: connection.taskSender,
-        serializers: TestbedSerializers()
       )
 
       var buffer = ByteBufferAllocator().buffer(capacity: 64)
@@ -748,7 +763,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
       timeout: timeout, prepareRetry: prepareRetry,
       finalizeChannels: {
         finalizeBoundChannels(
-          schemas: testbed_schemas["generateRetryIdem"]!.args, args: [count, output])
+          argsRoot: testbed_method_schemas[0xe2d2_7fd9_098c_6ea2]!.argsRoot,
+          schemaRegistry: testbed_schema_registry, args: [count, output])
       }, schemaInfo: schemaInfo)
     try decodeInfallibleResponse(response) { _ in }
   }
@@ -759,12 +775,12 @@ public final class TestbedClient: TestbedCaller, Sendable {
       schemaRegistry: testbed_schema_registry)
     let prepareRetry: @Sendable () async -> PreparedRetryRequest = { [connection] in
       await bindChannels(
-        schemas: testbed_schemas["transform"]!.args,
+        argsRoot: testbed_method_schemas[0xcb46_9cff_8d79_8feb]!.argsRoot,
+        schemaRegistry: testbed_schema_registry,
         args: [input, output],
         allocator: connection.channelAllocator,
         incomingRegistry: connection.incomingChannelRegistry,
         taskSender: connection.taskSender,
-        serializers: TestbedSerializers()
       )
 
       var buffer = ByteBufferAllocator().buffer(capacity: 64)
@@ -779,7 +795,74 @@ public final class TestbedClient: TestbedCaller, Sendable {
       methodId: 0xcb46_9cff_8d79_8feb, metadata: [], payload: prepared.payload, retry: .volatile,
       timeout: timeout, prepareRetry: prepareRetry,
       finalizeChannels: {
-        finalizeBoundChannels(schemas: testbed_schemas["transform"]!.args, args: [input, output])
+        finalizeBoundChannels(
+          argsRoot: testbed_method_schemas[0xcb46_9cff_8d79_8feb]!.argsRoot,
+          schemaRegistry: testbed_schema_registry, args: [input, output])
+      }, schemaInfo: schemaInfo)
+    try decodeInfallibleResponse(response) { _ in }
+  }
+
+  public func postReplyGenerate(output: UnboundTx<Int32>) async throws {
+    let schemaInfo = ClientSchemaInfo(
+      methodInfo: testbed_method_schemas[0xec36_e847_51a8_97be]!,
+      schemaRegistry: testbed_schema_registry)
+    let prepareRetry: @Sendable () async -> PreparedRetryRequest = { [connection] in
+      await bindChannels(
+        argsRoot: testbed_method_schemas[0xec36_e847_51a8_97be]!.argsRoot,
+        schemaRegistry: testbed_schema_registry,
+        args: [output],
+        allocator: connection.channelAllocator,
+        incomingRegistry: connection.incomingChannelRegistry,
+        taskSender: connection.taskSender,
+      )
+
+      var buffer = ByteBufferAllocator().buffer(capacity: 64)
+      encodeVarint(output.channelId, into: &buffer)
+      let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
+      return PreparedRetryRequest(payload: payload)
+    }
+    let prepared = await prepareRetry()
+
+    let response = try await connection.call(
+      methodId: 0xec36_e847_51a8_97be, metadata: [], payload: prepared.payload, retry: .volatile,
+      timeout: timeout, prepareRetry: prepareRetry,
+      finalizeChannels: {
+        finalizeBoundChannels(
+          argsRoot: testbed_method_schemas[0xec36_e847_51a8_97be]!.argsRoot,
+          schemaRegistry: testbed_schema_registry, args: [output])
+      }, schemaInfo: schemaInfo)
+    try decodeInfallibleResponse(response) { _ in }
+  }
+
+  public func postReplySum(input: UnboundRx<Int32>, result: UnboundTx<Int64>) async throws {
+    let schemaInfo = ClientSchemaInfo(
+      methodInfo: testbed_method_schemas[0xc1ce_3c39_7e4c_a6e7]!,
+      schemaRegistry: testbed_schema_registry)
+    let prepareRetry: @Sendable () async -> PreparedRetryRequest = { [connection] in
+      await bindChannels(
+        argsRoot: testbed_method_schemas[0xc1ce_3c39_7e4c_a6e7]!.argsRoot,
+        schemaRegistry: testbed_schema_registry,
+        args: [input, result],
+        allocator: connection.channelAllocator,
+        incomingRegistry: connection.incomingChannelRegistry,
+        taskSender: connection.taskSender,
+      )
+
+      var buffer = ByteBufferAllocator().buffer(capacity: 64)
+      encodeVarint(input.channelId, into: &buffer)
+      encodeVarint(result.channelId, into: &buffer)
+      let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
+      return PreparedRetryRequest(payload: payload)
+    }
+    let prepared = await prepareRetry()
+
+    let response = try await connection.call(
+      methodId: 0xc1ce_3c39_7e4c_a6e7, metadata: [], payload: prepared.payload, retry: .volatile,
+      timeout: timeout, prepareRetry: prepareRetry,
+      finalizeChannels: {
+        finalizeBoundChannels(
+          argsRoot: testbed_method_schemas[0xc1ce_3c39_7e4c_a6e7]!.argsRoot,
+          schemaRegistry: testbed_schema_registry, args: [input, result])
       }, schemaInfo: schemaInfo)
     try decodeInfallibleResponse(response) { _ in }
   }
@@ -1172,12 +1255,12 @@ public final class TestbedClient: TestbedCaller, Sendable {
       schemaRegistry: testbed_schema_registry)
     let prepareRetry: @Sendable () async -> PreparedRetryRequest = { [connection] in
       await bindChannels(
-        schemas: testbed_schemas["sumLarge"]!.args,
+        argsRoot: testbed_method_schemas[0x9a7b_ed54_5e08_8054]!.argsRoot,
+        schemaRegistry: testbed_schema_registry,
         args: [numbers],
         allocator: connection.channelAllocator,
         incomingRegistry: connection.incomingChannelRegistry,
         taskSender: connection.taskSender,
-        serializers: TestbedSerializers()
       )
 
       var buffer = ByteBufferAllocator().buffer(capacity: 64)
@@ -1191,7 +1274,9 @@ public final class TestbedClient: TestbedCaller, Sendable {
       methodId: 0x9a7b_ed54_5e08_8054, metadata: [], payload: prepared.payload, retry: .volatile,
       timeout: timeout, prepareRetry: prepareRetry,
       finalizeChannels: {
-        finalizeBoundChannels(schemas: testbed_schemas["sumLarge"]!.args, args: [numbers])
+        finalizeBoundChannels(
+          argsRoot: testbed_method_schemas[0x9a7b_ed54_5e08_8054]!.argsRoot,
+          schemaRegistry: testbed_schema_registry, args: [numbers])
       }, schemaInfo: schemaInfo)
     return try decodeInfallibleResponse(response) { buf in
       let result = try decodeI64(from: &buf)
@@ -1205,12 +1290,12 @@ public final class TestbedClient: TestbedCaller, Sendable {
       schemaRegistry: testbed_schema_registry)
     let prepareRetry: @Sendable () async -> PreparedRetryRequest = { [connection] in
       await bindChannels(
-        schemas: testbed_schemas["generateLarge"]!.args,
+        argsRoot: testbed_method_schemas[0x8edf_bd65_d162_f685]!.argsRoot,
+        schemaRegistry: testbed_schema_registry,
         args: [count, output],
         allocator: connection.channelAllocator,
         incomingRegistry: connection.incomingChannelRegistry,
         taskSender: connection.taskSender,
-        serializers: TestbedSerializers()
       )
 
       var buffer = ByteBufferAllocator().buffer(capacity: 64)
@@ -1226,7 +1311,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
       timeout: timeout, prepareRetry: prepareRetry,
       finalizeChannels: {
         finalizeBoundChannels(
-          schemas: testbed_schemas["generateLarge"]!.args, args: [count, output])
+          argsRoot: testbed_method_schemas[0x8edf_bd65_d162_f685]!.argsRoot,
+          schemaRegistry: testbed_schema_registry, args: [count, output])
       }, schemaInfo: schemaInfo)
     try decodeInfallibleResponse(response) { _ in }
   }
@@ -1517,6 +1603,14 @@ public protocol TestbedHandler: Sendable {
   ///
   ///  Tests: bidirectional streaming. Server receives via `Rx<T>`, sends via `Tx<T>`.
   func transform(input: Rx<String>, output: Tx<String>) async throws
+  ///  Server returns before streaming numbers back to the client.
+  ///
+  ///  Tests: callee-held `Tx<T>` outlives the unary method response.
+  func postReplyGenerate(output: Tx<Int32>) async throws
+  ///  Server returns before receiving numbers from the client, then reports their sum.
+  ///
+  ///  Tests: callee-held `Rx<T>` outlives the unary method response.
+  func postReplySum(input: Rx<Int32>, result: Tx<Int64>) async throws
   ///  Echo a point back.
   func echoPoint(point: Point) async throws -> Point
   ///  Create a person and return it.
@@ -1634,6 +1728,14 @@ public final class TestbedDispatcher: ServiceDispatcher {
         taskSender: taskSender)
     case 0xcb46_9cff_8d79_8feb:
       await dispatch_transform(
+        methodId: methodId, requestId: requestId, buffer: &buffer, registry: registry,
+        taskSender: taskSender)
+    case 0xec36_e847_51a8_97be:
+      await dispatch_postReplyGenerate(
+        methodId: methodId, requestId: requestId, buffer: &buffer, registry: registry,
+        taskSender: taskSender)
+    case 0xc1ce_3c39_7e4c_a6e7:
+      await dispatch_postReplySum(
         methodId: methodId, requestId: requestId, buffer: &buffer, registry: registry,
         taskSender: taskSender)
     case 0x81f5_386d_589d_fbe4:
@@ -1769,6 +1871,10 @@ public final class TestbedDispatcher: ServiceDispatcher {
       return .idem
     case 0xcb46_9cff_8d79_8feb:
       return .volatile
+    case 0xec36_e847_51a8_97be:
+      return .volatile
+    case 0xc1ce_3c39_7e4c_a6e7:
+      return .volatile
     case 0x81f5_386d_589d_fbe4:
       return .volatile
     case 0x68ff_a90b_7728_bde7:
@@ -1864,6 +1970,20 @@ public final class TestbedDispatcher: ServiceDispatcher {
         return
       }
     case 0xcb46_9cff_8d79_8feb:
+      do {
+        let inputChannelId = try decodeVarint(from: &buffer)
+        await registry.markKnown(inputChannelId)
+        _ = try decodeVarint(from: &buffer)
+      } catch {
+        return
+      }
+    case 0xec36_e847_51a8_97be:
+      do {
+        _ = try decodeVarint(from: &buffer)
+      } catch {
+        return
+      }
+    case 0xc1ce_3c39_7e4c_a6e7:
       do {
         let inputChannelId = try decodeVarint(from: &buffer)
         await registry.markKnown(inputChannelId)
@@ -2244,6 +2364,91 @@ public final class TestbedDispatcher: ServiceDispatcher {
       do {
         try await handler.transform(input: input, output: output)
         output.close()
+        taskSender(
+          .response(
+            requestId: requestId, payload: encodeResultOkUnit(), methodId: methodId,
+            schemaPayload: responseSchemaPayload))
+      } catch {
+        taskSender(
+          .response(
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
+      }
+    } catch {
+      taskSender(
+        .response(
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
+          schemaPayload: responseSchemaPayload))
+    }
+  }
+
+  private func dispatch_postReplyGenerate(
+    methodId: UInt64, requestId: UInt64, buffer: inout ByteBuffer,
+    registry: IncomingChannelRegistry, taskSender: @escaping TaskSender
+  ) async {
+    guard let methodInfo = methodSchemas[methodId] else {
+      taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
+      return
+    }
+    let responseSchemaPayload = methodInfo.buildPayload(
+      direction: .response, registry: schemaRegistry)
+    do {
+      let outputChannelId = try decodeVarint(from: &buffer)
+      let output = await createServerTx(
+        channelId: outputChannelId, taskSender: taskSender, registry: registry, initialCredit: 16,
+        serialize: { val, buf in encodeI32(val, into: &buf) })
+      do {
+        try await handler.postReplyGenerate(output: output)
+        output.close()
+        taskSender(
+          .response(
+            requestId: requestId, payload: encodeResultOkUnit(), methodId: methodId,
+            schemaPayload: responseSchemaPayload))
+      } catch {
+        taskSender(
+          .response(
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
+      }
+    } catch {
+      taskSender(
+        .response(
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
+          schemaPayload: responseSchemaPayload))
+    }
+  }
+
+  private func dispatch_postReplySum(
+    methodId: UInt64, requestId: UInt64, buffer: inout ByteBuffer,
+    registry: IncomingChannelRegistry, taskSender: @escaping TaskSender
+  ) async {
+    guard let methodInfo = methodSchemas[methodId] else {
+      taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
+      return
+    }
+    let responseSchemaPayload = methodInfo.buildPayload(
+      direction: .response, registry: schemaRegistry)
+    do {
+      let inputChannelId = try decodeVarint(from: &buffer)
+      let inputReceiver = await registry.register(
+        inputChannelId, initialCredit: 16,
+        onConsumed: { [taskSender] additional in
+          taskSender(.grantCredit(channelId: inputChannelId, bytes: additional))
+        })
+      let input = createServerRx(
+        channelId: inputChannelId, receiver: inputReceiver,
+        deserialize: { buf in try decodeI32(from: &buf) })
+      let resultChannelId = try decodeVarint(from: &buffer)
+      let result = await createServerTx(
+        channelId: resultChannelId, taskSender: taskSender, registry: registry, initialCredit: 16,
+        serialize: { val, buf in encodeI64(val, into: &buf) })
+      do {
+        try await handler.postReplySum(input: input, result: result)
+        result.close()
         taskSender(
           .response(
             requestId: requestId, payload: encodeResultOkUnit(), methodId: methodId,
@@ -3457,93 +3662,6 @@ public final class TestbedDispatcher: ServiceDispatcher {
 
 // MARK: - Testbed Schemas
 
-public let testbed_schemas: [String: MethodBindingSchema] = [
-  "echo": MethodBindingSchema(args: [.string]),
-  "reverse": MethodBindingSchema(args: [.string]),
-  "divide": MethodBindingSchema(args: [.i64, .i64]),
-  "lookup": MethodBindingSchema(args: [.u32]),
-  "sum": MethodBindingSchema(args: [.rx(element: .i32)]),
-  "generate": MethodBindingSchema(args: [.u32, .tx(element: .i32)]),
-  "generateRetryNonIdem": MethodBindingSchema(args: [.u32, .tx(element: .i32)]),
-  "generateRetryIdem": MethodBindingSchema(args: [.u32, .tx(element: .i32)]),
-  "transform": MethodBindingSchema(args: [.rx(element: .string), .tx(element: .string)]),
-  "echoPoint": MethodBindingSchema(args: [.struct(fields: [("x", .i32), ("y", .i32)])]),
-  "createPerson": MethodBindingSchema(args: [.string, .u8, .option(inner: .string)]),
-  "rectangleArea": MethodBindingSchema(args: [
-    .struct(fields: [
-      ("top_left", .struct(fields: [("x", .i32), ("y", .i32)])),
-      ("bottom_right", .struct(fields: [("x", .i32), ("y", .i32)])),
-      ("label", .option(inner: .string)),
-    ])
-  ]),
-  "parseColor": MethodBindingSchema(args: [.string]),
-  "shapeArea": MethodBindingSchema(args: [
-    .enum(variants: [("Circle", [.f64]), ("Rectangle", [.f64, .f64]), ("Point", [])])
-  ]),
-  "createCanvas": MethodBindingSchema(args: [
-    .string,
-    .vec(
-      element: .enum(variants: [("Circle", [.f64]), ("Rectangle", [.f64, .f64]), ("Point", [])])),
-    .enum(variants: [("Red", []), ("Green", []), ("Blue", [])]),
-  ]),
-  "echoGnarly": MethodBindingSchema(args: [
-    .struct(fields: [
-      ("revision", .u64), ("mount", .string),
-      (
-        "entries",
-        .vec(
-          element: .struct(fields: [
-            ("id", .u64), ("parent", .option(inner: .u64)), ("name", .string), ("path", .string),
-            ("attrs", .vec(element: .struct(fields: [("key", .string), ("value", .string)]))),
-            ("chunks", .vec(element: .bytes)),
-            (
-              "kind",
-              .enum(variants: [
-                ("File", [.string, .vec(element: .string)]),
-                ("Directory", [.u32, .vec(element: .string)]),
-                ("Symlink", [.string, .vec(element: .u32)]),
-              ])
-            ),
-          ]))
-      ), ("footer", .option(inner: .string)), ("digest", .bytes),
-    ])
-  ]),
-  "processMessage": MethodBindingSchema(args: [
-    .enum(variants: [("Text", [.string]), ("Number", [.i64]), ("Data", [.bytes])])
-  ]),
-  "getPoints": MethodBindingSchema(args: [.u32]),
-  "swapPair": MethodBindingSchema(args: [.bytes]),
-  "echoBytes": MethodBindingSchema(args: [.bytes]),
-  "echoBool": MethodBindingSchema(args: [.bool]),
-  "echoU64": MethodBindingSchema(args: [.u64]),
-  "echoOptionString": MethodBindingSchema(args: [.option(inner: .string)]),
-  "sumLarge": MethodBindingSchema(args: [.rx(element: .i32)]),
-  "generateLarge": MethodBindingSchema(args: [.u32, .tx(element: .i32)]),
-  "allColors": MethodBindingSchema(args: []),
-  "describePoint": MethodBindingSchema(args: [.string, .i32, .i32, .bool]),
-  "echoShape": MethodBindingSchema(args: [
-    .enum(variants: [("Circle", [.f64]), ("Rectangle", [.f64, .f64]), ("Point", [])])
-  ]),
-  "echoStatusV1": MethodBindingSchema(args: [.enum(variants: [("Active", []), ("Inactive", [])])]),
-  "echoTagV1": MethodBindingSchema(args: [
-    .struct(fields: [("label", .string), ("priority", .u32), ("note", .string)])
-  ]),
-  "echoProfile": MethodBindingSchema(args: [.struct(fields: [("name", .string), ("bio", .string)])]
-  ),
-  "echoRecord": MethodBindingSchema(args: [
-    .struct(fields: [("alpha", .i32), ("beta", .string), ("gamma", .f64)])
-  ]),
-  "echoStatus": MethodBindingSchema(args: [.enum(variants: [("Active", []), ("Inactive", [])])]),
-  "echoTag": MethodBindingSchema(args: [
-    .struct(fields: [("label", .string), ("priority", .u32), ("note", .string)])
-  ]),
-  "echoMeasurement": MethodBindingSchema(args: [
-    .struct(fields: [("unit", .string), ("value", .f64)])
-  ]),
-  "echoConfig": MethodBindingSchema(args: [.struct(fields: [("key", .string), ("value", .string)])]
-  ),
-]
-
 /// Global schema registry containing all schemas for this service.
 nonisolated(unsafe) public let testbed_schema_registry: [UInt64: Schema] = [
   0x0154_2aaa_833a_2511: Schema(
@@ -4014,6 +4132,44 @@ nonisolated(unsafe) public let testbed_method_schemas: [UInt64: MethodSchemaInfo
         .generic(0x4cf4_b2ae_b98a_1939, args: [.concrete(0x5db7_0a39_4660_f3e6)]),
       ])
   ),
+  0xec36_e847_51a8_97be: MethodSchemaInfo(
+    argsSchemaIds: [0x361f_4536_eee9_f991, 0xc886_545a_493d_06eb, 0x6847_ab90_feda_71c1],
+    argsRoot: .generic(
+      0x6847_ab90_feda_71c1,
+      args: [.generic(0xc886_545a_493d_06eb, args: [.concrete(0x361f_4536_eee9_f991)])]),
+    responseSchemaIds: [
+      0x1783_67a8_7f66_fb46, 0x281c_5be4_f2ee_63b4, 0x4204_6de6_63be_eef0, 0x5db7_0a39_4660_f3e6,
+      0x6d7d_ce91_4ee1_50e8, 0x4cf4_b2ae_b98a_1939, 0xbc5c_3324_9a2d_c720,
+    ],
+    responseRoot: .generic(
+      0x4204_6de6_63be_eef0,
+      args: [
+        .concrete(0xbc5c_3324_9a2d_c720),
+        .generic(0x4cf4_b2ae_b98a_1939, args: [.concrete(0x5db7_0a39_4660_f3e6)]),
+      ])
+  ),
+  0xc1ce_3c39_7e4c_a6e7: MethodSchemaInfo(
+    argsSchemaIds: [
+      0x361f_4536_eee9_f991, 0x967a_48ac_345e_2f5e, 0xc6eb_8c46_f1e1_7fba, 0xc886_545a_493d_06eb,
+      0xba04_96aa_8cee_7a4c,
+    ],
+    argsRoot: .generic(
+      0xba04_96aa_8cee_7a4c,
+      args: [
+        .generic(0x967a_48ac_345e_2f5e, args: [.concrete(0x361f_4536_eee9_f991)]),
+        .generic(0xc886_545a_493d_06eb, args: [.concrete(0xc6eb_8c46_f1e1_7fba)]),
+      ]),
+    responseSchemaIds: [
+      0x1783_67a8_7f66_fb46, 0x281c_5be4_f2ee_63b4, 0x4204_6de6_63be_eef0, 0x5db7_0a39_4660_f3e6,
+      0x6d7d_ce91_4ee1_50e8, 0x4cf4_b2ae_b98a_1939, 0xbc5c_3324_9a2d_c720,
+    ],
+    responseRoot: .generic(
+      0x4204_6de6_63be_eef0,
+      args: [
+        .concrete(0xbc5c_3324_9a2d_c720),
+        .generic(0x4cf4_b2ae_b98a_1939, args: [.concrete(0x5db7_0a39_4660_f3e6)]),
+      ])
+  ),
   0x81f5_386d_589d_fbe4: MethodSchemaInfo(
     argsSchemaIds: [0x361f_4536_eee9_f991, 0xb923_32c6_7187_108f, 0x6847_ab90_feda_71c1],
     argsRoot: .generic(0x6847_ab90_feda_71c1, args: [.concrete(0xb923_32c6_7187_108f)]),
@@ -4463,155 +4619,3 @@ nonisolated(unsafe) public let testbed_method_schemas: [UInt64: MethodSchemaInfo
       ])
   ),
 ]
-
-public struct TestbedSerializers: BindingSerializers {
-  public init() {}
-
-  public func txSerializer(for schema: BindingSchema) -> @Sendable (Any) -> [UInt8] {
-    switch schema {
-    case .bool:
-      return {
-        var b = ByteBufferAllocator().buffer(capacity: 1)
-        encodeBool($0 as! Bool, into: &b)
-        return b.readBytes(length: b.readableBytes) ?? []
-      }
-    case .u8:
-      return {
-        var b = ByteBufferAllocator().buffer(capacity: 1)
-        encodeU8($0 as! UInt8, into: &b)
-        return b.readBytes(length: b.readableBytes) ?? []
-      }
-    case .i8:
-      return {
-        var b = ByteBufferAllocator().buffer(capacity: 1)
-        encodeI8($0 as! Int8, into: &b)
-        return b.readBytes(length: b.readableBytes) ?? []
-      }
-    case .u16:
-      return {
-        var b = ByteBufferAllocator().buffer(capacity: 2)
-        encodeU16($0 as! UInt16, into: &b)
-        return b.readBytes(length: b.readableBytes) ?? []
-      }
-    case .i16:
-      return {
-        var b = ByteBufferAllocator().buffer(capacity: 2)
-        encodeI16($0 as! Int16, into: &b)
-        return b.readBytes(length: b.readableBytes) ?? []
-      }
-    case .u32:
-      return {
-        var b = ByteBufferAllocator().buffer(capacity: 4)
-        encodeU32($0 as! UInt32, into: &b)
-        return b.readBytes(length: b.readableBytes) ?? []
-      }
-    case .i32:
-      return {
-        var b = ByteBufferAllocator().buffer(capacity: 4)
-        encodeI32($0 as! Int32, into: &b)
-        return b.readBytes(length: b.readableBytes) ?? []
-      }
-    case .u64:
-      return {
-        var b = ByteBufferAllocator().buffer(capacity: 9)
-        encodeVarint($0 as! UInt64, into: &b)
-        return b.readBytes(length: b.readableBytes) ?? []
-      }
-    case .i64:
-      return {
-        var b = ByteBufferAllocator().buffer(capacity: 9)
-        encodeI64($0 as! Int64, into: &b)
-        return b.readBytes(length: b.readableBytes) ?? []
-      }
-    case .f32:
-      return {
-        var b = ByteBufferAllocator().buffer(capacity: 4)
-        encodeF32($0 as! Float, into: &b)
-        return b.readBytes(length: b.readableBytes) ?? []
-      }
-    case .f64:
-      return {
-        var b = ByteBufferAllocator().buffer(capacity: 8)
-        encodeF64($0 as! Double, into: &b)
-        return b.readBytes(length: b.readableBytes) ?? []
-      }
-    case .string:
-      return {
-        var b = ByteBufferAllocator().buffer(capacity: 64)
-        encodeString($0 as! String, into: &b)
-        return b.readBytes(length: b.readableBytes) ?? []
-      }
-    case .bytes: return { [UInt8]($0 as! Data) }
-    case .tx(_, _), .rx(_, _): fatalError("Channel schemas are not serialized directly")
-    default: fatalError("Unsupported schema for Tx serialization: \(schema)")
-    }
-  }
-
-  public func rxDeserializer(for schema: BindingSchema) -> @Sendable ([UInt8]) throws -> Any {
-    switch schema {
-    case .bool:
-      return {
-        var b = ByteBufferAllocator().buffer(bytes: $0)
-        return try decodeBool(from: &b)
-      }
-    case .u8:
-      return {
-        var b = ByteBufferAllocator().buffer(bytes: $0)
-        return try decodeU8(from: &b)
-      }
-    case .i8:
-      return {
-        var b = ByteBufferAllocator().buffer(bytes: $0)
-        return try decodeI8(from: &b)
-      }
-    case .u16:
-      return {
-        var b = ByteBufferAllocator().buffer(bytes: $0)
-        return try decodeU16(from: &b)
-      }
-    case .i16:
-      return {
-        var b = ByteBufferAllocator().buffer(bytes: $0)
-        return try decodeI16(from: &b)
-      }
-    case .u32:
-      return {
-        var b = ByteBufferAllocator().buffer(bytes: $0)
-        return try decodeU32(from: &b)
-      }
-    case .i32:
-      return {
-        var b = ByteBufferAllocator().buffer(bytes: $0)
-        return try decodeI32(from: &b)
-      }
-    case .u64:
-      return {
-        var b = ByteBufferAllocator().buffer(bytes: $0)
-        return try decodeVarint(from: &b)
-      }
-    case .i64:
-      return {
-        var b = ByteBufferAllocator().buffer(bytes: $0)
-        return try decodeI64(from: &b)
-      }
-    case .f32:
-      return {
-        var b = ByteBufferAllocator().buffer(bytes: $0)
-        return try decodeF32(from: &b)
-      }
-    case .f64:
-      return {
-        var b = ByteBufferAllocator().buffer(bytes: $0)
-        return try decodeF64(from: &b)
-      }
-    case .string:
-      return {
-        var b = ByteBufferAllocator().buffer(bytes: $0)
-        return try decodeString(from: &b)
-      }
-    case .bytes: return { Data($0) }
-    case .tx(_, _), .rx(_, _): fatalError("Channel schemas are not deserialized directly")
-    default: fatalError("Unsupported schema for Rx deserialization: \(schema)")
-    }
-  }
-}

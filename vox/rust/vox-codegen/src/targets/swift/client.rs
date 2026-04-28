@@ -237,7 +237,7 @@ fn generate_streaming_client_body(
     w: &mut CodeWriter<&mut String>,
     method: &MethodDescriptor,
     service_name: &str,
-    method_id_name: &str,
+    _method_id_name: &str,
     cursor_var: &str,
     retry_policy: &str,
 ) {
@@ -268,16 +268,17 @@ fn generate_streaming_client_body(
             let _indent = w.indent();
             cw_writeln!(
                 w,
-                "schemas: {service_name_lower}_schemas[\"{method_id_name}\"]!.args,"
+                "argsRoot: {service_name_lower}_method_schemas[{}]!.argsRoot,",
+                hex_u64(method_id)
             )
             .unwrap();
+            cw_writeln!(w, "schemaRegistry: {service_name_lower}_schema_registry,").unwrap();
             cw_writeln!(w, "args: [{}],", arg_names.join(", ")).unwrap();
             w.writeln("allocator: connection.channelAllocator,")
                 .unwrap();
             w.writeln("incomingRegistry: connection.incomingChannelRegistry,")
                 .unwrap();
             w.writeln("taskSender: connection.taskSender,").unwrap();
-            cw_writeln!(w, "serializers: {service_name}Serializers()").unwrap();
         }
         w.writeln(")").unwrap();
         w.blank_line().unwrap();
@@ -294,7 +295,8 @@ fn generate_streaming_client_body(
     let _ = ret_type;
     cw_writeln!(
         w,
-        "let response = try await connection.call(methodId: {}, metadata: [], payload: prepared.payload, retry: {retry_policy}, timeout: timeout, prepareRetry: prepareRetry, finalizeChannels: {{ finalizeBoundChannels(schemas: {service_name_lower}_schemas[\"{method_id_name}\"]!.args, args: [{}]) }}, schemaInfo: schemaInfo)",
+        "let response = try await connection.call(methodId: {}, metadata: [], payload: prepared.payload, retry: {retry_policy}, timeout: timeout, prepareRetry: prepareRetry, finalizeChannels: {{ finalizeBoundChannels(argsRoot: {service_name_lower}_method_schemas[{}]!.argsRoot, schemaRegistry: {service_name_lower}_schema_registry, args: [{}]) }}, schemaInfo: schemaInfo)",
+        hex_u64(method_id),
         hex_u64(method_id),
         arg_names.join(", ")
     )

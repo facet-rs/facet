@@ -156,11 +156,11 @@ mod tests {
         let generated = generate_service(&service);
 
         assert!(
-            generated.contains(".tx(element: .u32)"),
+            generated.contains(".channel(direction: .tx, element:"),
             "generated Swift should emit Tx channel schema:\n{generated}"
         );
         assert!(
-            generated.contains(".rx(element: .u32)"),
+            generated.contains(".channel(direction: .rx, element:"),
             "generated Swift should emit Rx channel schema:\n{generated}"
         );
     }
