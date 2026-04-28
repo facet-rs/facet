@@ -136,7 +136,7 @@ pub fn generate_named_types(named_types: &[(String, &'static Shape)]) -> String 
                 };
                 out.push_str(&format!("public enum {name}: {protocols} {{\n"));
                 for variant in variants {
-                    let variant_name = variant.name.to_lower_camel_case();
+                    let variant_name = swift_field_name(variant.name);
                     match classify_variant(variant) {
                         VariantKind::Unit => {
                             out.push_str(&format!("    case {variant_name}\n"));
@@ -180,19 +180,84 @@ pub fn generate_named_types(named_types: &[(String, &'static Shape)]) -> String 
     out
 }
 
-/// Map a Rust field name to a valid Swift identifier.
+/// Map a Rust field or variant name to a valid Swift identifier.
 ///
-/// Rust tuple-struct positional fields are exposed by facet with
-/// numeric names ("0", "1", ...). Those aren't valid Swift identifiers,
-/// so prefix them with an underscore. Everything else goes through
-/// `to_lower_camel_case` like before.
+/// Two transforms layered on top of `to_lower_camel_case`:
+///   - Rust tuple-struct positional fields are exposed by facet with
+///     numeric names ("0", "1", ...); prefix them with an underscore.
+///   - Swift reserved keywords (e.g. `internal`, `class`) need
+///     backticks when used as identifiers.
 pub fn swift_field_name(name: &str) -> String {
     if name.chars().next().map_or(false, |c| c.is_ascii_digit()) {
-        format!("_{name}")
+        return format!("_{name}");
+    }
+    let lower = name.to_lower_camel_case();
+    if SWIFT_RESERVED.binary_search(&lower.as_str()).is_ok() {
+        format!("`{lower}`")
     } else {
-        name.to_lower_camel_case()
+        lower
     }
 }
+
+/// Sorted list of Swift reserved words and contextual keywords that
+/// can't be used as bare identifiers. Kept sorted so we can
+/// `binary_search` it.
+const SWIFT_RESERVED: &[&str] = &[
+    "Any",
+    "Self",
+    "as",
+    "associatedtype",
+    "break",
+    "case",
+    "catch",
+    "class",
+    "continue",
+    "default",
+    "defer",
+    "deinit",
+    "do",
+    "else",
+    "enum",
+    "extension",
+    "fallthrough",
+    "false",
+    "fileprivate",
+    "for",
+    "func",
+    "guard",
+    "if",
+    "import",
+    "in",
+    "init",
+    "inout",
+    "internal",
+    "is",
+    "let",
+    "nil",
+    "open",
+    "operator",
+    "precedencegroup",
+    "private",
+    "protocol",
+    "public",
+    "repeat",
+    "rethrows",
+    "return",
+    "self",
+    "static",
+    "struct",
+    "subscript",
+    "super",
+    "switch",
+    "throw",
+    "throws",
+    "true",
+    "try",
+    "typealias",
+    "var",
+    "where",
+    "while",
+];
 
 /// Convert ScalarType to Swift type string.
 pub fn swift_scalar_type(scalar: ScalarType) -> String {

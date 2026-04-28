@@ -158,7 +158,7 @@ pub fn generate_encode_closure(shape: &'static Shape) -> String {
             // Anonymous enum — inline switch
             let mut code = "{ val, buf in\nswitch val {\n".to_string();
             for (i, v) in variants.iter().enumerate() {
-                let variant_name = v.name.to_lower_camel_case();
+                let variant_name = swift_field_name(v.name);
                 match classify_variant(v) {
                     VariantKind::Unit => {
                         code.push_str(&format!(
@@ -252,7 +252,7 @@ pub fn generate_named_type_encode_fn(name: &str, shape: &'static Shape) -> Strin
         ShapeKind::Enum(EnumInfo { variants, .. }) => {
             out.push_str("    switch value {\n");
             for (i, v) in variants.iter().enumerate() {
-                let variant_name = v.name.to_lower_camel_case();
+                let variant_name = swift_field_name(v.name);
                 match classify_variant(v) {
                     VariantKind::Unit => {
                         out.push_str(&format!(

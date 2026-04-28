@@ -363,7 +363,7 @@ fn generate_enum(name: &str, variants: &[facet_core::Variant], types: &[WireType
     // Enum definition
     out.push_str(&format!("public enum {name}: Sendable, Equatable {{\n"));
     for v in variants {
-        let variant_name = v.name.to_lower_camel_case();
+        let variant_name = swift_field_name(v.name);
         match classify_variant(v) {
             VariantKind::Unit => {
                 out.push_str(&format!("    case {variant_name}\n"));
@@ -405,7 +405,7 @@ fn generate_enum(name: &str, variants: &[facet_core::Variant], types: &[WireType
     out.push_str("\n    func encode(into buffer: inout ByteBuffer) {\n");
     out.push_str("        switch self {\n");
     for (i, v) in variants.iter().enumerate() {
-        let variant_name = v.name.to_lower_camel_case();
+        let variant_name = swift_field_name(v.name);
         match classify_variant(v) {
             VariantKind::Unit => {
                 out.push_str(&format!(
@@ -468,7 +468,7 @@ fn generate_enum(name: &str, variants: &[facet_core::Variant], types: &[WireType
     out.push_str("        let disc = try decodeVarint(from: &buffer)\n");
     out.push_str("        switch disc {\n");
     for (i, v) in variants.iter().enumerate() {
-        let variant_name = v.name.to_lower_camel_case();
+        let variant_name = swift_field_name(v.name);
         out.push_str(&format!("        case {i}:\n"));
         match classify_variant(v) {
             VariantKind::Unit => {
@@ -769,7 +769,7 @@ fn generate_factory_methods(types: &[WireType]) -> String {
     out.push_str("public extension Message {\n");
 
     for v in variants {
-        let variant_name = v.name.to_lower_camel_case();
+        let variant_name = swift_field_name(v.name);
         if let VariantKind::Newtype { inner } = classify_variant(v) {
             let inner_swift = swift_wire_type(inner, None, types);
             // Control messages use connId=0.

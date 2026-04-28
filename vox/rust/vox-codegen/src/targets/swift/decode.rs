@@ -74,6 +74,17 @@ fn generate_decode_stmt_impl(
     }
 
     match classify_shape(shape) {
+        // Unit reads zero bytes off the wire. Emit a plain assignment;
+        // calling `swift_decode_fn(Unit)` would produce a closure
+        // expression that the surrounding `try {fn}(from: &buf)`
+        // template can't invoke (gives "extraneous argument label
+        // 'from:' in call").
+        ShapeKind::Scalar(facet_core::ScalarType::Unit) => {
+            format!("{indent}let {var_name}: Void = ()\n")
+        }
+        ShapeKind::Tuple { elements } if elements.is_empty() => {
+            format!("{indent}let {var_name}: Void = ()\n")
+        }
         ShapeKind::Scalar(scalar) => {
             let decode_fn = swift_decode_fn(scalar);
             format!("{indent}let {var_name} = try {decode_fn}(from: &{buf_name})\n")
@@ -151,7 +162,7 @@ fn generate_decode_stmt_impl(
                     VariantKind::Unit => {
                         out.push_str(&format!(
                             "{inner_indent}{var_name} = .{}\n",
-                            v.name.to_lower_camel_case()
+                            swift_field_name(v.name)
                         ));
                     }
                     VariantKind::Newtype { inner } => {
@@ -163,7 +174,7 @@ fn generate_decode_stmt_impl(
                         ));
                         out.push_str(&format!(
                             "{inner_indent}{var_name} = .{}(_{var_name}_val)\n",
-                            v.name.to_lower_camel_case()
+                            swift_field_name(v.name)
                         ));
                     }
                     VariantKind::Tuple { fields } => {
@@ -180,7 +191,7 @@ fn generate_decode_stmt_impl(
                             .collect();
                         out.push_str(&format!(
                             "{inner_indent}{var_name} = .{}({})\n",
-                            v.name.to_lower_camel_case(),
+                            swift_field_name(v.name),
                             args.join(", ")
                         ));
                     }
@@ -203,7 +214,7 @@ fn generate_decode_stmt_impl(
                             .collect();
                         out.push_str(&format!(
                             "{inner_indent}{var_name} = .{}({})\n",
-                            v.name.to_lower_camel_case(),
+                            swift_field_name(v.name),
                             args.join(", ")
                         ));
                     }
@@ -332,16 +343,13 @@ pub fn generate_decode_closure(shape: &'static Shape) -> String {
                 code.push_str(&format!("    case {i}:\n"));
                 match classify_variant(v) {
                     VariantKind::Unit => {
-                        code.push_str(&format!(
-                            "        result = .{}\n",
-                            v.name.to_lower_camel_case()
-                        ));
+                        code.push_str(&format!("        result = .{}\n", swift_field_name(v.name)));
                     }
                     VariantKind::Newtype { inner } => {
                         let inner_closure = generate_decode_closure(inner);
                         code.push_str(&format!(
                             "        let val = try ({inner_closure})(&buf)\n        result = .{}(val)\n",
-                            v.name.to_lower_camel_case()
+                            swift_field_name(v.name)
                         ));
                     }
                     VariantKind::Tuple { fields } => {
@@ -353,7 +361,7 @@ pub fn generate_decode_closure(shape: &'static Shape) -> String {
                             (0..fields.len()).map(|j| format!("f{j}")).collect();
                         code.push_str(&format!(
                             "        result = .{}({})\n",
-                            v.name.to_lower_camel_case(),
+                            swift_field_name(v.name),
                             args.join(", ")
                         ));
                     }
@@ -374,7 +382,7 @@ pub fn generate_decode_closure(shape: &'static Shape) -> String {
                             .collect();
                         code.push_str(&format!(
                             "        result = .{}({})\n",
-                            v.name.to_lower_camel_case(),
+                            swift_field_name(v.name),
                             args.join(", ")
                         ));
                     }
