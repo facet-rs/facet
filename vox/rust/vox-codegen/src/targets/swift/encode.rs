@@ -4,6 +4,7 @@
 //! All encode functions are void — they append into the buffer rather than
 //! returning a new `[UInt8]`.
 
+use super::types::swift_field_name;
 use facet_core::{ScalarType, Shape};
 use heck::ToLowerCamelCase;
 use vox_types::{
@@ -58,7 +59,7 @@ pub fn generate_encode_stmt(shape: &'static Shape, value: &str) -> String {
             let stmts: Vec<String> = fields
                 .iter()
                 .map(|f| {
-                    let field_name = f.name.to_lower_camel_case();
+                    let field_name = swift_field_name(f.name);
                     generate_encode_stmt(f.shape(), &format!("{value}.{field_name}"))
                 })
                 .collect();
@@ -133,7 +134,7 @@ pub fn generate_encode_closure(shape: &'static Shape) -> String {
             let stmts: Vec<String> = fields
                 .iter()
                 .map(|f| {
-                    let field_name = f.name.to_lower_camel_case();
+                    let field_name = swift_field_name(f.name);
                     let inner = generate_encode_closure(f.shape());
                     format!("{inner}(val.{field_name}, &buf)")
                 })
@@ -192,14 +193,12 @@ pub fn generate_encode_closure(shape: &'static Shape) -> String {
                         ));
                     }
                     VariantKind::Struct { fields } => {
-                        let bindings: Vec<String> = fields
-                            .iter()
-                            .map(|f| f.name.to_lower_camel_case())
-                            .collect();
+                        let bindings: Vec<String> =
+                            fields.iter().map(|f| swift_field_name(f.name)).collect();
                         let stmts: Vec<String> = fields
                             .iter()
                             .map(|f| {
-                                let field_name = f.name.to_lower_camel_case();
+                                let field_name = swift_field_name(f.name);
                                 let c = generate_encode_closure(f.shape());
                                 format!("{c}({field_name}, &buf)")
                             })
@@ -243,7 +242,7 @@ pub fn generate_named_type_encode_fn(name: &str, shape: &'static Shape) -> Strin
     match classify_shape(shape) {
         ShapeKind::Struct(StructInfo { fields, .. }) => {
             for f in fields {
-                let field_name = f.name.to_lower_camel_case();
+                let field_name = swift_field_name(f.name);
                 let stmt = generate_encode_stmt(f.shape(), &format!("value.{field_name}"));
                 for line in stmt.lines() {
                     out.push_str(&format!("    {line}\n"));
@@ -288,10 +287,8 @@ pub fn generate_named_type_encode_fn(name: &str, shape: &'static Shape) -> Strin
                         }
                     }
                     VariantKind::Struct { fields } => {
-                        let bindings: Vec<String> = fields
-                            .iter()
-                            .map(|f| f.name.to_lower_camel_case())
-                            .collect();
+                        let bindings: Vec<String> =
+                            fields.iter().map(|f| swift_field_name(f.name)).collect();
                         let binding_str = bindings
                             .iter()
                             .map(|b| format!("let {b}"))
@@ -301,7 +298,7 @@ pub fn generate_named_type_encode_fn(name: &str, shape: &'static Shape) -> Strin
                             "    case .{variant_name}({binding_str}):\n        encodeVarint(UInt64({i}), into: &buffer)\n"
                         ));
                         for f in fields {
-                            let field_name = f.name.to_lower_camel_case();
+                            let field_name = swift_field_name(f.name);
                             let stmt = generate_encode_stmt(f.shape(), &field_name);
                             for line in stmt.lines() {
                                 out.push_str(&format!("        {line}\n"));

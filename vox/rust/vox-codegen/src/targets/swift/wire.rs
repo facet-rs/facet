@@ -8,6 +8,7 @@
 //! `OpaquePayload` with both length-prefixed and trailing byte handling.
 //! Everything else is normal struct/enum codegen.
 
+use super::types::swift_field_name;
 use facet_core::{Field, ScalarType, Shape};
 use heck::ToLowerCamelCase;
 use vox_types::{
@@ -262,7 +263,7 @@ fn generate_struct(name: &str, fields: &[Field], types: &[WireType], is_top_leve
     // Struct definition
     out.push_str(&format!("public struct {name}: Sendable, Equatable {{\n"));
     for f in fields {
-        let field_name = f.name.to_lower_camel_case();
+        let field_name = swift_field_name(f.name);
         let field_type = swift_wire_type(f.shape(), Some(f), types);
         out.push_str(&format!("    public var {field_name}: {field_type}\n"));
     }
@@ -274,13 +275,13 @@ fn generate_struct(name: &str, fields: &[Field], types: &[WireType], is_top_leve
             if i > 0 {
                 out.push_str(", ");
             }
-            let field_name = f.name.to_lower_camel_case();
+            let field_name = swift_field_name(f.name);
             let field_type = swift_wire_type(f.shape(), Some(f), types);
             out.push_str(&format!("{field_name}: {field_type}"));
         }
         out.push_str(") {\n");
         for f in fields {
-            let field_name = f.name.to_lower_camel_case();
+            let field_name = swift_field_name(f.name);
             out.push_str(&format!("        self.{field_name} = {field_name}\n"));
         }
         out.push_str("    }\n");
@@ -325,7 +326,7 @@ fn generate_struct(name: &str, fields: &[Field], types: &[WireType], is_top_leve
     let field_names: Vec<String> = fields
         .iter()
         .map(|f| {
-            let n = f.name.to_lower_camel_case();
+            let n = swift_field_name(f.name);
             format!("{n}: {n}")
         })
         .collect();
@@ -387,7 +388,7 @@ fn generate_enum(name: &str, variants: &[facet_core::Variant], types: &[WireType
                     .map(|f| {
                         format!(
                             "{}: {}",
-                            f.name.to_lower_camel_case(),
+                            swift_field_name(f.name),
                             swift_wire_type(f.shape(), Some(f), types)
                         )
                     })
@@ -437,10 +438,8 @@ fn generate_enum(name: &str, variants: &[facet_core::Variant], types: &[WireType
                 }
             }
             VariantKind::Struct { fields } => {
-                let bindings: Vec<String> = fields
-                    .iter()
-                    .map(|f| f.name.to_lower_camel_case())
-                    .collect();
+                let bindings: Vec<String> =
+                    fields.iter().map(|f| swift_field_name(f.name)).collect();
                 let binding_str = bindings
                     .iter()
                     .map(|b| format!("let {b}"))
@@ -449,7 +448,7 @@ fn generate_enum(name: &str, variants: &[facet_core::Variant], types: &[WireType
                 let stmts: Vec<String> = fields
                     .iter()
                     .map(|f| {
-                        encode_shape_stmt(f.shape(), &f.name.to_lower_camel_case(), Some(f), types)
+                        encode_shape_stmt(f.shape(), &swift_field_name(f.name), Some(f), types)
                     })
                     .collect();
                 out.push_str(&format!(
@@ -497,7 +496,7 @@ fn generate_enum(name: &str, variants: &[facet_core::Variant], types: &[WireType
             }
             VariantKind::Struct { fields } => {
                 for f in fields {
-                    let field_name = f.name.to_lower_camel_case();
+                    let field_name = swift_field_name(f.name);
                     for stmt in decode_stmts_for(f.shape(), Some(f), &field_name, types) {
                         out.push_str(&format!("            {stmt}\n"));
                     }
@@ -505,7 +504,7 @@ fn generate_enum(name: &str, variants: &[facet_core::Variant], types: &[WireType
                 let args: Vec<String> = fields
                     .iter()
                     .map(|f| {
-                        let n = f.name.to_lower_camel_case();
+                        let n = swift_field_name(f.name);
                         format!("{n}: {n}")
                     })
                     .collect();
@@ -527,7 +526,7 @@ fn generate_enum(name: &str, variants: &[facet_core::Variant], types: &[WireType
 
 /// Generate an encode statement for a struct field (writes into `buffer`).
 fn encode_field_stmt(field: &Field, types: &[WireType]) -> String {
-    let field_name = field.name.to_lower_camel_case();
+    let field_name = swift_field_name(field.name);
     encode_shape_stmt(field.shape(), &field_name, Some(field), types)
 }
 
@@ -623,7 +622,7 @@ fn encode_element_closure(shape: &'static Shape, _types: &[WireType]) -> String 
 /// Generate decode statements for a struct field into a named variable.
 /// Returns one or two Swift statements (as lines to be written individually).
 fn decode_field_stmts(field: &Field, types: &[WireType]) -> Vec<String> {
-    let field_name = field.name.to_lower_camel_case();
+    let field_name = swift_field_name(field.name);
     decode_stmts_for(field.shape(), Some(field), &field_name, types)
 }
 

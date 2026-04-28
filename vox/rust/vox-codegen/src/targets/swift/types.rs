@@ -104,7 +104,7 @@ pub fn generate_named_types(named_types: &[(String, &'static Shape)]) -> String 
             ShapeKind::Struct(StructInfo { fields, .. }) => {
                 out.push_str(&format!("public struct {name}: Codable, Sendable {{\n"));
                 for field in fields {
-                    let field_name = field.name.to_lower_camel_case();
+                    let field_name = swift_field_name(field.name);
                     let field_type = swift_type_base(field.shape());
                     out.push_str(&format!("    public var {field_name}: {field_type}\n"));
                 }
@@ -115,13 +115,13 @@ pub fn generate_named_types(named_types: &[(String, &'static Shape)]) -> String 
                     if i > 0 {
                         out.push_str(", ");
                     }
-                    let field_name = field.name.to_lower_camel_case();
+                    let field_name = swift_field_name(field.name);
                     let field_type = swift_type_base(field.shape());
                     out.push_str(&format!("{field_name}: {field_type}"));
                 }
                 out.push_str(") {\n");
                 for field in fields {
-                    let field_name = field.name.to_lower_camel_case();
+                    let field_name = swift_field_name(field.name);
                     out.push_str(&format!("        self.{field_name} = {field_name}\n"));
                 }
                 out.push_str("    }\n");
@@ -159,7 +159,7 @@ pub fn generate_named_types(named_types: &[(String, &'static Shape)]) -> String 
                                 .map(|f| {
                                     format!(
                                         "{}: {}",
-                                        f.name.to_lower_camel_case(),
+                                        swift_field_name(f.name),
                                         swift_type_base(f.shape())
                                     )
                                 })
@@ -178,6 +178,20 @@ pub fn generate_named_types(named_types: &[(String, &'static Shape)]) -> String 
     }
 
     out
+}
+
+/// Map a Rust field name to a valid Swift identifier.
+///
+/// Rust tuple-struct positional fields are exposed by facet with
+/// numeric names ("0", "1", ...). Those aren't valid Swift identifiers,
+/// so prefix them with an underscore. Everything else goes through
+/// `to_lower_camel_case` like before.
+pub fn swift_field_name(name: &str) -> String {
+    if name.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+        format!("_{name}")
+    } else {
+        name.to_lower_camel_case()
+    }
 }
 
 /// Convert ScalarType to Swift type string.

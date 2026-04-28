@@ -3,6 +3,7 @@
 //! Generates Swift code that decodes values from an `inout ByteBuffer`.
 //! All decode functions take `inout ByteBuffer` and advance its reader index.
 
+use super::types::swift_field_name;
 use facet_core::{ScalarType, Shape};
 use heck::ToLowerCamelCase;
 use vox_types::{
@@ -111,7 +112,7 @@ fn generate_decode_stmt_impl(
             // Named struct — decode each field then construct
             let mut out = String::new();
             for f in fields.iter() {
-                let field_name = f.name.to_lower_camel_case();
+                let field_name = swift_field_name(f.name);
                 out.push_str(&generate_decode_stmt_impl(
                     f.shape(),
                     &format!("_{var_name}_{field_name}"),
@@ -122,7 +123,7 @@ fn generate_decode_stmt_impl(
             let field_inits: Vec<String> = fields
                 .iter()
                 .map(|f| {
-                    let field_name = f.name.to_lower_camel_case();
+                    let field_name = swift_field_name(f.name);
                     format!("{field_name}: _{var_name}_{field_name}")
                 })
                 .collect();
@@ -185,7 +186,7 @@ fn generate_decode_stmt_impl(
                     }
                     VariantKind::Struct { fields } => {
                         for f in fields.iter() {
-                            let field_name = f.name.to_lower_camel_case();
+                            let field_name = swift_field_name(f.name);
                             out.push_str(&generate_decode_stmt_impl(
                                 f.shape(),
                                 &format!("_{var_name}_{field_name}"),
@@ -196,7 +197,7 @@ fn generate_decode_stmt_impl(
                         let args: Vec<String> = fields
                             .iter()
                             .map(|f| {
-                                let field_name = f.name.to_lower_camel_case();
+                                let field_name = swift_field_name(f.name);
                                 format!("{field_name}: _{var_name}_{field_name}")
                             })
                             .collect();
@@ -302,14 +303,14 @@ pub fn generate_decode_closure(shape: &'static Shape) -> String {
             // Named struct — inline decode all fields then construct
             let mut code = "{ buf in\n".to_string();
             for f in fields.iter() {
-                let field_name = f.name.to_lower_camel_case();
+                let field_name = swift_field_name(f.name);
                 let inner = generate_decode_closure(f.shape());
                 code.push_str(&format!("    let _{field_name} = try ({inner})(&buf)\n"));
             }
             let field_inits: Vec<String> = fields
                 .iter()
                 .map(|f| {
-                    let field_name = f.name.to_lower_camel_case();
+                    let field_name = swift_field_name(f.name);
                     format!("{field_name}: _{field_name}")
                 })
                 .collect();
@@ -358,7 +359,7 @@ pub fn generate_decode_closure(shape: &'static Shape) -> String {
                     }
                     VariantKind::Struct { fields } => {
                         for f in fields.iter() {
-                            let field_name = f.name.to_lower_camel_case();
+                            let field_name = swift_field_name(f.name);
                             let inner = generate_decode_closure(f.shape());
                             code.push_str(&format!(
                                 "        let _{field_name} = try ({inner})(&buf)\n"
@@ -367,7 +368,7 @@ pub fn generate_decode_closure(shape: &'static Shape) -> String {
                         let args: Vec<String> = fields
                             .iter()
                             .map(|f| {
-                                let field_name = f.name.to_lower_camel_case();
+                                let field_name = swift_field_name(f.name);
                                 format!("{field_name}: _{field_name}")
                             })
                             .collect();
