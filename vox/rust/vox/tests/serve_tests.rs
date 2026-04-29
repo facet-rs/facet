@@ -116,6 +116,54 @@ async fn high_level_builders_accept_channel_capacity() {
     server.abort();
 }
 
+// r[verify rpc.flow-control.credit.initial.zero]
+#[tokio::test]
+async fn connect_builder_rejects_zero_channel_capacity() {
+    let result: Result<EchoClient, _> = vox::connect("tcp://127.0.0.1:1").channel_capacity(0).await;
+    match result {
+        Err(vox::SessionError::Protocol(message)) => {
+            assert_eq!(message, "channel_capacity must be greater than zero");
+        }
+        Ok(_) => panic!("connect unexpectedly succeeded"),
+        Err(other) => panic!("expected protocol error, got {other:?}"),
+    }
+}
+
+// r[verify rpc.flow-control.credit.initial.zero]
+#[tokio::test]
+async fn serve_builder_rejects_zero_channel_capacity() {
+    let result = vox::serve("tcp://127.0.0.1:0", EchoDispatcher::new(EchoService))
+        .channel_capacity(0)
+        .run()
+        .await;
+    match result {
+        Err(vox::ServeError::Session(vox::SessionError::Protocol(message))) => {
+            assert_eq!(message, "channel_capacity must be greater than zero");
+        }
+        Ok(_) => panic!("serve unexpectedly succeeded"),
+        Err(other) => panic!("expected protocol error, got {other:?}"),
+    }
+}
+
+// r[verify rpc.flow-control.credit.initial.zero]
+#[tokio::test]
+async fn serve_listener_builder_rejects_zero_channel_capacity() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let result = vox::serve_listener(listener, EchoDispatcher::new(EchoService))
+        .channel_capacity(0)
+        .run()
+        .await;
+    match result {
+        Err(vox::SessionError::Protocol(message)) => {
+            assert_eq!(message, "channel_capacity must be greater than zero");
+        }
+        Ok(_) => panic!("serve_listener unexpectedly succeeded"),
+        Err(other) => panic!("expected protocol error, got {other:?}"),
+    }
+}
+
 // r[verify rpc.virtual-connection.accept]
 #[tokio::test]
 async fn connect_builder_can_configure_inbound_virtual_connections_before_await() {

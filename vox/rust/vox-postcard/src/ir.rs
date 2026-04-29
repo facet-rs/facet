@@ -629,9 +629,7 @@ fn mark_tail_calls(program: &mut DecodeProgram) {
                         changed = true;
                     }
                 }
-                DecodeOp::BranchOnVariant {
-                    variant_blocks, ..
-                } => {
+                DecodeOp::BranchOnVariant { variant_blocks, .. } => {
                     for (_, vb) in variant_blocks.iter() {
                         if tail_blocks.insert(*vb) {
                             changed = true;
@@ -649,10 +647,14 @@ fn mark_tail_calls(program: &mut DecodeProgram) {
                     }
                 }
                 DecodeOp::DecodeResult {
-                    ok_block, err_block, ..
+                    ok_block,
+                    err_block,
+                    ..
                 }
                 | DecodeOp::DecodeResultInit {
-                    ok_block, err_block, ..
+                    ok_block,
+                    err_block,
+                    ..
                 } => {
                     if tail_blocks.insert(ok_block) {
                         changed = true;
@@ -2334,9 +2336,7 @@ fn run_block(
                 let desc = cal
                     .get(vox_jit_cal::DescriptorHandle(descriptor.0))
                     .ok_or_else(|| {
-                        DeserializeError::Custom(
-                            "ReadFixedVec: descriptor handle not found".into(),
-                        )
+                        DeserializeError::Custom("ReadFixedVec: descriptor handle not found".into())
                     })?;
                 let list_len = state.read_varint()? as usize;
                 let byte_count = list_len * *elem_size;
@@ -2350,11 +2350,8 @@ fn run_block(
                         );
                     }
                 } else {
-                    let layout = std::alloc::Layout::from_size_align(
-                        byte_count,
-                        desc.elem_align,
-                    )
-                    .map_err(|_| {
+                    let layout = std::alloc::Layout::from_size_align(byte_count, desc.elem_align)
+                        .map_err(|_| {
                         DeserializeError::Custom("ReadFixedVec: invalid layout".into())
                     })?;
                     let backing_ptr = unsafe { std::alloc::alloc(layout) };
@@ -2365,11 +2362,7 @@ fn run_block(
                     }
                     let src_bytes = state.read_bytes(byte_count)?;
                     unsafe {
-                        std::ptr::copy_nonoverlapping(
-                            src_bytes.as_ptr(),
-                            backing_ptr,
-                            byte_count,
-                        );
+                        std::ptr::copy_nonoverlapping(src_bytes.as_ptr(), backing_ptr, byte_count);
                     }
                     if *validate_bool {
                         let mut acc: u8 = 0;
@@ -2389,14 +2382,8 @@ fn run_block(
                             dst.add(desc.ptr_offset as usize) as *mut *mut u8,
                             backing_ptr,
                         );
-                        std::ptr::write(
-                            dst.add(desc.len_offset as usize) as *mut usize,
-                            list_len,
-                        );
-                        std::ptr::write(
-                            dst.add(desc.cap_offset as usize) as *mut usize,
-                            list_len,
-                        );
+                        std::ptr::write(dst.add(desc.len_offset as usize) as *mut usize, list_len);
+                        std::ptr::write(dst.add(desc.cap_offset as usize) as *mut usize, list_len);
                     }
                 }
             }
@@ -2778,9 +2765,7 @@ fn run_block(
                 let desc = cal
                     .get(vox_jit_cal::DescriptorHandle(descriptor.0))
                     .ok_or_else(|| {
-                        DeserializeError::Custom(
-                            "AllocBacking: descriptor handle not found".into(),
-                        )
+                        DeserializeError::Custom("AllocBacking: descriptor handle not found".into())
                     })?;
 
                 let list_len = state.list_len;
@@ -2791,9 +2776,7 @@ fn run_block(
                         list_len * desc.elem_size,
                         desc.elem_align,
                     )
-                    .map_err(|_| {
-                        DeserializeError::Custom("AllocBacking: invalid layout".into())
-                    })?;
+                    .map_err(|_| DeserializeError::Custom("AllocBacking: invalid layout".into()))?;
                     let p = unsafe { std::alloc::alloc(layout) };
                     if p.is_null() {
                         return Err(DeserializeError::Custom(
@@ -2816,10 +2799,7 @@ fn run_block(
                         std::ptr::write(dst.add(desc.len_offset as usize) as *mut usize, 0);
                     }
                     if desc.cap_offset != vox_jit_cal::OFFSET_ABSENT {
-                        std::ptr::write(
-                            dst.add(desc.cap_offset as usize) as *mut usize,
-                            list_len,
-                        );
+                        std::ptr::write(dst.add(desc.cap_offset as usize) as *mut usize, list_len);
                     }
                 }
 

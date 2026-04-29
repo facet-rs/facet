@@ -402,11 +402,11 @@ identity described in [Retry](./retry/).
 
 > r[rpc.flow-control.credit.initial.zero]
 >
-> Zero initial credit is valid for lower-level channel sinks. The sender MUST
-> wait for an explicit `GrantCredit` before sending any items. Public session
-> builders that use `ConnectionSettings.initial_channel_credit` for both
-> initial credit and receive-queue capacity SHOULD reject zero-capacity
-> configurations.
+> Zero initial channel credit is invalid for negotiated connection settings and
+> public channel-capacity configuration. Implementations MUST reject zero before
+> advertising it in a handshake or accepting it from a peer, because a zero
+> receive queue also leaves the sender with no initial credit and no item can be
+> sent to trigger credit replenishment.
 
 > r[rpc.flow-control.credit.grant]
 >

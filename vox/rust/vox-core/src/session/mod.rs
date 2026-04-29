@@ -1803,6 +1803,15 @@ impl Session {
         let accept = accept.get();
         let slot = self.remove_connection(&conn_id);
         match slot {
+            Some(ConnectionSlot::PendingOutbound(mut pending))
+                if accept.connection_settings.initial_channel_credit == 0 =>
+            {
+                if let Some(tx) = pending.result_tx.take() {
+                    let _ = tx.send(Err(SessionError::Protocol(
+                        "initial_channel_credit must be greater than zero".into(),
+                    )));
+                }
+            }
             Some(ConnectionSlot::PendingOutbound(mut pending)) => {
                 let handle = self.make_connection_handle(
                     conn_id,
@@ -2739,6 +2748,20 @@ mod tests {
         )
     }
 
+    fn zero_credit_accept_ref() -> SelfRef<ConnectionAccept<'static>> {
+        SelfRef::owning(
+            Backing::Boxed(Box::<[u8]>::default()),
+            ConnectionAccept {
+                connection_settings: ConnectionSettings {
+                    parity: Parity::Even,
+                    max_concurrent_requests: 64,
+                    initial_channel_credit: 0,
+                },
+                metadata: vec![],
+            },
+        )
+    }
+
     fn reject_ref() -> SelfRef<ConnectionReject<'static>> {
         SelfRef::owning(
             Backing::Boxed(Box::<[u8]>::default()),
@@ -2812,6 +2835,43 @@ mod tests {
         assert!(
             !session.conns.contains_key(&conn_id),
             "duplicate reject should not recreate connection state"
+        );
+    }
+
+    // r[verify rpc.flow-control.credit.initial.zero]
+    #[tokio::test]
+    async fn inbound_accept_with_zero_initial_credit_rejects_pending_open() {
+        let mut session = make_session();
+        let conn_id = ConnectionId(1);
+        let (result_tx, result_rx) = moire::sync::oneshot::channel("session.test.open_result");
+
+        session.conns.insert(
+            conn_id,
+            ConnectionSlot::PendingOutbound(PendingOutboundData {
+                local_settings: ConnectionSettings {
+                    parity: Parity::Odd,
+                    max_concurrent_requests: 64,
+                    initial_channel_credit: 16,
+                },
+                result_tx: Some(result_tx),
+            }),
+        );
+
+        session.handle_inbound_accept(conn_id, zero_credit_accept_ref());
+        let result = result_rx
+            .await
+            .expect("pending outbound result should resolve");
+        assert!(
+            matches!(
+                result,
+                Err(SessionError::Protocol(ref message))
+                    if message == "initial_channel_credit must be greater than zero"
+            ),
+            "expected zero-credit protocol error, got: {result:?}"
+        );
+        assert!(
+            !session.conns.contains_key(&conn_id),
+            "zero-credit accept should not create an active connection"
         );
     }
 

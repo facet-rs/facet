@@ -3,6 +3,8 @@ use vox_types::{
     SessionResumeKey, SessionRole,
 };
 
+const INITIAL_CHANNEL_CREDIT_ZERO_ERROR: &str = "initial_channel_credit must be greater than zero";
+
 #[derive(Debug)]
 pub enum HandshakeError {
     Io(std::io::Error),
@@ -29,6 +31,16 @@ impl std::fmt::Display for HandshakeError {
 }
 
 impl std::error::Error for HandshakeError {}
+
+// r[impl rpc.flow-control.credit.initial.zero]
+fn validate_initial_channel_credit(settings: &ConnectionSettings) -> Result<(), HandshakeError> {
+    if settings.initial_channel_credit == 0 {
+        return Err(HandshakeError::Protocol(
+            INITIAL_CHANNEL_CREDIT_ZERO_ERROR.into(),
+        ));
+    }
+    Ok(())
+}
 
 /// Extract the Message schema from the static shape.
 fn message_schema() -> Vec<Schema> {
@@ -91,6 +103,8 @@ pub async fn handshake_as_initiator<Tx: LinkTx, Rx: LinkRx>(
     resume_key: Option<&SessionResumeKey>,
     metadata: vox_types::Metadata<'static>,
 ) -> Result<HandshakeResult, HandshakeError> {
+    validate_initial_channel_credit(&settings)?;
+
     let our_schema = message_schema();
 
     let hello = vox_types::Hello {
@@ -116,6 +130,17 @@ pub async fn handshake_as_initiator<Tx: LinkTx, Rx: LinkRx>(
             ));
         }
     };
+    if hy.connection_settings.initial_channel_credit == 0 {
+        let reason = INITIAL_CHANNEL_CREDIT_ZERO_ERROR.to_string();
+        send_handshake(
+            tx,
+            &HandshakeMessage::Sorry(vox_types::Sorry {
+                reason: reason.clone(),
+            }),
+        )
+        .await?;
+        return Err(HandshakeError::Protocol(reason));
+    }
 
     // Step 3: Send LetsGo
     // TODO: Compare schemas and send Sorry if incompatible
@@ -153,11 +178,24 @@ pub async fn handshake_as_acceptor<Tx: LinkTx, Rx: LinkRx>(
     expected_resume_key: Option<&SessionResumeKey>,
     metadata: vox_types::Metadata<'static>,
 ) -> Result<HandshakeResult, HandshakeError> {
+    validate_initial_channel_credit(&settings)?;
+
     // Step 1: Receive Hello
     let hello = match recv_handshake(rx).await? {
         HandshakeMessage::Hello(h) => h,
         _ => return Err(HandshakeError::Protocol("expected Hello".into())),
     };
+    if hello.connection_settings.initial_channel_credit == 0 {
+        let reason = INITIAL_CHANNEL_CREDIT_ZERO_ERROR.to_string();
+        send_handshake(
+            tx,
+            &HandshakeMessage::Sorry(vox_types::Sorry {
+                reason: reason.clone(),
+            }),
+        )
+        .await?;
+        return Err(HandshakeError::Protocol(reason));
+    }
 
     // Validate resume key if this is a resumption attempt
     if let Some(expected) = expected_resume_key {
@@ -232,4 +270,94 @@ fn fresh_resume_key() -> Result<SessionResumeKey, HandshakeError> {
         HandshakeError::Protocol(format!("failed to generate session key: {error}"))
     })?;
     Ok(SessionResumeKey(bytes))
+}
+
+#[cfg(test)]
+mod tests {
+    use vox_types::{Link, Parity};
+
+    use super::*;
+
+    fn settings(parity: Parity, initial_channel_credit: u32) -> ConnectionSettings {
+        ConnectionSettings {
+            parity,
+            max_concurrent_requests: 64,
+            initial_channel_credit,
+        }
+    }
+
+    // r[verify rpc.flow-control.credit.initial.zero]
+    #[tokio::test]
+    async fn initiator_rejects_local_zero_initial_credit_before_handshake() {
+        let (link, _peer) = crate::memory_link_pair(1);
+        let (tx, mut rx) = link.split();
+
+        let result =
+            handshake_as_initiator(&tx, &mut rx, settings(Parity::Odd, 0), true, None, vec![])
+                .await;
+
+        assert!(
+            matches!(
+                result,
+                Err(HandshakeError::Protocol(ref message))
+                    if message == INITIAL_CHANNEL_CREDIT_ZERO_ERROR
+            ),
+            "expected zero-credit protocol error, got: {result:?}"
+        );
+    }
+
+    // r[verify rpc.flow-control.credit.initial.zero]
+    #[tokio::test]
+    async fn acceptor_rejects_peer_zero_initial_credit_before_session_starts() {
+        let (client_link, server_link) = crate::memory_link_pair(4);
+        let (client_tx, mut client_rx) = client_link.split();
+        let (server_tx, mut server_rx) = server_link.split();
+
+        let acceptor = tokio::spawn(async move {
+            handshake_as_acceptor(
+                &server_tx,
+                &mut server_rx,
+                settings(Parity::Even, 16),
+                true,
+                false,
+                None,
+                vec![],
+            )
+            .await
+        });
+
+        send_handshake(
+            &client_tx,
+            &HandshakeMessage::Hello(vox_types::Hello {
+                parity: Parity::Odd,
+                connection_settings: settings(Parity::Odd, 0),
+                message_payload_schema: message_schema(),
+                supports_retry: true,
+                resume_key: None,
+                metadata: vec![],
+            }),
+        )
+        .await
+        .expect("send hello");
+
+        let response = recv_handshake(&mut client_rx).await.expect("recv sorry");
+        assert!(
+            matches!(
+                response,
+                HandshakeMessage::Sorry(vox_types::Sorry { ref reason })
+                    if reason == INITIAL_CHANNEL_CREDIT_ZERO_ERROR
+            ),
+            "expected Sorry for zero credit, got: {response:?}"
+        );
+
+        let result = acceptor.await.expect("acceptor task");
+        assert!(
+            matches!(
+                result,
+                Err(HandshakeError::Protocol(ref message))
+                    if message == INITIAL_CHANNEL_CREDIT_ZERO_ERROR
+            ),
+            "expected zero-credit protocol error, got: {result:?}"
+        );
+    }
 }

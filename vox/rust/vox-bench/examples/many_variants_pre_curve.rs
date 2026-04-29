@@ -35,7 +35,13 @@ fn main() {
     let registry = SchemaRegistry::new();
     let runtime = vox_jit::global_runtime();
     let decoder = runtime
-        .prepare_decoder(0, <ManyVariants as Facet<'static>>::SHAPE, &plan, &registry, BorrowMode::Owned)
+        .prepare_decoder(
+            0,
+            <ManyVariants as Facet<'static>>::SHAPE,
+            &plan,
+            &registry,
+            BorrowMode::Owned,
+        )
         .expect("prepare");
 
     println!(

@@ -185,6 +185,15 @@ impl<'a, Client> ConnectBuilder<'a, Client> {
 
 const INITIAL_CONNECT_BACKOFF_MIN: Duration = Duration::from_millis(100);
 const INITIAL_CONNECT_BACKOFF_MAX: Duration = Duration::from_secs(5);
+const CHANNEL_CAPACITY_ZERO_ERROR: &str = "channel_capacity must be greater than zero";
+
+// r[impl rpc.flow-control.credit.initial.zero]
+fn validate_channel_capacity(channel_capacity: u32) -> Result<(), SessionError> {
+    if channel_capacity == 0 {
+        return Err(SessionError::Protocol(CHANNEL_CAPACITY_ZERO_ERROR.into()));
+    }
+    Ok(())
+}
 
 impl<'a, Client> ConnectBuilder<'a, Client>
 where
@@ -202,6 +211,7 @@ where
             wait_for_service,
             _client: _,
         } = self;
+        validate_channel_capacity(channel_capacity)?;
 
         let parsed = parse_connect_address(addr)?;
         let metadata = metadata_into_owned(metadata);
@@ -449,6 +459,7 @@ where
             channel_capacity,
             observer,
         } = self;
+        validate_channel_capacity(channel_capacity)?;
         let (scheme, host) = match addr.split_once("://") {
             Some((scheme, host)) => (scheme.to_string(), host.to_string()),
             None => ("tcp".to_string(), addr),
@@ -575,6 +586,7 @@ where
     A: ConnectionAcceptor,
 {
     pub async fn run(mut self) -> Result<(), SessionError> {
+        validate_channel_capacity(self.channel_capacity)?;
         let acceptor: Arc<dyn ConnectionAcceptor> = Arc::new(self.acceptor);
         loop {
             let link = self.listener.accept().await.map_err(SessionError::Io)?;

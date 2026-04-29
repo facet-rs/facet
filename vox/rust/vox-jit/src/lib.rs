@@ -210,7 +210,10 @@ impl JitRuntime {
     /// reference owned by this runtime's process-wide cache. Conduits call
     /// this once at construction to skip the global cache lookup on every
     /// hot-path encode.
-    pub fn prepare_encoder(&self, shape: &'static Shape) -> Option<&'static cache::CompiledEncoder> {
+    pub fn prepare_encoder(
+        &self,
+        shape: &'static Shape,
+    ) -> Option<&'static cache::CompiledEncoder> {
         if let Some(encoder) = self.cache.get_encode(shape) {
             return Some(encoder);
         }
@@ -331,8 +334,7 @@ impl JitRuntime {
         {
             let mut ctx = DecodeCtx::new(input);
             let mut out = MaybeUninit::<T>::uninit();
-            let ret =
-                unsafe { decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8, 0) };
+            let ret = unsafe { decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8, 0) };
             ctx.consumed = ret.consumed();
             let status = ret.status();
             return if status == DecodeStatus::Ok {
@@ -380,8 +382,7 @@ impl JitRuntime {
         {
             let mut ctx = DecodeCtx::new(input);
             let mut out = MaybeUninit::<T>::uninit();
-            let ret =
-                unsafe { decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8, 0) };
+            let ret = unsafe { decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8, 0) };
             ctx.consumed = ret.consumed();
             let status = ret.status();
             return if status == DecodeStatus::Ok {
@@ -392,7 +393,12 @@ impl JitRuntime {
         }
 
         let cal = self.cal.lock().unwrap();
-        Some(from_slice_ir_borrowed::<T>(input, plan, registry, Some(&cal)))
+        Some(from_slice_ir_borrowed::<T>(
+            input,
+            plan,
+            registry,
+            Some(&cal),
+        ))
     }
 
     pub fn try_encode_ptr(

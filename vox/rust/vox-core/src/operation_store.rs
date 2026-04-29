@@ -50,12 +50,7 @@ pub trait OperationStore: MaybeSend + MaybeSync + 'static {
     /// postcard-encoded payload without schemas; `method_id` is needed
     /// at replay time to look up the response shape from the running
     /// code.
-    fn seal(
-        &self,
-        operation_id: OperationId,
-        method_id: MethodId,
-        response: &PostcardPayload,
-    );
+    fn seal(&self, operation_id: OperationId, method_id: MethodId, response: &PostcardPayload);
 
     /// Remove an admitted (but not sealed) operation, e.g. after handler failure.
     fn remove(&self, operation_id: OperationId);
@@ -134,12 +129,7 @@ impl OperationStore for InMemoryOperationStore {
         }
     }
 
-    fn seal(
-        &self,
-        operation_id: OperationId,
-        method_id: MethodId,
-        response: &PostcardPayload,
-    ) {
+    fn seal(&self, operation_id: OperationId, method_id: MethodId, response: &PostcardPayload) {
         let mut inner = self.inner.lock();
         inner.operations.insert(
             operation_id,

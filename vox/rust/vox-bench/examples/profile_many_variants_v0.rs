@@ -38,7 +38,10 @@ fn main() {
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(8);
     let deadline = Instant::now() + Duration::from_secs(secs);
-    eprintln!("profiling ManyVariants V0 jit_decode for {secs}s — pid {}", std::process::id());
+    eprintln!(
+        "profiling ManyVariants V0 jit_decode for {secs}s — pid {}",
+        std::process::id()
+    );
 
     let mut iters: u64 = 0;
     while Instant::now() < deadline {

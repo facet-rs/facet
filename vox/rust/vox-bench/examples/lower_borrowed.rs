@@ -63,11 +63,12 @@ fn dump_slow_paths(label: &str, shape: &'static facet::Shape) {
     let mut total_slow = 0;
     for (block_id, block) in program.blocks.iter().enumerate() {
         for op in &block.ops {
-            if let ir::DecodeOp::SlowPath { shape, dst_offset, .. } = op {
+            if let ir::DecodeOp::SlowPath {
+                shape, dst_offset, ..
+            } = op
+            {
                 total_slow += 1;
-                println!(
-                    "  SlowPath in block {block_id}: shape={shape}, dst_offset={dst_offset}"
-                );
+                println!("  SlowPath in block {block_id}: shape={shape}, dst_offset={dst_offset}");
             }
         }
     }

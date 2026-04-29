@@ -206,9 +206,7 @@ where
             registry,
         }
     }
-
 }
-
 
 mod serde_mirror {
     //! Mirror of `spec_proto::GnarlyPayload` with `serde` derives, so the
@@ -370,8 +368,7 @@ mod codec {
                 serde_bytes, vox_bytes,
                 "serde-postcard and vox-postcard wire bytes diverged"
             );
-            bencher
-                .bench_local(|| black_box(postcard::to_allocvec(black_box(&value)).unwrap()));
+            bencher.bench_local(|| black_box(postcard::to_allocvec(black_box(&value)).unwrap()));
         }
 
         #[divan::bench(args = [1, 4, 16])]
@@ -426,19 +423,15 @@ mod codec {
         fn jit_decode_borrowed(bencher: Bencher, n: usize) {
             type BorrowedArgs<'a> = (vox_bench::borrowed::GnarlyPayload<'a>,);
             let bytes = vox_postcard::to_vec(&(make_gnarly_payload(n, 0),)).unwrap();
-            let plan =
-                vox_postcard::build_identity_plan(<BorrowedArgs<'_> as Facet<'_>>::SHAPE);
+            let plan = vox_postcard::build_identity_plan(<BorrowedArgs<'_> as Facet<'_>>::SHAPE);
             let registry = vox_types::SchemaRegistry::new();
-            let decoder = vox_bench::prepare_jit_decoder_borrowed::<BorrowedArgs<'static>>(
-                &plan, &registry,
-            );
+            let decoder =
+                vox_bench::prepare_jit_decoder_borrowed::<BorrowedArgs<'static>>(&plan, &registry);
             bencher.bench_local(|| {
                 let mut ctx = vox_jit::abi::DecodeCtx::new(black_box(&bytes));
                 let mut out = std::mem::MaybeUninit::<BorrowedArgs<'_>>::uninit();
                 let decode_fn = *decoder.borrowed_fn.get().expect("borrowed_fn missing");
-                let ret = unsafe {
-                    decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8, 0)
-                };
+                let ret = unsafe { decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8, 0) };
                 assert!(ret.status().is_ok());
                 black_box(unsafe { out.assume_init() });
             });
@@ -452,9 +445,7 @@ mod codec {
             // same bytes (i.e. wire format compat between owned and borrowed).
             let _: BorrowedArgs<'_> = postcard::from_bytes(&bytes).unwrap();
             bencher.bench_local(|| {
-                black_box(
-                    postcard::from_bytes::<BorrowedArgs<'_>>(black_box(&bytes)).unwrap(),
-                )
+                black_box(postcard::from_bytes::<BorrowedArgs<'_>>(black_box(&bytes)).unwrap())
             });
         }
     }
@@ -493,8 +484,7 @@ mod codec {
             // enum that reproduces postcard's variant-index wire layout.
             let value: Result<serde_mirror::GnarlyPayload, ()> =
                 Ok(make_gnarly_payload_serde(n, 0));
-            bencher
-                .bench_local(|| black_box(postcard::to_allocvec(black_box(&value)).unwrap()));
+            bencher.bench_local(|| black_box(postcard::to_allocvec(black_box(&value)).unwrap()));
         }
 
         #[divan::bench(args = [1, 4, 16])]
@@ -561,8 +551,7 @@ mod codec {
         #[divan::bench]
         fn serde_encode(bencher: Bencher) {
             let value = make_wide(0xDEAD_BEEF);
-            bencher
-                .bench_local(|| black_box(postcard::to_allocvec(black_box(&value)).unwrap()));
+            bencher.bench_local(|| black_box(postcard::to_allocvec(black_box(&value)).unwrap()));
         }
 
         #[divan::bench]
@@ -609,8 +598,7 @@ mod codec {
         #[divan::bench(args = [0u32, 1, 7, 9, 11, 15])]
         fn serde_encode(bencher: Bencher, variant: u32) {
             let value = make_many_variants(variant);
-            bencher
-                .bench_local(|| black_box(postcard::to_allocvec(black_box(&value)).unwrap()));
+            bencher.bench_local(|| black_box(postcard::to_allocvec(black_box(&value)).unwrap()));
         }
 
         #[divan::bench(args = [0u32, 1, 7, 9, 11, 15])]
@@ -679,9 +667,7 @@ mod codec {
         #[divan::bench(args = [4u32, 6, 8])]
         fn serde_encode(bencher: Bencher, depth: u32) {
             let value = make_tree(depth, 0xC0FFEE);
-            bencher.bench_local(|| {
-                black_box(postcard::to_allocvec(black_box(&value)).unwrap())
-            });
+            bencher.bench_local(|| black_box(postcard::to_allocvec(black_box(&value)).unwrap()));
         }
     }
 
@@ -710,8 +696,7 @@ mod codec {
         #[divan::bench(args = [64usize, 256, 1024])]
         fn serde_encode(bencher: Bencher, n: usize) {
             let value = make_numeric_buffer(n, 0);
-            bencher
-                .bench_local(|| black_box(postcard::to_allocvec(black_box(&value)).unwrap()));
+            bencher.bench_local(|| black_box(postcard::to_allocvec(black_box(&value)).unwrap()));
         }
 
         #[divan::bench(args = [64usize, 256, 1024])]

@@ -58,7 +58,13 @@ impl<F: MsgFamily, L: Link> BareConduit<F, L> {
             .prepare_encoder(F::shape())
             .expect("JIT encode unavailable for message shape");
         let decoder = runtime
-            .prepare_decoder(remote_schema_id, F::shape(), plan, registry, BorrowMode::Owned)
+            .prepare_decoder(
+                remote_schema_id,
+                F::shape(),
+                plan,
+                registry,
+                BorrowMode::Owned,
+            )
             .expect("JIT decode unavailable for message shape");
         Self {
             link,
