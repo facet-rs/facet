@@ -241,6 +241,7 @@ async fn main() -> Result<()> {
         let server_settings = ConnectionSettings {
             parity: Parity::Even,
             max_concurrent_requests: 64,
+            initial_channel_credit: 16,
         };
         let server_guard = vox::acceptor_conduit(
             server_conduit,
@@ -250,6 +251,7 @@ async fn main() -> Result<()> {
                 peer_settings: ConnectionSettings {
                     parity: Parity::Odd,
                     max_concurrent_requests: 64,
+                    initial_channel_credit: 16,
                 },
                 peer_supports_retry: false,
                 session_resume_key: None,
@@ -270,6 +272,7 @@ async fn main() -> Result<()> {
     let client_settings = ConnectionSettings {
         parity: Parity::Odd,
         max_concurrent_requests: 64,
+        initial_channel_credit: 16,
     };
     let client = vox::initiator_conduit(
         client_conduit,
@@ -279,6 +282,7 @@ async fn main() -> Result<()> {
             peer_settings: ConnectionSettings {
                 parity: Parity::Even,
                 max_concurrent_requests: 64,
+                initial_channel_credit: 16,
             },
             peer_supports_retry: false,
             session_resume_key: None,

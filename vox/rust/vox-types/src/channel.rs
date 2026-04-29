@@ -1,4 +1,5 @@
 use std::marker::PhantomData;
+use std::panic::Location;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -6,14 +7,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use facet::Facet;
 use facet_core::PtrConst;
-use moire::sync::{Notify, Semaphore, TryAcquireError, mpsc};
+use moire::sync::{Notify, Semaphore, mpsc};
+use tokio::sync::TryAcquireError;
 
-use crate::ChannelId;
 use crate::{Backing, ChannelClose, ChannelItem, ChannelReset, Metadata, Payload, SelfRef};
 use crate::{
-    ChannelCloseReason, ChannelEvent, ChannelResetReason, ChannelSendOutcome,
-    ChannelTrySendOutcome, VoxObserverHandle,
+    ChannelCloseReason, ChannelDebugContext, ChannelEvent, ChannelEventContext, ChannelResetReason,
+    ChannelSendOutcome, ChannelTrySendOutcome, SourceLocation, VoxObserverHandle,
 };
+use crate::{ChannelId, ConnectionId};
 
 // ---------------------------------------------------------------------------
 // Thread-local channel binder — set during deserialization so TryFrom impls
@@ -88,6 +90,14 @@ pub trait ChannelCreditReplenisher: crate::MaybeSend + crate::MaybeSync + 'stati
         None
     }
 
+    fn connection_id(&self) -> Option<ConnectionId> {
+        None
+    }
+
+    fn debug_context(&self) -> Option<ChannelDebugContext> {
+        None
+    }
+
     fn observer(&self) -> Option<VoxObserverHandle> {
         None
     }
@@ -125,14 +135,16 @@ pub struct ChannelCore {
     binding: Mutex<Option<ChannelBinding>>,
     logical_receiver: Mutex<Option<LogicalReceiverState>>,
     binding_changed: Notify,
+    debug_context: ChannelDebugContext,
 }
 
 impl ChannelCore {
-    fn new() -> Self {
+    fn new(debug_context: ChannelDebugContext) -> Self {
         Self {
             binding: Mutex::new(None),
             logical_receiver: Mutex::new(None),
             binding_changed: Notify::new("vox_types.channel.binding_changed"),
+            debug_context,
         }
     }
 
@@ -274,6 +286,10 @@ impl ChannelCore {
         *guard = None;
         self.binding_changed.notify_waiters();
     }
+
+    pub fn debug_context(&self) -> ChannelDebugContext {
+        self.debug_context
+    }
 }
 
 /// Slot for the shared channel core, accessible via facet reflection.
@@ -290,14 +306,166 @@ impl CoreSlot {
 }
 
 // r[impl rpc.channel.pair]
+// r[impl rpc.observability.channel.context]
 /// Create a channel pair with shared state.
 ///
 /// Both ends hold an `Arc` reference to the same `ChannelCore`. The framework
 /// binds the handle that appears in args or return values, and the paired
 /// handle reads or takes the binding from the shared core.
+#[track_caller]
 pub fn channel<T>() -> (Tx<T>, Rx<T>) {
-    let core = Arc::new(ChannelCore::new());
+    let caller = Location::caller();
+    let debug_context = ChannelDebugContext {
+        type_name: Some(std::any::type_name::<T>()),
+        source_location: Some(SourceLocation {
+            file: caller.file(),
+            line: caller.line(),
+            column: caller.column(),
+        }),
+        ..ChannelDebugContext::default()
+    };
+    let core = Arc::new(ChannelCore::new(debug_context));
     (Tx::paired(core.clone()), Rx::paired(core))
+}
+
+fn merge_debug_context(
+    primary: Option<ChannelDebugContext>,
+    fallback: ChannelDebugContext,
+) -> Option<ChannelDebugContext> {
+    match (
+        primary.and_then(ChannelDebugContext::into_option),
+        fallback.into_option(),
+    ) {
+        (Some(primary), Some(fallback)) => ChannelDebugContext {
+            label: primary.label.or(fallback.label),
+            type_name: primary.type_name.or(fallback.type_name),
+            source_location: primary.source_location.or(fallback.source_location),
+            service: primary.service.or(fallback.service),
+            method: primary.method.or(fallback.method),
+        }
+        .into_option(),
+        (Some(primary), None) => Some(primary),
+        (None, fallback) => fallback,
+    }
+}
+
+fn sink_event_context(
+    sink: &dyn ChannelSink,
+    channel_id: ChannelId,
+    fallback: ChannelDebugContext,
+) -> ChannelEventContext {
+    ChannelEventContext {
+        connection_id: sink.connection_id(),
+        channel_id,
+        debug: merge_debug_context(sink.debug_context(), fallback),
+    }
+}
+
+fn replenisher_event_context(
+    replenisher: &dyn ChannelCreditReplenisher,
+    channel_id: ChannelId,
+    fallback: ChannelDebugContext,
+) -> ChannelEventContext {
+    ChannelEventContext {
+        connection_id: replenisher.connection_id(),
+        channel_id,
+        debug: merge_debug_context(replenisher.debug_context(), fallback),
+    }
+}
+
+fn observe_sink_channel(
+    sink: &dyn ChannelSink,
+    channel_id: Option<ChannelId>,
+    fallback: ChannelDebugContext,
+    event: impl FnOnce(ChannelEventContext) -> ChannelEvent,
+) {
+    if let (Some(observer), Some(channel_id)) = (sink.observer(), channel_id) {
+        observer.channel_event(event(sink_event_context(sink, channel_id, fallback)));
+    }
+}
+
+fn observe_replenisher_channel(
+    replenisher: &dyn ChannelCreditReplenisher,
+    fallback: ChannelDebugContext,
+    event: impl FnOnce(ChannelEventContext) -> ChannelEvent,
+) {
+    if let (Some(observer), Some(channel_id)) = (replenisher.observer(), replenisher.channel_id()) {
+        observer.channel_event(event(replenisher_event_context(
+            replenisher,
+            channel_id,
+            fallback,
+        )));
+    }
+}
+
+fn observe_optional_replenisher_channel(
+    replenisher: Option<&ChannelCreditReplenisherHandle>,
+    fallback: ChannelDebugContext,
+    event: impl FnOnce(ChannelEventContext) -> ChannelEvent,
+) {
+    if let Some(replenisher) = replenisher {
+        observe_replenisher_channel(replenisher.as_ref(), fallback, event);
+    }
+}
+
+fn decode_channel_item<T>(msg: SelfRef<ChannelItem<'static>>) -> Result<Option<SelfRef<T>>, RxError>
+where
+    T: Facet<'static>,
+{
+    msg.try_repack(|item, _backing_bytes| {
+        let Payload::PostcardBytes(bytes) = item.item else {
+            return Err(RxError::Protocol(
+                "incoming channel item payload was not Incoming".into(),
+            ));
+        };
+        vox_postcard::from_slice_borrowed(bytes).map_err(RxError::Deserialize)
+    })
+    .map(Some)
+}
+
+fn handle_incoming_channel_message<T>(
+    msg: Option<IncomingChannelMessage>,
+    replenisher: Option<&ChannelCreditReplenisherHandle>,
+    debug_context: ChannelDebugContext,
+    closed: &AtomicBool,
+) -> Result<Option<SelfRef<T>>, RxError>
+where
+    T: Facet<'static>,
+{
+    match msg {
+        Some(IncomingChannelMessage::Close(_)) | None => {
+            observe_optional_replenisher_channel(replenisher, debug_context, |channel| {
+                ChannelEvent::Closed {
+                    channel,
+                    reason: ChannelCloseReason::Remote,
+                }
+            });
+            closed.store(true, Ordering::Release);
+            Ok(None)
+        }
+        Some(IncomingChannelMessage::Reset(_)) => {
+            observe_optional_replenisher_channel(replenisher, debug_context, |channel| {
+                ChannelEvent::Reset {
+                    channel,
+                    reason: ChannelResetReason::Remote,
+                }
+            });
+            closed.store(true, Ordering::Release);
+            Err(RxError::Reset)
+        }
+        Some(IncomingChannelMessage::Item(msg)) => {
+            let value = decode_channel_item(msg);
+            if value.is_ok() {
+                observe_optional_replenisher_channel(replenisher, debug_context, |channel| {
+                    ChannelEvent::ItemConsumed { channel }
+                });
+                if let Some(replenisher) = replenisher {
+                    replenisher.on_item_consumed();
+                }
+            }
+            value
+        }
+    }
 }
 
 /// Runtime sink implemented by the session driver.
@@ -314,9 +482,29 @@ pub trait ChannelSink: crate::MaybeSend + crate::MaybeSync + 'static {
         None
     }
 
+    fn connection_id(&self) -> Option<ConnectionId> {
+        None
+    }
+
+    fn debug_context(&self) -> Option<ChannelDebugContext> {
+        None
+    }
+
     fn observer(&self) -> Option<VoxObserverHandle> {
         None
     }
+
+    #[doc(hidden)]
+    fn note_send_started(&self) {}
+
+    #[doc(hidden)]
+    fn note_send_waiting_for_credit(&self) {}
+
+    #[doc(hidden)]
+    fn note_send_finished(&self, _outcome: ChannelSendOutcome) {}
+
+    #[doc(hidden)]
+    fn note_try_send_outcome(&self, _outcome: ChannelTrySendOutcome) {}
 
     #[doc(hidden)]
     fn try_send_payload_with_outcome<'payload>(
@@ -389,12 +577,15 @@ impl<S: ChannelSink> ChannelSink for CreditSink<S> {
         payload: Payload<'payload>,
     ) -> Pin<Box<dyn crate::MaybeSendFuture<Output = Result<(), TxError>> + 'payload>> {
         let credit = self.credit.clone();
-        let observer = self.observer();
         let channel_id = self.channel_id();
-        if credit.available_permits() == 0
-            && let (Some(observer), Some(channel_id)) = (observer.as_ref(), channel_id)
-        {
-            observer.channel_event(ChannelEvent::SendWaitingForCredit { channel_id });
+        if credit.available_permits() == 0 {
+            self.inner.note_send_waiting_for_credit();
+            observe_sink_channel(
+                self,
+                channel_id,
+                ChannelDebugContext::default(),
+                |channel| ChannelEvent::SendWaitingForCredit { channel },
+            );
         }
         let fut = self.inner.send_payload(payload);
         Box::pin(async move {
@@ -411,8 +602,32 @@ impl<S: ChannelSink> ChannelSink for CreditSink<S> {
         self.inner.channel_id()
     }
 
+    fn connection_id(&self) -> Option<ConnectionId> {
+        self.inner.connection_id()
+    }
+
+    fn debug_context(&self) -> Option<ChannelDebugContext> {
+        self.inner.debug_context()
+    }
+
     fn observer(&self) -> Option<VoxObserverHandle> {
         self.inner.observer()
+    }
+
+    fn note_send_started(&self) {
+        self.inner.note_send_started();
+    }
+
+    fn note_send_waiting_for_credit(&self) {
+        self.inner.note_send_waiting_for_credit();
+    }
+
+    fn note_send_finished(&self, outcome: ChannelSendOutcome) {
+        self.inner.note_send_finished(outcome);
+    }
+
+    fn note_try_send_outcome(&self, outcome: ChannelTrySendOutcome) {
+        self.inner.note_try_send_outcome(outcome);
     }
 
     // r[impl rpc.observability.channel.try-send-detail]
@@ -540,6 +755,8 @@ pub struct Tx<T> {
     pub(crate) core: CoreSlot,
     pub(crate) liveness: LivenessSlot,
     #[facet(opaque)]
+    debug_context: ChannelDebugContext,
+    #[facet(opaque)]
     closed: AtomicBool,
     #[facet(opaque)]
     _marker: PhantomData<T>,
@@ -547,12 +764,27 @@ pub struct Tx<T> {
 
 impl<T> Tx<T> {
     /// Create a standalone unbound Tx (used by deserialization).
+    #[track_caller]
     pub fn unbound() -> Self {
+        let caller = Location::caller();
+        Self::unbound_with_context(ChannelDebugContext {
+            type_name: Some(std::any::type_name::<T>()),
+            source_location: Some(SourceLocation {
+                file: caller.file(),
+                line: caller.line(),
+                column: caller.column(),
+            }),
+            ..ChannelDebugContext::default()
+        })
+    }
+
+    fn unbound_with_context(debug_context: ChannelDebugContext) -> Self {
         Self {
             channel_id: ChannelId::RESERVED,
             sink: SinkSlot::empty(),
             core: CoreSlot::empty(),
             liveness: LivenessSlot::empty(),
+            debug_context,
             closed: AtomicBool::new(false),
             _marker: PhantomData,
         }
@@ -560,14 +792,20 @@ impl<T> Tx<T> {
 
     /// Create a Tx that is part of a `channel()` pair.
     fn paired(core: Arc<ChannelCore>) -> Self {
+        let debug_context = core.debug_context();
         Self {
             channel_id: ChannelId::RESERVED,
             sink: SinkSlot::empty(),
             core: CoreSlot { inner: Some(core) },
             liveness: LivenessSlot::empty(),
+            debug_context,
             closed: AtomicBool::new(false),
             _marker: PhantomData,
         }
+    }
+
+    pub fn debug_context(&self) -> ChannelDebugContext {
+        self.debug_context
     }
 
     pub fn is_bound(&self) -> bool {
@@ -600,6 +838,35 @@ impl<T> Tx<T> {
         None
     }
 
+    fn channel_id_for_sink(&self, sink: &dyn ChannelSink) -> Option<ChannelId> {
+        if self.channel_id == ChannelId::RESERVED {
+            sink.channel_id()
+        } else {
+            Some(self.channel_id)
+        }
+    }
+
+    fn observe_sink_event(
+        &self,
+        sink: &dyn ChannelSink,
+        channel_id: Option<ChannelId>,
+        event: impl FnOnce(ChannelEventContext) -> ChannelEvent,
+    ) {
+        observe_sink_channel(sink, channel_id, self.debug_context, event);
+    }
+
+    fn observe_try_send(
+        &self,
+        sink: &dyn ChannelSink,
+        channel_id: Option<ChannelId>,
+        outcome: ChannelTrySendOutcome,
+    ) {
+        self.observe_sink_event(sink, channel_id, |channel| ChannelEvent::TrySend {
+            channel,
+            outcome,
+        });
+    }
+
     pub async fn send<'value>(&self, value: T) -> Result<(), TxError>
     where
         T: Facet<'value>,
@@ -617,35 +884,32 @@ impl<T> Tx<T> {
         } else {
             return Err(TxError::Unbound);
         };
-        let observer = sink.observer();
-        let channel_id = if self.channel_id == ChannelId::RESERVED {
-            sink.channel_id()
-        } else {
-            Some(self.channel_id)
-        };
-        if let (Some(observer), Some(channel_id)) = (observer.as_ref(), channel_id) {
-            observer.channel_event(ChannelEvent::SendStarted { channel_id });
-        }
+        let channel_id = self.channel_id_for_sink(sink.as_ref());
+        sink.note_send_started();
+        self.observe_sink_event(sink.as_ref(), channel_id, |channel| {
+            ChannelEvent::SendStarted { channel }
+        });
         let started_at = std::time::Instant::now();
         let ptr = PtrConst::new((&value as *const T).cast::<u8>());
         // SAFETY: `value` is explicitly dropped only after `await`, so the pointer
         // remains valid for the whole send operation.
         let payload = unsafe { Payload::outgoing_unchecked(ptr, T::SHAPE) };
         let result = sink.send_payload(payload).await;
-        if let (Some(observer), Some(channel_id)) = (observer.as_ref(), channel_id) {
-            let outcome = match &result {
-                Ok(()) => ChannelSendOutcome::Sent,
-                Err(TxError::Transport(message)) if message == "channel closed" => {
-                    ChannelSendOutcome::Closed
-                }
-                Err(_) => ChannelSendOutcome::TransportError,
-            };
-            observer.channel_event(ChannelEvent::SendFinished {
-                channel_id,
+        let outcome = match &result {
+            Ok(()) => ChannelSendOutcome::Sent,
+            Err(TxError::Transport(message)) if message == "channel closed" => {
+                ChannelSendOutcome::Closed
+            }
+            Err(_) => ChannelSendOutcome::TransportError,
+        };
+        self.observe_sink_event(sink.as_ref(), channel_id, |channel| {
+            ChannelEvent::SendFinished {
+                channel,
                 outcome,
                 elapsed: started_at.elapsed(),
-            });
-        }
+            }
+        });
+        sink.note_send_finished(outcome);
         drop(value);
         result
     }
@@ -662,12 +926,7 @@ impl<T> Tx<T> {
         let Some(sink) = self.resolve_sink_now() else {
             return Err(TrySendError::Full(value));
         };
-        let observer = sink.observer();
-        let channel_id = if self.channel_id == ChannelId::RESERVED {
-            sink.channel_id()
-        } else {
-            Some(self.channel_id)
-        };
+        let channel_id = self.channel_id_for_sink(sink.as_ref());
 
         let ptr = PtrConst::new((&value as *const T).cast::<u8>());
         // SAFETY: `try_send_payload` must complete synchronously before this
@@ -675,32 +934,20 @@ impl<T> Tx<T> {
         let payload = unsafe { Payload::outgoing_unchecked(ptr, T::SHAPE) };
         match sink.try_send_payload_with_outcome(payload) {
             Ok(()) => {
-                if let (Some(observer), Some(channel_id)) = (observer.as_ref(), channel_id) {
-                    observer.channel_event(ChannelEvent::TrySend {
-                        channel_id,
-                        outcome: ChannelTrySendOutcome::Sent,
-                    });
-                }
+                sink.note_try_send_outcome(ChannelTrySendOutcome::Sent);
+                self.observe_try_send(sink.as_ref(), channel_id, ChannelTrySendOutcome::Sent);
                 drop(value);
                 Ok(())
             }
             Err(ChannelTrySendOutcome::Closed) => {
-                if let (Some(observer), Some(channel_id)) = (observer.as_ref(), channel_id) {
-                    observer.channel_event(ChannelEvent::TrySend {
-                        channel_id,
-                        outcome: ChannelTrySendOutcome::Closed,
-                    });
-                }
+                sink.note_try_send_outcome(ChannelTrySendOutcome::Closed);
+                self.observe_try_send(sink.as_ref(), channel_id, ChannelTrySendOutcome::Closed);
                 self.closed.store(true, Ordering::Release);
                 Err(TrySendError::Closed(value))
             }
             Err(outcome) => {
-                if let (Some(observer), Some(channel_id)) = (observer.as_ref(), channel_id) {
-                    observer.channel_event(ChannelEvent::TrySend {
-                        channel_id,
-                        outcome,
-                    });
-                }
+                sink.note_try_send_outcome(outcome);
+                self.observe_try_send(sink.as_ref(), channel_id, outcome);
                 Err(TrySendError::Full(value))
             }
         }
@@ -783,7 +1030,7 @@ impl<T> TryFrom<&Tx<T>> for ChannelId {
             let Some(binder) = *borrow else {
                 return Err("serializing Tx requires an active ChannelBinder".to_string());
             };
-            let (channel_id, bound) = binder.create_rx();
+            let (channel_id, bound) = binder.create_rx_with_context(Some(value.debug_context));
             if let Some(core) = &value.core.inner {
                 core.bind_retryable_receiver(bound);
             }
@@ -796,14 +1043,18 @@ impl<T> TryFrom<ChannelId> for Tx<T> {
     type Error = String;
 
     fn try_from(channel_id: ChannelId) -> Result<Self, Self::Error> {
-        let mut tx = Self::unbound();
+        let debug_context = ChannelDebugContext {
+            type_name: Some(std::any::type_name::<T>()),
+            ..ChannelDebugContext::default()
+        };
+        let mut tx = Self::unbound_with_context(debug_context);
         tx.channel_id = channel_id;
 
         CHANNEL_BINDER.with(|cell| {
             let Some(binder) = *cell.borrow() else {
                 return Err("deserializing Tx requires an active ChannelBinder".to_string());
             };
-            let sink = binder.bind_tx(channel_id);
+            let sink = binder.bind_tx_with_context(channel_id, Some(debug_context));
             let liveness = binder.channel_liveness();
             tx.bind_with_liveness(sink, liveness);
             Ok(())
@@ -874,6 +1125,8 @@ pub struct Rx<T> {
     pub(crate) liveness: LivenessSlot,
     pub(crate) replenisher: ReplenisherSlot,
     #[facet(opaque)]
+    debug_context: ChannelDebugContext,
+    #[facet(opaque)]
     closed: AtomicBool,
     #[facet(opaque)]
     _marker: PhantomData<T>,
@@ -881,7 +1134,21 @@ pub struct Rx<T> {
 
 impl<T> Rx<T> {
     /// Create a standalone unbound Rx (used by deserialization).
+    #[track_caller]
     pub fn unbound() -> Self {
+        let caller = Location::caller();
+        Self::unbound_with_context(ChannelDebugContext {
+            type_name: Some(std::any::type_name::<T>()),
+            source_location: Some(SourceLocation {
+                file: caller.file(),
+                line: caller.line(),
+                column: caller.column(),
+            }),
+            ..ChannelDebugContext::default()
+        })
+    }
+
+    fn unbound_with_context(debug_context: ChannelDebugContext) -> Self {
         Self {
             channel_id: ChannelId::RESERVED,
             receiver: ReceiverSlot::empty(),
@@ -889,6 +1156,7 @@ impl<T> Rx<T> {
             core: CoreSlot::empty(),
             liveness: LivenessSlot::empty(),
             replenisher: ReplenisherSlot::empty(),
+            debug_context,
             closed: AtomicBool::new(false),
             _marker: PhantomData,
         }
@@ -896,6 +1164,7 @@ impl<T> Rx<T> {
 
     /// Create an Rx that is part of a `channel()` pair.
     fn paired(core: Arc<ChannelCore>) -> Self {
+        let debug_context = core.debug_context();
         Self {
             channel_id: ChannelId::RESERVED,
             receiver: ReceiverSlot::empty(),
@@ -903,9 +1172,14 @@ impl<T> Rx<T> {
             core: CoreSlot { inner: Some(core) },
             liveness: LivenessSlot::empty(),
             replenisher: ReplenisherSlot::empty(),
+            debug_context,
             closed: AtomicBool::new(false),
             _marker: PhantomData,
         }
+    }
+
+    pub fn debug_context(&self) -> ChannelDebugContext {
+        self.debug_context
     }
 
     pub fn is_bound(&self) -> bool {
@@ -933,71 +1207,23 @@ impl<T> Rx<T> {
             }
 
             if let Some(receiver) = self.logical_receiver.inner.as_mut() {
-                match receiver.recv().await {
-                    Some(LogicalIncomingChannelMessage {
-                        msg: IncomingChannelMessage::Close(_),
-                        replenisher,
-                    }) => {
-                        if let Some(replenisher) = replenisher.as_ref()
-                            && let (Some(observer), Some(channel_id)) =
-                                (replenisher.observer(), replenisher.channel_id())
-                        {
-                            observer.channel_event(ChannelEvent::Closed {
-                                channel_id,
-                                reason: ChannelCloseReason::Remote,
-                            });
-                        }
-                        self.closed.store(true, Ordering::Release);
-                        return Ok(None);
+                let received = receiver.recv().await;
+                return match received {
+                    Some(LogicalIncomingChannelMessage { msg, replenisher }) => {
+                        handle_incoming_channel_message(
+                            Some(msg),
+                            replenisher.as_ref(),
+                            self.debug_context,
+                            &self.closed,
+                        )
                     }
-                    None => {
-                        self.closed.store(true, Ordering::Release);
-                        return Ok(None);
-                    }
-                    Some(LogicalIncomingChannelMessage {
-                        msg: IncomingChannelMessage::Reset(_),
-                        replenisher,
-                    }) => {
-                        if let Some(replenisher) = replenisher.as_ref()
-                            && let (Some(observer), Some(channel_id)) =
-                                (replenisher.observer(), replenisher.channel_id())
-                        {
-                            observer.channel_event(ChannelEvent::Reset {
-                                channel_id,
-                                reason: ChannelResetReason::Remote,
-                            });
-                        }
-                        self.closed.store(true, Ordering::Release);
-                        return Err(RxError::Reset);
-                    }
-                    Some(LogicalIncomingChannelMessage {
-                        msg: IncomingChannelMessage::Item(msg),
-                        replenisher,
-                    }) => {
-                        let value = msg
-                            .try_repack(|item, _backing_bytes| {
-                                let Payload::PostcardBytes(bytes) = item.item else {
-                                    return Err(RxError::Protocol(
-                                        "incoming channel item payload was not Incoming".into(),
-                                    ));
-                                };
-                                vox_postcard::from_slice_borrowed(bytes)
-                                    .map_err(RxError::Deserialize)
-                            })
-                            .map(Some);
-                        if value.is_ok()
-                            && let Some(replenisher) = replenisher.as_ref()
-                        {
-                            if let (Some(observer), Some(channel_id)) =
-                                (replenisher.observer(), replenisher.channel_id())
-                            {
-                                observer.channel_event(ChannelEvent::ItemConsumed { channel_id });
-                            }
-                            replenisher.on_item_consumed();
-                        }
-                        return value;
-                    }
-                }
+                    None => handle_incoming_channel_message(
+                        None,
+                        None,
+                        self.debug_context,
+                        &self.closed,
+                    ),
+                };
             }
 
             if self.receiver.inner.is_none()
@@ -1010,58 +1236,12 @@ impl<T> Rx<T> {
             }
 
             if let Some(receiver) = self.receiver.inner.as_mut() {
-                return match receiver.recv().await {
-                    Some(IncomingChannelMessage::Close(_)) | None => {
-                        if let Some(replenisher) = &self.replenisher.inner
-                            && let (Some(observer), Some(channel_id)) =
-                                (replenisher.observer(), replenisher.channel_id())
-                        {
-                            observer.channel_event(ChannelEvent::Closed {
-                                channel_id,
-                                reason: ChannelCloseReason::Remote,
-                            });
-                        }
-                        self.closed.store(true, Ordering::Release);
-                        Ok(None)
-                    }
-                    Some(IncomingChannelMessage::Reset(_)) => {
-                        if let Some(replenisher) = &self.replenisher.inner
-                            && let (Some(observer), Some(channel_id)) =
-                                (replenisher.observer(), replenisher.channel_id())
-                        {
-                            observer.channel_event(ChannelEvent::Reset {
-                                channel_id,
-                                reason: ChannelResetReason::Remote,
-                            });
-                        }
-                        self.closed.store(true, Ordering::Release);
-                        Err(RxError::Reset)
-                    }
-                    Some(IncomingChannelMessage::Item(msg)) => {
-                        let value = msg
-                            .try_repack(|item, _backing_bytes| {
-                                let Payload::PostcardBytes(bytes) = item.item else {
-                                    return Err(RxError::Protocol(
-                                        "incoming channel item payload was not Incoming".into(),
-                                    ));
-                                };
-                                vox_postcard::from_slice_borrowed(bytes)
-                                    .map_err(RxError::Deserialize)
-                            })
-                            .map(Some);
-                        if value.is_ok()
-                            && let Some(replenisher) = &self.replenisher.inner
-                        {
-                            if let (Some(observer), Some(channel_id)) =
-                                (replenisher.observer(), replenisher.channel_id())
-                            {
-                                observer.channel_event(ChannelEvent::ItemConsumed { channel_id });
-                            }
-                            replenisher.on_item_consumed();
-                        }
-                        value
-                    }
-                };
+                return handle_incoming_channel_message(
+                    receiver.recv().await,
+                    self.replenisher.inner.as_ref(),
+                    self.debug_context,
+                    &self.closed,
+                );
             }
 
             let Some(core) = &self.core.inner else {
@@ -1070,7 +1250,6 @@ impl<T> Rx<T> {
             core.binding_changed.notified().await;
         }
     }
-
     #[doc(hidden)]
     pub fn bind(&mut self, receiver: mpsc::Receiver<IncomingChannelMessage>) {
         self.bind_with_liveness(receiver, None);
@@ -1107,14 +1286,12 @@ impl<T> Drop for Rx<T> {
         }
 
         if let Some(replenisher) = &self.replenisher.inner {
-            if let (Some(observer), Some(channel_id)) =
-                (replenisher.observer(), replenisher.channel_id())
-            {
-                observer.channel_event(ChannelEvent::Reset {
-                    channel_id,
+            observe_replenisher_channel(replenisher.as_ref(), self.debug_context, |channel| {
+                ChannelEvent::Reset {
+                    channel,
                     reason: ChannelResetReason::ReceiverDropped,
-                });
-            }
+                }
+            });
             replenisher.on_receiver_dropped();
         }
     }
@@ -1132,7 +1309,7 @@ impl<T> TryFrom<&Rx<T>> for ChannelId {
             let Some(binder) = *borrow else {
                 return Err("serializing Rx requires an active ChannelBinder".to_string());
             };
-            let (channel_id, sink) = binder.create_tx();
+            let (channel_id, sink) = binder.create_tx_with_context(Some(value.debug_context));
             let liveness = binder.channel_liveness();
             if let Some(core) = &value.core.inner {
                 core.set_binding(ChannelBinding::Sink(BoundChannelSink { sink, liveness }));
@@ -1146,14 +1323,18 @@ impl<T> TryFrom<ChannelId> for Rx<T> {
     type Error = String;
 
     fn try_from(channel_id: ChannelId) -> Result<Self, Self::Error> {
-        let mut rx = Self::unbound();
+        let debug_context = ChannelDebugContext {
+            type_name: Some(std::any::type_name::<T>()),
+            ..ChannelDebugContext::default()
+        };
+        let mut rx = Self::unbound_with_context(debug_context);
         rx.channel_id = channel_id;
 
         CHANNEL_BINDER.with(|cell| {
             let Some(binder) = *cell.borrow() else {
                 return Err("deserializing Rx requires an active ChannelBinder".to_string());
             };
-            let bound = binder.register_rx(channel_id);
+            let bound = binder.register_rx_with_context(channel_id, Some(debug_context));
             rx.receiver.inner = Some(bound.receiver);
             rx.liveness.inner = bound.liveness;
             rx.replenisher.inner = bound.replenisher;
@@ -1206,18 +1387,52 @@ pub trait ChannelBinder: crate::MaybeSend + crate::MaybeSync {
     ///
     fn create_tx(&self) -> (ChannelId, Arc<dyn ChannelSink>);
 
+    fn create_tx_with_context(
+        &self,
+        debug_context: Option<ChannelDebugContext>,
+    ) -> (ChannelId, Arc<dyn ChannelSink>) {
+        let _ = debug_context;
+        self.create_tx()
+    }
+
     /// Allocate a channel ID, register it for routing, and return a receiver.
     fn create_rx(&self) -> (ChannelId, BoundChannelReceiver);
+
+    fn create_rx_with_context(
+        &self,
+        debug_context: Option<ChannelDebugContext>,
+    ) -> (ChannelId, BoundChannelReceiver) {
+        let _ = debug_context;
+        self.create_rx()
+    }
 
     /// Create a sink for a known channel ID (callee side).
     ///
     /// The channel ID comes from `Request.channels`.
     fn bind_tx(&self, channel_id: ChannelId) -> Arc<dyn ChannelSink>;
 
+    fn bind_tx_with_context(
+        &self,
+        channel_id: ChannelId,
+        debug_context: Option<ChannelDebugContext>,
+    ) -> Arc<dyn ChannelSink> {
+        let _ = debug_context;
+        self.bind_tx(channel_id)
+    }
+
     /// Register an inbound channel by ID and return the receiver (callee side).
     ///
     /// The channel ID comes from `Request.channels`.
     fn register_rx(&self, channel_id: ChannelId) -> BoundChannelReceiver;
+
+    fn register_rx_with_context(
+        &self,
+        channel_id: ChannelId,
+        debug_context: Option<ChannelDebugContext>,
+    ) -> BoundChannelReceiver {
+        let _ = debug_context;
+        self.register_rx(channel_id)
+    }
 
     /// Optional opaque handle that keeps the underlying session/connection alive
     /// for the lifetime of any bound channel handle.
@@ -1336,6 +1551,22 @@ mod tests {
         drop(tx);
 
         assert_eq!(sink_impl.close_on_drop_calls.load(Ordering::Acquire), 1);
+    }
+
+    // r[verify rpc.observability.channel.context]
+    #[test]
+    fn channel_pair_captures_source_location_and_type_context() {
+        let expected_line = line!() + 1;
+        let (tx, rx) = channel::<u32>();
+
+        for context in [tx.debug_context(), rx.debug_context()] {
+            assert_eq!(context.type_name, Some(std::any::type_name::<u32>()));
+            let location = context
+                .source_location
+                .expect("channel should capture source location");
+            assert_eq!(location.file, file!());
+            assert_eq!(location.line, expected_line);
+        }
     }
 
     #[tokio::test]
@@ -1484,7 +1715,7 @@ mod tests {
     fn logical_rx_drop_notifies_replenisher() {
         let (_tx, rx_inner) = mpsc::channel("vox_types.channel.test.logical_rx_drop", 1);
         let replenisher = Arc::new(CountingReplenisher::new());
-        let core = Arc::new(ChannelCore::new());
+        let core = Arc::new(ChannelCore::new(ChannelDebugContext::default()));
         core.bind_retryable_receiver(BoundChannelReceiver {
             receiver: rx_inner,
             liveness: None,
@@ -1501,7 +1732,7 @@ mod tests {
     async fn rx_recv_logical_receiver_decodes_items_and_notifies_replenisher() {
         let (tx, rx_inner) = mpsc::channel("vox_types.channel.test.rx5", 1);
         let replenisher = Arc::new(CountingReplenisher::new());
-        let core = Arc::new(ChannelCore::new());
+        let core = Arc::new(ChannelCore::new(ChannelDebugContext::default()));
         core.bind_retryable_receiver(BoundChannelReceiver {
             receiver: rx_inner,
             liveness: None,

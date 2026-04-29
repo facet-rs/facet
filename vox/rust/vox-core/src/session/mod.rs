@@ -15,8 +15,9 @@ use vox_types::{
     ConnectionOpen, ConnectionReject, ConnectionSettings, Handler, HandshakeResult, IdAllocator,
     MaybeSend, MaybeSync, Message, MessageFamily, MessagePayload, Metadata, Parity, RequestBody,
     RequestId, RequestMessage, RequestResponse, SchemaMessage, SelfRef, SessionResumeKey,
-    SessionRole, TrySendError, VoxObserverHandle,
+    SessionRole, TrySendError, VoxDebugSnapshot, VoxObserverHandle,
 };
+use vox_types::{ConnectionDebugSnapshot, ConnectionDebugState, DriverTaskStatus};
 
 mod builders;
 pub use builders::*;
@@ -852,6 +853,43 @@ impl ConnectionHandle {
 
     pub fn peer_supports_retry(&self) -> bool {
         self.peer_supports_retry
+    }
+
+    // r[impl rpc.debug.snapshot]
+    pub fn debug_snapshot(&self) -> VoxDebugSnapshot {
+        let (outbound_queue_depth, outbound_queue_capacity) =
+            self.sender.sess_core.outbound_queue_stats();
+        VoxDebugSnapshot {
+            connections: vec![ConnectionDebugSnapshot {
+                connection_id: self.connection_id(),
+                endpoint: None,
+                surface: None,
+                component: None,
+                state: if *self.closed_rx.borrow() {
+                    ConnectionDebugState::Closed
+                } else {
+                    ConnectionDebugState::Open
+                },
+                outstanding_requests: 0,
+                requests: Vec::new(),
+                open_channels: Vec::new(),
+                outbound_queue_depth: Some(outbound_queue_depth),
+                outbound_queue_capacity: Some(outbound_queue_capacity),
+                local_control_queue_depth: None,
+                local_control_queue_capacity: None,
+                last_inbound_message_at: None,
+                last_outbound_message_at: None,
+                last_progress_at: None,
+                close_reason: None,
+                driver_task_status: DriverTaskStatus::Unknown,
+            }],
+        }
+    }
+
+    pub fn dump_debug_snapshot(&self) -> VoxDebugSnapshot {
+        let snapshot = self.debug_snapshot();
+        tracing::info!(?snapshot, "vox debug snapshot");
+        snapshot
     }
 }
 
@@ -2185,6 +2223,12 @@ fn get_or_create_send_conn_state(
 }
 
 impl SessionCore {
+    pub(crate) fn outbound_queue_stats(&self) -> (usize, usize) {
+        let capacity = self.outbound_tx.max_capacity();
+        let available = self.outbound_tx.capacity();
+        (capacity.saturating_sub(available), capacity)
+    }
+
     fn prepare_outbound_batch<'a>(
         &self,
         mut msg: Message<'a>,

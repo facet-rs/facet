@@ -452,6 +452,20 @@ identity described in [Retry](./retry/).
 > directions. These IDs are suitable for logs and debug snapshots, but MUST
 > NOT be used as default metric labels.
 
+> r[rpc.observability.channel.context]
+>
+> Channel observer events and debug snapshots SHOULD include the connection ID
+> and best-effort local debug context for each channel when available. Rust
+> implementations SHOULD capture source location and payload type context for
+> locally created channel pairs.
+
+> r[rpc.debug.snapshot]
+>
+> Implementations SHOULD expose a local runtime debug snapshot API that inspects
+> in-process runtime state directly rather than sending requests over the
+> flow-controlled Vox channel path. Snapshots SHOULD include connection,
+> request, channel, flow-control, and runtime queue/task state when available.
+
 > r[rpc.observability.channel.try-send-detail]
 >
 > Channel try-send observer outcomes SHOULD distinguish credit exhaustion,

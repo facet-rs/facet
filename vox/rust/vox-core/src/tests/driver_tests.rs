@@ -5,11 +5,11 @@ use std::time::Duration;
 
 use moire::task::FutureExt;
 use vox_types::{
-    Backing, ChannelBody, ChannelClose, ChannelGrantCredit, ChannelId, ChannelItem, ChannelMessage,
-    ChannelSink, ConnectionSettings, HandshakeResult, IncomingChannelMessage, Message,
-    MessagePayload, Metadata, MetadataEntry, MethodId, Parity, Payload, RequestBody, RequestCall,
-    RequestCancel, RequestMessage, RequestResponse, RetryPolicy, Rx, SelfRef, SessionRole, Tx,
-    VoxError, channel, ensure_operation_id,
+    Backing, ChannelBody, ChannelClose, ChannelDirection, ChannelGrantCredit, ChannelId,
+    ChannelItem, ChannelMessage, ChannelSink, ConnectionSettings, HandshakeResult,
+    IncomingChannelMessage, Message, MessagePayload, Metadata, MetadataEntry, MethodId, Parity,
+    Payload, RequestBody, RequestCall, RequestCancel, RequestMessage, RequestResponse, RetryPolicy,
+    Rx, SelfRef, SessionRole, Tx, VoxError, channel, ensure_operation_id,
 };
 
 use super::utils::*;
@@ -1516,6 +1516,61 @@ async fn grant_credit_unblocks_driver_created_tx_channel() {
         send_result.is_ok(),
         "send should succeed after credit grant"
     );
+}
+
+// r[verify rpc.debug.snapshot]
+#[tokio::test]
+async fn debug_snapshot_reports_driver_channel_credit_state() {
+    let (client_conduit, server_conduit) = message_conduit_pair();
+
+    let server_task = moire::task::spawn(
+        async move {
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
+                .establish::<NoopClient>()
+                .await
+                .expect("server handshake failed")
+        }
+        .named("server_setup"),
+    );
+
+    let _client_caller = initiator_conduit(client_conduit, test_initiator_handshake())
+        .establish::<NoopClient>()
+        .await
+        .expect("client handshake failed");
+
+    let server_caller = server_task.await.expect("server setup failed");
+    let (channel_id, sink) = server_caller.caller.driver().create_tx_channel();
+    let mut tx = Tx::<u32>::unbound();
+    tx.bind(sink);
+    tx.try_send(7).expect("try_send should use one credit");
+
+    let snapshot = server_caller.caller.debug_snapshot();
+    let connection = snapshot
+        .connections
+        .iter()
+        .find(|connection| {
+            connection.connection_id
+                == server_caller
+                    .caller
+                    .driver()
+                    .connection_sender()
+                    .connection_id()
+        })
+        .expect("snapshot should include caller connection");
+    let channel = connection
+        .open_channels
+        .iter()
+        .find(|channel| channel.channel_id == channel_id)
+        .expect("snapshot should include created channel");
+
+    assert_eq!(channel.direction, ChannelDirection::Tx);
+    assert_eq!(channel.connection_id, connection.connection_id);
+    assert_eq!(channel.initial_credit, 16);
+    assert_eq!(channel.available_send_credit, Some(15));
+    assert_eq!(channel.current_permit_count, Some(15));
+    assert_eq!(channel.sent, 1);
+    assert!(channel.last_item_sent_at.is_some());
+    assert_eq!(connection.outbound_queue_capacity, Some(256));
 }
 
 // r[verify rpc.flow-control.credit.initial]

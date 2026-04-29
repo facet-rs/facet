@@ -113,6 +113,7 @@ async fn main() -> Result<()> {
     let settings = ConnectionSettings {
         parity: Parity::Odd,
         max_concurrent_requests: 64,
+        initial_channel_credit: 16,
     };
 
     println!("[client] opening counter virtual connection");

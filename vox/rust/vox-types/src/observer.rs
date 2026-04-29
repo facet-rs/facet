@@ -84,45 +84,93 @@ pub enum ChannelResetReason {
     Unknown,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SourceLocation {
+    pub file: &'static str,
+    pub line: u32,
+    pub column: u32,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ChannelDebugContext {
+    pub label: Option<&'static str>,
+    pub type_name: Option<&'static str>,
+    pub source_location: Option<SourceLocation>,
+    pub service: Option<&'static str>,
+    pub method: Option<&'static str>,
+}
+
+impl ChannelDebugContext {
+    pub const fn is_empty(&self) -> bool {
+        self.label.is_none()
+            && self.type_name.is_none()
+            && self.source_location.is_none()
+            && self.service.is_none()
+            && self.method.is_none()
+    }
+
+    pub const fn into_option(self) -> Option<Self> {
+        if self.is_empty() { None } else { Some(self) }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChannelEventContext {
+    pub connection_id: Option<ConnectionId>,
+    pub channel_id: ChannelId,
+    pub debug: Option<ChannelDebugContext>,
+}
+
+impl ChannelEventContext {
+    pub const fn new(channel_id: ChannelId) -> Self {
+        Self {
+            connection_id: None,
+            channel_id,
+            debug: None,
+        }
+    }
+}
+
 // r[impl rpc.observability.channel]
+// r[impl rpc.observability.channel.context]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChannelEvent {
     Opened {
-        channel_id: ChannelId,
+        channel: ChannelEventContext,
         direction: ChannelDirection,
         initial_credit: u32,
     },
     SendStarted {
-        channel_id: ChannelId,
+        channel: ChannelEventContext,
     },
     SendWaitingForCredit {
-        channel_id: ChannelId,
+        channel: ChannelEventContext,
     },
     SendFinished {
-        channel_id: ChannelId,
+        channel: ChannelEventContext,
         outcome: ChannelSendOutcome,
         elapsed: Duration,
     },
     TrySend {
-        channel_id: ChannelId,
+        channel: ChannelEventContext,
         outcome: ChannelTrySendOutcome,
     },
     CreditGranted {
-        channel_id: ChannelId,
+        channel: ChannelEventContext,
         amount: u32,
     },
     ItemReceived {
-        channel_id: ChannelId,
+        channel: ChannelEventContext,
     },
     ItemConsumed {
-        channel_id: ChannelId,
+        channel: ChannelEventContext,
     },
     Closed {
-        channel_id: ChannelId,
+        channel: ChannelEventContext,
         reason: ChannelCloseReason,
     },
     Reset {
-        channel_id: ChannelId,
+        channel: ChannelEventContext,
         reason: ChannelResetReason,
     },
 }

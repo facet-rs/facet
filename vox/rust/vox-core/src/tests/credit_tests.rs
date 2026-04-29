@@ -3,8 +3,8 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use vox_types::{
-    ChannelEvent, ChannelId, ChannelSink, ChannelTrySendOutcome, CreditSink, Metadata, Payload,
-    TrySendError, Tx, TxError, VoxObserver, VoxObserverHandle,
+    ChannelDebugContext, ChannelEvent, ChannelId, ChannelSink, ChannelTrySendOutcome, ConnectionId,
+    CreditSink, Metadata, Payload, TrySendError, Tx, TxError, VoxObserver, VoxObserverHandle,
 };
 
 /// A sink that completes immediately, counting sends.
@@ -63,7 +63,9 @@ impl VoxObserver for RecordingObserver {
 }
 
 struct ObservedTrySendSink {
+    connection_id: ConnectionId,
     channel_id: ChannelId,
+    debug_context: ChannelDebugContext,
     observer: VoxObserverHandle,
     outcome: Option<ChannelTrySendOutcome>,
 }
@@ -78,6 +80,14 @@ impl ChannelSink for ObservedTrySendSink {
 
     fn channel_id(&self) -> Option<ChannelId> {
         Some(self.channel_id)
+    }
+
+    fn connection_id(&self) -> Option<ConnectionId> {
+        Some(self.connection_id)
+    }
+
+    fn debug_context(&self) -> Option<ChannelDebugContext> {
+        Some(self.debug_context)
     }
 
     fn observer(&self) -> Option<VoxObserverHandle> {
@@ -151,7 +161,12 @@ fn observer_distinguishes_try_send_full_credit_from_runtime_queue() {
     let mut credit_full_tx = Tx::<u32>::unbound();
     credit_full_tx.bind(Arc::new(CreditSink::new(
         ObservedTrySendSink {
+            connection_id: ConnectionId(5),
             channel_id: ChannelId(7),
+            debug_context: ChannelDebugContext {
+                label: Some("credit-full"),
+                ..ChannelDebugContext::default()
+            },
             observer: observer.clone(),
             outcome: None,
         },
@@ -165,7 +180,12 @@ fn observer_distinguishes_try_send_full_credit_from_runtime_queue() {
     let mut runtime_full_tx = Tx::<u32>::unbound();
     runtime_full_tx.bind(Arc::new(CreditSink::new(
         ObservedTrySendSink {
+            connection_id: ConnectionId(5),
             channel_id: ChannelId(9),
+            debug_context: ChannelDebugContext {
+                label: Some("runtime-full"),
+                ..ChannelDebugContext::default()
+            },
             observer,
             outcome: Some(ChannelTrySendOutcome::FullRuntimeQueue),
         },
@@ -177,14 +197,20 @@ fn observer_distinguishes_try_send_full_credit_from_runtime_queue() {
     ));
 
     let events = events.lock().unwrap();
-    assert!(events.contains(&ChannelEvent::TrySend {
-        channel_id: ChannelId(7),
-        outcome: ChannelTrySendOutcome::FullCredit,
-    }));
-    assert!(events.contains(&ChannelEvent::TrySend {
-        channel_id: ChannelId(9),
-        outcome: ChannelTrySendOutcome::FullRuntimeQueue,
-    }));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        ChannelEvent::TrySend { channel, outcome: ChannelTrySendOutcome::FullCredit }
+            if channel.connection_id == Some(ConnectionId(5))
+                && channel.channel_id == ChannelId(7)
+                && channel.debug.and_then(|debug| debug.label) == Some("credit-full")
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        ChannelEvent::TrySend { channel, outcome: ChannelTrySendOutcome::FullRuntimeQueue }
+            if channel.connection_id == Some(ConnectionId(5))
+                && channel.channel_id == ChannelId(9)
+                && channel.debug.and_then(|debug| debug.label) == Some("runtime-full")
+    )));
 }
 
 // r[verify rpc.flow-control.credit.exhaustion]

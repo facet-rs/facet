@@ -68,6 +68,7 @@ impl vox::ConnectionAcceptor for ProxyAcceptor {
                     ConnectionSettings {
                         parity: Parity::Odd,
                         max_concurrent_requests: 64,
+                        initial_channel_credit: 16,
                     },
                     vec![MetadataEntry::str(
                         vox::VOX_SERVICE_METADATA_KEY,
@@ -103,6 +104,7 @@ async fn main() -> Result<()> {
             ConnectionSettings {
                 parity: Parity::Even,
                 max_concurrent_requests: 64,
+                initial_channel_credit: 16,
             },
         )
         .await
@@ -121,6 +123,7 @@ async fn main() -> Result<()> {
         ConnectionSettings {
             parity: Parity::Odd,
             max_concurrent_requests: 64,
+            initial_channel_credit: 16,
         },
     )
     .await
@@ -141,6 +144,7 @@ async fn main() -> Result<()> {
             ConnectionSettings {
                 parity: Parity::Even,
                 max_concurrent_requests: 64,
+                initial_channel_credit: 16,
             },
         )
         .await
@@ -159,6 +163,7 @@ async fn main() -> Result<()> {
         ConnectionSettings {
             parity: Parity::Odd,
             max_concurrent_requests: 64,
+            initial_channel_credit: 16,
         },
     )
     .await
@@ -174,6 +179,7 @@ async fn main() -> Result<()> {
         .open(ConnectionSettings {
             parity: Parity::Odd,
             max_concurrent_requests: 64,
+            initial_channel_credit: 16,
         })
         .await
         .map_err(|e| eyre!("guest-a open proxy vconn failed: {e:?}"))?;
