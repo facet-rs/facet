@@ -10,10 +10,9 @@
 
 use super::types::swift_field_name;
 use facet_core::{Field, ScalarType, Shape};
-use heck::ToLowerCamelCase;
 use vox_types::{
-    EnumInfo, ShapeKind, StructInfo, VariantKind, classify_shape, classify_variant,
-    extract_schemas, is_bytes,
+    DEFAULT_INITIAL_CHANNEL_CREDIT, EnumInfo, ShapeKind, StructInfo, VariantKind, classify_shape,
+    classify_variant, extract_schemas, is_bytes,
 };
 
 /// A wire type to generate Swift code for.
@@ -278,6 +277,9 @@ fn generate_struct(name: &str, fields: &[Field], types: &[WireType], is_top_leve
             let field_name = swift_field_name(f.name);
             let field_type = swift_wire_type(f.shape(), Some(f), types);
             out.push_str(&format!("{field_name}: {field_type}"));
+            if let Some(default_value) = swift_default_argument(f) {
+                out.push_str(&format!(" = {default_value}"));
+            }
         }
         out.push_str(") {\n");
         for f in fields {
@@ -354,6 +356,13 @@ fn generate_struct(name: &str, fields: &[Field], types: &[WireType], is_top_leve
 
     out.push_str("}\n");
     out
+}
+
+fn swift_default_argument(field: &Field) -> Option<String> {
+    if field.name == "initial_channel_credit" && field.has_default() {
+        return Some(DEFAULT_INITIAL_CHANNEL_CREDIT.to_string());
+    }
+    None
 }
 
 /// Generate a Swift enum with varint-discriminanted encode/decode methods.

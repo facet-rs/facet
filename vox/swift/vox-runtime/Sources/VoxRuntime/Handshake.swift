@@ -134,7 +134,8 @@ struct HandshakeHello: Sendable, Equatable {
     static func decodeCbor(_ bytes: [UInt8], offset: inout Int) throws -> Self {
         let count = try cborReadMapHeader(bytes, offset: &offset)
         var parity: Parity = .odd
-        var connectionSettings = ConnectionSettings(parity: .odd, maxConcurrentRequests: 64)
+        var connectionSettings = ConnectionSettings(
+            parity: .odd, maxConcurrentRequests: 64, initialChannelCredit: 16)
         var messagePayloadSchemaCbor: [UInt8] = []
         var supportsRetry = false
         var resumeKey: ResumeKeyBytes?
@@ -199,7 +200,8 @@ struct HandshakeHelloYourself: Sendable, Equatable {
 
     static func decodeCbor(_ bytes: [UInt8], offset: inout Int) throws -> Self {
         let count = try cborReadMapHeader(bytes, offset: &offset)
-        var connectionSettings = ConnectionSettings(parity: .even, maxConcurrentRequests: 64)
+        var connectionSettings = ConnectionSettings(
+            parity: .even, maxConcurrentRequests: 64, initialChannelCredit: 16)
         var messagePayloadSchemaCbor: [UInt8] = []
         var supportsRetry = false
         var resumeKey: ResumeKeyBytes?
@@ -354,17 +356,20 @@ extension Parity {
 
 extension ConnectionSettings {
     fileprivate func encodeCbor() -> [UInt8] {
-        cborEncodeMapHeader(2)
+        cborEncodeMapHeader(3)
             + cborEncodeText("parity")
             + parity.encodeCbor()
             + cborEncodeText("max_concurrent_requests")
             + cborEncodeUnsigned(UInt64(maxConcurrentRequests))
+            + cborEncodeText("initial_channel_credit")
+            + cborEncodeUnsigned(UInt64(initialChannelCredit))
     }
 
     fileprivate static func decodeCbor(_ bytes: [UInt8], offset: inout Int) throws -> Self {
         let count = try cborReadMapHeader(bytes, offset: &offset)
         var parity: Parity = .odd
         var maxConcurrentRequests: UInt32 = 64
+        var initialChannelCredit: UInt32 = 16
         for _ in 0..<count {
             let key = try cborReadText(bytes, offset: &offset)
             switch key {
@@ -374,11 +379,17 @@ extension ConnectionSettings {
                 let value = try cborReadUnsigned(bytes, offset: &offset)
                 guard value <= UInt64(UInt32.max) else { throw CborError.overflow }
                 maxConcurrentRequests = UInt32(value)
+            case "initial_channel_credit":
+                let value = try cborReadUnsigned(bytes, offset: &offset)
+                guard value <= UInt64(UInt32.max) else { throw CborError.overflow }
+                initialChannelCredit = UInt32(value)
             default:
                 _ = try cborReadRawValue(bytes, offset: &offset)
             }
         }
-        return .init(parity: parity, maxConcurrentRequests: maxConcurrentRequests)
+        return .init(
+            parity: parity, maxConcurrentRequests: maxConcurrentRequests,
+            initialChannelCredit: initialChannelCredit)
     }
 }
 

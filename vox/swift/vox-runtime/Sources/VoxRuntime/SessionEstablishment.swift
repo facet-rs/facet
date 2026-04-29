@@ -37,12 +37,15 @@ func performInitiatorHandshake(
     link: any Link,
     maxPayloadSize: UInt32,
     maxConcurrentRequests: UInt32,
+    initialChannelCredit: UInt32 = 16,
     resumable: Bool,
     resumeKey: [UInt8]? = nil,
     metadata: [MetadataEntry] = []
 ) async throws -> SessionHandshakeResult {
     traceLog(.handshake, "initiator sending Hello resumable=\(resumable)")
-    let ourSettings = ConnectionSettings(parity: .odd, maxConcurrentRequests: maxConcurrentRequests)
+    let ourSettings = ConnectionSettings(
+        parity: .odd, maxConcurrentRequests: maxConcurrentRequests,
+        initialChannelCredit: initialChannelCredit)
     let hello = HandshakeHello(
         parity: ourSettings.parity,
         connectionSettings: ourSettings,
@@ -103,6 +106,7 @@ func performAcceptorHandshake(
     link: any Link,
     maxPayloadSize: UInt32,
     maxConcurrentRequests: UInt32,
+    initialChannelCredit: UInt32 = 16,
     resumable: Bool,
     expectedResumeKey: [UInt8]? = nil,
     metadata: [MetadataEntry] = []
@@ -130,7 +134,8 @@ func performAcceptorHandshake(
 
     let ourSettings = ConnectionSettings(
         parity: oppositeParity(peerHello.parity),
-        maxConcurrentRequests: maxConcurrentRequests
+        maxConcurrentRequests: maxConcurrentRequests,
+        initialChannelCredit: initialChannelCredit
     )
     let sessionResumeKey = expectedResumeKey ?? (resumable ? freshSessionResumeKey() : nil)
     let helloYourself = HandshakeHelloYourself(
@@ -226,6 +231,7 @@ func establishInitiator(
     dispatcher: any ServiceDispatcher,
     connectionAcceptor: (any ConnectionAcceptor)? = nil,
     maxPayloadSize: UInt32? = nil,
+    initialChannelCredit: UInt32 = 16,
     keepalive: SessionKeepaliveConfig? = nil,
     resumable: Bool = false,
     recoverAttachment: (@Sendable () async throws -> LinkAttachment)? = nil,
@@ -237,6 +243,7 @@ func establishInitiator(
         link: attachment.link,
         maxPayloadSize: ourMaxPayload,
         maxConcurrentRequests: 64,
+        initialChannelCredit: initialChannelCredit,
         resumable: resumable,
         metadata: metadata
     )
@@ -274,6 +281,7 @@ func establishInitiator(
     dispatcher: any ServiceDispatcher,
     connectionAcceptor: (any ConnectionAcceptor)? = nil,
     maxPayloadSize: UInt32? = nil,
+    initialChannelCredit: UInt32 = 16,
     keepalive: SessionKeepaliveConfig? = nil,
     resumable: Bool = false,
     recoverAttachment: (@Sendable () async throws -> LinkAttachment)? = nil,
@@ -285,6 +293,7 @@ func establishInitiator(
         dispatcher: dispatcher,
         connectionAcceptor: connectionAcceptor,
         maxPayloadSize: maxPayloadSize,
+        initialChannelCredit: initialChannelCredit,
         keepalive: keepalive,
         resumable: resumable,
         recoverAttachment: recoverAttachment,
@@ -298,6 +307,7 @@ func establishInitiator(
     dispatcher: any ServiceDispatcher,
     connectionAcceptor: (any ConnectionAcceptor)? = nil,
     maxPayloadSize: UInt32? = nil,
+    initialChannelCredit: UInt32 = 16,
     keepalive: SessionKeepaliveConfig? = nil,
     resumable: Bool = false,
     recoverAttachment: (@Sendable () async throws -> LinkAttachment)? = nil,
@@ -309,6 +319,7 @@ func establishInitiator(
         dispatcher: dispatcher,
         connectionAcceptor: connectionAcceptor,
         maxPayloadSize: maxPayloadSize,
+        initialChannelCredit: initialChannelCredit,
         keepalive: keepalive,
         resumable: resumable,
         recoverAttachment: recoverAttachment,
@@ -322,6 +333,7 @@ func establishAcceptor(
     dispatcher: any ServiceDispatcher,
     connectionAcceptor: (any ConnectionAcceptor)? = nil,
     maxPayloadSize: UInt32? = nil,
+    initialChannelCredit: UInt32 = 16,
     keepalive: SessionKeepaliveConfig? = nil,
     resumable: Bool = false,
     metadata: [MetadataEntry] = []
@@ -347,6 +359,7 @@ func establishAcceptor(
         link: attachment.link,
         maxPayloadSize: ourMaxPayload,
         maxConcurrentRequests: 64,
+        initialChannelCredit: initialChannelCredit,
         resumable: resumable,
         metadata: metadata
     )
@@ -382,6 +395,7 @@ func establishAcceptor(
     dispatcher: any ServiceDispatcher,
     connectionAcceptor: (any ConnectionAcceptor)? = nil,
     maxPayloadSize: UInt32? = nil,
+    initialChannelCredit: UInt32 = 16,
     keepalive: SessionKeepaliveConfig? = nil,
     resumable: Bool = false,
     metadata: [MetadataEntry] = []
@@ -392,6 +406,7 @@ func establishAcceptor(
         dispatcher: dispatcher,
         connectionAcceptor: connectionAcceptor,
         maxPayloadSize: maxPayloadSize,
+        initialChannelCredit: initialChannelCredit,
         keepalive: keepalive,
         resumable: resumable,
         metadata: metadata
@@ -404,6 +419,7 @@ func establishAcceptor(
     dispatcher: any ServiceDispatcher,
     connectionAcceptor: (any ConnectionAcceptor)? = nil,
     maxPayloadSize: UInt32? = nil,
+    initialChannelCredit: UInt32 = 16,
     keepalive: SessionKeepaliveConfig? = nil,
     resumable: Bool = false,
     metadata: [MetadataEntry] = []
@@ -414,6 +430,7 @@ func establishAcceptor(
         dispatcher: dispatcher,
         connectionAcceptor: connectionAcceptor,
         maxPayloadSize: maxPayloadSize,
+        initialChannelCredit: initialChannelCredit,
         keepalive: keepalive,
         resumable: resumable,
         metadata: metadata

@@ -68,6 +68,7 @@ extension Driver {
                         link: attachment.link,
                         maxPayloadSize: 1024 * 1024,
                         maxConcurrentRequests: localRootSettings.maxConcurrentRequests,
+                        initialChannelCredit: localRootSettings.initialChannelCredit,
                         resumable: true,
                         resumeKey: sessionResumeKey
                     )
@@ -92,6 +93,7 @@ extension Driver {
                         link: fallbackAttachment.link,
                         maxPayloadSize: 1024 * 1024,
                         maxConcurrentRequests: localRootSettings.maxConcurrentRequests,
+                        initialChannelCredit: localRootSettings.initialChannelCredit,
                         resumable: false
                     )
                     establishedAttachment = fallbackAttachment
@@ -104,6 +106,7 @@ extension Driver {
                     link: attachment.link,
                     maxPayloadSize: 1024 * 1024,
                     maxConcurrentRequests: localRootSettings.maxConcurrentRequests,
+                    initialChannelCredit: localRootSettings.initialChannelCredit,
                     resumable: false
                 )
                 establishedAttachment = attachment

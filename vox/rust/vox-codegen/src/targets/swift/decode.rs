@@ -5,7 +5,6 @@
 
 use super::types::swift_field_name;
 use facet_core::{ScalarType, Shape};
-use heck::ToLowerCamelCase;
 use vox_types::{
     EnumInfo, ShapeKind, StructInfo, VariantKind, classify_shape, classify_variant, is_bytes,
 };

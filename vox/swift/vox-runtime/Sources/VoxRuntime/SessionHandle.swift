@@ -94,6 +94,7 @@ public final class SessionHandle: @unchecked Sendable {
                 link: readyAttachment.link,
                 maxPayloadSize: 1024 * 1024,
                 maxConcurrentRequests: localRootSettings.maxConcurrentRequests,
+                initialChannelCredit: localRootSettings.initialChannelCredit,
                 resumable: true,
                 resumeKey: sessionResumeKey
             )
@@ -118,6 +119,7 @@ public final class SessionHandle: @unchecked Sendable {
                 link: readyAttachment.link,
                 maxPayloadSize: 1024 * 1024,
                 maxConcurrentRequests: localRootSettings.maxConcurrentRequests,
+                initialChannelCredit: localRootSettings.initialChannelCredit,
                 resumable: false,
                 expectedResumeKey: sessionResumeKey
             )

@@ -122,7 +122,7 @@ public struct ConnectionSettings: Sendable, Equatable {
   public var maxConcurrentRequests: UInt32
   public var initialChannelCredit: UInt32
 
-  public init(parity: Parity, maxConcurrentRequests: UInt32, initialChannelCredit: UInt32) {
+  public init(parity: Parity, maxConcurrentRequests: UInt32, initialChannelCredit: UInt32 = 16) {
     self.parity = parity
     self.maxConcurrentRequests = maxConcurrentRequests
     self.initialChannelCredit = initialChannelCredit
