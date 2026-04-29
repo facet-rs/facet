@@ -50,6 +50,42 @@ public final class Session: @unchecked Sendable {
         try await driver.run()
     }
 
+    /// Like `initiator(...)` but injects `vox-service:
+    /// ExpectedClient.voxServiceName` into the session-establish
+    /// metadata so the peer's per-service router dispatches the
+    /// resulting root connection to the matching dispatcher. Use
+    /// this when talking to a server that routes connections by
+    /// service (e.g. `vox::acceptor_on(...).on_connection(factory)`),
+    /// pairing it with the typed client returned by codegen:
+    ///
+    ///     let session = try await Session.initiator(
+    ///         connector,
+    ///         expecting: ProfilerClient.self,
+    ///         dispatcher: NoopDispatcher(),
+    ///         resumable: false
+    ///     )
+    ///     let client = ProfilerClient(connection: session.connection)
+    public static func initiator<ExpectedClient: ExpectedRootClient>(
+        _ connector: some SessionConnector,
+        expecting _: ExpectedClient.Type,
+        dispatcher: any ServiceDispatcher,
+        onConnection: (any ConnectionAcceptor)? = nil,
+        keepalive: SessionKeepaliveConfig? = nil,
+        resumable: Bool = true,
+        metadata: [MetadataEntry] = []
+    ) async throws -> Session {
+        let metadata = injectExpectedRootService(
+            metadata, serviceName: ExpectedClient.voxServiceName)
+        return try await initiator(
+            connector,
+            dispatcher: dispatcher,
+            onConnection: onConnection,
+            keepalive: keepalive,
+            resumable: resumable,
+            metadata: metadata
+        )
+    }
+
     public static func initiator(
         _ connector: some SessionConnector,
         dispatcher: any ServiceDispatcher,

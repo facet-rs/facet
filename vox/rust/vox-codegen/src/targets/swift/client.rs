@@ -116,6 +116,25 @@ fn generate_client_impl(service: &ServiceDescriptor) -> String {
     w.writeln("}").unwrap();
     w.blank_line().unwrap();
 
+    // ExpectedRootClient conformance — lets `Session.initiator(...,
+    // expecting: <Service>Client.self, ...)` inject the right
+    // `vox-service` metadata so the server's per-connection router
+    // dispatches to this service.
+    w.writeln(&format!(
+        "extension {service_name}Client: ExpectedRootClient {{"
+    ))
+    .unwrap();
+    {
+        let _indent = w.indent();
+        w.writeln(&format!(
+            "public static let voxServiceName = \"{}\"",
+            service.service_name
+        ))
+        .unwrap();
+    }
+    w.writeln("}").unwrap();
+    w.blank_line().unwrap();
+
     out
 }
 
