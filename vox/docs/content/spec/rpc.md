@@ -302,9 +302,20 @@ identity described in [Retry](./retry/).
 
 > r[rpc.channel.lifecycle]
 >
-> Channels are created as part of a request, but they outlive the
-> request/response exchange. A channel remains live until it is explicitly
-> closed or reset, or until the connection is torn down.
+> Channels are created as part of a request. The request is the channel's
+> allocation and association scope: it supplies the channel IDs and the
+> request/service/method context used for observability and diagnostics.
+>
+> Endpoint ownership controls channel lifetime. Once a channel endpoint has
+> been handed to user code, returning a response, returning an application
+> error, or cancelling the request MUST NOT implicitly close or reset that
+> channel. A channel may outlive the request/response exchange and remains
+> live until the sender closes it, the receiver resets it, an endpoint is
+> otherwise explicitly made terminal, or the connection is torn down.
+>
+> If the runtime allocates or binds channel state for a request but fails
+> before handing the corresponding endpoint to user code, it MUST tear down
+> that local channel state instead of leaving an orphaned channel.
 
 > r[rpc.channel.item]
 >
@@ -470,9 +481,11 @@ identity described in [Retry](./retry/).
 > r[rpc.observability.channel.context]
 >
 > Channel observer events and debug snapshots SHOULD include the connection ID
-> and best-effort local debug context for each channel when available. Rust
-> implementations SHOULD capture source location and payload type context for
-> locally created channel pairs.
+> and best-effort local debug context for each channel when available. This
+> context SHOULD include the request ID, service, and method that introduced
+> the channel, and SHOULD remain available even after that request has
+> finished. Rust implementations SHOULD capture source location and payload
+> type context for locally created channel pairs.
 
 > r[rpc.debug.snapshot]
 >
@@ -480,6 +493,9 @@ identity described in [Retry](./retry/).
 > in-process runtime state directly rather than sending requests over the
 > flow-controlled Vox channel path. Snapshots SHOULD include connection,
 > request, channel, flow-control, and runtime queue/task state when available.
+> Channel snapshots SHOULD preserve the request/service/method association that
+> introduced the channel, plus the current or final state of that request when
+> known.
 
 > r[rpc.transport.stream.cancel-safe-recv]
 >

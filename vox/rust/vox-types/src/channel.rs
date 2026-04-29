@@ -1226,6 +1226,7 @@ impl<T> Tx<T> {
 }
 
 impl<T> Drop for Tx<T> {
+    // r[impl rpc.channel.lifecycle]
     fn drop(&mut self) {
         if self.closed.swap(true, Ordering::AcqRel) {
             return;
@@ -1500,6 +1501,7 @@ impl<T> Rx<T> {
 }
 
 impl<T> Drop for Rx<T> {
+    // r[impl rpc.channel.lifecycle]
     fn drop(&mut self) {
         if self.closed.swap(true, Ordering::AcqRel) {
             return;
