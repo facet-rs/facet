@@ -155,7 +155,41 @@ where
 
     fn split(self) -> (Self::Tx, Self::Rx) {
         let (tx_chan, mut rx_chan) = mpsc::channel::<Vec<u8>>(128);
+        let (read_tx, read_rx) = mpsc::channel::<io::Result<Option<Backing>>>(128);
+        let mut reader = BufReader::new(self.reader);
         let mut writer = BufWriter::new(self.writer);
+
+        let reader_task = tokio::spawn(async move {
+            loop {
+                let mut len_buf = [0u8; 4];
+                match read_frame_exact(&mut reader, &mut len_buf, "frame header").await {
+                    Ok(ReadExactOutcome::Complete) => {}
+                    Ok(ReadExactOutcome::CleanEof) => {
+                        let _ = read_tx.send(Ok(None)).await;
+                        break;
+                    }
+                    Err(error) => {
+                        let _ = read_tx.send(Err(error)).await;
+                        break;
+                    }
+                }
+
+                let len = u32::from_le_bytes(len_buf) as usize;
+                let mut buf = vec![0u8; len];
+                if let Err(error) = read_frame_exact(&mut reader, &mut buf, "frame body").await {
+                    let _ = read_tx.send(Err(error)).await;
+                    break;
+                }
+
+                if read_tx
+                    .send(Ok(Some(Backing::Boxed(buf.into_boxed_slice()))))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
 
         let writer_task = tokio::spawn(async move {
             while let Some(bytes) = rx_chan.recv().await {
@@ -183,7 +217,9 @@ where
                 writer_task,
             },
             StreamLinkRx {
-                reader: BufReader::new(self.reader),
+                rx: read_rx,
+                reader_task,
+                _phantom: std::marker::PhantomData,
             },
         )
     }
@@ -220,25 +256,58 @@ impl LinkTx for StreamLinkTx {
 
 /// Receiving half of a [`StreamLink`].
 pub struct StreamLinkRx<R> {
-    reader: R,
+    rx: mpsc::Receiver<io::Result<Option<Backing>>>,
+    reader_task: JoinHandle<()>,
+    _phantom: std::marker::PhantomData<fn(R)>,
 }
 
 // r[impl zerocopy.recv.stream]
-impl<R: AsyncRead + Send + Unpin + 'static> LinkRx for StreamLinkRx<R> {
+impl<R: Send + 'static> LinkRx for StreamLinkRx<R> {
     type Error = io::Error;
 
+    // r[impl rpc.transport.stream.cancel-safe-recv]
     async fn recv(&mut self) -> io::Result<Option<Backing>> {
-        let mut len_buf = [0u8; 4];
-        match self.reader.read_exact(&mut len_buf).await {
-            Ok(_) => {}
-            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
-            Err(e) => return Err(e),
+        match self.rx.recv().await {
+            Some(result) => result,
+            None => Ok(None),
         }
-        let len = u32::from_le_bytes(len_buf) as usize;
-        let mut buf = vec![0u8; len];
-        self.reader.read_exact(&mut buf).await?;
-        Ok(Some(Backing::Boxed(buf.into_boxed_slice())))
     }
+}
+
+impl<R> Drop for StreamLinkRx<R> {
+    fn drop(&mut self) {
+        self.reader_task.abort();
+    }
+}
+
+enum ReadExactOutcome {
+    Complete,
+    CleanEof,
+}
+
+async fn read_frame_exact<R>(
+    reader: &mut R,
+    buf: &mut [u8],
+    part: &'static str,
+) -> io::Result<ReadExactOutcome>
+where
+    R: AsyncRead + Unpin,
+{
+    let mut read = 0;
+    while read < buf.len() {
+        let n = reader.read(&mut buf[read..]).await?;
+        if n == 0 {
+            if read == 0 && part == "frame header" {
+                return Ok(ReadExactOutcome::CleanEof);
+            }
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                format!("stream ended after {read} of {} {part} bytes", buf.len()),
+            ));
+        }
+        read += n;
+    }
+    Ok(ReadExactOutcome::Complete)
 }
 
 // ---------------------------------------------------------------------------
@@ -691,6 +760,33 @@ mod tests {
         assert!(rx_b.recv().await.unwrap().is_none());
         // Subsequent calls also return None
         assert!(rx_b.recv().await.unwrap().is_none());
+    }
+
+    // r[verify rpc.transport.stream.cancel-safe-recv]
+    #[tokio::test]
+    async fn recv_can_be_cancelled_during_partial_frame() {
+        let (a, b) = tokio::io::duplex(4096);
+        let (a_r, a_w) = split(a);
+        let (_b_r, mut b_w) = split(b);
+        let receiver_link = StreamLink::new(a_r, a_w);
+        let (_tx, mut rx) = receiver_link.split();
+
+        let expected = b"cancel-safe-frame";
+        b_w.write_all(&(expected.len() as u32).to_le_bytes())
+            .await
+            .unwrap();
+        b_w.write_all(&expected[..6]).await.unwrap();
+
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(20), rx.recv())
+                .await
+                .is_err(),
+            "partial frame should not complete"
+        );
+
+        b_w.write_all(&expected[6..]).await.unwrap();
+        let msg = rx.recv().await.unwrap().unwrap();
+        assert_eq!(payload(&msg), expected);
     }
 
     #[cfg(unix)]

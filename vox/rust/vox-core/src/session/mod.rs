@@ -17,7 +17,10 @@ use vox_types::{
     RequestId, RequestMessage, RequestResponse, SchemaMessage, SelfRef, SessionResumeKey,
     SessionRole, TrySendError, VoxDebugSnapshot, VoxObserverHandle,
 };
-use vox_types::{ConnectionDebugSnapshot, ConnectionDebugState, DriverTaskStatus};
+use vox_types::{
+    ConnectionCloseReason, ConnectionDebugSnapshot, ConnectionDebugState, DecodeErrorKind,
+    DriverTaskStatus,
+};
 
 mod builders;
 pub use builders::*;
@@ -541,7 +544,7 @@ pub struct ConnectionState {
 
     /// Sender for routing incoming messages to the per-connection driver task.
     conn_tx: mpsc::Sender<RecvMessage>,
-    closed_tx: watch::Sender<bool>,
+    closed_tx: watch::Sender<Option<ConnectionCloseReason>>,
 
     /// Per-connection schema recv tracker — schemas are scoped to a connection.
     schema_recv_tracker: Arc<vox_types::SchemaRecvTracker>,
@@ -794,7 +797,7 @@ pub struct ConnectionHandle {
     pub(crate) rx: mpsc::Receiver<RecvMessage>,
     pub(crate) failures_rx: mpsc::UnboundedReceiver<(RequestId, FailureDisposition)>,
     pub(crate) control_tx: Option<mpsc::UnboundedSender<DropControlRequest>>,
-    pub(crate) closed_rx: watch::Receiver<bool>,
+    pub(crate) closed_rx: watch::Receiver<Option<ConnectionCloseReason>>,
     pub(crate) resumed_rx: watch::Receiver<u64>,
     pub(crate) local_settings: ConnectionSettings,
     pub(crate) peer_settings: ConnectionSettings,
@@ -835,12 +838,12 @@ impl ConnectionHandle {
 
     /// Resolve when this connection closes.
     pub async fn closed(&self) {
-        if *self.closed_rx.borrow() {
+        if self.closed_rx.borrow().is_some() {
             return;
         }
         let mut rx = self.closed_rx.clone();
         while rx.changed().await.is_ok() {
-            if *rx.borrow() {
+            if rx.borrow().is_some() {
                 return;
             }
         }
@@ -848,7 +851,11 @@ impl ConnectionHandle {
 
     /// Return whether this connection is still considered connected.
     pub fn is_connected(&self) -> bool {
-        !*self.closed_rx.borrow()
+        self.closed_rx.borrow().is_none()
+    }
+
+    pub fn close_reason(&self) -> Option<ConnectionCloseReason> {
+        *self.closed_rx.borrow()
     }
 
     pub fn peer_supports_retry(&self) -> bool {
@@ -865,7 +872,7 @@ impl ConnectionHandle {
                 endpoint: None,
                 surface: None,
                 component: None,
-                state: if *self.closed_rx.borrow() {
+                state: if self.closed_rx.borrow().is_some() {
                     ConnectionDebugState::Closed
                 } else {
                     ConnectionDebugState::Open
@@ -880,7 +887,7 @@ impl ConnectionHandle {
                 last_inbound_message_at: None,
                 last_outbound_message_at: None,
                 last_progress_at: None,
-                close_reason: None,
+                close_reason: *self.closed_rx.borrow(),
                 driver_task_status: DriverTaskStatus::Unknown,
             }],
         }
@@ -1004,14 +1011,57 @@ impl std::fmt::Display for SessionError {
 
 impl std::error::Error for SessionError {}
 
+fn classify_session_recv_error(error: &std::io::Error) -> ConnectionCloseReason {
+    let message = error.to_string();
+    if message.contains("decode error") || message.contains("protocol") {
+        ConnectionCloseReason::Protocol
+    } else {
+        ConnectionCloseReason::Transport
+    }
+}
+
+fn classify_decode_error(error: &std::io::Error) -> Option<DecodeErrorKind> {
+    let message = error.to_string();
+    if message.contains("decode error") {
+        Some(DecodeErrorKind::Payload)
+    } else {
+        None
+    }
+}
+
 impl Session {
+    // r[impl rpc.observability.session-errors]
+    // r[impl rpc.observability.driver]
+    fn observe_session_recv_error(&self, error: &std::io::Error) {
+        let Some(observer) = &self.observer else {
+            return;
+        };
+
+        if let Some(kind) = classify_decode_error(error) {
+            for conn_id in self.conns.iter().filter_map(|(conn_id, slot)| {
+                matches!(slot, ConnectionSlot::Active(_)).then_some(*conn_id)
+            }) {
+                observer.driver_event(vox_types::DriverEvent::DecodeError {
+                    connection_id: conn_id,
+                    kind,
+                });
+            }
+            return;
+        }
+
+        observer.transport_event(vox_types::TransportEvent::Closed {
+            connection_id: None,
+            reason: classify_session_recv_error(error),
+        });
+    }
+
     fn close_connection_for_protocol_error(
         &mut self,
         conn_id: ConnectionId,
         detail: impl std::fmt::Display,
     ) {
         warn!(%conn_id, "closing connection after protocol error: {detail}");
-        self.remove_connection(&conn_id);
+        self.remove_connection_with_reason(&conn_id, ConnectionCloseReason::Protocol);
         self.maybe_request_shutdown_after_root_closed();
     }
 
@@ -1147,7 +1197,7 @@ impl Session {
         let label = format!("session.conn{}", conn_id.0);
         let (conn_tx, conn_rx) = mpsc::channel::<RecvMessage>(&label, 64);
         let (failures_tx, failures_rx) = mpsc::unbounded_channel(format!("{label}.failures"));
-        let (closed_tx, closed_rx) = watch::channel(false);
+        let (closed_tx, closed_rx) = watch::channel(None);
         let resumed_rx = self.resume_notifier.subscribe();
 
         let sender = ConnectionSender {
@@ -1223,13 +1273,23 @@ impl Session {
                             vox_types::dlog!("[session {:?}] recv loop: conduit returned EOF", self.role);
                             if !self.handle_conduit_break(&mut keepalive_runtime).await {
                                 vox_types::dlog!("[session {:?}] recv loop: breaking (not resumable)", self.role);
+                                self.close_all_connections(ConnectionCloseReason::Remote);
                                 break;
                             }
                         }
                         Err(error) => {
+                            let close_reason = classify_session_recv_error(&error);
+                            self.observe_session_recv_error(&error);
+                            warn!(
+                                role = ?self.role,
+                                %error,
+                                ?close_reason,
+                                "session receive failed; closing connections if recovery is unavailable"
+                            );
                             vox_types::dlog!("[session {:?}] recv loop: conduit recv error: {}", self.role, error);
                             if !self.handle_conduit_break(&mut keepalive_runtime).await {
                                 vox_types::dlog!("[session {:?}] recv loop: breaking (not resumable)", self.role);
+                                self.close_all_connections(close_reason);
                                 break;
                             }
                         }
@@ -1248,6 +1308,7 @@ impl Session {
                 }
                 Some(req) = self.control_rx.recv() => {
                     if !self.handle_drop_control_request(req).await {
+                        self.close_all_connections(ConnectionCloseReason::Local);
                         break;
                     }
                 }
@@ -1257,6 +1318,7 @@ impl Session {
                     }
                 }, if keepalive_tick.is_some() => {
                     if !self.handle_keepalive_tick(&mut keepalive_runtime).await {
+                        self.close_all_connections(ConnectionCloseReason::Protocol);
                         break;
                     }
                 }
@@ -1264,7 +1326,7 @@ impl Session {
         }
 
         // Drop all connection slots so per-connection drivers exit immediately.
-        self.close_all_connections();
+        self.close_all_connections(ConnectionCloseReason::SessionShutdown);
         trace!("session recv loop exited");
     }
 
@@ -1435,7 +1497,7 @@ impl Session {
                 // Remove the connection — dropping conn_tx causes the Driver's rx
                 // to return None, which exits its run loop. All in-flight handlers
                 // are dropped, triggering DriverReplySink::drop → Cancelled responses.
-                self.remove_connection(&conn_id);
+                self.remove_connection_with_reason(&conn_id, ConnectionCloseReason::Remote);
                 self.maybe_request_shutdown_after_root_closed();
             }
             MessagePayload::ConnectionOpen(open) => {
@@ -1556,7 +1618,7 @@ impl Session {
                     body_kind
                 );
                 if conn_tx.send(recv_msg).await.is_err() {
-                    self.remove_connection(&conn_id);
+                    self.remove_connection_with_reason(&conn_id, ConnectionCloseReason::Unknown);
                     self.maybe_request_shutdown_after_root_closed();
                 }
             }
@@ -1571,7 +1633,7 @@ impl Session {
                     msg: c.map(ConnectionMessage::Channel),
                 };
                 if conn_tx.send(recv_msg).await.is_err() {
-                    self.remove_connection(&conn_id);
+                    self.remove_connection_with_reason(&conn_id, ConnectionCloseReason::Unknown);
                     self.maybe_request_shutdown_after_root_closed();
                 }
             }
@@ -1949,7 +2011,10 @@ impl Session {
 
         // Remove the connection slot — this drops conn_tx and causes the
         // Driver to exit cleanly.
-        if self.remove_connection(&req.conn_id).is_none() {
+        if self
+            .remove_connection_with_reason(&req.conn_id, ConnectionCloseReason::Local)
+            .is_none()
+        {
             let _ = req
                 .result_tx
                 .send(Err(SessionError::Protocol("connection not found".into())));
@@ -1998,7 +2063,10 @@ impl Session {
                     return self.has_virtual_connections();
                 }
 
-                if self.remove_connection(&conn_id).is_some() {
+                if self
+                    .remove_connection_with_reason(&conn_id, ConnectionCloseReason::Local)
+                    .is_some()
+                {
                     let _ = self
                         .sess_core
                         .send(
@@ -2024,21 +2092,30 @@ impl Session {
     }
 
     fn remove_connection(&mut self, conn_id: &ConnectionId) -> Option<ConnectionSlot> {
+        self.remove_connection_with_reason(conn_id, ConnectionCloseReason::Unknown)
+    }
+
+    fn remove_connection_with_reason(
+        &mut self,
+        conn_id: &ConnectionId,
+        reason: ConnectionCloseReason,
+    ) -> Option<ConnectionSlot> {
         trace!(%conn_id, "remove_connection called");
         let slot = self.conns.remove(conn_id);
         if let Some(ConnectionSlot::Active(state)) = &slot {
-            let _ = state.closed_tx.send(true);
+            let _ = state.closed_tx.send(Some(reason));
             if let Some(observer) = &self.observer {
                 observer.driver_event(vox_types::DriverEvent::ConnectionClosed {
                     connection_id: *conn_id,
-                    reason: vox_types::ConnectionCloseReason::Unknown,
+                    reason,
                 });
             }
         }
         slot
     }
 
-    fn close_all_connections(&mut self) {
+    // r[impl rpc.observability.session-errors]
+    fn close_all_connections(&mut self, reason: ConnectionCloseReason) {
         trace!(role = ?self.role, count = self.conns.len(), "close_all_connections");
         vox_types::dlog!(
             "[session {:?}] close_all_connections: {} slots",
@@ -2048,11 +2125,11 @@ impl Session {
         for (conn_id, slot) in self.conns.iter() {
             if let ConnectionSlot::Active(state) = slot {
                 vox_types::dlog!("[session {:?}] closing connection {:?}", self.role, conn_id);
-                let _ = state.closed_tx.send(true);
+                let _ = state.closed_tx.send(Some(reason));
                 if let Some(observer) = &self.observer {
                     observer.driver_event(vox_types::DriverEvent::ConnectionClosed {
                         connection_id: *conn_id,
-                        reason: vox_types::ConnectionCloseReason::SessionShutdown,
+                        reason,
                     });
                 }
             }

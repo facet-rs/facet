@@ -17,10 +17,11 @@ use moire::task::FutureExt as _;
 use vox_types::{
     BoxFut, CallResult, ChannelBinder, ChannelBody, ChannelClose, ChannelCreditReplenisher,
     ChannelCreditReplenisherHandle, ChannelEventContext, ChannelId, ChannelItem,
-    ChannelLivenessHandle, ChannelMessage, ChannelRetryMode, ChannelSink, ConnectionId, CreditSink,
-    Handler, IdAllocator, IncomingChannelMessage, MaybeSend, MaybeSync, Payload, ReplySink,
-    RequestBody, RequestCall, RequestId, RequestMessage, RequestResponse, SelfRef, TrySendError,
-    TxError, VoxError, ensure_operation_id, metadata_channel_retry_mode, metadata_operation_id,
+    ChannelLivenessHandle, ChannelMailboxReceiver, ChannelMailboxSender, ChannelMessage,
+    ChannelRetryMode, ChannelSink, ConnectionId, CreditSink, Handler, IdAllocator,
+    IncomingChannelMessage, MaybeSend, MaybeSync, Payload, ReplySink, RequestBody, RequestCall,
+    RequestId, RequestMessage, RequestResponse, SelfRef, TrySendError, TxError, VoxError,
+    channel_mailbox, ensure_operation_id, metadata_channel_retry_mode, metadata_operation_id,
 };
 use vox_types::{
     ChannelCloseReason, ChannelDebugContext, ChannelDirection, ChannelEvent, ChannelResetReason,
@@ -75,6 +76,12 @@ struct InFlightHandler {
 /// the `Stage` overhead and the `set_stage` memcpy that fires on
 /// `Running → Finished` transitions.
 type HandlerFut = Abortable<Pin<Box<dyn Future<Output = RequestId> + Send + 'static>>>;
+
+#[derive(Clone, Copy, Debug)]
+enum ChannelRuntimeTeardown {
+    DropOnly,
+    ConnectionClosed(ConnectionCloseReason),
+}
 
 // ============================================================================
 // Live operation tracking (driver-local, not persisted)
@@ -555,14 +562,11 @@ struct DriverShared {
     operations: Arc<dyn OperationStore>,
     channel_ids: SyncMutex<IdAllocator<ChannelId>>,
     /// Registry mapping inbound channel IDs to the sender that feeds the Rx handle.
-    channel_senders: SyncMutex<BTreeMap<ChannelId, mpsc::Sender<IncomingChannelMessage>>>,
-    /// Buffer for channel messages that arrive before the channel is registered.
-    ///
-    /// This handles the race between the caller sending items immediately after
-    /// channel binding, and the callee's handler task registering the channel
-    /// receiver. Items arriving in that window are buffered here and drained
-    /// when the channel is registered.
-    channel_buffers: SyncMutex<BTreeMap<ChannelId, Vec<IncomingChannelMessage>>>,
+    channel_senders: SyncMutex<BTreeMap<ChannelId, ChannelMailboxSender<IncomingChannelMessage>>>,
+    /// Receivers for channels that received messages before application code
+    /// deserialized/registered the corresponding `Rx` handle.
+    channel_receivers:
+        SyncMutex<BTreeMap<ChannelId, ChannelMailboxReceiver<IncomingChannelMessage>>>,
     /// Credit semaphores for outbound channels (Tx on our side).
     /// The driver's GrantCredit handler adds permits to these.
     channel_credits: SyncMutex<BTreeMap<ChannelId, Arc<Semaphore>>>,
@@ -819,6 +823,54 @@ impl DriverShared {
 
     fn record_receiver_dropped(&self, channel_id: ChannelId) {
         self.update_existing_channel_debug(channel_id, ChannelRuntimeDebug::mark_receiver_dropped);
+    }
+
+    fn new_channel_mailbox(
+        &self,
+    ) -> (
+        ChannelMailboxSender<IncomingChannelMessage>,
+        ChannelMailboxReceiver<IncomingChannelMessage>,
+    ) {
+        channel_mailbox(
+            "driver.channel_mailbox",
+            self.local_initial_channel_credit as usize,
+        )
+    }
+
+    fn inbound_channel_sender(
+        &self,
+        channel_id: ChannelId,
+    ) -> ChannelMailboxSender<IncomingChannelMessage> {
+        let mut senders = self.channel_senders.lock();
+        if let Some(sender) = senders.get(&channel_id) {
+            return sender.clone();
+        }
+
+        let (sender, receiver) = self.new_channel_mailbox();
+        senders.insert(channel_id, sender.clone());
+        self.channel_receivers.lock().insert(channel_id, receiver);
+        sender
+    }
+
+    fn register_inbound_channel_receiver(
+        &self,
+        channel_id: ChannelId,
+    ) -> (ChannelMailboxReceiver<IncomingChannelMessage>, bool) {
+        let terminal = self.terminal_channels.lock().contains(&channel_id);
+        let mut senders = self.channel_senders.lock();
+        let mut receivers = self.channel_receivers.lock();
+
+        if let Some(receiver) = receivers.remove(&channel_id) {
+            return (receiver, terminal);
+        }
+
+        let (sender, receiver) = self.new_channel_mailbox();
+        if terminal {
+            drop(sender);
+        } else {
+            senders.insert(channel_id, sender);
+        }
+        (receiver, terminal)
     }
 
     fn debug_snapshot(
@@ -1492,12 +1544,12 @@ impl Caller {
 
     /// Resolve when the underlying connection closes.
     pub async fn closed(&self) {
-        if *self.inner.closed_rx.borrow() {
+        if self.inner.closed_rx.borrow().is_some() {
             return;
         }
         let mut rx = self.inner.closed_rx.clone();
         while rx.changed().await.is_ok() {
-            if *rx.borrow() {
+            if rx.borrow().is_some() {
                 return;
             }
         }
@@ -1505,7 +1557,7 @@ impl Caller {
 
     /// Return whether the underlying connection is still considered connected.
     pub fn is_connected(&self) -> bool {
-        !*self.inner.closed_rx.borrow()
+        self.inner.closed_rx.borrow().is_none()
     }
 
     /// Return a channel binder for binding Tx/Rx handles in args before sending.
@@ -1573,7 +1625,6 @@ struct DriverChannelBinder {
 fn register_rx_channel_impl(
     shared: &Arc<DriverShared>,
     channel_id: ChannelId,
-    queue_name: &'static str,
     initial_channel_credit: u32,
     debug_context: Option<ChannelDebugContext>,
     liveness: Option<ChannelLivenessHandle>,
@@ -1586,43 +1637,9 @@ fn register_rx_channel_impl(
         initial_channel_credit,
         debug_context,
     );
-    let (tx, rx) = mpsc::channel(queue_name, initial_channel_credit as usize);
+    let (rx, terminal) = shared.register_inbound_channel_receiver(channel_id);
 
-    let mut terminal_buffered = false;
-    {
-        let mut senders = shared.channel_senders.lock();
-
-        // Publish the live sender and keep the registry locked until any
-        // pre-registration backlog has been drained.
-        //
-        // This makes the handoff lossless and order-preserving:
-        // - items that raced with registration cannot create a fresh orphan
-        //   buffer entry because the live sender is already visible
-        // - newer items cannot bypass older buffered items because
-        //   handle_channel() blocks on channel_senders until the drain finishes
-        senders.insert(channel_id, tx.clone());
-
-        let buffered = shared.channel_buffers.lock().remove(&channel_id);
-        if let Some(buffered) = buffered {
-            for msg in buffered {
-                let is_terminal = matches!(
-                    msg,
-                    IncomingChannelMessage::Close(_) | IncomingChannelMessage::Reset(_)
-                );
-                let _ = tx.try_send(msg);
-                if is_terminal {
-                    terminal_buffered = true;
-                    break;
-                }
-            }
-        }
-
-        if terminal_buffered {
-            senders.remove(&channel_id);
-        }
-    }
-
-    if terminal_buffered {
+    if terminal {
         shared.channel_credits.lock().remove(&channel_id);
         return vox_types::BoundChannelReceiver {
             receiver: rx,
@@ -1696,7 +1713,6 @@ trait DriverChannelEndpoint {
     fn endpoint_shared(&self) -> &Arc<DriverShared>;
     fn endpoint_local_control_tx(&self) -> &mpsc::UnboundedSender<DriverLocalControl>;
     fn endpoint_liveness(&self) -> Option<ChannelLivenessHandle>;
-    fn endpoint_rx_queue_name(&self) -> &'static str;
 
     fn create_tx_credit_sink(
         &self,
@@ -1754,7 +1770,6 @@ trait DriverChannelEndpoint {
         register_rx_channel_impl(
             shared,
             channel_id,
-            self.endpoint_rx_queue_name(),
             shared.local_initial_channel_credit,
             debug_context,
             self.endpoint_liveness(),
@@ -1780,10 +1795,6 @@ impl DriverChannelEndpoint for DriverChannelBinder {
         self.drop_guard
             .as_ref()
             .map(|guard| guard.clone() as ChannelLivenessHandle)
-    }
-
-    fn endpoint_rx_queue_name(&self) -> &'static str {
-        "driver.register_rx_channel"
     }
 }
 
@@ -1847,7 +1858,7 @@ pub struct DriverCaller {
     sender: ConnectionSender,
     shared: Arc<DriverShared>,
     local_control_tx: mpsc::UnboundedSender<DriverLocalControl>,
-    closed_rx: watch::Receiver<bool>,
+    closed_rx: watch::Receiver<Option<ConnectionCloseReason>>,
     resumed_rx: watch::Receiver<u64>,
     resume_processed_rx: watch::Receiver<u64>,
     peer_supports_retry: bool,
@@ -1898,10 +1909,6 @@ impl DriverChannelEndpoint for DriverCaller {
         self._drop_guard
             .as_ref()
             .map(|guard| guard.clone() as ChannelLivenessHandle)
-    }
-
-    fn endpoint_rx_queue_name(&self) -> &'static str {
-        "driver.caller.register_rx_channel"
     }
 }
 
@@ -1962,8 +1969,9 @@ impl DriverCaller {
     pub fn debug_snapshot(&self) -> VoxDebugSnapshot {
         self.shared.debug_snapshot(
             &self.sender,
-            self.shared.connection_debug_state(*self.closed_rx.borrow()),
-            if *self.closed_rx.borrow() {
+            self.shared
+                .connection_debug_state(self.closed_rx.borrow().is_some()),
+            if self.closed_rx.borrow().is_some() {
                 DriverTaskStatus::Dead
             } else {
                 DriverTaskStatus::Alive
@@ -2125,8 +2133,8 @@ impl DriverCaller {
                     ).await;
                 }
                 changed = closed_rx.changed() => {
-                    vox_types::dlog!("[CALLER] closed_rx fired, value={}", *closed_rx.borrow());
-                    if changed.is_err() || *closed_rx.borrow() {
+                    vox_types::dlog!("[CALLER] closed_rx fired, value={:?}", *closed_rx.borrow());
+                    if changed.is_err() || closed_rx.borrow().is_some() {
                         self.shared.pending_responses.lock().remove(&req_id);
                         finish_request(RpcOutcome::Closed);
                         return Err(VoxError::ConnectionClosed);
@@ -2163,7 +2171,7 @@ pub struct Driver<H: Handler<DriverReplySink>> {
     sender: ConnectionSender,
     rx: mpsc::Receiver<crate::session::RecvMessage>,
     failures_rx: mpsc::UnboundedReceiver<(RequestId, FailureDisposition)>,
-    closed_rx: watch::Receiver<bool>,
+    closed_rx: watch::Receiver<Option<ConnectionCloseReason>>,
     resumed_rx: watch::Receiver<u64>,
     resume_processed_tx: watch::Sender<u64>,
     peer_supports_retry: bool,
@@ -2288,7 +2296,8 @@ impl ChannelCreditReplenisher for DriverChannelCreditReplenisher {
 }
 
 impl<H: Handler<DriverReplySink>> Driver<H> {
-    fn close_all_channel_runtime_state(&self) {
+    // r[impl rpc.channel.connection-closure]
+    fn close_all_channel_runtime_state(&self, teardown: ChannelRuntimeTeardown) {
         let mut credits = self.shared.channel_credits.lock();
         for semaphore in credits.values() {
             semaphore.close();
@@ -2300,8 +2309,21 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
         credits.clear();
         drop(credits);
 
-        self.shared.channel_senders.lock().clear();
-        self.shared.channel_buffers.lock().clear();
+        let channel_senders = {
+            let mut senders = self.shared.channel_senders.lock();
+            std::mem::take(&mut *senders)
+        };
+        if let ChannelRuntimeTeardown::ConnectionClosed(reason) = teardown {
+            for (channel_id, sender) in channel_senders {
+                let _ = sender.force_send(IncomingChannelMessage::ConnectionClosed(reason));
+                self.shared
+                    .observe_channel(channel_id, None, |channel| ChannelEvent::Closed {
+                        channel,
+                        reason: ChannelCloseReason::ConnectionClosed,
+                    });
+            }
+        }
+        self.shared.channel_receivers.lock().clear();
         self.shared.terminal_channels.lock().clear();
     }
 
@@ -2368,7 +2390,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 operations: operation_store,
                 channel_ids: SyncMutex::new("driver.channel_ids", IdAllocator::new(parity)),
                 channel_senders: SyncMutex::new("driver.channel_senders", BTreeMap::new()),
-                channel_buffers: SyncMutex::new("driver.channel_buffers", BTreeMap::new()),
+                channel_receivers: SyncMutex::new("driver.channel_receivers", BTreeMap::new()),
                 channel_credits: SyncMutex::new("driver.channel_credits", BTreeMap::new()),
                 channel_contexts: SyncMutex::new("driver.channel_contexts", BTreeMap::new()),
                 request_debug: SyncMutex::new("driver.request_debug", BTreeMap::new()),
@@ -2445,7 +2467,8 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
     pub fn debug_snapshot(&self) -> VoxDebugSnapshot {
         self.shared.debug_snapshot(
             &self.sender,
-            self.shared.connection_debug_state(*self.closed_rx.borrow()),
+            self.shared
+                .connection_debug_state(self.closed_rx.borrow().is_some()),
             DriverTaskStatus::Alive,
         )
     }
@@ -2478,12 +2501,16 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 biased;
                 changed = resumed_rx.changed() => {
                     if changed.is_err() {
+                        tracing::trace!(
+                            conn_id = self.sender.connection_id().0,
+                            "resume notifier closed, exiting driver"
+                        );
                         break;
                     }
                     let generation = *resumed_rx.borrow();
                     if generation != seen_resume_generation {
                         seen_resume_generation = generation;
-                        self.close_all_channel_runtime_state();
+                        self.close_all_channel_runtime_state(ChannelRuntimeTeardown::DropOnly);
                         self.abort_channel_handlers();
                         let _ = self.resume_processed_tx.send(generation);
                     }
@@ -2491,7 +2518,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 recv = self.rx.recv() => {
                     match recv {
                         Some(recv) => {
-                            self.handle_recv(recv);
+                            self.handle_recv(recv).await;
                         }
                         None => {
                             tracing::trace!("driver rx closed, exiting loop");
@@ -2606,13 +2633,16 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
         }
         self.shared.pending_responses.lock().clear();
         self.shared.request_debug.lock().clear();
-        self.shared
-            .set_connection_closed(ConnectionCloseReason::SessionShutdown);
+        let close_reason =
+            (*self.closed_rx.borrow()).unwrap_or(ConnectionCloseReason::SessionShutdown);
+        self.shared.set_connection_closed(close_reason);
 
         // Connection is gone: drop channel runtime state so any registered Rx
         // receivers observe closure instead of hanging on recv(), and wake any
         // outbound Tx handles waiting for grant-credit.
-        self.close_all_channel_runtime_state();
+        self.close_all_channel_runtime_state(ChannelRuntimeTeardown::ConnectionClosed(
+            close_reason,
+        ));
     }
 
     async fn handle_local_control(&mut self, control: DriverLocalControl) {
@@ -2645,7 +2675,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             }
             DriverLocalControl::ResetChannel { channel_id } => {
                 self.shared.channel_senders.lock().remove(&channel_id);
-                self.shared.channel_buffers.lock().remove(&channel_id);
+                self.shared.channel_receivers.lock().remove(&channel_id);
                 self.close_outbound_channel(channel_id);
                 self.shared
                     .observe_channel(channel_id, None, |channel| ChannelEvent::Reset {
@@ -2687,7 +2717,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
         }
     }
 
-    fn handle_recv(&mut self, recv: crate::session::RecvMessage) {
+    async fn handle_recv(&mut self, recv: crate::session::RecvMessage) {
         self.shared.mark_inbound_progress();
         let crate::session::RecvMessage { schemas, msg } = recv;
         let msg_ref = msg.get();
@@ -2737,7 +2767,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 ConnectionMessage::Channel(c) => c,
                 _ => unreachable!(),
             });
-            self.handle_channel(msg);
+            self.handle_channel(msg).await;
         }
     }
 
@@ -2986,21 +3016,26 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
         }
     }
 
-    fn handle_channel(&mut self, msg: SelfRef<ChannelMessage<'static>>) {
+    async fn handle_channel(&mut self, msg: SelfRef<ChannelMessage<'static>>) {
         let msg_ref = msg.get();
         let chan_id = msg_ref.id;
+        enum ChannelBodyKind {
+            Item,
+            Close,
+            Reset,
+            GrantCredit(u32),
+        }
+        let body_kind = match &msg_ref.body {
+            ChannelBody::Item(_) => ChannelBodyKind::Item,
+            ChannelBody::Close(_) => ChannelBodyKind::Close,
+            ChannelBody::Reset(_) => ChannelBodyKind::Reset,
+            ChannelBody::GrantCredit(grant) => ChannelBodyKind::GrantCredit(grant.additional),
+        };
 
-        // Look up the channel sender from the shared registry (handles registered
-        // by both the driver and any DriverCaller that set up channels).
-        let sender = self.shared.channel_senders.lock().get(&chan_id).cloned();
-
-        match &msg_ref.body {
+        match body_kind {
             // r[impl rpc.channel.item]
-            ChannelBody::Item(_item) => {
-                self.shared
-                    .observe_channel(chan_id, None, |channel| ChannelEvent::ItemReceived {
-                        channel,
-                    });
+            // r[impl rpc.channel.delivery.reliable]
+            ChannelBodyKind::Item => {
                 if self.shared.terminal_channels.lock().contains(&chan_id) {
                     self.shared.record_inbound_item_not_enqueued(chan_id);
                     tracing::trace!(
@@ -3011,160 +3046,119 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                     return;
                 }
 
-                if let Some(tx) = &sender {
-                    tracing::trace!(
-                        conn_id = self.sender.connection_id().0,
-                        channel_id = chan_id.0,
-                        registered = true,
-                        "driver received channel item"
-                    );
-                    let item = msg.map(|m| match m.body {
-                        ChannelBody::Item(item) => item,
-                        _ => unreachable!(),
-                    });
-                    match tx.try_send(IncomingChannelMessage::Item(item)) {
-                        Ok(()) => {}
-                        Err(mpsc::error::TrySendError::Closed(_)) => {
-                            self.shared.record_inbound_item_not_enqueued(chan_id);
-                            self.shared.channel_senders.lock().remove(&chan_id);
-                            self.shared.channel_buffers.lock().remove(&chan_id);
-                            self.close_outbound_channel(chan_id);
-                            let _ = self
-                                .local_control_tx
-                                .send(DriverLocalControl::ResetChannel {
-                                    channel_id: chan_id,
-                                });
-                        }
-                        Err(mpsc::error::TrySendError::Full(_)) => {
-                            self.shared.record_inbound_item_not_enqueued(chan_id);
-                            // Preserve the old backpressure-overflow behavior:
-                            // if the Rx queue is full, drop this item without
-                            // treating the channel as abandoned.
-                        }
-                    }
-                } else {
-                    tracing::trace!(
-                        conn_id = self.sender.connection_id().0,
-                        channel_id = chan_id.0,
-                        registered = false,
-                        "driver buffered channel item before registration"
-                    );
-                    // Channel not yet registered — buffer until register_rx_channel is called.
-                    let item = msg.map(|m| match m.body {
-                        ChannelBody::Item(item) => item,
-                        _ => unreachable!(),
-                    });
-                    self.shared
-                        .channel_buffers
-                        .lock()
-                        .entry(chan_id)
-                        .or_default()
-                        .push(IncomingChannelMessage::Item(item));
+                tracing::trace!(
+                    conn_id = self.sender.connection_id().0,
+                    channel_id = chan_id.0,
+                    "driver received channel item"
+                );
+                let item = msg.map(|m| match m.body {
+                    ChannelBody::Item(item) => item,
+                    _ => unreachable!(),
+                });
+                let sender = self.shared.inbound_channel_sender(chan_id);
+                if sender
+                    .send(IncomingChannelMessage::Item(item))
+                    .await
+                    .is_err()
+                {
+                    self.shared.record_inbound_item_not_enqueued(chan_id);
+                    self.shared.channel_senders.lock().remove(&chan_id);
+                    self.shared.channel_receivers.lock().remove(&chan_id);
+                    self.close_outbound_channel(chan_id);
+                    let _ = self
+                        .local_control_tx
+                        .send(DriverLocalControl::ResetChannel {
+                            channel_id: chan_id,
+                        });
+                    return;
                 }
+                self.shared
+                    .observe_channel(chan_id, None, |channel| ChannelEvent::ItemReceived {
+                        channel,
+                    });
             }
             // r[impl rpc.channel.close]
-            ChannelBody::Close(_close) => {
+            ChannelBodyKind::Close => {
+                if self.shared.terminal_channels.lock().contains(&chan_id) {
+                    return;
+                }
+                let sender = self.shared.inbound_channel_sender(chan_id);
+                tracing::trace!(
+                    conn_id = self.sender.connection_id().0,
+                    channel_id = chan_id.0,
+                    "driver received channel close"
+                );
+                let close = msg.map(|m| match m.body {
+                    ChannelBody::Close(close) => close,
+                    _ => unreachable!(),
+                });
+                let delivered = sender
+                    .send(IncomingChannelMessage::Close(close))
+                    .await
+                    .is_ok();
+                self.shared.channel_senders.lock().remove(&chan_id);
+                self.shared.terminal_channels.lock().insert(chan_id);
+                self.close_outbound_channel(chan_id);
+                if !delivered {
+                    self.shared.channel_receivers.lock().remove(&chan_id);
+                    return;
+                }
                 self.shared
                     .observe_channel(chan_id, None, |channel| ChannelEvent::Closed {
                         channel,
                         reason: ChannelCloseReason::Remote,
                     });
-                if let Some(tx) = &sender {
-                    tracing::trace!(
-                        conn_id = self.sender.connection_id().0,
-                        channel_id = chan_id.0,
-                        registered = true,
-                        "driver received channel close"
-                    );
-                    let close = msg.map(|m| match m.body {
-                        ChannelBody::Close(close) => close,
-                        _ => unreachable!(),
-                    });
-                    let _ = tx.try_send(IncomingChannelMessage::Close(close));
-                } else {
-                    tracing::trace!(
-                        conn_id = self.sender.connection_id().0,
-                        channel_id = chan_id.0,
-                        registered = false,
-                        "driver buffered channel close before registration"
-                    );
-                    // Channel not yet registered — buffer the close.
-                    let close = msg.map(|m| match m.body {
-                        ChannelBody::Close(close) => close,
-                        _ => unreachable!(),
-                    });
-                    self.shared
-                        .channel_buffers
-                        .lock()
-                        .entry(chan_id)
-                        .or_default()
-                        .push(IncomingChannelMessage::Close(close));
+            }
+            // r[impl rpc.channel.reset]
+            ChannelBodyKind::Reset => {
+                if self.shared.terminal_channels.lock().contains(&chan_id) {
+                    return;
                 }
+                let sender = self.shared.inbound_channel_sender(chan_id);
+                tracing::trace!(
+                    conn_id = self.sender.connection_id().0,
+                    channel_id = chan_id.0,
+                    "driver received channel reset"
+                );
+                let reset = msg.map(|m| match m.body {
+                    ChannelBody::Reset(reset) => reset,
+                    _ => unreachable!(),
+                });
+                let delivered = sender
+                    .send(IncomingChannelMessage::Reset(reset))
+                    .await
+                    .is_ok();
                 self.shared.channel_senders.lock().remove(&chan_id);
                 self.shared.terminal_channels.lock().insert(chan_id);
                 self.close_outbound_channel(chan_id);
-            }
-            // r[impl rpc.channel.reset]
-            ChannelBody::Reset(_reset) => {
+                if !delivered {
+                    self.shared.channel_receivers.lock().remove(&chan_id);
+                    return;
+                }
                 self.shared
                     .observe_channel(chan_id, None, |channel| ChannelEvent::Reset {
                         channel,
                         reason: ChannelResetReason::Remote,
                     });
-                if let Some(tx) = &sender {
-                    tracing::trace!(
-                        conn_id = self.sender.connection_id().0,
-                        channel_id = chan_id.0,
-                        registered = true,
-                        "driver received channel reset"
-                    );
-                    let reset = msg.map(|m| match m.body {
-                        ChannelBody::Reset(reset) => reset,
-                        _ => unreachable!(),
-                    });
-                    let _ = tx.try_send(IncomingChannelMessage::Reset(reset));
-                } else {
-                    tracing::trace!(
-                        conn_id = self.sender.connection_id().0,
-                        channel_id = chan_id.0,
-                        registered = false,
-                        "driver buffered channel reset before registration"
-                    );
-                    // Channel not yet registered — buffer the reset.
-                    let reset = msg.map(|m| match m.body {
-                        ChannelBody::Reset(reset) => reset,
-                        _ => unreachable!(),
-                    });
-                    self.shared
-                        .channel_buffers
-                        .lock()
-                        .entry(chan_id)
-                        .or_default()
-                        .push(IncomingChannelMessage::Reset(reset));
-                }
-                self.shared.channel_senders.lock().remove(&chan_id);
-                self.shared.terminal_channels.lock().insert(chan_id);
-                self.close_outbound_channel(chan_id);
             }
             // r[impl rpc.flow-control.credit.grant]
             // r[impl rpc.flow-control.credit.grant.additive]
-            ChannelBody::GrantCredit(grant) => {
-                self.shared
-                    .record_credit_received(chan_id, grant.additional);
+            ChannelBodyKind::GrantCredit(additional) => {
+                self.shared.record_credit_received(chan_id, additional);
                 self.shared.emit_channel_event(chan_id, None, |channel| {
                     ChannelEvent::CreditGranted {
                         channel,
-                        amount: grant.additional,
+                        amount: additional,
                     }
                 });
                 tracing::trace!(
                     conn_id = self.sender.connection_id().0,
                     channel_id = chan_id.0,
-                    additional = grant.additional,
+                    additional,
                     "driver received channel credit"
                 );
                 if let Some(semaphore) = self.shared.channel_credits.lock().get(&chan_id) {
-                    semaphore.add_permits(grant.additional as usize);
+                    semaphore.add_permits(additional as usize);
                 }
             }
         }

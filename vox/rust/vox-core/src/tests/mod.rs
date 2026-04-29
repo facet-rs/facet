@@ -368,7 +368,7 @@ async fn tx_send_accepts_borrowed_payloads() {
 #[tokio::test]
 async fn rx_recv_decodes_channel_items() {
     let mut rx = Rx::<u32>::unbound();
-    let (tx_items, rx_items) = moire::sync::mpsc::channel("vox_core.tests.rx_recv_items", 4);
+    let (tx_items, rx_items) = vox_types::channel_mailbox("vox_core.tests.rx_recv_items", 4);
     rx.bind(rx_items);
 
     let payload_bytes = vox_postcard::to_vec(&42_u32).expect("serialize channel item");
@@ -404,7 +404,7 @@ async fn rx_recv_decodes_channel_items() {
 #[tokio::test]
 async fn rx_recv_signals_reset() {
     let mut rx = Rx::<u32>::unbound();
-    let (tx_items, rx_items) = moire::sync::mpsc::channel("vox_core.tests.rx_recv_reset", 4);
+    let (tx_items, rx_items) = vox_types::channel_mailbox("vox_core.tests.rx_recv_reset", 4);
     rx.bind(rx_items);
 
     let reset = ChannelReset {

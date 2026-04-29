@@ -1,7 +1,7 @@
 use moire::task::FutureExt;
 use vox_types::{
-    ChannelBinder, ConnectionSettings, Metadata, MetadataEntry, MethodId, Parity, Payload,
-    RequestCall,
+    ChannelBinder, ConnectionCloseReason, ConnectionSettings, IncomingChannelMessage, Metadata,
+    MetadataEntry, MethodId, Parity, Payload, RequestCall,
 };
 
 use super::utils::*;
@@ -402,8 +402,13 @@ async fn close_virtual_connection_closes_registered_rx_channels() {
         .await
         .expect("timed out waiting for channel receiver to close");
     assert!(
-        recv_result.is_none(),
-        "registered Rx channel should close when virtual connection closes"
+        matches!(
+            recv_result,
+            Some(IncomingChannelMessage::ConnectionClosed(
+                ConnectionCloseReason::Local
+            ))
+        ),
+        "registered Rx channel should report connection closure when virtual connection closes"
     );
 }
 

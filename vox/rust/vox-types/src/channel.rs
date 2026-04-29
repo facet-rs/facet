@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::panic::Location;
 use std::pin::Pin;
@@ -7,13 +8,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use facet::Facet;
 use facet_core::PtrConst;
-use moire::sync::{Notify, Semaphore, mpsc};
+use moire::sync::{Notify, Semaphore};
 use tokio::sync::TryAcquireError;
 
 use crate::{Backing, ChannelClose, ChannelItem, ChannelReset, Metadata, Payload, SelfRef};
 use crate::{
     ChannelCloseReason, ChannelDebugContext, ChannelEvent, ChannelEventContext, ChannelResetReason,
-    ChannelSendOutcome, ChannelTrySendOutcome, SourceLocation, VoxObserverHandle,
+    ChannelSendOutcome, ChannelTrySendOutcome, ConnectionCloseReason, SourceLocation,
+    VoxObserverHandle,
 };
 use crate::{ChannelId, ConnectionId};
 
@@ -111,8 +113,214 @@ pub struct BoundChannelSink {
     pub liveness: Option<ChannelLivenessHandle>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChannelMailboxStats {
+    pub len: usize,
+    pub capacity: usize,
+    pub receiver_closed: bool,
+    pub sender_count: usize,
+}
+
+pub struct ChannelMailboxSendError<T> {
+    item: T,
+}
+
+impl<T> std::fmt::Debug for ChannelMailboxSendError<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChannelMailboxSendError")
+            .finish_non_exhaustive()
+    }
+}
+
+impl<T> ChannelMailboxSendError<T> {
+    pub fn into_inner(self) -> T {
+        self.item
+    }
+}
+
+struct ChannelMailboxState<T> {
+    inner: Mutex<ChannelMailboxInner<T>>,
+    not_empty: Notify,
+    not_full: Notify,
+}
+
+struct ChannelMailboxInner<T> {
+    queue: VecDeque<T>,
+    capacity: usize,
+    receiver_closed: bool,
+    sender_count: usize,
+}
+
+// r[impl rpc.channel.delivery.reliable]
+pub struct ChannelMailboxSender<T> {
+    state: Arc<ChannelMailboxState<T>>,
+}
+
+pub struct ChannelMailboxReceiver<T> {
+    state: Arc<ChannelMailboxState<T>>,
+}
+
+pub fn channel_mailbox<T>(
+    name: &'static str,
+    capacity: usize,
+) -> (ChannelMailboxSender<T>, ChannelMailboxReceiver<T>) {
+    assert!(capacity > 0, "channel mailbox capacity must be non-zero");
+    let state = Arc::new(ChannelMailboxState {
+        inner: Mutex::new(ChannelMailboxInner {
+            queue: VecDeque::with_capacity(capacity),
+            capacity,
+            receiver_closed: false,
+            sender_count: 1,
+        }),
+        not_empty: Notify::new(name),
+        not_full: Notify::new(name),
+    });
+    (
+        ChannelMailboxSender {
+            state: Arc::clone(&state),
+        },
+        ChannelMailboxReceiver { state },
+    )
+}
+
+impl<T> Clone for ChannelMailboxSender<T> {
+    fn clone(&self) -> Self {
+        let mut guard = self
+            .state
+            .inner
+            .lock()
+            .expect("channel mailbox mutex poisoned");
+        guard.sender_count = guard.sender_count.saturating_add(1);
+        drop(guard);
+        Self {
+            state: Arc::clone(&self.state),
+        }
+    }
+}
+
+impl<T> Drop for ChannelMailboxSender<T> {
+    fn drop(&mut self) {
+        let mut guard = self
+            .state
+            .inner
+            .lock()
+            .expect("channel mailbox mutex poisoned");
+        guard.sender_count = guard.sender_count.saturating_sub(1);
+        let closed = guard.sender_count == 0;
+        drop(guard);
+        if closed {
+            self.state.not_empty.notify_waiters();
+            self.state.not_full.notify_waiters();
+        }
+    }
+}
+
+impl<T> ChannelMailboxSender<T> {
+    pub async fn send(&self, item: T) -> Result<(), ChannelMailboxSendError<T>> {
+        let mut item = Some(item);
+        loop {
+            let notified = {
+                let mut guard = self
+                    .state
+                    .inner
+                    .lock()
+                    .expect("channel mailbox mutex poisoned");
+                if guard.receiver_closed {
+                    return Err(ChannelMailboxSendError {
+                        item: item.take().expect("mailbox item already sent"),
+                    });
+                }
+                if guard.queue.len() < guard.capacity {
+                    guard
+                        .queue
+                        .push_back(item.take().expect("mailbox item already sent"));
+                    drop(guard);
+                    self.state.not_empty.notify_waiters();
+                    return Ok(());
+                }
+                self.state.not_full.notified()
+            };
+            notified.await;
+        }
+    }
+
+    pub fn force_send(&self, item: T) -> Result<(), ChannelMailboxSendError<T>> {
+        let mut guard = self
+            .state
+            .inner
+            .lock()
+            .expect("channel mailbox mutex poisoned");
+        if guard.receiver_closed {
+            return Err(ChannelMailboxSendError { item });
+        }
+        guard.queue.push_back(item);
+        drop(guard);
+        self.state.not_empty.notify_waiters();
+        Ok(())
+    }
+
+    pub fn stats(&self) -> ChannelMailboxStats {
+        self.state.stats()
+    }
+}
+
+impl<T> Drop for ChannelMailboxReceiver<T> {
+    fn drop(&mut self) {
+        let mut guard = self
+            .state
+            .inner
+            .lock()
+            .expect("channel mailbox mutex poisoned");
+        guard.receiver_closed = true;
+        guard.queue.clear();
+        drop(guard);
+        self.state.not_full.notify_waiters();
+        self.state.not_empty.notify_waiters();
+    }
+}
+
+impl<T> ChannelMailboxReceiver<T> {
+    pub async fn recv(&mut self) -> Option<T> {
+        loop {
+            let notified = {
+                let mut guard = self
+                    .state
+                    .inner
+                    .lock()
+                    .expect("channel mailbox mutex poisoned");
+                if let Some(item) = guard.queue.pop_front() {
+                    drop(guard);
+                    self.state.not_full.notify_waiters();
+                    return Some(item);
+                }
+                if guard.sender_count == 0 {
+                    return None;
+                }
+                self.state.not_empty.notified()
+            };
+            notified.await;
+        }
+    }
+
+    pub fn stats(&self) -> ChannelMailboxStats {
+        self.state.stats()
+    }
+}
+
+impl<T> ChannelMailboxState<T> {
+    fn stats(&self) -> ChannelMailboxStats {
+        let guard = self.inner.lock().expect("channel mailbox mutex poisoned");
+        ChannelMailboxStats {
+            len: guard.queue.len(),
+            capacity: guard.capacity,
+            receiver_closed: guard.receiver_closed,
+            sender_count: guard.sender_count,
+        }
+    }
+}
+
 pub struct BoundChannelReceiver {
-    pub receiver: mpsc::Receiver<IncomingChannelMessage>,
+    pub receiver: ChannelMailboxReceiver<IncomingChannelMessage>,
     pub liveness: Option<ChannelLivenessHandle>,
     pub replenisher: Option<ChannelCreditReplenisherHandle>,
 }
@@ -121,8 +329,8 @@ struct LogicalReceiverState {
     generation: u64,
     liveness: Option<ChannelLivenessHandle>,
     replenisher: Option<ChannelCreditReplenisherHandle>,
-    sender: Option<mpsc::Sender<LogicalIncomingChannelMessage>>,
-    receiver: Option<mpsc::Receiver<LogicalIncomingChannelMessage>>,
+    sender: Option<ChannelMailboxSender<LogicalIncomingChannelMessage>>,
+    receiver: Option<ChannelMailboxReceiver<LogicalIncomingChannelMessage>>,
 }
 
 // r[impl rpc.channel.pair]
@@ -191,7 +399,7 @@ impl ChannelCore {
             .lock()
             .expect("channel core logical receiver mutex poisoned");
         let state = guard.get_or_insert_with(|| {
-            let (tx, rx) = mpsc::channel("vox_types.channel.logical_receiver", 64);
+            let (tx, rx) = channel_mailbox("vox_types.channel.logical_receiver", 64);
             LogicalReceiverState {
                 generation: 0,
                 liveness: None,
@@ -245,7 +453,7 @@ impl ChannelCore {
     pub fn take_logical_receiver(
         &self,
     ) -> Option<(
-        mpsc::Receiver<LogicalIncomingChannelMessage>,
+        ChannelMailboxReceiver<LogicalIncomingChannelMessage>,
         Option<ChannelLivenessHandle>,
         Option<ChannelCreditReplenisherHandle>,
     )> {
@@ -274,7 +482,7 @@ impl ChannelCore {
                         metadata: Metadata::default(),
                     },
                 );
-                let _ = sender.try_send(LogicalIncomingChannelMessage {
+                let _ = sender.force_send(LogicalIncomingChannelMessage {
                     msg: IncomingChannelMessage::Close(close),
                     replenisher: None,
                 });
@@ -433,11 +641,31 @@ where
     T: Facet<'static>,
 {
     match msg {
-        Some(IncomingChannelMessage::Close(_)) | None => {
+        Some(IncomingChannelMessage::Close(_)) => {
             observe_optional_replenisher_channel(replenisher, debug_context, |channel| {
                 ChannelEvent::Closed {
                     channel,
                     reason: ChannelCloseReason::Remote,
+                }
+            });
+            closed.store(true, Ordering::Release);
+            Ok(None)
+        }
+        Some(IncomingChannelMessage::ConnectionClosed(reason)) => {
+            observe_optional_replenisher_channel(replenisher, debug_context, |channel| {
+                ChannelEvent::Closed {
+                    channel,
+                    reason: ChannelCloseReason::ConnectionClosed,
+                }
+            });
+            closed.store(true, Ordering::Release);
+            Err(RxError::ConnectionClosed(reason))
+        }
+        None => {
+            observe_optional_replenisher_channel(replenisher, debug_context, |channel| {
+                ChannelEvent::Closed {
+                    channel,
+                    reason: ChannelCloseReason::Unknown,
                 }
             });
             closed.store(true, Ordering::Release);
@@ -667,6 +895,8 @@ pub enum IncomingChannelMessage {
     Item(SelfRef<ChannelItem<'static>>),
     Close(SelfRef<ChannelClose<'static>>),
     Reset(SelfRef<ChannelReset<'static>>),
+    // r[impl rpc.channel.connection-closure]
+    ConnectionClosed(ConnectionCloseReason),
 }
 
 pub struct LogicalIncomingChannelMessage {
@@ -704,7 +934,7 @@ impl LivenessSlot {
 #[derive(Facet)]
 #[facet(opaque)]
 pub(crate) struct ReceiverSlot {
-    pub(crate) inner: Option<mpsc::Receiver<IncomingChannelMessage>>,
+    pub(crate) inner: Option<ChannelMailboxReceiver<IncomingChannelMessage>>,
 }
 
 impl ReceiverSlot {
@@ -716,7 +946,7 @@ impl ReceiverSlot {
 #[derive(Facet)]
 #[facet(opaque)]
 pub(crate) struct LogicalReceiverSlot {
-    pub(crate) inner: Option<mpsc::Receiver<LogicalIncomingChannelMessage>>,
+    pub(crate) inner: Option<ChannelMailboxReceiver<LogicalIncomingChannelMessage>>,
 }
 
 impl LogicalReceiverSlot {
@@ -1251,14 +1481,14 @@ impl<T> Rx<T> {
         }
     }
     #[doc(hidden)]
-    pub fn bind(&mut self, receiver: mpsc::Receiver<IncomingChannelMessage>) {
+    pub fn bind(&mut self, receiver: ChannelMailboxReceiver<IncomingChannelMessage>) {
         self.bind_with_liveness(receiver, None);
     }
 
     #[doc(hidden)]
     pub fn bind_with_liveness(
         &mut self,
-        receiver: mpsc::Receiver<IncomingChannelMessage>,
+        receiver: ChannelMailboxReceiver<IncomingChannelMessage>,
         liveness: Option<ChannelLivenessHandle>,
     ) {
         self.receiver.inner = Some(receiver);
@@ -1350,6 +1580,7 @@ impl<T> TryFrom<ChannelId> for Rx<T> {
 pub enum RxError {
     Unbound,
     Reset,
+    ConnectionClosed(ConnectionCloseReason),
     Deserialize(vox_postcard::error::DeserializeError),
     Protocol(String),
 }
@@ -1359,6 +1590,9 @@ impl std::fmt::Display for RxError {
         match self {
             Self::Unbound => write!(f, "channel is not bound"),
             Self::Reset => write!(f, "channel reset by peer"),
+            Self::ConnectionClosed(reason) => {
+                write!(f, "connection closed while receiving channel: {reason:?}")
+            }
             Self::Deserialize(e) => write!(f, "deserialize error: {e}"),
             Self::Protocol(msg) => write!(f, "protocol error: {msg}"),
         }
@@ -1581,7 +1815,7 @@ mod tests {
 
     #[tokio::test]
     async fn rx_recv_returns_none_on_close() {
-        let (tx, rx_inner) = mpsc::channel("vox_types.channel.test.rx1", 1);
+        let (tx, rx_inner) = channel_mailbox("vox_types.channel.test.rx1", 1);
         let mut rx = Rx::<u32>::unbound();
         rx.bind(rx_inner);
 
@@ -1600,7 +1834,7 @@ mod tests {
 
     #[tokio::test]
     async fn rx_recv_returns_reset_error() {
-        let (tx, rx_inner) = mpsc::channel("vox_types.channel.test.rx2", 1);
+        let (tx, rx_inner) = channel_mailbox("vox_types.channel.test.rx2", 1);
         let mut rx = Rx::<u32>::unbound();
         rx.bind(rx_inner);
 
@@ -1621,11 +1855,34 @@ mod tests {
         assert!(matches!(err, RxError::Reset));
     }
 
+    // r[verify rpc.channel.connection-closure]
+    #[tokio::test]
+    async fn rx_recv_surfaces_connection_closed() {
+        let (tx, rx_inner) = channel_mailbox("vox_types.channel.test.rx_connection_closed", 1);
+        let mut rx = Rx::<u32>::unbound();
+        rx.bind(rx_inner);
+
+        tx.send(IncomingChannelMessage::ConnectionClosed(
+            ConnectionCloseReason::Protocol,
+        ))
+        .await
+        .expect("send connection close");
+
+        let err = match rx.recv().await {
+            Ok(_) => panic!("connection closure should be surfaced as error"),
+            Err(err) => err,
+        };
+        assert!(matches!(
+            err,
+            RxError::ConnectionClosed(ConnectionCloseReason::Protocol)
+        ));
+    }
+
     #[tokio::test]
     async fn rx_recv_rejects_outgoing_payload_variant_as_protocol_error() {
         static VALUE: u32 = 42;
 
-        let (tx, rx_inner) = mpsc::channel("vox_types.channel.test.rx3", 1);
+        let (tx, rx_inner) = channel_mailbox("vox_types.channel.test.rx3", 1);
         let mut rx = Rx::<u32>::unbound();
         rx.bind(rx_inner);
 
@@ -1648,7 +1905,7 @@ mod tests {
 
     #[tokio::test]
     async fn rx_recv_notifies_replenisher_after_consuming_an_item() {
-        let (tx, rx_inner) = mpsc::channel("vox_types.channel.test.rx4", 1);
+        let (tx, rx_inner) = channel_mailbox("vox_types.channel.test.rx4", 1);
         let replenisher = Arc::new(CountingReplenisher::new());
         let mut rx = Rx::<u32>::unbound();
         rx.bind(rx_inner);
@@ -1676,7 +1933,7 @@ mod tests {
 
     #[test]
     fn rx_drop_notifies_replenisher() {
-        let (_tx, rx_inner) = mpsc::channel("vox_types.channel.test.rx_drop", 1);
+        let (_tx, rx_inner) = channel_mailbox("vox_types.channel.test.rx_drop", 1);
         let replenisher = Arc::new(CountingReplenisher::new());
         let mut rx = Rx::<u32>::unbound();
         rx.bind(rx_inner);
@@ -1689,7 +1946,7 @@ mod tests {
 
     #[tokio::test]
     async fn rx_drop_after_close_does_not_notify_replenisher() {
-        let (tx, rx_inner) = mpsc::channel("vox_types.channel.test.rx_drop_closed", 1);
+        let (tx, rx_inner) = channel_mailbox("vox_types.channel.test.rx_drop_closed", 1);
         let replenisher = Arc::new(CountingReplenisher::new());
         let mut rx = Rx::<u32>::unbound();
         rx.bind(rx_inner);
@@ -1713,7 +1970,7 @@ mod tests {
 
     #[test]
     fn logical_rx_drop_notifies_replenisher() {
-        let (_tx, rx_inner) = mpsc::channel("vox_types.channel.test.logical_rx_drop", 1);
+        let (_tx, rx_inner) = channel_mailbox("vox_types.channel.test.logical_rx_drop", 1);
         let replenisher = Arc::new(CountingReplenisher::new());
         let core = Arc::new(ChannelCore::new(ChannelDebugContext::default()));
         core.bind_retryable_receiver(BoundChannelReceiver {
@@ -1730,7 +1987,7 @@ mod tests {
 
     #[tokio::test]
     async fn rx_recv_logical_receiver_decodes_items_and_notifies_replenisher() {
-        let (tx, rx_inner) = mpsc::channel("vox_types.channel.test.rx5", 1);
+        let (tx, rx_inner) = channel_mailbox("vox_types.channel.test.rx5", 1);
         let replenisher = Arc::new(CountingReplenisher::new());
         let core = Arc::new(ChannelCore::new(ChannelDebugContext::default()));
         core.bind_retryable_receiver(BoundChannelReceiver {
@@ -1791,7 +2048,7 @@ mod tests {
         }
 
         fn create_rx(&self) -> (ChannelId, BoundChannelReceiver) {
-            let (tx, rx) = mpsc::channel("vox_types.channel.test.bind_retryable1", 8);
+            let (tx, rx) = channel_mailbox("vox_types.channel.test.bind_retryable1", 8);
             // Keep the sender alive by leaking it — test only.
             std::mem::forget(tx);
             (
@@ -1809,7 +2066,8 @@ mod tests {
         }
 
         fn register_rx(&self, _channel_id: ChannelId) -> BoundChannelReceiver {
-            let (_tx, rx) = mpsc::channel("vox_types.channel.test.bind_retryable2", 8);
+            let (tx, rx) = channel_mailbox("vox_types.channel.test.bind_retryable2", 8);
+            std::mem::forget(tx);
             BoundChannelReceiver {
                 receiver: rx,
                 liveness: None,

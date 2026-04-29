@@ -311,6 +311,21 @@ identity described in [Retry](./retry/).
 > A `ChannelItem` message carries a channel ID and a serialized value of
 > the channel's element type.
 
+> r[rpc.channel.delivery.reliable]
+>
+> Once a `ChannelItem` has been accepted by a reliable `Tx::send`, the local
+> runtime MUST NOT drop it because an internal receive queue is full. Internal
+> queue capacity is backpressure: the receiving runtime MUST preserve accepted
+> items and terminal channel messages in order, or report channel/connection
+> closure. Lossy application policy belongs above this layer through APIs such
+> as `Tx::try_send`.
+
+> r[rpc.channel.connection-closure]
+>
+> If the underlying connection terminates while a channel receiver is still
+> live and no channel `Close` or `Reset` has been delivered, the receiver MUST
+> observe connection closure as an error rather than a graceful channel EOF.
+
 > r[rpc.channel.close]
 >
 > The sender of a channel sends `CloseChannel` when it is done sending.
@@ -466,6 +481,14 @@ identity described in [Retry](./retry/).
 > flow-controlled Vox channel path. Snapshots SHOULD include connection,
 > request, channel, flow-control, and runtime queue/task state when available.
 
+> r[rpc.transport.stream.cancel-safe-recv]
+>
+> Stream transport receive operations exposed to session runtime loops MUST be
+> cancellation-safe. If a session stops polling `LinkRx::recv` because another
+> runtime branch wins selection, any partially-read length-prefixed frame MUST
+> continue to completion in transport-owned state rather than corrupting the
+> next receive attempt.
+
 > r[rpc.observability.channel.try-send-detail]
 >
 > Channel try-send observer outcomes SHOULD distinguish credit exhaustion,
@@ -478,6 +501,13 @@ identity described in [Retry](./retry/).
 > outbound runtime queue saturation/closure, encode/decode failures, and
 > protocol violations. Connection IDs and request IDs are suitable for local
 > debugging but MUST NOT be used as default metric labels.
+
+> r[rpc.observability.session-errors]
+>
+> Session receive errors from the conduit or transport MUST be surfaced as
+> runtime diagnostics and connection close reasons. Implementations MUST NOT
+> collapse decode, protocol, or transport receive failures into an ordinary
+> graceful shutdown.
 
 > r[rpc.observability.low-cardinality]
 >
