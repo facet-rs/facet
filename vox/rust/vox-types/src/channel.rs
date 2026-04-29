@@ -10,6 +10,10 @@ use moire::sync::{Notify, Semaphore, TryAcquireError, mpsc};
 
 use crate::ChannelId;
 use crate::{Backing, ChannelClose, ChannelItem, ChannelReset, Metadata, Payload, SelfRef};
+use crate::{
+    ChannelCloseReason, ChannelEvent, ChannelResetReason, ChannelSendOutcome,
+    ChannelTrySendOutcome, VoxObserverHandle,
+};
 
 // ---------------------------------------------------------------------------
 // Thread-local channel binder — set during deserialization so TryFrom impls
@@ -79,6 +83,14 @@ pub trait ChannelCreditReplenisher: crate::MaybeSend + crate::MaybeSync + 'stati
     fn on_item_consumed(&self);
 
     fn on_receiver_dropped(&self) {}
+
+    fn channel_id(&self) -> Option<ChannelId> {
+        None
+    }
+
+    fn observer(&self) -> Option<VoxObserverHandle> {
+        None
+    }
 }
 
 pub type ChannelCreditReplenisherHandle = Arc<dyn ChannelCreditReplenisher>;
@@ -298,6 +310,25 @@ pub trait ChannelSink: crate::MaybeSend + crate::MaybeSync + 'static {
         payload: Payload<'payload>,
     ) -> Pin<Box<dyn crate::MaybeSendFuture<Output = Result<(), TxError>> + 'payload>>;
 
+    fn channel_id(&self) -> Option<ChannelId> {
+        None
+    }
+
+    fn observer(&self) -> Option<VoxObserverHandle> {
+        None
+    }
+
+    #[doc(hidden)]
+    fn try_send_payload_with_outcome<'payload>(
+        &self,
+        payload: Payload<'payload>,
+    ) -> Result<(), ChannelTrySendOutcome> {
+        self.try_send_payload(payload).map_err(|err| match err {
+            TrySendError::Full(()) => ChannelTrySendOutcome::FullRuntimeQueue,
+            TrySendError::Closed(()) => ChannelTrySendOutcome::Closed,
+        })
+    }
+
     // r[impl rpc.flow-control.credit.try-send]
     fn try_send_payload<'payload>(
         &self,
@@ -358,6 +389,13 @@ impl<S: ChannelSink> ChannelSink for CreditSink<S> {
         payload: Payload<'payload>,
     ) -> Pin<Box<dyn crate::MaybeSendFuture<Output = Result<(), TxError>> + 'payload>> {
         let credit = self.credit.clone();
+        let observer = self.observer();
+        let channel_id = self.channel_id();
+        if credit.available_permits() == 0
+            && let (Some(observer), Some(channel_id)) = (observer.as_ref(), channel_id)
+        {
+            observer.channel_event(ChannelEvent::SendWaitingForCredit { channel_id });
+        }
         let fut = self.inner.send_payload(payload);
         Box::pin(async move {
             let permit = credit
@@ -369,16 +407,25 @@ impl<S: ChannelSink> ChannelSink for CreditSink<S> {
         })
     }
 
-    fn try_send_payload<'payload>(
+    fn channel_id(&self) -> Option<ChannelId> {
+        self.inner.channel_id()
+    }
+
+    fn observer(&self) -> Option<VoxObserverHandle> {
+        self.inner.observer()
+    }
+
+    // r[impl rpc.observability.channel.try-send-detail]
+    fn try_send_payload_with_outcome<'payload>(
         &self,
         payload: Payload<'payload>,
-    ) -> Result<(), TrySendError<()>> {
+    ) -> Result<(), ChannelTrySendOutcome> {
         let permit = self.credit.try_acquire_owned().map_err(|err| match err {
-            TryAcquireError::NoPermits => TrySendError::Full(()),
-            TryAcquireError::Closed => TrySendError::Closed(()),
+            TryAcquireError::NoPermits => ChannelTrySendOutcome::FullCredit,
+            TryAcquireError::Closed => ChannelTrySendOutcome::Closed,
         })?;
 
-        match self.inner.try_send_payload(payload) {
+        match self.inner.try_send_payload_with_outcome(payload) {
             Ok(()) => {
                 std::mem::forget(permit);
                 Ok(())
@@ -570,11 +617,35 @@ impl<T> Tx<T> {
         } else {
             return Err(TxError::Unbound);
         };
+        let observer = sink.observer();
+        let channel_id = if self.channel_id == ChannelId::RESERVED {
+            sink.channel_id()
+        } else {
+            Some(self.channel_id)
+        };
+        if let (Some(observer), Some(channel_id)) = (observer.as_ref(), channel_id) {
+            observer.channel_event(ChannelEvent::SendStarted { channel_id });
+        }
+        let started_at = std::time::Instant::now();
         let ptr = PtrConst::new((&value as *const T).cast::<u8>());
         // SAFETY: `value` is explicitly dropped only after `await`, so the pointer
         // remains valid for the whole send operation.
         let payload = unsafe { Payload::outgoing_unchecked(ptr, T::SHAPE) };
         let result = sink.send_payload(payload).await;
+        if let (Some(observer), Some(channel_id)) = (observer.as_ref(), channel_id) {
+            let outcome = match &result {
+                Ok(()) => ChannelSendOutcome::Sent,
+                Err(TxError::Transport(message)) if message == "channel closed" => {
+                    ChannelSendOutcome::Closed
+                }
+                Err(_) => ChannelSendOutcome::TransportError,
+            };
+            observer.channel_event(ChannelEvent::SendFinished {
+                channel_id,
+                outcome,
+                elapsed: started_at.elapsed(),
+            });
+        }
         drop(value);
         result
     }
@@ -591,20 +662,46 @@ impl<T> Tx<T> {
         let Some(sink) = self.resolve_sink_now() else {
             return Err(TrySendError::Full(value));
         };
+        let observer = sink.observer();
+        let channel_id = if self.channel_id == ChannelId::RESERVED {
+            sink.channel_id()
+        } else {
+            Some(self.channel_id)
+        };
 
         let ptr = PtrConst::new((&value as *const T).cast::<u8>());
         // SAFETY: `try_send_payload` must complete synchronously before this
         // function returns, so `value` stays alive for the full borrow.
         let payload = unsafe { Payload::outgoing_unchecked(ptr, T::SHAPE) };
-        match sink.try_send_payload(payload) {
+        match sink.try_send_payload_with_outcome(payload) {
             Ok(()) => {
+                if let (Some(observer), Some(channel_id)) = (observer.as_ref(), channel_id) {
+                    observer.channel_event(ChannelEvent::TrySend {
+                        channel_id,
+                        outcome: ChannelTrySendOutcome::Sent,
+                    });
+                }
                 drop(value);
                 Ok(())
             }
-            Err(TrySendError::Full(())) => Err(TrySendError::Full(value)),
-            Err(TrySendError::Closed(())) => {
+            Err(ChannelTrySendOutcome::Closed) => {
+                if let (Some(observer), Some(channel_id)) = (observer.as_ref(), channel_id) {
+                    observer.channel_event(ChannelEvent::TrySend {
+                        channel_id,
+                        outcome: ChannelTrySendOutcome::Closed,
+                    });
+                }
                 self.closed.store(true, Ordering::Release);
                 Err(TrySendError::Closed(value))
+            }
+            Err(outcome) => {
+                if let (Some(observer), Some(channel_id)) = (observer.as_ref(), channel_id) {
+                    observer.channel_event(ChannelEvent::TrySend {
+                        channel_id,
+                        outcome,
+                    });
+                }
+                Err(TrySendError::Full(value))
             }
         }
     }
@@ -839,16 +936,37 @@ impl<T> Rx<T> {
                 match receiver.recv().await {
                     Some(LogicalIncomingChannelMessage {
                         msg: IncomingChannelMessage::Close(_),
-                        ..
-                    })
-                    | None => {
+                        replenisher,
+                    }) => {
+                        if let Some(replenisher) = replenisher.as_ref()
+                            && let (Some(observer), Some(channel_id)) =
+                                (replenisher.observer(), replenisher.channel_id())
+                        {
+                            observer.channel_event(ChannelEvent::Closed {
+                                channel_id,
+                                reason: ChannelCloseReason::Remote,
+                            });
+                        }
+                        self.closed.store(true, Ordering::Release);
+                        return Ok(None);
+                    }
+                    None => {
                         self.closed.store(true, Ordering::Release);
                         return Ok(None);
                     }
                     Some(LogicalIncomingChannelMessage {
                         msg: IncomingChannelMessage::Reset(_),
-                        ..
+                        replenisher,
                     }) => {
+                        if let Some(replenisher) = replenisher.as_ref()
+                            && let (Some(observer), Some(channel_id)) =
+                                (replenisher.observer(), replenisher.channel_id())
+                        {
+                            observer.channel_event(ChannelEvent::Reset {
+                                channel_id,
+                                reason: ChannelResetReason::Remote,
+                            });
+                        }
                         self.closed.store(true, Ordering::Release);
                         return Err(RxError::Reset);
                     }
@@ -870,6 +988,11 @@ impl<T> Rx<T> {
                         if value.is_ok()
                             && let Some(replenisher) = replenisher.as_ref()
                         {
+                            if let (Some(observer), Some(channel_id)) =
+                                (replenisher.observer(), replenisher.channel_id())
+                            {
+                                observer.channel_event(ChannelEvent::ItemConsumed { channel_id });
+                            }
                             replenisher.on_item_consumed();
                         }
                         return value;
@@ -889,10 +1012,28 @@ impl<T> Rx<T> {
             if let Some(receiver) = self.receiver.inner.as_mut() {
                 return match receiver.recv().await {
                     Some(IncomingChannelMessage::Close(_)) | None => {
+                        if let Some(replenisher) = &self.replenisher.inner
+                            && let (Some(observer), Some(channel_id)) =
+                                (replenisher.observer(), replenisher.channel_id())
+                        {
+                            observer.channel_event(ChannelEvent::Closed {
+                                channel_id,
+                                reason: ChannelCloseReason::Remote,
+                            });
+                        }
                         self.closed.store(true, Ordering::Release);
                         Ok(None)
                     }
                     Some(IncomingChannelMessage::Reset(_)) => {
+                        if let Some(replenisher) = &self.replenisher.inner
+                            && let (Some(observer), Some(channel_id)) =
+                                (replenisher.observer(), replenisher.channel_id())
+                        {
+                            observer.channel_event(ChannelEvent::Reset {
+                                channel_id,
+                                reason: ChannelResetReason::Remote,
+                            });
+                        }
                         self.closed.store(true, Ordering::Release);
                         Err(RxError::Reset)
                     }
@@ -911,6 +1052,11 @@ impl<T> Rx<T> {
                         if value.is_ok()
                             && let Some(replenisher) = &self.replenisher.inner
                         {
+                            if let (Some(observer), Some(channel_id)) =
+                                (replenisher.observer(), replenisher.channel_id())
+                            {
+                                observer.channel_event(ChannelEvent::ItemConsumed { channel_id });
+                            }
                             replenisher.on_item_consumed();
                         }
                         value
@@ -961,6 +1107,14 @@ impl<T> Drop for Rx<T> {
         }
 
         if let Some(replenisher) = &self.replenisher.inner {
+            if let (Some(observer), Some(channel_id)) =
+                (replenisher.observer(), replenisher.channel_id())
+            {
+                observer.channel_event(ChannelEvent::Reset {
+                    channel_id,
+                    reason: ChannelResetReason::ReceiverDropped,
+                });
+            }
             replenisher.on_receiver_dropped();
         }
     }

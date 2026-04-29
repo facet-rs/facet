@@ -7,7 +7,10 @@ use vox_core::{
     ConnectionAcceptor, ConnectionRequest, FromVoxSession, NoopClient, PendingConnection,
     SessionError, TransportMode, initiator,
 };
-use vox_types::{Link, MaybeSend, MaybeSync, Metadata, metadata_into_owned};
+use vox_types::{
+    DEFAULT_INITIAL_CHANNEL_CREDIT, Link, MaybeSend, MaybeSync, Metadata, VoxObserver,
+    VoxObserverHandle, metadata_into_owned,
+};
 
 mod error;
 pub use error::ServeError;
@@ -41,6 +44,11 @@ pub trait VoxListener: MaybeSend + 'static {
         &mut self,
     ) -> impl std::future::Future<Output = std::io::Result<Self::Link>> + MaybeSend + '_;
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+type BoxHighLevelFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
+#[cfg(target_arch = "wasm32")]
+type BoxHighLevelFuture<T> = Pin<Box<dyn Future<Output = T>>>;
 
 /// Connect to a remote vox service, returning a typed client.
 ///
@@ -102,6 +110,8 @@ pub struct ConnectBuilder<'a, Client> {
     metadata: Metadata<'a>,
     on_connection: Option<Arc<dyn ConnectionAcceptor>>,
     connect_timeout: Option<Duration>,
+    channel_capacity: u32,
+    observer: Option<VoxObserverHandle>,
     resumable: bool,
     wait_for_service: Option<Duration>,
     _client: std::marker::PhantomData<Client>,
@@ -114,6 +124,8 @@ impl<'a, Client> ConnectBuilder<'a, Client> {
             metadata: vec![],
             on_connection: None,
             connect_timeout: Some(Duration::from_secs(5)),
+            channel_capacity: DEFAULT_INITIAL_CHANNEL_CREDIT,
+            observer: None,
             resumable: false,
             wait_for_service: None,
             _client: std::marker::PhantomData,
@@ -133,6 +145,24 @@ impl<'a, Client> ConnectBuilder<'a, Client> {
 
     pub fn connect_timeout(mut self, timeout: Duration) -> Self {
         self.connect_timeout = Some(timeout);
+        self
+    }
+
+    // r[impl rpc.flow-control.credit.initial.high-level]
+    pub fn channel_capacity(mut self, channel_capacity: u32) -> Self {
+        self.channel_capacity = channel_capacity;
+        self
+    }
+
+    // r[impl rpc.observability.runtime]
+    pub fn observer(mut self, observer: impl VoxObserver) -> Self {
+        self.observer = Some(Arc::new(observer));
+        self
+    }
+
+    // r[impl rpc.observability.runtime]
+    pub fn observer_handle(mut self, observer: VoxObserverHandle) -> Self {
+        self.observer = Some(observer);
         self
     }
 
@@ -166,6 +196,8 @@ where
             metadata,
             on_connection,
             connect_timeout,
+            channel_capacity,
+            observer,
             resumable,
             wait_for_service,
             _client: _,
@@ -196,6 +228,8 @@ where
                         metadata.clone(),
                         on_connection.clone(),
                         connect_timeout,
+                        channel_capacity,
+                        observer.clone(),
                         resumable,
                     );
                     let result = match moire::time::timeout(remaining, attempt).await {
@@ -227,8 +261,16 @@ where
                 }
             }
             None => {
-                Self::establish_once(&parsed, metadata, on_connection, connect_timeout, resumable)
-                    .await
+                Self::establish_once(
+                    &parsed,
+                    metadata,
+                    on_connection,
+                    connect_timeout,
+                    channel_capacity,
+                    observer,
+                    resumable,
+                )
+                .await
             }
         }
     }
@@ -238,6 +280,8 @@ where
         metadata: vox_types::Metadata<'static>,
         on_connection: Option<Arc<dyn ConnectionAcceptor>>,
         connect_timeout: Option<Duration>,
+        channel_capacity: u32,
+        observer: Option<VoxObserverHandle>,
         resumable: bool,
     ) -> Result<Client, SessionError> {
         match parsed {
@@ -252,6 +296,10 @@ where
                 }
                 if let Some(timeout) = connect_timeout {
                     builder = builder.connect_timeout(timeout);
+                }
+                builder = builder.channel_capacity(channel_capacity);
+                if let Some(observer) = observer.clone() {
+                    builder = builder.observer_handle(observer);
                 }
                 if resumable {
                     builder = builder.resumable();
@@ -270,6 +318,10 @@ where
                 if let Some(timeout) = connect_timeout {
                     builder = builder.connect_timeout(timeout);
                 }
+                builder = builder.channel_capacity(channel_capacity);
+                if let Some(observer) = observer.clone() {
+                    builder = builder.observer_handle(observer);
+                }
                 if resumable {
                     builder = builder.resumable();
                 }
@@ -286,6 +338,10 @@ where
                 }
                 if let Some(timeout) = connect_timeout {
                     builder = builder.connect_timeout(timeout);
+                }
+                builder = builder.channel_capacity(channel_capacity);
+                if let Some(observer) = observer {
+                    builder = builder.observer_handle(observer);
                 }
                 if resumable {
                     builder = builder.resumable();
@@ -342,32 +398,101 @@ where
 /// # Ok(())
 /// # }
 /// ```
-pub async fn serve(
-    addr: impl std::fmt::Display,
-    acceptor: impl ConnectionAcceptor,
-) -> Result<(), ServeError> {
-    let addr = addr.to_string();
-    let (scheme, host) = match addr.split_once("://") {
-        Some((scheme, host)) => (scheme.to_string(), host.to_string()),
-        None => ("tcp".to_string(), addr),
-    };
+pub fn serve<A: ConnectionAcceptor>(addr: impl std::fmt::Display, acceptor: A) -> ServeBuilder<A> {
+    ServeBuilder::new(addr.to_string(), acceptor)
+}
 
-    match scheme.as_str() {
-        #[cfg(feature = "transport-tcp")]
-        "tcp" => {
-            let listener = tokio::net::TcpListener::bind(&host).await?;
-            Ok(serve_listener(listener, acceptor).await?)
+pub struct ServeBuilder<A> {
+    addr: String,
+    acceptor: A,
+    channel_capacity: u32,
+    observer: Option<VoxObserverHandle>,
+}
+
+impl<A> ServeBuilder<A> {
+    fn new(addr: String, acceptor: A) -> Self {
+        Self {
+            addr,
+            acceptor,
+            channel_capacity: DEFAULT_INITIAL_CHANNEL_CREDIT,
+            observer: None,
         }
-        #[cfg(feature = "transport-local")]
-        "local" => local::serve_local(&host, acceptor).await,
-        #[cfg(feature = "transport-websocket")]
-        "ws" => {
-            let listener = WsListener::bind(&host).await?;
-            Ok(serve_listener(listener, acceptor).await?)
+    }
+
+    // r[impl rpc.flow-control.credit.initial.high-level]
+    pub fn channel_capacity(mut self, channel_capacity: u32) -> Self {
+        self.channel_capacity = channel_capacity;
+        self
+    }
+
+    // r[impl rpc.observability.runtime]
+    pub fn observer(mut self, observer: impl VoxObserver) -> Self {
+        self.observer = Some(Arc::new(observer));
+        self
+    }
+
+    // r[impl rpc.observability.runtime]
+    pub fn observer_handle(mut self, observer: VoxObserverHandle) -> Self {
+        self.observer = Some(observer);
+        self
+    }
+}
+
+impl<A> ServeBuilder<A>
+where
+    A: ConnectionAcceptor,
+{
+    pub async fn run(self) -> Result<(), ServeError> {
+        let Self {
+            addr,
+            acceptor,
+            channel_capacity,
+            observer,
+        } = self;
+        let (scheme, host) = match addr.split_once("://") {
+            Some((scheme, host)) => (scheme.to_string(), host.to_string()),
+            None => ("tcp".to_string(), addr),
+        };
+
+        match scheme.as_str() {
+            #[cfg(feature = "transport-tcp")]
+            "tcp" => {
+                let listener = tokio::net::TcpListener::bind(&host).await?;
+                let mut builder =
+                    serve_listener(listener, acceptor).channel_capacity(channel_capacity);
+                if let Some(observer) = observer {
+                    builder = builder.observer_handle(observer);
+                }
+                Ok(builder.await?)
+            }
+            #[cfg(feature = "transport-local")]
+            "local" => local::serve_local(&host, acceptor, channel_capacity, observer).await,
+            #[cfg(feature = "transport-websocket")]
+            "ws" => {
+                let listener = WsListener::bind(&host).await?;
+                let mut builder =
+                    serve_listener(listener, acceptor).channel_capacity(channel_capacity);
+                if let Some(observer) = observer {
+                    builder = builder.observer_handle(observer);
+                }
+                Ok(builder.await?)
+            }
+            #[cfg(feature = "transport-websocket-tls")]
+            "wss" => wss::serve_wss(&host, acceptor, channel_capacity, observer).await,
+            _ => Err(ServeError::UnsupportedScheme { scheme }),
         }
-        #[cfg(feature = "transport-websocket-tls")]
-        "wss" => wss::serve_wss(&host, acceptor).await,
-        _ => Err(ServeError::UnsupportedScheme { scheme }),
+    }
+}
+
+impl<A> IntoFuture for ServeBuilder<A>
+where
+    A: ConnectionAcceptor,
+{
+    type Output = Result<(), ServeError>;
+    type IntoFuture = BoxHighLevelFuture<Self::Output>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        Box::pin(self.run())
     }
 }
 
@@ -396,28 +521,94 @@ pub async fn serve(
 /// # Ok(())
 /// # }
 /// ```
-pub async fn serve_listener<L>(
-    mut listener: L,
-    acceptor: impl ConnectionAcceptor,
-) -> Result<(), SessionError>
+pub fn serve_listener<L, A>(listener: L, acceptor: A) -> ServeListenerBuilder<L, A>
 where
     L: VoxListener,
     <L::Link as Link>::Tx: MaybeSend + MaybeSync + 'static,
     <L::Link as Link>::Rx: MaybeSend + 'static,
+    A: ConnectionAcceptor,
 {
-    let acceptor: Arc<dyn ConnectionAcceptor> = Arc::new(acceptor);
-    loop {
-        let link = listener.accept().await.map_err(SessionError::Io)?;
-        let acceptor = acceptor.clone();
-        moire::spawn(async move {
-            let result = vox_core::acceptor_on(link)
-                .on_connection(AcceptorRef(acceptor))
-                .establish::<NoopClient>()
-                .await;
-            if let Ok(client) = result {
-                client.caller.closed().await;
-            }
-        });
+    ServeListenerBuilder::new(listener, acceptor)
+}
+
+pub struct ServeListenerBuilder<L, A> {
+    listener: L,
+    acceptor: A,
+    channel_capacity: u32,
+    observer: Option<VoxObserverHandle>,
+}
+
+impl<L, A> ServeListenerBuilder<L, A> {
+    fn new(listener: L, acceptor: A) -> Self {
+        Self {
+            listener,
+            acceptor,
+            channel_capacity: DEFAULT_INITIAL_CHANNEL_CREDIT,
+            observer: None,
+        }
+    }
+
+    // r[impl rpc.flow-control.credit.initial.high-level]
+    pub fn channel_capacity(mut self, channel_capacity: u32) -> Self {
+        self.channel_capacity = channel_capacity;
+        self
+    }
+
+    // r[impl rpc.observability.runtime]
+    pub fn observer(mut self, observer: impl VoxObserver) -> Self {
+        self.observer = Some(Arc::new(observer));
+        self
+    }
+
+    // r[impl rpc.observability.runtime]
+    pub fn observer_handle(mut self, observer: VoxObserverHandle) -> Self {
+        self.observer = Some(observer);
+        self
+    }
+}
+
+impl<L, A> ServeListenerBuilder<L, A>
+where
+    L: VoxListener,
+    <L::Link as Link>::Tx: MaybeSend + MaybeSync + 'static,
+    <L::Link as Link>::Rx: MaybeSend + 'static,
+    A: ConnectionAcceptor,
+{
+    pub async fn run(mut self) -> Result<(), SessionError> {
+        let acceptor: Arc<dyn ConnectionAcceptor> = Arc::new(self.acceptor);
+        loop {
+            let link = self.listener.accept().await.map_err(SessionError::Io)?;
+            let acceptor = acceptor.clone();
+            let observer = self.observer.clone();
+            let channel_capacity = self.channel_capacity;
+            moire::spawn(async move {
+                let mut builder = vox_core::acceptor_on(link)
+                    .on_connection(AcceptorRef(acceptor))
+                    .channel_capacity(channel_capacity);
+                if let Some(observer) = observer {
+                    builder = builder.observer_handle(observer);
+                }
+                let result = builder.establish::<NoopClient>().await;
+                if let Ok(client) = result {
+                    client.caller.closed().await;
+                }
+            });
+        }
+    }
+}
+
+impl<L, A> IntoFuture for ServeListenerBuilder<L, A>
+where
+    L: VoxListener,
+    <L::Link as Link>::Tx: MaybeSend + MaybeSync + 'static,
+    <L::Link as Link>::Rx: MaybeSend + 'static,
+    A: ConnectionAcceptor,
+{
+    type Output = Result<(), SessionError>;
+    type IntoFuture = BoxHighLevelFuture<Self::Output>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        Box::pin(self.run())
     }
 }
 

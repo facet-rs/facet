@@ -1,7 +1,11 @@
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use vox_types::{ChannelSink, CreditSink, Metadata, Payload, TrySendError, Tx, TxError};
+use vox_types::{
+    ChannelEvent, ChannelId, ChannelSink, ChannelTrySendOutcome, CreditSink, Metadata, Payload,
+    TrySendError, Tx, TxError, VoxObserver, VoxObserverHandle,
+};
 
 /// A sink that completes immediately, counting sends.
 struct ImmediateSink {
@@ -48,6 +52,57 @@ impl ChannelSink for ImmediateSink {
     }
 }
 
+struct RecordingObserver {
+    events: Arc<Mutex<Vec<ChannelEvent>>>,
+}
+
+impl VoxObserver for RecordingObserver {
+    fn channel_event(&self, event: ChannelEvent) {
+        self.events.lock().unwrap().push(event);
+    }
+}
+
+struct ObservedTrySendSink {
+    channel_id: ChannelId,
+    observer: VoxObserverHandle,
+    outcome: Option<ChannelTrySendOutcome>,
+}
+
+impl ChannelSink for ObservedTrySendSink {
+    fn send_payload<'a>(
+        &self,
+        _payload: Payload<'a>,
+    ) -> std::pin::Pin<Box<dyn vox_types::MaybeSendFuture<Output = Result<(), TxError>> + 'a>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn channel_id(&self) -> Option<ChannelId> {
+        Some(self.channel_id)
+    }
+
+    fn observer(&self) -> Option<VoxObserverHandle> {
+        Some(self.observer.clone())
+    }
+
+    fn try_send_payload_with_outcome<'a>(
+        &self,
+        _payload: Payload<'a>,
+    ) -> Result<(), ChannelTrySendOutcome> {
+        match self.outcome {
+            Some(outcome) => Err(outcome),
+            None => Ok(()),
+        }
+    }
+
+    fn close_channel(
+        &self,
+        _metadata: Metadata,
+    ) -> std::pin::Pin<Box<dyn vox_types::MaybeSendFuture<Output = Result<(), TxError>> + 'static>>
+    {
+        Box::pin(async { Ok(()) })
+    }
+}
+
 // r[verify rpc.flow-control.credit.try-send]
 // r[verify rpc.flow-control.credit.exhaustion]
 #[test]
@@ -83,6 +138,53 @@ fn try_send_returns_closed_with_value_when_credit_is_closed() {
         other => panic!("expected Closed(closed), got {other:?}"),
     }
     assert_eq!(count.load(Ordering::SeqCst), 0);
+}
+
+// r[verify rpc.observability.channel.try-send-detail]
+#[test]
+fn observer_distinguishes_try_send_full_credit_from_runtime_queue() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let observer: VoxObserverHandle = Arc::new(RecordingObserver {
+        events: events.clone(),
+    });
+
+    let mut credit_full_tx = Tx::<u32>::unbound();
+    credit_full_tx.bind(Arc::new(CreditSink::new(
+        ObservedTrySendSink {
+            channel_id: ChannelId(7),
+            observer: observer.clone(),
+            outcome: None,
+        },
+        0,
+    )));
+    assert!(matches!(
+        credit_full_tx.try_send(1),
+        Err(TrySendError::Full(1))
+    ));
+
+    let mut runtime_full_tx = Tx::<u32>::unbound();
+    runtime_full_tx.bind(Arc::new(CreditSink::new(
+        ObservedTrySendSink {
+            channel_id: ChannelId(9),
+            observer,
+            outcome: Some(ChannelTrySendOutcome::FullRuntimeQueue),
+        },
+        1,
+    )));
+    assert!(matches!(
+        runtime_full_tx.try_send(2),
+        Err(TrySendError::Full(2))
+    ));
+
+    let events = events.lock().unwrap();
+    assert!(events.contains(&ChannelEvent::TrySend {
+        channel_id: ChannelId(7),
+        outcome: ChannelTrySendOutcome::FullCredit,
+    }));
+    assert!(events.contains(&ChannelEvent::TrySend {
+        channel_id: ChannelId(9),
+        outcome: ChannelTrySendOutcome::FullRuntimeQueue,
+    }));
 }
 
 // r[verify rpc.flow-control.credit.exhaustion]

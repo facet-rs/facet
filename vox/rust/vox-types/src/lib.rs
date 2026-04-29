@@ -132,6 +132,9 @@ pub use server_middleware::*;
 mod client_middleware;
 pub use client_middleware::*;
 
+mod observer;
+pub use observer::*;
+
 mod calls;
 pub use calls::*;
 

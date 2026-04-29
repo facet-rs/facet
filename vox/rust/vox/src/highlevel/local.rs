@@ -4,6 +4,7 @@ use std::time::Duration;
 use vox_core::ConnectionAcceptor;
 #[cfg(unix)]
 use vox_core::{NoopClient, TransportMode, initiator};
+use vox_types::VoxObserverHandle;
 
 use super::{ServeError, VoxListener, serve_listener};
 
@@ -19,6 +20,8 @@ impl VoxListener for vox_stream::LocalLinkAcceptor {
 pub(super) async fn serve_local(
     host: &str,
     acceptor: impl ConnectionAcceptor,
+    channel_capacity: u32,
+    observer: Option<VoxObserverHandle>,
 ) -> Result<(), ServeError> {
     let lock = match vox_stream::try_local_lock(host)? {
         vox_stream::LocalLockOutcome::Acquired(lock) => {
@@ -45,16 +48,26 @@ pub(super) async fn serve_local(
     };
     let listener = vox_stream::LocalLinkAcceptor::bind(host)?;
     let _lock = lock;
-    Ok(serve_listener(listener, acceptor).await?)
+    let mut builder = serve_listener(listener, acceptor).channel_capacity(channel_capacity);
+    if let Some(observer) = observer {
+        builder = builder.observer_handle(observer);
+    }
+    Ok(builder.await?)
 }
 
 #[cfg(not(unix))]
 pub(super) async fn serve_local(
     host: &str,
     acceptor: impl ConnectionAcceptor,
+    channel_capacity: u32,
+    observer: Option<VoxObserverHandle>,
 ) -> Result<(), ServeError> {
     // Named pipes on Windows handle concurrency at the OS level;
     // no file-lock dance is needed.
     let listener = vox_stream::LocalLinkAcceptor::bind(host)?;
-    Ok(serve_listener(listener, acceptor).await?)
+    let mut builder = serve_listener(listener, acceptor).channel_capacity(channel_capacity);
+    if let Some(observer) = observer {
+        builder = builder.observer_handle(observer);
+    }
+    Ok(builder.await?)
 }

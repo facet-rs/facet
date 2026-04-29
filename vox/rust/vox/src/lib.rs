@@ -99,11 +99,13 @@ mod highlevel;
 pub use highlevel::*;
 
 mod client_logging;
+mod observer;
 pub mod schema_deser;
 mod server_logging;
 
 // Re-export the proc macro
 pub use client_logging::{ClientLogging, ClientLoggingOptions};
+pub use observer::TracingObserver;
 pub use server_logging::{ServerLogging, ServerLoggingOptions};
 pub use vox_service_macros::service;
 
@@ -130,9 +132,14 @@ pub use vox_types::{
     BoxMiddlewareFuture,
     // Traits
     Call,
+    ChannelCloseReason,
+    ChannelEvent,
     // Descriptors
     ChannelId,
+    ChannelResetReason,
     ChannelRetryMode,
+    ChannelSendOutcome,
+    ChannelTrySendOutcome,
     ClientCallOutcome,
     ClientContext,
     ClientMiddleware,
@@ -141,9 +148,13 @@ pub use vox_types::{
     ConduitAcceptor,
     ConduitRx,
     ConduitTx,
+    ConnectionCloseReason,
     // Types
     ConnectionId,
     ConnectionSettings,
+    DecodeErrorKind,
+    DriverEvent,
+    EncodeErrorKind,
     Extensions,
     Handler,
     HandshakeResult,
@@ -163,6 +174,7 @@ pub use vox_types::{
     OPERATION_ID_METADATA_KEY,
     Parity,
     Payload,
+    ProtocolErrorKind,
     RETRY_SUPPORT_METADATA_KEY,
     RETRY_SUPPORT_VERSION,
     ReplySink,
@@ -171,6 +183,9 @@ pub use vox_types::{
     RequestResponse,
     ResponseParts,
     RetryPolicy,
+    RpcEvent,
+    RpcOutcome,
+    RpcSide,
     Rx,
     RxError,
     SchemaRecvTracker,
@@ -184,11 +199,15 @@ pub use vox_types::{
     ServiceDescriptor,
     SessionRole,
     SinkCall,
+    TransportEvent,
     TransportMode,
+    TrySendError,
     // Channels
     Tx,
     TxError,
     VoxError,
+    VoxObserver,
+    VoxObserverHandle,
     WithTracker,
     // Channels
     channel,

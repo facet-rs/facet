@@ -21,6 +21,10 @@ use vox_types::{
     RequestResponse, SelfRef, TrySendError, TxError, VoxError, ensure_operation_id,
     metadata_channel_retry_mode, metadata_operation_id,
 };
+use vox_types::{
+    ChannelCloseReason, ChannelDirection, ChannelEvent, ChannelResetReason, ChannelTrySendOutcome,
+    DriverEvent, RpcOutcome, VoxObserverHandle,
+};
 
 use crate::session::{
     ConnectionHandle, ConnectionMessage, ConnectionSender, DropControlRequest, FailureDisposition,
@@ -319,6 +323,7 @@ struct DriverShared {
     local_initial_channel_credit: u32,
     // r[impl rpc.flow-control.credit.initial]
     peer_initial_channel_credit: u32,
+    observer: Option<VoxObserverHandle>,
 }
 
 struct CallerDropGuard {
@@ -340,7 +345,7 @@ mod tests {
     #[tokio::test]
     async fn replenisher_batches_at_half_the_initial_window() {
         let (tx, mut rx) = moire::sync::mpsc::unbounded_channel("test.replenisher");
-        let replenisher = DriverChannelCreditReplenisher::new(ChannelId(7), 16, tx);
+        let replenisher = DriverChannelCreditReplenisher::new(ChannelId(7), 16, tx, None);
 
         for _ in 0..7 {
             replenisher.on_item_consumed();
@@ -367,7 +372,7 @@ mod tests {
     #[tokio::test]
     async fn replenisher_grants_one_by_one_for_single_credit_windows() {
         let (tx, mut rx) = moire::sync::mpsc::unbounded_channel("test.replenisher.single");
-        let replenisher = DriverChannelCreditReplenisher::new(ChannelId(9), 1, tx);
+        let replenisher = DriverChannelCreditReplenisher::new(ChannelId(9), 1, tx, None);
 
         replenisher.on_item_consumed();
         let Some(DriverLocalControl::GrantCredit {
@@ -612,18 +617,27 @@ impl ChannelSink for DriverChannelSink {
         })
     }
 
+    fn channel_id(&self) -> Option<ChannelId> {
+        Some(self.channel_id)
+    }
+
+    fn observer(&self) -> Option<VoxObserverHandle> {
+        self.shared.observer.clone()
+    }
+
     // r[impl rpc.flow-control.credit.try-send]
-    fn try_send_payload<'payload>(
+    // r[impl rpc.observability.channel.try-send-detail]
+    fn try_send_payload_with_outcome<'payload>(
         &self,
         payload: Payload<'payload>,
-    ) -> Result<(), TrySendError<()>> {
+    ) -> Result<(), ChannelTrySendOutcome> {
         if self
             .shared
             .terminal_channels
             .lock()
             .contains(&self.channel_id)
         {
-            return Err(TrySendError::Closed(()));
+            return Err(ChannelTrySendOutcome::Closed);
         }
 
         self.sender
@@ -631,6 +645,10 @@ impl ChannelSink for DriverChannelSink {
                 id: self.channel_id,
                 body: ChannelBody::Item(ChannelItem { item: payload }),
             }))
+            .map_err(|err| match err {
+                TrySendError::Closed(()) => ChannelTrySendOutcome::Closed,
+                TrySendError::Full(()) => ChannelTrySendOutcome::FullRuntimeQueue,
+            })
     }
 
     fn close_channel(
@@ -645,6 +663,12 @@ impl ChannelSink for DriverChannelSink {
         let channel_id = self.channel_id;
         Box::pin(async move {
             shared.terminal_channels.lock().insert(channel_id);
+            if let Some(observer) = &shared.observer {
+                observer.channel_event(ChannelEvent::Closed {
+                    channel_id,
+                    reason: ChannelCloseReason::Local,
+                });
+            }
 
             sender
                 .send(ConnectionMessage::Channel(ChannelMessage {
@@ -660,6 +684,12 @@ impl ChannelSink for DriverChannelSink {
 
     fn close_channel_on_drop(&self) {
         self.shared.terminal_channels.lock().insert(self.channel_id);
+        if let Some(observer) = &self.shared.observer {
+            observer.channel_event(ChannelEvent::Closed {
+                channel_id: self.channel_id,
+                reason: ChannelCloseReason::Dropped,
+            });
+        }
         let _ = self
             .local_control_tx
             .send(DriverLocalControl::CloseChannel {
@@ -902,6 +932,12 @@ fn register_rx_channel_impl(
     liveness: Option<ChannelLivenessHandle>,
     local_control_tx: mpsc::UnboundedSender<DriverLocalControl>,
 ) -> vox_types::BoundChannelReceiver {
+    observe_channel_opened(
+        shared,
+        channel_id,
+        ChannelDirection::Rx,
+        initial_channel_credit,
+    );
     let (tx, rx) = mpsc::channel(queue_name, initial_channel_credit as usize);
 
     let mut terminal_buffered = false;
@@ -954,13 +990,36 @@ fn register_rx_channel_impl(
             channel_id,
             initial_channel_credit,
             local_control_tx,
+            shared.observer.clone(),
         )) as ChannelCreditReplenisherHandle),
+    }
+}
+
+// r[impl rpc.observability.channel]
+fn observe_channel_opened(
+    shared: &DriverShared,
+    channel_id: ChannelId,
+    direction: ChannelDirection,
+    initial_credit: u32,
+) {
+    if let Some(observer) = &shared.observer {
+        observer.channel_event(ChannelEvent::Opened {
+            channel_id,
+            direction,
+            initial_credit,
+        });
     }
 }
 
 impl DriverChannelBinder {
     fn create_tx_channel(&self) -> (ChannelId, Arc<CreditSink<DriverChannelSink>>) {
         let channel_id = self.shared.channel_ids.lock().alloc();
+        observe_channel_opened(
+            &self.shared,
+            channel_id,
+            ChannelDirection::Tx,
+            self.shared.peer_initial_channel_credit,
+        );
         let inner = DriverChannelSink {
             sender: self.sender.clone(),
             shared: Arc::clone(&self.shared),
@@ -1003,6 +1062,12 @@ impl ChannelBinder for DriverChannelBinder {
     }
 
     fn bind_tx(&self, channel_id: ChannelId) -> Arc<dyn ChannelSink> {
+        observe_channel_opened(
+            &self.shared,
+            channel_id,
+            ChannelDirection::Tx,
+            self.shared.peer_initial_channel_credit,
+        );
         let inner = DriverChannelSink {
             sender: self.sender.clone(),
             shared: Arc::clone(&self.shared),
@@ -1053,6 +1118,12 @@ impl DriverCaller {
     /// `GrantCredit` messages can add permits.
     pub fn create_tx_channel(&self) -> (ChannelId, Arc<CreditSink<DriverChannelSink>>) {
         let channel_id = self.shared.channel_ids.lock().alloc();
+        observe_channel_opened(
+            &self.shared,
+            channel_id,
+            ChannelDirection::Tx,
+            self.shared.peer_initial_channel_credit,
+        );
         let inner = DriverChannelSink {
             sender: self.sender.clone(),
             shared: Arc::clone(&self.shared),
@@ -1108,6 +1179,12 @@ impl ChannelBinder for DriverCaller {
     }
 
     fn bind_tx(&self, channel_id: ChannelId) -> Arc<dyn ChannelSink> {
+        observe_channel_opened(
+            &self.shared,
+            channel_id,
+            ChannelDirection::Tx,
+            self.shared.peer_initial_channel_credit,
+        );
         let inner = DriverChannelSink {
             sender: self.sender.clone(),
             shared: Arc::clone(&self.shared),
@@ -1150,6 +1227,24 @@ impl DriverCaller {
 
         // Allocate a request ID.
         let req_id = self.shared.request_ids.lock().alloc();
+        let request_started_at = std::time::Instant::now();
+        if let Some(observer) = &self.shared.observer {
+            observer.driver_event(DriverEvent::RequestStarted {
+                connection_id: self.sender.connection_id(),
+                request_id: req_id,
+                method_id: call.method_id,
+            });
+        }
+        let finish_request = |outcome: RpcOutcome| {
+            if let Some(observer) = &self.shared.observer {
+                observer.driver_event(DriverEvent::RequestFinished {
+                    connection_id: self.sender.connection_id(),
+                    request_id: req_id,
+                    outcome,
+                    elapsed: request_started_at.elapsed(),
+                });
+            }
+        };
 
         // Register the response slot before sending, so the driver can
         // route the response even if it arrives before we start awaiting.
@@ -1181,6 +1276,7 @@ impl DriverCaller {
             .is_err()
         {
             self.shared.pending_responses.lock().remove(&req_id);
+            finish_request(RpcOutcome::SendFailed);
             return Err(VoxError::SendFailed);
         }
 
@@ -1196,6 +1292,7 @@ impl DriverCaller {
                     match result {
                         Ok(pending) => break pending,
                         Err(_) => {
+                            finish_request(RpcOutcome::Closed);
                             return Err(VoxError::ConnectionClosed);
                         }
                     }
@@ -1204,6 +1301,7 @@ impl DriverCaller {
                     vox_types::dlog!("[CALLER] resumed_rx fired");
                     if changed.is_err() {
                         self.shared.pending_responses.lock().remove(&req_id);
+                        finish_request(RpcOutcome::Closed);
                         return Err(VoxError::SessionShutdown);
                     }
                     let generation = *resumed_rx.borrow();
@@ -1214,12 +1312,14 @@ impl DriverCaller {
                     while *resume_processed_rx.borrow() < generation {
                         if resume_processed_rx.changed().await.is_err() {
                             self.shared.pending_responses.lock().remove(&req_id);
+                            finish_request(RpcOutcome::Closed);
                             return Err(VoxError::SessionShutdown);
                         }
                     }
                     match metadata_channel_retry_mode(&call.metadata) {
                         ChannelRetryMode::NonIdem => {
                             self.shared.pending_responses.lock().remove(&req_id);
+                            finish_request(RpcOutcome::Indeterminate);
                             return Err(VoxError::Indeterminate);
                         }
                         ChannelRetryMode::Idem | ChannelRetryMode::None => {}
@@ -1244,6 +1344,7 @@ impl DriverCaller {
                     vox_types::dlog!("[CALLER] closed_rx fired, value={}", *closed_rx.borrow());
                     if changed.is_err() || *closed_rx.borrow() {
                         self.shared.pending_responses.lock().remove(&req_id);
+                        finish_request(RpcOutcome::Closed);
                         return Err(VoxError::ConnectionClosed);
                     }
                 }
@@ -1260,6 +1361,7 @@ impl DriverCaller {
             _ => unreachable!("pending_responses only gets Response variants"),
         });
 
+        finish_request(RpcOutcome::Ok);
         Ok(vox_types::WithTracker {
             value: response,
             tracker: response_schemas,
@@ -1320,6 +1422,7 @@ struct DriverChannelCreditReplenisher {
     channel_id: ChannelId,
     threshold: u32,
     local_control_tx: mpsc::UnboundedSender<DriverLocalControl>,
+    observer: Option<VoxObserverHandle>,
     pending: std::sync::Mutex<u32>,
 }
 
@@ -1328,11 +1431,13 @@ impl DriverChannelCreditReplenisher {
         channel_id: ChannelId,
         initial_credit: u32,
         local_control_tx: mpsc::UnboundedSender<DriverLocalControl>,
+        observer: Option<VoxObserverHandle>,
     ) -> Self {
         Self {
             channel_id,
             threshold: (initial_credit / 2).max(1),
             local_control_tx,
+            observer,
             pending: std::sync::Mutex::new(0),
         }
     }
@@ -1360,6 +1465,14 @@ impl ChannelCreditReplenisher for DriverChannelCreditReplenisher {
             .send(DriverLocalControl::ResetChannel {
                 channel_id: self.channel_id,
             });
+    }
+
+    fn channel_id(&self) -> Option<ChannelId> {
+        Some(self.channel_id)
+    }
+
+    fn observer(&self) -> Option<VoxObserverHandle> {
+        self.observer.clone()
     }
 }
 
@@ -1421,6 +1534,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             peer_settings,
             parity,
             peer_supports_retry,
+            observer,
         } = handle;
         let drop_control_request = DropControlRequest::Close(conn_id);
         let (local_control_tx, local_control_rx) = mpsc::unbounded_channel("driver.local_control");
@@ -1451,6 +1565,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 ),
                 local_initial_channel_credit: local_settings.initial_channel_credit,
                 peer_initial_channel_credit: peer_settings.initial_channel_credit,
+                observer,
             }),
             in_flight_handlers: BTreeMap::new(),
             handler_futs: FuturesUnordered::new(),
@@ -1674,6 +1789,12 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                     return;
                 }
                 self.close_outbound_channel(channel_id);
+                if let Some(observer) = &self.shared.observer {
+                    observer.channel_event(ChannelEvent::Closed {
+                        channel_id,
+                        reason: ChannelCloseReason::Local,
+                    });
+                }
                 let _ = self
                     .sender
                     .send(ConnectionMessage::Channel(ChannelMessage {
@@ -1688,6 +1809,12 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 self.shared.channel_senders.lock().remove(&channel_id);
                 self.shared.channel_buffers.lock().remove(&channel_id);
                 self.close_outbound_channel(channel_id);
+                if let Some(observer) = &self.shared.observer {
+                    observer.channel_event(ChannelEvent::Reset {
+                        channel_id,
+                        reason: ChannelResetReason::Local,
+                    });
+                }
                 let _ = self
                     .sender
                     .send(ConnectionMessage::Channel(ChannelMessage {
@@ -1702,6 +1829,12 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 channel_id,
                 additional,
             } => {
+                if let Some(observer) = &self.shared.observer {
+                    observer.channel_event(ChannelEvent::CreditGranted {
+                        channel_id,
+                        amount: additional,
+                    });
+                }
                 let _ = self
                     .sender
                     .send(ConnectionMessage::Channel(ChannelMessage {
@@ -2013,6 +2146,11 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
         match &msg_ref.body {
             // r[impl rpc.channel.item]
             ChannelBody::Item(_item) => {
+                if let Some(observer) = &self.shared.observer {
+                    observer.channel_event(ChannelEvent::ItemReceived {
+                        channel_id: chan_id,
+                    });
+                }
                 if self.shared.terminal_channels.lock().contains(&chan_id) {
                     tracing::trace!(
                         conn_id = self.sender.connection_id().0,
@@ -2073,6 +2211,12 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             }
             // r[impl rpc.channel.close]
             ChannelBody::Close(_close) => {
+                if let Some(observer) = &self.shared.observer {
+                    observer.channel_event(ChannelEvent::Closed {
+                        channel_id: chan_id,
+                        reason: ChannelCloseReason::Remote,
+                    });
+                }
                 if let Some(tx) = &sender {
                     tracing::trace!(
                         conn_id = self.sender.connection_id().0,
@@ -2110,6 +2254,12 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             }
             // r[impl rpc.channel.reset]
             ChannelBody::Reset(_reset) => {
+                if let Some(observer) = &self.shared.observer {
+                    observer.channel_event(ChannelEvent::Reset {
+                        channel_id: chan_id,
+                        reason: ChannelResetReason::Remote,
+                    });
+                }
                 if let Some(tx) = &sender {
                     tracing::trace!(
                         conn_id = self.sender.connection_id().0,
@@ -2148,6 +2298,12 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             // r[impl rpc.flow-control.credit.grant]
             // r[impl rpc.flow-control.credit.grant.additive]
             ChannelBody::GrantCredit(grant) => {
+                if let Some(observer) = &self.shared.observer {
+                    observer.channel_event(ChannelEvent::CreditGranted {
+                        channel_id: chan_id,
+                        amount: grant.additional,
+                    });
+                }
                 tracing::trace!(
                     conn_id = self.sender.connection_id().0,
                     channel_id = chan_id.0,

@@ -15,7 +15,7 @@ use vox_types::{
     ConnectionOpen, ConnectionReject, ConnectionSettings, Handler, HandshakeResult, IdAllocator,
     MaybeSend, MaybeSync, Message, MessageFamily, MessagePayload, Metadata, Parity, RequestBody,
     RequestId, RequestMessage, RequestResponse, SchemaMessage, SelfRef, SessionResumeKey,
-    SessionRole, TrySendError,
+    SessionRole, TrySendError, VoxObserverHandle,
 };
 
 mod builders;
@@ -511,6 +511,8 @@ pub struct Session {
     /// Whether this session was registered in a `SessionRegistry`, meaning
     /// an external acceptor could route a reconnecting client to resume it.
     registered_in_registry: bool,
+
+    observer: Option<VoxObserverHandle>,
 }
 
 #[derive(Debug)]
@@ -798,6 +800,7 @@ pub struct ConnectionHandle {
     /// The parity this side should use for allocating request/channel IDs.
     pub parity: Parity,
     pub(crate) peer_supports_retry: bool,
+    pub(crate) observer: Option<VoxObserverHandle>,
 }
 
 impl std::fmt::Debug for ConnectionHandle {
@@ -879,6 +882,7 @@ pub async fn proxy_connections(
         peer_settings: _left_peer_settings,
         parity: _left_parity,
         peer_supports_retry: _left_peer_supports_retry,
+        observer: _left_observer,
     } = left;
     let ConnectionHandle {
         sender: right_sender,
@@ -891,6 +895,7 @@ pub async fn proxy_connections(
         peer_settings: _right_peer_settings,
         parity: _right_parity,
         peer_supports_retry: _right_peer_supports_retry,
+        observer: _right_observer,
     } = right;
 
     loop {
@@ -1014,6 +1019,7 @@ impl Session {
         resumable: bool,
         recoverer: Option<Box<dyn ConduitRecoverer>>,
         recovery_timeout: Option<Duration>,
+        observer: Option<VoxObserverHandle>,
     ) -> Self
     where
         Tx: ConduitTx<Msg = MessageFamily> + MaybeSend + MaybeSync + 'static,
@@ -1026,6 +1032,7 @@ impl Session {
                 conns: HashMap::new(),
             }),
             outbound_tx,
+            observer: observer.clone(),
         });
         spawn_outbound_worker(outbound_rx);
         let (resume_notifier, _resume_rx) = watch::channel(0_u64);
@@ -1057,6 +1064,7 @@ impl Session {
             recoverer,
             recovery_timeout,
             registered_in_registry: false,
+            observer,
         }
     }
 
@@ -1114,6 +1122,11 @@ impl Session {
         let handle_local_settings = local_settings.clone();
         let handle_peer_settings = peer_settings.clone();
         trace!(%conn_id, "make_connection_handle: inserting slot into conns");
+        if let Some(observer) = &self.observer {
+            observer.driver_event(vox_types::DriverEvent::ConnectionOpened {
+                connection_id: conn_id,
+            });
+        }
         self.conns.insert(
             conn_id,
             ConnectionSlot::Active(ConnectionState {
@@ -1137,6 +1150,7 @@ impl Session {
             peer_settings: handle_peer_settings,
             parity,
             peer_supports_retry: self.peer_supports_retry,
+            observer: self.observer.clone(),
         }
     }
 
@@ -1967,6 +1981,12 @@ impl Session {
         let slot = self.conns.remove(conn_id);
         if let Some(ConnectionSlot::Active(state)) = &slot {
             let _ = state.closed_tx.send(true);
+            if let Some(observer) = &self.observer {
+                observer.driver_event(vox_types::DriverEvent::ConnectionClosed {
+                    connection_id: *conn_id,
+                    reason: vox_types::ConnectionCloseReason::Unknown,
+                });
+            }
         }
         slot
     }
@@ -1982,6 +2002,12 @@ impl Session {
             if let ConnectionSlot::Active(state) = slot {
                 vox_types::dlog!("[session {:?}] closing connection {:?}", self.role, conn_id);
                 let _ = state.closed_tx.send(true);
+                if let Some(observer) = &self.observer {
+                    observer.driver_event(vox_types::DriverEvent::ConnectionClosed {
+                        connection_id: *conn_id,
+                        reason: vox_types::ConnectionCloseReason::SessionShutdown,
+                    });
+                }
             }
         }
         self.conns.clear();
@@ -1997,6 +2023,7 @@ impl Session {
 pub(crate) struct SessionCore {
     inner: std::sync::Mutex<SessionCoreInner>,
     outbound_tx: tokio_mpsc::Sender<OutboundBatch>,
+    observer: Option<VoxObserverHandle>,
 }
 
 pub trait OutboundSendFuture: Future<Output = std::io::Result<()>> + MaybeSend + 'static {}
@@ -2238,9 +2265,27 @@ impl SessionCore {
         binder: Option<&'a dyn vox_types::ChannelBinder>,
         forwarded_schemas: Option<&vox_types::SchemaRecvTracker>,
     ) -> Result<(), ()> {
+        let connection_id = msg.connection_id;
         let (batch, result_rx) = self.prepare_outbound_batch(msg, binder, forwarded_schemas)?;
-        self.outbound_tx.send(batch).await.map_err(|_| ())?;
-        result_rx.await.map_err(|_| ())?.map_err(|_| ())
+        if self.outbound_tx.send(batch).await.is_err() {
+            if let Some(observer) = &self.observer {
+                observer
+                    .driver_event(vox_types::DriverEvent::OutboundQueueClosed { connection_id });
+            }
+            return Err(());
+        }
+        match result_rx.await.map_err(|_| ())? {
+            Ok(()) => Ok(()),
+            Err(_) => {
+                if let Some(observer) = &self.observer {
+                    observer.driver_event(vox_types::DriverEvent::EncodeError {
+                        connection_id,
+                        kind: vox_types::EncodeErrorKind::Transport,
+                    });
+                }
+                Err(())
+            }
+        }
     }
 
     // r[impl rpc.flow-control.credit.try-send]
@@ -2250,12 +2295,26 @@ impl SessionCore {
         binder: Option<&'a dyn vox_types::ChannelBinder>,
         forwarded_schemas: Option<&vox_types::SchemaRecvTracker>,
     ) -> Result<(), TrySendError<()>> {
+        let connection_id = msg.connection_id;
         let (batch, _result_rx) = self
             .prepare_outbound_batch(msg, binder, forwarded_schemas)
             .map_err(|_| TrySendError::Closed(()))?;
         self.outbound_tx.try_send(batch).map_err(|err| match err {
-            tokio_mpsc::error::TrySendError::Full(_) => TrySendError::Full(()),
-            tokio_mpsc::error::TrySendError::Closed(_) => TrySendError::Closed(()),
+            tokio_mpsc::error::TrySendError::Full(_) => {
+                if let Some(observer) = &self.observer {
+                    observer
+                        .driver_event(vox_types::DriverEvent::OutboundQueueFull { connection_id });
+                }
+                TrySendError::Full(())
+            }
+            tokio_mpsc::error::TrySendError::Closed(_) => {
+                if let Some(observer) = &self.observer {
+                    observer.driver_event(vox_types::DriverEvent::OutboundQueueClosed {
+                        connection_id,
+                    });
+                }
+                TrySendError::Closed(())
+            }
         })
     }
 
@@ -2645,7 +2704,7 @@ mod tests {
         let (control_tx, control_rx) = mpsc::unbounded_channel("session.control.test");
         Session::pre_handshake(
             tx, rx, None, open_rx, close_rx, resume_rx, control_tx, control_rx, None, false, None,
-            None,
+            None, None,
         )
     }
 

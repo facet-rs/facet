@@ -10,7 +10,8 @@ use moire::sync::mpsc;
 use moire::time;
 use vox_types::{
     Conduit, ConnectionSettings, DEFAULT_INITIAL_CHANNEL_CREDIT, HandshakeResult, Link, MaybeSend,
-    MaybeSync, MessageFamily, Metadata, Parity, SessionResumeKey, SplitLink, metadata_into_owned,
+    MaybeSync, MessageFamily, Metadata, Parity, SessionResumeKey, SplitLink, VoxObserver,
+    VoxObserverHandle, metadata_into_owned,
 };
 
 use crate::{Attachment, LinkSource, StableConduit};
@@ -204,6 +205,7 @@ pub struct SessionConfig<'a> {
     pub spawn_fn: SpawnFn,
     pub connect_timeout: Option<std::time::Duration>,
     pub recovery_timeout: Option<std::time::Duration>,
+    pub observer: Option<VoxObserverHandle>,
 }
 
 impl SessionConfig<'_> {
@@ -219,6 +221,7 @@ impl SessionConfig<'_> {
             spawn_fn: default_spawn_fn(),
             connect_timeout: None,
             recovery_timeout: None,
+            observer: None,
         }
     }
 }
@@ -266,6 +269,18 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
 
     pub fn channel_capacity(mut self, channel_capacity: u32) -> Self {
         self.config.root_settings.initial_channel_credit = channel_capacity;
+        self
+    }
+
+    // r[impl rpc.observability.runtime]
+    pub fn observer(mut self, observer: impl VoxObserver) -> Self {
+        self.config.observer = Some(Arc::new(observer));
+        self
+    }
+
+    // r[impl rpc.observability.runtime]
+    pub fn observer_handle(mut self, observer: VoxObserverHandle) -> Self {
+        self.config.observer = Some(observer);
         self
     }
 
@@ -354,6 +369,7 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
             config.resumable,
             recoverer,
             config.recovery_timeout,
+            config.observer.clone(),
         );
         let handle = session.establish_from_handshake(handshake_result)?;
         let resume_key = session.resume_key();
@@ -425,6 +441,18 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
 
     pub fn channel_capacity(mut self, channel_capacity: u32) -> Self {
         self.config.root_settings.initial_channel_credit = channel_capacity;
+        self
+    }
+
+    // r[impl rpc.observability.runtime]
+    pub fn observer(mut self, observer: impl VoxObserver) -> Self {
+        self.config.observer = Some(Arc::new(observer));
+        self
+    }
+
+    // r[impl rpc.observability.runtime]
+    pub fn observer_handle(mut self, observer: VoxObserverHandle) -> Self {
+        self.config.observer = Some(observer);
         self
     }
 
@@ -627,6 +655,18 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
 
     pub fn channel_capacity(mut self, channel_capacity: u32) -> Self {
         self.config.root_settings.initial_channel_credit = channel_capacity;
+        self
+    }
+
+    // r[impl rpc.observability.runtime]
+    pub fn observer(mut self, observer: impl VoxObserver) -> Self {
+        self.config.observer = Some(Arc::new(observer));
+        self
+    }
+
+    // r[impl rpc.observability.runtime]
+    pub fn observer_handle(mut self, observer: VoxObserverHandle) -> Self {
+        self.config.observer = Some(observer);
         self
     }
 
@@ -975,6 +1015,18 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
         self
     }
 
+    // r[impl rpc.observability.runtime]
+    pub fn observer(mut self, observer: impl VoxObserver) -> Self {
+        self.config.observer = Some(Arc::new(observer));
+        self
+    }
+
+    // r[impl rpc.observability.runtime]
+    pub fn observer_handle(mut self, observer: VoxObserverHandle) -> Self {
+        self.config.observer = Some(observer);
+        self
+    }
+
     pub fn connect_timeout(mut self, timeout: std::time::Duration) -> Self {
         self.config.connect_timeout = Some(timeout);
         self
@@ -1061,6 +1113,7 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
             config.resumable,
             None,
             config.recovery_timeout,
+            config.observer.clone(),
         );
         let handle = session.establish_from_handshake(handshake_result)?;
         let resume_key = session.resume_key();
@@ -1161,6 +1214,18 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
 
     pub fn channel_capacity(mut self, channel_capacity: u32) -> Self {
         self.config.root_settings.initial_channel_credit = channel_capacity;
+        self
+    }
+
+    // r[impl rpc.observability.runtime]
+    pub fn observer(mut self, observer: impl VoxObserver) -> Self {
+        self.config.observer = Some(Arc::new(observer));
+        self
+    }
+
+    // r[impl rpc.observability.runtime]
+    pub fn observer_handle(mut self, observer: VoxObserverHandle) -> Self {
+        self.config.observer = Some(observer);
         self
     }
 

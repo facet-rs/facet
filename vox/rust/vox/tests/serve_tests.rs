@@ -81,6 +81,41 @@ async fn connect_builder_establish_matches_await() {
     server.abort();
 }
 
+#[test]
+fn try_send_error_is_reexported_from_vox() {
+    let err = vox::TrySendError::Full(42_u32);
+    match err {
+        vox::TrySendError::Full(value) => assert_eq!(value, 42),
+        vox::TrySendError::Closed(_) => panic!("expected Full"),
+    }
+}
+
+// r[verify rpc.flow-control.credit.initial.high-level]
+#[tokio::test]
+async fn high_level_builders_accept_channel_capacity() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("local_addr");
+
+    let server = tokio::spawn(async move {
+        vox::serve_listener(listener, EchoDispatcher::new(EchoService))
+            .channel_capacity(2)
+            .await
+            .expect("serve");
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let client: EchoClient = vox::connect(format!("tcp://{addr}"))
+        .channel_capacity(2)
+        .await
+        .expect("connect");
+    assert_eq!(client.echo(11).await.expect("echo"), 11);
+
+    server.abort();
+}
+
 // r[verify rpc.virtual-connection.accept]
 #[tokio::test]
 async fn connect_builder_can_configure_inbound_virtual_connections_before_await() {

@@ -393,6 +393,13 @@ identity described in [Retry](./retry/).
 > initial channel credit is 16 items. Implementations MAY expose configuration
 > for this value.
 
+> r[rpc.flow-control.credit.initial.high-level]
+>
+> High-level connection and serving APIs SHOULD expose the same initial channel
+> credit / channel capacity configuration as lower-level session builders. The
+> configured value MUST be applied to the root connection settings used during
+> the session handshake.
+
 > r[rpc.flow-control.credit.initial.zero]
 >
 > Zero initial credit is valid for lower-level channel sinks. The sender MUST
@@ -428,6 +435,42 @@ identity described in [Retry](./retry/).
 > available, it MUST fail with `Full(value)` and return ownership of the value.
 > If the channel is terminal or the underlying connection is closed, it MUST
 > fail with `Closed(value)` and return ownership of the value.
+
+# Runtime observability
+
+> r[rpc.observability.runtime]
+>
+> Implementations SHOULD expose a runtime observer interface that can receive
+> local introspection events without imposing a dependency on any metrics,
+> tracing, or telemetry backend. Observer events are not wire protocol and MUST
+> NOT affect interoperability.
+
+> r[rpc.observability.channel]
+>
+> Channel observers SHOULD report channel open, send, try-send, credit,
+> receive, consume, close, and reset events with local channel IDs and
+> directions. These IDs are suitable for logs and debug snapshots, but MUST
+> NOT be used as default metric labels.
+
+> r[rpc.observability.channel.try-send-detail]
+>
+> Channel try-send observer outcomes SHOULD distinguish credit exhaustion,
+> runtime queue saturation, unbound handles, and closed channels even when the
+> public API collapses blocking cases into `TrySendError::Full(value)`.
+
+> r[rpc.observability.driver]
+>
+> Driver observers SHOULD report connection lifecycle, request lifecycle,
+> outbound runtime queue saturation/closure, encode/decode failures, and
+> protocol violations. Connection IDs and request IDs are suitable for local
+> debugging but MUST NOT be used as default metric labels.
+
+> r[rpc.observability.low-cardinality]
+>
+> Metrics derived from observer events MUST use low-cardinality labels such as
+> service, method, side, outcome, error kind, and channel direction. Request
+> IDs, connection IDs, channel IDs, peer addresses, operation IDs, and metadata
+> values MUST NOT be used as metric labels by default.
 
 # Cancellation
 
