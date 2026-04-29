@@ -27,6 +27,7 @@ members = [
   "rust/vox-jit-cal",
   "rust/vox-jit-abi",
   "rust/vox-jit",
+  "rust/vox-swift-abi",
   "rust/vox-jit-tests",
   "rust/wasm-browser-tests",
   "rust/wasm-inprocess-tests",
@@ -67,6 +68,7 @@ vox-postcard = { path = "rust/vox-postcard", version = "0.4.0" }
 vox-jit-cal = { path = "rust/vox-jit-cal", version = "0.4.0" }
 vox-jit-abi = { path = "rust/vox-jit-abi", version = "0.4.0" }
 vox-jit = { path = "rust/vox-jit", version = "0.4.0" }
+vox-swift-abi = { path = "rust/vox-swift-abi", version = "0.4.0" }
 facet-cbor = { path = "rust/facet-cbor", version = "0.3.3" }
 ur-taking-me-with-you = { path = "rust/ur-taking-me-with-you", version = "8.0.0" }
 
