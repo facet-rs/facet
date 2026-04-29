@@ -28,10 +28,12 @@ pub(crate) fn test_acceptor_handshake() -> HandshakeResult {
         our_settings: ConnectionSettings {
             parity: Parity::Even,
             max_concurrent_requests: 64,
+            initial_channel_credit: 16,
         },
         peer_settings: ConnectionSettings {
             parity: Parity::Odd,
             max_concurrent_requests: 64,
+            initial_channel_credit: 16,
         },
         peer_supports_retry: true,
         session_resume_key: Some(test_resume_key()),
@@ -48,10 +50,12 @@ pub(crate) fn test_initiator_handshake() -> HandshakeResult {
         our_settings: ConnectionSettings {
             parity: Parity::Odd,
             max_concurrent_requests: 64,
+            initial_channel_credit: 16,
         },
         peer_settings: ConnectionSettings {
             parity: Parity::Even,
             max_concurrent_requests: 64,
+            initial_channel_credit: 16,
         },
         peer_supports_retry: true,
         session_resume_key: Some(test_resume_key()),

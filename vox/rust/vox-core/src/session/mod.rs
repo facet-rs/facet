@@ -15,7 +15,7 @@ use vox_types::{
     ConnectionOpen, ConnectionReject, ConnectionSettings, Handler, HandshakeResult, IdAllocator,
     MaybeSend, MaybeSync, Message, MessageFamily, MessagePayload, Metadata, Parity, RequestBody,
     RequestId, RequestMessage, RequestResponse, SchemaMessage, SelfRef, SessionResumeKey,
-    SessionRole,
+    SessionRole, TrySendError,
 };
 
 mod builders;
@@ -651,6 +651,22 @@ impl ConnectionSender {
         self.send_with_binder(msg, None).await
     }
 
+    // r[impl rpc.flow-control.credit.try-send]
+    pub(crate) fn try_send<'a>(&self, msg: ConnectionMessage<'a>) -> Result<(), TrySendError<()>> {
+        let payload = match msg {
+            ConnectionMessage::Request(r) => MessagePayload::RequestMessage(r),
+            ConnectionMessage::Channel(c) => MessagePayload::ChannelMessage(c),
+        };
+        self.sess_core.try_send(
+            Message {
+                connection_id: self.connection_id,
+                payload,
+            },
+            None,
+            None,
+        )
+    }
+
     /// Send a received connection message without re-materializing payload values.
     pub(crate) async fn send_owned(
         &self,
@@ -777,6 +793,8 @@ pub struct ConnectionHandle {
     pub(crate) control_tx: Option<mpsc::UnboundedSender<DropControlRequest>>,
     pub(crate) closed_rx: watch::Receiver<bool>,
     pub(crate) resumed_rx: watch::Receiver<u64>,
+    pub(crate) local_settings: ConnectionSettings,
+    pub(crate) peer_settings: ConnectionSettings,
     /// The parity this side should use for allocating request/channel IDs.
     pub parity: Parity,
     pub(crate) peer_supports_retry: bool,
@@ -857,6 +875,8 @@ pub async fn proxy_connections(
         control_tx: left_control_tx,
         closed_rx: _left_closed_rx,
         resumed_rx: _left_resumed_rx,
+        local_settings: _left_local_settings,
+        peer_settings: _left_peer_settings,
         parity: _left_parity,
         peer_supports_retry: _left_peer_supports_retry,
     } = left;
@@ -867,6 +887,8 @@ pub async fn proxy_connections(
         control_tx: right_control_tx,
         closed_rx: _right_closed_rx,
         resumed_rx: _right_resumed_rx,
+        local_settings: _right_local_settings,
+        peer_settings: _right_peer_settings,
         parity: _right_parity,
         peer_supports_retry: _right_peer_supports_retry,
     } = right;
@@ -1016,6 +1038,7 @@ impl Session {
             local_root_settings: ConnectionSettings {
                 parity: Parity::Odd,
                 max_concurrent_requests: 64,
+                initial_channel_credit: 16,
             },
             peer_root_settings: None,
             resumable,
@@ -1088,6 +1111,8 @@ impl Session {
         };
 
         let parity = local_settings.parity;
+        let handle_local_settings = local_settings.clone();
+        let handle_peer_settings = peer_settings.clone();
         trace!(%conn_id, "make_connection_handle: inserting slot into conns");
         self.conns.insert(
             conn_id,
@@ -1108,6 +1133,8 @@ impl Session {
             control_tx: Some(self.control_tx.clone()),
             closed_rx,
             resumed_rx,
+            local_settings: handle_local_settings,
+            peer_settings: handle_peer_settings,
             parity,
             peer_supports_retry: self.peer_supports_retry,
         }
@@ -1641,11 +1668,32 @@ impl Session {
             return;
         }
 
-        // Derive settings: opposite parity, same max concurrent requests.
+        // Derive settings: opposite parity, same limits for now.
         let open = open.get();
+        if open.connection_settings.initial_channel_credit == 0 {
+            let _ = self
+                .sess_core
+                .send(
+                    Message {
+                        connection_id: conn_id,
+                        payload: MessagePayload::ConnectionReject(vox_types::ConnectionReject {
+                            metadata: vec![vox_types::MetadataEntry::str(
+                                "error",
+                                "initial_channel_credit must be greater than zero",
+                            )],
+                        }),
+                    },
+                    None,
+                    None,
+                )
+                .await;
+            return;
+        }
+
         let our_settings = ConnectionSettings {
             parity: open.connection_settings.parity.other(),
             max_concurrent_requests: open.connection_settings.max_concurrent_requests,
+            initial_channel_credit: open.connection_settings.initial_channel_credit,
         };
 
         // Create the connection handle and activate it.
@@ -1786,6 +1834,13 @@ impl Session {
 
     // r[impl connection.open]
     async fn handle_open_request(&mut self, req: OpenRequest) {
+        if req.settings.initial_channel_credit == 0 {
+            let _ = req.result_tx.send(Err(SessionError::Protocol(
+                "initial_channel_credit must be greater than zero".into(),
+            )));
+            return;
+        }
+
         let conn_id = self.conn_ids.alloc();
 
         // Send ConnectionOpen to the peer.
@@ -2094,13 +2149,12 @@ fn get_or_create_send_conn_state(
 }
 
 impl SessionCore {
-    // r[impl schema.principles.sender-driven]
-    pub(crate) async fn send<'a>(
+    fn prepare_outbound_batch<'a>(
         &self,
         mut msg: Message<'a>,
         binder: Option<&'a dyn vox_types::ChannelBinder>,
         forwarded_schemas: Option<&vox_types::SchemaRecvTracker>,
-    ) -> Result<(), ()> {
+    ) -> Result<(OutboundBatch, tokio_oneshot::Receiver<std::io::Result<()>>), ()> {
         let conn_id = msg.connection_id;
         let (tx, conn_state, schema_sends) = {
             let mut inner = self.inner.lock().expect("session core mutex poisoned");
@@ -2164,18 +2218,45 @@ impl SessionCore {
         let payload_send = tx.clone().prepare_msg(msg, binder).map_err(|_| ())?;
 
         let (result_tx, result_rx) = tokio_oneshot::channel();
-        self.outbound_tx
-            .send(OutboundBatch {
+        Ok((
+            OutboundBatch {
                 conn_id,
                 conn_state,
                 tx,
                 schema_sends,
                 payload_send,
                 result_tx,
-            })
-            .await
-            .map_err(|_| ())?;
+            },
+            result_rx,
+        ))
+    }
+
+    // r[impl schema.principles.sender-driven]
+    pub(crate) async fn send<'a>(
+        &self,
+        msg: Message<'a>,
+        binder: Option<&'a dyn vox_types::ChannelBinder>,
+        forwarded_schemas: Option<&vox_types::SchemaRecvTracker>,
+    ) -> Result<(), ()> {
+        let (batch, result_rx) = self.prepare_outbound_batch(msg, binder, forwarded_schemas)?;
+        self.outbound_tx.send(batch).await.map_err(|_| ())?;
         result_rx.await.map_err(|_| ())?.map_err(|_| ())
+    }
+
+    // r[impl rpc.flow-control.credit.try-send]
+    pub(crate) fn try_send<'a>(
+        &self,
+        msg: Message<'a>,
+        binder: Option<&'a dyn vox_types::ChannelBinder>,
+        forwarded_schemas: Option<&vox_types::SchemaRecvTracker>,
+    ) -> Result<(), TrySendError<()>> {
+        let (batch, _result_rx) = self
+            .prepare_outbound_batch(msg, binder, forwarded_schemas)
+            .map_err(|_| TrySendError::Closed(()))?;
+        self.outbound_tx.try_send(batch).map_err(|err| match err {
+            tokio_mpsc::error::TrySendError::Full(_) => TrySendError::Full(()),
+            tokio_mpsc::error::TrySendError::Closed(_) => TrySendError::Closed(()),
+        })
     }
 
     /// Record that an incoming call was received, so we can look up the
@@ -2592,6 +2673,7 @@ mod tests {
                 connection_settings: ConnectionSettings {
                     parity: Parity::Even,
                     max_concurrent_requests: 64,
+                    initial_channel_credit: 16,
                 },
                 metadata: vec![],
             },
@@ -2617,6 +2699,7 @@ mod tests {
                 local_settings: ConnectionSettings {
                     parity: Parity::Odd,
                     max_concurrent_requests: 64,
+                    initial_channel_credit: 16,
                 },
                 result_tx: Some(result_tx),
             }),
@@ -2651,6 +2734,7 @@ mod tests {
                 local_settings: ConnectionSettings {
                     parity: Parity::Odd,
                     max_concurrent_requests: 64,
+                    initial_channel_credit: 16,
                 },
                 result_tx: Some(result_tx),
             }),
@@ -2699,6 +2783,7 @@ mod tests {
                 local_settings: ConnectionSettings {
                     parity: Parity::Odd,
                     max_concurrent_requests: 64,
+                    initial_channel_credit: 16,
                 },
                 result_tx: Some(open_result_tx),
             }),
@@ -2732,10 +2817,12 @@ mod tests {
         let local_settings = ConnectionSettings {
             parity: Parity::Odd,
             max_concurrent_requests: 64,
+            initial_channel_credit: 16,
         };
         let peer_settings = ConnectionSettings {
             parity: Parity::Even,
             max_concurrent_requests: 64,
+            initial_channel_credit: 16,
         };
         let _root = session
             .establish_from_handshake(resumed_handshake(
@@ -2755,6 +2842,7 @@ mod tests {
                 ConnectionSettings {
                     parity: Parity::Odd,
                     max_concurrent_requests: 65,
+                    initial_channel_credit: 16,
                 },
                 peer_settings,
             ),
@@ -2776,10 +2864,12 @@ mod tests {
         let local_settings = ConnectionSettings {
             parity: Parity::Odd,
             max_concurrent_requests: 64,
+            initial_channel_credit: 16,
         };
         let peer_settings = ConnectionSettings {
             parity: Parity::Even,
             max_concurrent_requests: 64,
+            initial_channel_credit: 16,
         };
         let _root = session
             .establish_from_handshake(resumed_handshake(
@@ -2800,6 +2890,7 @@ mod tests {
                 ConnectionSettings {
                     parity: Parity::Even,
                     max_concurrent_requests: 65,
+                    initial_channel_credit: 16,
                 },
             ),
         );

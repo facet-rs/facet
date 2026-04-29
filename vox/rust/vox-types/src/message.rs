@@ -10,6 +10,10 @@ use crate::{
 use facet::{Facet, FacetOpaqueAdapter, OpaqueDeserialize, OpaqueSerialize, PtrConst, Shape};
 use vox_schema::opaque_encoded_borrowed;
 
+/// Default per-channel initial credit and inbound queue capacity.
+// r[impl rpc.flow-control.credit.initial]
+pub const DEFAULT_INITIAL_CHANNEL_CREDIT: u32 = 16;
+
 /// Per-connection limits advertised by a peer.
 // r[impl session.connection-settings]
 // r[impl session.parity]
@@ -17,12 +21,16 @@ use vox_schema::opaque_encoded_borrowed;
 // r[impl rpc.flow-control]
 // r[impl rpc.flow-control.max-concurrent-requests]
 // r[impl rpc.flow-control.max-concurrent-requests.default]
+// r[impl rpc.flow-control.credit.initial]
 #[derive(Debug, Clone, PartialEq, Eq, Facet)]
 pub struct ConnectionSettings {
     /// Whether this peer will use odd or even IDs for requests and channels on this connection.
     pub parity: Parity,
     /// Maximum number of in-flight requests this peer is willing to accept on this connection.
     pub max_concurrent_requests: u32,
+    /// Initial per-channel credit this peer grants for channels it receives.
+    #[facet(default = DEFAULT_INITIAL_CHANNEL_CREDIT)]
+    pub initial_channel_credit: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

@@ -120,21 +120,27 @@ public enum Parity: Sendable, Equatable {
 public struct ConnectionSettings: Sendable, Equatable {
   public var parity: Parity
   public var maxConcurrentRequests: UInt32
+  public var initialChannelCredit: UInt32
 
-  public init(parity: Parity, maxConcurrentRequests: UInt32) {
+  public init(parity: Parity, maxConcurrentRequests: UInt32, initialChannelCredit: UInt32) {
     self.parity = parity
     self.maxConcurrentRequests = maxConcurrentRequests
+    self.initialChannelCredit = initialChannelCredit
   }
 
   func encode(into buffer: inout ByteBuffer) {
     parity.encode(into: &buffer)
     encodeVarint(UInt64(maxConcurrentRequests), into: &buffer)
+    encodeVarint(UInt64(initialChannelCredit), into: &buffer)
   }
 
   static func decode(from buffer: inout ByteBuffer) throws -> Self {
     let parity = try Parity.decode(from: &buffer)
     let maxConcurrentRequests = try decodeWireVarintU32(from: &buffer)
-    return .init(parity: parity, maxConcurrentRequests: maxConcurrentRequests)
+    let initialChannelCredit = try decodeWireVarintU32(from: &buffer)
+    return .init(
+      parity: parity, maxConcurrentRequests: maxConcurrentRequests,
+      initialChannelCredit: initialChannelCredit)
   }
 }
 

@@ -270,29 +270,28 @@ identity described in [Retry](./retry/).
 > r[rpc.channel]
 >
 > A channel is a unidirectional, ordered sequence of typed values between
-> two peers. At the type level, `Tx<T, N>` and `Rx<T, N>` indicate direction
-> and initial credit. `T` is the element type; `N` is a `usize` const generic
-> specifying how many items the sender may send before receiving explicit
-> credit (see `r[rpc.flow-control.credit.initial]`). Each channel has exactly
-> one sender and one receiver.
+> two peers. At the type level, `Tx<T>` and `Rx<T>` indicate direction and
+> element type. `T` is the element type. Initial credit and buffering are
+> runtime channel settings (see `r[rpc.flow-control.credit.initial]`), not
+> type parameters. Each channel has exactly one sender and one receiver.
 
 > r[rpc.channel.direction]
 >
-> `Tx<T, N>` means "I send" and `Rx<T, N>` means "I receive", where "I" is
+> `Tx<T>` means "I send" and `Rx<T>` means "I receive", where "I" is
 > whoever holds the handle. Position determines who holds it:
 >
->   * In arg position (handler holds): `Tx<T, N>` = handler sends → caller,
->     `Rx<T, N>` = handler receives ← caller.
+>   * In arg position (handler holds): `Tx<T>` = handler sends → caller,
+>     `Rx<T>` = handler receives ← caller.
 
 > r[rpc.channel.placement]
 >
-> `Tx<T, N>` and `Rx<T, N>` may appear in argument types of service methods.
+> `Tx<T>` and `Rx<T>` may appear in argument types of service methods.
 > They MUST NOT appear in method return types or in the error variant of a
 > `Result` return type.
 
 > r[rpc.channel.no-collections]
 >
-> `Tx<T, N>` and `Rx<T, N>` MUST NOT appear inside collections (lists,
+> `Tx<T>` and `Rx<T>` MUST NOT appear inside collections (lists,
 > arrays, maps, sets). They may be nested arbitrarily deep inside structs
 > and enums.
 
@@ -385,18 +384,22 @@ identity described in [Retry](./retry/).
 
 > r[rpc.flow-control.credit.initial]
 >
-> Initial credit is part of the channel's type signature. `Tx<T, N>` and
-> `Rx<T, N>` carry a const generic `N: usize` that specifies the initial
-> credit for the channel. When a channel is created (as part of a request),
-> the sender starts with `N` units of credit. This value
-> is known at compile time and is part of the channel's type definition,
-> so both peers agree on it through schema exchange.
+> Initial credit is negotiated/configured per connection as
+> `ConnectionSettings.initial_channel_credit`. When a channel is created
+> (as part of a request), the sender starts with the receiver's advertised
+> initial credit for that connection, so the sender can transmit immediately
+> without waiting one RTT for the first `GrantCredit`. The receiver provisions
+> a bounded inbound queue of the same size for that channel. The default
+> initial channel credit is 16 items. Implementations MAY expose configuration
+> for this value.
 
 > r[rpc.flow-control.credit.initial.zero]
 >
-> `N = 0` is valid. The sender MUST wait for an explicit `GrantCredit`
-> before sending any items. This is useful for channels where the receiver
-> needs full control over when data starts flowing.
+> Zero initial credit is valid for lower-level channel sinks. The sender MUST
+> wait for an explicit `GrantCredit` before sending any items. Public session
+> builders that use `ConnectionSettings.initial_channel_credit` for both
+> initial credit and receive-queue capacity SHOULD reject zero-capacity
+> configurations.
 
 > r[rpc.flow-control.credit.grant]
 >
@@ -417,6 +420,14 @@ identity described in [Retry](./retry/).
 > messages on that channel until more credit is granted. The sender SHOULD
 > apply backpressure to the producing code (e.g. by blocking a `send()`
 > call) rather than buffering unboundedly.
+
+> r[rpc.flow-control.credit.try-send]
+>
+> A nonblocking channel send MUST NOT wait for credit or transport queue
+> capacity. If sending would block because no credit or local queue capacity is
+> available, it MUST fail with `Full(value)` and return ownership of the value.
+> If the channel is terminal or the underlying connection is closed, it MUST
+> fail with `Closed(value)` and return ownership of the value.
 
 # Cancellation
 
@@ -531,7 +542,7 @@ metadata.push((
 
 > r[rpc.channel.payload-encoding]
 >
-> `Tx<T, N>` and `Rx<T, N>` values in the serialized payload MUST be encoded as
+> `Tx<T>` and `Rx<T>` values in the serialized payload MUST be encoded as
 > unit placeholders. The actual channel IDs are carried out-of-band in the
 > `channels` field of the `Request` message.
 
@@ -545,9 +556,10 @@ metadata.push((
 
 > r[rpc.channel.pair]
 >
-> `channel<T>()` returns a `(Tx<T, 16>, Rx<T, 16>)` pair (default initial
-> credit `N = 16`) that share a single
-> channel core. Both handles hold an `Arc` reference to the core. The
+> `channel<T>()` returns a `(Tx<T>, Rx<T>)` pair that share a single
+> channel core. Runtime channel capacity defaults to 16 items unless the
+> session is configured otherwise. Both handles hold an `Arc` reference to
+> the core. The
 > core contains a `Mutex<Option<ChannelBinding>>` where `ChannelBinding`
 > is either a `Sink` or a `Receiver` — never both. The `Mutex` is
 > needed because `Rx::recv` takes the receiver out of the core on

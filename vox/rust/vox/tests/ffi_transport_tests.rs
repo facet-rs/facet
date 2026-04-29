@@ -38,6 +38,7 @@ fn connection_settings() -> ConnectionSettings {
     ConnectionSettings {
         parity: Parity::Odd,
         max_concurrent_requests: 64,
+        initial_channel_credit: 16,
     }
 }
 

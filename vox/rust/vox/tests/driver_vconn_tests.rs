@@ -32,6 +32,7 @@ async fn open_echo_vconn(session: &SessionHandle) -> EchoClient {
         .open::<EchoClient>(ConnectionSettings {
             parity: Parity::Odd,
             max_concurrent_requests: 64,
+            initial_channel_credit: 16,
         })
         .await
         .expect("open virtual connection")
@@ -191,6 +192,7 @@ async fn reject_virtual_connection() {
             ConnectionSettings {
                 parity: Parity::Odd,
                 max_concurrent_requests: 64,
+                initial_channel_credit: 16,
             },
             vec![MetadataEntry::str("vox-service", "Unknown")],
         )
@@ -225,6 +227,7 @@ async fn open_virtual_connection_without_acceptor_is_rejected() {
             ConnectionSettings {
                 parity: Parity::Odd,
                 max_concurrent_requests: 64,
+                initial_channel_credit: 16,
             },
             vec![MetadataEntry::str("vox-service", "Noop")],
         )
@@ -261,6 +264,7 @@ async fn close_virtual_connection() {
             ConnectionSettings {
                 parity: Parity::Odd,
                 max_concurrent_requests: 64,
+                initial_channel_credit: 16,
             },
             vec![MetadataEntry::str("vox-service", "Counter")],
         )

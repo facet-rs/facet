@@ -44,6 +44,7 @@ async fn open_virtual_connection_and_call() {
             ConnectionSettings {
                 parity: Parity::Odd,
                 max_concurrent_requests: 64,
+                initial_channel_credit: 16,
             },
             vec![MetadataEntry::str("vox-service", "Echo")],
         )
@@ -116,6 +117,7 @@ async fn reject_virtual_connection() {
             ConnectionSettings {
                 parity: Parity::Odd,
                 max_concurrent_requests: 64,
+                initial_channel_credit: 16,
             },
             vec![MetadataEntry::str("vox-service", "Unknown")],
         )
@@ -157,6 +159,7 @@ async fn open_virtual_connection_without_acceptor_is_rejected() {
             ConnectionSettings {
                 parity: Parity::Odd,
                 max_concurrent_requests: 64,
+                initial_channel_credit: 16,
             },
             vec![MetadataEntry::str("vox-service", "Noop")],
         )
@@ -234,6 +237,7 @@ async fn close_virtual_connection() {
             ConnectionSettings {
                 parity: Parity::Odd,
                 max_concurrent_requests: 64,
+                initial_channel_credit: 16,
             },
             vec![MetadataEntry::str("vox-service", "Echo")],
         )
@@ -313,6 +317,7 @@ async fn dropping_last_virtual_caller_closes_virtual_connection() {
             ConnectionSettings {
                 parity: Parity::Odd,
                 max_concurrent_requests: 64,
+                initial_channel_credit: 16,
             },
             vec![MetadataEntry::str("vox-service", "Echo")],
         )
@@ -373,6 +378,7 @@ async fn close_virtual_connection_closes_registered_rx_channels() {
             ConnectionSettings {
                 parity: Parity::Odd,
                 max_concurrent_requests: 64,
+                initial_channel_credit: 16,
             },
             vec![MetadataEntry::str("vox-service", "Echo")],
         )
@@ -452,6 +458,7 @@ async fn dropping_root_caller_waits_for_virtual_connections_before_session_shutd
             ConnectionSettings {
                 parity: Parity::Odd,
                 max_concurrent_requests: 64,
+                initial_channel_credit: 16,
             },
             vec![MetadataEntry::str("vox-service", "Echo")],
         )

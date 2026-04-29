@@ -404,6 +404,9 @@ starts only after that conduit has been selected and initialized.
 >
 >   * `max_concurrent_requests` — the maximum number of in-flight requests
 >     the peer is willing to accept on this connection (u32).
+>   * `initial_channel_credit` — the number of items the peer grants up
+>     front for each newly created channel it receives on this connection
+>     (u32). This value also bounds the peer's inbound per-channel queue.
 
 > r[session.connection-settings.hello]
 >

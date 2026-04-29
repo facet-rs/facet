@@ -1324,6 +1324,7 @@ where
             vox_types::ConnectionSettings {
                 parity: vox_types::Parity::Even,
                 max_concurrent_requests: 64,
+                initial_channel_credit: 16,
             },
             true,
             false,
@@ -1369,6 +1370,7 @@ where
         vox_types::ConnectionSettings {
             parity: vox_types::Parity::Odd,
             max_concurrent_requests: 64,
+            initial_channel_credit: 16,
         },
         true,
         None,

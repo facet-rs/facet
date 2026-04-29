@@ -70,6 +70,7 @@ async fn root_connect_sends_vox_service_and_factory_sees_it() {
         .open(ConnectionSettings {
             parity: Parity::Odd,
             max_concurrent_requests: 64,
+            initial_channel_credit: 16,
         })
         .await
         .expect("open Echo vconn");
@@ -129,6 +130,7 @@ async fn service_factory_routes_virtual_connections() {
         .open(ConnectionSettings {
             parity: Parity::Odd,
             max_concurrent_requests: 64,
+            initial_channel_credit: 16,
         })
         .await
         .expect("open Echo vconn");
@@ -141,6 +143,7 @@ async fn service_factory_routes_virtual_connections() {
         .open(ConnectionSettings {
             parity: Parity::Odd,
             max_concurrent_requests: 64,
+            initial_channel_credit: 16,
         })
         .await
         .expect("open Adder vconn");
@@ -192,6 +195,7 @@ async fn service_factory_rejects_unknown_service() {
         .open::<AdderClient>(ConnectionSettings {
             parity: Parity::Odd,
             max_concurrent_requests: 64,
+            initial_channel_credit: 16,
         })
         .await;
 

@@ -5,6 +5,8 @@ import { decodeCbor, type CborMap, type CborValue } from "./cbor.ts";
 import type { Link } from "./link.ts";
 import { normalizeSchemaList } from "./schema_cbor.ts";
 
+const DEFAULT_INITIAL_CHANNEL_CREDIT = 16;
+
 export type { MetadataEntry, Metadata };
 
 export interface HandshakeResult {
@@ -132,6 +134,7 @@ function encodeConnectionSettings(settings: ConnectionSettings): Uint8Array {
   return encodeMap([
     ["parity", encodeParity(settings.parity)],
     ["max_concurrent_requests", encodeUint(settings.max_concurrent_requests)],
+    ["initial_channel_credit", encodeUint(settings.initial_channel_credit)],
   ]);
 }
 
@@ -283,6 +286,13 @@ function parseConnectionSettings(value: CborValue): ConnectionSettings {
       map["max_concurrent_requests"],
       "connection_settings.max_concurrent_requests",
     ),
+    initial_channel_credit:
+      map["initial_channel_credit"] === undefined
+        ? DEFAULT_INITIAL_CHANNEL_CREDIT
+        : expectNumber(
+            map["initial_channel_credit"],
+            "connection_settings.initial_channel_credit",
+          ),
   };
 }
 

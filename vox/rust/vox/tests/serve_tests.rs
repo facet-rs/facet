@@ -103,6 +103,7 @@ async fn connect_builder_can_configure_inbound_virtual_connections_before_await(
             .open(vox::ConnectionSettings {
                 parity: vox::Parity::Odd,
                 max_concurrent_requests: 64,
+                initial_channel_credit: 16,
             })
             .await
             .expect("open echo client");

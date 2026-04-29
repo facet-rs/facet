@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use facet::Facet;
 use facet_core::PtrConst;
-use moire::sync::{Notify, Semaphore, mpsc};
+use moire::sync::{Notify, Semaphore, TryAcquireError, mpsc};
 
 use crate::ChannelId;
 use crate::{Backing, ChannelClose, ChannelItem, ChannelReset, Metadata, Payload, SelfRef};
@@ -298,6 +298,14 @@ pub trait ChannelSink: crate::MaybeSend + crate::MaybeSync + 'static {
         payload: Payload<'payload>,
     ) -> Pin<Box<dyn crate::MaybeSendFuture<Output = Result<(), TxError>> + 'payload>>;
 
+    // r[impl rpc.flow-control.credit.try-send]
+    fn try_send_payload<'payload>(
+        &self,
+        _payload: Payload<'payload>,
+    ) -> Result<(), TrySendError<()>> {
+        Err(TrySendError::Full(()))
+    }
+
     fn close_channel(
         &self,
         metadata: Metadata,
@@ -326,7 +334,7 @@ pub struct CreditSink<S: ChannelSink> {
 impl<S: ChannelSink> CreditSink<S> {
     // r[impl rpc.flow-control.credit.initial]
     // r[impl rpc.flow-control.credit.initial.zero]
-    /// Wrap `inner` with `initial_credit` permits (the const generic `N`).
+    /// Wrap `inner` with runtime-configured initial credit permits.
     pub fn new(inner: S, initial_credit: u32) -> Self {
         Self {
             inner,
@@ -359,6 +367,24 @@ impl<S: ChannelSink> ChannelSink for CreditSink<S> {
             std::mem::forget(permit);
             fut.await
         })
+    }
+
+    fn try_send_payload<'payload>(
+        &self,
+        payload: Payload<'payload>,
+    ) -> Result<(), TrySendError<()>> {
+        let permit = self.credit.try_acquire_owned().map_err(|err| match err {
+            TryAcquireError::NoPermits => TrySendError::Full(()),
+            TryAcquireError::Closed => TrySendError::Closed(()),
+        })?;
+
+        match self.inner.try_send_payload(payload) {
+            Ok(()) => {
+                std::mem::forget(permit);
+                Ok(())
+            }
+            Err(err) => Err(err),
+        }
     }
 
     fn close_channel(
@@ -553,6 +579,36 @@ impl<T> Tx<T> {
         result
     }
 
+    // r[impl rpc.flow-control.credit.try-send]
+    pub fn try_send<'value>(&self, value: T) -> Result<(), TrySendError<T>>
+    where
+        T: Facet<'value>,
+    {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(TrySendError::Closed(value));
+        }
+
+        let Some(sink) = self.resolve_sink_now() else {
+            return Err(TrySendError::Full(value));
+        };
+
+        let ptr = PtrConst::new((&value as *const T).cast::<u8>());
+        // SAFETY: `try_send_payload` must complete synchronously before this
+        // function returns, so `value` stays alive for the full borrow.
+        let payload = unsafe { Payload::outgoing_unchecked(ptr, T::SHAPE) };
+        match sink.try_send_payload(payload) {
+            Ok(()) => {
+                drop(value);
+                Ok(())
+            }
+            Err(TrySendError::Full(())) => Err(TrySendError::Full(value)),
+            Err(TrySendError::Closed(())) => {
+                self.closed.store(true, Ordering::Release);
+                Err(TrySendError::Closed(value))
+            }
+        }
+    }
+
     // r[impl rpc.channel.lifecycle]
     pub async fn close<'value>(&self, metadata: Metadata<'value>) -> Result<(), TxError> {
         self.closed.store(true, Ordering::Release);
@@ -677,6 +733,34 @@ impl std::fmt::Display for TxError {
 }
 
 impl std::error::Error for TxError {}
+
+/// Error returned by [`Tx::try_send`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TrySendError<T> {
+    /// Sending would block because channel credit or runtime queue capacity is exhausted.
+    Full(T),
+    /// The channel or underlying connection is closed.
+    Closed(T),
+}
+
+impl<T> TrySendError<T> {
+    pub fn into_inner(self) -> T {
+        match self {
+            Self::Full(value) | Self::Closed(value) => value,
+        }
+    }
+}
+
+impl<T> std::fmt::Display for TrySendError<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Full(_) => write!(f, "channel is full"),
+            Self::Closed(_) => write!(f, "channel is closed"),
+        }
+    }
+}
+
+impl<T: std::fmt::Debug> std::error::Error for TrySendError<T> {}
 
 /// Receiver handle: "I receive". The holder of an `Rx<T>` receives items of type `T`.
 ///

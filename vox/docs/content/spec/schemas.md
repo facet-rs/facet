@@ -196,7 +196,6 @@ both hash as `u64`.
 >   1. The tag `"channel"`
 >   2. The direction: `"send"` or `"recv"`
 >   3. The element `TypeRef`
->   4. The initial credit as a `u32` (4 bytes, little-endian)
 
 Content hashes give type IDs a universal meaning. A peer that receives
 a schema tagged with a content hash it has already seen — from this
@@ -438,10 +437,9 @@ enum SchemaKind {
 
     /// A channel endpoint. Channels are serialized as `()` on the wire;
     /// the actual channel ID is passed out-of-band. The schema records
-    /// the direction, element type, and initial credit so that
-    /// translation plans can correctly map channel positions across
-    /// schema versions.
-    Channel { direction: ChannelDirection, element: TypeRef, initial_credit: u32 },
+    /// the direction and element type so that translation plans can correctly
+    /// map channel positions across schema versions.
+    Channel { direction: ChannelDirection, element: TypeRef },
 }
 
 /// The direction of a channel endpoint.
@@ -615,13 +613,12 @@ The normative rules below define the CBOR encoding of these types.
 >   * `kind`: `"channel"`
 >   * `direction`: `"send"` or `"recv"`
 >   * `element`: a `TypeRef` for the channel's element type
->   * `initial_credit`: a `u32` — the initial flow-control credit
->     (buffer size) for this channel
 >
 > Channels are serialized as `()` (unit) on the wire. The actual channel
 > ID is passed out-of-band in the message's `channels` field. The schema
-> records the direction, element type, and credit so that translation
-> plans can correctly map channel positions across schema versions.
+> records the direction and element type so that translation plans can
+> correctly map channel positions across schema versions. Runtime channel
+> capacity is flow-control configuration, not part of the schema identity.
 
 ## Recursive types on the wire
 

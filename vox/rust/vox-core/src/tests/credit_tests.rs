@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use vox_types::{ChannelSink, CreditSink, Metadata, Payload, Tx, TxError};
+use vox_types::{ChannelSink, CreditSink, Metadata, Payload, TrySendError, Tx, TxError};
 
 /// A sink that completes immediately, counting sends.
 struct ImmediateSink {
@@ -33,6 +33,12 @@ impl ChannelSink for ImmediateSink {
         })
     }
 
+    fn try_send_payload<'a>(&self, payload: Payload<'a>) -> Result<(), TrySendError<()>> {
+        let _ = payload;
+        self.send_count.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
     fn close_channel(
         &self,
         _metadata: Metadata,
@@ -40,6 +46,43 @@ impl ChannelSink for ImmediateSink {
     {
         Box::pin(async { Ok(()) })
     }
+}
+
+// r[verify rpc.flow-control.credit.try-send]
+// r[verify rpc.flow-control.credit.exhaustion]
+#[test]
+fn try_send_returns_full_with_value_when_credit_is_exhausted() {
+    let (inner, count) = ImmediateSink::new();
+    let credit_sink = Arc::new(CreditSink::new(inner, 1));
+    let mut tx = Tx::<String>::unbound();
+    tx.bind(credit_sink);
+
+    tx.try_send("first".to_string())
+        .expect("first send should use initial credit");
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+
+    match tx.try_send("second".to_string()) {
+        Err(TrySendError::Full(value)) => assert_eq!(value, "second"),
+        other => panic!("expected Full(second), got {other:?}"),
+    }
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+}
+
+// r[verify rpc.flow-control.credit.try-send]
+#[test]
+fn try_send_returns_closed_with_value_when_credit_is_closed() {
+    let (inner, count) = ImmediateSink::new();
+    let credit_sink = Arc::new(CreditSink::new(inner, 0));
+    credit_sink.credit().close();
+
+    let mut tx = Tx::<String>::unbound();
+    tx.bind(credit_sink);
+
+    match tx.try_send("closed".to_string()) {
+        Err(TrySendError::Closed(value)) => assert_eq!(value, "closed"),
+        other => panic!("expected Closed(closed), got {other:?}"),
+    }
+    assert_eq!(count.load(Ordering::SeqCst), 0);
 }
 
 // r[verify rpc.flow-control.credit.exhaustion]

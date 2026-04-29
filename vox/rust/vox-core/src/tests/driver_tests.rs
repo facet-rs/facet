@@ -704,10 +704,12 @@ fn message_plan_from_identical_schemas_round_trips() {
         our_settings: ConnectionSettings {
             parity: Parity::Odd,
             max_concurrent_requests: 64,
+            initial_channel_credit: 16,
         },
         peer_settings: ConnectionSettings {
             parity: Parity::Even,
             max_concurrent_requests: 64,
+            initial_channel_credit: 16,
         },
         peer_supports_retry: false,
         session_resume_key: None,
@@ -1119,6 +1121,7 @@ async fn schema_tracker_is_per_connection_not_per_session() {
             ConnectionSettings {
                 parity: Parity::Odd,
                 max_concurrent_requests: 64,
+                initial_channel_credit: 16,
             },
             vec![MetadataEntry::str("vox-service", "Echo")],
         )
@@ -1161,10 +1164,12 @@ async fn initiator_builder_customization_controls_allocated_connection_parity() 
                     our_settings: ConnectionSettings {
                         parity: Parity::Odd,
                         max_concurrent_requests: 32,
+                        initial_channel_credit: 16,
                     },
                     peer_settings: ConnectionSettings {
                         parity: Parity::Even,
                         max_concurrent_requests: 64,
+                        initial_channel_credit: 16,
                     },
                     peer_supports_retry: false,
                     session_resume_key: None,
@@ -1189,10 +1194,12 @@ async fn initiator_builder_customization_controls_allocated_connection_parity() 
             our_settings: ConnectionSettings {
                 parity: Parity::Even,
                 max_concurrent_requests: 64,
+                initial_channel_credit: 16,
             },
             peer_settings: ConnectionSettings {
                 parity: Parity::Odd,
                 max_concurrent_requests: 32,
+                initial_channel_credit: 16,
             },
             peer_supports_retry: false,
             session_resume_key: None,
@@ -1214,6 +1221,7 @@ async fn initiator_builder_customization_controls_allocated_connection_parity() 
             ConnectionSettings {
                 parity: Parity::Even,
                 max_concurrent_requests: 64,
+                initial_channel_credit: 16,
             },
             vec![MetadataEntry::str("vox-service", "Echo")],
         )
@@ -1240,10 +1248,12 @@ async fn acceptor_builder_customization_supports_opening_connections() {
                     our_settings: ConnectionSettings {
                         parity: Parity::Even,
                         max_concurrent_requests: 64,
+                        initial_channel_credit: 16,
                     },
                     peer_settings: ConnectionSettings {
                         parity: Parity::Odd,
                         max_concurrent_requests: 32,
+                        initial_channel_credit: 16,
                     },
                     peer_supports_retry: false,
                     session_resume_key: None,
@@ -1268,10 +1278,12 @@ async fn acceptor_builder_customization_supports_opening_connections() {
             our_settings: ConnectionSettings {
                 parity: Parity::Odd,
                 max_concurrent_requests: 32,
+                initial_channel_credit: 16,
             },
             peer_settings: ConnectionSettings {
                 parity: Parity::Even,
                 max_concurrent_requests: 64,
+                initial_channel_credit: 16,
             },
             peer_supports_retry: false,
             session_resume_key: None,
@@ -1293,6 +1305,7 @@ async fn acceptor_builder_customization_supports_opening_connections() {
             ConnectionSettings {
                 parity: Parity::Odd,
                 max_concurrent_requests: 64,
+                initial_channel_credit: 16,
             },
             vec![MetadataEntry::str("vox-service", "Echo")],
         )
@@ -1502,6 +1515,73 @@ async fn grant_credit_unblocks_driver_created_tx_channel() {
     assert!(
         send_result.is_ok(),
         "send should succeed after credit grant"
+    );
+}
+
+// r[verify rpc.flow-control.credit.initial]
+// r[verify rpc.flow-control.credit.exhaustion]
+#[tokio::test]
+async fn configured_channel_capacity_controls_initial_credit() {
+    let (client_conduit, server_conduit) = message_conduit_pair();
+    let mut server_handshake = test_acceptor_handshake();
+    server_handshake.our_settings.initial_channel_credit = 2;
+    server_handshake.peer_settings.initial_channel_credit = 2;
+    let mut client_handshake = test_initiator_handshake();
+    client_handshake.our_settings.initial_channel_credit = 2;
+    client_handshake.peer_settings.initial_channel_credit = 2;
+
+    let server_task = moire::task::spawn(
+        async move {
+            acceptor_conduit(server_conduit, server_handshake)
+                .establish::<NoopClient>()
+                .await
+                .expect("server handshake failed")
+        }
+        .named("server_setup"),
+    );
+
+    let client_caller = initiator_conduit(client_conduit, client_handshake)
+        .establish::<NoopClient>()
+        .await
+        .expect("client handshake failed");
+    let client_sender = client_caller.caller.driver().connection_sender().clone();
+
+    let server_caller = server_task.await.expect("server setup failed");
+    let (channel_id, sink) = server_caller.caller.driver().create_tx_channel();
+
+    for _ in 0..2 {
+        let value = 0_u32;
+        sink.send_payload(Payload::outgoing(&value))
+            .await
+            .expect("send within configured initial credit");
+    }
+
+    let send_task = moire::task::spawn(async move {
+        let value = 42_u32;
+        sink.send_payload(Payload::outgoing(&value)).await
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    assert!(
+        !send_task.is_finished(),
+        "third send should block when configured credit is exhausted"
+    );
+
+    client_sender
+        .send(crate::session::ConnectionMessage::Channel(ChannelMessage {
+            id: channel_id,
+            body: ChannelBody::GrantCredit(ChannelGrantCredit { additional: 1 }),
+        }))
+        .await
+        .expect("send grant credit");
+
+    let send_result = tokio::time::timeout(std::time::Duration::from_millis(200), send_task)
+        .await
+        .expect("timed out waiting for send to unblock")
+        .expect("send task join");
+    assert!(
+        send_result.is_ok(),
+        "send should succeed after configured credit is replenished"
     );
 }
 
@@ -1724,6 +1804,7 @@ async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() 
                             ConnectionSettings {
                                 parity: Parity::Odd,
                                 max_concurrent_requests: 64,
+                                initial_channel_credit: 16,
                             },
                             vec![MetadataEntry::str("vox-service", "Echo")],
                         )
@@ -1782,6 +1863,7 @@ async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() 
             ConnectionSettings {
                 parity: Parity::Odd,
                 max_concurrent_requests: 64,
+                initial_channel_credit: 16,
             },
             vec![MetadataEntry::str("vox-service", "Echo")],
         )

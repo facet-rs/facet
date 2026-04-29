@@ -18,8 +18,8 @@ use vox_types::{
     ChannelCreditReplenisherHandle, ChannelId, ChannelItem, ChannelLivenessHandle, ChannelMessage,
     ChannelRetryMode, ChannelSink, CreditSink, Handler, IdAllocator, IncomingChannelMessage,
     MaybeSend, MaybeSync, Payload, ReplySink, RequestBody, RequestCall, RequestId, RequestMessage,
-    RequestResponse, SelfRef, TxError, VoxError, ensure_operation_id, metadata_channel_retry_mode,
-    metadata_operation_id,
+    RequestResponse, SelfRef, TrySendError, TxError, VoxError, ensure_operation_id,
+    metadata_channel_retry_mode, metadata_operation_id,
 };
 
 use crate::session::{
@@ -315,6 +315,10 @@ struct DriverShared {
     /// would send a ChannelClose message for a channel the peer no longer knows about.
     /// We suppress those Close messages by checking this set.
     stale_close_channels: SyncMutex<std::collections::HashSet<ChannelId>>,
+    // r[impl rpc.flow-control.credit.initial]
+    local_initial_channel_credit: u32,
+    // r[impl rpc.flow-control.credit.initial]
+    peer_initial_channel_credit: u32,
 }
 
 struct CallerDropGuard {
@@ -608,6 +612,27 @@ impl ChannelSink for DriverChannelSink {
         })
     }
 
+    // r[impl rpc.flow-control.credit.try-send]
+    fn try_send_payload<'payload>(
+        &self,
+        payload: Payload<'payload>,
+    ) -> Result<(), TrySendError<()>> {
+        if self
+            .shared
+            .terminal_channels
+            .lock()
+            .contains(&self.channel_id)
+        {
+            return Err(TrySendError::Closed(()));
+        }
+
+        self.sender
+            .try_send(ConnectionMessage::Channel(ChannelMessage {
+                id: self.channel_id,
+                body: ChannelBody::Item(ChannelItem { item: payload }),
+            }))
+    }
+
     fn close_channel(
         &self,
         _metadata: vox_types::Metadata,
@@ -869,17 +894,15 @@ struct DriverChannelBinder {
     drop_guard: Option<Arc<CallerDropGuard>>,
 }
 
-/// Default initial credit for all channels.
-const DEFAULT_CHANNEL_CREDIT: u32 = 16;
-
 fn register_rx_channel_impl(
     shared: &Arc<DriverShared>,
     channel_id: ChannelId,
     queue_name: &'static str,
+    initial_channel_credit: u32,
     liveness: Option<ChannelLivenessHandle>,
     local_control_tx: mpsc::UnboundedSender<DriverLocalControl>,
 ) -> vox_types::BoundChannelReceiver {
-    let (tx, rx) = mpsc::channel(queue_name, 64);
+    let (tx, rx) = mpsc::channel(queue_name, initial_channel_credit as usize);
 
     let mut terminal_buffered = false;
     {
@@ -929,7 +952,7 @@ fn register_rx_channel_impl(
         liveness,
         replenisher: Some(Arc::new(DriverChannelCreditReplenisher::new(
             channel_id,
-            DEFAULT_CHANNEL_CREDIT,
+            initial_channel_credit,
             local_control_tx,
         )) as ChannelCreditReplenisherHandle),
     }
@@ -944,7 +967,10 @@ impl DriverChannelBinder {
             channel_id,
             local_control_tx: self.local_control_tx.clone(),
         };
-        let sink = Arc::new(CreditSink::new(inner, DEFAULT_CHANNEL_CREDIT));
+        let sink = Arc::new(CreditSink::new(
+            inner,
+            self.shared.peer_initial_channel_credit,
+        ));
         self.shared
             .channel_credits
             .lock()
@@ -957,6 +983,7 @@ impl DriverChannelBinder {
             &self.shared,
             channel_id,
             "driver.register_rx_channel",
+            self.shared.local_initial_channel_credit,
             self.channel_liveness(),
             self.local_control_tx.clone(),
         )
@@ -982,7 +1009,10 @@ impl ChannelBinder for DriverChannelBinder {
             channel_id,
             local_control_tx: self.local_control_tx.clone(),
         };
-        let sink = Arc::new(CreditSink::new(inner, DEFAULT_CHANNEL_CREDIT));
+        let sink = Arc::new(CreditSink::new(
+            inner,
+            self.shared.peer_initial_channel_credit,
+        ));
         self.shared
             .channel_credits
             .lock()
@@ -1029,7 +1059,10 @@ impl DriverCaller {
             channel_id,
             local_control_tx: self.local_control_tx.clone(),
         };
-        let sink = Arc::new(CreditSink::new(inner, DEFAULT_CHANNEL_CREDIT));
+        let sink = Arc::new(CreditSink::new(
+            inner,
+            self.shared.peer_initial_channel_credit,
+        ));
         self.shared
             .channel_credits
             .lock()
@@ -1055,6 +1088,7 @@ impl DriverCaller {
             &self.shared,
             channel_id,
             "driver.caller.register_rx_channel",
+            self.shared.local_initial_channel_credit,
             self.channel_liveness(),
             self.local_control_tx.clone(),
         )
@@ -1080,7 +1114,10 @@ impl ChannelBinder for DriverCaller {
             channel_id,
             local_control_tx: self.local_control_tx.clone(),
         };
-        let sink = Arc::new(CreditSink::new(inner, DEFAULT_CHANNEL_CREDIT));
+        let sink = Arc::new(CreditSink::new(
+            inner,
+            self.shared.peer_initial_channel_credit,
+        ));
         self.shared
             .channel_credits
             .lock()
@@ -1380,6 +1417,8 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             control_tx,
             closed_rx,
             resumed_rx,
+            local_settings,
+            peer_settings,
             parity,
             peer_supports_retry,
         } = handle;
@@ -1410,6 +1449,8 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                     "driver.stale_close_channels",
                     std::collections::HashSet::new(),
                 ),
+                local_initial_channel_credit: local_settings.initial_channel_credit,
+                peer_initial_channel_credit: peer_settings.initial_channel_credit,
             }),
             in_flight_handlers: BTreeMap::new(),
             handler_futs: FuturesUnordered::new(),

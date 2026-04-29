@@ -28,14 +28,17 @@ export function parityEven(): Parity {
   return { tag: "Even" };
 }
 
-export function connectionSettings(parity: Parity, maxConcurrentRequests: number): ConnectionSettings {
+export function connectionSettings(
+  parity: Parity,
+  maxConcurrentRequests: number,
+  initialChannelCredit = 16,
+): ConnectionSettings {
   return {
     parity,
     max_concurrent_requests: maxConcurrentRequests,
+    initial_channel_credit: initialChannelCredit,
   };
 }
-
-
 
 export function metadataString(value: string): MetadataValue {
   return { tag: "String", value };

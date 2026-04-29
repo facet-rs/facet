@@ -108,6 +108,7 @@ async function resumeWhenReady(
   const settings: ConnectionSettings = {
     parity: isInitiator ? { tag: "Odd" } : { tag: "Even" },
     max_concurrent_requests: 64,
+    initial_channel_credit: 16,
   };
   const resumeKey = handle.sessionResumeKey();
   const handshake = isInitiator
@@ -137,8 +138,16 @@ async function establishPair(
   serverLink: MemoryLink,
   opts: { resumable?: boolean } = {},
 ): Promise<[Session, Session]> {
-  const clientSettings: ConnectionSettings = { parity: { tag: "Odd" }, max_concurrent_requests: 64 };
-  const serverSettings: ConnectionSettings = { parity: { tag: "Even" }, max_concurrent_requests: 64 };
+  const clientSettings: ConnectionSettings = {
+    parity: { tag: "Odd" },
+    max_concurrent_requests: 64,
+    initial_channel_credit: 16,
+  };
+  const serverSettings: ConnectionSettings = {
+    parity: { tag: "Even" },
+    max_concurrent_requests: 64,
+    initial_channel_credit: 16,
+  };
   const [clientHandshake, serverHandshake] = await Promise.all([
     handshakeAsInitiator(clientLink, clientSettings),
     handshakeAsAcceptor(serverLink, serverSettings, true, opts.resumable ?? false),
@@ -498,6 +507,7 @@ describe("session resumption", () => {
     const settings: ConnectionSettings = {
       parity: { tag: "Odd" },
       max_concurrent_requests: 64,
+      initial_channel_credit: 16,
     };
     const sent: Message[] = [];
     const fakeSession = {
@@ -581,8 +591,16 @@ describe("session resumption", () => {
       },
     };
 
-    const clientSettings: ConnectionSettings = { parity: { tag: "Odd" }, max_concurrent_requests: 64 };
-    const serverSettings: ConnectionSettings = { parity: { tag: "Even" }, max_concurrent_requests: 64 };
+    const clientSettings: ConnectionSettings = {
+      parity: { tag: "Odd" },
+      max_concurrent_requests: 64,
+      initial_channel_credit: 16,
+    };
+    const serverSettings: ConnectionSettings = {
+      parity: { tag: "Even" },
+      max_concurrent_requests: 64,
+      initial_channel_credit: 16,
+    };
     const [clientHandshake, serverHandshake] = await Promise.all([
       handshakeAsInitiator(clientLink1, clientSettings),
       handshakeAsAcceptor(serverLink1, serverSettings, true, true),

@@ -292,8 +292,16 @@ describe("retry operation identity", () => {
       },
     };
 
-    const clientSettings: ConnectionSettings = { parity: { tag: "Odd" }, max_concurrent_requests: 64 };
-    const serverSettings: ConnectionSettings = { parity: { tag: "Even" }, max_concurrent_requests: 64 };
+    const clientSettings: ConnectionSettings = {
+      parity: { tag: "Odd" },
+      max_concurrent_requests: 64,
+      initial_channel_credit: 16,
+    };
+    const serverSettings: ConnectionSettings = {
+      parity: { tag: "Even" },
+      max_concurrent_requests: 64,
+      initial_channel_credit: 16,
+    };
     const [clientHandshake, serverHandshake] = await Promise.all([
       handshakeAsInitiator(clientLink, clientSettings),
       handshakeAsAcceptor(serverLink, serverSettings),
@@ -339,8 +347,16 @@ describe("retry operation identity", () => {
       },
     };
 
-    const clientSettings: ConnectionSettings = { parity: { tag: "Odd" }, max_concurrent_requests: 64 };
-    const serverSettings: ConnectionSettings = { parity: { tag: "Even" }, max_concurrent_requests: 64 };
+    const clientSettings: ConnectionSettings = {
+      parity: { tag: "Odd" },
+      max_concurrent_requests: 64,
+      initial_channel_credit: 16,
+    };
+    const serverSettings: ConnectionSettings = {
+      parity: { tag: "Even" },
+      max_concurrent_requests: 64,
+      initial_channel_credit: 16,
+    };
     const [clientHandshake, serverHandshake] = await Promise.all([
       handshakeAsInitiator(clientLink, clientSettings),
       handshakeAsAcceptor(serverLink, serverSettings),
@@ -389,8 +405,16 @@ describe("retry operation identity", () => {
       },
     };
 
-    const clientSettings: ConnectionSettings = { parity: { tag: "Odd" }, max_concurrent_requests: 64 };
-    const serverSettings: ConnectionSettings = { parity: { tag: "Even" }, max_concurrent_requests: 64 };
+    const clientSettings: ConnectionSettings = {
+      parity: { tag: "Odd" },
+      max_concurrent_requests: 64,
+      initial_channel_credit: 16,
+    };
+    const serverSettings: ConnectionSettings = {
+      parity: { tag: "Even" },
+      max_concurrent_requests: 64,
+      initial_channel_credit: 16,
+    };
     const [clientHandshake, serverHandshake] = await Promise.all([
       handshakeAsInitiator(clientLink, clientSettings),
       handshakeAsAcceptor(serverLink, serverSettings),

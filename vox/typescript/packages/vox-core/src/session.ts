@@ -138,6 +138,7 @@ export interface ReconnectPolicy {
 
 export interface SessionBuilderOptions {
   maxConcurrentRequests?: number;
+  channelCapacity?: number;
   metadata?: Metadata;
   onConnection?: (connection: ConnectionHandle) => void | Promise<void>;
   resumable?: boolean;
@@ -222,6 +223,16 @@ export interface SessionTransportOptions extends SessionBuilderOptions {
   conduit?: SessionConduitKind;
 }
 
+const DEFAULT_CHANNEL_CAPACITY = 16;
+
+function channelCapacityFromOptions(options: SessionBuilderOptions): number {
+  const channelCapacity = options.channelCapacity ?? DEFAULT_CHANNEL_CAPACITY;
+  if (channelCapacity <= 0) {
+    throw SessionError.protocol("initial_channel_credit must be greater than zero");
+  }
+  return channelCapacity;
+}
+
 type SessionTransport = Link | LinkSource;
 
 function isLinkSource(value: SessionTransport): value is LinkSource {
@@ -277,6 +288,7 @@ async function makeInitiatorEstablishedTransport(
   const localSettings: ConnectionSettings = {
     parity: { tag: "Odd" },
     max_concurrent_requests: options.maxConcurrentRequests ?? 64,
+    initial_channel_credit: channelCapacityFromOptions(options),
   };
 
   if (isLinkSource(transport)) {
@@ -417,6 +429,7 @@ async function makeAcceptorEstablishedTransport(
   const localSettings: ConnectionSettings = {
     parity: { tag: "Even" },
     max_concurrent_requests: options.maxConcurrentRequests ?? 64,
+    initial_channel_credit: channelCapacityFromOptions(options),
   };
 
   const handshake = await handshakeAsAcceptor(
@@ -536,6 +549,7 @@ class SessionCore {
     return {
       parity: this.localRootSettings.parity,
       max_concurrent_requests: this.localRootSettings.max_concurrent_requests,
+      initial_channel_credit: this.localRootSettings.initial_channel_credit,
     };
   }
 
@@ -623,6 +637,10 @@ class SessionCore {
   ): Promise<ConnectionHandle> {
     // r[impl connection.open]
     this.assertConnected("resume before opening connections");
+    if (settings.initial_channel_credit <= 0) {
+      throw SessionError.protocol("initial_channel_credit must be greater than zero");
+    }
+
     const connectionId = this.allocateConnectionId();
     const result = deferred<ConnectionHandle>();
     this.pendingConnections.set(connectionId, {
@@ -923,9 +941,18 @@ class SessionCore {
       return;
     }
 
+    if (value.connection_settings.initial_channel_credit <= 0) {
+      await this.sendMessage({
+        connection_id: connectionId,
+        payload: { tag: "ConnectionReject", value: { metadata: [] } },
+      });
+      return;
+    }
+
     const localSettings: ConnectionSettings = {
       parity: oppositeParity(value.connection_settings.parity),
-      max_concurrent_requests: this.localRootSettings.max_concurrent_requests,
+      max_concurrent_requests: value.connection_settings.max_concurrent_requests,
+      initial_channel_credit: value.connection_settings.initial_channel_credit,
     };
     const connection = new ConnectionHandle(
       this,
@@ -1698,6 +1725,7 @@ export const session = {
     const localSettings: ConnectionSettings = {
       parity: { tag: "Odd" },
       max_concurrent_requests: options.maxConcurrentRequests ?? 64,
+      initial_channel_credit: channelCapacityFromOptions(options),
     };
     const handshake = await handshakeAsInitiator(link, localSettings, true, null, options.metadata ?? []);
     return Session.initiatorConduit(
@@ -1714,6 +1742,7 @@ export const session = {
     const localSettings: ConnectionSettings = {
       parity: { tag: "Even" },
       max_concurrent_requests: options.maxConcurrentRequests ?? 64,
+      initial_channel_credit: channelCapacityFromOptions(options),
     };
     const handshake = await handshakeAsAcceptor(link, localSettings, true, false, null, options.metadata ?? []);
     return Session.initiatorConduit(
@@ -1831,10 +1860,19 @@ export const session = {
     return session.acceptorOrResume(established.conduit, established.handshake, registry, options);
   },
 
-  rootSettings(role: Role, maxConcurrentRequests = 64): ConnectionSettings {
+  rootSettings(
+    role: Role,
+    maxConcurrentRequests = 64,
+    channelCapacity = DEFAULT_CHANNEL_CAPACITY,
+  ): ConnectionSettings {
+    if (channelCapacity <= 0) {
+      throw SessionError.protocol("initial_channel_credit must be greater than zero");
+    }
+
     return {
       parity: parityFromRole(role),
       max_concurrent_requests: maxConcurrentRequests,
+      initial_channel_credit: channelCapacity,
     };
   },
 };

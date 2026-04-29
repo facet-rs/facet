@@ -9,8 +9,8 @@ use std::{
 use moire::sync::mpsc;
 use moire::time;
 use vox_types::{
-    Conduit, ConnectionSettings, HandshakeResult, Link, MaybeSend, MaybeSync, MessageFamily,
-    Metadata, Parity, SessionResumeKey, SplitLink, metadata_into_owned,
+    Conduit, ConnectionSettings, DEFAULT_INITIAL_CHANNEL_CREDIT, HandshakeResult, Link, MaybeSend,
+    MaybeSync, MessageFamily, Metadata, Parity, SessionResumeKey, SplitLink, metadata_into_owned,
 };
 
 use crate::{Attachment, LinkSource, StableConduit};
@@ -228,6 +228,7 @@ impl Default for SessionConfig<'_> {
         Self::with_settings(ConnectionSettings {
             parity: Parity::Odd,
             max_concurrent_requests: 64,
+            initial_channel_credit: DEFAULT_INITIAL_CHANNEL_CREDIT,
         })
     }
 }
@@ -260,6 +261,11 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
 
     pub fn keepalive(mut self, keepalive: SessionKeepaliveConfig) -> Self {
         self.config.keepalive = Some(keepalive);
+        self
+    }
+
+    pub fn channel_capacity(mut self, channel_capacity: u32) -> Self {
+        self.config.root_settings.initial_channel_credit = channel_capacity;
         self
     }
 
@@ -414,6 +420,11 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
 
     pub fn max_concurrent_requests(mut self, max_concurrent_requests: u32) -> Self {
         self.config.root_settings.max_concurrent_requests = max_concurrent_requests;
+        self
+    }
+
+    pub fn channel_capacity(mut self, channel_capacity: u32) -> Self {
+        self.config.root_settings.initial_channel_credit = channel_capacity;
         self
     }
 
@@ -611,6 +622,11 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
 
     pub fn max_concurrent_requests(mut self, max_concurrent_requests: u32) -> Self {
         self.config.root_settings.max_concurrent_requests = max_concurrent_requests;
+        self
+    }
+
+    pub fn channel_capacity(mut self, channel_capacity: u32) -> Self {
+        self.config.root_settings.initial_channel_credit = channel_capacity;
         self
     }
 
@@ -954,6 +970,11 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
         self
     }
 
+    pub fn channel_capacity(mut self, channel_capacity: u32) -> Self {
+        self.config.root_settings.initial_channel_credit = channel_capacity;
+        self
+    }
+
     pub fn connect_timeout(mut self, timeout: std::time::Duration) -> Self {
         self.config.connect_timeout = Some(timeout);
         self
@@ -1123,6 +1144,7 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
             config: SessionConfig::with_settings(ConnectionSettings {
                 parity: Parity::Even,
                 max_concurrent_requests: 64,
+                initial_channel_credit: DEFAULT_INITIAL_CHANNEL_CREDIT,
             }),
         }
     }
@@ -1134,6 +1156,11 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
 
     pub fn max_concurrent_requests(mut self, max_concurrent_requests: u32) -> Self {
         self.config.root_settings.max_concurrent_requests = max_concurrent_requests;
+        self
+    }
+
+    pub fn channel_capacity(mut self, channel_capacity: u32) -> Self {
+        self.config.root_settings.initial_channel_credit = channel_capacity;
         self
     }
 
@@ -1330,6 +1357,14 @@ fn validate_negotiated_root_settings(
     expected_root_settings: &ConnectionSettings,
     handshake_result: &HandshakeResult,
 ) -> Result<(), SessionError> {
+    if expected_root_settings.initial_channel_credit == 0
+        || handshake_result.peer_settings.initial_channel_credit == 0
+    {
+        return Err(SessionError::Protocol(
+            "initial_channel_credit must be greater than zero".into(),
+        ));
+    }
+
     if handshake_result.our_settings != *expected_root_settings {
         return Err(SessionError::Protocol(
             "negotiated root settings do not match builder settings".into(),

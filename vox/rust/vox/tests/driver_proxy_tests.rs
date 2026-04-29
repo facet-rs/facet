@@ -40,6 +40,7 @@ impl vox::ConnectionAcceptor for ProxyAcceptor {
                     ConnectionSettings {
                         parity: Parity::Odd,
                         max_concurrent_requests: 64,
+                        initial_channel_credit: 16,
                     },
                     vec![MetadataEntry::str("vox-service", "Echo")],
                 )
@@ -102,6 +103,7 @@ async fn proxy_connections_forwards_calls() {
             ConnectionSettings {
                 parity: Parity::Odd,
                 max_concurrent_requests: 64,
+                initial_channel_credit: 16,
             },
             vec![MetadataEntry::str("vox-service", "Echo")],
         )

@@ -297,6 +297,7 @@ fn main() {
     let conn_settings = ConnectionSettings {
         parity: Parity::Odd,
         max_concurrent_requests: 64,
+        initial_channel_credit: 16,
     };
     let meta = sample_metadata();
 
@@ -332,6 +333,7 @@ fn main() {
                 connection_settings: ConnectionSettings {
                     parity: Parity::Even,
                     max_concurrent_requests: 96,
+                    initial_channel_credit: 16,
                 },
                 metadata: meta.clone(),
             }),
