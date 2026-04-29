@@ -109,6 +109,38 @@ struct TestbedService: TestbedHandler {
         log("transform complete")
     }
 
+    func postReplyGenerate(output: Tx<Int32>) async throws {
+        log("postReplyGenerate called")
+        Task {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+            for i in 0..<Int32(5) {
+                do {
+                    try await output.send(i)
+                } catch {
+                    log("postReplyGenerate send failed: \(error)")
+                    break
+                }
+            }
+            output.close()
+        }
+    }
+
+    func postReplySum(input: Rx<Int32>, result: Tx<Int64>) async throws {
+        log("postReplySum called")
+        Task {
+            var total: Int64 = 0
+            do {
+                for try await n in input {
+                    total += Int64(n)
+                }
+                try await result.send(total)
+            } catch {
+                log("postReplySum failed: \(error)")
+            }
+            result.close()
+        }
+    }
+
     func echoPoint(point: Point) async throws -> Point {
         return point
     }

@@ -7,6 +7,10 @@ public let VoxSwiftStatusPanic: VoxSwiftStatus = -3
 
 public let VoxSwiftTypeDescriptorMagic: UInt64 = 0x564F_5853_5746_5431
 public let VoxSwiftTypeDescriptorAbiVersion: UInt32 = 1
+public let VoxSwiftCodecConfigAbiVersion: UInt32 = 1
+
+public let VoxSwiftCodecDirectionArgs: UInt32 = 0
+public let VoxSwiftCodecDirectionResponse: UInt32 = 1
 
 public let VoxSwiftTypeKindPrimitive: UInt32 = 0
 public let VoxSwiftTypeKindStruct: UInt32 = 1
@@ -41,252 +45,420 @@ public let VoxSwiftTypeFlagFixedLayout: UInt32 = 1 << 3
 
 public let VoxSwiftFieldFlagHasDefault: UInt32 = 1 << 0
 
-public typealias VoxSwiftDestroyFn = @convention(c) (
+public typealias VoxSwiftDestroyFn =
+  @convention(c) (
     _ value: UnsafeMutableRawPointer?,
     _ context: UnsafeRawPointer?
-) -> Void
+  ) -> Void
 
-public typealias VoxSwiftCopyInitFn = @convention(c) (
+public typealias VoxSwiftCopyInitFn =
+  @convention(c) (
     _ dst: UnsafeMutableRawPointer?,
     _ src: UnsafeRawPointer?,
     _ context: UnsafeRawPointer?
-) -> VoxSwiftStatus
+  ) -> VoxSwiftStatus
 
-public typealias VoxSwiftTakeInitFn = @convention(c) (
+public typealias VoxSwiftTakeInitFn =
+  @convention(c) (
     _ dst: UnsafeMutableRawPointer?,
     _ src: UnsafeMutableRawPointer?,
     _ context: UnsafeRawPointer?
-) -> VoxSwiftStatus
+  ) -> VoxSwiftStatus
 
-public typealias VoxSwiftDefaultInitFn = @convention(c) (
+public typealias VoxSwiftDefaultInitFn =
+  @convention(c) (
     _ dst: UnsafeMutableRawPointer?,
     _ context: UnsafeRawPointer?
-) -> VoxSwiftStatus
+  ) -> VoxSwiftStatus
 
-public typealias VoxSwiftEnumFieldVisitorFn = @convention(c) (
+public typealias VoxSwiftEnumFieldVisitorFn =
+  @convention(c) (
     _ visitorContext: UnsafeMutableRawPointer?,
     _ fieldIndex: Int,
     _ fieldPtr: UnsafeRawPointer?
-) -> VoxSwiftStatus
+  ) -> VoxSwiftStatus
 
-public typealias VoxSwiftEnumTagFn = @convention(c) (
+public typealias VoxSwiftEnumTagFn =
+  @convention(c) (
     _ value: UnsafeRawPointer?,
     _ context: UnsafeRawPointer?
-) -> UInt32
+  ) -> UInt32
 
-public typealias VoxSwiftEnumProjectFn = @convention(c) (
+public typealias VoxSwiftEnumProjectFn =
+  @convention(c) (
     _ value: UnsafeRawPointer?,
     _ variantIndex: UInt32,
     _ visitorContext: UnsafeMutableRawPointer?,
     _ visitor: VoxSwiftEnumFieldVisitorFn?,
     _ context: UnsafeRawPointer?
-) -> VoxSwiftStatus
+  ) -> VoxSwiftStatus
 
-public typealias VoxSwiftEnumInjectFn = @convention(c) (
+public typealias VoxSwiftEnumInjectFn =
+  @convention(c) (
     _ dst: UnsafeMutableRawPointer?,
     _ variantIndex: UInt32,
     _ fieldValues: UnsafePointer<UnsafeRawPointer?>?,
     _ fieldCount: Int,
     _ context: UnsafeRawPointer?
-) -> VoxSwiftStatus
+  ) -> VoxSwiftStatus
 
 @frozen
 public struct VoxSwiftBytes {
-    public var ptr: UnsafePointer<UInt8>?
-    public var len: Int
+  public var ptr: UnsafePointer<UInt8>?
+  public var len: Int
 
-    public init(ptr: UnsafePointer<UInt8>?, len: Int) {
-        self.ptr = ptr
-        self.len = len
-    }
+  public init(ptr: UnsafePointer<UInt8>?, len: Int) {
+    self.ptr = ptr
+    self.len = len
+  }
 
-    public static var empty: Self {
-        .init(ptr: nil, len: 0)
-    }
+  public static var empty: Self {
+    .init(ptr: nil, len: 0)
+  }
+
+  public static func staticString(_ value: StaticString) -> Self {
+    .init(ptr: value.utf8Start, len: value.utf8CodeUnitCount)
+  }
+}
+
+@frozen
+public struct VoxSwiftOwnedBytes {
+  public var ptr: UnsafeMutablePointer<UInt8>?
+  public var len: Int
+  public var capacity: Int
+
+  public init(ptr: UnsafeMutablePointer<UInt8>?, len: Int, capacity: Int) {
+    self.ptr = ptr
+    self.len = len
+    self.capacity = capacity
+  }
+
+  public static var empty: Self {
+    .init(ptr: nil, len: 0, capacity: 0)
+  }
 }
 
 @frozen
 public struct VoxSwiftValueWitnesses {
-    public var destroy: VoxSwiftDestroyFn?
-    public var copyInit: VoxSwiftCopyInitFn?
-    public var takeInit: VoxSwiftTakeInitFn?
-    public var defaultInit: VoxSwiftDefaultInitFn?
+  public var destroy: VoxSwiftDestroyFn?
+  public var copyInit: VoxSwiftCopyInitFn?
+  public var takeInit: VoxSwiftTakeInitFn?
+  public var defaultInit: VoxSwiftDefaultInitFn?
 
-    public init(
-        destroy: VoxSwiftDestroyFn? = nil,
-        copyInit: VoxSwiftCopyInitFn? = nil,
-        takeInit: VoxSwiftTakeInitFn? = nil,
-        defaultInit: VoxSwiftDefaultInitFn? = nil
-    ) {
-        self.destroy = destroy
-        self.copyInit = copyInit
-        self.takeInit = takeInit
-        self.defaultInit = defaultInit
-    }
+  public init(
+    destroy: VoxSwiftDestroyFn? = nil,
+    copyInit: VoxSwiftCopyInitFn? = nil,
+    takeInit: VoxSwiftTakeInitFn? = nil,
+    defaultInit: VoxSwiftDefaultInitFn? = nil
+  ) {
+    self.destroy = destroy
+    self.copyInit = copyInit
+    self.takeInit = takeInit
+    self.defaultInit = defaultInit
+  }
 }
 
 @frozen
 public struct VoxSwiftEnumWitnesses {
-    public var tag: VoxSwiftEnumTagFn?
-    public var project: VoxSwiftEnumProjectFn?
-    public var inject: VoxSwiftEnumInjectFn?
+  public var tag: VoxSwiftEnumTagFn?
+  public var project: VoxSwiftEnumProjectFn?
+  public var inject: VoxSwiftEnumInjectFn?
 
-    public init(
-        tag: VoxSwiftEnumTagFn? = nil,
-        project: VoxSwiftEnumProjectFn? = nil,
-        inject: VoxSwiftEnumInjectFn? = nil
-    ) {
-        self.tag = tag
-        self.project = project
-        self.inject = inject
-    }
+  public init(
+    tag: VoxSwiftEnumTagFn? = nil,
+    project: VoxSwiftEnumProjectFn? = nil,
+    inject: VoxSwiftEnumInjectFn? = nil
+  ) {
+    self.tag = tag
+    self.project = project
+    self.inject = inject
+  }
 }
 
 @frozen
 public struct VoxSwiftFieldDescriptor {
-    public var name: VoxSwiftBytes
-    public var schemaId: UInt64
-    public var type: UnsafePointer<VoxSwiftTypeDescriptor>?
-    public var offset: Int
-    public var flags: UInt32
-    public var reserved: UInt32
+  public var name: VoxSwiftBytes
+  public var schemaId: UInt64
+  public var type: UnsafePointer<VoxSwiftTypeDescriptor>?
+  public var offset: Int
+  public var flags: UInt32
+  public var reserved: UInt32
 
-    public init(
-        name: VoxSwiftBytes,
-        schemaId: UInt64,
-        type: UnsafePointer<VoxSwiftTypeDescriptor>?,
-        offset: Int,
-        flags: UInt32 = 0
-    ) {
-        self.name = name
-        self.schemaId = schemaId
-        self.type = type
-        self.offset = offset
-        self.flags = flags
-        self.reserved = 0
-    }
+  public init(
+    name: VoxSwiftBytes,
+    schemaId: UInt64,
+    type: UnsafePointer<VoxSwiftTypeDescriptor>?,
+    offset: Int,
+    flags: UInt32 = 0
+  ) {
+    self.name = name
+    self.schemaId = schemaId
+    self.type = type
+    self.offset = offset
+    self.flags = flags
+    self.reserved = 0
+  }
 }
 
 @frozen
 public struct VoxSwiftVariantDescriptor {
-    public var name: VoxSwiftBytes
-    public var index: UInt32
-    public var reserved: UInt32
-    public var fields: UnsafePointer<VoxSwiftFieldDescriptor>?
-    public var fieldCount: Int
+  public var name: VoxSwiftBytes
+  public var index: UInt32
+  public var reserved: UInt32
+  public var fields: UnsafePointer<VoxSwiftFieldDescriptor>?
+  public var fieldCount: Int
 
-    public init(
-        name: VoxSwiftBytes,
-        index: UInt32,
-        fields: UnsafePointer<VoxSwiftFieldDescriptor>?,
-        fieldCount: Int
-    ) {
-        self.name = name
-        self.index = index
-        self.reserved = 0
-        self.fields = fields
-        self.fieldCount = fieldCount
-    }
+  public init(
+    name: VoxSwiftBytes,
+    index: UInt32,
+    fields: UnsafePointer<VoxSwiftFieldDescriptor>?,
+    fieldCount: Int
+  ) {
+    self.name = name
+    self.index = index
+    self.reserved = 0
+    self.fields = fields
+    self.fieldCount = fieldCount
+  }
 }
 
 @frozen
 public struct VoxSwiftTypeDescriptor {
-    public var magic: UInt64
-    public var abiVersion: UInt32
-    public var size: UInt32
-    public var kind: UInt32
-    public var primitiveKind: UInt32
-    public var flags: UInt32
-    public var schemaId: UInt64
-    public var typeMetadata: UnsafeRawPointer?
-    public var valueSize: Int
-    public var valueStride: Int
-    public var valueAlign: Int
-    public var typeArgs: UnsafePointer<UnsafePointer<VoxSwiftTypeDescriptor>?>?
-    public var typeArgCount: Int
-    public var fields: UnsafePointer<VoxSwiftFieldDescriptor>?
-    public var fieldCount: Int
-    public var variants: UnsafePointer<VoxSwiftVariantDescriptor>?
-    public var variantCount: Int
-    public var witnesses: VoxSwiftValueWitnesses
-    public var enumWitnesses: VoxSwiftEnumWitnesses
-    public var context: UnsafeRawPointer?
+  public var magic: UInt64
+  public var abiVersion: UInt32
+  public var size: UInt32
+  public var kind: UInt32
+  public var primitiveKind: UInt32
+  public var flags: UInt32
+  public var schemaId: UInt64
+  public var typeMetadata: UnsafeRawPointer?
+  public var valueSize: Int
+  public var valueStride: Int
+  public var valueAlign: Int
+  public var typeArgs: UnsafePointer<UnsafePointer<VoxSwiftTypeDescriptor>?>?
+  public var typeArgCount: Int
+  public var fields: UnsafePointer<VoxSwiftFieldDescriptor>?
+  public var fieldCount: Int
+  public var variants: UnsafePointer<VoxSwiftVariantDescriptor>?
+  public var variantCount: Int
+  public var witnesses: VoxSwiftValueWitnesses
+  public var enumWitnesses: VoxSwiftEnumWitnesses
+  public var context: UnsafeRawPointer?
 
-    public init(
-        kind: UInt32,
-        primitiveKind: UInt32 = VoxSwiftPrimitiveUnit,
-        flags: UInt32 = 0,
-        schemaId: UInt64,
-        typeMetadata: UnsafeRawPointer?,
-        valueSize: Int,
-        valueStride: Int,
-        valueAlign: Int,
-        typeArgs: UnsafePointer<UnsafePointer<VoxSwiftTypeDescriptor>?>? = nil,
-        typeArgCount: Int = 0,
-        fields: UnsafePointer<VoxSwiftFieldDescriptor>? = nil,
-        fieldCount: Int = 0,
-        variants: UnsafePointer<VoxSwiftVariantDescriptor>? = nil,
-        variantCount: Int = 0,
-        witnesses: VoxSwiftValueWitnesses = .init(),
-        enumWitnesses: VoxSwiftEnumWitnesses = .init(),
-        context: UnsafeRawPointer? = nil
-    ) {
-        self.magic = VoxSwiftTypeDescriptorMagic
-        self.abiVersion = VoxSwiftTypeDescriptorAbiVersion
-        self.size = UInt32(MemoryLayout<VoxSwiftTypeDescriptor>.stride)
-        self.kind = kind
-        self.primitiveKind = primitiveKind
-        self.flags = flags
-        self.schemaId = schemaId
-        self.typeMetadata = typeMetadata
-        self.valueSize = valueSize
-        self.valueStride = valueStride
-        self.valueAlign = valueAlign
-        self.typeArgs = typeArgs
-        self.typeArgCount = typeArgCount
-        self.fields = fields
-        self.fieldCount = fieldCount
-        self.variants = variants
-        self.variantCount = variantCount
-        self.witnesses = witnesses
-        self.enumWitnesses = enumWitnesses
-        self.context = context
+  public init(
+    kind: UInt32,
+    primitiveKind: UInt32 = VoxSwiftPrimitiveUnit,
+    flags: UInt32 = 0,
+    schemaId: UInt64,
+    typeMetadata: UnsafeRawPointer?,
+    valueSize: Int,
+    valueStride: Int,
+    valueAlign: Int,
+    typeArgs: UnsafePointer<UnsafePointer<VoxSwiftTypeDescriptor>?>? = nil,
+    typeArgCount: Int = 0,
+    fields: UnsafePointer<VoxSwiftFieldDescriptor>? = nil,
+    fieldCount: Int = 0,
+    variants: UnsafePointer<VoxSwiftVariantDescriptor>? = nil,
+    variantCount: Int = 0,
+    witnesses: VoxSwiftValueWitnesses = .init(),
+    enumWitnesses: VoxSwiftEnumWitnesses = .init(),
+    context: UnsafeRawPointer? = nil
+  ) {
+    self.magic = VoxSwiftTypeDescriptorMagic
+    self.abiVersion = VoxSwiftTypeDescriptorAbiVersion
+    self.size = UInt32(MemoryLayout<VoxSwiftTypeDescriptor>.stride)
+    self.kind = kind
+    self.primitiveKind = primitiveKind
+    self.flags = flags
+    self.schemaId = schemaId
+    self.typeMetadata = typeMetadata
+    self.valueSize = valueSize
+    self.valueStride = valueStride
+    self.valueAlign = valueAlign
+    self.typeArgs = typeArgs
+    self.typeArgCount = typeArgCount
+    self.fields = fields
+    self.fieldCount = fieldCount
+    self.variants = variants
+    self.variantCount = variantCount
+    self.witnesses = witnesses
+    self.enumWitnesses = enumWitnesses
+    self.context = context
+  }
+
+  public static func concrete<T>(
+    of type: T.Type = T.self,
+    kind: UInt32,
+    primitiveKind: UInt32 = VoxSwiftPrimitiveUnit,
+    flags: UInt32 = 0,
+    schemaId: UInt64,
+    typeArgs: UnsafePointer<UnsafePointer<VoxSwiftTypeDescriptor>?>? = nil,
+    typeArgCount: Int = 0,
+    fields: UnsafePointer<VoxSwiftFieldDescriptor>? = nil,
+    fieldCount: Int = 0,
+    variants: UnsafePointer<VoxSwiftVariantDescriptor>? = nil,
+    variantCount: Int = 0,
+    witnesses: VoxSwiftValueWitnesses = .init(),
+    enumWitnesses: VoxSwiftEnumWitnesses = .init(),
+    context: UnsafeRawPointer? = nil
+  ) -> Self {
+    .init(
+      kind: kind,
+      primitiveKind: primitiveKind,
+      flags: flags,
+      schemaId: schemaId,
+      typeMetadata: unsafeBitCast(type, to: UnsafeRawPointer.self),
+      valueSize: MemoryLayout<T>.size,
+      valueStride: MemoryLayout<T>.stride,
+      valueAlign: MemoryLayout<T>.alignment,
+      typeArgs: typeArgs,
+      typeArgCount: typeArgCount,
+      fields: fields,
+      fieldCount: fieldCount,
+      variants: variants,
+      variantCount: variantCount,
+      witnesses: witnesses,
+      enumWitnesses: enumWitnesses,
+      context: context
+    )
+  }
+}
+
+@frozen
+public struct VoxSwiftMethodValueDescriptorInfo {
+  public var argsRoot: UnsafePointer<VoxSwiftTypeDescriptor>
+  public var responseRoot: UnsafePointer<VoxSwiftTypeDescriptor>
+
+  public init(
+    argsRoot: UnsafePointer<VoxSwiftTypeDescriptor>,
+    responseRoot: UnsafePointer<VoxSwiftTypeDescriptor>
+  ) {
+    self.argsRoot = argsRoot
+    self.responseRoot = responseRoot
+  }
+}
+
+@frozen
+public struct VoxSwiftCodecConfig {
+  public var abiVersion: UInt32
+  public var size: UInt32
+  public var methodId: UInt64
+  public var direction: UInt32
+  public var localRoot: UnsafePointer<VoxSwiftTypeDescriptor>?
+  public var remoteSchemaCbor: VoxSwiftBytes
+
+  public init(
+    methodId: UInt64,
+    direction: UInt32,
+    localRoot: UnsafePointer<VoxSwiftTypeDescriptor>?,
+    remoteSchemaCbor: VoxSwiftBytes
+  ) {
+    self.abiVersion = VoxSwiftCodecConfigAbiVersion
+    self.size = UInt32(MemoryLayout<VoxSwiftCodecConfig>.stride)
+    self.methodId = methodId
+    self.direction = direction
+    self.localRoot = localRoot
+    self.remoteSchemaCbor = remoteSchemaCbor
+  }
+}
+
+public final class VoxSwiftDescriptorRegistry: @unchecked Sendable {
+  public private(set) var bySchemaId: [UInt64: UnsafePointer<VoxSwiftTypeDescriptor>] = [:]
+  public private(set) var methodById: [UInt64: VoxSwiftMethodValueDescriptorInfo] = [:]
+
+  private var cleanups: [() -> Void] = []
+
+  public init() {}
+
+  deinit {
+    for cleanup in cleanups.reversed() {
+      cleanup()
+    }
+  }
+
+  public func insert(_ descriptor: VoxSwiftTypeDescriptor) -> UnsafePointer<VoxSwiftTypeDescriptor>
+  {
+    let ptr = allocateOne(descriptor)
+    bySchemaId[descriptor.schemaId] = ptr
+    return ptr
+  }
+
+  public func reserveDescriptor() -> UnsafeMutablePointer<VoxSwiftTypeDescriptor> {
+    allocateOneMutable(
+      VoxSwiftTypeDescriptor(
+        kind: VoxSwiftTypeKindOpaque,
+        schemaId: 0,
+        typeMetadata: nil,
+        valueSize: 0,
+        valueStride: 0,
+        valueAlign: 1
+      )
+    )
+  }
+
+  public func defineDescriptor(
+    _ reserved: UnsafeMutablePointer<VoxSwiftTypeDescriptor>,
+    as descriptor: VoxSwiftTypeDescriptor
+  ) -> UnsafePointer<VoxSwiftTypeDescriptor> {
+    reserved.pointee = descriptor
+    bySchemaId[descriptor.schemaId] = UnsafePointer(reserved)
+    return UnsafePointer(reserved)
+  }
+
+  public func defineMethod(
+    methodId: UInt64,
+    argsRoot: UnsafePointer<VoxSwiftTypeDescriptor>,
+    responseRoot: UnsafePointer<VoxSwiftTypeDescriptor>
+  ) {
+    methodById[methodId] = VoxSwiftMethodValueDescriptorInfo(
+      argsRoot: argsRoot,
+      responseRoot: responseRoot
+    )
+  }
+
+  public func allocateFields(_ values: [VoxSwiftFieldDescriptor]) -> UnsafePointer<
+    VoxSwiftFieldDescriptor
+  >? {
+    allocateArray(values)
+  }
+
+  public func allocateVariants(_ values: [VoxSwiftVariantDescriptor]) -> UnsafePointer<
+    VoxSwiftVariantDescriptor
+  >? {
+    allocateArray(values)
+  }
+
+  public func allocateTypeArgs(
+    _ values: [UnsafePointer<VoxSwiftTypeDescriptor>?]
+  ) -> UnsafePointer<UnsafePointer<VoxSwiftTypeDescriptor>?>? {
+    allocateArray(values)
+  }
+
+  private func allocateOne<T>(_ value: T) -> UnsafePointer<T> {
+    UnsafePointer(allocateOneMutable(value))
+  }
+
+  private func allocateOneMutable<T>(_ value: T) -> UnsafeMutablePointer<T> {
+    let ptr = UnsafeMutablePointer<T>.allocate(capacity: 1)
+    ptr.initialize(to: value)
+    cleanups.append {
+      ptr.deinitialize(count: 1)
+      ptr.deallocate()
+    }
+    return ptr
+  }
+
+  private func allocateArray<T>(_ values: [T]) -> UnsafePointer<T>? {
+    if values.isEmpty {
+      return nil
     }
 
-    public static func concrete<T>(
-        of type: T.Type = T.self,
-        kind: UInt32,
-        primitiveKind: UInt32 = VoxSwiftPrimitiveUnit,
-        flags: UInt32 = 0,
-        schemaId: UInt64,
-        typeArgs: UnsafePointer<UnsafePointer<VoxSwiftTypeDescriptor>?>? = nil,
-        typeArgCount: Int = 0,
-        fields: UnsafePointer<VoxSwiftFieldDescriptor>? = nil,
-        fieldCount: Int = 0,
-        variants: UnsafePointer<VoxSwiftVariantDescriptor>? = nil,
-        variantCount: Int = 0,
-        witnesses: VoxSwiftValueWitnesses = .init(),
-        enumWitnesses: VoxSwiftEnumWitnesses = .init(),
-        context: UnsafeRawPointer? = nil
-    ) -> Self {
-        .init(
-            kind: kind,
-            primitiveKind: primitiveKind,
-            flags: flags,
-            schemaId: schemaId,
-            typeMetadata: unsafeBitCast(type, to: UnsafeRawPointer.self),
-            valueSize: MemoryLayout<T>.size,
-            valueStride: MemoryLayout<T>.stride,
-            valueAlign: MemoryLayout<T>.alignment,
-            typeArgs: typeArgs,
-            typeArgCount: typeArgCount,
-            fields: fields,
-            fieldCount: fieldCount,
-            variants: variants,
-            variantCount: variantCount,
-            witnesses: witnesses,
-            enumWitnesses: enumWitnesses,
-            context: context
-        )
+    let ptr = UnsafeMutablePointer<T>.allocate(capacity: values.count)
+    ptr.initialize(from: values, count: values.count)
+    cleanups.append {
+      ptr.deinitialize(count: values.count)
+      ptr.deallocate()
     }
+    return UnsafePointer(ptr)
+  }
 }

@@ -420,6 +420,6466 @@ nonisolated internal func encodeConfig(_ value: Config, into buffer: inout ByteB
   encodeString(value.key, into: &buffer)
   encodeString(value.value, into: &buffer)
 }
+// MARK: - Testbed Decoders
+
+nonisolated internal func decodeMathError(from buffer: inout ByteBuffer) throws -> MathError {
+  let disc = try decodeVarint(from: &buffer)
+  let result: MathError
+  switch disc {
+  case 0:
+    result = .divisionByZero
+  case 1:
+    result = .overflow
+  default:
+    throw VoxError.decodeError("unknown enum variant")
+  }
+  return result
+}
+
+nonisolated internal func decodePerson(from buffer: inout ByteBuffer) throws -> Person {
+  let _name = try ({ buf in try decodeString(from: &buf) })(&buffer)
+  let _age = try ({ buf in try decodeU8(from: &buf) })(&buffer)
+  let _email = try
+    ({ buf in try decodeOption(from: &buf, decoder: { buf in try decodeString(from: &buf) }) })(
+      &buffer)
+  return Person(name: _name, age: _age, email: _email)
+}
+
+nonisolated internal func decodeLookupError(from buffer: inout ByteBuffer) throws -> LookupError {
+  let disc = try decodeVarint(from: &buffer)
+  let result: LookupError
+  switch disc {
+  case 0:
+    result = .notFound
+  case 1:
+    result = .accessDenied
+  default:
+    throw VoxError.decodeError("unknown enum variant")
+  }
+  return result
+}
+
+nonisolated internal func decodePoint(from buffer: inout ByteBuffer) throws -> Point {
+  let _x = try ({ buf in try decodeI32(from: &buf) })(&buffer)
+  let _y = try ({ buf in try decodeI32(from: &buf) })(&buffer)
+  return Point(x: _x, y: _y)
+}
+
+nonisolated internal func decodeRectangle(from buffer: inout ByteBuffer) throws -> Rectangle {
+  let _topLeft = try ({ buf in try decodePoint(from: &buf) })(&buffer)
+  let _bottomRight = try ({ buf in try decodePoint(from: &buf) })(&buffer)
+  let _label = try
+    ({ buf in try decodeOption(from: &buf, decoder: { buf in try decodeString(from: &buf) }) })(
+      &buffer)
+  return Rectangle(topLeft: _topLeft, bottomRight: _bottomRight, label: _label)
+}
+
+nonisolated internal func decodeColor(from buffer: inout ByteBuffer) throws -> Color {
+  let disc = try decodeVarint(from: &buffer)
+  let result: Color
+  switch disc {
+  case 0:
+    result = .red
+  case 1:
+    result = .green
+  case 2:
+    result = .blue
+  default:
+    throw VoxError.decodeError("unknown enum variant")
+  }
+  return result
+}
+
+nonisolated internal func decodeShape(from buffer: inout ByteBuffer) throws -> Shape {
+  let disc = try decodeVarint(from: &buffer)
+  let result: Shape
+  switch disc {
+  case 0:
+    let _radius = try ({ buf in try decodeF64(from: &buf) })(&buffer)
+    result = .circle(radius: _radius)
+  case 1:
+    let _width = try ({ buf in try decodeF64(from: &buf) })(&buffer)
+    let _height = try ({ buf in try decodeF64(from: &buf) })(&buffer)
+    result = .rectangle(width: _width, height: _height)
+  case 2:
+    result = .point
+  default:
+    throw VoxError.decodeError("unknown enum variant")
+  }
+  return result
+}
+
+nonisolated internal func decodeCanvas(from buffer: inout ByteBuffer) throws -> Canvas {
+  let _name = try ({ buf in try decodeString(from: &buf) })(&buffer)
+  let _shapes = try
+    ({ buf in try decodeVec(from: &buf, decoder: { buf in try decodeShape(from: &buf) }) })(&buffer)
+  let _background = try ({ buf in try decodeColor(from: &buf) })(&buffer)
+  return Canvas(name: _name, shapes: _shapes, background: _background)
+}
+
+nonisolated internal func decodeGnarlyAttr(from buffer: inout ByteBuffer) throws -> GnarlyAttr {
+  let _key = try ({ buf in try decodeString(from: &buf) })(&buffer)
+  let _value = try ({ buf in try decodeString(from: &buf) })(&buffer)
+  return GnarlyAttr(key: _key, value: _value)
+}
+
+nonisolated internal func decodeGnarlyKind(from buffer: inout ByteBuffer) throws -> GnarlyKind {
+  let disc = try decodeVarint(from: &buffer)
+  let result: GnarlyKind
+  switch disc {
+  case 0:
+    let _mime = try ({ buf in try decodeString(from: &buf) })(&buffer)
+    let _tags = try
+      ({ buf in try decodeVec(from: &buf, decoder: { buf in try decodeString(from: &buf) }) })(
+        &buffer)
+    result = .file(mime: _mime, tags: _tags)
+  case 1:
+    let _childCount = try ({ buf in try decodeU32(from: &buf) })(&buffer)
+    let _children = try
+      ({ buf in try decodeVec(from: &buf, decoder: { buf in try decodeString(from: &buf) }) })(
+        &buffer)
+    result = .directory(childCount: _childCount, children: _children)
+  case 2:
+    let _target = try ({ buf in try decodeString(from: &buf) })(&buffer)
+    let _hops = try
+      ({ buf in try decodeVec(from: &buf, decoder: { buf in try decodeU32(from: &buf) }) })(&buffer)
+    result = .symlink(target: _target, hops: _hops)
+  default:
+    throw VoxError.decodeError("unknown enum variant")
+  }
+  return result
+}
+
+nonisolated internal func decodeGnarlyEntry(from buffer: inout ByteBuffer) throws -> GnarlyEntry {
+  let _id = try ({ buf in try decodeVarint(from: &buf) })(&buffer)
+  let _parent = try
+    ({ buf in try decodeOption(from: &buf, decoder: { buf in try decodeVarint(from: &buf) }) })(
+      &buffer)
+  let _name = try ({ buf in try decodeString(from: &buf) })(&buffer)
+  let _path = try ({ buf in try decodeString(from: &buf) })(&buffer)
+  let _attrs = try
+    ({ buf in try decodeVec(from: &buf, decoder: { buf in try decodeGnarlyAttr(from: &buf) }) })(
+      &buffer)
+  let _chunks = try
+    ({ buf in
+      try decodeVec(
+        from: &buf,
+        decoder: { buf in
+          var _b = try decodeBytes(from: &buf)
+          return Data(_b.readBytes(length: _b.readableBytes) ?? [])
+        })
+    })(&buffer)
+  let _kind = try ({ buf in try decodeGnarlyKind(from: &buf) })(&buffer)
+  return GnarlyEntry(
+    id: _id, parent: _parent, name: _name, path: _path, attrs: _attrs, chunks: _chunks, kind: _kind)
+}
+
+nonisolated internal func decodeGnarlyPayload(from buffer: inout ByteBuffer) throws -> GnarlyPayload
+{
+  let _revision = try ({ buf in try decodeVarint(from: &buf) })(&buffer)
+  let _mount = try ({ buf in try decodeString(from: &buf) })(&buffer)
+  let _entries = try
+    ({ buf in try decodeVec(from: &buf, decoder: { buf in try decodeGnarlyEntry(from: &buf) }) })(
+      &buffer)
+  let _footer = try
+    ({ buf in try decodeOption(from: &buf, decoder: { buf in try decodeString(from: &buf) }) })(
+      &buffer)
+  let _digest = try
+    ({ buf in
+      var _b = try decodeBytes(from: &buf)
+      return Data(_b.readBytes(length: _b.readableBytes) ?? [])
+    })(&buffer)
+  return GnarlyPayload(
+    revision: _revision, mount: _mount, entries: _entries, footer: _footer, digest: _digest)
+}
+
+nonisolated internal func decodeMessage(from buffer: inout ByteBuffer) throws -> Message {
+  let disc = try decodeVarint(from: &buffer)
+  let result: Message
+  switch disc {
+  case 0:
+    let val = try ({ buf in try decodeString(from: &buf) })(&buffer)
+    result = .text(val)
+  case 1:
+    let val = try ({ buf in try decodeI64(from: &buf) })(&buffer)
+    result = .number(val)
+  case 2:
+    let val = try
+      ({ buf in
+        var _b = try decodeBytes(from: &buf)
+        return Data(_b.readBytes(length: _b.readableBytes) ?? [])
+      })(&buffer)
+    result = .data(val)
+  default:
+    throw VoxError.decodeError("unknown enum variant")
+  }
+  return result
+}
+
+nonisolated internal func decodeTaggedPoint(from buffer: inout ByteBuffer) throws -> TaggedPoint {
+  let _label = try ({ buf in try decodeString(from: &buf) })(&buffer)
+  let _x = try ({ buf in try decodeI32(from: &buf) })(&buffer)
+  let _y = try ({ buf in try decodeI32(from: &buf) })(&buffer)
+  let _active = try ({ buf in try decodeBool(from: &buf) })(&buffer)
+  return TaggedPoint(label: _label, x: _x, y: _y, active: _active)
+}
+
+nonisolated internal func decodeStatus(from buffer: inout ByteBuffer) throws -> Status {
+  let disc = try decodeVarint(from: &buffer)
+  let result: Status
+  switch disc {
+  case 0:
+    result = .active
+  case 1:
+    result = .inactive
+  default:
+    throw VoxError.decodeError("unknown enum variant")
+  }
+  return result
+}
+
+nonisolated internal func decodeTag(from buffer: inout ByteBuffer) throws -> Tag {
+  let _label = try ({ buf in try decodeString(from: &buf) })(&buffer)
+  let _priority = try ({ buf in try decodeU32(from: &buf) })(&buffer)
+  let _note = try ({ buf in try decodeString(from: &buf) })(&buffer)
+  return Tag(label: _label, priority: _priority, note: _note)
+}
+
+nonisolated internal func decodeProfile(from buffer: inout ByteBuffer) throws -> Profile {
+  let _name = try ({ buf in try decodeString(from: &buf) })(&buffer)
+  let _bio = try ({ buf in try decodeString(from: &buf) })(&buffer)
+  return Profile(name: _name, bio: _bio)
+}
+
+nonisolated internal func decodeRecord(from buffer: inout ByteBuffer) throws -> Record {
+  let _alpha = try ({ buf in try decodeI32(from: &buf) })(&buffer)
+  let _beta = try ({ buf in try decodeString(from: &buf) })(&buffer)
+  let _gamma = try ({ buf in try decodeF64(from: &buf) })(&buffer)
+  return Record(alpha: _alpha, beta: _beta, gamma: _gamma)
+}
+
+nonisolated internal func decodeMeasurement(from buffer: inout ByteBuffer) throws -> Measurement {
+  let _unit = try ({ buf in try decodeString(from: &buf) })(&buffer)
+  let _value = try ({ buf in try decodeF64(from: &buf) })(&buffer)
+  return Measurement(unit: _unit, value: _value)
+}
+
+nonisolated internal func decodeConfig(from buffer: inout ByteBuffer) throws -> Config {
+  let _key = try ({ buf in try decodeString(from: &buf) })(&buffer)
+  let _value = try ({ buf in try decodeString(from: &buf) })(&buffer)
+  return Config(key: _key, value: _value)
+}
+// MARK: - Swift Value Descriptors
+
+private func testbed_swift_value_desc_0_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: MathError.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_0_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: MathError.self).initialize(
+    to: src.assumingMemoryBound(to: MathError.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_0_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: MathError.self)
+  dst.assumingMemoryBound(to: MathError.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_0_tag(
+  _ value: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> UInt32 {
+  guard let value else { return UInt32.max }
+  switch value.assumingMemoryBound(to: MathError.self).pointee {
+  case .divisionByZero:
+    return UInt32(0)
+  case .overflow:
+    return UInt32(1)
+  }
+}
+
+private func testbed_swift_value_desc_0_project(
+  _ value: UnsafeRawPointer?, _ variantIndex: UInt32, _ visitorContext: UnsafeMutableRawPointer?,
+  _ visitor: VoxSwiftEnumFieldVisitorFn?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let value else { return VoxSwiftStatusBadABI }
+  switch value.assumingMemoryBound(to: MathError.self).pointee {
+  case .divisionByZero:
+    guard variantIndex == UInt32(0) else { return VoxSwiftStatusBadABI }
+    return VoxSwiftStatusOK
+  case .overflow:
+    guard variantIndex == UInt32(1) else { return VoxSwiftStatusBadABI }
+    return VoxSwiftStatusOK
+  }
+}
+
+private func testbed_swift_value_desc_0_inject(
+  _ dst: UnsafeMutableRawPointer?, _ variantIndex: UInt32,
+  _ fieldValues: UnsafePointer<UnsafeRawPointer?>?, _ fieldCount: Int, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst else { return VoxSwiftStatusBadABI }
+  switch variantIndex {
+  case UInt32(0):
+    guard fieldCount == 0 else { return VoxSwiftStatusBadABI }
+    dst.assumingMemoryBound(to: MathError.self).initialize(to: .divisionByZero)
+    return VoxSwiftStatusOK
+  case UInt32(1):
+    guard fieldCount == 0 else { return VoxSwiftStatusBadABI }
+    dst.assumingMemoryBound(to: MathError.self).initialize(to: .overflow)
+    return VoxSwiftStatusOK
+  default:
+    return VoxSwiftStatusBadABI
+  }
+}
+
+private func testbed_swift_value_desc_1_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Person.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_1_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Person.self).initialize(
+    to: src.assumingMemoryBound(to: Person.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_1_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Person.self)
+  dst.assumingMemoryBound(to: Person.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_2_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: String.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_2_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: String.self).initialize(
+    to: src.assumingMemoryBound(to: String.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_2_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: String.self)
+  dst.assumingMemoryBound(to: String.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_3_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: UInt8.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_3_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: UInt8.self).initialize(
+    to: src.assumingMemoryBound(to: UInt8.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_3_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: UInt8.self)
+  dst.assumingMemoryBound(to: UInt8.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_4_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: String?.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_4_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: String?.self).initialize(
+    to: src.assumingMemoryBound(to: String?.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_4_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: String?.self)
+  dst.assumingMemoryBound(to: String?.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_5_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: String.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_5_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: String.self).initialize(
+    to: src.assumingMemoryBound(to: String.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_5_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: String.self)
+  dst.assumingMemoryBound(to: String.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_6_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: LookupError.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_6_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: LookupError.self).initialize(
+    to: src.assumingMemoryBound(to: LookupError.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_6_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: LookupError.self)
+  dst.assumingMemoryBound(to: LookupError.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_6_tag(
+  _ value: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> UInt32 {
+  guard let value else { return UInt32.max }
+  switch value.assumingMemoryBound(to: LookupError.self).pointee {
+  case .notFound:
+    return UInt32(0)
+  case .accessDenied:
+    return UInt32(1)
+  }
+}
+
+private func testbed_swift_value_desc_6_project(
+  _ value: UnsafeRawPointer?, _ variantIndex: UInt32, _ visitorContext: UnsafeMutableRawPointer?,
+  _ visitor: VoxSwiftEnumFieldVisitorFn?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let value else { return VoxSwiftStatusBadABI }
+  switch value.assumingMemoryBound(to: LookupError.self).pointee {
+  case .notFound:
+    guard variantIndex == UInt32(0) else { return VoxSwiftStatusBadABI }
+    return VoxSwiftStatusOK
+  case .accessDenied:
+    guard variantIndex == UInt32(1) else { return VoxSwiftStatusBadABI }
+    return VoxSwiftStatusOK
+  }
+}
+
+private func testbed_swift_value_desc_6_inject(
+  _ dst: UnsafeMutableRawPointer?, _ variantIndex: UInt32,
+  _ fieldValues: UnsafePointer<UnsafeRawPointer?>?, _ fieldCount: Int, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst else { return VoxSwiftStatusBadABI }
+  switch variantIndex {
+  case UInt32(0):
+    guard fieldCount == 0 else { return VoxSwiftStatusBadABI }
+    dst.assumingMemoryBound(to: LookupError.self).initialize(to: .notFound)
+    return VoxSwiftStatusOK
+  case UInt32(1):
+    guard fieldCount == 0 else { return VoxSwiftStatusBadABI }
+    dst.assumingMemoryBound(to: LookupError.self).initialize(to: .accessDenied)
+    return VoxSwiftStatusOK
+  default:
+    return VoxSwiftStatusBadABI
+  }
+}
+
+private func testbed_swift_value_desc_7_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Point.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_7_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Point.self).initialize(
+    to: src.assumingMemoryBound(to: Point.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_7_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Point.self)
+  dst.assumingMemoryBound(to: Point.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_8_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Int32.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_8_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Int32.self).initialize(
+    to: src.assumingMemoryBound(to: Int32.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_8_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Int32.self)
+  dst.assumingMemoryBound(to: Int32.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_9_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Rectangle.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_9_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Rectangle.self).initialize(
+    to: src.assumingMemoryBound(to: Rectangle.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_9_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Rectangle.self)
+  dst.assumingMemoryBound(to: Rectangle.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_10_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Color.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_10_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Color.self).initialize(
+    to: src.assumingMemoryBound(to: Color.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_10_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Color.self)
+  dst.assumingMemoryBound(to: Color.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_10_tag(
+  _ value: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> UInt32 {
+  guard let value else { return UInt32.max }
+  switch value.assumingMemoryBound(to: Color.self).pointee {
+  case .red:
+    return UInt32(0)
+  case .green:
+    return UInt32(1)
+  case .blue:
+    return UInt32(2)
+  }
+}
+
+private func testbed_swift_value_desc_10_project(
+  _ value: UnsafeRawPointer?, _ variantIndex: UInt32, _ visitorContext: UnsafeMutableRawPointer?,
+  _ visitor: VoxSwiftEnumFieldVisitorFn?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let value else { return VoxSwiftStatusBadABI }
+  switch value.assumingMemoryBound(to: Color.self).pointee {
+  case .red:
+    guard variantIndex == UInt32(0) else { return VoxSwiftStatusBadABI }
+    return VoxSwiftStatusOK
+  case .green:
+    guard variantIndex == UInt32(1) else { return VoxSwiftStatusBadABI }
+    return VoxSwiftStatusOK
+  case .blue:
+    guard variantIndex == UInt32(2) else { return VoxSwiftStatusBadABI }
+    return VoxSwiftStatusOK
+  }
+}
+
+private func testbed_swift_value_desc_10_inject(
+  _ dst: UnsafeMutableRawPointer?, _ variantIndex: UInt32,
+  _ fieldValues: UnsafePointer<UnsafeRawPointer?>?, _ fieldCount: Int, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst else { return VoxSwiftStatusBadABI }
+  switch variantIndex {
+  case UInt32(0):
+    guard fieldCount == 0 else { return VoxSwiftStatusBadABI }
+    dst.assumingMemoryBound(to: Color.self).initialize(to: .red)
+    return VoxSwiftStatusOK
+  case UInt32(1):
+    guard fieldCount == 0 else { return VoxSwiftStatusBadABI }
+    dst.assumingMemoryBound(to: Color.self).initialize(to: .green)
+    return VoxSwiftStatusOK
+  case UInt32(2):
+    guard fieldCount == 0 else { return VoxSwiftStatusBadABI }
+    dst.assumingMemoryBound(to: Color.self).initialize(to: .blue)
+    return VoxSwiftStatusOK
+  default:
+    return VoxSwiftStatusBadABI
+  }
+}
+
+private func testbed_swift_value_desc_11_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Shape.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_11_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Shape.self).initialize(
+    to: src.assumingMemoryBound(to: Shape.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_11_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Shape.self)
+  dst.assumingMemoryBound(to: Shape.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_11_tag(
+  _ value: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> UInt32 {
+  guard let value else { return UInt32.max }
+  switch value.assumingMemoryBound(to: Shape.self).pointee {
+  case .circle(radius: _):
+    return UInt32(0)
+  case .rectangle(width: _, height: _):
+    return UInt32(1)
+  case .point:
+    return UInt32(2)
+  }
+}
+
+private func testbed_swift_value_desc_11_project(
+  _ value: UnsafeRawPointer?, _ variantIndex: UInt32, _ visitorContext: UnsafeMutableRawPointer?,
+  _ visitor: VoxSwiftEnumFieldVisitorFn?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let value, let visitor else { return VoxSwiftStatusBadABI }
+  switch value.assumingMemoryBound(to: Shape.self).pointee {
+  case .circle(radius: let f0):
+    guard variantIndex == UInt32(0) else { return VoxSwiftStatusBadABI }
+    return withUnsafePointer(to: f0) { f0Ptr in
+      let status = visitor(visitorContext, 0, UnsafeRawPointer(f0Ptr))
+      guard status == VoxSwiftStatusOK else { return status }
+      return VoxSwiftStatusOK
+    }
+  case .rectangle(width: let f0, height: let f1):
+    guard variantIndex == UInt32(1) else { return VoxSwiftStatusBadABI }
+    return withUnsafePointer(to: f0) { f0Ptr in
+      let status = visitor(visitorContext, 0, UnsafeRawPointer(f0Ptr))
+      guard status == VoxSwiftStatusOK else { return status }
+      return withUnsafePointer(to: f1) { f1Ptr in
+        let status = visitor(visitorContext, 1, UnsafeRawPointer(f1Ptr))
+        guard status == VoxSwiftStatusOK else { return status }
+        return VoxSwiftStatusOK
+      }
+    }
+  case .point:
+    guard variantIndex == UInt32(2) else { return VoxSwiftStatusBadABI }
+    return VoxSwiftStatusOK
+  }
+}
+
+private func testbed_swift_value_desc_11_inject(
+  _ dst: UnsafeMutableRawPointer?, _ variantIndex: UInt32,
+  _ fieldValues: UnsafePointer<UnsafeRawPointer?>?, _ fieldCount: Int, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst else { return VoxSwiftStatusBadABI }
+  switch variantIndex {
+  case UInt32(0):
+    guard fieldCount == 1 else { return VoxSwiftStatusBadABI }
+    guard let fieldValues else { return VoxSwiftStatusBadABI }
+    guard let f0Ptr = fieldValues[0] else { return VoxSwiftStatusBadABI }
+    let f0 = f0Ptr.assumingMemoryBound(to: Double.self).pointee
+    dst.assumingMemoryBound(to: Shape.self).initialize(to: .circle(radius: f0))
+    return VoxSwiftStatusOK
+  case UInt32(1):
+    guard fieldCount == 2 else { return VoxSwiftStatusBadABI }
+    guard let fieldValues else { return VoxSwiftStatusBadABI }
+    guard let f0Ptr = fieldValues[0] else { return VoxSwiftStatusBadABI }
+    let f0 = f0Ptr.assumingMemoryBound(to: Double.self).pointee
+    guard let f1Ptr = fieldValues[1] else { return VoxSwiftStatusBadABI }
+    let f1 = f1Ptr.assumingMemoryBound(to: Double.self).pointee
+    dst.assumingMemoryBound(to: Shape.self).initialize(to: .rectangle(width: f0, height: f1))
+    return VoxSwiftStatusOK
+  case UInt32(2):
+    guard fieldCount == 0 else { return VoxSwiftStatusBadABI }
+    dst.assumingMemoryBound(to: Shape.self).initialize(to: .point)
+    return VoxSwiftStatusOK
+  default:
+    return VoxSwiftStatusBadABI
+  }
+}
+
+private func testbed_swift_value_desc_12_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Double.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_12_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Double.self).initialize(
+    to: src.assumingMemoryBound(to: Double.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_12_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Double.self)
+  dst.assumingMemoryBound(to: Double.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_13_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Canvas.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_13_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Canvas.self).initialize(
+    to: src.assumingMemoryBound(to: Canvas.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_13_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Canvas.self)
+  dst.assumingMemoryBound(to: Canvas.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_14_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: [Shape].self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_14_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: [Shape].self).initialize(
+    to: src.assumingMemoryBound(to: [Shape].self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_14_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: [Shape].self)
+  dst.assumingMemoryBound(to: [Shape].self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_15_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Color.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_15_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Color.self).initialize(
+    to: src.assumingMemoryBound(to: Color.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_15_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Color.self)
+  dst.assumingMemoryBound(to: Color.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_15_tag(
+  _ value: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> UInt32 {
+  guard let value else { return UInt32.max }
+  switch value.assumingMemoryBound(to: Color.self).pointee {
+  case .red:
+    return UInt32(0)
+  case .green:
+    return UInt32(1)
+  case .blue:
+    return UInt32(2)
+  }
+}
+
+private func testbed_swift_value_desc_15_project(
+  _ value: UnsafeRawPointer?, _ variantIndex: UInt32, _ visitorContext: UnsafeMutableRawPointer?,
+  _ visitor: VoxSwiftEnumFieldVisitorFn?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let value else { return VoxSwiftStatusBadABI }
+  switch value.assumingMemoryBound(to: Color.self).pointee {
+  case .red:
+    guard variantIndex == UInt32(0) else { return VoxSwiftStatusBadABI }
+    return VoxSwiftStatusOK
+  case .green:
+    guard variantIndex == UInt32(1) else { return VoxSwiftStatusBadABI }
+    return VoxSwiftStatusOK
+  case .blue:
+    guard variantIndex == UInt32(2) else { return VoxSwiftStatusBadABI }
+    return VoxSwiftStatusOK
+  }
+}
+
+private func testbed_swift_value_desc_15_inject(
+  _ dst: UnsafeMutableRawPointer?, _ variantIndex: UInt32,
+  _ fieldValues: UnsafePointer<UnsafeRawPointer?>?, _ fieldCount: Int, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst else { return VoxSwiftStatusBadABI }
+  switch variantIndex {
+  case UInt32(0):
+    guard fieldCount == 0 else { return VoxSwiftStatusBadABI }
+    dst.assumingMemoryBound(to: Color.self).initialize(to: .red)
+    return VoxSwiftStatusOK
+  case UInt32(1):
+    guard fieldCount == 0 else { return VoxSwiftStatusBadABI }
+    dst.assumingMemoryBound(to: Color.self).initialize(to: .green)
+    return VoxSwiftStatusOK
+  case UInt32(2):
+    guard fieldCount == 0 else { return VoxSwiftStatusBadABI }
+    dst.assumingMemoryBound(to: Color.self).initialize(to: .blue)
+    return VoxSwiftStatusOK
+  default:
+    return VoxSwiftStatusBadABI
+  }
+}
+
+private func testbed_swift_value_desc_16_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: GnarlyAttr.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_16_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: GnarlyAttr.self).initialize(
+    to: src.assumingMemoryBound(to: GnarlyAttr.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_16_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: GnarlyAttr.self)
+  dst.assumingMemoryBound(to: GnarlyAttr.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_17_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: GnarlyKind.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_17_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: GnarlyKind.self).initialize(
+    to: src.assumingMemoryBound(to: GnarlyKind.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_17_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: GnarlyKind.self)
+  dst.assumingMemoryBound(to: GnarlyKind.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_17_tag(
+  _ value: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> UInt32 {
+  guard let value else { return UInt32.max }
+  switch value.assumingMemoryBound(to: GnarlyKind.self).pointee {
+  case .file(mime: _, tags: _):
+    return UInt32(0)
+  case .directory(childCount: _, children: _):
+    return UInt32(1)
+  case .symlink(target: _, hops: _):
+    return UInt32(2)
+  }
+}
+
+private func testbed_swift_value_desc_17_project(
+  _ value: UnsafeRawPointer?, _ variantIndex: UInt32, _ visitorContext: UnsafeMutableRawPointer?,
+  _ visitor: VoxSwiftEnumFieldVisitorFn?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let value, let visitor else { return VoxSwiftStatusBadABI }
+  switch value.assumingMemoryBound(to: GnarlyKind.self).pointee {
+  case .file(mime: let f0, tags: let f1):
+    guard variantIndex == UInt32(0) else { return VoxSwiftStatusBadABI }
+    return withUnsafePointer(to: f0) { f0Ptr in
+      let status = visitor(visitorContext, 0, UnsafeRawPointer(f0Ptr))
+      guard status == VoxSwiftStatusOK else { return status }
+      return withUnsafePointer(to: f1) { f1Ptr in
+        let status = visitor(visitorContext, 1, UnsafeRawPointer(f1Ptr))
+        guard status == VoxSwiftStatusOK else { return status }
+        return VoxSwiftStatusOK
+      }
+    }
+  case .directory(childCount: let f0, children: let f1):
+    guard variantIndex == UInt32(1) else { return VoxSwiftStatusBadABI }
+    return withUnsafePointer(to: f0) { f0Ptr in
+      let status = visitor(visitorContext, 0, UnsafeRawPointer(f0Ptr))
+      guard status == VoxSwiftStatusOK else { return status }
+      return withUnsafePointer(to: f1) { f1Ptr in
+        let status = visitor(visitorContext, 1, UnsafeRawPointer(f1Ptr))
+        guard status == VoxSwiftStatusOK else { return status }
+        return VoxSwiftStatusOK
+      }
+    }
+  case .symlink(target: let f0, hops: let f1):
+    guard variantIndex == UInt32(2) else { return VoxSwiftStatusBadABI }
+    return withUnsafePointer(to: f0) { f0Ptr in
+      let status = visitor(visitorContext, 0, UnsafeRawPointer(f0Ptr))
+      guard status == VoxSwiftStatusOK else { return status }
+      return withUnsafePointer(to: f1) { f1Ptr in
+        let status = visitor(visitorContext, 1, UnsafeRawPointer(f1Ptr))
+        guard status == VoxSwiftStatusOK else { return status }
+        return VoxSwiftStatusOK
+      }
+    }
+  }
+}
+
+private func testbed_swift_value_desc_17_inject(
+  _ dst: UnsafeMutableRawPointer?, _ variantIndex: UInt32,
+  _ fieldValues: UnsafePointer<UnsafeRawPointer?>?, _ fieldCount: Int, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst else { return VoxSwiftStatusBadABI }
+  switch variantIndex {
+  case UInt32(0):
+    guard fieldCount == 2 else { return VoxSwiftStatusBadABI }
+    guard let fieldValues else { return VoxSwiftStatusBadABI }
+    guard let f0Ptr = fieldValues[0] else { return VoxSwiftStatusBadABI }
+    let f0 = f0Ptr.assumingMemoryBound(to: String.self).pointee
+    guard let f1Ptr = fieldValues[1] else { return VoxSwiftStatusBadABI }
+    let f1 = f1Ptr.assumingMemoryBound(to: [String].self).pointee
+    dst.assumingMemoryBound(to: GnarlyKind.self).initialize(to: .file(mime: f0, tags: f1))
+    return VoxSwiftStatusOK
+  case UInt32(1):
+    guard fieldCount == 2 else { return VoxSwiftStatusBadABI }
+    guard let fieldValues else { return VoxSwiftStatusBadABI }
+    guard let f0Ptr = fieldValues[0] else { return VoxSwiftStatusBadABI }
+    let f0 = f0Ptr.assumingMemoryBound(to: UInt32.self).pointee
+    guard let f1Ptr = fieldValues[1] else { return VoxSwiftStatusBadABI }
+    let f1 = f1Ptr.assumingMemoryBound(to: [String].self).pointee
+    dst.assumingMemoryBound(to: GnarlyKind.self).initialize(
+      to: .directory(childCount: f0, children: f1))
+    return VoxSwiftStatusOK
+  case UInt32(2):
+    guard fieldCount == 2 else { return VoxSwiftStatusBadABI }
+    guard let fieldValues else { return VoxSwiftStatusBadABI }
+    guard let f0Ptr = fieldValues[0] else { return VoxSwiftStatusBadABI }
+    let f0 = f0Ptr.assumingMemoryBound(to: String.self).pointee
+    guard let f1Ptr = fieldValues[1] else { return VoxSwiftStatusBadABI }
+    let f1 = f1Ptr.assumingMemoryBound(to: [UInt32].self).pointee
+    dst.assumingMemoryBound(to: GnarlyKind.self).initialize(to: .symlink(target: f0, hops: f1))
+    return VoxSwiftStatusOK
+  default:
+    return VoxSwiftStatusBadABI
+  }
+}
+
+private func testbed_swift_value_desc_18_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: [String].self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_18_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: [String].self).initialize(
+    to: src.assumingMemoryBound(to: [String].self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_18_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: [String].self)
+  dst.assumingMemoryBound(to: [String].self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_19_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: UInt32.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_19_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: UInt32.self).initialize(
+    to: src.assumingMemoryBound(to: UInt32.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_19_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: UInt32.self)
+  dst.assumingMemoryBound(to: UInt32.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_20_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: [UInt32].self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_20_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: [UInt32].self).initialize(
+    to: src.assumingMemoryBound(to: [UInt32].self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_20_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: [UInt32].self)
+  dst.assumingMemoryBound(to: [UInt32].self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_21_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: UInt32.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_21_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: UInt32.self).initialize(
+    to: src.assumingMemoryBound(to: UInt32.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_21_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: UInt32.self)
+  dst.assumingMemoryBound(to: UInt32.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_22_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: GnarlyEntry.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_22_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: GnarlyEntry.self).initialize(
+    to: src.assumingMemoryBound(to: GnarlyEntry.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_22_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: GnarlyEntry.self)
+  dst.assumingMemoryBound(to: GnarlyEntry.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_23_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: UInt64.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_23_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: UInt64.self).initialize(
+    to: src.assumingMemoryBound(to: UInt64.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_23_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: UInt64.self)
+  dst.assumingMemoryBound(to: UInt64.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_24_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: UInt64?.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_24_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: UInt64?.self).initialize(
+    to: src.assumingMemoryBound(to: UInt64?.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_24_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: UInt64?.self)
+  dst.assumingMemoryBound(to: UInt64?.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_25_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: UInt64.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_25_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: UInt64.self).initialize(
+    to: src.assumingMemoryBound(to: UInt64.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_25_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: UInt64.self)
+  dst.assumingMemoryBound(to: UInt64.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_26_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: [GnarlyAttr].self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_26_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: [GnarlyAttr].self).initialize(
+    to: src.assumingMemoryBound(to: [GnarlyAttr].self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_26_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: [GnarlyAttr].self)
+  dst.assumingMemoryBound(to: [GnarlyAttr].self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_27_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: [Data].self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_27_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: [Data].self).initialize(
+    to: src.assumingMemoryBound(to: [Data].self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_27_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: [Data].self)
+  dst.assumingMemoryBound(to: [Data].self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_28_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Data.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_28_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Data.self).initialize(
+    to: src.assumingMemoryBound(to: Data.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_28_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Data.self)
+  dst.assumingMemoryBound(to: Data.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_29_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: GnarlyPayload.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_29_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: GnarlyPayload.self).initialize(
+    to: src.assumingMemoryBound(to: GnarlyPayload.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_29_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: GnarlyPayload.self)
+  dst.assumingMemoryBound(to: GnarlyPayload.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_30_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: [GnarlyEntry].self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_30_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: [GnarlyEntry].self).initialize(
+    to: src.assumingMemoryBound(to: [GnarlyEntry].self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_30_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: [GnarlyEntry].self)
+  dst.assumingMemoryBound(to: [GnarlyEntry].self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_31_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Data.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_31_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Data.self).initialize(
+    to: src.assumingMemoryBound(to: Data.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_31_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Data.self)
+  dst.assumingMemoryBound(to: Data.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_32_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Message.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_32_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Message.self).initialize(
+    to: src.assumingMemoryBound(to: Message.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_32_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Message.self)
+  dst.assumingMemoryBound(to: Message.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_32_tag(
+  _ value: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> UInt32 {
+  guard let value else { return UInt32.max }
+  switch value.assumingMemoryBound(to: Message.self).pointee {
+  case .text(_):
+    return UInt32(0)
+  case .number(_):
+    return UInt32(1)
+  case .data(_):
+    return UInt32(2)
+  }
+}
+
+private func testbed_swift_value_desc_32_project(
+  _ value: UnsafeRawPointer?, _ variantIndex: UInt32, _ visitorContext: UnsafeMutableRawPointer?,
+  _ visitor: VoxSwiftEnumFieldVisitorFn?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let value, let visitor else { return VoxSwiftStatusBadABI }
+  switch value.assumingMemoryBound(to: Message.self).pointee {
+  case .text(let f0):
+    guard variantIndex == UInt32(0) else { return VoxSwiftStatusBadABI }
+    return withUnsafePointer(to: f0) { f0Ptr in
+      let status = visitor(visitorContext, 0, UnsafeRawPointer(f0Ptr))
+      guard status == VoxSwiftStatusOK else { return status }
+      return VoxSwiftStatusOK
+    }
+  case .number(let f0):
+    guard variantIndex == UInt32(1) else { return VoxSwiftStatusBadABI }
+    return withUnsafePointer(to: f0) { f0Ptr in
+      let status = visitor(visitorContext, 0, UnsafeRawPointer(f0Ptr))
+      guard status == VoxSwiftStatusOK else { return status }
+      return VoxSwiftStatusOK
+    }
+  case .data(let f0):
+    guard variantIndex == UInt32(2) else { return VoxSwiftStatusBadABI }
+    return withUnsafePointer(to: f0) { f0Ptr in
+      let status = visitor(visitorContext, 0, UnsafeRawPointer(f0Ptr))
+      guard status == VoxSwiftStatusOK else { return status }
+      return VoxSwiftStatusOK
+    }
+  }
+}
+
+private func testbed_swift_value_desc_32_inject(
+  _ dst: UnsafeMutableRawPointer?, _ variantIndex: UInt32,
+  _ fieldValues: UnsafePointer<UnsafeRawPointer?>?, _ fieldCount: Int, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst else { return VoxSwiftStatusBadABI }
+  switch variantIndex {
+  case UInt32(0):
+    guard fieldCount == 1 else { return VoxSwiftStatusBadABI }
+    guard let fieldValues else { return VoxSwiftStatusBadABI }
+    guard let f0Ptr = fieldValues[0] else { return VoxSwiftStatusBadABI }
+    let f0 = f0Ptr.assumingMemoryBound(to: String.self).pointee
+    dst.assumingMemoryBound(to: Message.self).initialize(to: .text(f0))
+    return VoxSwiftStatusOK
+  case UInt32(1):
+    guard fieldCount == 1 else { return VoxSwiftStatusBadABI }
+    guard let fieldValues else { return VoxSwiftStatusBadABI }
+    guard let f0Ptr = fieldValues[0] else { return VoxSwiftStatusBadABI }
+    let f0 = f0Ptr.assumingMemoryBound(to: Int64.self).pointee
+    dst.assumingMemoryBound(to: Message.self).initialize(to: .number(f0))
+    return VoxSwiftStatusOK
+  case UInt32(2):
+    guard fieldCount == 1 else { return VoxSwiftStatusBadABI }
+    guard let fieldValues else { return VoxSwiftStatusBadABI }
+    guard let f0Ptr = fieldValues[0] else { return VoxSwiftStatusBadABI }
+    let f0 = f0Ptr.assumingMemoryBound(to: Data.self).pointee
+    dst.assumingMemoryBound(to: Message.self).initialize(to: .data(f0))
+    return VoxSwiftStatusOK
+  default:
+    return VoxSwiftStatusBadABI
+  }
+}
+
+private func testbed_swift_value_desc_33_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Int64.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_33_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Int64.self).initialize(
+    to: src.assumingMemoryBound(to: Int64.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_33_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Int64.self)
+  dst.assumingMemoryBound(to: Int64.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_34_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: TaggedPoint.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_34_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: TaggedPoint.self).initialize(
+    to: src.assumingMemoryBound(to: TaggedPoint.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_34_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: TaggedPoint.self)
+  dst.assumingMemoryBound(to: TaggedPoint.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_35_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Bool.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_35_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Bool.self).initialize(
+    to: src.assumingMemoryBound(to: Bool.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_35_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Bool.self)
+  dst.assumingMemoryBound(to: Bool.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_36_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Status.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_36_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Status.self).initialize(
+    to: src.assumingMemoryBound(to: Status.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_36_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Status.self)
+  dst.assumingMemoryBound(to: Status.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_36_tag(
+  _ value: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> UInt32 {
+  guard let value else { return UInt32.max }
+  switch value.assumingMemoryBound(to: Status.self).pointee {
+  case .active:
+    return UInt32(0)
+  case .inactive:
+    return UInt32(1)
+  }
+}
+
+private func testbed_swift_value_desc_36_project(
+  _ value: UnsafeRawPointer?, _ variantIndex: UInt32, _ visitorContext: UnsafeMutableRawPointer?,
+  _ visitor: VoxSwiftEnumFieldVisitorFn?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let value else { return VoxSwiftStatusBadABI }
+  switch value.assumingMemoryBound(to: Status.self).pointee {
+  case .active:
+    guard variantIndex == UInt32(0) else { return VoxSwiftStatusBadABI }
+    return VoxSwiftStatusOK
+  case .inactive:
+    guard variantIndex == UInt32(1) else { return VoxSwiftStatusBadABI }
+    return VoxSwiftStatusOK
+  }
+}
+
+private func testbed_swift_value_desc_36_inject(
+  _ dst: UnsafeMutableRawPointer?, _ variantIndex: UInt32,
+  _ fieldValues: UnsafePointer<UnsafeRawPointer?>?, _ fieldCount: Int, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst else { return VoxSwiftStatusBadABI }
+  switch variantIndex {
+  case UInt32(0):
+    guard fieldCount == 0 else { return VoxSwiftStatusBadABI }
+    dst.assumingMemoryBound(to: Status.self).initialize(to: .active)
+    return VoxSwiftStatusOK
+  case UInt32(1):
+    guard fieldCount == 0 else { return VoxSwiftStatusBadABI }
+    dst.assumingMemoryBound(to: Status.self).initialize(to: .inactive)
+    return VoxSwiftStatusOK
+  default:
+    return VoxSwiftStatusBadABI
+  }
+}
+
+private func testbed_swift_value_desc_37_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Tag.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_37_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Tag.self).initialize(
+    to: src.assumingMemoryBound(to: Tag.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_37_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Tag.self)
+  dst.assumingMemoryBound(to: Tag.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_38_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Profile.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_38_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Profile.self).initialize(
+    to: src.assumingMemoryBound(to: Profile.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_38_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Profile.self)
+  dst.assumingMemoryBound(to: Profile.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_39_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Record.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_39_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Record.self).initialize(
+    to: src.assumingMemoryBound(to: Record.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_39_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Record.self)
+  dst.assumingMemoryBound(to: Record.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_40_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Measurement.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_40_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Measurement.self).initialize(
+    to: src.assumingMemoryBound(to: Measurement.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_40_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Measurement.self)
+  dst.assumingMemoryBound(to: Measurement.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_41_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Config.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_41_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Config.self).initialize(
+    to: src.assumingMemoryBound(to: Config.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_41_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Config.self)
+  dst.assumingMemoryBound(to: Config.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_42_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: (String).self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_42_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: (String).self).initialize(
+    to: src.assumingMemoryBound(to: (String).self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_42_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: (String).self)
+  dst.assumingMemoryBound(to: (String).self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_43_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: String.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_43_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: String.self).initialize(
+    to: src.assumingMemoryBound(to: String.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_43_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: String.self)
+  dst.assumingMemoryBound(to: String.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_44_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: (Int64, Int64).self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_44_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: (Int64, Int64).self).initialize(
+    to: src.assumingMemoryBound(to: (Int64, Int64).self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_44_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: (Int64, Int64).self)
+  dst.assumingMemoryBound(to: (Int64, Int64).self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_45_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Result<Int64, MathError>.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_45_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Result<Int64, MathError>.self).initialize(
+    to: src.assumingMemoryBound(to: Result<Int64, MathError>.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_45_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Result<Int64, MathError>.self)
+  dst.assumingMemoryBound(to: Result<Int64, MathError>.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_46_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Int64.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_46_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Int64.self).initialize(
+    to: src.assumingMemoryBound(to: Int64.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_46_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Int64.self)
+  dst.assumingMemoryBound(to: Int64.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_47_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: (UInt32).self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_47_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: (UInt32).self).initialize(
+    to: src.assumingMemoryBound(to: (UInt32).self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_47_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: (UInt32).self)
+  dst.assumingMemoryBound(to: (UInt32).self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_48_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Result<Person, LookupError>.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_48_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Result<Person, LookupError>.self).initialize(
+    to: src.assumingMemoryBound(to: Result<Person, LookupError>.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_48_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Result<Person, LookupError>.self)
+  dst.assumingMemoryBound(to: Result<Person, LookupError>.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_49_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: (Rx<Int32>).self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_49_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: (Rx<Int32>).self).initialize(
+    to: src.assumingMemoryBound(to: (Rx<Int32>).self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_49_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: (Rx<Int32>).self)
+  dst.assumingMemoryBound(to: (Rx<Int32>).self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_50_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Rx<Int32>.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_50_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Rx<Int32>.self).initialize(
+    to: src.assumingMemoryBound(to: Rx<Int32>.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_50_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Rx<Int32>.self)
+  dst.assumingMemoryBound(to: Rx<Int32>.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_51_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: (UInt32, Tx<Int32>).self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_51_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: (UInt32, Tx<Int32>).self).initialize(
+    to: src.assumingMemoryBound(to: (UInt32, Tx<Int32>).self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_51_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: (UInt32, Tx<Int32>).self)
+  dst.assumingMemoryBound(to: (UInt32, Tx<Int32>).self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_52_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Tx<Int32>.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_52_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Tx<Int32>.self).initialize(
+    to: src.assumingMemoryBound(to: Tx<Int32>.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_52_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Tx<Int32>.self)
+  dst.assumingMemoryBound(to: Tx<Int32>.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_53_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Void.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_53_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Void.self).initialize(
+    to: src.assumingMemoryBound(to: Void.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_53_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Void.self)
+  dst.assumingMemoryBound(to: Void.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_54_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: (Rx<String>, Tx<String>).self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_54_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: (Rx<String>, Tx<String>).self).initialize(
+    to: src.assumingMemoryBound(to: (Rx<String>, Tx<String>).self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_54_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: (Rx<String>, Tx<String>).self)
+  dst.assumingMemoryBound(to: (Rx<String>, Tx<String>).self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_55_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Rx<String>.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_55_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Rx<String>.self).initialize(
+    to: src.assumingMemoryBound(to: Rx<String>.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_55_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Rx<String>.self)
+  dst.assumingMemoryBound(to: Rx<String>.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_56_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Tx<String>.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_56_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Tx<String>.self).initialize(
+    to: src.assumingMemoryBound(to: Tx<String>.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_56_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Tx<String>.self)
+  dst.assumingMemoryBound(to: Tx<String>.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_57_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: (Tx<Int32>).self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_57_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: (Tx<Int32>).self).initialize(
+    to: src.assumingMemoryBound(to: (Tx<Int32>).self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_57_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: (Tx<Int32>).self)
+  dst.assumingMemoryBound(to: (Tx<Int32>).self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_58_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: (Rx<Int32>, Tx<Int64>).self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_58_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: (Rx<Int32>, Tx<Int64>).self).initialize(
+    to: src.assumingMemoryBound(to: (Rx<Int32>, Tx<Int64>).self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_58_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: (Rx<Int32>, Tx<Int64>).self)
+  dst.assumingMemoryBound(to: (Rx<Int32>, Tx<Int64>).self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_59_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Tx<Int64>.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_59_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Tx<Int64>.self).initialize(
+    to: src.assumingMemoryBound(to: Tx<Int64>.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_59_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Tx<Int64>.self)
+  dst.assumingMemoryBound(to: Tx<Int64>.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_60_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: (Point).self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_60_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: (Point).self).initialize(
+    to: src.assumingMemoryBound(to: (Point).self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_60_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: (Point).self)
+  dst.assumingMemoryBound(to: (Point).self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_61_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Point.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_61_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Point.self).initialize(
+    to: src.assumingMemoryBound(to: Point.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_61_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Point.self)
+  dst.assumingMemoryBound(to: Point.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_62_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: (String, UInt8, String?).self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_62_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: (String, UInt8, String?).self).initialize(
+    to: src.assumingMemoryBound(to: (String, UInt8, String?).self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_62_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: (String, UInt8, String?).self)
+  dst.assumingMemoryBound(to: (String, UInt8, String?).self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_63_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: (Rectangle).self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_63_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: (Rectangle).self).initialize(
+    to: src.assumingMemoryBound(to: (Rectangle).self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_63_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: (Rectangle).self)
+  dst.assumingMemoryBound(to: (Rectangle).self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_64_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Double.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_64_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Double.self).initialize(
+    to: src.assumingMemoryBound(to: Double.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_64_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Double.self)
+  dst.assumingMemoryBound(to: Double.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_65_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Color?.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_65_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Color?.self).initialize(
+    to: src.assumingMemoryBound(to: Color?.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_65_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Color?.self)
+  dst.assumingMemoryBound(to: Color?.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_66_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: (Shape).self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_66_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: (Shape).self).initialize(
+    to: src.assumingMemoryBound(to: (Shape).self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_66_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: (Shape).self)
+  dst.assumingMemoryBound(to: (Shape).self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_67_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: (String, [Shape], Color).self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_67_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: (String, [Shape], Color).self).initialize(
+    to: src.assumingMemoryBound(to: (String, [Shape], Color).self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_67_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: (String, [Shape], Color).self)
+  dst.assumingMemoryBound(to: (String, [Shape], Color).self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_68_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: (GnarlyPayload).self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_68_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: (GnarlyPayload).self).initialize(
+    to: src.assumingMemoryBound(to: (GnarlyPayload).self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_68_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: (GnarlyPayload).self)
+  dst.assumingMemoryBound(to: (GnarlyPayload).self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_69_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: GnarlyPayload.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_69_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: GnarlyPayload.self).initialize(
+    to: src.assumingMemoryBound(to: GnarlyPayload.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_69_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: GnarlyPayload.self)
+  dst.assumingMemoryBound(to: GnarlyPayload.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_70_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: (Message).self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_70_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: (Message).self).initialize(
+    to: src.assumingMemoryBound(to: (Message).self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_70_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: (Message).self)
+  dst.assumingMemoryBound(to: (Message).self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_71_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Message.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_71_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Message.self).initialize(
+    to: src.assumingMemoryBound(to: Message.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_71_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Message.self)
+  dst.assumingMemoryBound(to: Message.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_71_tag(
+  _ value: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> UInt32 {
+  guard let value else { return UInt32.max }
+  switch value.assumingMemoryBound(to: Message.self).pointee {
+  case .text(_):
+    return UInt32(0)
+  case .number(_):
+    return UInt32(1)
+  case .data(_):
+    return UInt32(2)
+  }
+}
+
+private func testbed_swift_value_desc_71_project(
+  _ value: UnsafeRawPointer?, _ variantIndex: UInt32, _ visitorContext: UnsafeMutableRawPointer?,
+  _ visitor: VoxSwiftEnumFieldVisitorFn?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let value, let visitor else { return VoxSwiftStatusBadABI }
+  switch value.assumingMemoryBound(to: Message.self).pointee {
+  case .text(let f0):
+    guard variantIndex == UInt32(0) else { return VoxSwiftStatusBadABI }
+    return withUnsafePointer(to: f0) { f0Ptr in
+      let status = visitor(visitorContext, 0, UnsafeRawPointer(f0Ptr))
+      guard status == VoxSwiftStatusOK else { return status }
+      return VoxSwiftStatusOK
+    }
+  case .number(let f0):
+    guard variantIndex == UInt32(1) else { return VoxSwiftStatusBadABI }
+    return withUnsafePointer(to: f0) { f0Ptr in
+      let status = visitor(visitorContext, 0, UnsafeRawPointer(f0Ptr))
+      guard status == VoxSwiftStatusOK else { return status }
+      return VoxSwiftStatusOK
+    }
+  case .data(let f0):
+    guard variantIndex == UInt32(2) else { return VoxSwiftStatusBadABI }
+    return withUnsafePointer(to: f0) { f0Ptr in
+      let status = visitor(visitorContext, 0, UnsafeRawPointer(f0Ptr))
+      guard status == VoxSwiftStatusOK else { return status }
+      return VoxSwiftStatusOK
+    }
+  }
+}
+
+private func testbed_swift_value_desc_71_inject(
+  _ dst: UnsafeMutableRawPointer?, _ variantIndex: UInt32,
+  _ fieldValues: UnsafePointer<UnsafeRawPointer?>?, _ fieldCount: Int, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst else { return VoxSwiftStatusBadABI }
+  switch variantIndex {
+  case UInt32(0):
+    guard fieldCount == 1 else { return VoxSwiftStatusBadABI }
+    guard let fieldValues else { return VoxSwiftStatusBadABI }
+    guard let f0Ptr = fieldValues[0] else { return VoxSwiftStatusBadABI }
+    let f0 = f0Ptr.assumingMemoryBound(to: String.self).pointee
+    dst.assumingMemoryBound(to: Message.self).initialize(to: .text(f0))
+    return VoxSwiftStatusOK
+  case UInt32(1):
+    guard fieldCount == 1 else { return VoxSwiftStatusBadABI }
+    guard let fieldValues else { return VoxSwiftStatusBadABI }
+    guard let f0Ptr = fieldValues[0] else { return VoxSwiftStatusBadABI }
+    let f0 = f0Ptr.assumingMemoryBound(to: Int64.self).pointee
+    dst.assumingMemoryBound(to: Message.self).initialize(to: .number(f0))
+    return VoxSwiftStatusOK
+  case UInt32(2):
+    guard fieldCount == 1 else { return VoxSwiftStatusBadABI }
+    guard let fieldValues else { return VoxSwiftStatusBadABI }
+    guard let f0Ptr = fieldValues[0] else { return VoxSwiftStatusBadABI }
+    let f0 = f0Ptr.assumingMemoryBound(to: Data.self).pointee
+    dst.assumingMemoryBound(to: Message.self).initialize(to: .data(f0))
+    return VoxSwiftStatusOK
+  default:
+    return VoxSwiftStatusBadABI
+  }
+}
+
+private func testbed_swift_value_desc_72_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: [Point].self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_72_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: [Point].self).initialize(
+    to: src.assumingMemoryBound(to: [Point].self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_72_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: [Point].self)
+  dst.assumingMemoryBound(to: [Point].self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_73_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: ((Int32, String)).self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_73_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: ((Int32, String)).self).initialize(
+    to: src.assumingMemoryBound(to: ((Int32, String)).self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_73_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: ((Int32, String)).self)
+  dst.assumingMemoryBound(to: ((Int32, String)).self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_74_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: (Int32, String).self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_74_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: (Int32, String).self).initialize(
+    to: src.assumingMemoryBound(to: (Int32, String).self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_74_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: (Int32, String).self)
+  dst.assumingMemoryBound(to: (Int32, String).self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_75_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: (String, Int32).self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_75_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: (String, Int32).self).initialize(
+    to: src.assumingMemoryBound(to: (String, Int32).self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_75_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: (String, Int32).self)
+  dst.assumingMemoryBound(to: (String, Int32).self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_76_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: (Data).self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_76_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: (Data).self).initialize(
+    to: src.assumingMemoryBound(to: (Data).self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_76_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: (Data).self)
+  dst.assumingMemoryBound(to: (Data).self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_77_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Data.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_77_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Data.self).initialize(
+    to: src.assumingMemoryBound(to: Data.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_77_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Data.self)
+  dst.assumingMemoryBound(to: Data.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_78_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: (Bool).self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_78_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: (Bool).self).initialize(
+    to: src.assumingMemoryBound(to: (Bool).self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_78_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: (Bool).self)
+  dst.assumingMemoryBound(to: (Bool).self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_79_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Bool.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_79_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Bool.self).initialize(
+    to: src.assumingMemoryBound(to: Bool.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_79_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Bool.self)
+  dst.assumingMemoryBound(to: Bool.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_80_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: (UInt64).self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_80_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: (UInt64).self).initialize(
+    to: src.assumingMemoryBound(to: (UInt64).self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_80_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: (UInt64).self)
+  dst.assumingMemoryBound(to: (UInt64).self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_81_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: UInt64.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_81_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: UInt64.self).initialize(
+    to: src.assumingMemoryBound(to: UInt64.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_81_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: UInt64.self)
+  dst.assumingMemoryBound(to: UInt64.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_82_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: (String?).self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_82_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: (String?).self).initialize(
+    to: src.assumingMemoryBound(to: (String?).self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_82_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: (String?).self)
+  dst.assumingMemoryBound(to: (String?).self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_83_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: String?.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_83_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: String?.self).initialize(
+    to: src.assumingMemoryBound(to: String?.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_83_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: String?.self)
+  dst.assumingMemoryBound(to: String?.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_84_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: [Color].self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_84_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: [Color].self).initialize(
+    to: src.assumingMemoryBound(to: [Color].self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_84_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: [Color].self)
+  dst.assumingMemoryBound(to: [Color].self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_85_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: (String, Int32, Int32, Bool).self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_85_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: (String, Int32, Int32, Bool).self).initialize(
+    to: src.assumingMemoryBound(to: (String, Int32, Int32, Bool).self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_85_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: (String, Int32, Int32, Bool).self)
+  dst.assumingMemoryBound(to: (String, Int32, Int32, Bool).self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_86_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Shape.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_86_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Shape.self).initialize(
+    to: src.assumingMemoryBound(to: Shape.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_86_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Shape.self)
+  dst.assumingMemoryBound(to: Shape.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_86_tag(
+  _ value: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> UInt32 {
+  guard let value else { return UInt32.max }
+  switch value.assumingMemoryBound(to: Shape.self).pointee {
+  case .circle(radius: _):
+    return UInt32(0)
+  case .rectangle(width: _, height: _):
+    return UInt32(1)
+  case .point:
+    return UInt32(2)
+  }
+}
+
+private func testbed_swift_value_desc_86_project(
+  _ value: UnsafeRawPointer?, _ variantIndex: UInt32, _ visitorContext: UnsafeMutableRawPointer?,
+  _ visitor: VoxSwiftEnumFieldVisitorFn?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let value, let visitor else { return VoxSwiftStatusBadABI }
+  switch value.assumingMemoryBound(to: Shape.self).pointee {
+  case .circle(radius: let f0):
+    guard variantIndex == UInt32(0) else { return VoxSwiftStatusBadABI }
+    return withUnsafePointer(to: f0) { f0Ptr in
+      let status = visitor(visitorContext, 0, UnsafeRawPointer(f0Ptr))
+      guard status == VoxSwiftStatusOK else { return status }
+      return VoxSwiftStatusOK
+    }
+  case .rectangle(width: let f0, height: let f1):
+    guard variantIndex == UInt32(1) else { return VoxSwiftStatusBadABI }
+    return withUnsafePointer(to: f0) { f0Ptr in
+      let status = visitor(visitorContext, 0, UnsafeRawPointer(f0Ptr))
+      guard status == VoxSwiftStatusOK else { return status }
+      return withUnsafePointer(to: f1) { f1Ptr in
+        let status = visitor(visitorContext, 1, UnsafeRawPointer(f1Ptr))
+        guard status == VoxSwiftStatusOK else { return status }
+        return VoxSwiftStatusOK
+      }
+    }
+  case .point:
+    guard variantIndex == UInt32(2) else { return VoxSwiftStatusBadABI }
+    return VoxSwiftStatusOK
+  }
+}
+
+private func testbed_swift_value_desc_86_inject(
+  _ dst: UnsafeMutableRawPointer?, _ variantIndex: UInt32,
+  _ fieldValues: UnsafePointer<UnsafeRawPointer?>?, _ fieldCount: Int, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst else { return VoxSwiftStatusBadABI }
+  switch variantIndex {
+  case UInt32(0):
+    guard fieldCount == 1 else { return VoxSwiftStatusBadABI }
+    guard let fieldValues else { return VoxSwiftStatusBadABI }
+    guard let f0Ptr = fieldValues[0] else { return VoxSwiftStatusBadABI }
+    let f0 = f0Ptr.assumingMemoryBound(to: Double.self).pointee
+    dst.assumingMemoryBound(to: Shape.self).initialize(to: .circle(radius: f0))
+    return VoxSwiftStatusOK
+  case UInt32(1):
+    guard fieldCount == 2 else { return VoxSwiftStatusBadABI }
+    guard let fieldValues else { return VoxSwiftStatusBadABI }
+    guard let f0Ptr = fieldValues[0] else { return VoxSwiftStatusBadABI }
+    let f0 = f0Ptr.assumingMemoryBound(to: Double.self).pointee
+    guard let f1Ptr = fieldValues[1] else { return VoxSwiftStatusBadABI }
+    let f1 = f1Ptr.assumingMemoryBound(to: Double.self).pointee
+    dst.assumingMemoryBound(to: Shape.self).initialize(to: .rectangle(width: f0, height: f1))
+    return VoxSwiftStatusOK
+  case UInt32(2):
+    guard fieldCount == 0 else { return VoxSwiftStatusBadABI }
+    dst.assumingMemoryBound(to: Shape.self).initialize(to: .point)
+    return VoxSwiftStatusOK
+  default:
+    return VoxSwiftStatusBadABI
+  }
+}
+
+private func testbed_swift_value_desc_87_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: (Status).self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_87_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: (Status).self).initialize(
+    to: src.assumingMemoryBound(to: (Status).self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_87_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: (Status).self)
+  dst.assumingMemoryBound(to: (Status).self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_88_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Status.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_88_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Status.self).initialize(
+    to: src.assumingMemoryBound(to: Status.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_88_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Status.self)
+  dst.assumingMemoryBound(to: Status.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_88_tag(
+  _ value: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> UInt32 {
+  guard let value else { return UInt32.max }
+  switch value.assumingMemoryBound(to: Status.self).pointee {
+  case .active:
+    return UInt32(0)
+  case .inactive:
+    return UInt32(1)
+  }
+}
+
+private func testbed_swift_value_desc_88_project(
+  _ value: UnsafeRawPointer?, _ variantIndex: UInt32, _ visitorContext: UnsafeMutableRawPointer?,
+  _ visitor: VoxSwiftEnumFieldVisitorFn?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let value else { return VoxSwiftStatusBadABI }
+  switch value.assumingMemoryBound(to: Status.self).pointee {
+  case .active:
+    guard variantIndex == UInt32(0) else { return VoxSwiftStatusBadABI }
+    return VoxSwiftStatusOK
+  case .inactive:
+    guard variantIndex == UInt32(1) else { return VoxSwiftStatusBadABI }
+    return VoxSwiftStatusOK
+  }
+}
+
+private func testbed_swift_value_desc_88_inject(
+  _ dst: UnsafeMutableRawPointer?, _ variantIndex: UInt32,
+  _ fieldValues: UnsafePointer<UnsafeRawPointer?>?, _ fieldCount: Int, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst else { return VoxSwiftStatusBadABI }
+  switch variantIndex {
+  case UInt32(0):
+    guard fieldCount == 0 else { return VoxSwiftStatusBadABI }
+    dst.assumingMemoryBound(to: Status.self).initialize(to: .active)
+    return VoxSwiftStatusOK
+  case UInt32(1):
+    guard fieldCount == 0 else { return VoxSwiftStatusBadABI }
+    dst.assumingMemoryBound(to: Status.self).initialize(to: .inactive)
+    return VoxSwiftStatusOK
+  default:
+    return VoxSwiftStatusBadABI
+  }
+}
+
+private func testbed_swift_value_desc_89_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: (Tag).self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_89_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: (Tag).self).initialize(
+    to: src.assumingMemoryBound(to: (Tag).self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_89_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: (Tag).self)
+  dst.assumingMemoryBound(to: (Tag).self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_90_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Tag.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_90_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Tag.self).initialize(
+    to: src.assumingMemoryBound(to: Tag.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_90_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Tag.self)
+  dst.assumingMemoryBound(to: Tag.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_91_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: (Profile).self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_91_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: (Profile).self).initialize(
+    to: src.assumingMemoryBound(to: (Profile).self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_91_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: (Profile).self)
+  dst.assumingMemoryBound(to: (Profile).self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_92_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Profile.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_92_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Profile.self).initialize(
+    to: src.assumingMemoryBound(to: Profile.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_92_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Profile.self)
+  dst.assumingMemoryBound(to: Profile.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_93_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: (Record).self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_93_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: (Record).self).initialize(
+    to: src.assumingMemoryBound(to: (Record).self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_93_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: (Record).self)
+  dst.assumingMemoryBound(to: (Record).self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_94_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Record.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_94_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Record.self).initialize(
+    to: src.assumingMemoryBound(to: Record.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_94_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Record.self)
+  dst.assumingMemoryBound(to: Record.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_95_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: (Measurement).self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_95_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: (Measurement).self).initialize(
+    to: src.assumingMemoryBound(to: (Measurement).self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_95_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: (Measurement).self)
+  dst.assumingMemoryBound(to: (Measurement).self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_96_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Measurement.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_96_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Measurement.self).initialize(
+    to: src.assumingMemoryBound(to: Measurement.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_96_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Measurement.self)
+  dst.assumingMemoryBound(to: Measurement.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_97_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: (Config).self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_97_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: (Config).self).initialize(
+    to: src.assumingMemoryBound(to: (Config).self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_97_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: (Config).self)
+  dst.assumingMemoryBound(to: (Config).self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_98_destroy(
+  _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) {
+  guard let value else { return }
+  value.assumingMemoryBound(to: Config.self).deinitialize(count: 1)
+}
+
+private func testbed_swift_value_desc_98_copyInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  dst.assumingMemoryBound(to: Config.self).initialize(
+    to: src.assumingMemoryBound(to: Config.self).pointee)
+  return VoxSwiftStatusOK
+}
+
+private func testbed_swift_value_desc_98_takeInit(
+  _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
+) -> VoxSwiftStatus {
+  guard let dst, let src else { return VoxSwiftStatusBadABI }
+  let srcTyped = src.assumingMemoryBound(to: Config.self)
+  dst.assumingMemoryBound(to: Config.self).initialize(to: srcTyped.pointee)
+  srcTyped.deinitialize(count: 1)
+  return VoxSwiftStatusOK
+}
+
+nonisolated(unsafe) public let testbed_swift_value_descriptors: VoxSwiftDescriptorRegistry = {
+  let registry = VoxSwiftDescriptorRegistry()
+  let d0 = registry.reserveDescriptor()
+  let d1 = registry.reserveDescriptor()
+  let d2 = registry.reserveDescriptor()
+  let d3 = registry.reserveDescriptor()
+  let d4 = registry.reserveDescriptor()
+  let d5 = registry.reserveDescriptor()
+  let d6 = registry.reserveDescriptor()
+  let d7 = registry.reserveDescriptor()
+  let d8 = registry.reserveDescriptor()
+  let d9 = registry.reserveDescriptor()
+  let d10 = registry.reserveDescriptor()
+  let d11 = registry.reserveDescriptor()
+  let d12 = registry.reserveDescriptor()
+  let d13 = registry.reserveDescriptor()
+  let d14 = registry.reserveDescriptor()
+  let d15 = registry.reserveDescriptor()
+  let d16 = registry.reserveDescriptor()
+  let d17 = registry.reserveDescriptor()
+  let d18 = registry.reserveDescriptor()
+  let d19 = registry.reserveDescriptor()
+  let d20 = registry.reserveDescriptor()
+  let d21 = registry.reserveDescriptor()
+  let d22 = registry.reserveDescriptor()
+  let d23 = registry.reserveDescriptor()
+  let d24 = registry.reserveDescriptor()
+  let d25 = registry.reserveDescriptor()
+  let d26 = registry.reserveDescriptor()
+  let d27 = registry.reserveDescriptor()
+  let d28 = registry.reserveDescriptor()
+  let d29 = registry.reserveDescriptor()
+  let d30 = registry.reserveDescriptor()
+  let d31 = registry.reserveDescriptor()
+  let d32 = registry.reserveDescriptor()
+  let d33 = registry.reserveDescriptor()
+  let d34 = registry.reserveDescriptor()
+  let d35 = registry.reserveDescriptor()
+  let d36 = registry.reserveDescriptor()
+  let d37 = registry.reserveDescriptor()
+  let d38 = registry.reserveDescriptor()
+  let d39 = registry.reserveDescriptor()
+  let d40 = registry.reserveDescriptor()
+  let d41 = registry.reserveDescriptor()
+  let d42 = registry.reserveDescriptor()
+  let d43 = registry.reserveDescriptor()
+  let d44 = registry.reserveDescriptor()
+  let d45 = registry.reserveDescriptor()
+  let d46 = registry.reserveDescriptor()
+  let d47 = registry.reserveDescriptor()
+  let d48 = registry.reserveDescriptor()
+  let d49 = registry.reserveDescriptor()
+  let d50 = registry.reserveDescriptor()
+  let d51 = registry.reserveDescriptor()
+  let d52 = registry.reserveDescriptor()
+  let d53 = registry.reserveDescriptor()
+  let d54 = registry.reserveDescriptor()
+  let d55 = registry.reserveDescriptor()
+  let d56 = registry.reserveDescriptor()
+  let d57 = registry.reserveDescriptor()
+  let d58 = registry.reserveDescriptor()
+  let d59 = registry.reserveDescriptor()
+  let d60 = registry.reserveDescriptor()
+  let d61 = registry.reserveDescriptor()
+  let d62 = registry.reserveDescriptor()
+  let d63 = registry.reserveDescriptor()
+  let d64 = registry.reserveDescriptor()
+  let d65 = registry.reserveDescriptor()
+  let d66 = registry.reserveDescriptor()
+  let d67 = registry.reserveDescriptor()
+  let d68 = registry.reserveDescriptor()
+  let d69 = registry.reserveDescriptor()
+  let d70 = registry.reserveDescriptor()
+  let d71 = registry.reserveDescriptor()
+  let d72 = registry.reserveDescriptor()
+  let d73 = registry.reserveDescriptor()
+  let d74 = registry.reserveDescriptor()
+  let d75 = registry.reserveDescriptor()
+  let d76 = registry.reserveDescriptor()
+  let d77 = registry.reserveDescriptor()
+  let d78 = registry.reserveDescriptor()
+  let d79 = registry.reserveDescriptor()
+  let d80 = registry.reserveDescriptor()
+  let d81 = registry.reserveDescriptor()
+  let d82 = registry.reserveDescriptor()
+  let d83 = registry.reserveDescriptor()
+  let d84 = registry.reserveDescriptor()
+  let d85 = registry.reserveDescriptor()
+  let d86 = registry.reserveDescriptor()
+  let d87 = registry.reserveDescriptor()
+  let d88 = registry.reserveDescriptor()
+  let d89 = registry.reserveDescriptor()
+  let d90 = registry.reserveDescriptor()
+  let d91 = registry.reserveDescriptor()
+  let d92 = registry.reserveDescriptor()
+  let d93 = registry.reserveDescriptor()
+  let d94 = registry.reserveDescriptor()
+  let d95 = registry.reserveDescriptor()
+  let d96 = registry.reserveDescriptor()
+  let d97 = registry.reserveDescriptor()
+  let d98 = registry.reserveDescriptor()
+
+  let d0Variants = registry.allocateVariants([
+    VoxSwiftVariantDescriptor(
+      name: .staticString("DivisionByZero"), index: UInt32(0), fields: nil, fieldCount: 0),
+    VoxSwiftVariantDescriptor(
+      name: .staticString("Overflow"), index: UInt32(1), fields: nil, fieldCount: 0),
+  ])
+  _ = registry.defineDescriptor(
+    d0,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: MathError.self,
+      kind: VoxSwiftTypeKindEnum,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0xd9d7_8670_738e_6064,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: nil,
+      fieldCount: 0,
+      variants: d0Variants,
+      variantCount: 2,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_0_destroy, copyInit: testbed_swift_value_desc_0_copyInit,
+        takeInit: testbed_swift_value_desc_0_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses(
+        tag: testbed_swift_value_desc_0_tag, project: testbed_swift_value_desc_0_project,
+        inject: testbed_swift_value_desc_0_inject)
+    )
+  )
+
+  let d1Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("name"), schemaId: 0x6d7d_ce91_4ee1_50e8, type: UnsafePointer(d2),
+      offset: MemoryLayout<Person>.offset(of: \Person.name)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("age"), schemaId: 0x2c8d_54f2_314d_0f20, type: UnsafePointer(d3),
+      offset: MemoryLayout<Person>.offset(of: \Person.age)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("email"), schemaId: 0xdcaf_d4de_6b79_69bb, type: UnsafePointer(d4),
+      offset: MemoryLayout<Person>.offset(of: \Person.email)!),
+  ])
+  _ = registry.defineDescriptor(
+    d1,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Person.self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0xc841_530b_759b_8ed0,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d1Fields,
+      fieldCount: 3,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_1_destroy, copyInit: testbed_swift_value_desc_1_copyInit,
+        takeInit: testbed_swift_value_desc_1_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  _ = registry.defineDescriptor(
+    d2,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: String.self,
+      kind: VoxSwiftTypeKindString,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: 0,
+      schemaId: 0x6d7d_ce91_4ee1_50e8,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_2_destroy, copyInit: testbed_swift_value_desc_2_copyInit,
+        takeInit: testbed_swift_value_desc_2_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  _ = registry.defineDescriptor(
+    d3,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: UInt8.self,
+      kind: VoxSwiftTypeKindPrimitive,
+      primitiveKind: VoxSwiftPrimitiveU8,
+      flags: VoxSwiftTypeFlagTrivial | VoxSwiftTypeFlagBitwiseMovable | VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x2c8d_54f2_314d_0f20,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_3_destroy, copyInit: testbed_swift_value_desc_3_copyInit,
+        takeInit: testbed_swift_value_desc_3_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d4TypeArgs = registry.allocateTypeArgs([UnsafePointer(d5)])
+  _ = registry.defineDescriptor(
+    d4,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: String?.self,
+      kind: VoxSwiftTypeKindOption,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: 0,
+      schemaId: 0xdcaf_d4de_6b79_69bb,
+      typeArgs: d4TypeArgs,
+      typeArgCount: 1,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_4_destroy, copyInit: testbed_swift_value_desc_4_copyInit,
+        takeInit: testbed_swift_value_desc_4_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  _ = registry.defineDescriptor(
+    d5,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: String.self,
+      kind: VoxSwiftTypeKindString,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: 0,
+      schemaId: 0x6d7d_ce91_4ee1_50e8,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_5_destroy, copyInit: testbed_swift_value_desc_5_copyInit,
+        takeInit: testbed_swift_value_desc_5_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d6Variants = registry.allocateVariants([
+    VoxSwiftVariantDescriptor(
+      name: .staticString("NotFound"), index: UInt32(0), fields: nil, fieldCount: 0),
+    VoxSwiftVariantDescriptor(
+      name: .staticString("AccessDenied"), index: UInt32(1), fields: nil, fieldCount: 0),
+  ])
+  _ = registry.defineDescriptor(
+    d6,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: LookupError.self,
+      kind: VoxSwiftTypeKindEnum,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x16d9_2ac9_e3bd_73ba,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: nil,
+      fieldCount: 0,
+      variants: d6Variants,
+      variantCount: 2,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_6_destroy, copyInit: testbed_swift_value_desc_6_copyInit,
+        takeInit: testbed_swift_value_desc_6_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses(
+        tag: testbed_swift_value_desc_6_tag, project: testbed_swift_value_desc_6_project,
+        inject: testbed_swift_value_desc_6_inject)
+    )
+  )
+
+  let d7Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("x"), schemaId: 0x361f_4536_eee9_f991, type: UnsafePointer(d8),
+      offset: MemoryLayout<Point>.offset(of: \Point.x)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("y"), schemaId: 0x361f_4536_eee9_f991, type: UnsafePointer(d8),
+      offset: MemoryLayout<Point>.offset(of: \Point.y)!),
+  ])
+  _ = registry.defineDescriptor(
+    d7,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Point.self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0xb923_32c6_7187_108f,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d7Fields,
+      fieldCount: 2,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_7_destroy, copyInit: testbed_swift_value_desc_7_copyInit,
+        takeInit: testbed_swift_value_desc_7_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  _ = registry.defineDescriptor(
+    d8,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Int32.self,
+      kind: VoxSwiftTypeKindPrimitive,
+      primitiveKind: VoxSwiftPrimitiveI32,
+      flags: VoxSwiftTypeFlagTrivial | VoxSwiftTypeFlagBitwiseMovable | VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x361f_4536_eee9_f991,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_8_destroy, copyInit: testbed_swift_value_desc_8_copyInit,
+        takeInit: testbed_swift_value_desc_8_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d9Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("top_left"), schemaId: 0xb923_32c6_7187_108f, type: UnsafePointer(d7),
+      offset: MemoryLayout<Rectangle>.offset(of: \Rectangle.topLeft)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("bottom_right"), schemaId: 0xb923_32c6_7187_108f, type: UnsafePointer(d7),
+      offset: MemoryLayout<Rectangle>.offset(of: \Rectangle.bottomRight)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("label"), schemaId: 0xdcaf_d4de_6b79_69bb, type: UnsafePointer(d4),
+      offset: MemoryLayout<Rectangle>.offset(of: \Rectangle.label)!),
+  ])
+  _ = registry.defineDescriptor(
+    d9,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Rectangle.self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x6ecf_4fe3_76e2_3113,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d9Fields,
+      fieldCount: 3,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_9_destroy, copyInit: testbed_swift_value_desc_9_copyInit,
+        takeInit: testbed_swift_value_desc_9_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d10Variants = registry.allocateVariants([
+    VoxSwiftVariantDescriptor(
+      name: .staticString("Red"), index: UInt32(0), fields: nil, fieldCount: 0),
+    VoxSwiftVariantDescriptor(
+      name: .staticString("Green"), index: UInt32(1), fields: nil, fieldCount: 0),
+    VoxSwiftVariantDescriptor(
+      name: .staticString("Blue"), index: UInt32(2), fields: nil, fieldCount: 0),
+  ])
+  _ = registry.defineDescriptor(
+    d10,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Color.self,
+      kind: VoxSwiftTypeKindEnum,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x1b57_cc77_42fa_beb0,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: nil,
+      fieldCount: 0,
+      variants: d10Variants,
+      variantCount: 3,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_10_destroy,
+        copyInit: testbed_swift_value_desc_10_copyInit,
+        takeInit: testbed_swift_value_desc_10_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses(
+        tag: testbed_swift_value_desc_10_tag, project: testbed_swift_value_desc_10_project,
+        inject: testbed_swift_value_desc_10_inject)
+    )
+  )
+
+  let d11Variant0Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("radius"), schemaId: 0x3f2e_589d_b81e_95bf, type: UnsafePointer(d12),
+      offset: 0)
+  ])
+  let d11Variant1Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("width"), schemaId: 0x3f2e_589d_b81e_95bf, type: UnsafePointer(d12),
+      offset: 0),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("height"), schemaId: 0x3f2e_589d_b81e_95bf, type: UnsafePointer(d12),
+      offset: 0),
+  ])
+  let d11Variants = registry.allocateVariants([
+    VoxSwiftVariantDescriptor(
+      name: .staticString("Circle"), index: UInt32(0), fields: d11Variant0Fields, fieldCount: 1),
+    VoxSwiftVariantDescriptor(
+      name: .staticString("Rectangle"), index: UInt32(1), fields: d11Variant1Fields, fieldCount: 2),
+    VoxSwiftVariantDescriptor(
+      name: .staticString("Point"), index: UInt32(2), fields: nil, fieldCount: 0),
+  ])
+  _ = registry.defineDescriptor(
+    d11,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Shape.self,
+      kind: VoxSwiftTypeKindEnum,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0xe407_302c_560d_a502,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: nil,
+      fieldCount: 0,
+      variants: d11Variants,
+      variantCount: 3,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_11_destroy,
+        copyInit: testbed_swift_value_desc_11_copyInit,
+        takeInit: testbed_swift_value_desc_11_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses(
+        tag: testbed_swift_value_desc_11_tag, project: testbed_swift_value_desc_11_project,
+        inject: testbed_swift_value_desc_11_inject)
+    )
+  )
+
+  _ = registry.defineDescriptor(
+    d12,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Double.self,
+      kind: VoxSwiftTypeKindPrimitive,
+      primitiveKind: VoxSwiftPrimitiveF64,
+      flags: VoxSwiftTypeFlagTrivial | VoxSwiftTypeFlagBitwiseMovable | VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x3f2e_589d_b81e_95bf,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_12_destroy,
+        copyInit: testbed_swift_value_desc_12_copyInit,
+        takeInit: testbed_swift_value_desc_12_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d13Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("name"), schemaId: 0x6d7d_ce91_4ee1_50e8, type: UnsafePointer(d2),
+      offset: MemoryLayout<Canvas>.offset(of: \Canvas.name)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("shapes"), schemaId: 0x0a96_b404_b4d7_9d67, type: UnsafePointer(d14),
+      offset: MemoryLayout<Canvas>.offset(of: \Canvas.shapes)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("background"), schemaId: 0x1b57_cc77_42fa_beb0, type: UnsafePointer(d15),
+      offset: MemoryLayout<Canvas>.offset(of: \Canvas.background)!),
+  ])
+  _ = registry.defineDescriptor(
+    d13,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Canvas.self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x2218_55c9_65fb_31e1,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d13Fields,
+      fieldCount: 3,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_13_destroy,
+        copyInit: testbed_swift_value_desc_13_copyInit,
+        takeInit: testbed_swift_value_desc_13_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d14TypeArgs = registry.allocateTypeArgs([UnsafePointer(d11)])
+  _ = registry.defineDescriptor(
+    d14,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: [Shape].self,
+      kind: VoxSwiftTypeKindList,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: 0,
+      schemaId: 0x0a96_b404_b4d7_9d67,
+      typeArgs: d14TypeArgs,
+      typeArgCount: 1,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_14_destroy,
+        copyInit: testbed_swift_value_desc_14_copyInit,
+        takeInit: testbed_swift_value_desc_14_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d15Variants = registry.allocateVariants([
+    VoxSwiftVariantDescriptor(
+      name: .staticString("Red"), index: UInt32(0), fields: nil, fieldCount: 0),
+    VoxSwiftVariantDescriptor(
+      name: .staticString("Green"), index: UInt32(1), fields: nil, fieldCount: 0),
+    VoxSwiftVariantDescriptor(
+      name: .staticString("Blue"), index: UInt32(2), fields: nil, fieldCount: 0),
+  ])
+  _ = registry.defineDescriptor(
+    d15,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Color.self,
+      kind: VoxSwiftTypeKindEnum,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x1b57_cc77_42fa_beb0,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: nil,
+      fieldCount: 0,
+      variants: d15Variants,
+      variantCount: 3,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_15_destroy,
+        copyInit: testbed_swift_value_desc_15_copyInit,
+        takeInit: testbed_swift_value_desc_15_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses(
+        tag: testbed_swift_value_desc_15_tag, project: testbed_swift_value_desc_15_project,
+        inject: testbed_swift_value_desc_15_inject)
+    )
+  )
+
+  let d16Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("key"), schemaId: 0x6d7d_ce91_4ee1_50e8, type: UnsafePointer(d2),
+      offset: MemoryLayout<GnarlyAttr>.offset(of: \GnarlyAttr.key)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("value"), schemaId: 0x6d7d_ce91_4ee1_50e8, type: UnsafePointer(d2),
+      offset: MemoryLayout<GnarlyAttr>.offset(of: \GnarlyAttr.value)!),
+  ])
+  _ = registry.defineDescriptor(
+    d16,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: GnarlyAttr.self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x1b46_261b_ad2c_62c9,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d16Fields,
+      fieldCount: 2,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_16_destroy,
+        copyInit: testbed_swift_value_desc_16_copyInit,
+        takeInit: testbed_swift_value_desc_16_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d17Variant0Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("mime"), schemaId: 0x6d7d_ce91_4ee1_50e8, type: UnsafePointer(d2),
+      offset: 0),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("tags"), schemaId: 0x0a96_b404_b4d7_9d67, type: UnsafePointer(d18),
+      offset: 0),
+  ])
+  let d17Variant1Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("child_count"), schemaId: 0x281c_5be4_f2ee_63b4, type: UnsafePointer(d19),
+      offset: 0),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("children"), schemaId: 0x0a96_b404_b4d7_9d67, type: UnsafePointer(d18),
+      offset: 0),
+  ])
+  let d17Variant2Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("target"), schemaId: 0x6d7d_ce91_4ee1_50e8, type: UnsafePointer(d2),
+      offset: 0),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("hops"), schemaId: 0x0a96_b404_b4d7_9d67, type: UnsafePointer(d20),
+      offset: 0),
+  ])
+  let d17Variants = registry.allocateVariants([
+    VoxSwiftVariantDescriptor(
+      name: .staticString("File"), index: UInt32(0), fields: d17Variant0Fields, fieldCount: 2),
+    VoxSwiftVariantDescriptor(
+      name: .staticString("Directory"), index: UInt32(1), fields: d17Variant1Fields, fieldCount: 2),
+    VoxSwiftVariantDescriptor(
+      name: .staticString("Symlink"), index: UInt32(2), fields: d17Variant2Fields, fieldCount: 2),
+  ])
+  _ = registry.defineDescriptor(
+    d17,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: GnarlyKind.self,
+      kind: VoxSwiftTypeKindEnum,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x2404_fbaa_0448_2121,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: nil,
+      fieldCount: 0,
+      variants: d17Variants,
+      variantCount: 3,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_17_destroy,
+        copyInit: testbed_swift_value_desc_17_copyInit,
+        takeInit: testbed_swift_value_desc_17_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses(
+        tag: testbed_swift_value_desc_17_tag, project: testbed_swift_value_desc_17_project,
+        inject: testbed_swift_value_desc_17_inject)
+    )
+  )
+
+  let d18TypeArgs = registry.allocateTypeArgs([UnsafePointer(d5)])
+  _ = registry.defineDescriptor(
+    d18,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: [String].self,
+      kind: VoxSwiftTypeKindList,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: 0,
+      schemaId: 0x0a96_b404_b4d7_9d67,
+      typeArgs: d18TypeArgs,
+      typeArgCount: 1,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_18_destroy,
+        copyInit: testbed_swift_value_desc_18_copyInit,
+        takeInit: testbed_swift_value_desc_18_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  _ = registry.defineDescriptor(
+    d19,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: UInt32.self,
+      kind: VoxSwiftTypeKindPrimitive,
+      primitiveKind: VoxSwiftPrimitiveU32,
+      flags: VoxSwiftTypeFlagTrivial | VoxSwiftTypeFlagBitwiseMovable | VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x281c_5be4_f2ee_63b4,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_19_destroy,
+        copyInit: testbed_swift_value_desc_19_copyInit,
+        takeInit: testbed_swift_value_desc_19_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d20TypeArgs = registry.allocateTypeArgs([UnsafePointer(d21)])
+  _ = registry.defineDescriptor(
+    d20,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: [UInt32].self,
+      kind: VoxSwiftTypeKindList,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: 0,
+      schemaId: 0x0a96_b404_b4d7_9d67,
+      typeArgs: d20TypeArgs,
+      typeArgCount: 1,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_20_destroy,
+        copyInit: testbed_swift_value_desc_20_copyInit,
+        takeInit: testbed_swift_value_desc_20_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  _ = registry.defineDescriptor(
+    d21,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: UInt32.self,
+      kind: VoxSwiftTypeKindPrimitive,
+      primitiveKind: VoxSwiftPrimitiveU32,
+      flags: VoxSwiftTypeFlagTrivial | VoxSwiftTypeFlagBitwiseMovable | VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x281c_5be4_f2ee_63b4,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_21_destroy,
+        copyInit: testbed_swift_value_desc_21_copyInit,
+        takeInit: testbed_swift_value_desc_21_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d22Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("id"), schemaId: 0xd935_6298_b816_39ac, type: UnsafePointer(d23),
+      offset: MemoryLayout<GnarlyEntry>.offset(of: \GnarlyEntry.id)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("parent"), schemaId: 0xdcaf_d4de_6b79_69bb, type: UnsafePointer(d24),
+      offset: MemoryLayout<GnarlyEntry>.offset(of: \GnarlyEntry.parent)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("name"), schemaId: 0x6d7d_ce91_4ee1_50e8, type: UnsafePointer(d2),
+      offset: MemoryLayout<GnarlyEntry>.offset(of: \GnarlyEntry.name)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("path"), schemaId: 0x6d7d_ce91_4ee1_50e8, type: UnsafePointer(d2),
+      offset: MemoryLayout<GnarlyEntry>.offset(of: \GnarlyEntry.path)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("attrs"), schemaId: 0x0a96_b404_b4d7_9d67, type: UnsafePointer(d26),
+      offset: MemoryLayout<GnarlyEntry>.offset(of: \GnarlyEntry.attrs)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("chunks"), schemaId: 0xba81_2587_6d63_88b4, type: UnsafePointer(d27),
+      offset: MemoryLayout<GnarlyEntry>.offset(of: \GnarlyEntry.chunks)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("kind"), schemaId: 0x2404_fbaa_0448_2121, type: UnsafePointer(d17),
+      offset: MemoryLayout<GnarlyEntry>.offset(of: \GnarlyEntry.kind)!),
+  ])
+  _ = registry.defineDescriptor(
+    d22,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: GnarlyEntry.self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x903c_92be_6fd7_e0e7,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d22Fields,
+      fieldCount: 7,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_22_destroy,
+        copyInit: testbed_swift_value_desc_22_copyInit,
+        takeInit: testbed_swift_value_desc_22_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  _ = registry.defineDescriptor(
+    d23,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: UInt64.self,
+      kind: VoxSwiftTypeKindPrimitive,
+      primitiveKind: VoxSwiftPrimitiveU64,
+      flags: VoxSwiftTypeFlagTrivial | VoxSwiftTypeFlagBitwiseMovable | VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0xd935_6298_b816_39ac,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_23_destroy,
+        copyInit: testbed_swift_value_desc_23_copyInit,
+        takeInit: testbed_swift_value_desc_23_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d24TypeArgs = registry.allocateTypeArgs([UnsafePointer(d25)])
+  _ = registry.defineDescriptor(
+    d24,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: UInt64?.self,
+      kind: VoxSwiftTypeKindOption,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: 0,
+      schemaId: 0xdcaf_d4de_6b79_69bb,
+      typeArgs: d24TypeArgs,
+      typeArgCount: 1,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_24_destroy,
+        copyInit: testbed_swift_value_desc_24_copyInit,
+        takeInit: testbed_swift_value_desc_24_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  _ = registry.defineDescriptor(
+    d25,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: UInt64.self,
+      kind: VoxSwiftTypeKindPrimitive,
+      primitiveKind: VoxSwiftPrimitiveU64,
+      flags: VoxSwiftTypeFlagTrivial | VoxSwiftTypeFlagBitwiseMovable | VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0xd935_6298_b816_39ac,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_25_destroy,
+        copyInit: testbed_swift_value_desc_25_copyInit,
+        takeInit: testbed_swift_value_desc_25_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d26TypeArgs = registry.allocateTypeArgs([UnsafePointer(d16)])
+  _ = registry.defineDescriptor(
+    d26,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: [GnarlyAttr].self,
+      kind: VoxSwiftTypeKindList,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: 0,
+      schemaId: 0x0a96_b404_b4d7_9d67,
+      typeArgs: d26TypeArgs,
+      typeArgCount: 1,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_26_destroy,
+        copyInit: testbed_swift_value_desc_26_copyInit,
+        takeInit: testbed_swift_value_desc_26_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d27TypeArgs = registry.allocateTypeArgs([UnsafePointer(d28)])
+  _ = registry.defineDescriptor(
+    d27,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: [Data].self,
+      kind: VoxSwiftTypeKindList,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: 0,
+      schemaId: 0xba81_2587_6d63_88b4,
+      typeArgs: d27TypeArgs,
+      typeArgCount: 1,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_27_destroy,
+        copyInit: testbed_swift_value_desc_27_copyInit,
+        takeInit: testbed_swift_value_desc_27_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  _ = registry.defineDescriptor(
+    d28,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Data.self,
+      kind: VoxSwiftTypeKindBytes,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: 0,
+      schemaId: 0xba81_2587_6d63_88b4,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_28_destroy,
+        copyInit: testbed_swift_value_desc_28_copyInit,
+        takeInit: testbed_swift_value_desc_28_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d29Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("revision"), schemaId: 0xd935_6298_b816_39ac, type: UnsafePointer(d23),
+      offset: MemoryLayout<GnarlyPayload>.offset(of: \GnarlyPayload.revision)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("mount"), schemaId: 0x6d7d_ce91_4ee1_50e8, type: UnsafePointer(d2),
+      offset: MemoryLayout<GnarlyPayload>.offset(of: \GnarlyPayload.mount)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("entries"), schemaId: 0x0a96_b404_b4d7_9d67, type: UnsafePointer(d30),
+      offset: MemoryLayout<GnarlyPayload>.offset(of: \GnarlyPayload.entries)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("footer"), schemaId: 0xdcaf_d4de_6b79_69bb, type: UnsafePointer(d4),
+      offset: MemoryLayout<GnarlyPayload>.offset(of: \GnarlyPayload.footer)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("digest"), schemaId: 0xba81_2587_6d63_88b4, type: UnsafePointer(d31),
+      offset: MemoryLayout<GnarlyPayload>.offset(of: \GnarlyPayload.digest)!),
+  ])
+  _ = registry.defineDescriptor(
+    d29,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: GnarlyPayload.self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0xdc8d_07b0_eaab_99ba,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d29Fields,
+      fieldCount: 5,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_29_destroy,
+        copyInit: testbed_swift_value_desc_29_copyInit,
+        takeInit: testbed_swift_value_desc_29_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d30TypeArgs = registry.allocateTypeArgs([UnsafePointer(d22)])
+  _ = registry.defineDescriptor(
+    d30,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: [GnarlyEntry].self,
+      kind: VoxSwiftTypeKindList,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: 0,
+      schemaId: 0x0a96_b404_b4d7_9d67,
+      typeArgs: d30TypeArgs,
+      typeArgCount: 1,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_30_destroy,
+        copyInit: testbed_swift_value_desc_30_copyInit,
+        takeInit: testbed_swift_value_desc_30_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  _ = registry.defineDescriptor(
+    d31,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Data.self,
+      kind: VoxSwiftTypeKindBytes,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: 0,
+      schemaId: 0xba81_2587_6d63_88b4,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_31_destroy,
+        copyInit: testbed_swift_value_desc_31_copyInit,
+        takeInit: testbed_swift_value_desc_31_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d32Variant0Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("0"), schemaId: 0x6d7d_ce91_4ee1_50e8, type: UnsafePointer(d2), offset: 0)
+  ])
+  let d32Variant1Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("0"), schemaId: 0xc6eb_8c46_f1e1_7fba, type: UnsafePointer(d33), offset: 0
+    )
+  ])
+  let d32Variant2Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("0"), schemaId: 0xba81_2587_6d63_88b4, type: UnsafePointer(d31), offset: 0
+    )
+  ])
+  let d32Variants = registry.allocateVariants([
+    VoxSwiftVariantDescriptor(
+      name: .staticString("Text"), index: UInt32(0), fields: d32Variant0Fields, fieldCount: 1),
+    VoxSwiftVariantDescriptor(
+      name: .staticString("Number"), index: UInt32(1), fields: d32Variant1Fields, fieldCount: 1),
+    VoxSwiftVariantDescriptor(
+      name: .staticString("Data"), index: UInt32(2), fields: d32Variant2Fields, fieldCount: 1),
+  ])
+  _ = registry.defineDescriptor(
+    d32,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Message.self,
+      kind: VoxSwiftTypeKindEnum,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0xbda7_7ebf_97f3_45a9,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: nil,
+      fieldCount: 0,
+      variants: d32Variants,
+      variantCount: 3,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_32_destroy,
+        copyInit: testbed_swift_value_desc_32_copyInit,
+        takeInit: testbed_swift_value_desc_32_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses(
+        tag: testbed_swift_value_desc_32_tag, project: testbed_swift_value_desc_32_project,
+        inject: testbed_swift_value_desc_32_inject)
+    )
+  )
+
+  _ = registry.defineDescriptor(
+    d33,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Int64.self,
+      kind: VoxSwiftTypeKindPrimitive,
+      primitiveKind: VoxSwiftPrimitiveI64,
+      flags: VoxSwiftTypeFlagTrivial | VoxSwiftTypeFlagBitwiseMovable | VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0xc6eb_8c46_f1e1_7fba,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_33_destroy,
+        copyInit: testbed_swift_value_desc_33_copyInit,
+        takeInit: testbed_swift_value_desc_33_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d34Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("label"), schemaId: 0x6d7d_ce91_4ee1_50e8, type: UnsafePointer(d2),
+      offset: MemoryLayout<TaggedPoint>.offset(of: \TaggedPoint.label)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("x"), schemaId: 0x361f_4536_eee9_f991, type: UnsafePointer(d8),
+      offset: MemoryLayout<TaggedPoint>.offset(of: \TaggedPoint.x)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("y"), schemaId: 0x361f_4536_eee9_f991, type: UnsafePointer(d8),
+      offset: MemoryLayout<TaggedPoint>.offset(of: \TaggedPoint.y)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("active"), schemaId: 0x1783_67a8_7f66_fb46, type: UnsafePointer(d35),
+      offset: MemoryLayout<TaggedPoint>.offset(of: \TaggedPoint.active)!),
+  ])
+  _ = registry.defineDescriptor(
+    d34,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: TaggedPoint.self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x7f14_5c7b_0ede_dd20,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d34Fields,
+      fieldCount: 4,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_34_destroy,
+        copyInit: testbed_swift_value_desc_34_copyInit,
+        takeInit: testbed_swift_value_desc_34_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  _ = registry.defineDescriptor(
+    d35,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Bool.self,
+      kind: VoxSwiftTypeKindPrimitive,
+      primitiveKind: VoxSwiftPrimitiveBool,
+      flags: VoxSwiftTypeFlagTrivial | VoxSwiftTypeFlagBitwiseMovable | VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x1783_67a8_7f66_fb46,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_35_destroy,
+        copyInit: testbed_swift_value_desc_35_copyInit,
+        takeInit: testbed_swift_value_desc_35_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d36Variants = registry.allocateVariants([
+    VoxSwiftVariantDescriptor(
+      name: .staticString("Active"), index: UInt32(0), fields: nil, fieldCount: 0),
+    VoxSwiftVariantDescriptor(
+      name: .staticString("Inactive"), index: UInt32(1), fields: nil, fieldCount: 0),
+  ])
+  _ = registry.defineDescriptor(
+    d36,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Status.self,
+      kind: VoxSwiftTypeKindEnum,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x0154_2aaa_833a_2511,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: nil,
+      fieldCount: 0,
+      variants: d36Variants,
+      variantCount: 2,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_36_destroy,
+        copyInit: testbed_swift_value_desc_36_copyInit,
+        takeInit: testbed_swift_value_desc_36_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses(
+        tag: testbed_swift_value_desc_36_tag, project: testbed_swift_value_desc_36_project,
+        inject: testbed_swift_value_desc_36_inject)
+    )
+  )
+
+  let d37Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("label"), schemaId: 0x6d7d_ce91_4ee1_50e8, type: UnsafePointer(d2),
+      offset: MemoryLayout<Tag>.offset(of: \Tag.label)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("priority"), schemaId: 0x281c_5be4_f2ee_63b4, type: UnsafePointer(d19),
+      offset: MemoryLayout<Tag>.offset(of: \Tag.priority)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("note"), schemaId: 0x6d7d_ce91_4ee1_50e8, type: UnsafePointer(d2),
+      offset: MemoryLayout<Tag>.offset(of: \Tag.note)!),
+  ])
+  _ = registry.defineDescriptor(
+    d37,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Tag.self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x4620_db6c_5c62_7787,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d37Fields,
+      fieldCount: 3,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_37_destroy,
+        copyInit: testbed_swift_value_desc_37_copyInit,
+        takeInit: testbed_swift_value_desc_37_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d38Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("name"), schemaId: 0x6d7d_ce91_4ee1_50e8, type: UnsafePointer(d2),
+      offset: MemoryLayout<Profile>.offset(of: \Profile.name)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("bio"), schemaId: 0x6d7d_ce91_4ee1_50e8, type: UnsafePointer(d2),
+      offset: MemoryLayout<Profile>.offset(of: \Profile.bio)!),
+  ])
+  _ = registry.defineDescriptor(
+    d38,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Profile.self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0xbc2c_d703_968e_7d0d,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d38Fields,
+      fieldCount: 2,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_38_destroy,
+        copyInit: testbed_swift_value_desc_38_copyInit,
+        takeInit: testbed_swift_value_desc_38_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d39Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("alpha"), schemaId: 0x361f_4536_eee9_f991, type: UnsafePointer(d8),
+      offset: MemoryLayout<Record>.offset(of: \Record.alpha)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("beta"), schemaId: 0x6d7d_ce91_4ee1_50e8, type: UnsafePointer(d2),
+      offset: MemoryLayout<Record>.offset(of: \Record.beta)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("gamma"), schemaId: 0x3f2e_589d_b81e_95bf, type: UnsafePointer(d12),
+      offset: MemoryLayout<Record>.offset(of: \Record.gamma)!),
+  ])
+  _ = registry.defineDescriptor(
+    d39,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Record.self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x2ef9_3123_176c_696c,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d39Fields,
+      fieldCount: 3,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_39_destroy,
+        copyInit: testbed_swift_value_desc_39_copyInit,
+        takeInit: testbed_swift_value_desc_39_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d40Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("unit"), schemaId: 0x6d7d_ce91_4ee1_50e8, type: UnsafePointer(d2),
+      offset: MemoryLayout<Measurement>.offset(of: \Measurement.unit)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("value"), schemaId: 0x3f2e_589d_b81e_95bf, type: UnsafePointer(d12),
+      offset: MemoryLayout<Measurement>.offset(of: \Measurement.value)!),
+  ])
+  _ = registry.defineDescriptor(
+    d40,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Measurement.self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x0930_935d_500f_9629,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d40Fields,
+      fieldCount: 2,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_40_destroy,
+        copyInit: testbed_swift_value_desc_40_copyInit,
+        takeInit: testbed_swift_value_desc_40_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d41Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("key"), schemaId: 0x6d7d_ce91_4ee1_50e8, type: UnsafePointer(d2),
+      offset: MemoryLayout<Config>.offset(of: \Config.key)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("value"), schemaId: 0x6d7d_ce91_4ee1_50e8, type: UnsafePointer(d2),
+      offset: MemoryLayout<Config>.offset(of: \Config.value)!),
+  ])
+  _ = registry.defineDescriptor(
+    d41,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Config.self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0xec27_64b2_5ae6_ef1e,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d41Fields,
+      fieldCount: 2,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_41_destroy,
+        copyInit: testbed_swift_value_desc_41_copyInit,
+        takeInit: testbed_swift_value_desc_41_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d42Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("0"), schemaId: 0x6d7d_ce91_4ee1_50e8, type: UnsafePointer(d2), offset: 0)
+  ])
+  _ = registry.defineDescriptor(
+    d42,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: (String).self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x6847_ab90_feda_71c1,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d42Fields,
+      fieldCount: 1,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_42_destroy,
+        copyInit: testbed_swift_value_desc_42_copyInit,
+        takeInit: testbed_swift_value_desc_42_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  _ = registry.defineDescriptor(
+    d43,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: String.self,
+      kind: VoxSwiftTypeKindString,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: 0,
+      schemaId: 0x6d7d_ce91_4ee1_50e8,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_43_destroy,
+        copyInit: testbed_swift_value_desc_43_copyInit,
+        takeInit: testbed_swift_value_desc_43_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d44Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("0"), schemaId: 0xc6eb_8c46_f1e1_7fba, type: UnsafePointer(d33), offset: 0
+    ),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("1"), schemaId: 0xc6eb_8c46_f1e1_7fba, type: UnsafePointer(d33), offset: 0
+    ),
+  ])
+  _ = registry.defineDescriptor(
+    d44,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: (Int64, Int64).self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0xba04_96aa_8cee_7a4c,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d44Fields,
+      fieldCount: 2,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_44_destroy,
+        copyInit: testbed_swift_value_desc_44_copyInit,
+        takeInit: testbed_swift_value_desc_44_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d45TypeArgs = registry.allocateTypeArgs([UnsafePointer(d46), UnsafePointer(d0)])
+  _ = registry.defineDescriptor(
+    d45,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Result<Int64, MathError>.self,
+      kind: VoxSwiftTypeKindOpaque,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: 0,
+      schemaId: 0x4204_6de6_63be_eef0,
+      typeArgs: d45TypeArgs,
+      typeArgCount: 2,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_45_destroy,
+        copyInit: testbed_swift_value_desc_45_copyInit,
+        takeInit: testbed_swift_value_desc_45_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  _ = registry.defineDescriptor(
+    d46,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Int64.self,
+      kind: VoxSwiftTypeKindPrimitive,
+      primitiveKind: VoxSwiftPrimitiveI64,
+      flags: VoxSwiftTypeFlagTrivial | VoxSwiftTypeFlagBitwiseMovable | VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0xc6eb_8c46_f1e1_7fba,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_46_destroy,
+        copyInit: testbed_swift_value_desc_46_copyInit,
+        takeInit: testbed_swift_value_desc_46_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d47Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("0"), schemaId: 0x281c_5be4_f2ee_63b4, type: UnsafePointer(d19), offset: 0
+    )
+  ])
+  _ = registry.defineDescriptor(
+    d47,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: (UInt32).self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x6847_ab90_feda_71c1,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d47Fields,
+      fieldCount: 1,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_47_destroy,
+        copyInit: testbed_swift_value_desc_47_copyInit,
+        takeInit: testbed_swift_value_desc_47_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d48TypeArgs = registry.allocateTypeArgs([UnsafePointer(d1), UnsafePointer(d6)])
+  _ = registry.defineDescriptor(
+    d48,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Result<Person, LookupError>.self,
+      kind: VoxSwiftTypeKindOpaque,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: 0,
+      schemaId: 0x4204_6de6_63be_eef0,
+      typeArgs: d48TypeArgs,
+      typeArgCount: 2,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_48_destroy,
+        copyInit: testbed_swift_value_desc_48_copyInit,
+        takeInit: testbed_swift_value_desc_48_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d49Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("0"), schemaId: 0x967a_48ac_345e_2f5e, type: UnsafePointer(d50), offset: 0
+    )
+  ])
+  _ = registry.defineDescriptor(
+    d49,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: (Rx<Int32>).self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x6847_ab90_feda_71c1,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d49Fields,
+      fieldCount: 1,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_49_destroy,
+        copyInit: testbed_swift_value_desc_49_copyInit,
+        takeInit: testbed_swift_value_desc_49_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d50TypeArgs = registry.allocateTypeArgs([UnsafePointer(d8)])
+  _ = registry.defineDescriptor(
+    d50,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Rx<Int32>.self,
+      kind: VoxSwiftTypeKindChannel,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: 0,
+      schemaId: 0x967a_48ac_345e_2f5e,
+      typeArgs: d50TypeArgs,
+      typeArgCount: 1,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_50_destroy,
+        copyInit: testbed_swift_value_desc_50_copyInit,
+        takeInit: testbed_swift_value_desc_50_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d51Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("0"), schemaId: 0x281c_5be4_f2ee_63b4, type: UnsafePointer(d19), offset: 0
+    ),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("1"), schemaId: 0xc886_545a_493d_06eb, type: UnsafePointer(d52), offset: 0
+    ),
+  ])
+  _ = registry.defineDescriptor(
+    d51,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: (UInt32, Tx<Int32>).self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0xba04_96aa_8cee_7a4c,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d51Fields,
+      fieldCount: 2,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_51_destroy,
+        copyInit: testbed_swift_value_desc_51_copyInit,
+        takeInit: testbed_swift_value_desc_51_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d52TypeArgs = registry.allocateTypeArgs([UnsafePointer(d8)])
+  _ = registry.defineDescriptor(
+    d52,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Tx<Int32>.self,
+      kind: VoxSwiftTypeKindChannel,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: 0,
+      schemaId: 0xc886_545a_493d_06eb,
+      typeArgs: d52TypeArgs,
+      typeArgCount: 1,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_52_destroy,
+        copyInit: testbed_swift_value_desc_52_copyInit,
+        takeInit: testbed_swift_value_desc_52_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  _ = registry.defineDescriptor(
+    d53,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Void.self,
+      kind: VoxSwiftTypeKindPrimitive,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagTrivial | VoxSwiftTypeFlagBitwiseMovable | VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0xbc5c_3324_9a2d_c720,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_53_destroy,
+        copyInit: testbed_swift_value_desc_53_copyInit,
+        takeInit: testbed_swift_value_desc_53_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d54Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("0"), schemaId: 0x967a_48ac_345e_2f5e, type: UnsafePointer(d55), offset: 0
+    ),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("1"), schemaId: 0xc886_545a_493d_06eb, type: UnsafePointer(d56), offset: 0
+    ),
+  ])
+  _ = registry.defineDescriptor(
+    d54,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: (Rx<String>, Tx<String>).self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0xba04_96aa_8cee_7a4c,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d54Fields,
+      fieldCount: 2,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_54_destroy,
+        copyInit: testbed_swift_value_desc_54_copyInit,
+        takeInit: testbed_swift_value_desc_54_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d55TypeArgs = registry.allocateTypeArgs([UnsafePointer(d5)])
+  _ = registry.defineDescriptor(
+    d55,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Rx<String>.self,
+      kind: VoxSwiftTypeKindChannel,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: 0,
+      schemaId: 0x967a_48ac_345e_2f5e,
+      typeArgs: d55TypeArgs,
+      typeArgCount: 1,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_55_destroy,
+        copyInit: testbed_swift_value_desc_55_copyInit,
+        takeInit: testbed_swift_value_desc_55_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d56TypeArgs = registry.allocateTypeArgs([UnsafePointer(d5)])
+  _ = registry.defineDescriptor(
+    d56,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Tx<String>.self,
+      kind: VoxSwiftTypeKindChannel,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: 0,
+      schemaId: 0xc886_545a_493d_06eb,
+      typeArgs: d56TypeArgs,
+      typeArgCount: 1,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_56_destroy,
+        copyInit: testbed_swift_value_desc_56_copyInit,
+        takeInit: testbed_swift_value_desc_56_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d57Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("0"), schemaId: 0xc886_545a_493d_06eb, type: UnsafePointer(d52), offset: 0
+    )
+  ])
+  _ = registry.defineDescriptor(
+    d57,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: (Tx<Int32>).self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x6847_ab90_feda_71c1,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d57Fields,
+      fieldCount: 1,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_57_destroy,
+        copyInit: testbed_swift_value_desc_57_copyInit,
+        takeInit: testbed_swift_value_desc_57_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d58Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("0"), schemaId: 0x967a_48ac_345e_2f5e, type: UnsafePointer(d50), offset: 0
+    ),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("1"), schemaId: 0xc886_545a_493d_06eb, type: UnsafePointer(d59), offset: 0
+    ),
+  ])
+  _ = registry.defineDescriptor(
+    d58,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: (Rx<Int32>, Tx<Int64>).self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0xba04_96aa_8cee_7a4c,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d58Fields,
+      fieldCount: 2,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_58_destroy,
+        copyInit: testbed_swift_value_desc_58_copyInit,
+        takeInit: testbed_swift_value_desc_58_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d59TypeArgs = registry.allocateTypeArgs([UnsafePointer(d33)])
+  _ = registry.defineDescriptor(
+    d59,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Tx<Int64>.self,
+      kind: VoxSwiftTypeKindChannel,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: 0,
+      schemaId: 0xc886_545a_493d_06eb,
+      typeArgs: d59TypeArgs,
+      typeArgCount: 1,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_59_destroy,
+        copyInit: testbed_swift_value_desc_59_copyInit,
+        takeInit: testbed_swift_value_desc_59_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d60Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("0"), schemaId: 0xb923_32c6_7187_108f, type: UnsafePointer(d7), offset: 0)
+  ])
+  _ = registry.defineDescriptor(
+    d60,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: (Point).self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x6847_ab90_feda_71c1,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d60Fields,
+      fieldCount: 1,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_60_destroy,
+        copyInit: testbed_swift_value_desc_60_copyInit,
+        takeInit: testbed_swift_value_desc_60_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d61Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("x"), schemaId: 0x361f_4536_eee9_f991, type: UnsafePointer(d8),
+      offset: MemoryLayout<Point>.offset(of: \Point.x)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("y"), schemaId: 0x361f_4536_eee9_f991, type: UnsafePointer(d8),
+      offset: MemoryLayout<Point>.offset(of: \Point.y)!),
+  ])
+  _ = registry.defineDescriptor(
+    d61,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Point.self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0xb923_32c6_7187_108f,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d61Fields,
+      fieldCount: 2,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_61_destroy,
+        copyInit: testbed_swift_value_desc_61_copyInit,
+        takeInit: testbed_swift_value_desc_61_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d62Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("0"), schemaId: 0x6d7d_ce91_4ee1_50e8, type: UnsafePointer(d2), offset: 0),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("1"), schemaId: 0x2c8d_54f2_314d_0f20, type: UnsafePointer(d3), offset: 0),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("2"), schemaId: 0xdcaf_d4de_6b79_69bb, type: UnsafePointer(d4), offset: 0),
+  ])
+  _ = registry.defineDescriptor(
+    d62,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: (String, UInt8, String?).self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0xaa51_0ab0_7d34_f141,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d62Fields,
+      fieldCount: 3,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_62_destroy,
+        copyInit: testbed_swift_value_desc_62_copyInit,
+        takeInit: testbed_swift_value_desc_62_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d63Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("0"), schemaId: 0x6ecf_4fe3_76e2_3113, type: UnsafePointer(d9), offset: 0)
+  ])
+  _ = registry.defineDescriptor(
+    d63,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: (Rectangle).self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x6847_ab90_feda_71c1,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d63Fields,
+      fieldCount: 1,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_63_destroy,
+        copyInit: testbed_swift_value_desc_63_copyInit,
+        takeInit: testbed_swift_value_desc_63_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  _ = registry.defineDescriptor(
+    d64,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Double.self,
+      kind: VoxSwiftTypeKindPrimitive,
+      primitiveKind: VoxSwiftPrimitiveF64,
+      flags: VoxSwiftTypeFlagTrivial | VoxSwiftTypeFlagBitwiseMovable | VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x3f2e_589d_b81e_95bf,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_64_destroy,
+        copyInit: testbed_swift_value_desc_64_copyInit,
+        takeInit: testbed_swift_value_desc_64_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d65TypeArgs = registry.allocateTypeArgs([UnsafePointer(d10)])
+  _ = registry.defineDescriptor(
+    d65,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Color?.self,
+      kind: VoxSwiftTypeKindOption,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: 0,
+      schemaId: 0xdcaf_d4de_6b79_69bb,
+      typeArgs: d65TypeArgs,
+      typeArgCount: 1,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_65_destroy,
+        copyInit: testbed_swift_value_desc_65_copyInit,
+        takeInit: testbed_swift_value_desc_65_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d66Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("0"), schemaId: 0xe407_302c_560d_a502, type: UnsafePointer(d11), offset: 0
+    )
+  ])
+  _ = registry.defineDescriptor(
+    d66,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: (Shape).self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x6847_ab90_feda_71c1,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d66Fields,
+      fieldCount: 1,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_66_destroy,
+        copyInit: testbed_swift_value_desc_66_copyInit,
+        takeInit: testbed_swift_value_desc_66_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d67Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("0"), schemaId: 0x6d7d_ce91_4ee1_50e8, type: UnsafePointer(d2), offset: 0),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("1"), schemaId: 0x0a96_b404_b4d7_9d67, type: UnsafePointer(d14), offset: 0
+    ),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("2"), schemaId: 0x1b57_cc77_42fa_beb0, type: UnsafePointer(d15), offset: 0
+    ),
+  ])
+  _ = registry.defineDescriptor(
+    d67,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: (String, [Shape], Color).self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0xaa51_0ab0_7d34_f141,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d67Fields,
+      fieldCount: 3,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_67_destroy,
+        copyInit: testbed_swift_value_desc_67_copyInit,
+        takeInit: testbed_swift_value_desc_67_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d68Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("0"), schemaId: 0xdc8d_07b0_eaab_99ba, type: UnsafePointer(d29), offset: 0
+    )
+  ])
+  _ = registry.defineDescriptor(
+    d68,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: (GnarlyPayload).self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x6847_ab90_feda_71c1,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d68Fields,
+      fieldCount: 1,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_68_destroy,
+        copyInit: testbed_swift_value_desc_68_copyInit,
+        takeInit: testbed_swift_value_desc_68_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d69Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("revision"), schemaId: 0xd935_6298_b816_39ac, type: UnsafePointer(d23),
+      offset: MemoryLayout<GnarlyPayload>.offset(of: \GnarlyPayload.revision)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("mount"), schemaId: 0x6d7d_ce91_4ee1_50e8, type: UnsafePointer(d2),
+      offset: MemoryLayout<GnarlyPayload>.offset(of: \GnarlyPayload.mount)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("entries"), schemaId: 0x0a96_b404_b4d7_9d67, type: UnsafePointer(d30),
+      offset: MemoryLayout<GnarlyPayload>.offset(of: \GnarlyPayload.entries)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("footer"), schemaId: 0xdcaf_d4de_6b79_69bb, type: UnsafePointer(d4),
+      offset: MemoryLayout<GnarlyPayload>.offset(of: \GnarlyPayload.footer)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("digest"), schemaId: 0xba81_2587_6d63_88b4, type: UnsafePointer(d31),
+      offset: MemoryLayout<GnarlyPayload>.offset(of: \GnarlyPayload.digest)!),
+  ])
+  _ = registry.defineDescriptor(
+    d69,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: GnarlyPayload.self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0xdc8d_07b0_eaab_99ba,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d69Fields,
+      fieldCount: 5,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_69_destroy,
+        copyInit: testbed_swift_value_desc_69_copyInit,
+        takeInit: testbed_swift_value_desc_69_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d70Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("0"), schemaId: 0xbda7_7ebf_97f3_45a9, type: UnsafePointer(d32), offset: 0
+    )
+  ])
+  _ = registry.defineDescriptor(
+    d70,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: (Message).self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x6847_ab90_feda_71c1,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d70Fields,
+      fieldCount: 1,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_70_destroy,
+        copyInit: testbed_swift_value_desc_70_copyInit,
+        takeInit: testbed_swift_value_desc_70_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d71Variant0Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("0"), schemaId: 0x6d7d_ce91_4ee1_50e8, type: UnsafePointer(d2), offset: 0)
+  ])
+  let d71Variant1Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("0"), schemaId: 0xc6eb_8c46_f1e1_7fba, type: UnsafePointer(d33), offset: 0
+    )
+  ])
+  let d71Variant2Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("0"), schemaId: 0xba81_2587_6d63_88b4, type: UnsafePointer(d31), offset: 0
+    )
+  ])
+  let d71Variants = registry.allocateVariants([
+    VoxSwiftVariantDescriptor(
+      name: .staticString("Text"), index: UInt32(0), fields: d71Variant0Fields, fieldCount: 1),
+    VoxSwiftVariantDescriptor(
+      name: .staticString("Number"), index: UInt32(1), fields: d71Variant1Fields, fieldCount: 1),
+    VoxSwiftVariantDescriptor(
+      name: .staticString("Data"), index: UInt32(2), fields: d71Variant2Fields, fieldCount: 1),
+  ])
+  _ = registry.defineDescriptor(
+    d71,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Message.self,
+      kind: VoxSwiftTypeKindEnum,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0xbda7_7ebf_97f3_45a9,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: nil,
+      fieldCount: 0,
+      variants: d71Variants,
+      variantCount: 3,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_71_destroy,
+        copyInit: testbed_swift_value_desc_71_copyInit,
+        takeInit: testbed_swift_value_desc_71_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses(
+        tag: testbed_swift_value_desc_71_tag, project: testbed_swift_value_desc_71_project,
+        inject: testbed_swift_value_desc_71_inject)
+    )
+  )
+
+  let d72TypeArgs = registry.allocateTypeArgs([UnsafePointer(d61)])
+  _ = registry.defineDescriptor(
+    d72,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: [Point].self,
+      kind: VoxSwiftTypeKindList,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: 0,
+      schemaId: 0x0a96_b404_b4d7_9d67,
+      typeArgs: d72TypeArgs,
+      typeArgCount: 1,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_72_destroy,
+        copyInit: testbed_swift_value_desc_72_copyInit,
+        takeInit: testbed_swift_value_desc_72_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d73Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("0"), schemaId: 0xba04_96aa_8cee_7a4c, type: UnsafePointer(d74), offset: 0
+    )
+  ])
+  _ = registry.defineDescriptor(
+    d73,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: ((Int32, String)).self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x6847_ab90_feda_71c1,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d73Fields,
+      fieldCount: 1,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_73_destroy,
+        copyInit: testbed_swift_value_desc_73_copyInit,
+        takeInit: testbed_swift_value_desc_73_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d74Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("0"), schemaId: 0x361f_4536_eee9_f991, type: UnsafePointer(d8), offset: 0),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("1"), schemaId: 0x6d7d_ce91_4ee1_50e8, type: UnsafePointer(d2), offset: 0),
+  ])
+  _ = registry.defineDescriptor(
+    d74,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: (Int32, String).self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0xba04_96aa_8cee_7a4c,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d74Fields,
+      fieldCount: 2,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_74_destroy,
+        copyInit: testbed_swift_value_desc_74_copyInit,
+        takeInit: testbed_swift_value_desc_74_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d75Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("0"), schemaId: 0x6d7d_ce91_4ee1_50e8, type: UnsafePointer(d2), offset: 0),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("1"), schemaId: 0x361f_4536_eee9_f991, type: UnsafePointer(d8), offset: 0),
+  ])
+  _ = registry.defineDescriptor(
+    d75,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: (String, Int32).self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0xba04_96aa_8cee_7a4c,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d75Fields,
+      fieldCount: 2,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_75_destroy,
+        copyInit: testbed_swift_value_desc_75_copyInit,
+        takeInit: testbed_swift_value_desc_75_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d76Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("0"), schemaId: 0xba81_2587_6d63_88b4, type: UnsafePointer(d31), offset: 0
+    )
+  ])
+  _ = registry.defineDescriptor(
+    d76,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: (Data).self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x6847_ab90_feda_71c1,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d76Fields,
+      fieldCount: 1,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_76_destroy,
+        copyInit: testbed_swift_value_desc_76_copyInit,
+        takeInit: testbed_swift_value_desc_76_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  _ = registry.defineDescriptor(
+    d77,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Data.self,
+      kind: VoxSwiftTypeKindBytes,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: 0,
+      schemaId: 0xba81_2587_6d63_88b4,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_77_destroy,
+        copyInit: testbed_swift_value_desc_77_copyInit,
+        takeInit: testbed_swift_value_desc_77_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d78Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("0"), schemaId: 0x1783_67a8_7f66_fb46, type: UnsafePointer(d35), offset: 0
+    )
+  ])
+  _ = registry.defineDescriptor(
+    d78,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: (Bool).self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x6847_ab90_feda_71c1,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d78Fields,
+      fieldCount: 1,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_78_destroy,
+        copyInit: testbed_swift_value_desc_78_copyInit,
+        takeInit: testbed_swift_value_desc_78_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  _ = registry.defineDescriptor(
+    d79,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Bool.self,
+      kind: VoxSwiftTypeKindPrimitive,
+      primitiveKind: VoxSwiftPrimitiveBool,
+      flags: VoxSwiftTypeFlagTrivial | VoxSwiftTypeFlagBitwiseMovable | VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x1783_67a8_7f66_fb46,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_79_destroy,
+        copyInit: testbed_swift_value_desc_79_copyInit,
+        takeInit: testbed_swift_value_desc_79_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d80Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("0"), schemaId: 0xd935_6298_b816_39ac, type: UnsafePointer(d23), offset: 0
+    )
+  ])
+  _ = registry.defineDescriptor(
+    d80,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: (UInt64).self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x6847_ab90_feda_71c1,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d80Fields,
+      fieldCount: 1,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_80_destroy,
+        copyInit: testbed_swift_value_desc_80_copyInit,
+        takeInit: testbed_swift_value_desc_80_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  _ = registry.defineDescriptor(
+    d81,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: UInt64.self,
+      kind: VoxSwiftTypeKindPrimitive,
+      primitiveKind: VoxSwiftPrimitiveU64,
+      flags: VoxSwiftTypeFlagTrivial | VoxSwiftTypeFlagBitwiseMovable | VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0xd935_6298_b816_39ac,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_81_destroy,
+        copyInit: testbed_swift_value_desc_81_copyInit,
+        takeInit: testbed_swift_value_desc_81_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d82Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("0"), schemaId: 0xdcaf_d4de_6b79_69bb, type: UnsafePointer(d4), offset: 0)
+  ])
+  _ = registry.defineDescriptor(
+    d82,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: (String?).self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x6847_ab90_feda_71c1,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d82Fields,
+      fieldCount: 1,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_82_destroy,
+        copyInit: testbed_swift_value_desc_82_copyInit,
+        takeInit: testbed_swift_value_desc_82_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d83TypeArgs = registry.allocateTypeArgs([UnsafePointer(d43)])
+  _ = registry.defineDescriptor(
+    d83,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: String?.self,
+      kind: VoxSwiftTypeKindOption,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: 0,
+      schemaId: 0xdcaf_d4de_6b79_69bb,
+      typeArgs: d83TypeArgs,
+      typeArgCount: 1,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_83_destroy,
+        copyInit: testbed_swift_value_desc_83_copyInit,
+        takeInit: testbed_swift_value_desc_83_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d84TypeArgs = registry.allocateTypeArgs([UnsafePointer(d10)])
+  _ = registry.defineDescriptor(
+    d84,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: [Color].self,
+      kind: VoxSwiftTypeKindList,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: 0,
+      schemaId: 0x0a96_b404_b4d7_9d67,
+      typeArgs: d84TypeArgs,
+      typeArgCount: 1,
+      fields: nil,
+      fieldCount: 0,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_84_destroy,
+        copyInit: testbed_swift_value_desc_84_copyInit,
+        takeInit: testbed_swift_value_desc_84_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d85Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("0"), schemaId: 0x6d7d_ce91_4ee1_50e8, type: UnsafePointer(d2), offset: 0),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("1"), schemaId: 0x361f_4536_eee9_f991, type: UnsafePointer(d8), offset: 0),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("2"), schemaId: 0x361f_4536_eee9_f991, type: UnsafePointer(d8), offset: 0),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("3"), schemaId: 0x1783_67a8_7f66_fb46, type: UnsafePointer(d35), offset: 0
+    ),
+  ])
+  _ = registry.defineDescriptor(
+    d85,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: (String, Int32, Int32, Bool).self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x915c_6fb5_b64f_270b,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d85Fields,
+      fieldCount: 4,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_85_destroy,
+        copyInit: testbed_swift_value_desc_85_copyInit,
+        takeInit: testbed_swift_value_desc_85_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d86Variant0Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("radius"), schemaId: 0x3f2e_589d_b81e_95bf, type: UnsafePointer(d12),
+      offset: 0)
+  ])
+  let d86Variant1Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("width"), schemaId: 0x3f2e_589d_b81e_95bf, type: UnsafePointer(d12),
+      offset: 0),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("height"), schemaId: 0x3f2e_589d_b81e_95bf, type: UnsafePointer(d12),
+      offset: 0),
+  ])
+  let d86Variants = registry.allocateVariants([
+    VoxSwiftVariantDescriptor(
+      name: .staticString("Circle"), index: UInt32(0), fields: d86Variant0Fields, fieldCount: 1),
+    VoxSwiftVariantDescriptor(
+      name: .staticString("Rectangle"), index: UInt32(1), fields: d86Variant1Fields, fieldCount: 2),
+    VoxSwiftVariantDescriptor(
+      name: .staticString("Point"), index: UInt32(2), fields: nil, fieldCount: 0),
+  ])
+  _ = registry.defineDescriptor(
+    d86,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Shape.self,
+      kind: VoxSwiftTypeKindEnum,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0xe407_302c_560d_a502,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: nil,
+      fieldCount: 0,
+      variants: d86Variants,
+      variantCount: 3,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_86_destroy,
+        copyInit: testbed_swift_value_desc_86_copyInit,
+        takeInit: testbed_swift_value_desc_86_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses(
+        tag: testbed_swift_value_desc_86_tag, project: testbed_swift_value_desc_86_project,
+        inject: testbed_swift_value_desc_86_inject)
+    )
+  )
+
+  let d87Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("0"), schemaId: 0x0154_2aaa_833a_2511, type: UnsafePointer(d36), offset: 0
+    )
+  ])
+  _ = registry.defineDescriptor(
+    d87,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: (Status).self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x6847_ab90_feda_71c1,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d87Fields,
+      fieldCount: 1,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_87_destroy,
+        copyInit: testbed_swift_value_desc_87_copyInit,
+        takeInit: testbed_swift_value_desc_87_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d88Variants = registry.allocateVariants([
+    VoxSwiftVariantDescriptor(
+      name: .staticString("Active"), index: UInt32(0), fields: nil, fieldCount: 0),
+    VoxSwiftVariantDescriptor(
+      name: .staticString("Inactive"), index: UInt32(1), fields: nil, fieldCount: 0),
+  ])
+  _ = registry.defineDescriptor(
+    d88,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Status.self,
+      kind: VoxSwiftTypeKindEnum,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x0154_2aaa_833a_2511,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: nil,
+      fieldCount: 0,
+      variants: d88Variants,
+      variantCount: 2,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_88_destroy,
+        copyInit: testbed_swift_value_desc_88_copyInit,
+        takeInit: testbed_swift_value_desc_88_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses(
+        tag: testbed_swift_value_desc_88_tag, project: testbed_swift_value_desc_88_project,
+        inject: testbed_swift_value_desc_88_inject)
+    )
+  )
+
+  let d89Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("0"), schemaId: 0x4620_db6c_5c62_7787, type: UnsafePointer(d37), offset: 0
+    )
+  ])
+  _ = registry.defineDescriptor(
+    d89,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: (Tag).self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x6847_ab90_feda_71c1,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d89Fields,
+      fieldCount: 1,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_89_destroy,
+        copyInit: testbed_swift_value_desc_89_copyInit,
+        takeInit: testbed_swift_value_desc_89_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d90Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("label"), schemaId: 0x6d7d_ce91_4ee1_50e8, type: UnsafePointer(d2),
+      offset: MemoryLayout<Tag>.offset(of: \Tag.label)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("priority"), schemaId: 0x281c_5be4_f2ee_63b4, type: UnsafePointer(d19),
+      offset: MemoryLayout<Tag>.offset(of: \Tag.priority)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("note"), schemaId: 0x6d7d_ce91_4ee1_50e8, type: UnsafePointer(d2),
+      offset: MemoryLayout<Tag>.offset(of: \Tag.note)!),
+  ])
+  _ = registry.defineDescriptor(
+    d90,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Tag.self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x4620_db6c_5c62_7787,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d90Fields,
+      fieldCount: 3,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_90_destroy,
+        copyInit: testbed_swift_value_desc_90_copyInit,
+        takeInit: testbed_swift_value_desc_90_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d91Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("0"), schemaId: 0xbc2c_d703_968e_7d0d, type: UnsafePointer(d38), offset: 0
+    )
+  ])
+  _ = registry.defineDescriptor(
+    d91,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: (Profile).self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x6847_ab90_feda_71c1,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d91Fields,
+      fieldCount: 1,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_91_destroy,
+        copyInit: testbed_swift_value_desc_91_copyInit,
+        takeInit: testbed_swift_value_desc_91_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d92Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("name"), schemaId: 0x6d7d_ce91_4ee1_50e8, type: UnsafePointer(d2),
+      offset: MemoryLayout<Profile>.offset(of: \Profile.name)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("bio"), schemaId: 0x6d7d_ce91_4ee1_50e8, type: UnsafePointer(d2),
+      offset: MemoryLayout<Profile>.offset(of: \Profile.bio)!),
+  ])
+  _ = registry.defineDescriptor(
+    d92,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Profile.self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0xbc2c_d703_968e_7d0d,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d92Fields,
+      fieldCount: 2,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_92_destroy,
+        copyInit: testbed_swift_value_desc_92_copyInit,
+        takeInit: testbed_swift_value_desc_92_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d93Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("0"), schemaId: 0x2ef9_3123_176c_696c, type: UnsafePointer(d39), offset: 0
+    )
+  ])
+  _ = registry.defineDescriptor(
+    d93,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: (Record).self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x6847_ab90_feda_71c1,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d93Fields,
+      fieldCount: 1,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_93_destroy,
+        copyInit: testbed_swift_value_desc_93_copyInit,
+        takeInit: testbed_swift_value_desc_93_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d94Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("alpha"), schemaId: 0x361f_4536_eee9_f991, type: UnsafePointer(d8),
+      offset: MemoryLayout<Record>.offset(of: \Record.alpha)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("beta"), schemaId: 0x6d7d_ce91_4ee1_50e8, type: UnsafePointer(d2),
+      offset: MemoryLayout<Record>.offset(of: \Record.beta)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("gamma"), schemaId: 0x3f2e_589d_b81e_95bf, type: UnsafePointer(d12),
+      offset: MemoryLayout<Record>.offset(of: \Record.gamma)!),
+  ])
+  _ = registry.defineDescriptor(
+    d94,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Record.self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x2ef9_3123_176c_696c,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d94Fields,
+      fieldCount: 3,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_94_destroy,
+        copyInit: testbed_swift_value_desc_94_copyInit,
+        takeInit: testbed_swift_value_desc_94_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d95Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("0"), schemaId: 0x0930_935d_500f_9629, type: UnsafePointer(d40), offset: 0
+    )
+  ])
+  _ = registry.defineDescriptor(
+    d95,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: (Measurement).self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x6847_ab90_feda_71c1,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d95Fields,
+      fieldCount: 1,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_95_destroy,
+        copyInit: testbed_swift_value_desc_95_copyInit,
+        takeInit: testbed_swift_value_desc_95_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d96Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("unit"), schemaId: 0x6d7d_ce91_4ee1_50e8, type: UnsafePointer(d2),
+      offset: MemoryLayout<Measurement>.offset(of: \Measurement.unit)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("value"), schemaId: 0x3f2e_589d_b81e_95bf, type: UnsafePointer(d12),
+      offset: MemoryLayout<Measurement>.offset(of: \Measurement.value)!),
+  ])
+  _ = registry.defineDescriptor(
+    d96,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Measurement.self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x0930_935d_500f_9629,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d96Fields,
+      fieldCount: 2,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_96_destroy,
+        copyInit: testbed_swift_value_desc_96_copyInit,
+        takeInit: testbed_swift_value_desc_96_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d97Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("0"), schemaId: 0xec27_64b2_5ae6_ef1e, type: UnsafePointer(d41), offset: 0
+    )
+  ])
+  _ = registry.defineDescriptor(
+    d97,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: (Config).self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0x6847_ab90_feda_71c1,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d97Fields,
+      fieldCount: 1,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_97_destroy,
+        copyInit: testbed_swift_value_desc_97_copyInit,
+        takeInit: testbed_swift_value_desc_97_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  let d98Fields = registry.allocateFields([
+    VoxSwiftFieldDescriptor(
+      name: .staticString("key"), schemaId: 0x6d7d_ce91_4ee1_50e8, type: UnsafePointer(d2),
+      offset: MemoryLayout<Config>.offset(of: \Config.key)!),
+    VoxSwiftFieldDescriptor(
+      name: .staticString("value"), schemaId: 0x6d7d_ce91_4ee1_50e8, type: UnsafePointer(d2),
+      offset: MemoryLayout<Config>.offset(of: \Config.value)!),
+  ])
+  _ = registry.defineDescriptor(
+    d98,
+    as: VoxSwiftTypeDescriptor.concrete(
+      of: Config.self,
+      kind: VoxSwiftTypeKindStruct,
+      primitiveKind: VoxSwiftPrimitiveUnit,
+      flags: VoxSwiftTypeFlagFixedLayout,
+      schemaId: 0xec27_64b2_5ae6_ef1e,
+      typeArgs: nil,
+      typeArgCount: 0,
+      fields: d98Fields,
+      fieldCount: 2,
+      variants: nil,
+      variantCount: 0,
+      witnesses: VoxSwiftValueWitnesses(
+        destroy: testbed_swift_value_desc_98_destroy,
+        copyInit: testbed_swift_value_desc_98_copyInit,
+        takeInit: testbed_swift_value_desc_98_takeInit),
+      enumWitnesses: VoxSwiftEnumWitnesses()
+    )
+  )
+
+  registry.defineMethod(
+    methodId: 0x880b_c4ee_e235_74be, argsRoot: UnsafePointer(d42), responseRoot: UnsafePointer(d43))
+  registry.defineMethod(
+    methodId: 0x1c22_3f30_e180_392a, argsRoot: UnsafePointer(d42), responseRoot: UnsafePointer(d43))
+  registry.defineMethod(
+    methodId: 0xfb68_d931_8f83_0875, argsRoot: UnsafePointer(d44), responseRoot: UnsafePointer(d45))
+  registry.defineMethod(
+    methodId: 0xa15f_f520_9471_2a3b, argsRoot: UnsafePointer(d47), responseRoot: UnsafePointer(d48))
+  registry.defineMethod(
+    methodId: 0x51f9_cfd8_e865_77c9, argsRoot: UnsafePointer(d49), responseRoot: UnsafePointer(d46))
+  registry.defineMethod(
+    methodId: 0x239e_5b99_b1f8_207a, argsRoot: UnsafePointer(d51), responseRoot: UnsafePointer(d53))
+  registry.defineMethod(
+    methodId: 0x3441_9529_478c_c7b8, argsRoot: UnsafePointer(d51), responseRoot: UnsafePointer(d53))
+  registry.defineMethod(
+    methodId: 0xe2d2_7fd9_098c_6ea2, argsRoot: UnsafePointer(d51), responseRoot: UnsafePointer(d53))
+  registry.defineMethod(
+    methodId: 0xcb46_9cff_8d79_8feb, argsRoot: UnsafePointer(d54), responseRoot: UnsafePointer(d53))
+  registry.defineMethod(
+    methodId: 0xec36_e847_51a8_97be, argsRoot: UnsafePointer(d57), responseRoot: UnsafePointer(d53))
+  registry.defineMethod(
+    methodId: 0xc1ce_3c39_7e4c_a6e7, argsRoot: UnsafePointer(d58), responseRoot: UnsafePointer(d53))
+  registry.defineMethod(
+    methodId: 0x81f5_386d_589d_fbe4, argsRoot: UnsafePointer(d60), responseRoot: UnsafePointer(d61))
+  registry.defineMethod(
+    methodId: 0x68ff_a90b_7728_bde7, argsRoot: UnsafePointer(d62), responseRoot: UnsafePointer(d1))
+  registry.defineMethod(
+    methodId: 0x223f_e028_2d26_3107, argsRoot: UnsafePointer(d63), responseRoot: UnsafePointer(d64))
+  registry.defineMethod(
+    methodId: 0xd4f1_6ea9_eca1_32e6, argsRoot: UnsafePointer(d42), responseRoot: UnsafePointer(d65))
+  registry.defineMethod(
+    methodId: 0x0438_5a4b_e2a8_82f5, argsRoot: UnsafePointer(d66), responseRoot: UnsafePointer(d64))
+  registry.defineMethod(
+    methodId: 0xef42_1eb5_b08c_973a, argsRoot: UnsafePointer(d67), responseRoot: UnsafePointer(d13))
+  registry.defineMethod(
+    methodId: 0xb6fa_cae6_a7a8_6e99, argsRoot: UnsafePointer(d68), responseRoot: UnsafePointer(d69))
+  registry.defineMethod(
+    methodId: 0xe08f_0f52_54e7_a997, argsRoot: UnsafePointer(d70), responseRoot: UnsafePointer(d71))
+  registry.defineMethod(
+    methodId: 0x5985_1852_3a62_66bf, argsRoot: UnsafePointer(d47), responseRoot: UnsafePointer(d72))
+  registry.defineMethod(
+    methodId: 0x7d55_a713_ad61_2bf2, argsRoot: UnsafePointer(d73), responseRoot: UnsafePointer(d75))
+  registry.defineMethod(
+    methodId: 0x4405_6c78_42fa_336c, argsRoot: UnsafePointer(d76), responseRoot: UnsafePointer(d77))
+  registry.defineMethod(
+    methodId: 0x5136_d8f0_1a5f_496c, argsRoot: UnsafePointer(d78), responseRoot: UnsafePointer(d79))
+  registry.defineMethod(
+    methodId: 0x85e2_380d_bf7f_fe65, argsRoot: UnsafePointer(d80), responseRoot: UnsafePointer(d81))
+  registry.defineMethod(
+    methodId: 0xb1a5_bfd2_05b3_fbfc, argsRoot: UnsafePointer(d82), responseRoot: UnsafePointer(d83))
+  registry.defineMethod(
+    methodId: 0x9a7b_ed54_5e08_8054, argsRoot: UnsafePointer(d49), responseRoot: UnsafePointer(d46))
+  registry.defineMethod(
+    methodId: 0x8edf_bd65_d162_f685, argsRoot: UnsafePointer(d51), responseRoot: UnsafePointer(d53))
+  registry.defineMethod(
+    methodId: 0xfbfb_05bb_caad_e4a0, argsRoot: UnsafePointer(d53), responseRoot: UnsafePointer(d84))
+  registry.defineMethod(
+    methodId: 0x62fe_b14a_8fcf_9b6d, argsRoot: UnsafePointer(d85), responseRoot: UnsafePointer(d34))
+  registry.defineMethod(
+    methodId: 0x4125_b5e6_78b7_b4a5, argsRoot: UnsafePointer(d66), responseRoot: UnsafePointer(d86))
+  registry.defineMethod(
+    methodId: 0xc7c5_aa84_5cfb_8bf6, argsRoot: UnsafePointer(d87), responseRoot: UnsafePointer(d88))
+  registry.defineMethod(
+    methodId: 0x6619_071b_e5d5_c259, argsRoot: UnsafePointer(d89), responseRoot: UnsafePointer(d90))
+  registry.defineMethod(
+    methodId: 0xbd9b_cabd_deeb_eb04, argsRoot: UnsafePointer(d91), responseRoot: UnsafePointer(d92))
+  registry.defineMethod(
+    methodId: 0x100b_0e08_da4b_8f1a, argsRoot: UnsafePointer(d93), responseRoot: UnsafePointer(d94))
+  registry.defineMethod(
+    methodId: 0x6975_90d3_ffc3_6703, argsRoot: UnsafePointer(d87), responseRoot: UnsafePointer(d88))
+  registry.defineMethod(
+    methodId: 0x2bd1_b314_9d73_ce97, argsRoot: UnsafePointer(d89), responseRoot: UnsafePointer(d90))
+  registry.defineMethod(
+    methodId: 0x3b3d_22b0_15fa_1a3f, argsRoot: UnsafePointer(d95), responseRoot: UnsafePointer(d96))
+  registry.defineMethod(
+    methodId: 0xe13a_477f_b964_ce28, argsRoot: UnsafePointer(d97), responseRoot: UnsafePointer(d98))
+
+  return registry
+}()
+
+nonisolated(unsafe) public let testbed_swift_value_descriptor_registry:
+  [UInt64: UnsafePointer<VoxSwiftTypeDescriptor>] = testbed_swift_value_descriptors.bySchemaId
+
+nonisolated(unsafe) public let testbed_swift_method_value_descriptors:
+  [UInt64: VoxSwiftMethodValueDescriptorInfo] = testbed_swift_value_descriptors.methodById
+
 // MARK: - Testbed Server
 
 ///  Testbed service for conformance testing.
@@ -1543,26 +8003,7 @@ public final class TestbedDispatcher: ServiceDispatcher {
       direction: .response, registry: schemaRegistry)
     do {
       let name = try decodeString(from: &buffer)
-      let shapes = try decodeVec(
-        from: &buffer,
-        decoder: { buf in
-          let disc = try decodeVarint(from: &buf)
-          let result: Shape
-          switch disc {
-          case 0:
-            let _radius = try ({ buf in try decodeF64(from: &buf) })(&buf)
-            result = .circle(radius: _radius)
-          case 1:
-            let _width = try ({ buf in try decodeF64(from: &buf) })(&buf)
-            let _height = try ({ buf in try decodeF64(from: &buf) })(&buf)
-            result = .rectangle(width: _width, height: _height)
-          case 2:
-            result = .point
-          default:
-            throw VoxError.decodeError("unknown enum variant")
-          }
-          return result
-        })
+      let shapes = try decodeVec(from: &buffer, decoder: { buf in try decodeShape(from: &buf) })
       let _background_disc = try decodeVarint(from: &buffer)
       let background: Color
       switch _background_disc {
@@ -1614,67 +8055,7 @@ public final class TestbedDispatcher: ServiceDispatcher {
       let _payload_revision = try decodeVarint(from: &buffer)
       let _payload_mount = try decodeString(from: &buffer)
       let _payload_entries = try decodeVec(
-        from: &buffer,
-        decoder: { buf in
-          let _id = try ({ buf in try decodeVarint(from: &buf) })(&buf)
-          let _parent = try
-            ({ buf in try decodeOption(from: &buf, decoder: { buf in try decodeVarint(from: &buf) })
-            })(&buf)
-          let _name = try ({ buf in try decodeString(from: &buf) })(&buf)
-          let _path = try ({ buf in try decodeString(from: &buf) })(&buf)
-          let _attrs = try
-            ({ buf in
-              try decodeVec(
-                from: &buf,
-                decoder: { buf in
-                  let _key = try ({ buf in try decodeString(from: &buf) })(&buf)
-                  let _value = try ({ buf in try decodeString(from: &buf) })(&buf)
-                  return GnarlyAttr(key: _key, value: _value)
-                })
-            })(&buf)
-          let _chunks = try
-            ({ buf in
-              try decodeVec(
-                from: &buf,
-                decoder: { buf in
-                  var _b = try decodeBytes(from: &buf)
-                  return Data(_b.readBytes(length: _b.readableBytes) ?? [])
-                })
-            })(&buf)
-          let _kind = try
-            ({ buf in
-              let disc = try decodeVarint(from: &buf)
-              let result: GnarlyKind
-              switch disc {
-              case 0:
-                let _mime = try ({ buf in try decodeString(from: &buf) })(&buf)
-                let _tags = try
-                  ({ buf in
-                    try decodeVec(from: &buf, decoder: { buf in try decodeString(from: &buf) })
-                  })(&buf)
-                result = .file(mime: _mime, tags: _tags)
-              case 1:
-                let _childCount = try ({ buf in try decodeU32(from: &buf) })(&buf)
-                let _children = try
-                  ({ buf in
-                    try decodeVec(from: &buf, decoder: { buf in try decodeString(from: &buf) })
-                  })(&buf)
-                result = .directory(childCount: _childCount, children: _children)
-              case 2:
-                let _target = try ({ buf in try decodeString(from: &buf) })(&buf)
-                let _hops = try
-                  ({ buf in try decodeVec(from: &buf, decoder: { buf in try decodeU32(from: &buf) })
-                  })(&buf)
-                result = .symlink(target: _target, hops: _hops)
-              default:
-                throw VoxError.decodeError("unknown enum variant")
-              }
-              return result
-            })(&buf)
-          return GnarlyEntry(
-            id: _id, parent: _parent, name: _name, path: _path, attrs: _attrs, chunks: _chunks,
-            kind: _kind)
-        })
+        from: &buffer, decoder: { buf in try decodeGnarlyEntry(from: &buf) })
       let _payload_footer = try decodeOption(
         from: &buffer, decoder: { buf in try decodeString(from: &buf) })
       var __payload_digest_buf = try decodeBytes(from: &buffer)

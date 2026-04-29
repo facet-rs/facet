@@ -10,6 +10,9 @@
 use std::ffi::c_void;
 use std::io;
 use std::mem::size_of;
+use std::panic::{AssertUnwindSafe, catch_unwind};
+
+use vox_types::{SchemaPayload, TypeRef};
 
 pub type vox_swift_status_t = i32;
 
@@ -20,6 +23,12 @@ pub const VOX_SWIFT_STATUS_PANIC: vox_swift_status_t = -3;
 
 pub const VOX_SWIFT_TYPE_DESCRIPTOR_MAGIC: u64 = 0x564f_5853_5746_5431;
 pub const VOX_SWIFT_TYPE_DESCRIPTOR_ABI_VERSION: u32 = 1;
+pub const VOX_SWIFT_CODEC_CONFIG_ABI_VERSION: u32 = 1;
+
+pub type vox_swift_codec_direction_t = u32;
+
+pub const VOX_SWIFT_CODEC_DIRECTION_ARGS: vox_swift_codec_direction_t = 0;
+pub const VOX_SWIFT_CODEC_DIRECTION_RESPONSE: vox_swift_codec_direction_t = 1;
 
 pub type vox_swift_type_kind_t = u32;
 
@@ -88,6 +97,25 @@ impl vox_swift_bytes {
             ));
         }
         Ok(())
+    }
+}
+
+/// Owned byte buffer returned by Rust and released by `vox_swift_owned_bytes_free_v1`.
+#[repr(C)]
+#[derive(Debug)]
+pub struct vox_swift_owned_bytes {
+    pub ptr: *mut u8,
+    pub len: usize,
+    pub capacity: usize,
+}
+
+impl vox_swift_owned_bytes {
+    pub const fn empty() -> Self {
+        Self {
+            ptr: std::ptr::null_mut(),
+            len: 0,
+            capacity: 0,
+        }
     }
 }
 
@@ -315,9 +343,308 @@ impl vox_swift_type_descriptor {
     }
 }
 
+/// Input for compiling a process-local Swift codec.
+///
+/// The local root describes the concrete Swift value layout for this process.
+/// The remote schema CBOR is the peer's postcard schema payload for the same
+/// method direction.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct vox_swift_codec_config {
+    pub abi_version: u32,
+    pub size: u32,
+    pub method_id: u64,
+    pub direction: vox_swift_codec_direction_t,
+    pub local_root: *const vox_swift_type_descriptor,
+    pub remote_schema_cbor: vox_swift_bytes,
+}
+
+impl vox_swift_codec_config {
+    pub const fn new(
+        method_id: u64,
+        direction: vox_swift_codec_direction_t,
+        local_root: *const vox_swift_type_descriptor,
+        remote_schema_cbor: vox_swift_bytes,
+    ) -> Self {
+        Self {
+            abi_version: VOX_SWIFT_CODEC_CONFIG_ABI_VERSION,
+            size: size_of::<Self>() as u32,
+            method_id,
+            direction,
+            local_root,
+            remote_schema_cbor,
+        }
+    }
+}
+
+/// Process-local Swift codec handle returned by `vox_swift_codec_prepare_v1`.
+///
+/// Callers must treat this as opaque and release it with
+/// `vox_swift_codec_release_v1`.
+#[repr(C)]
+pub struct vox_swift_codec {
+    _private: [u8; 0],
+}
+
+#[allow(dead_code)]
+struct SwiftCodec {
+    method_id: u64,
+    direction: vox_swift_codec_direction_t,
+    local_root: *const vox_swift_type_descriptor,
+    remote_root_schema_id: u64,
+    remote_schema_count: usize,
+    remote_schema_cbor: Vec<u8>,
+}
+
+struct PreparedCodecConfig {
+    method_id: u64,
+    direction: vox_swift_codec_direction_t,
+    local_root: *const vox_swift_type_descriptor,
+    remote_root_schema_id: u64,
+    remote_schema_count: usize,
+    remote_schema_cbor: Vec<u8>,
+}
+
+impl PreparedCodecConfig {
+    /// # Safety
+    ///
+    /// `config` must point to a live `vox_swift_codec_config`.
+    unsafe fn from_ptr(config: *const vox_swift_codec_config) -> io::Result<Self> {
+        let config = unsafe { config.as_ref() }.ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "swift codec config was null")
+        })?;
+
+        if config.abi_version != VOX_SWIFT_CODEC_CONFIG_ABI_VERSION {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "swift codec config abi version mismatch",
+            ));
+        }
+        if config.size != size_of::<vox_swift_codec_config>() as u32 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "swift codec config size mismatch",
+            ));
+        }
+        if config.direction != VOX_SWIFT_CODEC_DIRECTION_ARGS
+            && config.direction != VOX_SWIFT_CODEC_DIRECTION_RESPONSE
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "swift codec config direction was invalid",
+            ));
+        }
+
+        let local_root = unsafe { vox_swift_type_descriptor::validate_ptr(config.local_root)? };
+        config.remote_schema_cbor.validate("remote_schema_cbor")?;
+
+        let remote_schema_cbor = if config.remote_schema_cbor.len == 0 {
+            Vec::new()
+        } else {
+            unsafe {
+                std::slice::from_raw_parts(
+                    config.remote_schema_cbor.ptr,
+                    config.remote_schema_cbor.len,
+                )
+            }
+            .to_vec()
+        };
+
+        let remote_payload = SchemaPayload::from_cbor(&remote_schema_cbor).map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("remote schema payload CBOR was invalid: {error}"),
+            )
+        })?;
+
+        let remote_root_schema_id = match remote_payload.root {
+            TypeRef::Concrete { type_id, .. } => type_id.0,
+            TypeRef::Var { .. } => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "remote schema payload root cannot be a type variable",
+                ));
+            }
+        };
+
+        Ok(Self {
+            method_id: config.method_id,
+            direction: config.direction,
+            local_root,
+            remote_root_schema_id,
+            remote_schema_count: remote_payload.schemas.len(),
+            remote_schema_cbor,
+        })
+    }
+}
+
+/// # Safety
+///
+/// `codec` must point to a live `SwiftCodec` allocation returned as a
+/// `vox_swift_codec` handle.
+unsafe fn swift_codec_from_ptr<'a>(codec: *const vox_swift_codec) -> io::Result<&'a SwiftCodec> {
+    unsafe { (codec.cast::<SwiftCodec>()).as_ref() }
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "codec was null"))
+}
+
+fn ffi_status(run: impl FnOnce() -> io::Result<()>) -> vox_swift_status_t {
+    match catch_unwind(AssertUnwindSafe(run)) {
+        Ok(Ok(())) => VOX_SWIFT_STATUS_OK,
+        Ok(Err(_)) => VOX_SWIFT_STATUS_BAD_ABI,
+        Err(_) => VOX_SWIFT_STATUS_PANIC,
+    }
+}
+
+/// Prepare a Swift codec handle for one method direction.
+///
+/// This currently validates and retains the local Swift descriptor pointer plus
+/// the peer schema payload. The actual planner/JIT backend is intentionally not
+/// wired yet; encode/decode entrypoints return `VOX_SWIFT_STATUS_UNSUPPORTED`.
+///
+/// # Safety
+///
+/// `config` must point to a live `vox_swift_codec_config`; `out_codec` must
+/// point to writable storage for one codec pointer. The local descriptor graph
+/// referenced by `config` must outlive the returned codec handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vox_swift_codec_prepare_v1(
+    config: *const vox_swift_codec_config,
+    out_codec: *mut *mut vox_swift_codec,
+) -> vox_swift_status_t {
+    ffi_status(|| {
+        if out_codec.is_null() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "out_codec was null",
+            ));
+        }
+        unsafe {
+            *out_codec = std::ptr::null_mut();
+        }
+
+        let prepared = unsafe { PreparedCodecConfig::from_ptr(config)? };
+        let codec = Box::new(SwiftCodec {
+            method_id: prepared.method_id,
+            direction: prepared.direction,
+            local_root: prepared.local_root,
+            remote_root_schema_id: prepared.remote_root_schema_id,
+            remote_schema_count: prepared.remote_schema_count,
+            remote_schema_cbor: prepared.remote_schema_cbor,
+        });
+
+        unsafe {
+            *out_codec = Box::into_raw(codec).cast::<vox_swift_codec>();
+        }
+        Ok(())
+    })
+}
+
+/// Release a Swift codec handle returned by `vox_swift_codec_prepare_v1`.
+///
+/// # Safety
+///
+/// `codec` must be null or a pointer returned by `vox_swift_codec_prepare_v1`
+/// that has not already been released.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vox_swift_codec_release_v1(codec: *mut vox_swift_codec) {
+    if !codec.is_null() {
+        unsafe {
+            drop(Box::from_raw(codec.cast::<SwiftCodec>()));
+        }
+    }
+}
+
+/// Encode a Swift value into postcard bytes.
+///
+/// # Safety
+///
+/// `codec` must be a live codec handle, `value` must point to a live Swift
+/// value matching the codec's local root descriptor, and `out_bytes` must point
+/// to writable storage for one owned byte buffer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vox_swift_codec_encode_v1(
+    codec: *const vox_swift_codec,
+    value: *const u8,
+    out_bytes: *mut vox_swift_owned_bytes,
+) -> vox_swift_status_t {
+    let status = ffi_status(|| {
+        unsafe {
+            swift_codec_from_ptr(codec)?;
+        }
+        if value.is_null() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "value was null",
+            ));
+        }
+        if out_bytes.is_null() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "out_bytes was null",
+            ));
+        }
+        unsafe {
+            *out_bytes = vox_swift_owned_bytes::empty();
+        }
+        Ok(())
+    });
+    if status != VOX_SWIFT_STATUS_OK {
+        return status;
+    }
+    VOX_SWIFT_STATUS_UNSUPPORTED
+}
+
+/// Decode postcard bytes into caller-owned Swift value storage.
+///
+/// # Safety
+///
+/// `codec` must be a live codec handle, `input` must point to readable postcard
+/// bytes, and `dst` must point to writable storage large enough for the codec's
+/// local root Swift value.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vox_swift_codec_decode_v1(
+    codec: *const vox_swift_codec,
+    input: vox_swift_bytes,
+    dst: *mut u8,
+) -> vox_swift_status_t {
+    let status = ffi_status(|| {
+        unsafe {
+            swift_codec_from_ptr(codec)?;
+        }
+        input.validate("input")?;
+        if dst.is_null() {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "dst was null"));
+        }
+        Ok(())
+    });
+    if status != VOX_SWIFT_STATUS_OK {
+        return status;
+    }
+    VOX_SWIFT_STATUS_UNSUPPORTED
+}
+
+/// Release bytes returned through `vox_swift_owned_bytes`.
+///
+/// # Safety
+///
+/// `bytes` must be null or point to a buffer previously returned by this crate.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vox_swift_owned_bytes_free_v1(bytes: *mut vox_swift_owned_bytes) {
+    let Some(bytes) = (unsafe { bytes.as_mut() }) else {
+        return;
+    };
+    if !bytes.ptr.is_null() {
+        unsafe {
+            drop(Vec::from_raw_parts(bytes.ptr, bytes.len, bytes.capacity));
+        }
+    }
+    *bytes = vox_swift_owned_bytes::empty();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vox_types::{SchemaHash, SchemaPayload};
 
     #[test]
     fn empty_descriptor_is_valid_opaque_descriptor() {
@@ -352,5 +679,126 @@ mod tests {
             desc.validate(),
             Err(error) if error.kind() == io::ErrorKind::InvalidData
         ));
+    }
+
+    fn schema_payload_bytes(root_id: u64) -> Vec<u8> {
+        SchemaPayload {
+            schemas: Vec::new(),
+            root: TypeRef::concrete(SchemaHash(root_id)),
+        }
+        .to_cbor()
+        .0
+    }
+
+    #[test]
+    fn codec_prepare_rejects_null_config() {
+        let mut codec = std::ptr::null_mut();
+
+        let status = unsafe { vox_swift_codec_prepare_v1(std::ptr::null(), &mut codec) };
+
+        assert_eq!(status, VOX_SWIFT_STATUS_BAD_ABI);
+        assert!(codec.is_null());
+    }
+
+    #[test]
+    fn codec_prepare_rejects_bad_config_size() {
+        let local = vox_swift_type_descriptor::empty();
+        let remote_schema_cbor = schema_payload_bytes(7);
+        let mut config = vox_swift_codec_config::new(
+            42,
+            VOX_SWIFT_CODEC_DIRECTION_ARGS,
+            &local,
+            vox_swift_bytes {
+                ptr: remote_schema_cbor.as_ptr(),
+                len: remote_schema_cbor.len(),
+            },
+        );
+        config.size += 1;
+        let mut codec = std::ptr::null_mut();
+
+        let status = unsafe { vox_swift_codec_prepare_v1(&config, &mut codec) };
+
+        assert_eq!(status, VOX_SWIFT_STATUS_BAD_ABI);
+        assert!(codec.is_null());
+    }
+
+    #[test]
+    fn codec_prepare_accepts_valid_descriptor_and_schema_payload() {
+        let local = vox_swift_type_descriptor::empty();
+        let remote_schema_cbor = schema_payload_bytes(7);
+        let config = vox_swift_codec_config::new(
+            42,
+            VOX_SWIFT_CODEC_DIRECTION_RESPONSE,
+            &local,
+            vox_swift_bytes {
+                ptr: remote_schema_cbor.as_ptr(),
+                len: remote_schema_cbor.len(),
+            },
+        );
+        let mut codec = std::ptr::null_mut();
+
+        let status = unsafe { vox_swift_codec_prepare_v1(&config, &mut codec) };
+
+        assert_eq!(status, VOX_SWIFT_STATUS_OK);
+        assert!(!codec.is_null());
+
+        let codec_ref = unsafe { (codec.cast::<SwiftCodec>()).as_ref().unwrap() };
+        assert_eq!(codec_ref.method_id, 42);
+        assert_eq!(codec_ref.direction, VOX_SWIFT_CODEC_DIRECTION_RESPONSE);
+        assert!(std::ptr::eq(codec_ref.local_root, &local));
+        assert_eq!(codec_ref.remote_root_schema_id, 7);
+        assert_eq!(codec_ref.remote_schema_count, 0);
+        assert_eq!(codec_ref.remote_schema_cbor, remote_schema_cbor);
+
+        unsafe {
+            vox_swift_codec_release_v1(codec);
+        }
+    }
+
+    #[test]
+    fn codec_encode_and_decode_are_explicitly_unsupported_until_jit_lands() {
+        let local = vox_swift_type_descriptor::empty();
+        let remote_schema_cbor = schema_payload_bytes(7);
+        let config = vox_swift_codec_config::new(
+            42,
+            VOX_SWIFT_CODEC_DIRECTION_ARGS,
+            &local,
+            vox_swift_bytes {
+                ptr: remote_schema_cbor.as_ptr(),
+                len: remote_schema_cbor.len(),
+            },
+        );
+        let mut codec = std::ptr::null_mut();
+        assert_eq!(
+            unsafe { vox_swift_codec_prepare_v1(&config, &mut codec) },
+            VOX_SWIFT_STATUS_OK
+        );
+
+        let value = 5_u8;
+        let mut out = vox_swift_owned_bytes::empty();
+        assert_eq!(
+            unsafe { vox_swift_codec_encode_v1(codec, &value, &mut out) },
+            VOX_SWIFT_STATUS_UNSUPPORTED
+        );
+
+        let mut dst = 0_u8;
+        assert_eq!(
+            unsafe {
+                vox_swift_codec_decode_v1(
+                    codec,
+                    vox_swift_bytes {
+                        ptr: remote_schema_cbor.as_ptr(),
+                        len: remote_schema_cbor.len(),
+                    },
+                    &mut dst,
+                )
+            },
+            VOX_SWIFT_STATUS_UNSUPPORTED
+        );
+
+        unsafe {
+            vox_swift_owned_bytes_free_v1(&mut out);
+            vox_swift_codec_release_v1(codec);
+        }
     }
 }

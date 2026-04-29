@@ -11,6 +11,7 @@
 
 pub mod client;
 pub mod decode;
+pub mod descriptor;
 pub mod encode;
 pub mod schema;
 pub mod server;
@@ -20,6 +21,7 @@ pub mod wire;
 use vox_types::{MethodDescriptor, ServiceDescriptor};
 
 pub use client::generate_client;
+pub use descriptor::{generate_service_value_descriptors, generate_value_descriptors};
 pub use encode::generate_named_type_encode_fns;
 pub use schema::generate_schemas;
 pub use server::generate_server;
@@ -116,6 +118,7 @@ pub fn generate_common_types(services: &[&ServiceDescriptor]) -> String {
     out.push_str(&generate_named_type_encode_fns(&deduped));
     out.push_str("// MARK: - Shared Decoders\n\n");
     out.push_str(&decode::generate_named_type_decode_fns(&deduped));
+    out.push_str(&generate_value_descriptors("shared", &deduped));
     out
 }
 
@@ -161,6 +164,12 @@ fn generate_service_inner(
 
         out.push_str(&format!("// MARK: - {service_name} Decoders\n\n"));
         out.push_str(&decode::generate_named_type_decode_fns(&named_types));
+
+        out.push_str(&generate_service_value_descriptors(
+            &service.service_name.to_lower_camel_case(),
+            &named_types,
+            service.methods,
+        ));
     }
 
     match bindings {
@@ -256,6 +265,69 @@ mod tests {
         assert!(
             generated.contains("return .persistIdem"),
             "generated Swift dispatcher should return the method retry policy:\n{generated}"
+        );
+    }
+
+    #[test]
+    fn generated_swift_emits_value_descriptors_for_named_types() {
+        #[allow(dead_code)]
+        #[derive(facet::Facet)]
+        struct SwiftPoint {
+            x: i32,
+            label: String,
+        }
+
+        #[allow(dead_code)]
+        #[repr(u8)]
+        #[derive(facet::Facet)]
+        enum SwiftChoice {
+            Empty,
+            Number(i32),
+            Pair { left: i32, right: i32 },
+        }
+
+        let describe = method_descriptor::<(SwiftPoint, SwiftChoice), SwiftPoint>(
+            "DescriptorSvc",
+            "describe",
+            &["point", "choice"],
+            None,
+        );
+        let methods = Box::leak(vec![describe].into_boxed_slice());
+        let service = ServiceDescriptor {
+            service_name: "DescriptorSvc",
+            methods,
+            doc: None,
+        };
+
+        let generated = generate_service(&service);
+
+        assert!(
+            generated.contains(
+                "public let descriptorSvc_swift_value_descriptors: VoxSwiftDescriptorRegistry"
+            ),
+            "generated Swift should expose a value descriptor registry:\n{generated}"
+        );
+        assert!(
+            generated.contains("MemoryLayout<SwiftPoint>.offset(of: \\SwiftPoint.x)!"),
+            "generated Swift should capture struct field offsets:\n{generated}"
+        );
+        assert!(
+            generated.contains("kind: VoxSwiftTypeKindEnum"),
+            "generated Swift should emit enum descriptors:\n{generated}"
+        );
+        assert!(
+            generated.contains("enumWitnesses: VoxSwiftEnumWitnesses("),
+            "generated Swift should emit enum witness thunks:\n{generated}"
+        );
+        assert!(
+            generated.contains(
+                "public let descriptorSvc_swift_method_value_descriptors: [UInt64: VoxSwiftMethodValueDescriptorInfo]"
+            ),
+            "generated Swift should expose per-method value descriptor roots:\n{generated}"
+        );
+        assert!(
+            generated.contains("registry.defineMethod(methodId:"),
+            "generated Swift should bind method IDs to local value descriptor roots:\n{generated}"
         );
     }
 }
