@@ -1028,6 +1028,15 @@ impl TypePlanBuilder {
     ) -> Result<NodeId, AllocError> {
         let type_id = shape.id;
 
+        // Reuse an already-built node when no field-level proxy makes this call
+        // site distinct. Without this, types reachable via N distinct
+        // non-cyclic paths are rebuilt N times which explodes combinatorially.
+        if field_proxies.is_none()
+            && let Some(&idx) = self.finished.get(&type_id)
+        {
+            return Ok(idx);
+        }
+
         // Check if we're currently building this type (cycle detected)
         if self.building.contains(&type_id) {
             // Create a BackRef node with just the TypeId - resolved later via lookup
@@ -2447,6 +2456,34 @@ mod tests {
             }
             other => panic!("Expected Struct, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_typeplan_structure_sharing() {
+        // Make sure that a DAG can't cause exponential type plan node growth
+        macro_rules! make_ty {
+            ($name:ident, $subty:ty) => {
+                #[derive(Facet)]
+                #[repr(u8)]
+                #[expect(dead_code)]
+                enum $name {
+                    A($subty),
+                    B($subty),
+                    C($subty),
+                    D($subty),
+                }
+            };
+        }
+        make_ty!(L1, u32);
+        make_ty!(L2, L1);
+        make_ty!(L3, L2);
+        make_ty!(L4, L3);
+
+        let plan = TypePlan::<L4>::build().expect("typeplan build");
+        let core = plan.core();
+        let node_count = core.nodes.len();
+        // Node count would be 341 without sharing:
+        assert_eq!(node_count, 5);
     }
 
     #[test]
