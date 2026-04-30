@@ -3,8 +3,8 @@ use crate::{
     VTableDirect, type_ops_direct, vtable_direct,
 };
 
-// TypeOps lifted out - shared static (unit has Default but not Clone as Copy type)
-static UNIT_TYPE_OPS: TypeOpsDirect = type_ops_direct!(() => Default);
+// TypeOps lifted out - shared static
+static UNIT_TYPE_OPS: TypeOpsDirect = type_ops_direct!(() => Default, Clone);
 
 unsafe impl Facet<'_> for () {
     const SHAPE: &'static Shape = &const {
