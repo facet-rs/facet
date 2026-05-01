@@ -604,13 +604,18 @@ pub unsafe extern "C" fn vox_swift_codec_encode_v1(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_swift_codec_decode_v1(
     codec: *const vox_swift_codec,
-    input: vox_swift_bytes,
+    input_ptr: *const u8,
+    input_len: usize,
     dst: *mut u8,
 ) -> vox_swift_status_t {
     let status = ffi_status(|| {
         unsafe {
             swift_codec_from_ptr(codec)?;
         }
+        let input = vox_swift_bytes {
+            ptr: input_ptr,
+            len: input_len,
+        };
         input.validate("input")?;
         if dst.is_null() {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "dst was null"));
@@ -786,10 +791,8 @@ mod tests {
             unsafe {
                 vox_swift_codec_decode_v1(
                     codec,
-                    vox_swift_bytes {
-                        ptr: remote_schema_cbor.as_ptr(),
-                        len: remote_schema_cbor.len(),
-                    },
+                    remote_schema_cbor.as_ptr(),
+                    remote_schema_cbor.len(),
                     &mut dst,
                 )
             },

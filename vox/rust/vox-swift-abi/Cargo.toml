@@ -11,6 +11,9 @@ keywords = ["swift", "abi", "jit", "postcard"]
 categories = ["development-tools"]
 description = "Process-local Swift value descriptor ABI for vox"
 
+[lib]
+crate-type = ["rlib", "cdylib"]
+
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 

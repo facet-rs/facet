@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @testable import VoxRuntime
@@ -98,5 +99,31 @@ struct SwiftValueDescriptorTests {
       #expect(config.localRoot == root)
       #expect(config.remoteSchemaCbor.len == 4)
     }
+  }
+
+  @Test func preparesCodecThroughRustDylibWhenAvailable() throws {
+    guard let dylibPath = ProcessInfo.processInfo.environment["VOX_SWIFT_ABI_DYLIB"],
+      !dylibPath.isEmpty
+    else {
+      return
+    }
+
+    let registry = VoxSwiftDescriptorRegistry()
+    let root = registry.insert(
+      VoxSwiftTypeDescriptor.concrete(
+        of: Int32.self,
+        kind: VoxSwiftTypeKindPrimitive,
+        primitiveKind: VoxSwiftPrimitiveI32,
+        schemaId: 0x10
+      )
+    )
+    let library = try VoxSwiftCodecDynamicLibrary(path: URL(fileURLWithPath: dylibPath))
+
+    _ = try library.prepare(
+      methodId: 0x99,
+      direction: VoxSwiftCodecDirectionArgs,
+      localRoot: root,
+      remoteSchemaPayload: SchemaPayload(schemas: [], root: .concrete(0x10))
+    )
   }
 }
