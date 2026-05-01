@@ -44,7 +44,7 @@ fn generate_value_descriptors_inner(
     let mut nodes = Vec::new();
     let mut seen = HashSet::new();
     for (_, shape) in named_types {
-        collect_shape(*shape, &mut seen, &mut nodes);
+        collect_shape(shape, &mut seen, &mut nodes);
     }
     for method in methods {
         collect_shape(method.args_shape, &mut seen, &mut nodes);

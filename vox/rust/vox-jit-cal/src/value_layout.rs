@@ -3,15 +3,15 @@
 //! Every type in this module is `#[repr(C)]` with a stable ABI: the same
 //! `ValueLayout` graph can be produced by Rust calibration, by Swift
 //! calibration, or by anything else, and codegen consumes it the same way.
-//! Variable-length data (variant arrays, field arrays, names) lives behind
-//! `(ptr, len)` slice pairs whose backing storage is owned by a
-//! [`LayoutArena`] (in tests / build-time) or leaked for the process
-//! (steady-state).
+//! Variable-length data (variant arrays, field arrays, names, byte
+//! patterns) lives behind `(ptr, len)` slice pairs whose backing storage
+//! is owned by a [`LayoutArena`] (in tests / build-time) or leaked for
+//! the process (steady-state).
 //!
-//! Codegen reads a `ValueLayout` and emits direct stores. Per-type vtable
-//! functions are not part of this representation — the probe that produces
-//! it learns the offsets, alignments, and tag values once, and codegen
-//! turns those numbers into `mov` instructions.
+//! Codegen reads a `ValueLayout` and emits direct stores / loads.
+//! Per-type vtable functions are not part of this representation — the
+//! probe that produces it learns the patterns once, and codegen turns
+//! those bytes into `mov` and `cmp` instructions.
 
 use std::cell::RefCell;
 use std::fmt;
@@ -25,8 +25,7 @@ pub enum ValueLayoutKind {
     Struct = 1,
     Enum = 2,
     /// Opaque container (Vec/String/Box/Swift Array/...). Layout is in the
-    /// calibration registry under the [`DescriptorHandle`] in
-    /// `opaque_handle`.
+    /// calibration registry under the handle in `opaque_handle`.
     Opaque = 3,
 }
 
@@ -93,9 +92,38 @@ impl LayoutBytes {
     }
 }
 
+/// One byte of a variant's match or store pattern.
+///
+/// Both kinds of patterns describe a sequence of bytes within the enum
+/// value. For a `match_pattern` entry, the byte at `offset` must satisfy
+/// `(value_at_offset & mask) == (value & mask)` to count as a match. For
+/// a `store_pattern` entry, codegen stores the bits selected by `mask`
+/// from `value` into the byte at `offset`, leaving other bits intact (in
+/// practice almost every byte uses `mask == 0xFF`, which collapses to a
+/// plain store).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BytePattern {
+    pub offset: u32,
+    pub value: u8,
+    pub mask: u8,
+    pub _reserved: u16,
+}
+
+impl BytePattern {
+    /// Convenience: a full-byte pattern (mask = 0xFF) at the given offset.
+    pub const fn full(offset: u32, value: u8) -> Self {
+        Self {
+            offset,
+            value,
+            mask: 0xFF,
+            _reserved: 0,
+        }
+    }
+}
+
 /// Layout of one value. Tagged-struct representation: `kind` selects which
-/// of the trailing fields are meaningful. All fields are zero-initialized
-/// for the kinds that don't use them.
+/// of the trailing fields are meaningful.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct ValueLayout {
@@ -113,9 +141,6 @@ pub struct ValueLayout {
     pub field_count: u32,
 
     // --- kind == Enum ---
-    pub tag_offset: u32,
-    /// Width of the discriminant field in bytes. One of 1, 2, 4, 8.
-    pub tag_width: u32,
     pub variants: *const VariantLayout,
     pub variant_count: u32,
 
@@ -134,8 +159,6 @@ impl ValueLayout {
             primitive_kind: PrimitiveKind::Unit,
             fields: std::ptr::null(),
             field_count: 0,
-            tag_offset: 0,
-            tag_width: 0,
             variants: std::ptr::null(),
             variant_count: 0,
             opaque_handle: 0,
@@ -151,8 +174,6 @@ impl ValueLayout {
             primitive_kind: kind,
             fields: std::ptr::null(),
             field_count: 0,
-            tag_offset: 0,
-            tag_width: 0,
             variants: std::ptr::null(),
             variant_count: 0,
             opaque_handle: 0,
@@ -182,9 +203,8 @@ impl ValueLayout {
 #[derive(Clone, Copy, Debug)]
 pub struct FieldLayout {
     pub name: LayoutBytes,
-    /// Byte offset from the base of the enclosing value. For variant fields
-    /// this is absolute (within the entire enum value): it already accounts
-    /// for the discriminant region.
+    /// Byte offset from the base of the enclosing value. For variant
+    /// fields this is absolute (within the entire enum value).
     pub offset: u32,
     pub _pad: u32,
     pub layout: *const ValueLayout,
@@ -197,25 +217,64 @@ impl FieldLayout {
 }
 
 /// One variant of an enum-shaped value.
+///
+/// The variant is selected by `match_pattern`: every byte described in
+/// the pattern must match. An *empty* `match_pattern` makes the variant
+/// the "default" / catch-all — it matches anything no preceding variant
+/// matched, which is how niche-filled `Some(_)` is encoded.
+///
+/// To construct this variant, codegen emits the stores described by
+/// `store_pattern` and then the stores for each `field` in `fields`. For
+/// niche-filled variants where the payload bytes themselves *are* the
+/// discriminant (e.g. a non-null pointer makes a `Some`), `store_pattern`
+/// can be empty — the field stores do all the work.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct VariantLayout {
     pub name: LayoutBytes,
-    /// Numeric tag value to write at the discriminant offset to select this
-    /// variant.
-    pub tag_value: u64,
+    pub match_pattern: *const BytePattern,
+    pub match_pattern_count: u32,
+    pub store_pattern: *const BytePattern,
+    pub store_pattern_count: u32,
     pub fields: *const FieldLayout,
     pub field_count: u32,
     pub _pad: u32,
 }
 
 impl VariantLayout {
+    pub fn match_pattern_slice(&self) -> &[BytePattern] {
+        if self.match_pattern.is_null() || self.match_pattern_count == 0 {
+            &[]
+        } else {
+            unsafe {
+                std::slice::from_raw_parts(self.match_pattern, self.match_pattern_count as usize)
+            }
+        }
+    }
+
+    pub fn store_pattern_slice(&self) -> &[BytePattern] {
+        if self.store_pattern.is_null() || self.store_pattern_count == 0 {
+            &[]
+        } else {
+            unsafe {
+                std::slice::from_raw_parts(self.store_pattern, self.store_pattern_count as usize)
+            }
+        }
+    }
+
     pub fn fields_slice(&self) -> &[FieldLayout] {
         if self.fields.is_null() || self.field_count == 0 {
             &[]
         } else {
             unsafe { std::slice::from_raw_parts(self.fields, self.field_count as usize) }
         }
+    }
+
+    /// Returns `true` if this variant has no `match_pattern`, i.e. it's
+    /// the default / catch-all variant (must be last in the variant list
+    /// for the dispatch to make sense).
+    pub fn is_default(&self) -> bool {
+        self.match_pattern_count == 0
     }
 }
 
@@ -224,13 +283,8 @@ impl VariantLayout {
 // ---------------------------------------------------------------------------
 
 /// Owns the variable-length backing storage referenced by a [`ValueLayout`]
-/// graph (variant arrays, field arrays, name bytes, recursively-nested
-/// `ValueLayout` nodes).
-///
-/// While the arena lives, every `*const` pointer it has handed out is valid
-/// to dereference. Dropping the arena frees that storage. For process-wide
-/// layouts you would leak the arena (`Box::leak`) or build with `Box::leak`
-/// directly.
+/// graph (variant arrays, field arrays, name bytes, byte patterns,
+/// recursively-nested `ValueLayout` nodes).
 #[derive(Default)]
 pub struct LayoutArena {
     inner: RefCell<ArenaInner>,
@@ -241,6 +295,7 @@ struct ArenaInner {
     layouts: Vec<Box<ValueLayout>>,
     fields: Vec<Box<[FieldLayout]>>,
     variants: Vec<Box<[VariantLayout]>>,
+    patterns: Vec<Box<[BytePattern]>>,
     names: Vec<Box<[u8]>>,
 }
 
@@ -279,7 +334,17 @@ impl LayoutArena {
         (ptr, len)
     }
 
-    /// Move `layout` into the arena and return a stable pointer to it.
+    pub fn alloc_patterns(&self, patterns: Vec<BytePattern>) -> (*const BytePattern, u32) {
+        if patterns.is_empty() {
+            return (std::ptr::null(), 0);
+        }
+        let len = patterns.len() as u32;
+        let boxed: Box<[BytePattern]> = patterns.into_boxed_slice();
+        let ptr = boxed.as_ptr();
+        self.inner.borrow_mut().patterns.push(boxed);
+        (ptr, len)
+    }
+
     pub fn alloc_layout(&self, layout: ValueLayout) -> *const ValueLayout {
         let boxed = Box::new(layout);
         let ptr = NonNull::from(boxed.as_ref()).as_ptr() as *const ValueLayout;
@@ -288,9 +353,6 @@ impl LayoutArena {
     }
 }
 
-// SAFETY: the arena is interior-mutable but the borrowed slices it hands out
-// are read-only from the consumer's perspective; the arena itself is never
-// shared across threads (each backend builds its own).
 impl fmt::Debug for LayoutArena {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let inner = self.inner.borrow();
@@ -298,33 +360,52 @@ impl fmt::Debug for LayoutArena {
             .field("layouts", &inner.layouts.len())
             .field("fields", &inner.fields.len())
             .field("variants", &inner.variants.len())
+            .field("patterns", &inner.patterns.len())
             .field("names", &inner.names.len())
             .finish()
     }
 }
 
 // ---------------------------------------------------------------------------
-// Layout-driven byte writer (no per-type helper calls)
+// Pattern application
 // ---------------------------------------------------------------------------
 
-/// Write the discriminant bytes for variant `variant_index` into `dst`
-/// (which points at the base of the enum value).
+/// Apply a `store_pattern` to `dst`: for each entry, write
+/// `(byte & !mask) | (value & mask)` at `dst.add(offset)`. For full-byte
+/// patterns (`mask == 0xFF`) this is a plain store.
 ///
 /// # Safety
-/// `dst` must be writable for at least `layout.size` bytes. `layout.kind`
-/// must be `Enum`. `variant_index` must be a valid index.
-pub unsafe fn write_enum_tag(layout: &ValueLayout, dst: *mut u8, variant_index: u32) {
-    debug_assert_eq!(layout.kind, ValueLayoutKind::Enum);
-    let variant = &layout.variants_slice()[variant_index as usize];
-    let tag_value = variant.tag_value;
-    let tag_dst = unsafe { dst.add(layout.tag_offset as usize) };
-    match layout.tag_width {
-        1 => unsafe { tag_dst.cast::<u8>().write_unaligned(tag_value as u8) },
-        2 => unsafe { tag_dst.cast::<u16>().write_unaligned(tag_value as u16) },
-        4 => unsafe { tag_dst.cast::<u32>().write_unaligned(tag_value as u32) },
-        8 => unsafe { tag_dst.cast::<u64>().write_unaligned(tag_value) },
-        other => panic!("invalid tag_width {other}"),
+/// `dst` must be writable for at least `max(offset) + 1` bytes across
+/// every entry.
+pub unsafe fn apply_store_pattern(pattern: &[BytePattern], dst: *mut u8) {
+    for entry in pattern {
+        let p = unsafe { dst.add(entry.offset as usize) };
+        if entry.mask == 0xFF {
+            unsafe { p.write(entry.value) };
+        } else {
+            let existing = unsafe { p.read() };
+            unsafe { p.write((existing & !entry.mask) | (entry.value & entry.mask)) };
+        }
     }
+}
+
+/// Test whether `bytes` satisfy `match_pattern`: every entry's byte at
+/// `offset`, masked, must equal `value` masked. An empty pattern is
+/// treated as "always matches" (default variant).
+///
+/// # Safety
+/// `bytes` must be readable for at least `max(offset) + 1` bytes.
+pub unsafe fn matches_pattern(pattern: &[BytePattern], bytes: *const u8) -> bool {
+    if pattern.is_empty() {
+        return true;
+    }
+    for entry in pattern {
+        let actual = unsafe { bytes.add(entry.offset as usize).read() };
+        if (actual & entry.mask) != (entry.value & entry.mask) {
+            return false;
+        }
+    }
+    true
 }
 
 // ---------------------------------------------------------------------------
@@ -334,11 +415,11 @@ pub unsafe fn write_enum_tag(layout: &ValueLayout, dst: *mut u8, variant_index: 
 /// Probe `Result<T, E>`'s in-memory layout into the given arena.
 ///
 /// `t_zero` and `t_max` must be two `T` values whose byte representations
-/// differ in at least one byte that is wholly within `T`. Likewise
-/// `e_zero`/`e_max` for `E`. For ZST `E` the `e_*` arguments are unused.
-///
-/// Returns a [`ValueLayout`] (kind == Enum) whose backing storage lives in
-/// `arena`.
+/// differ in at least one byte that is wholly within `T`. The discriminant
+/// must live somewhere in the value that doesn't overlap with the Ok
+/// payload (the common case for `#[repr(...)]` Rust enums and explicit
+/// Swift enums; not the case for niche-filled `Option<Box<T>>` etc.,
+/// which need a different probe).
 pub fn probe_result_layout<T, E>(
     arena: &LayoutArena,
     t_zero: T,
@@ -368,6 +449,8 @@ where
     let err_zero_bytes =
         unsafe { std::slice::from_raw_parts(&err_zero as *const _ as *const u8, size) };
 
+    // Find the Ok payload byte range: bytes that differ between the two
+    // Ok samples (their discriminants are equal so only the payload moves).
     let mut ok_payload_first: Option<usize> = None;
     let mut ok_payload_last: Option<usize> = None;
     for i in 0..size {
@@ -376,63 +459,79 @@ where
             ok_payload_last = Some(i);
         }
     }
-    let ok_payload_offset = ok_payload_first.ok_or_else(|| {
-        "probe failed: t_zero and t_max have identical byte representations".to_string()
-    })?;
-    let ok_payload_end = ok_payload_last.unwrap() + 1;
+    let Some(ok_payload_first) = ok_payload_first else {
+        return Err("probe failed: t_zero and t_max bytes are identical".to_string());
+    };
+    let ok_payload_last = ok_payload_last.unwrap();
+    let ok_payload_end = ok_payload_last + 1;
 
-    let mut tag_offset: Option<usize> = None;
+    // The discriminant lives in bytes that differ between Ok and Err and
+    // are *outside* the payload range (so they were equal across the two
+    // Ok samples). Build a match/store pattern out of every such byte.
+    let mut ok_match_entries = Vec::new();
+    let mut err_match_entries = Vec::new();
     for i in 0..size {
-        if i >= ok_payload_offset && i < ok_payload_end {
+        if i >= ok_payload_first && i < ok_payload_end {
             continue;
         }
         if ok_zero_bytes[i] != err_zero_bytes[i] {
-            tag_offset = Some(i);
-            break;
+            ok_match_entries.push(BytePattern::full(i as u32, ok_zero_bytes[i]));
+            err_match_entries.push(BytePattern::full(i as u32, err_zero_bytes[i]));
         }
     }
-    let tag_offset = tag_offset.ok_or_else(|| {
-        "probe failed: no byte outside Ok payload differs between Ok and Err".to_string()
-    })?;
+    if ok_match_entries.is_empty() {
+        return Err("probe failed: no discriminant bytes found between Ok and Err".to_string());
+    }
 
-    let tag_width: u32 = 1;
-    let ok_tag = ok_zero_bytes[tag_offset] as u64;
-    let err_tag = err_zero_bytes[tag_offset] as u64;
+    // store_pattern for explicit-tag enums is the same as match_pattern.
+    let ok_store_entries = ok_match_entries.clone();
+    let err_store_entries = err_match_entries.clone();
 
     let t_layout_ptr = arena.alloc_layout(t_layout);
     let e_layout_ptr = arena.alloc_layout(e_layout);
 
     let ok_field = FieldLayout {
         name: arena.alloc_str("0"),
-        offset: ok_payload_offset as u32,
+        offset: ok_payload_first as u32,
         _pad: 0,
         layout: t_layout_ptr,
     };
-    let err_field = FieldLayout {
-        name: arena.alloc_str("0"),
-        offset: 0,
-        _pad: 0,
-        layout: e_layout_ptr,
-    };
-
     let (ok_fields_ptr, ok_field_count) = arena.alloc_fields(vec![ok_field]);
+
     let (err_fields_ptr, err_field_count) = if size_of::<E>() == 0 {
         (std::ptr::null(), 0)
     } else {
+        let err_field = FieldLayout {
+            name: arena.alloc_str("0"),
+            offset: 0,
+            _pad: 0,
+            layout: e_layout_ptr,
+        };
         arena.alloc_fields(vec![err_field])
     };
+
+    let (ok_match_ptr, ok_match_count) = arena.alloc_patterns(ok_match_entries);
+    let (ok_store_ptr, ok_store_count) = arena.alloc_patterns(ok_store_entries);
+    let (err_match_ptr, err_match_count) = arena.alloc_patterns(err_match_entries);
+    let (err_store_ptr, err_store_count) = arena.alloc_patterns(err_store_entries);
 
     let variants = vec![
         VariantLayout {
             name: arena.alloc_str("Ok"),
-            tag_value: ok_tag,
+            match_pattern: ok_match_ptr,
+            match_pattern_count: ok_match_count,
+            store_pattern: ok_store_ptr,
+            store_pattern_count: ok_store_count,
             fields: ok_fields_ptr,
             field_count: ok_field_count,
             _pad: 0,
         },
         VariantLayout {
             name: arena.alloc_str("Err"),
-            tag_value: err_tag,
+            match_pattern: err_match_ptr,
+            match_pattern_count: err_match_count,
+            store_pattern: err_store_ptr,
+            store_pattern_count: err_store_count,
             fields: err_fields_ptr,
             field_count: err_field_count,
             _pad: 0,
@@ -447,8 +546,6 @@ where
         primitive_kind: PrimitiveKind::Unit,
         fields: std::ptr::null(),
         field_count: 0,
-        tag_offset: tag_offset as u32,
-        tag_width,
         variants: variants_ptr,
         variant_count,
         opaque_handle: 0,
@@ -478,23 +575,28 @@ mod tests {
         assert_eq!(layout.kind, ValueLayoutKind::Enum);
         assert_eq!(layout.variant_count, 2);
 
+        let variants = layout.variants_slice();
+        let ok_variant = variants
+            .iter()
+            .find(|v| v.name.as_str() == Some("Ok"))
+            .unwrap();
+        assert!(!ok_variant.is_default());
+        assert!(!ok_variant.match_pattern_slice().is_empty());
+
         let mut storage: MaybeUninit<Result<u64, ()>> = MaybeUninit::uninit();
         let dst = storage.as_mut_ptr() as *mut u8;
-        unsafe { std::ptr::write_bytes(dst, 0, layout.size as usize) };
-
-        let variants = layout.variants_slice();
-        let ok_index = variants
-            .iter()
-            .position(|v| v.name.as_str() == Some("Ok"))
-            .unwrap() as u32;
-        unsafe { write_enum_tag(&layout, dst, ok_index) };
-
-        let payload_offset = variants[ok_index as usize].fields_slice()[0].offset as usize;
         unsafe {
+            std::ptr::write_bytes(dst, 0, layout.size as usize);
+
+            // Apply Ok's store_pattern (writes the discriminant) and then
+            // store the u64 payload at the field offset. Two operations,
+            // both expressed as bytes-at-offsets — no helper.
+            apply_store_pattern(ok_variant.store_pattern_slice(), dst);
+            let payload_offset = ok_variant.fields_slice()[0].offset as usize;
             dst.add(payload_offset)
                 .cast::<u64>()
-                .write_unaligned(31_u64)
-        };
+                .write_unaligned(31_u64);
+        }
 
         let result: Result<u64, ()> = unsafe { storage.assume_init() };
         assert_eq!(result, Ok(31));
@@ -516,17 +618,50 @@ mod tests {
 
         let mut storage: MaybeUninit<Result<u64, ()>> = MaybeUninit::uninit();
         let dst = storage.as_mut_ptr() as *mut u8;
-        unsafe { std::ptr::write_bytes(dst, 0, layout.size as usize) };
-
-        let variants = layout.variants_slice();
-        let err_index = variants
-            .iter()
-            .position(|v| v.name.as_str() == Some("Err"))
-            .unwrap() as u32;
-        unsafe { write_enum_tag(&layout, dst, err_index) };
+        unsafe {
+            std::ptr::write_bytes(dst, 0, layout.size as usize);
+            let variants = layout.variants_slice();
+            let err = variants
+                .iter()
+                .find(|v| v.name.as_str() == Some("Err"))
+                .unwrap();
+            apply_store_pattern(err.store_pattern_slice(), dst);
+            // Err(()) has no payload to store.
+        }
 
         let result: Result<u64, ()> = unsafe { storage.assume_init() };
         assert_eq!(result, Err(()));
+    }
+
+    #[test]
+    fn match_pattern_recognises_constructed_variant() {
+        let arena = LayoutArena::new();
+        let layout = probe_result_layout(
+            &arena,
+            0_u64,
+            0xDEAD_BEEF_CAFE_BABE_u64,
+            (),
+            (),
+            ValueLayout::primitive(PrimitiveKind::U64),
+            ValueLayout::primitive(PrimitiveKind::Unit),
+        )
+        .unwrap();
+
+        let value: Result<u64, ()> = Ok(42);
+        let bytes = &value as *const _ as *const u8;
+        let variants = layout.variants_slice();
+        let ok = variants
+            .iter()
+            .find(|v| v.name.as_str() == Some("Ok"))
+            .unwrap();
+        let err = variants
+            .iter()
+            .find(|v| v.name.as_str() == Some("Err"))
+            .unwrap();
+        unsafe {
+            assert!(matches_pattern(ok.match_pattern_slice(), bytes));
+            assert!(!matches_pattern(err.match_pattern_slice(), bytes));
+        }
     }
 
     #[test]

@@ -18,8 +18,8 @@
 
 pub mod value_layout;
 pub use value_layout::{
-    FieldLayout, LayoutArena, LayoutBytes, PrimitiveKind, ValueLayout, ValueLayoutKind,
-    VariantLayout,
+    BytePattern, FieldLayout, LayoutArena, LayoutBytes, PrimitiveKind, ValueLayout,
+    ValueLayoutKind, VariantLayout,
 };
 
 // ---------------------------------------------------------------------------
