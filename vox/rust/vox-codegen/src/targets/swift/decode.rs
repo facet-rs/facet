@@ -81,8 +81,15 @@ fn generate_decode_stmt_impl(
         ShapeKind::Scalar(facet_core::ScalarType::Unit) => {
             format!("{indent}let {var_name}: Void = ()\n")
         }
-        ShapeKind::Tuple { elements } if elements.is_empty() => {
+        ShapeKind::Tuple { elements: [] } => {
             format!("{indent}let {var_name}: Void = ()\n")
+        }
+        ShapeKind::Tuple { elements } if elements.len() == 2 => {
+            let a = generate_decode_closure(elements[0].shape);
+            let b = generate_decode_closure(elements[1].shape);
+            format!(
+                "{indent}let {var_name} = try decodeTuple2(from: &{buf_name}, decoderA: {a}, decoderB: {b})\n"
+            )
         }
         ShapeKind::Scalar(scalar) => {
             let decode_fn = swift_decode_fn(scalar);
@@ -98,13 +105,6 @@ fn generate_decode_stmt_impl(
             let inner = generate_decode_closure(inner);
             format!(
                 "{indent}let {var_name} = try decodeOption(from: &{buf_name}, decoder: {inner})\n"
-            )
-        }
-        ShapeKind::Tuple { elements } if elements.len() == 2 => {
-            let a = generate_decode_closure(elements[0].shape);
-            let b = generate_decode_closure(elements[1].shape);
-            format!(
-                "{indent}let {var_name} = try decodeTuple2(from: &{buf_name}, decoderA: {a}, decoderB: {b})\n"
             )
         }
         ShapeKind::TupleStruct { fields } if fields.len() == 2 => {

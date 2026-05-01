@@ -143,6 +143,7 @@ pub fn calibrate_vec<T>() -> CalibrationResult {
     }
 
     // Build probe: len=1, cap>=2 so all three header slots are distinct.
+    #[allow(clippy::uninit_vec)] // see SAFETY below
     let words: [usize; 3] = {
         let mut v: Vec<T> = Vec::with_capacity(1);
         // SAFETY: We set len=1 so the slot is distinguishable, but we never
@@ -252,6 +253,7 @@ fn calibrate_vec_zst<T>(
     let ptr_width = std::mem::size_of::<usize>();
 
     // Probe: set len=3 so the slot is distinguishable; reset to 0 before drop.
+    #[allow(clippy::uninit_vec)] // see SAFETY below
     let words: [usize; 3] = {
         let mut v: Vec<T> = Vec::new();
         // SAFETY: ZSTs have no bytes; set_len only updates the length counter.
@@ -504,6 +506,7 @@ pub fn calibrate_box_slice<T>() -> CalibrationResult {
     // We convert to a fat pointer to read its two words, then reconstruct the
     // original Vec (with len=0 and the same ptr+cap) and drop it — Vec::drop
     // uses the correct capacity for the allocator-free. No element dtors run.
+    #[allow(clippy::uninit_vec)] // see SAFETY below
     let words: [usize; 2] = {
         let mut v: Vec<T> = Vec::with_capacity(3);
         // SAFETY: We only inspect fat-pointer header words, not element bytes.
@@ -568,6 +571,7 @@ fn calibrate_box_slice_zst<T>(
     // identifiable, convert to a boxed slice to get a fat pointer, read its
     // words, then reconstruct the Vec (len=0, cap=usize::MAX) and drop it.
     // Vec::drop for ZSTs is a no-op (no allocation). Miri-clean.
+    #[allow(clippy::uninit_vec)] // see SAFETY below
     let words: [usize; 2] = {
         let mut v: Vec<T> = Vec::new();
         // SAFETY: ZSTs have no bytes; set_len only updates the len counter.

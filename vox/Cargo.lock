@@ -4220,6 +4220,7 @@ dependencies = [
  "smallvec 1.15.1",
  "structstruck",
  "tokio",
+ "vox-jit",
  "vox-postcard",
  "vox-schema",
 ]

@@ -105,21 +105,21 @@ pub fn host_isa_name() -> &'static str {
 
 #[derive(Debug)]
 pub enum CodegenError {
-    ModuleError(cranelift_module::ModuleError),
-    CraneliftError(cranelift_codegen::CodegenError),
+    ModuleError(Box<cranelift_module::ModuleError>),
+    CraneliftError(Box<cranelift_codegen::CodegenError>),
     UnsupportedOp(String),
     IsaError(String),
 }
 
 impl From<cranelift_module::ModuleError> for CodegenError {
     fn from(e: cranelift_module::ModuleError) -> Self {
-        Self::ModuleError(e)
+        Self::ModuleError(Box::new(e))
     }
 }
 
 impl From<cranelift_codegen::CodegenError> for CodegenError {
     fn from(e: cranelift_codegen::CodegenError) -> Self {
-        Self::CraneliftError(e)
+        Self::CraneliftError(Box::new(e))
     }
 }
 
@@ -166,9 +166,7 @@ impl CraneliftBackend {
         let isa_builder =
             cranelift_native::builder().map_err(|e| CodegenError::IsaError(e.to_string()))?;
         let flags = settings::Flags::new(flag_builder);
-        let isa = isa_builder
-            .finish(flags)
-            .map_err(CodegenError::CraneliftError)?;
+        let isa = isa_builder.finish(flags)?;
 
         let ptr_ty = isa.pointer_type();
         let isa_name = host_isa_name();
@@ -274,7 +272,7 @@ impl CraneliftBackend {
         descriptors: &CalibrationRegistry,
     ) -> Result<OwnedDecodeFn, CodegenError> {
         let (fn_ptr, _) = self.compile_decode_inner(shape, program, descriptors)?;
-        Ok(unsafe { core::mem::transmute(fn_ptr) })
+        Ok(unsafe { core::mem::transmute::<*const u8, OwnedDecodeFn>(fn_ptr) })
     }
 
     /// Compile a borrowed decoder.
@@ -285,7 +283,7 @@ impl CraneliftBackend {
         descriptors: &CalibrationRegistry,
     ) -> Result<BorrowedDecodeFn, CodegenError> {
         let (fn_ptr, _) = self.compile_decode_inner(shape, program, descriptors)?;
-        Ok(unsafe { core::mem::transmute(fn_ptr) })
+        Ok(unsafe { core::mem::transmute::<*const u8, BorrowedDecodeFn>(fn_ptr) })
     }
 
     fn compile_decode_inner(
@@ -329,9 +327,7 @@ impl CraneliftBackend {
             .unwrap_or(0);
 
         self.module.clear_context(&mut ctx);
-        self.module
-            .finalize_definitions()
-            .map_err(CodegenError::ModuleError)?;
+        self.module.finalize_definitions()?;
 
         let fn_ptr = self.module.get_finalized_function(func_id);
         crate::jitdump::record_load(&func_name, fn_ptr, code_size);
@@ -348,7 +344,10 @@ impl CraneliftBackend {
         descriptors: &CalibrationRegistry,
     ) -> Result<(OwnedDecodeFn, u32), CodegenError> {
         let (fn_ptr, code_size) = self.compile_decode_inner(shape, program, descriptors)?;
-        Ok((unsafe { core::mem::transmute(fn_ptr) }, code_size))
+        Ok((
+            unsafe { core::mem::transmute::<*const u8, OwnedDecodeFn>(fn_ptr) },
+            code_size,
+        ))
     }
 
     fn decode_signature(&self) -> Signature {
@@ -417,21 +416,18 @@ impl CraneliftBackend {
             eprintln!("=== CLIF encode {func_name} ===\n{}", ctx.func);
         }
         self.module.define_function(func_id, &mut ctx)?;
-        if dump {
-            if let Some(cc) = ctx.compiled_code()
-                && let Some(d) = cc.vcode.as_deref()
-            {
-                eprintln!("=== asm encode {func_name} ===\n{d}");
-            }
+        if dump
+            && let Some(cc) = ctx.compiled_code()
+            && let Some(d) = cc.vcode.as_deref()
+        {
+            eprintln!("=== asm encode {func_name} ===\n{d}");
         }
         let code_size = ctx
             .compiled_code()
             .map(|c| c.code_info().total_size)
             .unwrap_or(0);
         self.module.clear_context(&mut ctx);
-        self.module
-            .finalize_definitions()
-            .map_err(CodegenError::ModuleError)?;
+        self.module.finalize_definitions()?;
 
         let fn_ptr = self.module.get_finalized_function(func_id);
         crate::jitdump::record_load(&func_name, fn_ptr, code_size);
@@ -1289,13 +1285,15 @@ fn emit_op(
             emit_decode_result(
                 ctx,
                 program,
-                *dst_offset,
-                *ok_block,
-                *err_block,
-                *ok_offset,
-                *err_offset,
-                ok_bytes,
-                err_bytes,
+                EmitDecodeResultArgs {
+                    dst_offset: *dst_offset,
+                    ok_block_ir: *ok_block,
+                    err_block_ir: *err_block,
+                    ok_offset: *ok_offset,
+                    err_offset: *err_offset,
+                    ok_bytes,
+                    err_bytes,
+                },
             )?;
         }
 
@@ -1313,15 +1311,17 @@ fn emit_op(
             emit_decode_result_init(
                 ctx,
                 program,
-                *dst_offset,
-                *ok_block,
-                *err_block,
-                *ok_size,
-                *ok_align,
-                *err_size,
-                *err_align,
-                *init_ok_fn,
-                *init_err_fn,
+                EmitDecodeResultInitArgs {
+                    dst_offset: *dst_offset,
+                    ok_block_ir: *ok_block,
+                    err_block_ir: *err_block,
+                    ok_size: *ok_size,
+                    ok_align: *ok_align,
+                    err_size: *err_size,
+                    err_align: *err_align,
+                    init_ok_fn: *init_ok_fn,
+                    init_err_fn: *init_err_fn,
+                },
             )?;
         }
 
@@ -2309,17 +2309,31 @@ fn emit_decode_option(
     Ok(())
 }
 
-fn emit_decode_result(
-    ctx: &mut EmitCtx<'_, '_>,
-    program: &DecodeProgram,
+struct EmitDecodeResultArgs<'a> {
     dst_offset: usize,
     ok_block_ir: usize,
     err_block_ir: usize,
     ok_offset: usize,
     err_offset: usize,
-    ok_bytes: &[u8],
-    err_bytes: &[u8],
+    ok_bytes: &'a [u8],
+    err_bytes: &'a [u8],
+}
+
+fn emit_decode_result(
+    ctx: &mut EmitCtx<'_, '_>,
+    program: &DecodeProgram,
+    args: EmitDecodeResultArgs<'_>,
 ) -> Result<(), CodegenError> {
+    let EmitDecodeResultArgs {
+        dst_offset,
+        ok_block_ir,
+        err_block_ir,
+        ok_offset,
+        err_offset,
+        ok_bytes,
+        err_bytes,
+    } = args;
+
     let variant = ctx.read_varint_u64()?;
     let zero = ctx.b.ins().iconst(types::I64, 0);
     let one = ctx.b.ins().iconst(types::I64, 1);
@@ -2383,9 +2397,7 @@ fn emit_decode_result(
     Ok(())
 }
 
-fn emit_decode_result_init(
-    ctx: &mut EmitCtx<'_, '_>,
-    program: &DecodeProgram,
+struct EmitDecodeResultInitArgs {
     dst_offset: usize,
     ok_block_ir: usize,
     err_block_ir: usize,
@@ -2395,7 +2407,25 @@ fn emit_decode_result_init(
     err_align: usize,
     init_ok_fn: facet_core::ResultInitOkFn,
     init_err_fn: facet_core::ResultInitErrFn,
+}
+
+fn emit_decode_result_init(
+    ctx: &mut EmitCtx<'_, '_>,
+    program: &DecodeProgram,
+    args: EmitDecodeResultInitArgs,
 ) -> Result<(), CodegenError> {
+    let EmitDecodeResultInitArgs {
+        dst_offset,
+        ok_block_ir,
+        err_block_ir,
+        ok_size,
+        ok_align,
+        err_size,
+        err_align,
+        init_ok_fn,
+        init_err_fn,
+    } = args;
+
     let variant = ctx.read_varint_u64()?;
     let zero = ctx.b.ins().iconst(types::I64, 0);
     let one = ctx.b.ins().iconst(types::I64, 1);
@@ -3942,7 +3972,7 @@ fn emit_encode_op(
 
         EncodeOp::WriteShape { shape, src_offset } => {
             if let Some(&child_encoder) = ectx.child_encoders.get(shape) {
-                let in_cycle = ectx.inlining_stack.iter().any(|s| *s == *shape);
+                let in_cycle = ectx.inlining_stack.contains(shape);
                 if in_cycle {
                     emit_encode_direct_child(ectx, child_encoder.encode_fn, *src_offset);
                 } else {
@@ -4085,15 +4115,18 @@ fn emit_encode_op(
             emit_encode_result(
                 ectx,
                 program,
-                *src_offset,
-                *ok_block,
-                *err_block,
-                ok_shape,
-                err_shape,
-                *is_ok_fn,
-                *get_ok_fn,
-                *get_err_fn,
+                EmitEncodeResultArgs {
+                    src_offset: *src_offset,
+                    ok_block_ir: *ok_block,
+                    err_block_ir: *err_block,
+                    _ok_shape: ok_shape,
+                    _err_shape: err_shape,
+                    is_ok_fn: *is_ok_fn,
+                    get_ok_fn: *get_ok_fn,
+                    get_err_fn: *get_err_fn,
+                },
             )?;
+
             Ok(false)
         }
 
@@ -4818,9 +4851,7 @@ fn emit_encode_option_calibrated(
     Ok(())
 }
 
-fn emit_encode_result(
-    ectx: &mut EncodeCtx_<'_, '_>,
-    program: &EncodeProgram,
+struct EmitEncodeResultArgs {
     src_offset: usize,
     ok_block_ir: usize,
     err_block_ir: usize,
@@ -4829,7 +4860,24 @@ fn emit_encode_result(
     is_ok_fn: facet_core::ResultIsOkFn,
     get_ok_fn: facet_core::ResultGetOkFn,
     get_err_fn: facet_core::ResultGetErrFn,
+}
+
+fn emit_encode_result(
+    ectx: &mut EncodeCtx_<'_, '_>,
+    program: &EncodeProgram,
+    args: EmitEncodeResultArgs,
 ) -> Result<(), CodegenError> {
+    let EmitEncodeResultArgs {
+        src_offset,
+        ok_block_ir,
+        err_block_ir,
+        _ok_shape,
+        _err_shape,
+        is_ok_fn,
+        get_ok_fn,
+        get_err_fn,
+    } = args;
+
     let result_ptr = ectx.src_at(src_offset);
     let call_conv = ectx.b.func.signature.call_conv;
     let is_ok_sig = ectx.b.func.import_signature(Signature {
@@ -5843,6 +5891,7 @@ mod tests {
         let v = SimpleScalars {
             a: 42,
             b: -7,
+            #[allow(clippy::approx_constant)] // leave me alone
             c: 3.14,
             d: true,
         };

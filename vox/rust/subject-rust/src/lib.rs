@@ -25,7 +25,7 @@ pub async fn stream_retry_probe_values(count: u32, output: Tx<i32>) {
 }
 
 pub async fn stream_post_reply_values(output: Tx<i32>) {
-    let _ = moire::task::spawn(async move {
+    moire::task::spawn(async move {
         moire::time::sleep(std::time::Duration::from_millis(10)).await;
         for i in 0..5 {
             debug!(i, "post-reply sending value");
@@ -39,7 +39,7 @@ pub async fn stream_post_reply_values(output: Tx<i32>) {
 }
 
 pub async fn sum_post_reply_values(mut input: Rx<i32>, result: Tx<i64>) {
-    let _ = moire::task::spawn(async move {
+    moire::task::spawn(async move {
         let mut total: i64 = 0;
         while let Ok(Some(n)) = input.recv().await {
             let n = n.get();

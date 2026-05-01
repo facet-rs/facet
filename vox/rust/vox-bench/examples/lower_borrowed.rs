@@ -17,11 +17,8 @@ fn dump_slow_paths(label: &str, shape: &'static facet::Shape) {
     cal.calibrate_string_for_type();
 
     fn register_tree(shape: &'static facet::Shape, cal: &mut CalibrationRegistry) {
-        match shape.def {
-            facet::Def::List(_) => {
-                cal.get_or_calibrate_by_shape(shape);
-            }
-            _ => {}
+        if let facet::Def::List(_) = shape.def {
+            cal.get_or_calibrate_by_shape(shape);
         }
         match shape.ty {
             facet::Type::User(facet::UserType::Struct(st)) => {

@@ -2515,16 +2515,8 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                         let _ = self.resume_processed_tx.send(generation);
                     }
                 }
-                recv = self.rx.recv() => {
-                    match recv {
-                        Some(recv) => {
-                            self.handle_recv(recv).await;
-                        }
-                        None => {
-                            tracing::trace!("driver rx closed, exiting loop");
-                            break;
-                        }
-                    }
+                Some(ctrl) = self.local_control_rx.recv() => {
+                    self.handle_local_control(ctrl).await;
                 }
                 Some((req_id, disposition)) = self.failures_rx.recv() => {
                     tracing::trace!(%req_id, ?disposition, "failures_rx fired");
@@ -2597,8 +2589,16 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                         tracing::trace!(%req_id, "failures_rx: error response sent");
                     }
                 }
-                Some(ctrl) = self.local_control_rx.recv() => {
-                    self.handle_local_control(ctrl).await;
+                recv = self.rx.recv() => {
+                    match recv {
+                        Some(recv) => {
+                            self.handle_recv(recv).await;
+                        }
+                        None => {
+                            tracing::trace!("driver rx closed, exiting loop");
+                            break;
+                        }
+                    }
                 }
                 // The handler-future arm only fires when at least one
                 // handler is in flight. The guard is essential:

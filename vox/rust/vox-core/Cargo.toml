@@ -22,7 +22,7 @@ default = []
 diagnostics = ["moire/diagnostics"]
 
 [dependencies]
-vox-types.workspace = true
+vox-types = { workspace = true, features = ["jit"] }
 facet.workspace = true
 facet-core.workspace = true
 facet-reflect.workspace = true

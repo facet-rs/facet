@@ -684,6 +684,7 @@ fn mark_tail_calls(program: &mut DecodeProgram) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lower_value(
     plan: &TranslationPlan,
     shape: &'static Shape,
@@ -731,6 +732,7 @@ fn lower_value(
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lower_value_inner(
     plan: &TranslationPlan,
     shape: &'static Shape,
@@ -939,6 +941,7 @@ fn lower_value_inner(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lower_def(
     plan: &TranslationPlan,
     shape: &'static Shape,
@@ -1031,6 +1034,7 @@ fn lower_def(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lower_result(
     plan: &TranslationPlan,
     shape: &'static Shape,
@@ -1146,6 +1150,7 @@ fn lower_result(
 
 // r[impl schema.translation.reorder]
 // r[impl schema.translation.skip-unknown]
+#[allow(clippy::too_many_arguments)]
 fn lower_struct(
     plan: &TranslationPlan,
     st: facet_core::StructType,
@@ -1232,6 +1237,7 @@ fn lower_struct(
 // r[impl schema.translation.enum]
 // r[impl schema.translation.enum.unknown-variant]
 // r[impl schema.translation.enum.payload-compat]
+#[allow(clippy::too_many_arguments)]
 fn lower_enum(
     plan: &TranslationPlan,
     shape: &'static Shape,
@@ -1696,6 +1702,7 @@ fn calibrate_result_layout(
 }
 
 #[allow(unsafe_code)]
+#[allow(clippy::too_many_arguments)]
 fn lower_option(
     plan: &TranslationPlan,
     shape: &'static Shape,
@@ -1766,6 +1773,7 @@ fn lower_option(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lower_array(
     plan: &TranslationPlan,
     arr_def: facet_core::ArrayDef,
@@ -1817,6 +1825,7 @@ fn lower_array(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lower_list(
     plan: &TranslationPlan,
     shape: &'static Shape,
@@ -1971,6 +1980,7 @@ fn lower_list(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lower_pointer(
     plan: &TranslationPlan,
     shape: &'static Shape,
@@ -2915,7 +2925,7 @@ fn exec_read_scalar(
         }
         WirePrimitive::U8 => {
             let v = state.read_byte()?;
-            unsafe { std::ptr::write(dst as *mut u8, v) };
+            unsafe { std::ptr::write(dst, v) };
         }
         WirePrimitive::U16 => {
             let v = state.read_varint()? as u16;
@@ -3071,7 +3081,21 @@ fn exec_slow_path(
 ///
 /// A fresh `SchemaRegistry` is used — SlowPath types use identity plans that
 /// contain no `FieldOp::Skip` entries, so no cross-schema lookups are needed.
-pub fn slow_path_decode_raw(
+///
+/// # Safety
+///
+/// - `input_ptr` must be valid for reads of `input_len` bytes.
+/// - `consumed` must be less than or equal to `input_len`.
+/// - `plan` must be a valid, non-null pointer to a `TranslationPlan` that
+///   remains valid for the duration of this call.
+/// - `dst_base` must be valid for writes of at least `dst_offset +
+///   size_of::<T>()` bytes, where `T` is the type described by `shape`.
+/// - `dst_base.add(dst_offset)` must be properly aligned for the type
+///   described by `shape`.
+/// - The memory at `dst_base.add(dst_offset)` must be uninitialized or
+///   otherwise safe to overwrite (the caller is responsible for dropping
+///   any previously initialized value at that location).
+pub unsafe fn slow_path_decode_raw(
     input_ptr: *const u8,
     input_len: usize,
     consumed: usize,

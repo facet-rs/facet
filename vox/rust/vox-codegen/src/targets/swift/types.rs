@@ -188,7 +188,7 @@ pub fn generate_named_types(named_types: &[(String, &'static Shape)]) -> String 
 ///   - Swift reserved keywords (e.g. `internal`, `class`) need
 ///     backticks when used as identifiers.
 pub fn swift_field_name(name: &str) -> String {
-    if name.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+    if name.chars().next().is_some_and(|c| c.is_ascii_digit()) {
         return format!("_{name}");
     }
     let lower = name.to_lower_camel_case();

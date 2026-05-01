@@ -1,12 +1,18 @@
+#[cfg(all(feature = "jit", not(target_arch = "wasm32")))]
+use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::panic::Location;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Mutex;
+#[cfg(all(feature = "jit", not(target_arch = "wasm32")))]
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use facet::Facet;
+#[cfg(all(feature = "jit", not(target_arch = "wasm32")))]
+use facet_core::ConstTypeId;
 use facet_core::PtrConst;
 use moire::sync::{Notify, Semaphore};
 use tokio::sync::TryAcquireError;
@@ -18,6 +24,12 @@ use crate::{
     VoxObserverHandle,
 };
 use crate::{ChannelId, ConnectionId};
+
+#[cfg(all(feature = "jit", not(target_arch = "wasm32")))]
+struct ChannelDecodePlan {
+    plan: vox_postcard::TranslationPlan,
+    registry: vox_schema::SchemaRegistry,
+}
 
 // ---------------------------------------------------------------------------
 // Thread-local channel binder — set during deserialization so TryFrom impls
@@ -616,6 +628,56 @@ fn observe_optional_replenisher_channel(
     }
 }
 
+#[cfg(all(feature = "jit", not(target_arch = "wasm32")))]
+fn channel_decode_plan<T: Facet<'static>>() -> Arc<ChannelDecodePlan> {
+    static PLANS: OnceLock<Mutex<HashMap<ConstTypeId, Arc<ChannelDecodePlan>>>> = OnceLock::new();
+
+    let plans = PLANS.get_or_init(|| Mutex::new(HashMap::new()));
+    let key = T::SHAPE.id;
+    let mut plans = plans.lock().expect("channel decode plan mutex poisoned");
+    plans
+        .entry(key)
+        .or_insert_with(|| {
+            Arc::new(ChannelDecodePlan {
+                plan: vox_postcard::build_identity_plan(T::SHAPE),
+                registry: vox_schema::SchemaRegistry::new(),
+            })
+        })
+        .clone()
+}
+
+#[cfg(all(feature = "jit", not(target_arch = "wasm32")))]
+fn decode_channel_payload<T: Facet<'static>>(bytes: &'static [u8]) -> Result<T, RxError> {
+    if vox_jit::require_pure_jit() && vox_jit::JitRuntime::force_fallback() {
+        panic!(
+            "VOX_JIT_REQUIRE_PURE=1 but channel payload decode for '{}' was forced off by VOX_CODEC",
+            T::SHAPE
+        );
+    }
+
+    let resolved = channel_decode_plan::<T>();
+    match vox_jit::global_runtime().try_decode_borrowed::<T>(
+        bytes,
+        0,
+        &resolved.plan,
+        &resolved.registry,
+    ) {
+        Some(result) => result.map_err(RxError::Deserialize),
+        None if vox_jit::require_pure_jit() => {
+            panic!(
+                "VOX_JIT_REQUIRE_PURE=1 but channel payload decode for '{}' did not use the JIT",
+                T::SHAPE
+            )
+        }
+        None => vox_postcard::from_slice_borrowed(bytes).map_err(RxError::Deserialize),
+    }
+}
+
+#[cfg(not(all(feature = "jit", not(target_arch = "wasm32"))))]
+fn decode_channel_payload<T: Facet<'static>>(bytes: &'static [u8]) -> Result<T, RxError> {
+    vox_postcard::from_slice_borrowed(bytes).map_err(RxError::Deserialize)
+}
+
 fn decode_channel_item<T>(msg: SelfRef<ChannelItem<'static>>) -> Result<Option<SelfRef<T>>, RxError>
 where
     T: Facet<'static>,
@@ -626,7 +688,7 @@ where
                 "incoming channel item payload was not Incoming".into(),
             ));
         };
-        vox_postcard::from_slice_borrowed(bytes).map_err(RxError::Deserialize)
+        decode_channel_payload(bytes)
     })
     .map(Some)
 }

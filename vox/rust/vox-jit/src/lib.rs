@@ -56,7 +56,7 @@ use vox_schema::SchemaRegistry;
 /// - `reflect` — facet-reflect oracle (slow, correctness baseline, Miri-safe).
 /// - `interp`  — IR interpreter (shares lowering with JIT, Miri-safe).
 /// - `jit`     — Cranelift JIT, falling back to `reflect` for shapes the JIT
-///               cannot compile. This is the default.
+///   cannot compile. This is the default.
 ///
 /// Reading the env var is one-shot per process (OnceLock-cached).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -642,7 +642,7 @@ impl Drop for InProgressGuard {
     }
 }
 
-pub(crate) fn require_pure_jit() -> bool {
+pub fn require_pure_jit() -> bool {
     static CACHED: OnceLock<bool> = OnceLock::new();
     *CACHED.get_or_init(|| std::env::var_os("VOX_JIT_REQUIRE_PURE").is_some_and(|v| v == "1"))
 }

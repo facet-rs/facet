@@ -9,6 +9,10 @@ use vox_jit_abi::{
 };
 use vox_postcard::{TranslationPlan, ir::slow_path_decode_raw};
 
+/// # Safety
+///
+/// - `src_ptr` must be a valid pointer to a result buffer.
+/// - `is_ok_fn` must be a valid `ResultIsOkFn` function pointer.
 pub unsafe extern "C" fn vox_jit_result_is_ok_raw(
     src_ptr: *const u8,
     is_ok_fn: facet_core::ResultIsOkFn,
@@ -16,6 +20,10 @@ pub unsafe extern "C" fn vox_jit_result_is_ok_raw(
     unsafe { is_ok_fn(PtrConst::new(src_ptr)) }
 }
 
+/// # Safety
+///
+/// - `src_ptr` must be a valid pointer to a result buffer.
+/// - `get_fn` must be a valid `ResultGetOkFn` function pointer.
 pub unsafe extern "C" fn vox_jit_result_get_payload_raw(
     src_ptr: *const u8,
     get_fn: facet_core::ResultGetOkFn,
@@ -23,6 +31,11 @@ pub unsafe extern "C" fn vox_jit_result_get_payload_raw(
     unsafe { get_fn(PtrConst::new(src_ptr)) }
 }
 
+/// # Safety
+///
+/// - `dst_ptr` must be a valid pointer to a result buffer.
+/// - `payload_ptr` must be a valid pointer to a payload buffer.
+/// - `init_fn` must be a valid `ResultInitOkFn` function pointer.
 pub unsafe extern "C" fn vox_jit_result_init_raw(
     dst_ptr: *mut u8,
     payload_ptr: *mut u8,
@@ -58,18 +71,20 @@ pub unsafe extern "C" fn vox_jit_slow_path(
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let ctx_ref = unsafe { &mut *ctx };
-        slow_path_decode_raw(
-            ctx_ref.input_ptr,
-            ctx_ref.input_len,
-            ctx_ref.consumed,
-            shape,
-            plan,
-            dst_base,
-            dst_offset,
-        )
-        .map(|new_consumed| {
-            ctx_ref.consumed = new_consumed;
-        })
+        unsafe {
+            slow_path_decode_raw(
+                ctx_ref.input_ptr,
+                ctx_ref.input_len,
+                ctx_ref.consumed,
+                shape,
+                plan,
+                dst_base,
+                dst_offset,
+            )
+            .map(|new_consumed| {
+                ctx_ref.consumed = new_consumed;
+            })
+        }
     }));
 
     match result {
@@ -107,6 +122,13 @@ pub unsafe extern "C" fn vox_jit_write_default(
 
 /// Opaque decode helper: read a u32le-length-prefixed byte payload and
 /// initialize the destination via the shape's opaque adapter.
+///
+/// # Safety
+///
+/// - `ctx` must be a valid pointer to a `DecodeCtx` struct.
+/// - `shape` must be a valid `Shape` pointer.
+/// - `dst_base` must be a valid pointer to a buffer.
+/// - `dst_offset` must be a valid offset within the buffer.
 pub unsafe extern "C" fn vox_jit_decode_opaque(
     ctx: *mut DecodeCtx,
     shape: &'static facet_core::Shape,
@@ -216,6 +238,12 @@ fn handle_pure_jit_encode_miss(kind: &str, shape: &'static facet_core::Shape) ->
 
 /// Encode an opaque-adapter field without using the reflective walker when the
 /// mapped inner value can be encoded by the JIT runtime.
+///
+/// # Safety
+///
+/// - `ctx` must be a valid pointer to an `EncodeCtx` struct.
+/// - `src_ptr` must be a valid pointer to a payload buffer.
+/// - `shape` must be a valid `Shape` pointer.
 pub unsafe extern "C" fn vox_jit_encode_opaque(
     ctx: *mut EncodeCtx,
     src_ptr: *const u8,
@@ -255,6 +283,12 @@ pub unsafe extern "C" fn vox_jit_encode_opaque(
 
 /// Encode a proxy field by converting to the proxy value and delegating the
 /// proxy shape back through the JIT runtime.
+///
+/// # Safety
+///
+/// - `ctx` must be a valid pointer to an `EncodeCtx` struct.
+/// - `src_ptr` must be a valid pointer to a payload buffer.
+/// - `shape` must be a valid `Shape` pointer.
 pub unsafe extern "C" fn vox_jit_encode_proxy(
     ctx: *mut EncodeCtx,
     src_ptr: *const u8,
@@ -300,6 +334,12 @@ pub unsafe extern "C" fn vox_jit_encode_proxy(
 /// Encode a `Result<T, E>` by selecting the active arm via the result vtable,
 /// writing postcard discriminant `0`/`1`, then delegating the inner value back
 /// through the JIT runtime.
+///
+/// # Safety
+///
+/// - `ctx` must be a valid pointer to an `EncodeCtx` struct.
+/// - `src_ptr` must be a valid pointer to a result buffer.
+/// - `shape` must be a valid `Shape` pointer.
 pub unsafe extern "C" fn vox_jit_encode_result(
     ctx: *mut EncodeCtx,
     src_ptr: *const u8,
@@ -394,6 +434,11 @@ pub unsafe extern "C" fn vox_jit_init_byte_slice_ref(dst: *mut u8, data: *const 
 }
 
 /// Initialize a `Cow<str>` with owned bytes after UTF-8 validation.
+///
+/// # Safety
+///
+/// - `dst` must point to writable storage for `Cow<str>`.
+/// - `data` must be valid for `len` bytes and outlive the surrounding decode result.
 pub unsafe extern "C" fn vox_jit_init_cow_str_owned(dst: *mut u8, data: *const u8, len: usize) {
     let bytes = unsafe { std::slice::from_raw_parts(data, len) };
     let s = std::str::from_utf8(bytes).expect("JIT emitted invalid UTF-8 for Cow<str>");
@@ -404,6 +449,11 @@ pub unsafe extern "C" fn vox_jit_init_cow_str_owned(dst: *mut u8, data: *const u
 }
 
 /// Initialize a `Cow<str>` borrowing from the input buffer.
+///
+/// # Safety
+///
+/// - `dst` must point to writable storage for `Cow<str>`.
+/// - `data` must be valid for `len` bytes and outlive the surrounding decode result.
 pub unsafe extern "C" fn vox_jit_init_cow_str_borrowed(dst: *mut u8, data: *const u8, len: usize) {
     let bytes = unsafe { std::slice::from_raw_parts(data, len) };
     let s = std::str::from_utf8(bytes).expect("JIT emitted invalid UTF-8 for Cow<str>");
@@ -415,6 +465,11 @@ pub unsafe extern "C" fn vox_jit_init_cow_str_borrowed(dst: *mut u8, data: *cons
 }
 
 /// Initialize a `&str` borrowing from the input buffer.
+///
+/// # Safety
+///
+/// - `dst` must point to writable storage for `&str`.
+/// - `data` must be valid for `len` bytes and outlive the surrounding decode result.
 pub unsafe extern "C" fn vox_jit_init_str_ref(dst: *mut u8, data: *const u8, len: usize) {
     let bytes = unsafe { std::slice::from_raw_parts(data, len) };
     let s = std::str::from_utf8(bytes).expect("JIT emitted invalid UTF-8 for &str");
@@ -426,6 +481,12 @@ pub unsafe extern "C" fn vox_jit_init_str_ref(dst: *mut u8, data: *const u8, len
 
 /// Encode a string-like shape (`String`, `&str`, `Cow<str>`) without using
 /// the reflective walker.
+///
+/// # Safety
+///
+/// - `ctx` must be a valid pointer to an `EncodeCtx` struct.
+/// - `src_ptr` must be a valid pointer to a string-like buffer.
+/// - `shape` must be a valid `Shape` pointer.
 pub unsafe extern "C" fn vox_jit_encode_string_like(
     ctx: *mut EncodeCtx,
     src_ptr: *const u8,
@@ -451,6 +512,12 @@ pub unsafe extern "C" fn vox_jit_encode_string_like(
 }
 
 /// Encode a field by delegating to a nested encoder for the exact shape.
+///
+/// # Safety
+///
+/// - `ctx` must be a valid pointer to an `EncodeCtx` struct.
+/// - `src_ptr` must be a valid pointer to a buffer of the correct type.
+/// - `shape` must be a valid `Shape` pointer.
 pub unsafe extern "C" fn vox_jit_encode_shape(
     ctx: *mut EncodeCtx,
     src_ptr: *const u8,
@@ -473,6 +540,12 @@ pub unsafe extern "C" fn vox_jit_encode_shape(
 
 /// Encode a bytes-like shape (`Cow<[u8]>`, `&[u8]`) without using the
 /// reflective walker.
+///
+/// # Safety
+///
+/// - `ctx` must be a valid pointer to an `EncodeCtx` struct.
+/// - `src_ptr` must be a valid pointer to a buffer of the correct type.
+/// - `shape` must be a valid `Shape` pointer.
 pub unsafe extern "C" fn vox_jit_encode_bytes_like(
     ctx: *mut EncodeCtx,
     src_ptr: *const u8,

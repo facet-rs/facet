@@ -3,6 +3,9 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use tokio::sync::oneshot;
+use vox::Rx;
+
 #[derive(Clone, Debug, facet::Facet)]
 #[repr(u8)]
 enum AttachError {
@@ -11,16 +14,18 @@ enum AttachError {
 
 #[vox::service]
 trait BulkChannelStash {
-    async fn attach(&self, input: vox::Rx<Vec<u64>>) -> Result<(), AttachError>;
+    async fn attach(&self, input: Rx<Vec<u64>>) -> Result<(), AttachError>;
 }
+
+type Accepted = Option<oneshot::Sender<Rx<Vec<u64>>>>;
 
 #[derive(Clone)]
 struct BulkChannelStashService {
-    accepted: Arc<Mutex<Option<tokio::sync::oneshot::Sender<vox::Rx<Vec<u64>>>>>>,
+    accepted: Arc<Mutex<Accepted>>,
 }
 
 impl BulkChannelStash for BulkChannelStashService {
-    async fn attach(&self, input: vox::Rx<Vec<u64>>) -> Result<(), AttachError> {
+    async fn attach(&self, input: Rx<Vec<u64>>) -> Result<(), AttachError> {
         let sender = self
             .accepted
             .lock()
@@ -43,7 +48,7 @@ async fn local_keepalive_rx_argument_survives_large_item_burst() {
     let path = dir.path().join("channel.sock");
     let addr = path.display().to_string();
     let listener = vox::transport::local::LocalLinkAcceptor::bind(addr.clone()).expect("bind");
-    let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel::<vox::Rx<Vec<u64>>>();
+    let (accepted_tx, accepted_rx) = oneshot::channel::<Rx<Vec<u64>>>();
     let service = BulkChannelStashService {
         accepted: Arc::new(Mutex::new(Some(accepted_tx))),
     };

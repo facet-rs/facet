@@ -2404,7 +2404,8 @@ impl SessionCore {
             }
             return Err(());
         }
-        match result_rx.await.map_err(|_| ())? {
+        let result = result_rx.await.map_err(|_| ());
+        match result? {
             Ok(()) => Ok(()),
             Err(_) => {
                 if let Some(observer) = &self.observer {

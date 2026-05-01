@@ -197,10 +197,10 @@ mod platform {
             return;
         }
 
-        if let Some(m) = dump() {
-            if let Ok(mut d) = m.lock() {
-                let _ = d.record_load(name, code_addr as u64, code_size as u64);
-            }
+        if let Some(m) = dump()
+            && let Ok(mut d) = m.lock()
+        {
+            let _ = d.record_load(name, code_addr as u64, code_size as u64);
         }
     }
 }
