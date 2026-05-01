@@ -102,9 +102,7 @@ struct SwiftValueDescriptorTests {
   }
 
   @Test func preparesCodecThroughRustDylibWhenAvailable() throws {
-    guard let dylibPath = ProcessInfo.processInfo.environment["VOX_SWIFT_ABI_DYLIB"],
-      !dylibPath.isEmpty
-    else {
+    guard let dylibPath = swiftAbiDylibPath() else {
       return
     }
 
@@ -125,5 +123,18 @@ struct SwiftValueDescriptorTests {
       localRoot: root,
       remoteSchemaPayload: SchemaPayload(schemas: [], root: .concrete(0x10))
     )
+  }
+
+  private func swiftAbiDylibPath() -> String? {
+    let fileManager = FileManager.default
+    let envPath = ProcessInfo.processInfo.environment["VOX_SWIFT_ABI_DYLIB"]
+    let cwd = URL(fileURLWithPath: fileManager.currentDirectoryPath)
+    let candidates = [
+      envPath,
+      cwd.appendingPathComponent("target/debug/libvox_swift_abi.dylib").path,
+      cwd.appendingPathComponent("target/debug/libvox_swift_abi.so").path,
+    ].compactMap { $0 }.filter { !$0.isEmpty }
+
+    return candidates.first { fileManager.fileExists(atPath: $0) }
   }
 }
