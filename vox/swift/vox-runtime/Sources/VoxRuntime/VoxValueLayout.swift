@@ -261,3 +261,25 @@ public typealias VoxProbeTwoVariantEnumFn =
     _ variantBFieldLayout: UnsafeRawPointer?,
     _ outLayout: UnsafeMutableRawPointer?
   ) -> UInt32
+
+/// Encode a Swift value (whose layout is described by `layout`) into a
+/// freshly-allocated postcard byte buffer. Returns 0 on success; on
+/// success, `outBytes->ptr/len/capacity` describes the encoded buffer
+/// and the caller must release it through `vox_swift_owned_bytes_free_v1`.
+public typealias VoxLayoutEncodeFn =
+  @convention(c) (
+    _ layout: UnsafeRawPointer?,
+    _ valuePtr: UnsafeRawPointer?,
+    _ outBytes: UnsafeMutableRawPointer?
+  ) -> UInt32
+
+/// Decode postcard bytes into the value-shaped storage at `dst`.
+/// `outConsumed` (optional) receives the number of input bytes used.
+public typealias VoxLayoutDecodeFn =
+  @convention(c) (
+    _ layout: UnsafeRawPointer?,
+    _ inputPtr: UnsafeRawPointer?,
+    _ inputLen: Int,
+    _ dst: UnsafeMutableRawPointer?,
+    _ outConsumed: UnsafeMutablePointer<Int>?
+  ) -> UInt32

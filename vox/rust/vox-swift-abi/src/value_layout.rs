@@ -24,7 +24,12 @@ pub use vox_jit_cal::value_layout::{
     ValueLayoutKind, VariantLayout,
 };
 
-use crate::{VOX_SWIFT_STATUS_BAD_ABI, VOX_SWIFT_STATUS_OK, vox_swift_status_t};
+use crate::{
+    VOX_SWIFT_STATUS_BAD_ABI, VOX_SWIFT_STATUS_INVALID_BOOL, VOX_SWIFT_STATUS_OK,
+    VOX_SWIFT_STATUS_UNEXPECTED_EOF, VOX_SWIFT_STATUS_UNSUPPORTED,
+    VOX_SWIFT_STATUS_VARINT_OVERFLOW, vox_swift_owned_bytes, vox_swift_status_t,
+};
+use vox_jit_cal::postcard_codec;
 
 /// Opaque handle to a [`LayoutArena`].
 #[repr(C)]
@@ -242,6 +247,109 @@ pub unsafe extern "C" fn vox_swift_probe_two_variant_enum_v1(
 
     unsafe { *out_layout = layout_ptr };
     VOX_SWIFT_STATUS_OK
+}
+
+// ---------------------------------------------------------------------------
+// Codec FFI: encode / decode a value through a calibrated ValueLayout.
+//
+// These are the only hot-path FFI entries. The byte stores themselves
+// happen entirely inside the Rust dylib, walking the layout: the caller
+// (Swift) just hands a value pointer in and gets bytes / a written value
+// out.
+// ---------------------------------------------------------------------------
+
+fn codec_error_to_status(err: postcard_codec::CodecError) -> vox_swift_status_t {
+    match err {
+        postcard_codec::CodecError::Unsupported => VOX_SWIFT_STATUS_UNSUPPORTED,
+        postcard_codec::CodecError::UnexpectedEof => VOX_SWIFT_STATUS_UNEXPECTED_EOF,
+        postcard_codec::CodecError::VarintOverflow => VOX_SWIFT_STATUS_VARINT_OVERFLOW,
+        postcard_codec::CodecError::InvalidBool => VOX_SWIFT_STATUS_INVALID_BOOL,
+        postcard_codec::CodecError::NoMatchingVariant
+        | postcard_codec::CodecError::InvalidVariantIndex => VOX_SWIFT_STATUS_BAD_ABI,
+    }
+}
+
+/// Encode the value at `value_ptr` (matching `layout`) into a freshly
+/// allocated buffer returned through `out_bytes`. The caller must
+/// release the buffer with [`vox_swift_owned_bytes_free_v1`].
+///
+/// # Safety
+/// `layout` must be a live `*const ValueLayout`. `value_ptr` must point
+/// to a valid value of the type described by the layout (at least
+/// `layout.size` readable bytes). `out_bytes` must point to writable
+/// storage for one `vox_swift_owned_bytes`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vox_swift_layout_encode_v1(
+    layout: *const ValueLayout,
+    value_ptr: *const u8,
+    out_bytes: *mut vox_swift_owned_bytes,
+) -> vox_swift_status_t {
+    if layout.is_null() || value_ptr.is_null() || out_bytes.is_null() {
+        return VOX_SWIFT_STATUS_BAD_ABI;
+    }
+    let layout = unsafe { &*layout };
+
+    let mut buf: Vec<u8> = Vec::new();
+    let result = unsafe { postcard_codec::encode_value(layout, value_ptr, &mut buf) };
+    match result {
+        Ok(()) => {
+            // Hand the buffer's storage to the caller as
+            // vox_swift_owned_bytes; release happens via
+            // vox_swift_owned_bytes_free_v1.
+            let mut buf = std::mem::ManuallyDrop::new(buf);
+            unsafe {
+                *out_bytes = vox_swift_owned_bytes {
+                    ptr: buf.as_mut_ptr(),
+                    len: buf.len(),
+                    capacity: buf.capacity(),
+                };
+            }
+            VOX_SWIFT_STATUS_OK
+        }
+        Err(e) => codec_error_to_status(e),
+    }
+}
+
+/// Decode `input_len` bytes from `input_ptr` into the value-shaped
+/// storage at `dst` (which must be writable for at least `layout.size`
+/// bytes). Writes the number of input bytes consumed to
+/// `out_consumed` (may be null).
+///
+/// # Safety
+/// `layout` must be a live `*const ValueLayout`. `input_ptr`/`input_len`
+/// must describe a readable byte slice. `dst` must point to writable
+/// storage of at least `layout.size` bytes, suitably aligned.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vox_swift_layout_decode_v1(
+    layout: *const ValueLayout,
+    input_ptr: *const u8,
+    input_len: usize,
+    dst: *mut u8,
+    out_consumed: *mut usize,
+) -> vox_swift_status_t {
+    if layout.is_null() || dst.is_null() {
+        return VOX_SWIFT_STATUS_BAD_ABI;
+    }
+    if input_len > 0 && input_ptr.is_null() {
+        return VOX_SWIFT_STATUS_BAD_ABI;
+    }
+    let layout = unsafe { &*layout };
+    let input = if input_len == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(input_ptr, input_len) }
+    };
+
+    let result = unsafe { postcard_codec::decode_value(layout, input, dst) };
+    match result {
+        Ok(consumed) => {
+            if !out_consumed.is_null() {
+                unsafe { *out_consumed = consumed };
+            }
+            VOX_SWIFT_STATUS_OK
+        }
+        Err(e) => codec_error_to_status(e),
+    }
 }
 
 #[cfg(test)]

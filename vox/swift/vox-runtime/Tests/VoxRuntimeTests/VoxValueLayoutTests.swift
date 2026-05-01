@@ -24,11 +24,14 @@ private enum Foo {
   case err
 }
 
-private final class ProbeFFI {
+private final class CodecFFI {
   let handle: UnsafeMutableRawPointer
   let create: VoxLayoutArenaCreateFn
   let destroy: VoxLayoutArenaDestroyFn
   let probe: VoxProbeTwoVariantEnumFn
+  let encode: VoxLayoutEncodeFn
+  let decode: VoxLayoutDecodeFn
+  let freeBytes: VoxSwiftOwnedBytesFreeFn
 
   init(path: String) throws {
     guard let h = path.withCString({ dlopen($0, RTLD_NOW | RTLD_LOCAL) }) else {
@@ -41,6 +44,9 @@ private final class ProbeFFI {
     self.create = try Self.loadFn(h, "vox_swift_layout_arena_create_v1")
     self.destroy = try Self.loadFn(h, "vox_swift_layout_arena_destroy_v1")
     self.probe = try Self.loadFn(h, "vox_swift_probe_two_variant_enum_v1")
+    self.encode = try Self.loadFn(h, "vox_swift_layout_encode_v1")
+    self.decode = try Self.loadFn(h, "vox_swift_layout_decode_v1")
+    self.freeBytes = try Self.loadFn(h, "vox_swift_owned_bytes_free_v1")
   }
 
   deinit {
@@ -92,7 +98,7 @@ struct VoxValueLayoutTests {
       // existing SwiftValueDescriptorTests dylib-backed test.)
       return
     }
-    let ffi = try ProbeFFI(path: dylibPath)
+    let ffi = try CodecFFI(path: dylibPath)
 
     let valueSize = MemoryLayout<Foo>.size
     let valueAlign = MemoryLayout<Foo>.alignment
@@ -205,5 +211,130 @@ struct VoxValueLayoutTests {
     }
     #expect(okMatches)
     #expect(!errMatches)
+  }
+
+  /// Real RPC-shaped round-trip: a Swift value goes through the Rust
+  /// dylib's codec to postcard bytes and back, and the Swift caller
+  /// gets the equivalent value out the other side. This is what the
+  /// real codec does on every encode and every decode of an RPC
+  /// request/response — only here we plug both sides into the same
+  /// process to verify end-to-end.
+  @Test func encodesAndDecodesFooViaRustCodec() throws {
+    guard let dylibPath = swiftAbiDylibPath() else {
+      return
+    }
+    let ffi = try CodecFFI(path: dylibPath)
+
+    let valueSize = MemoryLayout<Foo>.size
+    let valueAlign = MemoryLayout<Foo>.alignment
+
+    let okZeroBytes = snapshotBytes(of: Foo.ok(0), size: valueSize)
+    let okMaxBytes = snapshotBytes(of: Foo.ok(0xDEAD_BEEF_CAFE_BABE), size: valueSize)
+    let errBytes = snapshotBytes(of: Foo.err, size: valueSize)
+
+    let arena = ffi.create()!
+    defer { ffi.destroy(arena) }
+
+    var u64Layout = VoxValueLayout(
+      fields: nil,
+      variants: nil,
+      kind: VoxValueLayoutKind.primitive.rawValue,
+      size: VoxPrimitiveKind.u64.size,
+      align: 8,
+      primitiveKind: VoxPrimitiveKind.u64.rawValue,
+      fieldCount: 0,
+      variantCount: 0,
+      opaqueHandle: 0,
+      reserved: 0
+    )
+
+    let okName = Array("Ok".utf8)
+    let errName = Array("Err".utf8)
+    var layoutPtr: UnsafeRawPointer? = nil
+
+    let probeStatus = withUnsafePointer(to: &u64Layout) { u64Ptr in
+      okZeroBytes.withUnsafeBufferPointer { z in
+        okMaxBytes.withUnsafeBufferPointer { m in
+          errBytes.withUnsafeBufferPointer { e in
+            okName.withUnsafeBufferPointer { okN in
+              errName.withUnsafeBufferPointer { errN in
+                withUnsafeMutablePointer(to: &layoutPtr) { outPtr in
+                  ffi.probe(
+                    arena,
+                    UInt32(valueSize),
+                    UInt32(valueAlign),
+                    UnsafeRawPointer(z.baseAddress),
+                    UnsafeRawPointer(m.baseAddress),
+                    UnsafeRawPointer(e.baseAddress),
+                    UnsafeRawPointer(okN.baseAddress),
+                    okN.count,
+                    UnsafeRawPointer(u64Ptr),
+                    UnsafeRawPointer(errN.baseAddress),
+                    errN.count,
+                    nil,
+                    UnsafeMutableRawPointer(outPtr)
+                  )
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    #expect(probeStatus == VoxSwiftStatusOK)
+    let layout = try #require(layoutPtr)
+
+    // Encode Foo.ok(31) via the Rust codec. The Swift side never reads
+    // or writes any byte of `value` itself: the dylib's postcard codec
+    // walks the calibrated layout against the value's memory and emits
+    // postcard bytes.
+    var value = Foo.ok(31)
+    var encoded = VoxSwiftOwnedBytes.empty
+    let encodeStatus = withUnsafePointer(to: &value) { valuePtr in
+      withUnsafeMutablePointer(to: &encoded) { outPtr in
+        ffi.encode(
+          layout,
+          UnsafeRawPointer(valuePtr),
+          UnsafeMutableRawPointer(outPtr)
+        )
+      }
+    }
+    #expect(encodeStatus == VoxSwiftStatusOK)
+    #expect(encoded.len > 0)
+    #expect(encoded.ptr != nil)
+
+    // Postcard wire bytes: variant 0 (Ok) as a varint = 0x00, then
+    // u64 31 as a varint = 0x1F. Two bytes total.
+    let encodedSlice = UnsafeBufferPointer(start: encoded.ptr, count: encoded.len)
+    let encodedArray = Array(encodedSlice)
+    #expect(encodedArray == [0x00, 0x1F])
+
+    // Decode those bytes back into a fresh Foo via the Rust codec. The
+    // Swift side allocates uninit storage for Foo, hands the dylib a
+    // pointer, and gets a fully initialised Foo back.
+    let storage = UnsafeMutablePointer<Foo>.allocate(capacity: 1)
+    defer { storage.deallocate() }
+    var consumed = 0
+    let decodeStatus = ffi.decode(
+      layout,
+      UnsafeRawPointer(encoded.ptr),
+      encoded.len,
+      UnsafeMutableRawPointer(storage),
+      &consumed
+    )
+    #expect(decodeStatus == VoxSwiftStatusOK)
+    #expect(consumed == encoded.len)
+
+    let decoded = storage.pointee
+    if case .ok(let v) = decoded {
+      #expect(v == 31)
+    } else {
+      Issue.record("expected Foo.ok(31) after decode")
+    }
+
+    // Release the owned bytes the dylib handed us.
+    withUnsafeMutablePointer(to: &encoded) { outPtr in
+      ffi.freeBytes(UnsafeMutableRawPointer(outPtr))
+    }
   }
 }
