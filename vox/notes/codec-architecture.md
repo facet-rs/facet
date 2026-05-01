@@ -353,6 +353,43 @@ These keep being tempting; they are wrong:
   language compiles its own paths against its own values. The only
   thing they share is the layout description.
 
+## Scope: Swift first, Rust later
+
+The Rust JIT works today and has a meaningful test suite covering it.
+Refactoring its IR (`vox-postcard::ir`) and Cranelift codegen to drop
+the helper-call ops in favor of layout-driven ops is a substantial
+undertaking — touching ~10k lines, several dozen tests, and the
+`facet`-coupled lowering — and there's no reason to do it before the
+new architecture is proven somewhere.
+
+So we develop the new architecture **on the Swift side**, where there
+is no existing implementation to be careful with, and we leave the
+Rust JIT alone until the architecture has settled. Once Swift's codec
+encodes/decodes the realistic shapes (enums with niches, structs,
+nested types, opaque containers, recursive types, …) using only
+calibrated layouts and direct stores, **then** we open a separate
+effort to migrate the Rust JIT off its helper-call IR onto the same
+machinery.
+
+Concretely:
+
+- `vox-postcard::ir`, `vox-jit::codegen`, the `Decode*`/`Encode*` ops
+  that special-case Option/Result/etc. — left untouched.
+- `vox-jit-cal::value_layout` — primary development target. Grows the
+  per-variant match/store patterns, niche calibration, struct/nested
+  support.
+- `vox-swift-abi` — primary consumer. Calibration entry points, layout
+  registry. No hot-path helpers.
+- Swift side (`vox-runtime`) — primary user. Builds layouts via the
+  calibration entry points, then encodes/decodes Swift values from
+  those layouts directly in Swift code.
+
+The Rust JIT remains a useful sanity check: when our calibrator
+produces a `ValueLayout` for `Result<u64, ()>`, we can cross-check
+that the layout's offsets/match-patterns match what `rustc` actually
+laid out, by reading bytes of native Rust values. That doesn't require
+modifying the JIT — just reading bytes.
+
 ## First milestone
 
 Concrete, small, and actually validated:
