@@ -553,6 +553,118 @@ where
     })
 }
 
+// ---------------------------------------------------------------------------
+// Probe: niche-filled Option<T> by byte-comparing samples
+// ---------------------------------------------------------------------------
+
+/// Probe a niche-filled `Option<T>`'s in-memory layout into the given
+/// arena.
+///
+/// Designed for the case where rustc has elided the discriminant by
+/// reusing an unused bit-pattern in the payload (e.g.
+/// `Option<Box<T>>`, `Option<&T>`, `Option<NonZeroU32>`, …): there is
+/// no separate tag region — `None` is encoded as a specific pattern
+/// across the payload bytes, and any other bit-pattern is `Some(_)`.
+///
+/// Caller supplies the pre-built byte representations of three sample
+/// values (a `None` and two distinct `Some(_)`s), the value's `size` /
+/// `align`, and the layout of the inner `T`. Taking bytes (rather than
+/// `T`) keeps the probe usable with non-`Copy` payload types like
+/// `Box<T>` without forcing the caller to leak or arena-allocate the
+/// samples.
+///
+/// # Safety
+/// `none_bytes`, `some_a_bytes`, and `some_b_bytes` must each point to
+/// a readable buffer of exactly `size` bytes representing a valid
+/// in-memory `Option<T>` value.
+pub unsafe fn probe_option_niche_layout(
+    arena: &LayoutArena,
+    size: usize,
+    align: usize,
+    none_bytes_ptr: *const u8,
+    some_a_bytes_ptr: *const u8,
+    some_b_bytes_ptr: *const u8,
+    t_layout: ValueLayout,
+) -> Result<ValueLayout, String> {
+    let none_bytes = unsafe { std::slice::from_raw_parts(none_bytes_ptr, size) };
+    let a_bytes = unsafe { std::slice::from_raw_parts(some_a_bytes_ptr, size) };
+    let b_bytes = unsafe { std::slice::from_raw_parts(some_b_bytes_ptr, size) };
+
+    // For a niche-filled `Option<T>` there is no separate tag region —
+    // the entire value is the payload. The match pattern for `None` is
+    // therefore "every byte of the value equals the corresponding byte
+    // of the canonical `None` representation." We don't try to infer a
+    // narrower payload range from sample diffs, because two `Some`
+    // samples may coincidentally share bytes (e.g. heap pointers in the
+    // same address range share their high bits).
+    let mut none_pattern: Vec<BytePattern> = Vec::new();
+    for i in 0..size {
+        none_pattern.push(BytePattern::full(i as u32, none_bytes[i]));
+    }
+
+    // Sanity: the None bytes must NOT match either Some sample byte-for-
+    // byte, otherwise our pattern would mismatch a real Some as None.
+    let none_matches_a = (0..size).all(|i| none_bytes[i] == a_bytes[i]);
+    let none_matches_b = (0..size).all(|i| none_bytes[i] == b_bytes[i]);
+    if none_matches_a || none_matches_b {
+        return Err(
+            "probe failed: None's bit-pattern collides with Some's — niche calibration unsound"
+                .into(),
+        );
+    }
+
+    let t_layout_ptr = arena.alloc_layout(t_layout);
+    let some_field = FieldLayout {
+        name: arena.alloc_str("0"),
+        offset: 0,
+        _pad: 0,
+        layout: t_layout_ptr,
+    };
+    let (some_fields_ptr, some_field_count) = arena.alloc_fields(vec![some_field]);
+
+    // Order: None first (its match_pattern catches the niche bit-pattern);
+    // Some last (default / catch-all, empty match_pattern).
+    let (none_match_ptr, none_match_count) = arena.alloc_patterns(none_pattern.clone());
+    let (none_store_ptr, none_store_count) = arena.alloc_patterns(none_pattern);
+
+    let variants = vec![
+        VariantLayout {
+            name: arena.alloc_str("None"),
+            match_pattern: none_match_ptr,
+            match_pattern_count: none_match_count,
+            store_pattern: none_store_ptr,
+            store_pattern_count: none_store_count,
+            fields: std::ptr::null(),
+            field_count: 0,
+            _pad: 0,
+        },
+        VariantLayout {
+            name: arena.alloc_str("Some"),
+            match_pattern: std::ptr::null(),
+            match_pattern_count: 0,
+            store_pattern: std::ptr::null(),
+            store_pattern_count: 0,
+            fields: some_fields_ptr,
+            field_count: some_field_count,
+            _pad: 0,
+        },
+    ];
+    let (variants_ptr, variant_count) = arena.alloc_variants(variants);
+
+    Ok(ValueLayout {
+        kind: ValueLayoutKind::Enum,
+        size: size as u32,
+        align: align as u32,
+        primitive_kind: PrimitiveKind::Unit,
+        fields: std::ptr::null(),
+        field_count: 0,
+        variants: variants_ptr,
+        variant_count,
+        opaque_handle: 0,
+        _reserved: 0,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -671,5 +783,119 @@ mod tests {
         assert_eq!(layout.size, 4);
         assert_eq!(layout.align, 4);
         assert_eq!(layout.primitive_kind, PrimitiveKind::U32);
+    }
+
+    /// Niche-filled `Option<Box<u64>>`: there is no separate
+    /// discriminant — `None` is "all 8 bytes zero," `Some(_)` is
+    /// "anything else." The pattern model handles this by giving
+    /// `None` a match/store pattern of 8 zero bytes and `Some` an empty
+    /// (default) match pattern.
+    #[test]
+    fn niche_probe_option_box_u64() {
+        let arena = LayoutArena::new();
+        let size = std::mem::size_of::<Option<Box<u64>>>();
+        let align = std::mem::align_of::<Option<Box<u64>>>();
+
+        // Build canonical None and two Some samples and snapshot their
+        // bytes into stable buffers so we can drop the originals.
+        let none: Option<Box<u64>> = None;
+        let some_a: Option<Box<u64>> = Some(Box::new(0x1111_1111_1111_1111));
+        let some_b: Option<Box<u64>> = Some(Box::new(0x2222_2222_2222_2222));
+        let mut none_buf = vec![0u8; size];
+        let mut a_buf = vec![0u8; size];
+        let mut b_buf = vec![0u8; size];
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                &none as *const _ as *const u8,
+                none_buf.as_mut_ptr(),
+                size,
+            );
+            std::ptr::copy_nonoverlapping(
+                &some_a as *const _ as *const u8,
+                a_buf.as_mut_ptr(),
+                size,
+            );
+            std::ptr::copy_nonoverlapping(
+                &some_b as *const _ as *const u8,
+                b_buf.as_mut_ptr(),
+                size,
+            );
+        }
+        // Originals stay alive through the probe (the byte buffers
+        // contain raw heap addresses, but we don't deref them, just
+        // compare byte values).
+
+        let layout = unsafe {
+            probe_option_niche_layout(
+                &arena,
+                size,
+                align,
+                none_buf.as_ptr(),
+                a_buf.as_ptr(),
+                b_buf.as_ptr(),
+                ValueLayout::empty_opaque(),
+            )
+        }
+        .expect("probe Option<Box<u64>>");
+
+        drop(some_a);
+        drop(some_b);
+        drop(none);
+
+        assert_eq!(layout.kind, ValueLayoutKind::Enum);
+        assert_eq!(layout.variant_count, 2);
+        assert_eq!(layout.size as usize, size);
+
+        let variants = layout.variants_slice();
+        let none_variant = variants
+            .iter()
+            .find(|v| v.name.as_str() == Some("None"))
+            .unwrap();
+        let some_variant = variants
+            .iter()
+            .find(|v| v.name.as_str() == Some("Some"))
+            .unwrap();
+
+        // None has a per-byte zero pattern across the whole 8-byte payload.
+        let none_pattern = none_variant.match_pattern_slice();
+        assert_eq!(none_pattern.len(), 8);
+        for entry in none_pattern {
+            assert_eq!(entry.value, 0);
+            assert_eq!(entry.mask, 0xFF);
+        }
+        // Some is the default catch-all.
+        assert!(some_variant.is_default());
+        assert!(some_variant.store_pattern_slice().is_empty());
+
+        // Layout-driven match: a real None value's bytes match the None
+        // pattern; a real Some value's bytes don't.
+        let real_none: Option<Box<u64>> = None;
+        let real_some: Option<Box<u64>> = Some(Box::new(99));
+        unsafe {
+            assert!(matches_pattern(
+                none_variant.match_pattern_slice(),
+                &real_none as *const _ as *const u8,
+            ));
+            assert!(!matches_pattern(
+                none_variant.match_pattern_slice(),
+                &real_some as *const _ as *const u8,
+            ));
+            // Some matches anything (default).
+            assert!(matches_pattern(
+                some_variant.match_pattern_slice(),
+                &real_some as *const _ as *const u8,
+            ));
+        }
+
+        // Layout-driven construct: store None's pattern into a fresh
+        // buffer, then assume_init — the resulting Option must be None
+        // and Drop must safely release nothing.
+        let mut storage: MaybeUninit<Option<Box<u64>>> = MaybeUninit::uninit();
+        let dst = storage.as_mut_ptr() as *mut u8;
+        unsafe {
+            apply_store_pattern(none_variant.store_pattern_slice(), dst);
+        }
+        let result: Option<Box<u64>> = unsafe { storage.assume_init() };
+        assert!(result.is_none());
     }
 }
