@@ -30,24 +30,31 @@ self-contained and native to that language.
 
 ## Why this exists
 
-The Rust JIT today is mostly a very expensive way of calling
-non-inlineable helper functions. Every interesting operation
-(`init_ok`, `init_some`, `vec_alloc`, …) is a call into Rust code that
-the JIT cannot inline. The `call_indirect` in front of it doesn't help —
-the work is still done in the helper.
+The Rust JIT already does the right thing in places: opaque containers
+(`Vec`, `String`, `Box<T>`, `Box<[T]>`) go through `vox-jit-cal`, which
+probes them once for the (`ptr`, `len`, `cap`) slot offsets and the
+empty-constructor bytes, and the JIT then reads/writes those slots with
+direct loads/stores at calibrated offsets. That is the pattern the
+whole codec should use — calibration produces numbers, codegen turns
+the numbers into instructions, no per-shape function calls.
 
-That happened because someone built an interpreter first, then "JIT'd"
-it by replacing match-on-op with `call_indirect` to the same helpers.
-The result is dispatch elimination at best; it isn't a real codegen
-backend, and most of the special-cased ops (`DecodeResult`,
-`DecodeOption`, `DecodeResultInit`, `EncodeOption`, `EncodeResult`)
-exist only because the helpers needed somewhere to be called from.
+Where it goes wrong is enums, options, and results. Those reach for
+facet's vtable functions (`init_ok`, `init_err`, `is_some`,
+`get_value`, …) and the JIT ends up emitting `call_indirect` to a
+non-inlineable helper for every variant manipulation. That isn't real
+codegen, it's dispatch elimination — the work is still done inside the
+helper that the JIT cannot see into. The special-cased IR ops
+(`DecodeResult`, `DecodeOption`, `DecodeResultInit`, `EncodeOption`,
+`EncodeResult`) exist only because each helper needed somewhere to be
+called from; once the calibration gives us tag offsets / widths /
+values directly, those ops collapse into one general `DecodeEnum` /
+`EncodeEnum`.
 
-We don't want to reproduce that for Swift. The fix is to **never
-introduce a helper**. If the codegen needs to write a discriminant
-byte, it computes the offset and value at calibration time and stores
-those numbers in the layout. At codegen time, it loads `dst.add(N)`
-and stores `K` directly.
+The fix, then, isn't "switch to a different architecture." It's
+"extend the calibrate-and-emit-stores pattern to enums, options, and
+results, the same way it already covers Vec/String/Box." The Swift
+backend should adopt that pattern from the start instead of inheriting
+the helper-call shortcut.
 
 ## ValueLayout
 
@@ -242,9 +249,15 @@ These keep being tempting; they are wrong:
   threading them through the IR.** Same trap, dressed in raw pointers.
   The functions shouldn't be in the IR at all.
 
-- **Special-casing Result, Option, Vec, String in their own IR ops.**
-  They're enums and opaque containers. The IR needs ops for those
-  general categories driven by the calibrated data; nothing else.
+- **Per-shape IR ops that exist to dispatch to a per-shape helper.**
+  `DecodeResult` / `DecodeResultInit` / `DecodeOption` / `EncodeResult`
+  / `EncodeOption` are in the IR today only because each one had a
+  facet vtable to call. Replace them with one general `DecodeEnum` /
+  `EncodeEnum` driven by the calibrated `EnumLayout`. (For contrast:
+  `ReadString` / `ReadFixedVec` / `AllocBacking` are calibrated already
+  — they read/write Vec/String slots at offsets `OpaqueDescriptor`
+  recorded — so they're examples of the pattern we want, not problems
+  to remove.)
 
 - **Cross-FFI hot-path calls between Rust and Swift codegen.** Each
   language compiles its own paths against its own values. The only
