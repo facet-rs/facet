@@ -322,12 +322,6 @@ pub(crate) struct PersistentReplyingHandler {
 }
 
 #[derive(Clone)]
-pub(crate) struct ResumableReplyingHandler {
-    pub(crate) started: Arc<tokio::sync::Notify>,
-    pub(crate) release: Arc<tokio::sync::Notify>,
-}
-
-#[derive(Clone)]
 #[allow(dead_code)]
 pub(crate) struct RetryAfterResumeHandler {
     pub(crate) retry: RetryPolicy,
@@ -473,36 +467,6 @@ impl Handler<DriverReplySink> for PersistentReplyingHandler {
         reply
             .send_reply(RequestResponse {
                 ret: Payload::outgoing(&123_u32),
-                schemas: Default::default(),
-                metadata: Default::default(),
-            })
-            .await;
-    }
-}
-
-impl Handler<DriverReplySink> for ResumableReplyingHandler {
-    fn retry_policy(&self, _method_id: MethodId) -> RetryPolicy {
-        RetryPolicy::PERSIST
-    }
-
-    async fn handle(
-        &self,
-        call: SelfRef<RequestCall<'static>>,
-        reply: DriverReplySink,
-        _schemas: std::sync::Arc<vox_types::SchemaRecvTracker>,
-    ) {
-        self.started.notify_waiters();
-        self.release.notified().await;
-
-        let call = call.get();
-        let args_bytes = match &call.args {
-            Payload::PostcardBytes(bytes) => *bytes,
-            _ => panic!("expected incoming payload"),
-        };
-        let result: u32 = vox_postcard::from_slice(args_bytes).expect("deserialize args");
-        reply
-            .send_reply(RequestResponse {
-                ret: Payload::outgoing(&result),
                 schemas: Default::default(),
                 metadata: Default::default(),
             })

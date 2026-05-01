@@ -14,7 +14,6 @@ use crate::{
 
 mod credit_tests;
 mod driver_tests;
-mod resumable_tests;
 pub(crate) mod utils;
 mod vconn_tests;
 
@@ -30,24 +29,6 @@ impl MsgFamily for StringFamily {
 
 type StringConduit = BareConduit<StringFamily, MemoryLink>;
 
-struct BareOnlyLink(MemoryLink);
-
-impl vox_types::Link for BareOnlyLink {
-    type Tx = <MemoryLink as vox_types::Link>::Tx;
-    type Rx = <MemoryLink as vox_types::Link>::Rx;
-
-    fn split(self) -> (Self::Tx, Self::Rx) {
-        self.0.split()
-    }
-
-    fn supports_transport_mode(mode: TransportMode) -> bool
-    where
-        Self: Sized,
-    {
-        matches!(mode, TransportMode::Bare)
-    }
-}
-
 /// Create a connected pair of BareConduits over MemoryLink for String messages.
 fn conduit_pair() -> (StringConduit, StringConduit) {
     let (a, b) = memory_link_pair(16);
@@ -62,36 +43,6 @@ async fn transport_prologue_accepts_bare_mode() {
         .await
         .unwrap();
     assert_eq!(acceptor.await.unwrap(), TransportMode::Bare);
-}
-
-#[tokio::test]
-async fn transport_prologue_accepts_stable_mode() {
-    let (client, server) = memory_link_pair(16);
-    let acceptor = tokio::spawn(async move { accept_transport(server).await.unwrap().0 });
-    let _initiator = initiate_transport(client, TransportMode::Stable)
-        .await
-        .unwrap();
-    assert_eq!(acceptor.await.unwrap(), TransportMode::Stable);
-}
-
-#[tokio::test]
-async fn transport_prologue_rejects_unsupported_mode() {
-    let (client, server) = memory_link_pair(16);
-    let acceptor = tokio::spawn(async move { accept_transport(BareOnlyLink(server)).await });
-    let initiator = initiate_transport(client, TransportMode::Stable).await;
-
-    assert!(matches!(
-        initiator,
-        Err(crate::TransportPrologueError::Rejected(
-            crate::TransportRejectReason::UnsupportedMode
-        ))
-    ));
-    assert!(matches!(
-        acceptor.await.unwrap(),
-        Err(crate::TransportPrologueError::Rejected(
-            crate::TransportRejectReason::UnsupportedMode
-        ))
-    ));
 }
 
 #[tokio::test]

@@ -33,8 +33,6 @@ export {
   BareConduit,
 } from "./conduit.ts";
 
-export { StableConduit } from "./stable_conduit.ts";
-
 export {
   Session,
   SessionHandle,

@@ -122,22 +122,17 @@ func performAcceptorHandshake(
 
     try await requireIdentityMessageSchema(peerHello.messagePayloadSchemaCbor, on: link)
 
-    if let expectedResumeKey {
-        guard let actualResumeKey = peerHello.resumeKey?.bytes,
-            sessionResumeKeysEqual(actualResumeKey, expectedResumeKey)
-        else {
-            let reason = "session resume key mismatch"
-            await sendHandshakeSorry(link, reason: reason)
-            throw ConnectionError.protocolViolation(rule: reason)
-        }
-    }
+    // Session resume / stable conduit was removed; ignore expectedResumeKey
+    // and don't generate fresh resume keys.
+    let _ = expectedResumeKey
+    let _ = resumable
 
     let ourSettings = ConnectionSettings(
         parity: oppositeParity(peerHello.parity),
         maxConcurrentRequests: maxConcurrentRequests,
         initialChannelCredit: initialChannelCredit
     )
-    let sessionResumeKey = expectedResumeKey ?? (resumable ? freshSessionResumeKey() : nil)
+    let sessionResumeKey: [UInt8]? = nil
     let helloYourself = HandshakeHelloYourself(
         connectionSettings: ourSettings,
         messagePayloadSchemaCbor: wireMessageSchemasCbor,
@@ -188,42 +183,18 @@ func buildEstablishedConduit(
     attachment: LinkAttachment,
     recoverAttachment: (@Sendable () async throws -> LinkAttachment)? = nil
 ) async throws -> any Conduit {
+    let _ = role
+    let _ = recoverAttachment
     switch transport {
     case .bare:
         return BareConduit(link: attachment.link)
     case .stable:
-        if let recoverAttachment {
-            return try await StableConduit.connect(
-                source: PrefetchedLinkSource(
-                    first: attachment,
-                    base: AnyLinkSource(recoverAttachment)
-                )
-            )
-        }
-        if role == .acceptor && attachment.negotiatedConduit == .stable {
-            return try await StableConduit.connect(
-                source: DeferredStableAcceptorAttachmentSource(link: attachment.link)
-            )
-        }
-        return try await StableConduit.connect(source: singleAttachmentSource(attachment))
+        // StableConduit was removed (had no real users). Anyone still
+        // negotiating .stable transport gets routed onto a bare conduit.
+        return BareConduit(link: attachment.link)
     }
 }
 
-private actor DeferredStableAcceptorAttachmentSource: LinkSource {
-    private var link: (any Link)?
-
-    init(link: any Link) {
-        self.link = link
-    }
-
-    func nextLink() async throws -> LinkAttachment {
-        guard let link else {
-            throw TransportError.protocolViolation("single-use stable acceptor source exhausted")
-        }
-        self.link = nil
-        return try await prepareStableAcceptorAttachment(link: link)
-    }
-}
 
 func establishInitiator(
     attachment: LinkAttachment,

@@ -273,11 +273,10 @@ pub use vox_core::{
 #[cfg(feature = "runtime")]
 pub use vox_core::{BareConduit, BareConduitError, IntoConduit, MessagePlan};
 
-// Stable conduit + reconnection (not available on wasm)
+// Link source / attachment plumbing (not available on wasm)
 #[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
 pub use vox_core::{
-    Attachment, LinkSource, SingleAttachmentSource, SplitLink, StableConduit, StableConduitError,
-    prepare_acceptor_attachment, recv_client_hello, single_attachment_source, single_link_source,
+    Attachment, LinkSource, SingleAttachmentSource, single_attachment_source, single_link_source,
 };
 
 // In-memory links for testing (not available on wasm)

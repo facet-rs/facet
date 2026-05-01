@@ -61,7 +61,6 @@ import {
 } from "./schema_tracker.ts";
 import type { Link, LinkSource } from "./link.ts";
 import { singleLinkSource } from "./link.ts";
-import { StableConduit } from "./stable_conduit.ts";
 import {
   acceptTransportMode,
   requestTransportMode,
@@ -297,9 +296,10 @@ async function makeInitiatorEstablishedTransport(
     const handshake = await handshakeAsInitiator(attachment.link, localSettings, true, null, options.metadata ?? []);
     const messagePlan = buildMessageDecodePlan(handshake.peerMessageSchema);
 
+    // StableConduit removed; "stable" mode now falls through to bare.
     if (conduitKind === "stable") {
-      const stableConduit = await StableConduit.connect(singleLinkSource(attachment.link));
-      return { conduit: stableConduit, handshake };
+      const bareConduit = new BareConduit(attachment.link, messagePlan);
+      return { conduit: bareConduit, handshake };
     }
 
     // For resumable bare sessions: build a recoverConduit that reconnects,
@@ -406,9 +406,12 @@ async function makeInitiatorEstablishedTransport(
   await requestTransportMode(transport, conduitKind);
   const handshake = await handshakeAsInitiator(transport, localSettings, true, null, options.metadata ?? []);
   const messagePlan = buildMessageDecodePlan(handshake.peerMessageSchema);
+  // StableConduit removed; "stable" requests now fall through to bare.
   if (conduitKind === "stable") {
-    const stableConduit = await StableConduit.connect(singleLinkSource(transport));
-    return { conduit: stableConduit, handshake };
+    return {
+      conduit: new BareConduit(transport, messagePlan),
+      handshake,
+    };
   }
 
   return {
@@ -442,15 +445,12 @@ async function makeAcceptorEstablishedTransport(
   );
   const messagePlan = buildMessageDecodePlan(handshake.peerMessageSchema);
 
+  // StableConduit removed; "stable" acceptors now route through bare.
+  // The peer's leading ClientHello bytes (if any) are consumed and
+  // discarded so the bare framing can take over cleanly.
   if (requestedMode === "stable") {
-    const clientHello = await attachment.link.recv();
-    if (!clientHello) {
-      throw SessionError.protocol("expected StableConduit ClientHello after CBOR handshake");
-    }
-    const stableConduit = await StableConduit.connect(
-      singleLinkSource(attachment.link, clientHello),
-    );
-    return { conduit: stableConduit, handshake };
+    const _maybeClientHello = await attachment.link.recv();
+    void _maybeClientHello;
   }
 
   return {

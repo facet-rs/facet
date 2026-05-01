@@ -1,12 +1,10 @@
 //! Core implementations for the vox connectivity layer.
 //!
 //! This crate provides concrete implementations of the traits defined in
-//! [`vox_types`]:
-//!
-//! - [`BareConduit`]: wraps a raw `Link` with postcard serialization.
-//!   No reconnect, no reliability. For localhost, SHM, testing.
-//! - `StableConduit` (TODO): wraps a Link + seq/ack/replay with
-//!   bytes-based replay buffer. Handles reconnect transparently.
+//! [`vox_types`]. The only conduit shape is [`BareConduit`]: wraps a raw
+//! `Link` with postcard serialization. No reconnect, no reliability —
+//! reconnect was removed (StableConduit deleted) because the abstraction
+//! had no real users.
 
 mod bare_conduit;
 pub use bare_conduit::*;
@@ -24,8 +22,8 @@ pub use operation_store::*;
 mod transport_prologue;
 pub use transport_prologue::*;
 
-mod stable_conduit;
-pub use stable_conduit::*;
+mod link_source;
+pub use link_source::*;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod memory_link;

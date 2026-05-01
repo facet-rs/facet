@@ -11,14 +11,14 @@ const REJECT_UNSUPPORTED_MODE: u8 = 1;
 fn transport_mode_as_u8(mode: TransportMode) -> u8 {
     match mode {
         TransportMode::Bare => 0,
-        TransportMode::Stable => 1,
     }
 }
 
 fn transport_mode_from_u8(value: u8) -> Result<TransportMode, TransportPrologueError> {
     match value {
         0 => Ok(TransportMode::Bare),
-        1 => Ok(TransportMode::Stable),
+        // Mode 1 was the (now-removed) Stable mode; reject it explicitly so a
+        // peer that still tries to negotiate it gets a clean error.
         _ => Err(TransportPrologueError::Protocol(format!(
             "unknown conduit mode {value}"
         ))),

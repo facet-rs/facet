@@ -108,11 +108,10 @@ public final class SessionHandle: @unchecked Sendable {
                     rule: "peer root settings changed across session resume"
                 )
             }
-            guard let echoedKey = handshake.sessionResumeKey,
-                sessionResumeKeysEqual(echoedKey, sessionResumeKey)
-            else {
-                throw ConnectionError.protocolViolation(rule: "session resume key mismatch")
-            }
+            // Session resume removed (StableConduit deletion). Any
+            // resume key the peer echoes back is ignored.
+            let _ = handshake.sessionResumeKey
+            let _ = sessionResumeKey
 
         case .acceptor:
             let handshake = try await performAcceptorHandshake(

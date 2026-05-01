@@ -647,14 +647,6 @@ fn generate_spec_matrix(
             name: "binary_payload_sizes",
             call: "binary_payloads::run_subject_process_message_binary_payload_sizes",
         },
-        TestCase {
-            name: "channel_retry_non_idem_fails_closed",
-            call: "channel_retry::run_channel_retry_non_idem_fails_closed",
-        },
-        TestCase {
-            name: "channel_retry_idem_reruns_with_fresh_channels",
-            call: "channel_retry::run_channel_retry_idem_reruns_with_fresh_channels",
-        },
     ];
     let subject_to_harness = [
         TestCase {
@@ -1006,8 +998,6 @@ fn generate_spec_matrix(
         mod binary_payload_transport_matrix;
         #[path = "cases/binary_payloads.rs"]
         mod binary_payloads;
-        #[path = "cases/channel_retry.rs"]
-        mod channel_retry;
         #[path = "cases/channeling.rs"]
         mod channeling;
         #[path = "cases/schema_compat.rs"]

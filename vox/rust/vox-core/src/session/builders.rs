@@ -14,7 +14,7 @@ use vox_types::{
     VoxObserverHandle, metadata_into_owned,
 };
 
-use crate::{Attachment, LinkSource, StableConduit};
+use crate::LinkSource;
 use crate::{
     BareConduit, IntoConduit, OperationStore, TransportMode, accept_transport,
     handshake_as_acceptor, handshake_as_initiator, initiate_transport,
@@ -544,9 +544,10 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
             mut config,
         } = self;
         inject_service_metadata::<Client>(&mut config.metadata);
+        let _ = mode;
 
-        match mode {
-            TransportMode::Bare => {
+        {
+            {
                 let attachment = source.next_link().await.map_err(SessionError::Io)?;
                 let mut link = initiate_transport(attachment.into_link(), TransportMode::Bare)
                     .await
@@ -577,44 +578,6 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
                     builder,
                     config,
                     Some(recoverer),
-                )
-                .establish()
-                .await
-            }
-            TransportMode::Stable => {
-                let attachment = source.next_link().await.map_err(SessionError::Io)?;
-                let mut link = initiate_transport(attachment.into_link(), TransportMode::Stable)
-                    .await
-                    .map_err(session_error_from_transport)?;
-                let handshake_result = handshake_as_initiator(
-                    &link.tx,
-                    &mut link.rx,
-                    config.root_settings.clone(),
-                    true,
-                    None,
-                    metadata_into_owned(config.metadata.clone()),
-                )
-                .await
-                .map_err(session_error_from_handshake)?;
-                let message_plan = crate::MessagePlan::from_handshake(&handshake_result)
-                    .map_err(SessionError::Protocol)?;
-                let conduit = StableConduit::<MessageFamily, _>::with_first_link(
-                    link.tx,
-                    link.rx,
-                    None,
-                    TransportedLinkSource {
-                        source,
-                        mode: TransportMode::Stable,
-                    },
-                )
-                .await
-                .map_err(|error| {
-                    SessionError::Protocol(format!("stable conduit setup failed: {error}"))
-                })?
-                .with_message_plan(message_plan);
-                let builder = SessionInitiatorBuilder::new(conduit, handshake_result);
-                SessionTransportInitiatorBuilder::<S::Link>::apply_common_parts(
-                    builder, config, None,
                 )
                 .establish()
                 .await
@@ -758,20 +721,11 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
             mut config,
         } = self;
         inject_service_metadata::<Client>(&mut config.metadata);
-        match mode {
-            TransportMode::Bare => {
-                let link = initiate_transport(link, TransportMode::Bare)
-                    .await
-                    .map_err(session_error_from_transport)?;
-                Self::finish_with_bare_parts(link, config).await
-            }
-            TransportMode::Stable => {
-                let link = initiate_transport(link, TransportMode::Stable)
-                    .await
-                    .map_err(session_error_from_transport)?;
-                Self::finish_with_stable_parts(link, config).await
-            }
-        }
+        let _ = mode;
+        let link = initiate_transport(link, TransportMode::Bare)
+            .await
+            .map_err(session_error_from_transport)?;
+        Self::finish_with_bare_parts(link, config).await
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -825,43 +779,6 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
             BareConduit::with_message_plan(link, message_plan),
             handshake_result,
         );
-        Self::apply_common_parts(builder, config, None)
-            .establish()
-            .await
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    async fn finish_with_stable_parts<Client: FromVoxSession>(
-        mut link: SplitLink<L::Tx, L::Rx>,
-        config: SessionConfig<'a>,
-    ) -> Result<Client, SessionError>
-    where
-        L: Link + Send + 'static,
-        L::Tx: MaybeSend + MaybeSync + Send + 'static,
-        L::Rx: MaybeSend + Send + 'static,
-    {
-        let handshake_result = handshake_as_initiator(
-            &link.tx,
-            &mut link.rx,
-            config.root_settings.clone(),
-            true,
-            None,
-            metadata_into_owned(config.metadata.clone()),
-        )
-        .await
-        .map_err(session_error_from_handshake)?;
-        let message_plan = crate::MessagePlan::from_handshake(&handshake_result)
-            .map_err(SessionError::Protocol)?;
-        let conduit = StableConduit::<MessageFamily, _>::with_first_link(
-            link.tx,
-            link.rx,
-            None,
-            crate::stable_conduit::exhausted_source::<SplitLink<L::Tx, L::Rx>>(),
-        )
-        .await
-        .map_err(|e| SessionError::Protocol(format!("stable conduit setup failed: {e}")))?
-        .with_message_plan(message_plan);
-        let builder = SessionInitiatorBuilder::new(conduit, handshake_result);
         Self::apply_common_parts(builder, config, None)
             .establish()
             .await
@@ -955,29 +872,6 @@ where
                 backoff = backoff.saturating_mul(2).min(SOURCE_RECOVERY_BACKOFF_MAX);
             }
         })
-    }
-}
-
-struct TransportedLinkSource<S> {
-    source: S,
-    mode: TransportMode,
-}
-
-impl<S> LinkSource for TransportedLinkSource<S>
-where
-    S: LinkSource,
-    S::Link: Link + MaybeSend + 'static,
-    <S::Link as Link>::Tx: MaybeSend + MaybeSync + 'static,
-    <S::Link as Link>::Rx: MaybeSend + 'static,
-{
-    type Link = SplitLink<<S::Link as Link>::Tx, <S::Link as Link>::Rx>;
-
-    async fn next_link(&mut self) -> std::io::Result<Attachment<Self::Link>> {
-        let attachment = self.source.next_link().await?;
-        let link = initiate_transport(attachment.into_link(), self.mode)
-            .await
-            .map_err(std::io::Error::other)?;
-        Ok(Attachment::initiator(link))
     }
 }
 
@@ -1325,7 +1219,6 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
                 );
                 Self::apply_common_parts(builder, config).establish().await
             }
-            TransportMode::Stable => Self::finish_with_stable_parts(link, config).await,
         }
     }
 
@@ -1365,48 +1258,7 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
                     .establish_or_resume()
                     .await
             }
-            TransportMode::Stable => Self::finish_with_stable_parts(link, config)
-                .await
-                .map(SessionAcceptOutcome::Established),
         }
-    }
-
-    async fn finish_with_stable_parts<Client: FromVoxSession>(
-        mut link: SplitLink<L::Tx, L::Rx>,
-        config: SessionConfig<'a>,
-    ) -> Result<Client, SessionError>
-    where
-        L: Link + MaybeSend + 'static,
-        L::Tx: MaybeSend + MaybeSync + 'static,
-        L::Rx: MaybeSend + 'static,
-    {
-        let handshake_result = handshake_as_acceptor(
-            &link.tx,
-            &mut link.rx,
-            config.root_settings.clone(),
-            true,
-            config.resumable,
-            None,
-            metadata_into_owned(config.metadata.clone()),
-        )
-        .await
-        .map_err(session_error_from_handshake)?;
-        let message_plan = crate::MessagePlan::from_handshake(&handshake_result)
-            .map_err(SessionError::Protocol)?;
-        let client_hello = crate::stable_conduit::recv_client_hello(&mut link.rx)
-            .await
-            .map_err(|e| SessionError::Protocol(format!("stable conduit setup failed: {e}")))?;
-        let conduit = StableConduit::<MessageFamily, _>::with_first_link(
-            link.tx,
-            link.rx,
-            Some(client_hello),
-            crate::stable_conduit::exhausted_source::<SplitLink<L::Tx, L::Rx>>(),
-        )
-        .await
-        .map_err(|e| SessionError::Protocol(format!("stable conduit setup failed: {e}")))?
-        .with_message_plan(message_plan);
-        let builder = SessionAcceptorBuilder::new(conduit, handshake_result);
-        Self::apply_common_parts(builder, config).establish().await
     }
 
     fn apply_common_parts<C>(

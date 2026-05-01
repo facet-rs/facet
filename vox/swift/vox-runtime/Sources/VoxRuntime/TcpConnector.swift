@@ -80,12 +80,14 @@ func connect(
         return BareConduit(link: attachment.link)
     }
 
-    let source = TimedTransportedLinkSource(
+    // .stable used to construct a StableConduit; that conduit shape was
+    // removed, so any non-bare request gets the same bare path.
+    let attachment = try await TimedTransportedLinkSource(
         source: connector,
         conduit: conduit,
         timeoutNs: prologueTimeoutNs
-    )
-    return try await StableConduit.connect(source: source)
+    ).nextLink()
+    return BareConduit(link: attachment.link)
 }
 
 public func connect(host: String, port: Int, conduit: ConduitKind = .bare) async throws
@@ -115,12 +117,14 @@ func connect(
         return BareConduit(link: attachment.link)
     }
 
-    let source = TimedTransportedLinkSource(
+    // .stable used to construct a StableConduit; that conduit shape was
+    // removed, so any non-bare request gets the same bare path.
+    let attachment = try await TimedTransportedLinkSource(
         source: connector,
         conduit: conduit,
         timeoutNs: prologueTimeoutNs
-    )
-    return try await StableConduit.connect(source: source)
+    ).nextLink()
+    return BareConduit(link: attachment.link)
 }
 
 private struct TimedTransportedLinkSource<Base: LinkSource>: LinkSource {

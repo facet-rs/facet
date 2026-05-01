@@ -5,8 +5,6 @@
 mod binary_payload_transport_matrix;
 #[path = "cases/binary_payloads.rs"]
 mod binary_payloads;
-#[path = "cases/channel_retry.rs"]
-mod channel_retry;
 #[path = "cases/channeling.rs"]
 mod channeling;
 #[path = "cases/schema_compat.rs"]
@@ -154,14 +152,6 @@ mod lang_rust_transport_tcp {
         #[test]
         fn binary_payload_sizes() {
             binary_payloads::run_subject_process_message_binary_payload_sizes(SPEC);
-        }
-        #[test]
-        fn channel_retry_non_idem_fails_closed() {
-            channel_retry::run_channel_retry_non_idem_fails_closed(SPEC);
-        }
-        #[test]
-        fn channel_retry_idem_reruns_with_fresh_channels() {
-            channel_retry::run_channel_retry_idem_reruns_with_fresh_channels(SPEC);
         }
     }
     mod direction_subject_to_harness {
@@ -444,14 +434,6 @@ mod lang_typescript_transport_tcp {
         fn binary_payload_sizes() {
             binary_payloads::run_subject_process_message_binary_payload_sizes(SPEC);
         }
-        #[test]
-        fn channel_retry_non_idem_fails_closed() {
-            channel_retry::run_channel_retry_non_idem_fails_closed(SPEC);
-        }
-        #[test]
-        fn channel_retry_idem_reruns_with_fresh_channels() {
-            channel_retry::run_channel_retry_idem_reruns_with_fresh_channels(SPEC);
-        }
     }
     mod direction_subject_to_harness {
         use super::*;
@@ -732,14 +714,6 @@ mod lang_typescript_transport_ws {
         #[test]
         fn binary_payload_sizes() {
             binary_payloads::run_subject_process_message_binary_payload_sizes(SPEC);
-        }
-        #[test]
-        fn channel_retry_non_idem_fails_closed() {
-            channel_retry::run_channel_retry_non_idem_fails_closed(SPEC);
-        }
-        #[test]
-        fn channel_retry_idem_reruns_with_fresh_channels() {
-            channel_retry::run_channel_retry_idem_reruns_with_fresh_channels(SPEC);
         }
     }
     mod direction_subject_to_harness {
@@ -1054,16 +1028,6 @@ mod lang_swift_transport_tcp {
         #[test]
         fn binary_payload_sizes() {
             binary_payloads::run_subject_process_message_binary_payload_sizes(SPEC);
-        }
-        #[ignore]
-        #[test]
-        fn channel_retry_non_idem_fails_closed() {
-            channel_retry::run_channel_retry_non_idem_fails_closed(SPEC);
-        }
-        #[ignore]
-        #[test]
-        fn channel_retry_idem_reruns_with_fresh_channels() {
-            channel_retry::run_channel_retry_idem_reruns_with_fresh_channels(SPEC);
         }
     }
     mod direction_subject_to_harness {

@@ -120,9 +120,6 @@ pub use metadata::*;
 mod retry_support;
 pub use retry_support::*;
 
-mod session_resume_support;
-pub use session_resume_support::*;
-
 mod request_context;
 pub use request_context::*;
 
