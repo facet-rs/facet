@@ -281,6 +281,23 @@ public typealias VoxProbeOptionNicheFn =
     _ outLayout: UnsafeMutableRawPointer?
   ) -> UInt32
 
+/// Build a struct-shaped `VoxValueLayout` from explicit field info. See
+/// `vox_swift_make_struct_layout_v1`. Field info is passed as four
+/// parallel arrays: name pointers, name lengths, offsets, inner layout
+/// pointers.
+public typealias VoxMakeStructLayoutFn =
+  @convention(c) (
+    _ arena: VoxLayoutArenaHandle?,
+    _ size: UInt32,
+    _ align: UInt32,
+    _ fieldCount: Int,
+    _ fieldNamePtrs: UnsafeRawPointer?,
+    _ fieldNameLens: UnsafeRawPointer?,
+    _ fieldOffsets: UnsafeRawPointer?,
+    _ fieldLayouts: UnsafeRawPointer?,
+    _ outLayout: UnsafeMutableRawPointer?
+  ) -> UInt32
+
 /// Encode a Swift value (whose layout is described by `layout`) into a
 /// freshly-allocated postcard byte buffer. Returns 0 on success; on
 /// success, `outBytes->ptr/len/capacity` describes the encoded buffer

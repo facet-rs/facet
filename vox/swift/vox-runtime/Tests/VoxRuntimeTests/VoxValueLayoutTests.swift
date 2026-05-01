@@ -24,12 +24,21 @@ private enum Foo {
   case err
 }
 
+/// Multi-field struct exercised by the codec FFI. Mixed-size fields so
+/// the field offsets aren't trivial.
+private struct Point: Equatable {
+  var x: UInt32
+  var y: UInt64
+  var z: Bool
+}
+
 private final class CodecFFI {
   let handle: UnsafeMutableRawPointer
   let create: VoxLayoutArenaCreateFn
   let destroy: VoxLayoutArenaDestroyFn
   let probe: VoxProbeTwoVariantEnumFn
   let probeNiche: VoxProbeOptionNicheFn
+  let makeStruct: VoxMakeStructLayoutFn
   let encode: VoxLayoutEncodeFn
   let decode: VoxLayoutDecodeFn
   let freeBytes: VoxSwiftOwnedBytesFreeFn
@@ -46,6 +55,7 @@ private final class CodecFFI {
     self.destroy = try Self.loadFn(h, "vox_swift_layout_arena_destroy_v1")
     self.probe = try Self.loadFn(h, "vox_swift_probe_two_variant_enum_v1")
     self.probeNiche = try Self.loadFn(h, "vox_swift_probe_option_niche_v1")
+    self.makeStruct = try Self.loadFn(h, "vox_swift_make_struct_layout_v1")
     self.encode = try Self.loadFn(h, "vox_swift_layout_encode_v1")
     self.decode = try Self.loadFn(h, "vox_swift_layout_decode_v1")
     self.freeBytes = try Self.loadFn(h, "vox_swift_owned_bytes_free_v1")
@@ -473,6 +483,129 @@ struct VoxValueLayoutTests {
     #expect(nilDecoded == nil)
 
     withUnsafeMutablePointer(to: &nilEncoded) { outPtr in
+      ffi.freeBytes(UnsafeMutableRawPointer(outPtr))
+    }
+  }
+
+  /// Multi-field struct round-trip. Swift knows the field offsets
+  /// natively (via `MemoryLayout`), so the Rust dylib doesn't need to
+  /// probe the struct: it just builds a `ValueLayout(kind: .struct)` in
+  /// the arena from explicit field info, and the codec walks each
+  /// field at its calibrated offset.
+  @Test func roundTripsStructPointViaRustCodec() throws {
+    guard let dylibPath = swiftAbiDylibPath() else {
+      return
+    }
+    let ffi = try CodecFFI(path: dylibPath)
+    let arena = ffi.create()!
+    defer { ffi.destroy(arena) }
+
+    // Build leaf primitive layouts.
+    func primitive(_ kind: VoxPrimitiveKind) -> VoxValueLayout {
+      VoxValueLayout(
+        fields: nil,
+        variants: nil,
+        kind: VoxValueLayoutKind.primitive.rawValue,
+        size: kind.size,
+        align: kind.size == 0 ? 1 : kind.size,
+        primitiveKind: kind.rawValue,
+        fieldCount: 0,
+        variantCount: 0,
+        opaqueHandle: 0,
+        reserved: 0
+      )
+    }
+
+    // Stage primitive layouts in stable allocations Swift owns. The
+    // make_struct_layout call captures their addresses into the arena's
+    // FieldLayout array, so they need to outlive the call (which they
+    // do, since they're locals here that survive past the call).
+    var u32Layout = primitive(.u32)
+    var u64Layout = primitive(.u64)
+    var boolLayout = primitive(.bool)
+
+    let xName = Array("x".utf8)
+    let yName = Array("y".utf8)
+    let zName = Array("z".utf8)
+
+    let xOffset = UInt32(MemoryLayout<Point>.offset(of: \Point.x)!)
+    let yOffset = UInt32(MemoryLayout<Point>.offset(of: \Point.y)!)
+    let zOffset = UInt32(MemoryLayout<Point>.offset(of: \Point.z)!)
+
+    var layoutPtr: UnsafeRawPointer? = nil
+    let status = withUnsafePointer(to: &u32Layout) { u32Ptr in
+      withUnsafePointer(to: &u64Layout) { u64Ptr in
+        withUnsafePointer(to: &boolLayout) { boolPtr in
+          xName.withUnsafeBufferPointer { xn in
+            yName.withUnsafeBufferPointer { yn in
+              zName.withUnsafeBufferPointer { zn in
+                let namePtrs: [UnsafePointer<UInt8>?] = [
+                  xn.baseAddress, yn.baseAddress, zn.baseAddress,
+                ]
+                let nameLens: [Int] = [xn.count, yn.count, zn.count]
+                let offsets: [UInt32] = [xOffset, yOffset, zOffset]
+                let layouts: [UnsafeRawPointer?] = [
+                  UnsafeRawPointer(u32Ptr),
+                  UnsafeRawPointer(u64Ptr),
+                  UnsafeRawPointer(boolPtr),
+                ]
+                return namePtrs.withUnsafeBufferPointer { np in
+                  nameLens.withUnsafeBufferPointer { nl in
+                    offsets.withUnsafeBufferPointer { off in
+                      layouts.withUnsafeBufferPointer { la in
+                        withUnsafeMutablePointer(to: &layoutPtr) { outPtr in
+                          ffi.makeStruct(
+                            arena,
+                            UInt32(MemoryLayout<Point>.size),
+                            UInt32(MemoryLayout<Point>.alignment),
+                            3,
+                            UnsafeRawPointer(np.baseAddress),
+                            UnsafeRawPointer(nl.baseAddress),
+                            UnsafeRawPointer(off.baseAddress),
+                            UnsafeRawPointer(la.baseAddress),
+                            UnsafeMutableRawPointer(outPtr)
+                          )
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    #expect(status == VoxSwiftStatusOK)
+    let layout = try #require(layoutPtr)
+
+    // Round-trip a Point through the codec.
+    var value = Point(x: 0xCAFE, y: 0xDEAD_BEEF_CAFE_BABE, z: true)
+    var encoded = VoxSwiftOwnedBytes.empty
+    let encodeStatus = withUnsafePointer(to: &value) { valuePtr in
+      withUnsafeMutablePointer(to: &encoded) { outPtr in
+        ffi.encode(layout, UnsafeRawPointer(valuePtr), UnsafeMutableRawPointer(outPtr))
+      }
+    }
+    #expect(encodeStatus == VoxSwiftStatusOK)
+    #expect(encoded.len > 0)
+
+    var decoded = Point(x: 0, y: 0, z: false)
+    var consumed = 0
+    let decodeStatus = withUnsafeMutablePointer(to: &decoded) { decodedPtr in
+      ffi.decode(
+        layout,
+        UnsafeRawPointer(encoded.ptr),
+        encoded.len,
+        UnsafeMutableRawPointer(decodedPtr),
+        &consumed
+      )
+    }
+    #expect(decodeStatus == VoxSwiftStatusOK)
+    #expect(consumed == encoded.len)
+    #expect(decoded == value)
+
+    withUnsafeMutablePointer(to: &encoded) { outPtr in
       ffi.freeBytes(UnsafeMutableRawPointer(outPtr))
     }
   }

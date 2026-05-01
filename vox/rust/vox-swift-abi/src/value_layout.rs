@@ -359,6 +359,87 @@ pub unsafe extern "C" fn vox_swift_probe_option_niche_v1(
     VOX_SWIFT_STATUS_OK
 }
 
+/// Build a struct-shaped [`ValueLayout`] from explicit field info. Used
+/// when the caller already knows field offsets (Swift can compute them
+/// via `MemoryLayout<T>.offset(of:)`); no probing required.
+///
+/// Field info comes as four parallel arrays of length `field_count`:
+/// names (utf-8 ptr+len pairs), offsets (absolute byte offsets within
+/// the struct), and inner layout pointers. The builder allocates names
+/// and a contiguous `FieldLayout` array in the arena, then a
+/// `ValueLayout` referencing them, and returns the layout pointer
+/// through `out_layout`.
+///
+/// # Safety
+/// All array pointers must be valid for `field_count` elements; each
+/// inner-layout pointer must be a live `*const ValueLayout`.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn vox_swift_make_struct_layout_v1(
+    arena: *mut vox_swift_layout_arena,
+    size: u32,
+    align: u32,
+    field_count: usize,
+    field_name_ptrs: *const *const u8,
+    field_name_lens: *const usize,
+    field_offsets: *const u32,
+    field_layouts: *const *const ValueLayout,
+    out_layout: *mut *const ValueLayout,
+) -> vox_swift_status_t {
+    if arena.is_null() || out_layout.is_null() {
+        return VOX_SWIFT_STATUS_BAD_ABI;
+    }
+    if field_count > 0
+        && (field_name_ptrs.is_null()
+            || field_name_lens.is_null()
+            || field_offsets.is_null()
+            || field_layouts.is_null())
+    {
+        return VOX_SWIFT_STATUS_BAD_ABI;
+    }
+    let arena = unsafe { &*arena.cast::<LayoutArena>() };
+
+    let mut fields = Vec::with_capacity(field_count);
+    for i in 0..field_count {
+        let name_ptr = unsafe { *field_name_ptrs.add(i) };
+        let name_len = unsafe { *field_name_lens.add(i) };
+        let offset = unsafe { *field_offsets.add(i) };
+        let layout_ptr = unsafe { *field_layouts.add(i) };
+        if layout_ptr.is_null() {
+            return VOX_SWIFT_STATUS_BAD_ABI;
+        }
+        let name_str = if name_ptr.is_null() || name_len == 0 {
+            ""
+        } else {
+            let bytes = unsafe { std::slice::from_raw_parts(name_ptr, name_len) };
+            std::str::from_utf8(bytes).unwrap_or("")
+        };
+        fields.push(FieldLayout {
+            name: arena.alloc_str(name_str),
+            layout: layout_ptr,
+            offset,
+            _pad: 0,
+        });
+    }
+
+    let (fields_ptr, fc) = arena.alloc_fields(fields);
+    let layout = ValueLayout {
+        fields: fields_ptr,
+        variants: std::ptr::null(),
+        kind: ValueLayoutKind::Struct,
+        size,
+        align,
+        primitive_kind: PrimitiveKind::Unit,
+        field_count: fc,
+        variant_count: 0,
+        opaque_handle: 0,
+        _reserved: 0,
+    };
+    let layout_ptr = arena.alloc_layout(layout);
+    unsafe { *out_layout = layout_ptr };
+    VOX_SWIFT_STATUS_OK
+}
+
 // ---------------------------------------------------------------------------
 // Codec FFI: encode / decode a value through a calibrated ValueLayout.
 //
