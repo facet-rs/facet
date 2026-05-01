@@ -15,6 +15,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 pub use vox_jit_abi::CodecStatus;
 use vox_types::{SchemaPayload, TypeRef};
 
+pub mod value_layout;
+
 /// Wire-level status type returned by every Swift FFI entry point.
 ///
 /// This is the `#[repr(u32)]` of [`CodecStatus`] flattened to the underlying
