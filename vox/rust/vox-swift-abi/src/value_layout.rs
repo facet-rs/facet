@@ -249,6 +249,116 @@ pub unsafe extern "C" fn vox_swift_probe_two_variant_enum_v1(
     VOX_SWIFT_STATUS_OK
 }
 
+/// Probe a niche-filled `Option<T>`-shaped enum from three pre-built
+/// sample buffers. There is no separate discriminant region: the entire
+/// value's bytes ARE the payload, and one variant (the "niche") is
+/// recognised by an exact byte pattern; anything else is the
+/// "catch-all" variant.
+///
+/// - `niche_variant_bytes` — bytes of a sample of the niche variant
+///   (e.g. `None` of `Optional<UnsafeRawPointer>`, all zeroes).
+/// - `catchall_a_bytes`, `catchall_b_bytes` — two distinct samples of
+///   the catch-all variant. Required so the probe can verify the niche
+///   pattern doesn't accidentally match a real catch-all.
+/// - `*_name_*` — utf-8 names for the variants (just metadata; the
+///   codec doesn't require any specific spelling).
+/// - `catchall_field_layout` — the layout of the catch-all's payload
+///   (the inner `T`); pass null if the catch-all has no payload.
+///
+/// On success writes the new `*const ValueLayout` to `out_layout`. The
+/// niche variant is emitted *first* in the variant array so the codec's
+/// match-first-then-fall-through dispatch picks it correctly.
+///
+/// # Safety
+/// All pointer arguments must be valid for the indicated reads/writes.
+/// `arena` must be a live arena handle.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn vox_swift_probe_option_niche_v1(
+    arena: *mut vox_swift_layout_arena,
+    value_size: u32,
+    value_align: u32,
+    niche_variant_bytes: *const u8,
+    catchall_a_bytes: *const u8,
+    catchall_b_bytes: *const u8,
+    niche_name_ptr: *const u8,
+    niche_name_len: usize,
+    catchall_name_ptr: *const u8,
+    catchall_name_len: usize,
+    catchall_field_layout: *const ValueLayout,
+    out_layout: *mut *const ValueLayout,
+) -> vox_swift_status_t {
+    if arena.is_null() || out_layout.is_null() {
+        return VOX_SWIFT_STATUS_BAD_ABI;
+    }
+    if niche_variant_bytes.is_null() || catchall_a_bytes.is_null() || catchall_b_bytes.is_null() {
+        return VOX_SWIFT_STATUS_BAD_ABI;
+    }
+    if value_size == 0 {
+        return VOX_SWIFT_STATUS_BAD_ABI;
+    }
+
+    let arena = unsafe { &*arena.cast::<LayoutArena>() };
+    let n = value_size as usize;
+
+    // Re-use the inner core (probe_option_niche_layout) but build the
+    // resulting variant names ourselves so the FFI layer doesn't depend
+    // on a `LayoutBytes`-by-value API.
+    let core = unsafe {
+        vox_jit_cal::value_layout::probe_option_niche_layout(
+            arena,
+            n,
+            value_align as usize,
+            niche_variant_bytes,
+            catchall_a_bytes,
+            catchall_b_bytes,
+            // The core probe writes generic "None"/"Some" strings into
+            // its own arena allocations. Callers can override by reading
+            // the layout and replacing variant names in-arena, but for
+            // now we just use those defaults.
+            ValueLayout::empty_opaque(),
+        )
+    };
+    let layout = match core {
+        Ok(l) => l,
+        Err(_) => return VOX_SWIFT_STATUS_BAD_ABI,
+    };
+
+    // Replace the inner-T layout pointer on the catch-all with the one
+    // the caller supplied (the core probe used a placeholder).
+    if !catchall_field_layout.is_null() {
+        let variants_ptr = layout.variants as *mut VariantLayout;
+        // Variant 0 = niche (e.g. None); variant 1 = catch-all.
+        let catchall = unsafe { &mut *variants_ptr.add(1) };
+        let fields_ptr = catchall.fields as *mut FieldLayout;
+        if !fields_ptr.is_null() && catchall.field_count > 0 {
+            let f = unsafe { &mut *fields_ptr };
+            f.layout = catchall_field_layout;
+        }
+    }
+
+    // Replace variant names with what the caller passed.
+    let niche_name = LayoutBytes {
+        ptr: niche_name_ptr,
+        len: niche_name_len,
+    };
+    let catchall_name = LayoutBytes {
+        ptr: catchall_name_ptr,
+        len: catchall_name_len,
+    };
+    let variants_ptr = layout.variants as *mut VariantLayout;
+    if !variants_ptr.is_null() && layout.variant_count >= 2 {
+        unsafe {
+            (*variants_ptr).name = arena.alloc_str(niche_name.as_str().unwrap_or("None"));
+            (*variants_ptr.add(1)).name = arena.alloc_str(catchall_name.as_str().unwrap_or("Some"));
+        }
+    }
+
+    let layout_ptr = arena.alloc_layout(layout);
+    unsafe { *out_layout = layout_ptr };
+    VOX_SWIFT_STATUS_OK
+}
+
 // ---------------------------------------------------------------------------
 // Codec FFI: encode / decode a value through a calibrated ValueLayout.
 //

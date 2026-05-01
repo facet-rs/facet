@@ -262,6 +262,25 @@ public typealias VoxProbeTwoVariantEnumFn =
     _ outLayout: UnsafeMutableRawPointer?
   ) -> UInt32
 
+/// Probe a niche-filled `Optional`-shaped enum: one variant is recognised
+/// by an exact byte pattern across the whole value, the other is
+/// "anything else." See `vox_swift_probe_option_niche_v1`.
+public typealias VoxProbeOptionNicheFn =
+  @convention(c) (
+    _ arena: VoxLayoutArenaHandle?,
+    _ valueSize: UInt32,
+    _ valueAlign: UInt32,
+    _ nicheVariantBytes: UnsafeRawPointer?,
+    _ catchallABytes: UnsafeRawPointer?,
+    _ catchallBBytes: UnsafeRawPointer?,
+    _ nicheNamePtr: UnsafeRawPointer?,
+    _ nicheNameLen: Int,
+    _ catchallNamePtr: UnsafeRawPointer?,
+    _ catchallNameLen: Int,
+    _ catchallFieldLayout: UnsafeRawPointer?,
+    _ outLayout: UnsafeMutableRawPointer?
+  ) -> UInt32
+
 /// Encode a Swift value (whose layout is described by `layout`) into a
 /// freshly-allocated postcard byte buffer. Returns 0 on success; on
 /// success, `outBytes->ptr/len/capacity` describes the encoded buffer

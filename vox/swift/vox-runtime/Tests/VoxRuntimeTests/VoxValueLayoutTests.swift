@@ -29,6 +29,7 @@ private final class CodecFFI {
   let create: VoxLayoutArenaCreateFn
   let destroy: VoxLayoutArenaDestroyFn
   let probe: VoxProbeTwoVariantEnumFn
+  let probeNiche: VoxProbeOptionNicheFn
   let encode: VoxLayoutEncodeFn
   let decode: VoxLayoutDecodeFn
   let freeBytes: VoxSwiftOwnedBytesFreeFn
@@ -44,6 +45,7 @@ private final class CodecFFI {
     self.create = try Self.loadFn(h, "vox_swift_layout_arena_create_v1")
     self.destroy = try Self.loadFn(h, "vox_swift_layout_arena_destroy_v1")
     self.probe = try Self.loadFn(h, "vox_swift_probe_two_variant_enum_v1")
+    self.probeNiche = try Self.loadFn(h, "vox_swift_probe_option_niche_v1")
     self.encode = try Self.loadFn(h, "vox_swift_layout_encode_v1")
     self.decode = try Self.loadFn(h, "vox_swift_layout_decode_v1")
     self.freeBytes = try Self.loadFn(h, "vox_swift_owned_bytes_free_v1")
@@ -334,6 +336,143 @@ struct VoxValueLayoutTests {
 
     // Release the owned bytes the dylib handed us.
     withUnsafeMutablePointer(to: &encoded) { outPtr in
+      ffi.freeBytes(UnsafeMutableRawPointer(outPtr))
+    }
+  }
+
+  /// Niche-filled round-trip: a Swift `Optional<UnsafeRawPointer>` has
+  /// no separate discriminant — `nil` is "all 8 bytes zero," any other
+  /// value is `.some`. The niche probe records None's pattern across
+  /// the whole value; Some is the catch-all. We then encode/decode a
+  /// `.some(0xDEADBEEFCAFEBABE)` through the codec FFI and verify the
+  /// payload bytes round-trip even though the variant has no separate
+  /// tag region in memory.
+  @Test func roundTripsNicheFilledOptionalPointerViaRustCodec() throws {
+    guard let dylibPath = swiftAbiDylibPath() else {
+      return
+    }
+    let ffi = try CodecFFI(path: dylibPath)
+
+    let valueSize = MemoryLayout<UnsafeRawPointer?>.size
+    let valueAlign = MemoryLayout<UnsafeRawPointer?>.alignment
+
+    let noneSample: UnsafeRawPointer? = nil
+    let someASample: UnsafeRawPointer? = UnsafeRawPointer(bitPattern: 0x1111_1111_1111_1111)
+    let someBSample: UnsafeRawPointer? = UnsafeRawPointer(bitPattern: 0x2222_2222_2222_2222)
+
+    let noneBytes = snapshotBytes(of: noneSample, size: valueSize)
+    let someABytes = snapshotBytes(of: someASample, size: valueSize)
+    let someBBytes = snapshotBytes(of: someBSample, size: valueSize)
+
+    let arena = ffi.create()!
+    defer { ffi.destroy(arena) }
+
+    // The catch-all's payload is a u64 (the pointer's bit pattern).
+    var u64Layout = VoxValueLayout(
+      fields: nil,
+      variants: nil,
+      kind: VoxValueLayoutKind.primitive.rawValue,
+      size: VoxPrimitiveKind.u64.size,
+      align: 8,
+      primitiveKind: VoxPrimitiveKind.u64.rawValue,
+      fieldCount: 0,
+      variantCount: 0,
+      opaqueHandle: 0,
+      reserved: 0
+    )
+
+    let noneName = Array("None".utf8)
+    let someName = Array("Some".utf8)
+    var layoutPtr: UnsafeRawPointer? = nil
+
+    let probeStatus = withUnsafePointer(to: &u64Layout) { u64Ptr in
+      noneBytes.withUnsafeBufferPointer { n in
+        someABytes.withUnsafeBufferPointer { a in
+          someBBytes.withUnsafeBufferPointer { b in
+            noneName.withUnsafeBufferPointer { nn in
+              someName.withUnsafeBufferPointer { sn in
+                withUnsafeMutablePointer(to: &layoutPtr) { outPtr in
+                  ffi.probeNiche(
+                    arena,
+                    UInt32(valueSize),
+                    UInt32(valueAlign),
+                    UnsafeRawPointer(n.baseAddress),
+                    UnsafeRawPointer(a.baseAddress),
+                    UnsafeRawPointer(b.baseAddress),
+                    UnsafeRawPointer(nn.baseAddress),
+                    nn.count,
+                    UnsafeRawPointer(sn.baseAddress),
+                    sn.count,
+                    UnsafeRawPointer(u64Ptr),
+                    UnsafeMutableRawPointer(outPtr)
+                  )
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    #expect(probeStatus == VoxSwiftStatusOK)
+    let layout = try #require(layoutPtr)
+
+    // Round-trip a non-nil Optional through the codec.
+    var value: UnsafeRawPointer? = UnsafeRawPointer(bitPattern: UInt(0xDEAD_BEEF_CAFE_BABE))
+    var encoded = VoxSwiftOwnedBytes.empty
+    let encodeStatus = withUnsafePointer(to: &value) { valuePtr in
+      withUnsafeMutablePointer(to: &encoded) { outPtr in
+        ffi.encode(layout, UnsafeRawPointer(valuePtr), UnsafeMutableRawPointer(outPtr))
+      }
+    }
+    #expect(encodeStatus == VoxSwiftStatusOK)
+    #expect(encoded.len > 0)
+
+    // Decode back into a fresh Optional.
+    var decoded: UnsafeRawPointer? = nil
+    var consumed = 0
+    let decodeStatus = withUnsafeMutablePointer(to: &decoded) { decodedPtr in
+      ffi.decode(
+        layout,
+        UnsafeRawPointer(encoded.ptr),
+        encoded.len,
+        UnsafeMutableRawPointer(decodedPtr),
+        &consumed
+      )
+    }
+    #expect(decodeStatus == VoxSwiftStatusOK)
+    #expect(consumed == encoded.len)
+    #expect(decoded == value)
+
+    withUnsafeMutablePointer(to: &encoded) { outPtr in
+      ffi.freeBytes(UnsafeMutableRawPointer(outPtr))
+    }
+
+    // Also round-trip nil — a niche-filled None goes through the same
+    // code path but with the catch-all's payload missing.
+    var nilValue: UnsafeRawPointer? = nil
+    var nilEncoded = VoxSwiftOwnedBytes.empty
+    let nilEncodeStatus = withUnsafePointer(to: &nilValue) { valuePtr in
+      withUnsafeMutablePointer(to: &nilEncoded) { outPtr in
+        ffi.encode(layout, UnsafeRawPointer(valuePtr), UnsafeMutableRawPointer(outPtr))
+      }
+    }
+    #expect(nilEncodeStatus == VoxSwiftStatusOK)
+
+    var nilDecoded: UnsafeRawPointer? = UnsafeRawPointer(bitPattern: 0x1234)
+    var nilConsumed = 0
+    let nilDecodeStatus = withUnsafeMutablePointer(to: &nilDecoded) { decodedPtr in
+      ffi.decode(
+        layout,
+        UnsafeRawPointer(nilEncoded.ptr),
+        nilEncoded.len,
+        UnsafeMutableRawPointer(decodedPtr),
+        &nilConsumed
+      )
+    }
+    #expect(nilDecodeStatus == VoxSwiftStatusOK)
+    #expect(nilDecoded == nil)
+
+    withUnsafeMutablePointer(to: &nilEncoded) { outPtr in
       ffi.freeBytes(UnsafeMutableRawPointer(outPtr))
     }
   }
