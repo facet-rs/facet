@@ -16,6 +16,12 @@
 
 #![allow(unsafe_code)]
 
+pub mod value_layout;
+pub use value_layout::{
+    DiscriminantWidth, EnumLayout, FieldLayout, PrimitiveKind, StructLayout, ValueLayout,
+    VariantLayout,
+};
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
