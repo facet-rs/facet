@@ -12,14 +12,31 @@ use std::io;
 use std::mem::size_of;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
+pub use vox_jit_abi::CodecStatus;
 use vox_types::{SchemaPayload, TypeRef};
 
-pub type vox_swift_status_t = i32;
+/// Wire-level status type returned by every Swift FFI entry point.
+///
+/// This is the `#[repr(u32)]` of [`CodecStatus`] flattened to the underlying
+/// integer. Numeric values 0..=8 mirror [`vox_jit_abi::DecodeStatus`]; values
+/// 9..=11 are codec-lifecycle errors specific to the FFI boundary. See
+/// [`CodecStatus`] for the full table.
+pub type vox_swift_status_t = u32;
 
-pub const VOX_SWIFT_STATUS_OK: vox_swift_status_t = 0;
-pub const VOX_SWIFT_STATUS_BAD_ABI: vox_swift_status_t = -1;
-pub const VOX_SWIFT_STATUS_UNSUPPORTED: vox_swift_status_t = -2;
-pub const VOX_SWIFT_STATUS_PANIC: vox_swift_status_t = -3;
+pub const VOX_SWIFT_STATUS_OK: vox_swift_status_t = CodecStatus::Ok as u32;
+pub const VOX_SWIFT_STATUS_UNEXPECTED_EOF: vox_swift_status_t = CodecStatus::UnexpectedEof as u32;
+pub const VOX_SWIFT_STATUS_VARINT_OVERFLOW: vox_swift_status_t = CodecStatus::VarintOverflow as u32;
+pub const VOX_SWIFT_STATUS_INVALID_BOOL: vox_swift_status_t = CodecStatus::InvalidBool as u32;
+pub const VOX_SWIFT_STATUS_INVALID_UTF8: vox_swift_status_t = CodecStatus::InvalidUtf8 as u32;
+pub const VOX_SWIFT_STATUS_INVALID_OPTION_TAG: vox_swift_status_t =
+    CodecStatus::InvalidOptionTag as u32;
+pub const VOX_SWIFT_STATUS_INVALID_ENUM_DISCRIMINANT: vox_swift_status_t =
+    CodecStatus::InvalidEnumDiscriminant as u32;
+pub const VOX_SWIFT_STATUS_UNKNOWN_VARIANT: vox_swift_status_t = CodecStatus::UnknownVariant as u32;
+pub const VOX_SWIFT_STATUS_ALLOC_FAILED: vox_swift_status_t = CodecStatus::AllocFailed as u32;
+pub const VOX_SWIFT_STATUS_BAD_ABI: vox_swift_status_t = CodecStatus::BadAbi as u32;
+pub const VOX_SWIFT_STATUS_UNSUPPORTED: vox_swift_status_t = CodecStatus::Unsupported as u32;
+pub const VOX_SWIFT_STATUS_PANIC: vox_swift_status_t = CodecStatus::Panic as u32;
 
 pub const VOX_SWIFT_TYPE_DESCRIPTOR_MAGIC: u64 = 0x564f_5853_5746_5431;
 pub const VOX_SWIFT_TYPE_DESCRIPTOR_ABI_VERSION: u32 = 1;

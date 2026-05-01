@@ -171,8 +171,7 @@ mod platform {
     }
 
     fn enabled() -> bool {
-        static CACHED: OnceLock<bool> = OnceLock::new();
-        *CACHED.get_or_init(|| std::env::var_os("VOX_JIT_PERF").is_some_and(|v| v == "1"))
+        vox_jit_abi::codec_mode::jit_perf_enabled()
     }
 
     fn dump() -> Option<&'static Mutex<Dump>> {

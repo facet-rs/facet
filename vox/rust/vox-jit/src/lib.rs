@@ -50,35 +50,10 @@ use vox_schema::SchemaRegistry;
 // Codec mode — `VOX_CODEC` selects between reflect / interp / jit
 // ---------------------------------------------------------------------------
 
-/// Which decoder/encoder the RPC layer should use for this process.
-///
-/// Selected via the `VOX_CODEC` environment variable:
-/// - `reflect` — facet-reflect oracle (slow, correctness baseline, Miri-safe).
-/// - `interp`  — IR interpreter (shares lowering with JIT, Miri-safe).
-/// - `jit`     — Cranelift JIT, falling back to `reflect` for shapes the JIT
-///   cannot compile. This is the default.
-///
-/// Reading the env var is one-shot per process (OnceLock-cached).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CodecMode {
-    Reflect,
-    Interp,
-    Jit,
-}
-
-impl CodecMode {
-    pub fn from_env() -> Self {
-        static CACHED: OnceLock<CodecMode> = OnceLock::new();
-        *CACHED.get_or_init(|| match std::env::var("VOX_CODEC").ok().as_deref() {
-            Some("reflect") => CodecMode::Reflect,
-            Some("interp") => CodecMode::Interp,
-            Some("jit") | None => CodecMode::Jit,
-            Some(other) => {
-                panic!("VOX_CODEC must be one of 'reflect', 'interp', 'jit' (got {other:?})")
-            }
-        })
-    }
-}
+pub use vox_jit_abi::codec_mode::{
+    CodecMode, abort_on_slow_path, dump_compiled, force_fallback, jit_perf_enabled,
+    require_pure_jit,
+};
 
 // ---------------------------------------------------------------------------
 // JIT runtime — top-level handle
@@ -110,13 +85,6 @@ impl JitRuntime {
         &self.cache
     }
 
-    /// Returns `true` when the current [`CodecMode`] is not `Jit`. Callers use
-    /// this to short-circuit JIT compilation and fall through to the reflective
-    /// or IR-interpreter path.
-    pub fn force_fallback() -> bool {
-        CodecMode::from_env() != CodecMode::Jit
-    }
-
     /// Compile (or look up) the decoder for `local_shape` translating from
     /// the given remote schema, returning a `&'static` reference owned by
     /// this runtime's process-wide cache. Conduits call this once at
@@ -141,7 +109,7 @@ impl JitRuntime {
             }
         }
 
-        if Self::force_fallback() {
+        if force_fallback() {
             return None;
         }
 
@@ -218,7 +186,7 @@ impl JitRuntime {
             return Some(encoder);
         }
 
-        if Self::force_fallback() {
+        if force_fallback() {
             return None;
         }
 
@@ -640,24 +608,6 @@ impl Drop for InProgressGuard {
     fn drop(&mut self) {
         encode_in_progress_remove(self.0);
     }
-}
-
-pub fn require_pure_jit() -> bool {
-    static CACHED: OnceLock<bool> = OnceLock::new();
-    *CACHED.get_or_init(|| std::env::var_os("VOX_JIT_REQUIRE_PURE").is_some_and(|v| v == "1"))
-}
-
-pub(crate) fn abort_on_slow_path() -> bool {
-    static CACHED: OnceLock<bool> = OnceLock::new();
-    *CACHED.get_or_init(|| std::env::var_os("VOX_JIT_ABORT_ON_SLOW_PATH").is_some_and(|v| v == "1"))
-}
-
-/// When set, the Cranelift backend prints each compiled function's CLIF IR
-/// and machine-code disassembly to stderr. Useful when reasoning about why
-/// the JIT is (or isn't) as fast as expected.
-pub fn dump_compiled() -> bool {
-    static CACHED: OnceLock<bool> = OnceLock::new();
-    *CACHED.get_or_init(|| std::env::var_os("VOX_JIT_DUMP").is_some_and(|v| v == "1"))
 }
 
 fn decode_program_has_slow_path(program: &DecodeProgram) -> bool {

@@ -9,7 +9,7 @@ homepage.workspace = true
 documentation.workspace = true
 keywords = ["jit", "abi", "decode", "postcard"]
 categories = ["development-tools"]
-description = "Stable extern C ABI types and helper signatures for the vox Cranelift JIT"
+description = "Stable extern C ABI types, codec env knobs, and shared cache primitives for vox codec backends"
 
 [package.metadata]
 
@@ -19,3 +19,5 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [dependencies]
 vox-jit-cal = { workspace = true }
 facet-core = { workspace = true }
+arc-swap = { workspace = true }
+museair = { workspace = true }

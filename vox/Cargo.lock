@@ -4100,7 +4100,9 @@ dependencies = [
 name = "vox-jit-abi"
 version = "0.4.0"
 dependencies = [
+ "arc-swap",
  "facet-core",
+ "museair",
  "vox-jit-cal",
 ]
 
@@ -4165,6 +4167,7 @@ dependencies = [
  "facet-core",
  "facet-postcard",
  "facet-reflect",
+ "vox-jit-abi",
  "vox-jit-cal",
  "vox-schema",
  "vox-types",
@@ -4205,6 +4208,7 @@ dependencies = [
 name = "vox-swift-abi"
 version = "0.4.0"
 dependencies = [
+ "vox-jit-abi",
  "vox-types",
 ]
 

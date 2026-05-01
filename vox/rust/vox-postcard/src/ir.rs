@@ -24,123 +24,56 @@ use crate::error::DeserializeError;
 use crate::plan::{FieldOp, TranslationPlan};
 
 // ---------------------------------------------------------------------------
-// Descriptor handles (opaque types — filled in by calibration-engineer)
+// Wire-level vocabulary
 // ---------------------------------------------------------------------------
+//
+// `OpaqueDescriptorId`, `WirePrimitive`, and `TagWidth` are pure-data IR
+// primitives shared with every codec backend; they live in `vox-jit-abi`.
+// We re-export them here so existing `vox_postcard::ir::WirePrimitive`
+// imports keep working. The facet-aware constructors below (which only
+// make sense for the Rust backend) live with the lowerer.
 
-/// Handle to a calibrated opaque-type descriptor (e.g. Vec<T>, String).
-///
-/// The concrete descriptor type is owned by the calibration subsystem.
-/// The IR stores only the handle; the interpreter resolves it at runtime.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct OpaqueDescriptorId(pub u32);
+pub use vox_jit_abi::wire::{OpaqueDescriptorId, TagWidth, WirePrimitive};
 
-impl From<DescriptorHandle> for OpaqueDescriptorId {
-    fn from(h: DescriptorHandle) -> Self {
-        OpaqueDescriptorId(h.0)
-    }
+/// Convert a facet `ScalarType` into the layout-agnostic [`WirePrimitive`]
+/// vocabulary. Lives here (not in `vox-jit-abi`) because it depends on
+/// facet, which the Swift codec backend does not.
+pub fn wire_primitive_from_scalar(s: ScalarType) -> Option<WirePrimitive> {
+    Some(match s {
+        ScalarType::Unit => WirePrimitive::Unit,
+        ScalarType::Bool => WirePrimitive::Bool,
+        ScalarType::U8 => WirePrimitive::U8,
+        ScalarType::U16 => WirePrimitive::U16,
+        ScalarType::U32 => WirePrimitive::U32,
+        ScalarType::U64 => WirePrimitive::U64,
+        ScalarType::U128 => WirePrimitive::U128,
+        ScalarType::USize => WirePrimitive::USize,
+        ScalarType::I8 => WirePrimitive::I8,
+        ScalarType::I16 => WirePrimitive::I16,
+        ScalarType::I32 => WirePrimitive::I32,
+        ScalarType::I64 => WirePrimitive::I64,
+        ScalarType::I128 => WirePrimitive::I128,
+        ScalarType::ISize => WirePrimitive::ISize,
+        ScalarType::F32 => WirePrimitive::F32,
+        ScalarType::F64 => WirePrimitive::F64,
+        ScalarType::String => WirePrimitive::String,
+        ScalarType::Str => WirePrimitive::String,
+        ScalarType::CowStr => WirePrimitive::String,
+        ScalarType::Char => WirePrimitive::Char,
+        _ => return None,
+    })
 }
 
-impl From<OpaqueDescriptorId> for DescriptorHandle {
-    fn from(id: OpaqueDescriptorId) -> Self {
-        DescriptorHandle(id.0)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Scalar primitive tag (no reflection at interpret time)
-// ---------------------------------------------------------------------------
-
-/// Wire-level primitive that can be decoded without any shape information.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WirePrimitive {
-    Unit,
-    Bool,
-    U8,
-    U16,
-    U32,
-    U64,
-    U128,
-    USize,
-    I8,
-    I16,
-    I32,
-    I64,
-    I128,
-    ISize,
-    F32,
-    F64,
-    /// varint-length-prefixed UTF-8 string
-    String,
-    /// varint-length-prefixed byte buffer
-    Bytes,
-    /// u32le-length-prefixed opaque payload
-    Payload,
-    /// char encoded as a length-1 UTF-8 string
-    Char,
-}
-
-impl WirePrimitive {
-    /// Convert from a facet ScalarType where possible.
-    pub fn from_scalar(s: ScalarType) -> Option<Self> {
-        Some(match s {
-            ScalarType::Unit => Self::Unit,
-            ScalarType::Bool => Self::Bool,
-            ScalarType::U8 => Self::U8,
-            ScalarType::U16 => Self::U16,
-            ScalarType::U32 => Self::U32,
-            ScalarType::U64 => Self::U64,
-            ScalarType::U128 => Self::U128,
-            ScalarType::USize => Self::USize,
-            ScalarType::I8 => Self::I8,
-            ScalarType::I16 => Self::I16,
-            ScalarType::I32 => Self::I32,
-            ScalarType::I64 => Self::I64,
-            ScalarType::I128 => Self::I128,
-            ScalarType::ISize => Self::ISize,
-            ScalarType::F32 => Self::F32,
-            ScalarType::F64 => Self::F64,
-            ScalarType::String => Self::String,
-            ScalarType::Str => Self::String,
-            ScalarType::CowStr => Self::String,
-            ScalarType::Char => Self::Char,
-            _ => return None,
-        })
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Tag width
-// ---------------------------------------------------------------------------
-
-/// Width (in bytes) of an enum discriminant on the wire / in memory.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TagWidth {
-    U8,
-    U16,
-    U32,
-    U64,
-}
-
-impl TagWidth {
-    pub fn from_enum_repr(repr: EnumRepr) -> Option<Self> {
-        match repr {
-            EnumRepr::U8 | EnumRepr::I8 => Some(TagWidth::U8),
-            EnumRepr::U16 | EnumRepr::I16 => Some(TagWidth::U16),
-            EnumRepr::U32 | EnumRepr::I32 => Some(TagWidth::U32),
-            EnumRepr::U64 | EnumRepr::I64 | EnumRepr::USize | EnumRepr::ISize => {
-                Some(TagWidth::U64)
-            }
-            EnumRepr::Rust | EnumRepr::RustNPO => None,
-        }
-    }
-
-    pub fn byte_size(self) -> usize {
-        match self {
-            TagWidth::U8 => 1,
-            TagWidth::U16 => 2,
-            TagWidth::U32 => 4,
-            TagWidth::U64 => 8,
-        }
+/// Convert a facet `EnumRepr` into the layout-agnostic [`TagWidth`]
+/// vocabulary, returning `None` for representations whose tag width is not
+/// statically known (Rust default repr).
+pub fn tag_width_from_enum_repr(repr: EnumRepr) -> Option<TagWidth> {
+    match repr {
+        EnumRepr::U8 | EnumRepr::I8 => Some(TagWidth::U8),
+        EnumRepr::U16 | EnumRepr::I16 => Some(TagWidth::U16),
+        EnumRepr::U32 | EnumRepr::I32 => Some(TagWidth::U32),
+        EnumRepr::U64 | EnumRepr::I64 | EnumRepr::USize | EnumRepr::ISize => Some(TagWidth::U64),
+        EnumRepr::Rust | EnumRepr::RustNPO => None,
     }
 }
 
@@ -856,7 +789,7 @@ fn lower_value_inner(
             _ => {}
         }
 
-        if let Some(prim) = WirePrimitive::from_scalar(scalar) {
+        if let Some(prim) = wire_primitive_from_scalar(scalar) {
             // `WirePrimitive::String` is reachable here only via custom
             // `ScalarType::String` types that aren't `std::string::String`
             // (handled above) — those would need a per-shape calibration.
@@ -1253,7 +1186,7 @@ fn lower_enum(
     // cannot emit a BranchOnVariant op. Emit SlowPath for the whole enum value
     // (e.g. Option<T>, which has RustNPO/Rust repr) so the field decodes via the
     // reflective interpreter without aborting the entire stub compilation.
-    let Some(tag_width) = TagWidth::from_enum_repr(et.enum_repr) else {
+    let Some(tag_width) = tag_width_from_enum_repr(et.enum_repr) else {
         program.emit(
             block,
             DecodeOp::SlowPath {
@@ -3641,7 +3574,7 @@ fn lower_encode_value_inner(
             _ => {}
         }
 
-        if let Some(prim) = WirePrimitive::from_scalar(scalar) {
+        if let Some(prim) = wire_primitive_from_scalar(scalar) {
             program.emit(block, EncodeOp::WriteScalar { prim, src_offset });
             return Ok(());
         }
@@ -4011,7 +3944,7 @@ fn lower_encode_enum(
     src_offset: usize,
 ) -> Result<(), EncodeLowerError> {
     let tag_width =
-        TagWidth::from_enum_repr(et.enum_repr).ok_or(EncodeLowerError::UnstableEnumRepr)?;
+        tag_width_from_enum_repr(et.enum_repr).ok_or(EncodeLowerError::UnstableEnumRepr)?;
 
     // Each variant body first writes the variant's postcard index, then
     // encodes its fields. The dispatch block only branches — the index write

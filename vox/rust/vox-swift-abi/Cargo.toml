@@ -18,4 +18,5 @@ crate-type = ["rlib", "cdylib"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
+vox-jit-abi.workspace = true
 vox-types.workspace = true

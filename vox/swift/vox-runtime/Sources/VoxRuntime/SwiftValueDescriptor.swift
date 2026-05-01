@@ -1,9 +1,21 @@
-public typealias VoxSwiftStatus = Int32
+/// Wire-level status type returned by every Swift codec FFI entry point.
+///
+/// Numeric values 0..=8 mirror `DecodeStatus` from `vox-jit-abi`; values
+/// 9..=11 are codec-lifecycle errors specific to the FFI boundary.
+public typealias VoxSwiftStatus = UInt32
 
 public let VoxSwiftStatusOK: VoxSwiftStatus = 0
-public let VoxSwiftStatusBadABI: VoxSwiftStatus = -1
-public let VoxSwiftStatusUnsupported: VoxSwiftStatus = -2
-public let VoxSwiftStatusPanic: VoxSwiftStatus = -3
+public let VoxSwiftStatusUnexpectedEof: VoxSwiftStatus = 1
+public let VoxSwiftStatusVarintOverflow: VoxSwiftStatus = 2
+public let VoxSwiftStatusInvalidBool: VoxSwiftStatus = 3
+public let VoxSwiftStatusInvalidUtf8: VoxSwiftStatus = 4
+public let VoxSwiftStatusInvalidOptionTag: VoxSwiftStatus = 5
+public let VoxSwiftStatusInvalidEnumDiscriminant: VoxSwiftStatus = 6
+public let VoxSwiftStatusUnknownVariant: VoxSwiftStatus = 7
+public let VoxSwiftStatusAllocFailed: VoxSwiftStatus = 8
+public let VoxSwiftStatusBadABI: VoxSwiftStatus = 9
+public let VoxSwiftStatusUnsupported: VoxSwiftStatus = 10
+public let VoxSwiftStatusPanic: VoxSwiftStatus = 11
 
 public let VoxSwiftTypeDescriptorMagic: UInt64 = 0x564F_5853_5746_5431
 public let VoxSwiftTypeDescriptorAbiVersion: UInt32 = 1

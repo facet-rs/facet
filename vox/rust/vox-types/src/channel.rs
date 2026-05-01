@@ -648,7 +648,7 @@ fn channel_decode_plan<T: Facet<'static>>() -> Arc<ChannelDecodePlan> {
 
 #[cfg(all(feature = "jit", not(target_arch = "wasm32")))]
 fn decode_channel_payload<T: Facet<'static>>(bytes: &'static [u8]) -> Result<T, RxError> {
-    if vox_jit::require_pure_jit() && vox_jit::JitRuntime::force_fallback() {
+    if vox_jit::require_pure_jit() && vox_jit::force_fallback() {
         panic!(
             "VOX_JIT_REQUIRE_PURE=1 but channel payload decode for '{}' was forced off by VOX_CODEC",
             T::SHAPE

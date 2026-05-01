@@ -13,30 +13,19 @@
 //! peers with different remote schemas get distinct compiled programs
 //! sharing the same local shape. Owned and borrowed compile outputs share
 //! one entry per `(shape, schema_id)` and lazy-fill `OnceLock` slots.
+//!
+//! The lock-free read + leak-on-insert plumbing lives in
+//! [`vox_jit_abi::cache::LeakedCache`] so the Swift codec backend can reuse
+//! the same shape with its own key/value types.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicUsize;
 
-use arc_swap::ArcSwap;
 use facet_core::Shape;
-use museair::FixedState;
+use vox_jit_abi::LeakedCache;
 use vox_jit_abi::{BorrowedDecodeFn, EncodeFn, OwnedDecodeFn};
 use vox_postcard::ir::EncodeProgram;
-
-/// Hasher used by `CompiledCache`'s HashMaps. The cache is process-local, never
-/// receives untrusted input, and keys are stable code-segment pointers + small
-/// integers — cryptographic resistance buys nothing here, so we ditch
-/// `RandomState` (SipHash13) for `museair::FixedState`. Visible in nperf
-/// profiles: SipHash on a `(&'static Shape, u64)` key was ~34% of every
-/// `try_decode_owned` call.
-type CacheHasher = FixedState;
-type CacheMap<K, V> = HashMap<K, V, CacheHasher>;
-
-fn new_cache_map<K, V>() -> CacheMap<K, V> {
-    HashMap::with_hasher(FixedState::new(0))
-}
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
 struct DecodeKey {
@@ -95,21 +84,16 @@ pub struct CompiledEncoder {
 // ---------------------------------------------------------------------------
 
 /// Process-local cache of compiled encoders and decoders.
-///
-/// Steady-state lookup is one atomic load + one pointer copy via
-/// `ArcSwap` — no locking. Insertions copy-on-write the inner `HashMap`
-/// via `ArcSwap::rcu`, so they're rare-path operations only (one per
-/// distinct shape ever seen by this process).
 pub struct CompiledCache {
-    encoders: ArcSwap<CacheMap<&'static Shape, &'static CompiledEncoder>>,
-    decoders: ArcSwap<CacheMap<DecodeKey, &'static CompiledDecoder>>,
+    encoders: LeakedCache<&'static Shape, CompiledEncoder>,
+    decoders: LeakedCache<DecodeKey, CompiledDecoder>,
 }
 
 impl Default for CompiledCache {
     fn default() -> Self {
         Self {
-            encoders: ArcSwap::from_pointee(new_cache_map()),
-            decoders: ArcSwap::from_pointee(new_cache_map()),
+            encoders: LeakedCache::new(),
+            decoders: LeakedCache::new(),
         }
     }
 }
@@ -122,7 +106,7 @@ impl CompiledCache {
     /// Look up a compiled encoder by local shape. One atomic load and (on
     /// hit) one pointer copy — no locking.
     pub fn get_encode(&self, shape: &'static Shape) -> Option<&'static CompiledEncoder> {
-        self.encoders.load().get(shape).copied()
+        self.encoders.get(&shape)
     }
 
     /// Insert a compiled encoder. `Box::leak`s it and returns the resulting
@@ -132,13 +116,7 @@ impl CompiledCache {
         shape: &'static Shape,
         encoder: CompiledEncoder,
     ) -> &'static CompiledEncoder {
-        let leaked: &'static CompiledEncoder = Box::leak(Box::new(encoder));
-        self.encoders.rcu(|cur| {
-            let mut next = (**cur).clone();
-            next.insert(shape, leaked);
-            next
-        });
-        leaked
+        self.encoders.insert(shape, encoder)
     }
 
     /// Look up the consolidated decoder entry for `(shape, remote_schema_id)`.
@@ -150,13 +128,10 @@ impl CompiledCache {
         shape: &'static Shape,
         remote_schema_id: u64,
     ) -> Option<&'static CompiledDecoder> {
-        self.decoders
-            .load()
-            .get(&DecodeKey {
-                shape,
-                remote_schema_id,
-            })
-            .copied()
+        self.decoders.get(&DecodeKey {
+            shape,
+            remote_schema_id,
+        })
     }
 
     /// Look up or create the consolidated decoder entry for
@@ -168,31 +143,16 @@ impl CompiledCache {
         shape: &'static Shape,
         remote_schema_id: u64,
     ) -> &'static CompiledDecoder {
-        if let Some(entry) = self.get_decode(shape, remote_schema_id) {
-            return entry;
-        }
-        let leaked: &'static CompiledDecoder =
-            Box::leak(Box::new(CompiledDecoder::new_empty(shape)));
-        let mut inserted = leaked;
-        self.decoders.rcu(|cur| {
-            let key = DecodeKey {
-                shape,
-                remote_schema_id,
-            };
-            if let Some(&existing) = cur.get(&key) {
-                inserted = existing;
-                return (**cur).clone();
-            }
-            let mut next = (**cur).clone();
-            next.insert(key, leaked);
-            inserted = leaked;
-            next
-        });
-        inserted
+        let key = DecodeKey {
+            shape,
+            remote_schema_id,
+        };
+        self.decoders
+            .get_or_insert_with(key, || CompiledDecoder::new_empty(shape))
     }
 
     /// Number of compiled decoder entries currently cached.
     pub fn decoder_count(&self) -> usize {
-        self.decoders.load().len()
+        self.decoders.len()
     }
 }

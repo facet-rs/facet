@@ -27,6 +27,18 @@ pub use vox_jit_cal::{
     OpaqueDescriptor,
 };
 
+pub mod cache;
+pub use cache::{CacheHasher, LeakedCache};
+
+pub mod codec_mode;
+pub use codec_mode::{
+    CodecMode, abort_on_slow_path, dump_compiled, force_fallback, jit_perf_enabled,
+    require_pure_jit,
+};
+
+pub mod wire;
+pub use wire::{OpaqueDescriptorId, TagWidth, WirePrimitive};
+
 // ---------------------------------------------------------------------------
 // Status codes
 // ---------------------------------------------------------------------------
@@ -61,6 +73,61 @@ impl DecodeStatus {
     #[inline]
     pub fn is_ok(self) -> bool {
         self == DecodeStatus::Ok
+    }
+}
+
+/// Cross-FFI codec status code returned by codec lifecycle/encode/decode
+/// entry points exposed to non-Rust callers (notably the Swift codec ABI in
+/// `vox-swift-abi`).
+///
+/// Discriminants 0..=8 are kept numerically identical to the corresponding
+/// [`DecodeStatus`] variants, so a `DecodeStatus` value can be sign-extended
+/// or transmuted to a `CodecStatus` of the same name. Discriminants 9..=11
+/// are codec-lifecycle errors specific to the FFI surface (configuration
+/// validation, unsupported shapes, panics caught at the boundary).
+///
+/// Discriminant values are part of the ABI. Do not reorder.
+#[repr(u32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodecStatus {
+    Ok = 0,
+    UnexpectedEof = 1,
+    VarintOverflow = 2,
+    InvalidBool = 3,
+    InvalidUtf8 = 4,
+    InvalidOptionTag = 5,
+    InvalidEnumDiscriminant = 6,
+    UnknownVariant = 7,
+    AllocFailed = 8,
+    /// The caller's ABI configuration (descriptor, schema payload, sizes)
+    /// failed validation before any work could begin.
+    BadAbi = 9,
+    /// The codec recognises the request but has no implementation for the
+    /// requested shape yet (e.g. a primitive or container type the Rust-side
+    /// interpreter has not been taught to walk).
+    Unsupported = 10,
+    /// A Rust panic was caught at the FFI boundary. Indicates a bug in the
+    /// codec; never a normal error path.
+    Panic = 11,
+}
+
+impl CodecStatus {
+    #[inline]
+    pub fn is_ok(self) -> bool {
+        self == CodecStatus::Ok
+    }
+}
+
+impl From<DecodeStatus> for CodecStatus {
+    #[inline]
+    fn from(status: DecodeStatus) -> Self {
+        // SAFETY: `CodecStatus` is `#[repr(u32)]` and its variants 0..=8
+        // share the same discriminant values as the corresponding
+        // `DecodeStatus` variants by construction (see the doc comments
+        // above). The `as` cast yields a value that is always a valid
+        // `CodecStatus` discriminant.
+        let raw = status as u32;
+        unsafe { core::mem::transmute::<u32, CodecStatus>(raw) }
     }
 }
 
