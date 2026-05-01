@@ -18,7 +18,7 @@
 
 pub mod value_layout;
 pub use value_layout::{
-    DiscriminantWidth, EnumLayout, FieldLayout, PrimitiveKind, StructLayout, ValueLayout,
+    FieldLayout, LayoutArena, LayoutBytes, PrimitiveKind, ValueLayout, ValueLayoutKind,
     VariantLayout,
 };
 
