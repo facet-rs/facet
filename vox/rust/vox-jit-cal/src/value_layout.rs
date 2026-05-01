@@ -124,42 +124,41 @@ impl BytePattern {
 
 /// Layout of one value. Tagged-struct representation: `kind` selects which
 /// of the trailing fields are meaningful.
+///
+/// Field order is chosen so the struct has no implicit padding under
+/// 64-bit `repr(C)`: pointer-sized fields first, then four-byte fields.
+/// Total size = 48 bytes, 8-aligned. Swift mirrors this struct as a
+/// `@frozen` `VoxValueLayout` with the same field order.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct ValueLayout {
+    // 8-byte fields (pointers).
+    pub fields: *const FieldLayout,
+    pub variants: *const VariantLayout,
+
+    // 4-byte fields.
     pub kind: ValueLayoutKind,
     /// Total size in bytes.
     pub size: u32,
     /// Alignment in bytes (power of two).
     pub align: u32,
-
-    // --- kind == Primitive ---
     pub primitive_kind: PrimitiveKind,
-
-    // --- kind == Struct ---
-    pub fields: *const FieldLayout,
     pub field_count: u32,
-
-    // --- kind == Enum ---
-    pub variants: *const VariantLayout,
     pub variant_count: u32,
-
-    // --- kind == Opaque ---
     pub opaque_handle: u32,
-
     pub _reserved: u32,
 }
 
 impl ValueLayout {
     pub const fn empty_opaque() -> Self {
         Self {
+            fields: std::ptr::null(),
+            variants: std::ptr::null(),
             kind: ValueLayoutKind::Opaque,
             size: 0,
             align: 1,
             primitive_kind: PrimitiveKind::Unit,
-            fields: std::ptr::null(),
             field_count: 0,
-            variants: std::ptr::null(),
             variant_count: 0,
             opaque_handle: 0,
             _reserved: 0,
@@ -168,13 +167,13 @@ impl ValueLayout {
 
     pub const fn primitive(kind: PrimitiveKind) -> Self {
         Self {
+            fields: std::ptr::null(),
+            variants: std::ptr::null(),
             kind: ValueLayoutKind::Primitive,
             size: kind.size(),
             align: kind.align(),
             primitive_kind: kind,
-            fields: std::ptr::null(),
             field_count: 0,
-            variants: std::ptr::null(),
             variant_count: 0,
             opaque_handle: 0,
             _reserved: 0,
@@ -199,15 +198,17 @@ impl ValueLayout {
 }
 
 /// One field of a struct, or one piece of an enum-variant payload.
+///
+/// Field order chosen for no implicit padding (32 bytes, 8-aligned).
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct FieldLayout {
     pub name: LayoutBytes,
+    pub layout: *const ValueLayout,
     /// Byte offset from the base of the enclosing value. For variant
     /// fields this is absolute (within the entire enum value).
     pub offset: u32,
     pub _pad: u32,
-    pub layout: *const ValueLayout,
 }
 
 impl FieldLayout {
@@ -228,15 +229,17 @@ impl FieldLayout {
 /// niche-filled variants where the payload bytes themselves *are* the
 /// discriminant (e.g. a non-null pointer makes a `Some`), `store_pattern`
 /// can be empty — the field stores do all the work.
+///
+/// Field order chosen for no implicit padding (56 bytes, 8-aligned).
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct VariantLayout {
     pub name: LayoutBytes,
     pub match_pattern: *const BytePattern,
-    pub match_pattern_count: u32,
     pub store_pattern: *const BytePattern,
-    pub store_pattern_count: u32,
     pub fields: *const FieldLayout,
+    pub match_pattern_count: u32,
+    pub store_pattern_count: u32,
     pub field_count: u32,
     pub _pad: u32,
 }
@@ -774,6 +777,24 @@ mod tests {
             assert!(matches_pattern(ok.match_pattern_slice(), bytes));
             assert!(!matches_pattern(err.match_pattern_slice(), bytes));
         }
+    }
+
+    /// The Swift-side mirror types depend on these sizes/alignments; if
+    /// you change the struct layout in Rust, update VoxValueLayout.swift
+    /// (and the cross-language interop tests) to match.
+    #[test]
+    fn struct_sizes_match_swift_mirror_expectations() {
+        use std::mem::{align_of, size_of};
+        assert_eq!(size_of::<LayoutBytes>(), 16);
+        assert_eq!(align_of::<LayoutBytes>(), 8);
+        assert_eq!(size_of::<BytePattern>(), 8);
+        assert_eq!(align_of::<BytePattern>(), 4);
+        assert_eq!(size_of::<FieldLayout>(), 32);
+        assert_eq!(align_of::<FieldLayout>(), 8);
+        assert_eq!(size_of::<VariantLayout>(), 56);
+        assert_eq!(align_of::<VariantLayout>(), 8);
+        assert_eq!(size_of::<ValueLayout>(), 48);
+        assert_eq!(align_of::<ValueLayout>(), 8);
     }
 
     #[test]

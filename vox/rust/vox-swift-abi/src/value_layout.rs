@@ -93,9 +93,11 @@ pub unsafe extern "C" fn vox_swift_probe_two_variant_enum_v1(
     variant_a_zero_bytes: *const u8,
     variant_a_max_bytes: *const u8,
     variant_b_zero_bytes: *const u8,
-    variant_a_name: LayoutBytes,
+    variant_a_name_ptr: *const u8,
+    variant_a_name_len: usize,
     variant_a_field_layout: *const ValueLayout,
-    variant_b_name: LayoutBytes,
+    variant_b_name_ptr: *const u8,
+    variant_b_name_len: usize,
     variant_b_field_layout: *const ValueLayout,
     out_layout: *mut *const ValueLayout,
 ) -> vox_swift_status_t {
@@ -111,6 +113,15 @@ pub unsafe extern "C" fn vox_swift_probe_two_variant_enum_v1(
     if value_size == 0 {
         return VOX_SWIFT_STATUS_BAD_ABI;
     }
+
+    let variant_a_name = LayoutBytes {
+        ptr: variant_a_name_ptr,
+        len: variant_a_name_len,
+    };
+    let variant_b_name = LayoutBytes {
+        ptr: variant_b_name_ptr,
+        len: variant_b_name_len,
+    };
 
     let arena = unsafe { &*arena.cast::<LayoutArena>() };
 
@@ -256,8 +267,8 @@ mod tests {
         let arena_handle = unsafe { vox_swift_layout_arena_create_v1() };
         let arena_ref = unsafe { &*arena_handle.cast::<LayoutArena>() };
         let u64_layout_ptr = arena_ref.alloc_layout(ValueLayout::primitive(PrimitiveKind::U64));
-        let ok_name = arena_ref.alloc_str("Ok");
-        let err_name = arena_ref.alloc_str("Err");
+        let ok_name = b"Ok";
+        let err_name = b"Err";
 
         let mut layout_ptr: *const ValueLayout = std::ptr::null();
         let status = unsafe {
@@ -268,9 +279,11 @@ mod tests {
                 &ok_zero as *const _ as *const u8,
                 &ok_max as *const _ as *const u8,
                 &err_zero as *const _ as *const u8,
-                ok_name,
+                ok_name.as_ptr(),
+                ok_name.len(),
                 u64_layout_ptr,
-                err_name,
+                err_name.as_ptr(),
+                err_name.len(),
                 std::ptr::null(),
                 &mut layout_ptr,
             )
@@ -311,7 +324,6 @@ mod tests {
     fn ffi_probe_rejects_null_args() {
         let mut out: *const ValueLayout = std::ptr::null();
         let dummy = 0_u8;
-        let name = LayoutBytes::empty();
 
         let status = unsafe {
             vox_swift_probe_two_variant_enum_v1(
@@ -321,9 +333,11 @@ mod tests {
                 &dummy,
                 &dummy,
                 &dummy,
-                name,
                 std::ptr::null(),
-                name,
+                0,
+                std::ptr::null(),
+                std::ptr::null(),
+                0,
                 std::ptr::null(),
                 &mut out,
             )

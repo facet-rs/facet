@@ -1,0 +1,209 @@
+// End-to-end demonstration: a Swift enum gets calibrated into a
+// `VoxValueLayout` by the Rust dylib's probe (running once, at
+// calibration time, against pre-built sample buffers), and a fresh
+// `Foo.ok(31)` is then constructed from Swift code by reading the
+// layout's match/store patterns and emitting the stores ourselves —
+// no FFI call goes from Swift back into Rust to do the stores.
+
+import Foundation
+import Testing
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#endif
+
+@testable import VoxRuntime
+
+/// The Swift enum the test calibrates. One payload-bearing variant
+/// (`ok(UInt64)`) and one unit variant (`err`). Layout is whatever the
+/// Swift compiler chose; the probe doesn't care.
+private enum Foo {
+  case ok(UInt64)
+  case err
+}
+
+private final class ProbeFFI {
+  let handle: UnsafeMutableRawPointer
+  let create: VoxLayoutArenaCreateFn
+  let destroy: VoxLayoutArenaDestroyFn
+  let probe: VoxProbeTwoVariantEnumFn
+
+  init(path: String) throws {
+    guard let h = path.withCString({ dlopen($0, RTLD_NOW | RTLD_LOCAL) }) else {
+      throw NSError(
+        domain: "VoxValueLayoutTests",
+        code: 1,
+        userInfo: [NSLocalizedDescriptionKey: "dlopen failed: \(String(cString: dlerror()))"])
+    }
+    self.handle = h
+    self.create = try Self.loadFn(h, "vox_swift_layout_arena_create_v1")
+    self.destroy = try Self.loadFn(h, "vox_swift_layout_arena_destroy_v1")
+    self.probe = try Self.loadFn(h, "vox_swift_probe_two_variant_enum_v1")
+  }
+
+  deinit {
+    dlclose(handle)
+  }
+
+  private static func loadFn<F>(_ h: UnsafeMutableRawPointer, _ name: String) throws -> F {
+    guard let sym = dlsym(h, name) else {
+      throw NSError(
+        domain: "VoxValueLayoutTests",
+        code: 2,
+        userInfo: [NSLocalizedDescriptionKey: "dlsym failed for \(name)"])
+    }
+    return unsafeBitCast(sym, to: F.self)
+  }
+}
+
+private func swiftAbiDylibPath() -> String? {
+  let fileManager = FileManager.default
+  let envPath = ProcessInfo.processInfo.environment["VOX_SWIFT_ABI_DYLIB"]
+  let cwd = URL(fileURLWithPath: fileManager.currentDirectoryPath)
+  let candidates = [
+    envPath,
+    cwd.appendingPathComponent("target/debug/libvox_swift_abi.dylib").path,
+    cwd.appendingPathComponent("target/debug/libvox_swift_abi.so").path,
+  ].compactMap { $0 }.filter { !$0.isEmpty }
+  return candidates.first { fileManager.fileExists(atPath: $0) }
+}
+
+/// Snapshot the bytes of `value` into a freshly allocated buffer the
+/// caller owns. We can't pass `&value` directly to FFI because Swift may
+/// move the value during the call; copying once into stable memory keeps
+/// pointers valid for the duration of the probe call.
+private func snapshotBytes<T>(of value: T, size: Int) -> [UInt8] {
+  var v = value
+  var bytes = [UInt8](repeating: 0, count: size)
+  withUnsafeBytes(of: &v) { src in
+    bytes.withUnsafeMutableBytes { dst in
+      dst.copyMemory(from: src)
+    }
+  }
+  return bytes
+}
+
+struct VoxValueLayoutTests {
+  @Test func probesSwiftEnumAndConstructsOkVariantFromLayout() throws {
+    guard let dylibPath = swiftAbiDylibPath() else {
+      // No dylib built yet; skip silently. (Same convention as the
+      // existing SwiftValueDescriptorTests dylib-backed test.)
+      return
+    }
+    let ffi = try ProbeFFI(path: dylibPath)
+
+    let valueSize = MemoryLayout<Foo>.size
+    let valueAlign = MemoryLayout<Foo>.alignment
+
+    // Build three sample buffers. (Snapshotted into [UInt8] so we can
+    // hand stable pointers to the probe.)
+    let okZeroBytes = snapshotBytes(of: Foo.ok(0), size: valueSize)
+    let okMaxBytes = snapshotBytes(of: Foo.ok(0xDEAD_BEEF_CAFE_BABE), size: valueSize)
+    let errBytes = snapshotBytes(of: Foo.err, size: valueSize)
+
+    let arena = ffi.create()!
+    defer { ffi.destroy(arena) }
+
+    // The Ok variant's payload is a UInt64. Build a primitive layout
+    // describing it; we cheat for now and synthesize one inline (the
+    // arena-allocated layout pointer would normally come from the same
+    // Rust calibration pipeline).
+    var u64Layout = VoxValueLayout(
+      fields: nil,
+      variants: nil,
+      kind: VoxValueLayoutKind.primitive.rawValue,
+      size: VoxPrimitiveKind.u64.size,
+      align: 8,
+      primitiveKind: VoxPrimitiveKind.u64.rawValue,
+      fieldCount: 0,
+      variantCount: 0,
+      opaqueHandle: 0,
+      reserved: 0
+    )
+
+    let okName = Array("Ok".utf8)
+    let errName = Array("Err".utf8)
+
+    var layoutPtr: UnsafePointer<VoxValueLayout>? = nil
+    let status = withUnsafePointer(to: &u64Layout) { u64Ptr in
+      okZeroBytes.withUnsafeBufferPointer { okZeroBuf in
+        okMaxBytes.withUnsafeBufferPointer { okMaxBuf in
+          errBytes.withUnsafeBufferPointer { errBuf in
+            okName.withUnsafeBufferPointer { okNameBuf in
+              errName.withUnsafeBufferPointer { errNameBuf in
+                withUnsafeMutablePointer(to: &layoutPtr) { outPtr in
+                  ffi.probe(
+                    arena,
+                    UInt32(valueSize),
+                    UInt32(valueAlign),
+                    UnsafeRawPointer(okZeroBuf.baseAddress),
+                    UnsafeRawPointer(okMaxBuf.baseAddress),
+                    UnsafeRawPointer(errBuf.baseAddress),
+                    UnsafeRawPointer(okNameBuf.baseAddress),
+                    okNameBuf.count,
+                    UnsafeRawPointer(u64Ptr),
+                    UnsafeRawPointer(errNameBuf.baseAddress),
+                    errNameBuf.count,
+                    nil,  // err has no payload
+                    UnsafeMutableRawPointer(outPtr)
+                  )
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    #expect(status == VoxSwiftStatusOK)
+    #expect(layoutPtr != nil)
+    let layout = layoutPtr!.pointee
+    #expect(layout.kindEnum == .enum)
+    #expect(layout.variantCount == 2)
+
+    // Find the Ok variant by name.
+    var okVariant: VoxVariantLayout? = nil
+    for variant in layout.variantsBuffer {
+      if variant.name.string == "Ok" {
+        okVariant = variant
+      }
+    }
+    let ok = try #require(okVariant)
+    #expect(!ok.isDefault)
+    #expect(ok.fieldCount == 1)
+
+    // Construct Foo.ok(31) from the layout: zero a fresh buffer, apply
+    // Ok's store_pattern (writes the discriminant byte(s)), then store
+    // the UInt64 payload at the calibrated offset. Two store loops, all
+    // in Swift — no FFI call into the dylib for the writes.
+    var storage = [UInt8](repeating: 0, count: Int(layout.size))
+    let result: Foo = storage.withUnsafeMutableBufferPointer { buf in
+      let dst = UnsafeMutableRawPointer(buf.baseAddress!)
+      dst.applyStorePattern(ok.storePatternBuffer)
+      let payloadOffset = Int(ok.fieldsBuffer[0].offset)
+      dst.advanced(by: payloadOffset).storeBytes(of: UInt64(31), as: UInt64.self)
+      return dst.load(as: Foo.self)
+    }
+
+    if case .ok(let v) = result {
+      #expect(v == 31)
+    } else {
+      Issue.record("expected Foo.ok(31), got something else")
+    }
+
+    // Sanity check the match pattern: a real Foo.ok value's bytes match
+    // Ok's match pattern; a real Foo.err's bytes don't.
+    var realOk = Foo.ok(99)
+    var realErr = Foo.err
+    let okMatches = withUnsafePointer(to: &realOk) { ptr in
+      UnsafeRawPointer(ptr).matches(ok.matchPatternBuffer)
+    }
+    let errMatches = withUnsafePointer(to: &realErr) { ptr in
+      UnsafeRawPointer(ptr).matches(ok.matchPatternBuffer)
+    }
+    #expect(okMatches)
+    #expect(!errMatches)
+  }
+}
