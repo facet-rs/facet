@@ -21,7 +21,7 @@ facet-xml = { workspace = true }
 indoc = { workspace = true }
 tracing = { workspace = true }
 facet-testhelpers = { workspace = true }
-facet-xml = { workspace = true, features = ["tracing"] }
+facet-xml = { path = "../facet-xml", features = ["tracing"] }
 
 [lints]
 workspace = true
