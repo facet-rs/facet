@@ -39,7 +39,7 @@ http-body-util = { version = "0.1", default-features = false, optional = true }
 facet = { workspace = true, features = ["doc", "net"] }
 facet-testhelpers = { workspace = true }
 tracing = { workspace = true }
-facet-dom = { workspace = true, features = ["tracing"] }
+facet-dom = { path = "../facet-dom", features = ["tracing"] }
 facet-reflect = { workspace = true, features = ["tracing"] }
 
 [features]

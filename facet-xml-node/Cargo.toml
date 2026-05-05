@@ -23,8 +23,8 @@ facet-xml = { workspace = true }
 
 [dev-dependencies]
 facet-testhelpers = { workspace = true }
-facet-dom = { workspace = true, features = ["tracing"] }
-facet-xml = { workspace = true, features = ["tracing"] }
+facet-dom = { path = "../facet-dom", features = ["tracing"] }
+facet-xml = { path = "../facet-xml", features = ["tracing"] }
 facet-reflect = { workspace = true, features = ["tracing"] }
 
 [lints]
