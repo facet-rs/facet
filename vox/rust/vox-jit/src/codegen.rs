@@ -2039,22 +2039,11 @@ fn emit_read_byte_slice_ref(
     dst_offset: usize,
 ) -> Result<(), CodegenError> {
     let (data, len) = emit_read_byte_slice(ctx)?;
-    let call_conv = ctx.b.func.signature.call_conv;
-    let sig = ctx.b.func.import_signature(Signature {
-        params: vec![
-            AbiParam::new(ctx.ptr_ty),
-            AbiParam::new(ctx.ptr_ty),
-            AbiParam::new(ctx.ptr_ty),
-        ],
-        returns: vec![],
-        call_conv,
-    });
-    let callee = ctx.b.ins().iconst(
-        ctx.ptr_ty,
-        crate::helpers::vox_jit_init_byte_slice_ref as *const () as i64,
-    );
     let dst = ctx.dst_at(dst_offset);
-    ctx.b.ins().call_indirect(sig, callee, &[dst, data, len]);
+    ctx.b.ins().store(MemFlags::trusted(), data, dst, 0);
+    ctx.b
+        .ins()
+        .store(MemFlags::trusted(), len, dst, ctx.ptr_ty.bytes() as i32);
     Ok(())
 }
 
