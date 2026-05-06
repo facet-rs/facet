@@ -945,14 +945,13 @@ fn get_default_config_value(
         return None;
     }
 
-    // Option<T> implicitly has Default semantics (None)
-    // Check type_identifier for "Option" - handles both std::option::Option and core::option::Option
+    // Option<T> implicitly has Default semantics (None).
+    // We don't insert ConfigValue::Null here because the facet deserializer
+    // may mishandle Null for flattened fields inside enum variants.
+    // Instead, leave the field missing and let facet apply the natural
+    // Default for Option<T>, which is None.
     if shape.type_identifier.contains("Option") {
-        return Some(ConfigValue::Null(Sourced {
-            value: (),
-            span: None,
-            provenance: Some(Provenance::Default),
-        }));
+        return None;
     }
 
     // For struct types without explicit defaults, create empty object for recursive filling
@@ -2421,6 +2420,59 @@ mod fill_defaults_tests {
             assert!(e.value.fields.contains_key("all"), "should have all field");
         } else {
             panic!("expected enum");
+        }
+    }
+
+    // Test 8: Enum with flatten containing Option<String> fields
+    #[derive(Facet, Debug)]
+    struct TranscribeArgs {
+        config: Option<String>,
+        language: Option<String>,
+        pulse_limit: Option<usize>,
+    }
+
+    #[derive(Facet, Debug)]
+    #[repr(u8)]
+    #[allow(dead_code)]
+    enum EnumWithFlattenOption {
+        Run {
+            #[facet(flatten)]
+            args: TranscribeArgs,
+        },
+    }
+
+    #[test]
+    fn test_fill_defaults_enum_flatten_option_fields() {
+        let fields = IndexMap::default();
+        let input = ConfigValue::Enum(Sourced::new(crate::config_value::EnumValue {
+            variant: "Run".to_string(),
+            fields,
+        }));
+        let result = fill_defaults_from_shape(&input, EnumWithFlattenOption::SHAPE);
+
+        if let ConfigValue::Enum(e) = &result {
+            println!("result fields: {:#?}", e.value.fields);
+
+            // Option fields should NOT be filled - they stay missing
+            // and the facet deserializer provides None by default.
+            assert!(!e.value.fields.contains_key("config"));
+            assert!(!e.value.fields.contains_key("language"));
+            assert!(!e.value.fields.contains_key("pulse_limit"));
+        } else {
+            panic!("expected enum, got {:?}", result);
+        }
+
+        // Now try full deserialization
+        let deserialized: EnumWithFlattenOption =
+            from_config_value(&input).expect("deserialization should succeed");
+        println!("deserialized: {:?}", deserialized);
+
+        if let EnumWithFlattenOption::Run { args } = &deserialized {
+            assert_eq!(args.config, None);
+            assert_eq!(args.language, None);
+            assert_eq!(args.pulse_limit, None);
+        } else {
+            panic!("expected Run variant");
         }
     }
 }
