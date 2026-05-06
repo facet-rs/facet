@@ -313,9 +313,11 @@ impl CraneliftBackend {
         let self_func = self.module.declare_func_in_func(func_id, &mut ctx.func);
 
         let mut func_ctx = FunctionBuilderContext::new();
+        let subrange_names: Vec<String>;
         {
             let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
-            emit_decode_function(&mut builder, program, descriptors, self.ptr_ty, self_func)?;
+            subrange_names =
+                emit_decode_function(&mut builder, program, descriptors, self.ptr_ty, self_func)?;
             builder.finalize();
         }
 
@@ -326,11 +328,52 @@ impl CraneliftBackend {
             .map(|c| c.code_info().total_size)
             .unwrap_or(0);
 
+        // Snapshot the (start, end, srcloc) ranges before clearing the
+        // context — we'll feed these to jitdump as additional symbols
+        // covering each labeled sub-range of the compiled function.
+        let subrange_records: Vec<(u32, u32, u32)> = ctx
+            .compiled_code()
+            .map(|c| {
+                c.buffer
+                    .get_srclocs_sorted()
+                    .iter()
+                    .map(|s| (s.start, s.end, s.loc.bits()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
         self.module.clear_context(&mut ctx);
         self.module.finalize_definitions()?;
 
         let fn_ptr = self.module.get_finalized_function(func_id);
         crate::jitdump::record_load(&func_name, fn_ptr, code_size);
+
+        // Emit one extra `JIT_CODE_LOAD` per labeled sub-range so a
+        // profiler can resolve PCs inside an inlined element body to a
+        // synthetic symbol like `vox_decode_..::elem::elem`. Cranelift
+        // gives us back contiguous `(start, end, SourceLoc)` triples;
+        // skip the default (`SourceLoc(u32::MAX)`) which marks "no
+        // label set", and also skip our reserved id 0 (used by
+        // `leave_subrange` when popping back to the function root).
+        for (start, end, id) in subrange_records {
+            if id == u32::MAX || id == 0 {
+                continue;
+            }
+            let Some(label) = subrange_names.get(id as usize) else {
+                continue;
+            };
+            if label.is_empty() {
+                continue;
+            }
+            let sub_name = format!("{func_name}::{label}");
+            let sub_ptr = unsafe { fn_ptr.add(start as usize) };
+            let sub_size = end.saturating_sub(start);
+            if sub_size == 0 {
+                continue;
+            }
+            crate::jitdump::record_load(&sub_name, sub_ptr, sub_size);
+        }
+
         Ok((fn_ptr, code_size))
     }
 
@@ -486,6 +529,49 @@ struct EmitCtx<'a, 'b> {
     /// IR block indices that were fully sealed+filled during recursive inlining.
     /// The outer loop skips these entirely — no dummy terminator is needed.
     sealed_inlined_blocks: std::collections::HashSet<usize>,
+    /// Tracks "logical sub-decoder" boundaries the codegen wants to label
+    /// (currently the per-element body of an `AllocBacking` loop). The
+    /// codegen calls `enter` before emitting the body and `leave` after,
+    /// which sets / restores cranelift `SourceLoc`s on the in-flight
+    /// instructions. After compilation the JIT runtime reads back the
+    /// `(start_offset, end_offset, srcloc)` triples from cranelift's
+    /// machine buffer and emits one extra jitdump `JIT_CODE_LOAD` record
+    /// per labeled range, with a synthetic name like
+    /// `vox_decode__GnarlyPayload::elem::elem`. Profilers symbolicate
+    /// inner samples to the innermost name.
+    subranges: SubrangeTracker,
+}
+
+/// Stack of "where in the type tree are we right now?" labels, used by
+/// the JIT codegen to tag instruction ranges with cranelift `SourceLoc`s
+/// that we later translate into per-sub-range jitdump symbols.
+#[derive(Default)]
+pub(crate) struct SubrangeTracker {
+    /// Names indexed by `SourceLoc` value. Index 0 is the empty / no-label
+    /// sentinel — when nothing is set, cranelift uses default-srcloc, which
+    /// we filter out at jitdump-emit time.
+    names: Vec<String>,
+    /// Current path components (one per nested `enter` not yet `leave`d).
+    path: Vec<String>,
+    /// Cranelift `SourceLoc` ids for each currently-open sub-range, kept
+    /// so `leave` can restore the parent's id when popping.
+    id_stack: Vec<u32>,
+}
+
+impl SubrangeTracker {
+    fn new() -> Self {
+        Self {
+            names: vec![String::new()],
+            path: Vec::new(),
+            id_stack: Vec::new(),
+        }
+    }
+
+    /// Returns the name table so `compile_decode_inner` can pair it with
+    /// the post-compile `MachSrcLoc` ranges.
+    pub(crate) fn into_names(self) -> Vec<String> {
+        self.names
+    }
 }
 
 impl<'a, 'b> EmitCtx<'a, 'b> {
@@ -516,6 +602,30 @@ impl<'a, 'b> EmitCtx<'a, 'b> {
     /// Read current consumed variable.
     fn consumed(&mut self) -> Value {
         self.b.use_var(self.var_consumed)
+    }
+
+    /// Push a sub-range label and tag in-flight instructions with a fresh
+    /// `SourceLoc`. The path so far joined with `::` is the synthetic
+    /// jitdump symbol — e.g. after entering "elem" inside an outer
+    /// "elem", the inner range's name is `"elem::elem"`.
+    fn enter_subrange(&mut self, name: &str) {
+        let tr = &mut self.subranges;
+        tr.path.push(name.to_owned());
+        let full = tr.path.join("::");
+        let id = u32::try_from(tr.names.len()).expect("too many sub-ranges");
+        tr.names.push(full);
+        tr.id_stack.push(id);
+        self.b.set_srcloc(cranelift_codegen::ir::SourceLoc::new(id));
+    }
+
+    /// Pop the topmost sub-range and restore the parent's `SourceLoc`.
+    fn leave_subrange(&mut self) {
+        let tr = &mut self.subranges;
+        tr.path.pop();
+        tr.id_stack.pop();
+        let restore = tr.id_stack.last().copied().unwrap_or(0);
+        self.b
+            .set_srcloc(cranelift_codegen::ir::SourceLoc::new(restore));
     }
 
     /// Reload `var_consumed` from `ctx.consumed` (after an opaque helper updates it).
@@ -882,7 +992,7 @@ fn emit_decode_function(
     descriptors: &CalibrationRegistry,
     ptr_ty: Type,
     self_func: cranelift_codegen::ir::FuncRef,
-) -> Result<(), CodegenError> {
+) -> Result<Vec<String>, CodegenError> {
     let entry = builder.create_block();
     builder.append_block_params_for_function_params(entry);
     builder.switch_to_block(entry);
@@ -937,6 +1047,7 @@ fn emit_decode_function(
         block_map: block_map.into_iter().collect(),
         inlined_blocks: std::collections::HashSet::new(),
         sealed_inlined_blocks: std::collections::HashSet::new(),
+        subranges: SubrangeTracker::new(),
     };
 
     // Switch into body_entry and emit block 0 there. body_entry stays
@@ -970,7 +1081,7 @@ fn emit_decode_function(
     // it (along with any other still-unsealed blocks).
     ctx.b.seal_all_blocks();
 
-    Ok(())
+    Ok(ctx.subranges.into_names())
 }
 
 fn emit_block(
@@ -2718,9 +2829,17 @@ fn emit_alloc_backing(
 
     // Inline-emit the element body, replacing Return with jump(loop_tail).
     // All transitively-referenced blocks are also inlined (handles nested Vecs).
+    //
+    // Wrap the body in a sub-range label ("elem") so post-compile we can
+    // emit a synthetic jitdump symbol for this address range. Nested
+    // AllocBacking calls produce paths like "elem::elem::elem", letting
+    // a profiler distinguish "decoding the inner Vec<GnarlyAttr>" from
+    // "decoding the outer Vec<GnarlyEntry>" at flame-graph resolution.
     let saved_out_ptr = ctx.out_ptr();
     ctx.set_out_ptr(elem_ptr);
+    ctx.enter_subrange("elem");
     emit_inline_block(ctx, program, body_block, loop_tail)?;
+    ctx.leave_subrange();
     ctx.set_out_ptr(saved_out_ptr);
 
     // Loop tail: all element body paths converge here.
