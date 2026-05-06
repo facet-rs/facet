@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use facet_core::{Shape, Type, UserType};
 use vox_schema::{
@@ -163,8 +163,53 @@ pub fn build_identity_plan(shape: &'static Shape) -> TranslationPlan {
 // r[impl schema.translation.reorder]
 // r[impl schema.errors.early-detection]
 pub fn build_plan(input: &PlanInput) -> Result<TranslationPlan, TranslationError> {
+    let mut in_flight = HashSet::new();
+    build_plan_inner(input, &mut in_flight)
+}
+
+/// `(remote_id, local_id)` pairs whose plan is currently being built.
+/// Used to break recursive types (e.g. `FlameNode { children: Vec<FlameNode> }`)
+/// — without this, `nested_plan` would descend forever through
+/// `build_plan` → `nested_plan` → `build_plan` → … .
+type InFlight = HashSet<(SchemaHash, SchemaHash)>;
+
+/// Recursive worker for [`build_plan`]. The `in_flight` set tracks the
+/// `(remote_id, local_id)` pairs whose plan is currently under construction
+/// further up the call stack; encountering one again means we've hit a
+/// cycle in the schema graph.
+///
+/// The IR-lowering layer (`vox_postcard::ir::lower_value`) does its own
+/// cycle detection on `&'static Shape` and emits a `CallSelf` op for
+/// self-recursion (or a `SlowPath` fallback for mutual recursion), so for
+/// self-recursive types we just need to terminate the plan walk with
+/// `Identity` — the decode path closes the loop on its own.
+fn build_plan_inner(
+    input: &PlanInput,
+    in_flight: &mut InFlight,
+) -> Result<TranslationPlan, TranslationError> {
     let remote = &input.remote.root;
     let local = &input.local.root;
+    let pair = (remote.id, local.id);
+
+    // Cycle: this pair is already being built higher up the stack.
+    if in_flight.contains(&pair) {
+        // Self-recursion with structurally-identical schemas: Identity is
+        // correct because the IR layer handles the actual recursion.
+        if remote.id == local.id {
+            return Ok(TranslationPlan::Identity);
+        }
+        // Mutual recursion across non-matching schemas would need a back-
+        // reference plan we don't currently emit. Surface it loudly
+        // instead of silently returning a wrong-shaped Identity.
+        return Err(TranslationError::new(
+            TranslationErrorKind::RecursiveTypeMismatch {
+                remote: remote.clone(),
+                local: local.clone(),
+                remote_rust: crate::error::format_schema_rust(remote, &input.remote.registry),
+                local_rust: crate::error::format_schema_rust(local, &input.local.registry),
+            },
+        ));
+    }
 
     // Validate type names match for nominal types (struct/enum).
     if let (Some(remote_name), Some(local_name)) = (remote.name(), local.name())
@@ -184,6 +229,18 @@ pub fn build_plan(input: &PlanInput) -> Result<TranslationPlan, TranslationError
         return Ok(TranslationPlan::Identity);
     }
 
+    in_flight.insert(pair);
+    let result = build_plan_kind(input, in_flight);
+    in_flight.remove(&pair);
+    result
+}
+
+fn build_plan_kind(
+    input: &PlanInput,
+    in_flight: &mut InFlight,
+) -> Result<TranslationPlan, TranslationError> {
+    let remote = &input.remote.root;
+    let local = &input.local.root;
     match (&remote.kind, &local.kind) {
         (
             SchemaKind::Struct {
@@ -194,7 +251,7 @@ pub fn build_plan(input: &PlanInput) -> Result<TranslationPlan, TranslationError
                 fields: local_fields,
                 ..
             },
-        ) => build_struct_plan(remote_fields, local_fields, remote, local, input),
+        ) => build_struct_plan(remote_fields, local_fields, remote, local, input, in_flight),
         (
             SchemaKind::Enum {
                 variants: remote_variants,
@@ -204,7 +261,14 @@ pub fn build_plan(input: &PlanInput) -> Result<TranslationPlan, TranslationError
                 variants: local_variants,
                 ..
             },
-        ) => build_enum_plan(remote_variants, local_variants, remote, local, input),
+        ) => build_enum_plan(
+            remote_variants,
+            local_variants,
+            remote,
+            local,
+            input,
+            in_flight,
+        ),
         (
             SchemaKind::Tuple {
                 elements: remote_elements,
@@ -212,7 +276,14 @@ pub fn build_plan(input: &PlanInput) -> Result<TranslationPlan, TranslationError
             SchemaKind::Tuple {
                 elements: local_elements,
             },
-        ) => build_tuple_plan(remote_elements, local_elements, remote, local, input),
+        ) => build_tuple_plan(
+            remote_elements,
+            local_elements,
+            remote,
+            local,
+            input,
+            in_flight,
+        ),
         // Container types — recurse into element/value types
         (
             SchemaKind::List {
@@ -222,7 +293,7 @@ pub fn build_plan(input: &PlanInput) -> Result<TranslationPlan, TranslationError
                 element: local_elem,
             },
         ) => {
-            let element_plan = nested_plan(remote_elem, local_elem, input)?;
+            let element_plan = nested_plan(remote_elem, local_elem, input, in_flight)?;
             Ok(TranslationPlan::List {
                 element: Box::new(element_plan.unwrap_or(TranslationPlan::Identity)),
             })
@@ -235,7 +306,7 @@ pub fn build_plan(input: &PlanInput) -> Result<TranslationPlan, TranslationError
                 element: local_elem,
             },
         ) => {
-            let inner_plan = nested_plan(remote_elem, local_elem, input)?;
+            let inner_plan = nested_plan(remote_elem, local_elem, input, in_flight)?;
             Ok(TranslationPlan::Option {
                 inner: Box::new(inner_plan.unwrap_or(TranslationPlan::Identity)),
             })
@@ -250,8 +321,8 @@ pub fn build_plan(input: &PlanInput) -> Result<TranslationPlan, TranslationError
                 value: local_val,
             },
         ) => {
-            let key_plan = nested_plan(remote_key, local_key, input)?;
-            let val_plan = nested_plan(remote_val, local_val, input)?;
+            let key_plan = nested_plan(remote_key, local_key, input, in_flight)?;
+            let val_plan = nested_plan(remote_val, local_val, input, in_flight)?;
             Ok(TranslationPlan::Map {
                 key: Box::new(key_plan.unwrap_or(TranslationPlan::Identity)),
                 value: Box::new(val_plan.unwrap_or(TranslationPlan::Identity)),
@@ -267,7 +338,7 @@ pub fn build_plan(input: &PlanInput) -> Result<TranslationPlan, TranslationError
                 ..
             },
         ) => {
-            let element_plan = nested_plan(remote_elem, local_elem, input)?;
+            let element_plan = nested_plan(remote_elem, local_elem, input, in_flight)?;
             Ok(TranslationPlan::Array {
                 element: Box::new(element_plan.unwrap_or(TranslationPlan::Identity)),
             })
@@ -306,6 +377,7 @@ fn nested_plan(
     remote_type_ref: &TypeRef,
     local_type_ref: &TypeRef,
     input: &PlanInput,
+    in_flight: &mut InFlight,
 ) -> Result<Option<TranslationPlan>, TranslationError> {
     let resolve_schema = |type_ref: &TypeRef, registry: &SchemaRegistry, side: SchemaSide| {
         let type_id = match type_ref {
@@ -344,7 +416,7 @@ fn nested_plan(
             registry: input.local.registry.clone(),
         },
     };
-    build_plan(&sub_input).map(Some)
+    build_plan_inner(&sub_input, in_flight).map(Some)
 }
 
 fn is_byte_buffer_kind(kind: &SchemaKind, registry: &SchemaRegistry) -> bool {
@@ -368,6 +440,7 @@ fn build_struct_plan(
     remote_schema: &Schema,
     _local_schema: &Schema,
     input: &PlanInput,
+    in_flight: &mut InFlight,
 ) -> Result<TranslationPlan, TranslationError> {
     let mut field_ops = Vec::with_capacity(remote_fields.len());
     let mut nested = HashMap::new();
@@ -385,8 +458,13 @@ fn build_struct_plan(
             });
 
             // r[impl schema.translation.type-compat]
-            let nested_plan = nested_plan(&remote_field.type_ref, &local_field.type_ref, input)
-                .map_err(|e| e.with_path_prefix(PathSegment::Field(remote_field.name.clone())))?;
+            let nested_plan = nested_plan(
+                &remote_field.type_ref,
+                &local_field.type_ref,
+                input,
+                in_flight,
+            )
+            .map_err(|e| e.with_path_prefix(PathSegment::Field(remote_field.name.clone())))?;
             if let Some(plan) = nested_plan {
                 nested.insert(local_idx, plan);
             }
@@ -418,6 +496,7 @@ fn build_tuple_plan(
     remote_schema: &Schema,
     local_schema: &Schema,
     input: &PlanInput,
+    in_flight: &mut InFlight,
 ) -> Result<TranslationPlan, TranslationError> {
     if remote_elements.len() != local_elements.len() {
         return Err(TranslationError::new(
@@ -445,7 +524,7 @@ fn build_tuple_plan(
     {
         field_ops.push(FieldOp::Read { local_index: i });
 
-        let nested_plan = nested_plan(remote_elem, local_elem, input)
+        let nested_plan = nested_plan(remote_elem, local_elem, input, in_flight)
             .map_err(|e| e.with_path_prefix(PathSegment::Index(i)))?;
         if let Some(plan) = nested_plan {
             nested.insert(i, plan);
@@ -464,6 +543,7 @@ fn build_enum_plan(
     _remote_schema: &Schema,
     _local_schema: &Schema,
     input: &PlanInput,
+    in_flight: &mut InFlight,
 ) -> Result<TranslationPlan, TranslationError> {
     let mut variant_map = Vec::with_capacity(remote_variants.len());
     let mut variant_plans = HashMap::new();
@@ -522,10 +602,14 @@ fn build_enum_plan(
                         type_ref: local_inner_ref,
                     },
                 ) => {
-                    let inner_plan = nested_plan(remote_inner_ref, local_inner_ref, input)
-                        .map_err(|e| {
-                            e.with_path_prefix(PathSegment::Variant(remote_variant.name.clone()))
-                        })?;
+                    let inner_plan =
+                        nested_plan(remote_inner_ref, local_inner_ref, input, in_flight).map_err(
+                            |e| {
+                                e.with_path_prefix(PathSegment::Variant(
+                                    remote_variant.name.clone(),
+                                ))
+                            },
+                        )?;
                     if let Some(plan) = inner_plan {
                         nested.insert(local_idx, plan);
                     }
@@ -543,6 +627,7 @@ fn build_enum_plan(
                         _remote_schema,
                         _local_schema,
                         input,
+                        in_flight,
                     )
                     .map_err(|e| {
                         e.with_path_prefix(PathSegment::Variant(remote_variant.name.clone()))

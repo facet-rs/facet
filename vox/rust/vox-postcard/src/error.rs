@@ -224,6 +224,18 @@ pub enum TranslationErrorKind {
     /// This means Var substitution didn't happen — a bug in the extraction
     /// or plan building pipeline.
     UnresolvedVar { name: String, side: SchemaSide },
+    /// Two recursive types reach the same `(remote, local)` pair through a
+    /// cycle, but the remote and local schemas at that pair are not
+    /// structurally identical. Self-recursion with matching schemas is
+    /// fine (the IR layer's `CallSelf` op closes the loop); mutual or
+    /// asymmetric recursion would need a back-reference plan that
+    /// `build_plan` does not yet emit.
+    RecursiveTypeMismatch {
+        remote: Schema,
+        local: Schema,
+        remote_rust: String,
+        local_rust: String,
+    },
 }
 
 /// Which side of the schema comparison a missing schema was on.
@@ -445,6 +457,16 @@ impl fmt::Display for TranslationError {
                 write!(
                     f,
                     "unresolved type variable {name} on {side} side — Var substitution failed"
+                )
+            }
+            TranslationErrorKind::RecursiveTypeMismatch {
+                remote_rust,
+                local_rust,
+                ..
+            } => {
+                write!(
+                    f,
+                    "recursive type mismatch: cycle reaches `{remote_rust}` (remote) paired with `{local_rust}` (local), and the two are not structurally identical — only self-recursion with matching schemas is supported today",
                 )
             }
         }

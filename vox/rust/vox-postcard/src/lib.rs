@@ -3124,4 +3124,46 @@ mod tests {
         assert_eq!(result.id, 42);
         assert_eq!(result.data, &data);
     }
+
+    #[test]
+    fn translation_recursive_type_terminates() {
+        // Self-recursive type (`Node { children: Vec<Node> }`). Without
+        // cycle detection in `build_plan`, the planner descends forever
+        // through the `Vec<Node>` element type. With the in-flight set,
+        // the cycle terminates with `Identity` and the IR layer's
+        // shape-level cycle detection (`CallSelf`) closes the loop at
+        // decode time.
+        #[derive(Facet, Debug, Clone, PartialEq)]
+        struct Node {
+            value: u32,
+            children: Vec<Node>,
+        }
+
+        // Build the plan: this used to hang.
+        let plan =
+            plan_for(Node::SHAPE, Node::SHAPE).expect("plan should build for recursive Node");
+
+        // Round-trip a small recursive value to make sure the plan is
+        // actually usable, not just constructible.
+        let tree = Node {
+            value: 1,
+            children: vec![
+                Node {
+                    value: 2,
+                    children: vec![Node {
+                        value: 4,
+                        children: vec![],
+                    }],
+                },
+                Node {
+                    value: 3,
+                    children: vec![],
+                },
+            ],
+        };
+        let bytes = to_vec(&tree).unwrap();
+        let decoded: Node =
+            from_slice_with_plan(&bytes, &plan.plan, &plan.remote.registry).unwrap();
+        assert_eq!(decoded, tree);
+    }
 }
