@@ -375,6 +375,65 @@ where
     de.deserialize_into(partial, MetaSource::FromEvents)
 }
 
+/// Deserialize a JSONC string (JSON with `//` and `/* */` comments) into an owned type.
+///
+/// Identical to [`from_str`] except that comments are allowed anywhere whitespace
+/// is allowed. Trailing commas are also accepted (they work in the plain JSON
+/// parser too).
+pub fn from_str_jsonc<T>(input: &str) -> Result<T, DeserializeError>
+where
+    T: facet_core::Facet<'static>,
+{
+    use facet_format::FormatDeserializer;
+    let mut parser = JsonParser::<true>::new_jsonc(input.as_bytes());
+    let mut de = FormatDeserializer::new_owned(&mut parser);
+    de.deserialize_root()
+}
+
+/// Deserialize a JSONC byte slice (JSON with `//` and `/* */` comments) into an owned type.
+///
+/// Identical to [`from_slice`] except that comments are allowed anywhere whitespace
+/// is allowed.
+pub fn from_slice_jsonc<T>(input: &[u8]) -> Result<T, DeserializeError>
+where
+    T: facet_core::Facet<'static>,
+{
+    use facet_format::FormatDeserializer;
+    let mut parser = JsonParser::<false>::new_jsonc(input);
+    let mut de = FormatDeserializer::new_owned(&mut parser);
+    de.deserialize_root()
+}
+
+/// Deserialize a JSONC string, allowing zero-copy borrowing.
+///
+/// Identical to [`from_str_borrowed`] except that comments are allowed.
+pub fn from_str_borrowed_jsonc<'input, 'facet, T>(input: &'input str) -> Result<T, DeserializeError>
+where
+    T: facet_core::Facet<'facet>,
+    'input: 'facet,
+{
+    use facet_format::FormatDeserializer;
+    let mut parser = JsonParser::<true>::new_jsonc(input.as_bytes());
+    let mut de = FormatDeserializer::new(&mut parser);
+    de.deserialize_root()
+}
+
+/// Deserialize a JSONC byte slice, allowing zero-copy borrowing.
+///
+/// Identical to [`from_slice_borrowed`] except that comments are allowed.
+pub fn from_slice_borrowed_jsonc<'input, 'facet, T>(
+    input: &'input [u8],
+) -> Result<T, DeserializeError>
+where
+    T: facet_core::Facet<'facet>,
+    'input: 'facet,
+{
+    use facet_format::FormatDeserializer;
+    let mut parser = JsonParser::<false>::new_jsonc(input);
+    let mut de = FormatDeserializer::new(&mut parser);
+    de.deserialize_root()
+}
+
 /// Deserialize JSON from bytes into an existing Partial, allowing zero-copy borrowing.
 ///
 /// This variant requires the input to outlive the Partial's lifetime (`'input: 'facet`),

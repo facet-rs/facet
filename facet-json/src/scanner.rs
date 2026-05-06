@@ -113,6 +113,8 @@ pub struct Scanner {
     pos: usize,
     /// State for resuming after NeedMore (for streaming)
     state: ScanState,
+    /// Whether to allow JSONC-style comments (`//` and `/* */`)
+    allow_comments: bool,
 }
 
 /// Internal state for resuming mid-token after buffer refill
@@ -142,6 +144,16 @@ impl Scanner {
         Self {
             pos: 0,
             state: ScanState::Ready,
+            allow_comments: false,
+        }
+    }
+
+    /// Create a new scanner that accepts JSONC-style comments (`//` and `/* */`).
+    pub const fn new_with_comments() -> Self {
+        Self {
+            pos: 0,
+            state: ScanState::Ready,
+            allow_comments: true,
         }
     }
 
@@ -151,6 +163,7 @@ impl Scanner {
         Self {
             pos,
             state: ScanState::Ready,
+            allow_comments: false,
         }
     }
 
@@ -257,7 +270,7 @@ impl Scanner {
             }
         }
 
-        self.skip_whitespace(buf);
+        self.skip_whitespace(buf)?;
 
         let start = self.pos;
         let Some(&byte) = buf.get(self.pos) else {
@@ -322,15 +335,61 @@ impl Scanner {
         }
     }
 
-    fn skip_whitespace(&mut self, buf: &[u8]) {
+    fn skip_whitespace(&mut self, buf: &[u8]) -> Result<(), ScanError> {
         let mut pos = self.pos;
-        while let Some(&b) = buf.get(pos) {
-            match b {
-                b' ' | b'\t' | b'\n' | b'\r' => pos += 1,
+        loop {
+            // Skip standard JSON whitespace.
+            while let Some(&b) = buf.get(pos) {
+                match b {
+                    b' ' | b'\t' | b'\n' | b'\r' => pos += 1,
+                    _ => break,
+                }
+            }
+
+            if !self.allow_comments {
+                break;
+            }
+
+            // Check for a comment introducer.
+            match (buf.get(pos), buf.get(pos + 1)) {
+                (Some(&b'/'), Some(&b'/')) => {
+                    // Line comment: skip everything up to and including the newline.
+                    pos += 2;
+                    while let Some(&b) = buf.get(pos) {
+                        pos += 1;
+                        if b == b'\n' {
+                            break;
+                        }
+                    }
+                    // Loop back to consume any whitespace/comments that follow.
+                }
+                (Some(&b'/'), Some(&b'*')) => {
+                    // Block comment: skip until the closing `*/`.
+                    let comment_start = pos;
+                    pos += 2;
+                    loop {
+                        match buf.get(pos) {
+                            Some(&b'*') if buf.get(pos + 1) == Some(&b'/') => {
+                                pos += 2;
+                                break;
+                            }
+                            Some(_) => pos += 1,
+                            None => {
+                                self.pos = pos;
+                                return Err(ScanError {
+                                    kind: ScanErrorKind::UnexpectedEof("in block comment"),
+                                    span: Span::new(comment_start, pos - comment_start),
+                                });
+                            }
+                        }
+                    }
+                    // Loop back to consume any whitespace/comments that follow.
+                }
                 _ => break,
             }
         }
         self.pos = pos;
+        Ok(())
     }
 
     /// Scan a string, finding its boundaries and noting if it has escapes.
