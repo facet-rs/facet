@@ -233,10 +233,25 @@ pub(crate) fn coerce_types_from_shape(
                 variant_fields
             };
 
-            // Coerce each field value using its field shape
+            // Coerce each field value using its field shape.
+            // Handle both regular fields and flattened fields (which expand
+            // their inner struct's fields directly into the variant).
             let mut new_fields = sourced.value.fields.clone();
             for field in effective_fields {
-                if let Some(val) = new_fields.get(field.name) {
+                if field.is_flattened() {
+                    // Expand flattened struct fields - their inner fields
+                    // appear directly in new_fields, not nested under the field name.
+                    let inner_shape = field.shape.get();
+                    if let facet_core::Type::User(facet_core::UserType::Struct(s)) = &inner_shape.ty
+                    {
+                        for inner_field in s.fields {
+                            if let Some(val) = new_fields.get(inner_field.name) {
+                                let coerced = coerce_types_from_shape(val, inner_field.shape.get());
+                                new_fields.insert(inner_field.name.to_string(), coerced);
+                            }
+                        }
+                    }
+                } else if let Some(val) = new_fields.get(field.name) {
                     let coerced = coerce_types_from_shape(val, field.shape.get());
                     new_fields.insert(field.name.to_string(), coerced);
                 }
