@@ -1,6 +1,6 @@
 [package]
 name = "facet-format"
-version = "0.47.0"
+version = "0.47.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
