@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.5](https://github.com/bearcove/figue/compare/figue-v2.0.4...figue-v2.0.5) - 2026-05-06
+
+### Fixed
+
+- resolve irrefutable let pattern warning in test
+- propagate Vec coercion through flatten boundaries in enum variants
+
 ## [2.0.3](https://github.com/bearcove/figue/compare/figue-v2.0.2...figue-v2.0.3) - 2026-04-15
 
 ### Other
