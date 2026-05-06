@@ -15,6 +15,7 @@
 /// The IR does NOT mention `Peek`, `Partial`, or any facet_reflect primitive.
 /// All layout knowledge is baked in at lowering time.
 use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
 
 use facet_core::{EnumRepr, Facet, ScalarType, Shape, Type, UserType};
 use vox_jit_cal::{BorrowMode, CalibrationRegistry, DescriptorHandle};
@@ -22,6 +23,43 @@ use vox_schema::{SchemaKind, SchemaRegistry};
 
 use crate::error::DeserializeError;
 use crate::plan::{FieldOp, TranslationPlan};
+
+/// Cached `VOX_JIT_TRACE_LOWER` env-var lookup. Set the variable to any
+/// non-empty value to print one stderr line per cycle-detector hit (decode
+/// and encode side), so you can find unexpected `CallSelf` / `SlowPath`
+/// emissions when staring at a flame graph.
+fn trace_lower_enabled() -> bool {
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        std::env::var_os("VOX_JIT_TRACE_LOWER")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+    })
+}
+
+fn trace_cycle_emission(
+    ir: &str,
+    op: &str,
+    shape: &'static Shape,
+    top_shape: Option<&'static Shape>,
+    in_progress: &HashSet<&'static Shape>,
+) {
+    if !trace_lower_enabled() {
+        return;
+    }
+    let top = top_shape
+        .map(|s| format!("{s}"))
+        .unwrap_or_else(|| "<none>".to_owned());
+    let in_progress_list = in_progress
+        .iter()
+        .map(|s| format!("{s}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    eprintln!(
+        "[vox-jit-trace] ir={ir} op={op} shape@{:p}={shape} top={top} in_progress=[{in_progress_list}]",
+        shape as *const Shape,
+    );
+}
 
 // ---------------------------------------------------------------------------
 // Wire-level vocabulary
@@ -637,8 +675,22 @@ fn lower_value(
     // pipeline we don't have on the decode side.
     if program.lowering_in_progress.contains(&shape) {
         if program.top_shape == Some(shape) {
+            trace_cycle_emission(
+                "decode",
+                "CallSelf",
+                shape,
+                program.top_shape,
+                &program.lowering_in_progress,
+            );
             program.emit(block, DecodeOp::CallSelf { dst_offset });
         } else {
+            trace_cycle_emission(
+                "decode",
+                "SlowPath",
+                shape,
+                program.top_shape,
+                &program.lowering_in_progress,
+            );
             program.emit(
                 block,
                 DecodeOp::SlowPath {
@@ -3500,8 +3552,22 @@ fn lower_encode_value(
     // but not the root) falls back to `SlowPath`, mirroring decode.
     if program.lowering_in_progress.contains(&shape) {
         if program.top_shape == Some(shape) {
+            trace_cycle_emission(
+                "encode",
+                "CallSelf",
+                shape,
+                program.top_shape,
+                &program.lowering_in_progress,
+            );
             program.emit(block, EncodeOp::CallSelf { src_offset });
         } else {
+            trace_cycle_emission(
+                "encode",
+                "SlowPath",
+                shape,
+                program.top_shape,
+                &program.lowering_in_progress,
+            );
             program.emit(block, EncodeOp::SlowPath { shape, src_offset });
         }
         return Ok(());
