@@ -2467,12 +2467,9 @@ mod fill_defaults_tests {
             from_config_value(&input).expect("deserialization should succeed");
         println!("deserialized: {:?}", deserialized);
 
-        if let EnumWithFlattenOption::Run { args } = &deserialized {
-            assert_eq!(args.config, None);
-            assert_eq!(args.language, None);
-            assert_eq!(args.pulse_limit, None);
-        } else {
-            panic!("expected Run variant");
-        }
+        let EnumWithFlattenOption::Run { args } = &deserialized;
+        assert_eq!(args.config, None);
+        assert_eq!(args.language, None);
+        assert_eq!(args.pulse_limit, None);
     }
 }
