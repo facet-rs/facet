@@ -292,8 +292,9 @@ mod ir_interp {
         let plan = plan_for::<Outer>();
         let registry = SchemaRegistry::new();
         let bytes = encode(&Outer::sample());
+        let cal = calibrated_registry();
 
-        bencher.bench(|| from_slice_ir::<Outer>(&bytes, &plan, &registry, None).unwrap());
+        bencher.bench(|| from_slice_ir::<Outer>(&bytes, &plan, &registry, Some(&cal)).unwrap());
     }
 
     #[divan::bench(args = [4, 16, 64, 256])]
@@ -301,8 +302,9 @@ mod ir_interp {
         let plan = plan_for::<TextBatch>();
         let registry = SchemaRegistry::new();
         let bytes = encode(&TextBatch::sample_n(n));
+        let cal = calibrated_registry();
 
-        bencher.bench(|| from_slice_ir::<TextBatch>(&bytes, &plan, &registry, None).unwrap());
+        bencher.bench(|| from_slice_ir::<TextBatch>(&bytes, &plan, &registry, Some(&cal)).unwrap());
     }
 
     #[divan::bench(args = [16, 64, 256, 1024])]
@@ -328,8 +330,9 @@ mod ir_interp {
         let plan = plan_for::<String>();
         let registry = SchemaRegistry::new();
         let bytes = encode(&"hello, world! this is a typical short string".to_string());
+        let cal = calibrated_registry();
 
-        bencher.bench(|| from_slice_ir::<String>(&bytes, &plan, &registry, None).unwrap());
+        bencher.bench(|| from_slice_ir::<String>(&bytes, &plan, &registry, Some(&cal)).unwrap());
     }
 
     /// IR with calibration registry (Vec<u8>/String opaque paths enabled).
@@ -727,10 +730,11 @@ mod alloc_count {
         let plan = plan_for::<TextBatch>();
         let registry = SchemaRegistry::new();
         let bytes = encode(&TextBatch::sample_n(n));
+        let cal = calibrated_registry();
 
         bencher.bench(|| {
             let snap = AllocSnapshot::take();
-            let v = from_slice_ir::<TextBatch>(&bytes, &plan, &registry, None).unwrap();
+            let v = from_slice_ir::<TextBatch>(&bytes, &plan, &registry, Some(&cal)).unwrap();
             let (c, b) = snap.delta();
             report(&format!("text_batch/{n}/ir"), c, b);
             v
