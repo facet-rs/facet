@@ -143,6 +143,25 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
         }
     }
 
+    /// Create a JSONC parser that accepts `//` and `/* */` comments.
+    pub fn new_jsonc(input: &'de [u8]) -> Self {
+        Self {
+            input,
+            scanner: Scanner::new_with_comments(),
+            state: ParserState {
+                stack: Vec::new(),
+                event_peek: None,
+                peek_start_offset: None,
+                root_started: false,
+                root_complete: false,
+                last_token_start: 0,
+                scanner_pos: 0,
+            },
+            save_counter: 0,
+            saved_states: Vec::new(),
+        }
+    }
+
     /// Scan and materialize the next token directly.
     #[inline]
     fn consume_token(&mut self) -> Result<MaterializedToken<'de>, ParseError> {
