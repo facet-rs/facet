@@ -12,3 +12,12 @@ OPTIONS:
             Server URL (required)
         --timeout <U32>
             Optional timeout
+
+
+Error: missing required argument
+   ╭─[ <usage>:1:9 ]
+   │
+ 1 │ connect --url <url>
+   │         ─────┬─────  
+   │              ╰─────── Server URL (required)
+───╯

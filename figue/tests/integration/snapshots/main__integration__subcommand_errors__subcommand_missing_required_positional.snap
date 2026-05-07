@@ -16,3 +16,12 @@ ARGUMENTS:
 OPTIONS:
     -t, --template <STRING>
             Template to use (skips interactive selection)
+
+
+Error: missing required argument
+   ╭─[ <usage>:1:6 ]
+   │
+ 1 │ init <name>
+   │      ───┬──  
+   │         ╰──── Project name (creates directory with this name)
+───╯

@@ -12,3 +12,12 @@ ARGUMENTS:
             Project name
         <DESCRIPTION>
             Project description
+
+
+Error: missing required argument
+   ╭─[ <usage>:1:16 ]
+   │
+ 1 │ init myproject <description>
+   │                ──────┬──────  
+   │                      ╰──────── Project description
+───╯
