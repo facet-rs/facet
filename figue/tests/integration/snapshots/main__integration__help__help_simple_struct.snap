@@ -1,6 +1,6 @@
 ---
 source: crates/figue/tests/integration/help.rs
-expression: "$crate :: common ::\nstrip_binary_paths(& $crate :: common :: strip_ansi(& help))"
+expression: "strip_ansi_escapes :: strip_str(& help)"
 ---
 myapp 1.0.0
 
@@ -18,13 +18,13 @@ ARGUMENTS:
             Output file (optional)
 
 OPTIONS:
-    -v, --verbose
+    -v, --[no-]verbose
             Enable verbose output
     -j, --jobs <COUNT>
             Number of parallel jobs
-    -h, --help
+    -h, --[no-]help
             Show help message and exit.
-    -V, --version
+    -V, --[no-]version
             Show version and exit.
         --completions <bash,zsh,fish>
             Generate shell completions.

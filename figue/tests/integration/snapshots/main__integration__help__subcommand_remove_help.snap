@@ -1,6 +1,6 @@
 ---
 source: crates/figue/tests/integration/help.rs
-expression: "$crate :: common :: strip_ansi(& help)"
+expression: "strip_ansi_escapes :: strip_str(& help)"
 ---
 main rm
 
@@ -14,5 +14,5 @@ ARGUMENTS:
             Package name to remove
 
 OPTIONS:
-    -y, --yes
+    -y, --[no-]yes
             Don't ask for confirmation

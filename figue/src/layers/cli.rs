@@ -373,6 +373,55 @@ impl<'a> ParseContext<'a> {
                 None, // enum_variants not available for parent lookup
                 inline_value,
             );
+        } else if let Some(negated_name) = flag_name.strip_prefix("no-") {
+            // --no-<flag> syntax: negate a boolean flag
+            if let Some((effective_name, arg_schema)) = level.args().get(negated_name)
+                && arg_schema.value().inner_if_option().is_bool()
+            {
+                let effective_name = effective_name.to_string();
+                let prov = Provenance::cli(arg, "false".to_string());
+                self.insert_value(
+                    &effective_name,
+                    ConfigValue::Bool(Sourced {
+                        value: false,
+                        span: None,
+                        provenance: Some(prov),
+                    }),
+                );
+                self.index += 1;
+            } else if let Some(lookup) = self.find_long_flag_in_parents(negated_name)
+                && lookup.is_bool
+            {
+                // Adoption agency: boolean flag found in parent, negate it
+                let target = InsertTarget::Parent(lookup.parent_idx);
+                let effective_name = lookup.effective_name.clone();
+                let prov = Provenance::cli(arg, "false".to_string());
+                self.insert_value_to(
+                    target,
+                    &effective_name,
+                    ConfigValue::Bool(Sourced {
+                        value: false,
+                        span: None,
+                        provenance: Some(prov),
+                    }),
+                );
+                self.index += 1;
+            } else {
+                let all_flags: Vec<&str> = level
+                    .args()
+                    .iter()
+                    .filter_map(|(name, schema)| {
+                        if matches!(schema.kind(), ArgKind::Named { .. }) {
+                            Some(name.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                let suggestion = crate::suggest::suggest_flag(flag_name, all_flags);
+                self.emit_error(format!("unknown flag: --{}{}", flag_name, suggestion));
+                self.index += 1;
+            }
         } else {
             // Collect all available flag names for suggestion
             let all_flags: Vec<&str> = level
@@ -2779,6 +2828,49 @@ mod tests {
                     "command",
                     cv::enumv("Install", [("package", cv::string("foo", "foo"))]),
                 ),
+            ]),
+        );
+    }
+
+    // ========================================================================
+    // Tests: --no-<flag> boolean negation
+    // ========================================================================
+
+    #[test]
+    fn test_no_prefix_negates_bool() {
+        // --no-verbose should set verbose to false
+        assert_parses_to::<SimpleArgs>(
+            &["--no-verbose"],
+            cv::object([("verbose", cv::bool(false, "--no-verbose"))]),
+        );
+    }
+
+    #[test]
+    fn test_no_prefix_subcommand_local_bool() {
+        // --no-release in the Build subcommand should negate the local bool flag
+        assert_parses_to::<ParentWithGlobalFlag>(
+            &["build", "--no-release"],
+            cv::object([(
+                "command",
+                cv::enumv("Build", [("release", cv::bool(false, "--no-release"))]),
+            )]),
+        );
+    }
+
+    #[test]
+    fn test_no_prefix_non_bool_flag_is_unknown() {
+        // --no-port should not be valid (port is not a bool)
+        assert_diagnostic_contains::<SimpleArgs>(&["--no-port"], "unknown flag");
+    }
+
+    #[test]
+    fn test_no_prefix_adoption_agency() {
+        // In a subcommand, --no-verbose should bubble up to the parent
+        assert_parses_to::<ParentWithGlobalFlag>(
+            &["build", "--no-verbose"],
+            cv::object([
+                ("verbose", cv::bool(false, "--no-verbose")),
+                ("command", cv::enumv("Build", [])),
             ]),
         );
     }

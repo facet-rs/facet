@@ -448,13 +448,13 @@ mod tests {
 
         // Flattened fields should appear at top level
         assert!(
-            help.contains("--verbose"),
-            "help should contain --verbose from flattened CommonArgs"
+            help.contains("--[no-]verbose"),
+            "help should contain --[no-]verbose from flattened CommonArgs"
         );
         assert!(help.contains("-v"), "help should contain -v short flag");
         assert!(
-            help.contains("--quiet"),
-            "help should contain --quiet from flattened CommonArgs"
+            help.contains("--[no-]quiet"),
+            "help should contain --[no-]quiet from flattened CommonArgs"
         );
         assert!(help.contains("-q"), "help should contain -q short flag");
 

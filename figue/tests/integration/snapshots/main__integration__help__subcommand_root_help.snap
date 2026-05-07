@@ -1,6 +1,6 @@
 ---
 source: crates/figue/tests/integration/help.rs
-expression: "$crate :: common :: strip_ansi(& help)"
+expression: "strip_ansi_escapes :: strip_str(& help)"
 ---
 main
 
@@ -10,9 +10,9 @@ USAGE:
     main [OPTIONS] <COMMAND>
 
 OPTIONS:
-    -h, --help
+    -h, --[no-]help
             Show help message and exit.
-    -V, --version
+    -V, --[no-]version
             Show version and exit.
         --completions <bash,zsh,fish>
             Generate shell completions.

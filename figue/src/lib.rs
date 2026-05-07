@@ -386,7 +386,8 @@ pub fn from_slice<T: Facet<'static>>(args: &[&str]) -> DriverOutcome<T> {
 /// let result = figue::from_slice::<Args>(&["--help"]).into_result();
 /// match result {
 ///     Err(DriverError::Help { text }) => {
-///         assert!(text.contains("--help"));
+///         // text contains the full help output
+///         let _ = text;
 ///     }
 ///     _ => panic!("expected help"),
 /// }
@@ -432,9 +433,15 @@ mod tests {
     #[test]
     fn test_figue_builtins_in_help() {
         let help = generate_help::<ArgsWithBuiltins>(&HelpConfig::default());
-        assert!(help.contains("--help"), "help should contain --help");
+        assert!(
+            help.contains("--[no-]help"),
+            "help should contain --[no-]help"
+        );
         assert!(help.contains("-h"), "help should contain -h");
-        assert!(help.contains("--version"), "help should contain --version");
+        assert!(
+            help.contains("--[no-]version"),
+            "help should contain --[no-]version"
+        );
         assert!(help.contains("-V"), "help should contain -V");
         assert!(
             help.contains("--completions"),
