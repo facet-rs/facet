@@ -167,7 +167,7 @@ fn generate_help_from_schema(schema: &Schema, program_name: &str, config: &HelpC
 
     out.push('\n');
 
-    generate_arg_level_help(&mut out, schema.args(), program_name);
+    generate_arg_level_help(&mut out, schema.args(), program_name, config);
 
     out
 }
@@ -208,13 +208,57 @@ fn generate_help_for_subcommand_level(
 
     out.push('\n');
 
-    generate_arg_level_help(&mut out, args, full_command);
+    generate_arg_level_help(&mut out, args, full_command, config);
 
     out
 }
 
+/// Wrap `text` into lines of at most `max_width - indent.len()` characters,
+/// prefixing each line with `indent`. When `max_width` is 0 the text is
+/// returned on a single line (no wrapping).
+fn wrap_text(text: &str, indent: &str, max_width: usize) -> String {
+    let available = if max_width == 0 || max_width <= indent.len() {
+        // No wrapping or degenerate case – just one line.
+        let mut s = indent.to_string();
+        s.push_str(text);
+        return s;
+    } else {
+        max_width - indent.len()
+    };
+
+    let mut result = String::new();
+    let mut line = String::new();
+
+    for word in text.split_whitespace() {
+        if line.is_empty() {
+            line.push_str(word);
+        } else if line.len() + 1 + word.len() <= available {
+            line.push(' ');
+            line.push_str(word);
+        } else {
+            result.push_str(indent);
+            result.push_str(&line);
+            result.push('\n');
+            line.clear();
+            line.push_str(word);
+        }
+    }
+
+    if !line.is_empty() {
+        result.push_str(indent);
+        result.push_str(&line);
+    }
+
+    result
+}
+
 /// Generate help output for an argument level (args + subcommands).
-fn generate_arg_level_help(out: &mut String, args: &ArgLevelSchema, program_name: &str) {
+fn generate_arg_level_help(
+    out: &mut String,
+    args: &ArgLevelSchema,
+    program_name: &str,
+    config: &HelpConfig,
+) {
     // Separate positionals and named flags
     let mut positionals: Vec<&ArgSchema> = Vec::new();
     let mut flags: Vec<&ArgSchema> = Vec::new();
@@ -258,7 +302,7 @@ fn generate_arg_level_help(out: &mut String, args: &ArgLevelSchema, program_name
     if !positionals.is_empty() {
         out.push_str(&format!("{}:\n", "ARGUMENTS".yellow().bold()));
         for arg in &positionals {
-            write_arg_help(out, arg);
+            write_arg_help(out, arg, config);
         }
         out.push('\n');
     }
@@ -267,7 +311,7 @@ fn generate_arg_level_help(out: &mut String, args: &ArgLevelSchema, program_name
     if !flags.is_empty() {
         out.push_str(&format!("{}:\n", "OPTIONS".yellow().bold()));
         for arg in &flags {
-            write_arg_help(out, arg);
+            write_arg_help(out, arg, config);
         }
         out.push('\n');
     }
@@ -276,14 +320,14 @@ fn generate_arg_level_help(out: &mut String, args: &ArgLevelSchema, program_name
     if args.has_subcommands() {
         out.push_str(&format!("{}:\n", "COMMANDS".yellow().bold()));
         for sub in args.subcommands().values() {
-            write_subcommand_help(out, sub);
+            write_subcommand_help(out, sub, config);
         }
         out.push('\n');
     }
 }
 
 /// Write help for a single argument.
-fn write_arg_help(out: &mut String, arg: &ArgSchema) {
+fn write_arg_help(out: &mut String, arg: &ArgSchema, config: &HelpConfig) {
     out.push_str("    ");
 
     let is_positional = arg.kind().is_positional();
@@ -309,9 +353,15 @@ fn write_arg_help(out: &mut String, arg: &ArgSchema) {
             format!("<{}>", name.to_uppercase()).if_supports_color(Stdout, |text| text.green())
         ));
     } else {
+        let is_bool = arg.value().inner_if_option().is_bool();
+        let flag_str = if is_bool {
+            format!("--[no-]{}", name.to_kebab_case())
+        } else {
+            format!("--{}", name.to_kebab_case())
+        };
         out.push_str(&format!(
             "{}",
-            format!("--{}", name.to_kebab_case()).if_supports_color(Stdout, |text| text.green())
+            flag_str.if_supports_color(Stdout, |text| text.green())
         ));
 
         // Show value placeholder for non-bool, non-counted types
@@ -328,21 +378,22 @@ fn write_arg_help(out: &mut String, arg: &ArgSchema) {
     }
 
     // Doc comment
+    const DOC_INDENT: &str = "            ";
     if let Some(summary) = arg.docs().summary() {
-        out.push_str("\n            ");
-        out.push_str(summary.trim());
+        out.push('\n');
+        out.push_str(&wrap_text(summary.trim(), DOC_INDENT, config.width));
     }
 
     if is_counted {
-        out.push_str("\n            ");
-        out.push_str("[can be repeated]");
+        out.push('\n');
+        out.push_str(&wrap_text("[can be repeated]", DOC_INDENT, config.width));
     }
 
     out.push('\n');
 }
 
 /// Write help for a subcommand.
-fn write_subcommand_help(out: &mut String, sub: &Subcommand) {
+fn write_subcommand_help(out: &mut String, sub: &Subcommand, config: &HelpConfig) {
     out.push_str("    ");
 
     out.push_str(&format!(
@@ -353,8 +404,8 @@ fn write_subcommand_help(out: &mut String, sub: &Subcommand) {
 
     // Doc comment
     if let Some(summary) = sub.docs().summary() {
-        out.push_str("\n            ");
-        out.push_str(summary.trim());
+        out.push('\n');
+        out.push_str(&wrap_text(summary.trim(), "            ", config.width));
     }
 
     out.push('\n');
@@ -502,5 +553,47 @@ mod tests {
             !help.contains("SERVEARGS"),
             "help should NOT show SERVEARGS as an option value"
         );
+    }
+
+    #[test]
+    fn test_long_doc_comment_wraps() {
+        #[derive(Facet)]
+        struct LongDocArgs {
+            /// This is a very long description that should definitely be wrapped because it exceeds the default width of eighty columns by quite a bit
+            #[facet(args::named)]
+            output: String,
+        }
+
+        let schema = Schema::from_shape(LongDocArgs::SHAPE).unwrap();
+        let config = HelpConfig {
+            width: 80,
+            ..Default::default()
+        };
+        let help = generate_help_for_subcommand(&schema, &[], &config);
+        eprintln!("{help}");
+
+        // Every doc-comment line should fit within 80 columns
+        for line in help.lines() {
+            // Strip ANSI escape codes before measuring length
+            let plain: String = line
+                .chars()
+                .fold((String::new(), false), |(mut s, in_esc), c| {
+                    if in_esc {
+                        if c == 'm' { (s, false) } else { (s, true) }
+                    } else if c == '\x1b' {
+                        (s, true)
+                    } else {
+                        s.push(c);
+                        (s, false)
+                    }
+                })
+                .0;
+            assert!(
+                plain.len() <= 80,
+                "line exceeds 80 columns ({} chars): {:?}",
+                plain.len(),
+                plain
+            );
+        }
     }
 }
