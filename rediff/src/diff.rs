@@ -179,6 +179,33 @@ pub fn diff_new_peek_with_options<'mem, 'facet>(
                 value,
             }
         }
+        // Option must be checked before Enum because in facet 0.46, Option<T> has
+        // Type::User(UserType::Enum(...)) but the enum field offsets are wrong for non-NPO
+        // options (e.g. Option<u64> stores the inner value at offset 8, not 0). The Option
+        // vtable's get_value function correctly computes the pointer via as_ref().
+        ((Def::Option(_), _), (Def::Option(_), _)) => {
+            let from_option = from.into_option().unwrap();
+            let to_option = to.into_option().unwrap();
+
+            let (Some(from_value), Some(to_value)) = (from_option.value(), to_option.value())
+            else {
+                return Diff::Replace { from, to };
+            };
+
+            // Use sequences::diff to properly handle nested diffs
+            let updates = sequences::diff_with_options(vec![from_value], vec![to_value], options);
+
+            if updates.is_empty() {
+                return Diff::Equal { value: Some(from) };
+            }
+
+            Diff::User {
+                from: from.shape(),
+                to: to.shape(),
+                variant: Some("Some"),
+                value: Value::Tuple { updates },
+            }
+        }
         ((_, Type::User(UserType::Enum(_))), (_, Type::User(UserType::Enum(_)))) => {
             let from_enum = from.into_enum().unwrap();
             let to_enum = to.into_enum().unwrap();
@@ -282,29 +309,6 @@ pub fn diff_new_peek_with_options<'mem, 'facet>(
                 to: to_enum.shape(),
                 variant: Some(from_variant.name),
                 value,
-            }
-        }
-        ((Def::Option(_), _), (Def::Option(_), _)) => {
-            let from_option = from.into_option().unwrap();
-            let to_option = to.into_option().unwrap();
-
-            let (Some(from_value), Some(to_value)) = (from_option.value(), to_option.value())
-            else {
-                return Diff::Replace { from, to };
-            };
-
-            // Use sequences::diff to properly handle nested diffs
-            let updates = sequences::diff_with_options(vec![from_value], vec![to_value], options);
-
-            if updates.is_empty() {
-                return Diff::Equal { value: Some(from) };
-            }
-
-            Diff::User {
-                from: from.shape(),
-                to: to.shape(),
-                variant: Some("Some"),
-                value: Value::Tuple { updates },
             }
         }
         (
