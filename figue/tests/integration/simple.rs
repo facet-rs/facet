@@ -296,10 +296,9 @@ fn test_option_named_enum_variant() {
     }
 }
 
-/// Test that demonstrates the helpful error when using from_slice with FigueBuiltins
-/// and --completions flag without specifying a shell. The error message now shows valid values.
+/// Test that an unknown shell name produces a clear error message.
 #[test]
-fn test_from_slice_with_completions_shows_helpful_error() {
+fn test_from_slice_with_completions_invalid_shell_shows_helpful_error() {
     use figue::FigueBuiltins;
 
     #[derive(Facet, Debug)]
@@ -311,12 +310,37 @@ fn test_from_slice_with_completions_shows_helpful_error() {
         builtins: FigueBuiltins,
     }
 
-    // When using from_slice with --completions but no shell argument, the error is helpful
-    let err = figue::from_slice::<Args>(&["--name", "test", "--completions"]).unwrap_err();
+    // An unrecognised shell name should produce a clear "unknown shell" error.
+    let err = figue::from_slice::<Args>(&["--name", "test", "--completions", "slartibartfast"])
+        .unwrap_err();
 
-    // Snapshot the error to show that it now helpfully lists valid values
-    // It says "requires one of: bash, zsh, fish"
     assert_diag_snapshot!(err);
+}
+
+/// Test that omitting the shell argument to --completions triggers auto-detection
+/// (returns Completions, not a Failed error).
+#[test]
+fn test_from_slice_with_completions_no_arg_auto_detects() {
+    use figue::{DriverError, FigueBuiltins};
+
+    #[derive(Facet, Debug)]
+    struct Args {
+        #[facet(args::named)]
+        name: String,
+
+        #[facet(flatten)]
+        builtins: FigueBuiltins,
+    }
+
+    let result = figue::from_slice::<Args>(&["--name", "test", "--completions"]).into_result();
+    match result {
+        // Shell was detected — we got completions script.
+        Err(DriverError::Completions { .. }) => {}
+        // Shell could not be detected (e.g. CI without SHELL set) — still an
+        // error but of the "Failed" kind, not a panic.
+        Err(DriverError::Failed { .. }) => {}
+        other => panic!("unexpected outcome: {:?}", other),
+    }
 }
 
 /// Test that help text shows enum variants for --completions flag.

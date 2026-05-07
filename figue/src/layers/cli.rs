@@ -656,6 +656,18 @@ impl<'a> ParseContext<'a> {
         } else {
             // Non-bool: need a value
             let flag_span = self.current_span();
+
+            // Check up-front whether this is the special completions field,
+            // which is allowed to omit its value (triggering auto-detection).
+            let is_completions_field = self
+                .schema
+                .special()
+                .completions
+                .as_ref()
+                .and_then(|p| p.last())
+                .map(|s| s.as_str() == name)
+                .unwrap_or(false);
+
             let (value_str, value_span) = if let Some(v) = inline_value {
                 // --flag=value: value starts after the '='
                 let eq_pos = arg.find('=').unwrap_or(0) + 1;
@@ -664,12 +676,25 @@ impl<'a> ParseContext<'a> {
                 (v, span)
             } else {
                 self.index += 1;
-                if self.index < self.args.len() {
-                    let span = self.current_span();
-                    let v = self.args[self.index];
-                    self.index += 1;
-                    (v, span)
-                } else {
+                let at_end = self.index >= self.args.len();
+                let next_looks_like_flag = !at_end && self.args[self.index].starts_with('-');
+
+                if is_completions_field && (at_end || next_looks_like_flag) {
+                    // No shell specified — store sentinel for auto-detection.
+                    let prov = Provenance::cli(arg, "auto");
+                    self.insert_value_to(
+                        target,
+                        name,
+                        ConfigValue::String(Sourced {
+                            value: "auto".to_string(),
+                            span: None,
+                            provenance: Some(prov),
+                        }),
+                    );
+                    return;
+                }
+
+                if at_end {
                     let error_msg = if let Some(variants) = enum_variants {
                         let variant_list = variants.join(", ");
                         format!("flag {} requires one of: {}", arg, variant_list)
@@ -679,6 +704,11 @@ impl<'a> ParseContext<'a> {
                     self.emit_error_at(error_msg, flag_span);
                     return;
                 }
+
+                let span = self.current_span();
+                let v = self.args[self.index];
+                self.index += 1;
+                (v, span)
             };
 
             let prov_arg = arg.split('=').next().unwrap_or(arg);

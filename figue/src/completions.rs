@@ -21,6 +21,23 @@ pub enum Shell {
     Fish,
 }
 
+impl Shell {
+    /// Detect the current shell using environment variables.
+    pub fn detect() -> Option<Self> {
+        use std::env::var;
+        let shell = var("SHELL").ok().unwrap_or_default();
+        if shell.ends_with("bash") || var("BASH_VERSION").is_ok_and(|ver| !ver.is_empty()) {
+            Some(Self::Bash)
+        } else if shell.ends_with("fish") || var("FISH_VERSION").is_ok_and(|ver| !ver.is_empty()) {
+            Some(Self::Fish)
+        } else if shell.ends_with("zsh") || var("ZSH_VERSION").is_ok_and(|ver| !ver.is_empty()) {
+            Some(Self::Zsh)
+        } else {
+            None
+        }
+    }
+}
+
 /// Generate shell completion script for a shape.
 ///
 /// This is a convenience function that builds a Schema internally.
