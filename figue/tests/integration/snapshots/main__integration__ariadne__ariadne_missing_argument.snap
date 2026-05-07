@@ -2,10 +2,10 @@
 source: crates/figue/tests/integration/ariadne.rs
 expression: ariadne_output
 ---
-Error: missing required argument
-   ╭─[ <suggestion>:1:6 ]
-   │
- 1 │ main --required-field <required-field>
-   │      ────────────────┬────────────────  
-   │                      ╰────────────────── missing required argument
-───╯
+main
+
+USAGE:
+    main [OPTIONS]
+
+OPTIONS:
+        --required-field <STRING>

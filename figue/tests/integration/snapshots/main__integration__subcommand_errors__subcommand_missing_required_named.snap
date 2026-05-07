@@ -1,11 +1,14 @@
 ---
 source: crates/figue/tests/integration/subcommand_errors.rs
-expression: "$crate :: common :: strip_ansi(& err.to_string())"
+expression: "strip_ansi_escapes :: strip_str(& err.to_string())"
 ---
-Error: missing required argument
-   ╭─[ <suggestion>:1:9 ]
-   │
- 1 │ connect --url <url>
-   │         ─────┬─────  
-   │              ╰─────── Server URL (required)
-───╯
+main connect
+
+USAGE:
+    main connect [OPTIONS]
+
+OPTIONS:
+        --url <STRING>
+            Server URL (required)
+        --timeout <U32>
+            Optional timeout

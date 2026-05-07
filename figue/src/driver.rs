@@ -33,9 +33,7 @@ use crate::env_subst::{EnvSubstError, RealEnv, substitute_env_vars};
 use crate::help::generate_help_for_subcommand;
 use crate::layers::{cli::parse_cli, env::parse_env, file::parse_file};
 use crate::merge::merge_layers;
-use crate::missing::{
-    build_corrected_command_diagnostics, collect_missing_fields, format_missing_fields_summary,
-};
+use crate::missing::{collect_missing_fields, format_missing_fields_summary};
 use crate::path::Path;
 use crate::provenance::{FileResolution, Override, Provenance};
 use crate::span::Span;
@@ -426,63 +424,34 @@ impl<T: Facet<'static>> Driver<T> {
                 && !missing_fields[0].available_subcommands.is_empty();
 
             if missing_subcommand_with_variants {
-                let field = &missing_fields[0];
+                let help_config = self
+                    .config
+                    .help_config
+                    .as_ref()
+                    .cloned()
+                    .unwrap_or_default();
 
-                // Format the available subcommands list
-                let items: Vec<(String, Option<&str>)> = field
-                    .available_subcommands
-                    .iter()
-                    .map(|sub| (sub.name.clone(), sub.doc.as_deref()))
-                    .collect();
+                // Walk as far as the user got into the subcommand tree so we
+                // show help for the right level (e.g. `hx hosts` → hosts help).
+                let subcommand_path = if let Some(subcommand_field) =
+                    self.config.schema.args().subcommand_field_name()
+                {
+                    layers
+                        .cli
+                        .value
+                        .as_ref()
+                        .map(|v| v.extract_subcommand_path(subcommand_field))
+                        .unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
 
-                // Find max width for alignment
-                let max_width = items.iter().map(|(name, _)| name.len()).max().unwrap_or(0);
-                let mut cmds = String::new();
-                for (name, doc) in &items {
-                    use std::fmt::Write;
-                    write!(cmds, "  {name}").unwrap();
-                    let padding = max_width.saturating_sub(name.len());
-                    for _ in 0..padding {
-                        cmds.push(' ');
-                    }
-                    if let Some(doc) = doc {
-                        write!(cmds, "  {}", doc.trim()).unwrap();
-                    }
-                    cmds.push('\n');
-                }
-
-                let mut diagnostics = vec![Diagnostic {
-                    message: format!(
-                        "expected a subcommand\n\navailable subcommands:\n{}",
-                        cmds.trim_end()
-                    ),
-                    label: None,
-                    path: None,
-                    span: None,
-                    severity: Severity::Error,
-                }];
-
-                // Add help hint if the schema has a help field
-                if self.config.schema.special().help.is_some() {
-                    diagnostics.push(Diagnostic {
-                        message: "Run with --help for usage information.".to_string(),
-                        label: None,
-                        path: None,
-                        span: None,
-                        severity: Severity::Note,
-                    });
-                }
-
-                return DriverOutcome::err(DriverError::Failed {
-                    report: Box::new(DriverReport {
-                        diagnostics,
-                        layers,
-                        file_resolution,
-                        overrides,
-                        cli_args_source: cli_args_display.to_string(),
-                        source_name: "<cli>".to_string(),
-                    }),
-                });
+                let help = generate_help_for_subcommand(
+                    &self.config.schema,
+                    &subcommand_path,
+                    &help_config,
+                );
+                return DriverOutcome::err(DriverError::Help { text: help });
             }
 
             // Check if all missing fields are simple CLI arguments (not config fields)
@@ -494,33 +463,32 @@ impl<T: Facet<'static>> Driver<T> {
                     .all(|f| matches!(f.kind, crate::missing::MissingFieldKind::CliArg));
 
             if all_cli_missing {
-                // Use corrected command as source with proper diagnostics
-                let mut corrected = build_corrected_command_diagnostics(
-                    &missing_fields,
-                    cli_args_source.as_deref(),
+                let help_config = self
+                    .config
+                    .help_config
+                    .as_ref()
+                    .cloned()
+                    .unwrap_or_default();
+
+                let subcommand_path = if let Some(subcommand_field) =
+                    self.config.schema.args().subcommand_field_name()
+                {
+                    layers
+                        .cli
+                        .value
+                        .as_ref()
+                        .map(|v| v.extract_subcommand_path(subcommand_field))
+                        .unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+
+                let help = generate_help_for_subcommand(
+                    &self.config.schema,
+                    &subcommand_path,
+                    &help_config,
                 );
-
-                // Add help hint if the schema has a help field
-                if self.config.schema.special().help.is_some() {
-                    corrected.diagnostics.push(Diagnostic {
-                        message: "Run with --help for usage information.".to_string(),
-                        label: None,
-                        path: None,
-                        span: None,
-                        severity: Severity::Note,
-                    });
-                }
-
-                return DriverOutcome::err(DriverError::Failed {
-                    report: Box::new(DriverReport {
-                        diagnostics: corrected.diagnostics,
-                        layers,
-                        file_resolution,
-                        overrides,
-                        cli_args_source: corrected.corrected_source,
-                        source_name: "<suggestion>".to_string(),
-                    }),
-                });
+                return DriverOutcome::err(DriverError::Help { text: help });
             }
 
             let message = {

@@ -1,11 +1,12 @@
 ---
 source: crates/figue/tests/integration/sequence.rs
-expression: "$crate :: common :: strip_ansi(& err.to_string())"
+expression: "strip_ansi_escapes :: strip_str(& err.to_string())"
 ---
-Error: missing required argument
-   ╭─[ <suggestion>:1:6 ]
-   │
- 1 │ main <input>
-   │      ───┬───  
-   │         ╰───── The input file to process
-───╯
+main
+
+USAGE:
+    main <INPUT>
+
+ARGUMENTS:
+        <INPUT>
+            The input file to process
