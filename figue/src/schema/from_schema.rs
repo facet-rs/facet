@@ -30,34 +30,7 @@ impl Schema {
         };
 
         let ctx_root = SchemaErrorContext::root(shape);
-        let mut config_field: Option<(&'static Field, SchemaErrorContext)> = None;
-
-        for field in struct_type.fields {
-            let field_ctx = ctx_root.with_field(field.name);
-
-            if is_config_field(field) {
-                if let Some((_, first_ctx)) = &config_field {
-                    return Err(SchemaError::new(
-                        first_ctx.clone(),
-                        "only one field may be marked with #[facet(args::config)]",
-                    )
-                    .with_primary_label("first marked here")
-                    .with_label(field_ctx, "also marked here"));
-                }
-                config_field = Some((field, field_ctx.clone()));
-            }
-
-            if field.has_attr(Some("args"), "env_prefix") && !field.has_attr(Some("args"), "config")
-            {
-                return Err(SchemaError::new(
-                    field_ctx,
-                    format!(
-                        "field `{}` uses args::env_prefix without args::config",
-                        field.name
-                    ),
-                ));
-            }
-        }
+        let config_field = discover_config_field(struct_type.fields, &ctx_root, false)?;
 
         let (args, special) = arg_level_from_fields_with_special(struct_type.fields, &ctx_root)?;
 
@@ -111,6 +84,97 @@ fn extract_env_prefix(field: &Field) -> Option<String> {
     } else {
         None
     }
+}
+
+fn discover_config_field(
+    fields: &'static [Field],
+    ctx: &SchemaErrorContext,
+    inside_subcommand: bool,
+) -> Result<Option<(&'static Field, SchemaErrorContext)>, SchemaError> {
+    let mut config_field: Option<(&'static Field, SchemaErrorContext)> = None;
+
+    for field in fields {
+        let field_ctx = ctx.with_field(field.name);
+
+        if is_config_field(field) {
+            if inside_subcommand {
+                return Err(SchemaError::new(
+                    field_ctx,
+                    "#[facet(args::config)] inside a subcommand variant is not supported",
+                )
+                .with_primary_label("place this config field on the outermost args struct"));
+            }
+
+            if let Some((_, first_ctx)) = &config_field {
+                return Err(SchemaError::new(
+                    first_ctx.clone(),
+                    "only one field may be marked with #[facet(args::config)]",
+                )
+                .with_primary_label("first marked here")
+                .with_label(field_ctx, "also marked here"));
+            }
+
+            config_field = Some((field, field_ctx));
+            continue;
+        }
+
+        if field.has_attr(Some("args"), "env_prefix") {
+            return Err(SchemaError::new(
+                field_ctx,
+                format!(
+                    "field `{}` uses args::env_prefix without args::config",
+                    field.name
+                ),
+            ));
+        }
+
+        if field.is_flattened() {
+            let inner_shape = field.shape();
+            let Type::User(UserType::Struct(struct_type)) = inner_shape.ty else {
+                return Err(SchemaError::new(
+                    field_ctx,
+                    format!("flattened field `{}` must be a struct", field.name),
+                ));
+            };
+
+            if let Some((inner_field, inner_ctx)) =
+                discover_config_field(struct_type.fields, &field_ctx, inside_subcommand)?
+            {
+                if let Some((_, first_ctx)) = &config_field {
+                    return Err(SchemaError::new(
+                        first_ctx.clone(),
+                        "only one field may be marked with #[facet(args::config)]",
+                    )
+                    .with_primary_label("first marked here")
+                    .with_label(inner_ctx, "also marked here"));
+                }
+                config_field = Some((inner_field, inner_ctx));
+            }
+        }
+
+        if field.has_attr(Some("args"), "subcommand") {
+            let field_shape = field.shape();
+            let (enum_shape, enum_type) = match field_shape.def {
+                Def::Option(opt) => match opt.t.ty {
+                    Type::User(UserType::Enum(enum_type)) => (opt.t, enum_type),
+                    _ => continue,
+                },
+                _ => match field_shape.ty {
+                    Type::User(UserType::Enum(enum_type)) => (field_shape, enum_type),
+                    _ => continue,
+                },
+            };
+
+            for variant in enum_type.variants {
+                let variant_ctx =
+                    SchemaErrorContext::root(enum_shape).with_variant(variant_cli_name(variant));
+                let variant_fields = variant_fields_for_schema(variant);
+                discover_config_field(variant_fields, &variant_ctx, true)?;
+            }
+        }
+    }
+
+    Ok(config_field)
 }
 
 /// Extract all env_alias values from a field's `#[facet(args::env_alias = "...")]` attributes.
