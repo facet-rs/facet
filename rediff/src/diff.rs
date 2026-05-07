@@ -611,16 +611,15 @@ fn diff_dynamic_vs_concrete<'mem, 'facet>(
 
     // Try to match based on the DynamicValue's kind
     match dyn_kind {
-        DynValueKind::Bool => {
+        DynValueKind::Bool
             if concrete_peek
                 .get::<bool>()
                 .ok()
-                .is_some_and(|&v| dyn_val.as_bool() == Some(v))
-            {
-                return Diff::Equal {
-                    value: Some(from_peek),
-                };
-            }
+                .is_some_and(|&v| dyn_val.as_bool() == Some(v)) =>
+        {
+            return Diff::Equal {
+                value: Some(from_peek),
+            };
         }
         DynValueKind::Number => {
             let is_equal =
@@ -645,15 +644,14 @@ fn diff_dynamic_vs_concrete<'mem, 'facet>(
                 };
             }
         }
-        DynValueKind::String => {
+        DynValueKind::String
             if concrete_peek
                 .as_str()
-                .is_some_and(|s| dyn_val.as_str() == Some(s))
-            {
-                return Diff::Equal {
-                    value: Some(from_peek),
-                };
-            }
+                .is_some_and(|s| dyn_val.as_str() == Some(s)) =>
+        {
+            return Diff::Equal {
+                value: Some(from_peek),
+            };
         }
         DynValueKind::Array => {
             // Try to diff as sequences if the concrete type is list-like

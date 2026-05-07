@@ -169,13 +169,13 @@ impl<'mem, 'facet> Display for Diff<'mem, 'facet> {
 
                         // Sort fields for deterministic output
                         let mut updates: Vec<_> = updates.iter().collect();
-                        updates.sort_by(|(a, _), (b, _)| a.cmp(b));
+                        updates.sort_by_key(|(a, _)| *a);
                         for (fld, update) in updates {
                             writeln!(indent, "{}{} {update}", field(fld), punct(":"))?;
                         }
 
                         let mut deletions: Vec<_> = deletions.iter().collect();
-                        deletions.sort_by(|(a, _), (b, _)| a.cmp(b));
+                        deletions.sort_by_key(|(a, _)| *a);
                         for (fld, value) in deletions {
                             writeln!(
                                 indent,
@@ -188,7 +188,7 @@ impl<'mem, 'facet> Display for Diff<'mem, 'facet> {
                         }
 
                         let mut insertions: Vec<_> = insertions.iter().collect();
-                        insertions.sort_by(|(a, _), (b, _)| a.cmp(b));
+                        insertions.sort_by_key(|(a, _)| *a);
                         for (fld, value) in insertions {
                             writeln!(
                                 indent,
