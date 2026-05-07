@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0](https://github.com/bearcove/figue/compare/figue-v2.0.6...figue-v3.0.0) - 2026-05-07
+
+### Added
+
+- add --[no-] negation support for boolean flags
+
+### Other
+
+- Fix nested config discovery and bool env coercion
+- show help + Ariadne suggestion for missing CLI argument errors
+- show subcommand-level help on missing subcommand/argument errors
+- wrap long doc comments to respect HelpConfig::width
+
 ## [2.0.6](https://github.com/bearcove/figue/compare/figue-v2.0.5...figue-v2.0.6) - 2026-05-07
 
 ### Other
