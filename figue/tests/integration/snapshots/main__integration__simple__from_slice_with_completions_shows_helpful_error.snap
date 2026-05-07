@@ -1,11 +1,30 @@
 ---
 source: crates/figue/tests/integration/simple.rs
-expression: "$crate :: common :: strip_ansi(& err.to_string())"
+expression: "strip_ansi_escapes :: strip_str(& err.to_string())"
 ---
-Error: flag --completions requires one of: bash, zsh, fish
-   ╭─[ <cli>:1:13 ]
-   │
- 1 │ --name test --completions
-   │             ──────┬──────  
-   │                   ╰──────── flag --completions requires one of: bash, zsh, fish
-───╯
+#compdef /Users/amos/bearcove/figue/target/debug/deps/main-0a7c3616ad96745f
+
+_/Users/amos/bearcove/figue/target/debug/deps/main-0a7c3616ad96745f() {
+    local -a options
+    local -a commands
+    local ret=1
+
+    options=(
+        '--name[]:value:_default'
+        '(-h --help)'-h'[Show help message and exit.]'
+        '(-h --help)'--help'[Show help message and exit.]'
+        '(-V --version)'-V'[Show version and exit.]'
+        '(-V --version)'--version'[Show version and exit.]'
+        '--completions[Generate shell completions.]:value:_default'
+    )
+
+    _arguments $options && ret=0
+    return ret
+}
+
+
+if [ "$funcstack[1]" = "_/Users/amos/bearcove/figue/target/debug/deps/main-0a7c3616ad96745f" ]; then
+    _/Users/amos/bearcove/figue/target/debug/deps/main-0a7c3616ad96745f "$@"
+else
+    compdef _/Users/amos/bearcove/figue/target/debug/deps/main-0a7c3616ad96745f /Users/amos/bearcove/figue/target/debug/deps/main-0a7c3616ad96745f
+fi

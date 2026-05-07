@@ -269,17 +269,38 @@ impl<T: Facet<'static>> Driver<T> {
             if let Some(ref completions_path) = special.completions
                 && let Some(value) = cli_value.get_by_path(completions_path)
             {
-                // The value should be a string representing the shell name
-                if let Some(shell) = extract_shell_from_value(value) {
-                    let program_name = self
-                        .config
-                        .help_config
-                        .as_ref()
-                        .and_then(|h| h.program_name.clone())
-                        .or_else(|| std::env::args().next())
-                        .unwrap_or_else(|| "program".to_string());
-                    let script = generate_completions_for_shape(T::SHAPE, shell, &program_name);
-                    return DriverOutcome::err(DriverError::Completions { script });
+                match extract_shell_from_value(value) {
+                    Some(shell) => {
+                        let program_name = self
+                            .config
+                            .help_config
+                            .as_ref()
+                            .and_then(|h| h.program_name.clone())
+                            .or_else(|| std::env::args().next())
+                            .unwrap_or_else(|| "program".to_string());
+                        let script = generate_completions_for_shape(T::SHAPE, shell, &program_name);
+                        return DriverOutcome::err(DriverError::Completions { script });
+                    }
+                    None => {
+                        // Either auto-detection failed or an unknown shell name was given.
+                        let msg = if is_auto_detect_sentinel(value) {
+                            "could not auto-detect shell; please specify one of: bash, zsh, fish"
+                                .to_string()
+                        } else {
+                            let given = match value {
+                                ConfigValue::String(s) => s.value.clone(),
+                                _ => "<unknown>".to_string(),
+                            };
+                            format!("unknown shell '{given}', valid values are: bash, zsh, fish")
+                        };
+                        all_diagnostics.push(Diagnostic {
+                            message: msg,
+                            label: None,
+                            path: None,
+                            span: None,
+                            severity: Severity::Error,
+                        });
+                    }
                 }
             }
         }
@@ -1166,13 +1187,16 @@ impl Severity {
 /// Extract a Shell value from a ConfigValue.
 ///
 /// The completions field is `Option<Shell>`, so after CLI parsing we get
-/// either nothing (None) or a string like "bash", "zsh", "fish".
+/// either nothing (None) or a string like "bash", "zsh", "fish", or the
+/// sentinel "auto" (injected by the CLI parser when no value was provided).
 fn extract_shell_from_value(value: &ConfigValue) -> Option<Shell> {
     match value {
         ConfigValue::String(s) => match s.value.to_lowercase().as_str() {
             "bash" => Some(Shell::Bash),
             "zsh" => Some(Shell::Zsh),
             "fish" => Some(Shell::Fish),
+            // "auto" sentinel: attempt runtime shell detection
+            "auto" => Shell::detect(),
             _ => None,
         },
         // Could also be an enum variant name directly
@@ -1184,6 +1208,12 @@ fn extract_shell_from_value(value: &ConfigValue) -> Option<Shell> {
         },
         _ => None,
     }
+}
+
+/// Returns true when the completions value is the "auto" sentinel inserted by
+/// the CLI parser for `--completions` with no explicit argument.
+fn is_auto_detect_sentinel(value: &ConfigValue) -> bool {
+    matches!(value, ConfigValue::String(s) if s.value == "auto")
 }
 
 /// Reason the driver did not produce a parsed value.
