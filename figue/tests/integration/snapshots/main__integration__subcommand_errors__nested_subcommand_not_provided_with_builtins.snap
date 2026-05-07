@@ -2,10 +2,17 @@
 source: crates/figue/tests/integration/subcommand_errors.rs
 expression: "strip_ansi_escapes :: strip_str(& err.to_string())"
 ---
-Error: expected a subcommand
+main repo
 
-available subcommands:
-  clone  Clone a repository
-  push   Push changes
-  pull   Pull changes
-Note: Run with --help for usage information.
+Repository operations
+
+USAGE:
+    main repo <COMMAND>
+
+COMMANDS:
+    clone
+            Clone a repository
+    push
+            Push changes
+    pull
+            Pull changes

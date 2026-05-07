@@ -2,7 +2,13 @@
 source: crates/figue/tests/integration/subcommand.rs
 expression: "strip_ansi_escapes :: strip_str(& err.to_string())"
 ---
-Error: expected a subcommand
+main ci
 
-available subcommands:
-  generate  Generate CI workflow files from Rust code
+CI workflow management
+
+USAGE:
+    main ci <COMMAND>
+
+COMMANDS:
+    generate
+            Generate CI workflow files from Rust code

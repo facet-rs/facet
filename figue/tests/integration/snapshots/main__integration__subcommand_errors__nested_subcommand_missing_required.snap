@@ -1,11 +1,14 @@
 ---
 source: crates/figue/tests/integration/subcommand_errors.rs
-expression: "$crate :: common :: strip_ansi(& err.to_string())"
+expression: "strip_ansi_escapes :: strip_str(& err.to_string())"
 ---
-Error: missing required argument
-   ╭─[ <suggestion>:1:12 ]
-   │
- 1 │ repo clone <url>
-   │            ──┬──  
-   │              ╰──── Repository URL
-───╯
+main repo clone
+
+Clone a repository
+
+USAGE:
+    main repo clone <URL>
+
+ARGUMENTS:
+        <URL>
+            Repository URL
