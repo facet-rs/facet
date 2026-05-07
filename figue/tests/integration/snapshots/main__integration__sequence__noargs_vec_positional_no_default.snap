@@ -10,3 +10,12 @@ USAGE:
 ARGUMENTS:
         <FILES>
             Files to process (at least one required)
+
+
+Error: missing required argument
+   ╭─[ <usage>:1:6 ]
+   │
+ 1 │ main <files>
+   │      ───┬───  
+   │         ╰───── Files to process (at least one required)
+───╯

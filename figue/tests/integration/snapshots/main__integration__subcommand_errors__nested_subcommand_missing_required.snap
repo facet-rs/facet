@@ -12,3 +12,12 @@ USAGE:
 ARGUMENTS:
         <URL>
             Repository URL
+
+
+Error: missing required argument
+   ╭─[ <usage>:1:12 ]
+   │
+ 1 │ repo clone <url>
+   │            ──┬──  
+   │              ╰──── Repository URL
+───╯

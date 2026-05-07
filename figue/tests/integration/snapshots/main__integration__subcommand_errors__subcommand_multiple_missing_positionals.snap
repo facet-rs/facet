@@ -14,3 +14,12 @@ ARGUMENTS:
             Resource name
         <LOCATION>
             Resource location
+
+
+Error: missing required argument
+   ╭─[ <usage>:1:8 ]
+   │
+ 1 │ create <resource-type>
+   │        ───────┬───────  
+   │               ╰───────── Resource type (e.g., user, project)
+───╯

@@ -10,3 +10,12 @@ USAGE:
 ARGUMENTS:
         <INPUT>
             The input file to process
+
+
+Error: missing required argument
+   ╭─[ <usage>:1:6 ]
+   │
+ 1 │ main <input>
+   │      ───┬───  
+   │         ╰───── The input file to process
+───╯

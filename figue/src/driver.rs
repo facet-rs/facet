@@ -33,7 +33,9 @@ use crate::env_subst::{EnvSubstError, RealEnv, substitute_env_vars};
 use crate::help::generate_help_for_subcommand;
 use crate::layers::{cli::parse_cli, env::parse_env, file::parse_file};
 use crate::merge::merge_layers;
-use crate::missing::{collect_missing_fields, format_missing_fields_summary};
+use crate::missing::{
+    build_corrected_command_diagnostics, collect_missing_fields, format_missing_fields_summary,
+};
 use crate::path::Path;
 use crate::provenance::{FileResolution, Override, Provenance};
 use crate::span::Span;
@@ -235,7 +237,10 @@ impl<T: Facet<'static>> Driver<T> {
                     &subcommand_path,
                     &help_config,
                 );
-                return DriverOutcome::err(DriverError::Help { text });
+                return DriverOutcome::err(DriverError::Help {
+                    text,
+                    suggestion: None,
+                });
             }
 
             // Check for --version
@@ -414,7 +419,10 @@ impl<T: Facet<'static>> Driver<T> {
                     .unwrap_or_default();
 
                 let help = generate_help_for_subcommand(&self.config.schema, &[], &help_config);
-                return DriverOutcome::err(DriverError::Help { text: help });
+                return DriverOutcome::err(DriverError::Help {
+                    text: help,
+                    suggestion: None,
+                });
             }
 
             // Check if the only missing field is a subcommand with available variants
@@ -451,7 +459,10 @@ impl<T: Facet<'static>> Driver<T> {
                     &subcommand_path,
                     &help_config,
                 );
-                return DriverOutcome::err(DriverError::Help { text: help });
+                return DriverOutcome::err(DriverError::Help {
+                    text: help,
+                    suggestion: None,
+                });
             }
 
             // Check if all missing fields are simple CLI arguments (not config fields)
@@ -488,7 +499,27 @@ impl<T: Facet<'static>> Driver<T> {
                     &subcommand_path,
                     &help_config,
                 );
-                return DriverOutcome::err(DriverError::Help { text: help });
+
+                // Build the Ariadne corrected-command suggestion so the user
+                // can see exactly which argument is missing, right above the
+                // prompt where it's easy to spot.
+                let corrected = build_corrected_command_diagnostics(
+                    &missing_fields,
+                    cli_args_source.as_deref(),
+                );
+                let suggestion = Box::new(DriverReport {
+                    diagnostics: corrected.diagnostics,
+                    layers,
+                    file_resolution,
+                    overrides,
+                    cli_args_source: corrected.corrected_source,
+                    source_name: "<usage>".to_string(),
+                });
+
+                return DriverOutcome::err(DriverError::Help {
+                    text: help,
+                    suggestion: Some(suggestion),
+                });
             }
 
             let message = {
@@ -806,8 +837,11 @@ impl<T> DriverOutcome<T> {
     pub fn unwrap(self) -> T {
         match self.0 {
             Ok(output) => output.get(),
-            Err(DriverError::Help { text }) => {
+            Err(DriverError::Help { text, suggestion }) => {
                 println!("{}", text);
+                if let Some(s) = suggestion {
+                    println!("{}", s.render_pretty());
+                }
                 std::process::exit(0);
             }
             Err(DriverError::Completions { script }) => {
@@ -1205,7 +1239,7 @@ fn extract_shell_from_value(value: &ConfigValue) -> Option<Shell> {
 ///     Ok(output) => {
 ///         // use output.value
 ///     }
-///     Err(DriverError::Help { text }) => {
+///     Err(DriverError::Help { text, .. }) => {
 ///         // print text and exit(0)
 ///         let _ = text;
 ///     }
@@ -1248,6 +1282,10 @@ pub enum DriverError {
     Help {
         /// Formatted help text ready to print to stdout.
         text: String,
+        /// Optional Ariadne-rendered suggestion to display after the help text
+        /// (e.g. a corrected command showing exactly which argument is missing).
+        /// Printed last so it sits close to the terminal prompt.
+        suggestion: Option<Box<DriverReport>>,
     },
 
     /// Shell completions were requested (via `#[facet(figue::completions)]` field).
@@ -1308,7 +1346,7 @@ impl DriverError {
     /// Returns the help text if this is a help request.
     pub fn help_text(&self) -> Option<&str> {
         match self {
-            DriverError::Help { text } => Some(text),
+            DriverError::Help { text, .. } => Some(text),
             _ => None,
         }
     }
@@ -1319,7 +1357,13 @@ impl std::fmt::Display for DriverError {
         match self {
             DriverError::Builder { error } => write!(f, "{}", error),
             DriverError::Failed { report } => write!(f, "{}", report),
-            DriverError::Help { text } => write!(f, "{}", text),
+            DriverError::Help { text, suggestion } => {
+                write!(f, "{}", text)?;
+                if let Some(s) = suggestion {
+                    write!(f, "\n{}", s.render_pretty())?;
+                }
+                Ok(())
+            }
             DriverError::Completions { script } => write!(f, "{}", script),
             DriverError::Version { text } => write!(f, "{}", text),
             DriverError::EnvSubst { error } => write!(f, "{}", error),
@@ -1339,7 +1383,13 @@ impl std::process::Termination for DriverError {
     fn report(self) -> std::process::ExitCode {
         // Print the appropriate output
         match &self {
-            DriverError::Help { text } | DriverError::Version { text } => {
+            DriverError::Help { text, suggestion } => {
+                println!("{}", text);
+                if let Some(s) = suggestion {
+                    println!("{}", s.render_pretty());
+                }
+            }
+            DriverError::Version { text } => {
                 println!("{}", text);
             }
             DriverError::Completions { script } => {
@@ -1392,7 +1442,7 @@ mod tests {
         let result = driver.run().into_result();
 
         match result {
-            Err(DriverError::Help { text }) => {
+            Err(DriverError::Help { text, .. }) => {
                 assert!(
                     text.contains("test-app"),
                     "help should contain program name"
@@ -1566,6 +1616,7 @@ mod tests {
     fn test_driver_error_exit_codes() {
         let help_err = DriverError::Help {
             text: "help".to_string(),
+            suggestion: None,
         };
         let version_err = DriverError::Version {
             text: "1.0".to_string(),

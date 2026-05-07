@@ -263,7 +263,7 @@ impl<T> ConfigBuilder<T> {
     ///
     /// let result = Driver::new(config).run().into_result();
     /// match result {
-    ///     Err(DriverError::Help { text }) => {
+    ///     Err(DriverError::Help { text, .. }) => {
     ///         assert!(text.contains("myapp"));
     ///     }
     ///     _ => panic!("expected help"),

@@ -16,3 +16,12 @@ OPTIONS:
             Deployment region (required)
         --version <STRING>
             Optional version tag
+
+
+Error: missing required argument
+   ╭─[ <usage>:1:19 ]
+   │
+ 1 │ deploy production --region <region>
+   │                   ────────┬────────  
+   │                           ╰────────── Deployment region (required)
+───╯

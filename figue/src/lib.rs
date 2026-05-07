@@ -385,7 +385,7 @@ pub fn from_slice<T: Facet<'static>>(args: &[&str]) -> DriverOutcome<T> {
 ///
 /// let result = figue::from_slice::<Args>(&["--help"]).into_result();
 /// match result {
-///     Err(DriverError::Help { text }) => {
+///     Err(DriverError::Help { text, .. }) => {
 ///         // text contains the full help output
 ///         let _ = text;
 ///     }
