@@ -1,6 +1,6 @@
 ---
 source: crates/figue/tests/integration/help.rs
-expression: "$crate :: common :: strip_ansi(& help)"
+expression: "strip_ansi_escapes :: strip_str(& help)"
 ---
 main ls
 
@@ -10,7 +10,7 @@ USAGE:
     main ls [OPTIONS]
 
 OPTIONS:
-    -a, --all
+    -a, --[no-]all
             Show all versions
-        --json
+        --[no-]json
             Output as JSON

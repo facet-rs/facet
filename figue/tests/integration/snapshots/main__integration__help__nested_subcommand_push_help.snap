@@ -1,6 +1,6 @@
 ---
 source: crates/figue/tests/integration/help.rs
-expression: "$crate :: common :: strip_ansi(& help)"
+expression: "strip_ansi_escapes :: strip_str(& help)"
 ---
 main repo push
 
@@ -14,5 +14,5 @@ ARGUMENTS:
             Remote name
 
 OPTIONS:
-    -f, --force
+    -f, --[no-]force
             Force push

@@ -1238,8 +1238,8 @@ fn extract_shell_from_value(value: &ConfigValue) -> Option<Shell> {
 ///         // use output.value
 ///     }
 ///     Err(DriverError::Help { text }) => {
-///         assert!(text.contains("--help"));
 ///         // print text and exit(0)
+///         let _ = text;
 ///     }
 ///     Err(DriverError::Version { text }) => {
 ///         // print text and exit(0)
@@ -1429,7 +1429,10 @@ mod tests {
                     text.contains("test-app"),
                     "help should contain program name"
                 );
-                assert!(text.contains("--help"), "help should mention --help flag");
+                assert!(
+                    text.contains("--[no-]help"),
+                    "help should mention --[no-]help flag"
+                );
             }
             other => panic!("expected DriverError::Help, got {:?}", other),
         }

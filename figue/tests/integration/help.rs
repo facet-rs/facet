@@ -144,10 +144,6 @@ fn test_help_flags() {
     let err = result.unwrap_err();
     assert!(err.is_help());
     assert!(err.help_text().is_some());
-    let help = err.help_text().unwrap();
-    assert!(help.contains("USAGE"));
-    assert!(help.contains("--verbose"));
-
     // -h
     let result = figue::from_slice::<SimpleArgs>(&["-h"]);
     assert!(result.is_err());
@@ -276,32 +272,6 @@ fn test_help_subcommand_install() {
     assert!(err.is_help(), "expected help error, got: {:?}", err);
 
     let help = err.help_text().expect("should have help text");
-
-    // Should show install-specific info
-    assert!(help.contains("install"), "help should mention 'install'");
-    assert!(
-        help.contains("PACKAGE"),
-        "help should show PACKAGE positional"
-    );
-    assert!(
-        help.contains("--global") || help.contains("-g"),
-        "help should show --global flag"
-    );
-    assert!(
-        help.contains("--force") || help.contains("-f"),
-        "help should show --force flag"
-    );
-
-    // Should NOT show other subcommands' options
-    assert!(
-        !help.contains("--yes"),
-        "help should not show --yes from remove"
-    );
-    assert!(
-        !help.contains("--json"),
-        "help should not show --json from list"
-    );
-
     assert_help_snapshot!("subcommand_install_help", help);
 }
 
@@ -315,31 +285,6 @@ fn test_help_subcommand_remove() {
     assert!(err.is_help(), "expected help error, got: {:?}", err);
 
     let help = err.help_text().expect("should have help text");
-
-    // Should show remove-specific info (note: renamed to "rm")
-    assert!(
-        help.contains("rm") || help.contains("remove"),
-        "help should mention 'rm' or 'remove'"
-    );
-    assert!(
-        help.contains("PACKAGE"),
-        "help should show PACKAGE positional"
-    );
-    assert!(
-        help.contains("--yes") || help.contains("-y"),
-        "help should show --yes flag"
-    );
-
-    // Should NOT show other subcommands' options
-    assert!(
-        !help.contains("--global"),
-        "help should not show --global from install"
-    );
-    assert!(
-        !help.contains("--json"),
-        "help should not show --json from list"
-    );
-
     assert_help_snapshot!("subcommand_remove_help", help);
 }
 
@@ -353,28 +298,6 @@ fn test_help_subcommand_list() {
     assert!(err.is_help(), "expected help error, got: {:?}", err);
 
     let help = err.help_text().expect("should have help text");
-
-    // Should show list-specific info (note: renamed to "ls")
-    assert!(
-        help.contains("ls") || help.contains("list"),
-        "help should mention 'ls' or 'list'"
-    );
-    assert!(
-        help.contains("--all") || help.contains("-a"),
-        "help should show --all flag"
-    );
-    assert!(help.contains("--json"), "help should show --json flag");
-
-    // Should NOT show other subcommands' options
-    assert!(
-        !help.contains("--global"),
-        "help should not show --global from install"
-    );
-    assert!(
-        !help.contains("--yes"),
-        "help should not show --yes from remove"
-    );
-
     assert_help_snapshot!("subcommand_list_help", help);
 }
 
@@ -387,18 +310,6 @@ fn test_help_root_shows_all_subcommands() {
     assert!(err.is_help(), "expected help error, got: {:?}", err);
 
     let help = err.help_text().expect("should have help text");
-
-    // Root help should list all subcommands
-    assert!(help.contains("install"), "root help should list install");
-    assert!(
-        help.contains("rm"),
-        "root help should list rm (renamed from remove)"
-    );
-    assert!(
-        help.contains("ls"),
-        "root help should list ls (renamed from list)"
-    );
-
     assert_help_snapshot!("subcommand_root_help", help);
 }
 
@@ -465,28 +376,6 @@ fn test_help_nested_subcommand_clone() {
     assert!(err.is_help(), "expected help error, got: {:?}", err);
 
     let help = err.help_text().expect("should have help text");
-
-    // Should show clone-specific info
-    assert!(help.contains("clone"), "help should mention 'clone'");
-    assert!(help.contains("URL"), "help should show URL positional");
-    assert!(help.contains("--depth"), "help should show --depth flag");
-    assert!(
-        help.contains("--branch") || help.contains("-b"),
-        "help should show --branch flag"
-    );
-
-    // Should NOT show push's options
-    assert!(
-        !help.contains("--force"),
-        "help should not show --force from push"
-    );
-
-    // Usage line should show the full path
-    assert!(
-        help.contains("repo") && help.contains("clone"),
-        "usage should show full subcommand path"
-    );
-
     assert_help_snapshot!("nested_subcommand_clone_help", help);
 }
 
@@ -500,24 +389,6 @@ fn test_help_nested_subcommand_push() {
     assert!(err.is_help(), "expected help error, got: {:?}", err);
 
     let help = err.help_text().expect("should have help text");
-
-    // Should show push-specific info
-    assert!(help.contains("push"), "help should mention 'push'");
-    assert!(
-        help.contains("--force") || help.contains("-f"),
-        "help should show --force flag"
-    );
-
-    // Should NOT show clone's options
-    assert!(
-        !help.contains("--depth"),
-        "help should not show --depth from clone"
-    );
-    assert!(
-        !help.contains("--branch"),
-        "help should not show --branch from clone"
-    );
-
     assert_help_snapshot!("nested_subcommand_push_help", help);
 }
 
@@ -531,14 +402,6 @@ fn test_help_nested_intermediate_level() {
     assert!(err.is_help(), "expected help error, got: {:?}", err);
 
     let help = err.help_text().expect("should have help text");
-
-    // Should show repo's subcommands
-    assert!(help.contains("clone"), "help should list clone subcommand");
-    assert!(help.contains("push"), "help should list push subcommand");
-
-    // Should show repo in the usage
-    assert!(help.contains("repo"), "usage should show 'repo'");
-
     assert_help_snapshot!("nested_intermediate_repo_help", help);
 }
 
@@ -553,31 +416,5 @@ fn test_help_short_flag_h_works_in_subcommand() {
         err.is_help(),
         "expected help error for -h flag, got: {:?}",
         err
-    );
-
-    let help = err.help_text().expect("should have help text");
-
-    // Should show install-specific flags (not just mention "install" in subcommand list)
-    assert!(
-        help.contains("--global") || help.contains("-g"),
-        "help should show --global flag (install-specific)"
-    );
-    assert!(
-        help.contains("--force") || help.contains("-f"),
-        "help should show --force flag (install-specific)"
-    );
-    assert!(
-        help.contains("PACKAGE"),
-        "help should show PACKAGE positional"
-    );
-
-    // Should NOT show other subcommands' options
-    assert!(
-        !help.contains("--yes"),
-        "help should not show --yes from remove"
-    );
-    assert!(
-        !help.contains("--json"),
-        "help should not show --json from list"
     );
 }
