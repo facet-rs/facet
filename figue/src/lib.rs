@@ -196,7 +196,7 @@ use facet_core::Facet;
 
 pub use crate::completions::{Shell, generate_completions_for_shape};
 pub use builder::builder;
-pub use config_format::{ConfigFormat, ConfigFormatError, JsonFormat};
+pub use config_format::{ConfigFormat, ConfigFormatError, JsonFormat, JsoncFormat};
 pub use config_value::ConfigValue;
 pub use driver::{Driver, DriverError, DriverOutcome, DriverOutput, DriverReport};
 pub use error::{ArgsErrorKind, ArgsErrorWithInput};
