@@ -662,7 +662,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
 
         // Process updates - these become changed attributes or nested children
         let mut sorted_updates: Vec<_> = updates.iter().collect();
-        sorted_updates.sort_by(|(a, _), (b, _)| a.cmp(b));
+        sorted_updates.sort_by_key(|(a, _)| *a);
 
         for (field_name, field_diff) in sorted_updates {
             // Navigate into the field in from/to Peeks for nested context
@@ -875,7 +875,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
 
         // Process deletions
         let mut sorted_deletions: Vec<_> = deletions.iter().collect();
-        sorted_deletions.sort_by(|(a, _), (b, _)| a.cmp(b));
+        sorted_deletions.sort_by_key(|(a, _)| *a);
 
         for (field_name, value) in sorted_deletions {
             let formatted = self.format_peek(*value);
@@ -886,7 +886,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
 
         // Process insertions
         let mut sorted_insertions: Vec<_> = insertions.iter().collect();
-        sorted_insertions.sort_by(|(a, _), (b, _)| a.cmp(b));
+        sorted_insertions.sort_by_key(|(a, _)| *a);
 
         for (field_name, value) in sorted_insertions {
             let formatted = self.format_peek(*value);
