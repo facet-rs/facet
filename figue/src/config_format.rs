@@ -3,7 +3,7 @@
 //! This module is under active development and not yet wired into the main API.
 //!
 //! This module provides the [`ConfigFormat`] trait for pluggable config file parsing,
-//! along with a built-in [`JsonFormat`] implementation.
+//! along with built-in [`JsonFormat`] and [`JsoncFormat`] implementations.
 //!
 //! The [`FormatRegistry`](crate::layers::file::FormatRegistry) that manages multiple
 //! formats is in the [`layers::file`](crate::layers::file) module.
@@ -71,6 +71,7 @@ impl core::error::Error for ConfigFormatError {}
 /// # Built-in Formats
 ///
 /// - [`JsonFormat`] - JSON files (`.json`)
+/// - [`JsoncFormat`] - JSONC files (`.jsonc`), JSON with `//` and `/* */` comments
 ///
 /// # Custom Formats
 ///
@@ -124,6 +125,23 @@ impl ConfigFormat for JsonFormat {
     }
 }
 
+/// JSONC config file format.
+///
+/// Parses `.jsonc` files using `facet-json`, supporting `//` and `/* */` comments
+/// in addition to standard JSON syntax.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct JsoncFormat;
+
+impl ConfigFormat for JsoncFormat {
+    fn extensions(&self) -> &[&str] {
+        &["jsonc"]
+    }
+
+    fn parse(&self, contents: &str) -> Result<ConfigValue, ConfigFormatError> {
+        facet_json::from_str_jsonc(contents).map_err(|e| ConfigFormatError::new(e.to_string()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,6 +150,45 @@ mod tests {
     fn test_json_format_extensions() {
         let format = JsonFormat;
         assert_eq!(format.extensions(), &["json"]);
+    }
+
+    #[test]
+    fn test_jsonc_format_extensions() {
+        let format = JsoncFormat;
+        assert_eq!(format.extensions(), &["jsonc"]);
+    }
+
+    #[test]
+    fn test_jsonc_format_parse_with_line_comment() {
+        let format = JsoncFormat;
+        let result = format.parse(
+            r#"{
+    // This is a comment
+    "port": 8080
+}"#,
+        );
+        assert!(result.is_ok(), "parse failed: {:?}", result.err());
+        let value = result.unwrap();
+        assert!(matches!(value, ConfigValue::Object(_)));
+    }
+
+    #[test]
+    fn test_jsonc_format_parse_with_block_comment() {
+        let format = JsoncFormat;
+        let result = format.parse(
+            r#"{
+    /* block comment */
+    "host": "localhost"
+}"#,
+        );
+        assert!(result.is_ok(), "parse failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_jsonc_format_parse_plain_json() {
+        let format = JsoncFormat;
+        let result = format.parse(r#"{"port": 9000, "host": "example.com"}"#);
+        assert!(result.is_ok(), "parse failed: {:?}", result.err());
     }
 
     #[test]
