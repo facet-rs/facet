@@ -121,8 +121,10 @@ fn test_help_short_flag_works_with_unknown_env_keys_strict() {
 fn test_help_works_with_unknown_file_keys_strict() {
     // Config file has unknown keys AND user passes --help
     let config_json = r#"{
-        "auth": {
-            "email_from": "noreply@example.com"
+        "config": {
+            "auth": {
+                "email_from": "noreply@example.com"
+            }
         }
     }"#;
 
@@ -196,9 +198,11 @@ fn test_unknown_key_in_env_strict_mode_shows_valid_fields() {
 fn test_unknown_key_in_file_strict_mode_shows_valid_fields() {
     // Config file has unknown keys
     let config_json = r#"{
-        "auth": {
-            "email_from": "noreply@example.com",
-            "rp_id": "example.com"
+        "config": {
+            "auth": {
+                "email_from": "noreply@example.com",
+                "rp_id": "example.com"
+            }
         }
     }"#;
 

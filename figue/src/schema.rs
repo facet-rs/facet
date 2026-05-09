@@ -146,12 +146,39 @@ pub struct ConfigStructSchema {
     /// Only present on the top-level config struct, not nested structs.
     env_prefix: Option<String>,
 
+    /// Whether this root config field was also marked `#[facet(flatten)]`.
+    ///
+    /// The config sources still use the root as their namespace, but the merged
+    /// value is flattened before deserialization so Facet sees the shape it
+    /// expects.
+    flattened_root: bool,
+
     /// Shape of the config struct.
     #[facet(skip)]
     shape: &'static Shape,
 
     /// Fields from the struct
     fields: IndexMap<String, ConfigFieldSchema, RandomState>,
+
+    /// Help-only groups for fields that were flattened from another struct.
+    field_groups: Vec<ConfigFieldGroupSchema>,
+}
+
+/// Help metadata for a flattened config field.
+#[derive(Facet, Debug, Clone)]
+#[facet(skip_all_unless_truthy)]
+pub struct ConfigFieldGroupSchema {
+    /// Field name of the flattened struct in the source type.
+    name: String,
+
+    /// Doc comments from the flattened field.
+    docs: Docs,
+
+    /// Fields contributed by the flattened struct.
+    fields: IndexMap<String, ConfigFieldSchema, RandomState>,
+
+    /// Nested flattened groups contributed by the flattened struct.
+    field_groups: Vec<ConfigFieldGroupSchema>,
 }
 
 #[derive(Facet, Debug, Default, Clone)]
@@ -276,6 +303,14 @@ pub struct Subcommand {
 pub struct ArgSchema {
     /// Argument name / effective name (rename or field name).
     name: String,
+
+    /// Path where this argument writes in ConfigValue.
+    ///
+    /// Most arguments write to `[name]`. Arguments exposed from a flattened
+    /// config root write to `[config_root, field]` so they merge with env/file
+    /// sources before the root is flattened for deserialization.
+    #[facet(skip)]
+    insertion_path: Vec<String>,
 
     /// Documentation for this argument.
     docs: Docs,
@@ -616,6 +651,11 @@ impl ArgSchema {
         &self.name
     }
 
+    /// Get the ConfigValue insertion path for this argument.
+    pub fn insertion_path(&self) -> &[String] {
+        &self.insertion_path
+    }
+
     /// Get the argument kind (positional or named).
     pub fn kind(&self) -> &ArgKind {
         &self.kind
@@ -705,14 +745,47 @@ impl ConfigStructSchema {
         self.env_prefix.as_deref()
     }
 
+    /// Check whether this root config field should be flattened before
+    /// deserialization.
+    pub fn flattened_root(&self) -> bool {
+        self.flattened_root
+    }
+
     /// Get the fields of this config struct.
     pub fn fields(&self) -> &IndexMap<String, ConfigFieldSchema, RandomState> {
         &self.fields
     }
 
+    /// Get help-only flattened field groups for this config struct.
+    pub fn field_groups(&self) -> &[ConfigFieldGroupSchema] {
+        &self.field_groups
+    }
+
     /// Get the shape of this config struct.
     pub fn shape(&self) -> &'static Shape {
         self.shape
+    }
+}
+
+impl ConfigFieldGroupSchema {
+    /// Get the flattened field name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Get documentation from the flattened field.
+    pub fn docs(&self) -> &Docs {
+        &self.docs
+    }
+
+    /// Get the fields contributed by the flattened struct.
+    pub fn fields(&self) -> &IndexMap<String, ConfigFieldSchema, RandomState> {
+        &self.fields
+    }
+
+    /// Get nested flattened field groups.
+    pub fn field_groups(&self) -> &[ConfigFieldGroupSchema] {
+        &self.field_groups
     }
 }
 
@@ -823,6 +896,22 @@ impl ConfigValueSchema {
             ConfigValueSchema::Enum(e) => e.shape().type_identifier,
             ConfigValueSchema::Leaf(leaf) => leaf.shape.type_identifier,
         }
+    }
+
+    /// Check if this is an Option type.
+    pub fn is_option(&self) -> bool {
+        matches!(self, ConfigValueSchema::Option { .. })
+    }
+
+    /// Check if this is a boolean type, unwrapping Option if present.
+    pub fn is_bool(&self) -> bool {
+        matches!(
+            self.inner_if_option(),
+            ConfigValueSchema::Leaf(LeafSchema {
+                kind: LeafKind::Scalar(ScalarType::Bool),
+                ..
+            })
+        )
     }
 }
 

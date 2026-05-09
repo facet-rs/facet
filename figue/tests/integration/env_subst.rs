@@ -39,7 +39,7 @@ fn test_basic_substitution_var_set() {
         .unwrap()
         .file(|f| {
             f.content(
-                r#"{"data_dir": "${FIGUE_TEST_BASE_PATH}/data"}"#,
+                r#"{"config": {"data_dir": "${FIGUE_TEST_BASE_PATH}/data"}}"#,
                 "config.json",
             )
         })
@@ -65,7 +65,7 @@ fn test_missing_var_error() {
         .unwrap()
         .file(|f| {
             f.content(
-                r#"{"data_dir": "${FIGUE_TEST_NOT_SET}/data"}"#,
+                r#"{"config": {"data_dir": "${FIGUE_TEST_NOT_SET}/data"}}"#,
                 "config.json",
             )
         })
@@ -94,7 +94,7 @@ fn test_default_value_used() {
         .unwrap()
         .file(|f| {
             f.content(
-                r#"{"data_dir": "${FIGUE_TEST_MAYBE_SET:-/default/path}"}"#,
+                r#"{"config": {"data_dir": "${FIGUE_TEST_MAYBE_SET:-/default/path}"}}"#,
                 "config.json",
             )
         })
@@ -117,7 +117,7 @@ fn test_default_value_ignored_when_set() {
         .unwrap()
         .file(|f| {
             f.content(
-                r#"{"data_dir": "${FIGUE_TEST_ACTUALLY_SET:-/default/path}"}"#,
+                r#"{"config": {"data_dir": "${FIGUE_TEST_ACTUALLY_SET:-/default/path}"}}"#,
                 "config.json",
             )
         })
@@ -138,7 +138,7 @@ fn test_default_value_ignored_when_set() {
 fn test_escape_mechanism() {
     let config = figue::builder::<ArgsWithEnvSubst>()
         .unwrap()
-        .file(|f| f.content(r#"{"data_dir": "$${LITERAL}"}"#, "config.json"))
+        .file(|f| f.content(r#"{"config": {"data_dir": "$${LITERAL}"}}"#, "config.json"))
         .build();
 
     let result = Driver::new(config).run();
@@ -159,7 +159,7 @@ fn test_multiple_substitutions() {
         .unwrap()
         .file(|f| {
             f.content(
-                r#"{"data_dir": "${FIGUE_TEST_PATH_A}/${FIGUE_TEST_PATH_B}"}"#,
+                r#"{"config": {"data_dir": "${FIGUE_TEST_PATH_A}/${FIGUE_TEST_PATH_B}"}}"#,
                 "config.json",
             )
         })
@@ -198,7 +198,7 @@ fn test_per_field_opt_in() {
         .unwrap()
         .file(|f| {
             f.content(
-                r#"{"with_subst": "${FIGUE_TEST_SUBST_VAR}", "without_subst": "${FIGUE_TEST_SUBST_VAR}"}"#,
+                r#"{"config": {"with_subst": "${FIGUE_TEST_SUBST_VAR}", "without_subst": "${FIGUE_TEST_SUBST_VAR}"}}"#,
                 "config.json",
             )
         })
@@ -239,7 +239,7 @@ fn test_container_opt_in() {
         .unwrap()
         .file(|f| {
             f.content(
-                r#"{"path_a": "${FIGUE_TEST_ALL_BASE}/a", "path_b": "${FIGUE_TEST_ALL_BASE}/b"}"#,
+                r#"{"config": {"path_a": "${FIGUE_TEST_ALL_BASE}/a", "path_b": "${FIGUE_TEST_ALL_BASE}/b"}}"#,
                 "config.json",
             )
         })
@@ -283,7 +283,7 @@ fn test_nested_structs_no_propagate() {
         .unwrap()
         .file(|f| {
             f.content(
-                r#"{"direct_path": "${FIGUE_TEST_NESTED_BASE}/direct", "nested": {"nested_path": "${FIGUE_TEST_NESTED_BASE}/nested"}}"#,
+                r#"{"config": {"direct_path": "${FIGUE_TEST_NESTED_BASE}/direct", "nested": {"nested_path": "${FIGUE_TEST_NESTED_BASE}/nested"}}}"#,
                 "config.json",
             )
         })
@@ -333,7 +333,7 @@ fn test_flatten_inherits_env_subst_all() {
         .unwrap()
         .file(|f| {
             f.content(
-                r#"{"direct_path": "${FIGUE_TEST_FLATTEN_BASE}/direct", "flattened_path": "${FIGUE_TEST_FLATTEN_BASE}/flattened"}"#,
+                r#"{"config": {"direct_path": "${FIGUE_TEST_FLATTEN_BASE}/direct", "flattened_path": "${FIGUE_TEST_FLATTEN_BASE}/flattened"}}"#,
                 "config.json",
             )
         })
@@ -373,7 +373,7 @@ fn test_pathbuf_substitution() {
         .unwrap()
         .file(|f| {
             f.content(
-                r#"{"data_path": "${FIGUE_TEST_PATHBUF_BASE}/files"}"#,
+                r#"{"config": {"data_path": "${FIGUE_TEST_PATHBUF_BASE}/files"}}"#,
                 "config.json",
             )
         })
