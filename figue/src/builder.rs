@@ -54,6 +54,7 @@
 #![allow(private_interfaces)]
 
 use std::marker::PhantomData;
+use std::path::{Path, PathBuf};
 use std::string::String;
 
 use camino::Utf8PathBuf;
@@ -63,6 +64,9 @@ use facet_reflect::ReflectError;
 use crate::{
     config_format::{ConfigFormat, ConfigFormatError},
     help::HelpConfig,
+    json_schema::{
+        JsonSchemaError, JsonSchemaFile, generate_json_schemas_for_schema, write_json_schema_files,
+    },
     layers::{
         cli::{CliConfig, CliConfigBuilder},
         env::{EnvConfig, EnvConfigBuilder},
@@ -390,6 +394,34 @@ impl<T> ConfigBuilder<T> {
             file_config: self.file_config,
             _phantom: PhantomData,
         }
+    }
+
+    /// Generate one JSON Schema document per config root.
+    pub fn generate_json_schemas(&self) -> Vec<JsonSchemaFile> {
+        generate_json_schemas_for_schema(&self.schema)
+    }
+
+    /// Write one JSON Schema file per config root to `output_dir`.
+    pub fn write_json_schemas(
+        &self,
+        output_dir: impl AsRef<Path>,
+    ) -> Result<Vec<PathBuf>, JsonSchemaError> {
+        write_json_schema_files(output_dir, &self.generate_json_schemas())
+    }
+}
+
+impl<T> Config<T> {
+    /// Generate one JSON Schema document per config root.
+    pub fn generate_json_schemas(&self) -> Vec<JsonSchemaFile> {
+        generate_json_schemas_for_schema(&self.schema)
+    }
+
+    /// Write one JSON Schema file per config root to `output_dir`.
+    pub fn write_json_schemas(
+        &self,
+        output_dir: impl AsRef<Path>,
+    ) -> Result<Vec<PathBuf>, JsonSchemaError> {
+        write_json_schema_files(output_dir, &self.generate_json_schemas())
     }
 }
 

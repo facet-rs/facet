@@ -4,6 +4,7 @@ mod deser_errors;
 mod env_subst;
 mod err;
 mod help;
+mod json_schema;
 mod layered;
 mod schema_defaults;
 mod sequence;

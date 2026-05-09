@@ -161,6 +161,14 @@ facet::define_attr_grammar! {
         ///
         /// Usage: `#[facet(figue::completions)]`
         Completions,
+        /// Marks a field as the JSON Schema export flag.
+        ///
+        /// When this flag is set, the driver writes one JSON Schema file per config root
+        /// to the requested output directory and exits with code 0.
+        /// The field should be `Option<String>`.
+        ///
+        /// Usage: `#[facet(figue::export_jsonschemas)]`
+        ExportJsonschemas,
         /// Specifies the origin path for field extraction.
         ///
         /// Used in "requirements structs" to indicate which field from the

@@ -1,0 +1,134 @@
+---
+source: crates/figue/tests/integration/json_schema.rs
+expression: "&schemas[0].contents"
+---
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AppConfig",
+  "description": "Primary configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "host": {
+      "type": "string",
+      "description": "Server hostname.",
+      "default": "localhost"
+    },
+    "port": {
+      "type": "integer",
+      "description": "Server port.",
+      "default": 8080
+    },
+    "max-retries": {
+      "type": "integer",
+      "description": "Maximum retry attempts.",
+      "default": 3
+    },
+    "aliases": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Additional hostnames."
+    },
+    "tls": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "cert_path": {
+              "type": "string",
+              "description": "Certificate path."
+            },
+            "key_path": {
+              "type": "string",
+              "description": "Private key path."
+            }
+          },
+          "required": [
+            "cert_path",
+            "key_path"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Optional TLS settings."
+    },
+    "storage": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "local": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "Base path."
+                }
+              },
+              "required": [
+                "path"
+              ]
+            }
+          },
+          "required": [
+            "local"
+          ],
+          "description": "Local filesystem storage."
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "s3": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "bucket": {
+                  "type": "string",
+                  "description": "Bucket name."
+                },
+                "region": {
+                  "type": "string",
+                  "description": "Region name.",
+                  "default": "us-east-1"
+                }
+              },
+              "required": [
+                "bucket"
+              ]
+            }
+          },
+          "required": [
+            "s3"
+          ],
+          "description": "S3-compatible storage."
+        },
+        {
+          "const": "memory",
+          "description": "In-memory storage."
+        }
+      ],
+      "description": "Storage backend."
+    },
+    "format": {
+      "type": "string",
+      "enum": [
+        "Plain",
+        "Json"
+      ],
+      "description": "Log output format.",
+      "default": "Plain"
+    }
+  },
+  "required": [
+    "aliases",
+    "storage"
+  ]
+}

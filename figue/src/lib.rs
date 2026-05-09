@@ -176,6 +176,7 @@ pub(crate) mod env_subst;
 pub(crate) mod error;
 pub(crate) mod extract;
 pub(crate) mod help;
+pub(crate) mod json_schema;
 pub(crate) mod layers;
 pub(crate) mod merge;
 pub(crate) mod missing;
@@ -202,6 +203,7 @@ pub use driver::{Driver, DriverError, DriverOutcome, DriverOutput, DriverReport}
 pub use error::{ArgsErrorKind, ArgsErrorWithInput};
 pub use extract::{ExtractError, ExtractMissingField};
 pub use help::{HelpConfig, generate_help, generate_help_for_shape};
+pub use json_schema::{JsonSchemaError, JsonSchemaFile, generate_json_schemas, write_json_schemas};
 pub use layers::env::MockEnv;
 pub use layers::file::FormatRegistry;
 
@@ -330,6 +332,7 @@ pub fn from_slice<T: Facet<'static>>(args: &[&str]) -> DriverOutcome<T> {
 /// - `--help` / `-h`: Shows help and exits with code 0
 /// - `--version` / `-V`: Shows version and exits with code 0
 /// - `--completions <SHELL>`: Generates shell completions and exits with code 0
+/// - `--export-jsonschemas <DIR>`: Writes one JSON Schema file per config root and exits with code 0
 ///
 /// # Setting the Version
 ///
@@ -405,6 +408,10 @@ pub struct FigueBuiltins {
     /// Generate shell completions.
     #[facet(args::named, args::completions, default)]
     pub completions: Option<Shell>,
+
+    /// Export JSON Schema files for all config roots.
+    #[facet(args::named, args::export_jsonschemas, args::label = "DIR", default)]
+    pub export_jsonschemas: Option<String>,
 }
 
 #[cfg(test)]
@@ -478,6 +485,15 @@ mod tests {
         assert_eq!(
             special.completions.as_ref().unwrap(),
             &vec!["completions".to_string()]
+        );
+
+        assert!(
+            special.export_jsonschemas.is_some(),
+            "export_jsonschemas should be detected"
+        );
+        assert_eq!(
+            special.export_jsonschemas.as_ref().unwrap(),
+            &vec!["export_jsonschemas".to_string()]
         );
     }
 
