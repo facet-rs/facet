@@ -1,0 +1,25 @@
+---
+source: crates/figue/tests/integration/json_schema.rs
+expression: "&schemas[1].contents"
+---
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EvalConfig",
+  "description": "Evaluation configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "dataset": {
+      "type": "string",
+      "description": "Dataset name."
+    },
+    "samples": {
+      "type": "integer",
+      "description": "Sample count.",
+      "default": 10
+    }
+  },
+  "required": [
+    "dataset"
+  ]
+}

@@ -100,6 +100,10 @@ pub struct SpecialFields {
     /// The field should be `Option<Shell>`.
     pub completions: Option<Path>,
 
+    /// Path to the JSON Schema export field - when set, write schemas and exit 0.
+    /// The field should be `Option<String>`.
+    pub export_jsonschemas: Option<Path>,
+
     /// Path to the `version` field - when true, show version and exit 0.
     /// The field should be a `bool`.
     pub version: Option<Path>,
@@ -758,6 +762,13 @@ impl ConfigVecSchema {
     /// Get the shape of this vec.
     pub fn shape(&self) -> &'static Shape {
         self.shape
+    }
+}
+
+impl LeafSchema {
+    /// Get the leaf kind.
+    pub fn kind(&self) -> &LeafKind {
+        &self.kind
     }
 }
 

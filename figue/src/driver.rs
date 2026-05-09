@@ -19,6 +19,7 @@
 #![allow(clippy::result_large_err)]
 
 use std::marker::PhantomData;
+use std::path::PathBuf;
 use std::string::String;
 use std::vec::Vec;
 
@@ -31,6 +32,7 @@ use crate::dump::dump_config_with_schema;
 use crate::enum_conflicts::detect_enum_conflicts;
 use crate::env_subst::{EnvSubstError, RealEnv, substitute_env_vars};
 use crate::help::generate_help_for_subcommand_with_config_formats;
+use crate::json_schema::{JsonSchemaError, write_json_schema_files};
 use crate::layers::{cli::parse_cli, env::parse_env, file::parse_file};
 use crate::merge::merge_layers;
 use crate::missing::{
@@ -273,6 +275,36 @@ impl<T: Facet<'static>> Driver<T> {
                     .unwrap_or_else(|| "program".to_string());
                 let text = format!("{} {}", program_name, version);
                 return DriverOutcome::err(DriverError::Version { text });
+            }
+
+            // Check for --export-jsonschemas <dir>
+            if let Some(ref export_jsonschemas_path) = special.export_jsonschemas
+                && let Some(value) = cli_value.get_by_path(export_jsonschemas_path)
+            {
+                match extract_string_from_value(value) {
+                    Some(output_dir) => {
+                        let files = self.config.generate_json_schemas();
+                        match write_json_schema_files(&output_dir, &files) {
+                            Ok(paths) => {
+                                return DriverOutcome::err(DriverError::JsonSchemasExported {
+                                    paths,
+                                });
+                            }
+                            Err(error) => {
+                                return DriverOutcome::err(DriverError::JsonSchemaExport { error });
+                            }
+                        }
+                    }
+                    None => {
+                        all_diagnostics.push(Diagnostic {
+                            message: "export-jsonschemas requires an output directory".to_string(),
+                            label: None,
+                            path: None,
+                            span: None,
+                            severity: Severity::Error,
+                        });
+                    }
+                }
             }
 
             // Check for --completions <shell>
@@ -869,6 +901,7 @@ impl<T> DriverOutcome<T> {
     /// | `--help` passed | Prints help to stdout, exits with code 0 |
     /// | `--version` passed | Prints version to stdout, exits with code 0 |
     /// | `--completions` passed | Prints shell script to stdout, exits with code 0 |
+    /// | `--export-jsonschemas` passed | Writes schemas, prints paths to stdout, exits with code 0 |
     /// | Parse failed | Prints diagnostics to stderr, exits with code 1 |
     ///
     /// # Example
@@ -910,11 +943,22 @@ impl<T> DriverOutcome<T> {
                 println!("{}", text);
                 std::process::exit(0);
             }
+            Err(DriverError::JsonSchemasExported { paths }) => {
+                println!("Wrote JSON Schema files:");
+                for path in paths {
+                    println!("{}", path.display());
+                }
+                std::process::exit(0);
+            }
             Err(DriverError::Failed { report }) => {
                 eprintln!("{}", report.render_pretty());
                 std::process::exit(1);
             }
             Err(DriverError::Builder { error }) => {
+                eprintln!("{}", error);
+                std::process::exit(1);
+            }
+            Err(DriverError::JsonSchemaExport { error }) => {
                 eprintln!("{}", error);
                 std::process::exit(1);
             }
@@ -1247,6 +1291,13 @@ fn extract_shell_from_value(value: &ConfigValue) -> Option<Shell> {
     }
 }
 
+fn extract_string_from_value(value: &ConfigValue) -> Option<String> {
+    match value {
+        ConfigValue::String(s) => Some(s.value.clone()),
+        _ => None,
+    }
+}
+
 /// Returns true when the completions value is the "auto" sentinel inserted by
 /// the CLI parser for `--completions` with no explicit argument.
 fn is_auto_detect_sentinel(value: &ConfigValue) -> bool {
@@ -1258,9 +1309,9 @@ fn is_auto_detect_sentinel(value: &ConfigValue) -> bool {
 /// This enum covers two distinct cases:
 ///
 /// - **Early exits** ([`Help`](Self::Help), [`Version`](Self::Version),
-///   [`Completions`](Self::Completions)) — the user asked for something other than
-///   running the program. These have exit code 0 and are "errors" only in the sense
-///   that no `T` was produced.
+///   [`Completions`](Self::Completions), [`JsonSchemasExported`](Self::JsonSchemasExported)) —
+///   the user asked for something other than running the program. These have exit code 0
+///   and are "errors" only in the sense that no `T` was produced.
 ///
 /// - **Actual errors** ([`Failed`](Self::Failed), [`Builder`](Self::Builder),
 ///   [`EnvSubst`](Self::EnvSubst)) — something went wrong. These have exit code 1.
@@ -1277,8 +1328,10 @@ fn is_auto_detect_sentinel(value: &ConfigValue) -> bool {
 /// | `Help` | 0 | Early exit |
 /// | `Version` | 0 | Early exit |
 /// | `Completions` | 0 | Early exit |
+/// | `JsonSchemasExported` | 0 | Early exit |
 /// | `Failed` | 1 | Error |
 /// | `Builder` | 1 | Error |
+/// | `JsonSchemaExport` | 1 | Error |
 /// | `EnvSubst` | 1 | Error |
 ///
 /// # Example
@@ -1375,6 +1428,24 @@ pub enum DriverError {
         text: String,
     },
 
+    /// JSON Schema files were exported.
+    ///
+    /// Exit code: 0
+    ///
+    /// This is a "successful" exit - the user asked for schemas and got them.
+    JsonSchemasExported {
+        /// Paths that were written.
+        paths: Vec<PathBuf>,
+    },
+
+    /// JSON Schema export failed.
+    ///
+    /// Exit code: 1
+    JsonSchemaExport {
+        /// Export error.
+        error: JsonSchemaError,
+    },
+
     /// Environment variable substitution failed.
     ///
     /// Exit code: 1
@@ -1396,6 +1467,8 @@ impl DriverError {
             DriverError::Help { .. } => 0,
             DriverError::Completions { .. } => 0,
             DriverError::Version { .. } => 0,
+            DriverError::JsonSchemasExported { .. } => 0,
+            DriverError::JsonSchemaExport { .. } => 1,
             DriverError::EnvSubst { .. } => 1,
         }
     }
@@ -1433,6 +1506,14 @@ impl std::fmt::Display for DriverError {
             }
             DriverError::Completions { script } => write!(f, "{}", script),
             DriverError::Version { text } => write!(f, "{}", text),
+            DriverError::JsonSchemasExported { paths } => {
+                writeln!(f, "Wrote JSON Schema files:")?;
+                for path in paths {
+                    writeln!(f, "{}", path.display())?;
+                }
+                Ok(())
+            }
+            DriverError::JsonSchemaExport { error } => write!(f, "{}", error),
             DriverError::EnvSubst { error } => write!(f, "{}", error),
         }
     }
@@ -1462,10 +1543,19 @@ impl std::process::Termination for DriverError {
             DriverError::Completions { script } => {
                 println!("{}", script);
             }
+            DriverError::JsonSchemasExported { paths } => {
+                println!("Wrote JSON Schema files:");
+                for path in paths {
+                    println!("{}", path.display());
+                }
+            }
             DriverError::Failed { report } => {
                 eprintln!("{}", report.render_pretty());
             }
             DriverError::Builder { error } => {
+                eprintln!("{}", error);
+            }
+            DriverError::JsonSchemaExport { error } => {
                 eprintln!("{}", error);
             }
             DriverError::EnvSubst { error } => {
@@ -1692,6 +1782,27 @@ mod tests {
                 );
             }
             other => panic!("expected DriverError::Completions, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_driver_export_jsonschemas() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let arg = format!("--export-jsonschemas={}", tempdir.path().display());
+        let config = builder::<ArgsWithConfigAndBuiltins>()
+            .unwrap()
+            .cli(|cli| cli.args([arg]))
+            .build();
+
+        let driver = Driver::new(config);
+        let result = driver.run().into_result();
+
+        match result {
+            Err(DriverError::JsonSchemasExported { paths }) => {
+                assert_eq!(paths.len(), 1);
+                assert!(tempdir.path().join("config.schema.json").exists());
+            }
+            other => panic!("expected DriverError::JsonSchemasExported, got {:?}", other),
         }
     }
 

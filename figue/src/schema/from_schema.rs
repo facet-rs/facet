@@ -705,6 +705,9 @@ fn arg_level_from_fields_with_prefix(
             if inner_special.completions.is_some() {
                 special.completions = inner_special.completions;
             }
+            if inner_special.export_jsonschemas.is_some() {
+                special.export_jsonschemas = inner_special.export_jsonschemas;
+            }
 
             // Merge the inner args into our args (checking for conflicts)
             for (name, arg) in inner.args {
@@ -986,6 +989,9 @@ fn arg_level_from_fields_with_prefix(
         }
         if field.has_attr(Some("args"), "completions") {
             special.completions = Some(field_path.clone());
+        }
+        if field.has_attr(Some("args"), "export_jsonschemas") {
+            special.export_jsonschemas = Some(field_path.clone());
         }
 
         let arg = ArgSchema {

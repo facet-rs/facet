@@ -16,6 +16,8 @@ OPTIONS:
             Show version and exit.
         --completions <bash,zsh,fish>
             Generate shell completions.
+        --export-jsonschemas <DIR>
+            Export JSON Schema files for all config roots.
 
 COMMANDS:
     install
