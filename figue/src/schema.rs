@@ -96,6 +96,10 @@ pub struct SpecialFields {
     /// The field should be a `bool`.
     pub help: Option<Path>,
 
+    /// Path to the `html_help` field - when true, write HTML help and exit 0.
+    /// The field should be a `bool`.
+    pub html_help: Option<Path>,
+
     /// Path to the `completions` field - when set, generate completions and exit 0.
     /// The field should be `Option<Shell>`.
     pub completions: Option<Path>,
@@ -110,7 +114,7 @@ pub struct SpecialFields {
 }
 
 /// Schema for one "level" of arguments: top-level, a subcommand, a subcommand's subcommand etc.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, Default)]
 #[facet(skip_all_unless_truthy)]
 pub struct ArgLevelSchema {
     /// Any valid arguments at this level, `--verbose` etc.

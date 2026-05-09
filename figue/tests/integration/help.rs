@@ -151,6 +151,26 @@ fn test_help_flags() {
     assert!(err.is_help());
 }
 
+#[test]
+fn test_html_help_flag_writes_html_file() {
+    let result = figue::from_slice::<SimpleArgs>(&["--html-help"]).into_result();
+
+    let Err(figue::DriverError::HtmlHelp { path }) = result else {
+        panic!("expected HTML help request");
+    };
+
+    assert_eq!(
+        path.file_name().and_then(|name| name.to_str()),
+        Some("index.html")
+    );
+
+    let html = std::fs::read_to_string(&path).expect("HTML help file should be readable");
+    assert!(html.contains("<!doctype html>"));
+    assert!(html.contains("A sample CLI application for testing help generation."));
+    assert!(html.contains("--html-help"));
+    assert!(html.contains("&lt;INPUT&gt;"));
+}
+
 /// Test that help output for tuple variant subcommands shows flattened fields
 /// instead of `--0 <STRUCTNAME>`.
 #[test]

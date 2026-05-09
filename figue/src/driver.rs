@@ -31,7 +31,11 @@ use crate::config_value_parser::{fill_defaults_from_schema, from_config_value};
 use crate::dump::dump_config_with_schema;
 use crate::enum_conflicts::detect_enum_conflicts;
 use crate::env_subst::{EnvSubstError, RealEnv, substitute_env_vars};
-use crate::help::generate_help_for_subcommand_with_config_formats;
+use crate::help::{
+    generate_help_for_subcommand_with_config_formats,
+    generate_html_help_for_subcommand_with_config_formats, open_html_help_file,
+    write_html_help_to_temp_file,
+};
 use crate::json_schema::{JsonSchemaError, write_json_schema_files};
 use crate::layers::{cli::parse_cli, env::parse_env, file::parse_file};
 use crate::merge::merge_layers;
@@ -253,6 +257,42 @@ impl<T: Facet<'static>> Driver<T> {
                     text,
                     suggestion: None,
                 });
+            }
+
+            // Check for --html-help
+            if let Some(ref html_help_path) = special.html_help
+                && let Some(ConfigValue::Bool(b)) = cli_value.get_by_path(html_help_path)
+                && b.value
+            {
+                let help_config = self
+                    .config
+                    .help_config
+                    .as_ref()
+                    .cloned()
+                    .unwrap_or_default();
+
+                let subcommand_path = if let Some(subcommand_field) =
+                    self.config.schema.args().subcommand_field_name()
+                {
+                    cli_value.extract_subcommand_path(subcommand_field)
+                } else {
+                    Vec::new()
+                };
+
+                let config_file_extensions = self.config_file_extensions();
+                let html = generate_html_help_for_subcommand_with_config_formats(
+                    &self.config.schema,
+                    &subcommand_path,
+                    &help_config,
+                    &config_file_extensions,
+                );
+
+                match write_html_help_to_temp_file(&html) {
+                    Ok(path) => return DriverOutcome::err(DriverError::HtmlHelp { path }),
+                    Err(error) => {
+                        return DriverOutcome::err(DriverError::HtmlHelpFailed { error });
+                    }
+                }
             }
 
             // Check for --version
@@ -935,6 +975,17 @@ impl<T> DriverOutcome<T> {
                 }
                 std::process::exit(0);
             }
+            Err(DriverError::HtmlHelp { path }) => match open_html_help_file(&path) {
+                Ok(()) => {
+                    println!("Opened HTML help: {}", path.display());
+                    std::process::exit(0);
+                }
+                Err(error) => {
+                    eprintln!("error: could not open HTML help: {}", error);
+                    eprintln!("HTML help was written to {}", path.display());
+                    std::process::exit(1);
+                }
+            },
             Err(DriverError::Completions { script }) => {
                 println!("{}", script);
                 std::process::exit(0);
@@ -964,6 +1015,10 @@ impl<T> DriverOutcome<T> {
             }
             Err(DriverError::EnvSubst { error }) => {
                 eprintln!("error: {}", error);
+                std::process::exit(1);
+            }
+            Err(DriverError::HtmlHelpFailed { error }) => {
+                eprintln!("error: could not write HTML help: {}", error);
                 std::process::exit(1);
             }
         }
@@ -1408,6 +1463,22 @@ pub enum DriverError {
         suggestion: Option<Box<DriverReport>>,
     },
 
+    /// HTML help was requested (via the built-in `FigueBuiltins::html_help` field).
+    ///
+    /// Exit code: 0 if the generated file opens successfully.
+    HtmlHelp {
+        /// Path to the generated HTML help file.
+        path: PathBuf,
+    },
+
+    /// Writing the HTML help file failed.
+    ///
+    /// Exit code: 1
+    HtmlHelpFailed {
+        /// The I/O error that occurred while writing the HTML help file.
+        error: std::io::Error,
+    },
+
     /// Shell completions were requested (via `#[facet(figue::completions)]` field).
     ///
     /// Exit code: 0
@@ -1465,6 +1536,8 @@ impl DriverError {
             DriverError::Builder { .. } => 1,
             DriverError::Failed { .. } => 1,
             DriverError::Help { .. } => 0,
+            DriverError::HtmlHelp { .. } => 0,
+            DriverError::HtmlHelpFailed { .. } => 1,
             DriverError::Completions { .. } => 0,
             DriverError::Version { .. } => 0,
             DriverError::JsonSchemasExported { .. } => 0,
@@ -1503,6 +1576,12 @@ impl std::fmt::Display for DriverError {
                     write!(f, "\n{}", s.render_pretty())?;
                 }
                 Ok(())
+            }
+            DriverError::HtmlHelp { path } => {
+                write!(f, "HTML help written to {}", path.display())
+            }
+            DriverError::HtmlHelpFailed { error } => {
+                write!(f, "could not write HTML help: {}", error)
             }
             DriverError::Completions { script } => write!(f, "{}", script),
             DriverError::Version { text } => write!(f, "{}", text),
@@ -1549,6 +1628,16 @@ impl std::process::Termination for DriverError {
                     println!("{}", path.display());
                 }
             }
+            DriverError::HtmlHelp { path } => match open_html_help_file(path) {
+                Ok(()) => {
+                    println!("Opened HTML help: {}", path.display());
+                }
+                Err(error) => {
+                    eprintln!("error: could not open HTML help: {}", error);
+                    eprintln!("HTML help was written to {}", path.display());
+                    return std::process::ExitCode::from(1);
+                }
+            },
             DriverError::Failed { report } => {
                 eprintln!("{}", report.render_pretty());
             }
@@ -1560,6 +1649,9 @@ impl std::process::Termination for DriverError {
             }
             DriverError::EnvSubst { error } => {
                 eprintln!("error: {}", error);
+            }
+            DriverError::HtmlHelpFailed { error } => {
+                eprintln!("error: could not write HTML help: {}", error);
             }
         }
         std::process::ExitCode::from(self.exit_code() as u8)

@@ -12,6 +12,8 @@ USAGE:
 OPTIONS:
     -h, --[no-]help
             Show help message and exit.
+        --[no-]html-help
+            Open HTML help in the browser and exit.
     -V, --[no-]version
             Show version and exit.
         --completions <bash,zsh,fish>

@@ -1,0 +1,21 @@
+{
+  // JSONC is registered by the kitchen sink example, so comments are allowed.
+  "service_name": "figue-demo-jsonc",
+  "server": {
+    "host": "0.0.0.0",
+    "port": 3000
+  },
+  "database": {
+    "url": "postgres://localhost/figue",
+    "max_connections": 24
+  },
+  "logging": {
+    "level": "debug"
+  },
+  "storage": {
+    "s3": {
+      "bucket": "figue-kitchen",
+      "region": "eu-west-1"
+    }
+  }
+}
