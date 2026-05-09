@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.1](https://github.com/bearcove/figue/compare/figue-v3.0.0...figue-v3.0.1) - 2026-05-09
+
+### Other
+
+- Support multiple config roots ([#88](https://github.com/bearcove/figue/pull/88))
+- fix #59 invalid shell error, fix #61 auto-detect shell
+
 ## [3.0.0](https://github.com/bearcove/figue/compare/figue-v2.0.6...figue-v3.0.0) - 2026-05-07
 
 ### Added
