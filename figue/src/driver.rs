@@ -30,7 +30,7 @@ use crate::config_value_parser::{fill_defaults_from_schema, from_config_value};
 use crate::dump::dump_config_with_schema;
 use crate::enum_conflicts::detect_enum_conflicts;
 use crate::env_subst::{EnvSubstError, RealEnv, substitute_env_vars};
-use crate::help::generate_help_for_subcommand;
+use crate::help::generate_help_for_subcommand_with_config_formats;
 use crate::layers::{cli::parse_cli, env::parse_env, file::parse_file};
 use crate::merge::merge_layers;
 use crate::missing::{
@@ -140,6 +140,14 @@ impl<T: Facet<'static>> Driver<T> {
         }
     }
 
+    fn config_file_extensions(&self) -> Vec<&str> {
+        self.config
+            .file_config
+            .as_ref()
+            .map(|file_config| file_config.registry.extensions())
+            .unwrap_or_else(|| vec!["json"])
+    }
+
     /// Execute the driver and return an outcome.
     ///
     /// The returned `DriverOutcome` must be handled explicitly:
@@ -232,10 +240,12 @@ impl<T: Facet<'static>> Driver<T> {
                     Vec::new()
                 };
 
-                let text = generate_help_for_subcommand(
+                let config_file_extensions = self.config_file_extensions();
+                let text = generate_help_for_subcommand_with_config_formats(
                     &self.config.schema,
                     &subcommand_path,
                     &help_config,
+                    &config_file_extensions,
                 );
                 return DriverOutcome::err(DriverError::Help {
                     text,
@@ -340,13 +350,16 @@ impl<T: Facet<'static>> Driver<T> {
         // Phase 2.5: Environment variable substitution
         // Substitute ${VAR} patterns in string values where env_subst is enabled
         let mut merged_value = merged.value;
-        if let Some(config_schema) = self.config.schema.config()
-            && let ConfigValue::Object(ref mut sourced_fields) = merged_value
-            && let Some(config_field_name) = config_schema.field_name()
-            && let Some(config_value) = sourced_fields.value.get_mut(&config_field_name.to_string())
-            && let Err(e) = substitute_env_vars(config_value, config_schema, &RealEnv)
-        {
-            return DriverOutcome::err(DriverError::EnvSubst { error: e });
+        if let ConfigValue::Object(ref mut sourced_fields) = merged_value {
+            for config_schema in self.config.schema.configs() {
+                if let Some(config_field_name) = config_schema.field_name()
+                    && let Some(config_value) =
+                        sourced_fields.value.get_mut(&config_field_name.to_string())
+                    && let Err(e) = substitute_env_vars(config_value, config_schema, &RealEnv)
+                {
+                    return DriverOutcome::err(DriverError::EnvSubst { error: e });
+                }
+            }
         }
         tracing::debug!(merged_value = ?merged_value, "driver: after env_subst");
 
@@ -439,7 +452,13 @@ impl<T: Facet<'static>> Driver<T> {
                     .cloned()
                     .unwrap_or_default();
 
-                let help = generate_help_for_subcommand(&self.config.schema, &[], &help_config);
+                let config_file_extensions = self.config_file_extensions();
+                let help = generate_help_for_subcommand_with_config_formats(
+                    &self.config.schema,
+                    &[],
+                    &help_config,
+                    &config_file_extensions,
+                );
                 return DriverOutcome::err(DriverError::Help {
                     text: help,
                     suggestion: None,
@@ -475,10 +494,12 @@ impl<T: Facet<'static>> Driver<T> {
                     Vec::new()
                 };
 
-                let help = generate_help_for_subcommand(
+                let config_file_extensions = self.config_file_extensions();
+                let help = generate_help_for_subcommand_with_config_formats(
                     &self.config.schema,
                     &subcommand_path,
                     &help_config,
+                    &config_file_extensions,
                 );
                 return DriverOutcome::err(DriverError::Help {
                     text: help,
@@ -515,10 +536,12 @@ impl<T: Facet<'static>> Driver<T> {
                     Vec::new()
                 };
 
-                let help = generate_help_for_subcommand(
+                let config_file_extensions = self.config_file_extensions();
+                let help = generate_help_for_subcommand_with_config_formats(
                     &self.config.schema,
                     &subcommand_path,
                     &help_config,
+                    &config_file_extensions,
                 );
 
                 // Build the Ariadne corrected-command suggestion so the user
@@ -580,13 +603,27 @@ impl<T: Facet<'static>> Driver<T> {
 
                 // Format the summary of unknown keys with suggestions
                 let unknown_summary = if has_unknown {
-                    let config_schema = self.config.schema.config();
                     let unknown_list: Vec<String> = unknown_keys
                         .iter()
                         .map(|uk| {
                             let source = uk.provenance.source_description();
-                            let suggestion = config_schema
-                                .map(|cs| crate::suggest::suggest_config_path(cs, &uk.key))
+                            let suggestion = self
+                                .config
+                                .schema
+                                .configs()
+                                .iter()
+                                .find_map(|cs| {
+                                    let key = if self.config.schema.configs().len() > 1 {
+                                        let field_name = cs.field_name()?;
+                                        uk.key
+                                            .strip_prefix(&[field_name.to_string()][..])
+                                            .unwrap_or(&uk.key)
+                                    } else {
+                                        &uk.key
+                                    };
+                                    let suggestion = crate::suggest::suggest_config_path(cs, key);
+                                    (!suggestion.is_empty()).then_some(suggestion)
+                                })
                                 .unwrap_or_default();
                             format!("  {} (from {}){}", uk.key.join("."), source, suggestion)
                         })
@@ -1460,6 +1497,22 @@ mod tests {
         builtins: FigueBuiltins,
     }
 
+    #[derive(Facet, Debug)]
+    struct ArgsWithConfigAndBuiltins {
+        /// Application configuration
+        #[facet(figue::config)]
+        config: HelpTestConfig,
+
+        #[facet(flatten)]
+        builtins: FigueBuiltins,
+    }
+
+    #[derive(Facet, Debug)]
+    struct HelpTestConfig {
+        #[facet(default = "localhost")]
+        host: String,
+    }
+
     #[test]
     fn test_driver_help_flag() {
         let config = builder::<ArgsWithBuiltins>()
@@ -1501,6 +1554,27 @@ mod tests {
             matches!(result, Err(DriverError::Help { .. })),
             "expected DriverError::Help"
         );
+    }
+
+    #[test]
+    fn test_driver_help_shows_registered_config_file_formats() {
+        let config = builder::<ArgsWithConfigAndBuiltins>()
+            .unwrap()
+            .cli(|cli| cli.args(["--help"]))
+            .file(|file| file.format(crate::JsoncFormat))
+            .build();
+
+        let driver = Driver::new(config);
+        let result = driver.run().into_result();
+
+        match result {
+            Err(DriverError::Help { text, .. }) => {
+                let text = strip_ansi_escapes::strip_str(&text);
+                assert!(text.contains("--config <FILE>"));
+                assert!(text.contains("Supported file formats: .json, .jsonc."));
+            }
+            other => panic!("expected DriverError::Help, got {:?}", other),
+        }
     }
 
     #[test]

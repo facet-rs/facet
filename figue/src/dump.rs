@@ -138,15 +138,31 @@ pub(crate) fn dump_config_with_schema(
 // ============================================================================
 
 fn write_sources_header(w: &mut impl Write, file_resolution: &FileResolution, schema: &Schema) {
-    let config = schema.config();
-    let config_field_name = config.and_then(|c| c.field_name()).unwrap_or("settings");
-    let env_prefix = config.and_then(|c| c.env_prefix());
+    let config_field_names: Vec<&str> = schema
+        .configs()
+        .iter()
+        .filter_map(|c| c.field_name())
+        .collect();
+    let env_prefixes: Vec<&str> = schema
+        .configs()
+        .iter()
+        .filter_map(|c| c.env_prefix())
+        .collect();
+    let cli_pattern = if config_field_names.is_empty() {
+        "--settings.*".to_string()
+    } else {
+        config_field_names
+            .iter()
+            .map(|name| format!("--{}.*", name))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
 
     writeln!(w, "Sources:").ok();
 
     // Count how many sources we have to determine which is last
     let has_files = !file_resolution.paths.is_empty() || file_resolution.had_explicit;
-    let has_env = env_prefix.is_some();
+    let has_env = !env_prefixes.is_empty();
     let has_cli = true;
     let has_defaults = true;
 
@@ -219,15 +235,20 @@ fn write_sources_header(w: &mut impl Write, file_resolution: &FileResolution, sc
         writeln!(w, "{}file: (none - explicit --config not provided)", branch).ok();
     }
 
-    if let Some(prefix) = env_prefix {
+    if has_env {
         current_source += 1;
         let is_last_source = current_source == sources_count;
         let branch = if is_last_source { "└─ " } else { "├─ " };
+        let env_pattern = env_prefixes
+            .iter()
+            .map(|prefix| format!("${}__*", prefix))
+            .collect::<Vec<_>>()
+            .join(", ");
         writeln!(
             w,
             "{}env {}",
             branch,
-            format!("${}__*", prefix).if_supports_color(Stdout, |text| text.yellow())
+            env_pattern.if_supports_color(Stdout, |text| text.yellow())
         )
         .ok();
     }
@@ -240,7 +261,7 @@ fn write_sources_header(w: &mut impl Write, file_resolution: &FileResolution, sc
             w,
             "{}cli {}",
             branch,
-            format!("--{}.*", config_field_name).if_supports_color(Stdout, |text| text.cyan())
+            cli_pattern.if_supports_color(Stdout, |text| text.cyan())
         )
         .ok();
     }
@@ -287,12 +308,14 @@ fn build_dump_tree(value: &ConfigValue, schema: &Schema, opts: &FormatOptions) -
     }
 
     // Config fields
-    if let Some(config_schema) = schema.config() {
+    let group_config_roots = schema.configs().len() > 1;
+    for config_schema in schema.configs() {
         let config_field_name = config_schema.field_name().unwrap_or("config");
         if let Some(ConfigValue::Object(config_sourced)) = sourced.value.get(config_field_name) {
+            let mut children = Vec::new();
             for (field_name, field_schema) in config_schema.fields() {
                 if let Some(field_value) = config_sourced.value.get(field_name.as_str()) {
-                    entries.push(build_entry_from_schema(
+                    children.push(build_entry_from_schema(
                         field_name,
                         field_value,
                         field_schema.value(),
@@ -303,11 +326,16 @@ fn build_dump_tree(value: &ConfigValue, schema: &Schema, opts: &FormatOptions) -
                     let is_optional =
                         matches!(field_schema.value(), ConfigValueSchema::Option { .. });
                     if is_optional {
-                        entries.push(DumpEntry::default_value(field_name));
+                        children.push(DumpEntry::default_value(field_name));
                     } else {
-                        entries.push(DumpEntry::missing(field_name));
+                        children.push(DumpEntry::missing(field_name));
                     }
                 }
+            }
+            if group_config_roots {
+                entries.push(DumpEntry::group(config_field_name, children));
+            } else {
+                entries.extend(children);
             }
         }
     }

@@ -192,6 +192,76 @@ fn test_layered_cli_overrides_all() {
     );
 }
 
+#[derive(Facet, Debug)]
+struct MultiConfigArgs {
+    #[facet(args::config, args::env_prefix = "BEE", rename = "cfg")]
+    cfg: PrimaryConfig,
+
+    #[facet(args::config, args::env_prefix = "BEE_EVAL", rename = "eval")]
+    eval: EvalConfig,
+
+    #[facet(args::subcommand)]
+    command: MultiConfigCommand,
+}
+
+#[derive(Facet, Debug)]
+struct PrimaryConfig {
+    #[facet(default = "localhost")]
+    host: String,
+
+    #[facet(default = 8080)]
+    port: u16,
+}
+
+#[derive(Facet, Debug)]
+struct EvalConfig {
+    dataset: String,
+
+    #[facet(default = 10)]
+    samples: u32,
+
+    #[facet(default)]
+    enabled: bool,
+}
+
+#[derive(Facet, Debug)]
+#[repr(u8)]
+enum MultiConfigCommand {
+    Run,
+}
+
+#[test]
+fn test_layered_multiple_config_roots() {
+    let config_json = r#"{
+        "cfg": {
+            "host": "file-host",
+            "port": 3000
+        },
+        "eval": {
+            "dataset": "file-dataset",
+            "samples": 20
+        }
+    }"#;
+
+    let env = MockEnv::from_pairs([("BEE__PORT", "4000"), ("BEE_EVAL__SAMPLES", "30")]);
+
+    let config = builder::<MultiConfigArgs>()
+        .unwrap()
+        .cli(|cli| cli.args(["--cfg.host", "cli-host", "--eval.enabled", "true", "run"]))
+        .env(|e| e.source(env))
+        .file(|f| f.content(config_json, "config.json"))
+        .build();
+
+    let args = Driver::new(config).run().unwrap();
+
+    assert_eq!(args.cfg.host, "cli-host");
+    assert_eq!(args.cfg.port, 4000);
+    assert_eq!(args.eval.dataset, "file-dataset");
+    assert_eq!(args.eval.samples, 30);
+    assert!(args.eval.enabled);
+    assert!(matches!(args.command, MultiConfigCommand::Run));
+}
+
 /// Simpler structure for testing dump output with all sources visible.
 #[derive(Facet, Debug)]
 struct SimpleArgs {

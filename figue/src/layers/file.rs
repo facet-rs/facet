@@ -29,11 +29,12 @@ use std::sync::Arc;
 use std::vec::Vec;
 
 use camino::{Utf8Path, Utf8PathBuf};
+use indexmap::IndexMap;
 
 use crate::config_format::{ConfigFormat, ConfigFormatError, JsonFormat};
-use crate::config_value::ConfigValue;
+use crate::config_value::{ConfigValue, Sourced};
 use crate::driver::{Diagnostic, LayerOutput, Severity};
-use crate::provenance::{ConfigFile, FilePathStatus, FileResolution};
+use crate::provenance::{ConfigFile, FilePathStatus, FileResolution, Provenance};
 use crate::schema::Schema;
 use crate::value_builder::ValueBuilder;
 
@@ -333,27 +334,32 @@ impl<'a> FileParseContext<'a> {
     }
 
     fn into_result(self) -> FileParseResult {
-        // If we have a config schema and a parsed value, use ValueBuilder
+        // If we have config schemas and a parsed value, use ValueBuilder
         // to validate and collect unused keys
-        let output = if let Some(config_schema) = self.schema.config() {
+        let output = if !self.schema.configs().is_empty() {
             if let Some(ref parsed) = self.value {
-                // Create a ValueBuilder and import the parsed tree
-                let mut builder = ValueBuilder::new(config_schema);
-                builder.import_tree(parsed);
+                if self.schema.configs().len() == 1 {
+                    let config_schema = &self.schema.configs()[0];
+                    // Create a ValueBuilder and import the parsed tree
+                    let mut builder = ValueBuilder::new(config_schema);
+                    builder.import_tree(parsed);
 
-                // Unknown keys are tracked in unused_keys by the builder.
-                // In strict mode, they'll be reported by the driver alongside the config dump.
+                    // Unknown keys are tracked in unused_keys by the builder.
+                    // In strict mode, they'll be reported by the driver alongside the config dump.
 
-                // Get the output from the builder
-                let mut output =
-                    builder.into_output_with_value(self.value.clone(), config_schema.field_name());
+                    // Get the output from the builder
+                    let mut output = builder
+                        .into_output_with_value(self.value.clone(), config_schema.field_name());
 
-                // Prepend any early diagnostics (file read errors, etc.)
-                let mut all_diagnostics = self.early_diagnostics;
-                all_diagnostics.append(&mut output.diagnostics);
-                output.diagnostics = all_diagnostics;
+                    // Prepend any early diagnostics (file read errors, etc.)
+                    let mut all_diagnostics = self.early_diagnostics;
+                    all_diagnostics.append(&mut output.diagnostics);
+                    output.diagnostics = all_diagnostics;
 
-                output
+                    output
+                } else {
+                    Self::multi_config_output(self.schema, parsed, self.early_diagnostics)
+                }
             } else {
                 // No parsed value - return early diagnostics only
                 LayerOutput {
@@ -379,6 +385,95 @@ impl<'a> FileParseContext<'a> {
             output,
             resolution: self.resolution,
         }
+    }
+
+    fn multi_config_output(
+        schema: &Schema,
+        parsed: &ConfigValue,
+        early_diagnostics: Vec<Diagnostic>,
+    ) -> LayerOutput {
+        let mut root = IndexMap::default();
+        let mut unused_keys = Vec::new();
+        let mut diagnostics = early_diagnostics;
+
+        let ConfigValue::Object(parsed_obj) = parsed else {
+            diagnostics.push(Diagnostic {
+                message: "config file with multiple config roots must be an object".to_string(),
+                label: None,
+                path: None,
+                span: None,
+                severity: Severity::Error,
+            });
+
+            return LayerOutput {
+                value: None,
+                unused_keys,
+                diagnostics,
+                source_text: None,
+                config_file_path: None,
+            };
+        };
+
+        for (key, value) in &parsed_obj.value {
+            let known_root = schema
+                .configs()
+                .iter()
+                .any(|config_schema| config_schema.field_name() == Some(key.as_str()));
+            if !known_root {
+                unused_keys.push(crate::driver::UnusedKey {
+                    key: vec![key.clone()],
+                    provenance: get_provenance(value)
+                        .cloned()
+                        .unwrap_or(Provenance::Default),
+                });
+            }
+        }
+
+        for config_schema in schema.configs() {
+            let Some(field_name) = config_schema.field_name() else {
+                continue;
+            };
+
+            let Some(config_value) = parsed_obj.value.get(field_name) else {
+                continue;
+            };
+
+            let mut builder = ValueBuilder::new(config_schema);
+            builder.import_tree(config_value);
+            let mut builder_output =
+                builder.into_output_with_value(Some(config_value.clone()), None);
+
+            if let Some(value) = builder_output.value {
+                root.insert(field_name.to_string(), value);
+            }
+
+            for unused_key in &mut builder_output.unused_keys {
+                unused_key.key.insert(0, field_name.to_string());
+            }
+            unused_keys.extend(builder_output.unused_keys);
+            diagnostics.extend(builder_output.diagnostics);
+        }
+
+        LayerOutput {
+            value: Some(ConfigValue::Object(Sourced::new(root))),
+            unused_keys,
+            diagnostics,
+            source_text: None,
+            config_file_path: None,
+        }
+    }
+}
+
+fn get_provenance(value: &ConfigValue) -> Option<&Provenance> {
+    match value {
+        ConfigValue::Null(s) => s.provenance.as_ref(),
+        ConfigValue::Bool(s) => s.provenance.as_ref(),
+        ConfigValue::Integer(s) => s.provenance.as_ref(),
+        ConfigValue::Float(s) => s.provenance.as_ref(),
+        ConfigValue::String(s) => s.provenance.as_ref(),
+        ConfigValue::Array(s) => s.provenance.as_ref(),
+        ConfigValue::Object(s) => s.provenance.as_ref(),
+        ConfigValue::Enum(s) => s.provenance.as_ref(),
     }
 }
 

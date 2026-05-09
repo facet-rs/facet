@@ -4,13 +4,18 @@
 //! including doc comments, field names, and attribute information.
 
 use crate::missing::normalize_program_name;
-use crate::schema::{ArgLevelSchema, ArgSchema, Schema, Subcommand};
+use crate::schema::{
+    ArgLevelSchema, ArgSchema, ConfigFieldSchema, ConfigStructSchema, ConfigValueSchema, Schema,
+    Subcommand,
+};
 use facet_core::Facet;
 use heck::ToKebabCase;
 use owo_colors::OwoColorize;
 use owo_colors::Stream::Stdout;
 use std::string::String;
 use std::vec::Vec;
+
+const DEFAULT_CONFIG_FILE_EXTENSIONS: &[&str] = &["json"];
 
 /// Generate help text for a Facet type.
 ///
@@ -81,6 +86,20 @@ pub fn generate_help_for_subcommand(
     subcommand_path: &[String],
     config: &HelpConfig,
 ) -> String {
+    generate_help_for_subcommand_with_config_formats(
+        schema,
+        subcommand_path,
+        config,
+        DEFAULT_CONFIG_FILE_EXTENSIONS,
+    )
+}
+
+pub(crate) fn generate_help_for_subcommand_with_config_formats(
+    schema: &Schema,
+    subcommand_path: &[String],
+    config: &HelpConfig,
+    config_file_extensions: &[&str],
+) -> String {
     let program_name = config
         .program_name
         .clone()
@@ -92,7 +111,7 @@ pub fn generate_help_for_subcommand(
         .unwrap_or_else(|| "program".to_string());
 
     if subcommand_path.is_empty() {
-        return generate_help_from_schema(schema, &program_name, config);
+        return generate_help_from_schema(schema, &program_name, config, config_file_extensions);
     }
 
     // Navigate to the subcommand
@@ -112,7 +131,12 @@ pub fn generate_help_for_subcommand(
             current_args = sub.args();
         } else {
             // Subcommand not found, fall back to root help
-            return generate_help_from_schema(schema, &program_name, config);
+            return generate_help_from_schema(
+                schema,
+                &program_name,
+                config,
+                config_file_extensions,
+            );
         }
     }
 
@@ -135,7 +159,12 @@ pub fn generate_help_for_subcommand(
 }
 
 /// Generate help from a built Schema.
-fn generate_help_from_schema(schema: &Schema, program_name: &str, config: &HelpConfig) -> String {
+fn generate_help_from_schema(
+    schema: &Schema,
+    program_name: &str,
+    config: &HelpConfig,
+    config_file_extensions: &[&str],
+) -> String {
     let mut out = String::new();
 
     // Program name and version
@@ -167,7 +196,14 @@ fn generate_help_from_schema(schema: &Schema, program_name: &str, config: &HelpC
 
     out.push('\n');
 
-    generate_arg_level_help(&mut out, schema.args(), program_name, config);
+    generate_arg_level_help(
+        &mut out,
+        schema.args(),
+        schema.configs(),
+        program_name,
+        config,
+        config_file_extensions,
+    );
 
     out
 }
@@ -208,7 +244,14 @@ fn generate_help_for_subcommand_level(
 
     out.push('\n');
 
-    generate_arg_level_help(&mut out, args, full_command, config);
+    generate_arg_level_help(
+        &mut out,
+        args,
+        &[],
+        full_command,
+        config,
+        DEFAULT_CONFIG_FILE_EXTENSIONS,
+    );
 
     out
 }
@@ -256,8 +299,10 @@ fn wrap_text(text: &str, indent: &str, max_width: usize) -> String {
 fn generate_arg_level_help(
     out: &mut String,
     args: &ArgLevelSchema,
+    config_roots: &[ConfigStructSchema],
     program_name: &str,
     config: &HelpConfig,
+    config_file_extensions: &[&str],
 ) {
     // Separate positionals and named flags
     let mut positionals: Vec<&ArgSchema> = Vec::new();
@@ -275,7 +320,7 @@ fn generate_arg_level_help(
     out.push_str(&format!("{}:\n    ", "USAGE".yellow().bold()));
     out.push_str(program_name);
 
-    if !flags.is_empty() {
+    if !flags.is_empty() || !config_roots.is_empty() {
         out.push_str(" [OPTIONS]");
     }
 
@@ -308,10 +353,13 @@ fn generate_arg_level_help(
     }
 
     // Options
-    if !flags.is_empty() {
+    if !flags.is_empty() || !config_roots.is_empty() {
         out.push_str(&format!("{}:\n", "OPTIONS".yellow().bold()));
         for arg in &flags {
             write_arg_help(out, arg, config);
+        }
+        for config_root in config_roots {
+            write_config_help(out, config_root, config, config_file_extensions);
         }
         out.push('\n');
     }
@@ -324,6 +372,186 @@ fn generate_arg_level_help(
         }
         out.push('\n');
     }
+}
+
+/// Write help for a config root.
+fn write_config_help(
+    out: &mut String,
+    config_root: &ConfigStructSchema,
+    config: &HelpConfig,
+    config_file_extensions: &[&str],
+) {
+    let Some(name) = config_root.field_name() else {
+        return;
+    };
+    let cli_name = name.to_kebab_case();
+    let config_flag = format!("--{cli_name}");
+
+    out.push_str("        ");
+    out.push_str(&format!(
+        "{} <FILE>",
+        config_flag.if_supports_color(Stdout, |text| text.green())
+    ));
+    out.push('\n');
+    let file_help = config_root
+        .docs()
+        .summary()
+        .unwrap_or("Load configuration values from a file.");
+    out.push_str(&wrap_text(file_help, "            ", config.width));
+    out.push('\n');
+    out.push_str(&wrap_text(
+        &format_config_file_extensions(config_file_extensions),
+        "            ",
+        config.width,
+    ));
+    out.push('\n');
+
+    for item in config_override_help_items(&config_flag, config_root) {
+        write_config_override_help(out, &item, config);
+    }
+}
+
+fn format_config_file_extensions(extensions: &[&str]) -> String {
+    let mut unique = Vec::new();
+    for extension in extensions {
+        let extension = extension.trim_start_matches('.');
+        if !extension.is_empty()
+            && !unique
+                .iter()
+                .any(|existing: &&str| existing.eq_ignore_ascii_case(extension))
+        {
+            unique.push(extension);
+        }
+    }
+
+    if unique.is_empty() {
+        return "No config file formats are registered.".to_string();
+    }
+
+    let formatted = unique
+        .iter()
+        .map(|extension| format!(".{extension}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("Supported file formats: {formatted}.")
+}
+
+struct ConfigOverrideHelpItem {
+    flag: String,
+    placeholder: String,
+    help: Option<String>,
+}
+
+fn write_config_override_help(
+    out: &mut String,
+    item: &ConfigOverrideHelpItem,
+    config: &HelpConfig,
+) {
+    out.push_str("        ");
+    out.push_str(&format!(
+        "{} <{}>",
+        item.flag.if_supports_color(Stdout, |text| text.green()),
+        item.placeholder
+    ));
+    out.push('\n');
+
+    if let Some(help) = &item.help {
+        out.push_str(&wrap_text(help, "            ", config.width));
+        out.push('\n');
+    }
+}
+
+fn config_override_help_items(
+    config_flag: &str,
+    config_root: &ConfigStructSchema,
+) -> Vec<ConfigOverrideHelpItem> {
+    let mut items = Vec::new();
+    collect_config_struct_overrides(config_flag, config_root, Vec::new(), &mut items);
+    items
+}
+
+fn collect_config_struct_overrides(
+    config_flag: &str,
+    config_struct: &ConfigStructSchema,
+    path: Vec<String>,
+    items: &mut Vec<ConfigOverrideHelpItem>,
+) {
+    for (field_name, field) in config_struct.fields() {
+        let mut field_path = path.clone();
+        field_path.push(field_name.clone());
+        collect_config_field_override(config_flag, field_path, field, items);
+    }
+}
+
+fn collect_config_field_override(
+    config_flag: &str,
+    path: Vec<String>,
+    field: &ConfigFieldSchema,
+    items: &mut Vec<ConfigOverrideHelpItem>,
+) {
+    let help = field.docs().summary().map(str::to_string);
+    collect_config_value_overrides(config_flag, path, field.value(), help, items);
+}
+
+fn collect_config_value_overrides(
+    config_flag: &str,
+    path: Vec<String>,
+    value: &ConfigValueSchema,
+    help: Option<String>,
+    items: &mut Vec<ConfigOverrideHelpItem>,
+) {
+    match value.inner_if_option() {
+        ConfigValueSchema::Struct(config_struct) => {
+            collect_config_struct_overrides(config_flag, config_struct, path, items);
+        }
+        ConfigValueSchema::Vec(vec_schema) => {
+            let mut element_path = path;
+            element_path.push("<INDEX>".to_string());
+            collect_config_value_overrides(
+                config_flag,
+                element_path,
+                vec_schema.element(),
+                help,
+                items,
+            );
+        }
+        ConfigValueSchema::Enum(enum_schema) => {
+            let variants: Vec<&str> = enum_schema.variants().keys().map(String::as_str).collect();
+            if enum_schema
+                .variants()
+                .values()
+                .any(|variant| variant.fields().is_empty())
+            {
+                items.push(ConfigOverrideHelpItem {
+                    flag: config_override_flag(config_flag, &path),
+                    placeholder: variants.join(","),
+                    help: help.clone(),
+                });
+            }
+
+            for (variant_name, variant_schema) in enum_schema.variants() {
+                let mut variant_path = path.clone();
+                variant_path.push(variant_name.clone());
+                for (field_name, field) in variant_schema.fields() {
+                    let mut field_path = variant_path.clone();
+                    field_path.push(field_name.clone());
+                    collect_config_field_override(config_flag, field_path, field, items);
+                }
+            }
+        }
+        ConfigValueSchema::Leaf(_) => {
+            items.push(ConfigOverrideHelpItem {
+                flag: config_override_flag(config_flag, &path),
+                placeholder: value.type_identifier().to_uppercase(),
+                help,
+            });
+        }
+        ConfigValueSchema::Option { .. } => unreachable!("inner_if_option removes Option wrappers"),
+    }
+}
+
+fn config_override_flag(config_flag: &str, path: &[String]) -> String {
+    format!("{config_flag}.{}", path.join("."))
 }
 
 /// Write help for a single argument.
@@ -553,6 +781,66 @@ mod tests {
             !help.contains("SERVEARGS"),
             "help should NOT show SERVEARGS as an option value"
         );
+    }
+
+    #[test]
+    fn test_config_roots_appear_in_help() {
+        #[derive(Facet)]
+        struct Args {
+            /// Session configuration
+            #[facet(args::config, args::env_prefix = "BEE", rename = "cfg")]
+            cfg: SessionConfig,
+
+            /// Evaluation configuration
+            #[facet(args::config, args::env_prefix = "BEE_EVAL", rename = "eval")]
+            eval: EvalConfig,
+        }
+
+        #[derive(Facet)]
+        struct SessionConfig {
+            /// Session hostname
+            #[facet(default = "localhost")]
+            host: String,
+
+            /// Labels attached to this session
+            tags: Vec<String>,
+
+            server: ServerConfig,
+        }
+
+        #[derive(Facet)]
+        struct ServerConfig {
+            /// Server port
+            #[facet(default = 8080)]
+            port: u16,
+        }
+
+        #[derive(Facet)]
+        struct EvalConfig {
+            /// Number of evaluation samples
+            #[facet(default = 10)]
+            samples: u32,
+        }
+
+        let schema = Schema::from_shape(Args::SHAPE).unwrap();
+        let help = generate_help_for_subcommand(&schema, &[], &HelpConfig::default());
+        let help = strip_ansi_escapes::strip_str(&help);
+
+        assert!(help.contains("--cfg <FILE>"));
+        assert!(help.contains("Session configuration"));
+        assert!(help.contains("Supported file formats: .json."));
+        assert!(help.contains("--cfg.host <STRING>"));
+        assert!(help.contains("Session hostname"));
+        assert!(help.contains("--cfg.tags.<INDEX> <STRING>"));
+        assert!(help.contains("Labels attached to this session"));
+        assert!(help.contains("--cfg.server.port <U16>"));
+        assert!(help.contains("Server port"));
+        assert!(help.contains("--eval <FILE>"));
+        assert!(help.contains("Evaluation configuration"));
+        assert!(help.contains("--eval.samples <U32>"));
+        assert!(help.contains("Number of evaluation samples"));
+        assert!(!help.contains("--cfg.<KEY>"));
+        assert!(!help.contains("--eval.<KEY>"));
     }
 
     #[test]

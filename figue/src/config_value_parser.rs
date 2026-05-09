@@ -96,8 +96,8 @@ pub(crate) fn fill_defaults_from_schema(value: &ConfigValue, schema: &Schema) ->
     // Fill defaults for args-level fields (already flattened in schema.args())
     fill_defaults_from_arg_level(&mut new_map, schema.args(), "");
 
-    // Fill defaults for config field if present
-    if let Some(config_schema) = schema.config() {
+    // Fill defaults for config fields if present
+    for config_schema in schema.configs() {
         let config_field_name = config_schema.field_name().unwrap_or("config").to_string();
 
         if let Some(config_value) = new_map.get(&config_field_name) {
