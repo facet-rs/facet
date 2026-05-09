@@ -240,7 +240,7 @@ pub fn parse_env(schema: &Schema, env_config: &EnvConfig, source: &dyn EnvSource
         unused_keys,
         diagnostics,
         source_text: None,
-        config_file_path: None,
+        config_file_paths: IndexMap::default(),
     };
 
     // Assign spans to env-sourced values and build the virtual source document
@@ -402,7 +402,7 @@ fn parse_env_no_config(env_config: &EnvConfig, source: &dyn EnvSource) -> LayerO
         unused_keys,
         diagnostics: Vec::new(),
         source_text: None,
-        config_file_path: None,
+        config_file_paths: IndexMap::default(),
     }
 }
 

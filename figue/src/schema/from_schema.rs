@@ -4,8 +4,9 @@ use crate::{
     Attr,
     schema::{
         ArgKind, ArgLevelSchema, ArgSchema, ConfigEnumSchema, ConfigEnumVariantSchema,
-        ConfigFieldSchema, ConfigStructSchema, ConfigValueSchema, ConfigVecSchema, Docs, LeafKind,
-        LeafSchema, ScalarType, Schema, SpecialFields, Subcommand, ValueSchema,
+        ConfigFieldGroupSchema, ConfigFieldSchema, ConfigStructSchema, ConfigValueSchema,
+        ConfigVecSchema, Docs, LeafKind, LeafSchema, ScalarType, Schema, SpecialFields, Subcommand,
+        ValueSchema,
         error::{SchemaError, SchemaErrorContext},
     },
 };
@@ -49,6 +50,7 @@ impl Schema {
                 docs_from_lines(field.doc),
                 Some(field.effective_name().to_string()),
                 env_prefix,
+                field.is_flattened(),
             )?);
         }
         // Extract docs from the top-level shape
@@ -71,6 +73,7 @@ fn has_any_args_attr(field: &Field) -> bool {
         || field.has_attr(Some("args"), "short")
         || field.has_attr(Some("args"), "counted")
         || field.has_attr(Some("args"), "env_prefix")
+        || field.is_flattened()
 }
 
 /// Extract the env_prefix value from a field's `#[facet(args::env_prefix = "...")]` attribute.
@@ -219,6 +222,9 @@ fn extract_field_default(field: &Field) -> Option<crate::config_value::ConfigVal
             // Don't return null for types that shouldn't be null - that indicates
             // the serialization couldn't represent the default value properly
             if matches!(config_value, crate::config_value::ConfigValue::Null(_)) {
+                if let Some(value) = from_trait_vec_default(default_source, shape) {
+                    return Some(value);
+                }
                 tracing::debug!(
                     field = field.name,
                     "extract_field_default: serialized to null, skipping"
@@ -234,6 +240,9 @@ fn extract_field_default(field: &Field) -> Option<crate::config_value::ConfigVal
             }
         }
         Err(e) => {
+            if let Some(value) = from_trait_vec_default(default_source, shape) {
+                return Some(value);
+            }
             tracing::debug!(
                 field = field.name,
                 error = %e,
@@ -242,6 +251,25 @@ fn extract_field_default(field: &Field) -> Option<crate::config_value::ConfigVal
             None
         }
     }
+}
+
+fn from_trait_vec_default(
+    default_source: &facet_core::DefaultSource,
+    shape: &'static Shape,
+) -> Option<crate::config_value::ConfigValue> {
+    if !matches!(default_source, facet_core::DefaultSource::FromTrait)
+        || !matches!(shape.def, Def::List(_))
+    {
+        return None;
+    }
+
+    Some(crate::config_value::ConfigValue::Array(
+        crate::config_value::Sourced {
+            value: Vec::new(),
+            span: None,
+            provenance: Some(crate::provenance::Provenance::Default),
+        },
+    ))
 }
 
 fn docs_from_lines(lines: &'static [&'static str]) -> Docs {
@@ -343,7 +371,14 @@ fn value_schema_from_shape(
         }),
         _ => match &shape.ty {
             Type::User(UserType::Struct(_)) => Ok(ValueSchema::Struct {
-                fields: config_struct_schema_from_shape(shape, ctx, Docs::default(), None, None)?,
+                fields: config_struct_schema_from_shape(
+                    shape,
+                    ctx,
+                    Docs::default(),
+                    None,
+                    None,
+                    false,
+                )?,
                 shape,
             }),
             _ => Ok(ValueSchema::Leaf(leaf_schema_from_shape(shape, ctx)?)),
@@ -366,13 +401,49 @@ fn config_value_schema_from_shape(
         })),
         _ => match &shape.ty {
             Type::User(UserType::Struct(_)) => Ok(ConfigValueSchema::Struct(
-                config_struct_schema_from_shape(shape, ctx, Docs::default(), None, None)?,
+                config_struct_schema_from_shape(shape, ctx, Docs::default(), None, None, false)?,
             )),
             Type::User(UserType::Enum(enum_type)) => Ok(ConfigValueSchema::Enum(
                 config_enum_schema_from_shape(shape, *enum_type, ctx)?,
             )),
             _ => Ok(ConfigValueSchema::Leaf(leaf_schema_from_shape(shape, ctx)?)),
         },
+    }
+}
+
+fn value_schema_from_config_value_schema(value: &ConfigValueSchema) -> ValueSchema {
+    match value {
+        ConfigValueSchema::Leaf(leaf) => ValueSchema::Leaf(leaf.clone()),
+        ConfigValueSchema::Option { value, shape } => ValueSchema::Option {
+            value: Box::new(value_schema_from_config_value_schema(value)),
+            shape,
+        },
+        ConfigValueSchema::Vec(vec_schema) => ValueSchema::Vec {
+            element: Box::new(value_schema_from_config_value_schema(vec_schema.element())),
+            shape: vec_schema.shape(),
+        },
+        ConfigValueSchema::Struct(struct_schema) => ValueSchema::Struct {
+            fields: struct_schema.clone(),
+            shape: struct_schema.shape(),
+        },
+        ConfigValueSchema::Enum(enum_schema) => ValueSchema::Leaf(LeafSchema {
+            kind: LeafKind::Enum {
+                variants: enum_schema
+                    .variants()
+                    .keys()
+                    .map(|name| name.to_kebab_case())
+                    .collect(),
+            },
+            shape: enum_schema.shape(),
+        }),
+    }
+}
+
+fn value_schema_is_multiple(value: &ValueSchema) -> bool {
+    match value {
+        ValueSchema::Option { value, .. } => value_schema_is_multiple(value),
+        ValueSchema::Vec { .. } => true,
+        _ => false,
     }
 }
 
@@ -427,27 +498,44 @@ fn config_struct_schema_from_shape(
     docs: Docs,
     field_name: Option<String>,
     env_prefix: Option<String>,
+    flattened_root: bool,
 ) -> Result<ConfigStructSchema, SchemaError> {
     config_struct_schema_from_shape_inner(
         shape,
         ctx,
         docs,
-        field_name,
-        env_prefix,
-        Vec::new(),
-        false,
+        ConfigStructBuildOptions {
+            field_name,
+            env_prefix,
+            flattened_root,
+            path_prefix: Vec::new(),
+            parent_env_subst_all: false,
+        },
     )
+}
+
+struct ConfigStructBuildOptions {
+    field_name: Option<String>,
+    env_prefix: Option<String>,
+    flattened_root: bool,
+    path_prefix: Vec<String>,
+    parent_env_subst_all: bool,
 }
 
 fn config_struct_schema_from_shape_inner(
     shape: &'static Shape,
     ctx: &SchemaErrorContext,
     docs: Docs,
-    field_name: Option<String>,
-    env_prefix: Option<String>,
-    path_prefix: Vec<String>,
-    parent_env_subst_all: bool,
+    options: ConfigStructBuildOptions,
 ) -> Result<ConfigStructSchema, SchemaError> {
+    let ConfigStructBuildOptions {
+        field_name,
+        env_prefix,
+        flattened_root,
+        path_prefix,
+        parent_env_subst_all,
+    } = options;
+
     let struct_type = match &shape.ty {
         Type::User(UserType::Struct(s)) => *s,
         _ => {
@@ -466,6 +554,7 @@ fn config_struct_schema_from_shape_inner(
     let apply_env_subst_to_children = parent_env_subst_all || this_env_subst_all;
 
     let mut fields_map: IndexMap<String, ConfigFieldSchema, RandomState> = IndexMap::default();
+    let mut field_groups = Vec::new();
 
     for field in struct_type.fields {
         let field_ctx = ctx.with_field(field.name);
@@ -494,11 +583,21 @@ fn config_struct_schema_from_shape_inner(
                 inner_shape,
                 &field_ctx,
                 Docs::default(),
-                None,
-                None,
-                new_prefix,
-                apply_env_subst_to_children,
+                ConfigStructBuildOptions {
+                    field_name: None,
+                    env_prefix: None,
+                    flattened_root: false,
+                    path_prefix: new_prefix,
+                    parent_env_subst_all: apply_env_subst_to_children,
+                },
             )?;
+
+            field_groups.push(ConfigFieldGroupSchema {
+                name: field.effective_name().to_string(),
+                docs: docs_from_lines(field.doc),
+                fields: inner.fields.clone(),
+                field_groups: inner.field_groups.clone(),
+            });
 
             // Merge the inner fields into our fields (checking for conflicts)
             for (name, field_schema) in inner.fields {
@@ -552,8 +651,10 @@ fn config_struct_schema_from_shape_inner(
         docs,
         field_name,
         env_prefix,
+        flattened_root,
         shape,
         fields: fields_map,
+        field_groups,
     })
 }
 
@@ -668,11 +769,65 @@ fn arg_level_from_fields_with_prefix(
     let mut first_subcommand_field: Option<SchemaErrorContext> = None;
 
     for field in fields {
+        let field_ctx = ctx.with_field(field.name);
+
         if is_config_field(field) {
+            if field.is_flattened() {
+                let shape = field.shape();
+                let config_shape = match shape.def {
+                    Def::Option(opt) => opt.t,
+                    _ => shape,
+                };
+                let config_field_name = field.effective_name().to_string();
+                let config_schema = config_struct_schema_from_shape(
+                    config_shape,
+                    &field_ctx,
+                    docs_from_lines(field.doc),
+                    Some(config_field_name.clone()),
+                    extract_env_prefix(field),
+                    true,
+                )?;
+
+                for (name, config_field_schema) in config_schema.fields() {
+                    let long = name.to_kebab_case();
+                    if let Some(existing_ctx) = seen_long.get(&long) {
+                        return Err(SchemaError::new(
+                            existing_ctx.clone(),
+                            format!("duplicate flag `--{long}` (from flattened config root)"),
+                        )
+                        .with_primary_label(format!("`--{long}` first defined here"))
+                        .with_label(field_ctx.clone(), "flattened config root defined here"));
+                    }
+                    if args.contains_key(name) {
+                        return Err(SchemaError::new(
+                            field_ctx.clone(),
+                            format!("duplicate argument `{name}` (from flattened config root)"),
+                        )
+                        .with_primary_label("flattened config root defined here"));
+                    }
+                    seen_long.insert(long, field_ctx.clone());
+
+                    let value = value_schema_from_config_value_schema(config_field_schema.value());
+                    let arg = ArgSchema {
+                        name: name.clone(),
+                        insertion_path: vec![config_field_name.clone(), name.clone()],
+                        docs: config_field_schema.docs().clone(),
+                        kind: ArgKind::Named {
+                            short: None,
+                            counted: false,
+                        },
+                        multiple: value_schema_is_multiple(&value),
+                        value,
+                        label: None,
+                        required: false,
+                        default: None,
+                    };
+
+                    args.insert(name.clone(), arg);
+                }
+            }
             continue;
         }
-
-        let field_ctx = ctx.with_field(field.name);
 
         // Handle flattened fields - recurse into the inner struct
         if field.is_flattened() {
@@ -1004,6 +1159,7 @@ fn arg_level_from_fields_with_prefix(
 
         let arg = ArgSchema {
             name: effective_name.clone(),
+            insertion_path: vec![effective_name.clone()],
             docs,
             kind,
             value,
@@ -1012,6 +1168,14 @@ fn arg_level_from_fields_with_prefix(
             multiple,
             default,
         };
+
+        if args.contains_key(&effective_name) {
+            return Err(SchemaError::new(
+                field_ctx.clone(),
+                format!("duplicate argument `{effective_name}`"),
+            )
+            .with_primary_label("defined again here"));
+        }
 
         args.insert(effective_name, arg);
     }

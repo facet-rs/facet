@@ -62,9 +62,12 @@ pub struct LayerOutput {
     /// For file layers, this is the file contents.
     /// For CLI, this is the concatenated args.
     pub source_text: Option<String>,
-    /// Config file path captured from CLI (e.g., `--config path/to/file.json`).
-    /// Only set by the CLI layer when the user specifies a config file path.
-    pub config_file_path: Option<camino::Utf8PathBuf>,
+    /// Config file paths captured from CLI, keyed by config root field name.
+    ///
+    /// This is used when a schema has multiple `args::config` fields. For
+    /// example, `--cfg cfg.json` should load `cfg.json` as the `cfg` block, not
+    /// as a top-level file containing every config root.
+    pub config_file_paths: indexmap::IndexMap<String, camino::Utf8PathBuf>,
 }
 
 /// A key that was unused by the schema, with provenance.
@@ -184,9 +187,10 @@ impl<T: Facet<'static>> Driver<T> {
         // Phase 1: Parse each layer
         // Priority order (lowest to highest): defaults < file < env < cli
         //
-        // Note: CLI is parsed first to capture the config file path (--config <path>),
-        // which is then used by the file layer. The priority ordering is enforced
-        // during the merge phase, not the parse phase.
+        // Note: CLI is parsed first to capture config-root file paths
+        // (`--config <path>`, `--cfg <path>`, etc.), which are then used by the
+        // file layer. The priority ordering is enforced during the merge phase,
+        // not the parse phase.
 
         // 1a. Defaults layer (TODO: extract defaults from schema)
         // For now, defaults is empty - this will be filled in when we implement
@@ -201,10 +205,10 @@ impl<T: Facet<'static>> Driver<T> {
 
         // 1c. File layer (uses config file path from CLI if provided)
         // If CLI provided a config file path, update the file config to use it
-        if let Some(ref cli_path) = layers.cli.config_file_path {
+        if !layers.cli.config_file_paths.is_empty() {
             // Get mutable access to file_config, creating a default if none exists
             let file_config = self.config.file_config.get_or_insert_with(Default::default);
-            file_config.explicit_path = Some(cli_path.clone());
+            file_config.explicit_paths_by_root = layers.cli.config_file_paths.clone();
         }
 
         if let Some(ref file_config) = self.config.file_config {
@@ -732,6 +736,10 @@ impl<T: Facet<'static>> Driver<T> {
         // Phase 4: Assign virtual spans and deserialize into T
         // The span registry maps virtual spans back to real source locations
         let mut value_with_virtual_spans = value_with_defaults;
+        flatten_config_roots_for_deserialization(
+            &mut value_with_virtual_spans,
+            &self.config.schema,
+        );
         let span_registry = assign_virtual_spans(&mut value_with_virtual_spans);
 
         let value: T = match from_config_value(&value_with_virtual_spans) {
@@ -788,6 +796,40 @@ impl<T: Facet<'static>> Driver<T> {
             merged_config: value_with_virtual_spans,
             schema: self.config.schema.clone(),
         })
+    }
+}
+
+fn flatten_config_roots_for_deserialization(
+    value: &mut ConfigValue,
+    schema: &crate::schema::Schema,
+) {
+    let ConfigValue::Object(root) = value else {
+        return;
+    };
+
+    for config_schema in schema.configs() {
+        if !config_schema.flattened_root() {
+            continue;
+        }
+
+        let Some(field_name) = config_schema.field_name() else {
+            continue;
+        };
+
+        let Some(config_value) = root.value.shift_remove(field_name) else {
+            continue;
+        };
+
+        match config_value {
+            ConfigValue::Object(config_object) => {
+                for (key, value) in config_object.value {
+                    root.value.insert(key, value);
+                }
+            }
+            other => {
+                root.value.insert(field_name.to_string(), other);
+            }
+        }
     }
 }
 

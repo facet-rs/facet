@@ -1,6 +1,6 @@
 ---
 source: crates/figue/tests/integration/layered.rs
-expression: "$crate :: common :: strip_ansi(& err.to_string())"
+expression: "strip_ansi_escapes :: strip_str(& err.to_string())"
 ---
 Error: Missing required fields:
 
@@ -13,19 +13,19 @@ Sources:
 
 debug......... true..... --debug
 name.......... ......... ⨯ MISSING
-host.......... 0.0.0.0.. app.json:2
+host.......... 0.0.0.0.. app.json:3
 port.......... 4000..... $MYAPP__PORT
-max_retries... 5........ app.json:4
+max_retries... 5........ app.json:5
 timeout_ms.... 10000.... $MYAPP__TIMEOUT_MS
 experimental.. true..... --settings.experimental
 logging
-├─ level... debug......... app.json:6
-├─ format.. Json.......... app.json:7
+├─ level... debug......... app.json:7
+├─ format.. Json.......... app.json:8
 └─ file.... /var/log/app.. $MYAPP__LOGGING__FILE
 storage
 └─ s3
 ···├─ bucket.... ........... ⨯ MISSING
-···├─ region.... eu-west-1.. app.json:11
+···├─ region.... eu-west-1.. app.json:12
 ···└─ endpoint.. <default>.. DEFAULT
 
 Missing:

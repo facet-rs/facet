@@ -349,7 +349,7 @@ impl<T> ConfigBuilder<T> {
     /// // Use inline content for testing (avoids file I/O)
     /// let config = builder::<Args>()
     ///     .unwrap()
-    ///     .file(|f| f.content(r#"{"port": 9000}"#, "config.json"))
+    ///     .file(|f| f.content(r#"{"config": {"port": 9000}}"#, "config.json"))
     ///     .build();
     ///
     /// let output = Driver::new(config).run().into_result().unwrap();
@@ -552,7 +552,7 @@ impl HelpConfigBuilder {
 /// // Load from inline JSON (useful for testing)
 /// let config = builder::<Args>()
 ///     .unwrap()
-///     .file(|f| f.content(r#"{"host": "0.0.0.0", "port": 3000}"#, "config.json"))
+///     .file(|f| f.content(r#"{"config": {"host": "0.0.0.0", "port": 3000}}"#, "config.json"))
 ///     .build();
 ///
 /// let output = Driver::new(config).run().into_result().unwrap();
@@ -645,7 +645,7 @@ impl FileConfigBuilder {
     ///
     /// let config = builder::<Args>()
     ///     .unwrap()
-    ///     .file(|f| f.content(r#"{"port": 9000}"#, "test.json"))
+    ///     .file(|f| f.content(r#"{"config": {"port": 9000}}"#, "test.json"))
     ///     .build();
     ///
     /// let output = Driver::new(config).run().into_result().unwrap();
@@ -819,7 +819,6 @@ mod tests {
             .strict()
             .build();
 
-        // explicit_path is set by the driver when CLI provides --config <path>
         assert_eq!(config.explicit_path, None);
         assert_eq!(config.default_paths.len(), 2);
         assert!(config.strict);

@@ -118,8 +118,10 @@ fn test_deser_error_env_number_out_of_range() {
 fn test_deser_error_file_wrong_type_for_port() {
     // Port expects u16 but JSON provides a string
     let config_json = r#"{
-        "port": "not_a_number",
-        "host": "localhost"
+        "config": {
+            "port": "not_a_number",
+            "host": "localhost"
+        }
     }"#;
 
     let config = builder::<ArgsWithSimpleConfig>()
@@ -141,9 +143,11 @@ fn test_deser_error_file_wrong_type_for_port() {
 fn test_deser_error_file_nested_wrong_type() {
     // max_connections expects u32 but JSON provides a string
     let config_json = r#"{
-        "database": {
-            "url": "postgres://localhost/db",
-            "max_connections": "lots"
+        "config": {
+            "database": {
+                "url": "postgres://localhost/db",
+                "max_connections": "lots"
+            }
         }
     }"#;
 
@@ -192,8 +196,10 @@ fn test_deser_error_cli_override_wrong_type() {
 fn test_deser_error_env_overrides_valid_file() {
     // File has valid port, but env overrides with invalid value
     let config_json = r#"{
-        "port": 8080,
-        "host": "localhost"
+        "config": {
+            "port": 8080,
+            "host": "localhost"
+        }
     }"#;
 
     let env = MockEnv::from_pairs([("APP__PORT", "invalid")]);

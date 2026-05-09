@@ -5,8 +5,8 @@
 
 use crate::missing::normalize_program_name;
 use crate::schema::{
-    ArgLevelSchema, ArgSchema, ConfigFieldSchema, ConfigStructSchema, ConfigValueSchema, Schema,
-    Subcommand,
+    ArgLevelSchema, ArgSchema, ConfigFieldGroupSchema, ConfigFieldSchema, ConfigStructSchema,
+    ConfigValueSchema, Docs, Schema, Subcommand,
 };
 use facet_core::Facet;
 use heck::ToKebabCase;
@@ -488,13 +488,16 @@ fn render_html_help_document(doc: HtmlHelpDocument<'_>) -> String {
         "    .topbar { position: sticky; top: 0; z-index: 10; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(12px); }\n",
     );
     out.push_str(
-        "    .topbar-inner { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 10px 0; display: grid; grid-template-columns: minmax(160px, auto) minmax(240px, 1fr); gap: 16px; align-items: center; } .topbar-title { font-weight: 750; font-size: 1rem; white-space: nowrap; }\n",
+        "    .topbar-inner { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 10px 0 6px; display: grid; grid-template-columns: minmax(160px, auto) minmax(240px, 1fr); gap: 16px; align-items: center; } .topbar-title { font-weight: 750; font-size: 1rem; white-space: nowrap; }\n",
     );
     out.push_str(
-        "    .layout { width: min(1180px, calc(100% - 32px)); margin: 28px auto 72px; display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 28px; align-items: start; } main { min-width: 0; } .side-nav { position: sticky; top: 76px; display: flex; flex-direction: column; gap: 3px; padding-left: 12px; border-left: 2px solid var(--line); font-size: .9rem; } .side-nav-title { margin: 0 0 8px; color: var(--muted); font-size: .72rem; font-weight: 750; text-transform: uppercase; letter-spacing: .08em; } .side-nav a { color: var(--muted); text-decoration: none; padding: 4px 0; } .side-nav a.nav-section { color: var(--fg); font-weight: 650; } .side-nav a.nav-command { padding-left: 12px; font-size: .86rem; } .side-nav a:hover { color: var(--accent); }\n",
+        "    .breadcrumbs { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 0 0 9px; color: var(--muted); font-size: .82rem; overflow-x: auto; scrollbar-width: thin; } .breadcrumbs ol { display: flex; align-items: center; gap: 0; min-height: 1.45rem; margin: 0; padding: 0; list-style: none; white-space: nowrap; } .breadcrumbs li { display: inline-flex; align-items: center; min-width: 0; } .breadcrumbs li + li::before { content: \"/\"; margin: 0 5px; color: color-mix(in srgb, var(--muted) 62%, transparent); } .breadcrumbs a { display: inline-block; max-width: 26ch; overflow: hidden; text-overflow: ellipsis; color: var(--muted); text-decoration: none; border-radius: 4px; padding: 1px 4px; } .breadcrumbs a:hover { color: var(--accent); background: var(--soft); } .breadcrumbs li:last-child a { color: var(--fg); font-weight: 650; }\n",
     );
     out.push_str(
-        "    header { max-width: 74ch; border-bottom: 1px solid var(--line); padding-bottom: 28px; margin-bottom: 30px; } h1 { margin: 0 0 8px; font-size: clamp(2rem, 4vw, 2.45rem); line-height: 1.08; letter-spacing: 0; } h2 { margin: 34px 0 14px; font-size: 1.02rem; line-height: 1.2; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); scroll-margin-top: 82px; } h3 { margin: 20px 0 10px; font-size: 1.02rem; line-height: 1.35; scroll-margin-top: 82px; }\n",
+        "    .layout { width: min(1180px, calc(100% - 32px)); margin: 28px auto 72px; display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 28px; align-items: start; } main { min-width: 0; } .side-nav { position: sticky; top: 76px; max-height: calc(100vh - 92px); overflow-y: auto; display: flex; flex-direction: column; gap: 3px; padding-left: 12px; padding-right: 8px; border-left: 2px solid var(--line); font-size: .9rem; scrollbar-width: thin; } .side-nav-title { margin: 0 0 8px; color: var(--muted); font-size: .72rem; font-weight: 750; text-transform: uppercase; letter-spacing: .08em; } .side-nav a { color: var(--muted); text-decoration: none; padding: 4px 0; } .side-nav a.nav-section { color: var(--fg); font-weight: 650; } .side-nav a.nav-command { padding-left: 12px; font-size: .86rem; } .side-nav a:hover { color: var(--accent); }\n",
+    );
+    out.push_str(
+        "    header { max-width: 74ch; border-bottom: 1px solid var(--line); padding-bottom: 28px; margin-bottom: 30px; } h1 { margin: 0 0 8px; font-size: clamp(2rem, 4vw, 2.45rem); line-height: 1.08; letter-spacing: 0; } h2 { margin: 34px 0 14px; font-size: 1.02rem; line-height: 1.2; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); scroll-margin-top: 118px; } h3 { margin: 20px 0 10px; font-size: 1.02rem; line-height: 1.35; scroll-margin-top: 118px; } section, details.schema-node, details.command-card, .config-schema-panel, .schema-node { scroll-margin-top: 118px; }\n",
     );
     out.push_str(
         "    p { margin: 0 0 .85rem; max-width: 72ch; } a { color: var(--accent); text-underline-offset: 2px; } .summary { font-size: 1.12rem; line-height: 1.55; color: var(--fg); } .description, .details, .meta, .name-meta { color: var(--muted); } .details p + p { margin-top: .95rem; } .meta, .name-meta { font-size: .9rem; line-height: 1.45; } .name-meta { display: block; margin-top: 7px; } .intro-copy { position: relative; max-height: 13.5rem; overflow: hidden; } .intro-copy.is-expanded { max-height: none; } .intro-copy:not(.is-expanded)::after { content: \"\"; position: absolute; inset: auto 0 0; height: 48px; background: linear-gradient(transparent, var(--bg)); pointer-events: none; } .intro-toggle { margin-top: 4px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--fg); font: inherit; cursor: pointer; } .markdown-body > :first-child { margin-top: 0; } .markdown-body p { margin-bottom: .85rem; } .markdown-body ul, .markdown-body ol { margin: 0 0 .9rem 1.4rem; padding: 0; } .markdown-body li { margin: .25rem 0; }\n",
@@ -515,7 +518,7 @@ fn render_html_help_document(doc: HtmlHelpDocument<'_>) -> String {
         "    code { font: .93em/1.45 \"Maple Mono\", ui-monospace, SFMono-Regular, Consolas, \"Liberation Mono\", monospace; background: var(--code); color: var(--fg); border-radius: 4px; padding: 2px 5px; white-space: nowrap; vertical-align: .03em; } code.value-token { background: var(--value-bg); color: var(--value-fg); } code.env-token { background: var(--env-bg); color: var(--env-fg); } .names { width: 32%; } .empty { color: var(--muted); } .badge { display: inline-block; margin: 2px 4px 2px 0; padding: 2px 7px; border-radius: 999px; background: var(--soft); color: var(--accent); font-size: .82rem; font-weight: 600; }\n",
     );
     out.push_str(
-        "    details.schema-node, details.command-card { margin: 10px 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); } details.inline-schema { margin-top: 12px; } details.schema-node details.schema-node { margin-left: 18px; background: transparent; } summary { cursor: pointer; font-weight: 650; list-style: none; } summary::-webkit-details-marker { display: none; } details > summary::before { content: \"+\"; display: inline-grid; place-items: center; width: 1.1em; margin-right: 4px; color: var(--accent); font-weight: 750; } details[open] > summary::before { content: \"-\"; } details::details-content { block-size: 0; overflow: clip; transition: block-size .22s ease, content-visibility .22s allow-discrete; } details[open]::details-content { block-size: auto; } @media (prefers-reduced-motion: reduce) { details::details-content { transition: none; } } .node-body, .command-body { margin-top: 8px; padding-left: 2px; } .node-grid { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(100px, auto); gap: 8px 16px; align-items: start; } .config-field { display: grid; grid-template-columns: minmax(180px, 32%) minmax(0, 1fr); gap: 12px 20px; padding: 10px 0; border-bottom: 1px solid var(--line); } .config-field:last-child { border-bottom: 0; } .config-desc p:last-child { margin-bottom: 0; } .override-details { margin-top: 8px; color: var(--muted); font-size: .9rem; } .override-details summary { font-weight: 600; } .override-grid { display: grid; grid-template-columns: auto 3.2em minmax(0, max-content) max-content; gap: 5px 8px; align-items: center; margin-top: 6px; } .copy-button { width: 1.55rem; height: 1.55rem; padding: 0; display: inline-grid; place-items: center; border: 1px solid var(--line); border-radius: 5px; background: var(--panel); color: var(--muted); cursor: pointer; } .copy-button svg { width: .9rem; height: .9rem; stroke: currentColor; } .copy-button:hover { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); } .copy-button.is-copied { color: var(--accent); background: var(--soft); } .override-label { color: var(--muted); font-weight: 650; } .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; } .layer-examples { display: grid; gap: 4px; }\n",
+        "    details.schema-node, details.command-card { margin: 10px 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); } details.inline-schema { margin-top: 12px; } details.schema-node details.schema-node { margin-left: 18px; background: transparent; } summary { cursor: pointer; font-weight: 650; list-style: none; } summary::-webkit-details-marker { display: none; } details > summary::before { content: \"+\"; display: inline-grid; place-items: center; width: 1.1em; margin-right: 4px; color: var(--accent); font-weight: 750; } details[open] > summary::before { content: \"-\"; } details::details-content { block-size: 0; overflow: clip; transition: block-size .22s ease, content-visibility .22s allow-discrete; } details[open]::details-content { block-size: auto; } @media (prefers-reduced-motion: reduce) { details::details-content { transition: none; } } .node-body, .command-body { margin-top: 8px; padding-left: 2px; } .node-grid { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(100px, auto); gap: 8px 16px; align-items: start; } .config-field { display: grid; grid-template-columns: minmax(0, 34%) minmax(0, 1fr); gap: 12px 20px; padding: 10px 0; border-bottom: 1px solid var(--line); } .config-field:last-child { border-bottom: 0; } .config-name, .config-desc { min-width: 0; } .config-name code { white-space: normal; overflow-wrap: anywhere; word-break: break-word; } .config-desc p:last-child { margin-bottom: 0; } .override-details { margin-top: 8px; color: var(--muted); font-size: .9rem; } .override-details summary { font-weight: 600; } .override-grid { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 5px 8px; align-items: center; margin-top: 6px; } .override-grid code { min-width: 0; white-space: normal; overflow-wrap: anywhere; word-break: break-word; } .copy-button { width: 1.55rem; height: 1.55rem; padding: 0; display: inline-grid; place-items: center; border: 1px solid var(--line); border-radius: 5px; background: var(--panel); color: var(--muted); cursor: pointer; } .copy-button svg { width: .9rem; height: .9rem; stroke: currentColor; } .copy-button:hover { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); } .copy-button.is-copied { color: var(--accent); background: var(--soft); } .override-label { color: var(--muted); font-weight: 650; display: inline-flex; align-items: center; gap: 6px; } .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; } .layer-examples { display: grid; gap: 4px; }\n",
     );
     out.push_str(
         "    .config-schema-panel { margin-top: 16px; padding: 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }\n",
@@ -526,10 +529,12 @@ fn render_html_help_document(doc: HtmlHelpDocument<'_>) -> String {
     out.push_str("  </style>\n</head>\n<body>\n");
     out.push_str("<div class=\"topbar\"><div class=\"topbar-inner\"><div class=\"topbar-title\">");
     push_escaped(&mut out, doc.command);
-    out.push_str("</div><input class=\"search\" type=\"search\" placeholder=\"Search flags, commands, config paths, defaults (Cmd/Ctrl-K)\" aria-label=\"Search help\"></div></div>\n");
+    out.push_str("</div><input class=\"search\" type=\"search\" placeholder=\"Search flags, commands, config paths, defaults (Cmd/Ctrl-K)\" aria-label=\"Search help\"></div><nav class=\"breadcrumbs\" aria-label=\"Breadcrumb\"><ol data-breadcrumbs><li><a href=\"#top\">");
+    push_escaped(&mut out, doc.command);
+    out.push_str("</a></li></ol></nav></div>\n");
     out.push_str("<div class=\"layout\">\n");
     render_html_side_nav(&mut out, doc.args, doc.config_roots);
-    out.push_str("<main>\n<header>\n");
+    out.push_str("<main id=\"top\">\n<header>\n");
     out.push_str("  <h1>");
     push_escaped(&mut out, doc.command);
     out.push_str("</h1>\n");
@@ -628,7 +633,9 @@ fn render_html_usage(
     config_roots: &[ConfigStructSchema],
     command: &str,
 ) {
-    out.push_str("<section aria-labelledby=\"usage-heading\">\n");
+    out.push_str(
+        "<section aria-labelledby=\"usage-heading\" data-breadcrumb-label=\"Usage\" data-breadcrumb-anchor=\"usage-heading\">\n",
+    );
     out.push_str("  <h2 id=\"usage-heading\">Usage</h2>\n");
     out.push_str("  <code class=\"usage\">");
     push_escaped(out, command);
@@ -673,7 +680,9 @@ fn render_html_command_sections(out: &mut String, args: &ArgLevelSchema, command
         return;
     }
 
-    out.push_str("<section aria-labelledby=\"commands-heading\">\n");
+    out.push_str(
+        "<section aria-labelledby=\"commands-heading\" data-breadcrumb-label=\"Commands\" data-breadcrumb-anchor=\"commands-heading\">\n",
+    );
     out.push_str("  <h2 id=\"commands-heading\">Commands</h2>\n");
     for sub in args.subcommands().values() {
         render_html_command_card(out, sub, &[sub.cli_name()], command);
@@ -683,7 +692,11 @@ fn render_html_command_sections(out: &mut String, args: &ArgLevelSchema, command
 
 fn render_html_command_card(out: &mut String, sub: &Subcommand, path: &[&str], root_command: &str) {
     let heading_id = command_heading_id(path);
-    out.push_str("<details class=\"command-card search-item\">\n<summary id=\"");
+    out.push_str("<details class=\"command-card search-item\" data-breadcrumb-label=\"");
+    push_escaped(out, sub.cli_name());
+    out.push_str("\" data-breadcrumb-anchor=\"");
+    push_escaped(out, &heading_id);
+    out.push_str("\">\n<summary id=\"");
     push_escaped(out, &heading_id);
     out.push_str("\"><code>");
     push_escaped(out, sub.cli_name());
@@ -768,7 +781,9 @@ fn render_html_arg_level_tables(
         .collect();
 
     if !positionals.is_empty() {
-        out.push_str("<h3>");
+        out.push_str("<h3 data-breadcrumb-label=\"");
+        push_escaped(out, positionals_title);
+        out.push_str("\">");
         push_escaped(out, positionals_title);
         out.push_str("</h3>\n<table>\n  <thead><tr><th>Name</th><th>Description</th></tr></thead>\n  <tbody>\n");
         for arg in positionals {
@@ -778,7 +793,9 @@ fn render_html_arg_level_tables(
     }
 
     if !flags.is_empty() {
-        out.push_str("<h3>");
+        out.push_str("<h3 data-breadcrumb-label=\"");
+        push_escaped(out, flags_title);
+        out.push_str("\">");
         push_escaped(out, flags_title);
         out.push_str("</h3>\n<table>\n  <thead><tr><th>Name</th><th>Description</th></tr></thead>\n  <tbody>\n");
         for arg in flags {
@@ -797,7 +814,7 @@ fn render_html_layer_summary(
         return;
     }
 
-    out.push_str("<section aria-labelledby=\"layers-heading\" class=\"search-item\">\n");
+    out.push_str("<section aria-labelledby=\"layers-heading\" class=\"search-item\" data-breadcrumb-label=\"Configuration\" data-breadcrumb-anchor=\"layers-heading\">\n");
     out.push_str("  <h2 id=\"layers-heading\">Configuration</h2>\n");
     out.push_str("  <p>When a field is set in more than one place, precedence is <span class=\"badge\">CLI</span> &gt; <span class=\"badge\">Environment</span> &gt; <span class=\"badge\">Config file</span> &gt; <span class=\"badge\">Defaults</span>.</p>\n");
     out.push_str("  <p class=\"description\">Supported file formats: ");
@@ -849,6 +866,10 @@ fn render_html_arg_sections(
 fn render_html_table_start(out: &mut String, id: &str, title: &str) {
     out.push_str("<section aria-labelledby=\"");
     push_escaped(out, id);
+    out.push_str("-heading\" data-breadcrumb-label=\"");
+    push_escaped(out, title);
+    out.push_str("\" data-breadcrumb-anchor=\"");
+    push_escaped(out, id);
     out.push_str("-heading\">\n  <h2 id=\"");
     push_escaped(out, id);
     out.push_str("-heading\">");
@@ -868,8 +889,8 @@ fn render_html_arg_row(out: &mut String, arg: &ArgSchema) {
     }
     render_arg_name_meta(out, arg);
     out.push_str("</td><td>");
-    if let Some(summary) = arg.docs().summary() {
-        push_markdown(out, summary.trim());
+    if arg.docs().summary().is_some() || arg.docs().details().is_some() {
+        render_html_docs(out, arg.docs());
     } else {
         out.push_str("<span class=\"empty\">No description.</span>");
     }
@@ -978,6 +999,34 @@ fn config_schema_heading_id(root_name: &str) -> String {
     format!("config-fields-{}", root_name.to_kebab_case())
 }
 
+fn config_node_id(path: &str) -> String {
+    let mut id = String::from("config-node-");
+    let mut last_was_dash = true;
+    for c in path.chars() {
+        let next = if c.is_ascii_alphanumeric() {
+            Some(c.to_ascii_lowercase())
+        } else if matches!(c, '-' | '_' | '.' | '<' | '>') {
+            Some('-')
+        } else {
+            None
+        };
+
+        let Some(next) = next else {
+            continue;
+        };
+        if next == '-' {
+            if last_was_dash {
+                continue;
+            }
+            last_was_dash = true;
+        } else {
+            last_was_dash = false;
+        }
+        id.push(next);
+    }
+    id.trim_end_matches('-').to_string()
+}
+
 fn config_file_example(root_name: &str, extensions: &[&str]) -> String {
     let extension = extensions
         .iter()
@@ -1027,7 +1076,11 @@ fn render_html_config_schema_panel(out: &mut String, config_root: &ConfigStructS
         return;
     };
 
-    out.push_str("<div class=\"config-schema-panel search-item\">\n");
+    out.push_str("<div class=\"config-schema-panel search-item\" data-breadcrumb-label=\"");
+    push_escaped(out, &format!("Config fields for {root_path}"));
+    out.push_str("\" data-breadcrumb-anchor=\"");
+    push_escaped(out, &config_schema_heading_id(root_path));
+    out.push_str("\">\n");
     out.push_str("<h3 id=\"");
     push_escaped(out, &config_schema_heading_id(root_path));
     out.push_str("\">Config fields for <code>");
@@ -1040,17 +1093,7 @@ fn render_html_config_schema_panel(out: &mut String, config_root: &ConfigStructS
         out.push_str("</code></p>\n");
     }
 
-    for (field_name, field) in config_root.fields() {
-        let child_path = join_path(root_path, field_name);
-        render_html_config_field_node(
-            out,
-            field_name,
-            &child_path,
-            field,
-            1,
-            config_root.env_prefix(),
-        );
-    }
+    render_html_config_struct_children(out, config_root, root_path, 1, config_root.env_prefix());
 
     out.push_str("</div>\n</div>\n");
 }
@@ -1064,7 +1107,14 @@ fn render_html_config_struct_node(
     env_prefix: Option<&str>,
 ) {
     let name = display_name.unwrap_or("config");
-    out.push_str("<details class=\"schema-node search-item\">\n<summary><code>");
+    let node_id = config_node_id(path);
+    out.push_str("<details id=\"");
+    push_escaped(out, &node_id);
+    out.push_str("\" class=\"schema-node search-item\" data-breadcrumb-label=\"");
+    push_escaped(out, name);
+    out.push_str("\" data-breadcrumb-anchor=\"");
+    push_escaped(out, &node_id);
+    out.push_str("\">\n<summary><code>");
     push_escaped(out, name);
     out.push_str("</code> <span class=\"meta\">struct ");
     push_escaped(out, config_struct.shape().type_identifier);
@@ -1084,11 +1134,106 @@ fn render_html_config_struct_node(
         out.push_str("</code></p>\n");
     }
 
-    for (field_name, field) in config_struct.fields() {
-        let child_path = join_path(path, field_name);
-        render_html_config_field_node(out, field_name, &child_path, field, depth + 1, env_prefix);
+    render_html_config_struct_children(out, config_struct, path, depth + 1, env_prefix);
+
+    out.push_str("</div>\n</details>\n");
+}
+
+fn render_html_config_struct_children(
+    out: &mut String,
+    config_struct: &ConfigStructSchema,
+    path: &str,
+    depth: usize,
+    env_prefix: Option<&str>,
+) {
+    render_html_config_children(
+        out,
+        config_struct.fields(),
+        config_struct.field_groups(),
+        path,
+        path,
+        depth,
+        env_prefix,
+    );
+}
+
+fn render_html_config_group_children(
+    out: &mut String,
+    group: &ConfigFieldGroupSchema,
+    config_path: &str,
+    group_path: &str,
+    depth: usize,
+    env_prefix: Option<&str>,
+) {
+    render_html_config_children(
+        out,
+        group.fields(),
+        group.field_groups(),
+        config_path,
+        group_path,
+        depth,
+        env_prefix,
+    );
+}
+
+fn render_html_config_children(
+    out: &mut String,
+    fields: &indexmap::IndexMap<String, ConfigFieldSchema, std::hash::RandomState>,
+    groups: &[ConfigFieldGroupSchema],
+    config_path: &str,
+    group_path: &str,
+    depth: usize,
+    env_prefix: Option<&str>,
+) {
+    for (field_name, field) in fields {
+        if config_field_is_grouped(groups, field_name) {
+            continue;
+        }
+        let child_path = join_path(config_path, field_name);
+        render_html_config_field_node(out, field_name, &child_path, field, depth, env_prefix);
     }
 
+    for group in groups {
+        let child_group_path = join_path(&join_path(group_path, "__group"), group.name());
+        render_html_config_field_group(
+            out,
+            group,
+            config_path,
+            &child_group_path,
+            depth,
+            env_prefix,
+        );
+    }
+}
+
+fn config_field_is_grouped(groups: &[ConfigFieldGroupSchema], field_name: &str) -> bool {
+    groups
+        .iter()
+        .any(|group| group.fields().contains_key(field_name))
+}
+
+fn render_html_config_field_group(
+    out: &mut String,
+    group: &ConfigFieldGroupSchema,
+    config_path: &str,
+    group_path: &str,
+    depth: usize,
+    env_prefix: Option<&str>,
+) {
+    let group_id = config_node_id(group_path);
+    out.push_str("<details id=\"");
+    push_escaped(out, &group_id);
+    out.push_str("\" class=\"schema-node search-item\" data-breadcrumb-label=\"");
+    push_escaped(out, group.name());
+    out.push_str("\" data-breadcrumb-anchor=\"");
+    push_escaped(out, &group_id);
+    out.push_str("\">\n<summary><code>");
+    push_escaped(out, group.name());
+    out.push_str(
+        "</code> <span class=\"meta\">group</span></summary>\n<div class=\"node-body\">\n",
+    );
+    render_html_docs(out, group.docs());
+    render_html_config_group_children(out, group, config_path, group_path, depth + 1, env_prefix);
     out.push_str("</div>\n</details>\n");
 }
 
@@ -1112,13 +1257,20 @@ fn render_html_config_field_node(
             );
         }
         ConfigValueSchema::Vec(vec_schema) => {
-            out.push_str("<details class=\"schema-node search-item\">\n<summary><code>");
+            let node_id = config_node_id(path);
+            out.push_str("<details id=\"");
+            push_escaped(out, &node_id);
+            out.push_str("\" class=\"schema-node search-item\" data-breadcrumb-label=\"");
+            push_escaped(out, field_name);
+            out.push_str("\" data-breadcrumb-anchor=\"");
+            push_escaped(out, &node_id);
+            out.push_str("\">\n<summary><code>");
             push_escaped(out, field_name);
             out.push_str("</code> <span class=\"meta\">list</span>");
             render_default_summary(out, field.default());
             out.push_str("</summary>\n<div class=\"node-body\">\n");
             render_config_field_docs(out, field);
-            render_config_override_details(out, path, field.value(), env_prefix);
+            render_config_override_details(out, path, env_prefix);
             let item_path = join_path(path, "<INDEX>");
             render_html_config_value_node(
                 out,
@@ -1131,7 +1283,14 @@ fn render_html_config_field_node(
             out.push_str("</div>\n</details>\n");
         }
         ConfigValueSchema::Enum(enum_schema) => {
-            out.push_str("<details class=\"schema-node search-item\">\n<summary><code>");
+            let node_id = config_node_id(path);
+            out.push_str("<details id=\"");
+            push_escaped(out, &node_id);
+            out.push_str("\" class=\"schema-node search-item\" data-breadcrumb-label=\"");
+            push_escaped(out, field_name);
+            out.push_str("\" data-breadcrumb-anchor=\"");
+            push_escaped(out, &node_id);
+            out.push_str("\">\n<summary><code>");
             push_escaped(out, field_name);
             out.push_str("</code> <span class=\"meta\">enum ");
             push_escaped(out, field.value().type_identifier());
@@ -1139,9 +1298,17 @@ fn render_html_config_field_node(
             render_default_summary(out, field.default());
             out.push_str("</summary>\n<div class=\"node-body\">\n");
             render_config_field_docs(out, field);
-            render_config_override_details(out, path, field.value(), env_prefix);
+            render_config_override_details(out, path, env_prefix);
             for (variant_name, variant) in enum_schema.variants() {
-                out.push_str("<details class=\"schema-node search-item\">\n<summary><code>");
+                let variant_path = join_path(path, variant_name);
+                let variant_id = config_node_id(&variant_path);
+                out.push_str("<details id=\"");
+                push_escaped(out, &variant_id);
+                out.push_str("\" class=\"schema-node search-item\" data-breadcrumb-label=\"");
+                push_escaped(out, variant_name);
+                out.push_str("\" data-breadcrumb-anchor=\"");
+                push_escaped(out, &variant_id);
+                out.push_str("\">\n<summary><code>");
                 push_escaped(out, variant_name);
                 out.push_str("</code> <span class=\"meta\">variant</span></summary>\n<div class=\"node-body\">\n");
                 if let Some(summary) = variant.docs().summary() {
@@ -1153,8 +1320,7 @@ fn render_html_config_field_node(
                     out.push_str("<p class=\"meta\">Unit variant.</p>\n");
                 }
                 for (variant_field_name, variant_field) in variant.fields() {
-                    let variant_path =
-                        join_path(&join_path(path, variant_name), variant_field_name);
+                    let variant_path = join_path(&variant_path, variant_field_name);
                     render_html_config_field_node(
                         out,
                         variant_field_name,
@@ -1206,12 +1372,19 @@ fn render_html_config_value_node(
             );
         }
         ConfigValueSchema::Enum(enum_schema) => {
-            out.push_str("<details class=\"schema-node search-item\">\n<summary><code>");
+            let node_id = config_node_id(path);
+            out.push_str("<details id=\"");
+            push_escaped(out, &node_id);
+            out.push_str("\" class=\"schema-node search-item\" data-breadcrumb-label=\"");
+            push_escaped(out, name);
+            out.push_str("\" data-breadcrumb-anchor=\"");
+            push_escaped(out, &node_id);
+            out.push_str("\">\n<summary><code>");
             push_escaped(out, name);
             out.push_str("</code> <span class=\"meta\">enum ");
             push_escaped(out, value.type_identifier());
             out.push_str("</span></summary>\n<div class=\"node-body\">\n");
-            render_config_override_details(out, path, value, env_prefix);
+            render_config_override_details(out, path, env_prefix);
             for variant_name in enum_schema.variants().keys() {
                 out.push_str("<p><code>");
                 push_escaped(out, variant_name);
@@ -1220,12 +1393,19 @@ fn render_html_config_value_node(
             out.push_str("</div>\n</details>\n");
         }
         ConfigValueSchema::Leaf(_) => {
-            out.push_str("<div class=\"schema-node search-item node-grid\"><div><code>");
+            let node_id = config_node_id(path);
+            out.push_str("<div id=\"");
+            push_escaped(out, &node_id);
+            out.push_str("\" class=\"schema-node search-item node-grid\" data-breadcrumb-label=\"");
+            push_escaped(out, name);
+            out.push_str("\" data-breadcrumb-anchor=\"");
+            push_escaped(out, &node_id);
+            out.push_str("\"><div><code>");
             push_escaped(out, name);
             out.push_str("</code> <span class=\"meta\">");
             push_escaped(out, value.type_identifier());
             out.push_str("</span>");
-            render_config_override_details(out, path, value, env_prefix);
+            render_config_override_details(out, path, env_prefix);
             out.push_str("</div></div>\n");
         }
         ConfigValueSchema::Option { .. } => unreachable!("inner_if_option removes Option wrappers"),
@@ -1239,52 +1419,47 @@ fn render_html_config_leaf_node(
     field: &ConfigFieldSchema,
     env_prefix: Option<&str>,
 ) {
-    out.push_str(
-        "<div class=\"schema-node search-item config-field\"><div class=\"config-name\"><code>",
-    );
+    let node_id = config_node_id(path);
+    out.push_str("<div id=\"");
+    push_escaped(out, &node_id);
+    out.push_str("\" class=\"schema-node search-item config-field\" data-breadcrumb-label=\"");
+    push_escaped(out, field_name);
+    out.push_str("\" data-breadcrumb-anchor=\"");
+    push_escaped(out, &node_id);
+    out.push_str("\"><div class=\"config-name\"><code>");
     push_escaped(out, field_name);
     out.push_str("</code> <span class=\"meta\">");
     push_escaped(out, field.value().type_identifier());
     out.push_str("</span>");
-    render_config_default_meta(out, field.default());
+    render_config_default_meta(out, field.value(), field.default());
     out.push_str("</div><div class=\"config-desc\">");
     render_config_field_docs(out, field);
-    render_config_override_details(out, path, field.value(), env_prefix);
+    render_config_override_details(out, path, env_prefix);
     out.push_str("</div></div>\n");
 }
 
 fn render_config_field_docs(out: &mut String, field: &ConfigFieldSchema) {
-    if let Some(summary) = field.docs().summary() {
-        out.push_str("<p>");
-        push_markdown(out, summary.trim());
-        out.push_str("</p>\n");
+    if field.docs().summary().is_some() || field.docs().details().is_some() {
+        render_html_docs(out, field.docs());
     }
 }
 
-fn render_config_override_details(
-    out: &mut String,
-    path: &str,
-    value: &ConfigValueSchema,
-    env_prefix: Option<&str>,
-) {
+fn render_config_override_details(out: &mut String, path: &str, env_prefix: Option<&str>) {
     out.push_str("<details class=\"override-details\"><summary>Overrides</summary>\n");
     out.push_str("<div class=\"override-grid\">\n");
     let cli_flag = format!("--{path}");
+    out.push_str("<span class=\"override-label\">");
     render_copy_button(out, &cli_flag);
-    out.push_str("<span class=\"override-label\">CLI</span><code>");
+    out.push_str("CLI</span><code>");
     push_escaped(out, &cli_flag);
-    out.push_str("</code><code class=\"value-token\">");
-    push_escaped(
-        out,
-        &format!("<{}>", value.type_identifier().to_uppercase()),
-    );
     out.push_str("</code>\n");
     if let Some(env_prefix) = env_prefix {
         let env_name = env_override_name(env_prefix, path);
+        out.push_str("<span class=\"override-label\">");
         render_copy_button(out, &env_name);
-        out.push_str("<span class=\"override-label\">Env</span><code class=\"env-token\">");
+        out.push_str("Env</span><code class=\"env-token\">");
         push_escaped(out, &env_name);
-        out.push_str("</code><code class=\"value-token\">=...</code>\n");
+        out.push_str("</code>\n");
     }
     out.push_str("</div>\n</details>\n");
 }
@@ -1301,14 +1476,23 @@ fn render_copy_button(out: &mut String, value: &str) {
 
 fn render_config_default_meta(
     out: &mut String,
+    value: &ConfigValueSchema,
     default: Option<&crate::config_value::ConfigValue>,
 ) {
+    let false_bool_default =
+        value.is_bool() && default.map(config_value_summary).as_deref() == Some("false");
+    if false_bool_default || (default.is_none() && value.is_bool()) {
+        return;
+    }
+
     out.push_str("<span class=\"name-meta\">");
     if let Some(default) = default {
         out.push_str("Default ");
         out.push_str("<code class=\"value-token\">");
         push_escaped(out, &config_value_summary(default));
         out.push_str("</code>");
+    } else if value.is_option() {
+        out.push_str("Optional");
     } else {
         out.push_str("Required");
     }
@@ -1370,7 +1554,7 @@ fn join_path(prefix: &str, segment: &str) -> String {
 
 fn render_html_search_script(out: &mut String) {
     out.push_str(
-        r#"<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+        r##"<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script>
 for (const source of document.querySelectorAll('[data-markdown-source]')) {
   const key = source.getAttribute('data-markdown-source');
@@ -1389,9 +1573,12 @@ const searchInput = document.querySelector('.search');
 const searchableRoot = document.querySelector('main');
 const intro = document.querySelector('[data-collapsible-intro]');
 const introToggle = document.querySelector('[data-intro-toggle]');
+const breadcrumbList = document.querySelector('[data-breadcrumbs]');
+const breadcrumbHome = document.querySelector('.topbar-title')?.textContent?.trim() || document.title || 'Home';
 let searchHits = [];
 let currentHit = -1;
 let revealingSearchHit = false;
+let breadcrumbFrame = 0;
 
 introToggle?.addEventListener('click', () => {
   intro?.classList.toggle('is-expanded');
@@ -1419,14 +1606,125 @@ searchInput?.addEventListener('keydown', event => {
   }
 });
 
+document.addEventListener('scroll', scheduleBreadcrumbUpdate, { passive: true });
+window.addEventListener('resize', scheduleBreadcrumbUpdate);
+breadcrumbList?.addEventListener('click', event => {
+  const link = event.target.closest('a[href^="#"]');
+  if (!link) {
+    return;
+  }
+  const id = decodeURIComponent(link.getAttribute('href').slice(1));
+  const target = document.getElementById(id);
+  if (!target) {
+    return;
+  }
+  event.preventDefault();
+  revealBreadcrumbTarget(target);
+  target.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' });
+  history.replaceState(null, '', `#${encodeURIComponent(id)}`);
+});
+
 for (const details of document.querySelectorAll('details')) {
   details.addEventListener('toggle', () => {
+    scheduleBreadcrumbUpdate();
     if (!details.open || revealingSearchHit) {
       return;
     }
     window.setTimeout(() => {
       keepOpenedDetailsComfortable(details);
     }, 280);
+  });
+}
+
+scheduleBreadcrumbUpdate();
+
+function scheduleBreadcrumbUpdate() {
+  if (breadcrumbFrame) {
+    return;
+  }
+  breadcrumbFrame = requestAnimationFrame(() => {
+    breadcrumbFrame = 0;
+    updateBreadcrumbs();
+  });
+}
+
+function updateBreadcrumbs() {
+  if (!breadcrumbList) {
+    return;
+  }
+
+  const active = currentBreadcrumbTarget();
+  const trail = breadcrumbTrail(active);
+  breadcrumbList.replaceChildren();
+  appendBreadcrumbCrumb(breadcrumbList, breadcrumbHome, 'top');
+  for (const item of trail) {
+    appendBreadcrumbCrumb(
+      breadcrumbList,
+      item.getAttribute('data-breadcrumb-label'),
+      item.getAttribute('data-breadcrumb-anchor')
+    );
+  }
+}
+
+function currentBreadcrumbTarget() {
+  const items = [...document.querySelectorAll('[data-breadcrumb-label][data-breadcrumb-anchor]')]
+    .filter(item => item.getClientRects().length > 0);
+  if (items.length === 0) {
+    return null;
+  }
+
+  const topbarBottom = document.querySelector('.topbar')?.getBoundingClientRect().bottom || 0;
+  const activationLine = topbarBottom + 16;
+  let active = items[0];
+  for (const item of items) {
+    const rect = item.getBoundingClientRect();
+    if (rect.top <= activationLine) {
+      active = item;
+    } else {
+      break;
+    }
+  }
+  return active;
+}
+
+function breadcrumbTrail(active) {
+  const trail = [];
+  let node = active;
+  while (node) {
+    if (
+      node.matches?.('[data-breadcrumb-label][data-breadcrumb-anchor]') &&
+      node.getAttribute('data-breadcrumb-label') &&
+      node.getAttribute('data-breadcrumb-anchor')
+    ) {
+      trail.push(node);
+    }
+    node = node.parentElement?.closest('[data-breadcrumb-label][data-breadcrumb-anchor]');
+  }
+  return trail.reverse();
+}
+
+function appendBreadcrumbCrumb(list, label, anchor) {
+  if (!label || !anchor) {
+    return;
+  }
+  const li = document.createElement('li');
+  const link = document.createElement('a');
+  link.href = `#${anchor}`;
+  link.textContent = label;
+  li.append(link);
+  list.append(li);
+}
+
+function revealBreadcrumbTarget(target) {
+  revealingSearchHit = true;
+  let details = target.closest('details');
+  while (details) {
+    details.open = true;
+    details = details.parentElement?.closest('details');
+  }
+  requestAnimationFrame(() => {
+    revealingSearchHit = false;
+    scheduleBreadcrumbUpdate();
   });
 }
 
@@ -1607,8 +1905,36 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 </script>
-"#,
+"##,
     );
+}
+
+fn render_html_docs(out: &mut String, docs: &Docs) {
+    let mut text = String::new();
+    if let Some(summary) = docs.summary() {
+        text.push_str(summary.trim());
+    }
+    if let Some(details) = docs.details() {
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str(details.trim());
+    }
+
+    for paragraph in text.split("\n\n") {
+        let paragraph = paragraph
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
+        if paragraph.is_empty() {
+            continue;
+        }
+        out.push_str("<p>");
+        push_markdown(out, &paragraph);
+        out.push_str("</p>\n");
+    }
 }
 
 fn push_markdown(out: &mut String, text: &str) {
@@ -2300,7 +2626,11 @@ mod tests {
         assert!(html.contains("&lt;INPUT&gt;"));
         assert!(html.contains("Input &lt;path&gt; to process"));
         assert!(html.contains("--[no-]verbose"));
+        assert!(html.contains("class=\"breadcrumbs\""));
+        assert!(html.contains("data-breadcrumbs"));
+        assert!(html.contains("function updateBreadcrumbs()"));
         assert!(html.contains("<nav class=\"side-nav\""));
+        assert!(html.contains("max-height: calc(100vh - 92px); overflow-y: auto;"));
         assert!(html.contains("On This Page"));
         assert!(html.contains("Top-Level Options"));
         assert!(html.contains("data-collapsible-intro"));
@@ -2346,8 +2676,12 @@ mod tests {
         assert!(html.contains("data-copy=\"--settings.server.port\""));
         assert!(html.contains("<code class=\"env-token\">APP__SERVER__PORT</code>"));
         assert!(html.contains("data-copy=\"APP__SERVER__PORT\""));
-        assert!(html.contains("<code class=\"value-token\">&lt;U16&gt;</code>"));
-        assert!(html.contains("<code class=\"value-token\">=...</code>"));
+        assert!(!html.contains(
+            "<code>--settings.server.port</code><code class=\"value-token\">&lt;U16&gt;</code>"
+        ));
+        assert!(!html.contains(
+            "<code class=\"env-token\">APP__SERVER__PORT</code><code class=\"value-token\">=...</code>"
+        ));
         assert!(
             html.contains(
                 "<code>--settings</code> <code class=\"value-token\">settings.json</code>"
@@ -2362,6 +2696,93 @@ mod tests {
         assert!(html.contains("Default <code class=\"value-token\">8080</code>"));
         assert!(!html.contains("config-schema-heading"));
         assert!(!html.contains("--settings.server.port &lt;U16&gt;</code></td><td>"));
+        assert!(html.contains("data-breadcrumb-label=\"Config fields for settings\""));
+        assert!(html.contains("data-breadcrumb-label=\"server\""));
+        assert!(html.contains(".config-name code { white-space: normal;"));
+        assert!(html.contains(
+            ".override-grid { display: grid; grid-template-columns: max-content minmax(0, 1fr);"
+        ));
+    }
+
+    #[test]
+    fn test_html_help_config_meta_matches_implicit_defaults() {
+        #[derive(Facet)]
+        struct Args {
+            #[facet(args::config)]
+            settings: Settings,
+        }
+
+        #[derive(Facet)]
+        #[allow(dead_code)]
+        struct Settings {
+            /// Enables the feature.
+            #[facet(default)]
+            enabled: bool,
+
+            /// Optional queue size.
+            queue_size: Option<usize>,
+
+            /// Implicitly false when omitted.
+            implicit_flag: bool,
+        }
+
+        let html = generate_html_help::<Args>(&HelpConfig::default());
+
+        assert!(!html.contains("Default <code class=\"value-token\">false</code>"));
+        assert!(!html.contains("<code>implicit_flag</code> <span class=\"meta\">bool</span><span class=\"name-meta\">Required</span>"));
+        assert!(html.contains("<code>queue_size</code> <span class=\"meta\">usize</span><span class=\"name-meta\">Optional</span>"));
+    }
+
+    #[test]
+    fn test_html_help_arg_rows_include_wrapped_doc_details() {
+        #[derive(Facet)]
+        struct Args {
+            /// Output path for the alignment JSONL (one
+            /// object per line).
+            #[facet(args::named)]
+            out: Option<String>,
+        }
+
+        let html = generate_html_help::<Args>(&HelpConfig::default());
+
+        assert!(html.contains("<p>Output path for the alignment JSONL (one object per line).</p>"));
+    }
+
+    #[test]
+    fn test_html_help_groups_flattened_config_fields() {
+        #[derive(Facet)]
+        struct Args {
+            #[facet(args::config)]
+            settings: Settings,
+        }
+
+        #[derive(Facet)]
+        #[allow(dead_code)]
+        struct Settings {
+            /// Runtime tuning controls.
+            #[facet(flatten)]
+            runtime: Runtime,
+
+            /// Service host.
+            host: String,
+        }
+
+        #[derive(Facet)]
+        #[allow(dead_code)]
+        struct Runtime {
+            /// Worker count.
+            #[facet(default = 4)]
+            workers: usize,
+        }
+
+        let html = generate_html_help::<Args>(&HelpConfig::default());
+
+        assert!(html.contains("data-breadcrumb-label=\"runtime\""));
+        assert!(html.contains("<span class=\"meta\">group</span>"));
+        assert!(html.contains("<p>Runtime tuning controls.</p>"));
+        assert!(html.contains("data-breadcrumb-label=\"workers\""));
+        assert!(html.contains("data-copy=\"--settings.workers\""));
+        assert!(!html.contains("--settings.runtime.workers"));
     }
 
     #[test]

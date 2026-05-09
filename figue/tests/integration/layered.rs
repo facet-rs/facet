@@ -61,15 +61,36 @@ struct TlsConfig {
     key_path: String,
 }
 
+#[derive(Facet, Debug)]
+struct ArgsWithFlattenedConfigRoot {
+    /// Run configuration; config sources keep this root namespace.
+    #[facet(args::config, args::env_prefix = "BEE_RUN")]
+    #[facet(flatten)]
+    run: FlattenedRunConfig,
+}
+
+#[derive(Facet, Debug)]
+struct FlattenedRunConfig {
+    model: String,
+
+    #[facet(default)]
+    tag: Vec<String>,
+
+    #[facet(default)]
+    tui: bool,
+}
+
 #[test]
 fn test_layered_all_sources() {
     // Config file content (lowest priority after defaults)
     let config_json = r#"{
-        "host": "0.0.0.0",
-        "port": 3000,
-        "database": {
-            "url": "postgres://localhost/mydb",
-            "max_connections": 20
+        "config": {
+            "host": "0.0.0.0",
+            "port": 3000,
+            "database": {
+                "url": "postgres://localhost/mydb",
+                "max_connections": 20
+            }
         }
     }"#;
 
@@ -116,13 +137,45 @@ fn test_layered_all_sources() {
 }
 
 #[test]
+fn test_flattened_config_root_merges_namespaced_sources_then_deserializes_flat() {
+    let config_json = r#"{
+        "run": {
+            "model": "file-model"
+        }
+    }"#;
+
+    let env = MockEnv::from_pairs([("BEE_RUN__MODEL", "env-model")]);
+
+    let config = builder::<ArgsWithFlattenedConfigRoot>()
+        .unwrap()
+        .cli(|cli| cli.args(["--tui", "--run.model", "cli-model"]))
+        .env(|e| e.source(env))
+        .file(|f| f.content(config_json, "config.json"))
+        .build();
+
+    let args = Driver::new(config).run().unwrap();
+
+    assert!(args.run.tui, "flattened CLI flag should populate run.tui");
+    assert!(
+        args.run.tag.is_empty(),
+        "explicit Vec default inside flattened config root should be preserved"
+    );
+    assert_eq!(
+        args.run.model, "cli-model",
+        "dotted CLI overrides should keep the config-root namespace and override env/file"
+    );
+}
+
+#[test]
 fn test_layered_missing_required_field() {
     // Config file missing database.url (required field)
     let config_json = r#"{
-        "host": "127.0.0.1",
-        "port": 5000,
-        "database": {
-            "max_connections": 5
+        "config": {
+            "host": "127.0.0.1",
+            "port": 5000,
+            "database": {
+                "max_connections": 5
+            }
         }
     }"#;
 
@@ -144,12 +197,14 @@ fn test_layered_missing_required_field() {
 fn test_layered_cli_overrides_all() {
     // File sets everything
     let config_json = r#"{
-        "host": "file-host",
-        "port": 1111,
-        "database": {
-            "url": "postgres://file/db",
-            "max_connections": 100,
-            "timeout_secs": 999
+        "config": {
+            "host": "file-host",
+            "port": 1111,
+            "database": {
+                "url": "postgres://file/db",
+                "max_connections": 100,
+                "timeout_secs": 999
+            }
         }
     }"#;
 
@@ -262,6 +317,46 @@ fn test_layered_multiple_config_roots() {
     assert!(matches!(args.command, MultiConfigCommand::Run));
 }
 
+#[test]
+fn test_layered_multiple_config_roots_cli_file_targets_matching_root() {
+    use std::io::Write;
+
+    let mut cfg_file = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+    write!(
+        cfg_file,
+        r#"{{
+            "host": "file-host",
+            "port": 3000
+        }}"#
+    )
+    .unwrap();
+
+    let cfg_path = cfg_file.path().to_str().unwrap();
+    let config = builder::<MultiConfigArgs>()
+        .unwrap()
+        .cli(|cli| {
+            cli.args([
+                "--cfg",
+                cfg_path,
+                "--cfg.host",
+                "cli-host",
+                "--eval.dataset",
+                "cli-dataset",
+                "run",
+            ])
+        })
+        .build();
+
+    let args = Driver::new(config).run().unwrap();
+
+    assert_eq!(args.cfg.host, "cli-host");
+    assert_eq!(args.cfg.port, 3000);
+    assert_eq!(args.eval.dataset, "cli-dataset");
+    assert_eq!(args.eval.samples, 10);
+    assert!(!args.eval.enabled);
+    assert!(matches!(args.command, MultiConfigCommand::Run));
+}
+
 /// Simpler structure for testing dump output with all sources visible.
 #[derive(Facet, Debug)]
 struct SimpleArgs {
@@ -366,16 +461,18 @@ fn test_layered_dump_shows_all_sources() {
     // This test shows missing required fields with values from multiple sources
     // Demonstrates: nested structs, enums with data, various sources, deep missing fields
     let config_json = r#"{
-        "host": "0.0.0.0",
-        "port": 3000,
-        "max_retries": 5,
-        "logging": {
-            "level": "debug",
-            "format": "Json"
-        },
-        "storage": {
-            "s3": {
-                "region": "eu-west-1"
+        "settings": {
+            "host": "0.0.0.0",
+            "port": 3000,
+            "max_retries": 5,
+            "logging": {
+                "level": "debug",
+                "format": "Json"
+            },
+            "storage": {
+                "s3": {
+                    "region": "eu-west-1"
+                }
             }
         }
     }"#;

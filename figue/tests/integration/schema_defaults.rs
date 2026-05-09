@@ -36,7 +36,9 @@ struct TestConfig {
 fn test_schema_default_vs_missing() {
     // Only set one field, leave the other two unset
     let config_json = r#"{
-        "field_set": "hello"
+        "config": {
+            "field_set": "hello"
+        }
     }"#;
 
     let config = builder::<Args>()
@@ -86,7 +88,7 @@ struct MultiDefaultConfig {
 #[test]
 fn test_schema_multiple_default_types() {
     // Empty config - only required_string should be missing
-    let config_json = r#"{}"#;
+    let config_json = r#"{"config": {}}"#;
 
     let config = builder::<ArgsMultipleDefaults>()
         .unwrap()
