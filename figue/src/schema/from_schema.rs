@@ -699,6 +699,9 @@ fn arg_level_from_fields_with_prefix(
             if inner_special.help.is_some() {
                 special.help = inner_special.help;
             }
+            if inner_special.html_help.is_some() {
+                special.html_help = inner_special.html_help;
+            }
             if inner_special.version.is_some() {
                 special.version = inner_special.version;
             }
@@ -980,9 +983,14 @@ fn arg_level_from_fields_with_prefix(
         let mut field_path = path_prefix.clone();
         field_path.push(effective_name.clone());
 
-        // Detect special fields by ATTRIBUTE, not field name
+        // Detect special fields by ATTRIBUTE, except for built-in html_help,
+        // which is recognized by its field name to keep FigueBuiltins usable
+        // without introducing another public attribute.
         if field.has_attr(Some("args"), "help") {
             special.help = Some(field_path.clone());
+        }
+        if field.has_attr(Some("args"), "html_help") || field.name == "html_help" {
+            special.html_help = Some(field_path.clone());
         }
         if field.has_attr(Some("args"), "version") {
             special.version = Some(field_path.clone());
