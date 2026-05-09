@@ -74,8 +74,8 @@ pub struct Schema {
     /// Top-level arguments: `--verbose`, etc.
     args: ArgLevelSchema,
 
-    /// Optional config, read from config file, environment
-    config: Option<ConfigStructSchema>,
+    /// All config roots, read from config file, environment.
+    configs: Vec<ConfigStructSchema>,
 
     /// Special fields that trigger early exit behavior.
     special: SpecialFields,
@@ -127,6 +127,9 @@ pub struct ArgLevelSchema {
 #[derive(Facet, Debug, Clone)]
 #[facet(skip_all_unless_truthy)]
 pub struct ConfigStructSchema {
+    /// Doc comments for the config root field, if this is a root config.
+    docs: Docs,
+
     /// Name of the field in the parent struct (e.g., "config" for `#[facet(args::config)] config: ServerConfig`).
     /// None for nested structs within config.
     field_name: Option<String>,
@@ -406,8 +409,8 @@ impl Schema {
 
         self.args.visit(visitor, &mut path);
 
-        if let Some(config) = &self.config {
-            path.push("config".to_string());
+        for config in &self.configs {
+            path.push(config.field_name().unwrap_or("config").to_string());
             config.visit(visitor, &mut path);
             path.pop();
         }
@@ -527,9 +530,9 @@ impl Schema {
         &self.args
     }
 
-    /// Get the config struct schema, if any.
-    pub fn config(&self) -> Option<&ConfigStructSchema> {
-        self.config.as_ref()
+    /// Get all config struct schemas.
+    pub fn configs(&self) -> &[ConfigStructSchema] {
+        &self.configs
     }
 
     /// Get the special fields (help, version, completions) if detected.
@@ -679,6 +682,11 @@ impl Subcommand {
 }
 
 impl ConfigStructSchema {
+    /// Get documentation for this config struct.
+    pub fn docs(&self) -> &Docs {
+        &self.docs
+    }
+
     /// Get the field name in the parent struct (e.g., "config").
     pub fn field_name(&self) -> Option<&str> {
         self.field_name.as_deref()
@@ -779,6 +787,27 @@ impl ConfigEnumVariantSchema {
     /// Get the documentation for this variant.
     pub fn docs(&self) -> &Docs {
         &self.docs
+    }
+}
+
+impl ConfigValueSchema {
+    /// Unwrap [Option] wrappers if present, returning the inner schema.
+    pub fn inner_if_option(&self) -> &ConfigValueSchema {
+        match self {
+            ConfigValueSchema::Option { value, .. } => value.inner_if_option(),
+            other => other,
+        }
+    }
+
+    /// Get the type identifier for display purposes.
+    pub fn type_identifier(&self) -> &'static str {
+        match self {
+            ConfigValueSchema::Struct(s) => s.shape().type_identifier,
+            ConfigValueSchema::Vec(v) => v.element().type_identifier(),
+            ConfigValueSchema::Option { value, .. } => value.type_identifier(),
+            ConfigValueSchema::Enum(e) => e.shape().type_identifier,
+            ConfigValueSchema::Leaf(leaf) => leaf.shape.type_identifier,
+        }
     }
 }
 

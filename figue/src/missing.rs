@@ -44,6 +44,7 @@ pub enum MissingFieldKind {
 
 /// A available subcommand name and its doc summary.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct AvailableSubcommand {
     /// CLI name (kebab-case)
     pub name: String,
@@ -176,8 +177,8 @@ pub fn collect_missing_fields(
     // Check CLI args (top-level arguments like --verbose, --output, etc.)
     collect_missing_in_arg_level(obj_map, schema.args(), "", missing);
 
-    // Check config section if present
-    if let Some(config_schema) = schema.config() {
+    // Check config sections if present
+    for config_schema in schema.configs() {
         let env_prefix = config_schema.env_prefix();
 
         // The config value is nested under the config field name

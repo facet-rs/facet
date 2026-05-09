@@ -129,31 +129,36 @@ expression: "facet_json :: to_string_pretty(& value).unwrap()"
     "subcommand_field_name": "command",
     "subcommand_optional": true
   },
-  "config": {
-    "field_name": "config",
-    "env_prefix": "APP",
-    "fields": {
-      "host": {
-        "docs": {},
-        "value": {
-          "Leaf": {
-            "kind": {
-              "Scalar": "String"
+  "configs": [
+    {
+      "docs": {
+        "summary": "Config"
+      },
+      "field_name": "config",
+      "env_prefix": "APP",
+      "fields": {
+        "host": {
+          "docs": {},
+          "value": {
+            "Leaf": {
+              "kind": {
+                "Scalar": "String"
+              }
             }
           }
-        }
-      },
-      "port": {
-        "docs": {},
-        "value": {
-          "Leaf": {
-            "kind": {
-              "Scalar": "Integer"
+        },
+        "port": {
+          "docs": {},
+          "value": {
+            "Leaf": {
+              "kind": {
+                "Scalar": "Integer"
+              }
             }
           }
         }
       }
     }
-  },
+  ],
   "special": {}
 }

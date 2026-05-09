@@ -40,7 +40,7 @@ use std::vec::Vec;
 use facet_reflect::Span;
 use indexmap::IndexMap;
 
-use crate::config_value::{ConfigValue, ConfigValueVisitorMut};
+use crate::config_value::{ConfigValue, ConfigValueVisitorMut, Sourced};
 use crate::driver::LayerOutput;
 use crate::path::Path;
 use crate::provenance::Provenance;
@@ -207,16 +207,64 @@ impl EnvConfigBuilder {
 /// This reads env vars with the configured prefix and builds a ConfigValue tree
 /// under the schema's config field.
 pub fn parse_env(schema: &Schema, env_config: &EnvConfig, source: &dyn EnvSource) -> LayerOutput {
-    // Get the config schema - if there's no config field, we can't parse env vars
-    let Some(config_schema) = schema.config() else {
+    // Get the config schemas - if there are no config fields, we can't parse env vars
+    if schema.configs().is_empty() {
         return parse_env_no_config(env_config, source);
     };
 
+    let mut root = IndexMap::default();
+    let mut unused_keys = Vec::new();
+    let mut diagnostics = Vec::new();
+
+    for config_schema in schema.configs() {
+        let Some(field_name) = config_schema.field_name() else {
+            continue;
+        };
+
+        let mut output = parse_env_config(schema, config_schema, env_config, source);
+        if schema.configs().len() > 1 {
+            for unused_key in &mut output.unused_keys {
+                unused_key.key.insert(0, field_name.to_string());
+            }
+        }
+        unused_keys.extend(output.unused_keys);
+        diagnostics.extend(output.diagnostics);
+
+        if let Some(value) = output.value {
+            root.insert(field_name.to_string(), value);
+        }
+    }
+
+    let mut output = LayerOutput {
+        value: Some(ConfigValue::Object(Sourced::new(root))),
+        unused_keys,
+        diagnostics,
+        source_text: None,
+        config_file_path: None,
+    };
+
+    // Assign spans to env-sourced values and build the virtual source document
+    if let Some(ref mut value) = output.value {
+        let source_text = assign_env_spans(value);
+        if !source_text.is_empty() {
+            output.source_text = Some(source_text);
+        }
+    }
+
+    output
+}
+
+fn parse_env_config(
+    schema: &Schema,
+    config_schema: &ConfigStructSchema,
+    env_config: &EnvConfig,
+    source: &dyn EnvSource,
+) -> LayerOutput {
     // Use explicit prefix from config, or fall back to schema's env_prefix
-    let prefix = if env_config.prefix.is_empty() {
-        config_schema.env_prefix().unwrap_or("")
-    } else {
-        &env_config.prefix
+    let schema_prefix = config_schema.env_prefix().unwrap_or("");
+    let prefix = match (env_config.prefix.is_empty(), schema.configs().len()) {
+        (false, 1) => env_config.prefix.as_str(),
+        _ => schema_prefix,
     };
 
     let prefix_with_sep = format!("{}__", prefix);
@@ -279,17 +327,7 @@ pub fn parse_env(schema: &Schema, env_config: &EnvConfig, source: &dyn EnvSource
     // Second pass: check env aliases (lower priority than prefixed vars)
     check_env_aliases(&mut builder, config_schema, source, &[], &prefixed_paths);
 
-    let mut output = builder.into_output(config_schema.field_name());
-
-    // Assign spans to env-sourced values and build the virtual source document
-    if let Some(ref mut value) = output.value {
-        let source_text = assign_env_spans(value);
-        if !source_text.is_empty() {
-            output.source_text = Some(source_text);
-        }
-    }
-
-    output
+    builder.into_output(None)
 }
 
 /// Recursively check env aliases for all fields in a config struct.

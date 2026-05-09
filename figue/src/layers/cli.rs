@@ -204,9 +204,8 @@ struct ParseContext<'a> {
     /// Stack of parent levels for the adoption agency algorithm.
     /// When parsing a subcommand, parent levels are pushed here so flags can bubble up.
     parent_stack: Vec<ParentLevel<'a>>,
-    /// ValueBuilder for config overrides (--config.foo.bar style).
-    /// Only present if the schema has a config field.
-    config_builder: Option<ValueBuilder<'a>>,
+    /// ValueBuilders for config overrides (--config.foo.bar style), keyed by config root field.
+    config_builders: IndexMap<String, ValueBuilder<'a>, RandomState>,
     /// Config file path captured from `--<config-field-name> <path>`.
     /// E.g., if the config field is named "config", this captures `--config /path/to/file.json`.
     config_file_path: Option<camino::Utf8PathBuf>,
@@ -227,7 +226,15 @@ impl<'a> ParseContext<'a> {
             }
         }
 
-        let config_builder = schema.config().map(ValueBuilder::new);
+        let config_builders = schema
+            .configs()
+            .iter()
+            .filter_map(|config_schema| {
+                config_schema
+                    .field_name()
+                    .map(|name| (name.to_string(), ValueBuilder::new(config_schema)))
+            })
+            .collect();
 
         Self {
             args,
@@ -239,7 +246,7 @@ impl<'a> ParseContext<'a> {
             counted: IndexMap::default(),
             arg_offsets,
             parent_stack: Vec::new(),
-            config_builder,
+            config_builders,
             config_file_path: None,
         }
     }
@@ -326,24 +333,34 @@ impl<'a> ParseContext<'a> {
         };
 
         // Check if this is a config override (e.g., --config.port)
-        if let Some(config_schema) = self.schema.config()
-            && let Some(config_field_name) = config_schema.field_name()
-            && flag_name.starts_with(config_field_name)
-            && flag_name.len() > config_field_name.len()
-            && flag_name.as_bytes()[config_field_name.len()] == b'.'
-        {
-            self.parse_config_override(arg, flag_name, inline_value, config_field_name);
-            return;
+        for config_schema in self.schema.configs() {
+            if let Some(config_field_name) = config_schema.field_name() {
+                let cli_root = config_field_name.to_kebab_case();
+                if flag_name.starts_with(&cli_root)
+                    && flag_name.len() > cli_root.len()
+                    && flag_name.as_bytes()[cli_root.len()] == b'.'
+                {
+                    self.parse_config_override(
+                        arg,
+                        flag_name,
+                        inline_value,
+                        &cli_root,
+                        config_field_name,
+                    );
+                    return;
+                }
+            }
         }
 
         // Check if this is the config file path flag (e.g., --config /path/to/file.json)
         // The flag name must match the config field's effective name (in kebab-case)
-        if let Some(config_schema) = self.schema.config()
-            && let Some(config_field_name) = config_schema.field_name()
-            && flag_name == config_field_name.to_kebab_case()
-        {
-            self.parse_config_file_path(arg, inline_value);
-            return;
+        for config_schema in self.schema.configs() {
+            if let Some(config_field_name) = config_schema.field_name()
+                && flag_name == config_field_name.to_kebab_case()
+            {
+                self.parse_config_file_path(arg, inline_value);
+                return;
+            }
         }
 
         // Look up in schema - Args::get converts schema keys to kebab-case for comparison
@@ -722,10 +739,11 @@ impl<'a> ParseContext<'a> {
         _arg: &str,
         flag_name: &str,
         inline_value: Option<&str>,
+        cli_root: &str,
         config_field_name: &str,
     ) {
         // Extract the path after "config."
-        let path_str = &flag_name[config_field_name.len() + 1..];
+        let path_str = &flag_name[cli_root.len() + 1..];
         let parts: Vec<&str> = path_str.split('.').collect();
 
         // Get the value
@@ -754,8 +772,8 @@ impl<'a> ParseContext<'a> {
         let path: Vec<String> = parts.iter().map(|s| (*s).to_string()).collect();
         let leaf_value = LeafValue::String(value_str.to_string());
 
-        self.config_builder
-            .as_mut()
+        self.config_builders
+            .get_mut(config_field_name)
             .expect("config_builder must exist when parsing config overrides")
             .set(&path, leaf_value, Some(value_span), provenance);
     }
@@ -1095,20 +1113,21 @@ impl<'a> ParseContext<'a> {
         // Merge config builder output if present
         let mut unused_keys = Vec::new();
         let mut diagnostics = self.diagnostics;
+        let multiple_config_roots = self.config_builders.len() > 1;
 
-        if let Some(builder) = self.config_builder
-            && let Some(config_schema) = self.schema.config()
-        {
-            let config_field_name = config_schema.field_name();
-            let builder_output = builder.into_output(None);
+        for (config_field_name, builder) in self.config_builders {
+            let mut builder_output = builder.into_output(None);
 
             // Merge builder's value into result under the config field name
-            if let Some(config_value) = builder_output.value
-                && let Some(name) = config_field_name
-            {
-                self.result.insert(name.to_string(), config_value);
+            if let Some(config_value) = builder_output.value {
+                self.result.insert(config_field_name.clone(), config_value);
             }
 
+            if multiple_config_roots {
+                for unused_key in &mut builder_output.unused_keys {
+                    unused_key.key.insert(0, config_field_name.clone());
+                }
+            }
             unused_keys.extend(builder_output.unused_keys);
             diagnostics.extend(builder_output.diagnostics);
         }

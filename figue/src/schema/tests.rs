@@ -390,7 +390,7 @@ struct ArgsWithFlattenedConfig {
 #[test]
 fn test_config_flatten_schema_builds() {
     let schema = Schema::from_shape(ArgsWithFlattenedConfig::SHAPE).expect("schema should build");
-    let config = schema.config().expect("should have config");
+    let config = schema.configs().first().expect("should have config");
     let fields = config.fields();
 
     // Should have 3 fields: name, log_level, debug (flattened from common)
@@ -434,7 +434,7 @@ struct ArgsWithNestedFlattenConfig {
 fn test_config_nested_flatten_schema_builds() {
     let schema =
         Schema::from_shape(ArgsWithNestedFlattenConfig::SHAPE).expect("schema should build");
-    let config = schema.config().expect("should have config");
+    let config = schema.configs().first().expect("should have config");
     let fields = config.fields();
 
     // Should have 5 fields: app_name + log_level, debug (from common) + host, port (from database)

@@ -107,7 +107,11 @@ pub fn extract_requirements<R: Facet<'static>>(
     let mut extracted_values: ObjectMap = IndexMap::default();
 
     // Get env prefix from schema if available
-    let env_prefix = schema.config().and_then(|c| c.env_prefix());
+    let env_prefix = if schema.configs().len() == 1 {
+        schema.configs()[0].env_prefix()
+    } else {
+        None
+    };
 
     for field in struct_type.fields {
         let field_name = field.name;

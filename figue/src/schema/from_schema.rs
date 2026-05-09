@@ -30,11 +30,12 @@ impl Schema {
         };
 
         let ctx_root = SchemaErrorContext::root(shape);
-        let config_field = discover_config_field(struct_type.fields, &ctx_root, false)?;
+        let config_fields = discover_config_fields(struct_type.fields, &ctx_root, false)?;
 
         let (args, special) = arg_level_from_fields_with_special(struct_type.fields, &ctx_root)?;
 
-        let config = if let Some((field, field_ctx)) = config_field {
+        let mut configs = Vec::new();
+        for (field, field_ctx) in config_fields {
             let shape = field.shape();
             let config_shape = match shape.def {
                 Def::Option(opt) => opt.t,
@@ -42,23 +43,21 @@ impl Schema {
             };
             // Extract env_prefix from the config field's attributes
             let env_prefix = extract_env_prefix(field);
-            Some(config_struct_schema_from_shape(
+            configs.push(config_struct_schema_from_shape(
                 config_shape,
                 &field_ctx,
+                docs_from_lines(field.doc),
                 Some(field.effective_name().to_string()),
                 env_prefix,
-            )?)
-        } else {
-            None
-        };
-
+            )?);
+        }
         // Extract docs from the top-level shape
         let docs = docs_from_lines(shape.doc);
 
         Ok(Schema {
             docs,
             args,
-            config,
+            configs,
             special,
         })
     }
@@ -86,12 +85,12 @@ fn extract_env_prefix(field: &Field) -> Option<String> {
     }
 }
 
-fn discover_config_field(
+fn discover_config_fields(
     fields: &'static [Field],
     ctx: &SchemaErrorContext,
     inside_subcommand: bool,
-) -> Result<Option<(&'static Field, SchemaErrorContext)>, SchemaError> {
-    let mut config_field: Option<(&'static Field, SchemaErrorContext)> = None;
+) -> Result<Vec<(&'static Field, SchemaErrorContext)>, SchemaError> {
+    let mut config_fields = Vec::new();
 
     for field in fields {
         let field_ctx = ctx.with_field(field.name);
@@ -105,16 +104,7 @@ fn discover_config_field(
                 .with_primary_label("place this config field on the outermost args struct"));
             }
 
-            if let Some((_, first_ctx)) = &config_field {
-                return Err(SchemaError::new(
-                    first_ctx.clone(),
-                    "only one field may be marked with #[facet(args::config)]",
-                )
-                .with_primary_label("first marked here")
-                .with_label(field_ctx, "also marked here"));
-            }
-
-            config_field = Some((field, field_ctx));
+            config_fields.push((field, field_ctx));
             continue;
         }
 
@@ -137,19 +127,11 @@ fn discover_config_field(
                 ));
             };
 
-            if let Some((inner_field, inner_ctx)) =
-                discover_config_field(struct_type.fields, &field_ctx, inside_subcommand)?
-            {
-                if let Some((_, first_ctx)) = &config_field {
-                    return Err(SchemaError::new(
-                        first_ctx.clone(),
-                        "only one field may be marked with #[facet(args::config)]",
-                    )
-                    .with_primary_label("first marked here")
-                    .with_label(inner_ctx, "also marked here"));
-                }
-                config_field = Some((inner_field, inner_ctx));
-            }
+            config_fields.extend(discover_config_fields(
+                struct_type.fields,
+                &field_ctx,
+                inside_subcommand,
+            )?);
         }
 
         if field.has_attr(Some("args"), "subcommand") {
@@ -169,12 +151,12 @@ fn discover_config_field(
                 let variant_ctx =
                     SchemaErrorContext::root(enum_shape).with_variant(variant_cli_name(variant));
                 let variant_fields = variant_fields_for_schema(variant);
-                discover_config_field(variant_fields, &variant_ctx, true)?;
+                discover_config_fields(variant_fields, &variant_ctx, true)?;
             }
         }
     }
 
-    Ok(config_field)
+    Ok(config_fields)
 }
 
 /// Extract all env_alias values from a field's `#[facet(args::env_alias = "...")]` attributes.
@@ -361,7 +343,7 @@ fn value_schema_from_shape(
         }),
         _ => match &shape.ty {
             Type::User(UserType::Struct(_)) => Ok(ValueSchema::Struct {
-                fields: config_struct_schema_from_shape(shape, ctx, None, None)?,
+                fields: config_struct_schema_from_shape(shape, ctx, Docs::default(), None, None)?,
                 shape,
             }),
             _ => Ok(ValueSchema::Leaf(leaf_schema_from_shape(shape, ctx)?)),
@@ -384,7 +366,7 @@ fn config_value_schema_from_shape(
         })),
         _ => match &shape.ty {
             Type::User(UserType::Struct(_)) => Ok(ConfigValueSchema::Struct(
-                config_struct_schema_from_shape(shape, ctx, None, None)?,
+                config_struct_schema_from_shape(shape, ctx, Docs::default(), None, None)?,
             )),
             Type::User(UserType::Enum(enum_type)) => Ok(ConfigValueSchema::Enum(
                 config_enum_schema_from_shape(shape, *enum_type, ctx)?,
@@ -442,15 +424,25 @@ fn config_enum_schema_from_shape(
 fn config_struct_schema_from_shape(
     shape: &'static Shape,
     ctx: &SchemaErrorContext,
+    docs: Docs,
     field_name: Option<String>,
     env_prefix: Option<String>,
 ) -> Result<ConfigStructSchema, SchemaError> {
-    config_struct_schema_from_shape_inner(shape, ctx, field_name, env_prefix, Vec::new(), false)
+    config_struct_schema_from_shape_inner(
+        shape,
+        ctx,
+        docs,
+        field_name,
+        env_prefix,
+        Vec::new(),
+        false,
+    )
 }
 
 fn config_struct_schema_from_shape_inner(
     shape: &'static Shape,
     ctx: &SchemaErrorContext,
+    docs: Docs,
     field_name: Option<String>,
     env_prefix: Option<String>,
     path_prefix: Vec<String>,
@@ -501,6 +493,7 @@ fn config_struct_schema_from_shape_inner(
             let inner = config_struct_schema_from_shape_inner(
                 inner_shape,
                 &field_ctx,
+                Docs::default(),
                 None,
                 None,
                 new_prefix,
@@ -556,6 +549,7 @@ fn config_struct_schema_from_shape_inner(
     check_env_alias_conflicts(&fields_map, ctx)?;
 
     Ok(ConfigStructSchema {
+        docs,
         field_name,
         env_prefix,
         shape,

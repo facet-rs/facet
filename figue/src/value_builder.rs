@@ -749,7 +749,7 @@ mod tests {
     #[test]
     fn test_simple_set() {
         let schema = Schema::from_shape(ArgsWithSimpleConfig::SHAPE).unwrap();
-        let config_schema = schema.config().unwrap();
+        let config_schema = schema.configs().first().unwrap();
         let mut builder = ValueBuilder::new(config_schema);
 
         let success = builder.set(
@@ -768,7 +768,7 @@ mod tests {
     #[test]
     fn test_invalid_path() {
         let schema = Schema::from_shape(ArgsWithSimpleConfig::SHAPE).unwrap();
-        let config_schema = schema.config().unwrap();
+        let config_schema = schema.configs().first().unwrap();
         let mut builder = ValueBuilder::new(config_schema);
 
         let success = builder.set(
@@ -784,7 +784,7 @@ mod tests {
     #[test]
     fn test_enum_variant_path() {
         let schema = Schema::from_shape(ArgsWithEnumConfig::SHAPE).unwrap();
-        let config_schema = schema.config().unwrap();
+        let config_schema = schema.configs().first().unwrap();
         let mut builder = ValueBuilder::new(config_schema);
 
         let prov_bucket = Provenance::env("TEST__STORAGE__S3__BUCKET", "my-bucket");
@@ -813,7 +813,7 @@ mod tests {
     #[test]
     fn test_enum_variant_conflict() {
         let schema = Schema::from_shape(ArgsWithEnumConfig::SHAPE).unwrap();
-        let config_schema = schema.config().unwrap();
+        let config_schema = schema.configs().first().unwrap();
         let mut builder = ValueBuilder::new(config_schema);
 
         // Set S3 variant
@@ -841,7 +841,7 @@ mod tests {
     #[test]
     fn test_has_value_at() {
         let schema = Schema::from_shape(ArgsWithSimpleConfig::SHAPE).unwrap();
-        let config_schema = schema.config().unwrap();
+        let config_schema = schema.configs().first().unwrap();
         let mut builder = ValueBuilder::new(config_schema);
 
         assert!(!builder.has_value_at(&path(&["port"])));
