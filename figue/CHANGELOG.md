@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.0](https://github.com/bearcove/figue/compare/figue-v3.0.1...figue-v4.0.0) - 2026-05-09
+
+### Other
+
+- Add interactive HTML help ([#93](https://github.com/bearcove/figue/pull/93))
+- Add built-in JSON Schema export ([#91](https://github.com/bearcove/figue/pull/91))
+
 ## [3.0.1](https://github.com/bearcove/figue/compare/figue-v3.0.0...figue-v3.0.1) - 2026-05-09
 
 ### Other
