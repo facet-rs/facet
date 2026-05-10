@@ -1331,8 +1331,13 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
     };
 
     // Static declaration for release builds (pre-evaluates SHAPE)
-    let static_decl =
-        crate::derive::generate_static_decl(enum_name, &facet_crate, has_type_or_const_generics);
+    let bgp_tokens = quote! { #bgp_for_vtable };
+    let static_decl = crate::derive::generate_static_decl(
+        enum_name,
+        &bgp_tokens,
+        &facet_crate,
+        has_type_or_const_generics,
+    );
 
     // Generate phantom use block for IDE hover support on attribute names.
     // This links attribute spans to facet::builtin::Attr variants.

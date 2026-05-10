@@ -91,7 +91,7 @@ impl<'a> TraitSources<'a> {
 ///
 /// This is used when generating helper function items inside const contexts,
 /// where referencing outer lifetime parameters directly is not allowed.
-fn lifetimes_to_static(tokens: &TokenStream) -> TokenStream {
+pub(crate) fn lifetimes_to_static(tokens: &TokenStream) -> TokenStream {
     fn rewrite(stream: TokenStream) -> TokenStream {
         let mut out = TokenStream::new();
         let mut iter = stream.into_iter().peekable();
@@ -2514,8 +2514,10 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     };
 
     // Static declaration for release builds (pre-evaluates SHAPE)
+    let bgp_tokens = quote! { #bgp_for_vtable };
     let static_decl = crate::derive::generate_static_decl(
         &struct_name_ident,
+        &bgp_tokens,
         &facet_crate,
         has_type_or_const_generics,
     );
