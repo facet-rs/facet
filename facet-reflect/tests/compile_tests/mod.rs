@@ -129,10 +129,14 @@ facet-reflect = {{ path = {:?} }}
         println!("  ✓ Compilation failed as expected");
     }
 
-    // Check for expected error messages
+    // Check for expected error messages.
+    // Each string may contain " OR " to specify alternatives (one must match).
+    // Across array elements, ALL must match (AND semantics).
     let mut missing_errors = Vec::new();
     for &expected_error in test.expected_errors {
-        if !stderr_clean.contains(expected_error) {
+        let alternatives: Vec<&str> = expected_error.split(" OR ").collect();
+        let found = alternatives.iter().any(|alt| stderr_clean.contains(alt));
+        if !found {
             missing_errors.push(expected_error);
         } else {
             println!("  ✓ Found expected error: '{expected_error}'");
@@ -209,7 +213,9 @@ fn test_partial_contravariant_shrinking() {
     let test = CompilationTest {
         name: "contravariant_shrinking",
         source: include_str!("fixtures/partial_contravariant_shrinking.rs"),
-        expected_errors: &["error[E0521]: borrowed data escapes outside of function"],
+        expected_errors: &[
+            "error[E0521]: borrowed data escapes outside of function OR error: lifetime may not live long enough",
+        ],
     };
 
     run_compilation_test(&test);
@@ -221,7 +227,9 @@ fn test_partial_invariant_shrinking() {
     let test = CompilationTest {
         name: "invariant_shrinking",
         source: include_str!("fixtures/partial_invariant_shrinking.rs"),
-        expected_errors: &["error[E0521]: borrowed data escapes outside of function"],
+        expected_errors: &[
+            "error[E0521]: borrowed data escapes outside of function OR error: lifetime may not live long enough",
+        ],
     };
 
     run_compilation_test(&test);
@@ -233,7 +241,9 @@ fn test_peek_covariant_growing() {
     let test = CompilationTest {
         name: "covariant_growing",
         source: include_str!("fixtures/peek_covariant_growing.rs"),
-        expected_errors: &["error[E0521]: borrowed data escapes outside of function"],
+        expected_errors: &[
+            "error[E0521]: borrowed data escapes outside of function OR error: lifetime may not live long enough",
+        ],
     };
 
     run_compilation_test(&test);
@@ -245,7 +255,9 @@ fn test_peek_invariant_growing() {
     let test = CompilationTest {
         name: "invariant_growing",
         source: include_str!("fixtures/peek_invariant_growing.rs"),
-        expected_errors: &["error[E0521]: borrowed data escapes outside of function"],
+        expected_errors: &[
+            "error[E0521]: borrowed data escapes outside of function OR error: lifetime may not live long enough",
+        ],
     };
 
     run_compilation_test(&test);
@@ -259,9 +271,11 @@ fn test_peek_contravariant_shrinking() {
         source: include_str!("fixtures/peek_contravariant_shrinking.rs"),
         // Depending on Rust version / platform, error can be either:
         // - E0521 (borrowed data escapes) - the original invariance error
-        // - E0515 (cannot return value referencing temporary) - covariant error
+        // - "lifetime may not live long enough" - nightly/later Rust
         // Either one is acceptable as long as the code fails to compile.
-        expected_errors: &["error[E0521]: borrowed data escapes outside of function"],
+        expected_errors: &[
+            "error[E0521]: borrowed data escapes outside of function OR error: lifetime may not live long enough",
+        ],
     };
 
     run_compilation_test(&test);
@@ -273,7 +287,9 @@ fn test_peek_invariant_shrinking() {
     let test = CompilationTest {
         name: "invariant_shrinking",
         source: include_str!("fixtures/peek_invariant_shrinking.rs"),
-        expected_errors: &["error[E0521]: borrowed data escapes outside of function"],
+        expected_errors: &[
+            "error[E0521]: borrowed data escapes outside of function OR error: lifetime may not live long enough",
+        ],
     };
 
     run_compilation_test(&test);
@@ -304,7 +320,9 @@ fn test_peek_fn_ptr_ub_exploit() {
     let test = CompilationTest {
         name: "fn_ptr_ub_exploit",
         source: include_str!("fixtures/fn_ptr_ub_exploit.rs"),
-        expected_errors: &["error[E0521]: borrowed data escapes outside of function"],
+        expected_errors: &[
+            "error[E0521]: borrowed data escapes outside of function OR error: lifetime may not live long enough",
+        ],
     };
 
     run_compilation_test(&test);
