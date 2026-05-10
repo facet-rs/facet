@@ -43,13 +43,18 @@ fn flatten_transparent_groups(input: TokenStream) -> TokenStream {
 
 /// Generate a static declaration that pre-evaluates `<T as Facet>::SHAPE`.
 /// Only emitted in release builds to avoid slowing down debug compile times.
-/// Skipped for generic types since we can't create a static for an unmonomorphized type.
+///
+/// Types with only lifetime generics (like `Holder<'a>`) get `'static` lifetimes
+/// substituted, since `SHAPE` is always `&'static Shape` regardless of the lifetime
+/// parameter. Types with type or const generics are skipped since those can't be
+/// monomorphized without knowing the concrete types.
 pub(crate) fn generate_static_decl(
     type_name: &Ident,
+    bgp_tokens: &TokenStream,
     facet_crate: &TokenStream,
     has_type_or_const_generics: bool,
 ) -> TokenStream {
-    // Can't generate a static for generic types - the type parameters aren't concrete
+    // Can't generate a static for types with type or const generics
     if has_type_or_const_generics {
         return quote! {};
     }
@@ -59,9 +64,12 @@ pub(crate) fn generate_static_decl(
 
     let static_name_ident = quote::format_ident!("{}_SHAPE", screaming_snake_name);
 
+    // Replace any lifetimes with 'static so we can generate a concrete monomorphic static
+    let bgp_static = crate::process_struct::lifetimes_to_static(bgp_tokens);
+
     quote! {
         #[cfg(not(debug_assertions))]
-        static #static_name_ident: &'static #facet_crate::Shape = <#type_name as #facet_crate::Facet>::SHAPE;
+        static #static_name_ident: &'static #facet_crate::Shape = <#type_name #bgp_static as #facet_crate::Facet #bgp_static>::SHAPE;
     }
 }
 
