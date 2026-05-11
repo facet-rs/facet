@@ -177,7 +177,7 @@ fn generate_value_witnesses(prefix: &str, index: usize, shape: &'static Shape) -
     let ty = swift_type_base(shape);
     let witness = witness_prefix(prefix, index);
     format!(
-        "private func {witness}_destroy(_ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?) {{\n    guard let value else {{ return }}\n    value.assumingMemoryBound(to: {ty}.self).deinitialize(count: 1)\n}}\n\nprivate func {witness}_copyInit(_ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?) -> VoxSwiftStatus {{\n    guard let dst, let src else {{ return VoxSwiftStatusBadABI }}\n    dst.assumingMemoryBound(to: {ty}.self).initialize(to: src.assumingMemoryBound(to: {ty}.self).pointee)\n    return VoxSwiftStatusOK\n}}\n\nprivate func {witness}_takeInit(_ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?) -> VoxSwiftStatus {{\n    guard let dst, let src else {{ return VoxSwiftStatusBadABI }}\n    let srcTyped = src.assumingMemoryBound(to: {ty}.self)\n    dst.assumingMemoryBound(to: {ty}.self).initialize(to: srcTyped.pointee)\n    srcTyped.deinitialize(count: 1)\n    return VoxSwiftStatusOK\n}}\n\n"
+        "nonisolated private func {witness}_destroy(_ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?) {{\n    guard let value else {{ return }}\n    value.assumingMemoryBound(to: {ty}.self).deinitialize(count: 1)\n}}\n\nnonisolated private func {witness}_copyInit(_ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?) -> VoxSwiftStatus {{\n    guard let dst, let src else {{ return VoxSwiftStatusBadABI }}\n    dst.assumingMemoryBound(to: {ty}.self).initialize(to: src.assumingMemoryBound(to: {ty}.self).pointee)\n    return VoxSwiftStatusOK\n}}\n\nnonisolated private func {witness}_takeInit(_ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?) -> VoxSwiftStatus {{\n    guard let dst, let src else {{ return VoxSwiftStatusBadABI }}\n    let srcTyped = src.assumingMemoryBound(to: {ty}.self)\n    dst.assumingMemoryBound(to: {ty}.self).initialize(to: srcTyped.pointee)\n    srcTyped.deinitialize(count: 1)\n    return VoxSwiftStatusOK\n}}\n\n"
     )
 }
 
@@ -194,7 +194,7 @@ fn generate_enum_witnesses(prefix: &str, index: usize, shape: &'static Shape) ->
     let mut out = String::new();
 
     out.push_str(&format!(
-        "private func {witness}_tag(_ value: UnsafeRawPointer?, _ context: UnsafeRawPointer?) -> UInt32 {{\n"
+        "nonisolated private func {witness}_tag(_ value: UnsafeRawPointer?, _ context: UnsafeRawPointer?) -> UInt32 {{\n"
     ));
     out.push_str("    guard let value else { return UInt32.max }\n");
     out.push_str(&format!(
@@ -210,7 +210,7 @@ fn generate_enum_witnesses(prefix: &str, index: usize, shape: &'static Shape) ->
     out.push_str("}\n\n");
 
     out.push_str(&format!(
-        "private func {witness}_project(_ value: UnsafeRawPointer?, _ variantIndex: UInt32, _ visitorContext: UnsafeMutableRawPointer?, _ visitor: VoxSwiftEnumFieldVisitorFn?, _ context: UnsafeRawPointer?) -> VoxSwiftStatus {{\n"
+        "nonisolated private func {witness}_project(_ value: UnsafeRawPointer?, _ variantIndex: UInt32, _ visitorContext: UnsafeMutableRawPointer?, _ visitor: VoxSwiftEnumFieldVisitorFn?, _ context: UnsafeRawPointer?) -> VoxSwiftStatus {{\n"
     ));
     let needs_visitor = variants
         .iter()
@@ -235,7 +235,7 @@ fn generate_enum_witnesses(prefix: &str, index: usize, shape: &'static Shape) ->
     out.push_str("}\n\n");
 
     out.push_str(&format!(
-        "private func {witness}_inject(_ dst: UnsafeMutableRawPointer?, _ variantIndex: UInt32, _ fieldValues: UnsafePointer<UnsafeRawPointer?>?, _ fieldCount: Int, _ context: UnsafeRawPointer?) -> VoxSwiftStatus {{\n"
+        "nonisolated private func {witness}_inject(_ dst: UnsafeMutableRawPointer?, _ variantIndex: UInt32, _ fieldValues: UnsafePointer<UnsafeRawPointer?>?, _ fieldCount: Int, _ context: UnsafeRawPointer?) -> VoxSwiftStatus {{\n"
     ));
     out.push_str("    guard let dst else { return VoxSwiftStatusBadABI }\n");
     out.push_str("    switch variantIndex {\n");
