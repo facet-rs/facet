@@ -211,3 +211,18 @@ fn test_derive_first_then_other_attrs() {
     assert_eq!(config.port, 8080);
     assert_eq!(config.host, "");
 }
+
+/// Repro for bug: `#[facet(default = "literal")]` on a String field
+/// The literal `"ha"` is a `&str`, not a `String`, so it should be auto-converted.
+#[test]
+fn test_string_literal_default() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(derive(Default))]
+    pub struct Blah {
+        #[facet(default = "ha")]
+        field: String,
+    }
+
+    let blah = Blah::default();
+    assert_eq!(blah.field, "ha");
+}

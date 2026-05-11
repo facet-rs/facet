@@ -1284,7 +1284,7 @@ fn emit_doc(ctx: &EvalContext<'_>, output: &mut TokenStream) {
 /// `@field_default_expr` - emit the default expression for the current field
 ///
 /// Checks for:
-/// - `#[facet(default = literal)]` (builtin) → `literal` (direct value)
+/// - `#[facet(default = literal)]` (builtin) → `literal.try_into().expect(...)` (auto-converts via TryFrom)
 /// - `#[facet(default)]` (builtin, no value) → `::core::default::Default::default()`
 /// - `#[facet(default::value = literal)]` → `literal.into()`
 /// - `#[facet(default::func = "path")]` → `path()`
@@ -1306,8 +1306,13 @@ fn emit_field_default_expr(ctx: &EvalContext<'_>, output: &mut TokenStream) {
             // #[facet(default)] without value - use Default::default()
             output.extend(quote! { ::core::default::Default::default() });
         } else {
-            // #[facet(default = value)] - emit the value directly
-            output.extend(quote! { #args });
+            // #[facet(default = value)] - emit the value with try_into for auto-conversion.
+            // .into() doesn't work here because From isn't implemented for lossy numeric
+            // conversions (e.g. From<i32> for usize). TryFrom covers both infallible
+            // conversions (via blanket impl from From) and fallible ones (e.g. i32→usize).
+            output.extend(quote! {
+                (#args).try_into().expect("facet-default: failed to convert default value to field type")
+            });
         }
         return;
     }
@@ -1367,8 +1372,13 @@ fn field_default_tokens(field: &facet_macro_parse::PStructField) -> TokenStream 
             // #[facet(default)] without value - use Default::default()
             return quote! { ::core::default::Default::default() };
         } else {
-            // #[facet(default = value)] - emit the value directly
-            return quote! { #args };
+            // #[facet(default = value)] - emit the value with try_into for auto-conversion.
+            // .into() doesn't work here because From isn't implemented for lossy numeric
+            // conversions (e.g. From<i32> for usize). TryFrom covers both infallible
+            // conversions (via blanket impl from From) and fallible ones (e.g. i32→usize).
+            return quote! {
+                (#args).try_into().expect("facet-default: failed to convert default value to field type")
+            };
         }
     }
 
