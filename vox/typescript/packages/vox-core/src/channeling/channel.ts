@@ -84,7 +84,8 @@ export function createChannel<T>(): Channel<T> {
 export class ChannelSender<T> {
   constructor(
     private channel: Channel<T>,
-    private readonly _keepaliveOwner?: object,
+    // @ts-expect-error unused
+    private _keepaliveOwner?: object,
   ) {}
 
   send(value: T): boolean {
@@ -102,7 +103,8 @@ export class ChannelSender<T> {
 export class ChannelReceiver<T> {
   constructor(
     private channel: Channel<T>,
-    private readonly _keepaliveOwner?: object,
+    // @ts-expect-error unused
+    private _keepaliveOwner?: object,
     private readonly onRecv?: () => void,
   ) {}
 

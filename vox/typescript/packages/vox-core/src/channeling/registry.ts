@@ -178,7 +178,8 @@ export class OutgoingSender {
     private _channelId: ChannelId,
     private state: OutgoingState,
     private readonly notifyOutgoing?: () => void,
-    private readonly _keepaliveOwner?: object,
+    // @ts-expect-error unused
+    private _keepaliveOwner?: object,
   ) {}
 
   get channelId(): ChannelId {

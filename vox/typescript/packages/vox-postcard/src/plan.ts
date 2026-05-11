@@ -12,7 +12,7 @@ import type {
   FieldSchema,
   VariantSchema,
   VariantPayload,
-  SchemaHash,
+  // SchemaHash,
 } from "./schema.ts";
 import { resolveTypeRef } from "./schema.ts";
 

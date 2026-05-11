@@ -29,7 +29,7 @@ import type {
   VariantSchema,
 } from "./schema.ts";
 import { resolveTypeRef } from "./schema.ts";
-import type { TranslationPlan, FieldOp } from "./plan.ts";
+import type { TranslationPlan } from "./plan.ts";
 
 class BufWriter {
   private buf: Uint8Array;
@@ -117,6 +117,7 @@ function encodeChar(value: string, writer: BufWriter): void {
   writer.writeBytes(bytes);
 }
 
+// @ts-expect-error unused
 function decodeChar(
   buf: Uint8Array,
   offset: number,

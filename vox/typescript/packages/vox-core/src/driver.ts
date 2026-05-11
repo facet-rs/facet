@@ -26,7 +26,7 @@ import { metadataOperationId } from "./retry.ts";
 import { type ServerCallOutcome, type ServerMiddleware } from "./server_middleware.ts";
 import type { ConnectionHandle, IncomingCall } from "./session.ts";
 import { voxLogger } from "./logger.ts";
-import { localSchemaSetForMethod, SchemaTranslationError } from "./schema_tracker.ts";
+import { localSchemaSetForMethod } from "./schema_tracker.ts";
 
 export interface Dispatcher {
   getDescriptor(): ServiceDescriptor;

@@ -10,8 +10,8 @@ import {
   type Message,
   type Metadata,
   type MetadataEntry,
-  parityEven,
-  parityOdd,
+ // parityEven,
+ // parityOdd,
   messageAccept,
   messageConnect,
   messageGoodbye,
@@ -38,14 +38,14 @@ import type { Conduit } from "./conduit.ts";
 import { AsyncQueue } from "./internal/async_queue.ts";
 import { deferred, type Deferred } from "./internal/deferred.ts";
 import {
-  appendRetrySupportMetadata,
+ // appendRetrySupportMetadata,
   ensureOperationId,
-  metadataSupportsRetry,
+ // metadataSupportsRetry,
 } from "./retry.ts";
-import {
-  appendSessionResumeKeyMetadata,
-  metadataSessionResumeKey,
-} from "./session_resume.ts";
+// import {
+//   appendSessionResumeKeyMetadata,
+//   metadataSessionResumeKey,
+// } from "./session_resume.ts";
 import {
   firstIdForParity,
   oppositeParity,
@@ -60,7 +60,7 @@ import {
   SchemaSendTracker,
 } from "./schema_tracker.ts";
 import type { Link, LinkSource } from "./link.ts";
-import { singleLinkSource } from "./link.ts";
+// import { singleLinkSource } from "./link.ts";
 import {
   acceptTransportMode,
   requestTransportMode,
@@ -238,6 +238,7 @@ function isLinkSource(value: SessionTransport): value is LinkSource {
   return typeof (value as LinkSource).nextLink === "function";
 }
 
+// @ts-expect-error unused
 function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
   if (left.length !== right.length) {
     return false;
@@ -1597,6 +1598,7 @@ class ConnectionHandleCaller implements Caller {
 export class Session {
   private constructor(private readonly core: SessionCore) {}
 
+  // @ts-expect-error unused
   private resumeKey(): Uint8Array | null {
     return this.core.sessionResumeKeyValue();
   }
@@ -1643,6 +1645,7 @@ export class Session {
   }
 }
 
+// @ts-expect-error unused
 class PrefetchedConduit implements Conduit<Message> {
   private first: Message | null;
 
@@ -1675,6 +1678,7 @@ class PrefetchedConduit implements Conduit<Message> {
   }
 }
 
+// @ts-expect-error unused
 function randomSessionResumeKey(): Uint8Array {
   const bytes = new Uint8Array(16);
   const cryptoApi = globalThis.crypto;

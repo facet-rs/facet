@@ -13,7 +13,7 @@ import {
   resolveTypeRef,
   type SchemaRegistry,
   type TypeRef,
-  type SchemaKind,
+  // type SchemaKind,
   type VariantPayload,
 } from "@bearcove/vox-postcard";
 
