@@ -773,11 +773,6 @@ fn generate_dispatch_arm(
             #args_let = match deser_result {
                 Ok(v) => v,
                 Err(e) => {
-                    ::std::eprintln!(
-                        "[rpc] dispatch args decode failed: method={:?} error={}",
-                        method_id,
-                        e
-                    );
                     reply
                         .send_typed_error::<#ok_ty_dispatch, ::core::convert::Infallible>(
                             #vox::VoxError::<::core::convert::Infallible>::InvalidPayload(e.to_string())

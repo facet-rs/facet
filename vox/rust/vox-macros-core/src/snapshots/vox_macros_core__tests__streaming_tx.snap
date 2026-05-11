@@ -133,11 +133,6 @@ where
             let args: (i32, Tx<i32>) = match deser_result {
                 Ok(v) => v,
                 Err(e) => {
-                    ::std::eprintln!(
-                        "[rpc] dispatch args decode failed: method={:?} error={}",
-                        method_id,
-                        e
-                    );
                     reply
                         .send_typed_error::<i32, ::core::convert::Infallible>(::vox::VoxError::<
                             ::core::convert::Infallible,

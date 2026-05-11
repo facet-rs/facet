@@ -155,11 +155,6 @@ where
             let args: (String,) = match deser_result {
                 Ok(v) => v,
                 Err(e) => {
-                    ::std::eprintln!(
-                        "[rpc] dispatch args decode failed: method={:?} error={}",
-                        method_id,
-                        e
-                    );
                     reply
                         .send_typed_error::<&'static str, ::core::convert::Infallible>(
                             ::vox::VoxError::<::core::convert::Infallible>::InvalidPayload(
@@ -214,11 +209,6 @@ where
             let args: () = match deser_result {
                 Ok(v) => v,
                 Err(e) => {
-                    ::std::eprintln!(
-                        "[rpc] dispatch args decode failed: method={:?} error={}",
-                        method_id,
-                        e
-                    );
                     reply
                         .send_typed_error::<u64, ::core::convert::Infallible>(::vox::VoxError::<
                             ::core::convert::Infallible,
