@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.46.2](https://github.com/facet-rs/facet/compare/facet-macros-impl-v0.46.1...facet-macros-impl-v0.46.2) - 2026-05-11
+
+### Fixed
+
+- *(facet-default)* auto-convert default values via TryFrom
+
 ## [0.46.1](https://github.com/facet-rs/facet/compare/facet-core-v0.46.0...facet-core-v0.46.1) - 2026-05-10
 
 ### Other
