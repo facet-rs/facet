@@ -5,6 +5,7 @@ pub mod pb {
 
 use facet::Facet;
 use spec_proto::{GnarlyAttr, GnarlyEntry, GnarlyKind, GnarlyPayload};
+use vox_jit::abi::{BorrowedDecodeFn, OwnedDecodeFn};
 use vox_jit::cache::{CompiledDecoder, CompiledEncoder};
 use vox_jit::cal::BorrowMode;
 
@@ -34,9 +35,7 @@ where
 }
 
 /// Resolve a pre-compiled JIT decoder for `T`. The returned reference has
-/// `'static` lifetime (entries live for the process lifetime). Bench code
-/// holds this outside the timed loop so the in-loop work is just an indirect
-/// function call — comparable to serde's monomorphized `from_bytes`.
+/// `'static` lifetime (entries live for the process lifetime).
 pub fn prepare_jit_decoder<T: Facet<'static>>(
     plan: &vox_postcard::plan::TranslationPlan,
     registry: &vox_types::SchemaRegistry,
@@ -56,6 +55,29 @@ pub fn prepare_jit_decoder_borrowed<T: Facet<'static>>(
         .expect("JIT borrowed decoder unsupported for shape")
 }
 
+/// Resolve the raw owned-mode decode function pointer for `T`. Bench code
+/// holds this outside the timed loop so the in-loop work is just an
+/// indirect call — comparable to serde's monomorphized `from_bytes`. No
+/// per-call `OnceLock` acquire-load.
+pub fn prepare_jit_decoder_owned_fn<T: Facet<'static>>(
+    plan: &vox_postcard::plan::TranslationPlan,
+    registry: &vox_types::SchemaRegistry,
+) -> OwnedDecodeFn {
+    prepare_jit_decoder::<T>(plan, registry)
+        .owned_fn_ptr()
+        .expect("owned decode_fn missing")
+}
+
+/// Same as `prepare_jit_decoder_owned_fn` but for borrowed-mode decoders.
+pub fn prepare_jit_decoder_borrowed_fn<T: Facet<'static>>(
+    plan: &vox_postcard::plan::TranslationPlan,
+    registry: &vox_types::SchemaRegistry,
+) -> BorrowedDecodeFn {
+    prepare_jit_decoder_borrowed::<T>(plan, registry)
+        .borrowed_fn_ptr()
+        .expect("borrowed decode_fn missing")
+}
+
 /// Resolve a pre-compiled JIT encoder for `T`.
 pub fn prepare_jit_encoder<T: Facet<'static>>() -> &'static CompiledEncoder {
     vox_jit::global_runtime()
@@ -66,8 +88,8 @@ pub fn prepare_jit_encoder<T: Facet<'static>>() -> &'static CompiledEncoder {
 /// Decode `bytes` via a pre-resolved JIT decoder. Skips the global cache
 /// lookup that `jit_decode` performs on every call — fair comparison vs
 /// `postcard::from_bytes` which has zero per-call dispatch overhead.
-pub fn jit_decode_pre<T: Facet<'static>>(decoder: &'static CompiledDecoder, bytes: &[u8]) -> T {
-    vox_jit::decode_owned_with::<T>(decoder, bytes).expect("JIT decode failed")
+pub fn jit_decode_pre<T: Facet<'static>>(decode_fn: OwnedDecodeFn, bytes: &[u8]) -> T {
+    vox_jit::decode_owned_with::<T>(decode_fn, bytes).expect("JIT decode failed")
 }
 
 /// Encode `value` via a pre-resolved JIT encoder.

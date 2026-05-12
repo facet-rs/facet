@@ -162,6 +162,14 @@ def write_csv(rows, out) -> None:
         w.writerow([r[f] for f in CSV_FIELDS])
 
 
+def _classify_op(variant: str) -> str | None:
+    if "encode" in variant:
+        return "encode"
+    if "decode" in variant:
+        return "decode"
+    return None
+
+
 def plot(rows, path: Path) -> None:
     try:
         import matplotlib
@@ -173,11 +181,12 @@ def plot(rows, path: Path) -> None:
         sys.exit(2)
     from collections import defaultdict
 
-    # Components after the harness root: codec / <shape> / <variant> [/ <arg>]
-    groups: dict[str, list[tuple[str, str | None, float]]] = defaultdict(list)
+    # groups[shape][op] = [(variant, arg, median_ns), ...]
+    groups: dict[str, dict[str, list[tuple[str, str | None, float]]]] = defaultdict(
+        lambda: {"encode": [], "decode": []}
+    )
     for r in rows:
         comps = r["components"]
-        # Trim leading 'rpc' if divan included it as a separate top-level row.
         if comps and comps[0] == "rpc":
             comps = comps[1:]
         if len(comps) < 3 or comps[0] != "codec":
@@ -185,49 +194,54 @@ def plot(rows, path: Path) -> None:
         shape = comps[1]
         variant = comps[2]
         arg = comps[3] if len(comps) >= 4 else None
-        groups[shape].append((variant, arg, r["median_ns"]))
+        op = _classify_op(variant)
+        if op is None:
+            continue
+        groups[shape][op].append((variant, arg, r["median_ns"]))
 
     if not groups:
         sys.stderr.write("no plot-eligible rows\n")
         sys.exit(1)
 
-    n = len(groups)
-    cols = 2
-    rows_n = (n + cols - 1) // cols
-    fig, axes = plt.subplots(rows_n, cols, figsize=(11, 4 * rows_n), squeeze=False)
-    flat = list(axes.flat)
+    shapes = sorted(groups)
+    ops = ["encode", "decode"]
+    n_rows = len(shapes)
+    fig, axes = plt.subplots(n_rows, 2, figsize=(11, 3.2 * n_rows), squeeze=False)
 
-    for ax, (shape, entries) in zip(flat, sorted(groups.items())):
-        per_variant: dict[str, list[tuple[str | None, float]]] = defaultdict(list)
-        for variant, arg, median in entries:
-            per_variant[variant].append((arg, median))
+    for row, shape in enumerate(shapes):
+        for col, op in enumerate(ops):
+            ax = axes[row][col]
+            entries = groups[shape][op]
+            if not entries:
+                ax.axis("off")
+                continue
 
-        any_args = any(a is not None for _, items in per_variant.items() for a, _ in items)
-        if any_args:
-            for variant, pairs in sorted(per_variant.items()):
-                try:
-                    pairs_sorted = sorted(pairs, key=lambda x: float(x[0]) if x[0] else 0)
-                except ValueError:
-                    pairs_sorted = sorted(pairs, key=lambda x: x[0] or "")
-                xs = [p[0] for p in pairs_sorted]
-                ys = [p[1] for p in pairs_sorted]
-                ax.plot(xs, ys, marker="o", label=variant)
-            ax.set_xlabel("arg")
-        else:
-            names = sorted(per_variant.keys())
-            values = [per_variant[v][0][1] for v in names]
-            ax.bar(names, values)
-            ax.tick_params(axis="x", labelrotation=20)
+            per_variant: dict[str, list[tuple[str | None, float]]] = defaultdict(list)
+            for variant, arg, median in entries:
+                per_variant[variant].append((arg, median))
 
-        ax.set_title(shape)
-        ax.set_ylabel("median (ns)")
-        ax.set_yscale("log")
-        ax.grid(True, which="both", alpha=0.3)
-        if any_args:
-            ax.legend(fontsize=8)
+            any_args = any(a is not None for items in per_variant.values() for a, _ in items)
+            if any_args:
+                for variant, pairs in sorted(per_variant.items()):
+                    try:
+                        pairs_sorted = sorted(pairs, key=lambda x: float(x[0]) if x[0] else 0)
+                    except ValueError:
+                        pairs_sorted = sorted(pairs, key=lambda x: x[0] or "")
+                    xs = [p[0] for p in pairs_sorted]
+                    ys = [p[1] for p in pairs_sorted]
+                    ax.plot(xs, ys, marker="o", label=variant)
+                ax.set_xlabel("arg")
+                ax.legend(fontsize=8)
+            else:
+                names = sorted(per_variant.keys())
+                values = [per_variant[v][0][1] for v in names]
+                ax.bar(names, values)
+                ax.tick_params(axis="x", labelrotation=20)
 
-    for ax in flat[len(groups) :]:
-        ax.axis("off")
+            ax.set_title(f"{shape} — {op}")
+            ax.set_ylabel("median (ns)")
+            ax.set_yscale("log")
+            ax.grid(True, which="both", alpha=0.3)
 
     fig.suptitle("rpc::codec bench (median)")
     fig.tight_layout()

@@ -43,6 +43,7 @@ fn main() {
             BorrowMode::Owned,
         )
         .expect("prepare");
+    let decode_fn = decoder.owned_fn_ptr().expect("owned_fn missing");
 
     println!(
         "{:<3} {:>6}  {:>13}  {:>13}  {:>13}",
@@ -52,7 +53,7 @@ fn main() {
         let value = make_many_variants(v);
         let bytes = vox_postcard::to_vec(&value).expect("encode");
         // Warm.
-        let _: ManyVariants = vox_jit::decode_owned_with(decoder, &bytes).unwrap();
+        let _: ManyVariants = vox_jit::decode_owned_with(decode_fn, &bytes).unwrap();
         let _: ManyVariants = runtime
             .try_decode_owned::<ManyVariants>(&bytes, 0, &plan, &registry)
             .unwrap()
@@ -77,7 +78,7 @@ fn main() {
         let (_, ns_pre) = bench("decode_owned_with", || {
             for _ in 0..10_000 {
                 let v: ManyVariants =
-                    vox_jit::decode_owned_with(decoder, black_box(&bytes)).unwrap();
+                    vox_jit::decode_owned_with(decode_fn, black_box(&bytes)).unwrap();
                 black_box(&v);
             }
             10_000

@@ -42,9 +42,10 @@ fn main() {
                     BorrowMode::Owned,
                 )
                 .expect("prepare");
+            let decode_fn = decoder.owned_fn_ptr().expect("owned_fn missing");
 
             // Warm.
-            let _: Tree = vox_jit::decode_owned_with(decoder, &bytes).unwrap();
+            let _: Tree = vox_jit::decode_owned_with(decode_fn, &bytes).unwrap();
 
             let deadline = Instant::now() + Duration::from_secs(secs);
             eprintln!(
@@ -55,7 +56,7 @@ fn main() {
 
             while Instant::now() < deadline {
                 for _ in 0..1_000 {
-                    let v: Tree = vox_jit::decode_owned_with(decoder, black_box(&bytes)).unwrap();
+                    let v: Tree = vox_jit::decode_owned_with(decode_fn, black_box(&bytes)).unwrap();
                     black_box(&v);
                 }
                 iters += 1_000;

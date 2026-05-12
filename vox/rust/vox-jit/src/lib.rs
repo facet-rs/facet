@@ -35,7 +35,7 @@ use std::sync::{Arc, Mutex, Once, OnceLock};
 use arc_swap::ArcSwap;
 
 use facet_core::{Def, Facet, Shape, Type, UserType};
-use vox_jit_abi::{DecodeCtx, DecodeStatus};
+use vox_jit_abi::{BorrowedDecodeFn, DecodeCtx, DecodeStatus, OwnedDecodeFn};
 use vox_jit_cal::{BorrowMode, CalibrationRegistry};
 use vox_postcard::TranslationPlan;
 use vox_postcard::error::DeserializeError;
@@ -298,18 +298,9 @@ impl JitRuntime {
             plan,
             registry,
             BorrowMode::Owned,
-        ) && let Some(&decode_fn) = stub.owned_fn.get()
+        ) && let Some(decode_fn) = stub.owned_fn_ptr()
         {
-            let mut ctx = DecodeCtx::new(input);
-            let mut out = MaybeUninit::<T>::uninit();
-            let ret = unsafe { decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8, 0) };
-            ctx.consumed = ret.consumed();
-            let status = ret.status();
-            return if status == DecodeStatus::Ok {
-                Some(Ok(unsafe { out.assume_init() }))
-            } else {
-                Some(Err(decode_status_to_error(status, &ctx, input)))
-            };
+            return Some(decode_owned_with::<T>(decode_fn, input));
         }
 
         let cal = self.cal.lock().unwrap();
@@ -346,18 +337,9 @@ impl JitRuntime {
             plan,
             registry,
             BorrowMode::Borrowed,
-        ) && let Some(&decode_fn) = stub.borrowed_fn.get()
+        ) && let Some(decode_fn) = stub.borrowed_fn_ptr()
         {
-            let mut ctx = DecodeCtx::new(input);
-            let mut out = MaybeUninit::<T>::uninit();
-            let ret = unsafe { decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8, 0) };
-            ctx.consumed = ret.consumed();
-            let status = ret.status();
-            return if status == DecodeStatus::Ok {
-                Some(Ok(unsafe { out.assume_init() }))
-            } else {
-                Some(Err(decode_status_to_error(status, &ctx, input)))
-            };
+            return Some(decode_borrowed_with::<T>(decode_fn, input));
         }
 
         let cal = self.cal.lock().unwrap();
@@ -410,42 +392,46 @@ pub fn encode_with(
 }
 
 /// Run a pre-resolved owned-mode decoder against `input`.
+///
+/// Takes the raw [`OwnedDecodeFn`] (resolved once via
+/// [`cache::CompiledDecoder::owned_fn_ptr`]) rather than the
+/// `CompiledDecoder` itself, so the hot path is just an indirect call —
+/// no `OnceLock` acquire-load per invocation. Hot-loop callers should
+/// hoist `owned_fn_ptr()` outside the loop.
+#[inline]
 pub fn decode_owned_with<T: Facet<'static>>(
-    decoder: &cache::CompiledDecoder,
+    decode_fn: OwnedDecodeFn,
     input: &[u8],
 ) -> Result<T, DeserializeError> {
-    let decode_fn = *decoder
-        .owned_fn
-        .get()
-        .expect("owned decode_fn missing on owned decoder");
     let mut ctx = DecodeCtx::new(input);
     let mut out = MaybeUninit::<T>::uninit();
     let ret = unsafe { decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8, 0) };
-    ctx.consumed = ret.consumed();
     let status = ret.status();
     if status == DecodeStatus::Ok {
+        // `ctx.consumed` is intentionally NOT updated here. The JIT'd stub
+        // packs the new cursor into the return value; nothing in this
+        // function or `decode_status_to_error` reads `ctx.consumed`. The
+        // writeback was dead code costing ~14% of caller-side cycles on
+        // tight V00-style decodes (see jit-decode profile, May 2026).
         Ok(unsafe { out.assume_init() })
     } else {
         Err(decode_status_to_error(status, &ctx, input))
     }
 }
 
-/// Run a pre-resolved borrowed-mode decoder against `input`.
+/// Run a pre-resolved borrowed-mode decoder against `input`. See
+/// [`decode_owned_with`] for the rationale on taking a raw fn pointer.
+#[inline]
 pub fn decode_borrowed_with<'input, 'facet, T: Facet<'facet>>(
-    decoder: &cache::CompiledDecoder,
+    decode_fn: BorrowedDecodeFn,
     input: &'input [u8],
 ) -> Result<T, DeserializeError>
 where
     'input: 'facet,
 {
-    let decode_fn = *decoder
-        .borrowed_fn
-        .get()
-        .expect("borrowed decode_fn missing on borrowed decoder");
     let mut ctx = DecodeCtx::new(input);
     let mut out = MaybeUninit::<T>::uninit();
     let ret = unsafe { decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8, 0) };
-    ctx.consumed = ret.consumed();
     let status = ret.status();
     if status == DecodeStatus::Ok {
         Ok(unsafe { out.assume_init() })
@@ -505,7 +491,10 @@ pub fn __decode_owned_with_slot<T: Facet<'static>>(
 ) -> Result<T, DeserializeError> {
     let decoder =
         lookup_or_insert_decoder::<T>(slot, remote_schema_id, plan, registry, BorrowMode::Owned);
-    decode_owned_with::<T>(decoder, input)
+    let decode_fn = decoder
+        .owned_fn_ptr()
+        .expect("owned decode_fn missing on owned decoder");
+    decode_owned_with::<T>(decode_fn, input)
 }
 
 #[doc(hidden)]
@@ -521,7 +510,10 @@ where
 {
     let decoder =
         lookup_or_insert_decoder::<T>(slot, remote_schema_id, plan, registry, BorrowMode::Borrowed);
-    decode_borrowed_with::<T>(decoder, input)
+    let decode_fn = decoder
+        .borrowed_fn_ptr()
+        .expect("borrowed decode_fn missing on borrowed decoder");
+    decode_borrowed_with::<T>(decode_fn, input)
 }
 
 fn lookup_or_insert_decoder<'a, T: Facet<'a>>(

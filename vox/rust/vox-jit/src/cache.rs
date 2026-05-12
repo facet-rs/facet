@@ -58,6 +58,22 @@ impl CompiledDecoder {
             borrowed_fn: OnceLock::new(),
         }
     }
+
+    /// Pre-resolved owned-mode decode function pointer. Callers that decode
+    /// in a hot loop should call this once outside the loop and pass the
+    /// returned pointer to [`crate::decode_owned_with`] — that bypasses the
+    /// per-call acquire-load on the `OnceLock`'s init flag.
+    #[inline]
+    pub fn owned_fn_ptr(&self) -> Option<OwnedDecodeFn> {
+        self.owned_fn.get().copied()
+    }
+
+    /// Pre-resolved borrowed-mode decode function pointer. See
+    /// [`Self::owned_fn_ptr`].
+    #[inline]
+    pub fn borrowed_fn_ptr(&self) -> Option<BorrowedDecodeFn> {
+        self.borrowed_fn.get().copied()
+    }
 }
 
 /// A JIT-compiled encoder for one shape.

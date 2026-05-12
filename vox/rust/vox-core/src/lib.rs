@@ -120,8 +120,11 @@ pub(crate) fn deserialize_postcard_with_decoder<T: facet::Facet<'static>>(
     backing: Backing,
     decoder: &'static vox_jit::cache::CompiledDecoder,
 ) -> Result<SelfRef<T>, vox_postcard::DeserializeError> {
+    let decode_fn = decoder
+        .owned_fn_ptr()
+        .expect("owned decode_fn missing on owned decoder");
     SelfRef::try_new(backing, |bytes| {
-        vox_jit::decode_owned_with::<T>(decoder, bytes)
+        vox_jit::decode_owned_with::<T>(decode_fn, bytes)
     })
 }
 

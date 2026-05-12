@@ -29,8 +29,9 @@ fn main() {
             BorrowMode::Owned,
         )
         .expect("prepare");
+    let decode_fn = decoder.owned_fn_ptr().expect("owned_fn missing");
     // Warm.
-    let _: ManyVariants = vox_jit::decode_owned_with(decoder, &bytes).unwrap();
+    let _: ManyVariants = vox_jit::decode_owned_with(decode_fn, &bytes).unwrap();
 
     let secs = std::env::var("PROFILE_SECS")
         .ok()
@@ -45,7 +46,7 @@ fn main() {
     let mut iters: u64 = 0;
     while Instant::now() < deadline {
         for _ in 0..10_000 {
-            let v: ManyVariants = vox_jit::decode_owned_with(decoder, black_box(&bytes)).unwrap();
+            let v: ManyVariants = vox_jit::decode_owned_with(decode_fn, black_box(&bytes)).unwrap();
             black_box(&v);
         }
         iters += 10_000;

@@ -389,11 +389,13 @@ mod codec {
         #[divan::bench(args = [1, 4, 16])]
         fn jit_decode(bencher: Bencher, n: usize) {
             let fixture = CodecFixture::<GnarlyArgs>::new((make_gnarly_payload(n, 0),));
-            let decoder =
-                vox_bench::prepare_jit_decoder::<GnarlyArgs>(&fixture.plan, &fixture.registry);
+            let decode_fn = vox_bench::prepare_jit_decoder_owned_fn::<GnarlyArgs>(
+                &fixture.plan,
+                &fixture.registry,
+            );
             bencher.bench_local(|| {
                 black_box(vox_bench::jit_decode_pre::<GnarlyArgs>(
-                    decoder,
+                    decode_fn,
                     black_box(&fixture.bytes),
                 ))
             });
@@ -425,12 +427,12 @@ mod codec {
             let bytes = vox_postcard::to_vec(&(make_gnarly_payload(n, 0),)).unwrap();
             let plan = vox_postcard::build_identity_plan(<BorrowedArgs<'_> as Facet<'_>>::SHAPE);
             let registry = vox_types::SchemaRegistry::new();
-            let decoder =
-                vox_bench::prepare_jit_decoder_borrowed::<BorrowedArgs<'static>>(&plan, &registry);
+            let decode_fn = vox_bench::prepare_jit_decoder_borrowed_fn::<BorrowedArgs<'static>>(
+                &plan, &registry,
+            );
             bencher.bench_local(|| {
                 let mut ctx = vox_jit::abi::DecodeCtx::new(black_box(&bytes));
                 let mut out = std::mem::MaybeUninit::<BorrowedArgs<'_>>::uninit();
-                let decode_fn = *decoder.borrowed_fn.get().expect("borrowed_fn missing");
                 let ret = unsafe { decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8, 0) };
                 assert!(ret.status().is_ok());
                 black_box(unsafe { out.assume_init() });
@@ -505,11 +507,13 @@ mod codec {
         #[divan::bench(args = [1, 4, 16])]
         fn jit_decode(bencher: Bencher, n: usize) {
             let fixture = CodecFixture::<GnarlyResponse>::new(Ok(make_gnarly_payload(n, 0)));
-            let decoder =
-                vox_bench::prepare_jit_decoder::<GnarlyResponse>(&fixture.plan, &fixture.registry);
+            let decode_fn = vox_bench::prepare_jit_decoder_owned_fn::<GnarlyResponse>(
+                &fixture.plan,
+                &fixture.registry,
+            );
             bencher.bench_local(|| {
                 black_box(vox_bench::jit_decode_pre::<GnarlyResponse>(
-                    decoder,
+                    decode_fn,
                     black_box(&fixture.bytes),
                 ))
             });
@@ -557,11 +561,13 @@ mod codec {
         #[divan::bench]
         fn jit_decode(bencher: Bencher) {
             let fixture = CodecFixture::<WideStruct>::new(make_wide(0xDEAD_BEEF));
-            let decoder =
-                vox_bench::prepare_jit_decoder::<WideStruct>(&fixture.plan, &fixture.registry);
+            let decode_fn = vox_bench::prepare_jit_decoder_owned_fn::<WideStruct>(
+                &fixture.plan,
+                &fixture.registry,
+            );
             bencher.bench_local(|| {
                 black_box(vox_bench::jit_decode_pre::<WideStruct>(
-                    decoder,
+                    decode_fn,
                     black_box(&fixture.bytes),
                 ))
             });
@@ -604,11 +610,13 @@ mod codec {
         #[divan::bench(args = [0u32, 1, 7, 9, 11, 15])]
         fn jit_decode(bencher: Bencher, variant: u32) {
             let fixture = CodecFixture::<ManyVariants>::new(make_many_variants(variant));
-            let decoder =
-                vox_bench::prepare_jit_decoder::<ManyVariants>(&fixture.plan, &fixture.registry);
+            let decode_fn = vox_bench::prepare_jit_decoder_owned_fn::<ManyVariants>(
+                &fixture.plan,
+                &fixture.registry,
+            );
             bencher.bench_local(|| {
                 black_box(vox_bench::jit_decode_pre::<ManyVariants>(
-                    decoder,
+                    decode_fn,
                     black_box(&fixture.bytes),
                 ))
             });
@@ -635,10 +643,11 @@ mod codec {
         #[divan::bench(args = [4u32, 6, 8])]
         fn jit_decode(bencher: Bencher, depth: u32) {
             let fixture = CodecFixture::<Tree>::new(make_tree(depth, 0xC0FFEE));
-            let decoder = vox_bench::prepare_jit_decoder::<Tree>(&fixture.plan, &fixture.registry);
+            let decode_fn =
+                vox_bench::prepare_jit_decoder_owned_fn::<Tree>(&fixture.plan, &fixture.registry);
             bencher.bench_local(|| {
                 black_box(vox_bench::jit_decode_pre::<Tree>(
-                    decoder,
+                    decode_fn,
                     black_box(&fixture.bytes),
                 ))
             });
@@ -702,11 +711,13 @@ mod codec {
         #[divan::bench(args = [64usize, 256, 1024])]
         fn jit_decode(bencher: Bencher, n: usize) {
             let fixture = CodecFixture::<NumericBuffer>::new(make_numeric_buffer(n, 0));
-            let decoder =
-                vox_bench::prepare_jit_decoder::<NumericBuffer>(&fixture.plan, &fixture.registry);
+            let decode_fn = vox_bench::prepare_jit_decoder_owned_fn::<NumericBuffer>(
+                &fixture.plan,
+                &fixture.registry,
+            );
             bencher.bench_local(|| {
                 black_box(vox_bench::jit_decode_pre::<NumericBuffer>(
-                    decoder,
+                    decode_fn,
                     black_box(&fixture.bytes),
                 ))
             });
