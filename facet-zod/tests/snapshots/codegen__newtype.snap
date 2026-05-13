@@ -1,0 +1,6 @@
+---
+source: tests/codegen.rs
+expression: output
+---
+export const WrapperSchema = z.string();
+export type Wrapper = z.infer<typeof WrapperSchema>;

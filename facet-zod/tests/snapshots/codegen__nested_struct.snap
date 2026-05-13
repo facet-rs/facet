@@ -1,0 +1,22 @@
+---
+source: tests/codegen.rs
+expression: output
+---
+export const UserSchema = z.object({
+  name: z.string(),
+  age: z.number().int(),
+  email: z.string().nullish(),
+});
+export type User = z.infer<typeof UserSchema>;
+
+export const PostSchema = z.object({
+  title: z.string(),
+  body: z.string(),
+  author: z.object({
+  name: z.string(),
+  age: z.number().int(),
+  email: z.string().nullish(),
+}),
+  tags: z.array(z.string()),
+});
+export type Post = z.infer<typeof PostSchema>;
