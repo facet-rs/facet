@@ -756,6 +756,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-zod"
+version = "0.46.2"
+dependencies = [
+ "facet",
+ "facet-core",
+ "facet-testhelpers",
+ "insta",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
