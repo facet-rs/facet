@@ -1743,6 +1743,26 @@ mod tests {
         host: String,
     }
 
+    #[derive(Facet, Debug)]
+    struct OptionalConfigArgs {
+        #[facet(figue::config)]
+        config: Option<RequiredTestConfig>,
+    }
+
+    #[derive(Facet, Debug)]
+    struct RequiredConfigArgs {
+        #[facet(figue::config)]
+        config: RequiredTestConfig,
+    }
+
+    #[derive(Facet, Debug)]
+    struct RequiredTestConfig {
+        database_url: String,
+
+        #[facet(default = 8080)]
+        port: u16,
+    }
+
     #[test]
     fn test_driver_help_flag() {
         let config = builder::<ArgsWithBuiltins>()
@@ -1964,6 +1984,88 @@ mod tests {
                 assert!(output.value.builtins.completions.is_none());
             }
             Err(e) => panic!("expected success, got error: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_optional_config_absent_deserializes_to_none() {
+        let config = builder::<OptionalConfigArgs>()
+            .unwrap()
+            .cli(|cli| cli.args(Vec::<String>::new()))
+            .build();
+
+        let result = Driver::new(config).run().into_result();
+
+        match result {
+            Ok(output) => assert!(output.value.config.is_none()),
+            Err(e) => panic!(
+                "expected optional config absence to succeed, got error: {:?}",
+                e
+            ),
+        }
+    }
+
+    #[test]
+    fn test_required_config_absent_still_errors() {
+        let config = builder::<RequiredConfigArgs>()
+            .unwrap()
+            .cli(|cli| cli.args(Vec::<String>::new()))
+            .build();
+
+        let result = Driver::new(config).run().into_result();
+
+        match result {
+            Err(DriverError::Failed { report }) => {
+                let rendered = report.render_pretty();
+                assert!(
+                    rendered.contains("Missing required fields") || rendered.contains("Missing:"),
+                    "expected missing-field error, got: {rendered}"
+                );
+            }
+            other => panic!("expected missing required config error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_optional_config_present_complete_deserializes_to_some() {
+        let config = builder::<OptionalConfigArgs>()
+            .unwrap()
+            .cli(|cli| cli.args(["--config.database-url", "postgres://localhost/app"]))
+            .build();
+
+        let result = Driver::new(config).run().into_result();
+
+        match result {
+            Ok(output) => {
+                let config = output.value.config.expect("config should be present");
+                assert_eq!(config.database_url, "postgres://localhost/app");
+                assert_eq!(config.port, 8080);
+            }
+            Err(e) => panic!(
+                "expected complete optional config to succeed, got error: {:?}",
+                e
+            ),
+        }
+    }
+
+    #[test]
+    fn test_optional_config_present_partial_still_errors() {
+        let config = builder::<OptionalConfigArgs>()
+            .unwrap()
+            .cli(|cli| cli.args(["--config.port", "9000"]))
+            .build();
+
+        let result = Driver::new(config).run().into_result();
+
+        match result {
+            Err(DriverError::Failed { report }) => {
+                let rendered = report.render_pretty();
+                assert!(
+                    rendered.contains("database_url") || rendered.contains("database-url"),
+                    "expected database_url missing-field error, got: {rendered}"
+                );
+            }
+            other => panic!("expected partial optional config to fail, got {:?}", other),
         }
     }
 
