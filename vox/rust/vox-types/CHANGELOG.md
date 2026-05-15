@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/bearcove/vox/compare/vox-types-v0.4.0...vox-types-v0.5.0) - 2026-05-15
+
+### Other
+
+- apply dependency upgrades ([#308](https://github.com/bearcove/vox/pull/308))
+- Delete StableConduit + session resume across the stack
+- Share codec scaffolding between Rust JIT and Swift codec
+- Take care of clippy warnings
+- Clarify channel lifecycle semantics
+- Fix channel backpressure and stream receive cancellation
+- Add Vox runtime debug snapshots
+- Add channel observability hooks
+- WIP try_send, negotiable capacity etc.
+- Fix channel reset propagation on dropped Rx
+- Cache args_have_channels on MethodDescriptor, drop the per-request walk
+- stop storing schemas
+- hold Bytes instead of Vec<u8>
+
 ## [0.4.0](https://github.com/bearcove/vox/compare/vox-types-v0.3.1...vox-types-v0.4.0) - 2026-04-15
 
 ### Added

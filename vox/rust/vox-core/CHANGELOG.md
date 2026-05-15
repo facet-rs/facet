@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/bearcove/vox/compare/vox-core-v0.4.0...vox-core-v0.5.0) - 2026-05-15
+
+### Other
+
+- apply dependency upgrades ([#308](https://github.com/bearcove/vox/pull/308))
+- *(jit)* drop OnceLock + dead writeback from decode_owned_with hot path
+- Delete StableConduit + session resume across the stack
+- Take care of clippy warnings
+- Fix channel backpressure and stream receive cancellation
+- Add Vox runtime debug snapshots
+- No zero initial credit
+- Add channel observability hooks
+- WIP try_send, negotiable capacity etc.
+- Fix channel reset propagation on dropped Rx
+- wip optim in codegen
+- Allow opting out of resumability
+- Fix TypeScript channel lifetime semantics
+- Cache args_have_channels on MethodDescriptor, drop the per-request walk
+- host handler futures on FuturesUnordered, drop tokio::spawn
+- Pre-resolve conduit Tx/Rx encoders/decoders at construction
+- stop storing schemas
+- Use call-site static cache for non-generic JIT encode sites
+- Rip reflective fallbacks from JIT call sites
+- JIT-encode the operation-store response
+- hold Bytes instead of Vec<u8>
+- Warnings--
+- Wire pure JIT through outer RPC frames
+
 ## [0.4.0](https://github.com/bearcove/vox/compare/vox-core-v0.3.1...vox-core-v0.4.0) - 2026-04-15
 
 ### Added

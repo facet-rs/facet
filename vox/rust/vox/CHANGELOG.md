@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/bearcove/vox/compare/vox-v0.4.0...vox-v0.5.0) - 2026-05-15
+
+### Other
+
+- apply dependency upgrades ([#308](https://github.com/bearcove/vox/pull/308))
+- Delete StableConduit + session resume across the stack
+- Take care of clippy warnings
+- Fix channel backpressure and stream receive cancellation
+- Add Vox runtime debug snapshots
+- No zero initial credit
+- Add channel observability hooks
+- WIP try_send, negotiable capacity etc.
+- fast-path for enum discriminants
+- Cache args_have_channels on MethodDescriptor, drop the per-request walk
+- Rip reflective fallbacks from JIT call sites
+- Wire pure JIT through outer RPC frames
+
 ## [0.4.0](https://github.com/bearcove/vox/compare/vox-v0.3.1...vox-v0.4.0) - 2026-04-15
 
 ### Added

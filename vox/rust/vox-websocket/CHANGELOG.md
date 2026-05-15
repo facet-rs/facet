@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/bearcove/vox/compare/vox-websocket-v0.4.0...vox-websocket-v0.5.0) - 2026-05-15
+
+### Other
+
+- update Cargo.toml dependencies
+
 ## [0.4.0](https://github.com/bearcove/vox/compare/vox-websocket-v0.3.1...vox-websocket-v0.4.0) - 2026-04-15
 
 ### Other

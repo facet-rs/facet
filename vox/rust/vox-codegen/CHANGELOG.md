@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/bearcove/vox/compare/vox-codegen-v0.4.0...vox-codegen-v0.5.0) - 2026-05-15
+
+### Other
+
+- apply dependency upgrades ([#308](https://github.com/bearcove/vox/pull/308))
+- add nonisolated to Swift value witness functions
+- per-variant match/store patterns (replaces simple-tag fields)
+- Add Swift codec descriptor entrypoint
+- Take care of clippy warnings
+- channel capacity etc.
+- typed initiator service routing — service name in codegen + Session.initiator(expecting:)
+- swift codegen: emit decode<Name>(from:) for named types
+- swift codegen: keyword-escape identifiers, dedupable types, fix Unit decode
+- swift codegen: emit valid identifiers for tuple-struct positional fields
+- migrate channel binding from BindingSchema to Schema/SchemaKind/TypeRef
+- Fix TypeScript channel lifetime semantics
+- Cache args_have_channels on MethodDescriptor, drop the per-request walk
+
 ## [0.4.0](https://github.com/bearcove/vox/compare/vox-codegen-v0.3.1...vox-codegen-v0.4.0) - 2026-04-15
 
 ### Fixed

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/bearcove/vox/compare/vox-macros-core-v0.4.0...vox-macros-core-v0.5.0) - 2026-05-15
+
+### Other
+
+- remove eprintln! from #[service] macro generated dispatch code
+- Cache args_have_channels on MethodDescriptor, drop the per-request walk
+
 ## [0.4.0](https://github.com/bearcove/vox/compare/vox-macros-core-v0.3.1...vox-macros-core-v0.4.0) - 2026-04-15
 
 ### Other
