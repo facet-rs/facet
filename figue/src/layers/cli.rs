@@ -191,6 +191,8 @@ struct ParentFlagLookup {
 struct ConfigOverrideTarget<'a> {
     /// Flag name without the leading `--` and without a leading `no-`.
     flag_name: &'a str,
+    /// Schema for the config object being overridden.
+    config_schema: &'a crate::schema::ConfigStructSchema,
     /// Kebab-case config root name used on the CLI.
     cli_root: String,
     /// Effective config field name in the schema.
@@ -361,6 +363,7 @@ impl<'a> ParseContext<'a> {
                     let is_bool = Self::config_path_is_bool(config_schema, &parts);
                     let target = ConfigOverrideTarget {
                         flag_name: override_flag_name,
+                        config_schema,
                         cli_root: cli_root.to_string(),
                         config_field_name: config_field_name.to_string(),
                         negated,
@@ -881,10 +884,7 @@ impl<'a> ParseContext<'a> {
 
             let path: Vec<String> = parts.iter().map(|s| (*s).to_string()).collect();
             let provenance = Provenance::cli(arg, "false");
-            self.config_builders
-                .get_mut(&target.config_field_name)
-                .expect("config_builder must exist when parsing config overrides")
-                .set(&path, LeafValue::Bool(false), None, provenance);
+            self.set_config_override(&target, &path, LeafValue::Bool(false), None, provenance);
             self.index += 1;
             return;
         }
@@ -917,10 +917,13 @@ impl<'a> ParseContext<'a> {
             let provenance = Provenance::cli(&prov_arg, provenance_value);
             let path: Vec<String> = parts.iter().map(|s| (*s).to_string()).collect();
 
-            self.config_builders
-                .get_mut(&target.config_field_name)
-                .expect("config_builder must exist when parsing config overrides")
-                .set(&path, LeafValue::Bool(value), value_span, provenance);
+            self.set_config_override(
+                &target,
+                &path,
+                LeafValue::Bool(value),
+                value_span,
+                provenance,
+            );
             return;
         }
 
@@ -951,10 +954,30 @@ impl<'a> ParseContext<'a> {
         let path: Vec<String> = parts.iter().map(|s| (*s).to_string()).collect();
         let leaf_value = LeafValue::String(value_str.to_string());
 
-        self.config_builders
+        self.set_config_override(&target, &path, leaf_value, Some(value_span), provenance);
+    }
+
+    fn set_config_override(
+        &mut self,
+        target: &ConfigOverrideTarget<'_>,
+        path: &Vec<String>,
+        value: LeafValue,
+        span: Option<facet_reflect::Span>,
+        provenance: Provenance,
+    ) {
+        let inserted = self
+            .config_builders
             .get_mut(&target.config_field_name)
             .expect("config_builder must exist when parsing config overrides")
-            .set(&path, leaf_value, Some(value_span), provenance);
+            .set(path, value, span, provenance);
+
+        if !inserted {
+            let suggestion = crate::suggest::suggest_config_path(target.config_schema, path);
+            self.emit_error(format!(
+                "unknown flag: --{}{}",
+                target.flag_name, suggestion
+            ));
+        }
     }
 
     fn parse_bool_literal(value: &str) -> Option<bool> {
