@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.2](https://github.com/bearcove/figue/compare/figue-v4.0.1...figue-v4.0.2) - 2026-05-15
+
+### Other
+
+- Respect optional config roots ([#102](https://github.com/bearcove/figue/pull/102))
+- Keep HTML help rooted at top level ([#101](https://github.com/bearcove/figue/pull/101))
+- Validate CLI config overrides ([#99](https://github.com/bearcove/figue/pull/99))
+
 ## [4.0.1](https://github.com/bearcove/figue/compare/figue-v4.0.0...figue-v4.0.1) - 2026-05-09
 
 ### Other
