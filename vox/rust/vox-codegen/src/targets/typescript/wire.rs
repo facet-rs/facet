@@ -176,34 +176,28 @@ fn visit(
             name: Some(name),
             fields,
             ..
-        }) => {
-            if !seen.contains(name) {
-                seen.insert(name.to_string());
-                for field in fields {
-                    visit(field.shape(), seen, types);
-                }
-                types.push((name.to_string(), shape));
+        }) if seen.insert(name.to_string()) => {
+            for field in fields {
+                visit(field.shape(), seen, types);
             }
+            types.push((name.to_string(), shape));
         }
         ShapeKind::Enum(EnumInfo {
             name: Some(name),
             variants,
-        }) => {
-            if !seen.contains(name) {
-                seen.insert(name.to_string());
-                for variant in variants {
-                    match classify_variant(variant) {
-                        VariantKind::Newtype { inner } => visit(inner, seen, types),
-                        VariantKind::Struct { fields } | VariantKind::Tuple { fields } => {
-                            for field in fields {
-                                visit(field.shape(), seen, types);
-                            }
+        }) if seen.insert(name.to_string()) => {
+            for variant in variants {
+                match classify_variant(variant) {
+                    VariantKind::Newtype { inner } => visit(inner, seen, types),
+                    VariantKind::Struct { fields } | VariantKind::Tuple { fields } => {
+                        for field in fields {
+                            visit(field.shape(), seen, types);
                         }
-                        VariantKind::Unit => {}
                     }
+                    VariantKind::Unit => {}
                 }
-                types.push((name.to_string(), shape));
             }
+            types.push((name.to_string(), shape));
         }
         ShapeKind::List { element } => visit(element, seen, types),
         ShapeKind::Option { inner } => visit(inner, seen, types),

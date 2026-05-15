@@ -44,5 +44,7 @@ vox-jit = { workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 futures-channel.workspace = true
+tokio.workspace = true
+wasmtimer.workspace = true
 
 [dev-dependencies]

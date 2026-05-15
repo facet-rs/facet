@@ -23,7 +23,11 @@ class AsyncQueue<T> {
   private recvWaiters: Array<(value: T | null) => void> = [];
   private sendWaiters: Array<() => void> = [];
 
-  constructor(private readonly capacity: number) {}
+  private readonly capacity: number;
+
+  constructor(capacity: number) {
+    this.capacity = capacity;
+  }
 
   async enqueue(value: T): Promise<boolean> {
     while (!this.closed && this.recvWaiters.length === 0 && this.items.length >= this.capacity) {
@@ -174,13 +178,22 @@ function creditReplenishmentThreshold(initialCredit: number): number {
  * This is the internal channel that Tx<T> writes to.
  */
 export class OutgoingSender {
+  private _channelId: ChannelId;
+  private state: OutgoingState;
+  private readonly notifyOutgoing?: () => void;
+  private _keepaliveOwner?: object;
+
   constructor(
-    private _channelId: ChannelId,
-    private state: OutgoingState,
-    private readonly notifyOutgoing?: () => void,
-    // @ts-expect-error unused
-    private _keepaliveOwner?: object,
-  ) {}
+    _channelId: ChannelId,
+    state: OutgoingState,
+    notifyOutgoing?: () => void,
+    _keepaliveOwner?: object,
+  ) {
+    this._channelId = _channelId;
+    this.state = state;
+    this.notifyOutgoing = notifyOutgoing;
+    this._keepaliveOwner = _keepaliveOwner;
+  }
 
   get channelId(): ChannelId {
     return this._channelId;
@@ -215,10 +228,13 @@ export class OutgoingSender {
  * outgoing channels (Tx<T> → Data to wire).
  */
 export class ChannelRegistry {
-  constructor(
-    private readonly keepaliveOwner?: object,
-    private readonly notifyOutgoing?: () => void,
-  ) {}
+  private readonly keepaliveOwner?: object;
+  private readonly notifyOutgoing?: () => void;
+
+  constructor(keepaliveOwner?: object, notifyOutgoing?: () => void) {
+    this.keepaliveOwner = keepaliveOwner;
+    this.notifyOutgoing = notifyOutgoing;
+  }
 
   /** Channels where we receive Data messages (backing Rx<T> handles). */
   private incoming = new Map<ChannelId, Channel<Uint8Array>>();

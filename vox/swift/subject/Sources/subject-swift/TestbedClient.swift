@@ -671,14 +671,14 @@ nonisolated internal func decodeConfig(from buffer: inout ByteBuffer) throws -> 
 }
 // MARK: - Swift Value Descriptors
 
-private func testbed_swift_value_desc_0_destroy(
+nonisolated private func testbed_swift_value_desc_0_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: MathError.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_0_copyInit(
+nonisolated private func testbed_swift_value_desc_0_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -687,7 +687,7 @@ private func testbed_swift_value_desc_0_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_0_takeInit(
+nonisolated private func testbed_swift_value_desc_0_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -697,7 +697,7 @@ private func testbed_swift_value_desc_0_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_0_tag(
+nonisolated private func testbed_swift_value_desc_0_tag(
   _ value: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> UInt32 {
   guard let value else { return UInt32.max }
@@ -709,7 +709,7 @@ private func testbed_swift_value_desc_0_tag(
   }
 }
 
-private func testbed_swift_value_desc_0_project(
+nonisolated private func testbed_swift_value_desc_0_project(
   _ value: UnsafeRawPointer?, _ variantIndex: UInt32, _ visitorContext: UnsafeMutableRawPointer?,
   _ visitor: VoxSwiftEnumFieldVisitorFn?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
@@ -724,7 +724,7 @@ private func testbed_swift_value_desc_0_project(
   }
 }
 
-private func testbed_swift_value_desc_0_inject(
+nonisolated private func testbed_swift_value_desc_0_inject(
   _ dst: UnsafeMutableRawPointer?, _ variantIndex: UInt32,
   _ fieldValues: UnsafePointer<UnsafeRawPointer?>?, _ fieldCount: Int, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
@@ -743,14 +743,14 @@ private func testbed_swift_value_desc_0_inject(
   }
 }
 
-private func testbed_swift_value_desc_1_destroy(
+nonisolated private func testbed_swift_value_desc_1_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Person.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_1_copyInit(
+nonisolated private func testbed_swift_value_desc_1_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -759,7 +759,7 @@ private func testbed_swift_value_desc_1_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_1_takeInit(
+nonisolated private func testbed_swift_value_desc_1_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -769,14 +769,14 @@ private func testbed_swift_value_desc_1_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_2_destroy(
+nonisolated private func testbed_swift_value_desc_2_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: String.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_2_copyInit(
+nonisolated private func testbed_swift_value_desc_2_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -785,7 +785,7 @@ private func testbed_swift_value_desc_2_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_2_takeInit(
+nonisolated private func testbed_swift_value_desc_2_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -795,14 +795,14 @@ private func testbed_swift_value_desc_2_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_3_destroy(
+nonisolated private func testbed_swift_value_desc_3_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: UInt8.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_3_copyInit(
+nonisolated private func testbed_swift_value_desc_3_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -811,7 +811,7 @@ private func testbed_swift_value_desc_3_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_3_takeInit(
+nonisolated private func testbed_swift_value_desc_3_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -821,14 +821,14 @@ private func testbed_swift_value_desc_3_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_4_destroy(
+nonisolated private func testbed_swift_value_desc_4_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: String?.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_4_copyInit(
+nonisolated private func testbed_swift_value_desc_4_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -837,7 +837,7 @@ private func testbed_swift_value_desc_4_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_4_takeInit(
+nonisolated private func testbed_swift_value_desc_4_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -847,14 +847,14 @@ private func testbed_swift_value_desc_4_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_5_destroy(
+nonisolated private func testbed_swift_value_desc_5_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: String.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_5_copyInit(
+nonisolated private func testbed_swift_value_desc_5_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -863,7 +863,7 @@ private func testbed_swift_value_desc_5_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_5_takeInit(
+nonisolated private func testbed_swift_value_desc_5_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -873,14 +873,14 @@ private func testbed_swift_value_desc_5_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_6_destroy(
+nonisolated private func testbed_swift_value_desc_6_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: LookupError.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_6_copyInit(
+nonisolated private func testbed_swift_value_desc_6_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -889,7 +889,7 @@ private func testbed_swift_value_desc_6_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_6_takeInit(
+nonisolated private func testbed_swift_value_desc_6_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -899,7 +899,7 @@ private func testbed_swift_value_desc_6_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_6_tag(
+nonisolated private func testbed_swift_value_desc_6_tag(
   _ value: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> UInt32 {
   guard let value else { return UInt32.max }
@@ -911,7 +911,7 @@ private func testbed_swift_value_desc_6_tag(
   }
 }
 
-private func testbed_swift_value_desc_6_project(
+nonisolated private func testbed_swift_value_desc_6_project(
   _ value: UnsafeRawPointer?, _ variantIndex: UInt32, _ visitorContext: UnsafeMutableRawPointer?,
   _ visitor: VoxSwiftEnumFieldVisitorFn?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
@@ -926,7 +926,7 @@ private func testbed_swift_value_desc_6_project(
   }
 }
 
-private func testbed_swift_value_desc_6_inject(
+nonisolated private func testbed_swift_value_desc_6_inject(
   _ dst: UnsafeMutableRawPointer?, _ variantIndex: UInt32,
   _ fieldValues: UnsafePointer<UnsafeRawPointer?>?, _ fieldCount: Int, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
@@ -945,14 +945,14 @@ private func testbed_swift_value_desc_6_inject(
   }
 }
 
-private func testbed_swift_value_desc_7_destroy(
+nonisolated private func testbed_swift_value_desc_7_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Point.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_7_copyInit(
+nonisolated private func testbed_swift_value_desc_7_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -961,7 +961,7 @@ private func testbed_swift_value_desc_7_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_7_takeInit(
+nonisolated private func testbed_swift_value_desc_7_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -971,14 +971,14 @@ private func testbed_swift_value_desc_7_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_8_destroy(
+nonisolated private func testbed_swift_value_desc_8_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Int32.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_8_copyInit(
+nonisolated private func testbed_swift_value_desc_8_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -987,7 +987,7 @@ private func testbed_swift_value_desc_8_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_8_takeInit(
+nonisolated private func testbed_swift_value_desc_8_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -997,14 +997,14 @@ private func testbed_swift_value_desc_8_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_9_destroy(
+nonisolated private func testbed_swift_value_desc_9_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Rectangle.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_9_copyInit(
+nonisolated private func testbed_swift_value_desc_9_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1013,7 +1013,7 @@ private func testbed_swift_value_desc_9_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_9_takeInit(
+nonisolated private func testbed_swift_value_desc_9_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1023,14 +1023,14 @@ private func testbed_swift_value_desc_9_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_10_destroy(
+nonisolated private func testbed_swift_value_desc_10_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Color.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_10_copyInit(
+nonisolated private func testbed_swift_value_desc_10_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1039,7 +1039,7 @@ private func testbed_swift_value_desc_10_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_10_takeInit(
+nonisolated private func testbed_swift_value_desc_10_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1049,7 +1049,7 @@ private func testbed_swift_value_desc_10_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_10_tag(
+nonisolated private func testbed_swift_value_desc_10_tag(
   _ value: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> UInt32 {
   guard let value else { return UInt32.max }
@@ -1063,7 +1063,7 @@ private func testbed_swift_value_desc_10_tag(
   }
 }
 
-private func testbed_swift_value_desc_10_project(
+nonisolated private func testbed_swift_value_desc_10_project(
   _ value: UnsafeRawPointer?, _ variantIndex: UInt32, _ visitorContext: UnsafeMutableRawPointer?,
   _ visitor: VoxSwiftEnumFieldVisitorFn?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
@@ -1081,7 +1081,7 @@ private func testbed_swift_value_desc_10_project(
   }
 }
 
-private func testbed_swift_value_desc_10_inject(
+nonisolated private func testbed_swift_value_desc_10_inject(
   _ dst: UnsafeMutableRawPointer?, _ variantIndex: UInt32,
   _ fieldValues: UnsafePointer<UnsafeRawPointer?>?, _ fieldCount: Int, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
@@ -1104,14 +1104,14 @@ private func testbed_swift_value_desc_10_inject(
   }
 }
 
-private func testbed_swift_value_desc_11_destroy(
+nonisolated private func testbed_swift_value_desc_11_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Shape.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_11_copyInit(
+nonisolated private func testbed_swift_value_desc_11_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1120,7 +1120,7 @@ private func testbed_swift_value_desc_11_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_11_takeInit(
+nonisolated private func testbed_swift_value_desc_11_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1130,7 +1130,7 @@ private func testbed_swift_value_desc_11_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_11_tag(
+nonisolated private func testbed_swift_value_desc_11_tag(
   _ value: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> UInt32 {
   guard let value else { return UInt32.max }
@@ -1144,7 +1144,7 @@ private func testbed_swift_value_desc_11_tag(
   }
 }
 
-private func testbed_swift_value_desc_11_project(
+nonisolated private func testbed_swift_value_desc_11_project(
   _ value: UnsafeRawPointer?, _ variantIndex: UInt32, _ visitorContext: UnsafeMutableRawPointer?,
   _ visitor: VoxSwiftEnumFieldVisitorFn?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
@@ -1174,7 +1174,7 @@ private func testbed_swift_value_desc_11_project(
   }
 }
 
-private func testbed_swift_value_desc_11_inject(
+nonisolated private func testbed_swift_value_desc_11_inject(
   _ dst: UnsafeMutableRawPointer?, _ variantIndex: UInt32,
   _ fieldValues: UnsafePointer<UnsafeRawPointer?>?, _ fieldCount: Int, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
@@ -1205,14 +1205,14 @@ private func testbed_swift_value_desc_11_inject(
   }
 }
 
-private func testbed_swift_value_desc_12_destroy(
+nonisolated private func testbed_swift_value_desc_12_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Double.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_12_copyInit(
+nonisolated private func testbed_swift_value_desc_12_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1221,7 +1221,7 @@ private func testbed_swift_value_desc_12_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_12_takeInit(
+nonisolated private func testbed_swift_value_desc_12_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1231,14 +1231,14 @@ private func testbed_swift_value_desc_12_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_13_destroy(
+nonisolated private func testbed_swift_value_desc_13_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Canvas.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_13_copyInit(
+nonisolated private func testbed_swift_value_desc_13_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1247,7 +1247,7 @@ private func testbed_swift_value_desc_13_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_13_takeInit(
+nonisolated private func testbed_swift_value_desc_13_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1257,14 +1257,14 @@ private func testbed_swift_value_desc_13_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_14_destroy(
+nonisolated private func testbed_swift_value_desc_14_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: [Shape].self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_14_copyInit(
+nonisolated private func testbed_swift_value_desc_14_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1273,7 +1273,7 @@ private func testbed_swift_value_desc_14_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_14_takeInit(
+nonisolated private func testbed_swift_value_desc_14_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1283,14 +1283,14 @@ private func testbed_swift_value_desc_14_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_15_destroy(
+nonisolated private func testbed_swift_value_desc_15_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Color.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_15_copyInit(
+nonisolated private func testbed_swift_value_desc_15_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1299,7 +1299,7 @@ private func testbed_swift_value_desc_15_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_15_takeInit(
+nonisolated private func testbed_swift_value_desc_15_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1309,7 +1309,7 @@ private func testbed_swift_value_desc_15_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_15_tag(
+nonisolated private func testbed_swift_value_desc_15_tag(
   _ value: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> UInt32 {
   guard let value else { return UInt32.max }
@@ -1323,7 +1323,7 @@ private func testbed_swift_value_desc_15_tag(
   }
 }
 
-private func testbed_swift_value_desc_15_project(
+nonisolated private func testbed_swift_value_desc_15_project(
   _ value: UnsafeRawPointer?, _ variantIndex: UInt32, _ visitorContext: UnsafeMutableRawPointer?,
   _ visitor: VoxSwiftEnumFieldVisitorFn?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
@@ -1341,7 +1341,7 @@ private func testbed_swift_value_desc_15_project(
   }
 }
 
-private func testbed_swift_value_desc_15_inject(
+nonisolated private func testbed_swift_value_desc_15_inject(
   _ dst: UnsafeMutableRawPointer?, _ variantIndex: UInt32,
   _ fieldValues: UnsafePointer<UnsafeRawPointer?>?, _ fieldCount: Int, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
@@ -1364,14 +1364,14 @@ private func testbed_swift_value_desc_15_inject(
   }
 }
 
-private func testbed_swift_value_desc_16_destroy(
+nonisolated private func testbed_swift_value_desc_16_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: GnarlyAttr.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_16_copyInit(
+nonisolated private func testbed_swift_value_desc_16_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1380,7 +1380,7 @@ private func testbed_swift_value_desc_16_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_16_takeInit(
+nonisolated private func testbed_swift_value_desc_16_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1390,14 +1390,14 @@ private func testbed_swift_value_desc_16_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_17_destroy(
+nonisolated private func testbed_swift_value_desc_17_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: GnarlyKind.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_17_copyInit(
+nonisolated private func testbed_swift_value_desc_17_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1406,7 +1406,7 @@ private func testbed_swift_value_desc_17_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_17_takeInit(
+nonisolated private func testbed_swift_value_desc_17_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1416,7 +1416,7 @@ private func testbed_swift_value_desc_17_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_17_tag(
+nonisolated private func testbed_swift_value_desc_17_tag(
   _ value: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> UInt32 {
   guard let value else { return UInt32.max }
@@ -1430,7 +1430,7 @@ private func testbed_swift_value_desc_17_tag(
   }
 }
 
-private func testbed_swift_value_desc_17_project(
+nonisolated private func testbed_swift_value_desc_17_project(
   _ value: UnsafeRawPointer?, _ variantIndex: UInt32, _ visitorContext: UnsafeMutableRawPointer?,
   _ visitor: VoxSwiftEnumFieldVisitorFn?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
@@ -1472,7 +1472,7 @@ private func testbed_swift_value_desc_17_project(
   }
 }
 
-private func testbed_swift_value_desc_17_inject(
+nonisolated private func testbed_swift_value_desc_17_inject(
   _ dst: UnsafeMutableRawPointer?, _ variantIndex: UInt32,
   _ fieldValues: UnsafePointer<UnsafeRawPointer?>?, _ fieldCount: Int, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
@@ -1511,14 +1511,14 @@ private func testbed_swift_value_desc_17_inject(
   }
 }
 
-private func testbed_swift_value_desc_18_destroy(
+nonisolated private func testbed_swift_value_desc_18_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: [String].self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_18_copyInit(
+nonisolated private func testbed_swift_value_desc_18_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1527,7 +1527,7 @@ private func testbed_swift_value_desc_18_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_18_takeInit(
+nonisolated private func testbed_swift_value_desc_18_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1537,14 +1537,14 @@ private func testbed_swift_value_desc_18_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_19_destroy(
+nonisolated private func testbed_swift_value_desc_19_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: UInt32.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_19_copyInit(
+nonisolated private func testbed_swift_value_desc_19_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1553,7 +1553,7 @@ private func testbed_swift_value_desc_19_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_19_takeInit(
+nonisolated private func testbed_swift_value_desc_19_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1563,14 +1563,14 @@ private func testbed_swift_value_desc_19_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_20_destroy(
+nonisolated private func testbed_swift_value_desc_20_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: [UInt32].self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_20_copyInit(
+nonisolated private func testbed_swift_value_desc_20_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1579,7 +1579,7 @@ private func testbed_swift_value_desc_20_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_20_takeInit(
+nonisolated private func testbed_swift_value_desc_20_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1589,14 +1589,14 @@ private func testbed_swift_value_desc_20_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_21_destroy(
+nonisolated private func testbed_swift_value_desc_21_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: UInt32.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_21_copyInit(
+nonisolated private func testbed_swift_value_desc_21_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1605,7 +1605,7 @@ private func testbed_swift_value_desc_21_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_21_takeInit(
+nonisolated private func testbed_swift_value_desc_21_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1615,14 +1615,14 @@ private func testbed_swift_value_desc_21_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_22_destroy(
+nonisolated private func testbed_swift_value_desc_22_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: GnarlyEntry.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_22_copyInit(
+nonisolated private func testbed_swift_value_desc_22_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1631,7 +1631,7 @@ private func testbed_swift_value_desc_22_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_22_takeInit(
+nonisolated private func testbed_swift_value_desc_22_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1641,14 +1641,14 @@ private func testbed_swift_value_desc_22_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_23_destroy(
+nonisolated private func testbed_swift_value_desc_23_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: UInt64.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_23_copyInit(
+nonisolated private func testbed_swift_value_desc_23_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1657,7 +1657,7 @@ private func testbed_swift_value_desc_23_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_23_takeInit(
+nonisolated private func testbed_swift_value_desc_23_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1667,14 +1667,14 @@ private func testbed_swift_value_desc_23_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_24_destroy(
+nonisolated private func testbed_swift_value_desc_24_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: UInt64?.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_24_copyInit(
+nonisolated private func testbed_swift_value_desc_24_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1683,7 +1683,7 @@ private func testbed_swift_value_desc_24_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_24_takeInit(
+nonisolated private func testbed_swift_value_desc_24_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1693,14 +1693,14 @@ private func testbed_swift_value_desc_24_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_25_destroy(
+nonisolated private func testbed_swift_value_desc_25_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: UInt64.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_25_copyInit(
+nonisolated private func testbed_swift_value_desc_25_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1709,7 +1709,7 @@ private func testbed_swift_value_desc_25_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_25_takeInit(
+nonisolated private func testbed_swift_value_desc_25_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1719,14 +1719,14 @@ private func testbed_swift_value_desc_25_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_26_destroy(
+nonisolated private func testbed_swift_value_desc_26_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: [GnarlyAttr].self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_26_copyInit(
+nonisolated private func testbed_swift_value_desc_26_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1735,7 +1735,7 @@ private func testbed_swift_value_desc_26_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_26_takeInit(
+nonisolated private func testbed_swift_value_desc_26_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1745,14 +1745,14 @@ private func testbed_swift_value_desc_26_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_27_destroy(
+nonisolated private func testbed_swift_value_desc_27_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: [Data].self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_27_copyInit(
+nonisolated private func testbed_swift_value_desc_27_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1761,7 +1761,7 @@ private func testbed_swift_value_desc_27_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_27_takeInit(
+nonisolated private func testbed_swift_value_desc_27_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1771,14 +1771,14 @@ private func testbed_swift_value_desc_27_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_28_destroy(
+nonisolated private func testbed_swift_value_desc_28_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Data.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_28_copyInit(
+nonisolated private func testbed_swift_value_desc_28_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1787,7 +1787,7 @@ private func testbed_swift_value_desc_28_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_28_takeInit(
+nonisolated private func testbed_swift_value_desc_28_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1797,14 +1797,14 @@ private func testbed_swift_value_desc_28_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_29_destroy(
+nonisolated private func testbed_swift_value_desc_29_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: GnarlyPayload.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_29_copyInit(
+nonisolated private func testbed_swift_value_desc_29_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1813,7 +1813,7 @@ private func testbed_swift_value_desc_29_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_29_takeInit(
+nonisolated private func testbed_swift_value_desc_29_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1823,14 +1823,14 @@ private func testbed_swift_value_desc_29_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_30_destroy(
+nonisolated private func testbed_swift_value_desc_30_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: [GnarlyEntry].self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_30_copyInit(
+nonisolated private func testbed_swift_value_desc_30_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1839,7 +1839,7 @@ private func testbed_swift_value_desc_30_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_30_takeInit(
+nonisolated private func testbed_swift_value_desc_30_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1849,14 +1849,14 @@ private func testbed_swift_value_desc_30_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_31_destroy(
+nonisolated private func testbed_swift_value_desc_31_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Data.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_31_copyInit(
+nonisolated private func testbed_swift_value_desc_31_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1865,7 +1865,7 @@ private func testbed_swift_value_desc_31_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_31_takeInit(
+nonisolated private func testbed_swift_value_desc_31_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1875,14 +1875,14 @@ private func testbed_swift_value_desc_31_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_32_destroy(
+nonisolated private func testbed_swift_value_desc_32_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Message.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_32_copyInit(
+nonisolated private func testbed_swift_value_desc_32_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1891,7 +1891,7 @@ private func testbed_swift_value_desc_32_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_32_takeInit(
+nonisolated private func testbed_swift_value_desc_32_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1901,7 +1901,7 @@ private func testbed_swift_value_desc_32_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_32_tag(
+nonisolated private func testbed_swift_value_desc_32_tag(
   _ value: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> UInt32 {
   guard let value else { return UInt32.max }
@@ -1915,7 +1915,7 @@ private func testbed_swift_value_desc_32_tag(
   }
 }
 
-private func testbed_swift_value_desc_32_project(
+nonisolated private func testbed_swift_value_desc_32_project(
   _ value: UnsafeRawPointer?, _ variantIndex: UInt32, _ visitorContext: UnsafeMutableRawPointer?,
   _ visitor: VoxSwiftEnumFieldVisitorFn?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
@@ -1945,7 +1945,7 @@ private func testbed_swift_value_desc_32_project(
   }
 }
 
-private func testbed_swift_value_desc_32_inject(
+nonisolated private func testbed_swift_value_desc_32_inject(
   _ dst: UnsafeMutableRawPointer?, _ variantIndex: UInt32,
   _ fieldValues: UnsafePointer<UnsafeRawPointer?>?, _ fieldCount: Int, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
@@ -1977,14 +1977,14 @@ private func testbed_swift_value_desc_32_inject(
   }
 }
 
-private func testbed_swift_value_desc_33_destroy(
+nonisolated private func testbed_swift_value_desc_33_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Int64.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_33_copyInit(
+nonisolated private func testbed_swift_value_desc_33_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -1993,7 +1993,7 @@ private func testbed_swift_value_desc_33_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_33_takeInit(
+nonisolated private func testbed_swift_value_desc_33_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2003,14 +2003,14 @@ private func testbed_swift_value_desc_33_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_34_destroy(
+nonisolated private func testbed_swift_value_desc_34_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: TaggedPoint.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_34_copyInit(
+nonisolated private func testbed_swift_value_desc_34_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2019,7 +2019,7 @@ private func testbed_swift_value_desc_34_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_34_takeInit(
+nonisolated private func testbed_swift_value_desc_34_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2029,14 +2029,14 @@ private func testbed_swift_value_desc_34_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_35_destroy(
+nonisolated private func testbed_swift_value_desc_35_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Bool.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_35_copyInit(
+nonisolated private func testbed_swift_value_desc_35_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2045,7 +2045,7 @@ private func testbed_swift_value_desc_35_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_35_takeInit(
+nonisolated private func testbed_swift_value_desc_35_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2055,14 +2055,14 @@ private func testbed_swift_value_desc_35_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_36_destroy(
+nonisolated private func testbed_swift_value_desc_36_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Status.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_36_copyInit(
+nonisolated private func testbed_swift_value_desc_36_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2071,7 +2071,7 @@ private func testbed_swift_value_desc_36_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_36_takeInit(
+nonisolated private func testbed_swift_value_desc_36_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2081,7 +2081,7 @@ private func testbed_swift_value_desc_36_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_36_tag(
+nonisolated private func testbed_swift_value_desc_36_tag(
   _ value: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> UInt32 {
   guard let value else { return UInt32.max }
@@ -2093,7 +2093,7 @@ private func testbed_swift_value_desc_36_tag(
   }
 }
 
-private func testbed_swift_value_desc_36_project(
+nonisolated private func testbed_swift_value_desc_36_project(
   _ value: UnsafeRawPointer?, _ variantIndex: UInt32, _ visitorContext: UnsafeMutableRawPointer?,
   _ visitor: VoxSwiftEnumFieldVisitorFn?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
@@ -2108,7 +2108,7 @@ private func testbed_swift_value_desc_36_project(
   }
 }
 
-private func testbed_swift_value_desc_36_inject(
+nonisolated private func testbed_swift_value_desc_36_inject(
   _ dst: UnsafeMutableRawPointer?, _ variantIndex: UInt32,
   _ fieldValues: UnsafePointer<UnsafeRawPointer?>?, _ fieldCount: Int, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
@@ -2127,14 +2127,14 @@ private func testbed_swift_value_desc_36_inject(
   }
 }
 
-private func testbed_swift_value_desc_37_destroy(
+nonisolated private func testbed_swift_value_desc_37_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Tag.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_37_copyInit(
+nonisolated private func testbed_swift_value_desc_37_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2143,7 +2143,7 @@ private func testbed_swift_value_desc_37_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_37_takeInit(
+nonisolated private func testbed_swift_value_desc_37_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2153,14 +2153,14 @@ private func testbed_swift_value_desc_37_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_38_destroy(
+nonisolated private func testbed_swift_value_desc_38_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Profile.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_38_copyInit(
+nonisolated private func testbed_swift_value_desc_38_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2169,7 +2169,7 @@ private func testbed_swift_value_desc_38_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_38_takeInit(
+nonisolated private func testbed_swift_value_desc_38_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2179,14 +2179,14 @@ private func testbed_swift_value_desc_38_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_39_destroy(
+nonisolated private func testbed_swift_value_desc_39_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Record.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_39_copyInit(
+nonisolated private func testbed_swift_value_desc_39_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2195,7 +2195,7 @@ private func testbed_swift_value_desc_39_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_39_takeInit(
+nonisolated private func testbed_swift_value_desc_39_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2205,14 +2205,14 @@ private func testbed_swift_value_desc_39_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_40_destroy(
+nonisolated private func testbed_swift_value_desc_40_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Measurement.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_40_copyInit(
+nonisolated private func testbed_swift_value_desc_40_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2221,7 +2221,7 @@ private func testbed_swift_value_desc_40_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_40_takeInit(
+nonisolated private func testbed_swift_value_desc_40_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2231,14 +2231,14 @@ private func testbed_swift_value_desc_40_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_41_destroy(
+nonisolated private func testbed_swift_value_desc_41_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Config.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_41_copyInit(
+nonisolated private func testbed_swift_value_desc_41_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2247,7 +2247,7 @@ private func testbed_swift_value_desc_41_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_41_takeInit(
+nonisolated private func testbed_swift_value_desc_41_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2257,14 +2257,14 @@ private func testbed_swift_value_desc_41_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_42_destroy(
+nonisolated private func testbed_swift_value_desc_42_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: (String).self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_42_copyInit(
+nonisolated private func testbed_swift_value_desc_42_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2273,7 +2273,7 @@ private func testbed_swift_value_desc_42_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_42_takeInit(
+nonisolated private func testbed_swift_value_desc_42_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2283,14 +2283,14 @@ private func testbed_swift_value_desc_42_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_43_destroy(
+nonisolated private func testbed_swift_value_desc_43_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: String.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_43_copyInit(
+nonisolated private func testbed_swift_value_desc_43_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2299,7 +2299,7 @@ private func testbed_swift_value_desc_43_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_43_takeInit(
+nonisolated private func testbed_swift_value_desc_43_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2309,14 +2309,14 @@ private func testbed_swift_value_desc_43_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_44_destroy(
+nonisolated private func testbed_swift_value_desc_44_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: (Int64, Int64).self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_44_copyInit(
+nonisolated private func testbed_swift_value_desc_44_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2325,7 +2325,7 @@ private func testbed_swift_value_desc_44_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_44_takeInit(
+nonisolated private func testbed_swift_value_desc_44_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2335,14 +2335,14 @@ private func testbed_swift_value_desc_44_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_45_destroy(
+nonisolated private func testbed_swift_value_desc_45_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Result<Int64, MathError>.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_45_copyInit(
+nonisolated private func testbed_swift_value_desc_45_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2351,7 +2351,7 @@ private func testbed_swift_value_desc_45_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_45_takeInit(
+nonisolated private func testbed_swift_value_desc_45_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2361,14 +2361,14 @@ private func testbed_swift_value_desc_45_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_46_destroy(
+nonisolated private func testbed_swift_value_desc_46_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Int64.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_46_copyInit(
+nonisolated private func testbed_swift_value_desc_46_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2377,7 +2377,7 @@ private func testbed_swift_value_desc_46_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_46_takeInit(
+nonisolated private func testbed_swift_value_desc_46_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2387,14 +2387,14 @@ private func testbed_swift_value_desc_46_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_47_destroy(
+nonisolated private func testbed_swift_value_desc_47_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: (UInt32).self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_47_copyInit(
+nonisolated private func testbed_swift_value_desc_47_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2403,7 +2403,7 @@ private func testbed_swift_value_desc_47_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_47_takeInit(
+nonisolated private func testbed_swift_value_desc_47_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2413,14 +2413,14 @@ private func testbed_swift_value_desc_47_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_48_destroy(
+nonisolated private func testbed_swift_value_desc_48_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Result<Person, LookupError>.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_48_copyInit(
+nonisolated private func testbed_swift_value_desc_48_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2429,7 +2429,7 @@ private func testbed_swift_value_desc_48_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_48_takeInit(
+nonisolated private func testbed_swift_value_desc_48_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2439,14 +2439,14 @@ private func testbed_swift_value_desc_48_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_49_destroy(
+nonisolated private func testbed_swift_value_desc_49_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: (Rx<Int32>).self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_49_copyInit(
+nonisolated private func testbed_swift_value_desc_49_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2455,7 +2455,7 @@ private func testbed_swift_value_desc_49_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_49_takeInit(
+nonisolated private func testbed_swift_value_desc_49_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2465,14 +2465,14 @@ private func testbed_swift_value_desc_49_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_50_destroy(
+nonisolated private func testbed_swift_value_desc_50_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Rx<Int32>.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_50_copyInit(
+nonisolated private func testbed_swift_value_desc_50_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2481,7 +2481,7 @@ private func testbed_swift_value_desc_50_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_50_takeInit(
+nonisolated private func testbed_swift_value_desc_50_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2491,14 +2491,14 @@ private func testbed_swift_value_desc_50_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_51_destroy(
+nonisolated private func testbed_swift_value_desc_51_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: (UInt32, Tx<Int32>).self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_51_copyInit(
+nonisolated private func testbed_swift_value_desc_51_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2507,7 +2507,7 @@ private func testbed_swift_value_desc_51_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_51_takeInit(
+nonisolated private func testbed_swift_value_desc_51_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2517,14 +2517,14 @@ private func testbed_swift_value_desc_51_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_52_destroy(
+nonisolated private func testbed_swift_value_desc_52_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Tx<Int32>.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_52_copyInit(
+nonisolated private func testbed_swift_value_desc_52_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2533,7 +2533,7 @@ private func testbed_swift_value_desc_52_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_52_takeInit(
+nonisolated private func testbed_swift_value_desc_52_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2543,14 +2543,14 @@ private func testbed_swift_value_desc_52_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_53_destroy(
+nonisolated private func testbed_swift_value_desc_53_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Void.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_53_copyInit(
+nonisolated private func testbed_swift_value_desc_53_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2559,7 +2559,7 @@ private func testbed_swift_value_desc_53_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_53_takeInit(
+nonisolated private func testbed_swift_value_desc_53_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2569,14 +2569,14 @@ private func testbed_swift_value_desc_53_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_54_destroy(
+nonisolated private func testbed_swift_value_desc_54_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: (Rx<String>, Tx<String>).self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_54_copyInit(
+nonisolated private func testbed_swift_value_desc_54_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2585,7 +2585,7 @@ private func testbed_swift_value_desc_54_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_54_takeInit(
+nonisolated private func testbed_swift_value_desc_54_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2595,14 +2595,14 @@ private func testbed_swift_value_desc_54_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_55_destroy(
+nonisolated private func testbed_swift_value_desc_55_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Rx<String>.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_55_copyInit(
+nonisolated private func testbed_swift_value_desc_55_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2611,7 +2611,7 @@ private func testbed_swift_value_desc_55_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_55_takeInit(
+nonisolated private func testbed_swift_value_desc_55_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2621,14 +2621,14 @@ private func testbed_swift_value_desc_55_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_56_destroy(
+nonisolated private func testbed_swift_value_desc_56_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Tx<String>.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_56_copyInit(
+nonisolated private func testbed_swift_value_desc_56_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2637,7 +2637,7 @@ private func testbed_swift_value_desc_56_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_56_takeInit(
+nonisolated private func testbed_swift_value_desc_56_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2647,14 +2647,14 @@ private func testbed_swift_value_desc_56_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_57_destroy(
+nonisolated private func testbed_swift_value_desc_57_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: (Tx<Int32>).self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_57_copyInit(
+nonisolated private func testbed_swift_value_desc_57_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2663,7 +2663,7 @@ private func testbed_swift_value_desc_57_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_57_takeInit(
+nonisolated private func testbed_swift_value_desc_57_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2673,14 +2673,14 @@ private func testbed_swift_value_desc_57_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_58_destroy(
+nonisolated private func testbed_swift_value_desc_58_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: (Rx<Int32>, Tx<Int64>).self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_58_copyInit(
+nonisolated private func testbed_swift_value_desc_58_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2689,7 +2689,7 @@ private func testbed_swift_value_desc_58_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_58_takeInit(
+nonisolated private func testbed_swift_value_desc_58_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2699,14 +2699,14 @@ private func testbed_swift_value_desc_58_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_59_destroy(
+nonisolated private func testbed_swift_value_desc_59_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Tx<Int64>.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_59_copyInit(
+nonisolated private func testbed_swift_value_desc_59_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2715,7 +2715,7 @@ private func testbed_swift_value_desc_59_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_59_takeInit(
+nonisolated private func testbed_swift_value_desc_59_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2725,14 +2725,14 @@ private func testbed_swift_value_desc_59_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_60_destroy(
+nonisolated private func testbed_swift_value_desc_60_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: (Point).self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_60_copyInit(
+nonisolated private func testbed_swift_value_desc_60_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2741,7 +2741,7 @@ private func testbed_swift_value_desc_60_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_60_takeInit(
+nonisolated private func testbed_swift_value_desc_60_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2751,14 +2751,14 @@ private func testbed_swift_value_desc_60_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_61_destroy(
+nonisolated private func testbed_swift_value_desc_61_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Point.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_61_copyInit(
+nonisolated private func testbed_swift_value_desc_61_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2767,7 +2767,7 @@ private func testbed_swift_value_desc_61_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_61_takeInit(
+nonisolated private func testbed_swift_value_desc_61_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2777,14 +2777,14 @@ private func testbed_swift_value_desc_61_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_62_destroy(
+nonisolated private func testbed_swift_value_desc_62_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: (String, UInt8, String?).self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_62_copyInit(
+nonisolated private func testbed_swift_value_desc_62_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2793,7 +2793,7 @@ private func testbed_swift_value_desc_62_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_62_takeInit(
+nonisolated private func testbed_swift_value_desc_62_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2803,14 +2803,14 @@ private func testbed_swift_value_desc_62_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_63_destroy(
+nonisolated private func testbed_swift_value_desc_63_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: (Rectangle).self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_63_copyInit(
+nonisolated private func testbed_swift_value_desc_63_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2819,7 +2819,7 @@ private func testbed_swift_value_desc_63_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_63_takeInit(
+nonisolated private func testbed_swift_value_desc_63_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2829,14 +2829,14 @@ private func testbed_swift_value_desc_63_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_64_destroy(
+nonisolated private func testbed_swift_value_desc_64_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Double.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_64_copyInit(
+nonisolated private func testbed_swift_value_desc_64_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2845,7 +2845,7 @@ private func testbed_swift_value_desc_64_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_64_takeInit(
+nonisolated private func testbed_swift_value_desc_64_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2855,14 +2855,14 @@ private func testbed_swift_value_desc_64_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_65_destroy(
+nonisolated private func testbed_swift_value_desc_65_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Color?.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_65_copyInit(
+nonisolated private func testbed_swift_value_desc_65_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2871,7 +2871,7 @@ private func testbed_swift_value_desc_65_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_65_takeInit(
+nonisolated private func testbed_swift_value_desc_65_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2881,14 +2881,14 @@ private func testbed_swift_value_desc_65_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_66_destroy(
+nonisolated private func testbed_swift_value_desc_66_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: (Shape).self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_66_copyInit(
+nonisolated private func testbed_swift_value_desc_66_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2897,7 +2897,7 @@ private func testbed_swift_value_desc_66_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_66_takeInit(
+nonisolated private func testbed_swift_value_desc_66_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2907,14 +2907,14 @@ private func testbed_swift_value_desc_66_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_67_destroy(
+nonisolated private func testbed_swift_value_desc_67_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: (String, [Shape], Color).self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_67_copyInit(
+nonisolated private func testbed_swift_value_desc_67_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2923,7 +2923,7 @@ private func testbed_swift_value_desc_67_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_67_takeInit(
+nonisolated private func testbed_swift_value_desc_67_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2933,14 +2933,14 @@ private func testbed_swift_value_desc_67_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_68_destroy(
+nonisolated private func testbed_swift_value_desc_68_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: (GnarlyPayload).self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_68_copyInit(
+nonisolated private func testbed_swift_value_desc_68_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2949,7 +2949,7 @@ private func testbed_swift_value_desc_68_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_68_takeInit(
+nonisolated private func testbed_swift_value_desc_68_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2959,14 +2959,14 @@ private func testbed_swift_value_desc_68_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_69_destroy(
+nonisolated private func testbed_swift_value_desc_69_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: GnarlyPayload.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_69_copyInit(
+nonisolated private func testbed_swift_value_desc_69_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2975,7 +2975,7 @@ private func testbed_swift_value_desc_69_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_69_takeInit(
+nonisolated private func testbed_swift_value_desc_69_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -2985,14 +2985,14 @@ private func testbed_swift_value_desc_69_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_70_destroy(
+nonisolated private func testbed_swift_value_desc_70_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: (Message).self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_70_copyInit(
+nonisolated private func testbed_swift_value_desc_70_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3001,7 +3001,7 @@ private func testbed_swift_value_desc_70_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_70_takeInit(
+nonisolated private func testbed_swift_value_desc_70_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3011,14 +3011,14 @@ private func testbed_swift_value_desc_70_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_71_destroy(
+nonisolated private func testbed_swift_value_desc_71_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Message.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_71_copyInit(
+nonisolated private func testbed_swift_value_desc_71_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3027,7 +3027,7 @@ private func testbed_swift_value_desc_71_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_71_takeInit(
+nonisolated private func testbed_swift_value_desc_71_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3037,7 +3037,7 @@ private func testbed_swift_value_desc_71_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_71_tag(
+nonisolated private func testbed_swift_value_desc_71_tag(
   _ value: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> UInt32 {
   guard let value else { return UInt32.max }
@@ -3051,7 +3051,7 @@ private func testbed_swift_value_desc_71_tag(
   }
 }
 
-private func testbed_swift_value_desc_71_project(
+nonisolated private func testbed_swift_value_desc_71_project(
   _ value: UnsafeRawPointer?, _ variantIndex: UInt32, _ visitorContext: UnsafeMutableRawPointer?,
   _ visitor: VoxSwiftEnumFieldVisitorFn?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
@@ -3081,7 +3081,7 @@ private func testbed_swift_value_desc_71_project(
   }
 }
 
-private func testbed_swift_value_desc_71_inject(
+nonisolated private func testbed_swift_value_desc_71_inject(
   _ dst: UnsafeMutableRawPointer?, _ variantIndex: UInt32,
   _ fieldValues: UnsafePointer<UnsafeRawPointer?>?, _ fieldCount: Int, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
@@ -3113,14 +3113,14 @@ private func testbed_swift_value_desc_71_inject(
   }
 }
 
-private func testbed_swift_value_desc_72_destroy(
+nonisolated private func testbed_swift_value_desc_72_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: [Point].self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_72_copyInit(
+nonisolated private func testbed_swift_value_desc_72_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3129,7 +3129,7 @@ private func testbed_swift_value_desc_72_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_72_takeInit(
+nonisolated private func testbed_swift_value_desc_72_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3139,14 +3139,14 @@ private func testbed_swift_value_desc_72_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_73_destroy(
+nonisolated private func testbed_swift_value_desc_73_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: ((Int32, String)).self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_73_copyInit(
+nonisolated private func testbed_swift_value_desc_73_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3155,7 +3155,7 @@ private func testbed_swift_value_desc_73_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_73_takeInit(
+nonisolated private func testbed_swift_value_desc_73_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3165,14 +3165,14 @@ private func testbed_swift_value_desc_73_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_74_destroy(
+nonisolated private func testbed_swift_value_desc_74_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: (Int32, String).self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_74_copyInit(
+nonisolated private func testbed_swift_value_desc_74_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3181,7 +3181,7 @@ private func testbed_swift_value_desc_74_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_74_takeInit(
+nonisolated private func testbed_swift_value_desc_74_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3191,14 +3191,14 @@ private func testbed_swift_value_desc_74_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_75_destroy(
+nonisolated private func testbed_swift_value_desc_75_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: (String, Int32).self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_75_copyInit(
+nonisolated private func testbed_swift_value_desc_75_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3207,7 +3207,7 @@ private func testbed_swift_value_desc_75_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_75_takeInit(
+nonisolated private func testbed_swift_value_desc_75_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3217,14 +3217,14 @@ private func testbed_swift_value_desc_75_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_76_destroy(
+nonisolated private func testbed_swift_value_desc_76_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: (Data).self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_76_copyInit(
+nonisolated private func testbed_swift_value_desc_76_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3233,7 +3233,7 @@ private func testbed_swift_value_desc_76_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_76_takeInit(
+nonisolated private func testbed_swift_value_desc_76_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3243,14 +3243,14 @@ private func testbed_swift_value_desc_76_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_77_destroy(
+nonisolated private func testbed_swift_value_desc_77_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Data.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_77_copyInit(
+nonisolated private func testbed_swift_value_desc_77_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3259,7 +3259,7 @@ private func testbed_swift_value_desc_77_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_77_takeInit(
+nonisolated private func testbed_swift_value_desc_77_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3269,14 +3269,14 @@ private func testbed_swift_value_desc_77_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_78_destroy(
+nonisolated private func testbed_swift_value_desc_78_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: (Bool).self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_78_copyInit(
+nonisolated private func testbed_swift_value_desc_78_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3285,7 +3285,7 @@ private func testbed_swift_value_desc_78_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_78_takeInit(
+nonisolated private func testbed_swift_value_desc_78_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3295,14 +3295,14 @@ private func testbed_swift_value_desc_78_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_79_destroy(
+nonisolated private func testbed_swift_value_desc_79_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Bool.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_79_copyInit(
+nonisolated private func testbed_swift_value_desc_79_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3311,7 +3311,7 @@ private func testbed_swift_value_desc_79_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_79_takeInit(
+nonisolated private func testbed_swift_value_desc_79_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3321,14 +3321,14 @@ private func testbed_swift_value_desc_79_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_80_destroy(
+nonisolated private func testbed_swift_value_desc_80_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: (UInt64).self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_80_copyInit(
+nonisolated private func testbed_swift_value_desc_80_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3337,7 +3337,7 @@ private func testbed_swift_value_desc_80_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_80_takeInit(
+nonisolated private func testbed_swift_value_desc_80_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3347,14 +3347,14 @@ private func testbed_swift_value_desc_80_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_81_destroy(
+nonisolated private func testbed_swift_value_desc_81_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: UInt64.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_81_copyInit(
+nonisolated private func testbed_swift_value_desc_81_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3363,7 +3363,7 @@ private func testbed_swift_value_desc_81_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_81_takeInit(
+nonisolated private func testbed_swift_value_desc_81_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3373,14 +3373,14 @@ private func testbed_swift_value_desc_81_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_82_destroy(
+nonisolated private func testbed_swift_value_desc_82_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: (String?).self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_82_copyInit(
+nonisolated private func testbed_swift_value_desc_82_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3389,7 +3389,7 @@ private func testbed_swift_value_desc_82_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_82_takeInit(
+nonisolated private func testbed_swift_value_desc_82_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3399,14 +3399,14 @@ private func testbed_swift_value_desc_82_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_83_destroy(
+nonisolated private func testbed_swift_value_desc_83_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: String?.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_83_copyInit(
+nonisolated private func testbed_swift_value_desc_83_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3415,7 +3415,7 @@ private func testbed_swift_value_desc_83_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_83_takeInit(
+nonisolated private func testbed_swift_value_desc_83_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3425,14 +3425,14 @@ private func testbed_swift_value_desc_83_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_84_destroy(
+nonisolated private func testbed_swift_value_desc_84_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: [Color].self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_84_copyInit(
+nonisolated private func testbed_swift_value_desc_84_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3441,7 +3441,7 @@ private func testbed_swift_value_desc_84_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_84_takeInit(
+nonisolated private func testbed_swift_value_desc_84_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3451,14 +3451,14 @@ private func testbed_swift_value_desc_84_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_85_destroy(
+nonisolated private func testbed_swift_value_desc_85_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: (String, Int32, Int32, Bool).self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_85_copyInit(
+nonisolated private func testbed_swift_value_desc_85_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3467,7 +3467,7 @@ private func testbed_swift_value_desc_85_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_85_takeInit(
+nonisolated private func testbed_swift_value_desc_85_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3477,14 +3477,14 @@ private func testbed_swift_value_desc_85_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_86_destroy(
+nonisolated private func testbed_swift_value_desc_86_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Shape.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_86_copyInit(
+nonisolated private func testbed_swift_value_desc_86_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3493,7 +3493,7 @@ private func testbed_swift_value_desc_86_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_86_takeInit(
+nonisolated private func testbed_swift_value_desc_86_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3503,7 +3503,7 @@ private func testbed_swift_value_desc_86_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_86_tag(
+nonisolated private func testbed_swift_value_desc_86_tag(
   _ value: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> UInt32 {
   guard let value else { return UInt32.max }
@@ -3517,7 +3517,7 @@ private func testbed_swift_value_desc_86_tag(
   }
 }
 
-private func testbed_swift_value_desc_86_project(
+nonisolated private func testbed_swift_value_desc_86_project(
   _ value: UnsafeRawPointer?, _ variantIndex: UInt32, _ visitorContext: UnsafeMutableRawPointer?,
   _ visitor: VoxSwiftEnumFieldVisitorFn?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
@@ -3547,7 +3547,7 @@ private func testbed_swift_value_desc_86_project(
   }
 }
 
-private func testbed_swift_value_desc_86_inject(
+nonisolated private func testbed_swift_value_desc_86_inject(
   _ dst: UnsafeMutableRawPointer?, _ variantIndex: UInt32,
   _ fieldValues: UnsafePointer<UnsafeRawPointer?>?, _ fieldCount: Int, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
@@ -3578,14 +3578,14 @@ private func testbed_swift_value_desc_86_inject(
   }
 }
 
-private func testbed_swift_value_desc_87_destroy(
+nonisolated private func testbed_swift_value_desc_87_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: (Status).self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_87_copyInit(
+nonisolated private func testbed_swift_value_desc_87_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3594,7 +3594,7 @@ private func testbed_swift_value_desc_87_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_87_takeInit(
+nonisolated private func testbed_swift_value_desc_87_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3604,14 +3604,14 @@ private func testbed_swift_value_desc_87_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_88_destroy(
+nonisolated private func testbed_swift_value_desc_88_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Status.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_88_copyInit(
+nonisolated private func testbed_swift_value_desc_88_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3620,7 +3620,7 @@ private func testbed_swift_value_desc_88_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_88_takeInit(
+nonisolated private func testbed_swift_value_desc_88_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3630,7 +3630,7 @@ private func testbed_swift_value_desc_88_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_88_tag(
+nonisolated private func testbed_swift_value_desc_88_tag(
   _ value: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> UInt32 {
   guard let value else { return UInt32.max }
@@ -3642,7 +3642,7 @@ private func testbed_swift_value_desc_88_tag(
   }
 }
 
-private func testbed_swift_value_desc_88_project(
+nonisolated private func testbed_swift_value_desc_88_project(
   _ value: UnsafeRawPointer?, _ variantIndex: UInt32, _ visitorContext: UnsafeMutableRawPointer?,
   _ visitor: VoxSwiftEnumFieldVisitorFn?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
@@ -3657,7 +3657,7 @@ private func testbed_swift_value_desc_88_project(
   }
 }
 
-private func testbed_swift_value_desc_88_inject(
+nonisolated private func testbed_swift_value_desc_88_inject(
   _ dst: UnsafeMutableRawPointer?, _ variantIndex: UInt32,
   _ fieldValues: UnsafePointer<UnsafeRawPointer?>?, _ fieldCount: Int, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
@@ -3676,14 +3676,14 @@ private func testbed_swift_value_desc_88_inject(
   }
 }
 
-private func testbed_swift_value_desc_89_destroy(
+nonisolated private func testbed_swift_value_desc_89_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: (Tag).self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_89_copyInit(
+nonisolated private func testbed_swift_value_desc_89_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3692,7 +3692,7 @@ private func testbed_swift_value_desc_89_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_89_takeInit(
+nonisolated private func testbed_swift_value_desc_89_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3702,14 +3702,14 @@ private func testbed_swift_value_desc_89_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_90_destroy(
+nonisolated private func testbed_swift_value_desc_90_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Tag.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_90_copyInit(
+nonisolated private func testbed_swift_value_desc_90_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3718,7 +3718,7 @@ private func testbed_swift_value_desc_90_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_90_takeInit(
+nonisolated private func testbed_swift_value_desc_90_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3728,14 +3728,14 @@ private func testbed_swift_value_desc_90_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_91_destroy(
+nonisolated private func testbed_swift_value_desc_91_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: (Profile).self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_91_copyInit(
+nonisolated private func testbed_swift_value_desc_91_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3744,7 +3744,7 @@ private func testbed_swift_value_desc_91_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_91_takeInit(
+nonisolated private func testbed_swift_value_desc_91_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3754,14 +3754,14 @@ private func testbed_swift_value_desc_91_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_92_destroy(
+nonisolated private func testbed_swift_value_desc_92_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Profile.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_92_copyInit(
+nonisolated private func testbed_swift_value_desc_92_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3770,7 +3770,7 @@ private func testbed_swift_value_desc_92_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_92_takeInit(
+nonisolated private func testbed_swift_value_desc_92_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3780,14 +3780,14 @@ private func testbed_swift_value_desc_92_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_93_destroy(
+nonisolated private func testbed_swift_value_desc_93_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: (Record).self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_93_copyInit(
+nonisolated private func testbed_swift_value_desc_93_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3796,7 +3796,7 @@ private func testbed_swift_value_desc_93_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_93_takeInit(
+nonisolated private func testbed_swift_value_desc_93_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3806,14 +3806,14 @@ private func testbed_swift_value_desc_93_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_94_destroy(
+nonisolated private func testbed_swift_value_desc_94_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Record.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_94_copyInit(
+nonisolated private func testbed_swift_value_desc_94_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3822,7 +3822,7 @@ private func testbed_swift_value_desc_94_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_94_takeInit(
+nonisolated private func testbed_swift_value_desc_94_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3832,14 +3832,14 @@ private func testbed_swift_value_desc_94_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_95_destroy(
+nonisolated private func testbed_swift_value_desc_95_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: (Measurement).self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_95_copyInit(
+nonisolated private func testbed_swift_value_desc_95_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3848,7 +3848,7 @@ private func testbed_swift_value_desc_95_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_95_takeInit(
+nonisolated private func testbed_swift_value_desc_95_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3858,14 +3858,14 @@ private func testbed_swift_value_desc_95_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_96_destroy(
+nonisolated private func testbed_swift_value_desc_96_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Measurement.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_96_copyInit(
+nonisolated private func testbed_swift_value_desc_96_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3874,7 +3874,7 @@ private func testbed_swift_value_desc_96_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_96_takeInit(
+nonisolated private func testbed_swift_value_desc_96_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3884,14 +3884,14 @@ private func testbed_swift_value_desc_96_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_97_destroy(
+nonisolated private func testbed_swift_value_desc_97_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: (Config).self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_97_copyInit(
+nonisolated private func testbed_swift_value_desc_97_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3900,7 +3900,7 @@ private func testbed_swift_value_desc_97_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_97_takeInit(
+nonisolated private func testbed_swift_value_desc_97_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3910,14 +3910,14 @@ private func testbed_swift_value_desc_97_takeInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_98_destroy(
+nonisolated private func testbed_swift_value_desc_98_destroy(
   _ value: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) {
   guard let value else { return }
   value.assumingMemoryBound(to: Config.self).deinitialize(count: 1)
 }
 
-private func testbed_swift_value_desc_98_copyInit(
+nonisolated private func testbed_swift_value_desc_98_copyInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }
@@ -3926,7 +3926,7 @@ private func testbed_swift_value_desc_98_copyInit(
   return VoxSwiftStatusOK
 }
 
-private func testbed_swift_value_desc_98_takeInit(
+nonisolated private func testbed_swift_value_desc_98_takeInit(
   _ dst: UnsafeMutableRawPointer?, _ src: UnsafeMutableRawPointer?, _ context: UnsafeRawPointer?
 ) -> VoxSwiftStatus {
   guard let dst, let src else { return VoxSwiftStatusBadABI }

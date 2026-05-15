@@ -15,7 +15,7 @@
 
 use std::cell::RefCell;
 use std::fmt;
-use std::ptr::NonNull;
+use std::pin::Pin;
 
 /// Discriminant for [`ValueLayout`]. Values are part of the ABI.
 #[repr(u32)]
@@ -295,7 +295,7 @@ pub struct LayoutArena {
 
 #[derive(Default)]
 struct ArenaInner {
-    layouts: Vec<Box<ValueLayout>>,
+    layouts: Vec<Pin<Box<ValueLayout>>>,
     fields: Vec<Box<[FieldLayout]>>,
     variants: Vec<Box<[VariantLayout]>>,
     patterns: Vec<Box<[BytePattern]>>,
@@ -349,8 +349,8 @@ impl LayoutArena {
     }
 
     pub fn alloc_layout(&self, layout: ValueLayout) -> *const ValueLayout {
-        let boxed = Box::new(layout);
-        let ptr = NonNull::from(boxed.as_ref()).as_ptr() as *const ValueLayout;
+        let boxed = Box::pin(layout);
+        let ptr = boxed.as_ref().get_ref() as *const ValueLayout;
         self.inner.borrow_mut().layouts.push(boxed);
         ptr
     }
@@ -601,8 +601,8 @@ pub unsafe fn probe_option_niche_layout(
     // samples may coincidentally share bytes (e.g. heap pointers in the
     // same address range share their high bits).
     let mut none_pattern: Vec<BytePattern> = Vec::new();
-    for i in 0..size {
-        none_pattern.push(BytePattern::full(i as u32, none_bytes[i]));
+    for (i, byte) in none_bytes.iter().copied().enumerate().take(size) {
+        none_pattern.push(BytePattern::full(i as u32, byte));
     }
 
     // Sanity: the None bytes must NOT match either Some sample byte-for-

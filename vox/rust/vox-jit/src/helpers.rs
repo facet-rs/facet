@@ -46,6 +46,71 @@ pub unsafe extern "C" fn vox_jit_result_init_raw(
     }
 }
 
+// PtrConst is a 16-byte (`{ tagged_ptr, metadata }`) struct, so calling
+// facet's option vtable fns directly from JIT — which can only model
+// pointer-sized params — passes the wrong ABI. On SystemV the upper
+// register slot ends up unused for thin pointers so it works by accident;
+// on Windows x64 a 16-byte struct is passed by hidden pointer (RCX holds
+// `&PtrConst`, not the value), and the callee then dereferences the raw
+// data pointer expecting a `PtrConst`, producing an access violation.
+// These Rust-side trampolines accept thin `*const u8`s, build the PtrConst
+// in Rust where the compiler handles the C ABI correctly, and forward.
+
+/// # Safety
+///
+/// - `src_ptr` must be a valid pointer to an `Option<T>` buffer.
+/// - `is_some_fn` must be a valid `OptionIsSomeFn` function pointer for that `T`.
+pub unsafe extern "C" fn vox_jit_option_is_some_raw(
+    src_ptr: *const u8,
+    is_some_fn: facet_core::OptionIsSomeFn,
+) -> bool {
+    unsafe { is_some_fn(PtrConst::new(src_ptr)) }
+}
+
+/// # Safety
+///
+/// - `src_ptr` must be a valid pointer to a `Some(T)` buffer.
+/// - `get_value_fn` must be a valid `OptionGetValueFn` function pointer for that `T`.
+pub unsafe extern "C" fn vox_jit_option_get_value_raw(
+    src_ptr: *const u8,
+    get_value_fn: facet_core::OptionGetValueFn,
+) -> *const u8 {
+    unsafe { get_value_fn(PtrConst::new(src_ptr)) }
+}
+
+/// # Safety
+///
+/// - `src_ptr` must be a valid pointer to a pointer-typed wrapper.
+/// - `borrow_fn` must be a valid `BorrowFn` for that wrapper.
+pub unsafe extern "C" fn vox_jit_borrow_raw(
+    src_ptr: *const u8,
+    borrow_fn: facet_core::BorrowFn,
+) -> *const u8 {
+    unsafe { borrow_fn(PtrConst::new(src_ptr)) }.as_byte_ptr()
+}
+
+/// # Safety
+///
+/// - `slice_ptr` must be a valid pointer to a slice wrapper.
+/// - `len_fn` must be a valid `SliceLenFn` for that wrapper.
+pub unsafe extern "C" fn vox_jit_slice_len_raw(
+    slice_ptr: *const u8,
+    len_fn: facet_core::SliceLenFn,
+) -> usize {
+    unsafe { len_fn(PtrConst::new(slice_ptr)) }
+}
+
+/// # Safety
+///
+/// - `slice_ptr` must be a valid pointer to a slice wrapper.
+/// - `as_ptr_fn` must be a valid `SliceAsPtrFn` for that wrapper.
+pub unsafe extern "C" fn vox_jit_slice_as_ptr_raw(
+    slice_ptr: *const u8,
+    as_ptr_fn: facet_core::SliceAsPtrFn,
+) -> *const u8 {
+    unsafe { as_ptr_fn(PtrConst::new(slice_ptr)) }.as_byte_ptr()
+}
+
 /// SlowPath helper: decode one field via the reflective interpreter and update
 /// `ctx.consumed`. Called by generated decoders when a `SlowPath` IR op is hit.
 ///

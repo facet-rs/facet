@@ -304,6 +304,10 @@ public final class Tx<T: Sendable>: @unchecked Sendable {
         }
         taskTx?(.close(channelId: channelId))
     }
+
+    deinit {
+        close()
+    }
 }
 
 // MARK: - Rx (Receive Handle)

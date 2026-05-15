@@ -14,7 +14,11 @@ function parseAddress(addr: string): { host: string; port: number } {
 }
 
 export class TcpLinkSource implements LinkSource<LengthPrefixedFramed> {
-  constructor(private readonly addr: string) {}
+  private readonly addr: string;
+
+  constructor(addr: string) {
+    this.addr = addr;
+  }
 
   async nextLink(): Promise<{ link: LengthPrefixedFramed }> {
     const { host, port } = parseAddress(this.addr);

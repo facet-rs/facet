@@ -519,7 +519,6 @@ async function runReconnectTest(wsUrl: string): Promise<void> {
   try {
     const source = new TrackingWsLinkSource(wsUrl);
     const established = await session.initiator(source, {
-      transport: "bare",
       resumable: true,
       metadata: voxServiceMetadata("Testbed"),
     });

@@ -7,6 +7,7 @@ import {
   type ConnectionSettings,
   type RequestMessage,
   type ChannelMessage,
+  type SchemaMessage,
   type Message,
   type Metadata,
   type MetadataEntry,
@@ -215,11 +216,7 @@ export type SessionAcceptOutcome =
   | { tag: "Established"; session: Session }
   | { tag: "Resumed" };
 
-export type SessionConduitKind = "bare" | "stable";
-
 export interface SessionTransportOptions extends SessionBuilderOptions {
-  transport?: SessionConduitKind;
-  conduit?: SessionConduitKind;
 }
 
 const DEFAULT_CHANNEL_CAPACITY = 16;
@@ -238,7 +235,6 @@ function isLinkSource(value: SessionTransport): value is LinkSource {
   return typeof (value as LinkSource).nextLink === "function";
 }
 
-// @ts-expect-error unused
 function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
   if (left.length !== right.length) {
     return false;
@@ -284,7 +280,6 @@ async function makeInitiatorEstablishedTransport(
   transport: SessionTransport,
   options: SessionTransportOptions,
 ): Promise<EstablishedTransport> {
-  const conduitKind = options.transport ?? options.conduit ?? "bare";
   const localSettings: ConnectionSettings = {
     parity: { tag: "Odd" },
     max_concurrent_requests: options.maxConcurrentRequests ?? 64,
@@ -293,15 +288,9 @@ async function makeInitiatorEstablishedTransport(
 
   if (isLinkSource(transport)) {
     const attachment = await transport.nextLink();
-    await requestTransportMode(attachment.link, conduitKind);
+    await requestTransportMode(attachment.link);
     const handshake = await handshakeAsInitiator(attachment.link, localSettings, true, null, options.metadata ?? []);
     const messagePlan = buildMessageDecodePlan(handshake.peerMessageSchema);
-
-    // StableConduit removed; "stable" mode now falls through to bare.
-    if (conduitKind === "stable") {
-      const bareConduit = new BareConduit(attachment.link, messagePlan);
-      return { conduit: bareConduit, handshake };
-    }
 
     // For resumable bare sessions: build a recoverConduit that reconnects,
     // re-handshakes with the stored resume key, and returns a fresh conduit.
@@ -328,7 +317,7 @@ async function makeInitiatorEstablishedTransport(
 
           try {
             const newAttachment = await (transport as LinkSource).nextLink();
-            await requestTransportMode(newAttachment.link, conduitKind);
+            await requestTransportMode(newAttachment.link);
             const newHandshake = await handshakeAsInitiator(
               newAttachment.link,
               localSettings,
@@ -404,16 +393,9 @@ async function makeInitiatorEstablishedTransport(
     };
   }
 
-  await requestTransportMode(transport, conduitKind);
+  await requestTransportMode(transport);
   const handshake = await handshakeAsInitiator(transport, localSettings, true, null, options.metadata ?? []);
   const messagePlan = buildMessageDecodePlan(handshake.peerMessageSchema);
-  // StableConduit removed; "stable" requests now fall through to bare.
-  if (conduitKind === "stable") {
-    return {
-      conduit: new BareConduit(transport, messagePlan),
-      handshake,
-    };
-  }
 
   return {
     conduit: new BareConduit(transport, messagePlan),
@@ -428,7 +410,7 @@ async function makeAcceptorEstablishedTransport(
   const attachment = isLinkSource(transport)
     ? await transport.nextLink()
     : { link: transport };
-  const requestedMode = await acceptTransportMode(attachment.link);
+  await acceptTransportMode(attachment.link);
 
   const localSettings: ConnectionSettings = {
     parity: { tag: "Even" },
@@ -445,14 +427,6 @@ async function makeAcceptorEstablishedTransport(
     options.metadata ?? [],
   );
   const messagePlan = buildMessageDecodePlan(handshake.peerMessageSchema);
-
-  // StableConduit removed; "stable" acceptors now route through bare.
-  // The peer's leading ClientHello bytes (if any) are consumed and
-  // discarded so the bare framing can take over cleanly.
-  if (requestedMode === "stable") {
-    const _maybeClientHello = await attachment.link.recv();
-    void _maybeClientHello;
-  }
 
   return {
     conduit: new BareConduit(attachment.link, messagePlan),
@@ -511,27 +485,33 @@ class SessionCore {
     result: Deferred<void>;
   }> = [];
   private resumeWaiter: ((request: { conduit: Conduit<Message>; result: Deferred<void> } | null) => void) | null = null;
+  private readonly localRootSettings: ConnectionSettings;
+  private readonly peerRootSettings: ConnectionSettings;
+  private readonly onConnection?: (connection: ConnectionHandle) => void | Promise<void>;
 
   constructor(
     conduit: Conduit<Message>,
-    private readonly localRootSettings: ConnectionSettings,
-    private readonly peerRootSettings: ConnectionSettings,
+    localRootSettings: ConnectionSettings,
+    peerRootSettings: ConnectionSettings,
     peerSupportsRetry: boolean,
     resumable: boolean,
     sessionResumeKey: Uint8Array | null,
     recoverConduit: (() => Promise<Conduit<Message>>) | undefined,
-    private readonly onConnection?: (connection: ConnectionHandle) => void | Promise<void>,
+    onConnection?: (connection: ConnectionHandle) => void | Promise<void>,
     onConnectivityChange?: (state: SessionConnectivity) => void,
     keepaliveIntervalMs = 0,
     keepaliveTimeoutMs = 0,
   ) {
     this.conduit = conduit;
+    this.localRootSettings = localRootSettings;
+    this.peerRootSettings = peerRootSettings;
     this.peerSupportsRetry = peerSupportsRetry;
     this.resumable = resumable;
     this.sessionResumeKey = sessionResumeKey?.slice() ?? null;
     this.recoverConduit = recoverConduit;
     this.nextConnectionId = firstIdForParity(localRootSettings.parity);
     this.sessionHandle = new SessionHandle(this);
+    this.onConnection = onConnection;
     this.onConnectivityChange = onConnectivityChange;
     this.keepaliveIntervalMs = keepaliveIntervalMs;
     this.keepaliveTimeoutMs =
@@ -920,10 +900,31 @@ class SessionCore {
         await this.handleRequestMessage(message.connection_id, message.payload.value);
         return;
 
+      case "SchemaMessage":
+        this.handleSchemaMessage(message.connection_id, message.payload.value);
+        return;
+
       case "ChannelMessage":
         this.handleChannelMessage(message.connection_id, message.payload.value);
         return;
 
+    }
+  }
+
+  private handleSchemaMessage(
+    connectionId: bigint,
+    schemaMessage: SchemaMessage,
+  ): void {
+    const connection = this.getConnection(connectionId);
+    const direction = schemaMessage.direction.tag === "Args" ? "args" : "response";
+    try {
+      connection.getSchemaTracker().recordReceived(
+        schemaMessage.method_id,
+        direction,
+        schemaMessage.schemas,
+      );
+    } catch (error) {
+      throw SessionError.protocol(error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -1089,7 +1090,11 @@ class SessionCore {
 }
 
 export class SessionHandle {
-  constructor(private readonly core: SessionCore) {}
+  private readonly core: SessionCore;
+
+  constructor(core: SessionCore) {
+    this.core = core;
+  }
 
   openConnection(
     settings: ConnectionSettings = this.core.defaultConnectionSettings(),
@@ -1138,13 +1143,24 @@ export class ConnectionHandle {
   private flushPromise: Promise<void> | null = null;
   private flushRequested = false;
 
+  private readonly session: SessionCore;
+  readonly id: bigint;
+  readonly localSettings: ConnectionSettings;
+  readonly peerSettings: ConnectionSettings;
+  readonly peerSupportsRetry: boolean;
+
   constructor(
-    private readonly session: SessionCore,
-    readonly id: bigint,
-    readonly localSettings: ConnectionSettings,
-    readonly peerSettings: ConnectionSettings,
-    readonly peerSupportsRetry: boolean,
+    session: SessionCore,
+    id: bigint,
+    localSettings: ConnectionSettings,
+    peerSettings: ConnectionSettings,
+    peerSupportsRetry: boolean,
   ) {
+    this.session = session;
+    this.id = id;
+    this.localSettings = localSettings;
+    this.peerSettings = peerSettings;
+    this.peerSupportsRetry = peerSupportsRetry;
     this.role = roleFromParity(localSettings.parity);
     this.channelAllocator = new ChannelIdAllocator(this.role);
     this.channelRegistry = new ChannelRegistry(undefined, () => {
@@ -1576,7 +1592,11 @@ export class ConnectionHandle {
 }
 
 class ConnectionHandleCaller implements Caller {
-  constructor(private readonly connection: ConnectionHandle) {}
+  private readonly connection: ConnectionHandle;
+
+  constructor(connection: ConnectionHandle) {
+    this.connection = connection;
+  }
 
   call(request: CallerRequest): Promise<unknown> {
     return this.connection.call(request);
@@ -1596,9 +1616,12 @@ class ConnectionHandleCaller implements Caller {
 }
 
 export class Session {
-  private constructor(private readonly core: SessionCore) {}
+  private readonly core: SessionCore;
 
-  // @ts-expect-error unused
+  private constructor(core: SessionCore) {
+    this.core = core;
+  }
+
   private resumeKey(): Uint8Array | null {
     return this.core.sessionResumeKeyValue();
   }
@@ -1645,15 +1668,13 @@ export class Session {
   }
 }
 
-// @ts-expect-error unused
 class PrefetchedConduit implements Conduit<Message> {
   private first: Message | null;
+  private readonly inner: Conduit<Message>;
 
-  constructor(
-    first: Message,
-    private readonly inner: Conduit<Message>,
-  ) {
+  constructor(first: Message, inner: Conduit<Message>) {
     this.first = first;
+    this.inner = inner;
   }
 
   send(item: Message): Promise<void> {
@@ -1678,7 +1699,6 @@ class PrefetchedConduit implements Conduit<Message> {
   }
 }
 
-// @ts-expect-error unused
 function randomSessionResumeKey(): Uint8Array {
   const bytes = new Uint8Array(16);
   const cryptoApi = globalThis.crypto;

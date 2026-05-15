@@ -1,7 +1,10 @@
 use std::marker::PhantomData;
 
+#[cfg(not(target_arch = "wasm32"))]
 use facet_core::PtrConst;
+#[cfg(not(target_arch = "wasm32"))]
 use vox_jit::cache::{CompiledDecoder, CompiledEncoder};
+#[cfg(not(target_arch = "wasm32"))]
 use vox_jit::cal::BorrowMode;
 
 use vox_types::{Conduit, ConduitRx, ConduitTx, Link, LinkTx, MaybeSend, MsgFamily, SelfRef};
@@ -21,32 +24,58 @@ use crate::MessagePlan;
 // r[impl zerocopy.framing.conduit.bare]
 pub struct BareConduit<F: MsgFamily, L: Link> {
     link: L,
+    #[cfg(not(target_arch = "wasm32"))]
     encoder: &'static CompiledEncoder,
+    #[cfg(not(target_arch = "wasm32"))]
     decoder: &'static CompiledDecoder,
+    #[cfg(target_arch = "wasm32")]
+    message_plan: MessagePlan,
     _phantom: PhantomData<fn(F) -> F>,
 }
 
 impl<F: MsgFamily, L: Link> BareConduit<F, L> {
     /// Create a new BareConduit (identity plan — no schema translation).
     pub fn new(link: L) -> Self {
-        let runtime = vox_jit::global_runtime();
         let identity_plan = vox_postcard::build_identity_plan(F::shape());
         let registry = vox_types::SchemaRegistry::new();
-        Self::resolve(link, runtime, 0, &identity_plan, &registry)
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let runtime = vox_jit::global_runtime();
+            Self::resolve(link, runtime, 0, &identity_plan, &registry)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            Self::resolve(
+                link,
+                MessagePlan {
+                    remote_schema_id: 0,
+                    plan: identity_plan,
+                    registry,
+                },
+            )
+        }
     }
 
     /// Create a new BareConduit with a pre-built message translation plan.
     pub fn with_message_plan(link: L, message_plan: MessagePlan) -> Self {
-        let runtime = vox_jit::global_runtime();
-        Self::resolve(
-            link,
-            runtime,
-            message_plan.remote_schema_id,
-            &message_plan.plan,
-            &message_plan.registry,
-        )
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let runtime = vox_jit::global_runtime();
+            Self::resolve(
+                link,
+                runtime,
+                message_plan.remote_schema_id,
+                &message_plan.plan,
+                &message_plan.registry,
+            )
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            Self::resolve(link, message_plan)
+        }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn resolve(
         link: L,
         runtime: &vox_jit::JitRuntime,
@@ -73,6 +102,15 @@ impl<F: MsgFamily, L: Link> BareConduit<F, L> {
             _phantom: PhantomData,
         }
     }
+
+    #[cfg(target_arch = "wasm32")]
+    fn resolve(link: L, message_plan: MessagePlan) -> Self {
+        Self {
+            link,
+            message_plan,
+            _phantom: PhantomData,
+        }
+    }
 }
 
 impl<F: MsgFamily, L: Link> Conduit for BareConduit<F, L>
@@ -89,12 +127,16 @@ where
         (
             BareConduitTx {
                 link_tx: tx,
+                #[cfg(not(target_arch = "wasm32"))]
                 encoder: self.encoder,
                 _phantom: PhantomData,
             },
             BareConduitRx {
                 link_rx: rx,
+                #[cfg(not(target_arch = "wasm32"))]
                 decoder: self.decoder,
+                #[cfg(target_arch = "wasm32")]
+                message_plan: self.message_plan,
                 _phantom: PhantomData,
             },
         )
@@ -107,6 +149,7 @@ where
 
 pub struct BareConduitTx<F: MsgFamily, LTx: LinkTx> {
     link_tx: LTx,
+    #[cfg(not(target_arch = "wasm32"))]
     encoder: &'static CompiledEncoder,
     _phantom: PhantomData<fn(F)>,
 }
@@ -124,8 +167,15 @@ impl<F: MsgFamily, LTx: LinkTx + MaybeSend + 'static> ConduitTx for BareConduitT
     // r[impl zerocopy.scatter.write]
     // r[impl zerocopy.scatter.lifetime]
     fn prepare_send(&self, item: F::Msg<'_>) -> Result<Self::Prepared, Self::Error> {
-        let ptr = PtrConst::new((&raw const item).cast::<u8>());
-        vox_jit::encode_with(self.encoder, ptr).map_err(BareConduitError::Encode)
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let ptr = PtrConst::new((&raw const item).cast::<u8>());
+            vox_jit::encode_with(self.encoder, ptr).map_err(BareConduitError::Encode)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            vox_postcard::to_vec(&item).map_err(BareConduitError::Encode)
+        }
     }
 
     async fn send_prepared(&self, prepared: Self::Prepared) -> Result<(), Self::Error> {
@@ -146,7 +196,10 @@ impl<F: MsgFamily, LTx: LinkTx + MaybeSend + 'static> ConduitTx for BareConduitT
 
 pub struct BareConduitRx<F: MsgFamily, LRx> {
     link_rx: LRx,
+    #[cfg(not(target_arch = "wasm32"))]
     decoder: &'static CompiledDecoder,
+    #[cfg(target_arch = "wasm32")]
+    message_plan: MessagePlan,
     _phantom: PhantomData<fn() -> F>,
 }
 
@@ -167,9 +220,22 @@ where
             None => return Ok(None),
         };
 
-        crate::deserialize_postcard_with_decoder::<F::Msg<'static>>(backing, self.decoder)
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            crate::deserialize_postcard_with_decoder::<F::Msg<'static>>(backing, self.decoder)
+                .map_err(BareConduitError::Decode)
+                .map(Some)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            crate::deserialize_postcard_with_plan::<F::Msg<'static>>(
+                backing,
+                &self.message_plan.plan,
+                &self.message_plan.registry,
+            )
             .map_err(BareConduitError::Decode)
             .map(Some)
+        }
     }
 }
 

@@ -801,6 +801,50 @@ func runClientScenario(client: TestbedClient, scenario: String) async throws {
             throw SubjectError.invalidResponse
         }
         log("process_message result OK")
+    case "post_reply_generate":
+        let (tx, rx) = channel(
+            serialize: { val, buf in encodeI32(val, into: &buf) },
+            deserialize: { buf in try decodeI32(from: &buf) }
+        )
+        try await client.postReplyGenerate(output: tx)
+        var received: [Int32] = []
+        for try await n in rx {
+            received.append(n)
+        }
+        let expected: [Int32] = [0, 1, 2, 3, 4]
+        guard received == expected else {
+            log("post_reply_generate expected \(expected), got \(received)")
+            throw SubjectError.invalidResponse
+        }
+        log("post_reply_generate OK")
+    case "post_reply_sum":
+        let (inputTx, inputRx) = channel(
+            serialize: { val, buf in encodeI32(val, into: &buf) },
+            deserialize: { buf in try decodeI32(from: &buf) }
+        )
+        let (resultTx, resultRx) = channel(
+            serialize: { val, buf in encodeI64(val, into: &buf) },
+            deserialize: { buf in try decodeI64(from: &buf) }
+        )
+        try await client.postReplySum(input: inputRx, result: resultTx)
+        for n in [1, 2, 3, 4, 5] {
+            try await inputTx.send(Int32(n))
+        }
+        inputTx.close()
+        var resultIter = resultRx.makeAsyncIterator()
+        guard let total = try await resultIter.next() else {
+            log("post_reply_sum result channel closed without a value")
+            throw SubjectError.invalidResponse
+        }
+        guard total == 15 else {
+            log("post_reply_sum expected 15, got \(total)")
+            throw SubjectError.invalidResponse
+        }
+        if let extra = try await resultIter.next() {
+            log("post_reply_sum result channel yielded extra value \(extra)")
+            throw SubjectError.invalidResponse
+        }
+        log("post_reply_sum OK")
     case "transform_bidi":
         let (inputTx, inputRx) = channel(
             serialize: { val, buf in encodeString(val, into: &buf) },

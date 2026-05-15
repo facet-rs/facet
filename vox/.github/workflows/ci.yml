@@ -217,7 +217,7 @@ jobs:
         run: cargo xtask codegen --typescript
 
       - name: Install Playwright browsers
-        run: pnpm exec playwright install --with-deps chromium
+        run: pnpm --filter "@bearcove/vox-playwright-tests" exec playwright install --with-deps chromium
 
       - name: Run TypeScript browser tests
         run: pnpm --filter "@bearcove/vox-playwright-tests" run test
@@ -225,13 +225,6 @@ jobs:
       - name: Run TypeScript TCP subject matrix tests
         run: >
           cargo nextest run -p spec-tests --test spec_matrix --run-ignored all -E 'test(lang_typescript_transport_tcp::)'
-
-      - name: Run TypeScript TCP stable-conduit cross-language tests
-        run: >
-          cargo nextest run -p spec-tests --test spec_matrix --run-ignored all
-          -E 'test(lang_typescript_transport_tcp::)'
-        env:
-          SPEC_CONDUIT: stable
 
   swift-conformance:
     name: Conformance / Swift
@@ -270,7 +263,7 @@ jobs:
       - name: Setup Swift
         uses: swift-actions/setup-swift@v2
         with:
-          swift-version: "6.0"
+          swift-version: "6.1"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -350,7 +343,7 @@ jobs:
         run: pnpm install
 
       - name: Install Playwright browsers
-        run: pnpm exec playwright install --with-deps chromium
+        run: pnpm --filter "@bearcove/vox-wasm-playwright-tests" exec playwright install --with-deps chromium
 
       - name: Run Wasm browser tests
         run: pnpm --filter "@bearcove/vox-wasm-playwright-tests" run test

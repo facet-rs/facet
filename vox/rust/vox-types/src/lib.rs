@@ -132,6 +132,8 @@ pub use client_middleware::*;
 mod observer;
 pub use observer::*;
 
+pub mod time;
+
 mod debug_snapshot;
 pub use debug_snapshot::*;
 

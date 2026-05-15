@@ -5,8 +5,14 @@ use std::time::{Duration, Instant};
 
 use vox_core::{
     ConnectionAcceptor, ConnectionRequest, FromVoxSession, NoopClient, PendingConnection,
-    SessionError, TransportMode, initiator,
+    SessionError,
 };
+#[cfg(any(
+    feature = "transport-tcp",
+    feature = "transport-local",
+    feature = "transport-websocket"
+))]
+use vox_core::{TransportMode, initiator};
 use vox_types::{
     DEFAULT_INITIAL_CHANNEL_CREDIT, Link, MaybeSend, MaybeSync, Metadata, VoxObserver,
     VoxObserverHandle, metadata_into_owned,
@@ -80,7 +86,9 @@ pub fn connect<Client: FromVoxSession>(
 }
 
 enum ConnectAddress {
+    #[cfg(feature = "transport-tcp")]
     Tcp(String),
+    #[cfg(feature = "transport-local")]
     Local(String),
     #[cfg(feature = "transport-websocket")]
     Ws(String),
@@ -91,6 +99,12 @@ fn parse_connect_address(addr: String) -> Result<ConnectAddress, SessionError> {
         Some((scheme, host)) => (scheme.to_string(), host.to_string()),
         None => ("tcp".to_string(), addr),
     };
+    #[cfg(not(any(
+        feature = "transport-tcp",
+        feature = "transport-local",
+        feature = "transport-websocket"
+    )))]
+    let _ = &host;
 
     match scheme.as_str() {
         #[cfg(feature = "transport-tcp")]
@@ -294,6 +308,20 @@ where
         observer: Option<VoxObserverHandle>,
         resumable: bool,
     ) -> Result<Client, SessionError> {
+        #[cfg(not(any(
+            feature = "transport-tcp",
+            feature = "transport-local",
+            feature = "transport-websocket"
+        )))]
+        let _ = (
+            &metadata,
+            &on_connection,
+            &connect_timeout,
+            channel_capacity,
+            &observer,
+            resumable,
+        );
+
         match parsed {
             #[cfg(feature = "transport-tcp")]
             ConnectAddress::Tcp(host) => {
@@ -464,6 +492,13 @@ where
             Some((scheme, host)) => (scheme.to_string(), host.to_string()),
             None => ("tcp".to_string(), addr),
         };
+        #[cfg(not(any(
+            feature = "transport-tcp",
+            feature = "transport-local",
+            feature = "transport-websocket",
+            feature = "transport-websocket-tls"
+        )))]
+        let _ = (&host, &acceptor, &observer);
 
         match scheme.as_str() {
             #[cfg(feature = "transport-tcp")]

@@ -1,5 +1,6 @@
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use crate::time::Instant;
 use crate::{
     ChannelCloseReason, ChannelDebugContext, ChannelDirection, ChannelId, ChannelResetReason,
     ConnectionCloseReason, ConnectionId, MethodId, RequestId,

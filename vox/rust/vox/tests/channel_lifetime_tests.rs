@@ -8,7 +8,7 @@ use vox::Rx;
 
 #[derive(Clone, Debug, facet::Facet)]
 #[repr(u8)]
-enum AttachError {
+pub enum AttachError {
     Rejected,
 }
 

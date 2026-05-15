@@ -33,6 +33,8 @@ export type {
   ChannelGrantCredit,
   ChannelBody,
   ChannelMessage,
+  BindingDirection,
+  SchemaMessage,
   Ping,
   Pong,
   MessagePayload,

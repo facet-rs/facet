@@ -252,15 +252,31 @@ export class InMemoryOperationStore implements OperationStore {
 class VoxCallImpl implements VoxCall {
   private replied = false;
 
+  private readonly method: MethodDescriptor;
+  private readonly requestId: bigint;
+  private readonly taskSender: TaskSender;
+  private readonly operations: OperationStore;
+  private readonly operationId: bigint | undefined;
+  private readonly schemaSendTracker: import("./schema_tracker.ts").SchemaSendTracker;
+  private readonly sendSchemas: import("./schema_tracker.ts").ServiceSendSchemas;
+
   constructor(
-    private readonly method: MethodDescriptor,
-    private readonly requestId: bigint,
-    private readonly taskSender: TaskSender,
-    private readonly operations: OperationStore,
-    private readonly operationId: bigint | undefined,
-    private readonly schemaSendTracker: import("./schema_tracker.ts").SchemaSendTracker,
-    private readonly sendSchemas: import("./schema_tracker.ts").ServiceSendSchemas,
-  ) {}
+    method: MethodDescriptor,
+    requestId: bigint,
+    taskSender: TaskSender,
+    operations: OperationStore,
+    operationId: bigint | undefined,
+    schemaSendTracker: import("./schema_tracker.ts").SchemaSendTracker,
+    sendSchemas: import("./schema_tracker.ts").ServiceSendSchemas,
+  ) {
+    this.method = method;
+    this.requestId = requestId;
+    this.taskSender = taskSender;
+    this.operations = operations;
+    this.operationId = operationId;
+    this.schemaSendTracker = schemaSendTracker;
+    this.sendSchemas = sendSchemas;
+  }
 
   didReply(): boolean {
     return this.replied;
@@ -340,6 +356,8 @@ class VoxCallImpl implements VoxCall {
 }
 
 export class Driver {
+  private readonly connection: ConnectionHandle;
+  private readonly dispatcher: Dispatcher;
   private readonly middlewares: ServerMiddleware[];
   private readonly taskQueue: TaskMessage[] = [];
   private readonly operations: OperationStore;
@@ -364,11 +382,13 @@ export class Driver {
   }
 
   constructor(
-    private readonly connection: ConnectionHandle,
-    private readonly dispatcher: Dispatcher,
+    connection: ConnectionHandle,
+    dispatcher: Dispatcher,
     middlewares: ServerMiddleware[] = [],
     store: OperationStore = new InMemoryOperationStore(),
   ) {
+    this.connection = connection;
+    this.dispatcher = dispatcher;
     this.middlewares = middlewares;
     this.operations = store;
   }

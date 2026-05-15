@@ -37,7 +37,6 @@ import {
   voxServiceMetadata,
   type Tx,
   type Rx,
-  type SessionConduitKind,
 } from "@bearcove/vox-core";
 
 // Enable vox internals logging for test visibility
@@ -52,6 +51,7 @@ class TestbedService implements TestbedHandler {
     for (let i = 0; i < count; i++) {
       await output.send(i);
     }
+    output.close();
   }
 
   // Echo methods
@@ -292,10 +292,6 @@ class TestbedService implements TestbedHandler {
   }
 }
 
-function subjectConduit(): SessionConduitKind {
-  return process.env.SPEC_CONDUIT === "stable" ? "stable" : "bare";
-}
-
 const RETRY_PROBE_ITEM_COUNT = 40;
 
 function expectSequentialPrefix(received: number[], label: string): void {
@@ -324,7 +320,6 @@ async function runServer() {
 
   console.error(`server mode: connecting to ${addr}, acceptConnections=${acceptConnections}`);
   const established = await session.initiator(makeConnector(addr), {
-    transport: subjectConduit(),
     metadata: voxServiceMetadata("Testbed"),
     onConnection: acceptConnections
       ? (connection) => {
@@ -362,7 +357,6 @@ async function runClient() {
   // Enable session resumption when the peer supports it — this allows
   // automatic reconnect and retry for idempotent/persist methods.
   const established = await session.initiator(makeConnector(addr), {
-    transport: subjectConduit(),
     metadata: voxServiceMetadata("Testbed"),
     resumable: true,
   });
@@ -807,7 +801,6 @@ async function runServerListen() {
   });
 
   const established = await session.acceptorOn(acceptTcp(socket), {
-    transport: subjectConduit(),
     metadata: voxServiceMetadata("Testbed"),
     // Provide a session resume key so Rust clients (which default to
     // resumable=true) don't reject the handshake. The key is generated

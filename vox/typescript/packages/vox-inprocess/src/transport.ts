@@ -5,8 +5,11 @@ export class InProcessLink implements Link {
   private pendingMessages: Uint8Array[] = [];
   private waitingResolve: ((payload: Uint8Array | null) => void) | null = null;
   private closed = false;
+  private readonly deliverToPeer: (payload: Uint8Array) => void;
 
-  constructor(private readonly deliverToPeer: (payload: Uint8Array) => void) {}
+  constructor(deliverToPeer: (payload: Uint8Array) => void) {
+    this.deliverToPeer = deliverToPeer;
+  }
 
   pushMessage(payload: Uint8Array): void {
     if (this.closed) {

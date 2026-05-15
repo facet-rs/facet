@@ -8,8 +8,11 @@ class MemoryLink {
   #closed = false;
   #queue: Uint8Array[] = [];
   #waiters: Array<(value: Uint8Array | null) => void> = [];
+  private readonly deliver: (payload: Uint8Array) => void;
 
-  constructor(private readonly deliver: (payload: Uint8Array) => void) {}
+  constructor(deliver: (payload: Uint8Array) => void) {
+    this.deliver = deliver;
+  }
 
   async send(payload: Uint8Array): Promise<void> {
     if (this.#closed) {
@@ -64,14 +67,7 @@ describe("transport prologue", () => {
   it("accepts bare mode", async () => {
     const [initiator, acceptor] = memoryLinkPair();
     const accepted = acceptTransportMode(acceptor);
-    await requestTransportMode(initiator, "bare");
-    await expect(accepted).resolves.toBe("bare");
-  });
-
-  it("accepts stable mode", async () => {
-    const [initiator, acceptor] = memoryLinkPair();
-    const accepted = acceptTransportMode(acceptor);
-    await requestTransportMode(initiator, "stable");
-    await expect(accepted).resolves.toBe("stable");
+    await requestTransportMode(initiator);
+    await expect(accepted).resolves.toBeUndefined();
   });
 });

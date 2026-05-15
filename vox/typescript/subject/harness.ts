@@ -7,15 +7,9 @@ import {
   Driver,
   SessionError,
   session,
-  voxServiceMetadata,
   type Dispatcher,
-  type SessionConduitKind,
   type Metadata,
 } from "@bearcove/vox-core";
-
-function subjectConduit(): SessionConduitKind {
-  return process.env.SPEC_CONDUIT === "stable" ? "stable" : "bare";
-}
 
 export async function runSubjectServer(createDispatcher: () => Dispatcher, metadata: Metadata = []): Promise<void> {
   const addr = process.env.PEER_ADDR;
@@ -27,7 +21,6 @@ export async function runSubjectServer(createDispatcher: () => Dispatcher, metad
 
   console.error(`server mode: connecting to ${addr}, acceptConnections=${acceptConnections}`);
   const established = await session.initiator(tcpConnector(addr), {
-    transport: subjectConduit(),
     metadata,
     onConnection: acceptConnections
       ? (connection) => {

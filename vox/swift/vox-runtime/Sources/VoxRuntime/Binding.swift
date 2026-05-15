@@ -289,14 +289,39 @@ public typealias IncomingChannelRegistry = ChannelRegistry
 
 // MARK: - Resolve helpers
 
-/// Resolve a TypeRef to a SchemaKind via the registry.
-private func resolveKind(_ typeRef: TypeRef, _ registry: [UInt64: Schema]) -> SchemaKind? {
-    guard case .concrete(let typeId, _) = typeRef,
+/// Substitution map from generic type parameter name to a bound TypeRef.
+typealias TypeSubst = [TypeParamName: TypeRef]
+
+/// Apply `subst` to a TypeRef, replacing any `.var(name)` whose name is bound.
+private func substitute(_ typeRef: TypeRef, _ subst: TypeSubst) -> TypeRef {
+    switch typeRef {
+    case .var(let name):
+        return subst[name] ?? typeRef
+    case .concrete(let typeId, let args):
+        if args.isEmpty {
+            return typeRef
+        }
+        return .concrete(typeId: typeId, args: args.map { substitute($0, subst) })
+    }
+}
+
+/// Resolve a TypeRef to a SchemaKind via the registry, applying the current
+/// substitution and returning a fresh substitution to use when recursing into
+/// the schema's children (which reference its `typeParams`).
+private func resolveKind(
+    _ typeRef: TypeRef, _ subst: TypeSubst, _ registry: [UInt64: Schema]
+) -> (kind: SchemaKind, subst: TypeSubst)? {
+    let resolved = substitute(typeRef, subst)
+    guard case .concrete(let typeId, let args) = resolved,
         let schema = registry[typeId]
     else {
         return nil
     }
-    return schema.kind
+    var innerSubst: TypeSubst = [:]
+    for (param, arg) in zip(schema.typeParams, args) {
+        innerSubst[param] = arg
+    }
+    return (schema.kind, innerSubst)
 }
 
 // MARK: - Bind Channels
@@ -315,7 +340,7 @@ public func bindChannels(
     incomingRegistry: ChannelRegistry,
     taskSender: @escaping TaskSender
 ) async {
-    guard let kind = resolveKind(argsRoot, schemaRegistry),
+    guard let (kind, subst) = resolveKind(argsRoot, [:], schemaRegistry),
         case .tuple(let elements) = kind
     else {
         fatalError("argsRoot must resolve to a tuple schema")
@@ -323,6 +348,7 @@ public func bindChannels(
     for (typeRef, arg) in zip(elements, args) {
         await bindValue(
             typeRef: typeRef,
+            subst: subst,
             schemaRegistry: schemaRegistry,
             value: arg,
             allocator: allocator,
@@ -338,13 +364,13 @@ public func finalizeBoundChannels(
     schemaRegistry: [UInt64: Schema],
     args: [Any]
 ) {
-    guard let kind = resolveKind(argsRoot, schemaRegistry),
+    guard let (kind, subst) = resolveKind(argsRoot, [:], schemaRegistry),
         case .tuple(let elements) = kind
     else {
         return
     }
     for (typeRef, arg) in zip(elements, args) {
-        finalizeValue(typeRef: typeRef, schemaRegistry: schemaRegistry, value: arg)
+        finalizeValue(typeRef: typeRef, subst: subst, schemaRegistry: schemaRegistry, value: arg)
     }
 }
 
@@ -355,25 +381,27 @@ public func collectChannelIds(
     args: [Any]
 ) -> [UInt64] {
     var channelIds: [UInt64] = []
-    guard let kind = resolveKind(argsRoot, schemaRegistry),
+    guard let (kind, subst) = resolveKind(argsRoot, [:], schemaRegistry),
         case .tuple(let elements) = kind
     else {
         return channelIds
     }
     for (typeRef, arg) in zip(elements, args) {
         collectChannelIdsFromValue(
-            typeRef: typeRef, schemaRegistry: schemaRegistry, value: arg, out: &channelIds)
+            typeRef: typeRef, subst: subst, schemaRegistry: schemaRegistry, value: arg,
+            out: &channelIds)
     }
     return channelIds
 }
 
 private func collectChannelIdsFromValue(
     typeRef: TypeRef,
+    subst: TypeSubst,
     schemaRegistry: [UInt64: Schema],
     value: Any,
     out: inout [UInt64]
 ) {
-    guard let kind = resolveKind(typeRef, schemaRegistry) else { return }
+    guard let (kind, innerSubst) = resolveKind(typeRef, subst, schemaRegistry) else { return }
     switch kind {
     case .channel:
         if let rx = value as? AnyUnboundRx {
@@ -386,29 +414,32 @@ private func collectChannelIdsFromValue(
         if let arr = value as? [Any] {
             for item in arr {
                 collectChannelIdsFromValue(
-                    typeRef: element, schemaRegistry: schemaRegistry, value: item, out: &out)
+                    typeRef: element, subst: innerSubst, schemaRegistry: schemaRegistry,
+                    value: item, out: &out)
             }
         }
     case .option(let element):
         let mirror = Mirror(reflecting: value)
         if mirror.displayStyle == .optional, let (_, unwrapped) = mirror.children.first {
             collectChannelIdsFromValue(
-                typeRef: element, schemaRegistry: schemaRegistry, value: unwrapped, out: &out)
+                typeRef: element, subst: innerSubst, schemaRegistry: schemaRegistry,
+                value: unwrapped, out: &out)
         }
     case .struct(_, let fields):
         let mirror = Mirror(reflecting: value)
         for field in fields {
             if let child = mirror.children.first(where: { $0.label == field.name }) {
                 collectChannelIdsFromValue(
-                    typeRef: field.typeRef, schemaRegistry: schemaRegistry, value: child.value,
-                    out: &out)
+                    typeRef: field.typeRef, subst: innerSubst, schemaRegistry: schemaRegistry,
+                    value: child.value, out: &out)
             }
         }
     case .tuple(let elements):
         if let arr = value as? [Any] {
             for (element, item) in zip(elements, arr) {
                 collectChannelIdsFromValue(
-                    typeRef: element, schemaRegistry: schemaRegistry, value: item, out: &out)
+                    typeRef: element, subst: innerSubst, schemaRegistry: schemaRegistry,
+                    value: item, out: &out)
             }
         }
     default:
@@ -418,13 +449,14 @@ private func collectChannelIdsFromValue(
 
 private func bindValue(
     typeRef: TypeRef,
+    subst: TypeSubst,
     schemaRegistry: [UInt64: Schema],
     value: Any,
     allocator: ChannelIdAllocator,
     incomingRegistry: ChannelRegistry,
     taskSender: @escaping TaskSender
 ) async {
-    guard let kind = resolveKind(typeRef, schemaRegistry) else { return }
+    guard let (kind, innerSubst) = resolveKind(typeRef, subst, schemaRegistry) else { return }
     switch kind {
     case .channel(let direction, _):
         if direction == .rx {
@@ -456,6 +488,7 @@ private func bindValue(
             for item in arr {
                 await bindValue(
                     typeRef: element,
+                    subst: innerSubst,
                     schemaRegistry: schemaRegistry,
                     value: item,
                     allocator: allocator,
@@ -470,6 +503,7 @@ private func bindValue(
         if mirror.displayStyle == .optional, let (_, unwrapped) = mirror.children.first {
             await bindValue(
                 typeRef: element,
+                subst: innerSubst,
                 schemaRegistry: schemaRegistry,
                 value: unwrapped,
                 allocator: allocator,
@@ -484,6 +518,7 @@ private func bindValue(
             if let child = mirror.children.first(where: { $0.label == field.name }) {
                 await bindValue(
                     typeRef: field.typeRef,
+                    subst: innerSubst,
                     schemaRegistry: schemaRegistry,
                     value: child.value,
                     allocator: allocator,
@@ -498,6 +533,7 @@ private func bindValue(
             for (element, item) in zip(elements, arr) {
                 await bindValue(
                     typeRef: element,
+                    subst: innerSubst,
                     schemaRegistry: schemaRegistry,
                     value: item,
                     allocator: allocator,
@@ -515,36 +551,44 @@ private func bindValue(
 
 private func finalizeValue(
     typeRef: TypeRef,
+    subst: TypeSubst,
     schemaRegistry: [UInt64: Schema],
     value: Any
 ) {
-    guard let kind = resolveKind(typeRef, schemaRegistry) else { return }
+    guard let (kind, innerSubst) = resolveKind(typeRef, subst, schemaRegistry) else { return }
     switch kind {
     case .channel:
         (value as? AnyRetryFinalizableChannel)?.finishRetryBinding()
     case .list(let element):
         if let arr = value as? [Any] {
             for item in arr {
-                finalizeValue(typeRef: element, schemaRegistry: schemaRegistry, value: item)
+                finalizeValue(
+                    typeRef: element, subst: innerSubst, schemaRegistry: schemaRegistry,
+                    value: item)
             }
         }
     case .option(let element):
         let mirror = Mirror(reflecting: value)
         if mirror.displayStyle == .optional, let (_, unwrapped) = mirror.children.first {
-            finalizeValue(typeRef: element, schemaRegistry: schemaRegistry, value: unwrapped)
+            finalizeValue(
+                typeRef: element, subst: innerSubst, schemaRegistry: schemaRegistry,
+                value: unwrapped)
         }
     case .struct(_, let fields):
         let mirror = Mirror(reflecting: value)
         for field in fields {
             if let child = mirror.children.first(where: { $0.label == field.name }) {
                 finalizeValue(
-                    typeRef: field.typeRef, schemaRegistry: schemaRegistry, value: child.value)
+                    typeRef: field.typeRef, subst: innerSubst, schemaRegistry: schemaRegistry,
+                    value: child.value)
             }
         }
     case .tuple(let elements):
         if let arr = value as? [Any] {
             for (element, item) in zip(elements, arr) {
-                finalizeValue(typeRef: element, schemaRegistry: schemaRegistry, value: item)
+                finalizeValue(
+                    typeRef: element, subst: innerSubst, schemaRegistry: schemaRegistry,
+                    value: item)
             }
         }
     default:

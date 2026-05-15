@@ -117,7 +117,6 @@ function encodeChar(value: string, writer: BufWriter): void {
   writer.writeBytes(bytes);
 }
 
-// @ts-expect-error unused
 function decodeChar(
   buf: Uint8Array,
   offset: number,

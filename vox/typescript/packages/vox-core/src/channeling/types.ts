@@ -17,8 +17,17 @@ export type Role = (typeof Role)[keyof typeof Role];
 
 /** Error types for channel operations. */
 export class ChannelError extends Error {
+  public kind:
+    | "unknown"
+    | "dataAfterClose"
+    | "closed"
+    | "serialize"
+    | "deserialize"
+    | "notBound"
+    | "alreadyConsumed";
+
   constructor(
-    public kind:
+    kind:
       | "unknown"
       | "dataAfterClose"
       | "closed"
@@ -29,6 +38,7 @@ export class ChannelError extends Error {
     message: string,
   ) {
     super(message);
+    this.kind = kind;
     this.name = "ChannelError";
   }
 

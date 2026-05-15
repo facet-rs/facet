@@ -701,7 +701,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
         let connect_timeout = self.config.connect_timeout;
         let fut = self.establish_inner::<Client>();
         match connect_timeout {
-            Some(timeout) => tokio::time::timeout(timeout, fut)
+            Some(timeout) => vox_types::time::tokio::timeout(timeout, fut)
                 .await
                 .map_err(|_| SessionError::ConnectTimeout)?,
             None => fut.await,
@@ -748,9 +748,6 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
                     .map_err(session_error_from_transport)?;
                 Self::finish_with_bare_parts(link, config).await
             }
-            TransportMode::Stable => Err(SessionError::Protocol(
-                "stable conduit transport selection is unsupported on wasm".into(),
-            )),
         }
     }
 

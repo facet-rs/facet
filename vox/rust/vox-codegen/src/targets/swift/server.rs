@@ -317,13 +317,6 @@ fn generate_channeling_dispatch_method(w: &mut CodeWriter<&mut String>, method: 
                         .unwrap();
                     }
 
-                    for arg in method.args {
-                        if is_tx(arg.shape) {
-                            let arg_name = arg.name.to_lower_camel_case();
-                            cw_writeln!(w, "{arg_name}.close()").unwrap();
-                        }
-                    }
-
                     if ret_type == "Void" {
                         w.writeln(
                             "taskSender(.response(requestId: requestId, payload: encodeResultOkUnit(), methodId: methodId, schemaPayload: responseSchemaPayload))",

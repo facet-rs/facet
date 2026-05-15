@@ -30,8 +30,11 @@ function debugJson(value: unknown): string {
 }
 
 export class DuplicateReceivedSchemaError extends Error {
-  constructor(readonly typeId: SchemaHash) {
+  readonly typeId: SchemaHash;
+
+  constructor(typeId: SchemaHash) {
     super(`duplicate schema ${typeId.toString(16)} received on same connection`);
+    this.typeId = typeId;
     this.name = "DuplicateReceivedSchemaError";
   }
 }

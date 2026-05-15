@@ -36,8 +36,10 @@ class NodeWsLink implements Link {
   private pendingMessages: Uint8Array[] = [];
   private waitingResolve: ((payload: Uint8Array | null) => void) | null = null;
   private closed = false;
+  private readonly ws: WebSocket;
 
-  constructor(private readonly ws: WebSocket) {
+  constructor(ws: WebSocket) {
+    this.ws = ws;
     ws.on("message", (data: RawData) => {
       const payload = rawDataToUint8Array(data);
       this.lastReceived = payload;
@@ -122,6 +124,7 @@ class TestbedService implements TestbedHandler {
     for (let i = 0; i < count; i++) {
       await output.send(i);
     }
+    output.close();
   }
 
   async echo(message: string): Promise<string> {
@@ -182,6 +185,7 @@ class TestbedService implements TestbedHandler {
     for await (const s of input) {
       await output.send(s);
     }
+    output.close();
   }
 
   echoPoint(point: Point): Point {
@@ -305,6 +309,7 @@ class TestbedService implements TestbedHandler {
     for (let i = 0; i < count; i++) {
       await output.send(i);
     }
+    output.close();
   }
 
   allColors(): Color[] {

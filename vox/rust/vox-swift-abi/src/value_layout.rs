@@ -40,6 +40,10 @@ pub struct vox_swift_layout_arena {
 /// Create a fresh layout arena. Pair with
 /// [`vox_swift_layout_arena_destroy_v1`] to release the storage and every
 /// `*const ValueLayout` ever allocated through it.
+///
+/// # Safety
+/// The returned pointer must be released exactly once with
+/// [`vox_swift_layout_arena_destroy_v1`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_swift_layout_arena_create_v1() -> *mut vox_swift_layout_arena {
     let arena = Box::new(LayoutArena::new());
@@ -462,7 +466,7 @@ fn codec_error_to_status(err: postcard_codec::CodecError) -> vox_swift_status_t 
 
 /// Encode the value at `value_ptr` (matching `layout`) into a freshly
 /// allocated buffer returned through `out_bytes`. The caller must
-/// release the buffer with [`vox_swift_owned_bytes_free_v1`].
+/// release the buffer with `vox_swift_owned_bytes_free_v1`.
 ///
 /// # Safety
 /// `layout` must be a live `*const ValueLayout`. `value_ptr` must point

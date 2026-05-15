@@ -14,7 +14,10 @@ use facet::Facet;
 #[cfg(all(feature = "jit", not(target_arch = "wasm32")))]
 use facet_core::ConstTypeId;
 use facet_core::PtrConst;
+#[cfg(target_arch = "wasm32")]
+use moire::sync::TryAcquireError;
 use moire::sync::{Notify, Semaphore};
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::sync::TryAcquireError;
 
 use crate::{Backing, ChannelClose, ChannelItem, ChannelReset, Metadata, Payload, SelfRef};
@@ -1181,7 +1184,7 @@ impl<T> Tx<T> {
         self.observe_sink_event(sink.as_ref(), channel_id, |channel| {
             ChannelEvent::SendStarted { channel }
         });
-        let started_at = std::time::Instant::now();
+        let started_at = crate::time::Instant::now();
         let ptr = PtrConst::new((&value as *const T).cast::<u8>());
         // SAFETY: `value` is explicitly dropped only after `await`, so the pointer
         // remains valid for the whole send operation.

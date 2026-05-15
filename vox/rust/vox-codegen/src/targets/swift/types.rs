@@ -30,36 +30,30 @@ pub fn collect_named_types(service: &ServiceDescriptor) -> Vec<(String, &'static
                 name: Some(name),
                 fields,
                 ..
-            }) => {
-                if !seen.contains(name) {
-                    seen.insert(name.to_string());
-                    // Visit nested types first (dependencies before dependents)
-                    for field in fields {
-                        visit(field.shape(), seen, types);
-                    }
-                    types.push((name.to_string(), shape));
+            }) if seen.insert(name.to_string()) => {
+                // Visit nested types first (dependencies before dependents)
+                for field in fields {
+                    visit(field.shape(), seen, types);
                 }
+                types.push((name.to_string(), shape));
             }
             ShapeKind::Enum(EnumInfo {
                 name: Some(name),
                 variants,
-            }) => {
-                if !seen.contains(name) {
-                    seen.insert(name.to_string());
-                    // Visit nested types in variants
-                    for variant in variants {
-                        match classify_variant(variant) {
-                            VariantKind::Newtype { inner } => visit(inner, seen, types),
-                            VariantKind::Struct { fields } | VariantKind::Tuple { fields } => {
-                                for field in fields {
-                                    visit(field.shape(), seen, types);
-                                }
+            }) if seen.insert(name.to_string()) => {
+                // Visit nested types in variants
+                for variant in variants {
+                    match classify_variant(variant) {
+                        VariantKind::Newtype { inner } => visit(inner, seen, types),
+                        VariantKind::Struct { fields } | VariantKind::Tuple { fields } => {
+                            for field in fields {
+                                visit(field.shape(), seen, types);
                             }
-                            VariantKind::Unit => {}
                         }
+                        VariantKind::Unit => {}
                     }
-                    types.push((name.to_string(), shape));
                 }
+                types.push((name.to_string(), shape));
             }
             ShapeKind::List { element }
             | ShapeKind::Slice { element }

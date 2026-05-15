@@ -106,16 +106,26 @@ pub(crate) fn deserialize_postcard_with_plan<T: facet::Facet<'static>>(
     plan: &vox_postcard::plan::TranslationPlan,
     registry: &vox_types::SchemaRegistry,
 ) -> Result<SelfRef<T>, vox_postcard::DeserializeError> {
-    SelfRef::try_new(backing, |bytes| {
-        vox_jit::global_runtime()
-            .try_decode_owned::<T>(bytes, 0, plan, registry)
-            .expect("JIT decode unavailable for type")
-    })
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        SelfRef::try_new(backing, |bytes| {
+            vox_jit::global_runtime()
+                .try_decode_owned::<T>(bytes, 0, plan, registry)
+                .expect("JIT decode unavailable for type")
+        })
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        SelfRef::try_new(backing, |bytes| {
+            vox_postcard::from_slice_with_plan::<T>(bytes, plan, registry)
+        })
+    }
 }
 
 /// Like [`deserialize_postcard`] but uses an already-resolved JIT decoder,
 /// skipping the global cache lookup. Used by conduits that resolved their
 /// decoder at construction.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn deserialize_postcard_with_decoder<T: facet::Facet<'static>>(
     backing: Backing,
     decoder: &'static vox_jit::cache::CompiledDecoder,

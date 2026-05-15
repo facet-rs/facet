@@ -101,7 +101,7 @@ pub fn gen_string(rng: &mut Rng) -> Vec<u8> {
     out
 }
 
-/// Generate a random valid postcard-encoded Vec<u8> (as bytes primitive).
+/// Generate a random valid postcard-encoded `Vec<u8>` (as bytes primitive).
 pub fn gen_bytes(rng: &mut Rng) -> Vec<u8> {
     let len = rng.next_usize(128);
     let mut out = encode_varint(len as u64);
@@ -114,7 +114,7 @@ pub fn gen_bool(rng: &mut Rng) -> Vec<u8> {
     vec![if rng.next_bool() { 1u8 } else { 0u8 }]
 }
 
-/// Generate a random valid Option<u32> (0x00 = None, 0x01 + payload = Some).
+/// Generate a random valid `Option<u32>` (0x00 = None, 0x01 + payload = Some).
 pub fn gen_option_u32(rng: &mut Rng) -> Vec<u8> {
     if rng.next_bool() {
         vec![0x00]
@@ -125,7 +125,7 @@ pub fn gen_option_u32(rng: &mut Rng) -> Vec<u8> {
     }
 }
 
-/// Generate a random valid Vec<u32>.
+/// Generate a random valid `Vec<u32>`.
 pub fn gen_vec_u32(rng: &mut Rng) -> Vec<u8> {
     let count = rng.next_usize(32);
     let mut out = encode_varint(count as u64);
@@ -135,7 +135,7 @@ pub fn gen_vec_u32(rng: &mut Rng) -> Vec<u8> {
     out
 }
 
-/// Generate a random valid Vec<String>.
+/// Generate a random valid `Vec<String>`.
 pub fn gen_vec_string(rng: &mut Rng) -> Vec<u8> {
     let count = rng.next_usize(16);
     let mut out = encode_varint(count as u64);

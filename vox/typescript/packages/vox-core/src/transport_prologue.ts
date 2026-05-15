@@ -1,10 +1,10 @@
 import type { Link } from "./link.ts";
-import type { SessionConduitKind } from "./session.ts";
 
 const TRANSPORT_HELLO_MAGIC = new Uint8Array([0x56, 0x4F, 0x54, 0x48]); // VOTH
 const TRANSPORT_ACCEPT_MAGIC = new Uint8Array([0x56, 0x4F, 0x54, 0x41]); // VOTA
 const TRANSPORT_REJECT_MAGIC = new Uint8Array([0x56, 0x4F, 0x54, 0x52]); // VOTR
 const TRANSPORT_VERSION = 9;
+const TRANSPORT_MODE_BARE = 0;
 const REJECT_UNSUPPORTED_MODE = 1;
 
 export class TransportPrologueError extends Error {
@@ -26,21 +26,21 @@ function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
   return true;
 }
 
-function encodeHello(requestedMode: SessionConduitKind): Uint8Array {
+function encodeHello(): Uint8Array {
   return new Uint8Array([
     ...TRANSPORT_HELLO_MAGIC,
     TRANSPORT_VERSION,
-    requestedMode === "stable" ? 1 : 0,
+    TRANSPORT_MODE_BARE,
     0,
     0,
   ]);
 }
 
-function encodeAccept(selectedMode: SessionConduitKind): Uint8Array {
+function encodeAccept(): Uint8Array {
   return new Uint8Array([
     ...TRANSPORT_ACCEPT_MAGIC,
     TRANSPORT_VERSION,
-    selectedMode === "stable" ? 1 : 0,
+    TRANSPORT_MODE_BARE,
     0,
     0,
   ]);
@@ -56,22 +56,8 @@ function encodeReject(reason = REJECT_UNSUPPORTED_MODE): Uint8Array {
   ]);
 }
 
-function decodeMode(byte: number): SessionConduitKind {
-  switch (byte) {
-    case 0:
-      return "bare";
-    case 1:
-      return "stable";
-    default:
-      throw new TransportPrologueError(`unknown conduit mode ${byte}`);
-  }
-}
-
-export async function requestTransportMode(
-  link: Link,
-  requestedMode: SessionConduitKind,
-): Promise<void> {
-  await link.send(encodeHello(requestedMode));
+export async function requestTransportMode(link: Link): Promise<void> {
+  await link.send(encodeHello());
   const response = await link.recv();
   if (!response) {
     throw new TransportPrologueError("transport closed during prologue");
@@ -83,25 +69,22 @@ export async function requestTransportMode(
     if ((response[4] ?? 0) !== TRANSPORT_VERSION) {
       throw new TransportPrologueError(`unsupported transport version ${response[4] ?? 0}`);
     }
-    const selectedMode = decodeMode(response[5] ?? 255);
-    if (selectedMode !== requestedMode) {
-      throw new TransportPrologueError(
-        `transport selected ${selectedMode}, requested ${requestedMode}`,
-      );
+    if ((response[5] ?? 255) !== TRANSPORT_MODE_BARE) {
+      throw new TransportPrologueError(`unknown conduit mode ${response[5] ?? 255}`);
     }
     return;
   }
   if (sameBytes(response.subarray(0, 4), TRANSPORT_REJECT_MAGIC)) {
     const reason = response[5] ?? 0;
     if (reason === REJECT_UNSUPPORTED_MODE) {
-      throw new TransportPrologueError(`transport rejected unsupported mode ${requestedMode}`);
+      throw new TransportPrologueError("transport rejected unsupported mode bare");
     }
     throw new TransportPrologueError(`transport rejected with reason ${reason}`);
   }
   throw new TransportPrologueError("expected TransportAccept or TransportReject");
 }
 
-export async function acceptTransportMode(link: Link): Promise<SessionConduitKind> {
+export async function acceptTransportMode(link: Link): Promise<void> {
   const hello = await link.recv();
   if (!hello) {
     throw new TransportPrologueError("transport closed before prologue");
@@ -113,7 +96,9 @@ export async function acceptTransportMode(link: Link): Promise<SessionConduitKin
     await link.send(encodeReject());
     throw new TransportPrologueError(`unsupported transport version ${hello[4] ?? 0}`);
   }
-  const requestedMode = decodeMode(hello[5] ?? 255);
-  await link.send(encodeAccept(requestedMode));
-  return requestedMode;
+  if ((hello[5] ?? 255) !== TRANSPORT_MODE_BARE) {
+    await link.send(encodeReject());
+    throw new TransportPrologueError(`unknown conduit mode ${hello[5] ?? 255}`);
+  }
+  await link.send(encodeAccept());
 }

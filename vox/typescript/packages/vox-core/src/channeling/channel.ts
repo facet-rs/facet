@@ -82,11 +82,13 @@ export function createChannel<T>(): Channel<T> {
  * Sender end of a channel (for Push).
  */
 export class ChannelSender<T> {
-  constructor(
-    private channel: Channel<T>,
-    // @ts-expect-error unused
-    private _keepaliveOwner?: object,
-  ) {}
+  private channel: Channel<T>;
+  private _keepaliveOwner?: object;
+
+  constructor(channel: Channel<T>, _keepaliveOwner?: object) {
+    this.channel = channel;
+    this._keepaliveOwner = _keepaliveOwner;
+  }
 
   send(value: T): boolean {
     return this.channel.send(value);
@@ -101,12 +103,15 @@ export class ChannelSender<T> {
  * Receiver end of a channel (for Pull).
  */
 export class ChannelReceiver<T> {
-  constructor(
-    private channel: Channel<T>,
-    // @ts-expect-error unused
-    private _keepaliveOwner?: object,
-    private readonly onRecv?: () => void,
-  ) {}
+  private channel: Channel<T>;
+  private _keepaliveOwner?: object;
+  private readonly onRecv?: () => void;
+
+  constructor(channel: Channel<T>, _keepaliveOwner?: object, onRecv?: () => void) {
+    this.channel = channel;
+    this._keepaliveOwner = _keepaliveOwner;
+    this.onRecv = onRecv;
+  }
 
   async recv(): Promise<T | null> {
     const value = await this.channel.recv();

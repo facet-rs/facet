@@ -5,8 +5,10 @@ export class WsLink implements Link {
   private pendingMessages: Uint8Array[] = [];
   private waitingResolve: ((payload: Uint8Array | null) => void) | null = null;
   private closed = false;
+  private readonly ws: WebSocket;
 
-  constructor(private readonly ws: WebSocket) {
+  constructor(ws: WebSocket) {
+    this.ws = ws;
     ws.binaryType = "arraybuffer";
 
     ws.addEventListener("message", (event: MessageEvent) => {
@@ -72,7 +74,11 @@ export class WsLink implements Link {
 }
 
 export class WsLinkSource implements LinkSource<WsLink> {
-  constructor(private readonly url: string) {}
+  private readonly url: string;
+
+  constructor(url: string) {
+    this.url = url;
+  }
 
   async nextLink(): Promise<{ link: WsLink }> {
     const ws = await new Promise<WebSocket>((resolve, reject) => {

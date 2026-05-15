@@ -290,7 +290,7 @@ pub enum DecodeOp {
     BranchOnVariant {
         tag_offset: usize,
         tag_width: TagWidth,
-        /// variant_table[remote_index] = Some(local_index) or None
+        /// `variant_table[remote_index] = Some(local_index) or None`
         variant_table: Vec<Option<usize>>,
         /// per-variant: (local_discriminant_value, block_id)
         variant_blocks: Vec<(u64, usize)>,
@@ -596,26 +596,23 @@ fn mark_tail_calls(program: &mut DecodeProgram) {
             let op = program.blocks[block_idx].ops[pos].clone();
             match op {
                 DecodeOp::AllocBoxed { body_block, .. } => {
-                    if tail_blocks.insert(body_block) {
-                        changed = true;
-                    }
+                    changed |= tail_blocks.insert(body_block);
                 }
                 DecodeOp::BranchOnVariant { variant_blocks, .. } => {
                     for (_, vb) in variant_blocks.iter() {
+                        if *vb == usize::MAX {
+                            continue;
+                        }
                         if tail_blocks.insert(*vb) {
                             changed = true;
                         }
                     }
                 }
                 DecodeOp::ReadListLen { empty_block, .. } => {
-                    if tail_blocks.insert(empty_block) {
-                        changed = true;
-                    }
+                    changed |= tail_blocks.insert(empty_block);
                 }
                 DecodeOp::DecodeOption { some_block, .. } => {
-                    if tail_blocks.insert(some_block) {
-                        changed = true;
-                    }
+                    changed |= tail_blocks.insert(some_block);
                 }
                 DecodeOp::DecodeResult {
                     ok_block,
@@ -635,9 +632,7 @@ fn mark_tail_calls(program: &mut DecodeProgram) {
                     }
                 }
                 DecodeOp::Jump { block_id } => {
-                    if tail_blocks.insert(block_id) {
-                        changed = true;
-                    }
+                    changed |= tail_blocks.insert(block_id);
                 }
                 _ => {}
             }
@@ -3127,8 +3122,8 @@ pub unsafe fn slow_path_decode_raw(
 /// This is the correctness oracle path — it must agree with the reflective
 /// interpreter for all valid inputs.
 ///
-/// Pass `cal` to enable the calibrated fast path for opaque types (Vec<T>,
-/// String). Pass `None` to use zero-filled fallbacks for those ops.
+/// Pass `cal` to enable the calibrated fast path for opaque types (`Vec<T>`,
+/// `String`). Pass `None` to use zero-filled fallbacks for those ops.
 pub fn from_slice_ir<T>(
     input: &[u8],
     plan: &TranslationPlan,
@@ -3815,8 +3810,19 @@ fn lower_encode_option(
 ) -> Result<(), EncodeLowerError> {
     let some_block = program.new_block();
 
+    let is_niche_optimized = shape
+        .layout
+        .sized_layout()
+        .ok()
+        .zip(opt_def.t.layout.sized_layout().ok())
+        .is_some_and(|(option_layout, inner_layout)| option_layout.size() == inner_layout.size());
+
     let fallback = match calibrate_option_layout(shape, opt_def) {
-        Some(layout) if !layout.tag_bytes.is_empty() => {
+        // Same-size Option<T> layouts are niche-optimized. The decode path can
+        // safely write calibrated None bytes and then overwrite the slot for
+        // Some, but encode cannot classify arbitrary Some values from the None
+        // bytes alone. Use facet's option vtable oracle for these layouts.
+        Some(layout) if !is_niche_optimized && !layout.tag_bytes.is_empty() => {
             program.emit(
                 block,
                 EncodeOp::EncodeOptionCalibrated {

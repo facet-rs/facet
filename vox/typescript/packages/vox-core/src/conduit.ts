@@ -56,10 +56,13 @@ export function buildMessageDecodePlan(peerSchemas: Schema[]): MessageDecodePlan
 }
 
 export class BareConduit implements Conduit<Message> {
-  constructor(
-    private readonly link: Link,
-    private readonly messagePlan: MessageDecodePlan | null = null,
-  ) {}
+  private readonly link: Link;
+  private readonly messagePlan: MessageDecodePlan | null;
+
+  constructor(link: Link, messagePlan: MessageDecodePlan | null = null) {
+    this.link = link;
+    this.messagePlan = messagePlan;
+  }
 
   async send(item: Message): Promise<void> {
     await this.link.send(encodeMessage(item));

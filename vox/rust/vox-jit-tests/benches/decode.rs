@@ -547,7 +547,9 @@ mod alloc_count {
     use std::mem::MaybeUninit;
 
     fn report(label: &str, count: u64, bytes: u64) {
-        // eprintln!("  {label}: {count} allocs, {bytes} bytes");
+        if std::env::var_os("VOX_BENCH_ALLOC_REPORT").is_some() {
+            eprintln!("  {label}: {count} allocs, {bytes} bytes");
+        }
     }
 
     unsafe fn decode_via_stub<T>(owned_fn: OwnedDecodeFn, bytes: &[u8]) -> T {

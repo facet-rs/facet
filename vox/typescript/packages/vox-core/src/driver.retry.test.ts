@@ -15,8 +15,11 @@ class MemoryLink {
   private readonly queue: Uint8Array[] = [];
   private waiting: ((value: Uint8Array | null) => void) | null = null;
   private closed = false;
+  private readonly deliver: (payload: Uint8Array) => void;
 
-  constructor(private readonly deliver: (payload: Uint8Array) => void) {}
+  constructor(deliver: (payload: Uint8Array) => void) {
+    this.deliver = deliver;
+  }
 
   async send(payload: Uint8Array): Promise<void> {
     if (this.closed) {

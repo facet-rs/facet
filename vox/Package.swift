@@ -10,7 +10,7 @@ let package = Package(
         .library(name: "VoxRuntime", targets: ["VoxRuntime"])
     ],
     dependencies: [
-        .package(url: "https://github.com/apple/swift-nio.git", from: "2.97.1")
+        .package(url: "https://github.com/apple/swift-nio.git", from: "2.99.0")
     ],
     targets: [
         .target(

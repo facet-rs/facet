@@ -341,7 +341,7 @@ async function runTests(): Promise<void> {
     });
 
     log("Establishing session as initiator...");
-    const established = await session.initiatorOn(link, { transport: "bare", metadata: voxServiceMetadata("Testbed") });
+    const established = await session.initiatorOn(link, { metadata: voxServiceMetadata("Testbed") });
 
     // Import the TestbedClient constructor dynamically to avoid circular issues
     const { TestbedClient } = await import(

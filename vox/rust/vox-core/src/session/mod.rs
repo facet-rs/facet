@@ -523,9 +523,9 @@ pub struct Session {
 struct KeepaliveRuntime {
     ping_interval: Duration,
     pong_timeout: Duration,
-    next_ping_at: tokio::time::Instant,
+    next_ping_at: vox_types::time::tokio::Instant,
     waiting_pong_nonce: Option<u64>,
-    pong_deadline: tokio::time::Instant,
+    pong_deadline: vox_types::time::tokio::Instant,
     next_ping_nonce: u64,
 }
 
@@ -1249,8 +1249,8 @@ impl Session {
     pub async fn run(&mut self) {
         let mut keepalive_runtime = self.make_keepalive_runtime();
         let mut keepalive_tick = keepalive_runtime.as_ref().map(|_| {
-            let mut interval = tokio::time::interval(Duration::from_millis(10));
-            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            let mut interval = vox_types::time::tokio::interval(Duration::from_millis(10));
+            interval.set_missed_tick_behavior(vox_types::time::tokio::MissedTickBehavior::Delay);
             interval
         });
 
@@ -1343,7 +1343,8 @@ impl Session {
         if let Some(recoverer) = self.recoverer.as_mut() {
             let recovery_fut = recoverer.next_conduit(self.session_resume_key.as_ref());
             let recovery_result = match self.recovery_timeout {
-                Some(timeout) => match tokio::time::timeout(timeout, recovery_fut).await {
+                Some(timeout) => match vox_types::time::tokio::timeout(timeout, recovery_fut).await
+                {
                     Ok(r) => r,
                     Err(_) => return false,
                 },
@@ -1647,7 +1648,7 @@ impl Session {
             warn!("keepalive disabled due to non-positive interval/timeout");
             return None;
         }
-        let now = tokio::time::Instant::now();
+        let now = vox_types::time::tokio::Instant::now();
         Some(KeepaliveRuntime {
             ping_interval: config.ping_interval,
             pong_timeout: config.pong_timeout,
@@ -1666,7 +1667,7 @@ impl Session {
             return;
         }
         runtime.waiting_pong_nonce = None;
-        runtime.next_ping_at = tokio::time::Instant::now() + runtime.ping_interval;
+        runtime.next_ping_at = vox_types::time::tokio::Instant::now() + runtime.ping_interval;
     }
 
     async fn handle_keepalive_tick(
@@ -1676,7 +1677,7 @@ impl Session {
         let Some(runtime) = keepalive_runtime.as_mut() else {
             return true;
         };
-        let now = tokio::time::Instant::now();
+        let now = vox_types::time::tokio::Instant::now();
 
         if let Some(waiting_nonce) = runtime.waiting_pong_nonce {
             if now >= runtime.pong_deadline {

@@ -5,7 +5,7 @@
 //!
 //! # How it works
 //!
-//! For each whitelisted opaque type we probe real values under [`ManuallyDrop`]
+//! For each whitelisted opaque type we probe real values under [`std::mem::ManuallyDrop`]
 //! to identify which word-slots hold the pointer, length, and capacity. We also
 //! record the exact byte representation of the empty constructor so the JIT can
 //! copy those bytes directly rather than assuming "three zero words".
@@ -106,7 +106,7 @@ pub enum CalibrationResult {
 
 /// Calibrate `Vec<T>` for element type `T`.
 ///
-/// Probes real `Vec<T>` values under [`ManuallyDrop`] to find which word-slots
+/// Probes real `Vec<T>` values under [`std::mem::ManuallyDrop`] to find which word-slots
 /// in the three-pointer-wide struct hold (ptr, len, cap), then records the
 /// exact empty-constructor bytes.
 pub fn calibrate_vec<T>() -> CalibrationResult {
@@ -944,8 +944,8 @@ impl Default for CalibrationRegistry {
 impl CalibrationRegistry {
     /// Pre-register calibrated descriptors for all common primitive element types.
     ///
-    /// Covers: Vec<bool>, Vec<i8/i16/i32/i64>, Vec<u8/u16/u32/u64>, Vec<f32/f64>,
-    /// Vec<String>, String, Box<T>/Box<[T]> for the same primitives.
+    /// Covers: `Vec<bool>`, `Vec<i8/i16/i32/i64>`, `Vec<u8/u16/u32/u64>`, `Vec<f32/f64>`,
+    /// `Vec<String>`, `String`, `Box<T>`/`Box<[T]>` for the same primitives.
     ///
     /// Any individual calibration failure is silently skipped (the JIT will fall
     /// back to the interpreter for that type). Returns `&mut self` so the caller
@@ -1073,7 +1073,7 @@ impl CalibrationRegistry {
     /// - `Def::List` with `type_ops` providing `init_in_place_with_capacity` + `set_len` —
     ///   probes `Vec<T>`-style three-word layout via vtable calls.
     /// - `Def::Pointer` with `known == Some(KnownPointer::Box)` and a non-slice pointee —
-    ///   derives `BoxOwned` from layout (no probing needed; Box<T> is always one pointer word).
+    ///   derives `BoxOwned` from layout (no probing needed; `Box<T>` is always one pointer word).
     /// - `Def::Pointer` with `known == Some(KnownPointer::Box)` and a `Def::Slice` pointee —
     ///   derives `BoxSlice` layout from the platform fat-pointer convention (ptr word first).
     ///

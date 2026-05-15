@@ -87,7 +87,8 @@ proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full"] }
 tokio = { version = "1", features = ["sync", "rt", "time", "macros", "io-util"] }
-tokio-tungstenite = "0.26"
+wasmtimer = { version = "0.4", default-features = false, features = ["tokio"] }
+tokio-tungstenite = "0.29"
 tokio-rustls = "0.26"
 rustls = "0.23"
 rustls-pemfile = "2"

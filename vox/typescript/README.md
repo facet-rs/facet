@@ -21,6 +21,6 @@ For TypeScript, run the Node subject with Node v22 type stripping:
 cargo xtask codegen --typescript
 
 # Run the compliance suite against the TypeScript subject
-SUBJECT_CMD='node --experimental-strip-types typescript/subject/subject.ts' \
+SUBJECT_CMD='node typescript/subject/subject.ts' \
   cargo nextest run -p spec-tests
 ```

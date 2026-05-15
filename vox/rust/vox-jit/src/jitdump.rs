@@ -96,12 +96,12 @@ mod platform {
                     return Err(std::io::Error::last_os_error());
                 }
 
-                return Ok(Self {
+                Ok(Self {
                     file,
                     _mmap_addr: addr,
                     _mmap_len: page,
                     code_index: 0,
-                });
+                })
             }
 
             #[cfg(target_os = "macos")]
