@@ -103,8 +103,9 @@ pub(crate) fn fill_defaults_from_schema(value: &ConfigValue, schema: &Schema) ->
         if let Some(config_value) = new_map.get(&config_field_name) {
             let filled = fill_defaults_from_config_struct(config_value, config_schema, "");
             new_map.insert(config_field_name, filled);
-        } else {
-            // Config field missing - create it with defaults
+        } else if !config_schema.optional_root() {
+            // Required config field missing - create it with defaults.
+            // Optional config roots should stay absent so they deserialize as None.
             let filled = fill_defaults_from_config_struct(
                 &ConfigValue::Object(Sourced::new(IndexMap::default())),
                 config_schema,

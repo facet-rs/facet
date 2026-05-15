@@ -38,6 +38,7 @@ impl Schema {
         let mut configs = Vec::new();
         for (field, field_ctx) in config_fields {
             let shape = field.shape();
+            let optional_root = matches!(shape.def, Def::Option(_));
             let config_shape = match shape.def {
                 Def::Option(opt) => opt.t,
                 _ => shape,
@@ -50,6 +51,7 @@ impl Schema {
                 docs_from_lines(field.doc),
                 Some(field.effective_name().to_string()),
                 env_prefix,
+                optional_root,
                 field.is_flattened(),
             )?);
         }
@@ -378,6 +380,7 @@ fn value_schema_from_shape(
                     None,
                     None,
                     false,
+                    false,
                 )?,
                 shape,
             }),
@@ -400,9 +403,17 @@ fn config_value_schema_from_shape(
             shape,
         })),
         _ => match &shape.ty {
-            Type::User(UserType::Struct(_)) => Ok(ConfigValueSchema::Struct(
-                config_struct_schema_from_shape(shape, ctx, Docs::default(), None, None, false)?,
-            )),
+            Type::User(UserType::Struct(_)) => {
+                Ok(ConfigValueSchema::Struct(config_struct_schema_from_shape(
+                    shape,
+                    ctx,
+                    Docs::default(),
+                    None,
+                    None,
+                    false,
+                    false,
+                )?))
+            }
             Type::User(UserType::Enum(enum_type)) => Ok(ConfigValueSchema::Enum(
                 config_enum_schema_from_shape(shape, *enum_type, ctx)?,
             )),
@@ -498,6 +509,7 @@ fn config_struct_schema_from_shape(
     docs: Docs,
     field_name: Option<String>,
     env_prefix: Option<String>,
+    optional_root: bool,
     flattened_root: bool,
 ) -> Result<ConfigStructSchema, SchemaError> {
     config_struct_schema_from_shape_inner(
@@ -507,6 +519,7 @@ fn config_struct_schema_from_shape(
         ConfigStructBuildOptions {
             field_name,
             env_prefix,
+            optional_root,
             flattened_root,
             path_prefix: Vec::new(),
             parent_env_subst_all: false,
@@ -517,6 +530,7 @@ fn config_struct_schema_from_shape(
 struct ConfigStructBuildOptions {
     field_name: Option<String>,
     env_prefix: Option<String>,
+    optional_root: bool,
     flattened_root: bool,
     path_prefix: Vec<String>,
     parent_env_subst_all: bool,
@@ -531,6 +545,7 @@ fn config_struct_schema_from_shape_inner(
     let ConfigStructBuildOptions {
         field_name,
         env_prefix,
+        optional_root,
         flattened_root,
         path_prefix,
         parent_env_subst_all,
@@ -586,6 +601,7 @@ fn config_struct_schema_from_shape_inner(
                 ConfigStructBuildOptions {
                     field_name: None,
                     env_prefix: None,
+                    optional_root: false,
                     flattened_root: false,
                     path_prefix: new_prefix,
                     parent_env_subst_all: apply_env_subst_to_children,
@@ -651,6 +667,7 @@ fn config_struct_schema_from_shape_inner(
         docs,
         field_name,
         env_prefix,
+        optional_root,
         flattened_root,
         shape,
         fields: fields_map,
@@ -774,6 +791,7 @@ fn arg_level_from_fields_with_prefix(
         if is_config_field(field) {
             if field.is_flattened() {
                 let shape = field.shape();
+                let optional_root = matches!(shape.def, Def::Option(_));
                 let config_shape = match shape.def {
                     Def::Option(opt) => opt.t,
                     _ => shape,
@@ -785,6 +803,7 @@ fn arg_level_from_fields_with_prefix(
                     docs_from_lines(field.doc),
                     Some(config_field_name.clone()),
                     extract_env_prefix(field),
+                    optional_root,
                     true,
                 )?;
 

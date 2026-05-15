@@ -191,8 +191,9 @@ pub fn collect_missing_fields(
                     env_prefix,
                     missing,
                 );
-            } else {
-                // The entire config struct is missing - report it
+            } else if !config_schema.optional_root() {
+                // The entire required config struct is missing - report it.
+                // Optional config roots are allowed to be absent and deserialize as None.
                 missing.push(MissingFieldInfo {
                     field_name: field_name.to_string(),
                     field_path: field_name.to_string(),

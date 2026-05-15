@@ -146,6 +146,13 @@ pub struct ConfigStructSchema {
     /// Only present on the top-level config struct, not nested structs.
     env_prefix: Option<String>,
 
+    /// Whether this root config field was originally `Option<T>`.
+    ///
+    /// The schema unwraps the inner `T` so config sources can still address its
+    /// fields, but an absent optional root should remain absent instead of being
+    /// synthesized from defaults or reported as missing.
+    optional_root: bool,
+
     /// Whether this root config field was also marked `#[facet(flatten)]`.
     ///
     /// The config sources still use the root as their namespace, but the merged
@@ -743,6 +750,11 @@ impl ConfigStructSchema {
     /// Get the environment variable prefix (e.g., "MYAPP").
     pub fn env_prefix(&self) -> Option<&str> {
         self.env_prefix.as_deref()
+    }
+
+    /// Check whether this root config field was originally `Option<T>`.
+    pub fn optional_root(&self) -> bool {
+        self.optional_root
     }
 
     /// Check whether this root config field should be flattened before

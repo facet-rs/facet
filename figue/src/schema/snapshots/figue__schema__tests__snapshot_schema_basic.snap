@@ -136,6 +136,7 @@ expression: "facet_json :: to_string_pretty(& value).unwrap()"
       },
       "field_name": "config",
       "env_prefix": "APP",
+      "optional_root": true,
       "fields": {
         "host": {
           "docs": {},
