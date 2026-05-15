@@ -100,6 +100,48 @@ pub fn generate_html_help_for_subcommand(
     )
 }
 
+pub(crate) fn generate_root_html_help_with_config_formats_and_anchor(
+    schema: &Schema,
+    config: &HelpConfig,
+    config_file_extensions: &[&str],
+    initial_anchor: Option<&str>,
+) -> String {
+    let program_name = resolve_program_name(config);
+    render_html_help_document(HtmlHelpDocument {
+        command: &program_name,
+        version: config.version.as_deref(),
+        docs: schema.docs(),
+        description: config.description.as_deref(),
+        args: schema.args(),
+        config_roots: schema.configs(),
+        config_file_extensions,
+        initial_anchor,
+    })
+}
+
+pub(crate) fn html_help_anchor_for_subcommand_path(
+    schema: &Schema,
+    subcommand_path: &[String],
+) -> Option<String> {
+    if subcommand_path.is_empty() {
+        return None;
+    }
+
+    let mut current_args = schema.args();
+    let mut anchor_path = Vec::new();
+
+    for name in subcommand_path {
+        let sub = current_args
+            .subcommands()
+            .values()
+            .find(|sub| sub.effective_name() == name)?;
+        anchor_path.push(sub.cli_name());
+        current_args = sub.args();
+    }
+
+    Some(command_heading_id(&anchor_path))
+}
+
 pub(crate) fn generate_html_help_for_subcommand_with_config_formats(
     schema: &Schema,
     subcommand_path: &[String],
@@ -109,15 +151,12 @@ pub(crate) fn generate_html_help_for_subcommand_with_config_formats(
     let program_name = resolve_program_name(config);
 
     if subcommand_path.is_empty() {
-        return render_html_help_document(HtmlHelpDocument {
-            command: &program_name,
-            version: config.version.as_deref(),
-            docs: schema.docs(),
-            description: config.description.as_deref(),
-            args: schema.args(),
-            config_roots: schema.configs(),
+        return generate_root_html_help_with_config_formats_and_anchor(
+            schema,
+            config,
             config_file_extensions,
-        });
+            None,
+        );
     }
 
     let mut current_args = schema.args();
@@ -138,6 +177,7 @@ pub(crate) fn generate_html_help_for_subcommand_with_config_formats(
                 args: schema.args(),
                 config_roots: schema.configs(),
                 config_file_extensions,
+                initial_anchor: None,
             });
         };
 
@@ -156,6 +196,7 @@ pub(crate) fn generate_html_help_for_subcommand_with_config_formats(
         args: current_args,
         config_roots: &[],
         config_file_extensions: DEFAULT_CONFIG_FILE_EXTENSIONS,
+        initial_anchor: None,
     })
 }
 
@@ -442,6 +483,7 @@ struct HtmlHelpDocument<'a> {
     args: &'a ArgLevelSchema,
     config_roots: &'a [ConfigStructSchema],
     config_file_extensions: &'a [&'a str],
+    initial_anchor: Option<&'a str>,
 }
 
 fn render_minimal_html_help(command: &str, version: Option<&str>, message: &str) -> String {
@@ -455,6 +497,7 @@ fn render_minimal_html_help(command: &str, version: Option<&str>, message: &str)
         args: &args,
         config_roots: &[],
         config_file_extensions: DEFAULT_CONFIG_FILE_EXTENSIONS,
+        initial_anchor: None,
     })
 }
 
@@ -557,6 +600,11 @@ fn render_html_help_document(doc: HtmlHelpDocument<'_>) -> String {
         doc.config_roots,
         doc.config_file_extensions,
     );
+    if let Some(initial_anchor) = doc.initial_anchor {
+        out.push_str("<script>window.FIGUE_INITIAL_ANCHOR = ");
+        push_json_string(&mut out, initial_anchor);
+        out.push_str(";</script>\n");
+    }
     render_html_search_script(&mut out);
     out.push_str("</main>\n</div>\n</body>\n</html>\n");
     out
@@ -1636,7 +1684,24 @@ for (const details of document.querySelectorAll('details')) {
   });
 }
 
+revealInitialAnchor();
 scheduleBreadcrumbUpdate();
+
+function revealInitialAnchor() {
+  const initialAnchor = window.FIGUE_INITIAL_ANCHOR || (window.location.hash ? decodeURIComponent(window.location.hash.slice(1)) : '');
+  if (!initialAnchor) {
+    return;
+  }
+  const target = document.getElementById(initialAnchor);
+  if (!target) {
+    return;
+  }
+  revealBreadcrumbTarget(target);
+  requestAnimationFrame(() => {
+    target.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' });
+    history.replaceState(null, '', `#${encodeURIComponent(initialAnchor)}`);
+  });
+}
 
 function scheduleBreadcrumbUpdate() {
   if (breadcrumbFrame) {
@@ -2002,6 +2067,25 @@ fn push_escaped(out: &mut String, text: &str) {
 
 fn push_script_text(out: &mut String, text: &str) {
     out.push_str(&text.replace("</script", "<\\/script"));
+}
+
+fn push_json_string(out: &mut String, text: &str) {
+    out.push('"');
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => {
+                use std::fmt::Write as _;
+                let _ = write!(out, "\\u{:04x}", c as u32);
+            }
+            _ => out.push(c),
+        }
+    }
+    out.push('"');
 }
 
 /// Wrap `text` into lines of at most `max_width - indent.len()` characters,

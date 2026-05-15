@@ -333,6 +333,27 @@ fn test_help_root_shows_all_subcommands() {
     assert_help_snapshot!("subcommand_root_help", help);
 }
 
+#[test]
+fn test_html_help_after_subcommand_still_writes_root_document() {
+    // `pkg install --html-help` should write the full app-wide HTML document,
+    // not a document scoped only to the already-parsed `install` subcommand.
+    let result = figue::from_slice::<PkgManager>(&["install", "--html-help"]).into_result();
+
+    let Err(figue::DriverError::HtmlHelp { path }) = result else {
+        panic!("expected HTML help request");
+    };
+
+    let html = std::fs::read_to_string(&path).expect("HTML help file should be readable");
+    assert!(html.contains("<!doctype html>"));
+    assert!(html.contains("CLI with subcommands for testing subcommand-specific help"));
+    assert!(html.contains("Install a package"));
+    assert!(html.contains("Remove a package"));
+    assert!(html.contains("List installed packages"));
+    assert!(html.contains("--html-help"));
+    assert!(html.contains("id=\"command-install\""));
+    assert!(html.contains("window.FIGUE_INITIAL_ANCHOR = \"command-install\""));
+}
+
 // Nested subcommands: help should be aware of the full path
 #[derive(Facet, Debug)]
 struct NestedCli {

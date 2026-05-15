@@ -33,8 +33,8 @@ use crate::enum_conflicts::detect_enum_conflicts;
 use crate::env_subst::{EnvSubstError, RealEnv, substitute_env_vars};
 use crate::help::{
     generate_help_for_subcommand_with_config_formats,
-    generate_html_help_for_subcommand_with_config_formats, open_html_help_file,
-    write_html_help_to_temp_file,
+    generate_root_html_help_with_config_formats_and_anchor, html_help_anchor_for_subcommand_path,
+    open_html_help_file, write_html_help_to_temp_file,
 };
 use crate::json_schema::{JsonSchemaError, write_json_schema_files};
 use crate::layers::{cli::parse_cli, env::parse_env, file::parse_file};
@@ -283,12 +283,18 @@ impl<T: Facet<'static>> Driver<T> {
                     Vec::new()
                 };
 
+                // HTML help is an app-wide document. Even when `--html-help` is
+                // requested after a subcommand has already been parsed, render
+                // the root document so users get the complete tool reference;
+                // use the parsed subcommand path only as the initial anchor.
+                let initial_anchor =
+                    html_help_anchor_for_subcommand_path(&self.config.schema, &subcommand_path);
                 let config_file_extensions = self.config_file_extensions();
-                let html = generate_html_help_for_subcommand_with_config_formats(
+                let html = generate_root_html_help_with_config_formats_and_anchor(
                     &self.config.schema,
-                    &subcommand_path,
                     &help_config,
                     &config_file_extensions,
+                    initial_anchor.as_deref(),
                 );
 
                 match write_html_help_to_temp_file(&html) {
