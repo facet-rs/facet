@@ -165,8 +165,24 @@ mod platform {
     }
 
     fn monotonic_ns() -> u64 {
+        // jitdump record timestamps must share a clock domain with the
+        // profiler's sample timestamps, or the profiler's
+        // "advance lib-mapping ops up to sample_ts" loop never sees the
+        // CodeLoad op as active and the JIT lib gets culled from the
+        // saved profile.
+        //
+        // - Linux perf: uses CLOCK_MONOTONIC for sample timestamps.
+        // - macOS samply / kperf: uses mach_absolute_time (== CLOCK_UPTIME_RAW),
+        //   which does NOT tick during sleep. CLOCK_MONOTONIC on macOS is
+        //   mach_continuous_time and DOES tick during sleep, so on machines
+        //   that have slept since boot the two clocks drift apart (minutes
+        //   to hours), and our CodeLoad timestamps end up in samply's future.
+        #[cfg(target_os = "macos")]
+        let clock_id = libc::CLOCK_UPTIME_RAW;
+        #[cfg(target_os = "linux")]
+        let clock_id = libc::CLOCK_MONOTONIC;
         let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
-        unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
+        unsafe { libc::clock_gettime(clock_id, &mut ts) };
         (ts.tv_sec as u64) * 1_000_000_000 + (ts.tv_nsec as u64)
     }
 
