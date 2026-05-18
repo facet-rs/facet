@@ -9,6 +9,10 @@ expression: "&schemas[0].contents"
   "type": "object",
   "additionalProperties": false,
   "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Path or URL of the JSON Schema this file conforms to."
+    },
     "host": {
       "type": "string",
       "description": "Server hostname.",
