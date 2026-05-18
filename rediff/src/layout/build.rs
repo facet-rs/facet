@@ -418,8 +418,8 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                     // Recurse into the inner value
                     return self.build_peek(inner, change);
                 }
-                // None - render as null text
-                let (span, width) = self.strings.push_str("null");
+                // None - render as ∅ (rediff shows Rust values, not JSON)
+                let (span, width) = self.strings.push_str("∅");
                 return self.tree.new_node(LayoutNode::Text {
                     value: FormattedValue::with_type(span, width, ValueType::Null),
                     change,
@@ -707,6 +707,38 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
 
             match field_diff {
                 Diff::Replace { from, to } => {
+                    // Option transitions (None<->Some, or a Some(a)->Some(b)
+                    // that surfaced as a Replace): render as a scalar value
+                    // change `field: old → new` (None formats as ∅) unless a
+                    // present payload is itself a struct/enum.
+                    let some_is_complex = |p: &Peek| {
+                        p.into_option()
+                            .ok()
+                            .and_then(|o| o.value())
+                            .map(|v| match v.shape().ty {
+                                Type::User(UserType::Enum(_)) => true,
+                                Type::User(UserType::Struct(s)) => s.kind == StructKind::Struct,
+                                _ => false,
+                            })
+                            .unwrap_or(false)
+                    };
+                    if (matches!(from.shape().def, Def::Option(_))
+                        || matches!(to.shape().def, Def::Option(_)))
+                        && !some_is_complex(from)
+                        && !some_is_complex(to)
+                    {
+                        let old_value = self.format_peek(*from);
+                        let new_value = self.format_peek(*to);
+                        let name_width = field_name.len();
+                        attrs.push(Attr::changed(
+                            field_name.clone(),
+                            name_width,
+                            old_value,
+                            new_value,
+                        ));
+                        continue;
+                    }
+
                     // Check if this is a complex type that should be built as children
                     let from_shape = from.shape();
                     let is_complex = match from_shape.ty {
@@ -1441,8 +1473,8 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
             if let Some(inner) = opt.value() {
                 return self.format_peek(inner);
             }
-            // None - format as null
-            let (span, width) = self.strings.push_str("null");
+            // None - format as ∅ (rediff shows Rust values, not JSON)
+            let (span, width) = self.strings.push_str("∅");
             return FormattedValue::with_type(span, width, ValueType::Null);
         }
 
