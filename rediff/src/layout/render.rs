@@ -92,12 +92,9 @@ const fn value_color_highlight(value_type: ValueType, context: ElementChange) ->
 fn inline_element_width<F: DiffFlavor>(attrs: &[super::Attr], tag: &str, flavor: &F) -> usize {
     let mut w = flavor.struct_open(tag).len() + 1; // "Tag {" + " "
 
-    let unchanged: Vec<&str> = attrs
+    let unchanged: Vec<&super::Attr> = attrs
         .iter()
-        .filter_map(|a| match a.status {
-            AttrStatus::Unchanged { .. } => Some(a.name.as_ref()),
-            _ => None,
-        })
+        .filter(|a| matches!(a.status, AttrStatus::Unchanged { .. }))
         .collect();
     let changed_count = attrs
         .iter()
@@ -105,7 +102,18 @@ fn inline_element_width<F: DiffFlavor>(attrs: &[super::Attr], tag: &str, flavor:
         .count();
 
     if !unchanged.is_empty() {
-        w += unchanged.join(", ").len() + " unchanged".len();
+        // Mirror render: one → `name: value`, many → `a, b unchanged`.
+        if let [only] = unchanged.as_slice()
+            && let AttrStatus::Unchanged { value } = &only.status
+        {
+            w += flavor.format_field_prefix(&only.name).len()
+                + value.width
+                + flavor.format_field_suffix().len();
+        } else {
+            let names_len: usize = unchanged.iter().map(|a| a.name.len()).sum::<usize>()
+                + 2 * unchanged.len().saturating_sub(1); // ", " joins
+            w += names_len + " unchanged".len();
+        }
         if changed_count > 0 {
             w += 2; // ", "
         }
@@ -712,21 +720,35 @@ fn render_inline_element<W: Write, B: ColorBackend, F: DiffFlavor>(
     opts.backend
         .write_styled(w, " ", SemanticColor::Whitespace)?;
 
-    let unchanged: Vec<&str> = attrs
+    let unchanged: Vec<&super::Attr> = attrs
         .iter()
-        .filter_map(|a| match a.status {
-            AttrStatus::Unchanged { .. } => Some(a.name.as_ref()),
-            _ => None,
-        })
+        .filter(|a| matches!(a.status, AttrStatus::Unchanged { .. }))
         .collect();
     let has_changed = attrs
         .iter()
         .any(|a| matches!(a.status, AttrStatus::Changed { .. }));
 
     if !unchanged.is_empty() {
-        let summary = format!("{} unchanged", unchanged.join(", "));
-        opts.backend
-            .write_styled(w, &summary, SemanticColor::Comment)?;
+        // One unchanged field: show `name: value` — it's about as short
+        // as "name unchanged" and far more informative. Two or more:
+        // summarize the names, which is where collapsing actually pays.
+        if unchanged.len() == 1
+            && let AttrStatus::Unchanged { value } = &unchanged[0].status
+        {
+            opts.backend.write_styled(
+                w,
+                &flavor.format_field(&unchanged[0].name, layout.get_string(value.span)),
+                SemanticColor::Comment,
+            )?;
+        } else {
+            let names = unchanged
+                .iter()
+                .map(|a| a.name.as_ref())
+                .collect::<Vec<_>>()
+                .join(", ");
+            opts.backend
+                .write_styled(w, &format!("{names} unchanged"), SemanticColor::Comment)?;
+        }
         if has_changed {
             opts.backend
                 .write_styled(w, ", ", SemanticColor::Whitespace)?;
