@@ -150,8 +150,10 @@ impl DiffTheme {
     /// vivid accents that read on a white background. Deleted / inserted
     /// / moved stay perceptually balanced (equal L*/C* per role).
     pub fn colorblind_light() -> Self {
-        // Darker, vivid accents; very light tinted backgrounds.
-        const ACCENT: (f32, f32) = (48.0, 64.0);
+        // Dark, vivid accents on very light tinted backgrounds. The
+        // accent is deliberately deep (L* ~34) so highlighted values
+        // keep a strong contrast ratio against the pale highlight bg.
+        const ACCENT: (f32, f32) = (31.0, 62.0);
         const LINE_BG: (f32, f32) = (93.0, 9.0);
         const HL_BG: (f32, f32) = (85.0, 20.0);
 
