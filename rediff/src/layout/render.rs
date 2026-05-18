@@ -1034,11 +1034,13 @@ fn render_sequence<W: Write, B: ColorBackend, F: DiffFlavor>(
     Ok(())
 }
 
-/// Render a group of changed attributes as a unified diff: every changed
-/// field becomes a `-` line carrying its old value followed by a `+` line
-/// carrying its new value, matching how deleted/inserted attributes render.
-/// This keeps mixed diffs (e.g. maps with changed + added + removed keys)
-/// consistent — every change reads as a deleted line and an added line.
+/// Render changed attributes, one per line, as `name: old → new`.
+///
+/// This matches the Display path's compact form (a value change is one
+/// line, not a `-`/`+` pair) while keeping the layout theme: the old
+/// value gets the deleted highlight, the new value the inserted
+/// highlight. Genuinely removed/added keys still render as `-`/`+`
+/// lines elsewhere — only same-key value changes come through here.
 fn render_changed_group<W: Write, B: ColorBackend, F: DiffFlavor>(
     layout: &Layout,
     w: &mut W,
@@ -1048,32 +1050,34 @@ fn render_changed_group<W: Write, B: ColorBackend, F: DiffFlavor>(
     attrs: &[super::Attr],
     group: &ChangedGroup,
 ) -> fmt::Result {
-    // Old values: one `-` line per changed field.
     for &idx in &group.attr_indices {
         let attr = &attrs[idx];
-        if let AttrStatus::Changed { old, .. } = &attr.status {
-            write_indent_minus_prefix(w, depth, opts)?;
-            opts.backend.write_prefix(w, '-', SemanticColor::Deleted)?;
-            write!(w, " ")?;
-            let formatted = flavor.format_field(&attr.name, layout.get_string(old.span));
+        if let AttrStatus::Changed { old, new } = &attr.status {
+            // No `-`/`+` gutter: align the content with the deleted/
+            // inserted lines (which spend 2 cols on the prefix).
+            write_indent(w, depth, opts)?;
+            opts.backend.write_styled(
+                w,
+                &flavor.format_field_prefix(&attr.name),
+                SemanticColor::Key,
+            )?;
+            opts.backend.write_styled(
+                w,
+                layout.get_string(old.span),
+                value_color_highlight(old.value_type, ElementChange::Deleted),
+            )?;
             opts.backend
-                .write_styled(w, &formatted, SemanticColor::DeletedHighlight)?;
-            opts.backend
-                .write_styled(w, flavor.trailing_separator(), SemanticColor::Whitespace)?;
-            writeln!(w)?;
-        }
-    }
-
-    // New values: one `+` line per changed field.
-    for &idx in &group.attr_indices {
-        let attr = &attrs[idx];
-        if let AttrStatus::Changed { new, .. } = &attr.status {
-            write_indent_minus_prefix(w, depth, opts)?;
-            opts.backend.write_prefix(w, '+', SemanticColor::Inserted)?;
-            write!(w, " ")?;
-            let formatted = flavor.format_field(&attr.name, layout.get_string(new.span));
-            opts.backend
-                .write_styled(w, &formatted, SemanticColor::InsertedHighlight)?;
+                .write_styled(w, " → ", SemanticColor::Comment)?;
+            opts.backend.write_styled(
+                w,
+                layout.get_string(new.span),
+                value_color_highlight(new.value_type, ElementChange::Inserted),
+            )?;
+            let suffix = flavor.format_field_suffix();
+            if !suffix.is_empty() {
+                opts.backend
+                    .write_styled(w, suffix, SemanticColor::Structure)?;
+            }
             opts.backend
                 .write_styled(w, flavor.trailing_separator(), SemanticColor::Whitespace)?;
             writeln!(w)?;
