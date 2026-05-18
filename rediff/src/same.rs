@@ -85,11 +85,16 @@ impl<'mem, 'facet> SameReport<'mem, 'facet> {
         matches!(self, Self::Same)
     }
 
-    /// Convert this report into a [`Sameness`] summary, formatting diffs using the legacy display.
+    /// Convert this report into a [`Sameness`] summary.
+    ///
+    /// Diffs are rendered through the layout renderer (Rust flavor, ANSI
+    /// colors) — the same output as [`DiffReport::render_ansi_rust`] — so
+    /// the assertion macros get the nicer aligned/collapsed presentation
+    /// rather than the legacy `Display` tree.
     pub fn into_sameness(self) -> Sameness {
         match self {
             SameReport::Same => Sameness::Same,
-            SameReport::Different(report) => Sameness::Different(report.legacy_string()),
+            SameReport::Different(report) => Sameness::Different(report.render_ansi_rust()),
             SameReport::Opaque { type_name } => Sameness::Opaque { type_name },
         }
     }
