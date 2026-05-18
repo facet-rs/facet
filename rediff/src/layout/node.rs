@@ -67,6 +67,20 @@ pub enum LayoutNode {
         field_name: Option<&'static str>,
     },
 
+    /// A tuple / tuple-struct / tuple-enum-variant, rendered paren-style:
+    /// `Tag( a, b → c )` on one line when it fits, else one element per
+    /// line. Children are the positional elements (built like a
+    /// sequence). No `N:` labels.
+    Tuple {
+        /// Type/variant name (`Point`, `Failed`); empty for anonymous
+        /// tuples like `(u32, u32)`.
+        tag: Cow<'static, str>,
+        /// Field name if this tuple is a struct field value.
+        field_name: Option<&'static str>,
+        /// How this tuple itself changed.
+        change: ElementChange,
+    },
+
     /// A collapsed run of unchanged siblings.
     Collapsed {
         /// Number of collapsed elements
@@ -204,6 +218,7 @@ impl LayoutNode {
             Self::Sequence { change, .. } => *change,
             Self::Collapsed { .. } => ElementChange::None,
             Self::Text { change, .. } => *change,
+            Self::Tuple { change, .. } => *change,
             Self::HexDump { .. } => ElementChange::None,
             Self::ValueChange { .. } => ElementChange::None,
             Self::ItemGroup { change, .. } => *change,
@@ -233,6 +248,7 @@ impl LayoutNode {
             Self::Sequence { change, .. } => change.has_prefix(),
             Self::Collapsed { .. } => false,
             Self::Text { change, .. } => change.has_prefix(),
+            Self::Tuple { .. } => true,
             Self::HexDump { lines, .. } => !lines.is_empty(),
             Self::ValueChange { .. } => true,
             Self::ItemGroup { change, .. } => change.has_prefix(),

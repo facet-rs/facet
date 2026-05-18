@@ -241,6 +241,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                 | LayoutNode::Sequence { field_name, .. }
                 | LayoutNode::HexDump { field_name, .. }
                 | LayoutNode::ValueChange { field_name, .. }
+                | LayoutNode::Tuple { field_name, .. }
                 | LayoutNode::Text { field_name, .. } => *field_name = Some(name),
                 LayoutNode::Collapsed { .. } | LayoutNode::ItemGroup { .. } => {}
             }
@@ -549,6 +550,31 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                                     change,
                                 });
                             }
+                        }
+
+                        // Tuple variant (`Failed(String)`): paren-style,
+                        // no `0:` labels — `Failed( "oom" )`.
+                        if matches!(
+                            variant.data.kind,
+                            StructKind::Tuple | StructKind::TupleStruct
+                        ) {
+                            let node = self.tree.new_node(LayoutNode::Tuple {
+                                tag: Cow::Borrowed(tag_str),
+                                field_name: None,
+                                change,
+                            });
+                            for (i, _field) in fields.iter().enumerate() {
+                                if let Ok(Some(field_value)) = enum_peek.field(i) {
+                                    let value = self.format_peek(field_value);
+                                    let child = self.tree.new_node(LayoutNode::Text {
+                                        value,
+                                        change,
+                                        field_name: None,
+                                    });
+                                    node.append(child, &mut self.tree);
+                                }
+                            }
+                            return node;
                         }
 
                         // General case: show variant fields directly
@@ -889,26 +915,9 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                     // Nested diff - build as child element or sequence
                     let child =
                         self.build_diff(field_diff, field_from, field_to, ElementChange::None);
-
-                    // Set the field name on the child (only for borrowed names for now)
-                    // TODO: Support owned field names for nested elements
-                    if let Cow::Borrowed(name) = field_name
-                        && let Some(node) = self.tree.get_mut(child)
-                    {
-                        match node.get_mut() {
-                            LayoutNode::Element { field_name, .. } => {
-                                *field_name = Some(name);
-                            }
-                            LayoutNode::Sequence { field_name, .. } => {
-                                *field_name = Some(name);
-                            }
-                            LayoutNode::HexDump { field_name, .. } => {
-                                *field_name = Some(name);
-                            }
-                            _ => {}
-                        }
+                    if let Cow::Borrowed(name) = field_name {
+                        self.set_field_name(child, name);
                     }
-
                     child_nodes.push(child);
                 }
             }
@@ -984,21 +993,21 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
         _to: Option<Peek<'mem, 'facet>>,
         change: ElementChange,
     ) -> NodeId {
-        // Same variant issue as build_struct
-        if variant.is_some() {
-            // TODO: LayoutNode::Element should support variant display
-        }
+        // Prefer the variant name as the tuple tag (`Failed( … )`).
+        // Anonymous tuples like `(u32, u32)` have no useful name.
+        let tag = match variant {
+            Some(v) => Cow::Borrowed(v),
+            None if tag.starts_with('(') => Cow::Borrowed(""),
+            None => tag,
+        };
 
-        // Create element for the tuple
-        let node = self.tree.new_node(LayoutNode::Element {
+        let node = self.tree.new_node(LayoutNode::Tuple {
             tag,
             field_name: None,
-            attrs: Vec::new(),
-            changed_groups: Vec::new(),
             change,
         });
 
-        // Build children from updates (tuple items don't have specific type names)
+        // Tuple elements are positional (no names).
         self.build_updates_children(node, updates, "item", true);
 
         node
