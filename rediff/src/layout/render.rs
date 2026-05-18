@@ -292,12 +292,16 @@ fn render_node<W: Write, B: ColorBackend, F: DiffFlavor>(
             )
         }
 
-        LayoutNode::Collapsed { count } => {
-            let count = *count;
+        LayoutNode::Collapsed { count, names } => {
             write_indent(w, depth, opts)?;
-            let comment = flavor.comment(&format!("{} unchanged", count));
+            let label = if names.is_empty() {
+                format!(".. {count} unchanged")
+            } else {
+                let refs: Vec<&str> = names.iter().map(|c| c.as_ref()).collect();
+                crate::display::unchanged_label(&refs)
+            };
             opts.backend
-                .write_styled(w, &comment, SemanticColor::Comment)?;
+                .write_styled(w, &label, SemanticColor::Comment)?;
             writeln!(w)
         }
 
@@ -1220,7 +1224,9 @@ mod tests {
         let opts = RenderOptions::plain();
         let output = render_to_string(&layout, &opts, &XmlFlavor);
 
-        assert!(output.contains("<!-- 5 unchanged -->"));
+        // Collapsed runs use the `..` convention in every flavor now,
+        // matching the Display path (diff output isn't valid XML anyway).
+        assert!(output.contains(".. 5 unchanged"), "got: {output:?}");
     }
 
     #[test]

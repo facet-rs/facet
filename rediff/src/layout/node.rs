@@ -71,6 +71,10 @@ pub enum LayoutNode {
     Collapsed {
         /// Number of collapsed elements
         count: usize,
+        /// Names of the collapsed fields/keys, if known (empty for
+        /// sequences, where elements have no names). When present they
+        /// are listed (`.. a, b unchanged`) like the Display path.
+        names: Vec<Cow<'static, str>>,
     },
 
     /// Text content.
@@ -136,9 +140,20 @@ impl LayoutNode {
         }
     }
 
-    /// Create a collapsed node.
+    /// Create a collapsed node with just a count (no names — sequences).
     pub const fn collapsed(count: usize) -> Self {
-        Self::Collapsed { count }
+        Self::Collapsed {
+            count,
+            names: Vec::new(),
+        }
+    }
+
+    /// Create a collapsed node that knows the names of what it hid.
+    pub fn collapsed_named(names: Vec<Cow<'static, str>>) -> Self {
+        Self::Collapsed {
+            count: names.len(),
+            names,
+        }
     }
 
     /// Create a text node.
@@ -285,7 +300,7 @@ mod tests {
         let node = LayoutNode::collapsed(5);
         assert!(!node.has_changes());
 
-        if let LayoutNode::Collapsed { count } = node {
+        if let LayoutNode::Collapsed { count, .. } = node {
             assert_eq!(count, 5);
         } else {
             panic!("expected Collapsed node");
