@@ -77,6 +77,9 @@ pub use diff::{
 };
 pub use report::DiffReport;
 
+// Re-export hex-dump diff types (embedded in the public `LayoutNode`)
+pub use hexdump::{Cls, HexCell, HexLine, RowKind};
+
 // Re-export layout types for custom rendering
 pub use layout::{
     AnsiBackend, BuildOptions, ColorBackend, DiffFlavor, JsonFlavor, PlainBackend, RenderOptions,

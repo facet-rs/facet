@@ -317,6 +317,64 @@ fn render_node<W: Write, B: ColorBackend, F: DiffFlavor>(
             writeln!(w)
         }
 
+        LayoutNode::HexDump { field_name, lines } => {
+            let field_name = *field_name;
+            let lines = lines.clone();
+
+            if let Some(name) = field_name {
+                let prefix = flavor.format_child_open(name);
+                if !prefix.is_empty() {
+                    write_indent(w, depth, opts)?;
+                    opts.backend
+                        .write_styled(w, prefix.trim_end(), SemanticColor::Key)?;
+                    writeln!(w)?;
+                }
+            }
+
+            for line in &lines {
+                match line {
+                    crate::hexdump::HexLine::Collapsed(n) => {
+                        let label = if *n == 1 { "row" } else { "rows" };
+                        write_indent(w, depth, opts)?;
+                        let comment = flavor.comment(&format!(".. {n} unchanged {label}"));
+                        opts.backend
+                            .write_styled(w, &comment, SemanticColor::Comment)?;
+                        writeln!(w)?;
+                    }
+                    crate::hexdump::HexLine::Row {
+                        kind,
+                        offset,
+                        cells,
+                    } => {
+                        let (marker, marker_color) = match kind {
+                            crate::hexdump::RowKind::Removed => ('-', SemanticColor::Deleted),
+                            crate::hexdump::RowKind::Added => ('+', SemanticColor::Inserted),
+                        };
+                        write_indent_minus_prefix(w, depth, opts)?;
+                        opts.backend.write_prefix(w, marker, marker_color)?;
+                        write!(w, " ")?;
+
+                        let backend = &opts.backend;
+                        let paint = |s: &str, cls: crate::hexdump::Cls| -> String {
+                            let color = match cls {
+                                crate::hexdump::Cls::Equal => SemanticColor::Comment,
+                                crate::hexdump::Cls::Deleted => SemanticColor::Deleted,
+                                crate::hexdump::Cls::Inserted => SemanticColor::Inserted,
+                            };
+                            let mut tmp = String::new();
+                            backend.write_styled(&mut tmp, s, color).ok();
+                            tmp
+                        };
+                        let mut row = String::new();
+                        crate::hexdump::write_row(&mut row, *offset, cells, paint);
+                        write!(w, "{row}")?;
+                        writeln!(w)?;
+                    }
+                }
+            }
+            Ok(())
+        }
+
         LayoutNode::ItemGroup {
             items,
             change,
