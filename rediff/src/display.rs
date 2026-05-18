@@ -34,6 +34,29 @@ fn punct(s: &str) -> String {
     format!("{}", s.color(tokyo_night::COMMENT))
 }
 
+/// Maximum number of unchanged field names to list before falling back to a count.
+const MAX_NAMED_UNCHANGED: usize = 5;
+
+/// Build the ".. unchanged" indicator for a set of unchanged struct fields / map keys.
+///
+/// If there are only a few of them, name them explicitly so the reader knows what
+/// was kept. If there are many, show the first few and summarize the rest.
+fn format_unchanged(
+    unchanged: &std::collections::HashSet<std::borrow::Cow<'static, str>>,
+) -> String {
+    let mut names: Vec<&str> = unchanged.iter().map(|c| c.as_ref()).collect();
+    names.sort_unstable();
+
+    if names.len() <= MAX_NAMED_UNCHANGED {
+        format!(".. {} unchanged", names.join(", "))
+    } else {
+        let shown = &names[..MAX_NAMED_UNCHANGED];
+        let rest = names.len() - MAX_NAMED_UNCHANGED;
+        let label = if rest == 1 { "field" } else { "fields" };
+        format!(".. {} (+ {rest} {label}) unchanged", shown.join(", "))
+    }
+}
+
 struct PadAdapter<'a, 'b: 'a> {
     fmt: &'a mut std::fmt::Formatter<'b>,
     on_newline: bool,
@@ -153,18 +176,8 @@ impl<'mem, 'facet> Display for Diff<'mem, 'facet> {
                         let mut indent = PadAdapter::new_indented(f);
 
                         // Show unchanged fields indicator first
-                        let unchanged_count = unchanged.len();
-                        if unchanged_count > 0 {
-                            let label = if unchanged_count == 1 {
-                                "field"
-                            } else {
-                                "fields"
-                            };
-                            writeln!(
-                                indent,
-                                "{}",
-                                muted(&format!(".. {unchanged_count} unchanged {label}"))
-                            )?;
+                        if !unchanged.is_empty() {
+                            writeln!(indent, "{}", muted(&format_unchanged(unchanged)))?;
                         }
 
                         // Sort fields for deterministic output
