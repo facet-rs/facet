@@ -938,15 +938,12 @@ fn render_tuple<W: Write, B: ColorBackend, F: DiffFlavor>(
     };
 
     if inlineable {
-        let mut width = prefix_w + tag.len() + 2; // "( )"
+        let mut width = prefix_w + tag.len() + 2; // "()"
         for (i, p) in pieces.iter().enumerate() {
             if i > 0 {
                 width += 2; // ", "
             }
             width += p.width();
-        }
-        if !pieces.is_empty() {
-            width += 2; // spaces just inside the parens
         }
 
         if width <= 80usize.saturating_sub(depth * opts.indent.len()) {
@@ -954,10 +951,6 @@ fn render_tuple<W: Write, B: ColorBackend, F: DiffFlavor>(
             write_head(w)?;
             opts.backend
                 .write_styled(w, "(", SemanticColor::Structure)?;
-            if !pieces.is_empty() {
-                opts.backend
-                    .write_styled(w, " ", SemanticColor::Whitespace)?;
-            }
             for (i, p) in pieces.iter().enumerate() {
                 if i > 0 {
                     opts.backend
@@ -986,10 +979,6 @@ fn render_tuple<W: Write, B: ColorBackend, F: DiffFlavor>(
                         )?;
                     }
                 }
-            }
-            if !pieces.is_empty() {
-                opts.backend
-                    .write_styled(w, " ", SemanticColor::Whitespace)?;
             }
             opts.backend
                 .write_styled(w, ")", SemanticColor::Structure)?;
