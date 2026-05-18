@@ -371,7 +371,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                 }
             }
             Diff::Sequence {
-                from: _seq_shape_from,
+                from: seq_shape_from,
                 to: _seq_shape_to,
                 updates,
             } => {
@@ -385,7 +385,12 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                     })
                     .map(|item| get_shape_display_name(item.shape()))
                     .unwrap_or("item");
-                self.build_sequence(updates, change, item_type)
+                // Positional containers pair a 1:1 replace as a
+                // substitution (`old → new`). A set is unordered — its
+                // members didn't "become" each other, so show them as
+                // independent removes/adds instead.
+                let pair = !matches!(seq_shape_from.def, Def::Set(_));
+                self.build_sequence(updates, change, item_type, pair)
             }
             Diff::Bytes { from, to } => {
                 let fb = crate::hexdump::peek_to_bytes(*from).unwrap_or_default();
@@ -994,7 +999,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
         });
 
         // Build children from updates (tuple items don't have specific type names)
-        self.build_updates_children(node, updates, "item");
+        self.build_updates_children(node, updates, "item", true);
 
         node
     }
@@ -1021,7 +1026,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
         });
 
         // Build children into the temporary container
-        self.build_updates_children(temp, updates, "item");
+        self.build_updates_children(temp, updates, "item", true);
 
         // Check how many children we have
         let children: Vec<_> = temp.children(&self.tree).collect();
@@ -1268,7 +1273,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
         });
 
         // Build children from updates
-        self.build_updates_children(node, updates, "item");
+        self.build_updates_children(node, updates, "item", true);
 
         node
     }
@@ -1279,6 +1284,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
         updates: &Updates<'_, '_>,
         change: ElementChange,
         item_type: &'static str,
+        pair: bool,
     ) -> NodeId {
         // Create sequence node with item type info
         let node = self.tree.new_node(LayoutNode::Sequence {
@@ -1288,38 +1294,36 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
         });
 
         // Build children from updates
-        self.build_updates_children(node, updates, item_type);
+        self.build_updates_children(node, updates, item_type, pair);
 
         node
     }
 
-    /// Build children from an Updates structure and append to parent.
-    ///
-    /// This groups consecutive items by their change type (unchanged, deleted, inserted)
-    /// and renders them on single lines with optional collapsing for long runs.
-    /// Nested diffs (struct items with internal changes) are built as full child nodes.
     /// Build sequence children in positional order.
     ///
     /// Walks the interspersed `Updates` structure once, appending each
     /// child to `parent` as it is encountered, so unchanged elements,
-    /// substitutions and adds/removes keep their original order.
+    /// substitutions and adds/removes keep their original order. `pair`
+    /// controls whether a 1:1 replace is shown as a substitution
+    /// (positional containers) or independent removes/adds (sets).
     fn build_updates_children(
         &mut self,
         parent: NodeId,
         updates: &Updates<'_, '_>,
         _item_type: &'static str,
+        pair: bool,
     ) {
         let interspersed = &updates.0;
 
         if let Some(group) = &interspersed.first {
-            self.build_updates_group(parent, group);
+            self.build_updates_group(parent, group, pair);
         }
         for (unchanged, group) in &interspersed.values {
             for item in unchanged {
                 let child = self.build_peek(*item, ElementChange::None);
                 parent.append(child, &mut self.tree);
             }
-            self.build_updates_group(parent, group);
+            self.build_updates_group(parent, group, pair);
         }
         if let Some(unchanged) = &interspersed.last {
             for item in unchanged {
@@ -1331,17 +1335,17 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
 
     /// Build one `UpdatesGroup` (replace groups interspersed with
     /// nested element diffs) in order.
-    fn build_updates_group(&mut self, parent: NodeId, group: &UpdatesGroup<'_, '_>) {
+    fn build_updates_group(&mut self, parent: NodeId, group: &UpdatesGroup<'_, '_>, pair: bool) {
         let interspersed = &group.0;
 
         if let Some(rg) = &interspersed.first {
-            self.build_replace_group(parent, rg);
+            self.build_replace_group(parent, rg, pair);
         }
         for (diffs, rg) in &interspersed.values {
             for diff in diffs {
                 self.build_nested_diff(parent, diff);
             }
-            self.build_replace_group(parent, rg);
+            self.build_replace_group(parent, rg, pair);
         }
         if let Some(diffs) = &interspersed.last {
             for diff in diffs {
@@ -1365,8 +1369,8 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
     /// positional substitution: each pair is re-diffed (scalars become
     /// an inline `old → new`, related struct/enum elements recurse to
     /// just their inner change). Unequal counts are genuine removes/adds.
-    fn build_replace_group(&mut self, parent: NodeId, group: &ReplaceGroup<'_, '_>) {
-        if !group.removals.is_empty() && group.removals.len() == group.additions.len() {
+    fn build_replace_group(&mut self, parent: NodeId, group: &ReplaceGroup<'_, '_>, pair: bool) {
+        if pair && !group.removals.is_empty() && group.removals.len() == group.additions.len() {
             for (from, to) in group.removals.iter().zip(&group.additions) {
                 let nested = crate::diff_new_peek(*from, *to);
                 let child = self.build_diff(&nested, Some(*from), Some(*to), ElementChange::None);

@@ -410,26 +410,26 @@ pub fn diff_new_peek_with_options<'mem, 'facet>(
             }
         }
         ((Def::Set(_), _), (Def::Set(_), _)) => {
+            // Diff a set like a sequence: Myers pairs identical members
+            // (kept), and the rest show as removed / added members.
+            // Order isn't meaningful for a set, but per-member is far
+            // more useful than replacing the whole set.
             let from_set = from.into_set().unwrap();
             let to_set = to.into_set().unwrap();
 
-            // Collect items from both sets using debug format for comparison
-            let mut from_items: HashSet<String> = HashSet::new();
-            for item in from_set.iter() {
-                from_items.insert(format!("{:?}", item));
-            }
+            let from_items: Vec<_> = from_set.iter().collect();
+            let to_items: Vec<_> = to_set.iter().collect();
 
-            let mut to_items: HashSet<String> = HashSet::new();
-            for item in to_set.iter() {
-                to_items.insert(format!("{:?}", item));
-            }
-
-            // Sets are equal if they have the same items
-            if from_items == to_items {
+            let updates = sequences::diff_with_options(from_items, to_items, options);
+            if updates.is_empty() {
                 return Diff::Equal { value: Some(from) };
             }
 
-            Diff::Replace { from, to }
+            Diff::Sequence {
+                from: from.shape(),
+                to: to.shape(),
+                updates,
+            }
         }
         ((Def::DynamicValue(_), _), (Def::DynamicValue(_), _)) => {
             diff_dynamic_values(from, to, options)
