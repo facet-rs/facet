@@ -305,15 +305,23 @@ fn render_node<W: Write, B: ColorBackend, F: DiffFlavor>(
             writeln!(w)
         }
 
-        LayoutNode::Text { value, change } => {
+        LayoutNode::Text {
+            value,
+            change,
+            field_name,
+        } => {
             let text = layout.get_string(value.span);
             let change = *change;
 
-            write_indent(w, depth, opts)?;
-            if let Some(prefix) = change.prefix() {
-                opts.backend
-                    .write_prefix(w, prefix, element_change_to_semantic(change))?;
-                write!(w, " ")?;
+            write_change_line_start(w, depth, opts, change)?;
+            // Keep scalar deleted/inserted values labelled (e.g. a unit
+            // enum variant `state: Idle`), symmetric with Element.
+            if let Some(name) = field_name {
+                let prefix = flavor.format_child_open(name);
+                if !prefix.is_empty() {
+                    opts.backend
+                        .write_styled(w, &prefix, SemanticColor::Unchanged)?;
+                }
             }
 
             let semantic = value_color(value.value_type, change);
@@ -502,12 +510,7 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
     };
 
     // Opening tag/struct
-    write_indent(w, depth, opts)?;
-    if let Some(prefix) = change.prefix() {
-        opts.backend
-            .write_prefix(w, prefix, element_change_to_semantic(change))?;
-        write!(w, " ")?;
-    }
+    write_change_line_start(w, depth, opts, change)?;
 
     // Render field name prefix if this element is a struct field (e.g., "point: " for Rust)
     // Uses format_child_open which handles the difference between:
@@ -618,7 +621,7 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
                 writeln!(w)?;
             }
         } else {
-            write_indent(w, depth, opts)?;
+            write_change_line_start(w, depth, opts, change)?;
             let close = flavor.struct_close(tag, true);
             opts.backend.write_styled(w, &close, tag_color)?;
             writeln!(w)?;
@@ -679,12 +682,7 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
 
     // Closing tag (if we have children, we already printed opening part above)
     if has_children {
-        write_indent(w, depth, opts)?;
-        if let Some(prefix) = change.prefix() {
-            opts.backend
-                .write_prefix(w, prefix, element_change_to_semantic(change))?;
-            write!(w, " ")?;
-        }
+        write_change_line_start(w, depth, opts, change)?;
         let close = flavor.struct_close(tag, false);
         opts.backend.write_styled(w, &close, tag_color)?;
         writeln!(w)?;
@@ -1159,6 +1157,27 @@ fn write_indent_minus_prefix<W: Write, B: ColorBackend>(
         write!(w, " ")?;
     }
     Ok(())
+}
+
+/// Start a line for an element whose *whole self* changed (deleted /
+/// inserted / moved): put the marker in the gutter, exactly like every
+/// other diff line, so the open line, the fields and the closing brace
+/// all share one consistent gutter. When the element didn't change as a
+/// whole (`ElementChange::None`) this is just a normal indent.
+fn write_change_line_start<W: Write, B: ColorBackend>(
+    w: &mut W,
+    depth: usize,
+    opts: &RenderOptions<B>,
+    change: ElementChange,
+) -> fmt::Result {
+    if let Some(prefix) = change.prefix() {
+        write_indent_minus_prefix(w, depth, opts)?;
+        opts.backend
+            .write_prefix(w, prefix, element_change_to_semantic(change))?;
+        write!(w, " ")
+    } else {
+        write_indent(w, depth, opts)
+    }
 }
 
 #[cfg(test)]

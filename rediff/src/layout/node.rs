@@ -83,6 +83,10 @@ pub enum LayoutNode {
         value: FormattedValue,
         /// How this text changed
         change: ElementChange,
+        /// Field name if this text is a struct field value (e.g. `state`
+        /// for a unit enum variant `state: Idle`). Keeps deleted/inserted
+        /// scalar values labelled, symmetric with Element.
+        field_name: Option<&'static str>,
     },
 
     /// A byte-level hex-dump diff block (pre-classified per byte).
@@ -158,7 +162,11 @@ impl LayoutNode {
 
     /// Create a text node.
     pub const fn text(value: FormattedValue, change: ElementChange) -> Self {
-        Self::Text { value, change }
+        Self::Text {
+            value,
+            change,
+            field_name: None,
+        }
     }
 
     /// Create an item group node.
