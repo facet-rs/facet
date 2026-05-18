@@ -139,9 +139,11 @@ impl AnsiBackend {
         Self { theme }
     }
 
-    /// Create a new ANSI backend with the default (One Dark Pro) theme.
+    /// Create a new ANSI backend whose theme matches the terminal
+    /// background (dark/light), auto-detected once via OSC 11. Falls
+    /// back to the dark theme when detection isn't possible.
     pub fn with_default_theme() -> Self {
-        Self::new(DiffTheme::default())
+        Self::new(DiffTheme::auto())
     }
 }
 
