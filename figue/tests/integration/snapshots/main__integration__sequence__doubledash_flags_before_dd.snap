@@ -1,7 +1,18 @@
 ---
 source: crates/figue/tests/integration/sequence.rs
-expression: "$crate :: common :: strip_ansi(& err.to_string())"
+expression: "strip_ansi_escapes :: strip_str(& err.to_string())"
 ---
+Error: could not parse command-line arguments
+
+Sources:
+├─ cli --settings.*
+└─ defaults
+
+foo... true.. --foo
+bar... true.. --bar
+args.. ...... 
+
+Run with --help for usage information.
 Error: unknown flag: --baz. Did you mean '--bar'?
    ╭─[ <cli>:1:13 ]
    │

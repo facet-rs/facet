@@ -1,7 +1,17 @@
 ---
-source: tests/integration/short_chaining.rs
-expression: "$crate :: common :: strip_ansi(& err.to_string())"
+source: crates/figue/tests/integration/short_chaining.rs
+expression: "strip_ansi_escapes :: strip_str(& err.to_string())"
 ---
+Error: could not parse command-line arguments
+
+Sources:
+├─ cli --settings.*
+└─ defaults
+
+flag_a.. true.. -a
+flag_c.. true.. -c
+
+Run with --help for usage information.
 Error: unknown flag: -x
    ╭─[ <cli>:1:1 ]
    │
