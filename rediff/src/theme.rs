@@ -64,11 +64,85 @@ pub struct DiffTheme {
 
 impl Default for DiffTheme {
     fn default() -> Self {
-        Self::COLORBLIND_WITH_BG
+        Self::colorblind_dark()
     }
 }
 
+/// Build an sRGB color from LCH (perceptually uniform): same `l`
+/// (lightness) and `c` (chroma) with a different `h` (hue) produces
+/// colors that *look equally intense* — only the hue differs. This is
+/// how deleted/inserted/moved stay visually balanced.
+///
+/// Lightness is the dominant intensity cue and is preserved exactly;
+/// if `(l, c, h)` falls outside the sRGB gamut we *reduce chroma*
+/// toward gray until it fits (gamut mapping) rather than clamping each
+/// channel — per-channel clamping is what shifts the lightness and
+/// makes one hue look muddier than another.
+fn lch_rgb(l: f32, c: f32, h: f32) -> Rgb {
+    let in_gamut = |s: &Srgb| {
+        let e = 1.0 / 512.0; // tolerance for rounding
+        (-e..=1.0 + e).contains(&s.red)
+            && (-e..=1.0 + e).contains(&s.green)
+            && (-e..=1.0 + e).contains(&s.blue)
+    };
+
+    let mut chroma = c;
+    let srgb: Srgb = loop {
+        let s: Srgb = Srgb::from_color(Lch::new(l, chroma, h));
+        if chroma <= 0.0 || in_gamut(&s) {
+            break s;
+        }
+        chroma -= 0.5;
+    };
+
+    Rgb(
+        (srgb.red.clamp(0.0, 1.0) * 255.0).round() as u8,
+        (srgb.green.clamp(0.0, 1.0) * 255.0).round() as u8,
+        (srgb.blue.clamp(0.0, 1.0) * 255.0).round() as u8,
+    )
+}
+
+// Hues (LCH degrees) for the three change kinds. Warm amber for
+// deletions, cool azure for insertions, magenta for moves — far apart
+// on the wheel and distinguishable for most color-vision deficiencies.
+const HUE_DELETED: f32 = 75.0;
+const HUE_INSERTED: f32 = 255.0;
+const HUE_MOVED: f32 = 320.0;
+
 impl DiffTheme {
+    /// The default dark-terminal theme.
+    ///
+    /// Deleted / inserted / moved share the *same lightness and chroma*
+    /// at every role (accent fg, line bg, highlight bg) and differ only
+    /// in hue, so the two sides of a diff are perceptually balanced —
+    /// no more "one side brown, the other gray".
+    pub fn colorblind_dark() -> Self {
+        // (lightness, chroma) for each role on a dark background.
+        const ACCENT: (f32, f32) = (74.0, 52.0);
+        const LINE_BG: (f32, f32) = (20.0, 10.0);
+        const HL_BG: (f32, f32) = (28.0, 22.0);
+
+        Self {
+            deleted: lch_rgb(ACCENT.0, ACCENT.1, HUE_DELETED),
+            inserted: lch_rgb(ACCENT.0, ACCENT.1, HUE_INSERTED),
+            moved: lch_rgb(ACCENT.0, ACCENT.1, HUE_MOVED),
+            unchanged: Rgb(140, 140, 140),
+            key: Rgb(140, 140, 140),
+            structure: Rgb(220, 220, 220),
+            comment: Rgb(100, 100, 100),
+            string: Rgb(152, 195, 121),
+            number: Rgb(209, 154, 102),
+            boolean: Rgb(209, 154, 102),
+            null: Rgb(86, 182, 194),
+            deleted_line_bg: Some(lch_rgb(LINE_BG.0, LINE_BG.1, HUE_DELETED)),
+            inserted_line_bg: Some(lch_rgb(LINE_BG.0, LINE_BG.1, HUE_INSERTED)),
+            moved_line_bg: Some(lch_rgb(LINE_BG.0, LINE_BG.1, HUE_MOVED)),
+            deleted_highlight_bg: Some(lch_rgb(HL_BG.0, HL_BG.1, HUE_DELETED)),
+            inserted_highlight_bg: Some(lch_rgb(HL_BG.0, HL_BG.1, HUE_INSERTED)),
+            moved_highlight_bg: Some(lch_rgb(HL_BG.0, HL_BG.1, HUE_MOVED)),
+        }
+    }
+
     /// Colorblind-friendly theme - orange vs blue. No backgrounds.
     pub const COLORBLIND_ORANGE_BLUE: Self = Self {
         deleted: Rgb(255, 167, 89),    // #ffa759 warm orange
@@ -401,42 +475,39 @@ impl DiffTheme {
 
     // === Desaturated background getters ===
 
-    /// Get desaturated deleted line background (more saturated ambient, darker context).
+    // Background getters. Backgrounds are now derived symmetrically in
+    // LCH at construction time (`colorblind_dark`), so these return the
+    // stored value as-is — the old per-call desaturate/brighten passes
+    // are what made deleted go brown while inserted went gray. Kept as
+    // methods so call sites (and other themes) are unaffected.
+
+    /// Deleted line background.
     pub fn desaturated_deleted_line_bg(&self) -> Option<Rgb> {
-        self.deleted_line_bg.map(|bg| Self::desaturate(bg, 0.2))
+        self.deleted_line_bg
     }
 
-    /// Get desaturated inserted line background (more saturated ambient, darker context).
+    /// Inserted line background.
     pub fn desaturated_inserted_line_bg(&self) -> Option<Rgb> {
-        self.inserted_line_bg.map(|bg| Self::desaturate(bg, 0.2))
+        self.inserted_line_bg
     }
 
-    /// Get desaturated moved line background (more saturated ambient, darker context).
+    /// Moved line background.
     pub fn desaturated_moved_line_bg(&self) -> Option<Rgb> {
-        self.moved_line_bg.map(|bg| Self::desaturate(bg, 0.2))
+        self.moved_line_bg
     }
 
-    /// Get desaturated deleted highlight background (very desaturated, minimal brightness boost).
+    /// Deleted highlight background.
     pub fn desaturated_deleted_highlight_bg(&self) -> Option<Rgb> {
-        self.deleted_highlight_bg.map(|bg| {
-            let brightened = Self::brighten_saturate(bg, 0.02, -5.0);
-            Self::desaturate(brightened, 0.75)
-        })
+        self.deleted_highlight_bg
     }
 
-    /// Get desaturated inserted highlight background (very desaturated, minimal brightness boost).
+    /// Inserted highlight background.
     pub fn desaturated_inserted_highlight_bg(&self) -> Option<Rgb> {
-        self.inserted_highlight_bg.map(|bg| {
-            let brightened = Self::brighten_saturate(bg, 0.02, -5.0);
-            Self::desaturate(brightened, 0.75)
-        })
+        self.inserted_highlight_bg
     }
 
-    /// Get desaturated moved highlight background (very desaturated, minimal brightness boost).
+    /// Moved highlight background.
     pub fn desaturated_moved_highlight_bg(&self) -> Option<Rgb> {
-        self.moved_highlight_bg.map(|bg| {
-            let brightened = Self::brighten_saturate(bg, 0.02, -5.0);
-            Self::desaturate(brightened, 0.75)
-        })
+        self.moved_highlight_bg
     }
 }
