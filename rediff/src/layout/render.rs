@@ -264,6 +264,19 @@ fn render_node<W: Write, B: ColorBackend, F: DiffFlavor>(
             )
         }
 
+        LayoutNode::Tuple {
+            tag,
+            field_name,
+            change,
+        } => {
+            let tag = tag.clone();
+            let field_name = *field_name;
+            let change = *change;
+            render_tuple(
+                layout, w, node_id, depth, opts, flavor, &tag, field_name, change,
+            )
+        }
+
         LayoutNode::Collapsed { count, names } => {
             write_indent(w, depth, opts)?;
             let label = if names.is_empty() {
@@ -661,7 +674,10 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
             let open_close = flavor.struct_open_close();
             opts.backend.write_styled(w, open_close, tag_color)?;
         } else {
-            // Self-closing
+            // Self-closing: ` }` — space before the close, matching the
+            // opening `Tag {` so we get `Tag { a, b }` not `Tag { a, b}`.
+            opts.backend
+                .write_styled(w, " ", SemanticColor::Whitespace)?;
             let close = flavor.struct_close(tag, true);
             opts.backend.write_styled(w, &close, tag_color)?;
         }
@@ -792,6 +808,148 @@ fn render_inline_element<W: Write, B: ColorBackend, F: DiffFlavor>(
         .write_styled(w, " ", SemanticColor::Whitespace)?;
     opts.backend
         .write_styled(w, &flavor.struct_close(tag, true), SemanticColor::Structure)?;
+    writeln!(w)
+}
+
+/// One positional element of a tuple, for inline rendering.
+enum TuplePiece {
+    Value(super::FormattedValue, ElementChange),
+    Change(super::FormattedValue, super::FormattedValue),
+}
+
+impl TuplePiece {
+    fn width(&self) -> usize {
+        match self {
+            TuplePiece::Value(v, _) => v.width,
+            TuplePiece::Change(o, n) => o.width + 3 + n.width, // " → "
+        }
+    }
+}
+
+/// Render a tuple / tuple-struct / tuple-enum-variant paren-style:
+/// `Tag( a, b → c )` on one line when every element is a simple
+/// scalar/value-change and it fits, else one element per line. No
+/// `N:` labels. An empty `tag` is an anonymous tuple (`( a, b )`).
+#[allow(clippy::too_many_arguments)]
+fn render_tuple<W: Write, B: ColorBackend, F: DiffFlavor>(
+    layout: &Layout,
+    w: &mut W,
+    node_id: indextree::NodeId,
+    depth: usize,
+    opts: &RenderOptions<B>,
+    flavor: &F,
+    tag: &str,
+    field_name: Option<&str>,
+    change: ElementChange,
+) -> fmt::Result {
+    let children: Vec<_> = layout.children(node_id).collect();
+
+    // Inline only if every element is a plain value or a value change.
+    let mut pieces = Vec::with_capacity(children.len());
+    let mut inlineable = true;
+    for &c in &children {
+        match layout.get(c) {
+            Some(LayoutNode::Text { value, change, .. }) => {
+                pieces.push(TuplePiece::Value(*value, *change));
+            }
+            Some(LayoutNode::ValueChange { old, new, .. }) => {
+                pieces.push(TuplePiece::Change(*old, *new));
+            }
+            _ => {
+                inlineable = false;
+                break;
+            }
+        }
+    }
+
+    let field_prefix = field_name.map(|n| flavor.format_child_open(n));
+    let prefix_w = field_prefix.as_deref().map_or(0, str::len);
+
+    let write_head = |w: &mut W| -> fmt::Result {
+        if let Some(p) = &field_prefix
+            && !p.is_empty()
+        {
+            opts.backend.write_styled(w, p, SemanticColor::Key)?;
+        }
+        if !tag.is_empty() {
+            opts.backend
+                .write_styled(w, tag, SemanticColor::Structure)?;
+        }
+        Ok(())
+    };
+
+    if inlineable {
+        let mut width = prefix_w + tag.len() + 2; // "( )"
+        for (i, p) in pieces.iter().enumerate() {
+            if i > 0 {
+                width += 2; // ", "
+            }
+            width += p.width();
+        }
+        if !pieces.is_empty() {
+            width += 2; // spaces just inside the parens
+        }
+
+        if width <= 80usize.saturating_sub(depth * opts.indent.len()) {
+            write_change_line_start(w, depth, opts, change)?;
+            write_head(w)?;
+            opts.backend
+                .write_styled(w, "(", SemanticColor::Structure)?;
+            if !pieces.is_empty() {
+                opts.backend
+                    .write_styled(w, " ", SemanticColor::Whitespace)?;
+            }
+            for (i, p) in pieces.iter().enumerate() {
+                if i > 0 {
+                    opts.backend
+                        .write_styled(w, ", ", SemanticColor::Whitespace)?;
+                }
+                match p {
+                    TuplePiece::Value(v, ch) => {
+                        opts.backend.write_styled(
+                            w,
+                            layout.get_string(v.span),
+                            value_color(v.value_type, *ch),
+                        )?;
+                    }
+                    TuplePiece::Change(o, n) => {
+                        opts.backend.write_styled(
+                            w,
+                            layout.get_string(o.span),
+                            value_color_highlight(o.value_type, ElementChange::Deleted),
+                        )?;
+                        opts.backend
+                            .write_styled(w, " → ", SemanticColor::Comment)?;
+                        opts.backend.write_styled(
+                            w,
+                            layout.get_string(n.span),
+                            value_color_highlight(n.value_type, ElementChange::Inserted),
+                        )?;
+                    }
+                }
+            }
+            if !pieces.is_empty() {
+                opts.backend
+                    .write_styled(w, " ", SemanticColor::Whitespace)?;
+            }
+            opts.backend
+                .write_styled(w, ")", SemanticColor::Structure)?;
+            return writeln!(w);
+        }
+    }
+
+    // Multi-line: one element per line.
+    write_change_line_start(w, depth, opts, change)?;
+    write_head(w)?;
+    opts.backend
+        .write_styled(w, "(", SemanticColor::Structure)?;
+    writeln!(w)?;
+    for &c in &children {
+        render_node(layout, w, c, depth + 1, opts, flavor)?;
+    }
+    write_change_line_start(w, depth, opts, change)?;
+    opts.backend
+        .write_styled(w, ")", SemanticColor::Structure)?;
     writeln!(w)
 }
 
