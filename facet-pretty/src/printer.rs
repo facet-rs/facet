@@ -20,6 +20,97 @@ use owo_colors::OwoColorize;
 use crate::color::{Palette, Theme};
 use crate::shape::{FieldSpan, Path, PathSegment, Span};
 
+/// Tokyo Night color palette (RGB values from official theme).
+///
+/// Kept for downstream consumers that reference these constants directly.
+/// The pretty-printer itself is themed via [`Palette`]/[`Theme`]; for new
+/// code prefer [`Palette::MELANGE_DARK`]/[`Palette::MELANGE_LIGHT`].
+///
+/// See: <https://github.com/tokyo-night/tokyo-night-vscode-theme>
+pub mod tokyo_night {
+    use owo_colors::Rgb;
+
+    // ========================================================================
+    // Core colors
+    // ========================================================================
+
+    /// Foreground - main text (#a9b1d6)
+    pub const FOREGROUND: Rgb = Rgb(169, 177, 214);
+    /// Background (#1a1b26)
+    pub const BACKGROUND: Rgb = Rgb(26, 27, 38);
+    /// Comment - muted text (#565f89)
+    pub const COMMENT: Rgb = Rgb(86, 95, 137);
+
+    // ========================================================================
+    // Terminal ANSI colors
+    // ========================================================================
+
+    /// Black (#414868)
+    pub const BLACK: Rgb = Rgb(65, 72, 104);
+    /// Red (#f7768e)
+    pub const RED: Rgb = Rgb(247, 118, 142);
+    /// Green - teal/cyan green (#73daca)
+    pub const GREEN: Rgb = Rgb(115, 218, 202);
+    /// Yellow - warm orange-yellow (#e0af68)
+    pub const YELLOW: Rgb = Rgb(224, 175, 104);
+    /// Blue (#7aa2f7)
+    pub const BLUE: Rgb = Rgb(122, 162, 247);
+    /// Magenta - purple (#bb9af7)
+    pub const MAGENTA: Rgb = Rgb(187, 154, 247);
+    /// Cyan - bright cyan (#7dcfff)
+    pub const CYAN: Rgb = Rgb(125, 207, 255);
+    /// White - muted white (#787c99)
+    pub const WHITE: Rgb = Rgb(120, 124, 153);
+
+    /// Bright white (#acb0d0)
+    pub const BRIGHT_WHITE: Rgb = Rgb(172, 176, 208);
+
+    // ========================================================================
+    // Extended syntax colors
+    // ========================================================================
+
+    /// Orange - numbers, constants (#ff9e64)
+    pub const ORANGE: Rgb = Rgb(255, 158, 100);
+    /// Dark green - strings (#9ece6a)
+    pub const DARK_GREEN: Rgb = Rgb(158, 206, 106);
+
+    // ========================================================================
+    // Semantic/status colors
+    // ========================================================================
+
+    /// Error - bright red for errors (#db4b4b)
+    pub const ERROR: Rgb = Rgb(219, 75, 75);
+    /// Warning - same as yellow (#e0af68)
+    pub const WARNING: Rgb = YELLOW;
+    /// Info - teal-blue (#0db9d7)
+    pub const INFO: Rgb = Rgb(13, 185, 215);
+    /// Hint - same as comment, muted
+    pub const HINT: Rgb = COMMENT;
+
+    // ========================================================================
+    // Semantic aliases for specific uses
+    // ========================================================================
+
+    /// Type names - blue, bold
+    pub const TYPE_NAME: Rgb = BLUE;
+    /// Field names - green/teal
+    pub const FIELD_NAME: Rgb = GREEN;
+    /// String literals - dark green
+    pub const STRING: Rgb = DARK_GREEN;
+    /// Number literals - orange
+    pub const NUMBER: Rgb = ORANGE;
+    /// Keywords (null, true, false) - magenta
+    pub const KEYWORD: Rgb = MAGENTA;
+    /// Deletions in diffs - red
+    pub const DELETION: Rgb = RED;
+    /// Insertions in diffs - green
+    pub const INSERTION: Rgb = GREEN;
+    /// Muted/unchanged - comment color
+    pub const MUTED: Rgb = COMMENT;
+    /// Borders - very muted, comment color
+    pub const BORDER: Rgb = COMMENT;
+}
+
 /// A formatter for pretty-printing Facet types
 #[derive(Clone, PartialEq)]
 pub struct PrettyPrinter {
