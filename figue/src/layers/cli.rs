@@ -298,8 +298,11 @@ impl<'a> ParseContext<'a> {
         while self.index < self.args.len() {
             let arg = self.args[self.index];
 
-            // Handle `--` separator
-            if arg == "--" {
+            // Handle `--` separator. Only the *first* `--` terminates option
+            // parsing (POSIX convention); once we're in positional-only mode a
+            // `--` is just a literal operand, so it falls through to the
+            // positional handling below instead of being swallowed again.
+            if arg == "--" && !self.positional_only {
                 self.positional_only = true;
                 self.index += 1;
                 continue;

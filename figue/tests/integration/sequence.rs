@@ -157,6 +157,37 @@ fn test_doubledash_flags_after_dd() {
     );
 }
 
+/// Only the first `--` terminates option parsing. Any subsequent `--` is a
+/// literal operand and must be collected as a positional, not swallowed as
+/// another separator.
+#[test]
+fn test_doubledash_second_dd_is_literal() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Args {
+        #[facet(args::named, default)]
+        foo: bool,
+
+        /// Additional arguments
+        #[facet(args::positional, default)]
+        args: Vec<String>,
+    }
+
+    let args =
+        figue::from_slice::<Args>(&["--foo", "--", "cargo", "run", "--", "--config.port"]).unwrap();
+    assert_eq!(
+        args,
+        Args {
+            foo: true,
+            args: vec![
+                "cargo".to_string(),
+                "run".to_string(),
+                "--".to_string(),
+                "--config.port".to_string(),
+            ],
+        }
+    );
+}
+
 /// Reproduces <https://github.com/facet-rs/facet/issues/1486>
 /// facet-args treats arguments after -- as unexpected positional
 #[test]
