@@ -55,6 +55,7 @@ mod types;
 
 // Diff computation (from facet-diff)
 mod diff;
+mod hexdump;
 mod report;
 mod sequences;
 

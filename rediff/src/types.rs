@@ -58,6 +58,18 @@ pub enum Diff<'mem, 'facet> {
         /// The updates on the sequence
         updates: Updates<'mem, 'facet>,
     },
+
+    /// A diff between two byte buffers (`Vec<u8>`, `&[u8]`, `[u8; N]`, …).
+    ///
+    /// Rendered as an `xxd`-style hex dump, diffed row by row, rather than
+    /// as an element-wise decimal sequence diff.
+    Bytes {
+        /// The `from` byte buffer.
+        from: Peek<'mem, 'facet>,
+
+        /// The `to` byte buffer.
+        to: Peek<'mem, 'facet>,
+    },
 }
 
 impl<'mem, 'facet> Diff<'mem, 'facet> {

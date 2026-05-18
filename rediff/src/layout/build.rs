@@ -370,6 +370,30 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                     .unwrap_or("item");
                 self.build_sequence(updates, change, item_type)
             }
+            Diff::Bytes { from, to } => {
+                let fb = crate::hexdump::peek_to_bytes(*from).unwrap_or_default();
+                let tb = crate::hexdump::peek_to_bytes(*to).unwrap_or_default();
+
+                // A hex dump is the same in every flavor, so render it as a
+                // transparent block of per-row diff lines. The existing Text
+                // render path supplies the indent, `-`/`+` gutter and color.
+                let container = self.tree.new_node(LayoutNode::element("_transparent"));
+                for line in crate::hexdump::diff_hex(&fb, &tb) {
+                    let line_change = match line.kind {
+                        crate::hexdump::HexLineKind::Removed => ElementChange::Deleted,
+                        crate::hexdump::HexLineKind::Added => ElementChange::Inserted,
+                        crate::hexdump::HexLineKind::Collapsed(_) => ElementChange::None,
+                    };
+                    let (span, width) = self.strings.push_str(&line.text);
+                    let value = FormattedValue::new(span, width);
+                    let node = self.tree.new_node(LayoutNode::Text {
+                        value,
+                        change: line_change,
+                    });
+                    container.append(node, &mut self.tree);
+                }
+                container
+            }
         }
     }
 

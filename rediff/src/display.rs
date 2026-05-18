@@ -236,6 +236,21 @@ impl<'mem, 'facet> Display for Diff<'mem, 'facet> {
                     write!(f, "{}", punct("]"))
                 }
             }
+            Diff::Bytes { from, to } => {
+                let fb = crate::hexdump::peek_to_bytes(*from).unwrap_or_default();
+                let tb = crate::hexdump::peek_to_bytes(*to).unwrap_or_default();
+                writeln!(f, "{}", punct("["))?;
+                {
+                    let mut indent = PadAdapter::new_indented(f);
+                    write!(
+                        indent,
+                        "{}",
+                        crate::hexdump::render_hex_diff(&fb, &tb, true)
+                    )?;
+                    indent.write_char('\n')?;
+                }
+                write!(f, "{}", punct("]"))
+            }
         }
     }
 }
