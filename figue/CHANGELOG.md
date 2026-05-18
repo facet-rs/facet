@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.3](https://github.com/bearcove/figue/compare/figue-v4.0.2...figue-v4.0.3) - 2026-05-18
+
+### Other
+
+- Only the first -- terminates option parsing
+- Show parsed config + usage hint on CLI parse errors
+- Allow $schema in properties
+
 ## [4.0.2](https://github.com/bearcove/figue/compare/figue-v4.0.1...figue-v4.0.2) - 2026-05-15
 
 ### Other
