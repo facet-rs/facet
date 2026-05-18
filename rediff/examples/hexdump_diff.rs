@@ -3,7 +3,7 @@
 //! Run with: `cargo run --example hexdump_diff`
 
 use facet::Facet;
-use rediff::{FacetDiff, check_same_report, format_diff_default};
+use rediff::{FacetDiff, assert_same, check_same_report, format_diff_default};
 
 #[derive(Facet)]
 struct Packet {
@@ -47,4 +47,17 @@ fn main() {
 
     println!("\n== One byte inserted (shift, not mass-rewrite) ==");
     println!("{}", format_diff_default(&ins_old.diff(&ins_new)));
+
+    println!("\n== assert_same! failure message (now the layout path) ==");
+    let panicked = std::panic::catch_unwind(|| {
+        assert_same!(old, new);
+    });
+    if let Err(e) = panicked {
+        let msg = e
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
+            .unwrap_or_default();
+        println!("{msg}");
+    }
 }
