@@ -134,7 +134,35 @@ fn config_root_schema(config: &ConfigStructSchema) -> Json {
         object.push(("description".to_string(), Json::String(description)));
     }
     append_struct_keywords(&mut object, config);
+    allow_schema_property(&mut object);
     Json::Object(object)
+}
+
+/// Allow a top-level `$schema` key in config files so editors can point at the
+/// generated schema without tripping `additionalProperties: false`.
+fn allow_schema_property(object: &mut [(String, Json)]) {
+    for (key, value) in object.iter_mut() {
+        if key == "properties"
+            && let Json::Object(properties) = value
+        {
+            properties.insert(
+                0,
+                (
+                    "$schema".to_string(),
+                    Json::object([
+                        ("type", Json::String("string".to_string())),
+                        (
+                            "description",
+                            Json::String(
+                                "Path or URL of the JSON Schema this file conforms to.".to_string(),
+                            ),
+                        ),
+                    ]),
+                ),
+            );
+            return;
+        }
+    }
 }
 
 fn struct_schema(config: &ConfigStructSchema) -> Json {
