@@ -143,6 +143,75 @@ impl DiffTheme {
         }
     }
 
+    /// The default light-terminal theme.
+    ///
+    /// The same symmetric LCH derivation as [`Self::colorblind_dark`],
+    /// with the lightnesses flipped: pale tinted backgrounds and darker,
+    /// vivid accents that read on a white background. Deleted / inserted
+    /// / moved stay perceptually balanced (equal L*/C* per role).
+    pub fn colorblind_light() -> Self {
+        // Darker, vivid accents; very light tinted backgrounds.
+        const ACCENT: (f32, f32) = (48.0, 64.0);
+        const LINE_BG: (f32, f32) = (93.0, 9.0);
+        const HL_BG: (f32, f32) = (85.0, 20.0);
+
+        Self {
+            deleted: lch_rgb(ACCENT.0, ACCENT.1, HUE_DELETED),
+            inserted: lch_rgb(ACCENT.0, ACCENT.1, HUE_INSERTED),
+            moved: lch_rgb(ACCENT.0, ACCENT.1, HUE_MOVED),
+            unchanged: Rgb(120, 120, 120),
+            key: Rgb(120, 120, 120),
+            structure: Rgb(50, 50, 50),
+            comment: Rgb(150, 150, 150),
+            // Value-type colors darkened for contrast on a light bg.
+            string: lch_rgb(45.0, 55.0, 135.0), // green
+            number: lch_rgb(50.0, 62.0, 55.0),  // orange
+            boolean: lch_rgb(50.0, 62.0, 55.0), // orange
+            null: lch_rgb(48.0, 38.0, 210.0),   // cyan
+            deleted_line_bg: Some(lch_rgb(LINE_BG.0, LINE_BG.1, HUE_DELETED)),
+            inserted_line_bg: Some(lch_rgb(LINE_BG.0, LINE_BG.1, HUE_INSERTED)),
+            moved_line_bg: Some(lch_rgb(LINE_BG.0, LINE_BG.1, HUE_MOVED)),
+            deleted_highlight_bg: Some(lch_rgb(HL_BG.0, HL_BG.1, HUE_DELETED)),
+            inserted_highlight_bg: Some(lch_rgb(HL_BG.0, HL_BG.1, HUE_INSERTED)),
+            moved_highlight_bg: Some(lch_rgb(HL_BG.0, HL_BG.1, HUE_MOVED)),
+        }
+    }
+
+    /// Pick a theme to match the terminal's background.
+    ///
+    /// Queries the terminal via OSC 11 (using `terminal-colorsaurus`,
+    /// which handles non-TTYs, tmux/SSH passthrough, timeouts and
+    /// Windows). The query runs **at most once per process** — the
+    /// result is cached — and on anything other than a clear "light"
+    /// answer (piped output, CI, unsupported terminal, timeout) it
+    /// falls back to the dark theme. `REDIFF_THEME=dark|light` forces a
+    /// choice and skips the query entirely.
+    pub fn auto() -> Self {
+        use std::sync::OnceLock;
+        static CACHED: OnceLock<DiffTheme> = OnceLock::new();
+
+        CACHED
+            .get_or_init(|| {
+                if let Ok(forced) = std::env::var("REDIFF_THEME") {
+                    return match forced.trim().to_ascii_lowercase().as_str() {
+                        "light" => Self::colorblind_light(),
+                        _ => Self::colorblind_dark(),
+                    };
+                }
+
+                use terminal_colorsaurus::{QueryOptions, ThemeMode, theme_mode};
+                let mut opts = QueryOptions::default();
+                // Keep it snappy: this can run from inside `assert_same!`.
+                opts.timeout = std::time::Duration::from_millis(100);
+
+                match theme_mode(opts) {
+                    Ok(ThemeMode::Light) => Self::colorblind_light(),
+                    _ => Self::colorblind_dark(),
+                }
+            })
+            .clone()
+    }
+
     /// Colorblind-friendly theme - orange vs blue. No backgrounds.
     pub const COLORBLIND_ORANGE_BLUE: Self = Self {
         deleted: Rgb(255, 167, 89),    // #ffa759 warm orange

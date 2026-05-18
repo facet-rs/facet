@@ -33,6 +33,7 @@ confusables = "0.1"
 indextree = "4"
 owo-colors = "4"
 palette = { version = "0.7", default-features = false, features = ["std"] }
+terminal-colorsaurus = "1"
 unicode-width = "0.2"
 
 tracing = { version = "0.1", default-features = false, optional = true }
