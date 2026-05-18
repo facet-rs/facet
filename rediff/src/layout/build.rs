@@ -1272,15 +1272,22 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
         updates: &Updates<'_, '_>,
         _item_type: &'static str,
     ) {
-        // Collect simple items (adds/removes) and nested diffs separately
+        // Collect simple items (adds/removes), positional substitutions
+        // and nested diffs separately
         let mut items: Vec<(Peek<'_, '_>, ElementChange)> = Vec::new();
+        let mut subs: Vec<(Peek<'_, '_>, Peek<'_, '_>)> = Vec::new();
         let mut nested_diffs: Vec<&Diff<'_, '_>> = Vec::new();
 
         let interspersed = &updates.0;
 
         // Process first update group if present
         if let Some(update_group) = &interspersed.first {
-            self.collect_updates_group_items(&mut items, &mut nested_diffs, update_group);
+            self.collect_updates_group_items(
+                &mut items,
+                &mut subs,
+                &mut nested_diffs,
+                update_group,
+            );
         }
 
         // Process interleaved (unchanged, update) pairs
@@ -1290,7 +1297,12 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                 items.push((*item, ElementChange::None));
             }
 
-            self.collect_updates_group_items(&mut items, &mut nested_diffs, update_group);
+            self.collect_updates_group_items(
+                &mut items,
+                &mut subs,
+                &mut nested_diffs,
+                update_group,
+            );
         }
 
         // Process trailing unchanged items
@@ -1324,6 +1336,15 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
             parent.append(child, &mut self.tree);
         }
 
+        // Positional substitutions: re-diff each (old, new) pair so the
+        // change shows as a nested diff (e.g. `code: 204 → 503`) rather
+        // than the whole old and new values as separate blocks.
+        for (from, to) in subs {
+            let nested = crate::diff_new_peek(from, to);
+            let child = self.build_diff(&nested, Some(from), Some(to), ElementChange::None);
+            parent.append(child, &mut self.tree);
+        }
+
         // Render simple items (unchanged, adds, removes)
         for (item_peek, item_change) in items {
             let child = self.build_peek(item_peek, item_change);
@@ -1336,6 +1357,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
     fn collect_updates_group_items<'a, 'mem: 'a, 'facet: 'a>(
         &self,
         items: &mut Vec<(Peek<'mem, 'facet>, ElementChange)>,
+        subs: &mut Vec<(Peek<'mem, 'facet>, Peek<'mem, 'facet>)>,
         nested_diffs: &mut Vec<&'a Diff<'mem, 'facet>>,
         group: &'a UpdatesGroup<'mem, 'facet>,
     ) {
@@ -1343,7 +1365,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
 
         // Process first replace group if present
         if let Some(replace) = &interspersed.first {
-            self.collect_replace_group_items(items, replace);
+            self.collect_replace_group_items(items, subs, replace);
         }
 
         // Process interleaved (diffs, replace) pairs
@@ -1352,7 +1374,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
             for diff in diffs {
                 nested_diffs.push(diff);
             }
-            self.collect_replace_group_items(items, replace);
+            self.collect_replace_group_items(items, subs, replace);
         }
 
         // Process trailing diffs (if any)
@@ -1363,20 +1385,43 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
         }
     }
 
-    /// Collect items from a ReplaceGroup into the items list.
+    /// Collect items from a ReplaceGroup.
+    ///
+    /// A replace group with equal numbers of removals and additions is a
+    /// positional substitution: pair them up so a changed element is
+    /// re-diffed recursively (`code: 204 → 503`) instead of dumping the
+    /// whole old and new values as separate blocks. Unequal counts are
+    /// genuine removes/adds.
     fn collect_replace_group_items<'a, 'mem: 'a, 'facet: 'a>(
         &self,
         items: &mut Vec<(Peek<'mem, 'facet>, ElementChange)>,
+        subs: &mut Vec<(Peek<'mem, 'facet>, Peek<'mem, 'facet>)>,
         group: &'a ReplaceGroup<'mem, 'facet>,
     ) {
-        // Add removals as deleted
-        for removal in &group.removals {
-            items.push((*removal, ElementChange::Deleted));
-        }
-
-        // Add additions as inserted
-        for addition in &group.additions {
-            items.push((*addition, ElementChange::Inserted));
+        if !group.removals.is_empty() && group.removals.len() == group.additions.len() {
+            for (removal, addition) in group.removals.iter().zip(&group.additions) {
+                // Only recurse when the two elements are structurally
+                // related (same-ish struct/enum/seq with internal
+                // changes). A bare `Diff::Replace` means they're
+                // unrelated (scalars, different variants) — show those
+                // as an in-order remove + add, not a nested block.
+                if matches!(
+                    crate::diff_new_peek(*removal, *addition),
+                    Diff::Replace { .. }
+                ) {
+                    items.push((*removal, ElementChange::Deleted));
+                    items.push((*addition, ElementChange::Inserted));
+                } else {
+                    subs.push((*removal, *addition));
+                }
+            }
+        } else {
+            for removal in &group.removals {
+                items.push((*removal, ElementChange::Deleted));
+            }
+            for addition in &group.additions {
+                items.push((*addition, ElementChange::Inserted));
+            }
         }
     }
 
