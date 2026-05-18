@@ -2,10 +2,59 @@
 
 use std::fmt::{self, Write};
 
+use confusables::Confusable;
+
 use super::backend::{AnsiBackend, ColorBackend, PlainBackend, SemanticColor};
 use super::flavor::DiffFlavor;
 use super::{AttrStatus, ChangedGroup, ElementChange, Layout, LayoutNode, ValueType};
 use crate::DiffSymbols;
+
+/// Per-position character differences between two equal-looking strings.
+/// `(index, old_char, new_char)`; a `None` means the string is shorter
+/// there. Mirrors the Display path's confusable explanation.
+fn char_diffs(a: &str, b: &str) -> Vec<(usize, Option<char>, Option<char>)> {
+    let ac: Vec<char> = a.chars().collect();
+    let bc: Vec<char> = b.chars().collect();
+    let mut out = Vec::new();
+    for i in 0..ac.len().max(bc.len()) {
+        match (ac.get(i), bc.get(i)) {
+            (Some(&l), Some(&r)) if l != r => out.push((i, Some(l), Some(r))),
+            (Some(&l), None) => out.push((i, Some(l), None)),
+            (None, Some(&r)) => out.push((i, None, Some(r))),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// True if the attribute is a *changed string* whose old/new values are
+/// visually confusable (look identical, differ only in codepoints).
+fn confusable_changed(layout: &Layout, attr: &super::Attr) -> bool {
+    if let AttrStatus::Changed { old, new } = &attr.status {
+        let a = layout.get_string(old.span);
+        let b = layout.get_string(new.span);
+        // Only quoted (string) values; `String` formats as
+        // ValueType::Other so we key off the rendered quotes instead.
+        if !(a.starts_with('"') && b.starts_with('"')) {
+            return false;
+        }
+        // The crate matches whole strings, so compare the unquoted body.
+        let (_, ab, _) = unquote(a);
+        let (_, bb, _) = unquote(b);
+        return ab != bb && (ab.is_confusable_with(bb) || bb.is_confusable_with(ab));
+    }
+    false
+}
+
+/// Render `c` with its codepoint: `'a' (U+0061)` or, for non-graphic
+/// chars, `'\u{0430}'`.
+fn char_with_codepoint(c: char) -> String {
+    if c.is_ascii_graphic() {
+        format!("'{}' (U+{:04X})", c, c as u32)
+    } else {
+        format!("'\\u{{{:04X}}}'", c as u32)
+    }
+}
 
 /// Syntax element type for context-aware coloring.
 #[derive(Clone, Copy)]
@@ -505,7 +554,17 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
     // 2. No deleted or inserted attributes (structural churn → multi-line)
     // 3. No children (self-closing element)
     // 4. The compact one-liner fits the available width
-    if has_changed_attrs && !has_deleted_attrs && !has_inserted_attrs && !has_children {
+    // A confusable string change must never be compacted — its whole
+    // point is that the values look identical, so it needs the
+    // multi-line per-character / codepoint breakdown.
+    let has_confusable = attrs.iter().any(|a| confusable_changed(layout, a));
+
+    if has_changed_attrs
+        && !has_deleted_attrs
+        && !has_inserted_attrs
+        && !has_children
+        && !has_confusable
+    {
         let indent_width = depth * opts.indent.len();
         if inline_element_width(attrs, tag, flavor) <= 80usize.saturating_sub(indent_width) {
             return render_inline_element(layout, w, depth, opts, flavor, tag, field_name, attrs);
@@ -1088,6 +1147,18 @@ fn render_changed_group<W: Write, B: ColorBackend, F: DiffFlavor>(
                 &flavor.format_field_prefix(&attr.name),
                 SemanticColor::Key,
             )?;
+
+            if confusable_changed(layout, attr) {
+                render_confusable(
+                    w,
+                    opts,
+                    depth,
+                    layout.get_string(old.span),
+                    layout.get_string(new.span),
+                )?;
+                continue;
+            }
+
             opts.backend.write_styled(
                 w,
                 layout.get_string(old.span),
@@ -1111,6 +1182,83 @@ fn render_changed_group<W: Write, B: ColorBackend, F: DiffFlavor>(
         }
     }
 
+    Ok(())
+}
+
+/// Strip one pair of surrounding double quotes, returning
+/// `(open_quote, body, close_quote)` so the body can be diffed by
+/// character while the quotes stay rendered.
+fn unquote(s: &str) -> (&str, &str, &str) {
+    if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
+        ("\"", &s[1..s.len() - 1], "\"")
+    } else {
+        ("", s, "")
+    }
+}
+
+/// Render a confusable string change: `name: ` is already written.
+/// Shows `old → new` with only the confusable characters highlighted
+/// (the rest muted, since the strings look identical), then a
+/// per-position codepoint breakdown indented underneath.
+fn render_confusable<W: Write, B: ColorBackend>(
+    w: &mut W,
+    opts: &RenderOptions<B>,
+    depth: usize,
+    old: &str,
+    new: &str,
+) -> fmt::Result {
+    let (oq, ob, oqc) = unquote(old);
+    let (nq, nb, nqc) = unquote(new);
+    let diffs = char_diffs(ob, nb);
+    let diff_pos: std::collections::HashSet<usize> = diffs.iter().map(|(i, ..)| *i).collect();
+
+    let write_body = |w: &mut W, q: &str, body: &str, qc: &str, hl: SemanticColor| -> fmt::Result {
+        opts.backend.write_styled(w, q, SemanticColor::Comment)?;
+        for (i, ch) in body.chars().enumerate() {
+            let color = if diff_pos.contains(&i) {
+                hl
+            } else {
+                SemanticColor::Comment
+            };
+            opts.backend.write_styled(w, &ch.to_string(), color)?;
+        }
+        opts.backend.write_styled(w, qc, SemanticColor::Comment)
+    };
+
+    write_body(w, oq, ob, oqc, SemanticColor::DeletedHighlight)?;
+    opts.backend
+        .write_styled(w, " → ", SemanticColor::Comment)?;
+    write_body(w, nq, nb, nqc, SemanticColor::InsertedHighlight)?;
+    writeln!(w)?;
+
+    for (pos, oc, nc) in &diffs {
+        write_indent(w, depth, opts)?;
+        opts.backend
+            .write_styled(w, &format!("  [{pos}]: "), SemanticColor::Comment)?;
+        match oc {
+            Some(c) => opts.backend.write_styled(
+                w,
+                &char_with_codepoint(*c),
+                SemanticColor::DeletedHighlight,
+            )?,
+            None => opts
+                .backend
+                .write_styled(w, "(missing)", SemanticColor::Comment)?,
+        }
+        opts.backend
+            .write_styled(w, " vs ", SemanticColor::Comment)?;
+        match nc {
+            Some(c) => opts.backend.write_styled(
+                w,
+                &char_with_codepoint(*c),
+                SemanticColor::InsertedHighlight,
+            )?,
+            None => opts
+                .backend
+                .write_styled(w, "(missing)", SemanticColor::Comment)?,
+        }
+        writeln!(w)?;
+    }
     Ok(())
 }
 

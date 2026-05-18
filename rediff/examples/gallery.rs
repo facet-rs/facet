@@ -468,14 +468,14 @@ fn strings() {
         },
     );
 
-    // Visually identical, but different Unicode scalars (Cyrylic 'а').
+    // Visually identical, but the second uses Cyrillic 'а' (U+0430).
     show(
         "confusable strings (look identical, differ in codepoints)",
         &Doc {
-            title: "paypal.com".into(),
+            title: "paypal".into(),
         },
         &Doc {
-            title: "pаypаl.com".into(),
+            title: "pаypаl".into(),
         },
     );
 }
