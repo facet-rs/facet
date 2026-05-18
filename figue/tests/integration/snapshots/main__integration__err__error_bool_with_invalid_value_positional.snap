@@ -1,7 +1,16 @@
 ---
-source: tests/integration/err.rs
-expression: "$crate :: common :: strip_ansi(& err.to_string())"
+source: crates/figue/tests/integration/err.rs
+expression: "strip_ansi_escapes :: strip_str(& err.to_string())"
 ---
+Error: could not parse command-line arguments
+
+Sources:
+├─ cli --settings.*
+└─ defaults
+
+enable.. true.. --enable
+
+Run with --help for usage information.
 Error: unexpected argument: maybe
    ╭─[ <cli>:1:10 ]
    │

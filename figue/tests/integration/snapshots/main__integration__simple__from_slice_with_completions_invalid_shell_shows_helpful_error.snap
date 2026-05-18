@@ -2,4 +2,18 @@
 source: crates/figue/tests/integration/simple.rs
 expression: "strip_ansi_escapes :: strip_str(& err.to_string())"
 ---
+Error: could not parse command-line arguments
+
+Sources:
+├─ cli --settings.*
+└─ defaults
+
+name................ test............ --name
+help................ false........... DEFAULT
+html_help........... false........... DEFAULT
+version............. false........... DEFAULT
+completions......... slartibartfast.. --completions
+export_jsonschemas.. <default>....... DEFAULT
+
+Run with --help for usage information.
 Error: unknown shell 'slartibartfast', valid values are: bash, zsh, fish

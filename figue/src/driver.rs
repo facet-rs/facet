@@ -397,14 +397,51 @@ impl<T: Facet<'static>> Driver<T> {
             }
         }
 
-        // Check for errors before proceeding
+        // Check for errors before proceeding.
+        //
+        // CLI/file/env parsing produced one or more hard errors (unknown flag,
+        // bad value, ...). Before bailing, build the same rich context we show
+        // for missing-field errors: a dump of everything that *was* understood
+        // (so the user sees what stuck and which flags exist), a usage hint,
+        // and finally the precise diagnostics pointing at the offending input —
+        // rendered last so they sit right above the prompt.
         let has_errors = all_diagnostics
             .iter()
             .any(|d| d.severity == Severity::Error);
         if has_errors {
+            // Merge what parsed so far for a "this is what I understood" dump.
+            // env-var substitution is intentionally skipped here: it can itself
+            // fail, and the parse error is the more actionable thing to show.
+            let display_value = {
+                let values: Vec<ConfigValue> = [
+                    layers.defaults.value.clone(),
+                    layers.file.value.clone(),
+                    layers.env.value.clone(),
+                    layers.cli.value.clone(),
+                ]
+                .into_iter()
+                .flatten()
+                .collect();
+                let merged = merge_layers(values);
+                fill_defaults_from_schema(&merged.value, &self.config.schema)
+            };
+            let dump = render_config_dump(&display_value, &file_resolution, &self.config.schema);
+
+            let mut diagnostics = Vec::with_capacity(all_diagnostics.len() + 1);
+            diagnostics.push(Diagnostic {
+                message: format!(
+                    "could not parse command-line arguments\n\n{dump}\nRun with --help for usage information."
+                ),
+                label: None,
+                path: None,
+                span: None,
+                severity: Severity::Error,
+            });
+            diagnostics.extend(all_diagnostics);
+
             return DriverOutcome::err(DriverError::Failed {
                 report: Box::new(DriverReport {
-                    diagnostics: all_diagnostics,
+                    diagnostics,
                     layers,
                     file_resolution,
                     overrides: Vec::new(),
@@ -650,16 +687,8 @@ impl<T: Facet<'static>> Driver<T> {
 
             let message = {
                 // Use detailed format with config dump
-                let mut dump_buf = Vec::new();
-                let resolution = file_resolution.as_ref().cloned().unwrap_or_default();
-                dump_config_with_schema(
-                    &mut dump_buf,
-                    &value_with_defaults,
-                    &resolution,
-                    &self.config.schema,
-                );
                 let dump =
-                    String::from_utf8(dump_buf).unwrap_or_else(|_| "error rendering dump".into());
+                    render_config_dump(&value_with_defaults, &file_resolution, &self.config.schema);
 
                 // Build error message with both missing fields and unknown keys
                 let mut message_parts = Vec::new();
@@ -803,6 +832,19 @@ impl<T: Facet<'static>> Driver<T> {
             schema: self.config.schema.clone(),
         })
     }
+}
+
+/// Render the provenance-annotated config dump (the "this is what I
+/// understood" tree, including the `Sources:` header) into a string.
+fn render_config_dump(
+    value: &ConfigValue,
+    file_resolution: &Option<FileResolution>,
+    schema: &crate::schema::Schema,
+) -> String {
+    let mut dump_buf = Vec::new();
+    let resolution = file_resolution.as_ref().cloned().unwrap_or_default();
+    dump_config_with_schema(&mut dump_buf, value, &resolution, schema);
+    String::from_utf8(dump_buf).unwrap_or_else(|_| "error rendering dump".into())
 }
 
 fn flatten_config_roots_for_deserialization(

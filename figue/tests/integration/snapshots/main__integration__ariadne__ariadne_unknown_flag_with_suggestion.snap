@@ -2,6 +2,15 @@
 source: crates/figue/tests/integration/ariadne.rs
 expression: ariadne_output
 ---
+Error: could not parse command-line arguments
+
+Sources:
+├─ cli --settings.*
+└─ defaults
+
+concurrency.. .. ⨯ MISSING
+
+Run with --help for usage information.
 Error: unknown flag: --c0ncurrency. Did you mean '--concurrency'?
    ╭─[ <cli>:1:1 ]
    │

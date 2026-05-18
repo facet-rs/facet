@@ -1,7 +1,16 @@
 ---
 source: crates/figue/tests/integration/err.rs
-expression: "$crate :: common :: strip_ansi(& err.to_string())"
+expression: "strip_ansi_escapes :: strip_str(& err.to_string())"
 ---
+Error: could not parse command-line arguments
+
+Sources:
+├─ cli --settings.*
+└─ defaults
+
+concurrency.. .. ⨯ MISSING
+
+Run with --help for usage information.
 Error: unknown flag: --c0ncurrency. Did you mean '--concurrency'?
    ╭─[ <cli>:1:1 ]
    │

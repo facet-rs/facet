@@ -2,6 +2,15 @@
 source: crates/figue/tests/integration/ariadne.rs
 expression: ariadne_output
 ---
+Error: could not parse command-line arguments
+
+Sources:
+├─ cli --settings.*
+└─ defaults
+
+command.. .. ⨯ MISSING
+
+Run with --help for usage information.
 Error: unexpected argument: buidl. Did you mean 'build'?
    ╭─[ <cli>:1:1 ]
    │
