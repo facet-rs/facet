@@ -943,7 +943,9 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
         if unchanged_count > 0
             && (unchanged_count > self.opts.max_unchanged_fields || !from_is_struct)
         {
-            let collapsed = self.tree.new_node(LayoutNode::collapsed(unchanged_count));
+            let mut names: Vec<Cow<'static, str>> = unchanged.iter().cloned().collect();
+            names.sort();
+            let collapsed = self.tree.new_node(LayoutNode::collapsed_named(names));
             node.append(collapsed, &mut self.tree);
         }
 

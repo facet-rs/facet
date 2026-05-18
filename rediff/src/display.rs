@@ -37,16 +37,16 @@ fn punct(s: &str) -> String {
 /// Maximum number of unchanged field names to list before falling back to a count.
 const MAX_NAMED_UNCHANGED: usize = 5;
 
-/// Build the ".. unchanged" indicator for a set of unchanged struct fields / map keys.
+/// Build the ".. unchanged" indicator from a list of unchanged
+/// struct-field / map-key names.
 ///
-/// If there are only a few of them, name them explicitly so the reader knows what
-/// was kept. If there are many, show the first few and summarize the rest.
-fn format_unchanged(
-    unchanged: &std::collections::HashSet<std::borrow::Cow<'static, str>>,
-) -> String {
-    let mut names: Vec<&str> = unchanged.iter().map(|c| c.as_ref()).collect();
-    names.sort_unstable();
-
+/// If there are only a few, name them explicitly so the reader knows what
+/// was kept; if there are many, show the first few and summarize the rest.
+/// Shared with the layout renderer so both paths phrase it identically.
+pub(crate) fn unchanged_label(names: &[&str]) -> String {
+    if names.is_empty() {
+        return ".. unchanged".to_string();
+    }
     if names.len() <= MAX_NAMED_UNCHANGED {
         format!(".. {} unchanged", names.join(", "))
     } else {
@@ -55,6 +55,15 @@ fn format_unchanged(
         let label = if rest == 1 { "field" } else { "fields" };
         format!(".. {} (+ {rest} {label}) unchanged", shown.join(", "))
     }
+}
+
+/// Build the ".. unchanged" indicator for a set of unchanged struct fields / map keys.
+fn format_unchanged(
+    unchanged: &std::collections::HashSet<std::borrow::Cow<'static, str>>,
+) -> String {
+    let mut names: Vec<&str> = unchanged.iter().map(|c| c.as_ref()).collect();
+    names.sort_unstable();
+    unchanged_label(&names)
 }
 
 struct PadAdapter<'a, 'b: 'a> {
