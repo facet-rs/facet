@@ -89,6 +89,19 @@ pub enum LayoutNode {
         field_name: Option<&'static str>,
     },
 
+    /// An inline scalar value change rendered as `[name: ]old → new`
+    /// (only old/new highlighted). Used for any `Diff::Replace` that
+    /// isn't a structural change — tuple slots, sequence elements,
+    /// top-level scalars, etc.
+    ValueChange {
+        /// Field/label name if known (set by the parent struct/seq).
+        field_name: Option<&'static str>,
+        /// The old value.
+        old: FormattedValue,
+        /// The new value.
+        new: FormattedValue,
+    },
+
     /// A byte-level hex-dump diff block (pre-classified per byte).
     HexDump {
         /// Optional struct-field label (e.g. `payload`) shown before the block.
@@ -192,6 +205,7 @@ impl LayoutNode {
             Self::Collapsed { .. } => ElementChange::None,
             Self::Text { change, .. } => *change,
             Self::HexDump { .. } => ElementChange::None,
+            Self::ValueChange { .. } => ElementChange::None,
             Self::ItemGroup { change, .. } => *change,
         }
     }
@@ -220,6 +234,7 @@ impl LayoutNode {
             Self::Collapsed { .. } => false,
             Self::Text { change, .. } => change.has_prefix(),
             Self::HexDump { lines, .. } => !lines.is_empty(),
+            Self::ValueChange { .. } => true,
             Self::ItemGroup { change, .. } => change.has_prefix(),
         }
     }

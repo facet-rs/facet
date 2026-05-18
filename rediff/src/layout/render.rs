@@ -293,6 +293,33 @@ fn render_node<W: Write, B: ColorBackend, F: DiffFlavor>(
             writeln!(w)
         }
 
+        LayoutNode::ValueChange {
+            field_name,
+            old,
+            new,
+        } => {
+            write_indent(w, depth, opts)?;
+            if let Some(name) = field_name {
+                let prefix = flavor.format_child_open(name);
+                if !prefix.is_empty() {
+                    opts.backend.write_styled(w, &prefix, SemanticColor::Key)?;
+                }
+            }
+            opts.backend.write_styled(
+                w,
+                layout.get_string(old.span),
+                value_color_highlight(old.value_type, ElementChange::Deleted),
+            )?;
+            opts.backend
+                .write_styled(w, " → ", SemanticColor::Comment)?;
+            opts.backend.write_styled(
+                w,
+                layout.get_string(new.span),
+                value_color_highlight(new.value_type, ElementChange::Inserted),
+            )?;
+            writeln!(w)
+        }
+
         LayoutNode::HexDump { field_name, lines } => {
             let field_name = *field_name;
             let lines = lines.clone();
