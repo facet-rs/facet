@@ -17,58 +17,62 @@ use facet_core::{
 };
 use owo_colors::OwoColorize;
 
-/// Tokyo Night color scheme for syntax highlighting
+/// Melange syntax highlighting for the type-definition view.
+///
+/// Colours follow the active [`Palette`](crate::Palette), which is detected
+/// from the terminal background once per process (see [`crate::Theme`]).
 pub mod colors {
+    use crate::color::detected_palette;
     use owo_colors::Style;
 
-    /// Keywords: struct, enum, pub, etc. (purple)
-    pub const fn keyword() -> Style {
-        Style::new().fg_rgb::<187, 154, 247>()
+    /// Keywords: `struct`, `enum`, `pub`, etc.
+    pub fn keyword() -> Style {
+        Style::new().color(detected_palette().accents[1])
     }
 
-    /// Type names and identifiers (light blue)
-    pub const fn type_name() -> Style {
-        Style::new().fg_rgb::<192, 202, 245>()
+    /// Type names and identifiers.
+    pub fn type_name() -> Style {
+        Style::new().color(detected_palette().type_name)
     }
 
-    /// Field names (cyan)
-    pub const fn field_name() -> Style {
-        Style::new().fg_rgb::<125, 207, 255>()
+    /// Field names.
+    pub fn field_name() -> Style {
+        Style::new().color(detected_palette().field_name)
     }
 
-    /// Primitive types: u8, i32, bool, String, etc. (teal)
-    pub const fn primitive() -> Style {
-        Style::new().fg_rgb::<115, 218, 202>()
+    /// Primitive types: `u8`, `i32`, `bool`, `String`, etc.
+    pub fn primitive() -> Style {
+        Style::new().color(detected_palette().type_name)
     }
 
-    /// Punctuation: {, }, (, ), :, etc. (gray-blue)
-    pub const fn punctuation() -> Style {
-        Style::new().fg_rgb::<154, 165, 206>()
+    /// Punctuation: `{`, `}`, `(`, `)`, `:`, etc.
+    pub fn punctuation() -> Style {
+        Style::new().color(detected_palette().punctuation)
     }
 
-    /// Attribute markers: #[...] (light cyan)
-    pub const fn attribute() -> Style {
-        Style::new().fg_rgb::<137, 221, 255>()
+    /// Attribute markers: `#[...]`.
+    pub fn attribute() -> Style {
+        Style::new().color(detected_palette().comment)
     }
 
-    /// Attribute content: derive, facet, repr (blue)
-    pub const fn attribute_content() -> Style {
-        Style::new().fg_rgb::<122, 162, 247>()
+    /// Attribute content: `derive`, `facet`, `repr`.
+    pub fn attribute_content() -> Style {
+        Style::new().color(detected_palette().comment)
     }
 
-    /// String literals (green)
-    pub const fn string() -> Style {
-        Style::new().fg_rgb::<158, 206, 106>()
+    /// String literals.
+    pub fn string() -> Style {
+        Style::new().color(detected_palette().string)
     }
 
-    /// Container types: Vec, Option, HashMap (orange)
-    pub const fn container() -> Style {
-        Style::new().fg_rgb::<255, 158, 100>()
+    /// Container types: `Vec`, `Option`, `HashMap`.
+    pub fn container() -> Style {
+        Style::new().color(detected_palette().type_name)
     }
 
-    /// Doc comments (muted gray)
-    pub const fn comment() -> Style {
-        Style::new().fg_rgb::<86, 95, 137>()
+    /// Doc comments.
+    pub fn comment() -> Style {
+        Style::new().color(detected_palette().comment)
     }
 }
 

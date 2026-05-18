@@ -15,97 +15,10 @@ use facet_core::{
 };
 use facet_reflect::{Peek, ValueId};
 
-use owo_colors::{OwoColorize, Rgb};
+use owo_colors::OwoColorize;
 
-use crate::color::ColorGenerator;
+use crate::color::{Palette, Theme};
 use crate::shape::{FieldSpan, Path, PathSegment, Span};
-
-/// Tokyo Night color palette (RGB values from official theme)
-///
-/// See: <https://github.com/tokyo-night/tokyo-night-vscode-theme>
-pub mod tokyo_night {
-    use owo_colors::Rgb;
-
-    // ========================================================================
-    // Core colors
-    // ========================================================================
-
-    /// Foreground - main text (#a9b1d6)
-    pub const FOREGROUND: Rgb = Rgb(169, 177, 214);
-    /// Background (#1a1b26)
-    pub const BACKGROUND: Rgb = Rgb(26, 27, 38);
-    /// Comment - muted text (#565f89)
-    pub const COMMENT: Rgb = Rgb(86, 95, 137);
-
-    // ========================================================================
-    // Terminal ANSI colors
-    // ========================================================================
-
-    /// Black (#414868)
-    pub const BLACK: Rgb = Rgb(65, 72, 104);
-    /// Red (#f7768e)
-    pub const RED: Rgb = Rgb(247, 118, 142);
-    /// Green - teal/cyan green (#73daca)
-    pub const GREEN: Rgb = Rgb(115, 218, 202);
-    /// Yellow - warm orange-yellow (#e0af68)
-    pub const YELLOW: Rgb = Rgb(224, 175, 104);
-    /// Blue (#7aa2f7)
-    pub const BLUE: Rgb = Rgb(122, 162, 247);
-    /// Magenta - purple (#bb9af7)
-    pub const MAGENTA: Rgb = Rgb(187, 154, 247);
-    /// Cyan - bright cyan (#7dcfff)
-    pub const CYAN: Rgb = Rgb(125, 207, 255);
-    /// White - muted white (#787c99)
-    pub const WHITE: Rgb = Rgb(120, 124, 153);
-
-    /// Bright white (#acb0d0)
-    pub const BRIGHT_WHITE: Rgb = Rgb(172, 176, 208);
-
-    // ========================================================================
-    // Extended syntax colors
-    // ========================================================================
-
-    /// Orange - numbers, constants (#ff9e64)
-    pub const ORANGE: Rgb = Rgb(255, 158, 100);
-    /// Dark green - strings (#9ece6a)
-    pub const DARK_GREEN: Rgb = Rgb(158, 206, 106);
-
-    // ========================================================================
-    // Semantic/status colors
-    // ========================================================================
-
-    /// Error - bright red for errors (#db4b4b)
-    pub const ERROR: Rgb = Rgb(219, 75, 75);
-    /// Warning - same as yellow (#e0af68)
-    pub const WARNING: Rgb = YELLOW;
-    /// Info - teal-blue (#0db9d7)
-    pub const INFO: Rgb = Rgb(13, 185, 215);
-    /// Hint - same as comment, muted
-    pub const HINT: Rgb = COMMENT;
-
-    // ========================================================================
-    // Semantic aliases for specific uses
-    // ========================================================================
-
-    /// Type names - blue, bold
-    pub const TYPE_NAME: Rgb = BLUE;
-    /// Field names - green/teal
-    pub const FIELD_NAME: Rgb = GREEN;
-    /// String literals - dark green
-    pub const STRING: Rgb = DARK_GREEN;
-    /// Number literals - orange
-    pub const NUMBER: Rgb = ORANGE;
-    /// Keywords (null, true, false) - magenta
-    pub const KEYWORD: Rgb = MAGENTA;
-    /// Deletions in diffs - red
-    pub const DELETION: Rgb = RED;
-    /// Insertions in diffs - green
-    pub const INSERTION: Rgb = GREEN;
-    /// Muted/unchanged - comment color
-    pub const MUTED: Rgb = COMMENT;
-    /// Borders - very muted, comment color
-    pub const BORDER: Rgb = COMMENT;
-}
 
 /// A formatter for pretty-printing Facet types
 #[derive(Clone, PartialEq)]
@@ -113,7 +26,7 @@ pub struct PrettyPrinter {
     /// usize::MAX is a special value that means indenting with tabs instead of spaces
     indent_size: usize,
     max_depth: Option<usize>,
-    color_generator: ColorGenerator,
+    theme: Theme,
     colors: ColorMode,
     list_u8_as_bytes: bool,
     /// Skip type names for Options (show `Some(x)` instead of `Option<T>::Some(x)`)
@@ -138,7 +51,7 @@ impl PrettyPrinter {
         Self {
             indent_size: 2,
             max_depth: None,
-            color_generator: ColorGenerator::new(),
+            theme: Theme::Auto,
             colors: ColorMode::Auto,
             list_u8_as_bytes: true,
             minimal_option_names: false,
@@ -160,10 +73,25 @@ impl PrettyPrinter {
         self
     }
 
-    /// Set the color generator
-    pub const fn with_color_generator(mut self, generator: ColorGenerator) -> Self {
-        self.color_generator = generator;
+    /// Set the colour theme.
+    ///
+    /// Defaults to [`Theme::Auto`], which detects the terminal background
+    /// once and picks the matching Melange variant.
+    pub const fn with_theme(mut self, theme: Theme) -> Self {
+        self.theme = theme;
         self
+    }
+
+    /// Use a specific [`Palette`], bypassing terminal detection.
+    pub const fn with_palette(mut self, palette: Palette) -> Self {
+        self.theme = Theme::Custom(palette);
+        self
+    }
+
+    /// Resolve the active palette for the configured theme.
+    #[inline]
+    fn palette(&self) -> Palette {
+        self.theme.palette()
     }
 
     /// Enable or disable colors. Use `None` to automatically detect color support based on the `NO_COLOR` environment variable.
@@ -598,8 +526,7 @@ impl PrettyPrinter {
                                     let mut hasher = DefaultHasher::new();
                                     byte.hash(&mut hasher);
                                     let hash = hasher.finish();
-                                    let color = self.color_generator.generate_color(hash);
-                                    let rgb = Rgb(color.r, color.g, color.b);
+                                    let rgb = self.palette().accent(hash);
                                     write!(f, "{}", format!("{byte:02x}").color(rgb))?;
                                 } else {
                                     write!(f, "{byte:02x}")?;
@@ -630,8 +557,7 @@ impl PrettyPrinter {
                                     let mut hasher = DefaultHasher::new();
                                     byte.hash(&mut hasher);
                                     let hash = hasher.finish();
-                                    let color = self.color_generator.generate_color(hash);
-                                    let rgb = Rgb(color.r, color.g, color.b);
+                                    let rgb = self.palette().accent(hash);
                                     write!(f, "{}", format!("{byte:02x}").color(rgb))?;
                                 } else {
                                     write!(f, "{byte:02x}")?;
@@ -650,8 +576,7 @@ impl PrettyPrinter {
                                     let mut hasher = DefaultHasher::new();
                                     byte.hash(&mut hasher);
                                     let hash = hasher.finish();
-                                    let color = self.color_generator.generate_color(hash);
-                                    let rgb = Rgb(color.r, color.g, color.b);
+                                    let rgb = self.palette().accent(hash);
                                     write!(f, "{}", format!("{byte:02x}").color(rgb))?;
                                 } else {
                                     write!(f, "{byte:02x}")?;
@@ -1355,11 +1280,10 @@ impl PrettyPrinter {
 
     /// Format a scalar value
     fn format_scalar(&self, value: Peek, f: &mut dyn Write) -> fmt::Result {
-        // Generate a color for this shape
+        // Give each distinct scalar shape its own accent from the palette.
         let mut hasher = DefaultHasher::new();
         value.shape().id.hash(&mut hasher);
         let hash = hasher.finish();
-        let color = self.color_generator.generate_color(hash);
 
         // Display the value
         struct DisplayWrapper<'mem, 'facet>(&'mem Peek<'mem, 'facet>);
@@ -1380,7 +1304,7 @@ impl PrettyPrinter {
 
         // Apply color if needed and display
         if self.use_colors() {
-            let rgb = Rgb(color.r, color.g, color.b);
+            let rgb = self.palette().accent(hash);
             write!(f, "{}", DisplayWrapper(&value).color(rgb))?;
         } else {
             write!(f, "{}", DisplayWrapper(&value))?;
@@ -1392,7 +1316,7 @@ impl PrettyPrinter {
     /// Write a keyword (null, true, false) with coloring
     fn write_keyword(&self, f: &mut dyn Write, keyword: &str) -> fmt::Result {
         if self.use_colors() {
-            write!(f, "{}", keyword.color(tokyo_night::KEYWORD))
+            write!(f, "{}", keyword.color(self.palette().keyword))
         } else {
             write!(f, "{keyword}")
         }
@@ -1401,7 +1325,7 @@ impl PrettyPrinter {
     /// Format a number for dynamic values
     fn format_number(&self, f: &mut dyn Write, s: &str) -> fmt::Result {
         if self.use_colors() {
-            write!(f, "{}", s.color(tokyo_night::NUMBER))
+            write!(f, "{}", s.color(self.palette().number))
         } else {
             write!(f, "{s}")
         }
@@ -1435,7 +1359,7 @@ impl PrettyPrinter {
         }
         write!(f, "\"")?;
         if self.use_colors() {
-            write!(f, "{}", value.color(tokyo_night::STRING))?;
+            write!(f, "{}", value.color(self.palette().string))?;
         } else {
             write!(f, "{value}")?;
         }
@@ -1472,11 +1396,12 @@ impl PrettyPrinter {
         let end_part = &s[end_start..];
 
         if self.use_colors() {
+            let string = self.palette().string;
             write!(
                 f,
                 "\"{}\"...({omitted} chars)...\"{}\"",
-                start_part.color(tokyo_night::STRING),
-                end_part.color(tokyo_night::STRING)
+                start_part.color(string),
+                end_part.color(string)
             )
         } else {
             write!(f, "\"{start_part}\"...({omitted} chars)...\"{end_part}\"")
@@ -1492,7 +1417,7 @@ impl PrettyPrinter {
         }
 
         if self.use_colors() {
-            write!(f, "\"{}\"", s.color(tokyo_night::STRING))
+            write!(f, "\"{}\"", s.color(self.palette().string))
         } else {
             write!(f, "{s:?}")
         }
@@ -1540,7 +1465,7 @@ impl PrettyPrinter {
         let type_name = TypeNameWriter(peek);
 
         if self.use_colors() {
-            write!(f, "{}", type_name.color(tokyo_night::TYPE_NAME).bold())
+            write!(f, "{}", type_name.color(self.palette().type_name).bold())
         } else {
             write!(f, "{type_name}")
         }
@@ -1557,7 +1482,7 @@ impl PrettyPrinter {
     /// Write styled field name to formatter
     fn write_field_name(&self, f: &mut dyn Write, name: &str) -> fmt::Result {
         if self.use_colors() {
-            write!(f, "{}", name.color(tokyo_night::FIELD_NAME))
+            write!(f, "{}", name.color(self.palette().field_name))
         } else {
             write!(f, "{name}")
         }
@@ -1566,7 +1491,7 @@ impl PrettyPrinter {
     /// Write styled punctuation to formatter
     fn write_punctuation(&self, f: &mut dyn Write, text: &str) -> fmt::Result {
         if self.use_colors() {
-            write!(f, "{}", text.dimmed())
+            write!(f, "{}", text.color(self.palette().punctuation))
         } else {
             write!(f, "{text}")
         }
@@ -1575,7 +1500,7 @@ impl PrettyPrinter {
     /// Write styled comment to formatter
     fn write_comment(&self, f: &mut dyn Write, text: &str) -> fmt::Result {
         if self.use_colors() {
-            write!(f, "{}", text.color(tokyo_night::MUTED))
+            write!(f, "{}", text.color(self.palette().comment))
         } else {
             write!(f, "{text}")
         }
@@ -1584,7 +1509,7 @@ impl PrettyPrinter {
     /// Write styled redacted value to formatter
     fn write_redacted(&self, f: &mut dyn Write, text: &str) -> fmt::Result {
         if self.use_colors() {
-            write!(f, "{}", text.color(tokyo_night::ERROR).bold())
+            write!(f, "{}", text.color(self.palette().error).bold())
         } else {
             write!(f, "{text}")
         }
@@ -1608,15 +1533,9 @@ impl PrettyPrinter {
     pub fn format_peek_with_spans(&self, value: Peek<'_, '_>) -> FormattedValue {
         let mut output = SpanTrackingOutput::new();
         let printer = Self {
-            colors: ColorMode::Never, // Always disable colors for span tracking
-            indent_size: self.indent_size,
-            max_depth: self.max_depth,
-            color_generator: self.color_generator.clone(),
-            list_u8_as_bytes: self.list_u8_as_bytes,
-            minimal_option_names: self.minimal_option_names,
-            show_doc_comments: self.show_doc_comments,
-            max_content_len: self.max_content_len,
-            max_collection_len: self.max_collection_len,
+            // Always disable colors for span tracking.
+            colors: ColorMode::Never,
+            ..self.clone()
         };
         printer
             .format_unified(

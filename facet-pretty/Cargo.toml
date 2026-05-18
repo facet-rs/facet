@@ -20,13 +20,19 @@ homepage = "https://facet.rs"
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
+default = ["detect-terminal-theme"]
 alloc = ["facet-core/alloc", "facet-reflect/alloc"] # Enables alloc support
 camino = ["alloc", "facet-core/camino"]
+# Detect the terminal background colour to pick the light/dark Melange
+# variant automatically. Disable for a leaner dependency tree (detection
+# then falls back to dark, still overridable via FACET_PRETTY_THEME).
+detect-terminal-theme = ["dep:terminal-light"]
 
 [dependencies]
 facet-core = { path = "../facet-core", version = "0.46.2" }
 facet-reflect = { path = "../facet-reflect", version = "0.46.2" }
 owo-colors = { version = "4", features = ["supports-colors"] }
+terminal-light = { version = "1.8", optional = true }
 
 [dev-dependencies]
 camino = { workspace = true }

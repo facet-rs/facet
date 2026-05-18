@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Replaced the Tokyo Night palette with a faithful [Melange](https://github.com/savq/melange-nvim) colour scheme. The terminal background is detected once (`detect-terminal-theme` feature, on by default) to pick the light or dark variant; override with `Theme`/`Palette` or the `FACET_PRETTY_THEME` env var (`dark`/`light`). Per-shape scalar colours now draw from the palette accents instead of random HSL hues. The `ColorGenerator`/`RGB` API and `tokyo_night` module are removed in favour of `Palette`/`Theme`.
+
 ## [0.44.7](https://github.com/facet-rs/facet/compare/facet-pretty-v0.44.6...facet-pretty-v0.44.7) - 2026-04-14
 
 ### Other
