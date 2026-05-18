@@ -46,15 +46,17 @@ fn shape_has_xml_attrs(shape: &Shape) -> bool {
     shape.attributes.iter().any(|attr| attr.ns == Some("xml"))
 }
 
-/// Get display name for XML output, prefixing proxy types with `@`.
-/// Proxy types are structs without XML namespace attributes - they're Rust
-/// implementation details (like PathData) that represent something that would
-/// be different in actual XML (like a string attribute).
-fn get_xml_display_name(shape: &Shape) -> Cow<'static, str> {
+/// Get the display name for a shape.
+///
+/// When `mark_proxy` is set (XML flavor only), structs without XML namespace
+/// attributes are "proxy types" — Rust implementation details (like PathData)
+/// that wouldn't appear literally in XML — and are prefixed with `@`. Rust
+/// and JSON flavors show the real type name verbatim.
+fn get_display_name(shape: &Shape, mark_proxy: bool) -> Cow<'static, str> {
     let base_name = get_shape_display_name(shape);
 
-    // Check if this is a struct without XML attributes (a proxy type)
-    if let Type::User(UserType::Struct(_)) = shape.ty
+    if mark_proxy
+        && let Type::User(UserType::Struct(_)) = shape.ty
         && !shape_has_xml_attrs(shape)
     {
         return Cow::Owned(format!("@{}", base_name));
@@ -335,7 +337,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
 
                 // Get type name for the tag, respecting `rename` attribute
                 // Use get_xml_display_name to prefix proxy types with `@`
-                let tag = get_xml_display_name(from_shape);
+                let tag = get_display_name(from_shape, self.flavor.marks_proxy_types());
                 debug!(tag = tag.as_ref(), variant = ?variant, value_type = ?std::mem::discriminant(value), "Diff::User");
 
                 match value {
@@ -411,7 +413,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
             (_, Type::User(UserType::Struct(ty))) if ty.kind == StructKind::Struct => {
                 // Build as element with fields as attributes
                 if let Ok(struct_peek) = peek.into_struct() {
-                    let tag = get_xml_display_name(shape);
+                    let tag = get_display_name(shape, self.flavor.marks_proxy_types());
                     let mut attrs = Vec::new();
 
                     for (i, field) in ty.fields.iter().enumerate() {

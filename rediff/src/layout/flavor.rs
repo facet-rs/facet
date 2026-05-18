@@ -171,6 +171,13 @@ pub trait DiffFlavor {
         None
     }
 
+    /// Whether to prefix "proxy" structs (Rust impl-detail types that
+    /// wouldn't appear literally in the output) with `@`. Only meaningful
+    /// for XML; Rust/JSON show the real type name verbatim.
+    fn marks_proxy_types(&self) -> bool {
+        false
+    }
+
     /// Opening wrapper for a child element (nested struct field).
     /// - Rust: `field_name: ` (field prefix)
     /// - JSON: `"field_name": ` (field prefix)
@@ -322,6 +329,10 @@ pub struct XmlFlavor;
 impl DiffFlavor for XmlFlavor {
     fn format_value(&self, peek: Peek<'_, '_>, w: &mut dyn Write) -> std::fmt::Result {
         format_value_raw(peek, w)
+    }
+
+    fn marks_proxy_types(&self) -> bool {
+        true
     }
 
     fn field_presentation(&self, field: &Field) -> FieldPresentation {
