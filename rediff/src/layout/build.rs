@@ -929,10 +929,17 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
             node.append(child, &mut self.tree);
         }
 
-        // Add collapsed unchanged fields indicator if needed
+        // Add collapsed unchanged fields indicator if needed.
+        //
+        // Unchanged fields are only rendered inline when `from` is a struct
+        // we can reflect into. For maps (and any non-struct peek, or no peek
+        // at all) we can't list them, so collapse them instead — otherwise
+        // unchanged entries would silently vanish and a map would look like
+        // every untouched key had been deleted.
         let unchanged_count = unchanged.len();
-        if unchanged_count > self.opts.max_unchanged_fields
-            || (unchanged_count > 0 && from.is_none())
+        let from_is_struct = from.map(|p| p.into_struct().is_ok()).unwrap_or(false);
+        if unchanged_count > 0
+            && (unchanged_count > self.opts.max_unchanged_fields || !from_is_struct)
         {
             let collapsed = self.tree.new_node(LayoutNode::collapsed(unchanged_count));
             node.append(collapsed, &mut self.tree);

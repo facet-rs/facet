@@ -456,26 +456,32 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
         .iter()
         .any(|a| matches!(a.status, AttrStatus::Inserted { .. }));
 
-    // Pure insertion: all non-unchanged attrs are Inserted (no Changed or Deleted)
-    // These should render as a single + line, not ← → pairs with ∅ placeholders
-    let is_pure_insertion = has_inserted_attrs && !has_changed_attrs && !has_deleted_attrs;
-
-    // Pure deletion: all non-unchanged attrs are Deleted (no Changed or Inserted)
-    // These should render as a single - line, not ← → pairs with ∅ placeholders
-    let is_pure_deletion = has_deleted_attrs && !has_changed_attrs && !has_inserted_attrs;
-
     let has_attr_changes = has_changed_attrs || has_deleted_attrs || has_inserted_attrs;
 
     let children: Vec<_> = layout.children(node_id).collect();
     let has_children = !children.is_empty();
 
-    // Check if we can render as inline element diff (all attrs on one -/+ line pair)
+    // A `Collapsed` child is a "N unchanged" summary, not structural content.
+    // When an element also has attribute changes, show that summary at the
+    // top (like the Display path) instead of dangling it after the changes.
+    let collapsed_children: Vec<_> = children
+        .iter()
+        .copied()
+        .filter(|&id| matches!(layout.get(id), Some(LayoutNode::Collapsed { .. })))
+        .collect();
+
+    // Check if we can render as inline element diff (all attrs on one -/+ line pair).
+    // This compact `← old / → new` form only reads well when every change is a
+    // scalar *value* replacement. The moment keys/fields are added or removed
+    // (the common case for maps), the column-aligned `∅` placeholders become
+    // hard to follow — fall through to the multi-line per-entry form instead,
+    // which shows each change as its own `-`/`+` line.
     // This is only viable when:
-    // 1. There are attribute changes (otherwise no need for -/+ lines)
-    // 2. No children (self-closing element)
-    // 3. All attrs fit on one line
-    // 4. NOT a pure insertion/deletion (those should use single line with +/- prefix)
-    if has_attr_changes && !has_children && !is_pure_insertion && !is_pure_deletion {
+    // 1. There are changed attributes (otherwise no need for -/+ lines)
+    // 2. No deleted or inserted attributes (structural churn → multi-line)
+    // 3. No children (self-closing element)
+    // 4. All attrs fit on one line
+    if has_changed_attrs && !has_deleted_attrs && !has_inserted_attrs && !has_children {
         let indent_width = depth * opts.indent.len();
         if let Some(info) = InlineElementInfo::calculate(attrs, tag, flavor, 80, indent_width) {
             return render_inline_element(
@@ -524,6 +530,11 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
     if has_attr_changes {
         // Multi-line attribute format
         writeln!(w)?;
+
+        // "N unchanged" summary first, so it reads as context for the changes.
+        for &cid in &collapsed_children {
+            render_node(layout, w, cid, depth + 1, opts, flavor)?;
+        }
 
         // Render changed groups as -/+ line pairs
         for group in changed_groups {
@@ -592,16 +603,22 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
             writeln!(w)?;
         }
 
-        // Closing bracket
-        write_indent(w, depth, opts)?;
+        // Close the opening. With children we only emit a separator if the
+        // flavor has one (e.g. XML `>`); Rust/JSON have none, so emitting an
+        // indented empty line here just leaves a stray blank line.
         if has_children {
             let open_close = flavor.struct_open_close();
-            opts.backend.write_styled(w, open_close, tag_color)?;
+            if !open_close.is_empty() {
+                write_indent(w, depth, opts)?;
+                opts.backend.write_styled(w, open_close, tag_color)?;
+                writeln!(w)?;
+            }
         } else {
+            write_indent(w, depth, opts)?;
             let close = flavor.struct_close(tag, true);
             opts.backend.write_styled(w, &close, tag_color)?;
+            writeln!(w)?;
         }
-        writeln!(w)?;
     } else if has_children && !attrs.is_empty() {
         // Unchanged attributes with children: put attrs on their own lines
         writeln!(w)?;
@@ -647,8 +664,12 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
         writeln!(w)?;
     }
 
-    // Children
+    // Children. Collapsed summaries were already rendered at the top of the
+    // changed block, so skip them here to avoid rendering them twice.
     for child_id in children {
+        if has_attr_changes && collapsed_children.contains(&child_id) {
+            continue;
+        }
         render_node(layout, w, child_id, depth + 1, opts, flavor)?;
     }
 
@@ -1013,6 +1034,11 @@ fn render_sequence<W: Write, B: ColorBackend, F: DiffFlavor>(
     Ok(())
 }
 
+/// Render a group of changed attributes as a unified diff: every changed
+/// field becomes a `-` line carrying its old value followed by a `+` line
+/// carrying its new value, matching how deleted/inserted attributes render.
+/// This keeps mixed diffs (e.g. maps with changed + added + removed keys)
+/// consistent — every change reads as a deleted line and an added line.
 fn render_changed_group<W: Write, B: ColorBackend, F: DiffFlavor>(
     layout: &Layout,
     w: &mut W,
@@ -1022,86 +1048,37 @@ fn render_changed_group<W: Write, B: ColorBackend, F: DiffFlavor>(
     attrs: &[super::Attr],
     group: &ChangedGroup,
 ) -> fmt::Result {
-    // Before line - use ← for "changed from" (prefix uses indent gutter)
-    write_indent_minus_prefix(w, depth, opts)?;
-    opts.backend.write_prefix(w, '←', SemanticColor::Deleted)?;
-    write!(w, " ")?;
-
-    let last_idx = group.attr_indices.len().saturating_sub(1);
-    for (i, &idx) in group.attr_indices.iter().enumerate() {
-        if i > 0 {
-            write!(w, "{}", flavor.field_separator())?;
-        }
+    // Old values: one `-` line per changed field.
+    for &idx in &group.attr_indices {
         let attr = &attrs[idx];
-        if let AttrStatus::Changed { old, new } = &attr.status {
-            // Each field padded to max of its own old/new value width
-            let field_max_width = old.width.max(new.width);
-            // Use context-aware key color for field prefix (line bg)
-            opts.backend.write_styled(
-                w,
-                &flavor.format_field_prefix(&attr.name),
-                SemanticColor::DeletedKey,
-            )?;
-            // Changed value uses highlight background for contrast
-            let old_str = layout.get_string(old.span);
-            let color = value_color_highlight(old.value_type, ElementChange::Deleted);
-            opts.backend.write_styled(w, old_str, color)?;
-            // Use context-aware structure color for field suffix (line bg)
-            opts.backend.write_styled(
-                w,
-                flavor.format_field_suffix(),
-                SemanticColor::DeletedStructure,
-            )?;
-            // Pad to align with the + line's value (only between fields, not at end)
-            if i < last_idx {
-                let value_padding = field_max_width.saturating_sub(old.width);
-                for _ in 0..value_padding {
-                    write!(w, " ")?;
-                }
-            }
+        if let AttrStatus::Changed { old, .. } = &attr.status {
+            write_indent_minus_prefix(w, depth, opts)?;
+            opts.backend.write_prefix(w, '-', SemanticColor::Deleted)?;
+            write!(w, " ")?;
+            let formatted = flavor.format_field(&attr.name, layout.get_string(old.span));
+            opts.backend
+                .write_styled(w, &formatted, SemanticColor::DeletedHighlight)?;
+            opts.backend
+                .write_styled(w, flavor.trailing_separator(), SemanticColor::Whitespace)?;
+            writeln!(w)?;
         }
     }
-    writeln!(w)?;
 
-    // After line - use → for "changed to" (prefix uses indent gutter)
-    write_indent_minus_prefix(w, depth, opts)?;
-    opts.backend.write_prefix(w, '→', SemanticColor::Inserted)?;
-    write!(w, " ")?;
-
-    for (i, &idx) in group.attr_indices.iter().enumerate() {
-        if i > 0 {
-            write!(w, "{}", flavor.field_separator())?;
-        }
+    // New values: one `+` line per changed field.
+    for &idx in &group.attr_indices {
         let attr = &attrs[idx];
-        if let AttrStatus::Changed { old, new } = &attr.status {
-            // Each field padded to max of its own old/new value width
-            let field_max_width = old.width.max(new.width);
-            // Use context-aware key color for field prefix (line bg)
-            opts.backend.write_styled(
-                w,
-                &flavor.format_field_prefix(&attr.name),
-                SemanticColor::InsertedKey,
-            )?;
-            // Changed value uses highlight background for contrast
-            let new_str = layout.get_string(new.span);
-            let color = value_color_highlight(new.value_type, ElementChange::Inserted);
-            opts.backend.write_styled(w, new_str, color)?;
-            // Use context-aware structure color for field suffix (line bg)
-            opts.backend.write_styled(
-                w,
-                flavor.format_field_suffix(),
-                SemanticColor::InsertedStructure,
-            )?;
-            // Pad to align with the - line's value (only between fields, not at end)
-            if i < last_idx {
-                let value_padding = field_max_width.saturating_sub(new.width);
-                for _ in 0..value_padding {
-                    write!(w, " ")?;
-                }
-            }
+        if let AttrStatus::Changed { new, .. } = &attr.status {
+            write_indent_minus_prefix(w, depth, opts)?;
+            opts.backend.write_prefix(w, '+', SemanticColor::Inserted)?;
+            write!(w, " ")?;
+            let formatted = flavor.format_field(&attr.name, layout.get_string(new.span));
+            opts.backend
+                .write_styled(w, &formatted, SemanticColor::InsertedHighlight)?;
+            opts.backend
+                .write_styled(w, flavor.trailing_separator(), SemanticColor::Whitespace)?;
+            writeln!(w)?;
         }
     }
-    writeln!(w)?;
 
     Ok(())
 }
