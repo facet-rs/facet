@@ -958,11 +958,15 @@ fn render_tuple<W: Write, B: ColorBackend, F: DiffFlavor>(
                 }
                 match p {
                     TuplePiece::Value(v, ch) => {
-                        opts.backend.write_styled(
-                            w,
-                            layout.get_string(v.span),
-                            value_color(v.value_type, *ch),
-                        )?;
+                        // Unchanged elements are context: mute them so the
+                        // `old → new` slot is what stands out.
+                        let color = if *ch == ElementChange::None {
+                            SemanticColor::Comment
+                        } else {
+                            value_color(v.value_type, *ch)
+                        };
+                        opts.backend
+                            .write_styled(w, layout.get_string(v.span), color)?;
                     }
                     TuplePiece::Change(o, n) => {
                         opts.backend.write_styled(
