@@ -358,7 +358,14 @@ fn render_node<W: Write, B: ColorBackend, F: DiffFlavor>(
                 }
             }
 
-            let semantic = value_color(value.value_type, change);
+            // Unchanged elements are context (e.g. kept sequence items):
+            // mute them instead of using their type color, consistent
+            // with every other unchanged-context spot.
+            let semantic = if change == ElementChange::None {
+                SemanticColor::Comment
+            } else {
+                value_color(value.value_type, change)
+            };
             opts.backend.write_styled(w, text, semantic)?;
             writeln!(w)
         }
@@ -1265,8 +1272,11 @@ fn render_attr_unchanged<W: Write, B: ColorBackend, F: DiffFlavor>(
 ) -> fmt::Result {
     let value_str = layout.get_string(value.span);
     let formatted = flavor.format_field(name, value_str);
+    // One muted gray for all unchanged context (matches the inline
+    // form and the `.. unchanged` collapse — previously this used the
+    // lighter `Unchanged` gray, so two `path:` fields disagreed).
     opts.backend
-        .write_styled(w, &formatted, SemanticColor::Unchanged)
+        .write_styled(w, &formatted, SemanticColor::Comment)
 }
 
 fn render_attr_deleted<W: Write, B: ColorBackend, F: DiffFlavor>(
