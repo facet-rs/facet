@@ -240,6 +240,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                 LayoutNode::Element { field_name, .. }
                 | LayoutNode::Sequence { field_name, .. }
                 | LayoutNode::HexDump { field_name, .. }
+                | LayoutNode::ValueChange { field_name, .. }
                 | LayoutNode::Text { field_name, .. } => *field_name = Some(name),
                 LayoutNode::Collapsed { .. } | LayoutNode::ItemGroup { .. } => {}
             }
@@ -271,16 +272,15 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                 }
             }
             Diff::Replace { from, to } => {
-                // Create a container element with deleted and inserted children
-                let root = self.tree.new_node(LayoutNode::element("_replace"));
-
-                let from_node = self.build_peek(*from, ElementChange::Deleted);
-                let to_node = self.build_peek(*to, ElementChange::Inserted);
-
-                root.append(from_node, &mut self.tree);
-                root.append(to_node, &mut self.tree);
-
-                root
+                // An inline value change: `old → new`, only old/new
+                // highlighted. The parent labels it if it's a field.
+                let old = self.format_peek(*from);
+                let new = self.format_peek(*to);
+                self.tree.new_node(LayoutNode::ValueChange {
+                    field_name: None,
+                    old,
+                    new,
+                })
             }
             Diff::User {
                 from: from_shape,
@@ -1298,161 +1298,88 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
     /// This groups consecutive items by their change type (unchanged, deleted, inserted)
     /// and renders them on single lines with optional collapsing for long runs.
     /// Nested diffs (struct items with internal changes) are built as full child nodes.
+    /// Build sequence children in positional order.
+    ///
+    /// Walks the interspersed `Updates` structure once, appending each
+    /// child to `parent` as it is encountered, so unchanged elements,
+    /// substitutions and adds/removes keep their original order.
     fn build_updates_children(
         &mut self,
         parent: NodeId,
         updates: &Updates<'_, '_>,
         _item_type: &'static str,
     ) {
-        // Collect simple items (adds/removes), positional substitutions
-        // and nested diffs separately
-        let mut items: Vec<(Peek<'_, '_>, ElementChange)> = Vec::new();
-        let mut subs: Vec<(Peek<'_, '_>, Peek<'_, '_>)> = Vec::new();
-        let mut nested_diffs: Vec<&Diff<'_, '_>> = Vec::new();
-
         let interspersed = &updates.0;
 
-        // Process first update group if present
-        if let Some(update_group) = &interspersed.first {
-            self.collect_updates_group_items(
-                &mut items,
-                &mut subs,
-                &mut nested_diffs,
-                update_group,
-            );
+        if let Some(group) = &interspersed.first {
+            self.build_updates_group(parent, group);
         }
-
-        // Process interleaved (unchanged, update) pairs
-        for (unchanged_items, update_group) in &interspersed.values {
-            // Add unchanged items
-            for item in unchanged_items {
-                items.push((*item, ElementChange::None));
+        for (unchanged, group) in &interspersed.values {
+            for item in unchanged {
+                let child = self.build_peek(*item, ElementChange::None);
+                parent.append(child, &mut self.tree);
             }
-
-            self.collect_updates_group_items(
-                &mut items,
-                &mut subs,
-                &mut nested_diffs,
-                update_group,
-            );
+            self.build_updates_group(parent, group);
         }
-
-        // Process trailing unchanged items
-        if let Some(unchanged_items) = &interspersed.last {
-            for item in unchanged_items {
-                items.push((*item, ElementChange::None));
+        if let Some(unchanged) = &interspersed.last {
+            for item in unchanged {
+                let child = self.build_peek(*item, ElementChange::None);
+                parent.append(child, &mut self.tree);
             }
-        }
-
-        debug!(
-            items_count = items.len(),
-            nested_diffs_count = nested_diffs.len(),
-            "collected sequence items"
-        );
-
-        // Build nested diffs as full child nodes (struct items with internal changes)
-        for diff in nested_diffs {
-            debug!(diff_type = ?std::mem::discriminant(diff), "building nested diff");
-            // Get from/to Peek from the diff for context
-            let (from_peek, to_peek) = match diff {
-                Diff::User { .. } => {
-                    // For User diffs, we need the actual Peek values
-                    // The diff contains the shapes but we need to find the corresponding Peeks
-                    // For now, pass None - the build_diff will use the shape info
-                    (None, None)
-                }
-                Diff::Replace { from, to } => (Some(*from), Some(*to)),
-                _ => (None, None),
-            };
-            let child = self.build_diff(diff, from_peek, to_peek, ElementChange::None);
-            parent.append(child, &mut self.tree);
-        }
-
-        // Positional substitutions: re-diff each (old, new) pair so the
-        // change shows as a nested diff (e.g. `code: 204 → 503`) rather
-        // than the whole old and new values as separate blocks.
-        for (from, to) in subs {
-            let nested = crate::diff_new_peek(from, to);
-            let child = self.build_diff(&nested, Some(from), Some(to), ElementChange::None);
-            parent.append(child, &mut self.tree);
-        }
-
-        // Render simple items (unchanged, adds, removes)
-        for (item_peek, item_change) in items {
-            let child = self.build_peek(item_peek, item_change);
-            parent.append(child, &mut self.tree);
         }
     }
 
-    /// Collect items from an UpdatesGroup into the items list.
-    /// Also returns nested diffs that need to be built as full child nodes.
-    fn collect_updates_group_items<'a, 'mem: 'a, 'facet: 'a>(
-        &self,
-        items: &mut Vec<(Peek<'mem, 'facet>, ElementChange)>,
-        subs: &mut Vec<(Peek<'mem, 'facet>, Peek<'mem, 'facet>)>,
-        nested_diffs: &mut Vec<&'a Diff<'mem, 'facet>>,
-        group: &'a UpdatesGroup<'mem, 'facet>,
-    ) {
+    /// Build one `UpdatesGroup` (replace groups interspersed with
+    /// nested element diffs) in order.
+    fn build_updates_group(&mut self, parent: NodeId, group: &UpdatesGroup<'_, '_>) {
         let interspersed = &group.0;
 
-        // Process first replace group if present
-        if let Some(replace) = &interspersed.first {
-            self.collect_replace_group_items(items, subs, replace);
+        if let Some(rg) = &interspersed.first {
+            self.build_replace_group(parent, rg);
         }
-
-        // Process interleaved (diffs, replace) pairs
-        for (diffs, replace) in &interspersed.values {
-            // Collect nested diffs - these are struct items with internal changes
+        for (diffs, rg) in &interspersed.values {
             for diff in diffs {
-                nested_diffs.push(diff);
+                self.build_nested_diff(parent, diff);
             }
-            self.collect_replace_group_items(items, subs, replace);
+            self.build_replace_group(parent, rg);
         }
-
-        // Process trailing diffs (if any)
         if let Some(diffs) = &interspersed.last {
             for diff in diffs {
-                nested_diffs.push(diff);
+                self.build_nested_diff(parent, diff);
             }
         }
     }
 
-    /// Collect items from a ReplaceGroup.
-    ///
-    /// A replace group with equal numbers of removals and additions is a
-    /// positional substitution: pair them up so a changed element is
-    /// re-diffed recursively (`code: 204 → 503`) instead of dumping the
-    /// whole old and new values as separate blocks. Unequal counts are
-    /// genuine removes/adds.
-    fn collect_replace_group_items<'a, 'mem: 'a, 'facet: 'a>(
-        &self,
-        items: &mut Vec<(Peek<'mem, 'facet>, ElementChange)>,
-        subs: &mut Vec<(Peek<'mem, 'facet>, Peek<'mem, 'facet>)>,
-        group: &'a ReplaceGroup<'mem, 'facet>,
-    ) {
+    /// Build a nested element diff (a struct/seq element with internal
+    /// changes) as a child of `parent`.
+    fn build_nested_diff(&mut self, parent: NodeId, diff: &Diff<'_, '_>) {
+        let (from, to) = match diff {
+            Diff::Replace { from, to } => (Some(*from), Some(*to)),
+            _ => (None, None),
+        };
+        let child = self.build_diff(diff, from, to, ElementChange::None);
+        parent.append(child, &mut self.tree);
+    }
+
+    /// Build a `ReplaceGroup`. Equal removal/addition counts are a
+    /// positional substitution: each pair is re-diffed (scalars become
+    /// an inline `old → new`, related struct/enum elements recurse to
+    /// just their inner change). Unequal counts are genuine removes/adds.
+    fn build_replace_group(&mut self, parent: NodeId, group: &ReplaceGroup<'_, '_>) {
         if !group.removals.is_empty() && group.removals.len() == group.additions.len() {
-            for (removal, addition) in group.removals.iter().zip(&group.additions) {
-                // Only recurse when the two elements are structurally
-                // related (same-ish struct/enum/seq with internal
-                // changes). A bare `Diff::Replace` means they're
-                // unrelated (scalars, different variants) — show those
-                // as an in-order remove + add, not a nested block.
-                if matches!(
-                    crate::diff_new_peek(*removal, *addition),
-                    Diff::Replace { .. }
-                ) {
-                    items.push((*removal, ElementChange::Deleted));
-                    items.push((*addition, ElementChange::Inserted));
-                } else {
-                    subs.push((*removal, *addition));
-                }
+            for (from, to) in group.removals.iter().zip(&group.additions) {
+                let nested = crate::diff_new_peek(*from, *to);
+                let child = self.build_diff(&nested, Some(*from), Some(*to), ElementChange::None);
+                parent.append(child, &mut self.tree);
             }
         } else {
             for removal in &group.removals {
-                items.push((*removal, ElementChange::Deleted));
+                let child = self.build_peek(*removal, ElementChange::Deleted);
+                parent.append(child, &mut self.tree);
             }
             for addition in &group.additions {
-                items.push((*addition, ElementChange::Inserted));
+                let child = self.build_peek(*addition, ElementChange::Inserted);
+                parent.append(child, &mut self.tree);
             }
         }
     }
@@ -1549,15 +1476,15 @@ mod tests {
             &RustFlavor,
         );
 
-        // Should produce an element with two children
+        // A scalar replace is an inline value change `10 → 20`.
         let root = layout.get(layout.root).unwrap();
         match root {
-            LayoutNode::Element { tag, .. } => assert_eq!(tag.as_ref(), "_replace"),
-            _ => panic!("expected Element node"),
+            LayoutNode::ValueChange { old, new, .. } => {
+                assert_eq!(layout.get_string(old.span), "10");
+                assert_eq!(layout.get_string(new.span), "20");
+            }
+            other => panic!("expected ValueChange node, got {other:?}"),
         }
-
-        let children: Vec<_> = layout.children(layout.root).collect();
-        assert_eq!(children.len(), 2);
     }
 
     #[test]
