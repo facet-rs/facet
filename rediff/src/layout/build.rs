@@ -232,6 +232,20 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
         self.build_diff(diff, from, to, ElementChange::None)
     }
 
+    /// Tag a node with the struct-field / map-key name it represents,
+    /// for every node kind that can show a `name:` label.
+    fn set_field_name(&mut self, node_id: NodeId, name: &'static str) {
+        if let Some(node) = self.tree.get_mut(node_id) {
+            match node.get_mut() {
+                LayoutNode::Element { field_name, .. }
+                | LayoutNode::Sequence { field_name, .. }
+                | LayoutNode::HexDump { field_name, .. }
+                | LayoutNode::Text { field_name, .. } => *field_name = Some(name),
+                LayoutNode::Collapsed { .. } | LayoutNode::ItemGroup { .. } => {}
+            }
+        }
+    }
+
     /// Build a node from a diff with a given element change type.
     fn build_diff<'mem, 'facet>(
         &mut self,
@@ -252,6 +266,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                     self.tree.new_node(LayoutNode::Text {
                         value,
                         change: ElementChange::None,
+                        field_name: None,
                     })
                 }
             }
@@ -408,6 +423,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                 return self.tree.new_node(LayoutNode::Text {
                     value: FormattedValue::with_type(span, width, ValueType::Null),
                     change,
+                    field_name: None,
                 });
             }
             (_, Type::User(UserType::Struct(ty))) if ty.kind == StructKind::Struct => {
@@ -582,6 +598,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                         return self.tree.new_node(LayoutNode::Text {
                             value: FormattedValue::new(span, width),
                             change,
+                            field_name: None,
                         });
                     }
                 }
@@ -594,6 +611,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
         self.tree.new_node(LayoutNode::Text {
             value: formatted,
             change,
+            field_name: None,
         })
     }
 
@@ -702,18 +720,11 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                         let from_node = self.build_peek(*from, ElementChange::Deleted);
                         let to_node = self.build_peek(*to, ElementChange::Inserted);
 
-                        // Set field name on both nodes
+                        // Set field name on both nodes (incl. unit-variant
+                        // Text, so `- state: Idle` keeps its label)
                         if let Cow::Borrowed(name) = field_name {
-                            if let Some(node) = self.tree.get_mut(from_node)
-                                && let LayoutNode::Element { field_name, .. } = node.get_mut()
-                            {
-                                *field_name = Some(name);
-                            }
-                            if let Some(node) = self.tree.get_mut(to_node)
-                                && let LayoutNode::Element { field_name, .. } = node.get_mut()
-                            {
-                                *field_name = Some(name);
-                            }
+                            self.set_field_name(from_node, name);
+                            self.set_field_name(to_node, name);
                         }
 
                         child_nodes.push(from_node);
@@ -770,21 +781,8 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                     // Fall through to child handling if not a simple scalar Option
                     let child =
                         self.build_diff(field_diff, field_from, field_to, ElementChange::None);
-                    if let Cow::Borrowed(name) = field_name
-                        && let Some(node) = self.tree.get_mut(child)
-                    {
-                        match node.get_mut() {
-                            LayoutNode::Element { field_name, .. } => {
-                                *field_name = Some(name);
-                            }
-                            LayoutNode::Sequence { field_name, .. } => {
-                                *field_name = Some(name);
-                            }
-                            LayoutNode::HexDump { field_name, .. } => {
-                                *field_name = Some(name);
-                            }
-                            _ => {}
-                        }
+                    if let Cow::Borrowed(name) = field_name {
+                        self.set_field_name(child, name);
                     }
                     child_nodes.push(child);
                 }
@@ -845,21 +843,8 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                     // Fall through to default child handling
                     let child =
                         self.build_diff(field_diff, field_from, field_to, ElementChange::None);
-                    if let Cow::Borrowed(name) = field_name
-                        && let Some(node) = self.tree.get_mut(child)
-                    {
-                        match node.get_mut() {
-                            LayoutNode::Element { field_name, .. } => {
-                                *field_name = Some(name);
-                            }
-                            LayoutNode::Sequence { field_name, .. } => {
-                                *field_name = Some(name);
-                            }
-                            LayoutNode::HexDump { field_name, .. } => {
-                                *field_name = Some(name);
-                            }
-                            _ => {}
-                        }
+                    if let Cow::Borrowed(name) = field_name {
+                        self.set_field_name(child, name);
                     }
                     child_nodes.push(child);
                 }
