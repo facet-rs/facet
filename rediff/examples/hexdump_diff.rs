@@ -31,11 +31,20 @@ fn main() {
         println!("{}", report.render_ansi_rust());
     }
 
-    // A larger buffer with collapsed unchanged rows.
+    // A single byte changed deep in a larger buffer.
     let big_old: Vec<u8> = (0u8..72).collect();
     let mut big_new = big_old.clone();
-    big_new[64] = 0xff;
+    big_new[0x24] = 0xff;
 
-    println!("\n== Larger buffer (collapsed rows) ==");
+    println!("\n== One byte changed in a larger buffer ==");
     println!("{}", format_diff_default(&big_old.diff(&big_new)));
+
+    // An inserted byte: a real binary diff localizes it instead of
+    // marking everything after it as changed.
+    let ins_old: Vec<u8> = (0u8..48).collect();
+    let mut ins_new = ins_old.clone();
+    ins_new.insert(0x14, 0xaa);
+
+    println!("\n== One byte inserted (shift, not mass-rewrite) ==");
+    println!("{}", format_diff_default(&ins_old.diff(&ins_new)));
 }

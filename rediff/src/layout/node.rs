@@ -81,6 +81,14 @@ pub enum LayoutNode {
         change: ElementChange,
     },
 
+    /// A byte-level hex-dump diff block (pre-classified per byte).
+    HexDump {
+        /// Optional struct-field label (e.g. `payload`) shown before the block.
+        field_name: Option<&'static str>,
+        /// The classified hex-dump lines to render.
+        lines: Vec<crate::hexdump::HexLine>,
+    },
+
     /// A group of items rendered on a single line (for sequences).
     /// Used to group consecutive unchanged/deleted/inserted items.
     ItemGroup {
@@ -160,6 +168,7 @@ impl LayoutNode {
             Self::Sequence { change, .. } => *change,
             Self::Collapsed { .. } => ElementChange::None,
             Self::Text { change, .. } => *change,
+            Self::HexDump { .. } => ElementChange::None,
             Self::ItemGroup { change, .. } => *change,
         }
     }
@@ -187,6 +196,7 @@ impl LayoutNode {
             Self::Sequence { change, .. } => change.has_prefix(),
             Self::Collapsed { .. } => false,
             Self::Text { change, .. } => change.has_prefix(),
+            Self::HexDump { lines, .. } => !lines.is_empty(),
             Self::ItemGroup { change, .. } => change.has_prefix(),
         }
     }
