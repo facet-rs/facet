@@ -315,6 +315,21 @@ pub fn diff_new_peek_with_options<'mem, 'facet>(
             (Def::List(_) | Def::Slice(_), _) | (_, Type::Sequence(_)),
             (Def::List(_) | Def::Slice(_), _) | (_, Type::Sequence(_)),
         ) => {
+            // Byte buffers get a hex-dump diff instead of an element-wise
+            // decimal sequence diff.
+            if crate::hexdump::is_byte_peek(from)
+                && crate::hexdump::is_byte_peek(to)
+                && let (Some(fb), Some(tb)) = (
+                    crate::hexdump::peek_to_bytes(from),
+                    crate::hexdump::peek_to_bytes(to),
+                )
+            {
+                if fb == tb {
+                    return Diff::Equal { value: Some(from) };
+                }
+                return Diff::Bytes { from, to };
+            }
+
             let from_list = from.into_list_like().unwrap();
             let to_list = to.into_list_like().unwrap();
 
@@ -489,7 +504,7 @@ fn diff_dynamic_values<'mem, 'facet>(
             if from_dyn.as_bytes() == to_dyn.as_bytes() {
                 Diff::Equal { value: Some(from) }
             } else {
-                Diff::Replace { from, to }
+                Diff::Bytes { from, to }
             }
         }
         DynValueKind::Array => {
@@ -893,6 +908,15 @@ fn collect_leaf_changes_inner<'mem, 'facet>(
         Diff::Sequence { updates, .. } => {
             collect_from_updates(&path, updates, changes);
         }
+        Diff::Bytes { from, to } => {
+            changes.push(LeafChange {
+                path,
+                kind: LeafChangeKind::Bytes {
+                    from: *from,
+                    to: *to,
+                },
+            });
+        }
     }
 }
 
@@ -1069,6 +1093,13 @@ pub enum LeafChangeKind<'mem, 'facet> {
         /// The inserted value
         value: Peek<'mem, 'facet>,
     },
+    /// Two byte buffers differ (rendered as a hex-dump diff)
+    Bytes {
+        /// The old byte buffer
+        from: Peek<'mem, 'facet>,
+        /// The new byte buffer
+        to: Peek<'mem, 'facet>,
+    },
 }
 
 impl<'mem, 'facet> LeafChange<'mem, 'facet> {
@@ -1100,6 +1131,14 @@ impl<'mem, 'facet> LeafChange<'mem, 'facet> {
             }
             LeafChangeKind::Insert { value } => {
                 out.push_str(&format!("+ {}", printer.format_peek(*value)));
+            }
+            LeafChangeKind::Bytes { from, to } => {
+                let fb = crate::hexdump::peek_to_bytes(*from).unwrap_or_default();
+                let tb = crate::hexdump::peek_to_bytes(*to).unwrap_or_default();
+                if !self.path.0.is_empty() {
+                    out.push('\n');
+                }
+                out.push_str(&crate::hexdump::render_hex_diff(&fb, &tb, false));
             }
         }
 
@@ -1147,6 +1186,14 @@ impl<'mem, 'facet> LeafChange<'mem, 'facet> {
                     "+".color(tokyo_night::INSERTION),
                     printer.format_peek(*value).color(tokyo_night::INSERTION)
                 ));
+            }
+            LeafChangeKind::Bytes { from, to } => {
+                let fb = crate::hexdump::peek_to_bytes(*from).unwrap_or_default();
+                let tb = crate::hexdump::peek_to_bytes(*to).unwrap_or_default();
+                if !self.path.0.is_empty() {
+                    out.push('\n');
+                }
+                out.push_str(&crate::hexdump::render_hex_diff(&fb, &tb, true));
             }
         }
 
