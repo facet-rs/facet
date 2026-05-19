@@ -9,6 +9,15 @@ struct SessionHandshakeResult {
     let peerMetadata: [MetadataEntry]
 }
 
+/// Generate a fresh 16-byte session resume key from the system CSPRNG.
+/// Matches the Rust acceptor's `fresh_resume_key` (`[u8; 16]` via getrandom)
+/// and the TypeScript acceptor's `randomSessionResumeKey` (16-byte
+/// `crypto.getRandomValues`).
+func freshResumeKey() -> [UInt8] {
+    var rng = SystemRandomNumberGenerator()
+    return (0..<16).map { _ in UInt8.random(in: UInt8.min...UInt8.max, using: &rng) }
+}
+
 func oppositeParity(_ parity: Parity) -> Parity {
     switch parity {
     case .odd:
@@ -122,17 +131,22 @@ func performAcceptorHandshake(
 
     try await requireIdentityMessageSchema(peerHello.messagePayloadSchemaCbor, on: link)
 
-    // Session resume / stable conduit was removed; ignore expectedResumeKey
-    // and don't generate fresh resume keys.
+    // True protocol-level session resume / stable conduit was removed from
+    // the Swift runtime, so the peer's resume key is not used to look up an
+    // existing session.
     let _ = expectedResumeKey
-    let _ = resumable
 
     let ourSettings = ConnectionSettings(
         parity: oppositeParity(peerHello.parity),
         maxConcurrentRequests: maxConcurrentRequests,
         initialChannelCredit: initialChannelCredit
     )
-    let sessionResumeKey: [UInt8]? = nil
+    // Still advertise a fresh resume key when resumable, mirroring the Rust
+    // and TypeScript acceptors. Reference initiators that request resumption
+    // (the TS client rejects the handshake outright otherwise) require the
+    // acceptor to echo a key; recovery is handled by replaying in-flight
+    // requests on a fresh session rather than a true protocol-level resume.
+    let sessionResumeKey: [UInt8]? = resumable ? freshResumeKey() : nil
     let helloYourself = HandshakeHelloYourself(
         connectionSettings: ourSettings,
         messagePayloadSchemaCbor: wireMessageSchemasCbor,
