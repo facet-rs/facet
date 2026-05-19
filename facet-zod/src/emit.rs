@@ -28,8 +28,9 @@ pub fn emit_schema(schema: &NamedSchema, config: &Config) -> String {
             out.push_str(&format!("export const {const_name} = {type_expr};\n"));
         }
         ExportStyle::TypeOnly => {
+            out.push_str(&format!("const {const_name} = {type_expr};\n"));
             out.push_str(&format!(
-                "export type {} = z.infer<typeof {type_expr}>;\n",
+                "export type {} = z.infer<typeof {const_name}>;\n",
                 schema.name
             ));
         }
@@ -95,7 +96,10 @@ fn emit_object(fields: &[ZodField]) -> String {
 
     let mut lines = Vec::new();
     for field in fields {
-        let type_expr = emit_type(&field.ty);
+        let mut type_expr = emit_type(&field.ty);
+        if field.optional {
+            type_expr.push_str(".optional()");
+        }
         let line = if let Some(doc) = &field.doc {
             format!("  /** {} */\n  {}: {}", doc, field.name, type_expr)
         } else {

@@ -1,5 +1,7 @@
 //! Intermediate Zod type representation and conversion from Facet [`Shape`](facet_core::Shape)s.
 
+use std::collections::{HashMap, HashSet};
+
 use facet_core::Shape;
 use facet_core::*;
 
@@ -37,9 +39,9 @@ pub enum ZodType {
     Nullable(Box<ZodType>),
     /// `T.nullish()`
     Nullish(Box<ZodType>),
-    /// Reference to a named schema (`FooSchema`).
+    /// Reference to an already-declared named schema (`FooSchema`).
     Ref(String),
-    /// `z.lazy(() => FooSchema)` — used to break recursive cycles.
+    /// `z.lazy(() => FooSchema)` — used for forward references and to break recursive cycles.
     Lazy(String),
     /// `z.literal(...)` — string or boolean literal.
     Literal(String),
@@ -58,7 +60,7 @@ pub struct ZodField {
     pub name: String,
     /// The field's type.
     pub ty: ZodType,
-    /// Whether the field is optional (Rust `Option` or has a default).
+    /// Whether the field key may be omitted (a non-`Option` field with a default).
     pub optional: bool,
     /// Optional doc-comment text to emit above the field.
     pub doc: Option<String>,
@@ -75,59 +77,77 @@ pub struct NamedSchema {
     pub doc: Option<String>,
 }
 
-/// Convert a Facet [`Shape`] to a [`ZodType`], inserting [`ZodType::Lazy`] for
-/// types already on the `visiting` stack to break cycles.
-pub fn shape_to_zod(
-    shape: &'static Shape,
-    config: &Config,
-    visiting: &mut Vec<ConstTypeId>,
-) -> ZodType {
-    let id = shape.id;
-
-    if visiting.contains(&id) {
-        return ZodType::Lazy(schema_name(shape));
-    }
-
-    visiting.push(id);
-    let result = shape_to_zod_inner(shape, config, visiting);
-    visiting.pop();
-    result
+/// Resolution context for a single named schema being emitted.
+///
+/// Nested named types are resolved against [`Ctx::registry`]: a type already
+/// declared (in [`Ctx::emitted`]) becomes a plain [`ZodType::Ref`]; anything
+/// not yet declared — including the schema currently being emitted — becomes a
+/// [`ZodType::Lazy`] so the generated TypeScript is free of temporal-dead-zone
+/// hazards regardless of declaration order or cycles.
+pub struct Ctx<'a> {
+    /// Generator configuration.
+    pub config: &'a Config,
+    /// All named shapes that get their own top-level declaration.
+    pub registry: &'a HashMap<ConstTypeId, &'static Shape>,
+    /// Named shapes whose declaration has already been written above.
+    pub emitted: &'a HashSet<ConstTypeId>,
+    /// The shape currently being emitted as a root (its body is expanded inline).
+    pub root: ConstTypeId,
 }
 
-fn shape_to_zod_inner(
-    shape: &'static Shape,
-    config: &Config,
-    visiting: &mut Vec<ConstTypeId>,
-) -> ZodType {
+/// Expand a registered named shape's *body* (struct/enum/newtype), resolving any
+/// nested named types through [`shape_to_zod`].
+pub fn shape_to_zod_root(shape: &'static Shape, ctx: &Ctx) -> ZodType {
+    map_shape(shape, ctx)
+}
+
+/// Convert a Facet [`Shape`] to a [`ZodType`].
+///
+/// A shape that has its own top-level declaration resolves to a reference
+/// ([`ZodType::Ref`] if already declared, otherwise [`ZodType::Lazy`]) instead
+/// of being inlined.
+pub fn shape_to_zod(shape: &'static Shape, ctx: &Ctx) -> ZodType {
+    if ctx.registry.contains_key(&shape.id) {
+        let name = schema_name(shape);
+        return if shape.id != ctx.root && ctx.emitted.contains(&shape.id) {
+            ZodType::Ref(name)
+        } else {
+            ZodType::Lazy(name)
+        };
+    }
+    map_shape(shape, ctx)
+}
+
+fn map_shape(shape: &'static Shape, ctx: &Ctx) -> ZodType {
     match &shape.def {
         Def::Option(opt) => {
-            let inner = shape_to_zod(opt.t, config, visiting);
-            wrap_optional(inner, config)
+            let inner = shape_to_zod(opt.t, ctx);
+            wrap_optional(inner, ctx.config)
         }
         Def::List(list) => {
-            let elem = shape_to_zod(list.t, config, visiting);
+            let elem = shape_to_zod(list.t, ctx);
             ZodType::Array(Box::new(elem))
         }
         Def::Set(set) => {
-            let elem = shape_to_zod(set.t, config, visiting);
+            let elem = shape_to_zod(set.t, ctx);
             ZodType::Array(Box::new(elem))
         }
         Def::Map(map) => {
-            let k = shape_to_zod(map.k, config, visiting);
-            let v = shape_to_zod(map.v, config, visiting);
+            let k = shape_to_zod(map.k, ctx);
+            let v = shape_to_zod(map.v, ctx);
             ZodType::Record(Box::new(k), Box::new(v))
         }
         Def::Array(arr) => {
-            let elem = shape_to_zod(arr.t, config, visiting);
+            let elem = shape_to_zod(arr.t, ctx);
             ZodType::Tuple(vec![elem; arr.n])
         }
         Def::Slice(slice) => {
-            let elem = shape_to_zod(slice.t, config, visiting);
+            let elem = shape_to_zod(slice.t, ctx);
             ZodType::Array(Box::new(elem))
         }
         Def::Result(res) => {
-            let ok = shape_to_zod(res.t, config, visiting);
-            let err = shape_to_zod(res.e, config, visiting);
+            let ok = shape_to_zod(res.t, ctx);
+            let err = shape_to_zod(res.e, ctx);
             ZodType::Union(vec![
                 ZodType::Object(vec![
                     ZodField {
@@ -161,34 +181,32 @@ fn shape_to_zod_inner(
         }
         Def::Pointer(ptr) => {
             if let Some(pointee) = ptr.pointee {
-                shape_to_zod(pointee, config, visiting)
+                shape_to_zod(pointee, ctx)
             } else {
                 ZodType::Unknown
             }
         }
-        Def::Scalar => primitive_to_zod(shape, config),
-        Def::Undefined | Def::DynamicValue(_) | Def::NdArray(_) => {
-            map_by_type(shape, config, visiting)
-        }
-        _ => map_by_type(shape, config, visiting),
+        Def::Scalar => primitive_to_zod(shape, ctx.config),
+        Def::Undefined | Def::DynamicValue(_) | Def::NdArray(_) => map_by_type(shape, ctx),
+        _ => map_by_type(shape, ctx),
     }
 }
 
-fn map_by_type(shape: &'static Shape, config: &Config, visiting: &mut Vec<ConstTypeId>) -> ZodType {
+fn map_by_type(shape: &'static Shape, ctx: &Ctx) -> ZodType {
     match &shape.ty {
-        Type::User(UserType::Struct(st)) => struct_to_zod(st, shape, config, visiting),
-        Type::User(UserType::Enum(et)) => enum_to_zod(et, shape, config, visiting),
-        Type::Primitive(_) => primitive_to_zod(shape, config),
+        Type::User(UserType::Struct(st)) => struct_to_zod(st, shape, ctx),
+        Type::User(UserType::Enum(et)) => enum_to_zod(et, shape, ctx),
+        Type::Primitive(_) => primitive_to_zod(shape, ctx.config),
         Type::Sequence(SequenceType::Array(arr)) => {
-            let elem = shape_to_zod(arr.t, config, visiting);
+            let elem = shape_to_zod(arr.t, ctx);
             ZodType::Tuple(vec![elem; arr.n])
         }
         Type::Sequence(SequenceType::Slice(slice)) => {
-            let elem = shape_to_zod(slice.t, config, visiting);
+            let elem = shape_to_zod(slice.t, ctx);
             ZodType::Array(Box::new(elem))
         }
         Type::Pointer(PointerType::Reference(vp) | PointerType::Raw(vp)) => {
-            shape_to_zod(vp.target, config, visiting)
+            shape_to_zod(vp.target, ctx)
         }
         Type::Pointer(PointerType::Function(_)) => ZodType::Never,
         _ => ZodType::Unknown,
@@ -228,25 +246,20 @@ fn numeric_to_zod(num: &NumericType, shape: &'static Shape, config: &Config) -> 
     }
 }
 
-fn struct_to_zod(
-    st: &StructType,
-    shape: &'static Shape,
-    config: &Config,
-    visiting: &mut Vec<ConstTypeId>,
-) -> ZodType {
+fn struct_to_zod(st: &StructType, shape: &'static Shape, ctx: &Ctx) -> ZodType {
     match st.kind {
         StructKind::TupleStruct if st.fields.len() == 1 => {
             if let Some(inner) = shape.inner {
-                return shape_to_zod(inner, config, visiting);
+                return shape_to_zod(inner, ctx);
             }
             let field_shape = st.fields[0].shape.get();
-            shape_to_zod(field_shape, config, visiting)
+            shape_to_zod(field_shape, ctx)
         }
         StructKind::TupleStruct | StructKind::Tuple => {
             let elems = st
                 .fields
                 .iter()
-                .map(|f| shape_to_zod(f.shape.get(), config, visiting))
+                .map(|f| shape_to_zod(f.shape.get(), ctx))
                 .collect();
             ZodType::Tuple(elems)
         }
@@ -259,18 +272,14 @@ fn struct_to_zod(
                     !f.flags
                         .contains(FieldFlags::SKIP | FieldFlags::SKIP_SERIALIZING)
                 })
-                .map(|f| field_to_zod(f, config, visiting))
+                .map(|f| field_to_zod(f, ctx))
                 .collect();
             ZodType::Object(fields)
         }
     }
 }
 
-fn field_to_zod(
-    field: &'static Field,
-    config: &Config,
-    visiting: &mut Vec<ConstTypeId>,
-) -> ZodField {
+fn field_to_zod(field: &'static Field, ctx: &Ctx) -> ZodField {
     let field_shape = field.shape.get();
     let name = field.rename.unwrap_or(field.name).to_string();
     let doc = if field.doc.is_empty() {
@@ -282,22 +291,20 @@ fn field_to_zod(
     let is_option = matches!(field_shape.def, Def::Option(_));
     let has_default = field.has_default();
 
-    let ty = shape_to_zod(field_shape, config, visiting);
+    let ty = shape_to_zod(field_shape, ctx);
 
+    // `Option<T>` already carries its optionality via `wrap_optional`. A
+    // non-`Option` field with a default may simply be absent from the payload,
+    // which Zod expresses with `.optional()`.
     ZodField {
         name,
         ty,
-        optional: is_option || has_default,
+        optional: has_default && !is_option,
         doc,
     }
 }
 
-fn enum_to_zod(
-    et: &EnumType,
-    _shape: &'static Shape,
-    config: &Config,
-    visiting: &mut Vec<ConstTypeId>,
-) -> ZodType {
+fn enum_to_zod(et: &EnumType, _shape: &'static Shape, ctx: &Ctx) -> ZodType {
     let all_unit = et.variants.iter().all(|v| v.data.fields.is_empty());
 
     if all_unit {
@@ -322,7 +329,7 @@ fn enum_to_zod(
                     doc: None,
                 }])
             } else {
-                let inner = struct_to_zod(&v.data, v.data.fields[0].shape.get(), config, visiting);
+                let inner = struct_to_zod(&v.data, v.data.fields[0].shape.get(), ctx);
                 ZodType::Object(vec![ZodField {
                     name: variant_name.to_string(),
                     ty: inner,
@@ -345,6 +352,10 @@ fn wrap_optional(inner: ZodType, config: &Config) -> ZodType {
 }
 
 /// Derive the TypeScript schema name for a given Facet [`Shape`].
+///
+/// Generic types are disambiguated by their concrete type arguments (e.g.
+/// `Foo<Bar>` → `FooBar`, `Foo<Baz>` → `FooBaz`) so distinct instantiations do
+/// not collide.
 pub fn schema_name(shape: &Shape) -> String {
     let base = shape.type_identifier.to_string();
     if shape.type_params.is_empty() {
@@ -353,7 +364,7 @@ pub fn schema_name(shape: &Shape) -> String {
         let params: Vec<String> = shape
             .type_params
             .iter()
-            .map(|tp| tp.name.to_string())
+            .map(|tp| schema_name(tp.shape))
             .collect();
         format!("{}{}", base, params.join(""))
     }

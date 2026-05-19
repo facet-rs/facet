@@ -45,6 +45,40 @@ struct Config2 {
 #[derive(Facet)]
 struct Wrapper(String);
 
+#[derive(Facet)]
+struct Tree {
+    value: i32,
+    children: Vec<Tree>,
+}
+
+#[derive(Facet)]
+struct Node {
+    edge: Box<Edge>,
+}
+
+#[derive(Facet)]
+struct Edge {
+    back: Option<Box<Node>>,
+}
+
+#[derive(Facet)]
+struct Defaulted {
+    #[facet(default)]
+    count: u32,
+    name: String,
+}
+
+#[derive(Facet)]
+struct Wrap<T> {
+    inner: T,
+}
+
+#[derive(Facet)]
+struct Holder {
+    a: Wrap<u32>,
+    b: Wrap<String>,
+}
+
 #[test]
 fn test_simple_struct() {
     let output = generate::<User>();
@@ -91,6 +125,45 @@ fn test_optional_mode_nullable() {
     };
     let output = generate_with_config::<User>(config);
     insta::assert_snapshot!("optional_nullable", output);
+}
+
+#[test]
+fn test_recursive_self() {
+    // Self-recursion must break the cycle with `z.lazy`, not inline forever.
+    let output = generate::<Tree>();
+    insta::assert_snapshot!("recursive_self", output);
+}
+
+#[test]
+fn test_mutual_recursion() {
+    // Cross-type references: one direction is a plain ref (already declared),
+    // the other a `z.lazy` forward ref. Neither side is inlined.
+    let output = generate::<Node>();
+    insta::assert_snapshot!("mutual_recursion", output);
+}
+
+#[test]
+fn test_has_default_is_optional() {
+    // A non-Option field with `#[facet(default)]` must emit `.optional()`.
+    let output = generate::<Defaulted>();
+    insta::assert_snapshot!("has_default", output);
+}
+
+#[test]
+fn test_export_style_type_only() {
+    let config = Config {
+        export_style: facet_zod::config::ExportStyle::TypeOnly,
+        ..Config::default()
+    };
+    let output = generate_with_config::<Defaulted>(config);
+    insta::assert_snapshot!("type_only", output);
+}
+
+#[test]
+fn test_generic_instantiations_dont_collide() {
+    // `Wrap<u32>` and `Wrap<String>` must get distinct schema names.
+    let output = generate::<Holder>();
+    insta::assert_snapshot!("generics", output);
 }
 
 #[test]

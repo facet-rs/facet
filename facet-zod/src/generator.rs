@@ -7,7 +7,7 @@ use facet_core::{Facet, Shape};
 
 use crate::config::Config;
 use crate::emit::emit_schema;
-use crate::mapping::{NamedSchema, schema_name, shape_to_zod};
+use crate::mapping::{Ctx, NamedSchema, schema_name, shape_to_zod_root};
 
 /// Accumulates root types to emit and renders them to a single Zod source string.
 pub struct ZodGenerator {
@@ -53,10 +53,16 @@ impl ZodGenerator {
             out.push('\n');
         }
 
+        let mut emitted: HashSet<ConstTypeId> = HashSet::new();
         for shape in &sorted {
             let name = schema_name(shape);
-            let mut visiting = Vec::new();
-            let ty = shape_to_zod(shape, &self.config, &mut visiting);
+            let ctx = Ctx {
+                config: &self.config,
+                registry: &registry,
+                emitted: &emitted,
+                root: shape.id,
+            };
+            let ty = shape_to_zod_root(shape, &ctx);
 
             let doc = if shape.doc.is_empty() {
                 None
@@ -67,6 +73,7 @@ impl ZodGenerator {
             let schema = NamedSchema { name, ty, doc };
             out.push_str(&emit_schema(&schema, &self.config));
             out.push('\n');
+            emitted.insert(shape.id);
         }
 
         out

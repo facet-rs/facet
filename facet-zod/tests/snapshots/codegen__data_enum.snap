@@ -1,5 +1,5 @@
 ---
-source: tests/codegen.rs
+source: facet-zod/tests/codegen.rs
 expression: output
 ---
 export const ShapeSchema = z.union([z.object({
