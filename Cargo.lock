@@ -555,9 +555,9 @@ dependencies = [
 
 [[package]]
 name = "dlmalloc"
-version = "0.2.13"
+version = "0.2.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f5b01c17f85ee988d832c40e549a64bd89ab2c9f8d8a613bdf5122ae507e294"
+checksum = "ad5208a115eaba24916f7456929832e310a81518c641f93fee4f89aa93aa3675"
 dependencies = [
  "cfg-if",
  "libc",
@@ -607,7 +607,7 @@ dependencies = [
 
 [[package]]
 name = "facet"
-version = "0.46.2"
+version = "0.46.3"
 dependencies = [
  "autocfg",
  "facet-core",
@@ -625,7 +625,7 @@ dependencies = [
 
 [[package]]
 name = "facet-core"
-version = "0.46.2"
+version = "0.46.3"
 dependencies = [
  "autocfg",
  "bytes",
@@ -660,7 +660,7 @@ dependencies = [
 
 [[package]]
 name = "facet-default"
-version = "0.46.2"
+version = "0.46.3"
 dependencies = [
  "facet",
 ]
@@ -677,7 +677,7 @@ dependencies = [
 
 [[package]]
 name = "facet-error"
-version = "0.46.2"
+version = "0.46.3"
 dependencies = [
  "facet",
 ]
@@ -709,7 +709,7 @@ dependencies = [
 
 [[package]]
 name = "facet-macro-parse"
-version = "0.46.2"
+version = "0.46.3"
 dependencies = [
  "facet-macro-types",
  "proc-macro2",
@@ -718,7 +718,7 @@ dependencies = [
 
 [[package]]
 name = "facet-macro-types"
-version = "0.46.2"
+version = "0.46.3"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -727,14 +727,14 @@ dependencies = [
 
 [[package]]
 name = "facet-macros"
-version = "0.46.2"
+version = "0.46.3"
 dependencies = [
  "facet-macros-impl",
 ]
 
 [[package]]
 name = "facet-macros-impl"
-version = "0.46.2"
+version = "0.46.3"
 dependencies = [
  "facet-macro-parse",
  "facet-macro-types",
@@ -746,7 +746,7 @@ dependencies = [
 
 [[package]]
 name = "facet-path"
-version = "0.46.2"
+version = "0.46.3"
 dependencies = [
  "facet",
  "facet-core",
@@ -756,7 +756,7 @@ dependencies = [
 
 [[package]]
 name = "facet-pretty"
-version = "0.46.2"
+version = "0.46.3"
 dependencies = [
  "camino",
  "facet",
@@ -771,7 +771,7 @@ dependencies = [
 
 [[package]]
 name = "facet-reflect"
-version = "0.46.2"
+version = "0.46.3"
 dependencies = [
  "camino",
  "eyre",
@@ -802,7 +802,7 @@ dependencies = [
 
 [[package]]
 name = "facet-solver"
-version = "0.46.2"
+version = "0.46.3"
 dependencies = [
  "divan",
  "facet",
@@ -823,7 +823,7 @@ dependencies = [
 
 [[package]]
 name = "facet-testhelpers"
-version = "0.46.2"
+version = "0.46.3"
 dependencies = [
  "color-backtrace",
  "facet-testhelpers-macros",
@@ -834,7 +834,7 @@ dependencies = [
 
 [[package]]
 name = "facet-testhelpers-macros"
-version = "0.46.2"
+version = "0.46.3"
 dependencies = [
  "quote",
  "unsynn",
@@ -842,7 +842,7 @@ dependencies = [
 
 [[package]]
 name = "facet-urlencoded"
-version = "0.46.2"
+version = "0.46.3"
 dependencies = [
  "axum-core",
  "facet",
@@ -857,7 +857,7 @@ dependencies = [
 
 [[package]]
 name = "facet-validate"
-version = "0.46.2"
+version = "0.46.3"
 dependencies = [
  "facet",
  "facet-core",
@@ -866,7 +866,7 @@ dependencies = [
 
 [[package]]
 name = "facet-zod"
-version = "0.46.2"
+version = "0.46.3"
 dependencies = [
  "facet",
  "facet-core",
@@ -1466,9 +1466,9 @@ dependencies = [
 
 [[package]]
 name = "num-conv"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6673768db2d862beb9b39a78fdcb1a69439615d5794a1be50caa9bc92c81967"
+checksum = "521739c6d2bac4aa25192232afe6841231376b2b26d4d9fae5ecf8ca5772e441"
 
 [[package]]
 name = "num-traits"
@@ -2706,9 +2706,9 @@ dependencies = [
 
 [[package]]
 name = "winnow"
-version = "1.0.2"
+version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ee1708bef14716a11bae175f579062d4554d95be2c6829f518df847b7b3fdd0"
+checksum = "0592e1c9d151f854e6fd382574c3a0855250e1d9b2f99d9281c6e6391af352f1"
 dependencies = [
  "memchr",
 ]
@@ -2877,9 +2877,9 @@ dependencies = [
 
 [[package]]
 name = "zerofrom"
-version = "0.1.7"
+version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69faa1f2a1ea75661980b013019ed6687ed0e83d069bc1114e2cc74c6c04c4df"
+checksum = "0ec05a11813ea801ff6d75110ad09cd0824ddba17dfe17128ea0d5f68e6c5272"
 dependencies = [
  "zerofrom-derive",
 ]
