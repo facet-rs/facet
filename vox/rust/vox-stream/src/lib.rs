@@ -15,6 +15,11 @@ use vox_types::{Backing, Link, LinkRx, LinkTx};
 #[cfg(not(target_arch = "wasm32"))]
 use vox_core::{Attachment, LinkSource};
 
+#[cfg(unix)]
+mod fd_link;
+#[cfg(unix)]
+pub use fd_link::{FdStreamLink, FdStreamLinkRx, FdStreamLinkTx};
+
 /// A [`Link`] over a byte stream with length-prefix framing.
 ///
 /// Wraps an `AsyncRead + AsyncWrite` pair. Each message is framed as

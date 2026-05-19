@@ -1,16 +1,27 @@
 use moire::sync::mpsc;
 use vox_types::{Backing, Link, LinkRx, LinkTx};
 
+/// One in-process frame: bytes, plus any descriptors moving with it.
+///
+/// In-process fd "passing" is just an ownership move through the same
+/// channel as the bytes — no `SCM_RIGHTS`, and no separate stream that
+/// could desync.
+#[cfg(unix)]
+type MemItem = (Vec<u8>, Vec<std::os::fd::OwnedFd>);
+#[cfg(not(unix))]
+type MemItem = Vec<u8>;
+
 /// In-process [`Link`] backed by tokio mpsc channels.
 ///
-/// Each direction is an unbounded channel carrying `Vec<u8>` — raw bytes,
-/// no serialization, no IO. Useful for testing Conduits, Session, and
-/// anything above the transport layer without real networking.
+/// Each direction is an unbounded channel carrying raw bytes (and, on Unix,
+/// any `Fd`s travelling with them) — no serialization, no IO. Useful for
+/// testing Conduits, Session, and anything above the transport layer
+/// without real networking.
 // r[impl transport.memory]
 // r[impl zerocopy.framing.link.memory]
 pub struct MemoryLink {
-    tx: mpsc::Sender<Vec<u8>>,
-    rx: mpsc::Receiver<Vec<u8>>,
+    tx: mpsc::Sender<MemItem>,
+    rx: mpsc::Receiver<MemItem>,
 }
 
 /// Create a pair of connected [`MemoryLink`]s.
@@ -31,7 +42,14 @@ impl Link for MemoryLink {
     type Rx = MemoryLinkRx;
 
     fn split(self) -> (Self::Tx, Self::Rx) {
-        (MemoryLinkTx { tx: self.tx }, MemoryLinkRx { rx: self.rx })
+        (
+            MemoryLinkTx { tx: self.tx },
+            MemoryLinkRx {
+                rx: self.rx,
+                #[cfg(unix)]
+                last_fds: Vec::new(),
+            },
+        )
     }
 }
 
@@ -42,21 +60,48 @@ impl Link for MemoryLink {
 /// Sending half of a [`MemoryLink`].
 #[derive(Clone)]
 pub struct MemoryLinkTx {
-    tx: mpsc::Sender<Vec<u8>>,
+    tx: mpsc::Sender<MemItem>,
+}
+
+impl MemoryLinkTx {
+    async fn send_item(&self, item: MemItem) -> std::io::Result<()> {
+        let permit = self.tx.clone().reserve_owned().await.map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::ConnectionReset, "receiver dropped")
+        })?;
+        drop(permit.send(item));
+        Ok(())
+    }
 }
 
 impl LinkTx for MemoryLinkTx {
     async fn send(&self, bytes: Vec<u8>) -> std::io::Result<()> {
-        let permit = self.tx.clone().reserve_owned().await.map_err(|_| {
-            std::io::Error::new(std::io::ErrorKind::ConnectionReset, "receiver dropped")
-        })?;
-        drop(permit.send(bytes));
-        Ok(())
+        #[cfg(unix)]
+        {
+            self.send_item((bytes, Vec::new())).await
+        }
+        #[cfg(not(unix))]
+        {
+            self.send_item(bytes).await
+        }
     }
 
     async fn close(self) -> std::io::Result<()> {
         drop(self.tx);
         Ok(())
+    }
+
+    #[cfg(unix)]
+    fn supports_fd_passing(&self) -> bool {
+        true
+    }
+
+    #[cfg(unix)]
+    async fn send_with_fds(
+        &self,
+        bytes: Vec<u8>,
+        fds: Vec<std::os::fd::OwnedFd>,
+    ) -> std::io::Result<()> {
+        self.send_item((bytes, fds)).await
     }
 }
 
@@ -66,7 +111,9 @@ impl LinkTx for MemoryLinkTx {
 
 /// Receiving half of a [`MemoryLink`].
 pub struct MemoryLinkRx {
-    rx: mpsc::Receiver<Vec<u8>>,
+    rx: mpsc::Receiver<MemItem>,
+    #[cfg(unix)]
+    last_fds: Vec<std::os::fd::OwnedFd>,
 }
 
 /// MemoryLink never fails on recv — the only "error" is channel closed (returns None).
@@ -86,8 +133,19 @@ impl LinkRx for MemoryLinkRx {
 
     async fn recv(&mut self) -> Result<Option<Backing>, Self::Error> {
         match self.rx.recv().await {
+            #[cfg(unix)]
+            Some((bytes, fds)) => {
+                self.last_fds = fds;
+                Ok(Some(Backing::Boxed(bytes.into_boxed_slice())))
+            }
+            #[cfg(not(unix))]
             Some(bytes) => Ok(Some(Backing::Boxed(bytes.into_boxed_slice()))),
             None => Ok(None),
         }
+    }
+
+    #[cfg(unix)]
+    fn take_frame_fds(&mut self) -> Vec<std::os::fd::OwnedFd> {
+        std::mem::take(&mut self.last_fds)
     }
 }

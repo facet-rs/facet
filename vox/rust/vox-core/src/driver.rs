@@ -50,6 +50,10 @@ use vox_types::{OperationId, PostcardPayload};
 struct PendingResponse {
     msg: SelfRef<RequestMessage<'static>>,
     schemas: Arc<vox_types::SchemaRecvTracker>,
+    /// Descriptors that arrived with the response frame, surfaced to the
+    /// caller via [`WithTracker::fds`](vox_types::WithTracker) and installed
+    /// at the typed-return decode site. `()` off-Unix.
+    fds: vox_types::FrameFds,
 }
 
 type ResponseSlot = moire::sync::oneshot::Sender<PendingResponse>;
@@ -2153,6 +2157,7 @@ impl DriverCaller {
         let PendingResponse {
             msg: response_msg,
             schemas: response_schemas,
+            fds: response_fds,
         } = pending;
         let response = response_msg.map(|m| match m.body {
             RequestBody::Response(r) => r,
@@ -2163,6 +2168,7 @@ impl DriverCaller {
         Ok(vox_types::WithTracker {
             value: response,
             tracker: response_schemas,
+            fds: response_fds,
         })
     }
 }
@@ -2725,7 +2731,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
 
     async fn handle_recv(&mut self, recv: crate::session::RecvMessage) {
         self.shared.mark_inbound_progress();
-        let crate::session::RecvMessage { schemas, msg } = recv;
+        let crate::session::RecvMessage { schemas, msg, fds } = recv;
         let msg_ref = msg.get();
         let is_request = matches!(msg_ref, ConnectionMessage::Request(_));
         if is_request {
@@ -2767,7 +2773,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 ConnectionMessage::Request(r) => r,
                 _ => unreachable!(),
             });
-            self.handle_request(msg, schemas);
+            self.handle_request(msg, schemas, fds);
         } else {
             let msg = msg.map(|m| match m {
                 ConnectionMessage::Channel(c) => c,
@@ -2781,6 +2787,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
         &mut self,
         msg: SelfRef<RequestMessage<'static>>,
         schemas: Arc<vox_types::SchemaRecvTracker>,
+        fds: vox_types::FrameFds,
     ) {
         let msg_ref = msg.get();
         let req_id = msg_ref.id;
@@ -2966,7 +2973,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             if let Some(tx) = self.shared.pending_responses.lock().remove(&req_id) {
                 vox_types::dlog!("[driver] routing response to waiter: req={:?}", req_id);
                 tracing::trace!(%req_id, "routing response to pending oneshot");
-                let _: Result<(), _> = tx.send(PendingResponse { msg, schemas });
+                let _: Result<(), _> = tx.send(PendingResponse { msg, schemas, fds });
             } else {
                 vox_types::dlog!("[driver] dropped unmatched response: req={:?}", req_id);
                 tracing::trace!(%req_id, "no pending response slot for this req_id");

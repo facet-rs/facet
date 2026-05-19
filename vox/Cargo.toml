@@ -57,6 +57,7 @@ vox-macros-core = { path = "rust/vox-macros-core", version = "0.5.1" }
 vox-service-macros = { path = "rust/vox-macros", version = "0.5.1" }
 vox-core = { path = "rust/vox-core", version = "0.5.1" }
 vox-stream = { path = "rust/vox-stream", version = "0.5.1" }
+vox-fdpass = { path = "rust/vox-fdpass", version = "0.5.1" }
 vox-codegen = { path = "rust/vox-codegen", version = "0.5.1" }
 vox-websocket = { path = "rust/vox-websocket", version = "0.5.1" }
 vox-inprocess = { path = "rust/vox-inprocess", version = "0.5.1" }

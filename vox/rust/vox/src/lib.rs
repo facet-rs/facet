@@ -229,6 +229,13 @@ pub use vox_types::{
     observe_reply,
 };
 
+// File-descriptor passing. `FrameFds`/`collect_fds`/`provide_fds` are
+// portable (no-ops off-Unix) so generated client code needs no `cfg`;
+// `Fd` itself is Unix-only.
+pub use vox_types::{FrameFds, collect_fds, frame_fds_len, provide_fds};
+#[cfg(unix)]
+pub use vox_types::{Fd, FdAdapter, SCM_MAX_FD};
+
 // ── vox-core: curated public API ──────────────────────────────────────
 
 // Session establishment — builder entry points
@@ -320,6 +327,11 @@ pub mod transport {
             LocalStream, connect, endpoint_exists, local_link_source, path_to_pipe_name,
             remove_endpoint,
         };
+
+        /// Descriptor-passing Unix-domain link (`SCM_RIGHTS`). The only
+        /// transport over which [`Fd`](crate::Fd) values may travel.
+        #[cfg(unix)]
+        pub use vox_stream::{FdStreamLink, FdStreamLinkRx, FdStreamLinkTx};
     }
 
     /// WebSocket transport (`vox-websocket`).

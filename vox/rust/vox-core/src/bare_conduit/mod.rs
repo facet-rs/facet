@@ -133,6 +133,7 @@ where
             },
             BareConduitRx {
                 link_rx: rx,
+                pending_fds: vox_types::FrameFds::default(),
                 #[cfg(not(target_arch = "wasm32"))]
                 decoder: self.decoder,
                 #[cfg(target_arch = "wasm32")]
@@ -154,9 +155,17 @@ pub struct BareConduitTx<F: MsgFamily, LTx: LinkTx> {
     _phantom: PhantomData<fn(F)>,
 }
 
+/// A serialized message plus the file descriptors collected while encoding
+/// it. The descriptors travel out-of-band via `SCM_RIGHTS`; off-Unix
+/// [`FrameFds`](vox_types::FrameFds) is `()`.
+pub struct PreparedFrame {
+    pub bytes: Vec<u8>,
+    pub fds: vox_types::FrameFds,
+}
+
 impl<F: MsgFamily, LTx: LinkTx + MaybeSend + 'static> ConduitTx for BareConduitTx<F, LTx> {
     type Msg = F;
-    type Prepared = Vec<u8>;
+    type Prepared = PreparedFrame;
     type Error = BareConduitError;
 
     // r[impl zerocopy.framing.single-pass]
@@ -167,20 +176,38 @@ impl<F: MsgFamily, LTx: LinkTx + MaybeSend + 'static> ConduitTx for BareConduitT
     // r[impl zerocopy.scatter.write]
     // r[impl zerocopy.scatter.lifetime]
     fn prepare_send(&self, item: F::Msg<'_>) -> Result<Self::Prepared, Self::Error> {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let ptr = PtrConst::new((&raw const item).cast::<u8>());
-            vox_jit::encode_with(self.encoder, ptr).map_err(BareConduitError::Encode)
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            vox_postcard::to_vec(&item).map_err(BareConduitError::Encode)
-        }
+        let encode = || -> Result<Vec<u8>, BareConduitError> {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let ptr = PtrConst::new((&raw const item).cast::<u8>());
+                vox_jit::encode_with(self.encoder, ptr).map_err(BareConduitError::Encode)
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                vox_postcard::to_vec(&item).map_err(BareConduitError::Encode)
+            }
+        };
+        // Collect any `Fd`s the encoder funnels into the thread-local
+        // collector — same install-around-encode shape as the channel
+        // binder (`with_channel_binder`). Off-Unix this is a pass-through
+        // and `fds` is `()`.
+        let (encoded, fds) = vox_types::collect_fds(encode);
+        Ok(PreparedFrame {
+            bytes: encoded?,
+            fds,
+        })
     }
 
     async fn send_prepared(&self, prepared: Self::Prepared) -> Result<(), Self::Error> {
+        let PreparedFrame { bytes, fds } = prepared;
+        if vox_types::frame_fds_len(&fds) > 0 && !self.link_tx.supports_fd_passing() {
+            return Err(BareConduitError::Io(std::io::Error::other(
+                "message carries file descriptors but the transport \
+                 cannot pass them",
+            )));
+        }
         self.link_tx
-            .send(prepared)
+            .send_with_fds(bytes, fds)
             .await
             .map_err(BareConduitError::Io)
     }
@@ -196,6 +223,9 @@ impl<F: MsgFamily, LTx: LinkTx + MaybeSend + 'static> ConduitTx for BareConduitT
 
 pub struct BareConduitRx<F: MsgFamily, LRx> {
     link_rx: LRx,
+    /// Descriptors that arrived with the most recently `recv`'d frame,
+    /// awaiting [`take_frame_fds`](vox_types::ConduitRx::take_frame_fds).
+    pending_fds: vox_types::FrameFds,
     #[cfg(not(target_arch = "wasm32"))]
     decoder: &'static CompiledDecoder,
     #[cfg(target_arch = "wasm32")]
@@ -220,6 +250,13 @@ where
             None => return Ok(None),
         };
 
+        // Capture this frame's descriptors. `Payload` only *borrows* its
+        // bytes during Message decode — the typed `Fd` is decoded later by
+        // the generated stub — so the fds are threaded out via
+        // `take_frame_fds` (the same rail as the schema tracker) and
+        // installed at that decode site, not here.
+        self.pending_fds = self.link_rx.take_frame_fds();
+
         #[cfg(not(target_arch = "wasm32"))]
         {
             crate::deserialize_postcard_with_decoder::<F::Msg<'static>>(backing, self.decoder)
@@ -236,6 +273,10 @@ where
             .map_err(BareConduitError::Decode)
             .map(Some)
         }
+    }
+
+    fn take_frame_fds(&mut self) -> vox_types::FrameFds {
+        std::mem::take(&mut self.pending_fds)
     }
 }
 

@@ -1,5 +1,6 @@
 ---
 source: rust/vox-macros-core/src/lib.rs
+assertion_line: 1347
 expression: "generate(quote!\n{\n    trait WordLab\n    {\n        async fn is_short(&self, word: &str) -> bool; async fn\n        classify(&self, word: String) -> &'vox str; async fn\n        transform(&self, prefix: &str, input: Rx<String>, output: Tx<String>)\n        -> u32;\n    }\n})"
 ---
 #[allow(non_snake_case, clippy::all)]
@@ -372,29 +373,32 @@ impl WordLabClient {
         let ::vox::WithTracker {
             value: response,
             tracker: schema_tracker,
+            fds: __vox_frame_fds,
         } = with_tracker;
-        let response = response.get();
-        let ret_bytes = match &response.ret {
-            ::vox::Payload::PostcardBytes(bytes) => bytes,
-            _ => {
-                return Err(
-                    ::vox::VoxError::<::core::convert::Infallible>::InvalidPayload(
-                        "response not PostcardBytes".into(),
-                    ),
-                );
+        ::vox::provide_fds(__vox_frame_fds, move || {
+            let response = response.get();
+            let ret_bytes = match &response.ret {
+                ::vox::Payload::PostcardBytes(bytes) => bytes,
+                _ => {
+                    return Err(
+                        ::vox::VoxError::<::core::convert::Infallible>::InvalidPayload(
+                            "response not PostcardBytes".into(),
+                        ),
+                    );
+                }
+            };
+            let result: Result<bool, ::vox::VoxError<::core::convert::Infallible>> =
+                ::vox::schema_deser::schema_deserialize_response::<
+                    Result<bool, ::vox::VoxError<::core::convert::Infallible>>,
+                >(ret_bytes, method_id, &schema_tracker)
+                .map_err(|e| {
+                    ::vox::VoxError::<::core::convert::Infallible>::InvalidPayload(e.to_string())
+                })?;
+            match result {
+                Ok(ret) => Ok(ret),
+                Err(err) => Err(err),
             }
-        };
-        let result: Result<bool, ::vox::VoxError<::core::convert::Infallible>> =
-            ::vox::schema_deser::schema_deserialize_response::<
-                Result<bool, ::vox::VoxError<::core::convert::Infallible>>,
-            >(ret_bytes, method_id, &schema_tracker)
-            .map_err(|e| {
-                ::vox::VoxError::<::core::convert::Infallible>::InvalidPayload(e.to_string())
-            })?;
-        match result {
-            Ok(ret) => Ok(ret),
-            Err(err) => Err(err),
-        }
+        })
     }
     pub async fn classify(
         &self,
@@ -442,29 +446,34 @@ impl WordLabClient {
         let ::vox::WithTracker {
             value: response,
             tracker: schema_tracker,
+            fds: __vox_frame_fds,
         } = with_tracker;
-        response.try_repack(|resp, _bytes| {
-            let ret_bytes = match &resp.ret {
-                ::vox::Payload::PostcardBytes(bytes) => bytes,
-                _ => {
-                    return Err(
+        ::vox::provide_fds(__vox_frame_fds, move || {
+            response.try_repack(|resp, _bytes| {
+                let ret_bytes = match &resp.ret {
+                    ::vox::Payload::PostcardBytes(bytes) => bytes,
+                    _ => {
+                        return Err(
+                            ::vox::VoxError::<::core::convert::Infallible>::InvalidPayload(
+                                "response not PostcardBytes".into(),
+                            ),
+                        );
+                    }
+                };
+                let result: Result<&'static str, ::vox::VoxError<::core::convert::Infallible>> =
+                    ::vox::schema_deser::schema_deserialize_response_borrowed::<
+                        Result<&'static str, ::vox::VoxError<::core::convert::Infallible>>,
+                    >(ret_bytes, method_id, &schema_tracker)
+                    .map_err(|e| {
                         ::vox::VoxError::<::core::convert::Infallible>::InvalidPayload(
-                            "response not PostcardBytes".into(),
-                        ),
-                    );
+                            e.to_string(),
+                        )
+                    })?;
+                match result {
+                    Ok(ret) => Ok(ret),
+                    Err(err) => Err(err),
                 }
-            };
-            let result: Result<&'static str, ::vox::VoxError<::core::convert::Infallible>> =
-                ::vox::schema_deser::schema_deserialize_response_borrowed::<
-                    Result<&'static str, ::vox::VoxError<::core::convert::Infallible>>,
-                >(ret_bytes, method_id, &schema_tracker)
-                .map_err(|e| {
-                    ::vox::VoxError::<::core::convert::Infallible>::InvalidPayload(e.to_string())
-                })?;
-            match result {
-                Ok(ret) => Ok(ret),
-                Err(err) => Err(err),
-            }
+            })
         })
     }
     pub async fn transform(
@@ -516,33 +525,36 @@ impl WordLabClient {
         let ::vox::WithTracker {
             value: response,
             tracker: schema_tracker,
+            fds: __vox_frame_fds,
         } = with_tracker;
-        let response = response.get();
-        let ret_bytes = match &response.ret {
-            ::vox::Payload::PostcardBytes(bytes) => bytes,
-            _ => {
-                return Err(
-                    ::vox::VoxError::<::core::convert::Infallible>::InvalidPayload(
-                        "response not PostcardBytes".into(),
-                    ),
-                );
+        ::vox::provide_fds(__vox_frame_fds, move || {
+            let response = response.get();
+            let ret_bytes = match &response.ret {
+                ::vox::Payload::PostcardBytes(bytes) => bytes,
+                _ => {
+                    return Err(
+                        ::vox::VoxError::<::core::convert::Infallible>::InvalidPayload(
+                            "response not PostcardBytes".into(),
+                        ),
+                    );
+                }
+            };
+            let result: Result<u32, ::vox::VoxError<::core::convert::Infallible>> =
+                ::vox::schema_deser::schema_deserialize_response::<
+                    Result<u32, ::vox::VoxError<::core::convert::Infallible>>,
+                >(ret_bytes, method_id, &schema_tracker)
+                .map_err(|e| {
+                    args.2.finish_retry_binding();
+                    ::vox::VoxError::<::core::convert::Infallible>::InvalidPayload(e.to_string())
+                })?;
+            match result {
+                Ok(ret) => Ok(ret),
+                Err(err) => {
+                    args.2.finish_retry_binding();
+                    Err(err)
+                }
             }
-        };
-        let result: Result<u32, ::vox::VoxError<::core::convert::Infallible>> =
-            ::vox::schema_deser::schema_deserialize_response::<
-                Result<u32, ::vox::VoxError<::core::convert::Infallible>>,
-            >(ret_bytes, method_id, &schema_tracker)
-            .map_err(|e| {
-                args.2.finish_retry_binding();
-                ::vox::VoxError::<::core::convert::Infallible>::InvalidPayload(e.to_string())
-            })?;
-        match result {
-            Ok(ret) => Ok(ret),
-            Err(err) => {
-                args.2.finish_retry_binding();
-                Err(err)
-            }
-        }
+        })
     }
 }
 impl ::vox::FromVoxSession for WordLabClient {

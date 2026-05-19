@@ -96,6 +96,38 @@ pub trait LinkTx: MaybeSend + MaybeSync + 'static {
     fn close(self) -> impl Future<Output = std::io::Result<()>> + MaybeSend
     where
         Self: Sized;
+
+    /// Whether this transport can carry file descriptors (`SCM_RIGHTS` over a
+    /// Unix-domain socket). Only such links may carry [`Fd`](crate::fd::Fd)
+    /// values; everything else (TCP, WebSocket, wasm) returns `false` and the
+    /// encoder refuses fd-bearing messages.
+    fn supports_fd_passing(&self) -> bool {
+        false
+    }
+
+    /// Send one payload that carries `fds` out-of-band via `SCM_RIGHTS`.
+    ///
+    /// The default errors if any fds are present (a transport that cannot
+    /// pass descriptors must never be handed one); with no fds it is exactly
+    /// [`send`](Self::send), so existing transports need no change. Off-Unix
+    /// [`FrameFds`](crate::FrameFds) is `()` and this is always plain
+    /// [`send`](Self::send).
+    fn send_with_fds(
+        &self,
+        bytes: Vec<u8>,
+        fds: crate::FrameFds,
+    ) -> impl Future<Output = std::io::Result<()>> + MaybeSend + '_ {
+        async move {
+            #[cfg(unix)]
+            if !fds.is_empty() {
+                return Err(std::io::Error::other(
+                    "transport does not support fd passing",
+                ));
+            }
+            let _ = &fds;
+            self.send(bytes).await
+        }
+    }
 }
 
 /// Receiving half of a [`Link`].
@@ -118,6 +150,18 @@ pub trait LinkRx: MaybeSend + 'static {
     fn recv(
         &mut self,
     ) -> impl Future<Output = Result<Option<Backing>, Self::Error>> + MaybeSend + '_;
+
+    /// Take the file descriptors that arrived with the frame returned by the
+    /// most recent [`recv`](Self::recv).
+    ///
+    /// Descriptors travel out-of-band in `SCM_RIGHTS`; an fd-capable link
+    /// attributes each batch to the frame whose bytes completed it (one
+    /// fd-bearing frame == one `sendmsg`). The default returns none, so
+    /// non-fd transports need no change. The conduit threads these to the
+    /// typed-decode site as the [`provide_fds`](crate::provide_fds) source.
+    fn take_frame_fds(&mut self) -> crate::FrameFds {
+        crate::FrameFds::default()
+    }
 }
 
 /// A [`Link`] assembled from pre-split Tx and Rx halves.

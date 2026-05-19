@@ -988,8 +988,11 @@ fn generate_client_method(
                         });
                     }
                 };
-                let #vox::WithTracker { value: response, tracker: schema_tracker } = with_tracker;
-                response.try_repack(|resp, _bytes| {
+                let #vox::WithTracker { value: response, tracker: schema_tracker, fds: __vox_frame_fds } = with_tracker;
+                // Install this response frame's descriptors as the fd source
+                // for the duration of the typed-return decode (any `vox::Fd`
+                // claims one). Pass-through off-Unix.
+                #vox::provide_fds(__vox_frame_fds, move || response.try_repack(|resp, _bytes| {
                     let ret_bytes = match &resp.ret {
                         #vox::Payload::PostcardBytes(bytes) => bytes,
                         _ => return Err(#vox::VoxError::<#err_ty>::InvalidPayload("response not PostcardBytes".into())),
@@ -1007,7 +1010,7 @@ fn generate_client_method(
                             Err(err)
                         }
                     }
-                })
+                }))
             }
         }
     } else {
@@ -1040,29 +1043,34 @@ fn generate_client_method(
                         });
                     }
                 };
-                let #vox::WithTracker { value: response, tracker: schema_tracker } = with_tracker;
-                let response = response.get();
-                let ret_bytes = match &response.ret {
-                    #vox::Payload::PostcardBytes(bytes) => bytes,
-                    _ => return Err(#vox::VoxError::<#err_ty>::InvalidPayload("response not PostcardBytes".into())),
-                };
-                let result: Result<#ok_ty_decode, #vox::VoxError<#err_ty>> =
-                    #vox::schema_deser::schema_deserialize_response::<Result<#ok_ty_decode, #vox::VoxError<#err_ty>>>(
-                        ret_bytes,
-                        method_id,
-                        &schema_tracker,
-                    )
-                    .map_err(|e| {
-                        #finish_retry_bindings
-                        #vox::VoxError::<#err_ty>::InvalidPayload(e.to_string())
-                    })?;
-                match result {
-                    Ok(ret) => Ok(ret),
-                    Err(err) => {
-                        #finish_retry_bindings
-                        Err(err)
+                let #vox::WithTracker { value: response, tracker: schema_tracker, fds: __vox_frame_fds } = with_tracker;
+                // Install this response frame's descriptors as the fd source
+                // for the typed-return decode (any `vox::Fd` claims one).
+                // Pass-through off-Unix.
+                #vox::provide_fds(__vox_frame_fds, move || {
+                    let response = response.get();
+                    let ret_bytes = match &response.ret {
+                        #vox::Payload::PostcardBytes(bytes) => bytes,
+                        _ => return Err(#vox::VoxError::<#err_ty>::InvalidPayload("response not PostcardBytes".into())),
+                    };
+                    let result: Result<#ok_ty_decode, #vox::VoxError<#err_ty>> =
+                        #vox::schema_deser::schema_deserialize_response::<Result<#ok_ty_decode, #vox::VoxError<#err_ty>>>(
+                            ret_bytes,
+                            method_id,
+                            &schema_tracker,
+                        )
+                        .map_err(|e| {
+                            #finish_retry_bindings
+                            #vox::VoxError::<#err_ty>::InvalidPayload(e.to_string())
+                        })?;
+                    match result {
+                        Ok(ret) => Ok(ret),
+                        Err(err) => {
+                            #finish_retry_bindings
+                            Err(err)
+                        }
                     }
-                }
+                })
             }
         }
     }

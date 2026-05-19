@@ -28,7 +28,9 @@ tokio = { workspace = true, features = ["net", "io-util", "io-std", "rt", "sync"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+vox-fdpass.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+vox-postcard.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

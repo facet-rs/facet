@@ -86,6 +86,17 @@ pub trait ConduitRx {
     /// Returns `Ok(None)` when the peer has closed.
     fn recv(&mut self)
     -> impl Future<Output = RecvResult<Self::Msg, Self::Error>> + MaybeSend + '_;
+
+    /// Take the file descriptors that arrived with the frame returned by the
+    /// most recent [`recv`](Self::recv).
+    ///
+    /// The session threads these alongside the message (the same rail as the
+    /// schema tracker) to the typed-payload decode site, where they are
+    /// installed as the [`provide_fds`](crate::provide_fds) source. The
+    /// default is none; off-Unix [`FrameFds`](crate::FrameFds) is `()`.
+    fn take_frame_fds(&mut self) -> crate::FrameFds {
+        crate::FrameFds::default()
+    }
 }
 
 /// Yields new conduits from inbound connections.

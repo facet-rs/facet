@@ -1,5 +1,6 @@
 ---
 source: rust/vox-macros-core/src/lib.rs
+assertion_line: 1142
 expression: "generate(quote!\n{\n    trait Audit\n    {\n        #[vox::context] async fn record(&self, payload: String) -> &'vox str;\n        async fn ping(&self) -> u64;\n    }\n})"
 ---
 #[allow(non_snake_case, clippy::all)]
@@ -331,29 +332,34 @@ impl AuditClient {
         let ::vox::WithTracker {
             value: response,
             tracker: schema_tracker,
+            fds: __vox_frame_fds,
         } = with_tracker;
-        response.try_repack(|resp, _bytes| {
-            let ret_bytes = match &resp.ret {
-                ::vox::Payload::PostcardBytes(bytes) => bytes,
-                _ => {
-                    return Err(
+        ::vox::provide_fds(__vox_frame_fds, move || {
+            response.try_repack(|resp, _bytes| {
+                let ret_bytes = match &resp.ret {
+                    ::vox::Payload::PostcardBytes(bytes) => bytes,
+                    _ => {
+                        return Err(
+                            ::vox::VoxError::<::core::convert::Infallible>::InvalidPayload(
+                                "response not PostcardBytes".into(),
+                            ),
+                        );
+                    }
+                };
+                let result: Result<&'static str, ::vox::VoxError<::core::convert::Infallible>> =
+                    ::vox::schema_deser::schema_deserialize_response_borrowed::<
+                        Result<&'static str, ::vox::VoxError<::core::convert::Infallible>>,
+                    >(ret_bytes, method_id, &schema_tracker)
+                    .map_err(|e| {
                         ::vox::VoxError::<::core::convert::Infallible>::InvalidPayload(
-                            "response not PostcardBytes".into(),
-                        ),
-                    );
+                            e.to_string(),
+                        )
+                    })?;
+                match result {
+                    Ok(ret) => Ok(ret),
+                    Err(err) => Err(err),
                 }
-            };
-            let result: Result<&'static str, ::vox::VoxError<::core::convert::Infallible>> =
-                ::vox::schema_deser::schema_deserialize_response_borrowed::<
-                    Result<&'static str, ::vox::VoxError<::core::convert::Infallible>>,
-                >(ret_bytes, method_id, &schema_tracker)
-                .map_err(|e| {
-                    ::vox::VoxError::<::core::convert::Infallible>::InvalidPayload(e.to_string())
-                })?;
-            match result {
-                Ok(ret) => Ok(ret),
-                Err(err) => Err(err),
-            }
+            })
         })
     }
     pub async fn ping(&self) -> Result<u64, ::vox::VoxError> {
@@ -399,29 +405,32 @@ impl AuditClient {
         let ::vox::WithTracker {
             value: response,
             tracker: schema_tracker,
+            fds: __vox_frame_fds,
         } = with_tracker;
-        let response = response.get();
-        let ret_bytes = match &response.ret {
-            ::vox::Payload::PostcardBytes(bytes) => bytes,
-            _ => {
-                return Err(
-                    ::vox::VoxError::<::core::convert::Infallible>::InvalidPayload(
-                        "response not PostcardBytes".into(),
-                    ),
-                );
+        ::vox::provide_fds(__vox_frame_fds, move || {
+            let response = response.get();
+            let ret_bytes = match &response.ret {
+                ::vox::Payload::PostcardBytes(bytes) => bytes,
+                _ => {
+                    return Err(
+                        ::vox::VoxError::<::core::convert::Infallible>::InvalidPayload(
+                            "response not PostcardBytes".into(),
+                        ),
+                    );
+                }
+            };
+            let result: Result<u64, ::vox::VoxError<::core::convert::Infallible>> =
+                ::vox::schema_deser::schema_deserialize_response::<
+                    Result<u64, ::vox::VoxError<::core::convert::Infallible>>,
+                >(ret_bytes, method_id, &schema_tracker)
+                .map_err(|e| {
+                    ::vox::VoxError::<::core::convert::Infallible>::InvalidPayload(e.to_string())
+                })?;
+            match result {
+                Ok(ret) => Ok(ret),
+                Err(err) => Err(err),
             }
-        };
-        let result: Result<u64, ::vox::VoxError<::core::convert::Infallible>> =
-            ::vox::schema_deser::schema_deserialize_response::<
-                Result<u64, ::vox::VoxError<::core::convert::Infallible>>,
-            >(ret_bytes, method_id, &schema_tracker)
-            .map_err(|e| {
-                ::vox::VoxError::<::core::convert::Infallible>::InvalidPayload(e.to_string())
-            })?;
-        match result {
-            Ok(ret) => Ok(ret),
-            Err(err) => Err(err),
-        }
+        })
     }
 }
 impl ::vox::FromVoxSession for AuditClient {

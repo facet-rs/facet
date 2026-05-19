@@ -143,6 +143,11 @@ pub use calls::*;
 pub mod channel;
 pub use channel::*;
 
+pub mod fd;
+pub use fd::{FrameFds, collect_fds, frame_fds_len, provide_fds};
+#[cfg(unix)]
+pub use fd::{Fd, FdAdapter, SCM_MAX_FD};
+
 mod shape_classify;
 pub use shape_classify::*;
 
@@ -158,6 +163,11 @@ pub use schema::*;
 pub struct WithTracker<T> {
     pub value: T,
     pub tracker: std::sync::Arc<SchemaRecvTracker>,
+    /// Descriptors that arrived with this response frame (`SCM_RIGHTS`).
+    /// The generated client installs these as the
+    /// [`provide_fds`] source around the typed-return
+    /// decode. `()` off-Unix.
+    pub fds: crate::FrameFds,
 }
 
 impl<T> std::fmt::Debug for WithTracker<T> {

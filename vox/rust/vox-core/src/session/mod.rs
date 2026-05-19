@@ -828,6 +828,9 @@ vox_types::impl_reborrow!(ConnectionMessage);
 pub(crate) struct RecvMessage {
     pub schemas: Arc<vox_types::SchemaRecvTracker>,
     pub msg: SelfRef<ConnectionMessage<'static>>,
+    /// Descriptors that arrived with this frame (`SCM_RIGHTS`). Threaded to
+    /// the typed-decode site; `()` off-Unix.
+    pub fds: vox_types::FrameFds,
 }
 
 impl ConnectionHandle {
@@ -1267,7 +1270,10 @@ impl Session {
                     vox_types::dlog!("[session {:?}] recv_msg returned", self.role);
                     match msg {
                         Ok(Some(msg)) => {
-                            self.handle_message(msg, &mut keepalive_runtime).await;
+                            // Capture the frame's descriptors before the next
+                            // recv overwrites them; thread them with the msg.
+                            let fds = self.rx.take_frame_fds();
+                            self.handle_message(msg, fds, &mut keepalive_runtime).await;
                         }
                         Ok(None) => {
                             vox_types::dlog!("[session {:?}] recv loop: conduit returned EOF", self.role);
@@ -1445,6 +1451,7 @@ impl Session {
     async fn handle_message(
         &mut self,
         msg: SelfRef<Message<'static>>,
+        fds: vox_types::FrameFds,
         keepalive_runtime: &mut Option<KeepaliveRuntime>,
     ) {
         let msg_ref = msg.get();
@@ -1610,6 +1617,7 @@ impl Session {
                 let recv_msg = RecvMessage {
                     schemas: Arc::clone(&state.schema_recv_tracker),
                     msg: r.map(ConnectionMessage::Request),
+                    fds,
                 };
                 vox_types::dlog!(
                     "[session {:?}] dispatch request: conn={:?} req={:?} body={}",
@@ -1632,6 +1640,7 @@ impl Session {
                 let recv_msg = RecvMessage {
                     schemas: Arc::clone(&state.schema_recv_tracker),
                     msg: c.map(ConnectionMessage::Channel),
+                    fds,
                 };
                 if conn_tx.send(recv_msg).await.is_err() {
                     self.remove_connection_with_reason(&conn_id, ConnectionCloseReason::Unknown);
@@ -2773,6 +2782,10 @@ pub trait DynConduitTx: MaybeSend + MaybeSync {
 pub trait DynConduitRx: MaybeSend {
     fn recv_msg<'a>(&'a mut self)
     -> BoxFut<'a, std::io::Result<Option<SelfRef<Message<'static>>>>>;
+
+    /// Descriptors that arrived with the frame from the most recent
+    /// `recv_msg`. Threaded alongside the message to the typed-decode site.
+    fn take_frame_fds(&mut self) -> vox_types::FrameFds;
 }
 
 // r[impl zerocopy.send]
@@ -2812,6 +2825,10 @@ where
                 .await
                 .map_err(|error| std::io::Error::other(error.to_string()))
         })
+    }
+
+    fn take_frame_fds(&mut self) -> vox_types::FrameFds {
+        ConduitRx::take_frame_fds(self)
     }
 }
 

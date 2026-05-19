@@ -1,5 +1,6 @@
 ---
 source: rust/vox-macros-core/src/lib.rs
+assertion_line: 1121
 expression: "generate(quote!\n{ pub trait Adder { async fn add(&self, a: i32, b: i32) -> i32; } })"
 ---
 #[allow(non_snake_case, clippy::all)]
@@ -246,29 +247,32 @@ impl AdderClient {
         let ::vox::WithTracker {
             value: response,
             tracker: schema_tracker,
+            fds: __vox_frame_fds,
         } = with_tracker;
-        let response = response.get();
-        let ret_bytes = match &response.ret {
-            ::vox::Payload::PostcardBytes(bytes) => bytes,
-            _ => {
-                return Err(
-                    ::vox::VoxError::<::core::convert::Infallible>::InvalidPayload(
-                        "response not PostcardBytes".into(),
-                    ),
-                );
+        ::vox::provide_fds(__vox_frame_fds, move || {
+            let response = response.get();
+            let ret_bytes = match &response.ret {
+                ::vox::Payload::PostcardBytes(bytes) => bytes,
+                _ => {
+                    return Err(
+                        ::vox::VoxError::<::core::convert::Infallible>::InvalidPayload(
+                            "response not PostcardBytes".into(),
+                        ),
+                    );
+                }
+            };
+            let result: Result<i32, ::vox::VoxError<::core::convert::Infallible>> =
+                ::vox::schema_deser::schema_deserialize_response::<
+                    Result<i32, ::vox::VoxError<::core::convert::Infallible>>,
+                >(ret_bytes, method_id, &schema_tracker)
+                .map_err(|e| {
+                    ::vox::VoxError::<::core::convert::Infallible>::InvalidPayload(e.to_string())
+                })?;
+            match result {
+                Ok(ret) => Ok(ret),
+                Err(err) => Err(err),
             }
-        };
-        let result: Result<i32, ::vox::VoxError<::core::convert::Infallible>> =
-            ::vox::schema_deser::schema_deserialize_response::<
-                Result<i32, ::vox::VoxError<::core::convert::Infallible>>,
-            >(ret_bytes, method_id, &schema_tracker)
-            .map_err(|e| {
-                ::vox::VoxError::<::core::convert::Infallible>::InvalidPayload(e.to_string())
-            })?;
-        match result {
-            Ok(ret) => Ok(ret),
-            Err(err) => Err(err),
-        }
+        })
     }
 }
 impl ::vox::FromVoxSession for AdderClient {

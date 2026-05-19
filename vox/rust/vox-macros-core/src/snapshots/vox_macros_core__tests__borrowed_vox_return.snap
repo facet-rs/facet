@@ -1,5 +1,6 @@
 ---
 source: rust/vox-macros-core/src/lib.rs
+assertion_line: 1324
 expression: "generate(quote!\n{ trait Hasher { async fn hash(&self, payload: String) -> &'vox str; } })"
 ---
 #[allow(non_snake_case, clippy::all)]
@@ -254,29 +255,34 @@ impl HasherClient {
         let ::vox::WithTracker {
             value: response,
             tracker: schema_tracker,
+            fds: __vox_frame_fds,
         } = with_tracker;
-        response.try_repack(|resp, _bytes| {
-            let ret_bytes = match &resp.ret {
-                ::vox::Payload::PostcardBytes(bytes) => bytes,
-                _ => {
-                    return Err(
+        ::vox::provide_fds(__vox_frame_fds, move || {
+            response.try_repack(|resp, _bytes| {
+                let ret_bytes = match &resp.ret {
+                    ::vox::Payload::PostcardBytes(bytes) => bytes,
+                    _ => {
+                        return Err(
+                            ::vox::VoxError::<::core::convert::Infallible>::InvalidPayload(
+                                "response not PostcardBytes".into(),
+                            ),
+                        );
+                    }
+                };
+                let result: Result<&'static str, ::vox::VoxError<::core::convert::Infallible>> =
+                    ::vox::schema_deser::schema_deserialize_response_borrowed::<
+                        Result<&'static str, ::vox::VoxError<::core::convert::Infallible>>,
+                    >(ret_bytes, method_id, &schema_tracker)
+                    .map_err(|e| {
                         ::vox::VoxError::<::core::convert::Infallible>::InvalidPayload(
-                            "response not PostcardBytes".into(),
-                        ),
-                    );
+                            e.to_string(),
+                        )
+                    })?;
+                match result {
+                    Ok(ret) => Ok(ret),
+                    Err(err) => Err(err),
                 }
-            };
-            let result: Result<&'static str, ::vox::VoxError<::core::convert::Infallible>> =
-                ::vox::schema_deser::schema_deserialize_response_borrowed::<
-                    Result<&'static str, ::vox::VoxError<::core::convert::Infallible>>,
-                >(ret_bytes, method_id, &schema_tracker)
-                .map_err(|e| {
-                    ::vox::VoxError::<::core::convert::Infallible>::InvalidPayload(e.to_string())
-                })?;
-            match result {
-                Ok(ret) => Ok(ret),
-                Err(err) => Err(err),
-            }
+            })
         })
     }
 }
