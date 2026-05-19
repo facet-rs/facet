@@ -19,60 +19,163 @@ use owo_colors::OwoColorize;
 
 /// Melange syntax highlighting for the type-definition view.
 ///
-/// Colours follow the active [`Palette`](crate::Palette), which is detected
-/// from the terminal background once per process (see [`crate::Theme`]).
+/// The free functions here are `const` and return a fixed Melange-dark
+/// style, preserving the pre-0.47 `const` API. For terminal-aware colours
+/// — the [`Palette`](crate::Palette) detected from the terminal background
+/// once per process (see [`crate::Theme`]) — use the matching function in
+/// the [`themed`] submodule, which is what the shape view renders with.
 pub mod colors {
-    use crate::color::detected_palette;
+    use crate::color::Palette;
     use owo_colors::Style;
 
     /// Keywords: `struct`, `enum`, `pub`, etc.
-    pub fn keyword() -> Style {
-        Style::new().color(detected_palette().accents[1])
+    pub const fn keyword() -> Style {
+        Style::new().fg_rgb::<
+            { Palette::MELANGE_DARK.accents[1].0 },
+            { Palette::MELANGE_DARK.accents[1].1 },
+            { Palette::MELANGE_DARK.accents[1].2 },
+        >()
     }
 
     /// Type names and identifiers.
-    pub fn type_name() -> Style {
-        Style::new().color(detected_palette().type_name)
+    pub const fn type_name() -> Style {
+        Style::new().fg_rgb::<
+            { Palette::MELANGE_DARK.type_name.0 },
+            { Palette::MELANGE_DARK.type_name.1 },
+            { Palette::MELANGE_DARK.type_name.2 },
+        >()
     }
 
     /// Field names.
-    pub fn field_name() -> Style {
-        Style::new().color(detected_palette().field_name)
+    pub const fn field_name() -> Style {
+        Style::new().fg_rgb::<
+            { Palette::MELANGE_DARK.field_name.0 },
+            { Palette::MELANGE_DARK.field_name.1 },
+            { Palette::MELANGE_DARK.field_name.2 },
+        >()
     }
 
     /// Primitive types: `u8`, `i32`, `bool`, `String`, etc.
-    pub fn primitive() -> Style {
-        Style::new().color(detected_palette().type_name)
+    pub const fn primitive() -> Style {
+        Style::new().fg_rgb::<
+            { Palette::MELANGE_DARK.type_name.0 },
+            { Palette::MELANGE_DARK.type_name.1 },
+            { Palette::MELANGE_DARK.type_name.2 },
+        >()
     }
 
     /// Punctuation: `{`, `}`, `(`, `)`, `:`, etc.
-    pub fn punctuation() -> Style {
-        Style::new().color(detected_palette().punctuation)
+    pub const fn punctuation() -> Style {
+        Style::new().fg_rgb::<
+            { Palette::MELANGE_DARK.punctuation.0 },
+            { Palette::MELANGE_DARK.punctuation.1 },
+            { Palette::MELANGE_DARK.punctuation.2 },
+        >()
     }
 
     /// Attribute markers: `#[...]`.
-    pub fn attribute() -> Style {
-        Style::new().color(detected_palette().comment)
+    pub const fn attribute() -> Style {
+        Style::new().fg_rgb::<
+            { Palette::MELANGE_DARK.comment.0 },
+            { Palette::MELANGE_DARK.comment.1 },
+            { Palette::MELANGE_DARK.comment.2 },
+        >()
     }
 
     /// Attribute content: `derive`, `facet`, `repr`.
-    pub fn attribute_content() -> Style {
-        Style::new().color(detected_palette().comment)
+    pub const fn attribute_content() -> Style {
+        Style::new().fg_rgb::<
+            { Palette::MELANGE_DARK.comment.0 },
+            { Palette::MELANGE_DARK.comment.1 },
+            { Palette::MELANGE_DARK.comment.2 },
+        >()
     }
 
     /// String literals.
-    pub fn string() -> Style {
-        Style::new().color(detected_palette().string)
+    pub const fn string() -> Style {
+        Style::new().fg_rgb::<
+            { Palette::MELANGE_DARK.string.0 },
+            { Palette::MELANGE_DARK.string.1 },
+            { Palette::MELANGE_DARK.string.2 },
+        >()
     }
 
     /// Container types: `Vec`, `Option`, `HashMap`.
-    pub fn container() -> Style {
-        Style::new().color(detected_palette().type_name)
+    pub const fn container() -> Style {
+        Style::new().fg_rgb::<
+            { Palette::MELANGE_DARK.type_name.0 },
+            { Palette::MELANGE_DARK.type_name.1 },
+            { Palette::MELANGE_DARK.type_name.2 },
+        >()
     }
 
     /// Doc comments.
-    pub fn comment() -> Style {
-        Style::new().color(detected_palette().comment)
+    pub const fn comment() -> Style {
+        Style::new().fg_rgb::<
+            { Palette::MELANGE_DARK.comment.0 },
+            { Palette::MELANGE_DARK.comment.1 },
+            { Palette::MELANGE_DARK.comment.2 },
+        >()
+    }
+
+    /// Terminal-aware Melange styles, matching [`Theme::Auto`](crate::Theme).
+    ///
+    /// Unlike the `const` functions in the parent module, these resolve the
+    /// active [`Palette`](crate::Palette) from the terminal background
+    /// (detected once per process) and are what the shape view renders with.
+    pub mod themed {
+        use crate::color::detected_palette;
+        use owo_colors::Style;
+
+        /// Keywords: `struct`, `enum`, `pub`, etc.
+        pub fn keyword() -> Style {
+            Style::new().color(detected_palette().accents[1])
+        }
+
+        /// Type names and identifiers.
+        pub fn type_name() -> Style {
+            Style::new().color(detected_palette().type_name)
+        }
+
+        /// Field names.
+        pub fn field_name() -> Style {
+            Style::new().color(detected_palette().field_name)
+        }
+
+        /// Primitive types: `u8`, `i32`, `bool`, `String`, etc.
+        pub fn primitive() -> Style {
+            Style::new().color(detected_palette().type_name)
+        }
+
+        /// Punctuation: `{`, `}`, `(`, `)`, `:`, etc.
+        pub fn punctuation() -> Style {
+            Style::new().color(detected_palette().punctuation)
+        }
+
+        /// Attribute markers: `#[...]`.
+        pub fn attribute() -> Style {
+            Style::new().color(detected_palette().comment)
+        }
+
+        /// Attribute content: `derive`, `facet`, `repr`.
+        pub fn attribute_content() -> Style {
+            Style::new().color(detected_palette().comment)
+        }
+
+        /// String literals.
+        pub fn string() -> Style {
+            Style::new().color(detected_palette().string)
+        }
+
+        /// Container types: `Vec`, `Option`, `HashMap`.
+        pub fn container() -> Style {
+            Style::new().color(detected_palette().type_name)
+        }
+
+        /// Doc comments.
+        pub fn comment() -> Style {
+            Style::new().color(detected_palette().comment)
+        }
     }
 }
 
@@ -310,11 +413,19 @@ fn format_struct_colored(
     }
 
     // #[derive(Facet)]
-    write!(output, "{}", "#[".style(colors::attribute()))?;
-    write!(output, "{}", "derive".style(colors::attribute_content()))?;
-    write!(output, "{}", "(".style(colors::attribute()))?;
-    write!(output, "{}", "Facet".style(colors::attribute_content()))?;
-    writeln!(output, "{}", ")]".style(colors::attribute()))?;
+    write!(output, "{}", "#[".style(colors::themed::attribute()))?;
+    write!(
+        output,
+        "{}",
+        "derive".style(colors::themed::attribute_content())
+    )?;
+    write!(output, "{}", "(".style(colors::themed::attribute()))?;
+    write!(
+        output,
+        "{}",
+        "Facet".style(colors::themed::attribute_content())
+    )?;
+    writeln!(output, "{}", ")]".style(colors::themed::attribute()))?;
 
     // Write facet attributes if any
     write_facet_attrs_colored(shape, output)?;
@@ -326,13 +437,13 @@ fn format_struct_colored(
 
     match struct_type.kind {
         StructKind::Struct => {
-            write!(output, "{} ", "struct".style(colors::keyword()))?;
+            write!(output, "{} ", "struct".style(colors::themed::keyword()))?;
             write!(
                 output,
                 "{}",
-                shape.type_identifier.style(colors::type_name())
+                shape.type_identifier.style(colors::themed::type_name())
             )?;
-            writeln!(output, " {}", "{".style(colors::punctuation()))?;
+            writeln!(output, " {}", "{".style(colors::themed::punctuation()))?;
 
             for (i, field) in struct_type.fields.iter().enumerate() {
                 // Blank line between fields (not before the first one)
@@ -347,42 +458,46 @@ fn format_struct_colored(
                 if config.show_third_party_attrs {
                     write_field_third_party_attrs_colored(field, output, "    ")?;
                 }
-                write!(output, "    {}", field.name.style(colors::field_name()))?;
-                write!(output, "{} ", ":".style(colors::punctuation()))?;
+                write!(
+                    output,
+                    "    {}",
+                    field.name.style(colors::themed::field_name())
+                )?;
+                write!(output, "{} ", ":".style(colors::themed::punctuation()))?;
                 write_type_name_colored(field.shape(), output)?;
-                writeln!(output, "{}", ",".style(colors::punctuation()))?;
+                writeln!(output, "{}", ",".style(colors::themed::punctuation()))?;
             }
-            write!(output, "{}", "}".style(colors::punctuation()))?;
+            write!(output, "{}", "}".style(colors::themed::punctuation()))?;
         }
         StructKind::Tuple | StructKind::TupleStruct => {
-            write!(output, "{} ", "struct".style(colors::keyword()))?;
+            write!(output, "{} ", "struct".style(colors::themed::keyword()))?;
             write!(
                 output,
                 "{}",
-                shape.type_identifier.style(colors::type_name())
+                shape.type_identifier.style(colors::themed::type_name())
             )?;
-            write!(output, "{}", "(".style(colors::punctuation()))?;
+            write!(output, "{}", "(".style(colors::themed::punctuation()))?;
             for (i, field) in struct_type.fields.iter().enumerate() {
                 if i > 0 {
-                    write!(output, "{} ", ",".style(colors::punctuation()))?;
+                    write!(output, "{} ", ",".style(colors::themed::punctuation()))?;
                 }
                 write_type_name_colored(field.shape(), output)?;
             }
             write!(
                 output,
                 "{}{}",
-                ")".style(colors::punctuation()),
-                ";".style(colors::punctuation())
+                ")".style(colors::themed::punctuation()),
+                ";".style(colors::themed::punctuation())
             )?;
         }
         StructKind::Unit => {
-            write!(output, "{} ", "struct".style(colors::keyword()))?;
+            write!(output, "{} ", "struct".style(colors::themed::keyword()))?;
             write!(
                 output,
                 "{}",
-                shape.type_identifier.style(colors::type_name())
+                shape.type_identifier.style(colors::themed::type_name())
             )?;
-            write!(output, "{}", ";".style(colors::punctuation()))?;
+            write!(output, "{}", ";".style(colors::themed::punctuation()))?;
         }
     }
     Ok(())
@@ -400,11 +515,19 @@ fn format_enum_colored(
     }
 
     // #[derive(Facet)]
-    write!(output, "{}", "#[".style(colors::attribute()))?;
-    write!(output, "{}", "derive".style(colors::attribute_content()))?;
-    write!(output, "{}", "(".style(colors::attribute()))?;
-    write!(output, "{}", "Facet".style(colors::attribute_content()))?;
-    writeln!(output, "{}", ")]".style(colors::attribute()))?;
+    write!(output, "{}", "#[".style(colors::themed::attribute()))?;
+    write!(
+        output,
+        "{}",
+        "derive".style(colors::themed::attribute_content())
+    )?;
+    write!(output, "{}", "(".style(colors::themed::attribute()))?;
+    write!(
+        output,
+        "{}",
+        "Facet".style(colors::themed::attribute_content())
+    )?;
+    writeln!(output, "{}", ")]".style(colors::themed::attribute()))?;
 
     // Write repr for the discriminant type
     let repr_str = match enum_type.enum_repr {
@@ -423,11 +546,15 @@ fn format_enum_colored(
     };
 
     if let Some(repr) = repr_str {
-        write!(output, "{}", "#[".style(colors::attribute()))?;
-        write!(output, "{}", "repr".style(colors::attribute_content()))?;
-        write!(output, "{}", "(".style(colors::attribute()))?;
-        write!(output, "{}", repr.style(colors::primitive()))?;
-        writeln!(output, "{}", ")]".style(colors::attribute()))?;
+        write!(output, "{}", "#[".style(colors::themed::attribute()))?;
+        write!(
+            output,
+            "{}",
+            "repr".style(colors::themed::attribute_content())
+        )?;
+        write!(output, "{}", "(".style(colors::themed::attribute()))?;
+        write!(output, "{}", repr.style(colors::themed::primitive()))?;
+        writeln!(output, "{}", ")]".style(colors::themed::attribute()))?;
     }
 
     // Write facet attributes if any
@@ -439,13 +566,13 @@ fn format_enum_colored(
     }
 
     // enum Name {
-    write!(output, "{} ", "enum".style(colors::keyword()))?;
+    write!(output, "{} ", "enum".style(colors::themed::keyword()))?;
     write!(
         output,
         "{}",
-        shape.type_identifier.style(colors::type_name())
+        shape.type_identifier.style(colors::themed::type_name())
     )?;
-    writeln!(output, " {}", "{".style(colors::punctuation()))?;
+    writeln!(output, " {}", "{".style(colors::themed::punctuation()))?;
 
     for (vi, variant) in enum_type.variants.iter().enumerate() {
         // Blank line between variants (not before the first one)
@@ -463,24 +590,36 @@ fn format_enum_colored(
 
         match variant.data.kind {
             StructKind::Unit => {
-                write!(output, "    {}", variant.name.style(colors::type_name()))?;
-                writeln!(output, "{}", ",".style(colors::punctuation()))?;
+                write!(
+                    output,
+                    "    {}",
+                    variant.name.style(colors::themed::type_name())
+                )?;
+                writeln!(output, "{}", ",".style(colors::themed::punctuation()))?;
             }
             StructKind::Tuple | StructKind::TupleStruct => {
-                write!(output, "    {}", variant.name.style(colors::type_name()))?;
-                write!(output, "{}", "(".style(colors::punctuation()))?;
+                write!(
+                    output,
+                    "    {}",
+                    variant.name.style(colors::themed::type_name())
+                )?;
+                write!(output, "{}", "(".style(colors::themed::punctuation()))?;
                 for (i, field) in variant.data.fields.iter().enumerate() {
                     if i > 0 {
-                        write!(output, "{} ", ",".style(colors::punctuation()))?;
+                        write!(output, "{} ", ",".style(colors::themed::punctuation()))?;
                     }
                     write_type_name_colored(field.shape(), output)?;
                 }
-                write!(output, "{}", ")".style(colors::punctuation()))?;
-                writeln!(output, "{}", ",".style(colors::punctuation()))?;
+                write!(output, "{}", ")".style(colors::themed::punctuation()))?;
+                writeln!(output, "{}", ",".style(colors::themed::punctuation()))?;
             }
             StructKind::Struct => {
-                write!(output, "    {}", variant.name.style(colors::type_name()))?;
-                writeln!(output, " {}", "{".style(colors::punctuation()))?;
+                write!(
+                    output,
+                    "    {}",
+                    variant.name.style(colors::themed::type_name())
+                )?;
+                writeln!(output, " {}", "{".style(colors::themed::punctuation()))?;
                 for (fi, field) in variant.data.fields.iter().enumerate() {
                     // Blank line between variant fields (not before the first one)
                     if fi > 0 {
@@ -494,18 +633,22 @@ fn format_enum_colored(
                     if config.show_third_party_attrs {
                         write_field_third_party_attrs_colored(field, output, "        ")?;
                     }
-                    write!(output, "        {}", field.name.style(colors::field_name()))?;
-                    write!(output, "{} ", ":".style(colors::punctuation()))?;
+                    write!(
+                        output,
+                        "        {}",
+                        field.name.style(colors::themed::field_name())
+                    )?;
+                    write!(output, "{} ", ":".style(colors::themed::punctuation()))?;
                     write_type_name_colored(field.shape(), output)?;
-                    writeln!(output, "{}", ",".style(colors::punctuation()))?;
+                    writeln!(output, "{}", ",".style(colors::themed::punctuation()))?;
                 }
-                write!(output, "    {}", "}".style(colors::punctuation()))?;
-                writeln!(output, "{}", ",".style(colors::punctuation()))?;
+                write!(output, "    {}", "}".style(colors::themed::punctuation()))?;
+                writeln!(output, "{}", ",".style(colors::themed::punctuation()))?;
             }
         }
     }
 
-    write!(output, "{}", "}".style(colors::punctuation()))?;
+    write!(output, "{}", "}".style(colors::themed::punctuation()))?;
     Ok(())
 }
 
@@ -516,22 +659,22 @@ fn write_facet_attrs_colored(shape: &Shape, output: &mut String) -> core::fmt::R
         if let Some(content) = shape.get_content_attr() {
             attrs.push(alloc::format!(
                 "{}{}{}{}{}{}{}{}{}",
-                "tag".style(colors::attribute_content()),
-                " = ".style(colors::punctuation()),
-                "\"".style(colors::string()),
-                tag.style(colors::string()),
-                "\"".style(colors::string()),
-                ", ".style(colors::punctuation()),
-                "content".style(colors::attribute_content()),
-                " = ".style(colors::punctuation()),
-                format!("\"{content}\"").style(colors::string()),
+                "tag".style(colors::themed::attribute_content()),
+                " = ".style(colors::themed::punctuation()),
+                "\"".style(colors::themed::string()),
+                tag.style(colors::themed::string()),
+                "\"".style(colors::themed::string()),
+                ", ".style(colors::themed::punctuation()),
+                "content".style(colors::themed::attribute_content()),
+                " = ".style(colors::themed::punctuation()),
+                format!("\"{content}\"").style(colors::themed::string()),
             ));
         } else {
             attrs.push(alloc::format!(
                 "{}{}{}",
-                "tag".style(colors::attribute_content()),
-                " = ".style(colors::punctuation()),
-                format!("\"{tag}\"").style(colors::string()),
+                "tag".style(colors::themed::attribute_content()),
+                " = ".style(colors::themed::punctuation()),
+                format!("\"{tag}\"").style(colors::themed::string()),
             ));
         }
     }
@@ -539,27 +682,31 @@ fn write_facet_attrs_colored(shape: &Shape, output: &mut String) -> core::fmt::R
     if shape.is_untagged() {
         attrs.push(alloc::format!(
             "{}",
-            "untagged".style(colors::attribute_content())
+            "untagged".style(colors::themed::attribute_content())
         ));
     }
 
     if shape.has_deny_unknown_fields_attr() {
         attrs.push(alloc::format!(
             "{}",
-            "deny_unknown_fields".style(colors::attribute_content())
+            "deny_unknown_fields".style(colors::themed::attribute_content())
         ));
     }
 
     if !attrs.is_empty() {
-        write!(output, "{}", "#[".style(colors::attribute()))?;
-        write!(output, "{}", "facet".style(colors::attribute_content()))?;
-        write!(output, "{}", "(".style(colors::attribute()))?;
+        write!(output, "{}", "#[".style(colors::themed::attribute()))?;
         write!(
             output,
             "{}",
-            attrs.join(&format!("{}", ", ".style(colors::punctuation())))
+            "facet".style(colors::themed::attribute_content())
         )?;
-        writeln!(output, "{}", ")]".style(colors::attribute()))?;
+        write!(output, "{}", "(".style(colors::themed::attribute()))?;
+        write!(
+            output,
+            "{}",
+            attrs.join(&format!("{}", ", ".style(colors::themed::punctuation())))
+        )?;
+        writeln!(output, "{}", ")]".style(colors::themed::attribute()))?;
     }
 
     Ok(())
@@ -573,7 +720,11 @@ fn write_doc_comments_colored(
 ) -> core::fmt::Result {
     for line in doc {
         write!(output, "{indent}")?;
-        writeln!(output, "{}", format!("///{line}").style(colors::comment()))?;
+        writeln!(
+            output,
+            "{}",
+            format!("///{line}").style(colors::themed::comment())
+        )?;
     }
     Ok(())
 }
@@ -596,21 +747,25 @@ fn write_third_party_attrs_colored(
     // Write one line per namespace with all keys
     for (ns, keys) in by_namespace {
         write!(output, "{indent}")?;
-        write!(output, "{}", "#[".style(colors::attribute()))?;
-        write!(output, "{}", "facet".style(colors::attribute_content()))?;
-        write!(output, "{}", "(".style(colors::attribute()))?;
+        write!(output, "{}", "#[".style(colors::themed::attribute()))?;
+        write!(
+            output,
+            "{}",
+            "facet".style(colors::themed::attribute_content())
+        )?;
+        write!(output, "{}", "(".style(colors::themed::attribute()))?;
 
         for (i, key) in keys.iter().enumerate() {
             if i > 0 {
-                write!(output, "{}", ", ".style(colors::punctuation()))?;
+                write!(output, "{}", ", ".style(colors::themed::punctuation()))?;
             }
-            write!(output, "{}", ns.style(colors::attribute_content()))?;
-            write!(output, "{}", "::".style(colors::punctuation()))?;
-            write!(output, "{}", key.style(colors::attribute_content()))?;
+            write!(output, "{}", ns.style(colors::themed::attribute_content()))?;
+            write!(output, "{}", "::".style(colors::themed::punctuation()))?;
+            write!(output, "{}", key.style(colors::themed::attribute_content()))?;
         }
 
-        write!(output, "{}", ")".style(colors::attribute()))?;
-        writeln!(output, "{}", "]".style(colors::attribute()))?;
+        write!(output, "{}", ")".style(colors::themed::attribute()))?;
+        writeln!(output, "{}", "]".style(colors::themed::attribute()))?;
     }
     Ok(())
 }
@@ -639,47 +794,47 @@ fn write_type_name_colored(shape: &Shape, output: &mut String) -> core::fmt::Res
             // Check if it's a primitive type
             let id = shape.type_identifier;
             if is_primitive_type(id) {
-                write!(output, "{}", id.style(colors::primitive()))?;
+                write!(output, "{}", id.style(colors::themed::primitive()))?;
             } else {
-                write!(output, "{}", id.style(colors::type_name()))?;
+                write!(output, "{}", id.style(colors::themed::type_name()))?;
             }
         }
         Def::Pointer(_) => {
             if let Type::Pointer(PointerType::Reference(r)) = shape.ty
                 && let Def::Array(array_def) = r.target.def
             {
-                write!(output, "{}", "&[".style(colors::punctuation()))?;
+                write!(output, "{}", "&[".style(colors::themed::punctuation()))?;
                 write_type_name_colored(array_def.t, output)?;
                 write!(
                     output,
                     "{}{}{}",
-                    "; ".style(colors::punctuation()),
-                    array_def.n.style(colors::primitive()),
-                    "]".style(colors::punctuation())
+                    "; ".style(colors::themed::punctuation()),
+                    array_def.n.style(colors::themed::primitive()),
+                    "]".style(colors::themed::punctuation())
                 )?;
                 return Ok(());
             }
             write!(
                 output,
                 "{}",
-                shape.type_identifier.style(colors::type_name())
+                shape.type_identifier.style(colors::themed::type_name())
             )?;
         }
         Def::List(list_def) => {
-            write!(output, "{}", "Vec".style(colors::container()))?;
-            write!(output, "{}", "<".style(colors::punctuation()))?;
+            write!(output, "{}", "Vec".style(colors::themed::container()))?;
+            write!(output, "{}", "<".style(colors::themed::punctuation()))?;
             write_type_name_colored(list_def.t, output)?;
-            write!(output, "{}", ">".style(colors::punctuation()))?;
+            write!(output, "{}", ">".style(colors::themed::punctuation()))?;
         }
         Def::Array(array_def) => {
-            write!(output, "{}", "[".style(colors::punctuation()))?;
+            write!(output, "{}", "[".style(colors::themed::punctuation()))?;
             write_type_name_colored(array_def.t, output)?;
             write!(
                 output,
                 "{}{}{}",
-                "; ".style(colors::punctuation()),
-                array_def.n.style(colors::primitive()),
-                "]".style(colors::punctuation())
+                "; ".style(colors::themed::punctuation()),
+                array_def.n.style(colors::themed::primitive()),
+                "]".style(colors::themed::punctuation())
             )?;
         }
         Def::Map(map_def) => {
@@ -688,25 +843,25 @@ fn write_type_name_colored(shape: &Shape, output: &mut String) -> core::fmt::Res
             } else {
                 "HashMap"
             };
-            write!(output, "{}", map_name.style(colors::container()))?;
-            write!(output, "{}", "<".style(colors::punctuation()))?;
+            write!(output, "{}", map_name.style(colors::themed::container()))?;
+            write!(output, "{}", "<".style(colors::themed::punctuation()))?;
             write_type_name_colored(map_def.k, output)?;
-            write!(output, "{} ", ",".style(colors::punctuation()))?;
+            write!(output, "{} ", ",".style(colors::themed::punctuation()))?;
             write_type_name_colored(map_def.v, output)?;
-            write!(output, "{}", ">".style(colors::punctuation()))?;
+            write!(output, "{}", ">".style(colors::themed::punctuation()))?;
         }
         Def::Option(option_def) => {
-            write!(output, "{}", "Option".style(colors::container()))?;
-            write!(output, "{}", "<".style(colors::punctuation()))?;
+            write!(output, "{}", "Option".style(colors::themed::container()))?;
+            write!(output, "{}", "<".style(colors::themed::punctuation()))?;
             write_type_name_colored(option_def.t, output)?;
-            write!(output, "{}", ">".style(colors::punctuation()))?;
+            write!(output, "{}", ">".style(colors::themed::punctuation()))?;
         }
         _ => {
             let id = shape.type_identifier;
             if is_primitive_type(id) {
-                write!(output, "{}", id.style(colors::primitive()))?;
+                write!(output, "{}", id.style(colors::themed::primitive()))?;
             } else {
-                write!(output, "{}", id.style(colors::type_name()))?;
+                write!(output, "{}", id.style(colors::themed::type_name()))?;
             }
         }
     }

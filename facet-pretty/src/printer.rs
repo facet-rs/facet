@@ -17,6 +17,8 @@ use facet_reflect::{Peek, ValueId};
 
 use owo_colors::OwoColorize;
 
+#[allow(deprecated)]
+use crate::color::ColorGenerator;
 use crate::color::{Palette, Theme};
 use crate::shape::{FieldSpan, Path, PathSegment, Span};
 
@@ -161,6 +163,20 @@ impl PrettyPrinter {
     /// Set the maximum depth for recursive printing
     pub const fn with_max_depth(mut self, depth: usize) -> Self {
         self.max_depth = Some(depth);
+        self
+    }
+
+    /// Set the color generator.
+    ///
+    /// Deprecated no-op shim: per-value colours now come from the active
+    /// [`Palette`]/[`Theme`]. The argument is ignored. Kept so pre-0.47
+    /// callers keep compiling.
+    #[deprecated(
+        since = "0.46.3",
+        note = "no-op; colours now come from `Theme`/`Palette`, configure via `with_theme`/`with_palette`"
+    )]
+    #[allow(deprecated)]
+    pub const fn with_color_generator(self, _generator: ColorGenerator) -> Self {
         self
     }
 
