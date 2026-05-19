@@ -12,10 +12,9 @@ repository.workspace = true
 publish = true
 
 [features]
-# These features are placeholders for when facet adds support for these types
-bytestring-facet = []
-compact_str-facet = []
-smartstring-facet = []
+bytestring-facet = ["facet/bytestring"]
+compact_str-facet = ["facet/compact_str"]
+smartstring-facet = ["facet/smartstring"]
 
 [dependencies]
 strid = { version = "9.0.0", path = "../strid" }

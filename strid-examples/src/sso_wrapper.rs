@@ -5,8 +5,9 @@
 //! of their values, so every valid UTF-8 string is potentially valid for
 //! these types.
 //!
-//! Note: This example requires facet support for `smartstring::SmartString` and
-//! `compact_str::CompactString`. See: https://github.com/facet-rs/facet/issues/1283 and https://github.com/facet-rs/facet/issues/1282
+//! Note: This example requires the `smartstring-facet` and `compact_str-facet`
+//! features, which enable facet's `smartstring` and `compact_str` features for
+//! `smartstring::SmartString` and `compact_str::CompactString` support.
 
 #![allow(dead_code)]
 
@@ -78,7 +79,7 @@ impl strid::Validator for LowerCompactString {
 
 #[cfg(all(feature = "smartstring-facet", feature = "compact_str-facet"))]
 impl strid::Normalizer for LowerCompactString {
-    fn normalize(s: &str) -> Result<Cow<str>, Self::Error> {
+    fn normalize(s: &str) -> Result<Cow<'_, str>, Self::Error> {
         if s.is_empty() {
             Err(InvalidString::EmptyString)
         } else if s.contains(char::is_uppercase) {

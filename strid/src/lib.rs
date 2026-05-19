@@ -854,7 +854,7 @@
 //! use strid::braid_ref;
 //!
 //! #[braid_ref(no_std)]
-//! pub struct NoStdValue;
+//! pub struct NoStdValue(str);
 //! #
 //! # fn main() {}
 //! ```
