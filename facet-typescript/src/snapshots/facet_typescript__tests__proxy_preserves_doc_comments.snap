@@ -1,6 +1,5 @@
 ---
 source: facet-typescript/src/lib.rs
-assertion_line: 1033
 expression: ts
 ---
 /**
