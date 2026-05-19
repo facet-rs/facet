@@ -164,7 +164,7 @@ fn detect() -> Palette {
     }
 }
 
-#[cfg(feature = "detect-terminal-theme")]
+#[cfg(all(feature = "detect-terminal-theme", not(target_arch = "wasm32")))]
 fn terminal_is_light() -> bool {
     use std::io::IsTerminal;
 
@@ -182,7 +182,7 @@ fn terminal_is_light() -> bool {
         .unwrap_or(false)
 }
 
-#[cfg(not(feature = "detect-terminal-theme"))]
+#[cfg(not(all(feature = "detect-terminal-theme", not(target_arch = "wasm32"))))]
 fn terminal_is_light() -> bool {
     false
 }

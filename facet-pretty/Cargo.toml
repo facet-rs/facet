@@ -26,12 +26,19 @@ camino = ["alloc", "facet-core/camino"]
 # Detect the terminal background colour to pick the light/dark Melange
 # variant automatically. Disable for a leaner dependency tree (detection
 # then falls back to dark, still overridable via FACET_PRETTY_THEME).
+# No-op on wasm: `terminal-light` pulls in `crossterm`, which doesn't
+# build for wasm32, so the dependency is target-gated below.
 detect-terminal-theme = ["dep:terminal-light"]
 
 [dependencies]
 facet-core = { path = "../facet-core", version = "0.46.3" }
 facet-reflect = { path = "../facet-reflect", version = "0.46.3" }
 owo-colors = { version = "4", features = ["supports-colors"] }
+
+# `terminal-light` -> `crossterm` does not compile on wasm32. The
+# `detect-terminal-theme` feature stays toggleable everywhere; on wasm it
+# simply has no dependency to pull in and detection falls back to dark.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 terminal-light = { version = "1.8", optional = true }
 
 [dev-dependencies]
