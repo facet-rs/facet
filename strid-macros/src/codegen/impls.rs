@@ -91,6 +91,7 @@ pub struct Impls {
     pub ord: ImplOrd,
     pub serde: ImplSerde,
     pub rusqlite: ImplRusqlite,
+    pub sailfish: ImplSailfish,
 }
 
 pub(crate) trait ToImpl {
@@ -319,6 +320,57 @@ impl ToImpl for ImplRusqlite {
                 impl ::rusqlite::types::ToSql for #ty {
                     fn to_sql(&self) -> ::rusqlite::Result<::rusqlite::types::ToSqlOutput<'_>> {
                         self.as_str().to_sql()
+                    }
+                }
+            }
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct ImplSailfish(ImplOption);
+
+impl Default for ImplSailfish {
+    fn default() -> Self {
+        Self(ImplOption::Omit)
+    }
+}
+
+impl From<ImplOption> for ImplSailfish {
+    fn from(opt: ImplOption) -> Self {
+        Self(opt)
+    }
+}
+
+impl ToImpl for ImplSailfish {
+    fn to_owned_impl(&self, cg: &OwnedCodeGen) -> Option<proc_macro2::TokenStream> {
+        self.0.map(|| {
+            let name = cg.ty;
+
+            quote! {
+                #[automatically_derived]
+                impl ::sailfish::runtime::Render for #name {
+                    #[inline]
+                    fn render(&self, b: &mut ::sailfish::runtime::Buffer) -> ::std::result::Result<(), ::sailfish::runtime::RenderError> {
+                        b.push_str(self.as_str());
+                        ::std::result::Result::Ok(())
+                    }
+                }
+            }
+        })
+    }
+
+    fn to_borrowed_impl(&self, cg: &RefCodeGen) -> Option<proc_macro2::TokenStream> {
+        self.0.map(|| {
+            let ty = &cg.ty;
+
+            quote! {
+                #[automatically_derived]
+                impl ::sailfish::runtime::Render for #ty {
+                    #[inline]
+                    fn render(&self, b: &mut ::sailfish::runtime::Buffer) -> ::std::result::Result<(), ::sailfish::runtime::RenderError> {
+                        b.push_str(self.as_str());
+                        ::std::result::Result::Ok(())
                     }
                 }
             }

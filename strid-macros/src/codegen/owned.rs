@@ -565,6 +565,7 @@ impl<'a> OwnedCodeGen<'a> {
         let ord = self.impls.ord.to_owned_impl(self);
         let serde = self.impls.serde.to_owned_impl(self);
         let rusqlite = self.impls.rusqlite.to_owned_impl(self);
+        let sailfish = self.impls.sailfish.to_owned_impl(self);
 
         let owned_attrs: proc_macro2::TokenStream =
             self.attrs.iter().map(|a| quote! {#[#a]}).collect();
@@ -597,6 +598,7 @@ impl<'a> OwnedCodeGen<'a> {
             #ord
             #serde
             #rusqlite
+            #sailfish
         }
     }
 }
