@@ -90,11 +90,12 @@ Day-to-day ergonomics: better output, better errors, less boilerplate.
 | [`figue`](https://docs.rs/figue) | Type-safe CLI args, environment variables, and config files in one layered model. [Guide](@/guide/cli.md). | [bearcove/figue](https://github.com/bearcove/figue) |
 | [`facet-cargo-toml`](https://docs.rs/facet-cargo-toml) | A fully-typed `Cargo.toml` / `Cargo.lock` parser. | [bearcove/facet-cargo-toml](https://github.com/bearcove/facet-cargo-toml) |
 
-## Web
+## Web & UI
 
 | Crate | What it does | Source |
 |-------|--------------|--------|
 | [`facet-axum`](https://docs.rs/facet-axum) | [axum](https://docs.rs/axum) extractors and responses backed by facet instead of serde. | [facet-rs/facet-axum](https://github.com/facet-rs/facet-axum) |
+| [`facet-egui`](https://docs.rs/facet-egui) | An [egui](https://www.egui.rs) inspector/editor widget for any `Facet` type — live, type-driven UI straight from a `Shape`. *Community-maintained.* | [Erik1000/facet-egui](https://github.com/Erik1000/facet-egui) |
 
 ## Building blocks
 
@@ -108,12 +109,6 @@ Lower-level pieces you'll meet when writing your own format crate or tooling.
 
 Writing a new format crate? The [Extend](@/extend/_index.md) section walks
 through `Peek`, `Partial`, and the format-crate architecture.
-
-## On the horizon
-
-`facet-egui` — live, type-driven [egui](https://www.egui.rs) inspectors and
-editors generated straight from a `Shape`. Not released yet; mentioned here
-because it's too fun not to.
 
 ---
 
