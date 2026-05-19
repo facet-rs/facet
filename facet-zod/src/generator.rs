@@ -42,6 +42,7 @@ impl ZodGenerator {
     pub fn emit(&self) -> String {
         let registry = self.discover_all();
         let sorted = toposort(&registry);
+        let map = &registry.map;
 
         let mut out = String::new();
 
@@ -58,7 +59,7 @@ impl ZodGenerator {
             let name = schema_name(shape);
             let ctx = Ctx {
                 config: &self.config,
-                registry: &registry,
+                registry: map,
                 emitted: &emitted,
                 root: shape.id,
             };
@@ -79,13 +80,24 @@ impl ZodGenerator {
         out
     }
 
-    fn discover_all(&self) -> HashMap<ConstTypeId, &'static Shape> {
-        let mut registry = HashMap::new();
+    fn discover_all(&self) -> Registry {
+        let mut registry = Registry::default();
+        let mut seen = HashSet::new();
         for shape in &self.roots {
-            discover(shape, &mut registry);
+            discover(shape, &mut registry, &mut seen);
         }
         registry
     }
+}
+
+/// Named schemas to emit. `map` answers "does this type get its own
+/// declaration?"; `order` is deterministic (first-seen during a DFS from the
+/// roots in field order) so generated output is reproducible regardless of
+/// `HashMap` seeding.
+#[derive(Default)]
+struct Registry {
+    map: HashMap<ConstTypeId, &'static Shape>,
+    order: Vec<&'static Shape>,
 }
 
 impl Default for ZodGenerator {
@@ -94,21 +106,22 @@ impl Default for ZodGenerator {
     }
 }
 
-fn discover(shape: &'static Shape, registry: &mut HashMap<ConstTypeId, &'static Shape>) {
+fn discover(shape: &'static Shape, registry: &mut Registry, seen: &mut HashSet<ConstTypeId>) {
     if is_primitive(shape) {
         return;
     }
 
-    if registry.contains_key(&shape.id) {
+    if !seen.insert(shape.id) {
         return;
     }
 
     if should_emit_named(shape) {
-        registry.insert(shape.id, shape);
+        registry.map.insert(shape.id, shape);
+        registry.order.push(shape);
     }
 
     for_each_child_shape(shape, |child| {
-        discover(child, registry);
+        discover(child, registry, seen);
     });
 }
 
@@ -135,10 +148,7 @@ fn for_each_child_shape(shape: &'static Shape, mut visit: impl FnMut(&'static Sh
         _ => match &shape.ty {
             Type::User(UserType::Struct(st)) => {
                 for field in st.fields {
-                    if !field
-                        .flags
-                        .contains(FieldFlags::SKIP | FieldFlags::SKIP_SERIALIZING)
-                    {
+                    if !field.should_skip_serializing_unconditional() {
                         visit(field.shape.get());
                     }
                 }
@@ -158,12 +168,12 @@ fn for_each_child_shape(shape: &'static Shape, mut visit: impl FnMut(&'static Sh
     }
 }
 
-fn toposort(registry: &HashMap<ConstTypeId, &'static Shape>) -> Vec<&'static Shape> {
+fn toposort(registry: &Registry) -> Vec<&'static Shape> {
     let mut visited = HashSet::new();
     let mut result = Vec::new();
 
-    for shape in registry.values() {
-        toposort_visit(shape, registry, &mut visited, &mut result);
+    for shape in &registry.order {
+        toposort_visit(shape, &registry.map, &mut visited, &mut result);
     }
 
     result

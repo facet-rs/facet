@@ -79,6 +79,10 @@ pub fn emit_type(ty: &ZodType) -> String {
             format!("z.union([{}])", items.join(", "))
         }
 
+        ZodType::Intersection(a, b) => {
+            format!("z.intersection({}, {})", emit_type(a), emit_type(b))
+        }
+
         ZodType::Enum(variants) => {
             let items: Vec<String> = variants.iter().map(|v| format!("\"{v}\"")).collect();
             format!("z.enum([{}])", items.join(", "))

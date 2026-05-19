@@ -21,6 +21,7 @@ facet-core = { path = "../facet-core", version = "0.46.2" }
 
 [dev-dependencies]
 facet = { path = "../facet", features = ["all-impls"] }
+facet-json = "0.46.1"
 facet-testhelpers = { path = "../facet-testhelpers" }
 insta = { workspace = true }
 

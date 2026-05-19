@@ -31,6 +31,8 @@ pub enum ZodType {
     Record(Box<ZodType>, Box<ZodType>),
     /// `z.union([...])`
     Union(Vec<ZodType>),
+    /// `z.intersection(a, b)` — used for internally-tagged newtype variants.
+    Intersection(Box<ZodType>, Box<ZodType>),
     /// `z.enum([...])` — list of string literal variant names.
     Enum(Vec<String>),
     /// `T.optional()`
@@ -119,6 +121,14 @@ pub fn shape_to_zod(shape: &'static Shape, ctx: &Ctx) -> ZodType {
 }
 
 fn map_shape(shape: &'static Shape, ctx: &Ctx) -> ZodType {
+    // A transparent wrapper (`#[facet(transparent)]` / `#[repr(transparent)]`)
+    // serializes as its inner value, so its schema is the inner schema.
+    if shape.is_transparent()
+        && let Some(inner) = shape.inner
+    {
+        return shape_to_zod(inner, ctx);
+    }
+
     match &shape.def {
         Def::Option(opt) => {
             let inner = shape_to_zod(opt.t, ctx);
@@ -133,7 +143,9 @@ fn map_shape(shape: &'static Shape, ctx: &Ctx) -> ZodType {
             ZodType::Array(Box::new(elem))
         }
         Def::Map(map) => {
-            let k = shape_to_zod(map.k, ctx);
+            // JSON object keys are always strings: facet-json stringifies
+            // numeric/boolean map keys (e.g. `{"1":...}`).
+            let k = record_key(shape_to_zod(map.k, ctx));
             let v = shape_to_zod(map.v, ctx);
             ZodType::Record(Box::new(k), Box::new(v))
         }
@@ -146,37 +158,21 @@ fn map_shape(shape: &'static Shape, ctx: &Ctx) -> ZodType {
             ZodType::Array(Box::new(elem))
         }
         Def::Result(res) => {
-            let ok = shape_to_zod(res.t, ctx);
-            let err = shape_to_zod(res.e, ctx);
+            // facet-json serializes `Result` as a normal externally-tagged
+            // enum: `{"Ok": T}` / `{"Err": E}`.
             ZodType::Union(vec![
-                ZodType::Object(vec![
-                    ZodField {
-                        name: "ok".into(),
-                        ty: ZodType::Literal("true".into()),
-                        optional: false,
-                        doc: None,
-                    },
-                    ZodField {
-                        name: "value".into(),
-                        ty: ok,
-                        optional: false,
-                        doc: None,
-                    },
-                ]),
-                ZodType::Object(vec![
-                    ZodField {
-                        name: "ok".into(),
-                        ty: ZodType::Literal("false".into()),
-                        optional: false,
-                        doc: None,
-                    },
-                    ZodField {
-                        name: "error".into(),
-                        ty: err,
-                        optional: false,
-                        doc: None,
-                    },
-                ]),
+                ZodType::Object(vec![ZodField {
+                    name: "Ok".into(),
+                    ty: shape_to_zod(res.t, ctx),
+                    optional: false,
+                    doc: None,
+                }]),
+                ZodType::Object(vec![ZodField {
+                    name: "Err".into(),
+                    ty: shape_to_zod(res.e, ctx),
+                    optional: false,
+                    doc: None,
+                }]),
             ])
         }
         Def::Pointer(ptr) => {
@@ -194,7 +190,7 @@ fn map_shape(shape: &'static Shape, ctx: &Ctx) -> ZodType {
 
 fn map_by_type(shape: &'static Shape, ctx: &Ctx) -> ZodType {
     match &shape.ty {
-        Type::User(UserType::Struct(st)) => struct_to_zod(st, shape, ctx),
+        Type::User(UserType::Struct(st)) => struct_to_zod(st, ctx),
         Type::User(UserType::Enum(et)) => enum_to_zod(et, shape, ctx),
         Type::Primitive(_) => primitive_to_zod(shape, ctx.config),
         Type::Sequence(SequenceType::Array(arr)) => {
@@ -246,15 +242,10 @@ fn numeric_to_zod(num: &NumericType, shape: &'static Shape, config: &Config) -> 
     }
 }
 
-fn struct_to_zod(st: &StructType, shape: &'static Shape, ctx: &Ctx) -> ZodType {
+fn struct_to_zod(st: &StructType, ctx: &Ctx) -> ZodType {
+    // Transparent newtypes are handled in `map_shape`; a plain tuple struct
+    // serializes as a JSON array, e.g. `Wrapper(String)` -> `["w"]`.
     match st.kind {
-        StructKind::TupleStruct if st.fields.len() == 1 => {
-            if let Some(inner) = shape.inner {
-                return shape_to_zod(inner, ctx);
-            }
-            let field_shape = st.fields[0].shape.get();
-            shape_to_zod(field_shape, ctx)
-        }
         StructKind::TupleStruct | StructKind::Tuple => {
             let elems = st
                 .fields
@@ -264,18 +255,24 @@ fn struct_to_zod(st: &StructType, shape: &'static Shape, ctx: &Ctx) -> ZodType {
             ZodType::Tuple(elems)
         }
         StructKind::Unit => ZodType::Object(vec![]),
-        StructKind::Struct => {
-            let fields = st
-                .fields
-                .iter()
-                .filter(|f| {
-                    !f.flags
-                        .contains(FieldFlags::SKIP | FieldFlags::SKIP_SERIALIZING)
-                })
-                .map(|f| field_to_zod(f, ctx))
-                .collect();
-            ZodType::Object(fields)
-        }
+        StructKind::Struct => ZodType::Object(struct_fields(st, ctx)),
+    }
+}
+
+fn struct_fields(st: &StructType, ctx: &Ctx) -> Vec<ZodField> {
+    st.fields
+        .iter()
+        .filter(|f| !f.should_skip_serializing_unconditional())
+        .map(|f| field_to_zod(f, ctx))
+        .collect()
+}
+
+/// JSON object keys are always strings; numeric/boolean Rust map keys are
+/// stringified by facet-json, so widen them to `z.string()`.
+fn record_key(key: ZodType) -> ZodType {
+    match key {
+        ZodType::Number { .. } | ZodType::BigInt | ZodType::Boolean => ZodType::String,
+        other => other,
     }
 }
 
@@ -290,57 +287,155 @@ fn field_to_zod(field: &'static Field, ctx: &Ctx) -> ZodField {
 
     let is_option = matches!(field_shape.def, Def::Option(_));
     let has_default = field.has_default();
+    let conditionally_skipped = field.skip_serializing_if.is_some();
 
     let ty = shape_to_zod(field_shape, ctx);
 
     // `Option<T>` already carries its optionality via `wrap_optional`. A
-    // non-`Option` field with a default may simply be absent from the payload,
-    // which Zod expresses with `.optional()`.
+    // non-`Option` field with a default, or one with a `skip_serializing_if`
+    // predicate, may be absent from the payload — Zod expresses that with
+    // `.optional()`.
     ZodField {
         name,
         ty,
-        optional: has_default && !is_option,
+        optional: (has_default && !is_option) || conditionally_skipped,
         doc,
     }
 }
 
-fn enum_to_zod(et: &EnumType, _shape: &'static Shape, ctx: &Ctx) -> ZodType {
-    let all_unit = et.variants.iter().all(|v| v.data.fields.is_empty());
+/// The serialized name of a variant (post-rename).
+fn variant_name(v: &Variant) -> &'static str {
+    v.rename.unwrap_or(v.name)
+}
 
-    if all_unit {
-        let names = et
+/// The data payload of a variant, as facet-json serializes it (the value that
+/// sits next to the tag, or stands alone when untagged). `None` for unit
+/// variants. A single-field tuple variant carries its field bare; multi-field
+/// tuple variants become a JSON array; struct variants become an object.
+fn variant_payload(v: &Variant, ctx: &Ctx) -> Option<ZodType> {
+    if v.data.fields.is_empty() {
+        return None;
+    }
+    Some(match v.data.kind {
+        StructKind::Struct => ZodType::Object(struct_fields(&v.data, ctx)),
+        StructKind::TupleStruct | StructKind::Tuple if v.data.fields.len() == 1 => {
+            shape_to_zod(v.data.fields[0].shape.get(), ctx)
+        }
+        StructKind::TupleStruct | StructKind::Tuple => ZodType::Tuple(
+            v.data
+                .fields
+                .iter()
+                .map(|f| shape_to_zod(f.shape.get(), ctx))
+                .collect(),
+        ),
+        StructKind::Unit => return None,
+    })
+}
+
+fn tag_field(tag: &str, name: &str) -> ZodField {
+    ZodField {
+        name: tag.to_string(),
+        ty: ZodType::Literal(name.to_string()),
+        optional: false,
+        doc: None,
+    }
+}
+
+fn enum_to_zod(et: &EnumType, shape: &'static Shape, ctx: &Ctx) -> ZodType {
+    // Untagged: each variant serializes as its bare payload (unit -> the
+    // variant-name string literal).
+    if shape.is_untagged() {
+        let members = et
             .variants
             .iter()
-            .map(|v| v.rename.unwrap_or(v.name).to_string())
+            .map(|v| {
+                variant_payload(v, ctx)
+                    .unwrap_or_else(|| ZodType::Literal(variant_name(v).to_string()))
+            })
             .collect();
-        return ZodType::Enum(names);
+        return ZodType::Union(members);
     }
 
-    let members: Vec<ZodType> = et
-        .variants
-        .iter()
-        .map(|v| {
-            let variant_name = v.rename.unwrap_or(v.name);
-            if v.data.fields.is_empty() {
-                ZodType::Object(vec![ZodField {
-                    name: variant_name.to_string(),
-                    ty: ZodType::Literal("true".into()),
-                    optional: false,
-                    doc: None,
-                }])
-            } else {
-                let inner = struct_to_zod(&v.data, v.data.fields[0].shape.get(), ctx);
-                ZodType::Object(vec![ZodField {
-                    name: variant_name.to_string(),
-                    ty: inner,
-                    optional: false,
-                    doc: None,
-                }])
+    match (shape.tag, shape.content) {
+        // Adjacently tagged: `{ [tag]: "Variant", [content]: payload }`.
+        (Some(tag), Some(content)) => {
+            let members = et
+                .variants
+                .iter()
+                .map(|v| {
+                    let mut fields = vec![tag_field(tag, variant_name(v))];
+                    if let Some(payload) = variant_payload(v, ctx) {
+                        fields.push(ZodField {
+                            name: content.to_string(),
+                            ty: payload,
+                            optional: false,
+                            doc: None,
+                        });
+                    }
+                    ZodType::Object(fields)
+                })
+                .collect();
+            ZodType::Union(members)
+        }
+        // Internally tagged: tag merged into the variant object.
+        (Some(tag), None) => {
+            let members = et
+                .variants
+                .iter()
+                .map(|v| internal_member(v, tag, ctx))
+                .collect();
+            ZodType::Union(members)
+        }
+        // Externally tagged (default): unit -> "Variant", data -> `{ Variant: payload }`.
+        _ => {
+            if et.variants.iter().all(|v| v.data.fields.is_empty()) {
+                let names = et
+                    .variants
+                    .iter()
+                    .map(|v| variant_name(v).to_string())
+                    .collect();
+                return ZodType::Enum(names);
             }
-        })
-        .collect();
+            let members = et
+                .variants
+                .iter()
+                .map(|v| match variant_payload(v, ctx) {
+                    None => ZodType::Literal(variant_name(v).to_string()),
+                    Some(payload) => ZodType::Object(vec![ZodField {
+                        name: variant_name(v).to_string(),
+                        ty: payload,
+                        optional: false,
+                        doc: None,
+                    }]),
+                })
+                .collect();
+            ZodType::Union(members)
+        }
+    }
+}
 
-    ZodType::Union(members)
+fn internal_member(v: &Variant, tag: &str, ctx: &Ctx) -> ZodType {
+    let tag = tag_field(tag, variant_name(v));
+    if v.data.fields.is_empty() {
+        return ZodType::Object(vec![tag]);
+    }
+    match v.data.kind {
+        StructKind::Struct => {
+            let mut fields = vec![tag];
+            fields.extend(struct_fields(&v.data, ctx));
+            ZodType::Object(fields)
+        }
+        // Newtype variant: the inner value's object fields are flattened
+        // alongside the tag (facet-json: `{"type":"V","a":1}`).
+        StructKind::TupleStruct | StructKind::Tuple if v.data.fields.len() == 1 => {
+            ZodType::Intersection(
+                Box::new(ZodType::Object(vec![tag])),
+                Box::new(shape_to_zod(v.data.fields[0].shape.get(), ctx)),
+            )
+        }
+        // facet-json refuses internally-tagged multi-field tuple variants.
+        _ => ZodType::Never,
+    }
 }
 
 fn wrap_optional(inner: ZodType, config: &Config) -> ZodType {
