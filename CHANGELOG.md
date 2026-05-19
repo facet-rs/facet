@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.46.3](https://github.com/facet-rs/facet/compare/facet-pretty-v0.46.2...facet-pretty-v0.46.3) - 2026-05-19
+
+### Added
+
+- *(facet-pretty)* keep tokyo_night module exported for downstream
+- *(facet-pretty)* Melange palette with terminal theme detection
+
+### Fixed
+
+- *(facet-pretty)* fix rustdoc intra-doc links in colors module
+- *(facet-pretty)* heal 0.47 semver breakage with const + deprecated shims
+
 ## [0.46.2](https://github.com/facet-rs/facet/compare/facet-macros-impl-v0.46.1...facet-macros-impl-v0.46.2) - 2026-05-11
 
 ### Fixed
