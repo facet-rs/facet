@@ -12,7 +12,7 @@ import type {
   FieldSchema,
   VariantSchema,
   VariantPayload,
-  // SchemaHash,
+  SchemaHash,
 } from "./schema.ts";
 import { resolveTypeRef } from "./schema.ts";
 
@@ -83,20 +83,65 @@ export class TranslationError extends Error {
 }
 
 /**
- * Build a translation plan by comparing remote and local schemas.
+ * `(remoteId, localId)` pairs whose plan is currently being built. Used to
+ * break recursive types (e.g. `FlameNode { children: FlameNode[] }`) —
+ * without this, `nestedPlan` would descend forever through `buildPlanInner`
+ * → `nestedPlan` → `buildPlanInner` → … .
  *
- * Returns `null` if the schemas are identical (identity plan).
+ * Keyed by a `"<remoteId>,<localId>"` string because a `Set` can't key on a
+ * bigint pair directly.
  */
-export function buildPlan(remote: SchemaSet, local: SchemaSet): TranslationPlan {
-  return buildPlanInner(remote.root, local.root, remote.registry, local.registry);
+type InFlight = Set<string>;
+
+function pairKey(remoteId: SchemaHash, localId: SchemaHash): string {
+  return `${remoteId},${localId}`;
 }
 
+/**
+ * Build a translation plan by comparing remote and local schemas.
+ */
+export function buildPlan(remote: SchemaSet, local: SchemaSet): TranslationPlan {
+  const inFlight: InFlight = new Set();
+  return buildPlanInner(
+    remote.root,
+    local.root,
+    remote.registry,
+    local.registry,
+    inFlight,
+  );
+}
+
+/**
+ * Recursive worker for {@link buildPlan}. `inFlight` tracks the
+ * `(remoteId, localId)` pairs whose plan is currently under construction
+ * further up the call stack; encountering one again means we've hit a cycle
+ * in the schema graph.
+ *
+ * For self-recursive types with structurally-identical schemas we terminate
+ * the plan walk with `Identity` — the decode path closes the loop on its
+ * own, driven by the actual serialized data depth. Mutual recursion across
+ * non-matching schemas would need a back-reference plan we don't emit, so we
+ * surface it loudly instead of silently returning a wrong-shaped Identity.
+ */
 function buildPlanInner(
   remote: Schema,
   local: Schema,
   remoteReg: SchemaRegistry,
   localReg: SchemaRegistry,
+  inFlight: InFlight,
 ): TranslationPlan {
+  const pair = pairKey(remote.id, local.id);
+
+  // Cycle: this pair is already being built higher up the stack.
+  if (inFlight.has(pair)) {
+    if (remote.id === local.id) {
+      return IDENTITY;
+    }
+    throw new TranslationError(
+      `recursive type mismatch: remote "${schemaName(remote.kind) ?? "?"}" vs local "${schemaName(local.kind) ?? "?"}"`,
+    );
+  }
+
   // Validate type names match for nominal types
   const remoteName = schemaName(remote.kind);
   const localName = schemaName(local.kind);
@@ -106,12 +151,30 @@ function buildPlanInner(
     );
   }
 
-  const rk = remote.kind;
-  const lk = local.kind;
-
-  if (isByteBufferKind(rk, remoteReg) && isByteBufferKind(lk, localReg)) {
+  if (
+    isByteBufferKind(remote.kind, remoteReg) &&
+    isByteBufferKind(local.kind, localReg)
+  ) {
     return IDENTITY;
   }
+
+  inFlight.add(pair);
+  try {
+    return buildPlanKind(remote, local, remoteReg, localReg, inFlight);
+  } finally {
+    inFlight.delete(pair);
+  }
+}
+
+function buildPlanKind(
+  remote: Schema,
+  local: Schema,
+  remoteReg: SchemaRegistry,
+  localReg: SchemaRegistry,
+  inFlight: InFlight,
+): TranslationPlan {
+  const rk = remote.kind;
+  const lk = local.kind;
 
   if (rk.tag !== lk.tag) {
     throw new TranslationError(
@@ -122,35 +185,35 @@ function buildPlanInner(
   switch (rk.tag) {
     case "struct": {
       const lkStruct = lk as Extract<SchemaKind, { tag: "struct" }>;
-      return buildStructPlan(rk.fields, lkStruct.fields, remote, remoteReg, localReg);
+      return buildStructPlan(rk.fields, lkStruct.fields, remote, remoteReg, localReg, inFlight);
     }
     case "enum": {
       const lkEnum = lk as Extract<SchemaKind, { tag: "enum" }>;
-      return buildEnumPlan(rk.variants, lkEnum.variants, remote, local, remoteReg, localReg);
+      return buildEnumPlan(rk.variants, lkEnum.variants, remote, local, remoteReg, localReg, inFlight);
     }
     case "tuple": {
       const lkTuple = lk as Extract<SchemaKind, { tag: "tuple" }>;
-      return buildTuplePlan(rk.elements, lkTuple.elements, remote, local, remoteReg, localReg);
+      return buildTuplePlan(rk.elements, lkTuple.elements, remote, local, remoteReg, localReg, inFlight);
     }
     case "list": {
       const lkList = lk as Extract<SchemaKind, { tag: "list" }>;
-      const element = nestedPlan(rk.element, lkList.element, remoteReg, localReg);
+      const element = nestedPlan(rk.element, lkList.element, remoteReg, localReg, inFlight);
       return { tag: "list", element: element ?? IDENTITY };
     }
     case "option": {
       const lkOpt = lk as Extract<SchemaKind, { tag: "option" }>;
-      const inner = nestedPlan(rk.element, lkOpt.element, remoteReg, localReg);
+      const inner = nestedPlan(rk.element, lkOpt.element, remoteReg, localReg, inFlight);
       return { tag: "option", inner: inner ?? IDENTITY };
     }
     case "map": {
       const lkMap = lk as Extract<SchemaKind, { tag: "map" }>;
-      const key = nestedPlan(rk.key, lkMap.key, remoteReg, localReg);
-      const value = nestedPlan(rk.value, lkMap.value, remoteReg, localReg);
+      const key = nestedPlan(rk.key, lkMap.key, remoteReg, localReg, inFlight);
+      const value = nestedPlan(rk.value, lkMap.value, remoteReg, localReg, inFlight);
       return { tag: "map", key: key ?? IDENTITY, value: value ?? IDENTITY };
     }
     case "array": {
       const lkArr = lk as Extract<SchemaKind, { tag: "array" }>;
-      const element = nestedPlan(rk.element, lkArr.element, remoteReg, localReg);
+      const element = nestedPlan(rk.element, lkArr.element, remoteReg, localReg, inFlight);
       return { tag: "array", element: element ?? IDENTITY };
     }
     case "primitive":
@@ -173,6 +236,7 @@ function nestedPlan(
   localRef: TypeRef,
   remoteReg: SchemaRegistry,
   localReg: SchemaRegistry,
+  inFlight: InFlight,
 ): TranslationPlan | null {
   const resolveSchema = (
     ref_: TypeRef,
@@ -200,7 +264,7 @@ function nestedPlan(
   const remoteSchema = resolveSchema(remoteRef, remoteReg, "remote");
   const localSchema = resolveSchema(localRef, localReg, "local");
 
-  return buildPlanInner(remoteSchema, localSchema, remoteReg, localReg);
+  return buildPlanInner(remoteSchema, localSchema, remoteReg, localReg, inFlight);
 }
 
 function buildStructPlan(
@@ -209,6 +273,7 @@ function buildStructPlan(
   remoteSchema: Schema,
   remoteReg: SchemaRegistry,
   localReg: SchemaRegistry,
+  inFlight: InFlight,
 ): TranslationPlan {
   const fieldOps: FieldOp[] = [];
   const nested = new Map<number, TranslationPlan>();
@@ -220,7 +285,7 @@ function buildStructPlan(
       matched[localIdx] = true;
       fieldOps.push({ tag: "read", local_index: localIdx });
 
-      const np = nestedPlan(rf.type_ref, localFields[localIdx].type_ref, remoteReg, localReg);
+      const np = nestedPlan(rf.type_ref, localFields[localIdx].type_ref, remoteReg, localReg, inFlight);
       if (np) nested.set(localIdx, np);
     } else {
       fieldOps.push({ tag: "skip", type_ref: rf.type_ref });
@@ -257,6 +322,7 @@ function buildTuplePlan(
   _localSchema: Schema,
   remoteReg: SchemaRegistry,
   localReg: SchemaRegistry,
+  inFlight: InFlight,
 ): TranslationPlan {
   if (remoteElements.length !== localElements.length) {
     throw new TranslationError(
@@ -269,7 +335,7 @@ function buildTuplePlan(
 
   for (let i = 0; i < remoteElements.length; i++) {
     fieldOps.push({ tag: "read", local_index: i });
-    const np = nestedPlan(remoteElements[i], localElements[i], remoteReg, localReg);
+    const np = nestedPlan(remoteElements[i], localElements[i], remoteReg, localReg, inFlight);
     if (np) nested.set(i, np);
   }
 
@@ -283,6 +349,7 @@ function buildEnumPlan(
   localSchema: Schema,
   remoteReg: SchemaRegistry,
   localReg: SchemaRegistry,
+  inFlight: InFlight,
 ): TranslationPlan {
   const variantMap: (number | null)[] = [];
   const variantPlans = new Map<number, TranslationPlan>();
@@ -327,7 +394,7 @@ function buildEnumPlan(
       }
       case "newtype": {
         const lvPayload = lv.payload as Extract<VariantPayload, { tag: "newtype" }>;
-        const np = nestedPlan(rv.payload.type_ref, lvPayload.type_ref, remoteReg, localReg);
+        const np = nestedPlan(rv.payload.type_ref, lvPayload.type_ref, remoteReg, localReg, inFlight);
         if (np) nested.set(localIdx, np);
         break;
       }
@@ -340,6 +407,7 @@ function buildEnumPlan(
           localSchema,
           remoteReg,
           localReg,
+          inFlight,
         );
         variantPlans.set(remoteIdx, tuplePlan);
         break;

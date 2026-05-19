@@ -183,6 +183,61 @@ describe("wire codec translation plans", () => {
     });
     expect((decoded.value as { payload: unknown }).payload).toBeInstanceOf(Uint8Array);
   });
+
+  it("plans a self-recursive type without exhausting the stack", () => {
+    // FlameNode { value: u32, children: FlameNode[] } — the schema graph
+    // has a cycle (children's element is FlameNode itself). buildPlan must
+    // break the cycle instead of recursing forever.
+    const U32_ID = 30n;
+    const FLAME_NODE_ID = 31n;
+    const LIST_FLAME_ID = 32n;
+
+    const u32Ref: TypeRef = { tag: "concrete", type_id: U32_ID, args: [] };
+    const flameRef: TypeRef = { tag: "concrete", type_id: FLAME_NODE_ID, args: [] };
+    const listFlameRef: TypeRef = { tag: "concrete", type_id: LIST_FLAME_ID, args: [] };
+
+    const recursiveSchemas: Schema[] = [
+      { id: U32_ID, type_params: [], kind: { tag: "primitive", primitive_type: "u32" } },
+      { id: LIST_FLAME_ID, type_params: [], kind: { tag: "list", element: flameRef } },
+      {
+        id: FLAME_NODE_ID,
+        type_params: [],
+        kind: {
+          tag: "struct",
+          name: "FlameNode",
+          fields: [
+            { name: "value", type_ref: u32Ref, required: true },
+            { name: "children", type_ref: listFlameRef, required: true },
+          ],
+        },
+      },
+    ];
+
+    const remote = schemaSetFromSchemas(recursiveSchemas);
+    const local = schemaSetFromSchemas(recursiveSchemas);
+    const plan = buildPlan(remote, local);
+
+    const tree = {
+      value: 1,
+      children: [
+        { value: 2, children: [] },
+        { value: 3, children: [{ value: 4, children: [] }] },
+      ],
+    };
+    const mergedRegistry = new Map([...remote.registry, ...local.registry]);
+    const encoded = encodeWithKind(tree, remote.root.kind, remote.registry);
+    const decoded = decodeWithPlan(
+      encoded,
+      0,
+      plan,
+      local.root.kind,
+      remote.root.kind,
+      mergedRegistry,
+    );
+
+    expect(decoded.next).toBe(encoded.length);
+    expect(decoded.value).toEqual(tree);
+  });
 });
 
 describe("wire codec never primitive", () => {
