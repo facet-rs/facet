@@ -2823,7 +2823,7 @@ dependencies = [
 
 [[package]]
 name = "rust-examples"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "eyre",
  "facet",
@@ -3953,7 +3953,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vox"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "facet",
  "facet-pretty",
@@ -3978,7 +3978,7 @@ dependencies = [
 
 [[package]]
 name = "vox-bench"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "dhat",
  "divan",
@@ -4010,7 +4010,7 @@ dependencies = [
 
 [[package]]
 name = "vox-codegen"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "facet",
  "facet-cbor",
@@ -4022,7 +4022,7 @@ dependencies = [
 
 [[package]]
 name = "vox-core"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "facet",
  "facet-cbor",
@@ -4047,7 +4047,7 @@ dependencies = [
 
 [[package]]
 name = "vox-fdpass"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "libc",
  "passfd",
@@ -4057,7 +4057,7 @@ dependencies = [
 
 [[package]]
 name = "vox-ffi"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "tracing",
  "vox-types",
@@ -4065,7 +4065,7 @@ dependencies = [
 
 [[package]]
 name = "vox-inprocess"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "futures-channel",
  "futures-util",
@@ -4076,7 +4076,7 @@ dependencies = [
 
 [[package]]
 name = "vox-jit"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "arc-swap",
  "cranelift-codegen",
@@ -4098,7 +4098,7 @@ dependencies = [
 
 [[package]]
 name = "vox-jit-abi"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "arc-swap",
  "facet-core",
@@ -4108,7 +4108,7 @@ dependencies = [
 
 [[package]]
 name = "vox-jit-cal"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "facet",
  "facet-core",
@@ -4116,7 +4116,7 @@ dependencies = [
 
 [[package]]
 name = "vox-jit-tests"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "divan",
  "facet",
@@ -4133,7 +4133,7 @@ dependencies = [
 
 [[package]]
 name = "vox-local"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "tokio",
  "vox-stream",
@@ -4141,7 +4141,7 @@ dependencies = [
 
 [[package]]
 name = "vox-macros-core"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "facet-cargo-toml",
  "heck",
@@ -4153,7 +4153,7 @@ dependencies = [
 
 [[package]]
 name = "vox-macros-parse"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "proc-macro2",
  "unsynn",
@@ -4161,7 +4161,7 @@ dependencies = [
 
 [[package]]
 name = "vox-postcard"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "facet",
  "facet-core",
@@ -4175,7 +4175,7 @@ dependencies = [
 
 [[package]]
 name = "vox-schema"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "blake3",
  "facet",
@@ -4186,7 +4186,7 @@ dependencies = [
 
 [[package]]
 name = "vox-service-macros"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "proc-macro2",
  "vox-macros-core",
@@ -4194,7 +4194,7 @@ dependencies = [
 
 [[package]]
 name = "vox-stream"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "libc",
  "moire",
@@ -4206,7 +4206,7 @@ dependencies = [
 
 [[package]]
 name = "vox-swift-abi"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "vox-jit-abi",
  "vox-jit-cal",
@@ -4215,7 +4215,7 @@ dependencies = [
 
 [[package]]
 name = "vox-types"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "bitflags 2.11.1",
  "blake3",
@@ -4240,7 +4240,7 @@ dependencies = [
 
 [[package]]
 name = "vox-websocket"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "futures-channel",
  "futures-util",
@@ -4353,7 +4353,7 @@ dependencies = [
 
 [[package]]
 name = "wasm-browser-tests"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "spec-proto",
  "vox-core",
@@ -4375,7 +4375,7 @@ dependencies = [
 
 [[package]]
 name = "wasm-inprocess-tests"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "js-sys",
  "spec-proto",
