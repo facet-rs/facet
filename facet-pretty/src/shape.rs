@@ -23,7 +23,8 @@ use owo_colors::OwoColorize;
 /// style, preserving the pre-0.47 `const` API. For terminal-aware colours
 /// — the [`Palette`](crate::Palette) detected from the terminal background
 /// once per process (see [`crate::Theme`]) — use the matching function in
-/// the [`themed`] submodule, which is what the shape view renders with.
+/// the [`themed`](crate::colors::themed) submodule, which is what the shape
+/// view renders with.
 pub mod colors {
     use crate::color::Palette;
     use owo_colors::Style;
@@ -121,8 +122,8 @@ pub mod colors {
     /// Terminal-aware Melange styles, matching [`Theme::Auto`](crate::Theme).
     ///
     /// Unlike the `const` functions in the parent module, these resolve the
-    /// active [`Palette`](crate::Palette) from the terminal background
-    /// (detected once per process) and are what the shape view renders with.
+    /// active [`Palette`] from the terminal background (detected once per
+    /// process) and are what the shape view renders with.
     pub mod themed {
         use crate::color::detected_palette;
         use owo_colors::Style;
