@@ -1,10 +1,14 @@
 +++
-title = "Ecosystem Integration"
+title = "Type Support"
 weight = 7
 insert_anchor_links = "heading"
 +++
 
 Facet provides `Facet` trait implementations for many popular Rust crates via feature flags. Enable the feature, and those types work seamlessly with all facet format crates.
+
+> Looking for the constellation of facet *crates* (formats, codegen, CLI, …)?
+> That's the [Ecosystem map](@/ecosystem/_index.md). This page is about which
+> *types* already implement `Facet`.
 
 ## Third-Party type support
 

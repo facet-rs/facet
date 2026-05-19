@@ -31,6 +31,12 @@ From this single derive, you get:
   <p class="tagline">Use facet in your app</p>
   <p class="description">Install a format crate, derive <code>Facet</code>, configure attributes, and ship with great diagnostics.</p>
 </a>
+<a class="guide-card" href="/ecosystem">
+  <div class="guide-card__icon"><img src="/icons/ecosystem.svg" alt="" loading="lazy"></div>
+  <h3 id="ecosystem">Ecosystem</h3>
+  <p class="tagline">See the whole map</p>
+  <p class="description">Every facet-related crate — formats, schema codegen, CLI, diffing, pretty-printing — with links to docs and source.</p>
+</a>
 <a class="guide-card" href="/showcases">
   <div class="guide-card__icon"><img src="/icons/showcases.svg" alt="" loading="lazy"></div>
   <h3 id="showcases">Showcases</h3>
@@ -59,7 +65,8 @@ From this single derive, you get:
 
 ## Quick links
 
+- [Getting Started](@/guide/getting-started.md) — Install, derive, ship
+- [Ecosystem map](@/ecosystem/_index.md) — Every facet crate and where to find it
+- [JSON guide](@/guide/json.md) — The flagship workflow
 - [Format Support Matrix](@/reference/format-crate-matrix/_index.md) — Feature comparison across format crates
-- [Extension Attributes](@/extend/extension-attributes.md) — Format-specific attribute namespaces
-- [GitHub](https://github.com/facet-rs/facet) — Source code and issues
-- [docs.rs](https://docs.rs/facet) — API documentation
+- [GitHub](https://github.com/facet-rs/facet) · [crates.io](https://crates.io/crates/facet) · [docs.rs](https://docs.rs/facet) · [Discord](https://discord.gg/JhD7CwCJ8F)
