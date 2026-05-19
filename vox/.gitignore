@@ -64,3 +64,5 @@ dhat-heap.json
 
 *.data
 *.nperf
+
+wasm/tests/playwright/test-results/
