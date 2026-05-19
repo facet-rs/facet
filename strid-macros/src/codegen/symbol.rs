@@ -13,6 +13,7 @@ pub const DISPLAY: Symbol = Symbol("display");
 pub const ORD: Symbol = Symbol("ord");
 pub const SERDE: Symbol = Symbol("serde");
 pub const RUSQLITE: Symbol = Symbol("rusqlite");
+pub const SAILFISH: Symbol = Symbol("sailfish");
 pub const REF: Symbol = Symbol("ref_name");
 pub const REF_DOC: Symbol = Symbol("ref_doc");
 pub const REF_ATTR: Symbol = Symbol("ref_attr");

@@ -177,6 +177,15 @@ impl Params {
                 } else {
                     params.impls.rusqlite = ImplOption::Implement.into();
                 }
+            } else if name == symbol::SAILFISH {
+                if let Some(lit) = arg.value() {
+                    params.impls.sailfish = parse_lit_into_string(symbol::SAILFISH, lit)?
+                        .parse::<ImplOption>()
+                        .map_err(|e| e.to_string())?
+                        .into();
+                } else {
+                    params.impls.sailfish = ImplOption::Implement.into();
+                }
             } else if name == symbol::NO_STD {
                 params.std_lib = StdLib::no_std(proc_macro2::Span::call_site());
             } else if name == symbol::NO_EXPOSE {
@@ -313,6 +322,15 @@ impl ParamsRef {
                         .into();
                 } else {
                     params.impls.rusqlite = ImplOption::Implement.into();
+                }
+            } else if name == symbol::SAILFISH {
+                if let Some(lit) = arg.value() {
+                    params.impls.sailfish = parse_lit_into_string(symbol::SAILFISH, lit)?
+                        .parse::<ImplOption>()
+                        .map_err(|e| e.to_string())?
+                        .into();
+                } else {
+                    params.impls.sailfish = ImplOption::Implement.into();
                 }
             } else if name == symbol::NO_STD {
                 params.std_lib = StdLib::no_std(proc_macro2::Span::call_site());
