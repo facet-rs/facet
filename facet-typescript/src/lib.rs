@@ -282,7 +282,13 @@ impl TypeScriptGenerator {
     /// Write a single field to the output.
     fn write_field(&mut self, field: &Field, force_optional: bool) {
         // Generate doc comment for field
-        if !field.doc.is_empty() {
+        if let [line] = field.doc {
+            // Short doc: collapse onto a single line, e.g. `/** Okay */`.
+            self.write_indent();
+            self.output.push_str("/**");
+            self.output.push_str(line);
+            self.output.push_str(" */\n");
+        } else if !field.doc.is_empty() {
             self.write_indent();
             self.output.push_str("/**\n");
             for line in field.doc {
@@ -332,7 +338,12 @@ impl TypeScriptGenerator {
         }
 
         // Generate doc comment if present (before proxy handling so proxied types keep their docs)
-        if !shape.doc.is_empty() {
+        if let [line] = shape.doc {
+            // Short doc: collapse onto a single line, e.g. `/** Okay */`.
+            self.output.push_str("/**");
+            self.output.push_str(line);
+            self.output.push_str(" */\n");
+        } else if !shape.doc.is_empty() {
             self.output.push_str("/**\n");
             for line in shape.doc {
                 self.output.push_str(" *");
