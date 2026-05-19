@@ -5,8 +5,8 @@
 //! of their values, so every valid UTF-8 string is potentially valid for
 //! these types.
 //!
-//! Note: This example requires facet support for `bytestring::ByteString`.
-//! See: https://github.com/facet-rs/facet/issues/1284
+//! Note: This example requires the `bytestring-facet` feature, which enables
+//! facet's `bytestring` feature for `bytestring::ByteString` support.
 //!
 //! [`Bytes`]: https://docs.rs/bytes/*/bytes/struct.Bytes.html
 

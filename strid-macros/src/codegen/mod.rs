@@ -447,10 +447,7 @@ impl CodeGen {
                 let tokens = self.ref_ty.to_token_stream();
                 let mut iter = tokens.to_token_iter();
                 iter.parse::<unsynn::Ident>().unwrap_or_else(|_| {
-                    unsynn::Ident::from(proc_macro2::Ident::new(
-                        "UnknownType",
-                        proc_macro2::Span::call_site(),
-                    ))
+                    proc_macro2::Ident::new("UnknownType", proc_macro2::Span::call_site())
                 })
             },
             owned_ty: Some(&self.body.ident),
@@ -501,13 +498,13 @@ fn create_ref_field_if_none(fields: &mut crate::grammar::Fields) {
     let _ = fields; // Suppress unused warning
 }
 
-fn get_field_info<'a>(
-    fields: &'a crate::grammar::Fields,
+fn get_field_info(
+    fields: &crate::grammar::Fields,
 ) -> Result<
     (
-        &'a crate::grammar::Type,
-        Option<&'a unsynn::Ident>,
-        &'a [crate::grammar::Attribute],
+        &crate::grammar::Type,
+        Option<&unsynn::Ident>,
+        &[crate::grammar::Attribute],
     ),
     String,
 > {
