@@ -243,7 +243,7 @@ let json = facet_json::to_string(&wrapper);
 let parsed: MyWrapper = facet_json::from_str(&json).unwrap();
 ```
 
-See the [Attributes Reference](@/reference/attributes/_index.md#container-attributes--opaque) for details on `opaque` and `proxy`.
+See [Container attributes → `opaque`](@/reference/container-attributes.md#opaque) and [Field attributes → `proxy`](@/reference/field-attributes.md#proxy) for details.
 
 ### Third-party type you want full support for
 
