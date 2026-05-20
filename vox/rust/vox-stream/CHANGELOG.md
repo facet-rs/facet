@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1](https://github.com/bearcove/vox/compare/vox-stream-v0.6.0...vox-stream-v0.6.1) - 2026-05-20
+
+### Other
+
+- *(deps)* mega-bump #2 (cranelift-frontend, facet-error, facet-testhelpers, tonic-prost) ([#334](https://github.com/bearcove/vox/pull/334))
+
 ## [0.6.0](https://github.com/bearcove/vox/compare/vox-stream-v0.5.1...vox-stream-v0.6.0) - 2026-05-19
 
 ### Added
