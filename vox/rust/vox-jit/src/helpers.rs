@@ -279,9 +279,16 @@ pub unsafe extern "C" fn vox_jit_encode_slow_path(
         } else if let Some(result) =
             crate::global_runtime().try_encode_ptr(mapped.ptr, mapped.shape)
         {
-            let Ok(inner) = result else {
-                unsafe { set_encode_err(ctx, VOX_JIT_ENCODE_ERR_NESTED, mapped.shape) };
-                return false;
+            let inner = match result {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!(
+                        "[vox_jit::slow_path] nested try_encode_ptr Err for outer={shape} mapped={mapped_shape}: {e}",
+                        mapped_shape = mapped.shape
+                    );
+                    unsafe { set_encode_err(ctx, VOX_JIT_ENCODE_ERR_NESTED, mapped.shape) };
+                    return false;
+                }
             };
             let mut out = Vec::with_capacity(4 + inner.len());
             out.extend_from_slice(&(inner.len() as u32).to_le_bytes());
@@ -290,7 +297,10 @@ pub unsafe extern "C" fn vox_jit_encode_slow_path(
         } else {
             match vox_postcard::serialize::to_vec_dynamic(PtrConst::new(src_ptr), shape) {
                 Ok(v) => v,
-                Err(_) => {
+                Err(e) => {
+                    eprintln!(
+                        "[vox_jit::slow_path] to_vec_dynamic (opaque, no JIT) failed for shape={shape}: {e}"
+                    );
                     unsafe { set_encode_err(ctx, VOX_JIT_ENCODE_ERR_POSTCARD_FALLBACK, shape) };
                     return false;
                 }
@@ -299,7 +309,10 @@ pub unsafe extern "C" fn vox_jit_encode_slow_path(
     } else {
         match vox_postcard::serialize::to_vec_dynamic(PtrConst::new(src_ptr), shape) {
             Ok(v) => v,
-            Err(_) => {
+            Err(e) => {
+                eprintln!(
+                    "[vox_jit::slow_path] to_vec_dynamic (non-opaque) failed for shape={shape}: {e}"
+                );
                 unsafe { set_encode_err(ctx, VOX_JIT_ENCODE_ERR_POSTCARD_FALLBACK, shape) };
                 return false;
             }
@@ -364,8 +377,8 @@ pub unsafe extern "C" fn vox_jit_encode_opaque(
         return unsafe { vox_jit_buf_push_bytes(ctx, inner.as_ptr(), inner.len()) };
     }
 
-    let _ = handle_pure_jit_encode_miss("opaque", shape);
-    unsafe { set_encode_err(ctx, VOX_JIT_ENCODE_ERR_SLOW_PATH_ABORT, shape) };
+    let _ = handle_pure_jit_encode_miss("opaque", mapped.shape);
+    unsafe { set_encode_err(ctx, VOX_JIT_ENCODE_ERR_SLOW_PATH_ABORT, mapped.shape) };
     false
 }
 

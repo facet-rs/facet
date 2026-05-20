@@ -20,6 +20,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 facet = { workspace = true }
 facet-core = { workspace = true }
 facet-reflect = { workspace = true }
+facet-value = { workspace = true }
 vox-schema = { workspace = true }
 vox-jit-cal = { workspace = true }
 vox-jit-abi = { workspace = true }

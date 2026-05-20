@@ -187,6 +187,7 @@ impl JitRuntime {
         }
 
         if force_fallback() {
+            eprintln!("[vox_jit::prepare] force_fallback for shape={shape}");
             return None;
         }
 
@@ -196,6 +197,7 @@ impl JitRuntime {
         // will complete and cache the encoder; subsequent encodes hit the
         // fast path directly.
         if !encode_in_progress_insert(shape) {
+            eprintln!("[vox_jit::prepare] cycle guard hit for shape={shape}");
             return None;
         }
         let _guard = InProgressGuard(shape);
@@ -214,6 +216,7 @@ impl JitRuntime {
                             shape, err
                         );
                     }
+                    eprintln!("[vox_jit::prepare] lower_encode failed for shape={shape}: {err}");
                     return None;
                 }
             };
@@ -257,6 +260,9 @@ impl JitRuntime {
                         shape, err
                     );
                 }
+                eprintln!(
+                    "[vox_jit::prepare] backend.compile_encode failed for shape={shape}: {err}"
+                );
                 return None;
             }
         };

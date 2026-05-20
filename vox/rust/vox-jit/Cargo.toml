@@ -25,6 +25,7 @@ arc-swap = { workspace = true }
 museair = { workspace = true }
 facet = { workspace = true }
 facet-core = { workspace = true }
+tracing = { workspace = true }
 cranelift-codegen = "0.131"
 cranelift-frontend = "0.131"
 cranelift-jit = "0.131"

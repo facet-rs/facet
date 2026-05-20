@@ -1,6 +1,7 @@
 use facet::Facet;
 use facet_core::{Def, ScalarType, StructKind, Type, UserType};
 use facet_reflect::Peek;
+use facet_value::{Value, ValueType};
 use std::sync::OnceLock;
 
 use crate::encode;
@@ -343,6 +344,14 @@ fn serialize_peek_inner<'a>(
                 None => Err(SerializeError::UnsupportedType("null pointer".into())),
             };
         }
+        // `Def::DynamicValue` — `facet_value::Value`. The postcard wire
+        // format mirrors `facet-postcard`'s tagged scheme: one tag byte
+        // (0..9) per `facet_format::DynamicValueTag` + variant payload
+        // (recurses for arrays/objects).
+        Def::DynamicValue(_) => {
+            let value = peek.get::<Value>().map_err(re)?;
+            return serialize_dynamic_value(value, out);
+        }
         _ => {}
     }
 
@@ -382,6 +391,110 @@ fn serialize_peek_inner<'a>(
         }
         _ => Err(SerializeError::UnsupportedType(format!("{}", peek.shape()))),
     }
+}
+
+/// Encode a `facet_value::Value` using the same tagged postcard scheme as
+/// `facet-postcard`. The tag bytes match `facet_format::DynamicValueTag`:
+/// 0=Null 1=Bool 2=I64 3=U64 4=F64 5=String 6=Bytes 7=Array 8=Object 9=DateTime.
+fn serialize_dynamic_value(value: &Value, out: &mut impl Writer) -> Result<(), SerializeError> {
+    match value.value_type() {
+        ValueType::Null => {
+            out.write_byte(0);
+        }
+        ValueType::Bool => {
+            out.write_byte(1);
+            let b = value.as_bool().ok_or_else(|| {
+                SerializeError::ReflectError("Value claims Bool but as_bool() returned None".into())
+            })?;
+            out.write_byte(if b { 1 } else { 0 });
+        }
+        ValueType::Number => {
+            let n = value.as_number().ok_or_else(|| {
+                SerializeError::ReflectError(
+                    "Value claims Number but as_number() returned None".into(),
+                )
+            })?;
+            if n.is_integer() {
+                if let Some(i) = n.to_i64() {
+                    out.write_byte(2);
+                    encode::write_varint_signed(out, i);
+                } else if let Some(u) = n.to_u64() {
+                    out.write_byte(3);
+                    encode::write_varint(out, u);
+                } else {
+                    // Integer too large for either i64 or u64 — fall through
+                    // to a lossy f64 representation (mirrors facet-postcard).
+                    out.write_byte(4);
+                    out.write_bytes(&n.to_f64_lossy().to_le_bytes());
+                }
+            } else {
+                out.write_byte(4);
+                let f = n.to_f64().unwrap_or_else(|| n.to_f64_lossy());
+                out.write_bytes(&f.to_le_bytes());
+            }
+        }
+        ValueType::String => {
+            out.write_byte(5);
+            let s = value
+                .as_string()
+                .ok_or_else(|| {
+                    SerializeError::ReflectError(
+                        "Value claims String but as_string() returned None".into(),
+                    )
+                })?
+                .as_str();
+            encode::write_varint(out, s.len() as u64);
+            out.write_bytes(s.as_bytes());
+        }
+        ValueType::Bytes => {
+            out.write_byte(6);
+            let b = value
+                .as_bytes()
+                .ok_or_else(|| {
+                    SerializeError::ReflectError(
+                        "Value claims Bytes but as_bytes() returned None".into(),
+                    )
+                })?
+                .as_slice();
+            encode::write_varint(out, b.len() as u64);
+            out.write_bytes(b);
+        }
+        ValueType::Array => {
+            out.write_byte(7);
+            let arr = value.as_array().ok_or_else(|| {
+                SerializeError::ReflectError(
+                    "Value claims Array but as_array() returned None".into(),
+                )
+            })?;
+            encode::write_varint(out, arr.len() as u64);
+            for item in arr {
+                serialize_dynamic_value(item, out)?;
+            }
+        }
+        ValueType::Object => {
+            out.write_byte(8);
+            let obj = value.as_object().ok_or_else(|| {
+                SerializeError::ReflectError(
+                    "Value claims Object but as_object() returned None".into(),
+                )
+            })?;
+            encode::write_varint(out, obj.len() as u64);
+            for (k, v) in obj.iter() {
+                let s = k.as_str();
+                encode::write_varint(out, s.len() as u64);
+                out.write_bytes(s.as_bytes());
+                serialize_dynamic_value(v, out)?;
+            }
+        }
+        ValueType::DateTime | ValueType::QName | ValueType::Uuid => {
+            return Err(SerializeError::UnsupportedType(format!(
+                "facet_value::Value variant {:?} not yet implemented in vox-postcard \
+                 (Null/Bool/Number/String/Bytes/Array/Object work)",
+                value.value_type()
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn serialize_scalar<'a>(

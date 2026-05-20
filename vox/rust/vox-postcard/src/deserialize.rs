@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use facet::Facet;
 use facet_core::{Def, ScalarType, StructKind, Type, UserType};
 use facet_reflect::Partial;
+use facet_value::{VArray, VObject, VString, Value};
 use vox_schema::SchemaRegistry;
 
 use crate::decode::{self, Cursor};
@@ -253,6 +254,13 @@ fn deserialize_value<'de, 'facet, const BORROW: bool>(
             };
             return deserialize_pointer::<BORROW>(partial, cursor, pointee_plan, registry);
         }
+        // `Def::DynamicValue` — `facet_value::Value`. Mirror of the encode
+        // path in `serialize::serialize_dynamic_value` (facet-postcard's
+        // tagged scheme).
+        Def::DynamicValue(_) => {
+            let value = read_dynamic_value(cursor)?;
+            return partial.set::<Value>(value).map_err(re);
+        }
         _ => {}
     }
 
@@ -268,6 +276,85 @@ fn deserialize_value<'de, 'facet, const BORROW: bool>(
             deserialize_enum_planned::<BORROW>(partial, cursor, plan, registry)
         }
         _ => Err(DeserializeError::UnsupportedType(format!("{}", shape))),
+    }
+}
+
+/// Decode a `facet_value::Value` from the tagged postcard scheme. Mirror of
+/// `serialize::serialize_dynamic_value`; tag bytes match
+/// `facet_format::DynamicValueTag` (0=Null .. 9=DateTime).
+fn read_dynamic_value<'de>(cursor: &mut Cursor<'de>) -> Result<Value, DeserializeError> {
+    let tag = cursor.read_byte()?;
+    match tag {
+        0 => Ok(Value::NULL),
+        1 => {
+            let b = cursor.read_byte()?;
+            match b {
+                0 => Ok(Value::from(false)),
+                1 => Ok(Value::from(true)),
+                other => Err(DeserializeError::InvalidBool {
+                    pos: cursor.pos() - 1,
+                    got: other,
+                }),
+            }
+        }
+        2 => {
+            // I64: ZigZag-decoded varint (mirror of write_varint_signed).
+            let zz = cursor.read_varint()?;
+            let signed = ((zz >> 1) as i64) ^ -((zz & 1) as i64);
+            Ok(Value::from(signed))
+        }
+        3 => {
+            let u = cursor.read_varint()?;
+            Ok(Value::from(u))
+        }
+        4 => {
+            let bytes = cursor.read_bytes(8)?;
+            let mut buf = [0u8; 8];
+            buf.copy_from_slice(bytes);
+            Ok(Value::from(f64::from_le_bytes(buf)))
+        }
+        5 => {
+            let len = cursor.read_varint()? as usize;
+            let raw = cursor.read_bytes(len)?;
+            let s = std::str::from_utf8(raw).map_err(|_| DeserializeError::InvalidUtf8 {
+                pos: cursor.pos() - len,
+            })?;
+            Ok(Value::from(s))
+        }
+        6 => {
+            let len = cursor.read_varint()? as usize;
+            let raw = cursor.read_bytes(len)?;
+            Ok(Value::from(raw.to_vec()))
+        }
+        7 => {
+            let len = cursor.read_varint()? as usize;
+            let mut arr = VArray::new();
+            for _ in 0..len {
+                arr.push(read_dynamic_value(cursor)?);
+            }
+            Ok(Value::from(arr))
+        }
+        8 => {
+            let len = cursor.read_varint()? as usize;
+            let mut obj = VObject::new();
+            for _ in 0..len {
+                let klen = cursor.read_varint()? as usize;
+                let kraw = cursor.read_bytes(klen)?;
+                let k = std::str::from_utf8(kraw).map_err(|_| DeserializeError::InvalidUtf8 {
+                    pos: cursor.pos() - klen,
+                })?;
+                let v = read_dynamic_value(cursor)?;
+                obj.insert(VString::new(k), v);
+            }
+            Ok(Value::from(obj))
+        }
+        9 => Err(DeserializeError::UnsupportedType(
+            "facet_value::Value::DateTime not yet implemented in vox-postcard".into(),
+        )),
+        other => Err(DeserializeError::Custom(format!(
+            "unknown DynamicValueTag byte 0x{other:02x} at pos {}",
+            cursor.pos() - 1
+        ))),
     }
 }
 

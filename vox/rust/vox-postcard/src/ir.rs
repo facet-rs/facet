@@ -3570,7 +3570,20 @@ fn lower_encode_value(
     program.lowering_in_progress.insert(shape);
     let result = lower_encode_value_inner(shape, cal, program, block, src_offset);
     program.lowering_in_progress.remove(&shape);
-    result
+    match result {
+        Ok(()) => Ok(()),
+        // Shape isn't statically lowerable (e.g. `facet_value::Value`, an
+        // opaque dynamic, an unmodelled pointer/slice). The IR's `SlowPath`
+        // op is the designed escape: at runtime the JIT-compiled stub calls
+        // `vox_jit_encode_slow_path` which reflectively postcard-encodes
+        // that one field. Strict callers opt out via `VOX_JIT_REQUIRE_PURE=1`,
+        // which panics if any SlowPath remains in the program.
+        Err(EncodeLowerError::Unsupported(_)) => {
+            program.emit(block, EncodeOp::SlowPath { shape, src_offset });
+            Ok(())
+        }
+        Err(e) => Err(e),
+    }
 }
 
 fn lower_encode_value_inner(
