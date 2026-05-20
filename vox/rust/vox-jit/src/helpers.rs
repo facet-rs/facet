@@ -364,17 +364,9 @@ pub unsafe extern "C" fn vox_jit_encode_opaque(
         return unsafe { vox_jit_buf_push_bytes(ctx, inner.as_ptr(), inner.len()) };
     }
 
-    // Either honors `VOX_JIT_ABORT_ON_SLOW_PATH`/`VOX_JIT_REQUIRE_PURE`
-    // (abort/panic), or returns None and we fall through to the dynamic
-    // postcard fallback below. The previous `is_none()` check made the
-    // fallback unreachable.
     let _ = handle_pure_jit_encode_miss("opaque", shape);
-
-    let Ok(bytes) = vox_postcard::serialize::to_vec_dynamic(PtrConst::new(src_ptr), shape) else {
-        unsafe { set_encode_err(ctx, VOX_JIT_ENCODE_ERR_POSTCARD_FALLBACK, shape) };
-        return false;
-    };
-    unsafe { vox_jit_buf_push_bytes(ctx, bytes.as_ptr(), bytes.len()) }
+    unsafe { set_encode_err(ctx, VOX_JIT_ENCODE_ERR_SLOW_PATH_ABORT, shape) };
+    false
 }
 
 /// Encode a proxy field by converting to the proxy value and delegating the
@@ -465,16 +457,9 @@ pub unsafe extern "C" fn vox_jit_encode_result(
             };
             return unsafe { vox_jit_buf_push_bytes(ctx, inner.as_ptr(), inner.len()) };
         }
-        // No JIT encoder for the inner Ok type — abort/panic on env flags or
-        // fall back to dynamic postcard encoding.
         let _ = handle_pure_jit_encode_miss("result Ok", result_def.t);
-        let Ok(bytes) =
-            vox_postcard::serialize::to_vec_dynamic(PtrConst::new(ok_ptr), result_def.t)
-        else {
-            unsafe { set_encode_err(ctx, VOX_JIT_ENCODE_ERR_POSTCARD_FALLBACK, result_def.t) };
-            return false;
-        };
-        unsafe { vox_jit_buf_push_bytes(ctx, bytes.as_ptr(), bytes.len()) }
+        unsafe { set_encode_err(ctx, VOX_JIT_ENCODE_ERR_SLOW_PATH_ABORT, result_def.t) };
+        false
     } else {
         if !unsafe { vox_jit_buf_write_varint(ctx, 1) } {
             return false;
@@ -494,13 +479,8 @@ pub unsafe extern "C" fn vox_jit_encode_result(
             return unsafe { vox_jit_buf_push_bytes(ctx, inner.as_ptr(), inner.len()) };
         }
         let _ = handle_pure_jit_encode_miss("result Err", result_def.e);
-        let Ok(bytes) =
-            vox_postcard::serialize::to_vec_dynamic(PtrConst::new(err_ptr), result_def.e)
-        else {
-            unsafe { set_encode_err(ctx, VOX_JIT_ENCODE_ERR_POSTCARD_FALLBACK, result_def.e) };
-            return false;
-        };
-        unsafe { vox_jit_buf_push_bytes(ctx, bytes.as_ptr(), bytes.len()) }
+        unsafe { set_encode_err(ctx, VOX_JIT_ENCODE_ERR_SLOW_PATH_ABORT, result_def.e) };
+        false
     }
 }
 
