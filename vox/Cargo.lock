@@ -621,9 +621,9 @@ dependencies = [
 
 [[package]]
 name = "cranelift-frontend"
-version = "0.131.0"
+version = "0.131.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4dca3df1d107d98d88f159ad1d5eaa2d5cdb678b3d5bcfadc6fc83d8ebb448ea"
+checksum = "dfa2ad00399dd47e7e7e33cb1dc23b0e39ed9dcd01e8f026fc37af91655031b8"
 dependencies = [
  "cranelift-codegen",
  "log",
@@ -1036,7 +1036,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1131,9 +1131,9 @@ dependencies = [
 
 [[package]]
 name = "facet-error"
-version = "0.46.3"
+version = "0.46.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec96d76935100e42d8826dd4e296776b76e858525178b8dafac58abf84ad79ca"
+checksum = "9adc600ea018a663b8aca5bd26813986b6f8d985d54a436b95bafd9c8d9be54f"
 dependencies = [
  "facet",
 ]
@@ -1270,9 +1270,9 @@ dependencies = [
 
 [[package]]
 name = "facet-testhelpers"
-version = "0.46.3"
+version = "0.46.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18d377d4471e2c03fb27a6418cebc96bb9869107656698098cbb7a2b205e45b5"
+checksum = "b06f92483f992adc46b490c20a27933e3060b44b6ea624841a610aa6012ba407"
 dependencies = [
  "color-backtrace",
  "facet-testhelpers-macros",
@@ -1283,9 +1283,9 @@ dependencies = [
 
 [[package]]
 name = "facet-testhelpers-macros"
-version = "0.46.3"
+version = "0.46.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ffe659fb076ff6fea8b29dad3b6050c8f53f573de041b587aa55d63a02a5b9e"
+checksum = "5fd3e9fdc193a4959428d0342de089f22da022d57a1455533952c1c48870b353"
 dependencies = [
  "quote",
  "unsynn",
@@ -2007,7 +2007,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2365,7 +2365,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2977,7 +2977,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3269,6 +3269,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "psm",
+ "windows-sys 0.52.0",
  "windows-sys 0.59.0",
 ]
 
@@ -3593,7 +3594,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3624,7 +3625,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
 dependencies = [
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3828,9 +3829,9 @@ dependencies = [
 
 [[package]]
 name = "tonic-prost"
-version = "0.14.5"
+version = "0.14.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a55376a0bbaa4975a3f10d009ad763d8f4108f067c7c2e74f3001fb49778d309"
+checksum = "50849f68853be452acf590cde0b146665b8d507b3b8af17261df47e02c209ea0"
 dependencies = [
  "bytes",
  "prost",
@@ -4647,7 +4648,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
