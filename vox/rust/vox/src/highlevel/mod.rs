@@ -27,14 +27,16 @@ mod tcp;
 #[cfg(feature = "transport-local")]
 mod local;
 
-#[cfg(feature = "transport-websocket")]
+// Server-side: ws/wss listeners use tokio::net::TcpListener and only make
+// sense on native targets.
+#[cfg(all(feature = "transport-websocket", not(target_arch = "wasm32")))]
 mod ws;
-#[cfg(feature = "transport-websocket")]
+#[cfg(all(feature = "transport-websocket", not(target_arch = "wasm32")))]
 pub use ws::WsListener;
 
-#[cfg(feature = "transport-websocket-tls")]
+#[cfg(all(feature = "transport-websocket-tls", not(target_arch = "wasm32")))]
 mod wss;
-#[cfg(feature = "transport-websocket-tls")]
+#[cfg(all(feature = "transport-websocket-tls", not(target_arch = "wasm32")))]
 pub use wss::WssListener;
 
 mod channel;
@@ -90,7 +92,7 @@ enum ConnectAddress {
     Tcp(String),
     #[cfg(feature = "transport-local")]
     Local(String),
-    #[cfg(feature = "transport-websocket")]
+    #[cfg(all(feature = "transport-websocket", not(target_arch = "wasm32")))]
     Ws(String),
 }
 
@@ -111,7 +113,7 @@ fn parse_connect_address(addr: String) -> Result<ConnectAddress, SessionError> {
         "tcp" => Ok(ConnectAddress::Tcp(host)),
         #[cfg(feature = "transport-local")]
         "local" => Ok(ConnectAddress::Local(host)),
-        #[cfg(feature = "transport-websocket")]
+        #[cfg(all(feature = "transport-websocket", not(target_arch = "wasm32")))]
         "ws" | "wss" => Ok(ConnectAddress::Ws(format!("{scheme}://{host}"))),
         _ => Err(SessionError::Protocol(format!(
             "unknown transport scheme: {scheme:?}"
@@ -365,7 +367,10 @@ where
                 }
                 builder.metadata(metadata).establish::<Client>().await
             }
-            #[cfg(feature = "transport-websocket")]
+            // Native-only: `ws_link_source` is the tokio-tungstenite reconnect
+            // source. Wasm clients use the lower-level vox_websocket::WsLink
+            // (web_sys::WebSocket) directly.
+            #[cfg(all(feature = "transport-websocket", not(target_arch = "wasm32")))]
             ConnectAddress::Ws(url) => {
                 let mut builder = initiator(
                     vox_websocket::ws_link_source(url.clone()),
@@ -513,7 +518,7 @@ where
             }
             #[cfg(feature = "transport-local")]
             "local" => local::serve_local(&host, acceptor, channel_capacity, observer).await,
-            #[cfg(feature = "transport-websocket")]
+            #[cfg(all(feature = "transport-websocket", not(target_arch = "wasm32")))]
             "ws" => {
                 let listener = WsListener::bind(&host).await?;
                 let mut builder =
@@ -523,7 +528,7 @@ where
                 }
                 Ok(builder.await?)
             }
-            #[cfg(feature = "transport-websocket-tls")]
+            #[cfg(all(feature = "transport-websocket-tls", not(target_arch = "wasm32")))]
             "wss" => wss::serve_wss(&host, acceptor, channel_capacity, observer).await,
             _ => Err(ServeError::UnsupportedScheme { scheme }),
         }
