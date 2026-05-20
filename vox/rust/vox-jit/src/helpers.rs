@@ -5,9 +5,24 @@
 
 use facet::{PtrConst, PtrMut, PtrUninit};
 use vox_jit_abi::{
-    DecodeCtx, DecodeStatus, EncodeCtx, vox_jit_buf_push_bytes, vox_jit_buf_write_varint,
+    DecodeCtx, DecodeStatus, EncodeCtx, VOX_JIT_ENCODE_ERR_DEF_MISMATCH, VOX_JIT_ENCODE_ERR_NESTED,
+    VOX_JIT_ENCODE_ERR_NO_OPAQUE_ADAPTER, VOX_JIT_ENCODE_ERR_NULL_VARIANT_PTR,
+    VOX_JIT_ENCODE_ERR_POSTCARD_FALLBACK, VOX_JIT_ENCODE_ERR_SLOW_PATH_ABORT,
+    VOX_JIT_ENCODE_ERR_UNKNOWN, vox_jit_buf_push_bytes, vox_jit_buf_write_varint,
 };
 use vox_postcard::{TranslationPlan, ir::slow_path_decode_raw};
+
+/// Record a JIT-encode failure on the ctx (first writer wins — keeps the
+/// innermost / most specific error). Safe to call multiple times; subsequent
+/// calls after the first non-UNKNOWN one are no-ops.
+#[inline]
+unsafe fn set_encode_err(ctx: *mut EncodeCtx, kind: u32, shape: &'static facet_core::Shape) {
+    let ctx = unsafe { &mut *ctx };
+    if ctx.error_kind == VOX_JIT_ENCODE_ERR_UNKNOWN {
+        ctx.error_kind = kind;
+        ctx.error_shape = shape as *const _ as *const u8;
+    }
+}
 
 /// # Safety
 ///
@@ -264,7 +279,10 @@ pub unsafe extern "C" fn vox_jit_encode_slow_path(
         } else if let Some(result) =
             crate::global_runtime().try_encode_ptr(mapped.ptr, mapped.shape)
         {
-            let Ok(inner) = result else { return false };
+            let Ok(inner) = result else {
+                unsafe { set_encode_err(ctx, VOX_JIT_ENCODE_ERR_NESTED, mapped.shape) };
+                return false;
+            };
             let mut out = Vec::with_capacity(4 + inner.len());
             out.extend_from_slice(&(inner.len() as u32).to_le_bytes());
             out.extend_from_slice(&inner);
@@ -272,13 +290,19 @@ pub unsafe extern "C" fn vox_jit_encode_slow_path(
         } else {
             match vox_postcard::serialize::to_vec_dynamic(PtrConst::new(src_ptr), shape) {
                 Ok(v) => v,
-                Err(_) => return false,
+                Err(_) => {
+                    unsafe { set_encode_err(ctx, VOX_JIT_ENCODE_ERR_POSTCARD_FALLBACK, shape) };
+                    return false;
+                }
             }
         }
     } else {
         match vox_postcard::serialize::to_vec_dynamic(PtrConst::new(src_ptr), shape) {
             Ok(v) => v,
-            Err(_) => return false,
+            Err(_) => {
+                unsafe { set_encode_err(ctx, VOX_JIT_ENCODE_ERR_POSTCARD_FALLBACK, shape) };
+                return false;
+            }
         }
     };
     unsafe { vox_jit_buf_push_bytes(ctx, bytes.as_ptr(), bytes.len()) }
@@ -315,6 +339,7 @@ pub unsafe extern "C" fn vox_jit_encode_opaque(
     shape: &'static facet_core::Shape,
 ) -> bool {
     let Some(adapter) = shape.opaque_adapter else {
+        unsafe { set_encode_err(ctx, VOX_JIT_ENCODE_ERR_NO_OPAQUE_ADAPTER, shape) };
         return false;
     };
     let mapped = unsafe { (adapter.serialize)(PtrConst::new(src_ptr)) };
@@ -323,24 +348,30 @@ pub unsafe extern "C" fn vox_jit_encode_opaque(
         unsafe { vox_postcard::raw::try_decode_passthrough_bytes(mapped.ptr, mapped.shape) }
     {
         if !unsafe { vox_jit_buf_push_bytes(ctx, (bytes.len() as u32).to_le_bytes().as_ptr(), 4) } {
-            return false;
+            return false; // ALLOC already set by vox_jit_buf_grow
         }
         return unsafe { vox_jit_buf_push_bytes(ctx, bytes.as_ptr(), bytes.len()) };
     }
 
     if let Some(result) = crate::global_runtime().try_encode_ptr(mapped.ptr, mapped.shape) {
-        let Ok(inner) = result else { return false };
+        let Ok(inner) = result else {
+            unsafe { set_encode_err(ctx, VOX_JIT_ENCODE_ERR_NESTED, mapped.shape) };
+            return false;
+        };
         if !unsafe { vox_jit_buf_push_bytes(ctx, (inner.len() as u32).to_le_bytes().as_ptr(), 4) } {
             return false;
         }
         return unsafe { vox_jit_buf_push_bytes(ctx, inner.as_ptr(), inner.len()) };
     }
 
-    if handle_pure_jit_encode_miss("opaque", shape).is_none() {
-        return false;
-    }
+    // Either honors `VOX_JIT_ABORT_ON_SLOW_PATH`/`VOX_JIT_REQUIRE_PURE`
+    // (abort/panic), or returns None and we fall through to the dynamic
+    // postcard fallback below. The previous `is_none()` check made the
+    // fallback unreachable.
+    let _ = handle_pure_jit_encode_miss("opaque", shape);
 
     let Ok(bytes) = vox_postcard::serialize::to_vec_dynamic(PtrConst::new(src_ptr), shape) else {
+        unsafe { set_encode_err(ctx, VOX_JIT_ENCODE_ERR_POSTCARD_FALLBACK, shape) };
         return false;
     };
     unsafe { vox_jit_buf_push_bytes(ctx, bytes.as_ptr(), bytes.len()) }
@@ -411,42 +442,65 @@ pub unsafe extern "C" fn vox_jit_encode_result(
     shape: &'static facet_core::Shape,
 ) -> bool {
     let facet_core::Def::Result(result_def) = shape.def else {
+        unsafe { set_encode_err(ctx, VOX_JIT_ENCODE_ERR_DEF_MISMATCH, shape) };
         return false;
     };
     let result_ptr = PtrConst::new(src_ptr);
 
     if unsafe { (result_def.vtable.is_ok)(result_ptr) } {
         if !unsafe { vox_jit_buf_write_varint(ctx, 0) } {
-            return false;
+            return false; // ALLOC already set
         }
         let ok_ptr = unsafe { (result_def.vtable.get_ok)(result_ptr) };
         if ok_ptr.is_null() {
+            unsafe { set_encode_err(ctx, VOX_JIT_ENCODE_ERR_NULL_VARIANT_PTR, shape) };
             return false;
         }
         if let Some(result) =
             crate::global_runtime().try_encode_ptr(PtrConst::new(ok_ptr), result_def.t)
         {
-            let Ok(inner) = result else { return false };
+            let Ok(inner) = result else {
+                unsafe { set_encode_err(ctx, VOX_JIT_ENCODE_ERR_NESTED, result_def.t) };
+                return false;
+            };
             return unsafe { vox_jit_buf_push_bytes(ctx, inner.as_ptr(), inner.len()) };
         }
+        // No JIT encoder for the inner Ok type — abort/panic on env flags or
+        // fall back to dynamic postcard encoding.
         let _ = handle_pure_jit_encode_miss("result Ok", result_def.t);
-        false
+        let Ok(bytes) =
+            vox_postcard::serialize::to_vec_dynamic(PtrConst::new(ok_ptr), result_def.t)
+        else {
+            unsafe { set_encode_err(ctx, VOX_JIT_ENCODE_ERR_POSTCARD_FALLBACK, result_def.t) };
+            return false;
+        };
+        unsafe { vox_jit_buf_push_bytes(ctx, bytes.as_ptr(), bytes.len()) }
     } else {
         if !unsafe { vox_jit_buf_write_varint(ctx, 1) } {
             return false;
         }
         let err_ptr = unsafe { (result_def.vtable.get_err)(result_ptr) };
         if err_ptr.is_null() {
+            unsafe { set_encode_err(ctx, VOX_JIT_ENCODE_ERR_NULL_VARIANT_PTR, shape) };
             return false;
         }
         if let Some(result) =
             crate::global_runtime().try_encode_ptr(PtrConst::new(err_ptr), result_def.e)
         {
-            let Ok(inner) = result else { return false };
+            let Ok(inner) = result else {
+                unsafe { set_encode_err(ctx, VOX_JIT_ENCODE_ERR_NESTED, result_def.e) };
+                return false;
+            };
             return unsafe { vox_jit_buf_push_bytes(ctx, inner.as_ptr(), inner.len()) };
         }
         let _ = handle_pure_jit_encode_miss("result Err", result_def.e);
-        false
+        let Ok(bytes) =
+            vox_postcard::serialize::to_vec_dynamic(PtrConst::new(err_ptr), result_def.e)
+        else {
+            unsafe { set_encode_err(ctx, VOX_JIT_ENCODE_ERR_POSTCARD_FALLBACK, result_def.e) };
+            return false;
+        };
+        unsafe { vox_jit_buf_push_bytes(ctx, bytes.as_ptr(), bytes.len()) }
     }
 }
 

@@ -385,9 +385,53 @@ pub fn encode_with(
         }
         Ok(bytes)
     } else {
-        Err(SerializeError::ReflectError(
-            "JIT encode returned false (OOM)".into(),
-        ))
+        // Format an actionable error from whatever diagnostic the helpers /
+        // JIT-emitted code populated on the ctx. We always know the
+        // entry-point shape (`encoder.local_shape`); helpers may additionally
+        // identify the inner shape and kind of failure.
+        let kind = ctx.error_kind;
+        let inner_shape = if ctx.error_shape.is_null() {
+            None
+        } else {
+            // SAFETY: helpers only ever store a `&'static facet_core::Shape`
+            // here, cast via `as *const u8`.
+            Some(unsafe { &*(ctx.error_shape as *const facet_core::Shape) })
+        };
+        Err(SerializeError::ReflectError(format_jit_encode_error(
+            encoder.local_shape,
+            kind,
+            inner_shape,
+        )))
+    }
+}
+
+fn jit_encode_err_kind_name(kind: u32) -> &'static str {
+    match kind {
+        vox_jit_abi::VOX_JIT_ENCODE_ERR_ALLOC => "alloc-failed",
+        vox_jit_abi::VOX_JIT_ENCODE_ERR_NO_OPAQUE_ADAPTER => "no-opaque-adapter",
+        vox_jit_abi::VOX_JIT_ENCODE_ERR_DEF_MISMATCH => "shape-def-mismatch",
+        vox_jit_abi::VOX_JIT_ENCODE_ERR_NULL_VARIANT_PTR => "null-variant-ptr",
+        vox_jit_abi::VOX_JIT_ENCODE_ERR_NESTED => "nested-encode-failed",
+        vox_jit_abi::VOX_JIT_ENCODE_ERR_POSTCARD_FALLBACK => "postcard-fallback-failed",
+        vox_jit_abi::VOX_JIT_ENCODE_ERR_SLOW_PATH_ABORT => "slow-path-abort",
+        _ => "unknown",
+    }
+}
+
+fn format_jit_encode_error(
+    entry_shape: &'static facet_core::Shape,
+    kind: u32,
+    inner_shape: Option<&'static facet_core::Shape>,
+) -> String {
+    let kind_name = jit_encode_err_kind_name(kind);
+    match inner_shape {
+        Some(inner) if !std::ptr::eq(inner as *const _, entry_shape as *const _) => {
+            format!(
+                "JIT encode failed: kind={kind_name} ({kind}) \
+                 entry_shape='{entry_shape}' failing_shape='{inner}'"
+            )
+        }
+        _ => format!("JIT encode failed: kind={kind_name} ({kind}) shape='{entry_shape}'"),
     }
 }
 

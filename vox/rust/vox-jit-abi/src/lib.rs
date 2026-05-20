@@ -785,6 +785,18 @@ pub unsafe extern "C" fn vox_jit_validate_bools(bytes: *const u8, len: usize) ->
 /// `vox_jit_buf_grow` when the buffer is full.
 ///
 /// Layout is stable and part of the ABI. Fields must not be reordered.
+// Reasons a JIT-encode call returned `false`. Helpers set this on `ctx`
+// before returning so `encode_with` can surface an actionable error.
+// 0 = unknown / not set (back-compat default).
+pub const VOX_JIT_ENCODE_ERR_UNKNOWN: u32 = 0;
+pub const VOX_JIT_ENCODE_ERR_ALLOC: u32 = 1; // buffer grow / alloc failure
+pub const VOX_JIT_ENCODE_ERR_NO_OPAQUE_ADAPTER: u32 = 2;
+pub const VOX_JIT_ENCODE_ERR_DEF_MISMATCH: u32 = 3; // shape.def not what helper expected
+pub const VOX_JIT_ENCODE_ERR_NULL_VARIANT_PTR: u32 = 4; // get_ok/get_err returned null
+pub const VOX_JIT_ENCODE_ERR_NESTED: u32 = 5; // a nested encode_with returned Err
+pub const VOX_JIT_ENCODE_ERR_POSTCARD_FALLBACK: u32 = 6; // dynamic postcard fallback failed
+pub const VOX_JIT_ENCODE_ERR_SLOW_PATH_ABORT: u32 = 7; // VOX_JIT_ABORT_ON_SLOW_PATH=1 hit
+
 #[repr(C)]
 pub struct EncodeCtx {
     /// Pointer to the start of the output buffer allocation.
@@ -793,6 +805,16 @@ pub struct EncodeCtx {
     pub buf_len: usize,
     /// Total capacity of the current allocation.
     pub buf_cap: usize,
+    // -- diagnostic slots (kept AFTER the hot fields so JIT-emitted offset_of
+    //    accesses to buf_ptr/buf_len/buf_cap stay stable) --
+    /// One of the `VOX_JIT_ENCODE_ERR_*` constants. 0 = no error / unknown.
+    pub error_kind: u32,
+    /// Padding to align the pointer field.
+    pub _error_pad: u32,
+    /// Opaque pointer to the `&'static facet_core::Shape` of the inner shape
+    /// that triggered the failure, if a helper had one in scope. null = unknown.
+    /// Cast back to `&'static Shape` in the encode wrapper.
+    pub error_shape: *const u8,
 }
 
 impl EncodeCtx {
@@ -808,6 +830,9 @@ impl EncodeCtx {
             buf_ptr,
             buf_len: 0,
             buf_cap: cap,
+            error_kind: VOX_JIT_ENCODE_ERR_UNKNOWN,
+            _error_pad: 0,
+            error_shape: std::ptr::null(),
         }
     }
 
@@ -860,7 +885,10 @@ pub unsafe extern "C" fn vox_jit_buf_grow(ctx: *mut EncodeCtx, needed: usize) ->
     let new_cap = (ctx.buf_cap * 2).max(ctx.buf_len + needed).max(64);
     let new_layout = match std::alloc::Layout::from_size_align(new_cap, 1) {
         Ok(l) => l,
-        Err(_) => return false,
+        Err(_) => {
+            ctx.error_kind = VOX_JIT_ENCODE_ERR_ALLOC;
+            return false;
+        }
     };
     let new_ptr = if ctx.buf_ptr.is_null() || ctx.buf_cap == 0 {
         unsafe { std::alloc::alloc(new_layout) }
@@ -870,6 +898,7 @@ pub unsafe extern "C" fn vox_jit_buf_grow(ctx: *mut EncodeCtx, needed: usize) ->
         unsafe { std::alloc::realloc(ctx.buf_ptr, old_layout, new_cap) }
     };
     if new_ptr.is_null() {
+        ctx.error_kind = VOX_JIT_ENCODE_ERR_ALLOC;
         return false;
     }
     ctx.buf_ptr = new_ptr;
