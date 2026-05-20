@@ -249,6 +249,10 @@ impl CraneliftBackend {
             "vox_jit_encode_bytes_like",
             crate::helpers::vox_jit_encode_bytes_like as *const u8,
         );
+        jit_builder.symbol(
+            "vox_jit_encode_char",
+            crate::helpers::vox_jit_encode_char as *const u8,
+        );
 
         let module = JITModule::new(jit_builder);
 
@@ -4424,12 +4428,11 @@ fn emit_write_scalar(
         }
 
         WirePrimitive::Char => {
-            // char is 4 bytes in Rust. Encode as UTF-8 length-prefixed string.
-            // Read the char as u32, encode as UTF-8. This requires runtime logic —
-            // fall back for now.
-            return Err(CodegenError::UnsupportedOp(
-                "char encode not yet supported in JIT".into(),
-            ));
+            // char is a 4-byte u32 in Rust; UTF-8 encoding + varint length
+            // is handled by the runtime helper (matches `serialize_scalar`'s
+            // ScalarType::Char arm). The helper has the standard EncodeFn
+            // signature, so we can use the direct-child dispatch path.
+            emit_encode_direct_child(ectx, crate::helpers::vox_jit_encode_char, src_offset);
         }
     }
     Ok(())

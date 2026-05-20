@@ -592,6 +592,42 @@ pub unsafe extern "C" fn vox_jit_init_str_ref(dst: *mut u8, data: *const u8, len
 }
 
 /// Encode a string-like shape (`String`, `&str`, `Cow<str>`) without using
+/// Encode a `char` (4-byte u32 codepoint) to postcard.
+///
+/// Postcard wire format: `varint(utf8_byte_len) + utf8_bytes` (1..4 bytes).
+/// Matches `serialize_scalar`'s `ScalarType::Char` arm exactly.
+///
+/// Signature is the standard `EncodeFn` so callers can use
+/// `emit_encode_direct_child` to dispatch — no shape arg needed.
+///
+/// # Safety
+///
+/// - `ctx` must be a valid pointer to an `EncodeCtx`.
+/// - `src_ptr` must point to 4 readable bytes holding a `char` (any valid
+///   Rust `char` is a Unicode scalar value, so `from_u32` will succeed).
+pub unsafe extern "C" fn vox_jit_encode_char(ctx: *mut EncodeCtx, src_ptr: *const u8) -> bool {
+    let codepoint = unsafe { (src_ptr as *const u32).read_unaligned() };
+    let Some(c) = char::from_u32(codepoint) else {
+        // A Rust `char` is by construction a valid Unicode scalar value;
+        // reaching here means the source memory was corrupt. Surface as a
+        // postcard-fallback failure with no specific shape attached.
+        unsafe {
+            let ctx_ref = &mut *ctx;
+            if ctx_ref.error_kind == VOX_JIT_ENCODE_ERR_UNKNOWN {
+                ctx_ref.error_kind = VOX_JIT_ENCODE_ERR_POSTCARD_FALLBACK;
+            }
+        }
+        return false;
+    };
+    let mut buf = [0u8; 4];
+    let s = c.encode_utf8(&mut buf);
+    let bytes = s.as_bytes();
+    if !unsafe { vox_jit_buf_write_varint(ctx, bytes.len() as u64) } {
+        return false; // ALLOC already set by buf_grow
+    }
+    unsafe { vox_jit_buf_push_bytes(ctx, bytes.as_ptr(), bytes.len()) }
+}
+
 /// the reflective walker.
 ///
 /// # Safety
