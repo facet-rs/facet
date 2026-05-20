@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/bearcove/vox/compare/vox-postcard-v0.6.1...vox-postcard-v0.7.0) - 2026-05-20
+
+### Other
+
+- vox-postcard + vox-jit: Def::DynamicValue codec + actionable JIT errors
+
 ## [0.5.0](https://github.com/bearcove/vox/compare/vox-postcard-v0.4.0...vox-postcard-v0.5.0) - 2026-05-15
 
 ### Added

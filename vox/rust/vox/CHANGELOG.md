@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/bearcove/vox/compare/vox-v0.6.1...vox-v0.7.0) - 2026-05-20
+
+### Fixed
+
+- gate native-WS off wasm32
+
 ## [0.6.0](https://github.com/bearcove/vox/compare/vox-v0.5.1...vox-v0.6.0) - 2026-05-19
 
 ### Added

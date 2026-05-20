@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/bearcove/vox/compare/vox-stream-v0.6.1...vox-stream-v0.7.0) - 2026-05-20
+
+### Fixed
+
+- *(stream)* wire LocalLink to FdStreamLink on Unix ([#338](https://github.com/bearcove/vox/pull/338))
+
 ## [0.6.1](https://github.com/bearcove/vox/compare/vox-stream-v0.6.0...vox-stream-v0.6.1) - 2026-05-20
 
 ### Other
