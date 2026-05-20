@@ -319,7 +319,9 @@ where
 // LocalLink
 // ---------------------------------------------------------------------------
 
+#[cfg(windows)]
 type BoxReader = Box<dyn AsyncRead + Send + Unpin>;
+#[cfg(windows)]
 type BoxWriter = Box<dyn AsyncWrite + Send + Unpin>;
 
 /// Raw local IPC stream.
@@ -465,7 +467,19 @@ pub fn path_to_pipe_name(path: impl AsRef<std::path::Path>) -> std::path::PathBu
 /// Uses Unix domain sockets on Linux/macOS, named pipes on Windows.
 /// Addresses are strings: a socket path on Unix, a named pipe path on Windows
 /// (e.g. `\\.\pipe\my-service`).
+///
+/// On Unix the link is fd-capable: methods that return `vox::Fd` work, because
+/// the inner transport is [`FdStreamLink`] (one `sendmsg`/`recvmsg` per frame
+/// with descriptors riding in `SCM_RIGHTS`). On Windows it is a plain named-pipe
+/// stream — `vox::Fd` is not deliverable there, and a service that returns one
+/// will error at send time as on any non-fd transport.
 // r[impl transport.stream.local]
+#[cfg(unix)]
+pub struct LocalLink {
+    inner: FdStreamLink,
+}
+
+#[cfg(windows)]
 pub struct LocalLink {
     inner: StreamLink<BoxReader, BoxWriter>,
 }
@@ -474,10 +488,8 @@ impl LocalLink {
     /// Connect to a local endpoint by address.
     #[cfg(unix)]
     pub async fn connect(addr: &str) -> io::Result<Self> {
-        let stream = connect(addr).await?;
-        let (r, w) = stream.into_split();
         Ok(Self {
-            inner: StreamLink::new(Box::new(r), Box::new(w)),
+            inner: FdStreamLink::connect(addr).await?,
         })
     }
 
@@ -492,6 +504,17 @@ impl LocalLink {
     }
 }
 
+#[cfg(unix)]
+impl Link for LocalLink {
+    type Tx = FdStreamLinkTx;
+    type Rx = FdStreamLinkRx;
+
+    fn split(self) -> (Self::Tx, Self::Rx) {
+        self.inner.split()
+    }
+}
+
+#[cfg(windows)]
 impl Link for LocalLink {
     type Tx = StreamLinkTx;
     type Rx = StreamLinkRx<BufReader<BoxReader>>;
@@ -659,9 +682,8 @@ impl LocalLinkAcceptor {
     #[cfg(unix)]
     pub async fn accept(&self) -> io::Result<LocalLink> {
         let (stream, _addr) = self.listener.accept().await?;
-        let (r, w) = stream.into_split();
         Ok(LocalLink {
-            inner: StreamLink::new(Box::new(r), Box::new(w)),
+            inner: FdStreamLink::new(stream),
         })
     }
 
@@ -816,5 +838,58 @@ mod tests {
 
         let msg = server.await.unwrap();
         assert_eq!(payload(&msg), b"local");
+    }
+
+    /// On Unix, `LocalLink` is fd-capable: an `SCM_RIGHTS` descriptor travels
+    /// across the listener-accepted connection and re-materialises into a
+    /// readable file on the peer. This locks in the
+    /// `LocalLinkAcceptor` → `FdStreamLink` wiring (the bug previously was that
+    /// accept produced a plain `StreamLink`, so `vox::Fd` returns from a
+    /// `#[vox::service]` over `LocalLink` failed at send time).
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn local_link_carries_fds() {
+        use std::io::{Read, Seek, Write};
+        use std::os::fd::OwnedFd;
+        use vox_types::{Fd, collect_fds, provide_fds};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fd.sock");
+        let addr = path.to_str().unwrap();
+
+        // A throwaway descriptor seeded with known bytes; reading it back
+        // through the SCM_RIGHTS-delivered fd proves the descriptor moved.
+        let mut tmp = tempfile::tempfile().unwrap();
+        tmp.write_all(b"hello-via-scm-rights").unwrap();
+        tmp.rewind().unwrap();
+        let fd_msg = Fd::new(OwnedFd::from(tmp));
+
+        let acceptor = LocalLinkAcceptor::bind(addr).unwrap();
+        let connect_addr = addr.to_string();
+        let server = tokio::spawn(async move {
+            let link = acceptor.accept().await.unwrap();
+            let (tx, _rx) = link.split();
+            let (body, fds) = collect_fds(|| vox_postcard::to_vec(&fd_msg).unwrap());
+            assert_eq!(fds.len(), 1);
+            tx.send_with_fds(body, fds).await.unwrap();
+        });
+
+        let client_link = LocalLink::connect(&connect_addr).await.unwrap();
+        let (_tx, mut rx) = client_link.split();
+        let backing = rx.recv().await.unwrap().unwrap();
+        let frame_fds = rx.take_frame_fds();
+        assert_eq!(frame_fds.len(), 1, "one fd attributed to the frame");
+        let bytes = match &backing {
+            Backing::Boxed(b) => b.to_vec(),
+            Backing::Shared(s) => s.as_bytes().to_vec(),
+        };
+        let decoded: Fd =
+            provide_fds(frame_fds, || vox_postcard::from_slice(&bytes).unwrap());
+        let mut f = std::fs::File::from(decoded.into_owned_fd().unwrap());
+        let mut got = String::new();
+        f.read_to_string(&mut got).unwrap();
+        assert_eq!(got, "hello-via-scm-rights");
+
+        server.await.unwrap();
     }
 }
