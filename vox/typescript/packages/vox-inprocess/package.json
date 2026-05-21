@@ -27,7 +27,7 @@
     "@bearcove/vox-core": "workspace:*"
   },
   "devDependencies": {
-    "vitest": "^2.1.0"
+    "vitest": "^4.0.0"
   },
   "license": "MIT OR Apache-2.0",
   "description": "In-process transport for vox — WASM to TypeScript communication without network",

@@ -13,6 +13,6 @@
     "@bearcove/vox-ws": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "^22"
+    "@types/node": "^25.0.0"
   }
 }

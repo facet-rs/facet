@@ -30,7 +30,7 @@
     "@bearcove/vox-wire": "workspace:*"
   },
   "devDependencies": {
-    "vitest": "^2.1.0"
+    "vitest": "^4.0.0"
   },
   "license": "MIT OR Apache-2.0",
   "description": "Core protocol runtime and transport abstractions for Vox",

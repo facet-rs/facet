@@ -7,6 +7,8 @@ packages:
   - "wasm/tests/browser-wasm"
   - "wasm/tests/browser-inprocess"
   - "wasm/tests/playwright"
+allowBuilds:
+  esbuild: false
 minimumReleaseAgeExclude:
   - '@typescript/native-preview-darwin-arm64@7.0.0-dev.20260519.1'
   - '@typescript/native-preview-darwin-x64@7.0.0-dev.20260519.1'

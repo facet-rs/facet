@@ -193,7 +193,7 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@v5
         with:
-          version: 10
+          version: 11
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -321,7 +321,7 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@v5
         with:
-          version: 10
+          version: 11
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable

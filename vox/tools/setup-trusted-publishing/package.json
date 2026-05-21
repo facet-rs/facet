@@ -10,7 +10,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.0.3",
-    "orval": "^7",
-    "typescript": "^5"
+    "orval": "^8.0.0",
+    "typescript": "^6.0.0"
   }
 }

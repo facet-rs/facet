@@ -29,7 +29,8 @@
     "@bearcove/vox-postcard": "workspace:*"
   },
   "devDependencies": {
-    "vitest": "^2.1.0"
+    "@types/node": "^25.0.0",
+    "vitest": "^4.0.0"
   },
   "license": "MIT OR Apache-2.0",
   "description": "Wire message codecs and helpers for Vox",

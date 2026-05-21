@@ -30,8 +30,8 @@
     "@bearcove/vox-tcp": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "^22",
-    "vitest": "^2.1.0"
+    "@types/node": "^25.0.0",
+    "vitest": "^4.0.0"
   },
   "license": "MIT OR Apache-2.0",
   "description": "WebSocket transport implementation for the Vox protocol",

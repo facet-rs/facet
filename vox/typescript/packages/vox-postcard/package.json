@@ -26,8 +26,9 @@
     "README.md"
   ],
   "devDependencies": {
-    "@vitest/coverage-v8": "^2.1.0",
-    "vitest": "^2.1.0"
+    "@types/node": "^25.0.0",
+    "@vitest/coverage-v8": "^4.0.0",
+    "vitest": "^4.0.0"
   },
   "license": "MIT OR Apache-2.0",
   "description": "Postcard serialization helpers for Vox service definitions",
