@@ -3651,6 +3651,31 @@ pub enum EncodeOp {
     },
 
     // -----------------------------------------------------------------------
+    // Map handling
+    // -----------------------------------------------------------------------
+    /// Encode a map (`BTreeMap`/`HashMap`) at `src_offset`.
+    ///
+    /// Writes the varint entry count, then walks the map's `(key, value)` pairs
+    /// through facet's iterator vtable. For each pair, `key_block` encodes the
+    /// key with the source base set to the key pointer, and `value_block`
+    /// encodes the value with the source base set to the value pointer.
+    EncodeMap {
+        src_offset: usize,
+        /// facet `MapVTable::len` — entry count for the varint prefix.
+        len_fn: facet_core::MapLenFn,
+        /// facet `IterVTable::init_with_value` — creates the iterator state.
+        iter_init_fn: facet_core::IterInitWithValueFn,
+        /// facet `IterVTable::next` (Rust ABI) — yields the next `(key, value)`.
+        iter_next_fn: facet_core::IterNextFn<(facet_core::PtrConst, facet_core::PtrConst)>,
+        /// facet `IterVTable::dealloc` — frees the iterator state.
+        iter_dealloc_fn: facet_core::IterDeallocFn,
+        /// IR block encoding one key (source base = key pointer).
+        key_block: usize,
+        /// IR block encoding one value (source base = value pointer).
+        value_block: usize,
+    },
+
+    // -----------------------------------------------------------------------
     // Control flow (mirrors decode IR)
     // -----------------------------------------------------------------------
     /// Unconditional jump to `block_id`.
@@ -3889,7 +3914,12 @@ fn lower_encode_value_inner(
         Def::Slice(slice_def) => {
             return lower_encode_slice(shape, slice_def, program, block, src_offset);
         }
-        Def::Map(_) | Def::Set(_) => {
+        Def::Map(map_def) => {
+            return lower_encode_map(shape, map_def, cal, program, block, src_offset);
+        }
+        Def::Set(_) => {
+            // Set: same iterator strategy as Map applies once SetVTable's
+            // iter_vtable is wired through — a fast-follow.
             return Err(EncodeLowerError::Unsupported(format!(
                 "unsupported def: {shape}"
             )));
@@ -4156,6 +4186,54 @@ fn lower_encode_array(
         );
     }
     program.emit(body_block, EncodeOp::Return);
+
+    Ok(())
+}
+
+/// Lower a map (`BTreeMap`/`HashMap`) to an `EncodeMap` op plus key/value body
+/// blocks.
+///
+/// At runtime `EncodeMap` writes the varint entry count, then drives facet's
+/// iterator vtable, encoding each key and value natively. Returns `Unsupported`
+/// (so the caller falls back to `SlowPath`) for a map type that exposes no
+/// iterator constructor.
+fn lower_encode_map(
+    shape: &'static Shape,
+    map_def: facet_core::MapDef,
+    cal: Option<&CalibrationRegistry>,
+    program: &mut EncodeProgram,
+    block: usize,
+    src_offset: usize,
+) -> Result<(), EncodeLowerError> {
+    let vt = map_def.vtable;
+    let Some(iter_init_fn) = vt.iter_vtable.init_with_value else {
+        return Err(EncodeLowerError::Unsupported(format!(
+            "map type without an iterator constructor: {shape}"
+        )));
+    };
+
+    let key_block = program.new_block();
+    let value_block = program.new_block();
+    program.emit(
+        block,
+        EncodeOp::EncodeMap {
+            src_offset,
+            len_fn: vt.len,
+            iter_init_fn,
+            iter_next_fn: vt.iter_vtable.next,
+            iter_dealloc_fn: vt.iter_vtable.dealloc,
+            key_block,
+            value_block,
+        },
+    );
+
+    // Key body: encode the key with source base = key pointer.
+    lower_encode_value(map_def.k(), cal, program, key_block, 0)?;
+    program.emit(key_block, EncodeOp::Return);
+
+    // Value body: encode the value with source base = value pointer.
+    lower_encode_value(map_def.v(), cal, program, value_block, 0)?;
+    program.emit(value_block, EncodeOp::Return);
 
     Ok(())
 }

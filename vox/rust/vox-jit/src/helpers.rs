@@ -201,6 +201,78 @@ pub unsafe extern "C" fn vox_jit_map_from_pair_slice(
     unsafe { from_pair_slice(PtrUninit::new(dst as *mut ()), slab, count) };
 }
 
+/// Map encode helper: entry count for the varint length prefix. Wraps facet's
+/// `MapVTable::len` behind a plain-pointer C ABI.
+///
+/// # Safety
+/// `len_fn` must be the `MapVTable::len` pointer for the map at `map`, and
+/// `map` must point to that initialized map.
+pub unsafe extern "C" fn vox_jit_map_len(len_fn: facet_core::MapLenFn, map: *const u8) -> usize {
+    unsafe { len_fn(PtrConst::new(map)) }
+}
+
+/// Map encode helper: create an iterator over a map's `(key, value)` pairs.
+/// Wraps facet's `IterVTable::init_with_value`; returns the thin iterator-state
+/// pointer threaded through `vox_jit_map_iter_next` / `vox_jit_map_iter_dealloc`.
+///
+/// # Safety
+/// `init_fn` must be the map's `IterVTable::init_with_value`, and `map` must
+/// point to the initialized map being iterated.
+pub unsafe extern "C" fn vox_jit_map_iter_init(
+    init_fn: facet_core::IterInitWithValueFn,
+    map: *const u8,
+) -> *mut u8 {
+    unsafe { init_fn(PtrConst::new(map)) }.as_mut_byte_ptr()
+}
+
+/// Map encode helper: advance the iterator. On `Some`, writes the key and
+/// value pointers through `out_k` / `out_v` and returns `true`; on exhaustion
+/// returns `false`. Wraps facet's Rust-ABI `IterVTable::next` — which the JIT
+/// cannot call directly — behind a plain-pointer C ABI.
+///
+/// `next_fn` arrives as a raw `*const ()` rather than a typed
+/// `IterNextFn<(PtrConst, PtrConst)>`: that type is a Rust-ABI fn pointer whose
+/// `Option<(PtrConst, PtrConst)>` return is not FFI-safe, so naming it in this
+/// `extern "C"` signature would be improper. Codegen passes the address; this
+/// helper transmutes it back to the typed pointer before calling.
+///
+/// # Safety
+/// - `next_fn` must be a valid `IterVTable::next` pointer paired with `iter`.
+/// - `iter` must be a live iterator state from `vox_jit_map_iter_init`.
+/// - `out_k` and `out_v` must each be valid for one pointer-sized write.
+pub unsafe extern "C" fn vox_jit_map_iter_next(
+    next_fn: *const (),
+    iter: *mut u8,
+    out_k: *mut *const u8,
+    out_v: *mut *const u8,
+) -> bool {
+    let next_fn: facet_core::IterNextFn<(PtrConst, PtrConst)> =
+        unsafe { core::mem::transmute(next_fn) };
+    match unsafe { next_fn(PtrMut::new(iter)) } {
+        Some((k, v)) => {
+            unsafe {
+                *out_k = k.as_byte_ptr();
+                *out_v = v.as_byte_ptr();
+            }
+            true
+        }
+        None => false,
+    }
+}
+
+/// Map encode helper: free an iterator created by `vox_jit_map_iter_init`.
+/// Wraps facet's `IterVTable::dealloc`.
+///
+/// # Safety
+/// `dealloc_fn` must be the `IterVTable::dealloc` paired with `iter`, and
+/// `iter` must not have already been freed.
+pub unsafe extern "C" fn vox_jit_map_iter_dealloc(
+    dealloc_fn: facet_core::IterDeallocFn,
+    iter: *mut u8,
+) {
+    unsafe { dealloc_fn(PtrMut::new(iter)) };
+}
+
 /// Default-fill helper: invoke a shape's `call_default_in_place` vtable on
 /// `dst_base.add(dst_offset)`. Used for local struct fields that have no
 /// corresponding remote field on the wire (schema evolution: fill-defaults).

@@ -4512,6 +4512,31 @@ fn emit_encode_op(
             Ok(false)
         }
 
+        EncodeOp::EncodeMap {
+            src_offset,
+            len_fn,
+            iter_init_fn,
+            iter_next_fn,
+            iter_dealloc_fn,
+            key_block,
+            value_block,
+        } => {
+            emit_encode_map(
+                ectx,
+                program,
+                EmitEncodeMapArgs {
+                    src_offset: *src_offset,
+                    len_fn: *len_fn,
+                    iter_init_fn: *iter_init_fn,
+                    iter_next_fn: *iter_next_fn,
+                    iter_dealloc_fn: *iter_dealloc_fn,
+                    key_block: *key_block,
+                    value_block: *value_block,
+                },
+            )?;
+            Ok(false)
+        }
+
         EncodeOp::WriteFixedList {
             src_offset,
             descriptor,
@@ -5653,6 +5678,205 @@ fn emit_encode_list(
 
     ectx.b.switch_to_block(exit);
     ectx.b.seal_block(exit);
+
+    Ok(())
+}
+
+/// Arguments for [`emit_encode_map`] — grouped to keep the signature readable.
+struct EmitEncodeMapArgs {
+    src_offset: usize,
+    len_fn: facet_core::MapLenFn,
+    iter_init_fn: facet_core::IterInitWithValueFn,
+    iter_next_fn: facet_core::IterNextFn<(facet_core::PtrConst, facet_core::PtrConst)>,
+    iter_dealloc_fn: facet_core::IterDeallocFn,
+    key_block: usize,
+    value_block: usize,
+}
+
+/// Emit native map encode: write the varint entry count, then drive facet's
+/// iterator vtable, encoding each key and value natively from the pointers it
+/// yields.
+///
+/// The four facet vtable functions are reached through plain-pointer
+/// `vox_jit_map_*` wrappers — facet's `PtrConst`/`PtrMut` are wide pointers and
+/// `IterVTable::next` is Rust-ABI, neither of which is modeled in codegen. None
+/// of those wrappers touch the encode buffer, so no flush/reload is needed
+/// around them; the key/value body ops manage the buffer themselves.
+fn emit_encode_map(
+    ectx: &mut EncodeCtx_<'_, '_>,
+    program: &EncodeProgram,
+    args: EmitEncodeMapArgs,
+) -> Result<(), CodegenError> {
+    let EmitEncodeMapArgs {
+        src_offset,
+        len_fn,
+        iter_init_fn,
+        iter_next_fn,
+        iter_dealloc_fn,
+        key_block,
+        value_block,
+    } = args;
+    let ptr_ty = ectx.ptr_ty;
+    let call_conv = ectx.b.func.signature.call_conv;
+    let map_ptr = ectx.src_at(src_offset);
+
+    // Shared signature for vox_jit_map_len and vox_jit_map_iter_init:
+    // (vtable_fn, map_ptr) -> pointer-width.
+    let unary_sig = ectx.b.func.import_signature(Signature {
+        params: vec![AbiParam::new(ptr_ty), AbiParam::new(ptr_ty)],
+        returns: vec![AbiParam::new(ptr_ty)],
+        call_conv,
+    });
+
+    // --- write the varint entry count ---
+    let len_helper = ectx
+        .b
+        .ins()
+        .iconst(ptr_ty, crate::helpers::vox_jit_map_len as *const () as i64);
+    let len_fn_v = ectx.b.ins().iconst(ptr_ty, len_fn as *const () as i64);
+    let call = ectx
+        .b
+        .ins()
+        .call_indirect(unary_sig, len_helper, &[len_fn_v, map_ptr]);
+    let len = ectx.b.inst_results(call)[0];
+    let len64 = if ptr_ty == types::I64 {
+        len
+    } else {
+        ectx.b.ins().uextend(types::I64, len)
+    };
+    ectx.call_write_varint(len64);
+
+    // --- create the iterator ---
+    let init_helper = ectx.b.ins().iconst(
+        ptr_ty,
+        crate::helpers::vox_jit_map_iter_init as *const () as i64,
+    );
+    let init_fn_v = ectx
+        .b
+        .ins()
+        .iconst(ptr_ty, iter_init_fn as *const () as i64);
+    let call = ectx
+        .b
+        .ins()
+        .call_indirect(unary_sig, init_helper, &[init_fn_v, map_ptr]);
+    let iter = ectx.b.inst_results(call)[0];
+
+    // Stack slots receiving the key/value pointers from each `next` call.
+    let slot_bytes = ptr_ty.bytes();
+    let slot_align_shift = slot_bytes.trailing_zeros() as u8;
+    let k_slot = ectx.b.create_sized_stack_slot(StackSlotData::new(
+        StackSlotKind::ExplicitSlot,
+        slot_bytes,
+        slot_align_shift,
+    ));
+    let v_slot = ectx.b.create_sized_stack_slot(StackSlotData::new(
+        StackSlotKind::ExplicitSlot,
+        slot_bytes,
+        slot_align_shift,
+    ));
+    let k_slot_addr = ectx.b.ins().stack_addr(ptr_ty, k_slot, 0);
+    let v_slot_addr = ectx.b.ins().stack_addr(ptr_ty, v_slot, 0);
+
+    // --- iteration loop ---
+    ectx.inlined_blocks.insert(key_block);
+    ectx.inlined_blocks.insert(value_block);
+
+    let next_sig = ectx.b.func.import_signature(Signature {
+        params: vec![
+            AbiParam::new(ptr_ty), // next_fn
+            AbiParam::new(ptr_ty), // iter
+            AbiParam::new(ptr_ty), // out_k
+            AbiParam::new(ptr_ty), // out_v
+        ],
+        returns: vec![AbiParam::new(types::I8)],
+        call_conv,
+    });
+    let next_helper = ectx.b.ins().iconst(
+        ptr_ty,
+        crate::helpers::vox_jit_map_iter_next as *const () as i64,
+    );
+    let next_fn_v = ectx
+        .b
+        .ins()
+        .iconst(ptr_ty, iter_next_fn as *const () as i64);
+
+    let header = ectx.fresh_block();
+    let body = ectx.fresh_block();
+    let exit = ectx.fresh_block();
+
+    ectx.b.ins().jump(header, &[]);
+
+    // Loop header: advance the iterator. Some → body, None → exit.
+    ectx.b.switch_to_block(header);
+    let call = ectx.b.ins().call_indirect(
+        next_sig,
+        next_helper,
+        &[next_fn_v, iter, k_slot_addr, v_slot_addr],
+    );
+    let has = ectx.b.inst_results(call)[0];
+    ectx.b.ins().brif(has, body, &[], exit, &[]);
+    // header is sealed once the body back-edge is in.
+
+    // Loop body: encode the key from k_slot, then the value from v_slot.
+    ectx.b.switch_to_block(body);
+    let saved_src = ectx.src_ptr;
+
+    let k_ptr = ectx
+        .b
+        .ins()
+        .load(ptr_ty, MemFlags::trusted(), k_slot_addr, 0);
+    ectx.src_ptr = k_ptr;
+    for op in &program.blocks[key_block].ops {
+        match op {
+            EncodeOp::Return => break,
+            _ => {
+                if emit_encode_op(ectx, program, op)? {
+                    break;
+                }
+            }
+        }
+    }
+
+    let v_ptr = ectx
+        .b
+        .ins()
+        .load(ptr_ty, MemFlags::trusted(), v_slot_addr, 0);
+    ectx.src_ptr = v_ptr;
+    for op in &program.blocks[value_block].ops {
+        match op {
+            EncodeOp::Return => break,
+            _ => {
+                if emit_encode_op(ectx, program, op)? {
+                    break;
+                }
+            }
+        }
+    }
+
+    ectx.src_ptr = saved_src;
+    ectx.b.ins().jump(header, &[]);
+    ectx.b.seal_block(body);
+    ectx.b.seal_block(header);
+
+    // Loop exit: free the iterator state.
+    ectx.b.switch_to_block(exit);
+    ectx.b.seal_block(exit);
+    let dealloc_sig = ectx.b.func.import_signature(Signature {
+        params: vec![AbiParam::new(ptr_ty), AbiParam::new(ptr_ty)],
+        returns: vec![],
+        call_conv,
+    });
+    let dealloc_helper = ectx.b.ins().iconst(
+        ptr_ty,
+        crate::helpers::vox_jit_map_iter_dealloc as *const () as i64,
+    );
+    let dealloc_fn_v = ectx
+        .b
+        .ins()
+        .iconst(ptr_ty, iter_dealloc_fn as *const () as i64);
+    ectx.b
+        .ins()
+        .call_indirect(dealloc_sig, dealloc_helper, &[dealloc_fn_v, iter]);
 
     Ok(())
 }
