@@ -1127,6 +1127,43 @@ fn emit_inline_block(
     emit_ops(ctx, program, ops, Some(loop_tail))
 }
 
+/// Emit an inline block using fresh Cranelift blocks for all IR sub-blocks.
+///
+/// Fixed arrays unroll the same element body multiple times. Reusing the
+/// function-level `block_map` for every copy would try to fill the same
+/// Cranelift blocks repeatedly when the element body contains nested control
+/// flow. This gives each unrolled copy its own block map while still recording
+/// the referenced IR blocks as inlined so the outer top-level emitter does not
+/// emit those helper blocks again.
+fn emit_inline_block_fresh(
+    ctx: &mut EmitCtx<'_, '_>,
+    program: &DecodeProgram,
+    block_idx: usize,
+    loop_tail: Block,
+) -> Result<(), CodegenError> {
+    let fresh_block_map: Vec<Option<Block>> = (0..program.blocks.len())
+        .map(|_| Some(ctx.fresh_block()))
+        .collect();
+
+    let saved_block_map = std::mem::replace(&mut ctx.block_map, fresh_block_map);
+    let saved_inlined_blocks = std::mem::take(&mut ctx.inlined_blocks);
+    let saved_sealed_inlined_blocks = std::mem::take(&mut ctx.sealed_inlined_blocks);
+
+    let result = emit_inline_block(ctx, program, block_idx, loop_tail);
+
+    let local_inlined_blocks = std::mem::take(&mut ctx.inlined_blocks);
+    let local_sealed_inlined_blocks = std::mem::take(&mut ctx.sealed_inlined_blocks);
+
+    ctx.block_map = saved_block_map;
+    ctx.inlined_blocks = saved_inlined_blocks;
+    ctx.inlined_blocks.extend(local_inlined_blocks);
+    ctx.sealed_inlined_blocks = saved_sealed_inlined_blocks;
+    ctx.sealed_inlined_blocks
+        .extend(local_sealed_inlined_blocks);
+
+    result
+}
+
 /// Unified op emitter used by both `emit_block` (top-level, `loop_tail=None`)
 /// and `emit_inline_block` (element body, `loop_tail=Some(tail)`).
 ///
@@ -2686,13 +2723,18 @@ fn emit_decode_array(
     }
     for i in 0..count {
         let elem_off = dst_offset + i * elem_size;
-        // Adjust out_ptr for this element, emit body ops.
-        // The body_block ops reference dst_offset=0 relative to their base.
-        // We need to add elem_off to ctx.out_ptr() temporarily.
+        let elem_done = ctx.fresh_block();
+
         let saved_out_ptr = ctx.out_ptr();
         let elem_ptr = ctx.b.ins().iadd_imm(saved_out_ptr, elem_off as i64);
         ctx.set_out_ptr(elem_ptr);
-        emit_block(ctx, program, body_block)?;
+
+        ctx.enter_subrange("array_elem");
+        emit_inline_block_fresh(ctx, program, body_block, elem_done)?;
+        ctx.leave_subrange();
+
+        ctx.b.switch_to_block(elem_done);
+        ctx.b.seal_block(elem_done);
         ctx.set_out_ptr(saved_out_ptr);
     }
     Ok(())
@@ -6402,6 +6444,85 @@ mod tests {
         );
     }
 
+    #[derive(Facet, Debug, PartialEq, Clone)]
+    struct FixedArray {
+        data: [u32; 4],
+    }
+
+    #[test]
+    fn decode_roundtrip_fixed_array() {
+        let original = FixedArray {
+            data: [10, 20, 30, 40],
+        };
+        let bytes = reflective_encode_static(&original);
+        let decoded = jit_decode_value::<FixedArray>(&bytes).expect("JIT decode fixed array");
+        assert_eq!(original, decoded, "fixed array round-trip mismatch");
+    }
+
+    #[test]
+    fn borrowed_decode_roundtrip_fixed_array() {
+        let original = FixedArray {
+            data: [10, 20, 30, 40],
+        };
+        let bytes = reflective_encode_static(&original);
+        let decoded =
+            jit_decode_borrowed_value::<FixedArray>(&bytes).expect("borrowed JIT fixed array");
+        assert_eq!(
+            original, decoded,
+            "borrowed fixed array round-trip mismatch"
+        );
+    }
+
+    #[derive(Facet, Debug, PartialEq, Clone)]
+    struct RowArray {
+        rows: [Row; 2],
+    }
+
+    #[test]
+    fn decode_roundtrip_fixed_array_of_nested_vec_struct() {
+        let original = RowArray {
+            rows: [
+                Row {
+                    id: 1,
+                    values: vec![10, 20, 30],
+                },
+                Row {
+                    id: 2,
+                    values: vec![42],
+                },
+            ],
+        };
+        let bytes = reflective_encode_static(&original);
+        let decoded = jit_decode_value::<RowArray>(&bytes).expect("JIT decode nested fixed array");
+        assert_eq!(
+            original, decoded,
+            "fixed array of nested Vec structs round-trip mismatch"
+        );
+    }
+
+    #[test]
+    fn borrowed_decode_roundtrip_fixed_array_of_nested_vec_struct() {
+        let original = RowArray {
+            rows: [
+                Row {
+                    id: 1,
+                    values: vec![10, 20, 30],
+                },
+                Row {
+                    id: 2,
+                    values: vec![42],
+                },
+            ],
+        };
+        let bytes = reflective_encode_static(&original);
+        let decoded =
+            jit_decode_borrowed_value::<RowArray>(&bytes).expect("borrowed JIT nested fixed array");
+        assert_eq!(
+            original, decoded,
+            "borrowed fixed array of nested Vec structs round-trip mismatch"
+        );
+    }
+
     #[test]
     fn metadata_entry_encode_decode_has_no_slow_path() {
         let plan = build_identity_plan(MetadataEntry::SHAPE);
@@ -6981,6 +7102,20 @@ mod tests {
             )));
         }
         Ok(unsafe { out.assume_init() })
+    }
+
+    fn jit_decode_borrowed_value<'input, T: Facet<'input>>(
+        bytes: &'input [u8],
+    ) -> Result<T, CodegenError> {
+        let plan = build_identity_plan(T::SHAPE);
+        let registry = vox_schema::SchemaRegistry::new();
+        let cal = calibration_for(T::SHAPE);
+        let program = lower_with_cal(&plan, T::SHAPE, &registry, Some(&cal), BorrowMode::Borrowed)
+            .map_err(|e| CodegenError::UnsupportedOp(format!("lowering failed: {e:?}")))?;
+        let mut backend = CraneliftBackend::new()?;
+        let decode_fn = backend.compile_decode_borrowed(T::SHAPE, &program, &cal)?;
+        crate::decode_borrowed_with::<T>(decode_fn, bytes)
+            .map_err(|e| CodegenError::UnsupportedOp(format!("decode failed: {e:?}")))
     }
 
     // Proxy type: serialized as u32, deserialized via convert_in.
