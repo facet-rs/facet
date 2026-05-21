@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0](https://github.com/bearcove/vox/compare/vox-jit-abi-v0.7.0...vox-jit-abi-v0.8.0) - 2026-05-21
+
+### Added
+
+- *(jit)* native BTreeMap/HashMap decode via slab strategy
+
 ## [0.7.0](https://github.com/bearcove/vox/compare/vox-jit-abi-v0.6.1...vox-jit-abi-v0.7.0) - 2026-05-20
 
 ### Other
