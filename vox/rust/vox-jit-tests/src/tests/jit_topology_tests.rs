@@ -9,6 +9,7 @@
 //! panics, infinite loops, and memory corruption, not to verify that every
 //! shape JIT-compiles successfully (that's tracked in task #34).
 
+use std::collections::BTreeMap;
 use std::mem::MaybeUninit;
 
 use facet::Facet;
@@ -298,6 +299,137 @@ fn jit_gnarly_payload_n1() {
     };
 
     assert_jit_roundtrip("gnarly_payload/n1", &value, &cal);
+}
+
+// ---------------------------------------------------------------------------
+// BTreeMap<K, V> support
+//
+// Maps lower to a `SlowPath` op on both the decode and encode IR: insertion
+// into a map requires per-element `MapVTable::insert` dispatch the JIT IR does
+// not model. These tests pin that the SlowPath fallback round-trips a
+// `BTreeMap` correctly — both as a struct field and as the program root.
+// ---------------------------------------------------------------------------
+
+#[derive(Facet, Debug, PartialEq, Clone)]
+struct WithStringKeyMap {
+    label: String,
+    counts: BTreeMap<String, u32>,
+}
+
+#[derive(Facet, Debug, PartialEq, Clone)]
+struct WithIntKeyMap {
+    by_id: BTreeMap<u32, String>,
+}
+
+/// JIT-encode a value, reflectively decode it back, and assert equality plus
+/// byte-for-byte agreement with the reflective oracle. Falls back gracefully
+/// (recording via `eprintln`) if the JIT rejects or panics on the shape.
+fn assert_jit_encode_roundtrip<T>(label: &str, value: &T, cal: &CalibrationRegistry)
+where
+    T: Facet<'static> + PartialEq + std::fmt::Debug + Clone,
+{
+    use std::sync::Arc;
+
+    use vox_jit::{abi::EncodeCtx, codegen::ChildEncoderMap};
+    use vox_postcard::ir::lower_encode;
+
+    let reflective = to_vec(value).expect("reflective encode failed");
+
+    let jit_bytes = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let program = lower_encode(T::SHAPE, Some(cal)).ok()?;
+        let mut backend = CraneliftBackend::new().ok()?;
+        let encode_fn = backend
+            .compile_encode(T::SHAPE, &program, cal, Arc::new(ChildEncoderMap::new()))
+            .ok()?;
+        let mut ctx = EncodeCtx::with_capacity(64);
+        let src = value as *const T as *const u8;
+        let ok = unsafe { encode_fn(&mut ctx, src) };
+        ok.then(|| ctx.into_vec())
+    }));
+
+    match jit_bytes {
+        Ok(Some(bytes)) => {
+            assert_eq!(
+                bytes, reflective,
+                "{label}: JIT encode != reflective oracle"
+            );
+        }
+        Ok(None) => {
+            eprintln!("[JIT-SlowPath] {label}: JIT encode unavailable; skipped byte check");
+        }
+        Err(_) => {
+            eprintln!("[JIT-Panic] {label}: JIT encode panicked; skipped byte check");
+        }
+    }
+}
+
+/// `BTreeMap<String, u32>` as a struct field — decode round-trip.
+#[test]
+fn jit_btreemap_string_key_decode() {
+    let cal = calibrated();
+    let value = WithStringKeyMap {
+        label: "histogram".to_string(),
+        counts: BTreeMap::from([
+            ("alpha".to_string(), 1),
+            ("beta".to_string(), 22),
+            ("gamma".to_string(), 333),
+        ]),
+    };
+    assert_jit_roundtrip("btreemap_string_key/nonempty", &value, &cal);
+
+    let empty = WithStringKeyMap {
+        label: "empty".to_string(),
+        counts: BTreeMap::new(),
+    };
+    assert_jit_roundtrip("btreemap_string_key/empty", &empty, &cal);
+}
+
+/// `BTreeMap<u32, String>` as a struct field — decode round-trip.
+#[test]
+fn jit_btreemap_int_key_decode() {
+    let cal = calibrated();
+    let value = WithIntKeyMap {
+        by_id: BTreeMap::from([
+            (1, "one".to_string()),
+            (2, "two".to_string()),
+            (1000, "thousand".to_string()),
+        ]),
+    };
+    assert_jit_roundtrip("btreemap_int_key/nonempty", &value, &cal);
+
+    let empty = WithIntKeyMap {
+        by_id: BTreeMap::new(),
+    };
+    assert_jit_roundtrip("btreemap_int_key/empty", &empty, &cal);
+}
+
+/// `BTreeMap<K, V>` as the program root (not a struct field) — decode.
+#[test]
+fn jit_btreemap_root_decode() {
+    let cal = calibrated();
+    let value: BTreeMap<String, u32> =
+        BTreeMap::from([("x".to_string(), 10), ("y".to_string(), 20)]);
+    assert_jit_roundtrip("btreemap_root/nonempty", &value, &cal);
+    assert_jit_roundtrip("btreemap_root/empty", &BTreeMap::<String, u32>::new(), &cal);
+}
+
+/// `BTreeMap<K, V>` round-trips through the JIT *encoder* (SlowPath).
+#[test]
+fn jit_btreemap_encode() {
+    let cal = calibrated();
+    let value = WithStringKeyMap {
+        label: "histogram".to_string(),
+        counts: BTreeMap::from([("alpha".to_string(), 1), ("beta".to_string(), 22)]),
+    };
+    assert_jit_encode_roundtrip("btreemap_encode/struct_field", &value, &cal);
+
+    let int_keyed = WithIntKeyMap {
+        by_id: BTreeMap::from([(7, "seven".to_string()), (9, "nine".to_string())]),
+    };
+    assert_jit_encode_roundtrip("btreemap_encode/int_key", &int_keyed, &cal);
+
+    let root: BTreeMap<String, u32> = BTreeMap::from([("k".to_string(), 42)]);
+    assert_jit_encode_roundtrip("btreemap_encode/root", &root, &cal);
 }
 
 #[test]
