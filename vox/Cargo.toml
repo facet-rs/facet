@@ -36,7 +36,7 @@ members = [
 exclude = ["fuzz"]
 
 [workspace.package]
-version = "0.8.0"
+version = "0.8.1"
 edition = "2024"
 rust-version = "1.91"
 readme = "README.md"
@@ -49,27 +49,27 @@ categories = ["network-programming", "asynchronous"]
 
 [workspace.dependencies]
 # Internal crates
-vox = { path = "rust/vox", version = "0.8.0" }
-vox-types = { path = "rust/vox-types", version = "0.8.0" }
-vox-schema = { path = "rust/vox-schema", version = "0.8.0" }
-vox-macros-parse = { path = "rust/vox-macros-parse", version = "0.8.0" }
-vox-macros-core = { path = "rust/vox-macros-core", version = "0.8.0" }
-vox-service-macros = { path = "rust/vox-macros", version = "0.8.0" }
-vox-core = { path = "rust/vox-core", version = "0.8.0" }
-vox-stream = { path = "rust/vox-stream", version = "0.8.0" }
-vox-fdpass = { path = "rust/vox-fdpass", version = "0.8.0" }
-vox-codegen = { path = "rust/vox-codegen", version = "0.8.0" }
-vox-websocket = { path = "rust/vox-websocket", version = "0.8.0" }
-vox-inprocess = { path = "rust/vox-inprocess", version = "0.8.0" }
-vox-local = { path = "rust/vox-local", version = "0.8.0" }
-vox-ffi = { path = "rust/vox-ffi", version = "0.8.0" }
+vox = { path = "rust/vox", version = "0.8.1" }
+vox-types = { path = "rust/vox-types", version = "0.8.1" }
+vox-schema = { path = "rust/vox-schema", version = "0.8.1" }
+vox-macros-parse = { path = "rust/vox-macros-parse", version = "0.8.1" }
+vox-macros-core = { path = "rust/vox-macros-core", version = "0.8.1" }
+vox-service-macros = { path = "rust/vox-macros", version = "0.8.1" }
+vox-core = { path = "rust/vox-core", version = "0.8.1" }
+vox-stream = { path = "rust/vox-stream", version = "0.8.1" }
+vox-fdpass = { path = "rust/vox-fdpass", version = "0.8.1" }
+vox-codegen = { path = "rust/vox-codegen", version = "0.8.1" }
+vox-websocket = { path = "rust/vox-websocket", version = "0.8.1" }
+vox-inprocess = { path = "rust/vox-inprocess", version = "0.8.1" }
+vox-local = { path = "rust/vox-local", version = "0.8.1" }
+vox-ffi = { path = "rust/vox-ffi", version = "0.8.1" }
 subject-rust = { path = "rust/subject-rust", version = "0.2.2" }
 spec-proto = { path = "spec/spec-proto", version = "0.2.2" }
-vox-postcard = { path = "rust/vox-postcard", version = "0.8.0" }
-vox-jit-cal = { path = "rust/vox-jit-cal", version = "0.8.0" }
-vox-jit-abi = { path = "rust/vox-jit-abi", version = "0.8.0" }
-vox-jit = { path = "rust/vox-jit", version = "0.8.0" }
-vox-swift-abi = { path = "rust/vox-swift-abi", version = "0.8.0" }
+vox-postcard = { path = "rust/vox-postcard", version = "0.8.1" }
+vox-jit-cal = { path = "rust/vox-jit-cal", version = "0.8.1" }
+vox-jit-abi = { path = "rust/vox-jit-abi", version = "0.8.1" }
+vox-jit = { path = "rust/vox-jit", version = "0.8.1" }
+vox-swift-abi = { path = "rust/vox-swift-abi", version = "0.8.1" }
 facet-cbor = { path = "rust/facet-cbor", version = "0.3.4" }
 ur-taking-me-with-you = { path = "rust/ur-taking-me-with-you", version = "8.0.0" }
 

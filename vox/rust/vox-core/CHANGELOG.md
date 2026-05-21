@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1](https://github.com/bearcove/vox/compare/vox-core-v0.8.0...vox-core-v0.8.1) - 2026-05-21
+
+### Other
+
+- update Cargo.lock dependencies
+
 ## [0.6.1](https://github.com/bearcove/vox/compare/vox-core-v0.6.0...vox-core-v0.6.1) - 2026-05-20
 
 ### Other
