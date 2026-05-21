@@ -1,3 +1,4 @@
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
 use facet::Facet;
@@ -19,14 +20,32 @@ where
     let resolved = resolve_plan::<T>(method_id, BindingDirection::Args, tracker)?;
     #[cfg(not(target_arch = "wasm32"))]
     {
-        vox_jit::global_runtime()
-            .try_decode_borrowed::<T>(
+        match std::panic::catch_unwind(AssertUnwindSafe(|| {
+            vox_jit::global_runtime().try_decode_borrowed::<T>(
                 bytes,
                 resolved.remote.root.id.0,
                 &resolved.plan,
                 &resolved.remote.registry,
             )
-            .expect("JIT decode unavailable for args type")
+        })) {
+            Ok(Some(result)) => result,
+            Ok(None) => vox_postcard::from_slice_borrowed_with_plan::<T>(
+                bytes,
+                &resolved.plan,
+                &resolved.remote.registry,
+            ),
+            Err(payload) => {
+                tracing::warn!(
+                    panic = %panic_payload_message(&payload),
+                    "vox JIT args decode panicked; falling back to interpreter"
+                );
+                vox_postcard::from_slice_borrowed_with_plan::<T>(
+                    bytes,
+                    &resolved.plan,
+                    &resolved.remote.registry,
+                )
+            }
+        }
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -51,14 +70,32 @@ where
     let resolved = resolve_plan::<T>(method_id, BindingDirection::Response, tracker)?;
     #[cfg(not(target_arch = "wasm32"))]
     {
-        vox_jit::global_runtime()
-            .try_decode_borrowed::<T>(
+        match std::panic::catch_unwind(AssertUnwindSafe(|| {
+            vox_jit::global_runtime().try_decode_borrowed::<T>(
                 bytes,
                 resolved.remote.root.id.0,
                 &resolved.plan,
                 &resolved.remote.registry,
             )
-            .expect("JIT decode unavailable for response type")
+        })) {
+            Ok(Some(result)) => result,
+            Ok(None) => vox_postcard::from_slice_borrowed_with_plan::<T>(
+                bytes,
+                &resolved.plan,
+                &resolved.remote.registry,
+            ),
+            Err(payload) => {
+                tracing::warn!(
+                    panic = %panic_payload_message(&payload),
+                    "vox JIT response decode panicked; falling back to interpreter"
+                );
+                vox_postcard::from_slice_borrowed_with_plan::<T>(
+                    bytes,
+                    &resolved.plan,
+                    &resolved.remote.registry,
+                )
+            }
+        }
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -80,18 +117,47 @@ pub fn schema_deserialize_response<T: Facet<'static>>(
     let resolved = resolve_plan::<T>(method_id, BindingDirection::Response, tracker)?;
     #[cfg(not(target_arch = "wasm32"))]
     {
-        vox_jit::global_runtime()
-            .try_decode_owned::<T>(
+        match std::panic::catch_unwind(AssertUnwindSafe(|| {
+            vox_jit::global_runtime().try_decode_owned::<T>(
                 bytes,
                 resolved.remote.root.id.0,
                 &resolved.plan,
                 &resolved.remote.registry,
             )
-            .expect("JIT decode unavailable for response type")
+        })) {
+            Ok(Some(result)) => result,
+            Ok(None) => vox_postcard::from_slice_with_plan::<T>(
+                bytes,
+                &resolved.plan,
+                &resolved.remote.registry,
+            ),
+            Err(payload) => {
+                tracing::warn!(
+                    panic = %panic_payload_message(&payload),
+                    "vox JIT response decode panicked; falling back to interpreter"
+                );
+                vox_postcard::from_slice_with_plan::<T>(
+                    bytes,
+                    &resolved.plan,
+                    &resolved.remote.registry,
+                )
+            }
+        }
     }
     #[cfg(target_arch = "wasm32")]
     {
         vox_postcard::from_slice_with_plan::<T>(bytes, &resolved.plan, &resolved.remote.registry)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<&'static str>() {
+        (*message).to_owned()
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "non-string panic payload".to_owned()
     }
 }
 

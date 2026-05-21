@@ -59,8 +59,7 @@ impl Link for FdStreamLink {
         let sock = Arc::new(self.stream);
         let (tx_chan, mut rx_chan) = mpsc::channel::<Outgoing>(128);
         #[allow(clippy::type_complexity)]
-        let (read_tx, read_rx) =
-            mpsc::channel::<io::Result<Option<(Backing, Vec<OwnedFd>)>>>(128);
+        let (read_tx, read_rx) = mpsc::channel::<io::Result<Option<(Backing, Vec<OwnedFd>)>>>(128);
 
         // Frame = [u32 body_len LE][u32 fd_count LE][body]. The explicit
         // `fd_count` + an ordered receive FIFO makes fd→frame attribution
@@ -117,10 +116,8 @@ impl Link for FdStreamLink {
                     if acc.len() < 8 {
                         break;
                     }
-                    let len =
-                        u32::from_le_bytes([acc[0], acc[1], acc[2], acc[3]]) as usize;
-                    let fd_count =
-                        u32::from_le_bytes([acc[4], acc[5], acc[6], acc[7]]) as usize;
+                    let len = u32::from_le_bytes([acc[0], acc[1], acc[2], acc[3]]) as usize;
+                    let fd_count = u32::from_le_bytes([acc[4], acc[5], acc[6], acc[7]]) as usize;
                     if acc.len() < 8 + len {
                         break;
                     }
@@ -169,9 +166,7 @@ impl LinkTx for FdStreamLinkTx {
         self.tx
             .send(Outgoing::Frame(bytes, Vec::new()))
             .await
-            .map_err(|_| {
-                io::Error::new(io::ErrorKind::ConnectionReset, "fd-stream writer stopped")
-            })
+            .map_err(|_| io::Error::new(io::ErrorKind::ConnectionReset, "fd-stream writer stopped"))
     }
 
     async fn close(self) -> io::Result<()> {
@@ -193,9 +188,7 @@ impl LinkTx for FdStreamLinkTx {
         self.tx
             .send(Outgoing::Frame(bytes, fds))
             .await
-            .map_err(|_| {
-                io::Error::new(io::ErrorKind::ConnectionReset, "fd-stream writer stopped")
-            })
+            .map_err(|_| io::Error::new(io::ErrorKind::ConnectionReset, "fd-stream writer stopped"))
     }
 }
 
@@ -296,8 +289,7 @@ mod tests {
             Backing::Boxed(b) => b.to_vec(),
             Backing::Shared(s) => s.as_bytes().to_vec(),
         };
-        let decoded: Fd =
-            provide_fds(frame_fds, || vox_postcard::from_slice(&bytes).unwrap());
+        let decoded: Fd = provide_fds(frame_fds, || vox_postcard::from_slice(&bytes).unwrap());
         let mut f = std::fs::File::from(decoded.into_owned_fd().unwrap());
         let mut got = String::new();
         f.read_to_string(&mut got).unwrap();

@@ -30,6 +30,9 @@ mod memory_link;
 #[cfg(not(target_arch = "wasm32"))]
 pub use memory_link::*;
 
+#[cfg(not(target_arch = "wasm32"))]
+use std::panic::AssertUnwindSafe;
+
 mod session;
 pub use session::*;
 
@@ -109,9 +112,20 @@ pub(crate) fn deserialize_postcard_with_plan<T: facet::Facet<'static>>(
     #[cfg(not(target_arch = "wasm32"))]
     {
         SelfRef::try_new(backing, |bytes| {
-            vox_jit::global_runtime()
-                .try_decode_owned::<T>(bytes, 0, plan, registry)
-                .expect("JIT decode unavailable for type")
+            match std::panic::catch_unwind(AssertUnwindSafe(|| {
+                vox_jit::global_runtime().try_decode_owned::<T>(bytes, 0, plan, registry)
+            })) {
+                Ok(Some(result)) => result,
+                Ok(None) => vox_postcard::from_slice_with_plan::<T>(bytes, plan, registry),
+                Err(payload) => {
+                    tracing::warn!(
+                        shape = %T::SHAPE,
+                        panic = %panic_payload_message(&payload),
+                        "vox message JIT decode panicked; falling back"
+                    );
+                    vox_postcard::from_slice_with_plan::<T>(bytes, plan, registry)
+                }
+            }
         })
     }
     #[cfg(target_arch = "wasm32")]
@@ -128,14 +142,46 @@ pub(crate) fn deserialize_postcard_with_plan<T: facet::Facet<'static>>(
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn deserialize_postcard_with_decoder<T: facet::Facet<'static>>(
     backing: Backing,
-    decoder: &'static vox_jit::cache::CompiledDecoder,
+    decoder: Option<&'static vox_jit::cache::CompiledDecoder>,
+    plan: &vox_postcard::plan::TranslationPlan,
+    registry: &vox_types::SchemaRegistry,
 ) -> Result<SelfRef<T>, vox_postcard::DeserializeError> {
-    let decode_fn = decoder
-        .owned_fn_ptr()
-        .expect("owned decode_fn missing on owned decoder");
     SelfRef::try_new(backing, |bytes| {
-        vox_jit::decode_owned_with::<T>(decode_fn, bytes)
+        let Some(decoder) = decoder else {
+            return vox_postcard::from_slice_with_plan::<T>(bytes, plan, registry);
+        };
+        let Some(decode_fn) = decoder.owned_fn_ptr() else {
+            tracing::warn!(
+                shape = %T::SHAPE,
+                "vox message JIT decoder missing function pointer; falling back"
+            );
+            return vox_postcard::from_slice_with_plan::<T>(bytes, plan, registry);
+        };
+        match std::panic::catch_unwind(AssertUnwindSafe(|| {
+            vox_jit::decode_owned_with::<T>(decode_fn, bytes)
+        })) {
+            Ok(result) => result,
+            Err(payload) => {
+                tracing::warn!(
+                    shape = %T::SHAPE,
+                    panic = %panic_payload_message(&payload),
+                    "vox message JIT decode panicked; falling back"
+                );
+                vox_postcard::from_slice_with_plan::<T>(bytes, plan, registry)
+            }
+        }
     })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<&'static str>() {
+        (*message).to_owned()
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "non-string panic payload".to_owned()
+    }
 }
 
 pub mod testing;

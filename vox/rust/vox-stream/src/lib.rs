@@ -378,7 +378,9 @@ impl LocalListener {
     /// Accept a new incoming raw stream.
     #[cfg(unix)]
     pub async fn accept(&self) -> io::Result<LocalServerStream> {
+        tracing::trace!("vox-stream local listener waiting for raw stream");
         let (stream, _addr) = self.inner.accept().await?;
+        tracing::debug!("vox-stream local listener accepted raw stream");
         Ok(stream)
     }
 
@@ -399,7 +401,18 @@ impl LocalListener {
 /// Connect to a local endpoint and return a raw stream.
 #[cfg(unix)]
 pub async fn connect(path: impl AsRef<std::path::Path>) -> io::Result<LocalStream> {
-    tokio::net::UnixStream::connect(path).await
+    let path = path.as_ref();
+    tracing::debug!(path = %path.display(), "vox-stream local connect starting");
+    let stream = tokio::net::UnixStream::connect(path).await;
+    match &stream {
+        Ok(_) => tracing::debug!(path = %path.display(), "vox-stream local connect succeeded"),
+        Err(error) => tracing::debug!(
+            path = %path.display(),
+            ?error,
+            "vox-stream local connect failed"
+        ),
+    }
+    stream
 }
 
 /// Connect to a local endpoint and return a raw stream.
@@ -883,8 +896,7 @@ mod tests {
             Backing::Boxed(b) => b.to_vec(),
             Backing::Shared(s) => s.as_bytes().to_vec(),
         };
-        let decoded: Fd =
-            provide_fds(frame_fds, || vox_postcard::from_slice(&bytes).unwrap());
+        let decoded: Fd = provide_fds(frame_fds, || vox_postcard::from_slice(&bytes).unwrap());
         let mut f = std::fs::File::from(decoded.into_owned_fd().unwrap());
         let mut got = String::new();
         f.read_to_string(&mut got).unwrap();

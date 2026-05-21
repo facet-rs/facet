@@ -229,6 +229,14 @@ where
         } = self;
         validate_channel_capacity(channel_capacity)?;
 
+        tracing::debug!(
+            service = Client::SERVICE_NAME,
+            %addr,
+            channel_capacity,
+            resumable,
+            wait_for_service = wait_for_service.is_some(),
+            "vox high-level connect starting"
+        );
         let parsed = parse_connect_address(addr)?;
         let metadata = metadata_into_owned(metadata);
 
@@ -264,7 +272,13 @@ where
                     };
 
                     match result {
-                        Ok(client) => return Ok(client),
+                        Ok(client) => {
+                            tracing::debug!(
+                                service = Client::SERVICE_NAME,
+                                "vox high-level connect established"
+                            );
+                            return Ok(client);
+                        }
                         // r[impl session.initial-connect-waiting.non-retryable]
                         Err(e)
                             if !matches!(e, SessionError::Io(_) | SessionError::ConnectTimeout) =>
@@ -280,6 +294,12 @@ where
                             }
                             let remaining = deadline - now;
                             let sleep = backoff.min(remaining);
+                            tracing::debug!(
+                                service = Client::SERVICE_NAME,
+                                error = ?e,
+                                ?sleep,
+                                "vox high-level connect attempt failed; backing off"
+                            );
                             moire::time::sleep(sleep).await;
                             backoff = backoff.saturating_mul(2).min(INITIAL_CONNECT_BACKOFF_MAX);
                         }
@@ -287,7 +307,7 @@ where
                 }
             }
             None => {
-                Self::establish_once(
+                let result = Self::establish_once(
                     &parsed,
                     metadata,
                     on_connection,
@@ -296,7 +316,19 @@ where
                     observer,
                     resumable,
                 )
-                .await
+                .await;
+                match &result {
+                    Ok(_) => tracing::debug!(
+                        service = Client::SERVICE_NAME,
+                        "vox high-level connect established"
+                    ),
+                    Err(error) => tracing::debug!(
+                        service = Client::SERVICE_NAME,
+                        ?error,
+                        "vox high-level connect failed"
+                    ),
+                }
+                result
             }
         }
     }
@@ -327,6 +359,12 @@ where
         match parsed {
             #[cfg(feature = "transport-tcp")]
             ConnectAddress::Tcp(host) => {
+                tracing::trace!(
+                    service = Client::SERVICE_NAME,
+                    transport = "tcp",
+                    %host,
+                    "vox high-level connect attempt"
+                );
                 let mut builder = initiator(
                     vox_stream::tcp_link_source(host.clone()),
                     TransportMode::Bare,
@@ -348,6 +386,12 @@ where
             }
             #[cfg(feature = "transport-local")]
             ConnectAddress::Local(host) => {
+                tracing::trace!(
+                    service = Client::SERVICE_NAME,
+                    transport = "local",
+                    %host,
+                    "vox high-level connect attempt"
+                );
                 let mut builder = initiator(
                     vox_stream::local_link_source(host.clone()),
                     TransportMode::Bare,
@@ -372,6 +416,12 @@ where
             // (web_sys::WebSocket) directly.
             #[cfg(all(feature = "transport-websocket", not(target_arch = "wasm32")))]
             ConnectAddress::Ws(url) => {
+                tracing::trace!(
+                    service = Client::SERVICE_NAME,
+                    transport = "ws",
+                    %url,
+                    "vox high-level connect attempt"
+                );
                 let mut builder = initiator(
                     vox_websocket::ws_link_source(url.clone()),
                     TransportMode::Bare,
@@ -629,11 +679,14 @@ where
         validate_channel_capacity(self.channel_capacity)?;
         let acceptor: Arc<dyn ConnectionAcceptor> = Arc::new(self.acceptor);
         loop {
+            tracing::trace!("vox high-level listener waiting for connection");
             let link = self.listener.accept().await.map_err(SessionError::Io)?;
+            tracing::debug!("vox high-level listener accepted raw connection");
             let acceptor = acceptor.clone();
             let observer = self.observer.clone();
             let channel_capacity = self.channel_capacity;
             moire::spawn(async move {
+                tracing::trace!("vox high-level listener establishing root session");
                 let mut builder = vox_core::acceptor_on(link)
                     .on_connection(AcceptorRef(acceptor))
                     .channel_capacity(channel_capacity);
@@ -641,8 +694,15 @@ where
                     builder = builder.observer_handle(observer);
                 }
                 let result = builder.establish::<NoopClient>().await;
-                if let Ok(client) = result {
-                    client.caller.closed().await;
+                match result {
+                    Ok(client) => {
+                        tracing::debug!("vox high-level listener established root session");
+                        client.caller.closed().await;
+                        tracing::debug!("vox high-level listener root session closed");
+                    }
+                    Err(error) => {
+                        tracing::debug!(?error, "vox high-level listener root session failed");
+                    }
                 }
             });
         }

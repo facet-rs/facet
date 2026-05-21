@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
+    panic::AssertUnwindSafe,
     pin::Pin,
     sync::{
         Arc, Weak,
@@ -9,7 +10,7 @@ use std::{
 
 use vox_types::time::Instant;
 
-use futures_util::future::{AbortHandle, Abortable};
+use futures_util::future::{AbortHandle, Abortable, FutureExt as FuturesFutureExt};
 use futures_util::stream::{FuturesUnordered, StreamExt as _};
 use moire::sync::{Semaphore, SyncMutex};
 use tokio::sync::watch;
@@ -81,7 +82,15 @@ struct InFlightHandler {
 /// `Stage<Future, Output>` plus does scheduler registration), this drops
 /// the `Stage` overhead and the `set_stage` memcpy that fires on
 /// `Running → Finished` transitions.
-type HandlerFut = Abortable<Pin<Box<dyn MaybeSendFuture<Output = RequestId> + 'static>>>;
+enum HandlerCompletion {
+    Finished(RequestId),
+    Panicked {
+        request_id: RequestId,
+        method_id: vox_types::MethodId,
+    },
+}
+
+type HandlerFut = Abortable<Pin<Box<dyn MaybeSendFuture<Output = HandlerCompletion> + 'static>>>;
 
 #[derive(Clone, Copy, Debug)]
 enum ChannelRuntimeTeardown {
@@ -1112,6 +1121,17 @@ impl ReplySink for DriverReplySink {
             },
             self.operation_id
         );
+        tracing::debug!(
+            conn_id = ?sender.connection_id(),
+            req_id = ?self.request_id,
+            method_id = ?self.method_id,
+            operation_id = ?self.operation_id,
+            payload = match &response.ret {
+                Payload::Value { .. } => "value",
+                Payload::PostcardBytes(_) => "postcard-bytes",
+            },
+            "vox driver sending reply"
+        );
         self.binder.shared.mark_outbound_progress();
 
         if let Payload::Value { shape, .. } = &response.ret
@@ -1148,6 +1168,12 @@ impl ReplySink for DriverReplySink {
                 response.schemas.0.len()
             );
             if let Err(_e) = sender.send_response(self.request_id, response).await {
+                tracing::debug!(
+                    conn_id = ?sender.connection_id(),
+                    req_id = ?self.request_id,
+                    method_id = ?self.method_id,
+                    "vox driver reply send failed"
+                );
                 sender.mark_failure(self.request_id, FailureDisposition::Cancelled);
             }
 
@@ -1190,6 +1216,12 @@ impl ReplySink for DriverReplySink {
                 .send_response_for_method(self.request_id, self.method_id, response)
                 .await
             {
+                tracing::debug!(
+                    conn_id = ?sender.connection_id(),
+                    req_id = ?self.request_id,
+                    method_id = ?self.method_id,
+                    "vox driver reply send failed"
+                );
                 sender.mark_failure(self.request_id, FailureDisposition::Cancelled);
             }
         }
@@ -2013,6 +2045,15 @@ impl DriverCaller {
         // Allocate a request ID.
         let req_id = self.shared.request_ids.lock().alloc();
         let request_started_at = Instant::now();
+        let (service_name, method_name) = request_debug.unwrap_or(("<unknown>", "<unknown>"));
+        tracing::debug!(
+            conn_id = ?self.sender.connection_id(),
+            ?req_id,
+            method_id = ?call.method_id,
+            service = service_name,
+            method = method_name,
+            "vox caller starting request"
+        );
         if let Some(observer) = &self.shared.observer {
             observer.driver_event(DriverEvent::RequestStarted {
                 connection_id: self.sender.connection_id(),
@@ -2046,8 +2087,8 @@ impl DriverCaller {
         self.shared.start_request(
             req_id,
             call.method_id,
-            request_debug.map(|(service, _)| service),
-            request_debug.map(|(_, method)| method),
+            Some(service_name),
+            Some(method_name),
             RequestDebugState::WaitingForResponse,
         );
 
@@ -2059,6 +2100,14 @@ impl DriverCaller {
         // Channel binding happens during serialization via the thread-local
         // ChannelBinder — no post-hoc walk needed.
         self.shared.mark_outbound_progress();
+        tracing::debug!(
+            conn_id = ?self.sender.connection_id(),
+            ?req_id,
+            method_id = ?call.method_id,
+            service = service_name,
+            method = method_name,
+            "vox caller sending request"
+        );
         if self
             .sender
             .send_with_binder(
@@ -2076,10 +2125,26 @@ impl DriverCaller {
             .await
             .is_err()
         {
+            tracing::debug!(
+                conn_id = ?self.sender.connection_id(),
+                ?req_id,
+                method_id = ?call.method_id,
+                service = service_name,
+                method = method_name,
+                "vox caller request send failed"
+            );
             self.shared.pending_responses.lock().remove(&req_id);
             finish_request(RpcOutcome::SendFailed);
             return Err(VoxError::SendFailed);
         }
+        tracing::debug!(
+            conn_id = ?self.sender.connection_id(),
+            ?req_id,
+            method_id = ?call.method_id,
+            service = service_name,
+            method = method_name,
+            "vox caller request sent; waiting for response"
+        );
 
         let mut resumed_rx = self.resumed_rx.clone();
         let mut seen_resume_generation = *resumed_rx.borrow();
@@ -2091,7 +2156,17 @@ impl DriverCaller {
             tokio::select! {
                 result = &mut response => {
                     match result {
-                        Ok(pending) => break pending,
+                        Ok(pending) => {
+                            tracing::debug!(
+                                conn_id = ?self.sender.connection_id(),
+                                ?req_id,
+                                method_id = ?call.method_id,
+                                service = service_name,
+                                method = method_name,
+                                "vox caller received response"
+                            );
+                            break pending;
+                        }
                         Err(_) => {
                             finish_request(RpcOutcome::Closed);
                             return Err(VoxError::ConnectionClosed);
@@ -2619,7 +2694,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 // select loop.
                 Some(item) = self.handler_futs.next(), if !self.handler_futs.is_empty() => {
                     match item {
-                        Ok(req_id) => {
+                        Ok(HandlerCompletion::Finished(req_id)) => {
                             let removed = self.in_flight_handlers.remove(&req_id).is_some();
                             self.shared.finish_request(req_id, RequestDebugState::Finished);
                             tracing::trace!(
@@ -2627,6 +2702,13 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                                 removed,
                                 in_flight = self.in_flight_handlers.len(),
                                 "handler completion processed",
+                            );
+                        }
+                        Ok(HandlerCompletion::Panicked { request_id, method_id }) => {
+                            tracing::error!(
+                                req_id = ?request_id,
+                                ?method_id,
+                                "vox driver handler panicked; waiting for reply-sink failure path"
                             );
                         }
                         Err(_aborted) => {
@@ -2935,20 +3017,38 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 RequestDebugState::Dispatching,
             );
             let (abort, abort_reg) = AbortHandle::new_pair();
-            let handler_fut: Pin<Box<dyn MaybeSendFuture<Output = RequestId> + 'static>> =
+            let handler_fut: Pin<Box<dyn MaybeSendFuture<Output = HandlerCompletion> + 'static>> =
                 Box::pin(async move {
+                    tracing::debug!(
+                        req_id = ?req_id,
+                        method_id = ?method_id,
+                        "vox driver handler starting"
+                    );
                     vox_types::dlog!(
                         "[driver] handler start: req={:?} method={:?}",
                         req_id,
                         method_id
                     );
-                    handler.handle(call, reply, schemas).await;
+                    let result = AssertUnwindSafe(handler.handle(call, reply, schemas))
+                        .catch_unwind()
+                        .await;
+                    if result.is_err() {
+                        return HandlerCompletion::Panicked {
+                            request_id: req_id,
+                            method_id,
+                        };
+                    }
+                    tracing::debug!(
+                        req_id = ?req_id,
+                        method_id = ?method_id,
+                        "vox driver handler finished"
+                    );
                     vox_types::dlog!(
                         "[driver] handler done: req={:?} method={:?}",
                         req_id,
                         method_id
                     );
-                    req_id
+                    HandlerCompletion::Finished(req_id)
                 });
             self.handler_futs
                 .push(Abortable::new(handler_fut, abort_reg));

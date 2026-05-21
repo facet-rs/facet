@@ -785,6 +785,68 @@ async fn call_through_cbor_handshake_reaches_handler() {
     assert_eq!(value, 42);
 }
 
+#[derive(Clone, Copy)]
+struct PanicHandler;
+
+impl vox_types::Handler<crate::DriverReplySink> for PanicHandler {
+    async fn handle(
+        &self,
+        _call: SelfRef<RequestCall<'static>>,
+        _reply: crate::DriverReplySink,
+        _schemas: std::sync::Arc<vox_types::SchemaRecvTracker>,
+    ) {
+        panic!("intentional handler panic");
+    }
+}
+
+#[tokio::test]
+async fn handler_panic_returns_error_response_instead_of_hanging() {
+    let (client_conduit, server_conduit) = message_conduit_pair();
+
+    let server_task = moire::task::spawn(
+        async move {
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
+                .on_connection(PanicHandler)
+                .establish::<NoopClient>()
+                .await
+                .expect("server handshake failed")
+        }
+        .named("server_setup"),
+    );
+
+    let caller = initiator_conduit(client_conduit, test_initiator_handshake())
+        .establish::<NoopClient>()
+        .await
+        .expect("client handshake failed");
+
+    let _server_caller_guard = server_task.await.expect("server setup failed");
+
+    let response = tokio::time::timeout(
+        Duration::from_millis(500),
+        caller.caller.call(RequestCall {
+            method_id: MethodId(1),
+            args: Payload::outgoing(&123_u32),
+            schemas: Default::default(),
+            metadata: Default::default(),
+        }),
+    )
+    .await
+    .expect("call hung after handler panic")
+    .expect("driver should deliver a terminal response");
+
+    let response = response.get();
+    let ret_bytes = match &response.ret {
+        Payload::PostcardBytes(bytes) => *bytes,
+        _ => panic!("expected incoming payload in response"),
+    };
+    let error: Result<(), VoxError<std::convert::Infallible>> =
+        vox_postcard::from_slice(ret_bytes).expect("deserialize error response");
+    assert!(
+        matches!(error, Err(VoxError::Cancelled)),
+        "expected Cancelled error response, got {error:?}"
+    );
+}
+
 #[tokio::test]
 async fn in_flight_call_returns_cancelled_when_peer_closes() {
     let (client_conduit, server_conduit) = message_conduit_pair();

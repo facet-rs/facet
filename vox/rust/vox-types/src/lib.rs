@@ -144,9 +144,9 @@ pub mod channel;
 pub use channel::*;
 
 pub mod fd;
-pub use fd::{FrameFds, collect_fds, frame_fds_len, provide_fds};
 #[cfg(unix)]
 pub use fd::{Fd, FdAdapter, SCM_MAX_FD};
+pub use fd::{FrameFds, collect_fds, frame_fds_len, provide_fds};
 
 mod shape_classify;
 pub use shape_classify::*;

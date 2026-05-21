@@ -2174,6 +2174,8 @@ struct PendingSchemaSend {
 
 struct OutboundBatch {
     conn_id: ConnectionId,
+    request_id: Option<RequestId>,
+    payload_kind: &'static str,
     conn_state: Arc<std::sync::Mutex<SendConnState>>,
     tx: Arc<dyn DynConduitTx>,
     schema_sends: Vec<PendingSchemaSend>,
@@ -2183,8 +2185,22 @@ struct OutboundBatch {
 
 async fn run_outbound_worker(mut rx: tokio_mpsc::Receiver<OutboundBatch>) {
     while let Some(batch) = rx.recv().await {
+        trace!(
+            conn_id = %batch.conn_id,
+            request_id = ?batch.request_id,
+            payload_kind = batch.payload_kind,
+            schema_count = batch.schema_sends.len(),
+            "session outbound worker received batch"
+        );
         let mut result = Ok(());
         for schema_send in batch.schema_sends {
+            trace!(
+                conn_id = %batch.conn_id,
+                request_id = ?batch.request_id,
+                method_id = ?schema_send.method_id,
+                direction = ?schema_send.direction,
+                "session outbound worker sending schema batch"
+            );
             let schemas = {
                 let mut conn_state = batch
                     .conn_state
@@ -2235,8 +2251,22 @@ async fn run_outbound_worker(mut rx: tokio_mpsc::Receiver<OutboundBatch>) {
         if result.is_ok()
             && let Err(error) = batch.payload_send.await
         {
+            trace!(
+                conn_id = %batch.conn_id,
+                request_id = ?batch.request_id,
+                payload_kind = batch.payload_kind,
+                ?error,
+                "session outbound worker payload send failed"
+            );
             result = Err(error);
         }
+        trace!(
+            conn_id = %batch.conn_id,
+            request_id = ?batch.request_id,
+            payload_kind = batch.payload_kind,
+            ok = result.is_ok(),
+            "session outbound worker finished batch"
+        );
         let _ = batch.result_tx.send(result);
     }
 }
@@ -2323,6 +2353,31 @@ impl SessionCore {
         forwarded_schemas: Option<&vox_types::SchemaRecvTracker>,
     ) -> Result<(OutboundBatch, tokio_oneshot::Receiver<std::io::Result<()>>), ()> {
         let conn_id = msg.connection_id;
+        let (request_id, payload_kind) = match &msg.payload {
+            MessagePayload::RequestMessage(req) => {
+                let kind = match &req.body {
+                    RequestBody::Call(_) => "request.call",
+                    RequestBody::Response(_) => "request.response",
+                    RequestBody::Cancel(_) => "request.cancel",
+                };
+                (Some(req.id), kind)
+            }
+            MessagePayload::SchemaMessage(_) => (None, "schema"),
+            MessagePayload::ChannelMessage(_) => (None, "channel"),
+            MessagePayload::ConnectionOpen(_) => (None, "connection.open"),
+            MessagePayload::ConnectionAccept(_) => (None, "connection.accept"),
+            MessagePayload::ConnectionReject(_) => (None, "connection.reject"),
+            MessagePayload::ConnectionClose(_) => (None, "connection.close"),
+            MessagePayload::ProtocolError(_) => (None, "protocol.error"),
+            MessagePayload::Ping(_) => (None, "ping"),
+            MessagePayload::Pong(_) => (None, "pong"),
+        };
+        trace!(
+            conn_id = %conn_id,
+            ?request_id,
+            payload_kind,
+            "session preparing outbound message"
+        );
         let (tx, conn_state, schema_sends) = {
             let mut inner = self.inner.lock().expect("session core mutex poisoned");
             let tx = inner.tx.clone();
@@ -2382,12 +2437,27 @@ impl SessionCore {
                 (tx, conn_state, Vec::new())
             }
         };
+        trace!(
+            conn_id = %conn_id,
+            ?request_id,
+            payload_kind,
+            schema_count = schema_sends.len(),
+            "session preparing outbound payload"
+        );
         let payload_send = tx.clone().prepare_msg(msg, binder).map_err(|_| ())?;
+        trace!(
+            conn_id = %conn_id,
+            ?request_id,
+            payload_kind,
+            "session prepared outbound payload"
+        );
 
         let (result_tx, result_rx) = tokio_oneshot::channel();
         Ok((
             OutboundBatch {
                 conn_id,
+                request_id,
+                payload_kind,
                 conn_state,
                 tx,
                 schema_sends,
@@ -2414,7 +2484,13 @@ impl SessionCore {
             }
             return Err(());
         }
+        trace!(conn_id = %connection_id, "session queued outbound batch");
         let result = result_rx.await.map_err(|_| ());
+        trace!(
+            conn_id = %connection_id,
+            ok = result.as_ref().map(|inner| inner.is_ok()).unwrap_or(false),
+            "session outbound batch completed"
+        );
         match result? {
             Ok(()) => Ok(()),
             Err(_) => {

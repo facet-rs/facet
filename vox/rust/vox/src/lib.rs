@@ -232,9 +232,9 @@ pub use vox_types::{
 // File-descriptor passing. `FrameFds`/`collect_fds`/`provide_fds` are
 // portable (no-ops off-Unix) so generated client code needs no `cfg`;
 // `Fd` itself is Unix-only.
-pub use vox_types::{FrameFds, collect_fds, frame_fds_len, provide_fds};
 #[cfg(unix)]
 pub use vox_types::{Fd, FdAdapter, SCM_MAX_FD};
+pub use vox_types::{FrameFds, collect_fds, frame_fds_len, provide_fds};
 
 // ── vox-core: curated public API ──────────────────────────────────────
 

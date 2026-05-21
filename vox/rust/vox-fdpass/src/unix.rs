@@ -85,11 +85,7 @@ pub const SCM_MAX_FD: usize = 253;
 ///
 /// `data` must be non-empty (`SCM_RIGHTS` requires ≥1 data byte) and `fds`
 /// must not exceed [`SCM_MAX_FD`].
-pub async fn send_msg_with_fds(
-    stream: &UnixStream,
-    data: &[u8],
-    fds: &[RawFd],
-) -> io::Result<()> {
+pub async fn send_msg_with_fds(stream: &UnixStream, data: &[u8], fds: &[RawFd]) -> io::Result<()> {
     if data.is_empty() {
         return Err(io::Error::new(
             ErrorKind::InvalidInput,
@@ -189,7 +185,10 @@ fn send_msg_now(sock_fd: RawFd, data: &[u8], fds: &[RawFd]) -> io::Result<usize>
         return Err(io::Error::last_os_error());
     }
     if n == 0 {
-        return Err(io::Error::new(ErrorKind::WriteZero, "sendmsg wrote 0 bytes"));
+        return Err(io::Error::new(
+            ErrorKind::WriteZero,
+            "sendmsg wrote 0 bytes",
+        ));
     }
     Ok(n as usize)
 }
@@ -498,7 +497,9 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         let fd = listener.into_raw_fd();
 
-        send_msg_with_fds(&a, b"FRAMEBYTES", &[fd]).await.expect("send");
+        send_msg_with_fds(&a, b"FRAMEBYTES", &[fd])
+            .await
+            .expect("send");
 
         let mut buf = [0u8; 64];
         let (n, fds) = recv_msg(&b, &mut buf).await.expect("recv");

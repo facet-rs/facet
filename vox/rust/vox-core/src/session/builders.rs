@@ -392,9 +392,24 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
             Client::SERVICE_NAME,
         ));
         let request = super::ConnectionRequest::new(&peer_metadata)?;
-        acceptor
-            .accept(&request, pending)
-            .map_err(SessionError::Rejected)?;
+        tracing::debug!(
+            service = Client::SERVICE_NAME,
+            "vox root connection routing to acceptor"
+        );
+        match acceptor.accept(&request, pending) {
+            Ok(()) => tracing::debug!(
+                service = Client::SERVICE_NAME,
+                "vox root connection accepted"
+            ),
+            Err(metadata) => {
+                tracing::debug!(
+                    service = Client::SERVICE_NAME,
+                    metadata_len = metadata.len(),
+                    "vox root connection rejected"
+                );
+                return Err(SessionError::Rejected(metadata));
+            }
+        }
         let caller =
             caller_slot.lock().unwrap().take().expect(
                 "root connection acceptor must call handle_with (not into_handle or proxy_to)",
@@ -1031,9 +1046,24 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
             Client::SERVICE_NAME,
         ));
         let request = super::ConnectionRequest::new(&peer_metadata)?;
-        acceptor
-            .accept(&request, pending)
-            .map_err(SessionError::Rejected)?;
+        tracing::debug!(
+            service = Client::SERVICE_NAME,
+            "vox root connection routing to acceptor"
+        );
+        match acceptor.accept(&request, pending) {
+            Ok(()) => tracing::debug!(
+                service = Client::SERVICE_NAME,
+                "vox root connection accepted"
+            ),
+            Err(metadata) => {
+                tracing::debug!(
+                    service = Client::SERVICE_NAME,
+                    metadata_len = metadata.len(),
+                    "vox root connection rejected"
+                );
+                return Err(SessionError::Rejected(metadata));
+            }
+        }
         let caller =
             caller_slot.lock().unwrap().take().expect(
                 "root connection acceptor must call handle_with (not into_handle or proxy_to)",

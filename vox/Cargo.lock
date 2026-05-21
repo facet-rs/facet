@@ -4360,6 +4360,7 @@ dependencies = [
  "moire",
  "tempfile",
  "tokio",
+ "tracing",
  "vox-core",
  "vox-fdpass",
  "vox-postcard",

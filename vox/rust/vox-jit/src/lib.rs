@@ -29,6 +29,7 @@ pub use vox_jit_cal as cal;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::mem::MaybeUninit;
+use std::panic::AssertUnwindSafe;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, Once, OnceLock};
 
@@ -140,10 +141,11 @@ impl JitRuntime {
             .get_or_insert_decode_entry(local_shape, remote_schema_id);
         match borrow_mode {
             BorrowMode::Borrowed => {
-                let borrowed_fn = match backend.compile_decode_borrowed(local_shape, &program, &cal)
-                {
-                    Ok(f) => f,
-                    Err(err) => {
+                let borrowed_fn = match std::panic::catch_unwind(AssertUnwindSafe(|| {
+                    backend.compile_decode_borrowed(local_shape, &program, &cal)
+                })) {
+                    Ok(Ok(f)) => f,
+                    Ok(Err(err)) => {
                         if require_pure_jit() {
                             panic!(
                                 "VOX_JIT_REQUIRE_PURE=1 and decode compile failed for '{}': {}",
@@ -152,19 +154,37 @@ impl JitRuntime {
                         }
                         return None;
                     }
+                    Err(payload) => {
+                        tracing::warn!(
+                            shape = %local_shape,
+                            panic = %panic_payload_message(&payload),
+                            "vox JIT borrowed decode compile panicked; falling back"
+                        );
+                        return None;
+                    }
                 };
                 let _ = entry.borrowed_fn.set(borrowed_fn);
             }
             BorrowMode::Owned => {
-                let owned_fn = match backend.compile_decode_owned(local_shape, &program, &cal) {
-                    Ok(f) => f,
-                    Err(err) => {
+                let owned_fn = match std::panic::catch_unwind(AssertUnwindSafe(|| {
+                    backend.compile_decode_owned(local_shape, &program, &cal)
+                })) {
+                    Ok(Ok(f)) => f,
+                    Ok(Err(err)) => {
                         if require_pure_jit() {
                             panic!(
                                 "VOX_JIT_REQUIRE_PURE=1 and decode compile failed for '{}': {}",
                                 local_shape, err
                             );
                         }
+                        return None;
+                    }
+                    Err(payload) => {
+                        tracing::warn!(
+                            shape = %local_shape,
+                            panic = %panic_payload_message(&payload),
+                            "vox JIT owned decode compile panicked; falling back"
+                        );
                         return None;
                     }
                 };
@@ -367,6 +387,16 @@ impl JitRuntime {
     }
 }
 
+fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<&'static str>() {
+        (*message).to_owned()
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "non-string panic payload".to_owned()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Direct-call helpers — for callers that hold a pre-resolved `&'static`
 // encoder/decoder (e.g. conduits that resolved once at construction).
@@ -539,12 +569,28 @@ pub fn __decode_owned_with_slot<T: Facet<'static>>(
     plan: &TranslationPlan,
     registry: &SchemaRegistry,
 ) -> Result<T, DeserializeError> {
-    let decoder =
-        lookup_or_insert_decoder::<T>(slot, remote_schema_id, plan, registry, BorrowMode::Owned);
-    let decode_fn = decoder
-        .owned_fn_ptr()
-        .expect("owned decode_fn missing on owned decoder");
-    decode_owned_with::<T>(decode_fn, input)
+    let Some(decoder) =
+        lookup_or_insert_decoder::<T>(slot, remote_schema_id, plan, registry, BorrowMode::Owned)
+    else {
+        return vox_postcard::from_slice_with_plan::<T>(input, plan, registry);
+    };
+    let Some(decode_fn) = decoder.owned_fn_ptr() else {
+        tracing::warn!("vox JIT owned decoder missing function pointer; falling back");
+        return vox_postcard::from_slice_with_plan::<T>(input, plan, registry);
+    };
+    match std::panic::catch_unwind(AssertUnwindSafe(|| {
+        decode_owned_with::<T>(decode_fn, input)
+    })) {
+        Ok(result) => result,
+        Err(payload) => {
+            tracing::warn!(
+                shape = %T::SHAPE,
+                panic = %panic_payload_message(&payload),
+                "vox JIT owned decode panicked; falling back"
+            );
+            vox_postcard::from_slice_with_plan::<T>(input, plan, registry)
+        }
+    }
 }
 
 #[doc(hidden)]
@@ -558,12 +604,28 @@ pub fn __decode_borrowed_with_slot<'input, 'facet, T: Facet<'facet>>(
 where
     'input: 'facet,
 {
-    let decoder =
-        lookup_or_insert_decoder::<T>(slot, remote_schema_id, plan, registry, BorrowMode::Borrowed);
-    let decode_fn = decoder
-        .borrowed_fn_ptr()
-        .expect("borrowed decode_fn missing on borrowed decoder");
-    decode_borrowed_with::<T>(decode_fn, input)
+    let Some(decoder) =
+        lookup_or_insert_decoder::<T>(slot, remote_schema_id, plan, registry, BorrowMode::Borrowed)
+    else {
+        return vox_postcard::from_slice_borrowed_with_plan::<T>(input, plan, registry);
+    };
+    let Some(decode_fn) = decoder.borrowed_fn_ptr() else {
+        tracing::warn!("vox JIT borrowed decoder missing function pointer; falling back");
+        return vox_postcard::from_slice_borrowed_with_plan::<T>(input, plan, registry);
+    };
+    match std::panic::catch_unwind(AssertUnwindSafe(|| {
+        decode_borrowed_with::<T>(decode_fn, input)
+    })) {
+        Ok(result) => result,
+        Err(payload) => {
+            tracing::warn!(
+                shape = %T::SHAPE,
+                panic = %panic_payload_message(&payload),
+                "vox JIT borrowed decode panicked; falling back"
+            );
+            vox_postcard::from_slice_borrowed_with_plan::<T>(input, plan, registry)
+        }
+    }
 }
 
 fn lookup_or_insert_decoder<'a, T: Facet<'a>>(
@@ -572,20 +634,24 @@ fn lookup_or_insert_decoder<'a, T: Facet<'a>>(
     plan: &TranslationPlan,
     registry: &SchemaRegistry,
     borrow_mode: BorrowMode,
-) -> &'static cache::CompiledDecoder {
+) -> Option<&'static cache::CompiledDecoder> {
     let cache = slot.get_or_init(|| ArcSwap::from_pointee(HashMap::new()));
     if let Some(&decoder) = cache.load().get(&remote_schema_id) {
-        return decoder;
+        return Some(decoder);
     }
-    let decoder = global_runtime()
-        .prepare_decoder(remote_schema_id, T::SHAPE, plan, registry, borrow_mode)
-        .expect("JIT decode unavailable for T");
+    let decoder = global_runtime().prepare_decoder(
+        remote_schema_id,
+        T::SHAPE,
+        plan,
+        registry,
+        borrow_mode,
+    )?;
     cache.rcu(|cur| {
         let mut next = (**cur).clone();
         next.insert(remote_schema_id, decoder);
         next
     });
-    decoder
+    Some(decoder)
 }
 
 /// Encode a typed value via the JIT, caching the compiled encoder at the

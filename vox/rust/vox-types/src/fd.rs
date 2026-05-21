@@ -186,7 +186,11 @@ mod unix {
         let _restore = Restore(FD_COLLECTOR.with(|c| c.borrow_mut().replace(fresh)));
         let out = f();
         let fds = FD_COLLECTOR
-            .with(|c| c.borrow_mut().as_mut().map(|col| std::mem::take(&mut col.fds)))
+            .with(|c| {
+                c.borrow_mut()
+                    .as_mut()
+                    .map(|col| std::mem::take(&mut col.fds))
+            })
             .unwrap_or_default();
         (out, fds)
     }
