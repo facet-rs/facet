@@ -206,3 +206,23 @@ fn differential_empty_vec_of_structs() {
 
     assert_oracle_roundtrip::<Vec<Elem>>(&[vec![], vec![Elem { x: 1, y: 2 }]]);
 }
+
+// ---------------------------------------------------------------------------
+// Differential: BTreeMap — exercises the IR interpreter's DecodeMap arm
+// (reflective oracle vs IR interpreter, no calibration).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn differential_btreemap() {
+    use std::collections::BTreeMap;
+
+    // Scalar key/value: `DecodeMap` drives a fully native pair-decode body.
+    let scalar: BTreeMap<u32, u32> = BTreeMap::from([(1, 100), (2, 200), (16384, 999)]);
+    assert_oracle_roundtrip::<BTreeMap<u32, u32>>(&[scalar, BTreeMap::new()]);
+
+    // String key: with no calibration the key decodes via `SlowPath` inside
+    // the `DecodeMap` loop — exercises the mixed native/slow body path.
+    let string_keyed: BTreeMap<String, u32> =
+        BTreeMap::from([("alpha".to_string(), 1), ("beta".to_string(), 2)]);
+    assert_oracle_roundtrip::<BTreeMap<String, u32>>(&[string_keyed, BTreeMap::new()]);
+}
