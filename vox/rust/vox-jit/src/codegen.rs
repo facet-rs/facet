@@ -30,8 +30,9 @@ use cranelift_module::{Linkage, Module};
 
 use vox_jit_abi::{
     BorrowedDecodeFn, DecodeCtx, DecodeStatus, EncodeCtx, EncodeFn, OwnedDecodeFn, vox_jit_alloc,
-    vox_jit_box_alloc, vox_jit_box_slice_alloc, vox_jit_buf_grow, vox_jit_string_alloc,
-    vox_jit_utf8_validate, vox_jit_validate_bools, vox_jit_vec_alloc,
+    vox_jit_box_alloc, vox_jit_box_slice_alloc, vox_jit_buf_grow, vox_jit_map_slab_alloc,
+    vox_jit_map_slab_free, vox_jit_string_alloc, vox_jit_utf8_validate, vox_jit_validate_bools,
+    vox_jit_vec_alloc,
 };
 use vox_jit_cal::{
     CalibrationRegistry, ContainerKind, DescriptorHandle, OFFSET_ABSENT,
@@ -1531,6 +1532,25 @@ fn emit_op(
             emit_alloc_boxed(ctx, program, *dst_offset, *descriptor, *body_block)?;
         }
 
+        DecodeOp::DecodeMap {
+            dst_offset,
+            from_pair_slice,
+            pair_stride,
+            pair_align,
+            value_offset: _,
+            body_block,
+        } => {
+            emit_decode_map(
+                ctx,
+                program,
+                *dst_offset,
+                *from_pair_slice,
+                *pair_stride,
+                *pair_align,
+                *body_block,
+            )?;
+        }
+
         DecodeOp::SlowPath {
             shape,
             plan,
@@ -2872,6 +2892,183 @@ fn emit_alloc_backing(
     Ok(())
 }
 
+/// Emit native map decode via the slab strategy.
+///
+/// Layout of generated code:
+///   1. Read the varint entry count.
+///   2. Call `vox_jit_map_slab_alloc(count, stride, align)` — one scratch
+///      buffer of `count` contiguous `(K, V)` slots.
+///   3. On alloc failure (null): return `AllocFailed`.
+///   4. Loop `count` times: set `out_ptr = slab + i * stride`, inline the
+///      pair-decode body (key at slot+0, value at slot+value_offset).
+///   5. Call facet's `from_pair_slice(dst, slab, count)` — builds the map in
+///      one shot (`collect()` into the target collection).
+///   6. Call `vox_jit_map_slab_free(slab, count, stride, align)`.
+///
+/// The element-loop variable bookkeeping mirrors `emit_alloc_backing` so that
+/// nested lists/maps inside the key or value decode keep their own counters.
+///
+/// On a malformed-input error mid-decode the body emits a direct error return;
+/// the slab buffer then leaks, consistent with the partial-value leak model
+/// the JIT decode path already has on malformed input.
+fn emit_decode_map(
+    ctx: &mut EmitCtx<'_, '_>,
+    program: &DecodeProgram,
+    dst_offset: usize,
+    from_pair_slice: facet_core::MapFromPairSliceFn,
+    pair_stride: usize,
+    pair_align: usize,
+    body_block: usize,
+) -> Result<(), CodegenError> {
+    let ptr_ty = ctx.ptr_ty;
+
+    // 1. Read the entry count, narrowed to pointer width.
+    let len64 = ctx.read_varint_u64()?;
+    let len = if ptr_ty == types::I64 {
+        len64
+    } else {
+        ctx.b.ins().ireduce(types::I32, len64)
+    };
+
+    // 2. Allocate the scratch slab.
+    let stride_v = ctx.b.ins().iconst(ptr_ty, pair_stride as i64);
+    let align_v = ctx.b.ins().iconst(ptr_ty, pair_align as i64);
+    let slab_alloc_sig = make_map_slab_alloc_sig(ctx);
+    let slab_alloc_fn = ctx
+        .b
+        .ins()
+        .iconst(ptr_ty, vox_jit_map_slab_alloc as *const () as i64);
+    let call = ctx
+        .b
+        .ins()
+        .call_indirect(slab_alloc_sig, slab_alloc_fn, &[len, stride_v, align_v]);
+    let slab = ctx.b.inst_results(call)[0];
+
+    // 3. Null → allocation failed.
+    let null = ctx.b.ins().iconst(ptr_ty, 0);
+    let is_ok = ctx.b.ins().icmp(IntCC::NotEqual, slab, null);
+    let alloc_ok = ctx.fresh_block();
+    let alloc_err = ctx.fresh_block();
+    ctx.b.ins().brif(is_ok, alloc_ok, &[], alloc_err, &[]);
+
+    ctx.b.switch_to_block(alloc_err);
+    ctx.b.seal_block(alloc_err);
+    ctx.return_err(DecodeStatus::AllocFailed);
+
+    ctx.b.switch_to_block(alloc_ok);
+    ctx.b.seal_block(alloc_ok);
+
+    // 4. Pair-decode loop. Fresh loop variables, with ctx.var_init_count /
+    // ctx.var_list_len redirected exactly as emit_alloc_backing does so that
+    // nested AllocBacking / ReadListLen in the key or value body cannot
+    // corrupt this loop's counter or length.
+    let var_loop_i = ctx.fresh_var(ptr_ty);
+    let var_loop_len = ctx.fresh_var(ptr_ty);
+    let var_inner_list_len = ctx.fresh_var(ptr_ty);
+
+    let zero = ctx.b.ins().iconst(ptr_ty, 0);
+    ctx.b.def_var(var_loop_i, zero);
+    ctx.b.def_var(var_loop_len, len);
+    ctx.b.def_var(var_inner_list_len, zero);
+
+    let saved_var_init_count = ctx.var_init_count;
+    let saved_var_list_len = ctx.var_list_len;
+    ctx.var_init_count = var_loop_i;
+    ctx.var_list_len = var_inner_list_len;
+
+    let loop_header = ctx.fresh_block();
+    let loop_body_entry = ctx.fresh_block();
+    let loop_tail = ctx.fresh_block();
+    let loop_done = ctx.fresh_block();
+
+    ctx.b.ins().jump(loop_header, &[]);
+
+    // Loop header: i < count ?
+    ctx.b.switch_to_block(loop_header);
+    let i = ctx.b.use_var(var_loop_i);
+    let loop_len = ctx.b.use_var(var_loop_len);
+    let done = ctx
+        .b
+        .ins()
+        .icmp(IntCC::UnsignedGreaterThanOrEqual, i, loop_len);
+    ctx.b.ins().brif(done, loop_done, &[], loop_body_entry, &[]);
+    // loop_header sealed after loop_tail's back-edge is emitted.
+
+    // Loop body: slot pointer = slab + i * pair_stride.
+    ctx.b.switch_to_block(loop_body_entry);
+    ctx.b.seal_block(loop_body_entry);
+
+    let slot_ptr = if pair_stride == 0 {
+        slab
+    } else if pair_stride == 1 {
+        let i2 = ctx.b.use_var(var_loop_i);
+        ctx.b.ins().iadd(slab, i2)
+    } else {
+        let i2 = ctx.b.use_var(var_loop_i);
+        let stride = ctx.b.ins().iconst(ptr_ty, pair_stride as i64);
+        let offset = ctx.b.ins().imul(i2, stride);
+        ctx.b.ins().iadd(slab, offset)
+    };
+
+    // Inline the pair-decode body with the slot as the destination base.
+    // The body decodes the key at offset 0 and the value at value_offset.
+    let saved_out_ptr = ctx.out_ptr();
+    ctx.set_out_ptr(slot_ptr);
+    ctx.enter_subrange("map-entry");
+    emit_inline_block(ctx, program, body_block, loop_tail)?;
+    ctx.leave_subrange();
+    ctx.set_out_ptr(saved_out_ptr);
+
+    // Loop tail: increment, back-edge.
+    ctx.b.switch_to_block(loop_tail);
+    ctx.b.seal_block(loop_tail);
+    let i3 = ctx.b.use_var(var_loop_i);
+    let one = ctx.b.ins().iconst(ptr_ty, 1);
+    let next_i = ctx.b.ins().iadd(i3, one);
+    ctx.b.def_var(var_loop_i, next_i);
+    ctx.b.ins().jump(loop_header, &[]);
+    ctx.b.seal_block(loop_header);
+
+    ctx.b.switch_to_block(loop_done);
+    ctx.b.seal_block(loop_done);
+
+    // Restore outer loop vars.
+    ctx.var_init_count = saved_var_init_count;
+    ctx.var_list_len = saved_var_list_len;
+
+    // 5. Build the map from the populated slab. `from_pair_slice` moves every
+    // `(K, V)` out of the slab via `ptr::read`, leaving it uninitialized. The
+    // call goes through `vox_jit_map_from_pair_slice`, a plain-pointer wrapper
+    // (facet's `from_pair_slice` itself takes a wide `PtrUninit`).
+    let dst = ctx.dst_at(dst_offset);
+    let build_sig = make_map_from_pair_slice_sig(ctx);
+    let build_fn = ctx.b.ins().iconst(
+        ptr_ty,
+        crate::helpers::vox_jit_map_from_pair_slice as *const () as i64,
+    );
+    let fps_ptr = ctx
+        .b
+        .ins()
+        .iconst(ptr_ty, from_pair_slice as *const () as i64);
+    ctx.b
+        .ins()
+        .call_indirect(build_sig, build_fn, &[fps_ptr, dst, slab, len]);
+
+    // 6. Free the scratch slab.
+    let free_sig = make_map_slab_free_sig(ctx);
+    let free_fn = ctx
+        .b
+        .ins()
+        .iconst(ptr_ty, vox_jit_map_slab_free as *const () as i64);
+    let stride_v2 = ctx.b.ins().iconst(ptr_ty, pair_stride as i64);
+    let align_v2 = ctx.b.ins().iconst(ptr_ty, pair_align as i64);
+    ctx.b
+        .ins()
+        .call_indirect(free_sig, free_fn, &[slab, len, stride_v2, align_v2]);
+
+    Ok(())
+}
+
 /// Emit a `Box<T>` or `Box<[T]>` allocation + inline pointee decode.
 ///
 /// Dispatches on `desc.kind`:
@@ -3433,6 +3630,52 @@ fn make_global_alloc_sig(ctx: &mut EmitCtx<'_, '_>) -> cranelift_codegen::ir::Si
             AbiParam::new(ctx.ptr_ty), // align
         ],
         returns: vec![AbiParam::new(ctx.ptr_ty)],
+        call_conv,
+    })
+}
+
+/// Signature for `vox_jit_map_slab_alloc(count, stride, align) -> *mut u8`.
+fn make_map_slab_alloc_sig(ctx: &mut EmitCtx<'_, '_>) -> cranelift_codegen::ir::SigRef {
+    let call_conv = ctx.b.func.signature.call_conv;
+    ctx.b.func.import_signature(Signature {
+        params: vec![
+            AbiParam::new(ctx.ptr_ty), // count
+            AbiParam::new(ctx.ptr_ty), // stride
+            AbiParam::new(ctx.ptr_ty), // align
+        ],
+        returns: vec![AbiParam::new(ctx.ptr_ty)],
+        call_conv,
+    })
+}
+
+/// Signature for `vox_jit_map_slab_free(ptr, count, stride, align)`.
+fn make_map_slab_free_sig(ctx: &mut EmitCtx<'_, '_>) -> cranelift_codegen::ir::SigRef {
+    let call_conv = ctx.b.func.signature.call_conv;
+    ctx.b.func.import_signature(Signature {
+        params: vec![
+            AbiParam::new(ctx.ptr_ty), // ptr
+            AbiParam::new(ctx.ptr_ty), // count
+            AbiParam::new(ctx.ptr_ty), // stride
+            AbiParam::new(ctx.ptr_ty), // align
+        ],
+        returns: vec![],
+        call_conv,
+    })
+}
+
+/// Signature for `vox_jit_map_from_pair_slice(from_pair_slice, dst, slab,
+/// count)` — the plain-pointer wrapper around facet's `from_pair_slice` (whose
+/// own `PtrUninit`/`PtrMut` wide-pointer ABI is not modeled in codegen).
+fn make_map_from_pair_slice_sig(ctx: &mut EmitCtx<'_, '_>) -> cranelift_codegen::ir::SigRef {
+    let call_conv = ctx.b.func.signature.call_conv;
+    ctx.b.func.import_signature(Signature {
+        params: vec![
+            AbiParam::new(ctx.ptr_ty), // from_pair_slice fn pointer
+            AbiParam::new(ctx.ptr_ty), // dst: *mut u8
+            AbiParam::new(ctx.ptr_ty), // slab: *mut u8
+            AbiParam::new(ctx.ptr_ty), // count: usize
+        ],
+        returns: vec![],
         call_conv,
     })
 }

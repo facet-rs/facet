@@ -174,6 +174,33 @@ pub unsafe extern "C" fn vox_jit_slow_path(
     }
 }
 
+/// Map builder helper: build a map (`BTreeMap`/`HashMap`) from a decoded
+/// `(K, V)` slab. Called once per `DecodeMap` op after the slab is fully
+/// populated.
+///
+/// Wraps facet's `MapVTable::from_pair_slice` in a plain-pointer C ABI. facet's
+/// `PtrUninit` is a *wide* pointer (`#[repr(C)]` over `{ ptr, metadata }`), so
+/// JIT codegen cannot pass it as one register-width value — it passes `dst` as
+/// a thin `*mut u8` and this helper reconstructs the `PtrUninit` facet expects.
+///
+/// # Safety
+/// - `from_pair_slice` must be a valid `MapVTable::from_pair_slice` pointer for
+///   the map type whose storage begins at `dst`.
+/// - `dst` must point to uninitialized, correctly-aligned storage for that map.
+/// - `slab` must point to `count` contiguous, fully-initialized `(K, V)` pairs
+///   (or be the dangling sentinel produced by `vox_jit_map_slab_alloc` when
+///   `count == 0`).
+/// - Ownership of every `(K, V)` moves into the map; the slab is left
+///   logically uninitialized afterwards.
+pub unsafe extern "C" fn vox_jit_map_from_pair_slice(
+    from_pair_slice: facet_core::MapFromPairSliceFn,
+    dst: *mut u8,
+    slab: *mut u8,
+    count: usize,
+) {
+    unsafe { from_pair_slice(PtrUninit::new(dst as *mut ()), slab, count) };
+}
+
 /// Default-fill helper: invoke a shape's `call_default_in_place` vtable on
 /// `dst_base.add(dst_offset)`. Used for local struct fields that have no
 /// corresponding remote field on the wire (schema evolution: fill-defaults).

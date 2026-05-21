@@ -383,6 +383,61 @@ pub unsafe extern "C" fn vox_jit_alloc(size: usize, align: usize) -> *mut u8 {
     unsafe { std::alloc::alloc(layout) }
 }
 
+/// Allocate the scratch slab used by the `DecodeMap` IR op: `count` slots of
+/// `stride` bytes each, aligned to `align`.
+///
+/// Returns a dangling-but-non-null, `align`-valued pointer when no storage is
+/// needed — an empty map (`count == 0`) or an all-ZST pair type
+/// (`stride == 0`). `from_pair_slice` reads `count` ZST pairs (or none) in
+/// that case and never dereferences the pointer. Returns null on allocation
+/// failure or an invalid layout (size overflow); the JIT/interpreter map that
+/// to `AllocFailed`.
+///
+/// # Safety
+/// `align` must be a non-zero power of two.
+pub unsafe extern "C" fn vox_jit_map_slab_alloc(
+    count: usize,
+    stride: usize,
+    align: usize,
+) -> *mut u8 {
+    if count == 0 || stride == 0 {
+        return align as *mut u8;
+    }
+    let Some(size) = count.checked_mul(stride) else {
+        return core::ptr::null_mut();
+    };
+    let Ok(layout) = std::alloc::Layout::from_size_align(size, align) else {
+        return core::ptr::null_mut();
+    };
+    unsafe { std::alloc::alloc(layout) }
+}
+
+/// Free a slab allocated by [`vox_jit_map_slab_alloc`]. No-op for the
+/// dangling-pointer case (`count == 0` or `stride == 0`), which performed no
+/// real allocation.
+///
+/// # Safety
+/// - `ptr`, `count`, `stride`, `align` must be exactly the values from the
+///   paired [`vox_jit_map_slab_alloc`] call.
+/// - The slab contents must already have been moved out (e.g. by
+///   `from_pair_slice`); the buffer is treated as uninitialized memory.
+pub unsafe extern "C" fn vox_jit_map_slab_free(
+    ptr: *mut u8,
+    count: usize,
+    stride: usize,
+    align: usize,
+) {
+    if count == 0 || stride == 0 {
+        return;
+    }
+    let Some(size) = count.checked_mul(stride) else {
+        return;
+    };
+    if let Ok(layout) = std::alloc::Layout::from_size_align(size, align) {
+        unsafe { std::alloc::dealloc(ptr, layout) };
+    }
+}
+
 /// Returns the address of `__rust_alloc`, the global allocator's actual
 /// entry point — bypassing `std::alloc::alloc`'s call to
 /// `__rust_no_alloc_shim_is_unstable_v2` (a stability marker that costs one

@@ -381,6 +381,38 @@ pub enum DecodeOp {
     },
 
     // -----------------------------------------------------------------------
+    // Map handling
+    // -----------------------------------------------------------------------
+    /// Decode a map (`BTreeMap`/`HashMap`) via the slab strategy.
+    ///
+    /// Reads the varint entry count, decodes every `(K, V)` pair natively into
+    /// a contiguous scratch slab, then hands the slab to facet's
+    /// `from_pair_slice` constructor in one call — one boundary crossing for
+    /// the whole map, no per-entry vtable dispatch. The JIT win is captured on
+    /// the native K/V value decode; the collection assembly is amortized.
+    ///
+    /// `body_block` decodes one pair into the current slab slot: the key at
+    /// offset 0, the value at `value_offset`. The slot base advances by
+    /// `pair_stride` bytes per iteration. The slab holds `count` slots of
+    /// `pair_stride` bytes, aligned to `pair_align`.
+    DecodeMap {
+        dst_offset: usize,
+        /// facet `MapVTable::from_pair_slice` — builds the map from the slab
+        /// (`collect()` into the target collection, with capacity known).
+        from_pair_slice: facet_core::MapFromPairSliceFn,
+        /// `size_of::<(K, V)>()` — stride between slab slots (facet `pair_stride`).
+        pair_stride: usize,
+        /// `align_of::<(K, V)>()` = `max(align K, align V)` — slab allocation align.
+        pair_align: usize,
+        /// Byte offset of the value within a `(K, V)` slot (facet
+        /// `value_offset_in_pair`). The key is always at offset 0.
+        value_offset: usize,
+        /// IR block decoding one pair into the current slab slot
+        /// (key at offset 0, value at `value_offset`).
+        body_block: usize,
+    },
+
+    // -----------------------------------------------------------------------
     // Slow path
     // -----------------------------------------------------------------------
 
@@ -989,17 +1021,24 @@ fn lower_def(
             block,
             dst_offset,
         ),
+        Def::Map(map_def) => lower_map(
+            plan,
+            shape,
+            map_def,
+            registry,
+            cal,
+            borrow_mode,
+            program,
+            block,
+            dst_offset,
+        ),
         _ => {
-            // Def::Map, Def::Set, Def::Slice, Def::NdArray,
-            // Def::DynamicValue, Def::Undefined — SlowPath by design.
+            // Def::Set, Def::Slice, Def::NdArray, Def::DynamicValue,
+            // Def::Undefined — SlowPath.
             //
-            // Set/Map: same postcard wire encoding as List (varint len + elements),
-            // but insertion requires vtable calls (SetVTable::insert /
-            // MapVTable::insert). The IR has no "insert into container" op;
-            // adding one would require per-element vtable dispatch that negates JIT
-            // benefits. The spec §Non-Goals does not require JIT for these.
-            //
-            // Slice: unsized — cannot be placed on the stack by the IR.
+            // Set: same slab strategy as Map would apply (SetVTable exposes
+            // from_slice); a native lowering is a fast-follow once DecodeMap
+            // lands. Slice: borrowed &[T] — a separate piece of work.
             // NdArray/DynamicValue/Undefined: no postcard ABI defined.
             program.emit(
                 block,
@@ -1012,6 +1051,107 @@ fn lower_def(
             Ok(())
         }
     }
+}
+
+/// Lower a map (`BTreeMap`/`HashMap`) to a `DecodeMap` op plus a body block.
+///
+/// The body block decodes one `(K, V)` pair into a scratch-slab slot. At
+/// runtime `DecodeMap` reads the entry count, decodes every pair natively into
+/// the slab, then calls facet's `from_pair_slice` to build the map in one shot.
+///
+/// Falls back to `SlowPath` when the map type does not expose a
+/// `from_pair_slice` constructor (no batch builder ⇒ no slab strategy).
+#[allow(clippy::too_many_arguments)]
+fn lower_map(
+    plan: &TranslationPlan,
+    shape: &'static Shape,
+    map_def: facet_core::MapDef,
+    registry: &SchemaRegistry,
+    cal: Option<&CalibrationRegistry>,
+    borrow_mode: BorrowMode,
+    program: &mut DecodeProgram,
+    block: usize,
+    dst_offset: usize,
+) -> Result<(), LowerError> {
+    let slow_path = |program: &mut DecodeProgram| {
+        program.emit(
+            block,
+            DecodeOp::SlowPath {
+                shape,
+                plan: Box::new(clone_plan(plan)),
+                dst_offset,
+            },
+        );
+    };
+
+    // The slab strategy needs facet's batch constructor. Without it (a map
+    // type that only exposes per-entry `insert`) fall back to the interpreter.
+    let Some(from_pair_slice) = map_def.vtable.from_pair_slice else {
+        slow_path(program);
+        return Ok(());
+    };
+
+    // Key and value must be sized — the slab holds inline `(K, V)` slots.
+    let (Ok(k_layout), Ok(v_layout)) = (
+        map_def.k().layout.sized_layout(),
+        map_def.v().layout.sized_layout(),
+    ) else {
+        slow_path(program);
+        return Ok(());
+    };
+
+    let pair_stride = map_def.vtable.pair_stride;
+    let value_offset = map_def.vtable.value_offset_in_pair;
+    // Alignment of `(K, V)` is the max of the field alignments (true for both
+    // repr(Rust) and repr(C) aggregates). `.max(1)` guards the all-ZST case.
+    let pair_align = k_layout.align().max(v_layout.align()).max(1);
+
+    // A degenerate `pair_stride` of 0 (both K and V are ZSTs) means the slab
+    // carries no bytes; `from_pair_slice` still works (it reads `count` ZST
+    // pairs). The codegen/interpreter treat stride 0 as "no allocation".
+
+    // Key/value translation plans, if the schemas differ on either side.
+    let (key_plan, value_plan): (&TranslationPlan, &TranslationPlan) = match plan {
+        TranslationPlan::Map { key, value } => (key, value),
+        _ => (&TranslationPlan::Identity, &TranslationPlan::Identity),
+    };
+
+    let body_block = program.new_block();
+    program.emit(
+        block,
+        DecodeOp::DecodeMap {
+            dst_offset,
+            from_pair_slice,
+            pair_stride,
+            pair_align,
+            value_offset,
+            body_block,
+        },
+    );
+
+    // Body: decode the key at slot offset 0, the value at `value_offset`.
+    lower_value(
+        key_plan,
+        map_def.k(),
+        registry,
+        cal,
+        borrow_mode,
+        program,
+        body_block,
+        0,
+    )?;
+    lower_value(
+        value_plan,
+        map_def.v(),
+        registry,
+        cal,
+        borrow_mode,
+        program,
+        body_block,
+        value_offset,
+    )?;
+    program.emit(body_block, DecodeOp::Return);
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2851,6 +2991,82 @@ fn run_block(
                     std::ptr::write(ptr_slot, alloc_ptr);
                 }
                 run_block(program, *body_block, state, alloc_ptr, registry, Some(cal))?;
+            }
+
+            DecodeOp::DecodeMap {
+                dst_offset,
+                from_pair_slice,
+                pair_stride,
+                pair_align,
+                value_offset: _,
+                body_block,
+            } => {
+                // Slab strategy: decode every pair into a contiguous scratch
+                // buffer, then build the map in one `from_pair_slice` call.
+                // Mirrors `emit_decode_map` in the JIT codegen so the two
+                // engines produce identical maps for the same input bytes.
+                let len = state.read_varint()? as usize;
+                let stride = *pair_stride;
+
+                // Stride 0 (both K and V are ZSTs) or an empty map needs no
+                // allocation: `from_pair_slice` reads `len` ZST pairs (or
+                // none) and never dereferences a real address.
+                let (slab, slab_layout): (*mut u8, Option<std::alloc::Layout>) =
+                    if len == 0 || stride == 0 {
+                        (*pair_align as *mut u8, None)
+                    } else {
+                        let size = len.checked_mul(stride).ok_or_else(|| {
+                            DeserializeError::Custom("DecodeMap: slab size overflow".into())
+                        })?;
+                        let layout = std::alloc::Layout::from_size_align(size, *pair_align)
+                            .map_err(|_| {
+                                DeserializeError::Custom("DecodeMap: invalid slab layout".into())
+                            })?;
+                        let p = unsafe { std::alloc::alloc(layout) };
+                        if p.is_null() {
+                            return Err(DeserializeError::Custom(
+                                "DecodeMap: slab allocation failed (OOM)".into(),
+                            ));
+                        }
+                        (p, Some(layout))
+                    };
+
+                // Decode each `(K, V)` pair into its slab slot. The body block
+                // writes the key at slot+0 and the value at slot+value_offset.
+                let mut decode_result = Ok(());
+                for i in 0..len {
+                    let slot = unsafe { slab.add(i * stride) };
+                    if let Err(e) = run_block(program, *body_block, state, slot, registry, cal) {
+                        decode_result = Err(e);
+                        break;
+                    }
+                }
+
+                match decode_result {
+                    Ok(()) => {
+                        // Build the map from the fully-populated slab. This
+                        // moves every `(K, V)` out of the slab via `ptr::read`,
+                        // leaving the buffer logically uninitialized.
+                        let from_pair_slice = *from_pair_slice;
+                        let dst = unsafe { base.add(*dst_offset) };
+                        unsafe {
+                            from_pair_slice(facet_core::PtrUninit::new(dst as *mut ()), slab, len);
+                        }
+                        if let Some(layout) = slab_layout {
+                            unsafe { std::alloc::dealloc(slab, layout) };
+                        }
+                    }
+                    Err(e) => {
+                        // Malformed input mid-decode: free the slab buffer.
+                        // The keys/values decoded so far leak their contents —
+                        // consistent with the partial-value leak model the
+                        // decode path already has on malformed input.
+                        if let Some(layout) = slab_layout {
+                            unsafe { std::alloc::dealloc(slab, layout) };
+                        }
+                        return Err(e);
+                    }
+                }
             }
 
             DecodeOp::SlowPath {

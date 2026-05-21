@@ -363,6 +363,40 @@ where
     }
 }
 
+/// Lower `T` to a decode program and assert the map decoded natively: at least
+/// one `DecodeMap` op is present, and no `SlowPath` op survives anywhere in the
+/// program. This is the regression gate against silently degrading back to the
+/// reflective slow path.
+fn assert_native_map_decode<T: Facet<'static>>(cal: &CalibrationRegistry) {
+    use vox_postcard::ir::DecodeOp;
+
+    let plan = build_identity_plan(T::SHAPE);
+    let registry = SchemaRegistry::new();
+    let program = lower_with_cal(&plan, T::SHAPE, &registry, Some(cal), BorrowMode::Owned)
+        .expect("lower_with_cal failed");
+    let ops: Vec<&DecodeOp> = program.blocks.iter().flat_map(|b| b.ops.iter()).collect();
+
+    assert!(
+        ops.iter().any(|o| matches!(o, DecodeOp::DecodeMap { .. })),
+        "{}: expected a native DecodeMap op in the lowered program",
+        T::SHAPE
+    );
+    assert!(
+        !ops.iter().any(|o| matches!(o, DecodeOp::SlowPath { .. })),
+        "{}: lowered decode program still contains a SlowPath op",
+        T::SHAPE
+    );
+}
+
+/// `BTreeMap<K, V>` lowers to native `DecodeMap` codegen — no SlowPath.
+#[test]
+fn jit_btreemap_lowers_natively() {
+    let cal = calibrated();
+    assert_native_map_decode::<WithStringKeyMap>(&cal);
+    assert_native_map_decode::<WithIntKeyMap>(&cal);
+    assert_native_map_decode::<BTreeMap<String, u32>>(&cal);
+}
+
 /// `BTreeMap<String, u32>` as a struct field — decode round-trip.
 #[test]
 fn jit_btreemap_string_key_decode() {
