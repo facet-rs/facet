@@ -46,10 +46,22 @@ engine for the existing one.
 
 - No persistent code cache across process restarts.
 - No attempt to discover arbitrary Rust type layout at runtime.
-- No attempt to make all std or ecosystem container internals first-class.
+- No reverse-engineering of std or ecosystem container internals. Containers
+  get native codegen by driving the primitives facet exposes for them — e.g.
+  `MapVTable::from_pair_slice` and `pair_stride` for map decode, `IterVTable`
+  for map encode, calibrated descriptors for `Vec`-family types — never by
+  hardcoding a `BTreeMap` node or `HashMap` table layout. A container whose
+  facet vtable does not expose what the JIT needs falls back to the reflective
+  interpreter; it is not a hard limit on which containers can be JIT-driven.
 - No unwind through JIT-generated code.
 - No change to the wire format, handshake, schema payloads, or translation-plan
   semantics.
+
+This list is about *how* the JIT may obtain layout knowledge, not a fixed set
+of supported types. Maps (`BTreeMap`/`HashMap`) decode and encode through
+Cranelift today via the facet vtable primitives above; sets and borrowed
+slices are still routed to the interpreter only because that wiring has not
+been done yet, not by design.
 
 ## Core Idea
 
