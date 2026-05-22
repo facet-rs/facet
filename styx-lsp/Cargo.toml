@@ -1,6 +1,6 @@
 [package]
 name = "styx-lsp"
-version = "3.0.2"
+version = "4.0.0"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -16,11 +16,11 @@ tower-lsp = "0.20"
 tokio = { version = "1", features = ["full"] }
 
 # Styx crates
-styx-cst = { path = "../styx-cst", version = "3.0" }
-styx-tree = { path = "../styx-tree", version = "3.0" }
-styx-format = { path = "../styx-format", version = "3.0" }
-styx-embed = { path = "../styx-embed", version = "3.0" }
-facet-styx = { path = "../facet-styx", version = "3.0" }
+styx-cst = { path = "../styx-cst", version = "4.0" }
+styx-tree = { path = "../styx-tree", version = "4.0" }
+styx-format = { path = "../styx-format", version = "4.0" }
+styx-embed = { path = "../styx-embed", version = "4.0" }
+facet-styx = { path = "../facet-styx", version = "4.0" }
 
 # Binary lookup
 which = "7"
@@ -47,10 +47,10 @@ vox.workspace = true
 vox-stream.workspace = true
 
 # Extension protocol
-styx-lsp-ext = { path = "../styx-lsp-ext", version = "3.0" }
+styx-lsp-ext = { path = "../styx-lsp-ext", version = "4.0" }
 
 # Testing
-styx-lsp-test-schema = { path = "../styx-lsp-test-schema", version = "3.0" }
+styx-lsp-test-schema = { path = "../styx-lsp-test-schema", version = "4.0" }
 
 [dev-dependencies]
 serde_json.workspace = true
@@ -59,4 +59,4 @@ tower = "0.4"
 
 [build-dependencies]
 facet.workspace = true
-facet-styx = { path = "../facet-styx", version = "3.0" }
+facet-styx = { path = "../facet-styx", version = "4.0" }
