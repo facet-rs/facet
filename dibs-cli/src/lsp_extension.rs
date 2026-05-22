@@ -41,7 +41,7 @@ pub async fn run() {
     let extension = DibsExtension::new();
     let dispatcher = StyxLspExtensionDispatcher::new(extension.clone());
 
-    let link = styx_lsp_ext::vox::transport::tcp::StreamLink::stdio();
+    let link = vox_stream::StreamLink::stdio();
     let host_client = match styx_lsp_ext::vox::acceptor_on(link)
         .on_connection(dispatcher)
         .establish::<StyxLspHostClient>()
