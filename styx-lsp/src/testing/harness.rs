@@ -31,7 +31,7 @@ use styx_tree::Value;
 use tokio::process::{Child, Command};
 use tokio::sync::RwLock;
 use tower_lsp::lsp_types::Url;
-use vox::transport::tcp::StreamLink;
+use vox_stream::StreamLink;
 
 use crate::extensions::StyxLspHostImpl;
 use crate::server::{DocumentMap, DocumentState};
@@ -142,6 +142,7 @@ impl TestHarness {
         // Initiate vox session (we're the initiator, like the real LSP)
         let client = vox::initiator_on(StreamLink::new(stdout, stdin), vox::TransportMode::Bare)
             .on_connection(dispatcher)
+            .non_resumable()
             .establish::<StyxLspExtensionClient>()
             .await
             .map_err(|e| HarnessError::HandshakeFailed(e.to_string()))?;

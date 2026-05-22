@@ -35,7 +35,7 @@ use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::RwLock;
 use tower_lsp::lsp_types::Url;
 use tracing::{debug, info, warn};
-use vox::transport::tcp::StreamLink;
+use vox_stream::StreamLink;
 
 use crate::config::{self, StyxUserConfig};
 use crate::schema_validation::resolve_schema;
@@ -240,6 +240,7 @@ impl ExtensionManager {
         // Initiate vox session (LSP is the initiator)
         let client = vox::initiator_on(StreamLink::new(stdout, stdin), vox::TransportMode::Bare)
             .on_connection(dispatcher)
+            .non_resumable()
             .establish::<StyxLspExtensionClient>()
             .await
             .map_err(|e| {

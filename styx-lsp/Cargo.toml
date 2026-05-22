@@ -44,6 +44,7 @@ serde_json.workspace = true
 
 # LSP extensions (vox RPC)
 vox.workspace = true
+vox-stream.workspace = true
 
 # Extension protocol
 styx-lsp-ext = { path = "../styx-lsp-ext", version = "3.0" }
