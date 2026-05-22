@@ -39,7 +39,7 @@ tokio = { workspace = true, features = [
 facet.workspace = true
 figue.workspace = true
 facet-json.workspace = true
-facet-styx = { workspace = true, features = ["figue"] }
+facet-styx.workspace = true
 vox.workspace = true
 vox-core.workspace = true
 vox-stream.workspace = true

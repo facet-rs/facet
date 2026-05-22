@@ -8,7 +8,6 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use facet::Facet;
-use facet_styx::StyxFormat;
 use figue as args;
 use jiff::Zoned;
 use ratatui::{
@@ -23,6 +22,26 @@ mod lints;
 mod lsp_extension;
 mod service;
 mod tui;
+
+#[derive(Debug, Clone, Copy, Default)]
+struct StyxFormat;
+
+impl args::ConfigFormat for StyxFormat {
+    fn extensions(&self) -> &[&str] {
+        &["styx"]
+    }
+
+    fn parse(&self, contents: &str) -> Result<args::ConfigValue, args::ConfigFormatError> {
+        let mut value: args::ConfigValue = facet_styx::from_str(contents)
+            .map_err(|e| args::ConfigFormatError::new(e.to_string()))?;
+
+        if let args::ConfigValue::Object(ref mut obj) = value {
+            obj.value.retain(|key, _| !key.starts_with('@'));
+        }
+
+        Ok(value)
+    }
+}
 
 // Embed Styx schemas for LSP extraction via `styx extract $(which dibs)`
 styx_embed::embed_outdir_file!("dibs-config.styx");
