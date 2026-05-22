@@ -19,7 +19,7 @@ dibs.workspace = true
 my-app-db = { path = "../my-app-db" }
 
 [dev-dependencies]
-dockside.workspace = true
+dockside = { path = "../../../crates/dockside" }
 tokio.workspace = true
 tokio-postgres.workspace = true
-dibs.workspace = true
+dibs = { path = "../../../crates/dibs" }

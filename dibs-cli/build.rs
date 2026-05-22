@@ -19,6 +19,7 @@ fn main() {
         .version("1")
         .cli("dibs")
         .generate();
+    let config_schema = dibs_query_schema::normalize_schema_tag_payload_spacing(&config_schema);
 
     // Generate query schema with LSP extension
     let query_schema = facet_styx::GenerateSchema::<dibs_query_schema::QueryFile>::new()
@@ -27,6 +28,7 @@ fn main() {
         .cli("dibs")
         .lsp(lsp_config)
         .generate();
+    let query_schema = dibs_query_schema::normalize_schema_tag_payload_spacing(&query_schema);
 
     // Write schemas to OUT_DIR for embedding
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");

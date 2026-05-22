@@ -1,13 +1,13 @@
 //! Protocol definitions for dibs CLI-to-service communication.
 //!
-//! This crate defines the roam service interface between the `dibs` CLI
+//! This crate defines the vox service interface between the `dibs` CLI
 //! and the user's db crate (e.g., `my-app-db`).
 //!
-//! The db crate runs as a short-lived roam service, responding to
+//! The db crate runs as a short-lived vox service, responding to
 //! schema and migration queries from the CLI.
 
 use facet::Facet;
-use roam::service;
+use vox::service;
 
 /// Schema information for a table.
 #[derive(Debug, Clone, Facet)]
@@ -479,7 +479,7 @@ pub trait DibsService {
     async fn migrate(
         &self,
         request: MigrateRequest,
-        logs: roam::Tx<MigrationLog>,
+        logs: vox::Tx<MigrationLog>,
     ) -> Result<MigrateResult, DibsError>;
 }
 

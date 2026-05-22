@@ -40,9 +40,9 @@ facet.workspace = true
 figue.workspace = true
 facet-json.workspace = true
 facet-styx = { workspace = true, features = ["figue"] }
-roam.workspace = true
-roam-session.workspace = true
-roam-stream.workspace = true
+vox.workspace = true
+vox-core.workspace = true
+vox-stream.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 jiff.workspace = true

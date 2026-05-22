@@ -1044,7 +1044,7 @@ fn run_migrate(config: &Config) {
     info!(database_url = %mask_password(database_url), "Running migrations");
 
     rt.block_on(async {
-        // Connect to the db crate via roam
+        // Connect to the db crate via vox
         let conn = match service::connect_to_service(&config.db).await {
             Ok(conn) => conn,
             Err(e) => {
@@ -1056,7 +1056,7 @@ fn run_migrate(config: &Config) {
         let client = conn.client();
 
         // Create a channel for receiving log messages (we'll handle display ourselves)
-        let (log_tx, mut log_rx) = roam::channel::<dibs_proto::MigrationLog>();
+        let (log_tx, mut log_rx) = vox::channel::<dibs_proto::MigrationLog>();
 
         // Spawn a task to collect log messages (we display summary at the end)
         let log_collector = tokio::spawn(async move {
@@ -1185,7 +1185,7 @@ fn run_status(config: &Config) {
     info!(database_url = %mask_password(database_url), "Checking migration status");
 
     rt.block_on(async {
-        // Connect to the db crate via roam
+        // Connect to the db crate via vox
         let conn = match service::connect_to_service(&config.db).await {
             Ok(conn) => conn,
             Err(e) => {
@@ -1252,7 +1252,7 @@ fn run_diff(config: &Config) {
     info!(database_url = %mask_password(database_url), "Comparing schema to database");
 
     rt.block_on(async {
-        // Connect to the db crate via roam
+        // Connect to the db crate via vox
         let conn = match service::connect_to_service(&config.db).await {
             Ok(conn) => conn,
             Err(e) => {
@@ -1409,7 +1409,7 @@ async fn run_generate_from_diff_via_roam(config: &Config, name: &str) {
         "Connecting to db service"
     );
 
-    // Connect to the db crate via roam
+    // Connect to the db crate via vox
     let conn = match service::connect_to_service(&config.db).await {
         Ok(conn) => conn,
         Err(e) => {

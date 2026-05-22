@@ -18,7 +18,8 @@ dibs.workspace = true
 dibs-proto.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net"] }
 tokio-tungstenite.workspace = true
-roam-stream.workspace = true
-roam-websocket.workspace = true
+vox-stream.workspace = true
+vox-websocket.workspace = true
+vox.workspace = true
 dotenvy.workspace = true
 tokio-postgres.workspace = true

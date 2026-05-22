@@ -11,6 +11,62 @@ pub use facet_reflect::Span;
 use indexmap::IndexMap;
 use std::{borrow::Borrow, hash::Hash, ops::Deref};
 
+/// Generate a parseable Styx schema for [`QueryFile`].
+pub fn query_file_schema() -> String {
+    normalize_schema_tag_payload_spacing(&facet_styx::schema_from_type::<QueryFile>())
+}
+
+/// Normalize schema strings rendered by facet-styx so tag payloads stay attached.
+///
+/// Styx tag payloads are syntactically significant: `@map(...)` is a tagged
+/// sequence payload, while `@map (...)` is a unit tag followed by a separate
+/// sequence. facet-styx 3.0.x can currently render the latter for generated
+/// schema types, so Dibs normalizes that source boundary before embedding or
+/// round-tripping the schema.
+pub fn normalize_schema_tag_payload_spacing(schema: &str) -> String {
+    let mut normalized = String::with_capacity(schema.len());
+    let mut chars = schema.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        normalized.push(ch);
+
+        if ch != '@' || !matches!(chars.peek(), Some(c) if is_schema_tag_char(*c)) {
+            continue;
+        }
+
+        while let Some(c) = chars.peek().copied() {
+            if is_schema_tag_char(c) {
+                normalized.push(c);
+                chars.next();
+            } else {
+                break;
+            }
+        }
+
+        let mut whitespace = String::new();
+        while let Some(c) = chars.peek().copied() {
+            if c.is_whitespace() {
+                whitespace.push(c);
+                chars.next();
+            } else {
+                break;
+            }
+        }
+
+        if matches!(chars.peek(), Some('(')) {
+            continue;
+        }
+
+        normalized.push_str(&whitespace);
+    }
+
+    normalized
+}
+
+fn is_schema_tag_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '-' || ch == '_'
+}
+
 /// A value with source span and documentation.
 ///
 /// This struct wraps a value along with:

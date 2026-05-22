@@ -21,7 +21,7 @@ indexmap.workspace = true
 [dev-dependencies]
 tracing.workspace = true
 facet-testhelpers.workspace = true
-dockside.workspace = true
+dockside = { path = "../dockside" }
 tokio.workspace = true
 tokio-postgres.workspace = true
 insta.workspace = true

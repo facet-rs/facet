@@ -156,7 +156,7 @@ fn test_query_file_schema_roundtrip() {
     use facet_styx::SchemaFile;
 
     // Generate the schema from the QueryFile type
-    let schema_str = facet_styx::schema_from_type::<QueryFile>();
+    let schema_str = query_file_schema();
     eprintln!("Generated QueryFile schema:\n{schema_str}");
 
     // Parse it back into a SchemaFile - this validates the schema is well-formed

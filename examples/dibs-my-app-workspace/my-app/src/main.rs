@@ -1,18 +1,17 @@
 //! my-app: WebSocket server exposing SquelService for admin UI.
 //!
 //! This binary serves as the main application server, providing:
-//! - WebSocket endpoint for roam RPC (SquelService)
+//! - WebSocket endpoint for vox RPC (SquelService)
 //! - Schema introspection and CRUD operations for all registered tables
 
 use dibs::SquelServiceImpl;
 use dibs_proto::SquelServiceDispatcher;
-use roam_stream::HandshakeConfig;
-use roam_websocket::{WsTransport, ws_accept};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio_postgres::NoTls;
 use tokio_tungstenite::accept_async;
+use vox_websocket::WsLink;
 
 // Import my-app-db to register its tables via inventory
 use my_app_db as _;
@@ -50,19 +49,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::spawn(async move {
             match accept_async(stream).await {
                 Ok(ws_stream) => {
-                    let transport = WsTransport::new(ws_stream);
+                    let link = WsLink::new(ws_stream);
                     let dispatcher = SquelServiceDispatcher::new(SquelServiceImpl::new(client));
 
-                    match ws_accept(transport, HandshakeConfig::default(), dispatcher).await {
-                        Ok((handle, _incoming, driver)) => {
-                            println!("Roam handshake complete with {}", peer_addr);
+                    match vox::acceptor_on(link)
+                        .on_connection(dispatcher)
+                        .non_resumable()
+                        .establish::<vox::NoopClient>()
+                        .await
+                    {
+                        Ok(client) => {
+                            println!("Vox handshake complete with {}", peer_addr);
 
-                            // Run the driver to completion
-                            if let Err(e) = driver.run().await {
-                                eprintln!("Connection error with {}: {}", peer_addr, e);
-                            }
-
-                            drop(handle);
+                            let _ = client.caller.closed().await;
                             println!("Connection closed: {}", peer_addr);
                         }
                         Err(e) => {

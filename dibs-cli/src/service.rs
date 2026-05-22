@@ -1,6 +1,6 @@
 //! Service connection handling for dibs CLI.
 //!
-//! This module handles spawning the user's db crate as a roam service
+//! This module handles spawning the user's db crate as a vox service
 //! and connecting to it.
 //!
 //! # Connection Model
@@ -9,11 +9,10 @@
 //! connects to it as a client (initiator). This avoids race conditions:
 //! the CLI is already listening before spawning the child.
 //!
-//! Roam supports bidirectional RPC, so both sides can call each other.
+//! Vox supports bidirectional RPC, so both sides can call each other.
 
 use crate::DbConfig;
 use dibs_proto::DibsServiceClient;
-use roam_stream::{ConnectionHandle, HandshakeConfig, NoDispatcher, accept};
 use std::process::{Child, Command, Stdio};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::TcpListener;
@@ -22,10 +21,8 @@ use tracing::info;
 
 /// A connection to the dibs service.
 pub struct ServiceConnection {
-    /// The roam connection handle for making calls
-    handle: ConnectionHandle,
-    /// The driver task handle (keeps connection alive)
-    _driver: tokio::task::JoinHandle<()>,
+    /// The typed vox client for making calls.
+    client: DibsServiceClient,
     /// The spawned child process (if held)
     _child: Option<Child>,
     /// The binary mtime (for staleness checks)
@@ -36,8 +33,8 @@ pub struct ServiceConnection {
 
 impl ServiceConnection {
     /// Get a typed client for calling service methods.
-    pub fn client(&self) -> DibsServiceClient<ConnectionHandle> {
-        DibsServiceClient::new(self.handle.clone())
+    pub fn client(&self) -> DibsServiceClient {
+        self.client.clone()
     }
 
     /// Check if any migration files are newer than the binary.
@@ -115,21 +112,16 @@ pub async fn connect_to_service(db_config: &DbConfig) -> Result<ServiceConnectio
         .await
         .map_err(|e| ServiceError::Connection(format!("Failed to accept connection: {}", e)))?;
 
-    // Establish roam session (we're the acceptor)
-    let (handle, _incoming, driver) = accept(stream, HandshakeConfig::default(), NoDispatcher)
+    // Establish vox session (we're the acceptor).
+    let link = vox_stream::StreamLink::tcp(stream);
+    let client = vox::acceptor_on(link)
+        .non_resumable()
+        .establish::<DibsServiceClient>()
         .await
-        .map_err(|e| ServiceError::Connection(format!("Roam handshake failed: {}", e)))?;
-
-    // Spawn the driver to handle the connection
-    let driver_handle = tokio::spawn(async move {
-        if let Err(e) = driver.run().await {
-            eprintln!("Roam driver error: {}", e);
-        }
-    });
+        .map_err(|e| ServiceError::Connection(format!("Vox handshake failed: {}", e)))?;
 
     Ok(ServiceConnection {
-        handle,
-        _driver: driver_handle,
+        client,
         _child: Some(child),
         binary_mtime: None,
         migrations_dir: None,
@@ -217,20 +209,15 @@ impl BuildProcess {
         // Try to accept with a very short timeout (non-blocking feel)
         match timeout(Duration::from_millis(10), self.listener.accept()).await {
             Ok(Ok((stream, _peer_addr))) => {
-                // Establish roam session
-                let (handle, _incoming, driver) =
-                    accept(stream, HandshakeConfig::default(), NoDispatcher)
-                        .await
-                        .map_err(|e| {
-                            ServiceError::Connection(format!("Roam handshake failed: {}", e))
-                        })?;
-
-                // Spawn the driver
-                let driver_handle = tokio::spawn(async move {
-                    if let Err(e) = driver.run().await {
-                        eprintln!("Roam driver error: {}", e);
-                    }
-                });
+                // Establish vox session.
+                let link = vox_stream::StreamLink::tcp(stream);
+                let client = vox::acceptor_on(link)
+                    .non_resumable()
+                    .establish::<DibsServiceClient>()
+                    .await
+                    .map_err(|e| {
+                        ServiceError::Connection(format!("Vox handshake failed: {}", e))
+                    })?;
 
                 // Get binary mtime
                 let binary_mtime = self
@@ -239,8 +226,7 @@ impl BuildProcess {
                     .and_then(|p| p.metadata().ok().and_then(|m| m.modified().ok()));
 
                 Ok(Some(ServiceConnection {
-                    handle,
-                    _driver: driver_handle,
+                    client,
                     _child: None,
                     binary_mtime,
                     migrations_dir: self.migrations_dir.clone(),

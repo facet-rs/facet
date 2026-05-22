@@ -29,8 +29,8 @@ dibs-jsonb.workspace = true
 dibs-macros.workspace = true
 dibs-proto.workspace = true
 dibs-qgen.workspace = true
-roam.workspace = true
-roam-stream.workspace = true
+vox.workspace = true
+vox-stream.workspace = true
 blake3.workspace = true
 tracing.workspace = true
 camino.workspace = true
@@ -39,5 +39,5 @@ indexmap.workspace = true
 [dev-dependencies]
 insta.workspace = true
 proptest.workspace = true
-dockside.workspace = true
+dockside = { path = "../dockside" }
 tokio.workspace = true

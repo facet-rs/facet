@@ -15,8 +15,6 @@
 
 use crate::{Change, MigrationError, Schema, diff::SchemaExt, introspect::SchemaIntrospect};
 use dibs_proto::*;
-use roam_stream::{HandshakeConfig, connect};
-use std::io;
 use std::net::SocketAddr;
 use tokio::net::TcpStream;
 
@@ -76,19 +74,6 @@ fn error_to_dibs_error(err: crate::Error) -> DibsError {
     }
 }
 
-/// Connector that connects to the CLI's address (from DIBS_CLI_ADDR env var).
-struct CliConnector {
-    addr: SocketAddr,
-}
-
-impl roam_stream::Connector for CliConnector {
-    type Transport = TcpStream;
-
-    async fn connect(&self) -> io::Result<TcpStream> {
-        TcpStream::connect(self.addr).await
-    }
-}
-
 /// Run the dibs service, connecting back to the CLI.
 ///
 /// This function reads `DIBS_CLI_ADDR` from the environment, connects to
@@ -113,27 +98,23 @@ pub fn run_service() {
 }
 
 async fn run_service_async(addr: SocketAddr) {
-    let connector = CliConnector { addr };
     let dispatcher = DibsServiceDispatcher::new(DibsServiceImpl::new());
 
-    let client = connect(connector, HandshakeConfig::default(), dispatcher);
+    let result = async {
+        let stream = TcpStream::connect(addr).await?;
+        let link = vox_stream::StreamLink::tcp(stream);
+        vox::initiator_on(link, vox::TransportMode::Bare)
+            .on_connection(dispatcher)
+            .non_resumable()
+            .establish::<vox::NoopClient>()
+            .await
+            .map_err(std::io::Error::other)
+    }
+    .await;
 
-    // Wait for the connection to be established
-    match client.handle().await {
-        Ok(handle) => {
-            // Keep the connection alive until the CLI disconnects
-            // The handle going out of scope would close the connection,
-            // so we need to hold onto it
-            let _ = handle;
-
-            // Wait for the client to disconnect (driver task ends)
-            // This happens when the CLI closes the connection
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                if client.handle().await.is_err() {
-                    break;
-                }
-            }
+    match result {
+        Ok(client) => {
+            let _ = client.caller.closed().await;
         }
         Err(e) => {
             eprintln!("Failed to connect to dibs CLI: {}", e);
@@ -212,27 +193,19 @@ impl DibsServiceImpl {
 }
 
 impl DibsService for DibsServiceImpl {
-    async fn schema(&self, _cx: &roam::Context) -> SchemaInfo {
+    async fn schema(&self) -> SchemaInfo {
         let schema = crate::schema::collect_schema();
         schema_to_info(&schema)
     }
 
-    async fn diff(
-        &self,
-        _cx: &roam::Context,
-        request: DiffRequest,
-    ) -> Result<DiffResult, DibsError> {
+    async fn diff(&self, request: DiffRequest) -> Result<DiffResult, DibsError> {
         let ctx = self
             .compute_diff_with_context(&request.database_url)
             .await?;
         Ok(diff_to_result(&ctx.diff))
     }
 
-    async fn generate_migration_sql(
-        &self,
-        _cx: &roam::Context,
-        request: DiffRequest,
-    ) -> Result<String, DibsError> {
+    async fn generate_migration_sql(&self, request: DiffRequest) -> Result<String, DibsError> {
         let ctx = self
             .compute_diff_with_context(&request.database_url)
             .await?;
@@ -254,7 +227,6 @@ impl DibsService for DibsServiceImpl {
 
     async fn migration_status(
         &self,
-        _cx: &roam::Context,
         request: MigrationStatusRequest,
     ) -> Result<Vec<MigrationInfo>, DibsError> {
         // Connect to database
@@ -292,9 +264,8 @@ impl DibsService for DibsServiceImpl {
 
     async fn migrate(
         &self,
-        _cx: &roam::Context,
         request: MigrateRequest,
-        logs: roam::Tx<MigrationLog>,
+        logs: vox::Tx<MigrationLog>,
     ) -> Result<MigrateResult, DibsError> {
         use dibs_proto::{AppliedMigration as ProtoApplied, RanMigration as ProtoRan};
 
@@ -339,7 +310,7 @@ impl DibsService for DibsServiceImpl {
         // Log each applied migration
         for m in &ran {
             let _ = logs
-                .send(&MigrationLog {
+                .send(MigrationLog {
                     level: LogLevel::Info,
                     message: format!("Applied {} ({}ms)", m.version, m.duration.as_millis()),
                     migration: Some(m.version.to_string()),

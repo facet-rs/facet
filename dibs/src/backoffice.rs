@@ -216,16 +216,12 @@ fn schema_to_info(schema: &Schema) -> SchemaInfo {
 // =============================================================================
 
 impl<P: ConnectionProvider> SquelService for SquelServiceImpl<P> {
-    async fn schema(&self, _cx: &roam::Context) -> SchemaInfo {
+    async fn schema(&self) -> SchemaInfo {
         let schema = crate::schema::collect_schema();
         schema_to_info(&schema)
     }
 
-    async fn list(
-        &self,
-        _cx: &roam::Context,
-        request: ListRequest,
-    ) -> Result<ListResponse, DibsError> {
+    async fn list(&self, request: ListRequest) -> Result<ListResponse, DibsError> {
         let conn = self
             .pool
             .get()
@@ -282,11 +278,7 @@ impl<P: ConnectionProvider> SquelService for SquelServiceImpl<P> {
         })
     }
 
-    async fn get(
-        &self,
-        _cx: &roam::Context,
-        request: GetRequest,
-    ) -> Result<Option<Row>, DibsError> {
+    async fn get(&self, request: GetRequest) -> Result<Option<Row>, DibsError> {
         let conn = self
             .pool
             .get()
@@ -322,7 +314,7 @@ impl<P: ConnectionProvider> SquelService for SquelServiceImpl<P> {
         Ok(row.map(query_row_to_proto))
     }
 
-    async fn create(&self, _cx: &roam::Context, request: CreateRequest) -> Result<Row, DibsError> {
+    async fn create(&self, request: CreateRequest) -> Result<Row, DibsError> {
         let conn = self
             .pool
             .get()
@@ -344,7 +336,7 @@ impl<P: ConnectionProvider> SquelService for SquelServiceImpl<P> {
         Ok(query_row_to_proto(row))
     }
 
-    async fn update(&self, _cx: &roam::Context, request: UpdateRequest) -> Result<Row, DibsError> {
+    async fn update(&self, request: UpdateRequest) -> Result<Row, DibsError> {
         let conn = self
             .pool
             .get()
@@ -383,7 +375,7 @@ impl<P: ConnectionProvider> SquelService for SquelServiceImpl<P> {
         Ok(query_row_to_proto(row))
     }
 
-    async fn delete(&self, _cx: &roam::Context, request: DeleteRequest) -> Result<u64, DibsError> {
+    async fn delete(&self, request: DeleteRequest) -> Result<u64, DibsError> {
         let conn = self
             .pool
             .get()

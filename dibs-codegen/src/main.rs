@@ -2,12 +2,12 @@
 //!
 //! Generates TypeScript client code for SquelService and DibsService.
 
-use dibs_proto::{dibs_service_service_detail, squel_service_service_detail};
+use dibs_proto::{dibs_service_service_descriptor, squel_service_service_descriptor};
 use facet::Facet;
 use figue as args;
-use roam_codegen::targets::typescript::generate_service;
 use std::fs;
 use std::path::PathBuf;
+use vox_codegen::targets::typescript::generate_service;
 
 #[derive(Facet)]
 struct Args {
@@ -46,16 +46,16 @@ fn main() {
 
     if args.typescript {
         if generate_squel {
-            let squel_detail = squel_service_service_detail();
-            let squel_ts = generate_service(&squel_detail);
+            let squel_descriptor = squel_service_service_descriptor();
+            let squel_ts = generate_service(&squel_descriptor);
             let squel_path = args.output.join("squel-service.ts");
             fs::write(&squel_path, &squel_ts).expect("Failed to write squel-service.ts");
             println!("Generated {}", squel_path.display());
         }
 
         if generate_dibs {
-            let dibs_detail = dibs_service_service_detail();
-            let dibs_ts = generate_service(&dibs_detail);
+            let dibs_descriptor = dibs_service_service_descriptor();
+            let dibs_ts = generate_service(&dibs_descriptor);
             let dibs_path = args.output.join("dibs-service.ts");
             fs::write(&dibs_path, &dibs_ts).expect("Failed to write dibs-service.ts");
             println!("Generated {}", dibs_path.display());

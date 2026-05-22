@@ -10,8 +10,6 @@ use crate::config;
 use crate::service::{self, ServiceConnection};
 use dibs_proto::{SchemaInfo, TableInfo};
 use dibs_query_schema::{Decl, QueryFile};
-use roam_session::HandshakeConfig;
-use roam_stream::CobsFramed;
 use std::path::Path;
 use std::sync::Arc;
 use styx_lsp_ext::{
@@ -21,13 +19,12 @@ use styx_lsp_ext::{
     Location, OffsetToPositionParams, Position, StyxLspExtension, StyxLspExtensionDispatcher,
     StyxLspHostClient, TextEdit, WorkspaceEdit,
 };
-use tokio::io::{stdin, stdout};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
 /// Run the LSP extension, communicating over stdin/stdout.
 pub async fn run() {
-    // Set up logging to stderr (stdout is for roam protocol)
+    // Set up logging to stderr (stdout is for vox protocol)
     // Use plain format without ANSI colors since this goes to editor logs
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
@@ -40,89 +37,31 @@ pub async fn run() {
 
     info!("dibs LSP extension starting");
 
-    // Wrap stdin/stdout in COBS framing for roam
-    let stdio = StdioStream::new();
-    let framed = CobsFramed::new(stdio);
-
-    // Accept the roam handshake (we're the responder)
-    let handshake_config = HandshakeConfig::default();
-
     // Create the extension - we'll set the host client after handshake
     let extension = DibsExtension::new();
     let dispatcher = StyxLspExtensionDispatcher::new(extension.clone());
 
-    let (handle, _incoming, driver) =
-        match roam_session::accept_framed(framed, handshake_config, dispatcher).await {
-            Ok(result) => result,
-            Err(e) => {
-                warn!(error = %e, "Failed roam handshake");
-                return;
-            }
-        };
+    let link = styx_lsp_ext::vox::transport::tcp::StreamLink::stdio();
+    let host_client = match styx_lsp_ext::vox::acceptor_on(link)
+        .on_connection(dispatcher)
+        .establish::<StyxLspHostClient>()
+        .await
+    {
+        Ok(client) => client,
+        Err(e) => {
+            warn!(error = %e, "Failed vox handshake");
+            return;
+        }
+    };
 
-    debug!("Roam session established");
-
-    // The handle can be used to call back to the host via StyxLspHostClient
-    let host_client = StyxLspHostClient::new(handle);
+    debug!("Vox session established");
 
     // Store the host client in the extension so it can call back for offset_to_position
-    extension.set_host(host_client).await;
+    extension.set_host(host_client.clone()).await;
 
-    // Run the driver until the connection closes
-    if let Err(e) = driver.run().await {
-        warn!(error = %e, "Session driver error");
-    }
+    let _ = host_client.caller.closed().await;
 
     info!("dibs LSP extension shutting down");
-}
-
-/// Duplex stream over stdin/stdout.
-struct StdioStream {
-    stdin: tokio::io::Stdin,
-    stdout: tokio::io::Stdout,
-}
-
-impl StdioStream {
-    fn new() -> Self {
-        Self {
-            stdin: stdin(),
-            stdout: stdout(),
-        }
-    }
-}
-
-impl tokio::io::AsyncRead for StdioStream {
-    fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        std::pin::Pin::new(&mut self.stdin).poll_read(cx, buf)
-    }
-}
-
-impl tokio::io::AsyncWrite for StdioStream {
-    fn poll_write(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
-        std::pin::Pin::new(&mut self.stdout).poll_write(cx, buf)
-    }
-
-    fn poll_flush(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        std::pin::Pin::new(&mut self.stdout).poll_flush(cx)
-    }
-
-    fn poll_shutdown(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        std::pin::Pin::new(&mut self.stdout).poll_shutdown(cx)
-    }
 }
 
 /// Internal state that gets populated during initialize.
@@ -684,15 +623,9 @@ impl DibsExtension {
 
     /// Get completions for fields of a specific schema type.
     fn schema_type_completions(&self, prefix: &str, type_name: &str) -> Vec<CompletionItem> {
-        use facet_styx::{Documented, ObjectKey, ObjectSchema, Schema, SchemaFile};
+        use facet_styx::{Documented, ObjectKey, ObjectSchema, Schema};
 
-        // Generate schema string from the QueryFile type
-        let schema_str = facet_styx::schema_from_type::<dibs_query_schema::QueryFile>();
-
-        // Parse it back into a SchemaFile
-        let Ok(schema_file) = facet_styx::from_str::<SchemaFile>(&schema_str) else {
-            return Vec::new();
-        };
+        let schema_file = facet_styx::schema_file_from_type::<dibs_query_schema::QueryFile>();
 
         let Some(Schema::Object(ObjectSchema(fields))) =
             schema_file.schema.get(&Some(type_name.to_string()))
@@ -723,7 +656,7 @@ impl DibsExtension {
 }
 
 impl StyxLspExtension for DibsExtension {
-    async fn initialize(&self, _cx: &roam::Context, params: InitializeParams) -> InitializeResult {
+    async fn initialize(&self, params: InitializeParams) -> InitializeResult {
         info!(
             schema_id = %params.schema_id,
             document_uri = %params.document_uri,
@@ -766,11 +699,7 @@ impl StyxLspExtension for DibsExtension {
         }
     }
 
-    async fn completions(
-        &self,
-        _cx: &roam::Context,
-        params: CompletionParams,
-    ) -> Vec<CompletionItem> {
+    async fn completions(&self, params: CompletionParams) -> Vec<CompletionItem> {
         debug!(path = ?params.path, prefix = %params.prefix, "Completion request");
 
         // Determine what kind of completions to provide based on path
@@ -840,7 +769,7 @@ impl StyxLspExtension for DibsExtension {
         }
     }
 
-    async fn hover(&self, _cx: &roam::Context, params: HoverParams) -> Option<HoverResult> {
+    async fn hover(&self, params: HoverParams) -> Option<HoverResult> {
         debug!(
             path = ?params.path,
             context = ?params.context,
@@ -894,7 +823,7 @@ impl StyxLspExtension for DibsExtension {
         None
     }
 
-    async fn inlay_hints(&self, _cx: &roam::Context, params: InlayHintParams) -> Vec<InlayHint> {
+    async fn inlay_hints(&self, params: InlayHintParams) -> Vec<InlayHint> {
         debug!(range = ?params.range, "Inlay hints request");
 
         let mut hints = Vec::new();
@@ -919,7 +848,7 @@ impl StyxLspExtension for DibsExtension {
         hints
     }
 
-    async fn diagnostics(&self, _cx: &roam::Context, params: DiagnosticParams) -> Vec<Diagnostic> {
+    async fn diagnostics(&self, params: DiagnosticParams) -> Vec<Diagnostic> {
         debug!("Diagnostics request");
 
         let mut diagnostics = Vec::new();
@@ -949,7 +878,7 @@ impl StyxLspExtension for DibsExtension {
         diagnostics
     }
 
-    async fn code_actions(&self, _cx: &roam::Context, params: CodeActionParams) -> Vec<CodeAction> {
+    async fn code_actions(&self, params: CodeActionParams) -> Vec<CodeAction> {
         let mut actions = Vec::new();
 
         debug!(
@@ -1012,7 +941,7 @@ impl StyxLspExtension for DibsExtension {
         actions
     }
 
-    async fn definition(&self, _cx: &roam::Context, params: DefinitionParams) -> Vec<Location> {
+    async fn definition(&self, params: DefinitionParams) -> Vec<Location> {
         debug!(path = ?params.path, cursor = ?params.cursor, "Definition request");
 
         // We support definition for:
@@ -1097,7 +1026,7 @@ impl StyxLspExtension for DibsExtension {
         Vec::new()
     }
 
-    async fn shutdown(&self, _cx: &roam::Context) {
+    async fn shutdown(&self) {
         info!("Shutdown requested");
     }
 }
@@ -1167,7 +1096,7 @@ mod tests {
     #[test]
     fn test_query_schema_roundtrip() {
         // Generate schema from QueryFile type
-        let schema_str = facet_styx::schema_from_type::<dibs_query_schema::QueryFile>();
+        let schema_str = dibs_query_schema::query_file_schema();
 
         // Parse it back into a SchemaFile - this validates the schema is well-formed
         let schema_file: SchemaFile = facet_styx::from_str(&schema_str)

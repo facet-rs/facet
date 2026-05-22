@@ -22,7 +22,7 @@ use ratatui::{
         ScrollbarState, Tabs,
     },
 };
-use roam::session::{CallError, RoamError};
+use vox::VoxError;
 
 use crate::DbConfig;
 use crate::highlight::highlight_to_lines;
@@ -878,7 +878,7 @@ impl App {
         if let (Some(conn), Some(url)) = (&self.conn, &self.database_url) {
             use dibs_proto::MigrateRequest;
 
-            let (log_tx, mut log_rx) = roam::channel::<dibs_proto::MigrationLog>();
+            let (log_tx, mut log_rx) = vox::channel::<dibs_proto::MigrationLog>();
 
             let client = conn.client().clone();
             let url = url.clone();
@@ -1372,12 +1372,12 @@ impl App {
     }
 
     /// Show a migration error with syntax-highlighted source code.
-    fn show_migration_error(&mut self, err: &CallError<DibsError>) {
+    fn show_migration_error(&mut self, err: &VoxError<DibsError>) {
         // Try to extract SqlError from the nested error
         let sql_err = match err {
-            CallError::Roam(RoamError::User(DibsError::MigrationFailed(e))) => e,
+            VoxError::User(DibsError::MigrationFailed(e)) => e,
             _ => {
-                self.show_error(format!("{}", err));
+                self.show_error(format!("{err:?}"));
                 return;
             }
         };
@@ -1921,7 +1921,7 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
 
             self.loading = Some("Running migrations...".to_string());
 
-            let (log_tx, mut log_rx) = roam::channel::<dibs_proto::MigrationLog>();
+            let (log_tx, mut log_rx) = vox::channel::<dibs_proto::MigrationLog>();
 
             // We can't easily show streaming logs in TUI without more complex async handling
             // For now, just run and show result

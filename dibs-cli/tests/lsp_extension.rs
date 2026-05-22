@@ -1,7 +1,7 @@
 //! Integration tests for the dibs LSP extension.
 //!
 //! These tests spawn the actual `dibs lsp-extension` binary and communicate
-//! with it over roam, just like the real Styx LSP does.
+//! with it over vox, just like the real Styx LSP does.
 //!
 //! IMPORTANT: These tests need a real dibs project context because the extension
 //! connects to the service to fetch the schema. We use the `my-app-db` example.
