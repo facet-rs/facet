@@ -278,6 +278,67 @@ DeleteProduct @delete{
     returning {id, handle}
 }
 
+// Hard delete by handle, no RETURNING — exercises the `execute` path
+// (codegen yields `Result<u64, QueryError>` for affected-row count).
+DeleteProductByHandle @delete{
+    params {handle @string}
+    from product
+    where {handle $handle}
+}
+
+// ============================================================================
+// JSONB mutations (regression coverage for the $N::text::jsonb cast)
+// ============================================================================
+// `metadata` on `product` is JSONB. These four queries exercise the
+// full @jsonb param surface: insert with RETURNING, update returning
+// affected count, upsert, and a SELECT to read the value back.
+// Without ::text::jsonb the bind fails at parameter serialization
+// before the body reaches postgres — see the qgen comment for the
+// gory details.
+
+CreateProductWithMetadata @insert{
+    params {handle @string, metadata @jsonb}
+    into product
+    values {
+        handle $handle
+        status "draft"
+        metadata $metadata
+        created_at @now
+    }
+    returning {id, handle}
+}
+
+UpdateProductMetadata @update{
+    params {id @int, metadata @jsonb}
+    table product
+    set {metadata $metadata, updated_at @now}
+    where {id $id}
+}
+
+UpsertProductWithMetadata @upsert{
+    params {handle @string, metadata @jsonb}
+    into product
+    on-conflict {
+        target {handle}
+        update {metadata, updated_at @now}
+    }
+    values {
+        handle $handle
+        status "draft"
+        metadata $metadata
+        created_at @now
+    }
+    returning {id, handle}
+}
+
+ProductMetadataById @select{
+    params {id @int}
+    from product
+    first true
+    where {id $id}
+    fields {id, handle, metadata}
+}
+
 // ============================================================================
 // JSONB Operators (if you have JSONB columns)
 // ============================================================================

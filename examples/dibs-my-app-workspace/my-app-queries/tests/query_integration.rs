@@ -62,7 +62,12 @@ async fn create_postgres_container() -> (Container, tokio_postgres::Client) {
 }
 
 async fn setup_schema(client: &tokio_postgres::Client) {
-    // Create the product table matching my-app-db schema
+    // Create the product table matching my-app-db schema. `metadata` is
+    // JSONB (the migration in my-app-db's m2026_01_27_145001_jsonb.rs
+    // alters it from TEXT to JSONB) — keep them aligned here so the
+    // @jsonb-param mutation tests below actually exercise the cast
+    // path; with TEXT they'd silently never trigger the codegen bug
+    // class that ::text::jsonb is meant to handle.
     client
         .execute(
             r#"
@@ -71,7 +76,7 @@ async fn setup_schema(client: &tokio_postgres::Client) {
                 "handle" TEXT NOT NULL UNIQUE,
                 "status" TEXT NOT NULL DEFAULT 'draft',
                 "active" BOOLEAN NOT NULL DEFAULT true,
-                "metadata" TEXT,
+                "metadata" JSONB,
                 "created_at" TIMESTAMPTZ NOT NULL DEFAULT now(),
                 "updated_at" TIMESTAMPTZ NOT NULL DEFAULT now(),
                 "deleted_at" TIMESTAMPTZ
@@ -392,4 +397,235 @@ async fn test_product_with_translation() {
         .await
         .unwrap();
     assert!(result.is_none(), "Expected None for non-existent product");
+}
+
+// ============================================================================
+// Mutation tests
+// ============================================================================
+// The SELECT tests above were already in place. The tests below close
+// the gap that let the $N::jsonb codegen bug ship: nothing actually
+// inserted/updated rows through the generated mutation functions
+// against real postgres. The new tests exercise every mutation path
+// (INSERT with/without RETURNING, UPDATE returning u64, UPSERT,
+// INSERT-MANY UNNEST, DELETE) and specifically the @jsonb param
+// surface end-to-end (bind → server cast → read back).
+
+/// Regression test for the $N::jsonb bug. Bind a JSON string to a
+/// JSONB column via an @jsonb param, then read it back. If qgen
+/// regresses to a single ::jsonb cast, tokio-postgres will reject
+/// `String::to_sql(JSONB, …)` and this test fails at the insert call
+/// with "error serializing parameter N" — exactly the prod symptom we
+/// hit.
+#[tokio::test]
+async fn test_create_product_with_jsonb_metadata_roundtrip() {
+    let (_container, client) = create_postgres_container().await;
+    setup_schema(&client).await;
+
+    let handle = "jsonb-roundtrip".to_string();
+    let metadata = r#"{"color":"orange","weight_g":42}"#.to_string();
+
+    let inserted = my_app_queries::create_product_with_metadata(&client, &handle, &metadata)
+        .await
+        .expect("insert should succeed")
+        .expect("insert should return a row");
+    assert_eq!(inserted.handle, "jsonb-roundtrip");
+
+    let read = my_app_queries::product_metadata_by_id(&client, &inserted.id)
+        .await
+        .expect("select should succeed")
+        .expect("row should exist");
+    assert_eq!(read.handle, "jsonb-roundtrip");
+
+    // The Jsonb<Value> roundtrip should preserve our object verbatim.
+    let stored = read.metadata.expect("metadata should be present").0;
+    let stored_obj = stored.as_object().expect("metadata should be an object");
+    assert_eq!(
+        stored_obj
+            .get("color")
+            .and_then(|v| v.as_string())
+            .map(|s| s.as_str()),
+        Some("orange"),
+    );
+}
+
+/// UPDATE with @jsonb param exercises the same cast on the SET side.
+/// Returns `Result<u64, QueryError>` — also asserts the affected count.
+#[tokio::test]
+async fn test_update_jsonb_metadata() {
+    let (_container, client) = create_postgres_container().await;
+    setup_schema(&client).await;
+
+    let handle = "jsonb-update".to_string();
+    let initial = r#"{"v":1}"#.to_string();
+    let updated = r#"{"v":2,"tag":"bumped"}"#.to_string();
+
+    let row = my_app_queries::create_product_with_metadata(&client, &handle, &initial)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let affected = my_app_queries::update_product_metadata(&client, &row.id, &updated)
+        .await
+        .expect("update should succeed");
+    assert_eq!(affected, 1);
+
+    let read = my_app_queries::product_metadata_by_id(&client, &row.id)
+        .await
+        .unwrap()
+        .unwrap();
+    let stored = read.metadata.unwrap().0;
+    let stored_obj = stored.as_object().unwrap();
+    assert_eq!(
+        stored_obj.get("v").and_then(|v| v.as_number()).is_some(),
+        true
+    );
+    assert_eq!(
+        stored_obj
+            .get("tag")
+            .and_then(|v| v.as_string())
+            .map(|s| s.as_str()),
+        Some("bumped"),
+    );
+}
+
+/// UPSERT with @jsonb: first call inserts, second call (same handle)
+/// hits the conflict branch and updates `metadata` via the SET clause.
+#[tokio::test]
+async fn test_upsert_jsonb_metadata_insert_then_update() {
+    let (_container, client) = create_postgres_container().await;
+    setup_schema(&client).await;
+
+    let handle = "jsonb-upsert".to_string();
+    let first = r#"{"phase":"insert"}"#.to_string();
+    let second = r#"{"phase":"update"}"#.to_string();
+
+    let a = my_app_queries::upsert_product_with_metadata(&client, &handle, &first)
+        .await
+        .unwrap()
+        .unwrap();
+    let b = my_app_queries::upsert_product_with_metadata(&client, &handle, &second)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(a.id, b.id, "second upsert should hit the same row");
+
+    let read = my_app_queries::product_metadata_by_id(&client, &a.id)
+        .await
+        .unwrap()
+        .unwrap();
+    let obj = read.metadata.unwrap().0;
+    let obj = obj.as_object().unwrap();
+    assert_eq!(
+        obj.get("phase")
+            .and_then(|v| v.as_string())
+            .map(|s| s.as_str()),
+        Some("update")
+    );
+}
+
+/// INSERT without RETURNING goes through the `execute` codepath and
+/// yields `Result<u64, QueryError>` (affected count) instead of the
+/// `Result<Option<…Result>, …>` shape the RETURNING variant produces.
+/// `create_product_with_defaults` returns id/handle/status; for the
+/// no-RETURNING path we use the new `delete_product_by_handle`
+/// query — same shape (u64).
+#[tokio::test]
+async fn test_delete_without_returning_yields_affected_count() {
+    let (_container, client) = create_postgres_container().await;
+    setup_schema(&client).await;
+    insert_test_data(&client).await;
+
+    // prototype-z has no product_translation row — picking widget-a
+    // would trip the FK and obscure what the test is checking.
+    let handle = "prototype-z".to_string();
+    let affected = my_app_queries::delete_product_by_handle(&client, &handle)
+        .await
+        .expect("delete should succeed");
+    assert_eq!(affected, 1, "exactly one row should match handle");
+
+    // Idempotent: a second delete of the same handle finds nothing.
+    let again = my_app_queries::delete_product_by_handle(&client, &handle)
+        .await
+        .unwrap();
+    assert_eq!(again, 0);
+}
+
+/// DELETE with RETURNING shapes as `Option<…Result>` (the row we
+/// removed) — this is the symmetric companion to the no-RETURNING
+/// test above.
+#[tokio::test]
+async fn test_delete_with_returning_yields_removed_row() {
+    let (_container, client) = create_postgres_container().await;
+    setup_schema(&client).await;
+    insert_test_data(&client).await;
+
+    // Find an id to delete via the already-tested select. Use
+    // prototype-z (no translation row) so the FK doesn't block.
+    let handle = "prototype-z".to_string();
+    let target = my_app_queries::product_by_handle(&client, &handle)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let removed = my_app_queries::delete_product(&client, &target.id)
+        .await
+        .unwrap()
+        .expect("RETURNING should yield the deleted row");
+    assert_eq!(removed.handle, "prototype-z");
+}
+
+/// UPDATE with RETURNING — the existing `UpdateProductStatus` query.
+/// Asserts the returned row reflects the new status.
+#[tokio::test]
+async fn test_update_product_status_returns_updated_row() {
+    let (_container, client) = create_postgres_container().await;
+    setup_schema(&client).await;
+    insert_test_data(&client).await;
+
+    let handle = "prototype-z".to_string();
+    let new_status = "published".to_string();
+    let updated = my_app_queries::update_product_status(&client, &handle, &new_status)
+        .await
+        .unwrap()
+        .expect("update should match one row");
+    assert_eq!(updated.handle, "prototype-z");
+    assert_eq!(updated.status, "published");
+}
+
+/// Bulk INSERT via UNNEST. The generated function accepts a slice of
+/// param structs; exercises the multi-row codepath that's separate
+/// from single-row INSERT.
+#[tokio::test]
+async fn test_bulk_create_products_inserts_all_rows() {
+    let (_container, client) = create_postgres_container().await;
+    setup_schema(&client).await;
+
+    let rows = vec![
+        my_app_queries::BulkCreateProductsParams {
+            handle: "bulk-a".to_string(),
+            status: "draft".to_string(),
+        },
+        my_app_queries::BulkCreateProductsParams {
+            handle: "bulk-b".to_string(),
+            status: "published".to_string(),
+        },
+        my_app_queries::BulkCreateProductsParams {
+            handle: "bulk-c".to_string(),
+            status: "draft".to_string(),
+        },
+    ];
+
+    let returned = my_app_queries::bulk_create_products(&client, &rows)
+        .await
+        .expect("bulk insert should succeed");
+    assert_eq!(returned.len(), 3, "RETURNING yields one row per insert");
+    let handles: Vec<_> = returned.iter().map(|r| r.handle.as_str()).collect();
+    assert!(handles.contains(&"bulk-a"));
+    assert!(handles.contains(&"bulk-b"));
+    assert!(handles.contains(&"bulk-c"));
+
+    // Sanity-check via the existing search query.
+    let q = "%bulk-%".to_string();
+    let found = my_app_queries::search_products(&client, &q).await.unwrap();
+    assert_eq!(found.len(), 3);
 }
