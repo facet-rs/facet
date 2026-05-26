@@ -929,6 +929,12 @@ fn param_type_to_rust(ty: &dibs_query_schema::ParamType) -> String {
         ParamType::Decimal => "Decimal".to_string(),
         ParamType::Timestamp => "Timestamp".to_string(),
         ParamType::Bytes => "Vec<u8>".to_string(),
+        // JSONB params travel over the wire as JSON-encoded text and
+        // get cast `::jsonb` at the binding site (see sqlgen). The
+        // caller-facing type is therefore plain `String` — the same
+        // shape they'd produce from `facet_json::to_string`, an axum
+        // body, or a webhook delivery.
+        ParamType::Jsonb => "String".to_string(),
         ParamType::Optional(inner_vec) => {
             if let Some(inner) = inner_vec.first() {
                 format!("Option<{}>", param_type_to_rust(inner))

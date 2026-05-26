@@ -26,7 +26,7 @@ pub fn generate_upsert_sql(upsert: &Upsert) -> GeneratedUpsert {
     // VALUES clause
     for (col_meta, value_expr) in &upsert.values.columns {
         let col_name = &col_meta.value;
-        let expr = value_expr_to_expr(col_name, value_expr);
+        let expr = value_expr_to_expr(col_name, value_expr, upsert.params.as_ref());
         stmt = stmt.column(col_name.clone(), expr);
     }
 
@@ -47,7 +47,7 @@ pub fn generate_upsert_sql(upsert: &Upsert) -> GeneratedUpsert {
         .iter()
         .map(|(col_meta, update_value)| {
             let col_name = &col_meta.value;
-            let expr = update_value_to_expr(col_name, update_value);
+            let expr = update_value_to_expr(col_name, update_value, upsert.params.as_ref());
             UpdateAssignment::new(col_name.clone(), expr)
         })
         .collect();

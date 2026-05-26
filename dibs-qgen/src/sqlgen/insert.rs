@@ -24,7 +24,7 @@ pub fn generate_insert_sql(insert: &Insert) -> GeneratedInsert {
     // VALUES clause
     for (col_meta, value_expr) in &insert.values.columns {
         let col_name = &col_meta.value;
-        let expr = value_expr_to_expr(col_name, value_expr);
+        let expr = value_expr_to_expr(col_name, value_expr, insert.params.as_ref());
         stmt = stmt.column(col_name.clone(), expr);
     }
 
@@ -115,6 +115,24 @@ CreateUser @insert{
     params {name @string, email @string}
     into users
     values {name, email}
+    returning {id}
+}
+"#;
+        let insert = get_first_insert(source);
+        let result = generate_insert_sql(&insert);
+        insta::assert_snapshot!(result.sql);
+    }
+
+    /// A `@jsonb` param becomes a `$N::jsonb` cast at the binding site.
+    /// PG validates the body as JSON on insert and stores it in the
+    /// JSONB column; the wire-level binding is plain text from Rust.
+    #[test]
+    fn test_insert_jsonb_param_cast() {
+        let source = r#"
+RecordEvent @insert{
+    params {event_type @string, payload @jsonb}
+    into webhook_event
+    values {event_type $event_type, payload $payload}
     returning {id}
 }
 "#;

@@ -6,6 +6,12 @@
 //! The db crate runs as a short-lived vox service, responding to
 //! schema and migration queries from the CLI.
 
+// The `vox::service` macro expands to handler functions whose Result Err
+// type is `vox::VoxError<DibsError>` — large enough that newer clippy
+// flags `result_large_err`. The shape comes from upstream `vox`, not
+// anything we can box without touching that crate.
+#![allow(clippy::result_large_err)]
+
 use facet::Facet;
 use vox::service;
 

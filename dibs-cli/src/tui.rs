@@ -1,5 +1,10 @@
 //! Unified TUI for dibs - shows schema, diff, and migrations in one interface.
 
+// Several `if let` patterns inside the input-handling `match` could be
+// collapsed into outer match arms (clippy: collapsible_match), but
+// the parallel structure makes it easier to read each branch end-to-end.
+#![allow(clippy::collapsible_match)]
+
 use std::io::{self, stdout};
 use std::sync::mpsc;
 use std::time::Duration;

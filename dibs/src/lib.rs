@@ -3,6 +3,11 @@
 //! This crate provides:
 //! - Database migrations as Rust functions
 //! - Schema introspection via facet reflection
+// `error::Error` is a large thiserror variant; query execution closures
+// return `Result<_, Error>` and trip clippy's `result_large_err` under
+// newer toolchains. Boxing the error would propagate through every
+// call site for marginal gain; accept the size.
+#![allow(clippy::result_large_err)]
 //! - Query building (planned)
 //!
 //! # Naming Convention

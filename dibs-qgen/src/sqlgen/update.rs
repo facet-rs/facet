@@ -29,7 +29,7 @@ pub fn generate_update_sql(
     // SET clause
     for (col_meta, value_expr) in &update.set.columns {
         let col_name = &col_meta.value;
-        let expr = value_expr_to_expr(col_name, value_expr);
+        let expr = value_expr_to_expr(col_name, value_expr, update.params.as_ref());
         stmt = stmt.set(col_name.clone(), expr);
     }
 

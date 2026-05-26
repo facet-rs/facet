@@ -6,7 +6,9 @@ use crate::filter_spec::{
     JSON_GET_TEXT_SPEC, KEY_EXISTS_SPEC, LIKE_SPEC, LT_SPEC, LTE_SPEC, NE_SPEC,
 };
 use crate::{FilterArg, QError};
-use dibs_query_schema::{FilterValue, Meta, Payload, Span, UpdateValue, ValueExpr, Where};
+use dibs_query_schema::{
+    FilterValue, Meta, ParamType, Params, Payload, Span, UpdateValue, ValueExpr, Where,
+};
 use dibs_sql::{BinOp, ColumnName, Expr, TableName};
 
 /// Convert a column name (possibly qualified like "t0.id") to an Expr.
@@ -239,8 +241,12 @@ pub fn where_to_expr_validated(
 /// - `@funcname(args...)` -> FUNCNAME(args...)
 /// - `$param` -> parameter reference
 /// - literals -> string/int/bool literals
-pub fn value_expr_to_expr(column: &ColumnName, expr: &Option<ValueExpr>) -> Expr {
-    match expr {
+pub fn value_expr_to_expr(
+    column: &ColumnName,
+    expr: &Option<ValueExpr>,
+    params: Option<&Params>,
+) -> Expr {
+    let raw = match expr {
         None => {
             // Shorthand: {col} means {col $col}
             Expr::param(column.as_str().into())
@@ -258,7 +264,7 @@ pub fn value_expr_to_expr(column: &ColumnName, expr: &Option<ValueExpr>) -> Expr
             (Some(name), Some(Payload::Seq(args))) => {
                 let sql_args: Vec<Expr> = args
                     .iter()
-                    .map(|a| value_expr_to_expr(column, &Some(a.clone())))
+                    .map(|a| value_expr_to_expr(column, &Some(a.clone()), params))
                     .collect();
                 Expr::FnCall {
                     name: name.to_uppercase(),
@@ -275,14 +281,40 @@ pub fn value_expr_to_expr(column: &ColumnName, expr: &Option<ValueExpr>) -> Expr
             // Sequence without tag - shouldn't happen
             (None, Some(Payload::Seq(_))) => Expr::Null,
         },
+    };
+    cast_for_jsonb_param(raw, params)
+}
+
+/// If `expr` is a bare `Expr::Param(name)` and `params[name]` is declared
+/// `@jsonb`, wrap it in `Expr::Cast(_, Jsonb)` so the rendered SQL emits
+/// `$N::jsonb`. PG then validates the body on insert. No-op for every
+/// other shape.
+pub fn cast_for_jsonb_param(expr: Expr, params: Option<&Params>) -> Expr {
+    let Some(params) = params else { return expr };
+    let Expr::Param(name) = &expr else {
+        return expr;
+    };
+    let is_jsonb = params
+        .params
+        .iter()
+        .find(|(k, _)| k.as_str() == name.as_str())
+        .is_some_and(|(_, ty)| matches!(ty, ParamType::Jsonb));
+    if is_jsonb {
+        expr.cast("jsonb".into())
+    } else {
+        expr
     }
 }
 
 /// Convert an UpdateValue to a dibs_sql::Expr.
 ///
 /// Similar to value_expr_to_expr but for the update clause in upserts.
-pub fn update_value_to_expr(column: &ColumnName, expr: &Option<UpdateValue>) -> Expr {
-    match expr {
+pub fn update_value_to_expr(
+    column: &ColumnName,
+    expr: &Option<UpdateValue>,
+    params: Option<&Params>,
+) -> Expr {
+    let raw = match expr {
         None => {
             // Shorthand: {col} means use EXCLUDED.col
             Expr::excluded(column.clone())
@@ -302,7 +334,7 @@ pub fn update_value_to_expr(column: &ColumnName, expr: &Option<UpdateValue>) -> 
                 // For now, handle the common cases
                 let sql_args: Vec<Expr> = args
                     .iter()
-                    .map(|a| value_expr_to_expr(column, &Some(a.clone())))
+                    .map(|a| value_expr_to_expr(column, &Some(a.clone()), params))
                     .collect();
                 Expr::FnCall {
                     name: name.to_uppercase(),
@@ -319,5 +351,6 @@ pub fn update_value_to_expr(column: &ColumnName, expr: &Option<UpdateValue>) -> 
             // Sequence without tag - shouldn't happen
             (None, Some(Payload::Seq(_))) => Expr::Null,
         },
-    }
+    };
+    cast_for_jsonb_param(raw, params)
 }

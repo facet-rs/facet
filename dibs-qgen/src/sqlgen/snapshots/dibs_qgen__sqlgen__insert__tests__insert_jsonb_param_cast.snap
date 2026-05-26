@@ -1,0 +1,8 @@
+---
+source: crates/dibs-qgen/src/sqlgen/insert.rs
+assertion_line: 141
+expression: result.sql
+---
+INSERT INTO "webhook_event" ("event_type", "payload")
+VALUES ($1, $2::jsonb)
+RETURNING "id"

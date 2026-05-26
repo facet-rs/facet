@@ -20,6 +20,7 @@ fn types_compatible(param_type: &str, sql_type: &str) -> bool {
             sql_type.to_uppercase().as_str(),
             "FLOAT" | "DOUBLE" | "REAL" | "NUMERIC" | "DECIMAL" | "FLOAT4" | "FLOAT8"
         ),
+        "jsonb" => matches!(sql_type.to_uppercase().as_str(), "JSON" | "JSONB"),
         _ => true, // Unknown types are assumed compatible
     }
 }
@@ -52,6 +53,7 @@ fn param_type_name(param_type: &ParamType) -> String {
         ParamType::Decimal => "decimal".to_string(),
         ParamType::Timestamp => "timestamp".to_string(),
         ParamType::Bytes => "bytes".to_string(),
+        ParamType::Jsonb => "jsonb".to_string(),
         ParamType::Optional(inner) => {
             if let Some(first) = inner.first() {
                 format!("optional({})", param_type_name(first))

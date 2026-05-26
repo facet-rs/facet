@@ -47,7 +47,7 @@ fn main() {
     if args.typescript {
         if generate_squel {
             let squel_descriptor = squel_service_service_descriptor();
-            let squel_ts = generate_service(&squel_descriptor);
+            let squel_ts = generate_service(squel_descriptor);
             let squel_path = args.output.join("squel-service.ts");
             fs::write(&squel_path, &squel_ts).expect("Failed to write squel-service.ts");
             println!("Generated {}", squel_path.display());
@@ -55,7 +55,7 @@ fn main() {
 
         if generate_dibs {
             let dibs_descriptor = dibs_service_service_descriptor();
-            let dibs_ts = generate_service(&dibs_descriptor);
+            let dibs_ts = generate_service(dibs_descriptor);
             let dibs_path = args.output.join("dibs-service.ts");
             fs::write(&dibs_path, &dibs_ts).expect("Failed to write dibs-service.ts");
             println!("Generated {}", dibs_path.display());

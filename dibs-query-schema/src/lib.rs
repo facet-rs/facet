@@ -407,6 +407,10 @@ pub enum ParamType {
     Decimal,
     Timestamp,
     Bytes,
+    /// JSONB column. At the wire level the param is a JSON-encoded
+    /// `String`; sqlgen casts it to `jsonb` at the binding site
+    /// (`$N::jsonb`) so PG validates the body on insert.
+    Jsonb,
     /// Optional type: @optional(@string) -> Optional(vec![String])
     Optional(Vec<ParamType>),
 }

@@ -633,6 +633,7 @@ impl DibsExtension {
             return Vec::new();
         };
 
+        #[allow(clippy::iter_kv_map)] // we type-annotate the closure for clarity
         fields
             .iter()
             .filter_map(|(key, _schema): (&Documented<ObjectKey>, &Schema)| {

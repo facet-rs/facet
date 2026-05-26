@@ -189,6 +189,7 @@ fn param_type_to_pg_array(ty: &ParamType) -> &'static str {
         ParamType::Decimal => "numeric[]",
         ParamType::Timestamp => "timestamptz[]",
         ParamType::Bytes => "bytea[]",
+        ParamType::Jsonb => "jsonb[]",
         ParamType::Optional(inner_vec) => {
             // For optional, use the inner type's array (from first element if available)
             if let Some(inner) = inner_vec.first() {
