@@ -4,5 +4,5 @@ assertion_line: 141
 expression: result.sql
 ---
 INSERT INTO "webhook_event" ("event_type", "payload")
-VALUES ($1, $2::jsonb)
+VALUES ($1, $2::text::jsonb)
 RETURNING "id"

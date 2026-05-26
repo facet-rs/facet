@@ -286,9 +286,17 @@ pub fn value_expr_to_expr(
 }
 
 /// If `expr` is a bare `Expr::Param(name)` and `params[name]` is declared
-/// `@jsonb`, wrap it in `Expr::Cast(_, Jsonb)` so the rendered SQL emits
-/// `$N::jsonb`. PG then validates the body on insert. No-op for every
-/// other shape.
+/// `@jsonb`, wrap it in `$N::text::jsonb`. The first cast pins the
+/// inferred parameter type to `TEXT` (which `&String` / `&str` know
+/// how to `ToSql`); the second cast does the actual JSONB conversion
+/// (and parse-validation) postgres-side.
+///
+/// We can't emit a single `$N::jsonb`: postgres infers `$N` as JSONB
+/// during the Parse phase, so tokio-postgres asks
+/// `String::to_sql(JSONB, …)`, whose `accepts()` only allows
+/// TEXT/VARCHAR/BPCHAR/NAME/UNKNOWN → the bind fails with
+/// "error serializing parameter N" before the body ever reaches the
+/// server. No-op for every non-`@jsonb` param shape.
 pub fn cast_for_jsonb_param(expr: Expr, params: Option<&Params>) -> Expr {
     let Some(params) = params else { return expr };
     let Expr::Param(name) = &expr else {
@@ -300,7 +308,7 @@ pub fn cast_for_jsonb_param(expr: Expr, params: Option<&Params>) -> Expr {
         .find(|(k, _)| k.as_str() == name.as_str())
         .is_some_and(|(_, ty)| matches!(ty, ParamType::Jsonb));
     if is_jsonb {
-        expr.cast("jsonb".into())
+        expr.cast("text".into()).cast("jsonb".into())
     } else {
         expr
     }

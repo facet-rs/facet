@@ -123,9 +123,10 @@ CreateUser @insert{
         insta::assert_snapshot!(result.sql);
     }
 
-    /// A `@jsonb` param becomes a `$N::jsonb` cast at the binding site.
-    /// PG validates the body as JSON on insert and stores it in the
-    /// JSONB column; the wire-level binding is plain text from Rust.
+    /// A `@jsonb` param becomes a `$N::text::jsonb` chain at the
+    /// binding site: the first `::text` pins postgres's inferred type
+    /// to TEXT (so `&String` / `&str` can ToSql), the second `::jsonb`
+    /// does the actual conversion + parse-validation server-side.
     #[test]
     fn test_insert_jsonb_param_cast() {
         let source = r#"
