@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.46.5](https://github.com/facet-rs/facet/compare/facet-urlencoded-v0.46.4...facet-urlencoded-v0.46.5) - 2026-05-26
+
+### Added
+
+- *(facet-urlencoded)* Option<T> + i64 + bool scalars
+
 ## [0.46.4](https://github.com/facet-rs/facet/compare/facet-pretty-v0.46.3...facet-pretty-v0.46.4) - 2026-05-19
 
 ### Fixed

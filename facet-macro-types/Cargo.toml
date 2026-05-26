@@ -1,6 +1,6 @@
 [package]
 name = "facet-macro-types"
-version = "0.46.4"
+version = "0.46.5"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
