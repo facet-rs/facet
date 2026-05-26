@@ -60,11 +60,76 @@ impl From<facet_tokio_postgres::Error> for QueryError {
     }
 }
 
+/// Extension trait that emits a structured `tracing::error!` event when
+/// a query returns `Err`, then yields the `Result` unchanged.
+///
+/// Generated query functions wrap their entire body in `.trace_err(…)`
+/// so the postgres-side detail (SQLSTATE, severity, table, column,
+/// constraint, hint, detail, …) always reaches `tracing` — even when
+/// the caller silently drops the `QueryError`. With JSON-formatted
+/// tracing those fields become Loki labels; with text formatters they
+/// land in the structured fields beside the message.
+pub trait TraceErr: Sized {
+    /// `query` is the styx query name (e.g. `"insert_webhook_event"`)
+    /// so a log search can pivot on the originating query.
+    fn trace_err(self, query: &'static str) -> Self;
+}
+
+impl<T> TraceErr for Result<T, QueryError> {
+    fn trace_err(self, query: &'static str) -> Self {
+        if let Err(e) = &self {
+            log_query_error(query, e);
+        }
+        self
+    }
+}
+
+fn log_query_error(query: &'static str, err: &QueryError) {
+    match err {
+        QueryError::Database(e) => {
+            if let Some(db) = e.as_db_error() {
+                tracing::error!(
+                    query,
+                    kind = "database",
+                    sqlstate = db.code().code(),
+                    severity = db.severity(),
+                    db_message = db.message(),
+                    detail = db.detail(),
+                    hint = db.hint(),
+                    schema = db.schema(),
+                    table = db.table(),
+                    column = db.column(),
+                    constraint = db.constraint(),
+                    routine = db.routine(),
+                    "dibs query failed",
+                );
+            } else {
+                tracing::error!(
+                    query,
+                    kind = "database",
+                    sqlstate = e.code().map(|c| c.code()),
+                    error = %e,
+                    "dibs query failed (transport / non-db error)",
+                );
+            }
+        }
+        QueryError::Deserialize(e) => {
+            tracing::error!(
+                query,
+                kind = "deserialize",
+                error = ?e,
+                "dibs row deserialization failed",
+            );
+        }
+    }
+}
+
 // Convenient prelude for generated code
 pub mod prelude {
     pub use facet::Facet;
     pub use facet_tokio_postgres::from_row;
 
     pub use super::QueryError;
+    pub use super::TraceErr;
     pub use super::types::*;
 }

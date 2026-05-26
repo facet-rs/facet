@@ -27,6 +27,25 @@ pub struct GeneratedCode {
     pub code: String,
 }
 
+/// Wrap a generated function body so its `Result` is fed through
+/// `TraceErr::trace_err(query_name)` before being returned. This is
+/// the *single point* where postgres-side error detail gets pushed
+/// into `tracing`, regardless of what each call site does with the
+/// `QueryError` afterward.
+///
+/// The body string is expected to be an expression evaluating to
+/// `Result<_, QueryError>` (which is what every generator already
+/// emits). We wrap it in `async { … }.await` so any `?` inside
+/// propagates to the wrapped Result instead of to the outer function,
+/// then let the inserted helper observe the Err and re-yield the
+/// Result.
+fn wrap_with_trace_err(body: &str, fn_name: &str) -> String {
+    format!(
+        "let __dibs_result = async {{\n{body}\n}}.await;\n\
+         <_ as TraceErr>::trace_err(__dibs_result, \"{fn_name}\")"
+    )
+}
+
 /// Look up the Rust type for a column in a schema.
 fn schema_column_type(schema: &Schema, table: &str, column: &str) -> Option<String> {
     let table_info = schema.get_table(table)?;
@@ -427,13 +446,12 @@ fn generate_select_function(
     func.bound("C", "tokio_postgres::GenericClient");
 
     // Generate function body
-    if let Some(raw_sql_meta) = &query.sql {
-        let body = generate_raw_query_body(query, &raw_sql_meta.value);
-        func.line(block_to_string(&body));
+    let body = if let Some(raw_sql_meta) = &query.sql {
+        block_to_string(&generate_raw_query_body(query, &raw_sql_meta.value))
     } else {
-        let body = generate_query_body(ctx, query, struct_name);
-        func.line(body);
+        generate_query_body(ctx, query, struct_name)
     };
+    func.line(wrap_with_trace_err(&body, &fn_name));
 
     scope.push_fn(func);
 }
@@ -1042,7 +1060,7 @@ fn generate_insert_code(
     func.bound("C", "tokio_postgres::GenericClient");
 
     let body = generate_mutation_body(&generated.sql, &generated.params, !has_returning);
-    func.line(block_to_string(&body));
+    func.line(wrap_with_trace_err(&block_to_string(&body), &fn_name));
 
     scope.push_fn(func);
 }
@@ -1096,7 +1114,7 @@ fn generate_upsert_code(
     func.bound("C", "tokio_postgres::GenericClient");
 
     let body = generate_mutation_body(&generated.sql, &generated.params, !has_returning);
-    func.line(block_to_string(&body));
+    func.line(wrap_with_trace_err(&block_to_string(&body), &fn_name));
 
     scope.push_fn(func);
 }
@@ -1156,7 +1174,7 @@ fn generate_insert_many_code(
     func.bound("C", "tokio_postgres::GenericClient");
 
     let body = generate_bulk_mutation_body(&generated.sql, insert.params.as_ref(), !has_returning);
-    func.line(block_to_string(&body));
+    func.line(wrap_with_trace_err(&block_to_string(&body), &fn_name));
 
     scope.push_fn(func);
 }
@@ -1216,7 +1234,7 @@ fn generate_upsert_many_code(
     func.bound("C", "tokio_postgres::GenericClient");
 
     let body = generate_bulk_mutation_body(&generated.sql, upsert.params.as_ref(), !has_returning);
-    func.line(block_to_string(&body));
+    func.line(wrap_with_trace_err(&block_to_string(&body), &fn_name));
 
     scope.push_fn(func);
 }
@@ -1343,7 +1361,7 @@ fn generate_update_code(
     func.bound("C", "tokio_postgres::GenericClient");
 
     let body = generate_mutation_body(&generated.sql, &generated.params, !has_returning);
-    func.line(block_to_string(&body));
+    func.line(wrap_with_trace_err(&block_to_string(&body), &fn_name));
 
     scope.push_fn(func);
     Ok(())
@@ -1399,7 +1417,7 @@ fn generate_delete_code(
     func.bound("C", "tokio_postgres::GenericClient");
 
     let body = generate_mutation_body(&generated.sql, &generated.params, !has_returning);
-    func.line(block_to_string(&body));
+    func.line(wrap_with_trace_err(&block_to_string(&body), &fn_name));
 
     scope.push_fn(func);
     Ok(())
