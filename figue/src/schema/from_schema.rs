@@ -573,6 +573,18 @@ fn config_struct_schema_from_shape_inner(
 
     for field in struct_type.fields {
         let field_ctx = ctx.with_field(field.name);
+        if field.flags.contains(facet_core::FieldFlags::SKIP) {
+            if field.default.is_none() {
+                return Err(SchemaError::new(
+                    field_ctx,
+                    format!(
+                        "config field `{}` is skipped but has no default value",
+                        field.name
+                    ),
+                ));
+            }
+            continue;
+        }
 
         // Handle flattened fields - recurse into the inner struct and merge fields
         if field.is_flattened() {

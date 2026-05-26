@@ -1,0 +1,30 @@
+---
+source: crates/figue/src/schema/tests.rs
+expression: "facet_json :: to_string_pretty(& value).unwrap()"
+---
+{
+  "docs": {},
+  "args": {
+    "args": {},
+    "subcommands": {}
+  },
+  "configs": [
+    {
+      "docs": {},
+      "field_name": "config",
+      "fields": {
+        "visible": {
+          "docs": {},
+          "value": {
+            "Leaf": {
+              "kind": {
+                "Scalar": "String"
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "special": {}
+}

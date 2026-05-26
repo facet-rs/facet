@@ -406,6 +406,42 @@ fn test_config_flatten_schema_builds() {
     );
 }
 
+#[test]
+fn test_config_skipped_field_is_omitted() {
+    #[derive(Facet)]
+    struct ConfigWithSkippedField {
+        visible: String,
+        #[facet(skip, default)]
+        skipped: String,
+    }
+
+    #[derive(Facet)]
+    struct ArgsWithSkippedConfigField {
+        #[facet(args::config)]
+        config: ConfigWithSkippedField,
+    }
+    assert_schema_snapshot!(Schema::from_shape(ArgsWithSkippedConfigField::SHAPE))
+}
+
+#[test]
+fn test_config_skipped_field_errors_when_not_defaulted() {
+    #[derive(Facet)]
+    struct ConfigWithSkippedNonDefaultField {
+        visible: String,
+        #[facet(skip)]
+        skipped: String,
+    }
+
+    #[derive(Facet)]
+    struct ArgsWithSkippedNonDefaultConfigField {
+        #[facet(args::config)]
+        config: ConfigWithSkippedNonDefaultField,
+    }
+    assert_schema_snapshot!(Schema::from_shape(
+        ArgsWithSkippedNonDefaultConfigField::SHAPE
+    ))
+}
+
 /// Deeply nested config flatten: common inside extended
 #[derive(Facet)]
 struct ExtendedConfig {
