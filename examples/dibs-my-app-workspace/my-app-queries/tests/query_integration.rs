@@ -629,3 +629,303 @@ async fn test_bulk_create_products_inserts_all_rows() {
     let found = my_app_queries::search_products(&client, &q).await.unwrap();
     assert_eq!(found.len(), 3);
 }
+
+// ============================================================================
+// Codegen-surface coverage
+// ============================================================================
+// These tests don't target a known bug; they exercise the parts of
+// dibs-qgen that no other test reaches. Each one is the canonical
+// integration test for the named codegen path; if the generator
+// silently regresses one of them, the test fails against postgres
+// instead of against a customer.
+
+/// `distinct true` should produce a SELECT DISTINCT. Test data has
+/// statuses {published, draft, archived} — DISTINCT should collapse
+/// the duplicates to those three values.
+#[tokio::test]
+async fn test_unique_statuses_distinct() {
+    let (_container, client) = create_postgres_container().await;
+    setup_schema(&client).await;
+    insert_test_data(&client).await;
+
+    let mut statuses: Vec<String> = my_app_queries::unique_statuses(&client)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.status)
+        .collect();
+    statuses.sort();
+    assert_eq!(
+        statuses,
+        vec![
+            "archived".to_string(),
+            "draft".to_string(),
+            "published".to_string()
+        ],
+        "DISTINCT should yield exactly the three populated statuses",
+    );
+}
+
+/// `@ne($param)` filter generates `col != $1`. Asserts the parameter
+/// is bound (we already exercise @null, @ilike, equality elsewhere;
+/// @ne has its own codegen branch).
+#[tokio::test]
+async fn test_products_excluding_status_ne_filter() {
+    let (_container, client) = create_postgres_container().await;
+    setup_schema(&client).await;
+    insert_test_data(&client).await;
+
+    let excluded = "published".to_string();
+    let rows = my_app_queries::products_excluding_status(&client, &excluded)
+        .await
+        .unwrap();
+    // Test data: 3 published (one soft-deleted), 1 draft, 1 archived.
+    // The deleted_at @null clause in the styx hides the soft-deleted one.
+    // Excluding "published" leaves draft + archived = 2 rows.
+    assert_eq!(rows.len(), 2);
+    for r in &rows {
+        assert_ne!(r.status, "published");
+    }
+}
+
+/// `@in(literal_list)` currently emits malformed SQL — the styx
+/// `@in("'a','b','c'")` renders as `ANY('''a'',''b'',''c''')`,
+/// which postgres rejects with SQLSTATE 22P02 ("malformed array
+/// literal") because the comma-separated list isn't valid array
+/// syntax (needs `ARRAY[...]` or `IN (...)`).
+///
+/// This test pins the *current* broken behaviour so the failure is
+/// visible and a future qgen fix flips it green. If you're staring
+/// at a fresh failure here, the cause is good news: `@in` with a
+/// literal array now actually works, and you should switch the
+/// assertion to the happy-path checks below.
+#[tokio::test]
+async fn test_products_by_known_handles_in_filter_known_broken() {
+    let (_container, client) = create_postgres_container().await;
+    setup_schema(&client).await;
+
+    for h in ["prod-1", "prod-2", "prod-3", "prod-unrelated"] {
+        client
+            .execute(
+                r#"INSERT INTO "product" ("handle", "status") VALUES ($1, 'draft')"#,
+                &[&h],
+            )
+            .await
+            .unwrap();
+    }
+
+    let result = my_app_queries::products_by_known_handles(&client).await;
+    let err = result.expect_err(
+        "@in literal list still broken — see comment; if this succeeds, update the test",
+    );
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("malformed array literal"),
+        "expected the malformed-array-literal SQLSTATE 22P02, got: {msg}",
+    );
+}
+
+/// One-to-many relation: `translations @rel{ ... }` without
+/// `first true` generates a `Vec<Translations>` field on the result
+/// struct. Different codegen path from the existing Option<Nested>
+/// test (`product_with_translation`).
+#[tokio::test]
+async fn test_product_with_all_translations_vec_relation() {
+    let (_container, client) = create_postgres_container().await;
+    setup_schema(&client).await;
+    insert_test_data(&client).await;
+
+    // widget-a has 1 translation in insert_test_data.
+    let handle = "widget-a".to_string();
+    let p = my_app_queries::product_with_all_translations(&client, &handle)
+        .await
+        .unwrap()
+        .expect("widget-a exists");
+    assert_eq!(p.translations.len(), 1);
+    assert_eq!(p.translations[0].locale, "en");
+
+    // Add a second translation, confirm both come back in the Vec.
+    client
+        .execute(
+            r#"INSERT INTO "product_translation" ("product_id", "locale", "title")
+               SELECT id, 'de', 'Widget Alpha (DE)' FROM "product" WHERE handle = 'widget-a'"#,
+            &[],
+        )
+        .await
+        .unwrap();
+    let p = my_app_queries::product_with_all_translations(&client, &handle)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(p.translations.len(), 2);
+    let mut locales: Vec<&str> = p.translations.iter().map(|t| t.locale.as_str()).collect();
+    locales.sort();
+    assert_eq!(locales, vec!["de", "en"]);
+
+    // gadget-x has zero translations — LEFT JOIN produces no rows for
+    // the nested struct; the result should have an empty Vec, not a
+    // Vec with one None-shaped entry.
+    let handle = "gadget-x".to_string();
+    let p = my_app_queries::product_with_all_translations(&client, &handle)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        p.translations.len(),
+        0,
+        "empty LEFT JOIN should produce empty Vec, not a singleton",
+    );
+}
+
+/// Nested SQL functions in VALUES (`@lower(@concat("prod-", $x))`)
+/// currently render with an uncast parameter — `CONCAT('prod-', $1)`
+/// — and postgres bails at Parse with SQLSTATE 42P18 "could not
+/// determine data type of parameter $1", because `CONCAT` is
+/// polymorphic. Exactly the same bug class as the @jsonb one we
+/// fixed: codegen doesn't pin the parameter's inferred type, so
+/// tokio-postgres has nothing to satisfy ToSql against.
+///
+/// Fix would be in dibs-qgen: cast bare-param arguments of SQL
+/// functions (`$1::text`) the way `cast_for_jsonb_param` does for
+/// @jsonb. Until then this test pins the broken behaviour so a
+/// future qgen fix flips it.
+#[tokio::test]
+async fn test_create_product_with_nested_sql_functions_known_broken() {
+    let (_container, client) = create_postgres_container().await;
+    setup_schema(&client).await;
+
+    let handle = "WIDGET-X".to_string();
+    let result = my_app_queries::create_product_normalized(&client, &handle).await;
+    let err = result.expect_err(
+        "@concat with bare $param still broken — see comment; if this succeeds, switch the test \
+         to assert the happy-path roundtrip and remove `_known_broken`",
+    );
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("could not determine data type of parameter"),
+        "expected the polymorphic-parameter-inference error, got: {msg}",
+    );
+}
+
+/// `@default` on a column in VALUES emits the literal `DEFAULT`
+/// keyword (postgres applies the column's declared default). For
+/// `status` that's `'draft'` per the schema.
+#[tokio::test]
+async fn test_create_product_with_default() {
+    let (_container, client) = create_postgres_container().await;
+    setup_schema(&client).await;
+
+    let handle = "default-status".to_string();
+    let row = my_app_queries::create_product_with_defaults(&client, &handle)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        row.status, "draft",
+        "DEFAULT should pick up the column's literal default"
+    );
+}
+
+/// `@now` in an UPDATE SET clause emits `NOW()` (no param). Verifies
+/// the soft-delete query actually populates `deleted_at`.
+#[tokio::test]
+async fn test_soft_delete_sets_deleted_at_via_now() {
+    let (_container, client) = create_postgres_container().await;
+    setup_schema(&client).await;
+    insert_test_data(&client).await;
+
+    let handle = "widget-a".to_string();
+    let row = my_app_queries::soft_delete_product(&client, &handle)
+        .await
+        .unwrap()
+        .expect("update should return one row");
+    assert_eq!(row.handle, "widget-a");
+
+    // The deleted_at filter on all_products should now exclude it.
+    let remaining = my_app_queries::all_products(&client).await.unwrap();
+    let handles: Vec<&str> = remaining.iter().map(|p| p.handle.as_str()).collect();
+    assert!(
+        !handles.contains(&"widget-a"),
+        "soft-deleted product disappears from non-deleted view"
+    );
+}
+
+/// Plain UPSERT (no @jsonb). First call inserts, second call with
+/// the same conflict target updates. Returns the row in both cases.
+#[tokio::test]
+async fn test_upsert_product_insert_then_update() {
+    let (_container, client) = create_postgres_container().await;
+    setup_schema(&client).await;
+
+    let handle = "upsert-target".to_string();
+    let s1 = "draft".to_string();
+    let s2 = "published".to_string();
+
+    let a = my_app_queries::upsert_product(&client, &handle, &s1)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(a.status, "draft");
+
+    let b = my_app_queries::upsert_product(&client, &handle, &s2)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        b.id, a.id,
+        "upsert should update the same row, not insert a duplicate"
+    );
+    assert_eq!(b.status, "published", "ON CONFLICT should overwrite status");
+}
+
+/// UPSERT-MANY via UNNEST + ON CONFLICT DO UPDATE. The bulk
+/// equivalent of the test above; exercises the
+/// `INSERT … SELECT … FROM UNNEST(...) ON CONFLICT` codegen path,
+/// which is distinct from both `insert_many` (no conflict) and the
+/// scalar upsert.
+#[tokio::test]
+async fn test_bulk_upsert_products_insert_then_update() {
+    let (_container, client) = create_postgres_container().await;
+    setup_schema(&client).await;
+
+    let first = vec![
+        my_app_queries::BulkUpsertProductsParams {
+            handle: "bu-a".to_string(),
+            status: "draft".to_string(),
+        },
+        my_app_queries::BulkUpsertProductsParams {
+            handle: "bu-b".to_string(),
+            status: "draft".to_string(),
+        },
+    ];
+    let r1 = my_app_queries::bulk_upsert_products(&client, &first)
+        .await
+        .unwrap();
+    assert_eq!(r1.len(), 2);
+    let ids_first: std::collections::HashSet<i64> = r1.iter().map(|r| r.id).collect();
+
+    // Re-upsert with the same handles + new status. Expect same row
+    // ids back and updated status.
+    let second = vec![
+        my_app_queries::BulkUpsertProductsParams {
+            handle: "bu-a".to_string(),
+            status: "published".to_string(),
+        },
+        my_app_queries::BulkUpsertProductsParams {
+            handle: "bu-b".to_string(),
+            status: "published".to_string(),
+        },
+    ];
+    let r2 = my_app_queries::bulk_upsert_products(&client, &second)
+        .await
+        .unwrap();
+    assert_eq!(r2.len(), 2);
+    let ids_second: std::collections::HashSet<i64> = r2.iter().map(|r| r.id).collect();
+    assert_eq!(
+        ids_first, ids_second,
+        "ON CONFLICT should hit the same rows"
+    );
+    for r in &r2 {
+        assert_eq!(r.status, "published");
+    }
+}
