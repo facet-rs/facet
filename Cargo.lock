@@ -871,7 +871,6 @@ dependencies = [
  "facet",
  "facet-core",
  "facet-json",
- "facet-testhelpers",
  "insta",
 ]
 

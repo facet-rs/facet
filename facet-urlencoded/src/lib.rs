@@ -274,12 +274,25 @@ fn deserialize_value<'facet, const BORROW: bool>(
     }
 }
 
-/// Helper function to deserialize a scalar field
+/// Helper function to deserialize a scalar field.
+///
+/// `Option<T>` fields are transparently descended into via `begin_some`
+/// before scalar parsing — present keys land in `Some(value)`, absent
+/// keys leave the field at its default (`None` unless the struct field
+/// carries `#[facet(default = …)]`). This lets `?provider=github&limit=50`
+/// drive into `struct { provider: Option<String>, limit: Option<i64> }`
+/// without forcing callers to sentinel-encode "missing".
 fn deserialize_scalar_field<'facet, const BORROW: bool>(
     key: &str,
     value: &str,
     mut wip: Partial<'facet, BORROW>,
 ) -> Result<Partial<'facet, BORROW>, UrlEncodedError> {
+    // Transparently descend through `Option<T>`. Mirrors how
+    // facet-format's path_navigator handles it.
+    let is_option = matches!(wip.shape().def, Def::Option(_));
+    if is_option {
+        wip = wip.begin_some()?;
+    }
     match wip.shape().def {
         Def::Scalar => {
             if wip.shape().is_type::<String>() {
@@ -295,9 +308,36 @@ fn deserialize_scalar_field<'facet, const BORROW: bool>(
                         ));
                     }
                 };
+            } else if wip.shape().is_type::<i64>() {
+                match value.parse::<i64>() {
+                    Ok(num) => wip = wip.set(num)?,
+                    Err(_) => {
+                        return Err(UrlEncodedError::InvalidNumber(
+                            key.to_string(),
+                            value.to_string(),
+                        ));
+                    }
+                };
+            } else if wip.shape().is_type::<bool>() {
+                let parsed = match value {
+                    "true" | "1" | "on" | "yes" => true,
+                    "false" | "0" | "off" | "no" | "" => false,
+                    _ => {
+                        return Err(UrlEncodedError::UnsupportedType(format!(
+                            "{}: unparseable bool literal {value:?}",
+                            wip.shape()
+                        )));
+                    }
+                };
+                wip = wip.set(parsed)?;
             } else {
-                warn!("facet-yaml: unsupported scalar type: {}", wip.shape());
+                warn!("facet-urlencoded: unsupported scalar type: {}", wip.shape());
                 return Err(UrlEncodedError::UnsupportedType(format!("{}", wip.shape())));
+            }
+            // Pop the `begin_some` frame opened above so the caller's
+            // `.end()` can pop the field cleanly.
+            if is_option {
+                wip = wip.end()?;
             }
             Ok(wip)
         }

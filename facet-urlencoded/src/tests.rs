@@ -214,3 +214,44 @@ fn test_deep_nesting() {
         }
     );
 }
+
+#[derive(Debug, Default, Facet, PartialEq)]
+struct OptionalParams {
+    #[facet(default)]
+    provider: Option<String>,
+    #[facet(default)]
+    limit: Option<i64>,
+}
+
+/// Present `?provider=stripe&limit=50` should land in `Some(...)`.
+#[test]
+fn test_option_some() {
+    let q: OptionalParams = from_str("provider=stripe&limit=50").unwrap();
+    assert_eq!(
+        q,
+        OptionalParams {
+            provider: Some("stripe".to_string()),
+            limit: Some(50),
+        }
+    );
+}
+
+/// Absent keys should leave `Option` fields at their default (`None`).
+#[test]
+fn test_option_default_none_on_missing() {
+    let q: OptionalParams = from_str("provider=github").unwrap();
+    assert_eq!(
+        q,
+        OptionalParams {
+            provider: Some("github".to_string()),
+            limit: None,
+        }
+    );
+}
+
+/// Empty query string → both fields default to `None`.
+#[test]
+fn test_option_all_default() {
+    let q: OptionalParams = from_str("").unwrap();
+    assert_eq!(q, OptionalParams::default());
+}
