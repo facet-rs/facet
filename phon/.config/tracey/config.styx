@@ -3,9 +3,7 @@
 specs (
     {
         name phon
-        include (
-            docs/content/spec/_index.md
-        )
+        include (docs/content/spec.md)
         impls (
             {
                 name rust
@@ -14,3 +12,4 @@ specs (
         )
     }
 )
+
