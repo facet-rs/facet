@@ -871,29 +871,42 @@ construct it (decode). It is never transmitted, never hashed, never part of
 schema identity. It is true for exactly one type, in one language, in one
 build, in one process.
 
-Descriptors are shared between the memory-layout implementations, Rust and
-Swift. TypeScript has none — its values are objects accessed by property, with
-no offsets to describe.
+The descriptor model is a shared design, realized separately by each
+memory-layout implementation. Rust has its own descriptor types describing Rust
+memory; Swift has its own describing Swift memory. They never cross — like the
+`Schema` type, the *shape* is shared and documented once, here, but each
+implementation has its own. TypeScript has no descriptors at all; its values are
+objects accessed by property, with no offsets to describe.
 
 Every node carries its facts in one of two forms:
 
 - **Direct facts** — offsets, strides, tag locations, niche patterns —
-  concrete enough that the engine reads or writes memory itself, with no help
-  from the backend. A plain struct's fields sit at known offsets; the engine
-  reads them directly.
-- **Thunks** — named functions the backend provides, for everything direct
-  facts can't express. A hash map's internal layout is opaque, so iterating it
-  to encode and inserting into it to decode go through backend thunks. A Swift
-  existential is opaque end to end.
+  concrete enough that the engine reads or writes memory itself. A plain
+  struct's fields sit at known offsets; the engine reads them directly.
+- **Thunks** — named functions the implementation provides, in its own
+  language, for everything direct facts can't express. A Rust `HashMap`'s
+  internal layout is opaque, so the Rust engine iterates it to encode and
+  inserts to decode through Rust functions; a Swift existential is opaque, so
+  the Swift engine goes through Swift functions. Thunks are same-language
+  helpers, not cross-language bridges.
 
-> r[descriptors.backend-blind]
+> r[descriptors.separate-implementations]
 >
-> The execution engine — interpreter or JIT — consumes descriptors and thunk
-> bindings only. It never branches on which language produced a descriptor.
-> Direct facts it lowers to memory operations; thunks it lowers to calls
-> resolved through the binding the caller supplied. Rust-produced facts and
-> Swift-produced facts flow through identical engine code. There is no
-> language-specific path in the engine.
+> Each memory-layout implementation has its own descriptors and its own engine.
+> The Rust engine consumes Rust descriptors and calls Rust thunks; the Swift
+> engine consumes Swift descriptors and calls Swift thunks. Nothing crosses:
+> there is no shared engine, and no descriptor is ever handed across a language
+> boundary. Rust and Swift peers interoperate only through the wire. What is
+> shared is this model's shape, documented once and realized in each
+> implementation — the same way the `Schema` type is.
+
+> r[descriptors.fact-driven]
+>
+> Within an implementation, the engine works from descriptor facts and thunk
+> bindings, never from the source type directly. There is no hand-written
+> per-type encode/decode path beside the engine — the descriptor is the single
+> input that tells the engine how to read and build any value of any type, and
+> the JIT specializes it per `(schema, descriptor)` pair at runtime.
 
 Reading a value and constructing one are not symmetric, and the descriptor
 reflects that. Reading is usually direct: the value already exists in memory,
@@ -1083,15 +1096,17 @@ then stamped out and patched at runtime.
 
 ## Swift
 
-A Swift implementation produces the same descriptors, sourced differently: by
-probing the Swift runtime — reflection over stored properties, enum-case
-layout, the runtime's own type metadata — and validating the facts against live
-values before trusting them. Where Rust reads a struct's field offsets from
-facet, Swift reads them from runtime metadata; the resulting `Record` is
-identical to the engine. Swift leans on thunks more than Rust does — copy-on-
+A Swift implementation produces descriptors of the same shape, sourced
+differently: by probing the Swift runtime — reflection over stored properties,
+enum-case layout, the runtime's own type metadata — and validating the facts
+against live values before trusting them. Where Rust reads a struct's field
+offsets from facet, Swift reads them from runtime metadata; the resulting
+`Record` has the same shape, and Swift's engine consumes it the way Rust's
+engine consumes Rust's. Swift leans on thunks more than Rust does — copy-on-
 write `Array`, `String`'s inline-or-heap representation, and existentials are
-opaque enough to go through `Sequence { Thunk }` or `Opaque` — but every such
-node is the same `Access` the engine already knows; only the producer differs.
+opaque enough to go through `Sequence { Thunk }` or `Opaque` — but each is the
+same `Access` shape, handled by Swift's own engine. The design transfers; the
+code doesn't.
 
 Execution: interpreter baseline; copy-and-patch JIT through swiftc/LLVM — the
 same technique as Rust, on the same compiler substrate, so implementation
