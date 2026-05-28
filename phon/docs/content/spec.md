@@ -12,6 +12,11 @@ description = "Typed binary format and execution engine"
 >
 > it gracefully supports adding fields, removing fields, re-ordering fields, similar evolutions
 > with enum variants, etc.
+>
+> The wire schema is the source of truth for every exchange, including ones where both ends
+> happen to be Rust. The same property makes phon work as a storage format: bytes written
+> today and read back years later go through the same path as two peers on different deploys
+> talking now.
 
 > r[two-forms]
 >
@@ -45,6 +50,10 @@ description = "Typed binary format and execution engine"
 >   ]
 > }
 > ```
+>
+> Other languages receive their schemas through codegen. phon emits the type definitions
+> plus the schema bytes — in self-describing phon — into Swift, TypeScript, or any other
+> target. Each peer ships with the schemas it needs as constants.
 
 > r[schemas-vs-descriptors]
 > 
@@ -86,3 +95,27 @@ description = "Typed binary format and execution engine"
 > // print-type-size     padding: 4 bytes
 > // print-type-size     field `.y`: 8 bytes
 > ```
+>
+> A descriptor pairs a schema with one process's memory layout for that schema. The
+> engine takes a `(schema, descriptor)` pair in both directions and uses it to move
+> values between memory and wire.
+>
+> Each language produces descriptors its own way: Rust through facet metadata, Swift by
+> probing the runtime, TypeScript from codegen. The engine sees one shape.
+
+> r[two-engines]
+>
+> phon has an interpreter and (optionally) a JIT. They share one intermediate
+> representation: a `(schema, descriptor)` pair compiles down to the same operations
+> either way.
+>
+> The interpreter runs everywhere — including Apple sandboxes, WebAssembly, and other
+> environments that restrict allocating executable memory.
+>
+> The JIT specializes one `(schema, descriptor)` pair at runtime, trading compile-time
+> paid once for fast per-message execution. What "JIT" means is per-target: in Rust and
+> Swift, machine code via copy-and-patch; in TypeScript, generated JavaScript source
+> passed to `new Function()`. The IR is shared; the lowering is per-language.
+>
+> Each language's JIT lives behind an opt-in — in Rust, the `phon-jit` crate — so it's
+> only present where wanted.
