@@ -650,6 +650,51 @@ in-order struct fields. An implementation's two decoders share most of their
 machinery; the compact decoder is the self-describing decoder with the tags
 removed and the schema supplying the kinds instead.
 
+# Framing
+
+phon decodes a message from a buffer, or from a stream of byte chunks. It does
+not define how those bytes are delimited on the wire — where one message ends
+and the next begins, which bytes belong to which concurrent exchange, how a
+large message is split so it can interleave with others. That is framing, and
+framing belongs to the transport.
+
+But phon and the framing layer share a contract, and three parts of it are
+load-bearing enough to state outright.
+
+> r[framing.not-defined]
+>
+> phon does not define a wire framing format. Delimiting messages, multiplexing
+> concurrent exchanges, and fragmenting large messages are the transport's
+> responsibility. A transport may length-prefix its frames, chunk-delimit them,
+> multiplex them with stream ids, or carry a single message per connection —
+> phon is indifferent, subject to the two requirements below.
+
+> r[framing.completion-signal]
+>
+> phon's decoder reports when a message is structurally complete (per
+> `r[incremental-decoding]`) and how many bytes it consumed. A framing layer
+> may rely on that signal to find message boundaries rather than carrying its
+> own per-message length. It may also carry a length for its own reasons —
+> multiplexing, validation, cheap skipping — but phon does not require one.
+
+> r[framing.alignment]
+>
+> For a receiver to borrow values out of the buffer (per
+> `r[compact.aligned-buffer]`), the framing layer must deliver each message
+> starting at an address aligned to the largest alignment the message uses. A
+> framing layer that does not is still correct — the receiver copies instead of
+> borrowing — but it forfeits zero-copy for its receivers. A framing layer that
+> wants zero-copy aligns message starts.
+
+phon doesn't mandate a framing format, but it was designed with one shape in
+mind, and a transport that wants phon's full benefits will land near it:
+independent streams multiplexed over a single connection, each message split
+into frames small enough that a large message on one stream doesn't block small
+messages on another, with distinct frame kinds for the parts a dispatcher needs
+cheaply (a method identifier) versus the bulk payload. That is the HTTP/2 model,
+and it is the reference shape for vox's transport. It is guidance — phon's
+actual requirements are only the three rules above.
+
 # Compatibility
 
 Two peers drift. The reader receives bytes written against the writer's schema
@@ -775,3 +820,82 @@ speaks.
 > peer's `SchemaId` matches the Rust origin exactly — a peer that re-derived
 > from, say, TypeScript types might hash to something different, because the
 > mapping from phon types to a given language is not always one-to-one.
+
+# Language implementations
+
+Everything above is the portable contract: the wire format, schema identity,
+compatibility, framing requirements, the behaviors every implementation shares.
+What follows is per-language — how a given implementation realizes the contract
+in its own runtime. None of it affects the wire; two implementations that
+disagree here still interoperate, because they agree on everything above.
+
+Two concepts are inherently per-language and live here rather than in the
+portable contract:
+
+- **Descriptors** — how an implementation reads and writes its own language's
+  in-memory values for a given schema. The wire says what bytes to produce; the
+  descriptor says where the value's pieces are in this process's memory.
+- **Execution** — how an implementation turns a translation plan into running
+  code.
+
+Execution shares a shape across all implementations:
+
+> r[exec.interpreter-baseline]
+>
+> Every implementation has an interpreter that handles any schema the
+> compatibility rules accept. It is the baseline — it always works, including
+> on platforms where a JIT cannot run.
+
+> r[exec.jit-optional]
+>
+> A JIT is optional. When present it produces results identical to the
+> interpreter, differing only in speed. The technique is the implementation's
+> choice: copy-and-patch machine code, generated source, or none at all.
+
+> r[exec.strict-recording]
+>
+> An implementation may offer a strict mode that records every subtree its JIT
+> could not compile and fell back on, as a development aid for finding what to
+> teach the JIT next. Strict mode is a diagnostic, not a production execution
+> mode.
+
+## Rust
+
+A Rust implementation learns the in-memory layout of a value from
+[facet](https://crates.io/crates/facet) metadata — field offsets, enum
+discriminants, niche optimizations — produced at compile time by
+`#[derive(Facet)]`. That metadata is the source of its descriptors.
+
+Execution: the interpreter walks the translation plan against facet-described
+memory. The JIT, behind a Cargo feature, compiles the plan to machine code via
+copy-and-patch — ops written as small Rust functions, lowered through
+rustc/LLVM at build time, with their machine code and relocations extracted,
+then stamped out and patched at runtime.
+
+(The descriptor model — exactly what facts a descriptor carries and how the
+engine consumes them — is still being designed. This section will specify it
+once it settles.)
+
+## Swift
+
+A Swift implementation learns layout by probing the Swift runtime: reflection
+over stored properties, enum-case layout, the runtime's own type metadata.
+
+Execution: interpreter baseline; copy-and-patch JIT through swiftc/LLVM — the
+same technique as Rust, on the same compiler substrate, so implementation
+experience transfers directly between the two. The JIT runs where the platform
+permits allocating executable memory (macOS does); the interpreter alone covers
+platforms that don't.
+
+(Same open descriptor-design question as Rust.)
+
+## TypeScript
+
+A TypeScript implementation has no manual memory layout — values are
+garbage-collected objects — so it has no descriptor in the Rust/Swift sense.
+"Layout" is just property access on objects.
+
+Execution: interpreter baseline; the JIT is generated JavaScript source handed
+to `new Function()`. Same engine model, language-native realization — where
+Rust and Swift emit machine code, TypeScript emits a specialized JavaScript
+function and lets the host JS engine compile it.
