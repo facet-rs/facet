@@ -369,16 +369,28 @@ while small messages on other streams complete around it.
 > r[incremental-decoding]
 >
 > A phon decoder consumes input incrementally. The caller feeds bytes in
-> chunks; the decoder returns one of `Done(value)`, `NeedsMore`, or
-> `Error(reason)` per call. `NeedsMore` means the decoder is parked; feeding
-> additional bytes resumes it.
+> chunks; the decoder returns one of `Done(value, consumed)`, `NeedsMore`, or
+> `Error(reason)` per call. `Done` reports how many input bytes the value
+> occupied. `NeedsMore` means the decoder is parked; feeding additional bytes
+> resumes it.
 
 The decoder knows when it's done because the schema bounds the decode.
 Primitives have fixed widths. Lists, maps, options, strings, and byte
 sequences carry their own length prefixes. Structs and enums are walked
 field-by-field. By the time the last field is consumed, the decoder has read
-exactly the right number of bytes — it returns `Done` and any remaining
-bytes in the input belong to whatever comes next.
+exactly the right number of bytes — it returns `Done(value, consumed)` and any
+remaining bytes in the input belong to whatever comes next.
+
+> r[decode.chained]
+>
+> Several independent values may sit back to back in one buffer, and a caller
+> may decode them in sequence: after a decode returns `Done(value, consumed)`,
+> the next value starts at `consumed`. This is how a reader handles a message
+> that is more than one value — most importantly RPC dispatch, where an envelope
+> (method id, metadata) is decoded first, its method id selects the schema for
+> what follows, and the remainder of the buffer is decoded as the arguments
+> against that schema. phon does not bundle the two into one schema; it decodes
+> one value, hands back the offset, and lets the caller decode the next.
 
 The caller never tells phon where a message ends. Phon tells the caller it's
 done. Framing — message boundaries, stream multiplexing, fragmentation —
@@ -423,6 +435,23 @@ anywhere. When a peer receives a `SchemaId` it recognizes, it already has the
 schema; when it receives one it doesn't recognize, that absence is the signal
 that the schema needs to be sent before the value referencing it can be
 decoded.
+
+> r[schema-identity.closure]
+>
+> A schema references other schemas by `SchemaId`. Transmitting a schema means
+> transmitting the transitive closure of those references — every schema
+> reachable through its `SchemaRef`s — so the receiver can resolve all of them.
+> A receiver holding the full closure can decode any value of the root schema;
+> one missing a referenced schema cannot.
+
+> r[schema-identity.unknown-is-error]
+>
+> Referencing a `SchemaId` the receiver does not hold is a decode error, full
+> stop. The decoder does not pause to wait for the schema to arrive. Schema
+> delivery is a protocol-layer concern that happens before a value is decoded —
+> by the time a decoder runs, every schema it needs must already be resolved. An
+> unknown id at decode time means delivery failed upstream, and that is an error,
+> not a wait state.
 
 > r[schema-identity.canonical-encoding]
 >
@@ -694,6 +723,17 @@ messages on another, with distinct frame kinds for the parts a dispatcher needs
 cheaply (a method identifier) versus the bulk payload. That is the HTTP/2 model,
 and it is the reference shape for vox's transport. It is guidance — phon's
 actual requirements are only the three rules above.
+
+phon also doesn't model streams. A long-lived stream of values — a vox channel,
+a server-pushed sequence — is not a phon value; it is a series of independent
+phon messages that the framing layer associates with a channel. A stream handle
+that appears in a method signature (vox's `Tx<T>` / `Rx<T>`) is carried as an
+ordinary phon value: a channel identifier, typically a `u64`. The items
+themselves flow as separate messages, each encoded and decoded by phon on its
+own. The stream's identity, lifecycle, and backpressure belong to the framing
+layer; phon never sees "a stream," only the individual values and the channel-id
+handle. This absence is deliberate — streaming is framing over phon, not a phon
+construct.
 
 # Compatibility
 
@@ -1034,14 +1074,23 @@ pub struct SequenceAccess {
 }
 
 pub enum SequenceStorage {
-    /// (ptr, len, capacity) at offsets, elements `element.layout` stride apart.
-    /// Encode reads ptr+len and walks. Decode calls `allocate`, writes the
-    /// elements, then writes the triple.
-    Contiguous {
+    /// Owned contiguous run: (ptr, len, capacity) at offsets, elements
+    /// `element.layout` stride apart. Encode reads ptr+len and walks. Decode
+    /// calls `allocate`, writes the elements, then writes the triple.
+    /// `Vec<T>`, `String`.
+    Owned {
         ptr_offset: usize,
         len_offset: usize,
-        cap_offset: Option<usize>,   // None for fixed or borrowed storage
+        cap_offset: Option<usize>,   // None for owned-without-capacity, e.g. Box<[T]>
         allocate: Thunk,
+    },
+    /// Borrowed contiguous run: (ptr, len) at offsets, no capacity, no
+    /// allocation. Decode points `ptr` into the input (or a decode-scoped
+    /// arena) and writes `len`. Encode reads ptr+len and walks, same as Owned.
+    /// `&str`, `&[u8]`, `&[T]` for scalar `T`.
+    Borrowed {
+        ptr_offset: usize,
+        len_offset: usize,
     },
     /// Non-flat storage: length and per-element access go through thunks
     /// (linked lists, copy-on-write buffers, anything not a contiguous run).
@@ -1069,6 +1118,29 @@ pub struct Thunk {
 > with no binding is a build-time error — there is no implicit fallback, no
 > default behavior an unbound name silently falls into.
 
+> r[descriptors.borrowed]
+>
+> A `Borrowed` sequence decodes without allocating: the engine points its
+> pointer into the input buffer and writes its length. The decoded value is
+> valid only as long as that input buffer — and any decode-scoped arena (below)
+> — lives; the caller must keep it alive for the value's lifetime. Borrowing in
+> place requires the run to be contiguous and, for primitive-array elements,
+> aligned per `r[compact.alignment]`. When it can't borrow in place — a value
+> fragmented across frames, a misaligned array — the engine copies the run into
+> a decode-scoped arena that shares the value's lifetime, still without
+> allocating a per-value owned container. Borrowing applies only where the wire
+> bytes equal the memory bytes: scalars, `bytes`, `string`, and arrays of those.
+> A `&[T]` of non-scalar `T` cannot borrow, because the wire and memory layouts
+> differ; it is `Owned` or `Thunk` instead.
+
+Borrowed storage is the heart of zero-copy decoding. A wire format that always
+allocated would make the alignment work in `r[compact.alignment]` pointless;
+`Borrowed` is what turns an aligned, contiguous run on the wire into a slice the
+caller reads in place. An implementation built for throughput — a virtual
+filesystem moving file contents, an RPC layer relaying large responses — leans
+on it heavily, and the model has to express it as a first-class storage mode,
+not as an afterthought to allocation.
+
 This is exactly where the execution model's "direct codegen or helper call"
 split comes from. A node with direct facts is one the JIT lowers to inline
 memory operations. A node with a thunk is one the JIT lowers to a call. Strict
@@ -1083,11 +1155,14 @@ model](#the-descriptor-model)) from [facet](https://crates.io/crates/facet)
 metadata — field offsets, enum discriminants, niche optimizations — produced at
 compile time by `#[derive(Facet)]`. Most Rust descriptors are direct: structs
 become `Record { InPlace }` with field offsets, fixed primitives become
-`Scalar`, `Vec<T>`/`String` become `Sequence { Contiguous }` reading the
+`Scalar`, `Vec<T>`/`String` become `Sequence { Owned }` reading the
 `(ptr, len, cap)` triple directly on encode and allocating via a thunk on
-decode, niche-optimized `Option`s become `Option { Niche }`. The thunked paths
-appear where Rust construction needs the allocator or a container's own insert —
-`Vec` allocation, `HashMap`/`HashSet` insertion, `BTreeMap`.
+decode, borrowed `&str`/`&[u8]`/`&[T]` become `Sequence { Borrowed }` decoded as
+pointers into the input rather than allocations — the zero-copy path a hot Rust
+service leans on — and niche-optimized `Option`s become `Option { Niche }`. The
+thunked paths appear where Rust construction needs the allocator or a
+container's own insert — `Vec` allocation, `HashMap`/`HashSet` insertion,
+`BTreeMap`.
 
 Execution: the interpreter walks the translation plan against descriptor-typed
 memory. The JIT, behind a Cargo feature, compiles the plan to machine code via
