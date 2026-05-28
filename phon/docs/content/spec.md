@@ -949,6 +949,117 @@ speaks.
 > from, say, TypeScript types might hash to something different, because the
 > mapping from phon types to a given language is not always one-to-one.
 
+# Crates and packages
+
+This section is implementation organization, not wire contract — like the
+language sections below, it's how each implementation is built, and two
+implementations packaged differently still interoperate. It's in the spec
+because the boundaries are load-bearing: a package with no dependency on a
+language's reflection *cannot* leak that reflection into the engine, which is
+how phon keeps execution backend-blind structurally rather than by discipline.
+
+Every implementation separates the same four concerns, and each boundary is a
+real package, not merely a module:
+
+- **Contract** — the schema model, identity, `Value`, and the self-describing
+  codec. The most widely depended-on piece; no engine, no language binding.
+- **Engine** — compact codec, compatibility planning, the IR, the interpreter,
+  the descriptor model. Backend-blind: it consumes descriptors and an IR and
+  reaches for no reflection.
+- **JIT** — the optional accelerator, behind an opt-in so the baseline pays
+  nothing for it and restricted platforms omit it entirely.
+- **Binding** — the language-specific bridge that produces descriptors and
+  offers the ergonomic typed API. The only part that touches facet, the Swift
+  runtime, or JS objects.
+
+> r[crates.concern-separation]
+>
+> An implementation is split into at least four packages: a contract package, an
+> engine package, an optional JIT package, and a binding package, as described
+> above. The separations are package boundaries, not module boundaries, so that
+> dependency edges — not convention — enforce what each layer may touch.
+
+> r[crates.engine-is-binding-free]
+>
+> The engine and JIT packages do not depend on the language's reflection or
+> derive machinery; only the binding package does. This is the structural
+> guarantee behind `r[descriptors.fact-driven]`: the engine consumes a descriptor
+> and an IR and physically cannot call facet (Rust), probe the Swift runtime, or
+> reflect over JS objects, because those crates are not in its dependency graph.
+
+> r[crates.jit-opt-in]
+>
+> The JIT is its own package, reached only through an opt-in — in Rust, a `jit`
+> Cargo feature on the front-door crate. With it off, the JIT's machinery is not
+> compiled and the engine runs the interpreter; with it on, the typed API routes
+> through the JIT. A platform that cannot allocate executable memory simply never
+> enables it.
+
+## Rust — six crates
+
+```
+phon-schema    Schema, SchemaKind, SchemaRef, Primitive, ChannelDirection,
+               Field, Variant, SchemaId + identity hash, Value, the
+               self-describing codec.
+               deps: blake3, facet_value.   (no facet-derive, no engine)
+
+phon-ir        the IR both backends run, the Descriptor model, and thunk
+               bindings — the shared vocabulary of execution.
+               deps: phon-schema.
+
+phon-engine    compact codec, compatibility planning (schema + descriptor ->
+               IR), and the interpreter (runs IR). the backend-blind baseline.
+               deps: phon-schema, phon-ir.   (no facet)
+
+phon-jit       copy-and-patch JIT: IR -> machine code via rustc/LLVM stencils.
+               deps: phon-ir.   (no facet; opt-in)
+
+phon           the front door. facet -> schema + descriptor, typed
+               encode::<T> / decode::<T>. `jit` feature pulls phon-jit and
+               routes the typed API through it.
+               deps: phon-engine, phon-schema, facet [+ phon-jit if `jit`].
+
+phon-codegen   the codegen tool: reads Rust types (facet) or schema bundles,
+               emits target-language source + schema-bytes constants.
+               deps: phon-schema, facet.
+```
+
+Only `phon` and `phon-codegen` depend on facet. `phon-ir`, `phon-engine`, and
+`phon-jit` cannot, which is `r[crates.engine-is-binding-free]` made concrete.
+The `jit` feature on `phon` is the "enable a feature, get the JIT" ergonomics:
+the machinery is absent unless the feature is on, and the feature is simply not
+enabled on targets that forbid executable memory. Because `phon-ir` defines the
+IR up front and the interpreter in `phon-engine` is its first consumer, the JIT
+is a second consumer of an IR that exists from the first commit — JIT-ready by
+construction, not retrofitted.
+
+## Swift — the same four concerns
+
+As Swift Package Manager modules: `PhonSchema`, `PhonIR`, `PhonEngine`,
+`PhonJIT` (copy-and-patch via swiftc/LLVM), and `Phon` (the binding: probes the
+Swift runtime for descriptors, offers the typed API). The split mirrors Rust;
+only the binding differs (runtime probing instead of facet). Swift consumes
+codegen output, so there is no Swift codegen module.
+
+## TypeScript — where it diverges
+
+As npm packages: `@phon/schema`, `@phon/engine`, and `@phon/core` (the front
+door). TypeScript has no descriptor model — values are GC'd objects with no
+offsets — so its binding is codegen-emitted property accessors, and the engine
+consumes accessor functions rather than descriptor data. Its JIT is generated
+JavaScript passed to `new Function()`, light enough to live inside
+`@phon/engine` rather than a separate package. TypeScript consumes codegen
+output too.
+
+## Where vox sits
+
+phon is the format-and-engine layer; [vox](https://github.com/bearcove/vox) is
+the RPC layer above it. Migrating vox onto phon means vox drops its
+`vox-schema` / `vox-postcard` / `vox-jit` crates and depends on `phon-schema` /
+`phon-engine` / `phon-jit`, keeping its own RPC core, transports, fd-passing,
+and FFI. phon owns the wire and the engine; vox owns sessions, dispatch,
+channels, and everything stateful.
+
 # Language implementations
 
 Everything above is the portable contract: the wire format, schema identity,
