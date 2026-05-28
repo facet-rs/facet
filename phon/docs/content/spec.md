@@ -49,4 +49,29 @@ description = "Typed binary format and execution engine"
 > r[schemas-vs-descriptors]
 > 
 > Schemas describe what goes on the wire: in the case of the `Point` struct from earlier,
-> a `u32` and then an `f64`.
+> a `u32` and then an `f64`. It does not tell us how a `Point` value is represented in memory.
+>
+> In Rust, it might be represented as:
+>
+> ```rust
+> struct Point { x: u32, y: f64 }
+>
+> // print-type-size type: `Point`: 16 bytes, alignment: 8 bytes
+> // print-type-size     field `.y`: 8 bytes
+> // print-type-size     field `.x`: 4 bytes
+> // print-type-size     end padding: 4 bytes
+> ```
+>
+> Or perhaps:
+>
+> ```rust
+> #[repr(C)]
+> struct PointC { x: u32, y: f64 }
+>
+> // print-type-size type: `PointC`: 16 bytes, alignment: 8 bytes
+> // print-type-size     field `.x`: 4 bytes
+> // print-type-size     padding: 4 bytes
+> // print-type-size     field `.y`: 8 bytes, alignment: 8 bytes
+> ```
+>
+> Which have different layouts.
