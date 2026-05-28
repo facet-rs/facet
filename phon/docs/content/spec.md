@@ -211,7 +211,8 @@ pub enum SchemaKind {
     List { element: SchemaRef },
     Set { element: SchemaRef },
     Map { key: SchemaRef, value: SchemaRef },
-    Array { element: SchemaRef, length: u64 },
+    Array { element: SchemaRef, dimensions: Vec<u64> },
+    Tensor { element: SchemaRef, rank: Option<u32> },
     Option { element: SchemaRef },
     Channel { direction: ChannelDirection, element: SchemaRef },
     Dynamic,
@@ -224,8 +225,30 @@ pub enum ChannelDirection {
 }
 ```
 
-`Struct`, `Enum`, `Tuple`, `List`, `Set`, `Map`, `Array`, and `Option` are the
-shapes you'd expect. `Channel`, `Dynamic`, and `External` deserve a note:
+`Struct`, `Enum`, `Tuple`, `List`, `Set`, `Map`, and `Option` are the shapes
+you'd expect. `Array`, `Tensor`, `Channel`, `Dynamic`, and `External` deserve a
+note:
+
+> r[type-system.array]
+>
+> An `Array` has a fixed shape known at the schema level: `dimensions` lists the
+> size of each axis. `[u8; 32]` is `Array { element: u8, dimensions: [32] }`;
+> `[[f32; 256]; 256]` is `dimensions: [256, 256]`. The shape is part of schema
+> identity, so two arrays of different shape are different types. On the wire the
+> elements are a flat row-major run — the dimensions are not repeated, because
+> the schema already has them — which makes a scalar-element array borrowable as
+> one contiguous slice.
+
+> r[type-system.tensor]
+>
+> A `Tensor` has a runtime shape carried on the wire, for n-dimensional data
+> whose dimensions vary per value — `ndarray`'s arrays, audio buffers, model
+> activations. `rank` is `Some(r)` for a fixed number of axes (a 2-D `Array2`
+> is `rank: Some(2)`) or `None` for fully dynamic rank (`ArrayD`). The
+> dimension *sizes* are never in the schema or its identity; only `element` and
+> `rank` are. On the wire a tensor writes its dimension sizes, then its elements
+> as a flat row-major run. The distinction from `Array` is exactly fixed shape
+> (in the schema, in identity) versus runtime shape (on the wire, per value).
 
 > r[type-system.channel]
 >
@@ -258,10 +281,6 @@ shapes you'd expect. `Channel`, `Dynamic`, and `External` deserve a note:
 > channel; `metadata` describes the payload to the transport without revealing
 > its content.
 
-`Array` has a fixed `length` known at the schema level: `[u32; 4]` is
-`Array { element: u32, length: 4 }`. Multi-dimensional arrays nest — `[[u32; 4]; 3]`
-is an `Array` of length 3 whose element is an `Array` of length 4, not a
-`List<List<u32>>`.
 
 ## Schema references
 
@@ -485,8 +504,9 @@ decoded.
 > The bytes fed to BLAKE3 are a deterministic encoding of the schema's
 > structure: the kind discriminant, then per kind, the names (struct name,
 > field names, variant names, type parameter names), variant indices, field
-> `required` flags, channel direction, the primitive kind, array length, and the
-> nested `SchemaRef`s — all in declaration order, with strings length-prefixed
+> `required` flags, channel direction, the primitive kind, array dimensions,
+> tensor rank, and the nested `SchemaRef`s — all in declaration order, with
+> strings length-prefixed
 > and nested concrete references encoded by the referenced `SchemaId`. The `id`
 > field is never fed into its own hash. Every implementation encodes this
 > identically, which is what makes the hash reproducible across languages.
@@ -568,12 +588,13 @@ The tags and their bodies:
 | 0x11 | list          | u32 LE element count, then that many values                     |
 | 0x12 | set           | u32 LE element count, then that many values                     |
 | 0x13 | map           | u32 LE entry count, then that many `key` `value` value pairs    |
-| 0x14 | array         | u32 LE length, then that many elements                          |
+| 0x14 | array         | u32 LE rank, then `rank` u64 LE dimensions, then the elements   |
 | 0x15 | tuple         | u32 LE element count, then that many values                     |
 | 0x16 | struct        | name string, u32 LE field count, then that many `name` `value`  |
 | 0x17 | enum          | variant name string, then the variant's payload value(s)       |
 | 0x18 | option-none   | none                                                            |
 | 0x19 | option-some   | one value                                                       |
+| 0x1A | tensor        | u32 LE rank, then `rank` u64 LE dimensions, then the elements   |
 
 A few things worth calling out:
 
@@ -585,8 +606,11 @@ A few things worth calling out:
 - An enum carries the variant *name*, not its index. A self-describing decoder
   has no schema to map an index back to a name, so the name is the only
   meaningful identifier.
-- `array` carries its length in the body, because without a schema there is
+- `array` carries its shape in the body, because without a schema there is
   nowhere else for it to live. Compact mode, which has the schema, omits it.
+  `tensor` always carries its shape — its shape is runtime even in compact mode
+  — so the two have identical bodies here and differ only by tag and by where
+  the shape comes from in compact mode.
 - there is no tag for `channel`: channel values appear only in compact,
   schema-known contexts, never in self-describing form (see
   `r[type-system.channel]`).
@@ -633,7 +657,11 @@ but not how many:
 - `option`: one byte, `0x00` none or `0x01` some, then the value if some
 - `enum`: the variant *index* as u32 LE (the schema lists variants by index;
   the name is not needed and not sent), then the payload
-- `array`: nothing extra — the length is in the schema; just the elements
+- `array`: nothing extra — the shape is in the schema; just the elements, a
+  flat row-major run of `product(dimensions)` of them
+- `tensor`: the dimension sizes (each u64 LE), then the elements as a flat
+  row-major run. If the schema fixes `rank` to `Some(r)`, exactly `r` sizes are
+  written; if `rank` is `None`, a u32 LE rank precedes the sizes
 - `channel`: a `u64` LE transport handle (see `r[type-system.channel]`)
 - `struct`, `tuple`: nothing extra — fields and arity are in the schema; just
   the values in declaration order
@@ -810,12 +838,17 @@ possible; translation is how it's done.
 > r[compat.type-match]
 >
 > Matched fields are compatible only when a rule says so. The same primitive is
-> compatible with itself. The same container kind (list, set, map, option,
-> array) is compatible when its element types are compatible. A tuple is
-> compatible with a tuple of the same arity and pairwise-compatible elements. A
-> struct is compatible when its field plan builds. Numeric widening is not
-> implicit: `u32` and `u64` are different types, and a value written as one is
-> not readable as the other unless a future rule adds an explicit conversion.
+> compatible with itself. The same container kind (list, set, map, option) is
+> compatible when its element types are compatible. A tuple is compatible with a
+> tuple of the same arity and pairwise-compatible elements. An array is
+> compatible with an array of compatible element type and identical
+> `dimensions` (shape is part of an array's contract). A tensor is compatible
+> with a tensor of compatible element type and identical `rank` — the dimension
+> sizes are runtime, so they are not a schema-compatibility question (a decoder
+> may still validate them per value). A struct is compatible when its field plan
+> builds. Numeric widening is not implicit: `u32` and `u64` are different types,
+> and a value written as one is not readable as the other unless a future rule
+> adds an explicit conversion.
 
 > r[compat.enum]
 >
@@ -1023,9 +1056,12 @@ pub enum Access {
     /// none / some.
     Option(OptionAccess),
 
-    /// A fixed-size array: `count` elements inline, `stride` apart. No
-    /// allocation, direct both ways.
+    /// A fixed-shape array: `count` elements inline (the product of the
+    /// schema's dimensions), `stride` apart, no allocation, direct both ways.
     Array { element: Box<Descriptor>, count: usize, stride: usize },
+
+    /// A runtime-shape tensor (ndarray and friends).
+    Tensor(TensorAccess),
 
     /// A dynamic homogeneous sequence (list, set) or byte sequence
     /// (string, bytes).
@@ -1133,6 +1169,13 @@ pub struct MapAccess {
     pub insert: Thunk,      // decode: insert a decoded pair
 }
 
+pub struct TensorAccess {
+    pub element: Box<Descriptor>,
+    pub shape: Thunk,           // encode: read the dimension sizes
+    pub data: SequenceStorage,  // the flat row-major elements; Borrowed when contiguous
+    pub reshape: Thunk,         // decode: give the filled flat data its shape
+}
+
 pub struct Thunk {
     pub name: String,   // resolved to a function pointer by the binding
 }
@@ -1157,9 +1200,11 @@ pub struct Thunk {
 > fragmented across frames, a misaligned array — the engine copies the run into
 > a decode-scoped arena that shares the value's lifetime, still without
 > allocating a per-value owned container. Borrowing applies only where the wire
-> bytes equal the memory bytes: scalars, `bytes`, `string`, and arrays of those.
-> A `&[T]` of non-scalar `T` cannot borrow, because the wire and memory layouts
-> differ; it is `Owned` or `Thunk` instead.
+> bytes equal the memory bytes: scalars, `bytes`, `string`, arrays of those, and
+> the element data of a contiguous (standard-layout) tensor. A `&[T]` of
+> non-scalar `T` cannot borrow, because the wire and memory layouts differ; it is
+> `Owned` or `Thunk` instead, and a strided or non-contiguous tensor view falls
+> back the same way.
 
 Borrowed storage is the heart of zero-copy decoding. A wire format that always
 allocated would make the alignment work in `r[compact.alignment]` pointless;
