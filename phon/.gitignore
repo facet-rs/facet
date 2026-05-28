@@ -1,3 +1,5 @@
 target/
 .DS_Store
 *.swp
+probes/*/point-layout
+probes/**/*.dSYM

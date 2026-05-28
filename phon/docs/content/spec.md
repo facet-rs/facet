@@ -75,3 +75,14 @@ description = "Typed binary format and execution engine"
 > ```
 >
 > Which have different layouts.
+>
+> Or, in Swift, where structs are not reordered by default, the layout would match the `#[repr(C)]` variant:
+>
+> ```swift
+> struct Point { var x: UInt32; var y: Double }
+>
+> // print-type-size type: `Point`: 16 bytes, alignment: 8 bytes
+> // print-type-size     field `.x`: 4 bytes
+> // print-type-size     padding: 4 bytes
+> // print-type-size     field `.y`: 8 bytes
+> ```
