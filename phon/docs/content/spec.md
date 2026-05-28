@@ -303,6 +303,15 @@ parameter declared by an enclosing schema's `type_params`.
 > Concrete uses of the schema bind the parameters by supplying `args` in the
 > `Concrete` reference.
 
+> r[type-system.generic-resolution]
+>
+> To use a parametric schema — to decode a value or to compare it for
+> compatibility — the engine resolves the reference: it looks up the schema by
+> id, zips its `type_params` with the `args` from the `Concrete` reference, and
+> substitutes each `Var(name)` with the bound type. Resolution is recursive (an
+> arg may itself be parametric) and happens at plan-build time, so the resulting
+> plan is fully concrete and the per-value decode path never encounters a `Var`.
+
 ## Primitives
 
 ```rust
@@ -845,10 +854,15 @@ possible; translation is how it's done.
 > `dimensions` (shape is part of an array's contract). A tensor is compatible
 > with a tensor of compatible element type and identical `rank` — the dimension
 > sizes are runtime, so they are not a schema-compatibility question (a decoder
-> may still validate them per value). A struct is compatible when its field plan
-> builds. Numeric widening is not implicit: `u32` and `u64` are different types,
-> and a value written as one is not readable as the other unless a future rule
-> adds an explicit conversion.
+> may still validate them per value). A channel is compatible with a channel of
+> the same `direction`; its element compatibility is enforced when the stream's
+> items are decoded, each as its own message, not at the channel itself. A
+> struct is compatible when its field plan builds. Numeric widening is not
+> implicit: `u32` and `u64` are different types, and a value written as one is
+> not readable as the other unless a future rule adds an explicit conversion.
+>
+> Parametric references are resolved (per `r[type-system.generic-resolution]`)
+> before matching; compatibility is decided on the resolved forms.
 
 > r[compat.enum]
 >
@@ -861,10 +875,13 @@ possible; translation is how it's done.
 
 > r[compat.direction]
 >
-> A compatibility check between two schema versions reports a direction:
-> backward (the newer schema can read the older), forward (the older can read
-> the newer), bidirectional (both), or incompatible (at least one required plan
-> can't be built). A report should name the schema path and the reason for each
+> The runtime builds one-directional plans on demand — writer schema to reader
+> schema — and fails if one can't be built; that is all decoding needs.
+> Separately, tooling may offer a direction report between two schema versions,
+> built by planning both ways: backward (the newer reads the older), forward
+> (the older reads the newer), bidirectional, or incompatible. This is a
+> schema-evolution aid (a CI check before deploy), not part of the decode path.
+> Such a report should name the schema path and the reason for each
 > incompatibility.
 
 # External payloads
