@@ -290,13 +290,14 @@ top of phon." `Unit` is the value-less type (Rust's `()`, Swift's `Void`);
 pub struct Field {
     pub name: String,
     pub schema: SchemaRef,
-    pub required: bool,
 }
 ```
 
-A struct's fields name a schema (possibly parametric) and declare whether the
-field is required. Non-required fields can be omitted by a writer that doesn't
-have one to send; required fields can't.
+A struct's fields each have a name and a schema, which may itself be parametric.
+There is no "required" or "optional" flag. Optionality *within a value* is the
+field's schema being an `Option`. Presence *across schema versions* — a field
+one peer has and the other doesn't — is handled by compatibility and
+reader-side defaults (see [Compatibility](#compatibility)), not by a flag here.
 
 ## Variants
 
@@ -589,7 +590,8 @@ wire size beats decode speed for some deployment.)
 
 ## Alignment
 
-This is where compact mode earns the zero-copy property from `r[zero-copy]`.
+This is where compact mode enables zero-copy reads — a receiver borrowing a
+primitive array straight out of the input buffer instead of copying it out.
 
 A receiver decoding a `[u32]` should be able to borrow it as a slice pointing
 straight into the input buffer, no copy. That only works if those bytes sit at
@@ -623,6 +625,14 @@ responsibility.
 > affected scalars and arrays into aligned storage instead of borrowing. The
 > decoded value is identical; only the zero-copy optimization is forfeited.
 
+Fragmentation interacts with this. A borrow requires the value to be contiguous
+in one buffer. A value split across frames during incremental decode
+(`r[incremental-decoding]`) is not contiguous, so it cannot be borrowed and is
+copied into contiguous storage as its bytes arrive. Borrowing is therefore a
+best-effort optimization available when a value lands whole in one aligned
+buffer — not a guarantee. Alignment padding is always written regardless, so a
+value that *does* land whole stays borrowable.
+
 Padding is wasted bytes, so field order matters. phon writes fields in schema
 declaration order and never reorders, because the wire order is part of what
 the schema pins down. A schema author minimizes padding the same way they would
@@ -639,3 +649,129 @@ the same shapes — little-endian scalars, u32-length-prefixed sequences,
 in-order struct fields. An implementation's two decoders share most of their
 machinery; the compact decoder is the self-describing decoder with the tags
 removed and the schema supplying the kinds instead.
+
+# Compatibility
+
+Two peers drift. The reader receives bytes written against the writer's schema
+and has to produce a value of its own type. Compatibility is whether that's
+possible; translation is how it's done.
+
+> r[compat.plan-first]
+>
+> Before decoding any compact bytes, the reader builds a translation plan from
+> the writer schema to its own schema. If the plan cannot be built, the schemas
+> are incompatible and decoding must not begin. You find out before touching
+> the payload, not partway through it.
+
+> r[compat.field-matching]
+>
+> Struct fields are matched by name, not by declaration position. The plan maps
+> each writer field position to a reader field position before any bytes are
+> read. Reordering fields between versions is transparent.
+
+> r[compat.skip-writer-only]
+>
+> A field present in the writer schema but absent from the reader schema is
+> skipped: the reader walks the writer schema to step over that field's bytes.
+> Compact mode has no per-field length wrappers, so skipping means decoding the
+> field by its schema and discarding it, not jumping a stored length.
+
+> r[compat.reader-only-fields]
+>
+> A field present in the reader schema but absent from the writer schema must be
+> filled with a default. Whether a default exists is a reader-side capability,
+> determined when the plan is built. If a reader field has no default and the
+> writer can't supply it, the plan fails and the schemas are incompatible.
+
+> r[compat.defaults-are-reader-side]
+>
+> phon schemas do not carry default values. A default is the reader's business
+> — it lives in the reader's language mapping (Rust's `Default`, a
+> codegen-emitted initializer, and so on) and is never part of the schema or
+> its identity. This keeps `SchemaId` purely structural and lets each language
+> fill missing fields its own way. Tooling may track defaultability separately
+> — no default, an opaque default, or a literal default value — for
+> cross-language analysis, but that metadata is not part of the schema and not
+> fed to the hash.
+
+> r[compat.type-match]
+>
+> Matched fields are compatible only when a rule says so. The same primitive is
+> compatible with itself. The same container kind (list, set, map, option,
+> array) is compatible when its element types are compatible. A tuple is
+> compatible with a tuple of the same arity and pairwise-compatible elements. A
+> struct is compatible when its field plan builds. Numeric widening is not
+> implicit: `u32` and `u64` are different types, and a value written as one is
+> not readable as the other unless a future rule adds an explicit conversion.
+
+> r[compat.enum]
+>
+> Enum variants are matched by name, and the plan maps writer variant indices
+> to reader variant indices. A reader variant the writer lacks is fine — the
+> writer can't produce it. A writer variant the reader lacks is structurally
+> skippable, but actually receiving that variant at runtime is a decode error
+> for that value. Variants present in both must have matching payload shapes:
+> unit with unit, newtype with newtype, tuple with tuple, struct with struct.
+
+> r[compat.direction]
+>
+> A compatibility check between two schema versions reports a direction:
+> backward (the newer schema can read the older), forward (the older can read
+> the newer), bidirectional (both), or incompatible (at least one required plan
+> can't be built). A report should name the schema path and the reason for each
+> incompatibility.
+
+# External payloads
+
+Putting a large payload through the wire format means copying it at every
+buffer boundary it crosses. For an RPC between two processes on the same
+machine, a 100 MB blob serialized inline gets copied out of the sender's heap,
+into a kernel buffer, into the receiver's read buffer, into a decode buffer,
+and out into whatever the receiver hands the application — several 100 MB
+memcpys for data that never had to leave physical memory. That is the cost
+`External` exists to avoid.
+
+> r[external.handle-in-band]
+>
+> An `External` value occupies no payload bytes in the message. Its in-band
+> form is the unit value. The actual bytes travel through a side channel the
+> transport provides, identified by the schema's `kind` field; the `metadata`
+> describes the payload to the transport without inlining it.
+
+> r[external.transport-channel]
+>
+> The side channel is the transport's choice: shared memory between
+> same-machine peers (map a region once, pass the identifier, both sides see
+> the bytes), file-descriptor passing over a Unix socket, a content-addressed
+> blob store, anything that beats copying. phon defines the in-band handle and
+> defers the channel to the transport, the same way it defers framing.
+
+> r[external.borrow-on-receive]
+>
+> On the receiving side, an `External` value yields a borrow — a pointer and a
+> length — into wherever the side channel placed the bytes, exactly as an
+> inline byte field yields a borrow into the wire buffer. The receiver cannot
+> tell the difference and pays a copy only if it asks for an owned value.
+
+# Codegen
+
+phon schemas come from Rust types via facet (see [Base concepts](#base-concepts)).
+Codegen turns those schemas into source for the other languages a system
+speaks.
+
+> r[codegen.emits]
+>
+> For each target language, codegen emits two things per schema: the type
+> definitions a programmer writes against, and the schema itself as a constant
+> — the self-describing phon bytes of the `Schema` value, ready to hand across
+> the C API or load at startup. The peer ships with its schemas baked in and
+> never derives or fetches them at runtime.
+
+> r[codegen.schema-is-source-of-truth]
+>
+> A non-Rust peer never re-derives a schema from its generated types. The
+> schema bytes emitted from the Rust-side schema are the source of truth; the
+> generated types exist for the programmer's convenience. This guarantees the
+> peer's `SchemaId` matches the Rust origin exactly — a peer that re-derived
+> from, say, TypeScript types might hash to something different, because the
+> mapping from phon types to a given language is not always one-to-one.
