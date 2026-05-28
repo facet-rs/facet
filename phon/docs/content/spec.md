@@ -211,22 +211,44 @@ pub enum SchemaKind {
     List { element: SchemaRef },
     Set { element: SchemaRef },
     Map { key: SchemaRef, value: SchemaRef },
-    Array { element: SchemaRef, dimensions: Vec<u64> },
+    Array { element: SchemaRef, length: u64 },
     Option { element: SchemaRef },
+    Channel { direction: ChannelDirection, element: SchemaRef },
     Dynamic,
     External { kind: String, metadata: Value },
+}
+
+pub enum ChannelDirection {
+    Tx,  // the sending end
+    Rx,  // the receiving end
 }
 ```
 
 `Struct`, `Enum`, `Tuple`, `List`, `Set`, `Map`, `Array`, and `Option` are the
-shapes you'd expect. Three deserve a note:
+shapes you'd expect. `Channel`, `Dynamic`, and `External` deserve a note:
+
+> r[type-system.channel]
+>
+> A `Channel` is a stream of values of its `element` type in the given
+> `direction` — `Tx` sending, `Rx` receiving. It comes from a streaming RPC
+> signature (vox's `Tx<T>` / `Rx<T>`). The *type* lives in the schema so codegen
+> and dispatch know a stream of `element` flows here; the *value* on the wire is
+> a transport-assigned handle (a `u64`). The stream's items, lifecycle, and
+> backpressure are the transport's, carried as separate messages. phon encodes
+> the handle and knows the element type; it does not run the stream. In the
+> descriptor model a channel is `Opaque` — the transport binds thunks that turn
+> a local endpoint into a handle on encode and a handle into a local endpoint on
+> decode. Channel values appear only in compact, schema-known contexts, never in
+> self-describing form.
 
 > r[type-system.dynamic]
 >
 > A `Dynamic` value carries any phon value, encoded in self-describing form,
-> regardless of what schema produced it. It's the escape hatch when the
-> receiver shouldn't have to know the value's type ahead of time — at the cost
-> of the bandwidth and validation that compact form provides for that subtree.
+> regardless of what schema produced it. It is how a `facet_value::Value` — a
+> value whose type isn't known at the schema level — goes on the wire, and the
+> escape hatch anywhere a receiver shouldn't need the type ahead of time, at the
+> cost of the bandwidth and validation compact form gives the rest of the
+> message.
 
 > r[type-system.external]
 >
@@ -236,9 +258,10 @@ shapes you'd expect. Three deserve a note:
 > channel; `metadata` describes the payload to the transport without revealing
 > its content.
 
-`Array` differs from `List` by having fixed dimensions known at the schema
-level. A `[[u32; 4]; 3]` is an `Array { element: u32, dimensions: [3, 4] }`,
-not a `List<List<u32>>`.
+`Array` has a fixed `length` known at the schema level: `[u32; 4]` is
+`Array { element: u32, length: 4 }`. Multi-dimensional arrays nest — `[[u32; 4]; 3]`
+is an `Array` of length 3 whose element is an `Array` of length 4, not a
+`List<List<u32>>`.
 
 ## Schema references
 
@@ -290,14 +313,18 @@ top of phon." `Unit` is the value-less type (Rust's `()`, Swift's `Void`);
 pub struct Field {
     pub name: String,
     pub schema: SchemaRef,
+    pub required: bool,
 }
 ```
 
-A struct's fields each have a name and a schema, which may itself be parametric.
-There is no "required" or "optional" flag. Optionality *within a value* is the
-field's schema being an `Option`. Presence *across schema versions* — a field
-one peer has and the other doesn't — is handled by compatibility and
-reader-side defaults (see [Compatibility](#compatibility)), not by a flag here.
+A struct's fields each have a name, a schema (which may be parametric), and a
+`required` flag. `required` means the field has no default and must be present;
+a non-required field is one the source type can default, so a reader can supply
+it when a writer doesn't (see [Compatibility](#compatibility)). The default
+*value* is reader-side — the schema records only the boolean. `required` is part
+of schema identity, because required-versus-optional is a real contract
+difference. Optionality of the value itself — none-or-some — is a separate thing,
+expressed by the field's schema being an `Option`.
 
 ## Variants
 
@@ -457,12 +484,12 @@ decoded.
 >
 > The bytes fed to BLAKE3 are a deterministic encoding of the schema's
 > structure: the kind discriminant, then per kind, the names (struct name,
-> field names, variant names, type parameter names), variant indices, the
-> primitive kind, array dimensions, and the nested `SchemaRef`s — all in
-> declaration order, with strings length-prefixed and nested concrete
-> references encoded by the referenced `SchemaId`. The `id` field is never fed
-> into its own hash. Every implementation encodes this identically, which is
-> what makes the hash reproducible across languages.
+> field names, variant names, type parameter names), variant indices, field
+> `required` flags, channel direction, the primitive kind, array length, and the
+> nested `SchemaRef`s — all in declaration order, with strings length-prefixed
+> and nested concrete references encoded by the referenced `SchemaId`. The `id`
+> field is never fed into its own hash. Every implementation encodes this
+> identically, which is what makes the hash reproducible across languages.
 
 Everything structural is in the hash; there is nothing non-structural in a
 phon schema to leave out (no doc comments, no annotations travel on the wire).
@@ -541,7 +568,7 @@ The tags and their bodies:
 | 0x11 | list          | u32 LE element count, then that many values                     |
 | 0x12 | set           | u32 LE element count, then that many values                     |
 | 0x13 | map           | u32 LE entry count, then that many `key` `value` value pairs    |
-| 0x14 | array         | u32 LE rank, then `rank` u32 LE dimensions, then the elements   |
+| 0x14 | array         | u32 LE length, then that many elements                          |
 | 0x15 | tuple         | u32 LE element count, then that many values                     |
 | 0x16 | struct        | name string, u32 LE field count, then that many `name` `value`  |
 | 0x17 | enum          | variant name string, then the variant's payload value(s)       |
@@ -558,9 +585,11 @@ A few things worth calling out:
 - An enum carries the variant *name*, not its index. A self-describing decoder
   has no schema to map an index back to a name, so the name is the only
   meaningful identifier.
-- `array` carries its rank and dimensions in the body, because without a
-  schema there is nowhere else for them to live. Compact mode, which has the
-  schema, omits them.
+- `array` carries its length in the body, because without a schema there is
+  nowhere else for it to live. Compact mode, which has the schema, omits it.
+- there is no tag for `channel`: channel values appear only in compact,
+  schema-known contexts, never in self-describing form (see
+  `r[type-system.channel]`).
 
 > r[self-describing.no-extra-kinds]
 >
@@ -604,7 +633,8 @@ but not how many:
 - `option`: one byte, `0x00` none or `0x01` some, then the value if some
 - `enum`: the variant *index* as u32 LE (the schema lists variants by index;
   the name is not needed and not sent), then the payload
-- `array`: nothing extra — dimensions are in the schema; just the elements
+- `array`: nothing extra — the length is in the schema; just the elements
+- `channel`: a `u64` LE transport handle (see `r[type-system.channel]`)
 - `struct`, `tuple`: nothing extra — fields and arity are in the schema; just
   the values in declaration order
 
@@ -724,16 +754,14 @@ cheaply (a method identifier) versus the bulk payload. That is the HTTP/2 model,
 and it is the reference shape for vox's transport. It is guidance — phon's
 actual requirements are only the three rules above.
 
-phon also doesn't model streams. A long-lived stream of values — a vox channel,
-a server-pushed sequence — is not a phon value; it is a series of independent
-phon messages that the framing layer associates with a channel. A stream handle
-that appears in a method signature (vox's `Tx<T>` / `Rx<T>`) is carried as an
-ordinary phon value: a channel identifier, typically a `u64`. The items
-themselves flow as separate messages, each encoded and decoded by phon on its
-own. The stream's identity, lifecycle, and backpressure belong to the framing
-layer; phon never sees "a stream," only the individual values and the channel-id
-handle. This absence is deliberate — streaming is framing over phon, not a phon
-construct.
+phon models a channel's *type* but not its *operation*. The `Channel` schema
+kind (see `r[type-system.channel]`) records direction and element type, so
+codegen and dispatch know a stream of `Event` flows here — but phon does not run
+the stream. A channel value on the wire is a transport-assigned `u64` handle;
+the items flow as separate phon messages the framing layer associates with that
+handle, and the stream's identity, lifecycle, and backpressure are the framing
+layer's. phon encodes the handle and knows the element type; everything dynamic
+about the stream lives above phon.
 
 # Compatibility
 
@@ -763,21 +791,21 @@ possible; translation is how it's done.
 
 > r[compat.reader-only-fields]
 >
-> A field present in the reader schema but absent from the writer schema must be
-> filled with a default. Whether a default exists is a reader-side capability,
-> determined when the plan is built. If a reader field has no default and the
-> writer can't supply it, the plan fails and the schemas are incompatible.
+> A field present in the reader schema but absent from the writer schema is
+> governed by its `required` flag. A `required` reader field absent from the
+> writer makes the plan fail — the schemas are incompatible. A non-required
+> reader field absent from the writer is filled with the reader's default value.
 
 > r[compat.defaults-are-reader-side]
 >
-> phon schemas do not carry default values. A default is the reader's business
-> — it lives in the reader's language mapping (Rust's `Default`, a
-> codegen-emitted initializer, and so on) and is never part of the schema or
-> its identity. This keeps `SchemaId` purely structural and lets each language
-> fill missing fields its own way. Tooling may track defaultability separately
-> — no default, an opaque default, or a literal default value — for
-> cross-language analysis, but that metadata is not part of the schema and not
-> fed to the hash.
+> The schema carries *whether* a field has a default — that is the `required`
+> flag, and it is part of schema identity, because required-versus-optional is a
+> real contract difference. The schema does not carry the default *value*: that
+> is the reader's business, living in the reader's language mapping (Rust's
+> `Default`, a codegen-emitted initializer), and applied when a non-required
+> field is absent from the writer. Two readers of the same schema may fill
+> different values; both are correct. Tooling may track the value for
+> cross-language analysis, but the schema records only the boolean.
 
 > r[compat.type-match]
 >
