@@ -859,35 +859,245 @@ Execution shares a shape across all implementations:
 > teach the JIT next. Strict mode is a diagnostic, not a production execution
 > mode.
 
+## The descriptor model
+
+A schema says what bytes go on the wire. It says nothing about where a value's
+pieces live in memory — and they have to live somewhere for an encoder to read
+them or a decoder to build them. That "where" is the descriptor.
+
+A descriptor is a tree shaped like the schema, each node annotated with the
+process-local facts needed to read that part of the value (encode) and
+construct it (decode). It is never transmitted, never hashed, never part of
+schema identity. It is true for exactly one type, in one language, in one
+build, in one process.
+
+Descriptors are shared between the memory-layout implementations, Rust and
+Swift. TypeScript has none — its values are objects accessed by property, with
+no offsets to describe.
+
+Every node carries its facts in one of two forms:
+
+- **Direct facts** — offsets, strides, tag locations, niche patterns —
+  concrete enough that the engine reads or writes memory itself, with no help
+  from the backend. A plain struct's fields sit at known offsets; the engine
+  reads them directly.
+- **Thunks** — named functions the backend provides, for everything direct
+  facts can't express. A hash map's internal layout is opaque, so iterating it
+  to encode and inserting into it to decode go through backend thunks. A Swift
+  existential is opaque end to end.
+
+> r[descriptors.backend-blind]
+>
+> The execution engine — interpreter or JIT — consumes descriptors and thunk
+> bindings only. It never branches on which language produced a descriptor.
+> Direct facts it lowers to memory operations; thunks it lowers to calls
+> resolved through the binding the caller supplied. Rust-produced facts and
+> Swift-produced facts flow through identical engine code. There is no
+> language-specific path in the engine.
+
+Reading a value and constructing one are not symmetric, and the descriptor
+reflects that. Reading is usually direct: the value already exists in memory,
+and offsets are enough to walk it. Constructing often is not — allocating a
+vector's backing buffer, inserting into a hash map, initializing a type with
+internal invariants — and needs the backend's cooperation. So a node commonly
+has direct read facts and a thunked construct path.
+
+> r[descriptors.encode-decode-asymmetry]
+>
+> A descriptor node may provide direct facts for one direction and a thunk for
+> the other. Encoding — reading an existing value — is commonly direct.
+> Decoding — constructing a value — commonly needs a backend thunk for
+> allocation, insertion, or controlled initialization. The engine uses whatever
+> the node provides for the direction it is running.
+
+The model, in the same Rust notation the type system uses. These are not wire
+types: no `SchemaId`, never serialized, process-local only.
+
+```rust
+pub struct Descriptor {
+    pub schema: SchemaRef,   // the schema this realizes
+    pub layout: Layout,      // process-local size and alignment
+    pub access: Access,      // how to read and construct it
+}
+
+pub struct Layout {
+    pub size: usize,
+    pub align: usize,
+}
+
+pub enum Access {
+    /// Fixed-width scalar whose in-memory bytes equal its wire bytes: bool,
+    /// the integer and float primitives, char. Copy `layout.size` bytes either
+    /// direction. (Assumes the host matches wire endianness, which every phon
+    /// target does; a host that didn't would thunk or byteswap instead.)
+    Scalar,
+
+    /// A struct or tuple: fields at fixed offsets.
+    Record(RecordAccess),
+
+    /// A sum type: an active variant chosen by a tag, a payload per variant.
+    Enum(EnumAccess),
+
+    /// none / some.
+    Option(OptionAccess),
+
+    /// A fixed-size array: `count` elements inline, `stride` apart. No
+    /// allocation, direct both ways.
+    Array { element: Box<Descriptor>, count: usize, stride: usize },
+
+    /// A dynamic homogeneous sequence (list, set) or byte sequence
+    /// (string, bytes).
+    Sequence(SequenceAccess),
+
+    /// Key / value pairs.
+    Map(MapAccess),
+
+    /// The whole subtree is backend-handled: no direct facts apply.
+    Opaque { encode: Thunk, decode: Thunk },
+}
+
+pub struct RecordAccess {
+    pub fields: Vec<FieldAccess>,
+    pub construct: Construct,
+}
+
+pub struct FieldAccess {
+    pub offset: usize,
+    pub descriptor: Descriptor,
+}
+
+pub enum Construct {
+    /// Decode writes each field into its offset in uninitialized storage; the
+    /// value is valid once all fields are written. Plain structs and tuples.
+    InPlace,
+    /// Decode fills a scratch buffer, then a thunk builds the real value from
+    /// it. Types with construction invariants, backends that can't be poked
+    /// field by field.
+    Thunk(Thunk),
+}
+
+pub struct EnumAccess {
+    pub tag: Tag,
+    pub variants: Vec<VariantAccess>,
+}
+
+pub enum Tag {
+    /// An integer discriminant `width` bytes wide at `offset`. The value read
+    /// there matches one variant's `selector`.
+    Direct { offset: usize, width: usize },
+    /// A niche: the discriminating region overlaps the payload (Option<&T> is
+    /// null, niche-optimized enums). Read like `Direct`, but writing it only
+    /// applies to variants that don't otherwise occupy the region.
+    Niche { offset: usize, width: usize },
+    /// The backend determines and sets the active variant.
+    Thunk { read: Thunk, write: Thunk },
+}
+
+pub struct VariantAccess {
+    pub index: u32,                 // schema variant index
+    pub selector: u64,              // tag value that identifies this variant in memory
+    pub payload: RecordAccess,      // payload fields at offsets, with their own construct
+}
+
+pub struct OptionAccess {
+    pub presence: Presence,
+    pub some: Box<Descriptor>,
+}
+
+pub enum Presence {
+    /// A dedicated tag region; `none_value` distinguishes none from some.
+    Tag { offset: usize, width: usize, none_value: u64 },
+    /// The some-payload's own bytes encode none at a pattern (null pointer,
+    /// zero of a non-zero type).
+    Niche { offset: usize, width: usize, none_pattern: Vec<u8> },
+    /// Backend presence and construction.
+    Thunk { is_some: Thunk, set_none: Thunk, set_some: Thunk },
+}
+
+pub struct SequenceAccess {
+    pub element: Box<Descriptor>,
+    pub storage: SequenceStorage,
+}
+
+pub enum SequenceStorage {
+    /// (ptr, len, capacity) at offsets, elements `element.layout` stride apart.
+    /// Encode reads ptr+len and walks. Decode calls `allocate`, writes the
+    /// elements, then writes the triple.
+    Contiguous {
+        ptr_offset: usize,
+        len_offset: usize,
+        cap_offset: Option<usize>,   // None for fixed or borrowed storage
+        allocate: Thunk,
+    },
+    /// Non-flat storage: length and per-element access go through thunks
+    /// (linked lists, copy-on-write buffers, anything not a contiguous run).
+    Thunk { len: Thunk, get: Thunk, push: Thunk },
+}
+
+pub struct MapAccess {
+    pub key: Box<Descriptor>,
+    pub value: Box<Descriptor>,
+    pub len: Thunk,         // encode: entry count
+    pub iterate: Thunk,     // encode: yield (key, value) pairs
+    pub insert: Thunk,      // decode: insert a decoded pair
+}
+
+pub struct Thunk {
+    pub name: String,   // resolved to a function pointer by the binding
+}
+```
+
+> r[descriptors.thunk-binding]
+>
+> A thunk names a function; it does not carry one. Before building an encoder or
+> decoder, the caller supplies a binding from thunk names to process-local
+> function pointers. The engine resolves names through that binding. A thunk
+> with no binding is a build-time error — there is no implicit fallback, no
+> default behavior an unbound name silently falls into.
+
+This is exactly where the execution model's "direct codegen or helper call"
+split comes from. A node with direct facts is one the JIT lowers to inline
+memory operations. A node with a thunk is one the JIT lowers to a call. Strict
+mode (`r[exec.strict-recording]`) records the thunked nodes, because those are
+the ones a sharper producer — exposing a layout fact it currently hides — or a
+sharper engine could someday turn into direct facts.
+
 ## Rust
 
-A Rust implementation learns the in-memory layout of a value from
-[facet](https://crates.io/crates/facet) metadata — field offsets, enum
-discriminants, niche optimizations — produced at compile time by
-`#[derive(Facet)]`. That metadata is the source of its descriptors.
+A Rust implementation produces descriptors (per [The descriptor
+model](#the-descriptor-model)) from [facet](https://crates.io/crates/facet)
+metadata — field offsets, enum discriminants, niche optimizations — produced at
+compile time by `#[derive(Facet)]`. Most Rust descriptors are direct: structs
+become `Record { InPlace }` with field offsets, fixed primitives become
+`Scalar`, `Vec<T>`/`String` become `Sequence { Contiguous }` reading the
+`(ptr, len, cap)` triple directly on encode and allocating via a thunk on
+decode, niche-optimized `Option`s become `Option { Niche }`. The thunked paths
+appear where Rust construction needs the allocator or a container's own insert —
+`Vec` allocation, `HashMap`/`HashSet` insertion, `BTreeMap`.
 
-Execution: the interpreter walks the translation plan against facet-described
+Execution: the interpreter walks the translation plan against descriptor-typed
 memory. The JIT, behind a Cargo feature, compiles the plan to machine code via
 copy-and-patch — ops written as small Rust functions, lowered through
 rustc/LLVM at build time, with their machine code and relocations extracted,
 then stamped out and patched at runtime.
 
-(The descriptor model — exactly what facts a descriptor carries and how the
-engine consumes them — is still being designed. This section will specify it
-once it settles.)
-
 ## Swift
 
-A Swift implementation learns layout by probing the Swift runtime: reflection
-over stored properties, enum-case layout, the runtime's own type metadata.
+A Swift implementation produces the same descriptors, sourced differently: by
+probing the Swift runtime — reflection over stored properties, enum-case
+layout, the runtime's own type metadata — and validating the facts against live
+values before trusting them. Where Rust reads a struct's field offsets from
+facet, Swift reads them from runtime metadata; the resulting `Record` is
+identical to the engine. Swift leans on thunks more than Rust does — copy-on-
+write `Array`, `String`'s inline-or-heap representation, and existentials are
+opaque enough to go through `Sequence { Thunk }` or `Opaque` — but every such
+node is the same `Access` the engine already knows; only the producer differs.
 
 Execution: interpreter baseline; copy-and-patch JIT through swiftc/LLVM — the
 same technique as Rust, on the same compiler substrate, so implementation
 experience transfers directly between the two. The JIT runs where the platform
 permits allocating executable memory (macOS does); the interpreter alone covers
 platforms that don't.
-
-(Same open descriptor-design question as Rust.)
 
 ## TypeScript
 
