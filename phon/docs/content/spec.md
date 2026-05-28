@@ -401,40 +401,39 @@ use only:
 > translation to other implementation languages has no judgment calls left
 > to make.
 
-# Incremental decoding
+# Decoding
 
-phon decoders consume bytes as they arrive rather than requiring the whole
-encoded value upfront.
+phon decodes a complete message from one contiguous buffer. It is not an
+incremental, feed-me-bytes-as-they-arrive decoder: the framing layer hands it a
+whole message and it walks it start to finish.
 
-The motivation is head-of-line blocking. Multiple RPC exchanges typically
-share a transport, often with very different sizes. A peer receiving a 100 MB
-response for one call interleaved with a 200-byte status reply for another
-should not have to wait for the 100 MB to be reassembled in some
-transport-side buffer before phon can decode the status reply. If the decoder
-demands a complete encoded value as a single buffer, every byte that arrives
-on the wire has to be sorted into per-stream reassembly buffers, and small
-messages sit behind large ones' accumulation.
+This is a deliberate choice, and it rests on three other parts of the design
+carrying the weight that an incremental decoder would otherwise carry:
 
-Letting phon consume bytes as they arrive — interleaved with bytes for other
-streams, in whatever chunks the transport delivers — removes the buffering
-layer entirely. Each stream's decoder advances when its bytes are available
-and parks when they're not. A 100 MB response can be paused indefinitely
-while small messages on other streams complete around it.
+- **Large payloads are never inline.** Anything big — file contents, blobs — is
+  an `External` value: a handle in the message, bytes out of band. So there is
+  no such thing as a hundred-megabyte inline message to stream through a decoder.
+- **Streams are not single values.** A `Channel` is a sequence of separate
+  per-item messages, not one ever-growing value. Streaming is many small
+  messages, each decoded whole.
+- **Messages are size-bounded.** The transport negotiates a maximum message size
+  (see [Framing](#framing)) — a couple of megabytes over a network, more over a
+  local socket. Anything that would exceed it goes `External` instead. So a
+  message always fits in a bounded buffer.
 
-> r[incremental-decoding]
+Head-of-line blocking — the reason an incremental decoder looks tempting — is
+handled one layer down, by framing, not by the decoder. The transport
+interleaves frames across streams and reassembles each message in its own
+bounded buffer; a small message completes and decodes while a large one is still
+arriving on another stream. The decoder never has to be suspendable to avoid
+blocking, because it only ever runs on a message that has already fully arrived.
+
+> r[decode.whole-message]
 >
-> A phon decoder consumes input incrementally. The caller feeds bytes in
-> chunks; the decoder returns one of `Done(value, consumed)`, `NeedsMore`, or
-> `Error(reason)` per call. `Done` reports how many input bytes the value
-> occupied. `NeedsMore` means the decoder is parked; feeding additional bytes
-> resumes it.
-
-The decoder knows when it's done because the schema bounds the decode.
-Primitives have fixed widths. Lists, maps, options, strings, and byte
-sequences carry their own length prefixes. Structs and enums are walked
-field-by-field. By the time the last field is consumed, the decoder has read
-exactly the right number of bytes — it returns `Done(value, consumed)` and any
-remaining bytes in the input belong to whatever comes next.
+> A phon decoder runs on a complete message buffer and returns
+> `Done(value, consumed)` or `Error(reason)`. `consumed` is the number of bytes
+> the value occupied. There is no parked/needs-more state: the bytes are all
+> present before the decoder runs.
 
 > r[decode.chained]
 >
@@ -447,24 +446,20 @@ remaining bytes in the input belong to whatever comes next.
 > against that schema. phon does not bundle the two into one schema; it decodes
 > one value, hands back the offset, and lets the caller decode the next.
 
-The caller never tells phon where a message ends. Phon tells the caller it's
-done. Framing — message boundaries, stream multiplexing, fragmentation —
-belongs to whatever is layered above phon, and that layer consults phon's
-`Done` signal to know when to start the next decode.
+The decoder knows where a value ends because the schema bounds it: primitives
+have fixed widths, lists/maps/options/strings carry length prefixes, structs and
+enums are walked field by field. So `consumed` falls out of the walk; the caller
+doesn't have to be told where the value ended.
 
-Encoders mirror this: they write to a sink that accepts bytes. The encoder
-walks the schema and the value and emits bytes as it goes, never buffering
-the whole result. The sink chunks or frames the output however its transport
-needs.
+Encoders write to a sink (a buffer, or the transport's framer). The encoder
+walks the schema and value and emits bytes as it goes.
 
-The JIT implication is real. A decoder generated by copy-and-patch is a state
-machine with explicit suspend/resume points wherever the input might run out
-— every primitive read, every length prefix, every field boundary. The
-stencils for "try to read N bytes; suspend if not yet available" become
-first-class operations. Encoders stay straight-line because writing to a
-sink either succeeds or fails terminally with a single branch. The
-interpreter follows the same suspend/resume shape so it and the JIT remain
-interchangeable.
+The JIT benefits directly from this. Because a decoder always has all its input,
+copy-and-patch generates **straight-line** code — no suspend/resume state
+machine, no "try to read N bytes, park if not available" at every field
+boundary. A read is just a read. This is a large simplification over a
+streaming decoder, and it is the main reason whole-message decoding is worth the
+size cap.
 
 # Schema identity
 
@@ -721,13 +716,12 @@ responsibility.
 > affected scalars and arrays into aligned storage instead of borrowing. The
 > decoded value is identical; only the zero-copy optimization is forfeited.
 
-Fragmentation interacts with this. A borrow requires the value to be contiguous
-in one buffer. A value split across frames during incremental decode
-(`r[incremental-decoding]`) is not contiguous, so it cannot be borrowed and is
-copied into contiguous storage as its bytes arrive. Borrowing is therefore a
-best-effort optimization available when a value lands whole in one aligned
-buffer — not a guarantee. Alignment padding is always written regardless, so a
-value that *does* land whole stays borrowable.
+Because phon decodes a whole message from one buffer (see
+[Decoding](#decoding)), every value is contiguous by construction — there is no
+fragmentation to defeat a borrow. So a borrow succeeds whenever the buffer is
+aligned; the only fallback is the copy-into-aligned-storage case above, for a
+buffer the framing layer couldn't start at an aligned address. Alignment padding
+is always written, so an aligned buffer is always borrowable.
 
 Padding is wasted bytes, so field order matters. phon writes fields in schema
 declaration order and never reorders, because the wire order is part of what
@@ -748,30 +742,42 @@ removed and the schema supplying the kinds instead.
 
 # Framing
 
-phon decodes a message from a buffer, or from a stream of byte chunks. It does
-not define how those bytes are delimited on the wire — where one message ends
-and the next begins, which bytes belong to which concurrent exchange, how a
-large message is split so it can interleave with others. That is framing, and
+phon decodes a complete message from one buffer (see [Decoding](#decoding)). It
+does not define how those buffers are produced — where one message ends and the
+next begins, which bytes belong to which concurrent exchange, how a large
+message is split for transmission and put back together. That is framing, and
 framing belongs to the transport.
 
-But phon and the framing layer share a contract, and three parts of it are
-load-bearing enough to state outright.
+The contract between phon and the framing layer has four load-bearing parts.
 
 > r[framing.not-defined]
 >
 > phon does not define a wire framing format. Delimiting messages, multiplexing
-> concurrent exchanges, and fragmenting large messages are the transport's
-> responsibility. A transport may length-prefix its frames, chunk-delimit them,
-> multiplex them with stream ids, or carry a single message per connection —
-> phon is indifferent, subject to the two requirements below.
+> concurrent exchanges, fragmenting messages for transmission, and reassembling
+> them are the transport's responsibility. A transport may length-prefix its
+> frames, chunk-delimit them, multiplex them with stream ids, or carry a single
+> message per connection — phon is indifferent, subject to the requirements
+> below.
 
-> r[framing.completion-signal]
+> r[framing.whole-messages]
 >
-> phon's decoder reports when a message is structurally complete (per
-> `r[incremental-decoding]`) and how many bytes it consumed. A framing layer
-> may rely on that signal to find message boundaries rather than carrying its
-> own per-message length. It may also carry a length for its own reasons —
-> multiplexing, validation, cheap skipping — but phon does not require one.
+> The framing layer delivers a complete message as one buffer. phon decodes the
+> whole buffer; it cannot find a message boundary itself, because it runs only
+> after the message has fully arrived and been reassembled. Finding boundaries
+> is therefore the framing layer's job (its own length prefix, delimiter, or
+> per-stream end-of-message flag). phon reports how many bytes each value
+> consumed (`r[decode.whole-message]`) so a caller can chain several values
+> within one delivered message, not so framing can discover where the message
+> ends.
+
+> r[framing.max-size]
+>
+> The transport negotiates a maximum message size — on the order of a couple of
+> megabytes over a network, more over a local socket. A value too large to fit
+> goes out of band as an `External` instead. The bound is what lets a transport
+> reassemble each message in a buffer of bounded size and lets phon assume it
+> always receives a complete message. The exact limit is the transport's to
+> negotiate; phon only relies on one existing.
 
 > r[framing.alignment]
 >
@@ -782,14 +788,17 @@ load-bearing enough to state outright.
 > borrowing — but it forfeits zero-copy for its receivers. A framing layer that
 > wants zero-copy aligns message starts.
 
-phon doesn't mandate a framing format, but it was designed with one shape in
-mind, and a transport that wants phon's full benefits will land near it:
-independent streams multiplexed over a single connection, each message split
-into frames small enough that a large message on one stream doesn't block small
-messages on another, with distinct frame kinds for the parts a dispatcher needs
-cheaply (a method identifier) versus the bulk payload. That is the HTTP/2 model,
-and it is the reference shape for vox's transport. It is guidance — phon's
-actual requirements are only the three rules above.
+Head-of-line blocking is the framing layer's to avoid, and it does so by
+interleaving frames across streams and reassembling each message in its own
+per-stream buffer. A small message's frames complete and decode while a large
+message is still arriving on another stream — they never share a buffer, so the
+small one doesn't wait. This is why phon's decoder doesn't need to be
+incremental: the interleaving that prevents blocking happens below it, and by
+the time phon runs, its one message is whole. The reference shape is HTTP/2 —
+independent streams multiplexed over one connection, messages split into frames,
+distinct frame kinds for the cheap dispatch header versus the bulk payload — and
+it is the shape vox's transport targets. It is guidance; phon's actual
+requirements are the four rules above.
 
 phon models a channel's *type* but not its *operation*. The `Channel` schema
 kind (see `r[type-system.channel]`) records direction and element type, so
@@ -1211,12 +1220,13 @@ pub struct Thunk {
 > A `Borrowed` sequence decodes without allocating: the engine points its
 > pointer into the input buffer and writes its length. The decoded value is
 > valid only as long as that input buffer — and any decode-scoped arena (below)
-> — lives; the caller must keep it alive for the value's lifetime. Borrowing in
-> place requires the run to be contiguous and, for primitive-array elements,
-> aligned per `r[compact.alignment]`. When it can't borrow in place — a value
-> fragmented across frames, a misaligned array — the engine copies the run into
-> a decode-scoped arena that shares the value's lifetime, still without
-> allocating a per-value owned container. Borrowing applies only where the wire
+> — lives; the caller must keep it alive for the value's lifetime. Because phon
+> decodes a whole message from one buffer, the run is always contiguous, so
+> borrowing in place needs only that it be aligned (for primitive-array elements)
+> per `r[compact.alignment]`. When the buffer wasn't delivered at an aligned
+> address — a misaligned array — the engine copies the run into a decode-scoped
+> arena that shares the value's lifetime, still without allocating a per-value
+> owned container. Borrowing applies only where the wire
 > bytes equal the memory bytes: scalars, `bytes`, `string`, arrays of those, and
 > the element data of a contiguous (standard-layout) tensor. A `&[T]` of
 > non-scalar `T` cannot borrow, because the wire and memory layouts differ; it is
