@@ -808,9 +808,10 @@ speaks.
 >
 > For each target language, codegen emits two things per schema: the type
 > definitions a programmer writes against, and the schema itself as a constant
-> — the self-describing phon bytes of the `Schema` value, ready to hand across
-> the C API or load at startup. The peer ships with its schemas baked in and
-> never derives or fetches them at runtime.
+> — the self-describing phon bytes of the `Schema` value, which the peer's own
+> phon implementation parses into a `Schema` at startup or on first use. The
+> peer ships with its schemas baked in and never derives or fetches them at
+> runtime.
 
 > r[codegen.schema-is-source-of-truth]
 >
@@ -912,16 +913,16 @@ Reading a value and constructing one are not symmetric, and the descriptor
 reflects that. Reading is usually direct: the value already exists in memory,
 and offsets are enough to walk it. Constructing often is not — allocating a
 vector's backing buffer, inserting into a hash map, initializing a type with
-internal invariants — and needs the backend's cooperation. So a node commonly
-has direct read facts and a thunked construct path.
+internal invariants — and needs the language runtime's cooperation. So a node
+commonly has direct read facts and a thunked construct path.
 
 > r[descriptors.encode-decode-asymmetry]
 >
 > A descriptor node may provide direct facts for one direction and a thunk for
 > the other. Encoding — reading an existing value — is commonly direct.
-> Decoding — constructing a value — commonly needs a backend thunk for
-> allocation, insertion, or controlled initialization. The engine uses whatever
-> the node provides for the direction it is running.
+> Decoding — constructing a value — commonly needs a thunk for allocation,
+> insertion, or controlled initialization. The engine uses whatever the node
+> provides for the direction it is running.
 
 The model, in the same Rust notation the type system uses. These are not wire
 types: no `SchemaId`, never serialized, process-local only.
@@ -965,7 +966,7 @@ pub enum Access {
     /// Key / value pairs.
     Map(MapAccess),
 
-    /// The whole subtree is backend-handled: no direct facts apply.
+    /// The whole subtree is handled by thunks: no direct facts apply.
     Opaque { encode: Thunk, decode: Thunk },
 }
 
@@ -984,7 +985,7 @@ pub enum Construct {
     /// value is valid once all fields are written. Plain structs and tuples.
     InPlace,
     /// Decode fills a scratch buffer, then a thunk builds the real value from
-    /// it. Types with construction invariants, backends that can't be poked
+    /// it. Types with construction invariants, languages that can't be poked
     /// field by field.
     Thunk(Thunk),
 }
@@ -1002,7 +1003,7 @@ pub enum Tag {
     /// null, niche-optimized enums). Read like `Direct`, but writing it only
     /// applies to variants that don't otherwise occupy the region.
     Niche { offset: usize, width: usize },
-    /// The backend determines and sets the active variant.
+    /// The implementation determines and sets the active variant via thunks.
     Thunk { read: Thunk, write: Thunk },
 }
 
