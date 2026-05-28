@@ -1,0 +1,16 @@
+@schema {id crate:tracey-config@1, cli tracey}
+
+specs (
+    {
+        name phon
+        include (
+            docs/content/spec/_index.md
+        )
+        impls (
+            {
+                name rust
+                include (rust/**/*.rs)
+            }
+        )
+    }
+)
