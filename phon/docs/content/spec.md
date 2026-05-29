@@ -506,15 +506,42 @@ decoded.
 
 > r[schema-identity.canonical-encoding]
 >
-> The bytes fed to BLAKE3 are a deterministic encoding of the schema's
-> structure: the kind discriminant, then per kind, the names (struct name,
-> field names, variant names, type parameter names), variant indices, field
-> `required` flags, channel direction, the primitive kind, array dimensions,
-> tensor rank, and the nested `SchemaRef`s — all in declaration order, with
-> strings length-prefixed
-> and nested concrete references encoded by the referenced `SchemaId`. The `id`
-> field is never fed into its own hash. Every implementation encodes this
-> identically, which is what makes the hash reproducible across languages.
+> The bytes fed to BLAKE3 follow this exact recipe, so every implementation
+> produces the same bytes. Building blocks: `u32`/`u64` are little-endian; a
+> *string* is a `u32` LE byte length then its UTF-8 bytes; a `bool` is one byte,
+> `0` or `1`. A schema's `id` field is never fed into its own hash.
+>
+> A schema's kind is its tag string followed by its body:
+>
+> - **primitive**: the primitive tag — one of `bool`, `u8`, `u16`, `u32`, `u64`,
+>   `u128`, `i8`, `i16`, `i32`, `i64`, `i128`, `f32`, `f64`, `char`, `string`,
+>   `bytes`, `unit`, `never`.
+> - **struct**: `struct`; the name; the type-parameter list (a `u32` count then
+>   each parameter name); a `u32` field count; then per field, in declaration
+>   order: the field name, the `required` bool, the field's reference.
+> - **enum**: `enum`; the name; the type-parameter list; a `u32` variant count;
+>   then per variant, in declaration order: the variant name, its index (`u32`),
+>   and its payload — `unit`; or `newtype` then a reference; or `tuple` then a
+>   `u32` count then references; or `struct` then a `u32` field count then fields
+>   encoded as above.
+> - **tuple**: `tuple`; a `u32` element count; then each element reference.
+> - **list** / **set** / **option**: the tag (`list` / `set` / `option`) then
+>   the element reference.
+> - **map**: `map`; the key reference; the value reference.
+> - **array**: `array`; the element reference; a `u32` dimension count; then each
+>   dimension as `u64`.
+> - **tensor**: `tensor`; the element reference; then rank — one byte `0` for
+>   `None`, or `1` then the rank as `u32`.
+> - **channel**: `channel`; the direction tag (`tx` or `rx`); the element
+>   reference.
+> - **dynamic**: `dynamic`.
+> - **external**: `external`; the `kind` string; then the `metadata`, encoded as
+>   a `u32` length followed by its self-describing-form bytes.
+>
+> A *reference* is encoded as `concrete` then the referenced `SchemaId` (8 bytes
+> LE) then a `u32` argument count then each argument reference; or, for a type
+> parameter, `var` then the parameter name. The argument count is always written
+> — zero for a non-generic concrete reference — with no conditional marker.
 
 Everything structural is in the hash; there is nothing non-structural in a
 phon schema to leave out (no doc comments, no annotations travel on the wire).
@@ -530,15 +557,41 @@ Recursive schemas need care. A linked list references itself —
 `struct Node { value: u32, next: Option<Node> }` — and you cannot hash `Node`
 by recursing into `Node`, because you would never stop.
 
-> r[schema-identity.recursive]
+> r[schema-identity.computation]
 >
-> When schemas reference each other in a cycle, the references that close the
-> cycle are encoded as a fixed sentinel rather than by recursing into the
-> referenced schema's id. An implementation identifies the cycle group, hashes
-> each member with intra-group references replaced by the sentinel, combines
-> those into a group hash, and derives each member's final `SchemaId` from the
-> group hash plus the member's sorted position within the group. This makes
-> recursive schema identity well-defined and identical across implementations.
+> Ids are assigned in dependency order. Partition the schemas into the
+> strongly-connected components of the reference graph (edges follow `concrete`
+> references and their arguments) and process the components dependencies-first,
+> so a component's outward references all resolve to already-assigned ids. The
+> SCC *partition* is canonical — it does not depend on traversal order — and a
+> component's id depends only on its own structure and its dependencies' ids, so
+> the order among independent components doesn't matter.
+>
+> A component that is a single schema with no reference back to itself is encoded
+> per `r[schema-identity.canonical-encoding]`, every reference feeding an
+> already-assigned id, and its id is the truncated BLAKE3 of that encoding.
+>
+> A component that is a cycle is resolved by **structural unfolding with
+> depth-indexed back-references**. Each member's id is the truncated BLAKE3 of a
+> walk rooted at that member, where every reference encountered (including a
+> concrete reference's arguments) is resolved against the component:
+>
+> - a reference whose target is outside the component feeds the target's
+>   already-assigned id (`concrete` + id + args, as usual);
+> - a reference whose target is another member of the component and is *not* yet
+>   on the current walk path is inlined — emit `inline`, then walk that member's
+>   kind with the path extended by it, then its arguments;
+> - a reference whose target is a member already on the path is emitted as
+>   `backref` then that ancestor's depth on the path (`u32`, the root being
+>   depth 0), then its arguments.
+>
+> The back-reference is what terminates the walk. Because the walk is a pure
+> function of the member's structure — not of discovery order, with no sorting,
+> no group hash, no positional heuristic — every implementation computes the same
+> id. Two members collapse to one id only when they are genuinely the same type
+> (same names, same structure), which is correct. This deliberately does not
+> canonicalize cycles up to isomorphism; phon doesn't need it, because schema
+> names already distinguish members.
 
 A 64-bit id has a birthday bound around four billion distinct schemas before a
 coincidental collision becomes likely. A realistic deployment has thousands of
