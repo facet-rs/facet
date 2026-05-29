@@ -11,13 +11,21 @@
 //! Decoding is the first real untrusted-input path: every length, tag, depth,
 //! and UTF-8 check from `r[validate.*]` runs here, via [`crate::bytes::Reader`].
 //!
-//! The coarse `Value` codec (for the `Dynamic` kind) is a separate, later
-//! addition; this module is schemas only for now.
+//! The coarse `Value` codec for the `Dynamic` kind is also here
+//! ([`value_to_bytes`] / [`value_from_bytes`]): it folds the rich self-describing
+//! tag set onto `facet_value::Value`'s coarser cases (one `number`, one `array`,
+//! one `object`), so a schema-less decode recovers a `Value` and `Dynamic`
+//! round-trips one.
 //!
-//! Spec: "Self-describing mode".
+//! Spec: "Self-describing mode", `r[value]`.
+
+use std::collections::HashSet;
+
+use facet_value::{VArray, VBytes, VNumber, VObject, VString, Value, ValueType};
 
 use crate::bytes::{
-    DecodeError, Reader, Sink, write_bool, write_str, write_u8, write_u32, write_u64,
+    DecodeError, Reader, Sink, write_bool, write_bytes, write_f64, write_i128, write_i64,
+    write_str, write_u8, write_u32, write_u64, write_u128,
 };
 use crate::schema::{
     ChannelDirection, Field, Primitive, Schema, SchemaId, SchemaKind, SchemaRef, Variant,
@@ -32,14 +40,31 @@ const MAX_DEPTH: usize = 128;
 mod tag {
     pub const UNIT: u8 = 0x00;
     pub const BOOL: u8 = 0x01;
+    pub const U8: u8 = 0x02;
+    pub const U16: u8 = 0x03;
     pub const U32: u8 = 0x04;
     pub const U64: u8 = 0x05;
+    pub const U128: u8 = 0x06;
+    pub const I8: u8 = 0x07;
+    pub const I16: u8 = 0x08;
+    pub const I32: u8 = 0x09;
+    pub const I64: u8 = 0x0A;
+    pub const I128: u8 = 0x0B;
+    pub const F32: u8 = 0x0C;
+    pub const F64: u8 = 0x0D;
+    pub const CHAR: u8 = 0x0E;
     pub const STRING: u8 = 0x0F;
+    pub const BYTES: u8 = 0x10;
     pub const LIST: u8 = 0x11;
+    pub const SET: u8 = 0x12;
+    pub const MAP: u8 = 0x13;
+    pub const ARRAY: u8 = 0x14;
+    pub const TUPLE: u8 = 0x15;
     pub const STRUCT: u8 = 0x16;
     pub const ENUM: u8 = 0x17;
     pub const OPTION_NONE: u8 = 0x18;
     pub const OPTION_SOME: u8 = 0x19;
+    pub const TENSOR: u8 = 0x1A;
 }
 
 // ============================================================================
@@ -654,6 +679,287 @@ fn dec_field_list(r: &mut Reader, depth: usize) -> Result<Vec<Field>, DecodeErro
     Ok(v)
 }
 
+// ============================================================================
+// The coarse Value codec
+// ============================================================================
+
+/// Why encoding a [`Value`] failed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum EncodeError {
+    /// A `Value` case phon has no self-describing tag for, and no agreed
+    /// encoding yet: date/time, qualified name, or uuid.
+    Unsupported(&'static str),
+}
+
+impl core::fmt::Display for EncodeError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            EncodeError::Unsupported(k) => {
+                write!(f, "no self-describing encoding for value kind: {k}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for EncodeError {}
+
+/// Encode a [`Value`] to self-describing bytes.
+///
+/// # Errors
+/// [`EncodeError::Unsupported`] for the `facet_value` cases phon has no tag for
+/// (date/time, qname, uuid).
+pub fn value_to_bytes(value: &Value) -> Result<Vec<u8>, EncodeError> {
+    let mut out = Vec::new();
+    write_value(&mut out, value)?;
+    Ok(out)
+}
+
+/// Decode a [`Value`] from self-describing bytes, rejecting trailing bytes.
+///
+/// # Errors
+/// [`DecodeError`] for any malformed input.
+pub fn value_from_bytes(buf: &[u8]) -> Result<Value, DecodeError> {
+    let mut r = Reader::new(buf);
+    let v = read_value(&mut r)?;
+    if r.remaining() != 0 {
+        return Err(DecodeError::TrailingBytes(r.remaining()));
+    }
+    Ok(v)
+}
+
+/// Write a [`Value`] into a sink in self-describing form. Each `Value` case has
+/// a fixed tag, so `Dynamic` bytes are canonical (`r[value]`).
+///
+/// # Errors
+/// As [`value_to_bytes`].
+// r[impl value]
+pub fn write_value<S: Sink>(out: &mut S, value: &Value) -> Result<(), EncodeError> {
+    match value.value_type() {
+        ValueType::Null => write_u8(out, tag::OPTION_NONE),
+        ValueType::Bool => {
+            write_u8(out, tag::BOOL);
+            write_bool(out, value.as_bool().unwrap());
+        }
+        ValueType::Number => enc_number(out, value.as_number().unwrap()),
+        ValueType::String => {
+            write_u8(out, tag::STRING);
+            write_str(out, value.as_string().unwrap().as_str());
+        }
+        ValueType::Bytes => {
+            write_u8(out, tag::BYTES);
+            write_bytes(out, value.as_bytes().unwrap().as_slice());
+        }
+        ValueType::Char => {
+            write_u8(out, tag::CHAR);
+            write_u32(out, value.as_char().unwrap() as u32);
+        }
+        ValueType::Array => {
+            let a = value.as_array().unwrap();
+            write_u8(out, tag::LIST);
+            write_u32(out, a.len() as u32);
+            for i in 0..a.len() {
+                write_value(out, a.get(i).unwrap())?;
+            }
+        }
+        ValueType::Object => {
+            let o = value.as_object().unwrap();
+            write_u8(out, tag::MAP);
+            write_u32(out, o.len() as u32);
+            for (key, val) in o.iter() {
+                write_u8(out, tag::STRING);
+                write_str(out, key.as_str());
+                write_value(out, val)?;
+            }
+        }
+        ValueType::DateTime => return Err(EncodeError::Unsupported("datetime")),
+        ValueType::QName => return Err(EncodeError::Unsupported("qname")),
+        ValueType::Uuid => return Err(EncodeError::Unsupported("uuid")),
+        // ValueType is #[non_exhaustive]: a future kind has no encoding yet.
+        _ => return Err(EncodeError::Unsupported("unknown")),
+    }
+    Ok(())
+}
+
+/// A number's wire tag follows its canonical storage: float to `f64`, otherwise
+/// the narrowest of `i64`/`u64`/`i128`/`u128` that holds it (matching
+/// `VNumber`'s magnitude canonicalization, so the choice is deterministic).
+fn enc_number<S: Sink>(out: &mut S, n: &VNumber) {
+    if n.is_float() {
+        write_u8(out, tag::F64);
+        write_f64(out, n.to_f64_lossy());
+    } else if let Some(i) = n.to_i64() {
+        write_u8(out, tag::I64);
+        write_i64(out, i);
+    } else if let Some(u) = n.to_u64() {
+        write_u8(out, tag::U64);
+        write_u64(out, u);
+    } else if let Some(i) = n.to_i128() {
+        write_u8(out, tag::I128);
+        write_i128(out, i);
+    } else {
+        write_u8(out, tag::U128);
+        write_u128(out, n.to_u128().expect("a non-float integer fits one width"));
+    }
+}
+
+/// Read a [`Value`] from a reader (for embedding, e.g. a `Dynamic` field).
+///
+/// # Errors
+/// [`DecodeError`] for any malformed input.
+pub fn read_value(r: &mut Reader) -> Result<Value, DecodeError> {
+    dec_value(r, 0)
+}
+
+// r[impl validate.tags]
+fn dec_value(r: &mut Reader, depth: usize) -> Result<Value, DecodeError> {
+    check_depth(depth)?;
+    let t = r.read_u8()?;
+    Ok(match t {
+        tag::UNIT | tag::OPTION_NONE => Value::NULL,
+        tag::BOOL => Value::from(r.read_bool()?),
+        tag::U8 => Value::from(r.read_u8()?),
+        tag::U16 => Value::from(r.read_u16()?),
+        tag::U32 => Value::from(r.read_u32()?),
+        tag::U64 => Value::from(r.read_u64()?),
+        tag::U128 => Value::from(r.read_u128()?),
+        tag::I8 => Value::from(r.read_i8()?),
+        tag::I16 => Value::from(r.read_i16()?),
+        tag::I32 => Value::from(r.read_i32()?),
+        tag::I64 => Value::from(r.read_i64()?),
+        tag::I128 => Value::from(r.read_i128()?),
+        tag::F32 => Value::from(r.read_f32()?),
+        tag::F64 => Value::from(r.read_f64()?),
+        tag::CHAR => Value::from(r.read_char()?),
+        tag::STRING => VString::new(r.read_str()?).into(),
+        tag::BYTES => VBytes::new(r.read_bytes()?).into(),
+        // list and tuple both fold to a flat array.
+        tag::LIST | tag::TUPLE => {
+            let n = r.read_len(1)?;
+            let mut a = VArray::new();
+            for _ in 0..n {
+                a.push(dec_value(r, depth + 1)?);
+            }
+            a.into()
+        }
+        // r[impl validate.uniqueness]
+        tag::SET => {
+            let n = r.read_len(1)?;
+            let mut a = VArray::new();
+            let mut seen: HashSet<Value> = HashSet::new();
+            for _ in 0..n {
+                let elem = dec_value(r, depth + 1)?;
+                if !seen.insert(elem.clone()) {
+                    return Err(DecodeError::DuplicateElement);
+                }
+                a.push(elem);
+            }
+            a.into()
+        }
+        tag::MAP => dec_map(r, depth)?,
+        tag::ARRAY | tag::TENSOR => dec_dimensioned(r, depth)?,
+        tag::STRUCT => dec_struct_value(r, depth)?,
+        tag::ENUM => dec_enum_value(r, depth)?,
+        tag::OPTION_SOME => dec_value(r, depth + 1)?,
+        other => return Err(DecodeError::UnknownTag(other)),
+    })
+}
+
+/// A `map` folds to an object when its keys are all strings, else to an array of
+/// `[key, value]` pairs. Keys must be unique either way (`r[validate.uniqueness]`).
+fn dec_map(r: &mut Reader, depth: usize) -> Result<Value, DecodeError> {
+    let n = r.read_len(2)?;
+    let mut entries: Vec<(Value, Value)> = Vec::new();
+    let mut seen: HashSet<Value> = HashSet::new();
+    let mut all_string = true;
+    for _ in 0..n {
+        let key = dec_value(r, depth + 1)?;
+        let val = dec_value(r, depth + 1)?;
+        if !seen.insert(key.clone()) {
+            return Err(DecodeError::DuplicateKey);
+        }
+        if key.value_type() != ValueType::String {
+            all_string = false;
+        }
+        entries.push((key, val));
+    }
+    if all_string {
+        let mut o = VObject::new();
+        for (key, val) in entries {
+            o.insert(VString::new(key.as_string().unwrap().as_str()), val);
+        }
+        Ok(o.into())
+    } else {
+        let mut a = VArray::new();
+        for (key, val) in entries {
+            let mut pair = VArray::new();
+            pair.push(key);
+            pair.push(val);
+            a.push(pair);
+        }
+        Ok(a.into())
+    }
+}
+
+/// `array` and `tensor` fold to a flat array of their elements. The dimensions
+/// are validated (`r[validate.dimensions]`): rank and the element product are
+/// bounded by the buffer, and the product is computed with checked arithmetic.
+// r[impl validate.dimensions]
+fn dec_dimensioned(r: &mut Reader, depth: usize) -> Result<Value, DecodeError> {
+    let rank = r.read_u32()? as usize;
+    if rank.checked_mul(8).is_none_or(|bytes| bytes > r.remaining()) {
+        return Err(DecodeError::LengthTooLarge {
+            count: rank as u64,
+            remaining: r.remaining(),
+        });
+    }
+    let mut product: u64 = 1;
+    for _ in 0..rank {
+        let dim = r.read_u64()?;
+        product = product
+            .checked_mul(dim)
+            .ok_or(DecodeError::Malformed("array/tensor dimension overflow"))?;
+    }
+    if product > r.remaining() as u64 {
+        return Err(DecodeError::LengthTooLarge {
+            count: product,
+            remaining: r.remaining(),
+        });
+    }
+    let mut a = VArray::new();
+    for _ in 0..product {
+        a.push(dec_value(r, depth + 1)?);
+    }
+    Ok(a.into())
+}
+
+/// A `struct` folds to an object keyed by field name (names must be unique).
+fn dec_struct_value(r: &mut Reader, depth: usize) -> Result<Value, DecodeError> {
+    r.read_str()?; // struct name, folded away
+    let n = r.read_len(1)?;
+    let mut o = VObject::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for _ in 0..n {
+        let field = r.read_str()?.to_string();
+        if !seen.insert(field.clone()) {
+            return Err(DecodeError::DuplicateKey);
+        }
+        let val = dec_value(r, depth + 1)?;
+        o.insert(VString::new(&field), val);
+    }
+    Ok(o.into())
+}
+
+/// An `enum` folds to a one-entry object mapping the variant name to its single
+/// payload value (`r[self-describing.enum-payload]`).
+fn dec_enum_value(r: &mut Reader, depth: usize) -> Result<Value, DecodeError> {
+    let variant = r.read_str()?.to_string();
+    let payload = dec_value(r, depth + 1)?;
+    let mut o = VObject::new();
+    o.insert(VString::new(&variant), payload);
+    Ok(o.into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -858,5 +1164,185 @@ mod tests {
             schema_from_bytes(&bytes),
             Err(DecodeError::Malformed(_))
         ));
+    }
+
+    // --- Value codec --------------------------------------------------------
+
+    fn rt_value(v: Value) {
+        let bytes = value_to_bytes(&v).expect("encode");
+        let back = value_from_bytes(&bytes).expect("decode");
+        assert_eq!(v, back);
+        // byte-stable after the first encode.
+        assert_eq!(value_to_bytes(&back).unwrap(), bytes);
+    }
+
+    fn ival(n: i64) -> Vec<u8> {
+        let mut b = Vec::new();
+        write_u8(&mut b, tag::I64);
+        write_i64(&mut b, n);
+        b
+    }
+
+    fn sval(s: &str) -> Vec<u8> {
+        let mut b = Vec::new();
+        write_u8(&mut b, tag::STRING);
+        write_str(&mut b, s);
+        b
+    }
+
+    #[test]
+    fn value_roundtrip_scalars() {
+        rt_value(Value::NULL);
+        rt_value(Value::from(true));
+        rt_value(Value::from(false));
+        rt_value(Value::from(7i64));
+        rt_value(Value::from(-5i64));
+        rt_value(Value::from(u64::MAX));
+        rt_value(Value::from(u128::MAX));
+        rt_value(Value::from(i128::MIN));
+        rt_value(Value::from(2.5f64));
+        rt_value(VString::new("héllo λ").into());
+        rt_value(VBytes::new(&[0, 1, 2, 255]).into());
+        rt_value(Value::from('λ'));
+    }
+
+    #[test]
+    fn value_roundtrip_composite() {
+        let mut arr = VArray::new();
+        arr.push(Value::from(1i64));
+        arr.push(VString::new("x"));
+        arr.push(Value::NULL);
+        rt_value(arr.into());
+
+        let mut obj = VObject::new();
+        obj.insert(VString::new("a"), Value::from(1i64));
+        obj.insert(VString::new("b"), Value::from(true));
+        let mut nested = VArray::new();
+        nested.push(Value::from('z'));
+        obj.insert(VString::new("c"), Value::from(nested));
+        rt_value(obj.into());
+    }
+
+    #[test]
+    fn unit_and_option_none_fold_to_null() {
+        assert!(value_from_bytes(&[tag::UNIT]).unwrap().is_null());
+        assert!(value_from_bytes(&[tag::OPTION_NONE]).unwrap().is_null());
+    }
+
+    #[test]
+    fn set_and_tuple_fold_to_array() {
+        let mut bytes = Vec::new();
+        write_u8(&mut bytes, tag::SET);
+        write_u32(&mut bytes, 2);
+        bytes.extend(ival(1));
+        bytes.extend(ival(2));
+        let v = value_from_bytes(&bytes).unwrap();
+        assert_eq!(v.as_array().unwrap().len(), 2);
+
+        let mut t = Vec::new();
+        write_u8(&mut t, tag::TUPLE);
+        write_u32(&mut t, 2);
+        t.extend(ival(1));
+        t.extend(sval("x"));
+        assert_eq!(value_from_bytes(&t).unwrap().as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn set_rejects_duplicate_elements() {
+        let mut bytes = Vec::new();
+        write_u8(&mut bytes, tag::SET);
+        write_u32(&mut bytes, 2);
+        bytes.extend(ival(9));
+        bytes.extend(ival(9));
+        assert_eq!(
+            value_from_bytes(&bytes),
+            Err(DecodeError::DuplicateElement)
+        );
+    }
+
+    #[test]
+    fn map_folds_to_object_and_rejects_duplicate_keys() {
+        let mut bytes = Vec::new();
+        write_u8(&mut bytes, tag::MAP);
+        write_u32(&mut bytes, 2);
+        bytes.extend(sval("a"));
+        bytes.extend(ival(1));
+        bytes.extend(sval("b"));
+        bytes.extend(ival(2));
+        let v = value_from_bytes(&bytes).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 2);
+
+        let mut dup = Vec::new();
+        write_u8(&mut dup, tag::MAP);
+        write_u32(&mut dup, 2);
+        dup.extend(sval("a"));
+        dup.extend(ival(1));
+        dup.extend(sval("a"));
+        dup.extend(ival(2));
+        assert_eq!(value_from_bytes(&dup), Err(DecodeError::DuplicateKey));
+    }
+
+    #[test]
+    fn struct_and_enum_fold_to_object() {
+        // struct: name "S", one field "f" = 1
+        let mut s = Vec::new();
+        write_u8(&mut s, tag::STRUCT);
+        write_str(&mut s, "S");
+        write_u32(&mut s, 1);
+        write_str(&mut s, "f");
+        s.extend(ival(1));
+        assert!(value_from_bytes(&s).unwrap().as_object().is_some());
+
+        // enum: variant "V" with payload 1 -> object { "V": 1 }
+        let mut e = Vec::new();
+        write_u8(&mut e, tag::ENUM);
+        write_str(&mut e, "V");
+        e.extend(ival(1));
+        let obj = value_from_bytes(&e).unwrap();
+        assert_eq!(obj.as_object().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn array_tag_folds_to_flat_array() {
+        // rank 1, dim [3], three i64 elements
+        let mut bytes = Vec::new();
+        write_u8(&mut bytes, tag::ARRAY);
+        write_u32(&mut bytes, 1);
+        write_u64(&mut bytes, 3);
+        for n in 0..3 {
+            bytes.extend(ival(n));
+        }
+        assert_eq!(value_from_bytes(&bytes).unwrap().as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn value_rejects_malformed_input() {
+        // unknown tag
+        assert_eq!(value_from_bytes(&[0x7F]), Err(DecodeError::UnknownTag(0x7F)));
+        // truncated string value
+        let mut s = sval("hello");
+        s.truncate(s.len() - 2);
+        assert!(value_from_bytes(&s).is_err());
+        // oversized list count
+        let mut big = Vec::new();
+        write_u8(&mut big, tag::LIST);
+        write_u32(&mut big, u32::MAX);
+        assert!(matches!(
+            value_from_bytes(&big),
+            Err(DecodeError::LengthTooLarge { .. })
+        ));
+        // excessive nesting
+        let mut deep = vec![tag::OPTION_SOME; MAX_DEPTH + 2];
+        deep.push(tag::OPTION_NONE);
+        assert_eq!(value_from_bytes(&deep), Err(DecodeError::DepthExceeded));
+    }
+
+    #[test]
+    fn encode_rejects_unsupported_kinds() {
+        let uuid: Value = facet_value::VUuid::from_u128(0).into();
+        assert_eq!(
+            value_to_bytes(&uuid),
+            Err(EncodeError::Unsupported("uuid"))
+        );
     }
 }

@@ -30,5 +30,8 @@ pub use schema::{
     ChannelDirection, Field, Primitive, Schema, SchemaId, SchemaKind, SchemaRef, Variant,
     VariantPayload,
 };
-pub use selfdescribing::{schema_from_bytes, schema_to_bytes};
+pub use selfdescribing::{
+    EncodeError, read_value, schema_from_bytes, schema_to_bytes, value_from_bytes, value_to_bytes,
+    write_value,
+};
 pub use value::Value;
