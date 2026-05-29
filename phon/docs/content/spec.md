@@ -1579,6 +1579,108 @@ mode (`r[exec.strict-recording]`) records the thunked nodes, because those are
 the ones a sharper producer — exposing a layout fact it currently hides — or a
 sharper engine could someday turn into direct facts.
 
+## The intermediate representation
+
+Compatibility planning doesn't decode anything itself; it produces an
+intermediate representation — the program the interpreter walks and the JIT
+lowers. Like the descriptor model, the IR is per-implementation (Rust's lives in
+`phon-ir`; Swift and TypeScript have their own) but the shape is shared and
+documented once, here.
+
+> r[ir.two-forms]
+>
+> The IR has two forms. Planning produces a value-shaped **tree** that fuses
+> three things: the wire walk (from the schema), the memory access — offsets,
+> storage, thunks — (from the descriptor), and the compatibility plan (field
+> match, skip, default, variant remap). Lowering flattens the tree into a
+> **linear op stream**. The interpreter walks the linear form directly; a JIT
+> lowers it further (to copy-and-patch machine code in Rust and Swift, to
+> generated JavaScript in TypeScript). Both backends consume the same linear
+> form, which is why they stay interchangeable.
+
+> r[ir.one-vocabulary]
+>
+> One op vocabulary serves both directions. A program is tagged encode or
+> decode; the decode-only ops — skip a writer field, fill a reader default,
+> remap a variant index — simply don't occur in an encode program. There are
+> not two parallel op sets.
+
+The linear ops, each a stencil-able unit:
+
+- **scalar** — copy a fixed-width scalar between the wire and a memory offset.
+- **bytes** — a length-prefixed byte run; the memory side follows the
+  descriptor's storage (borrowed, owned-with-allocation, or arena-copy).
+- **record** — a struct or tuple: its children's ops, spliced in (see inlining).
+- **sequence** — a count, then a per-element body run in a loop.
+- **map** — a count, then a per-pair body, inserted through a thunk.
+- **array** — a fixed count of an element (spliced if small, looped if large).
+- **tensor** — the shape, then a flat element run.
+- **option** — a presence read, then a branch to the some-body.
+- **enum** — a tag read, then a dispatch to the active variant's sub-range.
+- **alloc** — allocate backing for an owned sequence, via a descriptor thunk.
+- **call-thunk** — call a bound thunk (opaque construction or access).
+- **call-program** — call a separately-compiled subprogram (recursion, dedup).
+- **dynamic** — sub-encode/decode a self-describing `Value`.
+- **external** — read/write the handle, resolved through the transport.
+- **skip** (decode only) — decode and discard a writer field by its
+  writer-schema sub-program.
+- **default** (decode only) — write a reader default, no wire read.
+
+> r[ir.stencils]
+>
+> In the copy-and-patch backends each op is a stencil: a fragment of machine
+> code, compiled once at build time from a small function, with holes for its
+> patch values (offsets, widths, thunk pointers, branch targets, descriptor
+> fields). Stencils thread the live state — input/output cursor, the value's
+> base pointer, the context — through fixed registers and tail-call the next
+> stencil, so a run of ops keeps its state in registers with no spills.
+> "JIT-compiling" a program is memcpying its stencils into executable memory and
+> patching the holes: microseconds, no optimizer, no unwinding (errors are
+> status codes through the context, never panics across a stencil boundary).
+
+> r[ir.inlining]
+>
+> Because stencils tail-call through registers, inlining is the default, not an
+> optimization. A nested fixed structure — struct, tuple, small fixed array —
+> lowers by splicing the child's op sequence into the parent's, with the child's
+> offsets folded into parent-relative offsets at lowering time. No call, and the
+> state stays in registers across the whole nested shape; this is the throughput
+> the format exists for. A `call-program` (a real call passing an adjusted base
+> pointer) is emitted only where splicing can't or shouldn't apply:
+>
+> - **recursion** — a schema in a reference cycle is compiled once and called at
+>   the recursion site; required for correctness, since an unbounded chain can't
+>   be spliced. (This mirrors the cycle handling in schema identity.)
+> - **dynamic-length sequences and maps** — the element or pair body is compiled
+>   once and run in a loop, never spliced N times.
+> - **code-size dedup** — a large child reused at enough sites may be compiled
+>   once and called, trading the register-threading win for code size, by a
+>   lowering-time size-times-reuse threshold.
+>
+> Inlined chains and called subprograms share one state ABI: a called subprogram
+> is just a chain reached by call-and-return instead of by splicing.
+
+> r[ir.memory]
+>
+> Memory operations carry the calibrated descriptor facts they need — offsets,
+> strides, the allocate thunk — as patch values. The borrow-versus-own-versus-
+> copy decision (`r[descriptors.borrowed]`) is a field on the read op, not a
+> separate op kind, so the same op stencils whether it borrows from the input,
+> allocates an owned buffer, or copies into the decode arena. A thunk is reached
+> by a `call-thunk` op carrying the bound function pointer; a facet-style wide
+> (16-byte) vtable pointer does not fit the register-threaded calling convention,
+> so such calls go through pre-wrapped thin-pointer thunks — a real ABI trap, and
+> the binding pre-wraps them.
+
+> r[ir.total]
+>
+> Every shape lowers to ops. There is no reflective-interpreter escape hatch: a
+> subtree the JIT cannot direct-codegen lowers to a `call-thunk` against a
+> descriptor-provided thunk, not to a fallback into a different engine. The
+> interpreter and the JIT consume the same lowered program, so they produce
+> identical results and differ only in speed. Recursion depth is bounded per
+> `r[validate.depth]`.
+
 ## Rust
 
 A Rust implementation produces descriptors (per [The descriptor
