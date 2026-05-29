@@ -196,6 +196,23 @@ fn format_value_into(ctx: &mut FormatContext, value: &Value, current_path: &[Pat
             // Format using Debug which produces standard UUID format
             let _ = write!(ctx.output, "{uuid:?}");
         }
+        ValueType::Char => {
+            let c = value.as_char().unwrap();
+            // Write as a JSON string with escaping, mirroring the String arm.
+            ctx.output.push('"');
+            match c {
+                '"' => ctx.output.push_str("\\\""),
+                '\\' => ctx.output.push_str("\\\\"),
+                '\n' => ctx.output.push_str("\\n"),
+                '\r' => ctx.output.push_str("\\r"),
+                '\t' => ctx.output.push_str("\\t"),
+                c if c.is_control() => {
+                    let _ = write!(ctx.output, "\\u{:04x}", c as u32);
+                }
+                c => ctx.output.push(c),
+            }
+            ctx.output.push('"');
+        }
     }
 
     let end = ctx.len();

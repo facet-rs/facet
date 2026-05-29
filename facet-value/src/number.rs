@@ -18,6 +18,10 @@ enum NumberType {
     U64 = 1,
     /// 64-bit floating point
     F64 = 2,
+    /// Signed 128-bit integer
+    I128 = 3,
+    /// Unsigned 128-bit integer
+    U128 = 4,
 }
 
 /// Header for heap-allocated numbers.
@@ -36,6 +40,8 @@ union NumberData {
     i: i64,
     u: u64,
     f: f64,
+    i128: i128,
+    u128: u128,
 }
 
 /// A JSON number value.
@@ -114,6 +120,53 @@ impl VNumber {
         }
     }
 
+    /// Creates a number from an i128, canonicalizing to the smallest representation.
+    ///
+    /// Magnitude canonicalization keeps the representations over disjoint ranges so
+    /// that equal values always share a single internal form:
+    /// `I64=[i64::MIN, i64::MAX]`, `U64=(i64::MAX, u64::MAX]`,
+    /// `U128=(u64::MAX, u128::MAX]`, `I128=[i128::MIN, i64::MIN)`.
+    #[cfg(feature = "alloc")]
+    #[must_use]
+    pub fn from_i128(v: i128) -> Self {
+        if let Ok(i) = i64::try_from(v) {
+            Self::from_i64(i)
+        } else if v >= 0 {
+            if let Ok(u) = u64::try_from(v) {
+                Self::from_u64(u)
+            } else {
+                // v > u64::MAX and positive: store as u128
+                unsafe {
+                    let ptr = Self::alloc(NumberType::U128);
+                    (*ptr).data.u128 = v as u128;
+                    VNumber(Value::new_ptr(ptr.cast(), TypeTag::Number))
+                }
+            }
+        } else {
+            // v < i64::MIN: store as i128
+            unsafe {
+                let ptr = Self::alloc(NumberType::I128);
+                (*ptr).data.i128 = v;
+                VNumber(Value::new_ptr(ptr.cast(), TypeTag::Number))
+            }
+        }
+    }
+
+    /// Creates a number from a u128, canonicalizing to the smallest representation.
+    #[cfg(feature = "alloc")]
+    #[must_use]
+    pub fn from_u128(v: u128) -> Self {
+        if let Ok(u) = u64::try_from(v) {
+            Self::from_u64(u)
+        } else {
+            unsafe {
+                let ptr = Self::alloc(NumberType::U128);
+                (*ptr).data.u128 = v;
+                VNumber(Value::new_ptr(ptr.cast(), TypeTag::Number))
+            }
+        }
+    }
+
     /// Returns the number zero.
     #[cfg(feature = "alloc")]
     #[must_use]
@@ -136,6 +189,8 @@ impl VNumber {
             match hd.type_ {
                 NumberType::I64 => Some(hd.data.i),
                 NumberType::U64 => i64::try_from(hd.data.u).ok(),
+                NumberType::I128 => i64::try_from(hd.data.i128).ok(),
+                NumberType::U128 => i64::try_from(hd.data.u128).ok(),
                 NumberType::F64 => {
                     let f = hd.data.f;
                     // Check if in range and is a whole number via round-trip cast
@@ -159,11 +214,63 @@ impl VNumber {
             match hd.type_ {
                 NumberType::I64 => u64::try_from(hd.data.i).ok(),
                 NumberType::U64 => Some(hd.data.u),
+                NumberType::I128 => u64::try_from(hd.data.i128).ok(),
+                NumberType::U128 => u64::try_from(hd.data.u128).ok(),
                 NumberType::F64 => {
                     let f = hd.data.f;
                     // Check if in range and is a whole number via round-trip cast
                     if f >= 0.0 && f <= u64::MAX as f64 {
                         let u = f as u64;
+                        if u as f64 == f {
+                            return Some(u);
+                        }
+                    }
+                    None
+                }
+            }
+        }
+    }
+
+    /// Converts to i128 if it can be represented exactly.
+    #[must_use]
+    pub fn to_i128(&self) -> Option<i128> {
+        let hd = self.header();
+        unsafe {
+            match hd.type_ {
+                NumberType::I64 => Some(i128::from(hd.data.i)),
+                NumberType::U64 => Some(i128::from(hd.data.u)),
+                NumberType::I128 => Some(hd.data.i128),
+                NumberType::U128 => i128::try_from(hd.data.u128).ok(),
+                NumberType::F64 => {
+                    let f = hd.data.f;
+                    // Check if in range and is a whole number via round-trip cast
+                    if f >= i128::MIN as f64 && f <= i128::MAX as f64 {
+                        let i = f as i128;
+                        if i as f64 == f {
+                            return Some(i);
+                        }
+                    }
+                    None
+                }
+            }
+        }
+    }
+
+    /// Converts to u128 if it can be represented exactly.
+    #[must_use]
+    pub fn to_u128(&self) -> Option<u128> {
+        let hd = self.header();
+        unsafe {
+            match hd.type_ {
+                NumberType::I64 => u128::try_from(hd.data.i).ok(),
+                NumberType::U64 => Some(u128::from(hd.data.u)),
+                NumberType::I128 => u128::try_from(hd.data.i128).ok(),
+                NumberType::U128 => Some(hd.data.u128),
+                NumberType::F64 => {
+                    let f = hd.data.f;
+                    // Check if in range and is a whole number via round-trip cast
+                    if f >= 0.0 && f <= u128::MAX as f64 {
+                        let u = f as u128;
                         if u as f64 == f {
                             return Some(u);
                         }
@@ -190,6 +297,16 @@ impl VNumber {
                     let f = u as f64;
                     if f as u64 == u { Some(f) } else { None }
                 }
+                NumberType::I128 => {
+                    let i = hd.data.i128;
+                    let f = i as f64;
+                    if f as i128 == i { Some(f) } else { None }
+                }
+                NumberType::U128 => {
+                    let u = hd.data.u128;
+                    let f = u as f64;
+                    if f as u128 == u { Some(f) } else { None }
+                }
                 NumberType::F64 => Some(hd.data.f),
             }
         }
@@ -203,6 +320,8 @@ impl VNumber {
             match hd.type_ {
                 NumberType::I64 => hd.data.i as f64,
                 NumberType::U64 => hd.data.u as f64,
+                NumberType::I128 => hd.data.i128 as f64,
+                NumberType::U128 => hd.data.u128 as f64,
                 NumberType::F64 => hd.data.f,
             }
         }
@@ -242,7 +361,10 @@ impl VNumber {
     /// Returns true if this number is an integer (signed or unsigned).
     #[must_use]
     pub fn is_integer(&self) -> bool {
-        matches!(self.header().type_, NumberType::I64 | NumberType::U64)
+        matches!(
+            self.header().type_,
+            NumberType::I64 | NumberType::U64 | NumberType::I128 | NumberType::U128
+        )
     }
 
     pub(crate) fn clone_impl(&self) -> Value {
@@ -253,6 +375,16 @@ impl VNumber {
                 NumberType::U64 => {
                     let ptr = Self::alloc(NumberType::U64);
                     (*ptr).data.u = hd.data.u;
+                    Value::new_ptr(ptr.cast(), TypeTag::Number)
+                }
+                NumberType::I128 => {
+                    let ptr = Self::alloc(NumberType::I128);
+                    (*ptr).data.i128 = hd.data.i128;
+                    Value::new_ptr(ptr.cast(), TypeTag::Number)
+                }
+                NumberType::U128 => {
+                    let ptr = Self::alloc(NumberType::U128);
+                    (*ptr).data.u128 = hd.data.u128;
                     Value::new_ptr(ptr.cast(), TypeTag::Number)
                 }
                 NumberType::F64 => Self::from_f64(hd.data.f).0,
@@ -284,12 +416,25 @@ impl PartialOrd for VNumber {
                 match h1.type_ {
                     NumberType::I64 => Some(h1.data.i.cmp(&h2.data.i)),
                     NumberType::U64 => Some(h1.data.u.cmp(&h2.data.u)),
+                    NumberType::I128 => Some(h1.data.i128.cmp(&h2.data.i128)),
+                    NumberType::U128 => Some(h1.data.u128.cmp(&h2.data.u128)),
                     NumberType::F64 => h1.data.f.partial_cmp(&h2.data.f),
                 }
-            } else {
-                // Cross-type comparison: convert to f64 for simplicity
-                // (This loses precision for very large integers, but is simple)
+            } else if h1.type_ == NumberType::F64 || h2.type_ == NumberType::F64 {
+                // If either operand is a float, fall back to lossy f64 comparison.
+                // This preserves int == whole-float equality and NaN -> None.
                 self.to_f64_lossy().partial_cmp(&other.to_f64_lossy())
+            } else {
+                // Both are integers: compare exactly.
+                match (self.to_i128(), other.to_i128()) {
+                    (Some(a), Some(b)) => Some(a.cmp(&b)),
+                    // Exactly one is None means it's a U128 exceeding i128::MAX,
+                    // so that side is the greater value.
+                    (None, Some(_)) => Some(Ordering::Greater),
+                    (Some(_), None) => Some(Ordering::Less),
+                    // Both None: both exceed i128::MAX, compare via u128.
+                    (None, None) => Some(self.to_u128().unwrap().cmp(&other.to_u128().unwrap())),
+                }
             }
         }
     }
@@ -297,12 +442,20 @@ impl PartialOrd for VNumber {
 
 impl Hash for VNumber {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        // Hash based on the "canonical" representation
+        // Hash based on the "canonical" representation. The chain mirrors the
+        // canonicalization order so that equal values (including whole floats
+        // equal to an integer) always land in the same bucket.
         if let Some(i) = self.to_i64() {
             0u8.hash(state); // discriminant for integer
             i.hash(state);
         } else if let Some(u) = self.to_u64() {
             1u8.hash(state); // discriminant for large unsigned
+            u.hash(state);
+        } else if let Some(i) = self.to_i128() {
+            3u8.hash(state); // discriminant for 128-bit signed
+            i.hash(state);
+        } else if let Some(u) = self.to_u128() {
+            4u8.hash(state); // discriminant for 128-bit unsigned
             u.hash(state);
         } else if let Some(f) = self.to_f64() {
             2u8.hash(state); // discriminant for float
@@ -316,6 +469,10 @@ impl Debug for VNumber {
         if let Some(i) = self.to_i64() {
             Debug::fmt(&i, f)
         } else if let Some(u) = self.to_u64() {
+            Debug::fmt(&u, f)
+        } else if let Some(i) = self.to_i128() {
+            Debug::fmt(&i, f)
+        } else if let Some(u) = self.to_u128() {
             Debug::fmt(&u, f)
         } else if let Some(fl) = self.to_f64() {
             Debug::fmt(&fl, f)
@@ -364,6 +521,38 @@ impl_from_int! {
     u32 => from_i64,
     u64 => from_u64,
     usize => from_u64,
+}
+
+// 128-bit integers must NOT go through the `as _` cast in `impl_from_int!`
+// (that would be lossy), so they get explicit impls calling the dedicated
+// canonicalizing constructors.
+
+#[cfg(feature = "alloc")]
+impl From<i128> for VNumber {
+    fn from(v: i128) -> Self {
+        Self::from_i128(v)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl From<i128> for Value {
+    fn from(v: i128) -> Self {
+        VNumber::from_i128(v).0
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl From<u128> for VNumber {
+    fn from(v: u128) -> Self {
+        Self::from_u128(v)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl From<u128> for Value {
+    fn from(v: u128) -> Self {
+        VNumber::from_u128(v).0
+    }
 }
 
 #[cfg(feature = "alloc")]
@@ -509,5 +698,92 @@ mod tests {
         assert!(c < b);
         assert!(b < inf);
         assert!(!(c > nan || c < nan));
+    }
+
+    #[test]
+    fn test_u128_max_roundtrip() {
+        let n = VNumber::from_u128(u128::MAX);
+        assert_eq!(n.to_u128(), Some(u128::MAX));
+        // u128::MAX exceeds i128::MAX, so to_i128 must be None.
+        assert_eq!(n.to_i128(), None);
+        assert_eq!(n.to_u64(), None);
+        assert!(n.is_integer());
+    }
+
+    #[test]
+    fn test_i128_min_roundtrip() {
+        let n = VNumber::from_i128(i128::MIN);
+        assert_eq!(n.to_i128(), Some(i128::MIN));
+        assert_eq!(n.to_u128(), None);
+        assert_eq!(n.to_i64(), None);
+        assert!(n.is_integer());
+    }
+
+    #[test]
+    fn test_above_u64_max_roundtrip() {
+        let v = u128::from(u64::MAX) + 1;
+        let n = VNumber::from_u128(v);
+        assert_eq!(n.to_u128(), Some(v));
+        assert_eq!(n.to_i128(), Some(v as i128));
+        assert_eq!(n.to_u64(), None);
+    }
+
+    #[test]
+    fn test_128_canonicalization() {
+        // Small values canonicalize down to I64.
+        assert_eq!(VNumber::from_i128(5), VNumber::from_i64(5));
+        assert_eq!(VNumber::from_u128(5), VNumber::from_i64(5));
+        // u64::MAX canonicalizes to the same U64 representation.
+        assert_eq!(
+            VNumber::from_u128(u128::from(u64::MAX)),
+            VNumber::from_u64(u64::MAX)
+        );
+        // A negative value within i64 range canonicalizes to I64.
+        assert_eq!(VNumber::from_i128(-42), VNumber::from_i64(-42));
+    }
+
+    #[test]
+    fn test_128_eq_hash_consistency() {
+        use std::collections::HashSet;
+
+        // Equal values built via different constructors must be Eq and hash equal.
+        let a = VNumber::from_i128(5);
+        let b = VNumber::from_u128(5);
+        assert_eq!(a, b);
+
+        let mut set = HashSet::new();
+        set.insert(crate::Value::from(a.clone()));
+        // Inserting the equal-but-differently-constructed value must collide.
+        assert!(!set.insert(crate::Value::from(b.clone())));
+
+        // A big value above u64::MAX, equal across i128/u128 construction.
+        let big = u128::from(u64::MAX) + 12345;
+        let x = VNumber::from_u128(big);
+        let y = VNumber::from_i128(big as i128);
+        assert_eq!(x, y);
+        let mut set2 = HashSet::new();
+        set2.insert(crate::Value::from(x));
+        assert!(!set2.insert(crate::Value::from(y)));
+    }
+
+    #[test]
+    fn test_128_cross_type_ordering() {
+        // U128 above i128::MAX must order greater than any i128.
+        let huge = VNumber::from_u128(u128::MAX);
+        let big_signed = VNumber::from_i128(i128::MAX);
+        assert!(big_signed < huge);
+
+        // I128 min is the smallest.
+        let small = VNumber::from_i128(i128::MIN);
+        assert!(small < big_signed);
+        assert!(small < VNumber::from_i64(0));
+    }
+
+    #[test]
+    fn test_from_128_impls() {
+        let v: crate::Value = (u128::MAX).into();
+        assert_eq!(v.as_number().unwrap().to_u128(), Some(u128::MAX));
+        let v: crate::Value = (i128::MIN).into();
+        assert_eq!(v.as_number().unwrap().to_i128(), Some(i128::MIN));
     }
 }

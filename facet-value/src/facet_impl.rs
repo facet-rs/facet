@@ -169,6 +169,10 @@ unsafe fn dyn_get_kind(value: PtrConst) -> DynValueKind {
             crate::ValueType::DateTime => DynValueKind::DateTime,
             crate::ValueType::QName => DynValueKind::QName,
             crate::ValueType::Uuid => DynValueKind::Uuid,
+            // The facet-reflection view of a char is a string: facet-serializing a
+            // char Value emits a string (correct for JSON/etc.), and we avoid
+            // introducing a new DynValueKind variant in facet-core.
+            crate::ValueType::Char => DynValueKind::String,
         }
     }
 }
@@ -204,7 +208,14 @@ unsafe fn dyn_get_f64(value: PtrConst) -> Option<f64> {
 unsafe fn dyn_get_str<'a>(value: PtrConst) -> Option<&'a str> {
     unsafe {
         let ptr = value.as_byte_ptr() as *const Value;
-        (*ptr).as_string().map(|s| s.as_str())
+        let v = &*ptr;
+        // A char Value also yields a borrowed &str (its UTF-8 encoding), so that
+        // facet-serializing a char Value emits a string.
+        if let Some(s) = v.as_string() {
+            Some(s.as_str())
+        } else {
+            v.as_vchar().map(|c| c.as_str())
+        }
     }
 }
 

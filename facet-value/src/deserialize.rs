@@ -417,6 +417,17 @@ fn deserialize_scalar<'facet>(
             }
             Ok(partial)
         }
+        ValueType::Char => {
+            let vchar = value.as_vchar().unwrap();
+            // A char target (and other FromStr scalars) can parse from the
+            // single-char UTF-8 string; otherwise fall back to a String.
+            if shape.vtable.has_parse() {
+                partial = partial.parse_from_str(vchar.as_str())?;
+            } else {
+                partial = partial.set(vchar.as_str().to_string())?;
+            }
+            Ok(partial)
+        }
         ValueType::Bytes => {
             let bytes = value.as_bytes().unwrap();
             partial = partial.set(bytes.as_slice().to_vec())?;
