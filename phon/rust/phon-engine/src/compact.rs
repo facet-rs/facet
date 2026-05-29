@@ -23,8 +23,8 @@ use phon_schema::bytes::{
     write_i128, write_u8, write_u16, write_u32, write_u64, write_u128,
 };
 use phon_schema::{
-    DecodeError, EncodeError, Primitive, Schema, SchemaId, SchemaKind, SchemaRef, VariantPayload,
-    primitive_id, read_value, write_value,
+    DecodeError, EncodeError, Field, Primitive, Schema, SchemaId, SchemaKind, SchemaRef, Variant,
+    VariantPayload, extended_from_string, extended_to_string, primitive_id, read_value, write_value,
 };
 
 /// Maximum nesting depth on decode (`r[validate.depth]`).
@@ -50,6 +50,11 @@ pub enum CompactError {
     UnknownVariant(String),
     /// A decoded enum variant index is out of range.
     BadVariantIndex(u32),
+    /// A generic schema applied with the wrong number of type arguments.
+    GenericArity { params: usize, args: usize },
+    /// A structurally malformed schema (e.g. an unbound type variable, or a
+    /// primitive carrying type arguments).
+    Malformed(&'static str),
     /// A decode-side validation failure from the byte reader.
     Decode(DecodeError),
     /// A dynamic (self-describing) sub-value failed to encode.
@@ -78,6 +83,10 @@ impl core::fmt::Display for CompactError {
             }
             CompactError::UnknownVariant(name) => write!(f, "unknown enum variant {name:?}"),
             CompactError::BadVariantIndex(i) => write!(f, "enum variant index {i} out of range"),
+            CompactError::GenericArity { params, args } => {
+                write!(f, "generic expects {params} type arguments, got {args}")
+            }
+            CompactError::Malformed(what) => write!(f, "malformed schema: {what}"),
             CompactError::Decode(e) => write!(f, "decode: {e}"),
             CompactError::Encode(e) => write!(f, "encode: {e}"),
         }
@@ -163,7 +172,7 @@ fn skip_pad(r: &mut Reader, n: usize) -> core::result::Result<(), DecodeError> {
 /// is missing, or the codec does not yet support a kind in play.
 pub fn to_bytes(value: &Value, root: SchemaId, registry: &Registry) -> Result<Vec<u8>> {
     let mut out = Vec::new();
-    encode_id(value, root, registry, &mut out)?;
+    encode_ref(value, &SchemaRef::concrete(root), registry, &mut out)?;
     Ok(out)
 }
 
@@ -173,7 +182,7 @@ pub fn to_bytes(value: &Value, root: SchemaId, registry: &Registry) -> Result<Ve
 /// [`CompactError`] for malformed input or an unsupported kind.
 pub fn from_bytes(bytes: &[u8], root: SchemaId, registry: &Registry) -> Result<Value> {
     let mut r = Reader::new(bytes);
-    let v = decode_id(&mut r, root, registry, 0)?;
+    let v = decode_ref(&mut r, &SchemaRef::concrete(root), registry, 0)?;
     if r.remaining() != 0 {
         return Err(CompactError::Decode(DecodeError::TrailingBytes(r.remaining())));
     }
@@ -184,24 +193,32 @@ pub fn from_bytes(bytes: &[u8], root: SchemaId, registry: &Registry) -> Result<V
 // Encoding
 // ============================================================================
 
-fn encode_id(value: &Value, id: SchemaId, reg: &Registry, out: &mut Vec<u8>) -> Result<()> {
-    if let Some(p) = reg.primitive(id) {
-        encode_primitive(value, p, out)
-    } else if let Some(schema) = reg.composite(id) {
-        encode_kind(value, &schema.kind, reg, out)
-    } else {
-        Err(CompactError::UnknownSchema(id))
-    }
-}
-
+// r[impl type-system.generic-resolution]
 fn encode_ref(value: &Value, r: &SchemaRef, reg: &Registry, out: &mut Vec<u8>) -> Result<()> {
     match r {
-        SchemaRef::Var { .. } => Err(CompactError::Unsupported("generics")),
+        SchemaRef::Var { .. } => Err(CompactError::Malformed("unbound type variable")),
         SchemaRef::Concrete { id, args } => {
-            if !args.is_empty() {
-                return Err(CompactError::Unsupported("generics"));
+            if let Some(p) = reg.primitive(*id) {
+                if !args.is_empty() {
+                    return Err(CompactError::Malformed("primitive carrying type arguments"));
+                }
+                encode_primitive(value, p, out)
+            } else if let Some(schema) = reg.composite(*id) {
+                if schema.type_params.len() != args.len() {
+                    return Err(CompactError::GenericArity {
+                        params: schema.type_params.len(),
+                        args: args.len(),
+                    });
+                }
+                if args.is_empty() {
+                    encode_kind(value, &schema.kind, reg, out)
+                } else {
+                    let kind = substitute_kind(&schema.kind, &schema.type_params, args);
+                    encode_kind(value, &kind, reg, out)
+                }
+            } else {
+                Err(CompactError::UnknownSchema(*id))
             }
-            encode_id(value, *id, reg, out)
         }
     }
 }
@@ -260,7 +277,9 @@ fn encode_primitive(value: &Value, p: Primitive, out: &mut Vec<u8>) -> Result<()
         }
         Primitive::Never => return Err(CompactError::TypeMismatch { expected: "never" }),
         Primitive::DateTime | Primitive::Uuid | Primitive::QName => {
-            return Err(CompactError::Unsupported("datetime/uuid/qname primitives"));
+            let s = extended_to_string(value, p).map_err(CompactError::Encode)?;
+            write_u32(out, s.len() as u32);
+            out.extend_from_slice(s.as_bytes());
         }
     }
     Ok(())
@@ -412,30 +431,145 @@ fn product(dimensions: &[u64]) -> Result<u64> {
 }
 
 // ============================================================================
-// Decoding
+// Generic resolution
 // ============================================================================
+//
+// Resolving a parametric schema substitutes its type parameters with the
+// arguments from a concrete reference, throughout its kind. Substitution is
+// eager and per-reference: each `Concrete { id, args }` produces a Var-free kind
+// before it is walked, so the walker never meets a `Var` (`r[type-system.generic-resolution]`).
 
-fn decode_id(r: &mut Reader, id: SchemaId, reg: &Registry, depth: usize) -> Result<Value> {
-    if depth > MAX_DEPTH {
-        return Err(CompactError::Decode(DecodeError::DepthExceeded));
-    }
-    if let Some(p) = reg.primitive(id) {
-        decode_primitive(r, p)
-    } else if let Some(schema) = reg.composite(id) {
-        decode_kind(r, &schema.kind, reg, depth)
-    } else {
-        Err(CompactError::UnknownSchema(id))
+fn substitute_ref(r: &SchemaRef, params: &[String], args: &[SchemaRef]) -> SchemaRef {
+    match r {
+        SchemaRef::Var { name } => params
+            .iter()
+            .position(|p| p == name)
+            .map(|i| args[i].clone())
+            .unwrap_or_else(|| r.clone()),
+        SchemaRef::Concrete { id, args: inner } => SchemaRef::Concrete {
+            id: *id,
+            args: inner
+                .iter()
+                .map(|a| substitute_ref(a, params, args))
+                .collect(),
+        },
     }
 }
 
+fn substitute_field(f: &Field, params: &[String], args: &[SchemaRef]) -> Field {
+    Field {
+        name: f.name.clone(),
+        schema: substitute_ref(&f.schema, params, args),
+        required: f.required,
+    }
+}
+
+fn substitute_kind(kind: &SchemaKind, params: &[String], args: &[SchemaRef]) -> SchemaKind {
+    match kind {
+        SchemaKind::Primitive(p) => SchemaKind::Primitive(*p),
+        SchemaKind::Dynamic => SchemaKind::Dynamic,
+        SchemaKind::Struct { name, fields } => SchemaKind::Struct {
+            name: name.clone(),
+            fields: fields
+                .iter()
+                .map(|f| substitute_field(f, params, args))
+                .collect(),
+        },
+        SchemaKind::Enum { name, variants } => SchemaKind::Enum {
+            name: name.clone(),
+            variants: variants
+                .iter()
+                .map(|v| Variant {
+                    name: v.name.clone(),
+                    index: v.index,
+                    payload: match &v.payload {
+                        VariantPayload::Unit => VariantPayload::Unit,
+                        VariantPayload::Newtype(r) => {
+                            VariantPayload::Newtype(substitute_ref(r, params, args))
+                        }
+                        VariantPayload::Tuple(rs) => VariantPayload::Tuple(
+                            rs.iter().map(|r| substitute_ref(r, params, args)).collect(),
+                        ),
+                        VariantPayload::Struct(fs) => VariantPayload::Struct(
+                            fs.iter().map(|f| substitute_field(f, params, args)).collect(),
+                        ),
+                    },
+                })
+                .collect(),
+        },
+        SchemaKind::Tuple { elements } => SchemaKind::Tuple {
+            elements: elements
+                .iter()
+                .map(|r| substitute_ref(r, params, args))
+                .collect(),
+        },
+        SchemaKind::List { element } => SchemaKind::List {
+            element: substitute_ref(element, params, args),
+        },
+        SchemaKind::Set { element } => SchemaKind::Set {
+            element: substitute_ref(element, params, args),
+        },
+        SchemaKind::Option { element } => SchemaKind::Option {
+            element: substitute_ref(element, params, args),
+        },
+        SchemaKind::Map { key, value } => SchemaKind::Map {
+            key: substitute_ref(key, params, args),
+            value: substitute_ref(value, params, args),
+        },
+        SchemaKind::Array {
+            element,
+            dimensions,
+        } => SchemaKind::Array {
+            element: substitute_ref(element, params, args),
+            dimensions: dimensions.clone(),
+        },
+        SchemaKind::Tensor { element, rank } => SchemaKind::Tensor {
+            element: substitute_ref(element, params, args),
+            rank: *rank,
+        },
+        SchemaKind::Channel { direction, element } => SchemaKind::Channel {
+            direction: *direction,
+            element: substitute_ref(element, params, args),
+        },
+        SchemaKind::External { kind, metadata } => SchemaKind::External {
+            kind: kind.clone(),
+            metadata: metadata.as_ref().map(|r| substitute_ref(r, params, args)),
+        },
+    }
+}
+
+// ============================================================================
+// Decoding
+// ============================================================================
+
 fn decode_ref(r: &mut Reader, rf: &SchemaRef, reg: &Registry, depth: usize) -> Result<Value> {
+    if depth > MAX_DEPTH {
+        return Err(CompactError::Decode(DecodeError::DepthExceeded));
+    }
     match rf {
-        SchemaRef::Var { .. } => Err(CompactError::Unsupported("generics")),
+        SchemaRef::Var { .. } => Err(CompactError::Malformed("unbound type variable")),
         SchemaRef::Concrete { id, args } => {
-            if !args.is_empty() {
-                return Err(CompactError::Unsupported("generics"));
+            if let Some(p) = reg.primitive(*id) {
+                if !args.is_empty() {
+                    return Err(CompactError::Malformed("primitive carrying type arguments"));
+                }
+                decode_primitive(r, p)
+            } else if let Some(schema) = reg.composite(*id) {
+                if schema.type_params.len() != args.len() {
+                    return Err(CompactError::GenericArity {
+                        params: schema.type_params.len(),
+                        args: args.len(),
+                    });
+                }
+                if args.is_empty() {
+                    decode_kind(r, &schema.kind, reg, depth + 1)
+                } else {
+                    let kind = substitute_kind(&schema.kind, &schema.type_params, args);
+                    decode_kind(r, &kind, reg, depth + 1)
+                }
+            } else {
+                Err(CompactError::UnknownSchema(*id))
             }
-            decode_id(r, *id, reg, depth + 1)
         }
     }
 }
@@ -464,7 +598,7 @@ fn decode_primitive(r: &mut Reader, p: Primitive) -> Result<Value> {
             return Err(CompactError::Decode(DecodeError::Malformed("never is uninhabited")));
         }
         Primitive::DateTime | Primitive::Uuid | Primitive::QName => {
-            return Err(CompactError::Unsupported("datetime/uuid/qname primitives"));
+            extended_from_string(r.read_str()?, p).map_err(CompactError::Decode)?
         }
     })
 }
@@ -783,5 +917,118 @@ mod tests {
             to_bytes(&Value::from("x"), primitive_id(Primitive::U32), &reg),
             Err(CompactError::TypeMismatch { .. })
         ));
+    }
+
+    #[test]
+    fn generics_resolve() {
+        // Pair<A, B> = (A, B); Holder<T> = { pair: Pair<T, u32>, tag: string };
+        // Root = { h: Holder<u8> } (concrete).
+        let pair = Schema {
+            id: SchemaId(10),
+            type_params: vec!["A".to_string(), "B".to_string()],
+            kind: SchemaKind::Tuple {
+                elements: vec![SchemaRef::var("A"), SchemaRef::var("B")],
+            },
+        };
+        let holder = Schema {
+            id: SchemaId(11),
+            type_params: vec!["T".to_string()],
+            kind: SchemaKind::Struct {
+                name: "Holder".to_string(),
+                fields: vec![
+                    Field {
+                        name: "pair".to_string(),
+                        schema: SchemaRef::generic(
+                            SchemaId(10),
+                            vec![SchemaRef::var("T"), prim(Primitive::U32)],
+                        ),
+                        required: true,
+                    },
+                    Field {
+                        name: "tag".to_string(),
+                        schema: prim(Primitive::String),
+                        required: true,
+                    },
+                ],
+            },
+        };
+        let root = schema(
+            12,
+            SchemaKind::Struct {
+                name: "Root".to_string(),
+                fields: vec![Field {
+                    name: "h".to_string(),
+                    schema: SchemaRef::generic(SchemaId(11), vec![prim(Primitive::U8)]),
+                    required: true,
+                }],
+            },
+        );
+        let reg = Registry::new([pair, holder, root]);
+
+        let mut pair_val = VArray::new();
+        pair_val.push(Value::from(5u8));
+        pair_val.push(Value::from(70_000u32));
+        let mut holder_val = VObject::new();
+        holder_val.insert(VString::new("pair"), Value::from(pair_val));
+        holder_val.insert(VString::new("tag"), VString::new("hi"));
+        let mut root_val = VObject::new();
+        root_val.insert(VString::new("h"), Value::from(holder_val));
+
+        rt(root_val.into(), SchemaId(12), &reg);
+
+        // wrong arity is rejected
+        let bad = schema(
+            13,
+            SchemaKind::Struct {
+                name: "Bad".to_string(),
+                fields: vec![Field {
+                    name: "h".to_string(),
+                    schema: SchemaRef::concrete(SchemaId(11)), // Holder needs 1 arg
+                    required: true,
+                }],
+            },
+        );
+        let reg2 = Registry::new([
+            Schema {
+                id: SchemaId(11),
+                type_params: vec!["T".to_string()],
+                kind: SchemaKind::Option {
+                    element: SchemaRef::var("T"),
+                },
+            },
+            bad,
+        ]);
+        let mut bv = VObject::new();
+        bv.insert(VString::new("h"), Value::NULL);
+        assert!(matches!(
+            to_bytes(&bv.into(), SchemaId(13), &reg2),
+            Err(CompactError::GenericArity { .. })
+        ));
+    }
+
+    #[test]
+    fn extended_primitives() {
+        use facet_value::{VDateTime, VQName, VUuid};
+        let reg = Registry::new([]);
+        rt(
+            VUuid::from_u128(0x0123_4567_89ab_cdef_fedc_ba98_7654_3210).into(),
+            primitive_id(Primitive::Uuid),
+            &reg,
+        );
+        rt(
+            VQName::new(VString::new("http://ns"), VString::new("el")).into(),
+            primitive_id(Primitive::QName),
+            &reg,
+        );
+        rt(
+            VDateTime::new_offset(2026, 5, 29, 7, 32, 0, 0, 330).into(),
+            primitive_id(Primitive::DateTime),
+            &reg,
+        );
+        rt(
+            VDateTime::new_local_date(2026, 5, 29).into(),
+            primitive_id(Primitive::DateTime),
+            &reg,
+        );
     }
 }

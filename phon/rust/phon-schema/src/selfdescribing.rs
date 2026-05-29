@@ -989,6 +989,49 @@ fn parse_offset(s: &str) -> Option<i16> {
     i16::try_from(sign * (h * 60 + m)).ok()
 }
 
+/// Format a `Value` as the canonical string of an extended-kind primitive
+/// (`datetime`/`uuid`/`qname`, `r[value.extended-kinds]`). The compact codec
+/// uses this so the canonical form lives in one place.
+///
+/// # Errors
+/// [`EncodeError`] if `value` is not the expected kind, or `primitive` is not an
+/// extended-kind primitive.
+pub fn extended_to_string(value: &Value, primitive: Primitive) -> Result<String, EncodeError> {
+    match primitive {
+        Primitive::DateTime => datetime_string(
+            value
+                .as_datetime()
+                .ok_or(EncodeError::Unsupported("expected datetime"))?,
+        ),
+        Primitive::Uuid => Ok(uuid_string(
+            value
+                .as_uuid()
+                .ok_or(EncodeError::Unsupported("expected uuid"))?
+                .as_u128(),
+        )),
+        Primitive::QName => qname_string(
+            value
+                .as_qname()
+                .ok_or(EncodeError::Unsupported("expected qname"))?,
+        ),
+        _ => Err(EncodeError::Unsupported("not an extended-kind primitive")),
+    }
+}
+
+/// Parse the canonical string of an extended-kind primitive into a `Value`.
+///
+/// # Errors
+/// [`DecodeError`] if the string is malformed for the kind, or `primitive` is
+/// not an extended-kind primitive.
+pub fn extended_from_string(s: &str, primitive: Primitive) -> Result<Value, DecodeError> {
+    match primitive {
+        Primitive::DateTime => Ok(parse_datetime(s)?.into()),
+        Primitive::Uuid => Ok(parse_uuid(s)?.into()),
+        Primitive::QName => Ok(parse_qname(s)?.into()),
+        _ => Err(DecodeError::Malformed("not an extended-kind primitive")),
+    }
+}
+
 /// Read a [`Value`] from a reader (for embedding, e.g. a `Dynamic` field).
 ///
 /// # Errors
