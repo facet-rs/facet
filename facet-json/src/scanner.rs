@@ -92,6 +92,7 @@ pub struct ScanError {
 
 /// Types of scanner errors
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum ScanErrorKind {
     /// Unexpected character
     UnexpectedChar(char),

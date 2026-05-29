@@ -8,6 +8,7 @@ use facet_reflect::Span;
 
 /// Location hint for a serialized field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum FieldLocationHint {
     /// Key/value entry (JSON/YAML/TOML/etc).
     #[default]
@@ -22,6 +23,7 @@ pub enum FieldLocationHint {
 /// - `Name`: Simple string key (24 bytes) - used by JSON, YAML, TOML, etc.
 /// - `Full`: Boxed full key with metadata (8 bytes) - used by Styx for doc/tag support.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum FieldKey<'de> {
     /// Simple named key (common case for JSON/YAML/TOML).
     Name(Cow<'de, str>),
@@ -204,6 +206,7 @@ impl<'de> FieldKey<'de> {
 /// This distinguishes between format-specific container types to enable
 /// better error messages and type checking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ContainerKind {
     /// Object: struct-like with key-value pairs.
     /// Type mismatches (e.g., object where array expected) should produce errors.
@@ -225,6 +228,7 @@ impl ContainerKind {
 
 /// Value classification hint for evidence gathering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ValueTypeHint {
     /// Null-like values.
     Null,
@@ -244,6 +248,7 @@ pub enum ValueTypeHint {
 
 /// Scalar data extracted from the wire format.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum ScalarValue<'de> {
     /// Unit type (Rust's `()`).
     Unit,
@@ -492,6 +497,7 @@ impl<'de> ParseEvent<'de> {
 
 /// The kind of parse event.
 #[derive(Clone, PartialEq)]
+#[non_exhaustive]
 pub enum ParseEventKind<'de> {
     /// Beginning of a struct/object/node.
     StructStart(ContainerKind),

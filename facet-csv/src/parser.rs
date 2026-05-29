@@ -258,6 +258,9 @@ fn parse_scalar_with_hint(value: &str, hint: ScalarTypeHint) -> ScalarValue<'_> 
             // For now, just return as string and let the deserializer handle it
             ScalarValue::Str(Cow::Borrowed(value))
         }
+        // Unknown future hint kinds: fall back to the raw string representation,
+        // mirroring the parse-failure fallback used by every other arm.
+        _ => ScalarValue::Str(Cow::Borrowed(value)),
     }
 }
 

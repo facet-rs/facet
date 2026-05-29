@@ -233,6 +233,9 @@ impl FormatSerializer for XdrSerializer {
             }
             ScalarValue::Str(s) => self.write_string(&s),
             ScalarValue::Bytes(bytes) => self.write_opaque(&bytes),
+            _ => {
+                return Err(XdrSerializeError::new("unsupported scalar value kind"));
+            }
         }
         Ok(())
     }

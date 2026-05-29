@@ -16,6 +16,7 @@ use crate::value::{TypeTag, Value};
 
 /// The kind of datetime value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum DateTimeKind {
     /// Offset date-time with UTC offset in minutes.
     /// e.g., `1979-05-27T07:32:00Z` (offset=0) or `1979-05-27T07:32:00+05:30` (offset=330)

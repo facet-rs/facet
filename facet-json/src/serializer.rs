@@ -31,6 +31,7 @@ impl Default for SerializeOptions {
 
 /// Byte serialization format for JSON.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum BytesFormat {
     /// Serialize as a JSON array of numbers (e.g., `[0, 255, 42]`).
     #[default]
@@ -529,6 +530,11 @@ impl FormatSerializer for JsonSerializer {
             }
             ScalarValue::Str(s) => self.write_json_string(&s),
             ScalarValue::Bytes(bytes) => self.write_bytes_with_options(bytes.as_ref()),
+            _ => {
+                return Err(JsonSerializeError {
+                    msg: "unsupported scalar value kind",
+                });
+            }
         }
         Ok(())
     }

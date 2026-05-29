@@ -20,6 +20,7 @@ use crate::value::{TypeTag, Value};
 /// This allows 256 subtypes to share a single tag value.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum OtherKind {
     /// Qualified name (namespace + local name)
     QName = 0,

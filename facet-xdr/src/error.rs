@@ -4,6 +4,7 @@ use core::fmt;
 
 /// XDR parsing error.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct XdrError {
     /// Error code
     pub code: i32,

@@ -56,6 +56,7 @@ impl JsonError {
 
 /// Specific error kinds for JSON deserialization
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum JsonErrorKind {
     /// Scanner/adapter error
     Scan(ScanErrorKind),

@@ -54,6 +54,7 @@ impl TomlError {
 
 /// Specific error kinds for TOML operations
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum TomlErrorKind {
     /// Parse error from toml_parser
     Parse(String),

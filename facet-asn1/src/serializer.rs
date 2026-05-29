@@ -327,6 +327,11 @@ impl FormatSerializer for Asn1Serializer {
             ScalarValue::F64(n) => self.write_f64(n),
             ScalarValue::Str(s) => self.write_str(&s),
             ScalarValue::Bytes(bytes) => self.write_bytes(&bytes),
+            _ => {
+                return Err(Asn1SerializeError {
+                    message: "unsupported scalar value kind".into(),
+                });
+            }
         }
         Ok(())
     }

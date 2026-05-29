@@ -15,6 +15,7 @@ const DESERIALIZE_STACK_SEGMENT: usize = 32 * 1024 * 1024;
 
 /// Specifies where metadata should come from during deserialization.
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub enum MetaSource<'a> {
     /// Use explicit metadata from an outer context (borrowed).
     ///

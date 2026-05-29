@@ -478,6 +478,9 @@ impl FormatSerializer for YamlSerializer {
                     "bytes serialization not supported for YAML",
                 ));
             }
+            _ => {
+                return Err(YamlSerializeError::new("unsupported scalar value kind"));
+            }
         }
 
         self.line_pos = LinePos::Inline;

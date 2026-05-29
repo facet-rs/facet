@@ -176,6 +176,11 @@ impl FormatSerializer for CsvSerializer {
                     msg: "CSV does not support binary data",
                 });
             }
+            _ => {
+                return Err(CsvSerializeError {
+                    msg: "unsupported scalar value kind",
+                });
+            }
         }
         Ok(())
     }

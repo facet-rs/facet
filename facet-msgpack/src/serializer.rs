@@ -347,6 +347,11 @@ impl FormatSerializer for MsgPackSerializer {
             ScalarValue::F64(n) => self.write_f64(n),
             ScalarValue::Str(s) => self.write_str(&s),
             ScalarValue::Bytes(bytes) => self.write_bin(&bytes),
+            _ => {
+                return Err(MsgPackSerializeError {
+                    message: "unsupported scalar value kind".into(),
+                });
+            }
         }
         Ok(())
     }

@@ -96,6 +96,7 @@ impl Writer for Vec<u8> {
 
 /// A segment in a postcard scatter plan.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Segment<'a> {
     /// Bytes stored in [`ScatterPlan::staging`].
     Staged { offset: usize, len: usize },
@@ -455,6 +456,7 @@ fn map_format_error(error: FormatSerializeError<SerializeError>) -> SerializeErr
         FormatSerializeError::Reflect(err) => SerializeError::Custom(alloc::format!("{err}")),
         FormatSerializeError::Unsupported(message) => SerializeError::Custom(message.into_owned()),
         FormatSerializeError::Internal(message) => SerializeError::Custom(message.into_owned()),
+        other => SerializeError::Custom(alloc::format!("{other}")),
     }
 }
 
@@ -533,6 +535,11 @@ impl<'a, W> PostcardSerializer<'a, W> {
             DynamicValueTag::Array => 7,
             DynamicValueTag::Object => 8,
             DynamicValueTag::DateTime => 9,
+            _ => {
+                return Err(SerializeError::Custom(
+                    "unsupported dynamic value tag".into(),
+                ));
+            }
         };
         self.writer.write_byte(byte)
     }
@@ -586,6 +593,9 @@ impl<'a, W: PostcardWriter<'a>> FormatSerializer for PostcardSerializer<'a, W> {
                 Cow::Borrowed(bytes) => self.write_bytes_borrowed(bytes),
                 Cow::Owned(bytes) => self.write_bytes(&bytes),
             },
+            _ => Err(SerializeError::Custom(
+                "unsupported scalar value kind".into(),
+            )),
         }
     }
 
