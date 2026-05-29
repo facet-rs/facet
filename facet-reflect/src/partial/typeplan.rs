@@ -1534,6 +1534,8 @@ impl TypePlanBuilder {
             let field_default = match default_source {
                 DefaultSource::Custom(f) => FieldDefault::Custom(*f),
                 DefaultSource::FromTrait => FieldDefault::FromTrait(field_shape),
+                // Unknown default sources fall back to the type's Default impl.
+                _ => FieldDefault::FromTrait(field_shape),
             };
             return FillRule::Defaultable(field_default);
         }

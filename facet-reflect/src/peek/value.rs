@@ -786,6 +786,9 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
                         PointerType::Function(_) => {
                             // well that's not a list-like
                         }
+                        _ => {
+                            // unknown pointer kind - not a list-like
+                        }
                     },
                     _ => {
                         // well that's not a list-like either
@@ -1421,6 +1424,12 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
                     shape: proxy_def.shape,
                 })
             }
+            // Unknown path steps cannot be applied to this value.
+            _ => Err(PathAccessError::WrongStepKind {
+                step,
+                step_index,
+                shape: self.shape,
+            }),
         }
     }
 }

@@ -89,6 +89,7 @@ facet::define_attr_grammar! {
     /// Validation attributes for facet fields.
     ///
     /// These attributes can be used with `#[facet(validate::...)]` syntax.
+    #[non_exhaustive]
     pub enum Attr {
         /// Minimum numeric value constraint.
         ///

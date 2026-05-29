@@ -18,6 +18,7 @@ fn test_bool_debug() {
         VTableErased::Indirect(_) => {
             panic!("bool should use Direct vtable, not Indirect");
         }
+        _ => panic!("bool should use Direct vtable"),
     }
 }
 
@@ -37,6 +38,7 @@ fn test_str_indirect() {
             assert!(vt.partial_eq.is_some(), "str should have partial_eq");
             assert!(vt.cmp.is_some(), "str should have cmp");
         }
+        _ => panic!("str should use Indirect vtable"),
     }
 }
 
@@ -68,6 +70,7 @@ fn test_integers_have_vtable() {
                 VTableErased::Indirect(_) => {
                     panic!(concat!(stringify!($t), " should use Direct vtable"));
                 }
+                _ => panic!(concat!(stringify!($t), " should use Direct vtable")),
             }
         };
     }
@@ -183,6 +186,7 @@ fn test_option_vtable_indirect() {
             assert!(vt.partial_cmp.is_some(), "Option should have partial_cmp");
             assert!(vt.cmp.is_some(), "Option should have cmp");
         }
+        _ => panic!("Option<i32> should use Indirect vtable"),
     }
     // drop_in_place moved from VTable to TypeOps
     assert!(shape.type_ops.is_some(), "Option should have type_ops");
@@ -374,6 +378,7 @@ fn test_infallible_has_facet() {
         VTableErased::Direct(_) => {
             panic!("Infallible should use Indirect vtable, not Direct");
         }
+        _ => panic!("Infallible should use Indirect vtable"),
     }
 
     // Infallible should have type_ops with drop

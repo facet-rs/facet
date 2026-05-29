@@ -4,6 +4,7 @@ use crate::DocInner;
 
 /// Errors that can occur while unescaping a string
 #[derive(Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum UnescapeError {
     /// An illegal character was found following a backslash (e.g., `\a`)
     IllegalCharacterFollowingBackslash {

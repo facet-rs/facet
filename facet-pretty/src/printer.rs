@@ -301,8 +301,10 @@ impl PrettyPrinter {
                     max
                 }
                 UserType::Opaque | UserType::Union(_) => 1,
+                _ => 1,
             },
             Type::Undefined => 1,
+            _ => 1,
         }
     }
 

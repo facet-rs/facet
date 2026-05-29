@@ -5,6 +5,7 @@ use super::{Shape, TypeNameOpts};
 /// A characteristic a shape can have
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(C)]
+#[non_exhaustive]
 pub enum Characteristic {
     // Functionality traits
     /// Implements Clone

@@ -1246,6 +1246,12 @@ impl Frame {
                         return true;
                     }
                 }
+                _ => {
+                    // Unknown default sources fall back to the type's Default trait.
+                    if unsafe { field.shape().call_default_in_place(field_ptr) }.is_some() {
+                        return true;
+                    }
+                }
             }
         }
 

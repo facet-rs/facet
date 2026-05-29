@@ -9,6 +9,7 @@ use crate::config::{BigIntMode, Config};
 
 /// Intermediate representation of a Zod type, before emission to source text.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum ZodType {
     /// `z.string()`
     String,

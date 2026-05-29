@@ -4,6 +4,7 @@ use super::{Ox, Shape, VTableErased};
 ///
 /// Can hold either a shaped error value (the actual error from `FromStr`)
 /// or a static string message.
+#[non_exhaustive]
 pub enum ParseError {
     /// A shaped error value (e.g., `ParseIntError`, `ParseBoolError`).
     /// The `Ox` owns the error and will drop it properly.
@@ -91,6 +92,7 @@ impl core::error::Error for ParseError {}
 /// This enum encodes both the result and whether the source value was consumed,
 /// which is critical for correct memory management.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum TryFromOutcome {
     /// Conversion succeeded. The source value was consumed.
     Converted,
@@ -104,6 +106,7 @@ pub enum TryFromOutcome {
 
 /// Error returned when `try_from` fails to convert a value.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum TryFromError {
     /// The source shape is not supported for conversion.
     UnsupportedSourceShape {
@@ -150,6 +153,7 @@ impl core::error::Error for TryFromError {}
 
 /// Error returned when `try_into_inner` fails.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum TryIntoInnerError {
     /// The type does not support extracting an inner value.
     NotSupported,
@@ -170,6 +174,7 @@ impl core::error::Error for TryIntoInnerError {}
 
 /// Error returned when `try_borrow_inner` fails.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum TryBorrowInnerError {
     /// The type does not support borrowing an inner value.
     NotSupported,

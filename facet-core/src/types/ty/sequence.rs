@@ -3,6 +3,7 @@ use super::Shape;
 /// Describes built-in sequence type (array, slice)
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
+#[non_exhaustive]
 pub enum SequenceType {
     /// Array (`[T; N]`)
     Array(ArrayType),

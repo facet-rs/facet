@@ -5,6 +5,7 @@ use super::Shape;
 /// Describes all pointer types
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
+#[non_exhaustive]
 pub enum PointerType {
     /// Describees bound const and mut references (`&`/`&mut`)
     Reference(ValuePointerType),
@@ -19,6 +20,7 @@ pub enum PointerType {
 /// Describes the raw/reference pointer
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
+#[non_exhaustive]
 pub struct ValuePointerType {
     /// Is the pointer mutable or not.
     pub mutable: bool,

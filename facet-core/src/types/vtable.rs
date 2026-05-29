@@ -740,6 +740,7 @@ impl<T> TypedVTableDirectBuilder<T> {
 /// | Direct | Concrete types: scalars, String, derived types |
 /// | Indirect | Generic containers: `Vec<T>`, `Option<T>`, `Arc<T>` |
 #[derive(Clone, Copy)]
+#[non_exhaustive]
 pub enum VTableErased {
     /// For concrete types with compile-time known traits.
     Direct(&'static VTableDirect),
@@ -1311,6 +1312,7 @@ pub struct TypeOpsIndirect {
 /// | Direct | Concrete types: scalars, String, derived types |
 /// | Indirect | Generic containers: `Vec<T>`, `Option<T>`, `Arc<T>` |
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub enum TypeOps {
     /// For concrete types with thin pointers.
     Direct(&'static TypeOpsDirect),

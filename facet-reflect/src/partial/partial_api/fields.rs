@@ -230,6 +230,12 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                         operation: "cannot select a field from an opaque type",
                     }));
                 }
+                _ => {
+                    return Err(self.err(ReflectErrorKind::OperationFailed {
+                        shape,
+                        operation: "cannot select a field from this user type",
+                    }));
+                }
             },
             Type::Sequence(sequence_type) => match sequence_type {
                 SequenceType::Array(array_type) => {
@@ -246,6 +252,12 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     return Err(self.err(ReflectErrorKind::OperationFailed {
                         shape,
                         operation: "cannot select a field from slices yet",
+                    }));
+                }
+                _ => {
+                    return Err(self.err(ReflectErrorKind::OperationFailed {
+                        shape,
+                        operation: "cannot select a field from this sequence type",
                     }));
                 }
             },
@@ -297,6 +309,10 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 }
                 facet_core::DefaultSource::FromTrait => {
                     // Use the type's Default trait via #[facet(default)]
+                    self = self.set_default()?;
+                }
+                _ => {
+                    // Unknown default sources fall back to the type's Default trait.
                     self = self.set_default()?;
                 }
             }

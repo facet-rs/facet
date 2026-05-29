@@ -3,6 +3,7 @@ use super::{EnumType, StructType, UnionType};
 /// User-defined types (structs, enums, unions)
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
+#[non_exhaustive]
 pub enum UserType {
     /// Describes a `struct`
     Struct(StructType),
@@ -32,6 +33,7 @@ impl UserType {
 /// Is the structure packed, is it laid out like a C struct, is it a transparent wrapper?
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 #[repr(C)]
+#[non_exhaustive]
 pub struct Repr {
     /// Describes base layout representation of the type
     pub base: BaseRepr,
@@ -86,6 +88,7 @@ impl Repr {
 /// Underlying byte layout representation
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 #[repr(C)]
+#[non_exhaustive]
 pub enum BaseRepr {
     /// `#[repr(C)]`
     C,

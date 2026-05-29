@@ -207,10 +207,18 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     shape: frame.allocated.shape(),
                     operation: "opaque types cannot be reflected upon",
                 })),
+                _ => Err(self.err(ReflectErrorKind::OperationFailed {
+                    shape: frame.allocated.shape(),
+                    operation: "cannot select a field from this user type",
+                })),
             },
             Type::Pointer(_) => Err(self.err(ReflectErrorKind::OperationFailed {
                 shape: frame.allocated.shape(),
                 operation: "cannot select a field from a pointer type",
+            })),
+            _ => Err(self.err(ReflectErrorKind::OperationFailed {
+                shape: frame.allocated.shape(),
+                operation: "cannot select a field from this type",
             })),
         }
     }

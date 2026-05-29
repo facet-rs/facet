@@ -129,6 +129,7 @@ pub mod builtin {
         /// Attributes annotated with `#[storage(field)]` are stored in dedicated `Field` struct fields.
         /// Attributes without `#[storage(...)]` are stored in the `attributes` slice (O(n) lookup).
         /// <https://facet.rs/guide/attributes/>
+        #[non_exhaustive]
         pub enum Attr {
             /// Marks a field as containing sensitive data that should be redacted in debug output.
             ///

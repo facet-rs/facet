@@ -274,6 +274,7 @@ impl<'mem, 'facet> HasFields<'mem, 'facet> for PeekEnum<'mem, 'facet> {
 
 /// Error that can occur when trying to determine variant information
 #[derive(Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum VariantError {
     /// Error indicating that enum internals are opaque and cannot be determined
     OpaqueInternals,

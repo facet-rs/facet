@@ -24,6 +24,7 @@ use quote::quote;
 /// - `Error` → convention-based lookup (`::facet_error`)
 /// - `some_crate::SomeTrait` → explicit path (`::some_crate`)
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum PluginRef {
     /// Simple name like `Error` - uses convention `::facet_{snake_case}`
     Simple(String),

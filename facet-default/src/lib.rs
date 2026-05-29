@@ -54,6 +54,7 @@ facet::define_attr_grammar! {
     crate_path ::facet_default;
 
     /// Default attribute types for configuring Default implementation.
+    #[non_exhaustive]
     pub enum Attr {
         /// Mark an enum variant as the default.
         ///

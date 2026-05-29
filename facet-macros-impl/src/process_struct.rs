@@ -1269,6 +1269,11 @@ pub(crate) fn gen_field_from_pfield(
                             Some(#facet_crate::TryFromOutcome::Unsupported) => {
                                 #panic_unsupported
                             },
+                            // Unknown outcomes are treated as unsupported. We do not
+                            // forget the source since its consumption status is unknown.
+                            Some(_) => {
+                                #panic_unsupported
+                            },
                             None => {
                                 #panic_unsupported
                             },

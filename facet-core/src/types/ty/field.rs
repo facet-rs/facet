@@ -6,6 +6,7 @@ use super::Shape;
 ///
 /// Used by the `#[facet(default)]` attribute.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub enum DefaultSource {
     /// Use the type's Default trait via shape vtable.
     /// Set when `#[facet(default)]` is used without an expression.
@@ -529,6 +530,7 @@ pub type FieldAttribute = super::Attr;
 
 /// Errors encountered when calling `field_by_index` or `field_by_name`
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum FieldError {
     /// `field_by_name` was called on a struct, and there is no static field
     /// with the given key.

@@ -743,6 +743,13 @@ fn apply_step_mut(
             step_index,
             shape,
         }),
+
+        // Unknown path steps cannot be applied to this value.
+        _ => Err(PathAccessError::WrongStepKind {
+            step,
+            step_index,
+            shape,
+        }),
     }
 }
 

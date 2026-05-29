@@ -1050,6 +1050,8 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     return;
                 }
             }
+            // Unknown vtable kind: no conversion possible.
+            _ => return,
         };
 
         match result {
@@ -1060,7 +1062,8 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     wrapper_shape
                 );
             }
-            TryFromOutcome::Unsupported | TryFromOutcome::Failed(_) => {
+            // Treat unsupported, failed, and unknown outcomes as not-converted.
+            _ => {
                 crate::trace!(
                     "complete_inner_frame: conversion failed from {} to {}",
                     inner_shape,
@@ -1980,6 +1983,8 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             && match parent_shape.vtable {
                 facet_core::VTableErased::Direct(vt) => vt.try_from.is_some(),
                 facet_core::VTableErased::Indirect(vt) => vt.try_from.is_some(),
+                // Unknown vtable kind: assume no try_from available.
+                _ => false,
             };
 
         if needs_conversion {
@@ -2047,6 +2052,13 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         }));
                     }
                 }
+                // Unknown vtable kind: try_from not available for this type.
+                _ => {
+                    return Err(self.err(ReflectErrorKind::OperationFailed {
+                        shape: parent_shape,
+                        operation: "try_from not available for this type",
+                    }));
+                }
             };
 
             // Handle the TryFromOutcome, which explicitly communicates ownership semantics:
@@ -2108,6 +2120,16 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         src_shape: inner_shape,
                         dst_shape: parent_shape,
                         inner: facet_core::TryFromError::Generic(e.into_owned()),
+                    }));
+                }
+                // Unknown outcome: ownership semantics are unknown, so we conservatively
+                // leave the source frame untouched (leaking rather than risking a
+                // double-free) and report the conversion as failed.
+                _ => {
+                    return Err(self.err(ReflectErrorKind::TryFromError {
+                        src_shape: inner_shape,
+                        dst_shape: parent_shape,
+                        inner: facet_core::TryFromError::UnsupportedSourceType,
                     }));
                 }
             }
@@ -2775,6 +2797,9 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         {
                             path.push(PathStep::Index(*idx as u32));
                         }
+                    }
+                    _ => {
+                        // Unknown user types contribute no structural path steps.
                     }
                 },
                 Type::Sequence(facet_core::SequenceType::Array(_array_def)) => {

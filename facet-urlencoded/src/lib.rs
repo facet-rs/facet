@@ -394,6 +394,7 @@ fn deserialize_nested_field<'facet, const BORROW: bool>(
 
 /// Errors that can occur during URL encoded form data deserialization.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum UrlEncodedError {
     /// The field value couldn't be parsed as a number.
     InvalidNumber(String, String),

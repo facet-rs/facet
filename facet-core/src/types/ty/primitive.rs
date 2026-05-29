@@ -1,6 +1,7 @@
 /// Describes built-in primitives (u32, bool, str, etc.)
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
+#[non_exhaustive]
 pub enum PrimitiveType {
     /// Boolean (`bool`)
     Boolean,
@@ -38,6 +39,7 @@ pub enum NumericType {
 /// given type.
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
+#[non_exhaustive]
 pub enum TextualType {
     /// UCS-16 `char` type
     Char,

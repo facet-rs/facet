@@ -328,6 +328,7 @@ impl PointerVTable {
 
 /// Represents common standard library pointer kinds
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum KnownPointer {
     /// [`Box<T>`](alloc::boxed::Box), heap-allocated values with single ownership
     Box,

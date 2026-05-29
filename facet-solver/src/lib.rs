@@ -279,6 +279,7 @@ pub use facet_reflect::{
 /// - Flat formats (JSON, TOML, YAML) treat all fields as key-value pairs
 /// - DOM formats (XML, HTML) distinguish attributes, elements, and text content
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum Format {
     /// Flat key-value formats (JSON, TOML, YAML, etc.)
     ///
@@ -487,6 +488,7 @@ fn find_disambiguating_fields(configs: &[&Resolution]) -> Vec<String> {
 
 /// Information about a missing required field for error reporting.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct MissingFieldInfo {
     /// The serialized field name (as it appears in input)
     pub name: &'static str,
@@ -509,6 +511,7 @@ impl MissingFieldInfo {
 
 /// Information about why a specific candidate (resolution) failed to match.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct CandidateFailure {
     /// Human-readable description of the variant (e.g., "DatabaseBackend::Postgres")
     pub variant_name: String,
@@ -523,6 +526,7 @@ pub struct CandidateFailure {
 
 /// Suggestion for a field that might have been misspelled.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct FieldSuggestion {
     /// The unknown field from input
     pub unknown: String,
@@ -534,6 +538,7 @@ pub struct FieldSuggestion {
 
 /// Errors that can occur when building a schema.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum SchemaError {
     /// A field name appears from multiple sources (parent struct and flattened struct)
     DuplicateField(DuplicateFieldError),
@@ -566,6 +571,7 @@ impl std::error::Error for SchemaError {}
 
 /// Errors that can occur during flatten resolution.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum SolverError {
     /// No configuration matches the input fields
     NoMatch {
@@ -889,6 +895,8 @@ impl<'a> Solver<'a> {
                 // DOM key on flat schema - ignore category
                 self.schema.field_to_resolutions.get(name.as_ref())
             }
+            // Unknown key/format combinations have no associated resolutions.
+            _ => None,
         };
 
         let resolutions_with_key = match resolutions_with_key {
@@ -1691,6 +1699,7 @@ fn compute_suggestions(
 
 /// Result of reporting a key to the probing solver.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ProbeResult<'a> {
     /// Keep reporting keys - not yet disambiguated
     KeepGoing,
@@ -1819,6 +1828,7 @@ impl<'a> ProbingSolver<'a> {
 /// This is used by deserializers to determine how to parse untagged enum variants
 /// based on the YAML/JSON/etc. value type they encounter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum VariantFormat {
     /// Unit variant: no fields, serializes as the variant name or nothing for untagged
     Unit,
@@ -2208,6 +2218,7 @@ impl VariantsByFormat {
 
 /// How enum variants are represented in the serialized format.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum EnumRepr {
     /// Variant fields are flattened to the same level as other fields.
     /// Also used for `#[facet(untagged)]` enums where there's no tag at all.

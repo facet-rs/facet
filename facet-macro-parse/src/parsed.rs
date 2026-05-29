@@ -8,6 +8,7 @@ use quote::{quote, quote_spanned};
 /// Some errors are caught by rustc itself, so we don't emit duplicate diagnostics.
 /// Others are facet-specific and need our own compile_error!.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ParseError {
     /// An error that rustc will catch on its own - we don't emit a diagnostic.
     ///

@@ -23,6 +23,7 @@ use facet_core::{Field, Shape};
 /// For DOM formats (XML, HTML), fields are categorized by their role
 /// in the tree structure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, Default)]
+#[non_exhaustive]
 pub enum FieldCategory {
     /// Regular field in flat formats (JSON, TOML, YAML, etc.)
     /// All fields are treated as simple key-value pairs.
@@ -70,6 +71,7 @@ impl FieldCategory {
 /// For flat formats (JSON, TOML), keys are just field names.
 /// For DOM formats (XML, HTML), keys include a category (attribute, element, text).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub enum FieldKey<'a> {
     /// Flat format key - just a name (for JSON, TOML, YAML, etc.)
     Flat(Cow<'a, str>),
@@ -332,6 +334,7 @@ impl Eq for FieldInfo {}
 
 /// Result of matching input fields against a resolution.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum MatchResult {
     /// All required fields present, all fields known
     Exact,

@@ -75,6 +75,7 @@ pub use walk::{ShapeVisitor, VisitDecision, WalkStatus, walk_shape};
 /// Each step records an index that can be used to navigate
 /// back through a [`Shape`] to reconstruct field names and types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub enum PathStep {
     /// Navigate to a struct field by index
     Field(u32),

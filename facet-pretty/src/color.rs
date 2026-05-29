@@ -108,6 +108,7 @@ impl Palette {
 
 /// Which colour palette the pretty-printer should use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum Theme {
     /// Detect the terminal background once and pick the matching Melange
     /// variant (light or dark). Falls back to dark when detection is

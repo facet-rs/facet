@@ -5,6 +5,7 @@ use core::{fmt::Debug, marker::PhantomData, ptr::NonNull};
 
 /// Fields for types which act like lists
 #[derive(Clone, Copy)]
+#[non_exhaustive]
 pub enum ListLikeDef {
     /// Ordered list of homogenous values, variable size
     ///

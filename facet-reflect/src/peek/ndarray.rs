@@ -17,6 +17,7 @@ impl Debug for PeekNdArray<'_, '_> {
 
 /// Error that can occur when trying to access an n-dimensional array as strided
 #[derive(Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum StrideError {
     /// Error indicating that the array is not strided.
     NotStrided,

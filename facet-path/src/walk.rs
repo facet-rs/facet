@@ -38,6 +38,7 @@ use crate::{Path, PathStep};
 
 /// Decision returned by [`ShapeVisitor::enter`] to control traversal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum VisitDecision {
     /// Descend into this node's children, then call [`ShapeVisitor::leave`].
     Recurse,

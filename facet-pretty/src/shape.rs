@@ -228,6 +228,7 @@ impl ShapeFormatConfig {
 
 /// A segment in a path through a type structure
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub enum PathSegment {
     /// A field name in a struct
     Field(Cow<'static, str>),
@@ -391,6 +392,9 @@ pub fn format_shape_colored_into_with_config(
                     }
                 }
                 UserType::Union(_) | UserType::Opaque => {
+                    printed.remove(&current.id);
+                }
+                _ => {
                     printed.remove(&current.id);
                 }
             },
@@ -997,6 +1001,10 @@ fn format_shape_into_with_spans(shape: &Shape, ctx: &mut SpanTrackingContext) ->
                 UserType::Union(_) | UserType::Opaque => {
                     // For union/opaque types, just show the type identifier
                     // Don't actually print anything since we can't expand them
+                    printed.remove(&current.id);
+                }
+                _ => {
+                    // Unknown user types can't be expanded; don't print them.
                     printed.remove(&current.id);
                 }
             },

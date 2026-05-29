@@ -43,6 +43,7 @@ facet::define_attr_grammar! {
     crate_path ::facet_error;
 
     /// Error attribute types for field configuration.
+    #[non_exhaustive]
     pub enum Attr {
         /// Marks a field as the error source and generates a `From` impl.
         ///

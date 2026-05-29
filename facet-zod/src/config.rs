@@ -19,6 +19,7 @@ pub enum BigIntMode {
 }
 
 /// Controls what `export` declarations are emitted per named schema.
+#[non_exhaustive]
 pub enum ExportStyle {
     /// Emit both the `const ...Schema` value and the inferred `type`.
     ConstAndType,

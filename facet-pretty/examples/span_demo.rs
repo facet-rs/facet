@@ -134,6 +134,7 @@ fn format_path(path: &[PathSegment]) -> String {
             PathSegment::Variant(name) => format!("::{name}"),
             PathSegment::Index(i) => format!("[{i}]"),
             PathSegment::Key(k) => format!("[{k}]"),
+            _ => String::new(),
         })
         .collect::<Vec<_>>()
         .join("")
