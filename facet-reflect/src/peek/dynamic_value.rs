@@ -223,6 +223,14 @@ impl<'mem, 'facet> PeekDynamicValue<'mem, 'facet> {
                     s.hash(hasher);
                 }
             }
+            _ => {
+                // Unknown future kind: the discriminant is already hashed above;
+                // fall back to hashing its string representation if available,
+                // mirroring the DateTime/QName/Uuid arm.
+                if let Some(s) = self.as_str() {
+                    s.hash(hasher);
+                }
+            }
         }
     }
 }

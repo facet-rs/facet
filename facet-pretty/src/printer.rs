@@ -1026,6 +1026,23 @@ impl PrettyPrinter {
                                         write!(f, "{:02}:{:02}:{:02}", hour, minute, second)?;
                                     }
                                 }
+                                _ => {
+                                    // Unknown future datetime kind: fall back to a
+                                    // full local date-time rendering.
+                                    if nanos > 0 {
+                                        write!(
+                                            f,
+                                            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:09}",
+                                            year, month, day, hour, minute, second, nanos
+                                        )?;
+                                    } else {
+                                        write!(
+                                            f,
+                                            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
+                                            year, month, day, hour, minute, second
+                                        )?;
+                                    }
+                                }
                             }
                         }
                     }
@@ -1036,6 +1053,11 @@ impl PrettyPrinter {
                     DynValueKind::Uuid => {
                         // UUID formatting is not yet supported via vtable
                         write!(f, "<uuid>")?;
+                    }
+                    _ => {
+                        // Unknown future kind: emit a placeholder, mirroring the
+                        // QName/Uuid arms above.
+                        write!(f, "<unknown>")?;
                     }
                 }
             }

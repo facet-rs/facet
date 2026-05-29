@@ -186,6 +186,7 @@ impl FieldProxies {
 /// This is denormalized: we store node indices, proxy defs, etc. directly so the
 /// deserializer can follow the plan without chasing pointers through Shape/vtable.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum DeserStrategy {
     /// Container-level proxy: the type itself has `#[facet(proxy = X)]` or format-specific proxies.
     ///

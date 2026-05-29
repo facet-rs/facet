@@ -19,6 +19,7 @@ pub enum PrimitiveType {
 /// given type.
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
+#[non_exhaustive]
 pub enum NumericType {
     /// Integer (`u16`, `i8`, `usize`, etc.)
     ///

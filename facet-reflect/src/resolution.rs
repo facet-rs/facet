@@ -180,6 +180,7 @@ pub type DomKeyPath = Vec<FieldKey<'static>>;
 
 /// A segment in a field path.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub enum PathSegment {
     /// A regular struct field
     Field(&'static str),

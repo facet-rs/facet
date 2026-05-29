@@ -711,6 +711,7 @@ pub fn specificity_score(shape: &'static Shape) -> u64 {
 
 /// Result of reporting a key to the solver.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum KeyResult<'a> {
     /// All candidates have the same type for this key.
     /// The deserializer can parse the value directly.
@@ -743,6 +744,7 @@ pub enum KeyResult<'a> {
 
 /// Result of reporting which fields the value can satisfy.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum SatisfyResult<'a> {
     /// Continue - still multiple candidates, keep feeding keys.
     Continue,

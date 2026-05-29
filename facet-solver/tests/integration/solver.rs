@@ -165,6 +165,10 @@ impl<'a> JsonDeserializer<'a> {
                                 "AMBIGUOUS: different types at this path, will disambiguate by value"
                             );
                         }
+                        _ => {
+                            warn!(key = %key_str, path = ?path_refs, "unhandled key result");
+                            return Err("unhandled key result");
+                        }
                     }
 
                     pending_key = Some(key_str);
@@ -1076,8 +1080,10 @@ fn probe_int_json(json: &[u8]) -> Result<String, String> {
                     SatisfyResult::Solved(config) => return Ok(config.resolution().describe()),
                     SatisfyResult::Continue => {}
                     SatisfyResult::NoMatch => return Err("no type can accept value".into()),
+                    _ => return Err("unhandled satisfy result".into()),
                 }
             }
+            _ => return Err("unhandled key result".into()),
         }
     }
 
@@ -1247,8 +1253,10 @@ fn probe_signed_json(json: &[u8]) -> Result<String, String> {
                     SatisfyResult::Solved(config) => return Ok(config.resolution().describe()),
                     SatisfyResult::Continue => {}
                     SatisfyResult::NoMatch => return Err("no type can accept value".into()),
+                    _ => return Err("unhandled satisfy result".into()),
                 }
             }
+            _ => return Err("unhandled key result".into()),
         }
     }
 
@@ -1412,8 +1420,10 @@ fn probe_multitype_json(json: &[u8]) -> Result<String, String> {
                     SatisfyResult::Solved(config) => return Ok(config.resolution().describe()),
                     SatisfyResult::Continue => {}
                     SatisfyResult::NoMatch => return Err("no type can accept value".into()),
+                    _ => return Err("unhandled satisfy result".into()),
                 }
             }
+            _ => return Err("unhandled key result".into()),
         }
     }
 
@@ -1592,8 +1602,10 @@ fn probe_string_format_json(json: &[u8]) -> Result<String, String> {
                     SatisfyResult::Solved(config) => return Ok(config.resolution().describe()),
                     SatisfyResult::Continue => {}
                     SatisfyResult::NoMatch => return Err("no type can accept value".into()),
+                    _ => return Err("unhandled satisfy result".into()),
                 }
             }
+            _ => return Err("unhandled key result".into()),
         }
     }
 

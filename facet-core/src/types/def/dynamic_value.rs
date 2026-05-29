@@ -87,6 +87,7 @@ pub type DynSetBytesFn = unsafe fn(dst: PtrUninit, value: &[u8]);
 
 /// The kind of datetime value (for dynamic value datetime support).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum DynDateTimeKind {
     /// Offset date-time with UTC offset in minutes.
     Offset {
@@ -193,6 +194,7 @@ pub type DynEndObjectFn = unsafe fn(object: PtrMut);
 
 /// The kind of value stored in a dynamic value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum DynValueKind {
     /// Null value
     Null,
