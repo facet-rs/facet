@@ -308,6 +308,7 @@ pub trait FormatParser<'de> {
 /// Provides the information needed by non-self-describing formats to correctly
 /// parse enum variants, including the variant's structure kind and field count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct EnumVariantHint {
     /// Name of the variant (e.g., "Some", "Pair", "Named")
     pub name: &'static str,
@@ -321,6 +322,7 @@ pub struct EnumVariantHint {
 ///
 /// Used by non-self-describing formats to know how to decode the next value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ScalarTypeHint {
     /// Boolean (postcard: 0 or 1 byte)
     Bool,

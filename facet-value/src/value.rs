@@ -102,6 +102,7 @@ impl From<usize> for TypeTag {
 
 /// Enum distinguishing the value types.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub enum ValueType {
     /// Null value
     Null,
@@ -790,6 +791,7 @@ impl<K: Into<VString>, V: Into<Value>> core::iter::FromIterator<(K, V)> for Valu
 
 /// Enum for destructuring a `Value` by ownership.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum Destructured {
     /// Null value
     Null,
@@ -815,6 +817,7 @@ pub enum Destructured {
 
 /// Enum for destructuring a `Value` by reference.
 #[derive(Debug, Copy, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum DestructuredRef<'a> {
     /// Null value
     Null,
@@ -840,6 +843,7 @@ pub enum DestructuredRef<'a> {
 
 /// Enum for destructuring a `Value` by mutable reference.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum DestructuredMut<'a> {
     /// Null value
     Null,

@@ -54,6 +54,7 @@ fn current_span() -> Span {
 /// When propagated through the deserializer, this is converted to a `DeserializeError`
 /// which can add path information.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct ParseError {
     /// Source span where the error occurred.
     pub span: Span,

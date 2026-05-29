@@ -4,6 +4,7 @@ use core::fmt;
 
 /// MsgPack parsing error.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct MsgPackError {
     /// Error code from JIT
     pub code: i32,

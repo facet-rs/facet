@@ -709,6 +709,16 @@ impl<'de> PostcardParser<'de> {
                 // Represent as string since ScalarValue doesn't have Char
                 ScalarValue::Str(Cow::Owned(c.to_string()))
             }
+            _ => {
+                // Unknown future hint kinds cannot be decoded from postcard's
+                // non-self-describing wire format.
+                return Err(ParseError::new(
+                    Span::new(self.pos, 1),
+                    DeserializeErrorKind::InvalidValue {
+                        message: "unsupported scalar type hint".into(),
+                    },
+                ));
+            }
         };
         Ok(self.event(ParseEventKind::Scalar(scalar)))
     }

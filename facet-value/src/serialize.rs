@@ -167,6 +167,7 @@ impl FormatSerializer for ValueSerializer {
             ScalarValue::F64(n) => VNumber::from_f64(n).into(),
             ScalarValue::Str(s) => VString::new(&s).into(),
             ScalarValue::Bytes(b) => VBytes::new(b.as_ref()).into(),
+            _ => return Err(ToValueError::new("unsupported scalar value kind")),
         };
         self.emit(value);
         Ok(())

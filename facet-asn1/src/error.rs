@@ -7,6 +7,7 @@ use core::fmt;
 
 /// ASN.1 parsing error.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct Asn1Error {
     /// Error kind
     pub kind: Asn1ErrorKind,
@@ -16,6 +17,7 @@ pub struct Asn1Error {
 
 /// The kind of ASN.1 error.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum Asn1ErrorKind {
     /// Unexpected end of input
     UnexpectedEof,

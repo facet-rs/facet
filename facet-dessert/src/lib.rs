@@ -14,6 +14,7 @@ use facet_core::{Def, Facet, KnownPointer, Type, UserType};
 use facet_reflect::{Partial, ReflectError, ReflectErrorKind, Span};
 
 /// Result of checking if a pointer type needs special handling.
+#[non_exhaustive]
 pub enum PointerAction {
     /// Pointer to str (`Cow<str>`, `&str`, `Arc<str>`, `Box<str>`, `Rc<str>`) - should be handled as a scalar/string.
     /// `set_string_value` already handles these via `begin_smart_ptr` internally.
@@ -90,6 +91,7 @@ pub fn begin_pointer<'input, const BORROW: bool>(
 
 /// Error type for dessert operations.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum DessertError {
     /// A reflection error occurred.
     Reflect {

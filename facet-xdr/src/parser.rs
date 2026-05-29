@@ -517,6 +517,10 @@ impl<'de> XdrParser<'de> {
                 })?;
                 ScalarValue::Str(Cow::Owned(c.to_string()))
             }
+            _ => {
+                // Unknown future hint kinds are unsupported by XDR.
+                return Err(error_from_code(codes::UNSUPPORTED_TYPE, self.pos));
+            }
         };
         Ok(self.event(ParseEventKind::Scalar(scalar)))
     }

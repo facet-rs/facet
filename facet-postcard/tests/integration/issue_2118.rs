@@ -100,7 +100,7 @@ fn issue_2118_non_trailing_encoded_bytes_preserve_scatter_gather_reference() {
         Segment::Reference { bytes } => {
             bytes.len() == passthrough.len() && bytes.as_ptr() == passthrough.as_ptr()
         }
-        Segment::Staged { .. } => false,
+        _ => false,
     });
     assert!(
         has_payload_ref,

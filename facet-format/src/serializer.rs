@@ -48,6 +48,7 @@ fn extract_string_from_peek<'mem, 'facet>(peek: Peek<'mem, 'facet>) -> Option<&'
 
 /// Field ordering preference for serialization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum FieldOrdering {
     /// Fields are serialized in declaration order (default).
     #[default]
@@ -56,6 +57,7 @@ pub enum FieldOrdering {
 
 /// How struct fields should be serialized.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum StructFieldMode {
     /// Serialize fields with names/keys (default for text formats).
     #[default]
@@ -66,6 +68,7 @@ pub enum StructFieldMode {
 
 /// How map-like values should be serialized.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum MapEncoding {
     /// Serialize maps as objects/structs with string keys.
     #[default]
@@ -76,6 +79,7 @@ pub enum MapEncoding {
 
 /// How enum variants should be serialized.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum EnumVariantEncoding {
     /// Serialize enums using tag/field-name strategies (default for text formats).
     #[default]
@@ -86,6 +90,7 @@ pub enum EnumVariantEncoding {
 
 /// How dynamic values (e.g. `facet_value::Value`) should be encoded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum DynamicValueEncoding {
     /// Use the format's native self-describing encoding (default for JSON, MsgPack, etc.).
     #[default]
@@ -96,6 +101,7 @@ pub enum DynamicValueEncoding {
 
 /// Tag describing the concrete payload type for a dynamic value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum DynamicValueTag {
     /// Null value.
     Null,
@@ -565,6 +571,7 @@ pub trait FormatSerializer {
 
 /// Error produced by the shared serializer.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum SerializeError<E: Debug> {
     /// Format backend error.
     Backend(E),

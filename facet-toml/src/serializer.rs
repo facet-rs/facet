@@ -306,6 +306,11 @@ impl FormatSerializer for TomlSerializer {
                     msg: "TOML does not natively support byte arrays".into(),
                 });
             }
+            _ => {
+                return Err(TomlSerializeError {
+                    msg: "unsupported scalar value kind".into(),
+                });
+            }
         }
         Ok(())
     }

@@ -315,6 +315,13 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 path: None,
                 kind: DeserializeErrorKind::CannotBorrow { reason: message },
             },
+            other => DeserializeError {
+                span: None,
+                path: None,
+                kind: DeserializeErrorKind::CannotBorrow {
+                    reason: Cow::Owned(alloc::format!("dessert error: {other}")),
+                },
+            },
         })
     }
 
@@ -340,6 +347,13 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 span: None,
                 path: None,
                 kind: DeserializeErrorKind::CannotBorrow { reason: message },
+            },
+            other => DeserializeError {
+                span: None,
+                path: None,
+                kind: DeserializeErrorKind::CannotBorrow {
+                    reason: Cow::Owned(alloc::format!("dessert error: {other}")),
+                },
             },
         })
     }

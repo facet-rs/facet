@@ -19,6 +19,7 @@ pub struct SolveOutcome {
 
 /// Error when variant solving fails.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum SolveVariantError {
     /// No variant matched the evidence.
     NoMatch,

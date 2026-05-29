@@ -59,6 +59,7 @@ impl YamlError {
 
 /// Specific error kinds for YAML operations
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum YamlErrorKind {
     /// YAML parser error
     Parse(String),

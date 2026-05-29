@@ -42,6 +42,7 @@ use crate::{VNumber, Value, ValueType};
 
 /// A segment in a deserialization path
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum PathSegment {
     /// A field name in a struct or map
     Field(String),
@@ -63,6 +64,7 @@ impl core::fmt::Display for PathSegment {
 
 /// Error type for Value deserialization.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct ValueError {
     /// The specific kind of error
     pub kind: ValueErrorKind,
@@ -151,6 +153,7 @@ impl core::error::Error for ValueError {}
 
 /// Specific error kinds for Value deserialization.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ValueErrorKind {
     /// Type mismatch between Value and target type
     TypeMismatch {

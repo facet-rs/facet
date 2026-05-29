@@ -8,6 +8,7 @@ use core::fmt;
 
 /// Postcard parsing error with optional source context for diagnostics.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct PostcardError {
     /// Error code from JIT
     pub code: i32,
@@ -126,6 +127,7 @@ impl PostcardError {
 
 /// Errors that can occur during postcard serialization.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum SerializeError {
     /// The output buffer is too small to hold the serialized data
     BufferTooSmall,

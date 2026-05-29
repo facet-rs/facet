@@ -59,6 +59,7 @@ impl std::error::Error for CsvError {}
 
 /// Specific kinds of CSV errors.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum CsvErrorKind {
     /// Unexpected end of input.
     UnexpectedEof {

@@ -102,7 +102,7 @@ fn issue_2108_trailing_opaque_preserves_scatter_gather_references() {
         Segment::Reference { bytes } => {
             bytes.len() == payload.len() && bytes.as_ptr() == payload.as_ptr()
         }
-        Segment::Staged { .. } => false,
+        _ => false,
     });
     assert!(
         has_payload_ref,

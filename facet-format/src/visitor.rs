@@ -7,6 +7,7 @@ use facet_solver::Resolution;
 
 /// Result of checking a serialized field against the active resolution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum FieldMatch<'a> {
     /// Field exists in the schema and this is the first time we've seen it.
     KnownFirst(&'a FieldInfo),
