@@ -1,6 +1,21 @@
 [package]
 name = "phon"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The phon front door: facet-derived schemas and descriptors, typed encode/decode, optional JIT."
+
+[features]
+default = []
+# Pull in the copy-and-patch JIT and route the typed API through it. Off by
+# default so the baseline interpreter pays nothing; not enabled on targets that
+# forbid allocating executable memory. (r[crates.jit-opt-in])
+jit = ["dep:phon-jit"]
 
 [dependencies]
+phon-schema.workspace = true
+phon-engine.workspace = true
+phon-jit = { workspace = true, optional = true }
+facet.workspace = true
+facet-value.workspace = true

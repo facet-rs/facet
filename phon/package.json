@@ -1,0 +1,19 @@
+{
+  "name": "@bearcove/phon-typescript",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "scripts": {
+    "build": "pnpm --filter './typescript/packages/*' run build",
+    "check": "pnpm -r run check",
+    "test": "pnpm -r run test",
+    "lint": "oxlint typescript"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "oxlint": "^1.67.0",
+    "tsdown": "^0.22.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.7"
+  }
+}

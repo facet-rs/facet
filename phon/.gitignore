@@ -3,3 +3,12 @@ target/
 *.swp
 probes/*/point-layout
 probes/**/*.dSYM
+
+# Swift / SwiftPM
+.build/
+.swiftpm/
+
+# Node / pnpm / TypeScript
+node_modules/
+dist/
+*.tsbuildinfo

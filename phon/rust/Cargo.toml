@@ -1,3 +1,27 @@
 [workspace]
-members = ["phon", "phon-jit"]
 resolver = "3"
+members = [
+  "phon-schema",
+  "phon-ir",
+  "phon-engine",
+  "phon-jit",
+  "phon",
+  "phon-codegen",
+  "phon-conformance",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/bearcove/phon"
+
+[workspace.dependencies]
+phon-schema = { path = "phon-schema" }
+phon-ir = { path = "phon-ir" }
+phon-engine = { path = "phon-engine" }
+phon-jit = { path = "phon-jit" }
+
+blake3 = "1.8"
+facet = "0.46"
+facet-value = "0.46"

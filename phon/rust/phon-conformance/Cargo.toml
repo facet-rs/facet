@@ -1,0 +1,15 @@
+[package]
+name = "phon-conformance"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Generator and Rust loader for phon's cross-language conformance corpus."
+
+[[bin]]
+name = "phon-conformance"
+path = "src/main.rs"
+
+[dependencies]
+phon = { path = "../phon" }
+phon-schema.workspace = true

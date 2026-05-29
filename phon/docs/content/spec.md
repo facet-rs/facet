@@ -1276,13 +1276,13 @@ codegen output, so there is no Swift codegen module.
 
 ## TypeScript — where it diverges
 
-As npm packages: `@phon/schema`, `@phon/engine`, and `@phon/core` (the front
-door). TypeScript has no descriptor model — values are GC'd objects with no
-offsets — so its binding is codegen-emitted property accessors, and the engine
-consumes accessor functions rather than descriptor data. Its JIT is generated
-JavaScript passed to `new Function()`, light enough to live inside
-`@phon/engine` rather than a separate package. TypeScript consumes codegen
-output too.
+As npm packages: `@bearcove/phon-schema`, `@bearcove/phon-engine`, and
+`@bearcove/phon` (the front door). TypeScript has no descriptor model — values
+are GC'd objects with no offsets — so its binding is codegen-emitted property
+accessors, and the engine consumes accessor functions rather than descriptor
+data. Its JIT is generated JavaScript passed to `new Function()`, light enough to
+live inside `@bearcove/phon-engine` rather than a separate package. TypeScript
+consumes codegen output too.
 
 ## Where vox sits
 

@@ -1,0 +1,38 @@
+{
+  "name": "@bearcove/phon-schema",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "check": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "import": {
+          "types": "./dist/index.d.mts",
+          "default": "./dist/index.mjs"
+        }
+      }
+    }
+  },
+  "files": ["dist", "README.md"],
+  "dependencies": {
+    "@noble/hashes": "^2.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.7"
+  },
+  "license": "MIT OR Apache-2.0",
+  "description": "phon's wire contract for TypeScript: schema model, schema identity, Value, and the self-describing codec.",
+  "repository": "https://github.com/bearcove/phon",
+  "homepage": "https://github.com/bearcove/phon",
+  "keywords": ["phon", "serialization", "schema", "rpc", "typescript"]
+}

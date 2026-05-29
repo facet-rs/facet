@@ -1,0 +1,11 @@
+[package]
+name = "phon-codegen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The phon codegen tool: reads Rust types (facet) or schema bundles, emits target-language source plus schema-bytes constants."
+
+[dependencies]
+phon-schema.workspace = true
+facet.workspace = true
