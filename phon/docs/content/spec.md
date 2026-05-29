@@ -966,6 +966,81 @@ memcpys for data that never had to leave physical memory. That is the cost
 > receiver cannot tell the difference and pays a copy only if it asks for an
 > owned value.
 
+# Decoding untrusted input
+
+A phon decoder reads bytes from a peer that may be malicious. A crafted message
+must never crash the decoder, hang it, make it over-allocate, or let it escape
+memory safety. The format is shaped to make every check cheap — whole-message
+decoding means the decoder always knows how many bytes remain, fixed-u32 lengths
+mean no varint tricks, and the negotiated size cap bounds the buffer — but the
+checks are mandatory. This section is normative: a conforming decoder performs
+all of them.
+
+> r[validate.lengths]
+>
+> Every length or count read from the wire is checked against the bytes
+> remaining in the buffer before any allocation or iteration. Because every
+> element has a nonzero minimum wire size, a count may never drive a
+> pre-allocation larger than `bytes_remaining / min_element_size` — that ratio
+> is the true ceiling, regardless of what the count claims. A length or count
+> that exceeds what remains is a decode error. (A u32 can claim four billion
+> elements in a twelve-byte message; this rule is what stops the resulting
+> allocation bomb.)
+
+> r[validate.dimensions]
+>
+> A tensor's or array's element count is `product(dimensions)`, computed with
+> checked multiplication — overflow is a decode error, never a silent wrap. The
+> product times the element's wire size must not exceed the bytes remaining. A
+> tensor `rank` read from the wire is bounded; an absurd rank is rejected before
+> reading that many dimension sizes.
+
+> r[validate.depth]
+>
+> Decoding, and schema-structure traversal including the identity hash of
+> recursive schemas, are bounded by a maximum nesting depth. A message or schema
+> that nests deeper is a decode error, not a stack overflow. The exact bound is
+> an implementation's to choose; it must exist. (A self-describing list-of-one
+> repeated thousands of times is cheap to author and would otherwise blow the
+> stack.)
+
+> r[validate.tags]
+>
+> A self-describing tag byte outside the defined table is a decode error. The
+> decoder never skips an unknown tag — without a known kind it cannot know the
+> body's length, so there is nothing safe to skip.
+
+> r[validate.text]
+>
+> A `string` is validated as UTF-8, and a `char` as a Unicode scalar value
+> (surrogates and values above U+10FFFF rejected), before the value is exposed —
+> in particular before any borrowed `&str` is handed out.
+
+> r[validate.uniqueness]
+>
+> Duplicate keys in a `map`, or duplicate elements in a `set`, are a decode
+> error. The schema claims uniqueness; a message that violates it is malformed,
+> and accepting it would make decode ambiguous and invite hash-flooding. The
+> seen-set this requires is bounded by `r[validate.lengths]`, so the check is
+> cheap.
+
+> r[validate.bundles]
+>
+> A schema bundle received over the wire is verified before use: each member's
+> stated `SchemaId` must equal its recomputed content hash, and the transitive
+> closure must be complete — no referenced `SchemaId` left unresolved. A bundle
+> failing either check is rejected. (`r[schema-identity.unknown-is-error]` is the
+> runtime counterpart, for an id referenced by a value but never delivered.)
+
+Two safety contracts stated elsewhere are part of this discipline:
+`r[external.handle-is-validated]` (a handle is an untrusted capability; an
+unissued one is a decode error, never a dereference) and `r[descriptors.borrowed]`
+(a borrowed value's lifetime is bound to the input buffer). The borrow contract
+is a hard requirement, not advice: an implementation must tie a borrowed value's
+lifetime to the buffer it points into — in a language without lifetimes, by
+copying instead of borrowing — so a freed buffer can never leave a dangling
+view.
+
 # Codegen
 
 phon schemas come from Rust types via facet (see [Base concepts](#base-concepts)).
