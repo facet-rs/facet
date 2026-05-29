@@ -216,7 +216,7 @@ pub enum SchemaKind {
     Option { element: SchemaRef },
     Channel { direction: ChannelDirection, element: SchemaRef },
     Dynamic,
-    External { kind: String, metadata: Value },
+    External { kind: String, metadata: Option<SchemaRef> },
 }
 
 pub enum ChannelDirection {
@@ -278,8 +278,15 @@ note:
 > An `External` value's payload bytes don't appear in the message. In their
 > place the wire carries a transport-assigned `u64` handle; the actual payload
 > travels through the transport's external-attachment channel. The `kind` field
-> names which channel; `metadata` (a `Value`, carried in-band) describes the
-> payload to the transport without inlining it. See [External
+> names which channel. `metadata` is an optional `SchemaRef` naming the *type* of
+> a small descriptor that travels with each send (a content hash, a byte length,
+> a MIME type — whatever the channel needs to make sense of the payload); the
+> metadata *value* rides the message in-band, encoded compact against that
+> schema, while the payload stays out of band. Because `metadata` is a reference
+> and not an inline value, it is deterministic schema-identity input like any
+> other reference. An `External`, like a `Channel`, appears only in compact,
+> schema-known contexts — never in self-describing form, because without the
+> schema there is no `kind` and no metadata type. See [External
 > payloads](#external-payloads) for the handle, validation, and borrow rules.
 
 
@@ -535,13 +542,20 @@ decoded.
 > - **channel**: `channel`; the direction tag (`tx` or `rx`); the element
 >   reference.
 > - **dynamic**: `dynamic`.
-> - **external**: `external`; the `kind` string; then the `metadata`, encoded as
->   a `u32` length followed by its self-describing-form bytes.
+> - **external**: `external`; the `kind` string; then the `metadata` — one byte
+>   `0` for `None`, or `1` then the metadata reference.
 >
 > A *reference* is encoded as `concrete` then the referenced `SchemaId` (8 bytes
 > LE) then a `u32` argument count then each argument reference; or, for a type
 > parameter, `var` then the parameter name. The argument count is always written
 > — zero for a non-generic concrete reference — with no conditional marker.
+>
+> Every tag and marker token above — the kind tags, the primitive tags, the
+> variant-payload tags (`unit`/`newtype`/`tuple`/`struct`), the channel direction
+> tags (`tx`/`rx`), and the reference markers (`concrete`/`var`/`inline`/
+> `backref`) — is fed to the hash as a *string* by the building-block rule (a
+> `u32` LE length then its UTF-8 bytes), never as a bare byte, so token framing
+> is unambiguous and identical across implementations.
 
 Everything structural is in the hash; there is nothing non-structural in a
 phon schema to leave out (no doc comments, no annotations travel on the wire).
@@ -669,17 +683,18 @@ A few things worth calling out:
   `tensor` always carries its shape — its shape is runtime even in compact mode
   — so the two have identical bodies here and differ only by tag and by where
   the shape comes from in compact mode.
-- there is no tag for `channel`: channel values appear only in compact,
+- there is no tag for `channel` or `external`: both appear only in compact,
   schema-known contexts, never in self-describing form (see
-  `r[type-system.channel]`).
+  `r[type-system.channel]` and `r[type-system.external]`).
 
 > r[self-describing.no-extra-kinds]
 >
-> `Dynamic` and `External` have no self-describing tags of their own. A
-> `Dynamic` value simply *is* a self-describing value — it carries whatever tag
-> its actual kind calls for. An `External` value's in-band form is its
-> transport-assigned `u64` handle (encoded as a `u64`); its payload bytes travel
-> out of band per `r[type-system.external]`.
+> `Dynamic`, `Channel`, and `External` have no self-describing tags. A `Dynamic`
+> value simply *is* a self-describing value — it carries whatever tag its actual
+> kind calls for, so it needs no tag of its own. `Channel` and `External` have no
+> self-describing form at all: both require the schema to interpret (a channel's
+> element type, an external's `kind` and metadata type), so they appear only in
+> compact mode and never inside a `Dynamic`.
 
 > r[self-describing.bootstraps-schemas]
 >
@@ -692,18 +707,18 @@ A few things worth calling out:
 ## Value
 
 `Value` is phon's dynamic value: any phon value held in memory without reference
-to a schema. It is what the self-describing codec produces and consumes, what a
-`Dynamic` field carries, and what `External`'s `metadata` is.
+to a schema. It is what the self-describing codec produces and consumes, and
+what a `Dynamic` field carries.
 
 > r[value]
 >
 > A `Value` has one case per self-describing kind in the tag table above — unit,
 > bool, each integer and float width, char, string, bytes, list, set, map,
 > array, tuple, struct (named fields), enum (named variant plus payload),
-> option, and tensor. (There is no `channel` case: channel values never appear
-> in self-describing form.) A `Value` is exactly the information a
-> self-describing decode recovers, and exactly what a self-describing encode
-> needs — the two are inverses over `Value`.
+> option, and tensor. (There is no `channel` or `external` case: those values
+> appear only in compact, schema-known form, never self-describing.) A `Value`
+> is exactly the information a self-describing decode recovers, and exactly what
+> a self-describing encode needs — the two are inverses over `Value`.
 
 Each implementation maps `Value` onto its native dynamic-value type. In Rust
 that type is `facet_value::Value`; the `phon` binding crate provides a total
@@ -754,6 +769,14 @@ but not how many:
   row-major run. If the schema fixes `rank` to `Some(r)`, exactly `r` sizes are
   written; if `rank` is `None`, a u32 LE rank precedes the sizes
 - `channel`: a `u64` LE transport handle (see `r[type-system.channel]`)
+- `external`: a `u64` LE transport handle, then — if the schema's `metadata` is
+  `Some` — the metadata value encoded compact against that metadata schema;
+  nothing follows the handle if `metadata` is `None` (see
+  `r[type-system.external]`). The payload itself is out of band.
+- `dynamic`: a complete self-describing value (tag-led, per [Self-describing
+  mode](#self-describing-mode)). It is self-delimiting — the tags and embedded
+  lengths bound it — so no extra length prefix wraps it; the compact decoder
+  hands off to the self-describing decoder and resumes at the byte after.
 - `struct`, `tuple`: nothing extra — fields and arity are in the schema; just
   the values in declaration order
 
@@ -971,7 +994,9 @@ possible; translation is how it's done.
 > sizes are runtime, so they are not a schema-compatibility question (a decoder
 > may still validate them per value). A channel is compatible with a channel of
 > the same `direction`; its element compatibility is enforced when the stream's
-> items are decoded, each as its own message, not at the channel itself. A
+> items are decoded, each as its own message, not at the channel itself. An
+> external is compatible with an external of the same `kind` and compatible
+> `metadata` — both `None`, or both `Some` with compatible metadata schemas. A
 > struct is compatible when its field plan builds. Numeric widening is not
 > implicit: `u32` and `u64` are different types, and a value written as one is
 > not readable as the other unless a future rule adds an explicit conversion.
@@ -1020,10 +1045,11 @@ memcpys for data that never had to leave physical memory. That is the cost
 > wire carries a *handle*: a `u64` the transport assigns, plus the schema's
 > `kind` naming the side channel. The handle is what lets one message carry many
 > externals of the same kind and keep them apart — a unit placeholder couldn't,
-> since two same-kind externals would be indistinguishable. The `metadata` is
-> in-band (it rides the message as a self-describing `Value`, so it is sized and
-> not free); it describes the payload to the transport without inlining the
-> payload itself.
+> since two same-kind externals would be indistinguishable. When the schema's
+> `metadata` is `Some`, the metadata value rides the message in-band right after
+> the handle, encoded compact against its schema (so it is typed and sized, not
+> free); it describes the payload to the transport without inlining the payload
+> itself.
 
 > r[external.transport-channel]
 >
@@ -1112,9 +1138,16 @@ all of them.
 >
 > A schema bundle received over the wire is verified before use: each member's
 > stated `SchemaId` must equal its recomputed content hash, and the transitive
-> closure must be complete — no referenced `SchemaId` left unresolved. A bundle
-> failing either check is rejected. (`r[schema-identity.unknown-is-error]` is the
-> runtime counterpart, for an id referenced by a value but never delivered.)
+> closure must be complete — no referenced `SchemaId` left unresolved. Every
+> `Array`'s `product(dimensions)` is also checked here, with checked
+> multiplication against a fixed cap — because a fixed array's element count
+> comes from the schema, not the wire, an element type with zero wire size (an
+> `Array` of `Unit`, or of an empty struct) would otherwise slip past
+> `r[validate.dimensions]`, whose product-times-wire-size bound is zero, and
+> still drive an unbounded construction loop. The schema-side cap closes that.
+> A bundle failing any check is rejected. (`r[schema-identity.unknown-is-error]`
+> is the runtime counterpart, for an id referenced by a value but never
+> delivered.)
 
 Two safety contracts stated elsewhere are part of this discipline:
 `r[external.handle-is-validated]` (a handle is an untrusted capability; an
@@ -1611,17 +1644,23 @@ The linear ops, each a stencil-able unit:
 - **bytes** — a length-prefixed byte run; the memory side follows the
   descriptor's storage (borrowed, owned-with-allocation, or arena-copy).
 - **record** — a struct or tuple: its children's ops, spliced in (see inlining).
-- **sequence** — a count, then a per-element body run in a loop.
-- **map** — a count, then a per-pair body, inserted through a thunk.
+- **sequence** — a count, then a per-element body run in a loop. A `set` body
+  also records each element in the decode-time uniqueness seen-set (below).
+- **map** — a count, then a per-pair body, inserted through a thunk; the key is
+  recorded in the uniqueness seen-set.
 - **array** — a fixed count of an element (spliced if small, looped if large).
 - **tensor** — the shape, then a flat element run.
 - **option** — a presence read, then a branch to the some-body.
 - **enum** — a tag read, then a dispatch to the active variant's sub-range.
-- **alloc** — allocate backing for an owned sequence, via a descriptor thunk.
+- **alloc** (decode only) — allocate backing for an owned sequence, via a
+  descriptor thunk.
 - **call-thunk** — call a bound thunk (opaque construction or access).
 - **call-program** — call a separately-compiled subprogram (recursion, dedup).
 - **dynamic** — sub-encode/decode a self-describing `Value`.
-- **external** — read/write the handle, resolved through the transport.
+- **channel** — read/write the transport handle for a stream endpoint, validated
+  like an external handle.
+- **external** — read/write the transport handle; then, if the schema's
+  `metadata` is `Some`, the metadata value as a nested compact sub-program.
 - **skip** (decode only) — decode and discard a writer field by its
   writer-schema sub-program.
 - **default** (decode only) — write a reader default, no wire read.
@@ -1633,7 +1672,12 @@ The linear ops, each a stencil-able unit:
 > patch values (offsets, widths, thunk pointers, branch targets, descriptor
 > fields). Stencils thread the live state — input/output cursor, the value's
 > base pointer, the context — through fixed registers and tail-call the next
-> stencil, so a run of ops keeps its state in registers with no spills.
+> stencil, so a run of ops keeps its state in registers with no spills. State
+> that can't live in a register — the decode arena, the recursion-depth counter,
+> and the per-`set`/`map` uniqueness seen-set (`r[validate.uniqueness]`, sized by
+> the count just read and bounded by `r[validate.lengths]`) — hangs off the
+> context, which is itself one of the threaded registers; ops that need it reach
+> through that pointer.
 > "JIT-compiling" a program is memcpying its stencils into executable memory and
 > patching the holes: microseconds, no optimizer, no unwinding (errors are
 > status codes through the context, never panics across a stencil boundary).
@@ -1648,14 +1692,25 @@ The linear ops, each a stencil-able unit:
 > the format exists for. A `call-program` (a real call passing an adjusted base
 > pointer) is emitted only where splicing can't or shouldn't apply:
 >
-> - **recursion** — a schema in a reference cycle is compiled once and called at
->   the recursion site; required for correctness, since an unbounded chain can't
->   be spliced. (This mirrors the cycle handling in schema identity.)
+> - **recursion** — splicing must stop at any reference whose target lies in the
+>   same reference cycle (strongly-connected component) as a schema already on
+>   the lowering path; that schema is compiled once and called at the re-entry
+>   site. The cut is on *any* edge back into an active cycle, not only a direct
+>   self-reference, because an indirect cycle (`A → B → A`) splices just as
+>   unboundedly as a direct one. This is **not** the rule schema identity uses:
+>   identity inlines off-path component members and terminates on a depth-indexed
+>   back-reference (a finite string), which it can because it is emitting bytes,
+>   not code; lowering emits straight-line code, so it must call on every
+>   cycle-re-entering edge or the splice never terminates.
 > - **dynamic-length sequences and maps** — the element or pair body is compiled
 >   once and run in a loop, never spliced N times.
 > - **code-size dedup** — a large child reused at enough sites may be compiled
 >   once and called, trading the register-threading win for code size, by a
 >   lowering-time size-times-reuse threshold.
+> - **spliced-size cap** — an absolute cap on the spliced size of a single chain
+>   forces a `call-program` even for a single-use child, so a deeply nested
+>   single-use shape can't splice into unbounded code. Dedup keys on reuse; this
+>   cap keeps the no-reuse deep-nesting case bounded too.
 >
 > Inlined chains and called subprograms share one state ABI: a called subprogram
 > is just a chain reached by call-and-return instead of by splicing.
