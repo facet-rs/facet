@@ -20,35 +20,60 @@ use crate::schema::{
 };
 
 // ============================================================================
+// Byte sink
+// ============================================================================
+
+/// A destination for canonical-encoding bytes.
+///
+/// Production hashing streams directly into a [`blake3::Hasher`] (no intermediate
+/// allocation); tests and debug tooling capture the exact bytes into a `Vec<u8>`
+/// to inspect or compare the canonical encoding itself, not just the final hash.
+trait Sink {
+    fn put(&mut self, bytes: &[u8]);
+}
+
+impl Sink for blake3::Hasher {
+    fn put(&mut self, bytes: &[u8]) {
+        self.update(bytes);
+    }
+}
+
+impl Sink for Vec<u8> {
+    fn put(&mut self, bytes: &[u8]) {
+        self.extend_from_slice(bytes);
+    }
+}
+
+// ============================================================================
 // Canonical encoding building blocks
 // ============================================================================
 //
 // Spec building blocks: u32/u64 are little-endian; a *string* is a u32 LE byte
 // length then its UTF-8 bytes; a bool is one byte (0 or 1). Every tag and marker
-// token is fed to the hash as a *string*.
+// token is fed to the sink as a *string*.
 
-fn write_u8(out: &mut Vec<u8>, b: u8) {
-    out.push(b);
+fn write_u8<S: Sink>(out: &mut S, b: u8) {
+    out.put(&[b]);
 }
 
-fn write_u32(out: &mut Vec<u8>, n: u32) {
-    out.extend_from_slice(&n.to_le_bytes());
+fn write_u32<S: Sink>(out: &mut S, n: u32) {
+    out.put(&n.to_le_bytes());
 }
 
-fn write_u64(out: &mut Vec<u8>, n: u64) {
-    out.extend_from_slice(&n.to_le_bytes());
+fn write_u64<S: Sink>(out: &mut S, n: u64) {
+    out.put(&n.to_le_bytes());
 }
 
-fn write_bool(out: &mut Vec<u8>, b: bool) {
+fn write_bool<S: Sink>(out: &mut S, b: bool) {
     write_u8(out, u8::from(b));
 }
 
-fn write_str(out: &mut Vec<u8>, s: &str) {
+fn write_str<S: Sink>(out: &mut S, s: &str) {
     write_u32(out, s.len() as u32);
-    out.extend_from_slice(s.as_bytes());
+    out.put(s.as_bytes());
 }
 
-fn write_type_params(out: &mut Vec<u8>, params: &[String]) {
+fn write_type_params<S: Sink>(out: &mut S, params: &[String]) {
     write_u32(out, params.len() as u32);
     for p in params {
         write_str(out, p);
@@ -63,8 +88,8 @@ fn direction_tag(d: ChannelDirection) -> &'static str {
 }
 
 // r[impl schema-identity.content-hash]
-fn finish(out: &[u8]) -> SchemaId {
-    let hash = blake3::hash(out);
+fn finalize(hasher: &blake3::Hasher) -> SchemaId {
+    let hash = hasher.finalize();
     let bytes = hash.as_bytes();
     let mut first8 = [0u8; 8];
     first8.copy_from_slice(&bytes[..8]);
@@ -78,9 +103,28 @@ fn finish(out: &[u8]) -> SchemaId {
 /// Spec: `r[schema-identity.canonical-encoding]` (primitive tags).
 #[must_use]
 pub fn primitive_id(p: Primitive) -> SchemaId {
-    let mut out = Vec::new();
-    write_str(&mut out, p.tag());
-    finish(&out)
+    let mut hasher = blake3::Hasher::new();
+    write_str(&mut hasher, p.tag());
+    finalize(&hasher)
+}
+
+// ============================================================================
+// Graph node index
+// ============================================================================
+
+/// An index into the batch being resolved. A newtype so a batch position can't
+/// be confused with any other integer.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+struct NodeIx(u32);
+
+impl NodeIx {
+    fn of(i: usize) -> Self {
+        NodeIx(i as u32)
+    }
+
+    fn ix(self) -> usize {
+        self.0 as usize
+    }
 }
 
 // ============================================================================
@@ -153,30 +197,30 @@ fn visit_ref_targets(r: &SchemaRef, f: &mut dyn FnMut(SchemaId)) {
 // ============================================================================
 
 struct Tarjan<'a> {
-    adj: &'a [Vec<usize>],
-    index: usize,
-    indices: Vec<Option<usize>>,
+    adj: &'a [Vec<NodeIx>],
+    next_order: usize,
+    order: Vec<Option<usize>>,
     lowlink: Vec<usize>,
     on_stack: Vec<bool>,
-    stack: Vec<usize>,
-    sccs: Vec<Vec<usize>>,
+    stack: Vec<NodeIx>,
+    sccs: Vec<Vec<NodeIx>>,
 }
 
 impl<'a> Tarjan<'a> {
-    fn run(adj: &'a [Vec<usize>]) -> Vec<Vec<usize>> {
+    fn run(adj: &'a [Vec<NodeIx>]) -> Vec<Vec<NodeIx>> {
         let n = adj.len();
         let mut t = Tarjan {
             adj,
-            index: 0,
-            indices: vec![None; n],
+            next_order: 0,
+            order: vec![None; n],
             lowlink: vec![0; n],
             on_stack: vec![false; n],
             stack: Vec::new(),
             sccs: Vec::new(),
         };
         for v in 0..n {
-            if t.indices[v].is_none() {
-                t.strongconnect(v);
+            if t.order[v].is_none() {
+                t.strongconnect(NodeIx::of(v));
             }
         }
         // Components are popped when their root finishes, so dependencies (which
@@ -184,27 +228,27 @@ impl<'a> Tarjan<'a> {
         t.sccs
     }
 
-    fn strongconnect(&mut self, v: usize) {
-        self.indices[v] = Some(self.index);
-        self.lowlink[v] = self.index;
-        self.index += 1;
+    fn strongconnect(&mut self, v: NodeIx) {
+        self.order[v.ix()] = Some(self.next_order);
+        self.lowlink[v.ix()] = self.next_order;
+        self.next_order += 1;
         self.stack.push(v);
-        self.on_stack[v] = true;
+        self.on_stack[v.ix()] = true;
 
-        for &w in &self.adj[v] {
-            if self.indices[w].is_none() {
+        for &w in &self.adj[v.ix()] {
+            if self.order[w.ix()].is_none() {
                 self.strongconnect(w);
-                self.lowlink[v] = self.lowlink[v].min(self.lowlink[w]);
-            } else if self.on_stack[w] {
-                self.lowlink[v] = self.lowlink[v].min(self.indices[w].unwrap());
+                self.lowlink[v.ix()] = self.lowlink[v.ix()].min(self.lowlink[w.ix()]);
+            } else if self.on_stack[w.ix()] {
+                self.lowlink[v.ix()] = self.lowlink[v.ix()].min(self.order[w.ix()].unwrap());
             }
         }
 
-        if self.lowlink[v] == self.indices[v].unwrap() {
+        if self.lowlink[v.ix()] == self.order[v.ix()].unwrap() {
             let mut scc = Vec::new();
             loop {
                 let w = self.stack.pop().unwrap();
-                self.on_stack[w] = false;
+                self.on_stack[w.ix()] = false;
                 scc.push(w);
                 if w == v {
                     break;
@@ -222,17 +266,17 @@ impl<'a> Tarjan<'a> {
 /// Context shared across a member's structural walk.
 struct Walk<'a> {
     batch: &'a [Schema],
-    key_to_index: &'a HashMap<u64, usize>,
-    component: &'a HashSet<usize>,
-    assigned: &'a HashMap<usize, SchemaId>,
+    key_to_index: &'a HashMap<u64, NodeIx>,
+    component: &'a HashSet<NodeIx>,
+    assigned: &'a HashMap<NodeIx, SchemaId>,
 }
 
 impl Walk<'_> {
     /// Walk schema `idx`'s kind, with `path` holding the component members from
     /// the root of this walk down to (and including) `idx`.
     // r[impl schema-identity.canonical-encoding]
-    fn schema(&self, idx: usize, path: &[usize], out: &mut Vec<u8>) {
-        let schema = &self.batch[idx];
+    fn schema<S: Sink>(&self, idx: NodeIx, path: &[NodeIx], out: &mut S) {
+        let schema = &self.batch[idx.ix()];
         match &schema.kind {
             SchemaKind::Primitive(p) => write_str(out, p.tag()),
             SchemaKind::Struct { name, fields } => {
@@ -341,13 +385,13 @@ impl Walk<'_> {
         }
     }
 
-    fn field(&self, field: &Field, path: &[usize], out: &mut Vec<u8>) {
+    fn field<S: Sink>(&self, field: &Field, path: &[NodeIx], out: &mut S) {
         write_str(out, &field.name);
         write_bool(out, field.required);
         self.reference(&field.schema, path, out);
     }
 
-    fn reference(&self, r: &SchemaRef, path: &[usize], out: &mut Vec<u8>) {
+    fn reference<S: Sink>(&self, r: &SchemaRef, path: &[NodeIx], out: &mut S) {
         match r {
             SchemaRef::Var { name } => {
                 write_str(out, "var");
@@ -504,14 +548,14 @@ fn remap_kind(kind: &SchemaKind, map: &HashMap<u64, SchemaId>) -> SchemaKind {
 pub fn resolve_ids(batch: Vec<Schema>) -> Vec<Schema> {
     let n = batch.len();
 
-    // Provisional key -> batch index.
-    let mut key_to_index: HashMap<u64, usize> = HashMap::with_capacity(n);
+    // Provisional key -> node index.
+    let mut key_to_index: HashMap<u64, NodeIx> = HashMap::with_capacity(n);
     for (i, s) in batch.iter().enumerate() {
-        key_to_index.insert(s.id.0, i);
+        key_to_index.insert(s.id.0, NodeIx::of(i));
     }
 
     // Reference graph: edge i -> j when schema i references in-batch schema j.
-    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut adj: Vec<Vec<NodeIx>> = vec![Vec::new(); n];
     for (i, s) in batch.iter().enumerate() {
         let mut seen = HashSet::new();
         visit_kind_targets(&s.kind, &mut |id| {
@@ -526,9 +570,9 @@ pub fn resolve_ids(batch: Vec<Schema>) -> Vec<Schema> {
     let sccs = Tarjan::run(&adj);
 
     // Assign ids component-by-component, dependencies first.
-    let mut assigned: HashMap<usize, SchemaId> = HashMap::with_capacity(n);
+    let mut assigned: HashMap<NodeIx, SchemaId> = HashMap::with_capacity(n);
     for scc in &sccs {
-        let component: HashSet<usize> = scc.iter().copied().collect();
+        let component: HashSet<NodeIx> = scc.iter().copied().collect();
         let walk = Walk {
             batch: &batch,
             key_to_index: &key_to_index,
@@ -540,9 +584,9 @@ pub fn resolve_ids(batch: Vec<Schema>) -> Vec<Schema> {
         // does not matter.
         let mut local = Vec::with_capacity(scc.len());
         for &i in scc {
-            let mut out = Vec::new();
-            walk.schema(i, &[i], &mut out);
-            local.push((i, finish(&out)));
+            let mut hasher = blake3::Hasher::new();
+            walk.schema(i, &[i], &mut hasher);
+            local.push((i, finalize(&hasher)));
         }
         for (i, id) in local {
             assigned.insert(i, id);
@@ -552,14 +596,14 @@ pub fn resolve_ids(batch: Vec<Schema>) -> Vec<Schema> {
     // Provisional key -> real id, for rewriting references.
     let mut key_to_real: HashMap<u64, SchemaId> = HashMap::with_capacity(n);
     for (i, s) in batch.iter().enumerate() {
-        key_to_real.insert(s.id.0, assigned[&i]);
+        key_to_real.insert(s.id.0, assigned[&NodeIx::of(i)]);
     }
 
     batch
         .iter()
         .enumerate()
         .map(|(i, s)| Schema {
-            id: assigned[&i],
+            id: assigned[&NodeIx::of(i)],
             type_params: s.type_params.clone(),
             kind: remap_kind(&s.kind, &key_to_real),
         })
@@ -601,6 +645,84 @@ mod tests {
         )
     }
 
+    // --- Sink ---------------------------------------------------------------
+
+    #[test]
+    fn vec_sink_captures_canonical_bytes() {
+        let mut buf: Vec<u8> = Vec::new();
+        write_str(&mut buf, Primitive::U32.tag());
+        // u32 LE length (3) then the UTF-8 bytes of "u32".
+        assert_eq!(buf, vec![3, 0, 0, 0, b'u', b'3', b'2']);
+    }
+
+    // --- SCC ----------------------------------------------------------------
+
+    /// Run Tarjan on a hand-built edge list, returning components as sorted
+    /// `usize` vectors (preserving Tarjan's component order).
+    fn run_scc(n: usize, edges: &[(usize, usize)]) -> Vec<Vec<usize>> {
+        let mut adj: Vec<Vec<NodeIx>> = vec![Vec::new(); n];
+        for &(a, b) in edges {
+            adj[a].push(NodeIx::of(b));
+        }
+        Tarjan::run(&adj)
+            .into_iter()
+            .map(|c| {
+                let mut v: Vec<usize> = c.into_iter().map(NodeIx::ix).collect();
+                v.sort_unstable();
+                v
+            })
+            .collect()
+    }
+
+    fn as_set(components: &[Vec<usize>]) -> HashSet<Vec<usize>> {
+        components.iter().cloned().collect()
+    }
+
+    /// Position of the component containing `node` within the result order.
+    fn order_of(components: &[Vec<usize>], node: usize) -> usize {
+        components
+            .iter()
+            .position(|c| c.contains(&node))
+            .expect("node must be in some component")
+    }
+
+    #[test]
+    fn scc_self_loop_is_its_own_component() {
+        // 0 -> 0
+        let comps = run_scc(1, &[(0, 0)]);
+        assert_eq!(as_set(&comps), as_set(&[vec![0]]));
+    }
+
+    #[test]
+    fn scc_partitions_independent_cycles_chains_and_isolates() {
+        // {0,1} cycle; 2 -> 0 (depends on the cycle); {3} self-loop;
+        // {4,5} independent cycle; {6} isolated.
+        let comps = run_scc(
+            7,
+            &[(0, 1), (1, 0), (2, 0), (3, 3), (4, 5), (5, 4)],
+        );
+        assert_eq!(
+            as_set(&comps),
+            as_set(&[vec![0, 1], vec![2], vec![3], vec![4, 5], vec![6]])
+        );
+    }
+
+    #[test]
+    fn scc_yields_dependencies_first() {
+        // 0 -> 1 -> 2 -> 1: component {1,2} is a dependency of {0}.
+        let comps = run_scc(3, &[(0, 1), (1, 2), (2, 1)]);
+        assert_eq!(as_set(&comps), as_set(&[vec![1, 2], vec![0]]));
+        // The cycle {1,2} must be assigned before its dependent {0}.
+        assert!(order_of(&comps, 1) < order_of(&comps, 0));
+
+        // Chain feeding the earlier independent-cycles graph: the cycle {0,1}
+        // is emitted before its dependent singleton {2}.
+        let comps = run_scc(3, &[(0, 1), (1, 0), (2, 0)]);
+        assert!(order_of(&comps, 0) < order_of(&comps, 2));
+    }
+
+    // --- identity hashing ---------------------------------------------------
+
     #[test]
     fn primitive_ids_are_distinct_and_stable() {
         assert_eq!(primitive_id(Primitive::U32), primitive_id(Primitive::U32));
@@ -632,12 +754,11 @@ mod tests {
 
     #[test]
     fn required_flag_is_part_of_identity() {
-        let mut required = point("Point", "x", "y");
+        let required = point("Point", "x", "y");
         let mut optional = point("Point", "x", "y");
         if let SchemaKind::Struct { fields, .. } = &mut optional.kind {
             fields[0].required = false;
         }
-        let _ = &mut required;
         assert_ne!(
             resolve_ids(vec![required])[0].id,
             resolve_ids(vec![optional])[0].id
@@ -676,11 +797,10 @@ mod tests {
         let forward = resolve_ids(linked_list(true));
         let reversed = resolve_ids(linked_list(false));
 
-        // Map name -> id for each resolution (order of the output follows input).
-        let id_of = |schemas: &[Schema], want_node: bool| -> SchemaId {
+        let id_of = |schemas: &[Schema], want_struct: bool| -> SchemaId {
             schemas
                 .iter()
-                .find(|s| matches!(&s.kind, SchemaKind::Struct { .. }) == want_node)
+                .find(|s| matches!(&s.kind, SchemaKind::Struct { .. }) == want_struct)
                 .unwrap()
                 .id
         };
@@ -689,7 +809,7 @@ mod tests {
         assert_eq!(id_of(&forward, true), id_of(&reversed, true));
         assert_eq!(id_of(&forward, false), id_of(&reversed, false));
 
-        // And references were rewritten to the real ids (no provisional keys left).
+        // References were rewritten to real ids (no provisional keys left).
         let node = forward
             .iter()
             .find(|s| matches!(&s.kind, SchemaKind::Struct { .. }))
@@ -712,7 +832,6 @@ mod tests {
             .unwrap()
             .id;
 
-        // A differently-named but structurally identical recursive type.
         let node2 = proto(
             10,
             SchemaKind::Struct {
@@ -729,8 +848,7 @@ mod tests {
                 element: SchemaRef::concrete(SchemaId(10)),
             },
         );
-        let list2 = resolve_ids(vec![node2, opt2]);
-        let cell_id = list2
+        let cell_id = resolve_ids(vec![node2, opt2])
             .iter()
             .find(|s| matches!(&s.kind, SchemaKind::Struct { .. }))
             .unwrap()
