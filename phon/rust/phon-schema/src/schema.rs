@@ -128,6 +128,15 @@ pub enum Primitive {
     Char,
     String,
     Bytes,
+    /// An instant or civil time, carried as its RFC 3339 / ISO 8601 canonical
+    /// string. A binding with a native date/time type parses and formats it; one
+    /// without holds the string.
+    DateTime,
+    /// A UUID, carried as its lowercase hyphenated canonical string.
+    Uuid,
+    /// A qualified name (optional namespace + local name), carried as its James
+    /// Clark `{namespace}local` canonical string.
+    QName,
     Unit,
     Never,
 }
@@ -155,6 +164,9 @@ impl Primitive {
             Primitive::Char => "char",
             Primitive::String => "string",
             Primitive::Bytes => "bytes",
+            Primitive::DateTime => "datetime",
+            Primitive::Uuid => "uuid",
+            Primitive::QName => "qname",
             Primitive::Unit => "unit",
             Primitive::Never => "never",
         }
@@ -180,6 +192,9 @@ impl Primitive {
             "char" => Primitive::Char,
             "string" => Primitive::String,
             "bytes" => Primitive::Bytes,
+            "datetime" => Primitive::DateTime,
+            "uuid" => Primitive::Uuid,
+            "qname" => Primitive::QName,
             "unit" => Primitive::Unit,
             "never" => Primitive::Never,
             _ => return None,

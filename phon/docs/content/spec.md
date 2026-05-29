@@ -331,6 +331,7 @@ pub enum Primitive {
     Char,
     String,
     Bytes,
+    DateTime, Uuid, QName,
     Unit,
     Never,
 }
@@ -342,6 +343,14 @@ the carrier for "bytes whose meaning is defined by some protocol layered on
 top of phon." `Unit` is the value-less type (Rust's `()`, Swift's `Void`);
 `Never` is the type with no inhabitants, useful in shapes like
 `Result<T, Never>`.
+
+`DateTime`, `Uuid`, and `QName` are common library types phon names as
+primitives so they survive as themselves rather than collapsing to a string an
+implementation can't tell apart. Each travels as a canonical UTF-8 string (so
+the wire stays simple and a peer with no native type just holds the string), but
+its own tag and schema kind keep it distinct from a plain `String`. The exact
+canonical strings are in `r[value.extended-kinds]`. A peer parses and formats at
+the boundary using whatever date/time or uuid library it has.
 
 ## Fields
 
@@ -522,7 +531,7 @@ decoded.
 >
 > - **primitive**: the primitive tag — one of `bool`, `u8`, `u16`, `u32`, `u64`,
 >   `u128`, `i8`, `i16`, `i32`, `i64`, `i128`, `f32`, `f64`, `char`, `string`,
->   `bytes`, `unit`, `never`.
+>   `bytes`, `datetime`, `uuid`, `qname`, `unit`, `never`.
 > - **struct**: `struct`; the name; the type-parameter list (a `u32` count then
 >   each parameter name); a `u32` field count; then per field, in declaration
 >   order: the field name, the `required` bool, the field's reference.
@@ -667,6 +676,9 @@ The tags and their bodies:
 | 0x18 | option-none   | none                                                            |
 | 0x19 | option-some   | one value                                                       |
 | 0x1A | tensor        | u32 LE rank, then `rank` u64 LE dimensions, then the elements   |
+| 0x1B | datetime      | u32 LE byte length, then a canonical date/time string (UTF-8)   |
+| 0x1C | uuid          | u32 LE byte length, then a canonical uuid string (UTF-8)        |
+| 0x1D | qname         | u32 LE byte length, then a canonical qname string (UTF-8)       |
 
 A few things worth calling out:
 
@@ -734,20 +746,40 @@ them.
 > Schema-less decode folds the richer wire tags onto these cases; the exact
 > width and precise container kind are recovered only on the typed path, decoding
 > against a schema. `Value` round-trips itself, but `Dynamic` is a coarse escape
-> hatch, not a way to preserve a typed value's exact shape — and it cannot carry
-> what its model can't hold (a `u128`, an `f32`'s narrowness). The per-case wire
-> tag the codec emits for a `Value` is fixed, so `Dynamic` bytes are canonical
-> across implementations. (There is no `channel` or `external` case: those appear
-> only in compact, schema-known form.)
+> hatch: it preserves the *value* — including 128-bit integers, `char`, and the
+> extended kinds of `r[value.extended-kinds]` — but not a typed value's exact wire
+> shape: a `u32` reads back as a plain number, a tuple as an array, an `f32`
+> widened to `f64`. The per-case wire tag the codec emits for a `Value` is fixed,
+> so `Dynamic` bytes are canonical across implementations. (There is no `channel`
+> or `external` case: those appear only in compact, schema-known form.)
+
+> r[value.extended-kinds]
+>
+> The `datetime`, `uuid`, and `qname` primitives each travel as a canonical UTF-8
+> string under their own tag (`0x1B`/`0x1C`/`0x1D` self-describing; the bare
+> string in compact). The own tag keeps them distinct from a `string`, so a
+> schema-less decode recovers a date/time, uuid, or qname — not just text — while
+> a peer without a native type holds the string verbatim. The canonical strings:
+>
+> - **uuid** — lowercase hyphenated hex, `8-4-4-4-12`
+>   (`550e8400-e29b-41d4-a716-446655440000`).
+> - **qname** — James Clark notation: `{namespace}local`, or `local` with no
+>   namespace.
+> - **datetime** — RFC 3339 / ISO 8601. The kind is unambiguous by shape: a `T`
+>   means a datetime (`2026-05-29T07:32:00`, local), a trailing `Z` or `±HH:MM`
+>   makes it an offset (`2026-05-29T07:32:00+05:30`), a `:` alone is a time
+>   (`07:32:00`), a `-` alone is a date (`2026-05-29`). Fractional seconds are a
+>   `.` then exactly nine digits, present only when nonzero. The offset is `Z`
+>   for zero, else `±HH:MM`.
 
 The self-describing tag table stays rich because self-describing mode also
 carries *typed* values at full fidelity — most importantly the schemas exchanged
 during bootstrap, whose `u32` counts and enum variants must survive exactly. A
 reader decoding against a known type keeps every distinction; a schema-less
 reader collapses those same bytes onto the coarser `Value` model. The cases
-facet carries beyond the wire — null, date/time, qname, uuid — are mapped by the
-self-describing codec (null to an option's none; date/time to an agreed
-encoding, since phon has no date/time primitive). The reconciliation lives in the
+facet carries beyond the wire are mapped by the self-describing codec: null to an
+option's none, and date/time, qname, and uuid to the `datetime`/`uuid`/`qname`
+primitive tags of `r[value.extended-kinds]`. The reconciliation lives in the
 codec, not in a separate value type.
 
 # Compact mode
@@ -771,7 +803,9 @@ Fixed-shape kinds are just their bytes. The variable-shape kinds still need
 their counts and lengths on the wire, because the schema says "a list of u32"
 but not how many:
 
-- `string`, `bytes`: u32 LE byte length, then the bytes
+- `string`, `bytes`, `datetime`, `uuid`, `qname`: u32 LE byte length, then the
+  bytes — for `datetime`/`uuid`/`qname` the bytes are the canonical string of
+  `r[value.extended-kinds]`
 - `list`, `set`: u32 LE element count, then the elements
 - `map`: u32 LE entry count, then the key/value pairs
 - `option`: one byte, `0x00` none or `0x01` some, then the value if some

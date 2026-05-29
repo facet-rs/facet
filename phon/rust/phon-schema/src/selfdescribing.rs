@@ -21,7 +21,10 @@
 
 use std::collections::HashSet;
 
-use facet_value::{VArray, VBytes, VNumber, VObject, VString, Value, ValueType};
+use facet_value::{
+    DateTimeKind, VArray, VBytes, VDateTime, VNumber, VObject, VQName, VString, VUuid, Value,
+    ValueType,
+};
 
 use crate::bytes::{
     DecodeError, Reader, Sink, write_bool, write_bytes, write_f64, write_i128, write_i64,
@@ -65,6 +68,9 @@ mod tag {
     pub const OPTION_NONE: u8 = 0x18;
     pub const OPTION_SOME: u8 = 0x19;
     pub const TENSOR: u8 = 0x1A;
+    pub const DATETIME: u8 = 0x1B;
+    pub const UUID: u8 = 0x1C;
+    pub const QNAME: u8 = 0x1D;
 }
 
 // ============================================================================
@@ -772,11 +778,11 @@ pub fn write_value<S: Sink>(out: &mut S, value: &Value) -> Result<(), EncodeErro
                 write_value(out, val)?;
             }
         }
-        ValueType::DateTime => return Err(EncodeError::Unsupported("datetime")),
-        ValueType::QName => return Err(EncodeError::Unsupported("qname")),
-        ValueType::Uuid => return Err(EncodeError::Unsupported("uuid")),
+        ValueType::DateTime => enc_datetime(out, value.as_datetime().unwrap())?,
+        ValueType::QName => enc_qname(out, value.as_qname().unwrap())?,
+        ValueType::Uuid => enc_uuid(out, value.as_uuid().unwrap()),
         // ValueType is #[non_exhaustive]: a future kind has no encoding yet.
-        _ => return Err(EncodeError::Unsupported("unknown")),
+        _ => return Err(EncodeError::Unsupported("unknown value kind")),
     }
     Ok(())
 }
@@ -801,6 +807,186 @@ fn enc_number<S: Sink>(out: &mut S, n: &VNumber) {
         write_u8(out, tag::U128);
         write_u128(out, n.to_u128().expect("a non-float integer fits one width"));
     }
+}
+
+// The kinds phon has no primitive tag for ride a dedicated tag carrying their
+// canonical string (`r[value.extended-kinds]`). A reader without a native type
+// keeps the string.
+// r[impl value.extended-kinds]
+fn enc_uuid<S: Sink>(out: &mut S, u: &VUuid) {
+    write_u8(out, tag::UUID);
+    write_str(out, &uuid_string(u.as_u128()));
+}
+
+fn enc_qname<S: Sink>(out: &mut S, q: &VQName) -> Result<(), EncodeError> {
+    write_u8(out, tag::QNAME);
+    write_str(out, &qname_string(q)?);
+    Ok(())
+}
+
+fn enc_datetime<S: Sink>(out: &mut S, d: &VDateTime) -> Result<(), EncodeError> {
+    write_u8(out, tag::DATETIME);
+    write_str(out, &datetime_string(d)?);
+    Ok(())
+}
+
+/// `550e8400-e29b-41d4-a716-446655440000` (lowercase, hyphenated).
+fn uuid_string(n: u128) -> String {
+    let h = format!("{n:032x}");
+    format!(
+        "{}-{}-{}-{}-{}",
+        &h[0..8],
+        &h[8..12],
+        &h[12..16],
+        &h[16..20],
+        &h[20..32]
+    )
+}
+
+fn parse_uuid(s: &str) -> Result<VUuid, DecodeError> {
+    let hex: String = s.chars().filter(|c| *c != '-').collect();
+    if hex.len() != 32 {
+        return Err(DecodeError::Malformed("uuid"));
+    }
+    let n = u128::from_str_radix(&hex, 16).map_err(|_| DecodeError::Malformed("uuid"))?;
+    Ok(VUuid::from_u128(n))
+}
+
+/// James Clark notation: `{namespace}local`, or `local` with no namespace.
+fn qname_string(q: &VQName) -> Result<String, EncodeError> {
+    let local = q
+        .local_name()
+        .as_string()
+        .ok_or(EncodeError::Unsupported("qname local name"))?
+        .as_str()
+        .to_string();
+    match q.namespace() {
+        None => Ok(local),
+        Some(ns) => {
+            let ns = ns
+                .as_string()
+                .ok_or(EncodeError::Unsupported("qname namespace"))?
+                .as_str();
+            Ok(format!("{{{ns}}}{local}"))
+        }
+    }
+}
+
+fn parse_qname(s: &str) -> Result<VQName, DecodeError> {
+    if let Some(rest) = s.strip_prefix('{') {
+        let (ns, local) = rest
+            .split_once('}')
+            .ok_or(DecodeError::Malformed("qname"))?;
+        Ok(VQName::new(VString::new(ns), VString::new(local)))
+    } else {
+        Ok(VQName::new_local(VString::new(s)))
+    }
+}
+
+/// RFC 3339 / ISO 8601: `T` marks a datetime, `:` a time, `-` a date; fractional
+/// seconds are `.` plus nine digits when nonzero; the offset is `Z` or `±HH:MM`.
+fn datetime_string(d: &VDateTime) -> Result<String, EncodeError> {
+    let date = format!("{:04}-{:02}-{:02}", d.year(), d.month(), d.day());
+    let mut time = format!("{:02}:{:02}:{:02}", d.hour(), d.minute(), d.second());
+    if d.nanos() != 0 {
+        time.push_str(&format!(".{:09}", d.nanos()));
+    }
+    Ok(match d.kind() {
+        DateTimeKind::LocalDate => date,
+        DateTimeKind::LocalTime => time,
+        DateTimeKind::LocalDateTime => format!("{date}T{time}"),
+        DateTimeKind::Offset { offset_minutes } => {
+            let offset = if offset_minutes == 0 {
+                "Z".to_string()
+            } else {
+                let (sign, abs) = if offset_minutes < 0 {
+                    ('-', (-(i32::from(offset_minutes))) as u32)
+                } else {
+                    ('+', u32::from(offset_minutes as u16))
+                };
+                format!("{sign}{:02}:{:02}", abs / 60, abs % 60)
+            };
+            format!("{date}T{time}{offset}")
+        }
+        _ => return Err(EncodeError::Unsupported("datetime kind")),
+    })
+}
+
+fn parse_datetime(s: &str) -> Result<VDateTime, DecodeError> {
+    let bad = || DecodeError::Malformed("datetime");
+    if let Some((date, rest)) = s.split_once('T') {
+        let (y, mo, da) = parse_date(date).ok_or_else(bad)?;
+        // The offset starts at a trailing `Z`, `+`, or `-`; the time has none.
+        let (time, offset) = match rest.find(['Z', '+', '-']) {
+            Some(i) => (&rest[..i], Some(&rest[i..])),
+            None => (rest, None),
+        };
+        let (h, mi, se, na) = parse_time(time).ok_or_else(bad)?;
+        match offset {
+            None => Ok(VDateTime::new_local_datetime(y, mo, da, h, mi, se, na)),
+            Some(off) => {
+                let off = parse_offset(off).ok_or_else(bad)?;
+                Ok(VDateTime::new_offset(y, mo, da, h, mi, se, na, off))
+            }
+        }
+    } else if s.contains(':') {
+        let (h, mi, se, na) = parse_time(s).ok_or_else(bad)?;
+        Ok(VDateTime::new_local_time(h, mi, se, na))
+    } else if s.contains('-') {
+        let (y, mo, da) = parse_date(s).ok_or_else(bad)?;
+        Ok(VDateTime::new_local_date(y, mo, da))
+    } else {
+        Err(bad())
+    }
+}
+
+fn parse_date(s: &str) -> Option<(i32, u8, u8)> {
+    // `[-]YYYY-MM-DD`: split the day and month off the right so a negative year's
+    // leading `-` stays with the year.
+    let (rest, day) = s.rsplit_once('-')?;
+    let (year, month) = rest.rsplit_once('-')?;
+    Some((year.parse().ok()?, month.parse().ok()?, day.parse().ok()?))
+}
+
+fn parse_time(s: &str) -> Option<(u8, u8, u8, u32)> {
+    let (hms, frac) = match s.split_once('.') {
+        Some((hms, f)) => (hms, Some(f)),
+        None => (s, None),
+    };
+    let mut parts = hms.split(':');
+    let h = parts.next()?.parse().ok()?;
+    let mi = parts.next()?.parse().ok()?;
+    let se = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    let nanos = match frac {
+        None => 0,
+        Some(f) if (1..=9).contains(&f.len()) && f.bytes().all(|b| b.is_ascii_digit()) => {
+            let mut padded = f.to_string();
+            while padded.len() < 9 {
+                padded.push('0');
+            }
+            padded.parse().ok()?
+        }
+        Some(_) => return None,
+    };
+    Some((h, mi, se, nanos))
+}
+
+fn parse_offset(s: &str) -> Option<i16> {
+    if s == "Z" {
+        return Some(0);
+    }
+    let sign: i32 = match s.as_bytes().first()? {
+        b'+' => 1,
+        b'-' => -1,
+        _ => return None,
+    };
+    let (hh, mm) = s[1..].split_once(':')?;
+    let h: i32 = hh.parse().ok()?;
+    let m: i32 = mm.parse().ok()?;
+    i16::try_from(sign * (h * 60 + m)).ok()
 }
 
 /// Read a [`Value`] from a reader (for embedding, e.g. a `Dynamic` field).
@@ -861,6 +1047,9 @@ fn dec_value(r: &mut Reader, depth: usize) -> Result<Value, DecodeError> {
         tag::STRUCT => dec_struct_value(r, depth)?,
         tag::ENUM => dec_enum_value(r, depth)?,
         tag::OPTION_SOME => dec_value(r, depth + 1)?,
+        tag::DATETIME => parse_datetime(r.read_str()?)?.into(),
+        tag::UUID => parse_uuid(r.read_str()?)?.into(),
+        tag::QNAME => parse_qname(r.read_str()?)?.into(),
         other => return Err(DecodeError::UnknownTag(other)),
     })
 }
@@ -1338,11 +1527,28 @@ mod tests {
     }
 
     #[test]
-    fn encode_rejects_unsupported_kinds() {
-        let uuid: Value = facet_value::VUuid::from_u128(0).into();
-        assert_eq!(
-            value_to_bytes(&uuid),
-            Err(EncodeError::Unsupported("uuid"))
-        );
+    fn value_roundtrip_extended_kinds() {
+        rt_value(VUuid::from_u128(0x0123_4567_89ab_cdef_fedc_ba98_7654_3210).into());
+        rt_value(VQName::new(VString::new("http://ex.com/ns"), VString::new("el")).into());
+        rt_value(VQName::new_local(VString::new("el")).into());
+        // all four datetime kinds, with and without fractional seconds / offset
+        rt_value(VDateTime::new_offset(2026, 5, 29, 7, 32, 0, 123_456_789, 330).into());
+        rt_value(VDateTime::new_offset(2026, 5, 29, 7, 32, 0, 0, 0).into());
+        rt_value(VDateTime::new_offset(2026, 5, 29, 7, 32, 0, 0, -480).into());
+        rt_value(VDateTime::new_local_datetime(2026, 5, 29, 7, 32, 0, 0).into());
+        rt_value(VDateTime::new_local_date(2026, 5, 29).into());
+        rt_value(VDateTime::new_local_time(7, 32, 0, 500).into());
+    }
+
+    #[test]
+    fn extended_kind_wire_forms_are_canonical() {
+        // Spot-check the canonical strings the codec emits (`r[value.extended-kinds]`).
+        let bytes = value_to_bytes(&VUuid::from_u128(0).into()).unwrap();
+        // tag (1) + u32 len + 36-char string
+        let s = std::str::from_utf8(&bytes[5..]).unwrap();
+        assert_eq!(s, "00000000-0000-0000-0000-000000000000");
+
+        let dt = value_to_bytes(&VDateTime::new_offset(2026, 5, 29, 7, 32, 0, 0, 0).into()).unwrap();
+        assert_eq!(std::str::from_utf8(&dt[5..]).unwrap(), "2026-05-29T07:32:00Z");
     }
 }
