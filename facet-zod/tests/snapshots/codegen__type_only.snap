@@ -1,0 +1,9 @@
+---
+source: facet-zod/tests/codegen.rs
+expression: output
+---
+const DefaultedSchema = z.object({
+  count: z.number().int().optional(),
+  name: z.string(),
+});
+export type Defaulted = z.infer<typeof DefaultedSchema>;

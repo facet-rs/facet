@@ -1,0 +1,28 @@
+[package]
+name = "facet-zod"
+version = "0.46.5"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Generate Zod schemas from Rust types via Facet reflection"
+keywords = ["zod", "typescript", "schema", "codegen", "facet"]
+categories = ["development-tools", "encoding"]
+homepage = "https://facet.rs"
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+facet-core = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+facet = { workspace = true, features = ["all-impls"] }
+facet-json = { path = "../facet-json" }
+insta = { workspace = true }
+
+[lints]
+workspace = true

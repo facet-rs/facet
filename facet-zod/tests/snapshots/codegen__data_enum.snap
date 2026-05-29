@@ -1,0 +1,15 @@
+---
+source: facet-zod/tests/codegen.rs
+expression: output
+---
+export const ShapeSchema = z.union([z.object({
+  Circle: z.object({
+  radius: z.number(),
+}),
+}), z.object({
+  Rectangle: z.object({
+  width: z.number(),
+  height: z.number(),
+}),
+})]);
+export type Shape = z.infer<typeof ShapeSchema>;
