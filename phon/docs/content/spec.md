@@ -258,11 +258,11 @@ note:
 > and dispatch know a stream of `element` flows here; the *value* on the wire is
 > a transport-assigned handle (a `u64`). The stream's items, lifecycle, and
 > backpressure are the transport's, carried as separate messages. phon encodes
-> the handle and knows the element type; it does not run the stream. In the
-> descriptor model a channel is `Opaque` — the transport binds thunks that turn
-> a local endpoint into a handle on encode and a handle into a local endpoint on
-> decode. Channel values appear only in compact, schema-known contexts, never in
-> self-describing form.
+> the handle and knows the element type; it does not run the stream. Channel
+> values appear only in compact, schema-known contexts, never in self-describing
+> form. (How an implementation obtains the handle — turning a local endpoint
+> into one and back — is a descriptor-model detail, covered in [Language
+> implementations](#language-implementations), not part of this wire contract.)
 
 > r[type-system.dynamic]
 >
@@ -374,10 +374,10 @@ pub enum VariantPayload {
 
 > r[type-system.variant-payloads]
 >
-> Each variant carries exactly one payload shape: no payload, a single-schema
-> newtype, a positional tuple of schemas, or a named-field struct. These map
-> directly to Rust enum variant forms and to Swift enum cases with associated
-> values.
+> Each variant carries exactly one payload shape: no payload (unit), a
+> single-schema newtype, a positional tuple of schemas, or a named-field struct.
+> These four shapes are what an enum variant can hold; a language with tagged
+> unions or sum types maps onto them directly.
 
 The `index` field gives each variant a stable position separate from its
 declaration order. Reordering variants in source doesn't change wire
@@ -687,9 +687,16 @@ but not how many:
 - `map`: u32 LE entry count, then the key/value pairs
 - `option`: one byte, `0x00` none or `0x01` some, then the value if some
 - `enum`: the variant *index* as u32 LE (the schema lists variants by index;
-  the name is not needed and not sent), then the payload
+  the name is not needed and not sent), then the payload. `Never` — an enum
+  with zero variants — is uninhabited: it has no valid index, can never be
+  encoded, and any bytes presented for it are a decode error.
+- `set`, `map`: as above, with one constraint — duplicate set elements or map
+  keys are a decode error (`r[validate.uniqueness]`). Element/pair order on the
+  wire is the encoder's; the decoder preserves it but no canonical ordering is
+  imposed.
 - `array`: nothing extra — the shape is in the schema; just the elements, a
-  flat row-major run of `product(dimensions)` of them
+  flat row-major run of `product(dimensions)` of them (`product(dimensions)` is
+  checked for overflow, `r[validate.dimensions]`)
 - `tensor`: the dimension sizes (each u64 LE), then the elements as a flat
   row-major run. If the schema fixes `rank` to `Some(r)`, exactly `r` sizes are
   written; if `rank` is `None`, a u32 LE rank precedes the sizes
@@ -727,6 +734,16 @@ So compact mode pads.
 > Alignment N is the natural alignment of the type: 2 for u16/i16, 4 for
 > u32/i32/f32/char, 8 for u64/i64/f64, 16 for u128/i128. Primitive-array
 > payloads align to their element's alignment.
+
+This bites at the length prefix. A `[u64]`/`[f64]`/`[u128]` list writes its
+u32 count, then padding to the element's 8- or 16-byte alignment, then the run —
+the count desyncs the offset, so 4 (or up to 12) padding bytes follow it on
+every such list. The layout is: count, then pad-to-element-alignment, then the
+aligned run. A fixed `Array` of the same element pays no such padding, because
+its shape is in the schema and there is no on-wire count before the run — so a
+schema author who wants a borrowable `[f64; N]` with no per-message padding
+reaches for `Array`, while a dynamic `List<f64>` accepts the count+padding. That
+asymmetry is a real reason to prefer fixed arrays for hot numeric data.
 
 Padding is relative to message start, which means absolute alignment only holds
 if the message itself starts at an aligned address. That is the framing layer's
@@ -805,6 +822,15 @@ The contract between phon and the framing layer has four load-bearing parts.
 > reassemble each message in a buffer of bounded size and lets phon assume it
 > always receives a complete message. The exact limit is the transport's to
 > negotiate; phon only relies on one existing.
+>
+> The max-message size bounds *one* message, not the aggregate. Per-stream
+> reassembly means total in-flight reassembly memory is roughly
+> `max_message_size × concurrent partial messages`, which is unbounded unless
+> the transport also caps how many partial reassemblies it will hold at once.
+> That cap is part of the transport's flow control (alongside its stream-count
+> and credit limits); phon names the requirement but the limit is the
+> transport's. Without it, a peer opening many streams and dribbling a large
+> message on each is a memory-exhaustion vector.
 
 > r[framing.alignment]
 >
@@ -896,6 +922,11 @@ possible; translation is how it's done.
 > struct is compatible when its field plan builds. Numeric widening is not
 > implicit: `u32` and `u64` are different types, and a value written as one is
 > not readable as the other unless a future rule adds an explicit conversion.
+> These rules nest: `Option<Option<T>>` is compatible with `Option<Option<U>>`
+> exactly when `T` and `U` are. `Dynamic` is compatible only with `Dynamic` —
+> its bytes are self-describing, a form a compact reader of a concrete type
+> cannot consume, so a concrete writer and a `Dynamic` reader (or the reverse)
+> are incompatible.
 >
 > Parametric references are resolved (per `r[type-system.generic-resolution]`)
 > before matching; compatibility is decided on the resolved forms.
@@ -1323,7 +1354,14 @@ pub enum Access {
     /// Key / value pairs.
     Map(MapAccess),
 
-    /// The whole subtree is handled by thunks: no direct facts apply.
+    /// A `Dynamic` value: no layout to describe. The engine decodes/encodes a
+    /// `Value` through the self-describing codec and hands it over as-is.
+    Dynamic,
+
+    /// The whole subtree is handled by thunks: no direct facts apply. This is
+    /// how `Channel` and `External` are accessed — the binding turns a local
+    /// endpoint or external buffer into a handle on encode and back on decode —
+    /// and the fallback for any kind a producer can't reduce to layout facts.
     Opaque { encode: Thunk, decode: Thunk },
 }
 
@@ -1442,6 +1480,16 @@ pub struct Thunk {
 > with no binding is a build-time error — there is no implicit fallback, no
 > default behavior an unbound name silently falls into.
 
+> r[descriptors.facts-are-optional]
+>
+> Direct-fact variants — niche tags, direct offsets, `Contiguous` storage — are
+> producer-optional. A producer emits them when it can prove the layout and
+> falls back to a thunk otherwise; an engine must accept a descriptor that uses
+> only thunks for any given subtree. The engine never requires a particular fact
+> to be present. (Niche packing, for instance, is a Rust/Swift compiler concern
+> with no TypeScript analog — a producer that has no niche to expose simply uses
+> a `Tag` or a thunk.)
+
 > r[descriptors.borrowed]
 >
 > A `Borrowed` sequence decodes without allocating: the engine points its
@@ -1449,16 +1497,19 @@ pub struct Thunk {
 > valid only as long as that input buffer — and any decode-scoped arena (below)
 > — lives; the caller must keep it alive for the value's lifetime. Because phon
 > decodes a whole message from one buffer, the run is always contiguous, so
-> borrowing in place needs only that it be aligned (for primitive-array elements)
-> per `r[compact.alignment]`. When the buffer wasn't delivered at an aligned
-> address — a misaligned array — the engine copies the run into a decode-scoped
-> arena that shares the value's lifetime, still without allocating a per-value
-> owned container. Borrowing applies only where the wire
-> bytes equal the memory bytes: scalars, `bytes`, `string`, arrays of those, and
-> the element data of a contiguous (standard-layout) tensor. A `&[T]` of
-> non-scalar `T` cannot borrow, because the wire and memory layouts differ; it is
-> `Owned` or `Thunk` instead, and a strided or non-contiguous tensor view falls
-> back the same way.
+> borrowing in place needs two things: the run is aligned (for primitive-array
+> elements) per `r[compact.alignment]`, and the host's byte order matches the
+> wire's. The wire is little-endian and every phon target is little-endian, so
+> on a target host this always holds; a hypothetical big-endian host would
+> byteswap multi-byte elements on the copy path and could not borrow them. When
+> a precondition fails — a misaligned array, or (off-target) a byte-order
+> mismatch — the engine copies the run into a decode-scoped arena that shares
+> the value's lifetime, still without allocating a per-value owned container.
+> Borrowing applies only where the wire bytes equal the memory bytes: scalars,
+> `bytes`, `string`, arrays of those, and the element data of a contiguous
+> (standard-layout) tensor. A `&[T]` of non-scalar `T` cannot borrow, because
+> the wire and memory layouts differ; it is `Owned` or `Thunk` instead, and a
+> strided or non-contiguous tensor view falls back the same way.
 
 Borrowed storage is the heart of zero-copy decoding. A wire format that always
 allocated would make the alignment work in `r[compact.alignment]` pointless;
