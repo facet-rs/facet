@@ -687,6 +687,16 @@ A few things worth calling out:
   schema-known contexts, never in self-describing form (see
   `r[type-system.channel]` and `r[type-system.external]`).
 
+> r[self-describing.enum-payload]
+>
+> An enum value (tag `0x17`) is the variant name string followed by *exactly one*
+> payload value, so a schema-less decoder can find the variant's end with no
+> schema. That one value carries the variant's shape: a unit variant writes a
+> `unit` (`0x00`); a newtype variant writes its single value; a tuple variant
+> writes a `tuple` (`0x15`); a struct variant writes a `struct` (`0x16`). A
+> schema-less decode therefore reads any enum as a one-entry object mapping the
+> variant name to that payload value.
+
 > r[self-describing.no-extra-kinds]
 >
 > `Dynamic`, `Channel`, and `External` have no self-describing tags. A `Dynamic`

@@ -15,63 +15,18 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::bytes::{Sink, write_bool, write_str, write_u32, write_u64, write_u8};
 use crate::schema::{
     ChannelDirection, Field, Primitive, Schema, SchemaId, SchemaKind, SchemaRef, VariantPayload,
 };
 
 // ============================================================================
-// Byte sink
-// ============================================================================
-
-/// A destination for canonical-encoding bytes.
-///
-/// Production hashing streams directly into a [`blake3::Hasher`] (no intermediate
-/// allocation); tests and debug tooling capture the exact bytes into a `Vec<u8>`
-/// to inspect or compare the canonical encoding itself, not just the final hash.
-trait Sink {
-    fn put(&mut self, bytes: &[u8]);
-}
-
-impl Sink for blake3::Hasher {
-    fn put(&mut self, bytes: &[u8]) {
-        self.update(bytes);
-    }
-}
-
-impl Sink for Vec<u8> {
-    fn put(&mut self, bytes: &[u8]) {
-        self.extend_from_slice(bytes);
-    }
-}
-
-// ============================================================================
 // Canonical encoding building blocks
 // ============================================================================
 //
-// Spec building blocks: u32/u64 are little-endian; a *string* is a u32 LE byte
-// length then its UTF-8 bytes; a bool is one byte (0 or 1). Every tag and marker
-// token is fed to the sink as a *string*.
-
-fn write_u8<S: Sink>(out: &mut S, b: u8) {
-    out.put(&[b]);
-}
-
-fn write_u32<S: Sink>(out: &mut S, n: u32) {
-    out.put(&n.to_le_bytes());
-}
-
-fn write_u64<S: Sink>(out: &mut S, n: u64) {
-    out.put(&n.to_le_bytes());
-}
-
-fn write_bool<S: Sink>(out: &mut S, b: bool) {
-    write_u8(out, u8::from(b));
-}
-
-fn write_str<S: Sink>(out: &mut S, s: &str) {
-    write_u32(out, s.len() as u32);
-    out.put(s.as_bytes());
-}
+// The byte primitives live in `crate::bytes`; every tag and marker token is fed
+// to the sink as a *string*. (Building blocks: little-endian ints; a string is a
+// u32 LE length then UTF-8; a bool is one byte.)
 
 fn write_type_params<S: Sink>(out: &mut S, params: &[String]) {
     write_u32(out, params.len() as u32);

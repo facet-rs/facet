@@ -9,8 +9,10 @@
 //! Spec: `docs/content/spec.md` — "Type system", "Schema identity",
 //! "Self-describing mode", and `r[crates.concern-separation]`.
 
+pub mod bytes;
 pub mod identity;
 pub mod schema;
+pub mod selfdescribing;
 
 /// phon's dynamic value. In Rust this *is* `facet_value::Value`, re-exported
 /// rather than wrapped — a `Dynamic` field carries one directly. The
@@ -22,15 +24,11 @@ pub mod value {
     pub use facet_value::Value;
 }
 
-/// The self-describing (tag-led) codec: encode/decode a `Value` with no schema.
-/// The bootstrap mode, and the backing of the `Dynamic` kind.
-///
-/// Spec: "Self-describing mode" (`r[self-describing.*]`).
-pub mod selfdescribing {}
-
+pub use bytes::{DecodeError, Reader};
 pub use identity::{primitive_id, resolve_ids};
 pub use schema::{
     ChannelDirection, Field, Primitive, Schema, SchemaId, SchemaKind, SchemaRef, Variant,
     VariantPayload,
 };
+pub use selfdescribing::{schema_from_bytes, schema_to_bytes};
 pub use value::Value;

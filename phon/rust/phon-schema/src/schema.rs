@@ -159,6 +159,32 @@ impl Primitive {
             Primitive::Never => "never",
         }
     }
+
+    /// The inverse of [`Primitive::tag`]: parse a primitive from its tag string.
+    #[must_use]
+    pub fn from_tag(tag: &str) -> Option<Primitive> {
+        Some(match tag {
+            "bool" => Primitive::Bool,
+            "u8" => Primitive::U8,
+            "u16" => Primitive::U16,
+            "u32" => Primitive::U32,
+            "u64" => Primitive::U64,
+            "u128" => Primitive::U128,
+            "i8" => Primitive::I8,
+            "i16" => Primitive::I16,
+            "i32" => Primitive::I32,
+            "i64" => Primitive::I64,
+            "i128" => Primitive::I128,
+            "f32" => Primitive::F32,
+            "f64" => Primitive::F64,
+            "char" => Primitive::Char,
+            "string" => Primitive::String,
+            "bytes" => Primitive::Bytes,
+            "unit" => Primitive::Unit,
+            "never" => Primitive::Never,
+            _ => return None,
+        })
+    }
 }
 
 /// A struct field: a name, the field's schema (which may be parametric), and a
