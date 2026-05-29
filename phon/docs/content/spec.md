@@ -275,11 +275,12 @@ note:
 
 > r[type-system.external]
 >
-> An `External` value's bytes don't appear in the message at all. Its in-band
-> representation is the unit value; the actual payload travels through the
-> transport's external-attachment channel. The `kind` field names which
-> channel; `metadata` describes the payload to the transport without revealing
-> its content.
+> An `External` value's payload bytes don't appear in the message. In their
+> place the wire carries a transport-assigned `u64` handle; the actual payload
+> travels through the transport's external-attachment channel. The `kind` field
+> names which channel; `metadata` (a `Value`, carried in-band) describes the
+> payload to the transport without inlining it. See [External
+> payloads](#external-payloads) for the handle, validation, and borrow rules.
 
 
 ## Schema references
@@ -623,8 +624,9 @@ A few things worth calling out:
 >
 > `Dynamic` and `External` have no self-describing tags of their own. A
 > `Dynamic` value simply *is* a self-describing value — it carries whatever tag
-> its actual kind calls for. An `External` attachment's in-band value is
-> `unit`; its bytes travel out of band per `r[type-system.external]`.
+> its actual kind calls for. An `External` value's in-band form is its
+> transport-assigned `u64` handle (encoded as a `u64`); its payload bytes travel
+> out of band per `r[type-system.external]`.
 
 > r[self-describing.bootstraps-schemas]
 >
@@ -633,6 +635,31 @@ A few things worth calling out:
 > it self-describing needs no pre-shared schema. That is what makes
 > bootstrapping possible: the first thing two peers exchange is schemas, and
 > schemas ride the one mode that requires nothing agreed in advance.
+
+## Value
+
+`Value` is phon's dynamic value: any phon value held in memory without reference
+to a schema. It is what the self-describing codec produces and consumes, what a
+`Dynamic` field carries, and what `External`'s `metadata` is.
+
+> r[value]
+>
+> A `Value` has one case per self-describing kind in the tag table above — unit,
+> bool, each integer and float width, char, string, bytes, list, set, map,
+> array, tuple, struct (named fields), enum (named variant plus payload),
+> option, and tensor. (There is no `channel` case: channel values never appear
+> in self-describing form.) A `Value` is exactly the information a
+> self-describing decode recovers, and exactly what a self-describing encode
+> needs — the two are inverses over `Value`.
+
+Each implementation maps `Value` onto its native dynamic-value type. In Rust
+that type is `facet_value::Value`; the `phon` binding crate provides a total
+conversion in both directions. A native dynamic type may carry cases phon's tag
+table doesn't — `facet_value::Value`, for instance, has a null and a date/time
+case — and the binding is responsible for mapping those onto phon kinds (null
+to an option's none; a date/time to an agreed struct or integer, since phon has
+no date/time primitive). The wire stays language-neutral; the reconciliation
+lives in the binding, not the format.
 
 # Compact mode
 
@@ -905,25 +932,39 @@ memcpys for data that never had to leave physical memory. That is the cost
 
 > r[external.handle-in-band]
 >
-> An `External` value occupies no payload bytes in the message. Its in-band
-> form is the unit value. The actual bytes travel through a side channel the
-> transport provides, identified by the schema's `kind` field; the `metadata`
-> describes the payload to the transport without inlining it.
+> An `External` value's payload bytes are not in the message. In their place the
+> wire carries a *handle*: a `u64` the transport assigns, plus the schema's
+> `kind` naming the side channel. The handle is what lets one message carry many
+> externals of the same kind and keep them apart — a unit placeholder couldn't,
+> since two same-kind externals would be indistinguishable. The `metadata` is
+> in-band (it rides the message as a self-describing `Value`, so it is sized and
+> not free); it describes the payload to the transport without inlining the
+> payload itself.
 
 > r[external.transport-channel]
 >
 > The side channel is the transport's choice: shared memory between
-> same-machine peers (map a region once, pass the identifier, both sides see
-> the bytes), file-descriptor passing over a Unix socket, a content-addressed
-> blob store, anything that beats copying. phon defines the in-band handle and
-> defers the channel to the transport, the same way it defers framing.
+> same-machine peers (map a region once, the handle names it, both sides see
+> the bytes), file-descriptor passing over a Unix socket (the handle indexes the
+> message's fd table), a content-addressed blob store, anything that beats
+> copying. phon defines the in-band handle and defers the channel to the
+> transport, the same way it defers framing.
+
+> r[external.handle-is-validated]
+>
+> A handle is a capability the transport issued, and the decoder treats it as
+> untrusted: a handle that names no channel the transport actually provided is a
+> decode error, never a dereference. The transport validates the handle before
+> the receiver borrows through it. This closes the confused-deputy path where a
+> peer names a buffer or descriptor it was never given.
 
 > r[external.borrow-on-receive]
 >
-> On the receiving side, an `External` value yields a borrow — a pointer and a
-> length — into wherever the side channel placed the bytes, exactly as an
-> inline byte field yields a borrow into the wire buffer. The receiver cannot
-> tell the difference and pays a copy only if it asks for an owned value.
+> On the receiving side, a validated `External` handle yields a borrow — a
+> pointer and a length — into wherever the side channel placed the bytes,
+> exactly as an inline byte field yields a borrow into the wire buffer. The
+> receiver cannot tell the difference and pays a copy only if it asks for an
+> owned value.
 
 # Codegen
 
