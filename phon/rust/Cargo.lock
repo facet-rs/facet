@@ -334,6 +334,7 @@ dependencies = [
 name = "phon-conformance"
 version = "0.1.0"
 dependencies = [
+ "facet-value",
  "phon-schema",
  "tracing",
  "tracing-subscriber",

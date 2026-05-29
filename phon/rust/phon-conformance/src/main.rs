@@ -7,8 +7,8 @@
 use std::error::Error;
 use std::fs;
 
-use phon_conformance::{cases, cases_dir, resolve_case};
-use phon_schema::schema_to_bytes;
+use phon_conformance::{cases, cases_dir, resolve_case, value_cases, values_dir};
+use phon_schema::{schema_to_bytes, value_to_bytes};
 
 fn main() -> Result<(), Box<dyn Error>> {
     tracing_subscriber::fmt::init();
@@ -43,9 +43,23 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
+    // Value cases (schema-less; one file each).
+    let vdir = values_dir();
+    if vdir.exists() {
+        fs::remove_dir_all(&vdir)?;
+    }
+    fs::create_dir_all(&vdir)?;
+    let values = value_cases();
+    for vc in &values {
+        let bytes = value_to_bytes(&vc.value).expect("sample value must encode");
+        fs::write(vdir.join(format!("{}.phon", vc.name)), &bytes)?;
+        tracing::debug!(value = %vc.name, bytes = bytes.len(), "wrote value");
+    }
+
     tracing::info!(
         cases = all.len(),
         schemas = schema_count,
+        values = values.len(),
         dir = %dir.display(),
         "wrote conformance corpus"
     );

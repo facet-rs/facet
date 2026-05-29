@@ -12,5 +12,6 @@ path = "src/main.rs"
 
 [dependencies]
 phon-schema.workspace = true
+facet-value.workspace = true
 tracing = "0.1"
 tracing-subscriber = "0.3"

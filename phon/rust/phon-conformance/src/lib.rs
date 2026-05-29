@@ -12,23 +12,36 @@
 
 use std::path::{Path, PathBuf};
 
+use facet_value::{VArray, VBytes, VDateTime, VObject, VQName, VString, VUuid, Value};
 use phon_schema::{
     ChannelDirection, Field, Primitive, Schema, SchemaId, SchemaKind, SchemaRef, Variant,
     VariantPayload, primitive_id, resolve_ids,
 };
 
-/// The committed corpus directory, relative to the repository root.
+/// The committed schema-case directory, relative to the repository root.
 pub const CASES_DIR: &str = "conformance/cases";
+/// The committed value-case directory, relative to the repository root.
+pub const VALUES_DIR: &str = "conformance/values";
 
-/// Resolve the corpus directory from this crate's location
-/// (`<repo>/rust/phon-conformance` -> `<repo>/conformance/cases`).
-#[must_use]
-pub fn cases_dir() -> PathBuf {
-    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+/// The repository root, derived from this crate's location
+/// (`<repo>/rust/phon-conformance` -> `<repo>`).
+fn repo_root() -> &'static Path {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .nth(2)
-        .expect("crate is two levels under the repo root");
-    repo_root.join(CASES_DIR)
+        .expect("crate is two levels under the repo root")
+}
+
+/// The schema-case corpus directory.
+#[must_use]
+pub fn cases_dir() -> PathBuf {
+    repo_root().join(CASES_DIR)
+}
+
+/// The value-case corpus directory.
+#[must_use]
+pub fn values_dir() -> PathBuf {
+    repo_root().join(VALUES_DIR)
 }
 
 /// A schema within a case, with the filename label it is written under.
@@ -332,4 +345,78 @@ fn special() -> Case {
             ),
         ],
     }
+}
+
+// ============================================================================
+// Value cases
+// ============================================================================
+
+/// A named sample [`Value`], written self-describing under `values/<name>.phon`.
+pub struct ValueCase {
+    pub name: String,
+    pub value: Value,
+}
+
+fn value_case(name: &str, value: impl Into<Value>) -> ValueCase {
+    ValueCase {
+        name: name.to_string(),
+        value: value.into(),
+    }
+}
+
+/// Sample values exercising every `Value` case the codec emits — scalars, the
+/// containers, and the extended kinds (uuid, qname, every datetime shape). The
+/// oracle: decode these and re-encode to byte-identical output, with `SchemaId`s
+/// untouched (values carry no schema).
+#[must_use]
+pub fn value_cases() -> Vec<ValueCase> {
+    let mut array = VArray::new();
+    array.push(Value::from(1i64));
+    array.push(VString::new("x"));
+    array.push(Value::NULL);
+    array.push(Value::from(true));
+
+    let mut object = VObject::new();
+    object.insert(VString::new("a"), Value::from(1i64));
+    object.insert(VString::new("b"), Value::from(true));
+    let mut inner = VArray::new();
+    inner.push(Value::from('z'));
+    object.insert(VString::new("c"), Value::from(inner));
+
+    vec![
+        value_case("null", Value::NULL),
+        value_case("bool_true", true),
+        value_case("bool_false", false),
+        value_case("int_small", 42i64),
+        value_case("int_negative", -7i64),
+        value_case("int_u64_max", u64::MAX),
+        value_case("int_u128_max", u128::MAX),
+        value_case("int_i128_min", i128::MIN),
+        value_case("float", 2.5f64),
+        value_case("string", VString::new("héllo λ 🌍")),
+        value_case("bytes", VBytes::new(&[0, 1, 2, 254, 255])),
+        value_case("char", 'λ'),
+        value_case("array", array),
+        value_case("object", object),
+        value_case("uuid", VUuid::from_u128(0x0123_4567_89ab_cdef_fedc_ba98_7654_3210)),
+        value_case(
+            "qname_namespaced",
+            VQName::new(VString::new("http://ex.com/ns"), VString::new("el")),
+        ),
+        value_case("qname_local", VQName::new_local(VString::new("el"))),
+        value_case(
+            "datetime_offset",
+            VDateTime::new_offset(2026, 5, 29, 7, 32, 0, 123_456_789, 330),
+        ),
+        value_case(
+            "datetime_utc",
+            VDateTime::new_offset(2026, 5, 29, 7, 32, 0, 0, 0),
+        ),
+        value_case(
+            "datetime_local",
+            VDateTime::new_local_datetime(2026, 5, 29, 7, 32, 0, 0),
+        ),
+        value_case("datetime_date", VDateTime::new_local_date(2026, 5, 29)),
+        value_case("datetime_time", VDateTime::new_local_time(7, 32, 0, 500)),
+    ]
 }

@@ -11,8 +11,10 @@
 
 use std::fs;
 
-use phon_conformance::{cases, cases_dir, resolve_case};
-use phon_schema::{Schema, resolve_ids, schema_from_bytes, schema_to_bytes};
+use phon_conformance::{cases, cases_dir, resolve_case, value_cases, values_dir};
+use phon_schema::{
+    Schema, resolve_ids, schema_from_bytes, schema_to_bytes, value_from_bytes, value_to_bytes,
+};
 
 #[test]
 fn corpus_is_golden_and_self_consistent() {
@@ -72,4 +74,35 @@ fn corpus_is_golden_and_self_consistent() {
         }
     }
     assert!(checked > 0, "corpus is empty");
+}
+
+#[test]
+fn value_corpus_is_golden_and_self_consistent() {
+    let mut checked = 0usize;
+    for vc in value_cases() {
+        let path = values_dir().join(format!("{}.phon", vc.name));
+        let committed = fs::read(&path).unwrap_or_else(|e| {
+            panic!(
+                "missing value file {}: {e}; run `cargo run -p phon-conformance`",
+                path.display()
+            )
+        });
+
+        // golden: the current code reproduces the committed bytes.
+        let fresh = value_to_bytes(&vc.value).expect("sample value must encode");
+        assert_eq!(fresh, committed, "{}: value bytes drifted — regenerate", vc.name);
+
+        // round-trip: committed bytes decode to the expected value and back.
+        let decoded = value_from_bytes(&committed)
+            .unwrap_or_else(|e| panic!("{}: decode failed: {e}", vc.name));
+        assert_eq!(decoded, vc.value, "{}: decoded value differs", vc.name);
+        assert_eq!(
+            value_to_bytes(&decoded).expect("re-encode"),
+            committed,
+            "{}: re-encode differs from committed bytes",
+            vc.name
+        );
+        checked += 1;
+    }
+    assert!(checked > 0, "value corpus is empty");
 }

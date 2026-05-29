@@ -31,24 +31,33 @@ TypeScript loaders read the same files once those implementations exist.
 ## Layout
 
 ```
-conformance/cases/
-  <case>/
-    <label>.phon     self-describing bytes of one schema (id baked in)
+conformance/
+  cases/
+    <case>/
+      <label>.phon   self-describing bytes of one schema (id baked in)
+  values/
+    <name>.phon      self-describing bytes of one Value
 ```
 
-A case is a batch of mutually-referential schemas resolved together, so
+A *schema case* is a batch of mutually-referential schemas resolved together, so
 recursion (e.g. `linked_list`: `Node` ⇄ `Option<Node>`) gets correct ids. The
-current cases cover a plain struct, an enum with all four payload shapes, the
-recursive linked list, generics (`Pair<A,B>` + `Holder<T>`), every container
-kind, and the special kinds (dynamic, external with and without metadata,
-channel).
+cases cover a plain struct, an enum with all four payload shapes, the recursive
+linked list, generics (`Pair<A,B>` + `Holder<T>`), every container kind, and the
+special kinds (dynamic, external with and without metadata, channel).
+
+A *value case* is one self-describing `Value`. The values cover every case the
+codec emits — null, bool, the integer/float widths, string, bytes, char, array,
+object — and the extended kinds: uuid, qname (namespaced and local), and every
+datetime shape. The oracle for a value is: decode it, re-encode, and get
+byte-identical output (its `Value` codec matches Rust's), since values carry no
+schema and no id.
 
 ## Scope
 
-This is the **schema-level** oracle: schema bytes and schema identity. When the
-compact codec and the `Value` (self-describing) codec land, cases will gain
-sample-value files (a value in each wire mode) and the loaders will check those
-round-trip too. The directory format extends without breaking what's here.
+This covers schema bytes + identity and self-describing `Value` bytes. When the
+compact codec lands, value cases will gain a compact rendering against a schema
+and the loaders will check that round-trips too. The directory format extends
+without breaking what's here.
 
 ## Why bytes, not a portable phon file
 
