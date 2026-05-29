@@ -9,18 +9,8 @@
 //! Spec: `docs/content/spec.md` — "Type system", "Schema identity",
 //! "Self-describing mode", and `r[crates.concern-separation]`.
 
-/// The schema model: `Schema`, `SchemaKind`, `SchemaRef`, `Primitive`,
-/// `ChannelDirection`, `Field`, `Variant`, `VariantPayload`, `SchemaId`.
-///
-/// Spec: "Type system" (`r[type-system.*]`).
-pub mod schema {}
-
-/// Content-derived schema identity: the canonical structural encoding and the
-/// BLAKE3-based `SchemaId` computation, including SCC-ordered assignment and
-/// the depth-indexed back-reference walk for reference cycles.
-///
-/// Spec: "Schema identity" (`r[schema-identity.*]`).
-pub mod identity {}
+pub mod identity;
+pub mod schema;
 
 /// phon's dynamic value. In Rust this *is* `facet_value::Value`, re-exported
 /// rather than wrapped — a `Dynamic` field carries one directly. The
@@ -37,3 +27,10 @@ pub mod value {
 ///
 /// Spec: "Self-describing mode" (`r[self-describing.*]`).
 pub mod selfdescribing {}
+
+pub use identity::{primitive_id, resolve_ids};
+pub use schema::{
+    ChannelDirection, Field, Primitive, Schema, SchemaId, SchemaKind, SchemaRef, Variant,
+    VariantPayload,
+};
+pub use value::Value;

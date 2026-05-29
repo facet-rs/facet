@@ -1,0 +1,771 @@
+//! Content-derived schema identity.
+//!
+//! A [`SchemaId`] is the first 8 bytes (little-endian `u64`) of the BLAKE3 hash
+//! of a schema's *canonical structural encoding*. The encoding is byte-exact and
+//! reproducible across implementations, so the same logical schema yields the
+//! same id everywhere with no coordination.
+//!
+//! Recursive schemas are handled by partitioning the reference graph into
+//! strongly-connected components, processing them dependencies-first, and — for
+//! a cyclic component — hashing each member via a structural unfolding with
+//! depth-indexed back-references that terminates the walk.
+//!
+//! Spec: "Schema identity" — `r[schema-identity.canonical-encoding]`,
+//! `r[schema-identity.computation]`.
+
+use std::collections::{HashMap, HashSet};
+
+use crate::schema::{
+    ChannelDirection, Field, Primitive, Schema, SchemaId, SchemaKind, SchemaRef, VariantPayload,
+};
+
+// ============================================================================
+// Canonical encoding building blocks
+// ============================================================================
+//
+// Spec building blocks: u32/u64 are little-endian; a *string* is a u32 LE byte
+// length then its UTF-8 bytes; a bool is one byte (0 or 1). Every tag and marker
+// token is fed to the hash as a *string*.
+
+fn write_u8(out: &mut Vec<u8>, b: u8) {
+    out.push(b);
+}
+
+fn write_u32(out: &mut Vec<u8>, n: u32) {
+    out.extend_from_slice(&n.to_le_bytes());
+}
+
+fn write_u64(out: &mut Vec<u8>, n: u64) {
+    out.extend_from_slice(&n.to_le_bytes());
+}
+
+fn write_bool(out: &mut Vec<u8>, b: bool) {
+    write_u8(out, u8::from(b));
+}
+
+fn write_str(out: &mut Vec<u8>, s: &str) {
+    write_u32(out, s.len() as u32);
+    out.extend_from_slice(s.as_bytes());
+}
+
+fn write_type_params(out: &mut Vec<u8>, params: &[String]) {
+    write_u32(out, params.len() as u32);
+    for p in params {
+        write_str(out, p);
+    }
+}
+
+fn direction_tag(d: ChannelDirection) -> &'static str {
+    match d {
+        ChannelDirection::Tx => "tx",
+        ChannelDirection::Rx => "rx",
+    }
+}
+
+// r[impl schema-identity.content-hash]
+fn finish(out: &[u8]) -> SchemaId {
+    let hash = blake3::hash(out);
+    let bytes = hash.as_bytes();
+    let mut first8 = [0u8; 8];
+    first8.copy_from_slice(&bytes[..8]);
+    SchemaId(u64::from_le_bytes(first8))
+}
+
+/// The canonical id of a primitive schema (`Schema { kind: Primitive(p), .. }`).
+/// Constant and universal — useful for referencing primitives as already-resolved
+/// targets when building a batch.
+///
+/// Spec: `r[schema-identity.canonical-encoding]` (primitive tags).
+#[must_use]
+pub fn primitive_id(p: Primitive) -> SchemaId {
+    let mut out = Vec::new();
+    write_str(&mut out, p.tag());
+    finish(&out)
+}
+
+// ============================================================================
+// Reference graph
+// ============================================================================
+
+/// Visit every `SchemaRef::Concrete` target reachable in a kind (including those
+/// nested inside type arguments), calling `f` with each referenced id.
+fn visit_kind_targets(kind: &SchemaKind, f: &mut impl FnMut(SchemaId)) {
+    let on_ref = |r: &SchemaRef, f: &mut dyn FnMut(SchemaId)| visit_ref_targets(r, f);
+    match kind {
+        SchemaKind::Primitive(_) | SchemaKind::Dynamic => {}
+        SchemaKind::Struct { fields, .. } => {
+            for field in fields {
+                on_ref(&field.schema, f);
+            }
+        }
+        SchemaKind::Enum { variants, .. } => {
+            for v in variants {
+                match &v.payload {
+                    VariantPayload::Unit => {}
+                    VariantPayload::Newtype(r) => on_ref(r, f),
+                    VariantPayload::Tuple(refs) => {
+                        for r in refs {
+                            on_ref(r, f);
+                        }
+                    }
+                    VariantPayload::Struct(fields) => {
+                        for field in fields {
+                            on_ref(&field.schema, f);
+                        }
+                    }
+                }
+            }
+        }
+        SchemaKind::Tuple { elements } => {
+            for r in elements {
+                on_ref(r, f);
+            }
+        }
+        SchemaKind::List { element }
+        | SchemaKind::Set { element }
+        | SchemaKind::Array { element, .. }
+        | SchemaKind::Tensor { element, .. }
+        | SchemaKind::Option { element }
+        | SchemaKind::Channel { element, .. } => on_ref(element, f),
+        SchemaKind::Map { key, value } => {
+            on_ref(key, f);
+            on_ref(value, f);
+        }
+        SchemaKind::External { metadata, .. } => {
+            if let Some(r) = metadata {
+                on_ref(r, f);
+            }
+        }
+    }
+}
+
+fn visit_ref_targets(r: &SchemaRef, f: &mut dyn FnMut(SchemaId)) {
+    if let SchemaRef::Concrete { id, args } = r {
+        f(*id);
+        for a in args {
+            visit_ref_targets(a, f);
+        }
+    }
+}
+
+// ============================================================================
+// Tarjan SCC (yields components dependencies-first)
+// ============================================================================
+
+struct Tarjan<'a> {
+    adj: &'a [Vec<usize>],
+    index: usize,
+    indices: Vec<Option<usize>>,
+    lowlink: Vec<usize>,
+    on_stack: Vec<bool>,
+    stack: Vec<usize>,
+    sccs: Vec<Vec<usize>>,
+}
+
+impl<'a> Tarjan<'a> {
+    fn run(adj: &'a [Vec<usize>]) -> Vec<Vec<usize>> {
+        let n = adj.len();
+        let mut t = Tarjan {
+            adj,
+            index: 0,
+            indices: vec![None; n],
+            lowlink: vec![0; n],
+            on_stack: vec![false; n],
+            stack: Vec::new(),
+            sccs: Vec::new(),
+        };
+        for v in 0..n {
+            if t.indices[v].is_none() {
+                t.strongconnect(v);
+            }
+        }
+        // Components are popped when their root finishes, so dependencies (which
+        // finish first) appear before dependents: dependencies-first order.
+        t.sccs
+    }
+
+    fn strongconnect(&mut self, v: usize) {
+        self.indices[v] = Some(self.index);
+        self.lowlink[v] = self.index;
+        self.index += 1;
+        self.stack.push(v);
+        self.on_stack[v] = true;
+
+        for &w in &self.adj[v] {
+            if self.indices[w].is_none() {
+                self.strongconnect(w);
+                self.lowlink[v] = self.lowlink[v].min(self.lowlink[w]);
+            } else if self.on_stack[w] {
+                self.lowlink[v] = self.lowlink[v].min(self.indices[w].unwrap());
+            }
+        }
+
+        if self.lowlink[v] == self.indices[v].unwrap() {
+            let mut scc = Vec::new();
+            loop {
+                let w = self.stack.pop().unwrap();
+                self.on_stack[w] = false;
+                scc.push(w);
+                if w == v {
+                    break;
+                }
+            }
+            self.sccs.push(scc);
+        }
+    }
+}
+
+// ============================================================================
+// The walk
+// ============================================================================
+
+/// Context shared across a member's structural walk.
+struct Walk<'a> {
+    batch: &'a [Schema],
+    key_to_index: &'a HashMap<u64, usize>,
+    component: &'a HashSet<usize>,
+    assigned: &'a HashMap<usize, SchemaId>,
+}
+
+impl Walk<'_> {
+    /// Walk schema `idx`'s kind, with `path` holding the component members from
+    /// the root of this walk down to (and including) `idx`.
+    // r[impl schema-identity.canonical-encoding]
+    fn schema(&self, idx: usize, path: &[usize], out: &mut Vec<u8>) {
+        let schema = &self.batch[idx];
+        match &schema.kind {
+            SchemaKind::Primitive(p) => write_str(out, p.tag()),
+            SchemaKind::Struct { name, fields } => {
+                write_str(out, "struct");
+                write_str(out, name);
+                write_type_params(out, &schema.type_params);
+                write_u32(out, fields.len() as u32);
+                for field in fields {
+                    self.field(field, path, out);
+                }
+            }
+            SchemaKind::Enum { name, variants } => {
+                write_str(out, "enum");
+                write_str(out, name);
+                write_type_params(out, &schema.type_params);
+                write_u32(out, variants.len() as u32);
+                for v in variants {
+                    write_str(out, &v.name);
+                    write_u32(out, v.index);
+                    match &v.payload {
+                        VariantPayload::Unit => write_str(out, "unit"),
+                        VariantPayload::Newtype(r) => {
+                            write_str(out, "newtype");
+                            self.reference(r, path, out);
+                        }
+                        VariantPayload::Tuple(refs) => {
+                            write_str(out, "tuple");
+                            write_u32(out, refs.len() as u32);
+                            for r in refs {
+                                self.reference(r, path, out);
+                            }
+                        }
+                        VariantPayload::Struct(fields) => {
+                            write_str(out, "struct");
+                            write_u32(out, fields.len() as u32);
+                            for field in fields {
+                                self.field(field, path, out);
+                            }
+                        }
+                    }
+                }
+            }
+            SchemaKind::Tuple { elements } => {
+                write_str(out, "tuple");
+                write_u32(out, elements.len() as u32);
+                for r in elements {
+                    self.reference(r, path, out);
+                }
+            }
+            SchemaKind::List { element } => {
+                write_str(out, "list");
+                self.reference(element, path, out);
+            }
+            SchemaKind::Set { element } => {
+                write_str(out, "set");
+                self.reference(element, path, out);
+            }
+            SchemaKind::Option { element } => {
+                write_str(out, "option");
+                self.reference(element, path, out);
+            }
+            SchemaKind::Map { key, value } => {
+                write_str(out, "map");
+                self.reference(key, path, out);
+                self.reference(value, path, out);
+            }
+            SchemaKind::Array {
+                element,
+                dimensions,
+            } => {
+                write_str(out, "array");
+                self.reference(element, path, out);
+                write_u32(out, dimensions.len() as u32);
+                for d in dimensions {
+                    write_u64(out, *d);
+                }
+            }
+            SchemaKind::Tensor { element, rank } => {
+                write_str(out, "tensor");
+                self.reference(element, path, out);
+                match rank {
+                    None => write_u8(out, 0),
+                    Some(r) => {
+                        write_u8(out, 1);
+                        write_u32(out, *r);
+                    }
+                }
+            }
+            SchemaKind::Channel { direction, element } => {
+                write_str(out, "channel");
+                write_str(out, direction_tag(*direction));
+                self.reference(element, path, out);
+            }
+            SchemaKind::Dynamic => write_str(out, "dynamic"),
+            SchemaKind::External { kind, metadata } => {
+                write_str(out, "external");
+                write_str(out, kind);
+                match metadata {
+                    None => write_u8(out, 0),
+                    Some(r) => {
+                        write_u8(out, 1);
+                        self.reference(r, path, out);
+                    }
+                }
+            }
+        }
+    }
+
+    fn field(&self, field: &Field, path: &[usize], out: &mut Vec<u8>) {
+        write_str(out, &field.name);
+        write_bool(out, field.required);
+        self.reference(&field.schema, path, out);
+    }
+
+    fn reference(&self, r: &SchemaRef, path: &[usize], out: &mut Vec<u8>) {
+        match r {
+            SchemaRef::Var { name } => {
+                write_str(out, "var");
+                write_str(out, name);
+            }
+            SchemaRef::Concrete { id, args } => {
+                match self.key_to_index.get(&id.0) {
+                    Some(&target) if self.component.contains(&target) => {
+                        if let Some(depth) = path.iter().position(|&p| p == target) {
+                            // Target is an ancestor on the current walk path: the
+                            // back-reference that terminates the walk.
+                            write_str(out, "backref");
+                            write_u32(out, depth as u32);
+                        } else {
+                            // Target is another component member, off-path: inline
+                            // its structure with the path extended by it.
+                            write_str(out, "inline");
+                            let mut next = path.to_vec();
+                            next.push(target);
+                            self.schema(target, &next, out);
+                        }
+                    }
+                    Some(&target) => {
+                        // A different, already-processed component: feed its id.
+                        let rid = self.assigned.get(&target).copied().expect(
+                            "dependency component must be assigned before its dependents",
+                        );
+                        write_str(out, "concrete");
+                        write_u64(out, rid.0);
+                    }
+                    None => {
+                        // External: the reference already carries a real id.
+                        write_str(out, "concrete");
+                        write_u64(out, id.0);
+                    }
+                }
+                write_u32(out, args.len() as u32);
+                for a in args {
+                    self.reference(a, path, out);
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Substitution of provisional keys with computed ids in the output
+// ============================================================================
+
+fn remap_ref(r: &SchemaRef, map: &HashMap<u64, SchemaId>) -> SchemaRef {
+    match r {
+        SchemaRef::Var { name } => SchemaRef::Var { name: name.clone() },
+        SchemaRef::Concrete { id, args } => SchemaRef::Concrete {
+            id: map.get(&id.0).copied().unwrap_or(*id),
+            args: args.iter().map(|a| remap_ref(a, map)).collect(),
+        },
+    }
+}
+
+fn remap_field(field: &Field, map: &HashMap<u64, SchemaId>) -> Field {
+    Field {
+        name: field.name.clone(),
+        schema: remap_ref(&field.schema, map),
+        required: field.required,
+    }
+}
+
+fn remap_kind(kind: &SchemaKind, map: &HashMap<u64, SchemaId>) -> SchemaKind {
+    match kind {
+        SchemaKind::Primitive(p) => SchemaKind::Primitive(*p),
+        SchemaKind::Dynamic => SchemaKind::Dynamic,
+        SchemaKind::Struct { name, fields } => SchemaKind::Struct {
+            name: name.clone(),
+            fields: fields.iter().map(|f| remap_field(f, map)).collect(),
+        },
+        SchemaKind::Enum { name, variants } => SchemaKind::Enum {
+            name: name.clone(),
+            variants: variants
+                .iter()
+                .map(|v| crate::schema::Variant {
+                    name: v.name.clone(),
+                    index: v.index,
+                    payload: match &v.payload {
+                        VariantPayload::Unit => VariantPayload::Unit,
+                        VariantPayload::Newtype(r) => VariantPayload::Newtype(remap_ref(r, map)),
+                        VariantPayload::Tuple(refs) => {
+                            VariantPayload::Tuple(refs.iter().map(|r| remap_ref(r, map)).collect())
+                        }
+                        VariantPayload::Struct(fields) => VariantPayload::Struct(
+                            fields.iter().map(|f| remap_field(f, map)).collect(),
+                        ),
+                    },
+                })
+                .collect(),
+        },
+        SchemaKind::Tuple { elements } => SchemaKind::Tuple {
+            elements: elements.iter().map(|r| remap_ref(r, map)).collect(),
+        },
+        SchemaKind::List { element } => SchemaKind::List {
+            element: remap_ref(element, map),
+        },
+        SchemaKind::Set { element } => SchemaKind::Set {
+            element: remap_ref(element, map),
+        },
+        SchemaKind::Option { element } => SchemaKind::Option {
+            element: remap_ref(element, map),
+        },
+        SchemaKind::Map { key, value } => SchemaKind::Map {
+            key: remap_ref(key, map),
+            value: remap_ref(value, map),
+        },
+        SchemaKind::Array {
+            element,
+            dimensions,
+        } => SchemaKind::Array {
+            element: remap_ref(element, map),
+            dimensions: dimensions.clone(),
+        },
+        SchemaKind::Tensor { element, rank } => SchemaKind::Tensor {
+            element: remap_ref(element, map),
+            rank: *rank,
+        },
+        SchemaKind::Channel { direction, element } => SchemaKind::Channel {
+            direction: *direction,
+            element: remap_ref(element, map),
+        },
+        SchemaKind::External { kind, metadata } => SchemaKind::External {
+            kind: kind.clone(),
+            metadata: metadata.as_ref().map(|r| remap_ref(r, map)),
+        },
+    }
+}
+
+// ============================================================================
+// Entry point
+// ============================================================================
+
+/// Compute content-derived [`SchemaId`]s for a batch of mutually-referential
+/// schemas.
+///
+/// On input, each schema's `id` and every in-batch `SchemaRef::Concrete.id` is a
+/// caller-assigned *provisional key* (any unique `u64` — dense indices work
+/// well). A reference whose id is not a provisional key in the batch is treated
+/// as already resolved (its id is a real, external [`SchemaId`]). The returned
+/// schemas have real ids substituted everywhere — on each schema and on every
+/// in-batch reference.
+///
+/// Caller contract: provisional keys must be unique within the batch and must
+/// not collide with the real id of any external schema the batch references.
+///
+/// Spec: `r[schema-identity.computation]`.
+// r[impl schema-identity.computation]
+#[must_use]
+pub fn resolve_ids(batch: Vec<Schema>) -> Vec<Schema> {
+    let n = batch.len();
+
+    // Provisional key -> batch index.
+    let mut key_to_index: HashMap<u64, usize> = HashMap::with_capacity(n);
+    for (i, s) in batch.iter().enumerate() {
+        key_to_index.insert(s.id.0, i);
+    }
+
+    // Reference graph: edge i -> j when schema i references in-batch schema j.
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for (i, s) in batch.iter().enumerate() {
+        let mut seen = HashSet::new();
+        visit_kind_targets(&s.kind, &mut |id| {
+            if let Some(&j) = key_to_index.get(&id.0)
+                && seen.insert(j)
+            {
+                adj[i].push(j);
+            }
+        });
+    }
+
+    let sccs = Tarjan::run(&adj);
+
+    // Assign ids component-by-component, dependencies first.
+    let mut assigned: HashMap<usize, SchemaId> = HashMap::with_capacity(n);
+    for scc in &sccs {
+        let component: HashSet<usize> = scc.iter().copied().collect();
+        let walk = Walk {
+            batch: &batch,
+            key_to_index: &key_to_index,
+            component: &component,
+            assigned: &assigned,
+        };
+        // Within a component every member's id is independent (same-component
+        // references use inline/backref, never an assigned id), so order here
+        // does not matter.
+        let mut local = Vec::with_capacity(scc.len());
+        for &i in scc {
+            let mut out = Vec::new();
+            walk.schema(i, &[i], &mut out);
+            local.push((i, finish(&out)));
+        }
+        for (i, id) in local {
+            assigned.insert(i, id);
+        }
+    }
+
+    // Provisional key -> real id, for rewriting references.
+    let mut key_to_real: HashMap<u64, SchemaId> = HashMap::with_capacity(n);
+    for (i, s) in batch.iter().enumerate() {
+        key_to_real.insert(s.id.0, assigned[&i]);
+    }
+
+    batch
+        .iter()
+        .enumerate()
+        .map(|(i, s)| Schema {
+            id: assigned[&i],
+            type_params: s.type_params.clone(),
+            kind: remap_kind(&s.kind, &key_to_real),
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::schema::{Field, Schema, SchemaKind, SchemaRef, Variant};
+
+    /// A schema with a provisional key and the given kind, no type params.
+    fn proto(key: u64, kind: SchemaKind) -> Schema {
+        Schema {
+            id: SchemaId(key),
+            type_params: Vec::new(),
+            kind,
+        }
+    }
+
+    fn field(name: &str, r: SchemaRef) -> Field {
+        Field {
+            name: name.to_string(),
+            schema: r,
+            required: true,
+        }
+    }
+
+    fn point(name: &str, x: &str, y: &str) -> Schema {
+        proto(
+            1,
+            SchemaKind::Struct {
+                name: name.to_string(),
+                fields: vec![
+                    field(x, SchemaRef::concrete(primitive_id(Primitive::U32))),
+                    field(y, SchemaRef::concrete(primitive_id(Primitive::F64))),
+                ],
+            },
+        )
+    }
+
+    #[test]
+    fn primitive_ids_are_distinct_and_stable() {
+        assert_eq!(primitive_id(Primitive::U32), primitive_id(Primitive::U32));
+        assert_ne!(primitive_id(Primitive::U32), primitive_id(Primitive::U64));
+        assert_ne!(primitive_id(Primitive::I32), primitive_id(Primitive::U32));
+        assert_ne!(
+            primitive_id(Primitive::String),
+            primitive_id(Primitive::Bytes)
+        );
+    }
+
+    #[test]
+    fn struct_id_is_deterministic() {
+        let a = resolve_ids(vec![point("Point", "x", "y")])[0].id;
+        let b = resolve_ids(vec![point("Point", "x", "y")])[0].id;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn name_and_field_order_matter() {
+        let base = resolve_ids(vec![point("Point", "x", "y")])[0].id;
+        let renamed = resolve_ids(vec![point("Vec2", "x", "y")])[0].id;
+        let reordered = resolve_ids(vec![point("Point", "y", "x")])[0].id;
+        let renamed_field = resolve_ids(vec![point("Point", "a", "y")])[0].id;
+        assert_ne!(base, renamed);
+        assert_ne!(base, reordered);
+        assert_ne!(base, renamed_field);
+    }
+
+    #[test]
+    fn required_flag_is_part_of_identity() {
+        let mut required = point("Point", "x", "y");
+        let mut optional = point("Point", "x", "y");
+        if let SchemaKind::Struct { fields, .. } = &mut optional.kind {
+            fields[0].required = false;
+        }
+        let _ = &mut required;
+        assert_ne!(
+            resolve_ids(vec![required])[0].id,
+            resolve_ids(vec![optional])[0].id
+        );
+    }
+
+    /// Build the linked-list cycle `Node { value: u32, next: Option<Node> }`,
+    /// modelled as two schemas: `Node` (key 10) and `Option<Node>` (key 20),
+    /// referencing each other. Returns them in the given order.
+    fn linked_list(node_first: bool) -> Vec<Schema> {
+        let node = proto(
+            10,
+            SchemaKind::Struct {
+                name: "Node".to_string(),
+                fields: vec![
+                    field("value", SchemaRef::concrete(primitive_id(Primitive::U32))),
+                    field("next", SchemaRef::concrete(SchemaId(20))),
+                ],
+            },
+        );
+        let opt = proto(
+            20,
+            SchemaKind::Option {
+                element: SchemaRef::concrete(SchemaId(10)),
+            },
+        );
+        if node_first {
+            vec![node, opt]
+        } else {
+            vec![opt, node]
+        }
+    }
+
+    #[test]
+    fn recursive_schema_terminates_and_is_order_independent() {
+        let forward = resolve_ids(linked_list(true));
+        let reversed = resolve_ids(linked_list(false));
+
+        // Map name -> id for each resolution (order of the output follows input).
+        let id_of = |schemas: &[Schema], want_node: bool| -> SchemaId {
+            schemas
+                .iter()
+                .find(|s| matches!(&s.kind, SchemaKind::Struct { .. }) == want_node)
+                .unwrap()
+                .id
+        };
+
+        // Same logical schema gets the same id regardless of input order.
+        assert_eq!(id_of(&forward, true), id_of(&reversed, true));
+        assert_eq!(id_of(&forward, false), id_of(&reversed, false));
+
+        // And references were rewritten to the real ids (no provisional keys left).
+        let node = forward
+            .iter()
+            .find(|s| matches!(&s.kind, SchemaKind::Struct { .. }))
+            .unwrap();
+        if let SchemaKind::Struct { fields, .. } = &node.kind {
+            if let SchemaRef::Concrete { id, .. } = &fields[1].schema {
+                assert_eq!(*id, id_of(&forward, false));
+            } else {
+                panic!("next field should be concrete");
+            }
+        }
+    }
+
+    #[test]
+    fn distinct_recursive_types_differ() {
+        let list = resolve_ids(linked_list(true));
+        let node_id = list
+            .iter()
+            .find(|s| matches!(&s.kind, SchemaKind::Struct { .. }))
+            .unwrap()
+            .id;
+
+        // A differently-named but structurally identical recursive type.
+        let node2 = proto(
+            10,
+            SchemaKind::Struct {
+                name: "Cell".to_string(),
+                fields: vec![
+                    field("value", SchemaRef::concrete(primitive_id(Primitive::U32))),
+                    field("next", SchemaRef::concrete(SchemaId(20))),
+                ],
+            },
+        );
+        let opt2 = proto(
+            20,
+            SchemaKind::Option {
+                element: SchemaRef::concrete(SchemaId(10)),
+            },
+        );
+        let list2 = resolve_ids(vec![node2, opt2]);
+        let cell_id = list2
+            .iter()
+            .find(|s| matches!(&s.kind, SchemaKind::Struct { .. }))
+            .unwrap()
+            .id;
+
+        assert_ne!(node_id, cell_id);
+    }
+
+    #[test]
+    fn enum_variants_contribute_to_identity() {
+        let make = |variant_name: &str| {
+            proto(
+                1,
+                SchemaKind::Enum {
+                    name: "E".to_string(),
+                    variants: vec![
+                        Variant {
+                            name: variant_name.to_string(),
+                            index: 0,
+                            payload: VariantPayload::Unit,
+                        },
+                        Variant {
+                            name: "B".to_string(),
+                            index: 1,
+                            payload: VariantPayload::Newtype(SchemaRef::concrete(primitive_id(
+                                Primitive::U32,
+                            ))),
+                        },
+                    ],
+                },
+            )
+        };
+        assert_ne!(
+            resolve_ids(vec![make("A")])[0].id,
+            resolve_ids(vec![make("Z")])[0].id
+        );
+    }
+}
