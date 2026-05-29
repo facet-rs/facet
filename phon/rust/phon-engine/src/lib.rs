@@ -14,12 +14,9 @@ pub mod compact;
 
 pub use compact::{CompactError, Registry};
 
-/// Compatibility planning: build a translation plan from writer schema to reader
-/// schema (failing fast if impossible), fuse it with the descriptor, and emit
-/// the IR tree the backends lower.
-///
-/// Spec: "Compatibility" (`r[compat.*]`) and `r[ir.two-forms]`.
-pub mod plan {}
+pub mod plan;
+
+pub use plan::Plan;
 
 /// The interpreter: walk the lowered IR directly. The reference semantics every
 /// JIT must match exactly.

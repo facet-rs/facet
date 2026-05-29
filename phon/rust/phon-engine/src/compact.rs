@@ -55,6 +55,11 @@ pub enum CompactError {
     /// A structurally malformed schema (e.g. an unbound type variable, or a
     /// primitive carrying type arguments).
     Malformed(&'static str),
+    /// Two schemas cannot be reconciled into a translation plan (`r[compat.*]`).
+    Incompatible(String),
+    /// A decoded enum variant exists in the writer schema but has no counterpart
+    /// in the reader schema (`r[compat.enum]`).
+    WriterOnlyVariant(u32),
     /// A decode-side validation failure from the byte reader.
     Decode(DecodeError),
     /// A dynamic (self-describing) sub-value failed to encode.
@@ -87,6 +92,10 @@ impl core::fmt::Display for CompactError {
                 write!(f, "generic expects {params} type arguments, got {args}")
             }
             CompactError::Malformed(what) => write!(f, "malformed schema: {what}"),
+            CompactError::Incompatible(why) => write!(f, "incompatible schemas: {why}"),
+            CompactError::WriterOnlyVariant(i) => {
+                write!(f, "received enum variant {i} the reader schema does not have")
+            }
             CompactError::Decode(e) => write!(f, "decode: {e}"),
             CompactError::Encode(e) => write!(f, "encode: {e}"),
         }
@@ -130,6 +139,44 @@ impl Registry {
 
     fn composite(&self, id: SchemaId) -> Option<&Schema> {
         self.composites.get(&id)
+    }
+}
+
+/// A reference resolved to either a primitive or a fully type-substituted kind.
+pub(crate) enum Resolved {
+    Primitive(Primitive),
+    Composite(SchemaKind),
+}
+
+/// Resolve a reference against the registry, applying generic substitution.
+/// Shared by the compact codec's walks and the compatibility planner.
+// r[impl type-system.generic-resolution]
+pub(crate) fn resolve(reg: &Registry, r: &SchemaRef) -> Result<Resolved> {
+    match r {
+        SchemaRef::Var { .. } => Err(CompactError::Malformed("unbound type variable")),
+        SchemaRef::Concrete { id, args } => {
+            if let Some(p) = reg.primitive(*id) {
+                if !args.is_empty() {
+                    return Err(CompactError::Malformed("primitive carrying type arguments"));
+                }
+                Ok(Resolved::Primitive(p))
+            } else if let Some(schema) = reg.composite(*id) {
+                if schema.type_params.len() != args.len() {
+                    return Err(CompactError::GenericArity {
+                        params: schema.type_params.len(),
+                        args: args.len(),
+                    });
+                }
+                let kind = if args.is_empty() {
+                    schema.kind.clone()
+                } else {
+                    substitute_kind(&schema.kind, &schema.type_params, args)
+                };
+                Ok(Resolved::Composite(kind))
+            } else {
+                Err(CompactError::UnknownSchema(*id))
+            }
+        }
     }
 }
 
@@ -420,7 +467,7 @@ fn encode_payload(
     }
 }
 
-fn product(dimensions: &[u64]) -> Result<u64> {
+pub(crate) fn product(dimensions: &[u64]) -> Result<u64> {
     let mut p: u64 = 1;
     for &d in dimensions {
         p = p
@@ -542,7 +589,7 @@ fn substitute_kind(kind: &SchemaKind, params: &[String], args: &[SchemaRef]) -> 
 // Decoding
 // ============================================================================
 
-fn decode_ref(r: &mut Reader, rf: &SchemaRef, reg: &Registry, depth: usize) -> Result<Value> {
+pub(crate) fn decode_ref(r: &mut Reader, rf: &SchemaRef, reg: &Registry, depth: usize) -> Result<Value> {
     if depth > MAX_DEPTH {
         return Err(CompactError::Decode(DecodeError::DepthExceeded));
     }
@@ -574,7 +621,7 @@ fn decode_ref(r: &mut Reader, rf: &SchemaRef, reg: &Registry, depth: usize) -> R
     }
 }
 
-fn decode_primitive(r: &mut Reader, p: Primitive) -> Result<Value> {
+pub(crate) fn decode_primitive(r: &mut Reader, p: Primitive) -> Result<Value> {
     skip_pad(r, alignment(p))?;
     Ok(match p {
         Primitive::Bool => Value::from(r.read_bool()?),
