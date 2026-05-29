@@ -51,7 +51,7 @@ mod serialize;
 pub use serialize::*;
 
 mod other;
-pub use other::{OtherKind, VQName, VUuid};
+pub use other::{OtherKind, VChar, VQName, VUuid};
 
 #[cfg(feature = "alloc")]
 mod facet_impl;

@@ -26,6 +26,8 @@ pub enum OtherKind {
     QName = 0,
     /// UUID (128-bit universally unique identifier)
     Uuid = 1,
+    /// Unicode scalar value (`char`)
+    Char = 2,
 }
 
 // ============================================================================
@@ -383,6 +385,161 @@ impl From<u128> for VUuid {
 }
 
 // ============================================================================
+// VChar - Unicode scalar value
+// ============================================================================
+
+/// Header for VChar values.
+///
+/// Layout: [kind: u8][_pad: 3 bytes][utf8_len: u8][utf8: 4 bytes][ch: u32]
+///
+/// We store both the raw `char` as a `u32` and its UTF-8 encoding (plus length)
+/// so we can offer a borrowed `&str` view without re-encoding.
+#[repr(C, align(8))]
+struct CharHeader {
+    /// The OtherKind discriminant (always Char = 2)
+    kind: OtherKind,
+    /// Padding for alignment
+    _pad: [u8; 3],
+    /// Number of valid bytes in `utf8`
+    utf8_len: u8,
+    /// UTF-8 encoding of the char (only the first `utf8_len` bytes are valid)
+    utf8: [u8; 4],
+    /// The raw char as a u32 scalar value
+    ch: u32,
+}
+
+/// A single Unicode scalar value (`char`).
+///
+/// `VChar` stores the character both as its raw `u32` scalar value and as its
+/// UTF-8 encoding, so it can be viewed either as a `char` or as a borrowed
+/// `&str` without re-encoding.
+#[repr(transparent)]
+pub struct VChar(pub(crate) Value);
+
+impl VChar {
+    const fn layout() -> Layout {
+        Layout::new::<CharHeader>()
+    }
+
+    #[cfg(feature = "alloc")]
+    fn alloc() -> *mut CharHeader {
+        unsafe { alloc(Self::layout()).cast::<CharHeader>() }
+    }
+
+    #[cfg(feature = "alloc")]
+    fn dealloc(ptr: *mut CharHeader) {
+        unsafe {
+            dealloc(ptr.cast::<u8>(), Self::layout());
+        }
+    }
+
+    fn header(&self) -> &CharHeader {
+        unsafe { &*(self.0.heap_ptr() as *const CharHeader) }
+    }
+
+    /// Creates a new `VChar` from a `char`.
+    #[cfg(feature = "alloc")]
+    #[must_use]
+    pub fn new(c: char) -> Self {
+        let mut utf8 = [0u8; 4];
+        let utf8_len = c.encode_utf8(&mut utf8).len() as u8;
+        unsafe {
+            let ptr = Self::alloc();
+            // Use ptr::write to avoid dropping uninitialized memory
+            core::ptr::write(&raw mut (*ptr).kind, OtherKind::Char);
+            core::ptr::write(&raw mut (*ptr)._pad, [0; 3]);
+            core::ptr::write(&raw mut (*ptr).utf8_len, utf8_len);
+            core::ptr::write(&raw mut (*ptr).utf8, utf8);
+            core::ptr::write(&raw mut (*ptr).ch, c as u32);
+            VChar(Value::new_ptr(ptr.cast(), TypeTag::Other))
+        }
+    }
+
+    /// Returns the stored character.
+    #[must_use]
+    pub fn value(&self) -> char {
+        // Safety: the stored u32 is always a valid char by construction.
+        unsafe { char::from_u32_unchecked(self.header().ch) }
+    }
+
+    /// Returns the UTF-8 encoding of the character as a borrowed `&str`.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        let h = self.header();
+        let bytes = &h.utf8[..h.utf8_len as usize];
+        // Safety: the bytes are a valid UTF-8 encoding of a char by construction.
+        unsafe { core::str::from_utf8_unchecked(bytes) }
+    }
+
+    // === Internal ===
+
+    pub(crate) fn clone_impl(&self) -> Value {
+        #[cfg(feature = "alloc")]
+        {
+            Self::new(self.value()).0
+        }
+        #[cfg(not(feature = "alloc"))]
+        {
+            panic!("cannot clone VChar without alloc feature")
+        }
+    }
+
+    pub(crate) fn drop_impl(&mut self) {
+        #[cfg(feature = "alloc")]
+        unsafe {
+            Self::dealloc(self.0.heap_ptr_mut().cast());
+        }
+    }
+}
+
+impl Clone for VChar {
+    fn clone(&self) -> Self {
+        VChar(self.clone_impl())
+    }
+}
+
+impl PartialEq for VChar {
+    fn eq(&self, other: &Self) -> bool {
+        self.header().ch == other.header().ch
+    }
+}
+
+impl Eq for VChar {}
+
+impl Hash for VChar {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.value().hash(state);
+    }
+}
+
+impl Debug for VChar {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        Debug::fmt(&self.value(), f)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl From<char> for VChar {
+    fn from(c: char) -> Self {
+        Self::new(c)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl From<char> for Value {
+    fn from(c: char) -> Self {
+        VChar::new(c).0
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl From<VChar> for Value {
+    fn from(c: VChar) -> Self {
+        c.0
+    }
+}
+
+// ============================================================================
 // Helper to get OtherKind from a Value with tag 7
 // ============================================================================
 
@@ -468,5 +625,35 @@ mod tests {
         let uuid = VUuid::from_u128(0x12345678_9abc_def0_1234_56789abcdef0);
         let debug = format!("{uuid:?}");
         assert_eq!(debug, "12345678-9abc-def0-1234-56789abcdef0");
+    }
+
+    #[test]
+    fn test_char_value_and_str() {
+        let c = VChar::new('λ');
+        assert_eq!(c.value(), 'λ');
+        assert_eq!(c.as_str(), "λ");
+
+        let ascii = VChar::new('A');
+        assert_eq!(ascii.value(), 'A');
+        assert_eq!(ascii.as_str(), "A");
+
+        // 4-byte UTF-8 character
+        let emoji = VChar::new('\u{1F600}');
+        assert_eq!(emoji.value(), '\u{1F600}');
+        assert_eq!(emoji.as_str(), "\u{1F600}");
+    }
+
+    #[test]
+    fn test_char_clone_eq() {
+        let c = VChar::new('λ');
+        let cloned = c.clone();
+        assert_eq!(c, cloned);
+        assert_ne!(c, VChar::new('μ'));
+    }
+
+    #[test]
+    fn test_char_debug() {
+        let c = VChar::new('x');
+        assert_eq!(format!("{c:?}"), "'x'");
     }
 }

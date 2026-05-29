@@ -30,7 +30,7 @@ extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::{VArray, VNumber, VObject, VString, Value};
+use crate::{VArray, VChar, VNumber, VObject, VString, Value};
 use facet_core::Facet;
 use facet_format::{FormatSerializer, ScalarValue, SerializeError, serialize_root};
 use facet_reflect::Peek;
@@ -159,11 +159,11 @@ impl FormatSerializer for ValueSerializer {
         let value = match scalar {
             ScalarValue::Unit | ScalarValue::Null => Value::NULL,
             ScalarValue::Bool(b) => Value::from(b),
-            ScalarValue::Char(c) => VString::new(&c.to_string()).into(),
+            ScalarValue::Char(c) => VChar::new(c).into(),
             ScalarValue::I64(n) => VNumber::from_i64(n).into(),
             ScalarValue::U64(n) => VNumber::from_u64(n).into(),
-            ScalarValue::I128(n) => VString::new(&n.to_string()).into(),
-            ScalarValue::U128(n) => VString::new(&n.to_string()).into(),
+            ScalarValue::I128(n) => VNumber::from_i128(n).into(),
+            ScalarValue::U128(n) => VNumber::from_u128(n).into(),
             ScalarValue::F64(n) => VNumber::from_f64(n).into(),
             ScalarValue::Str(s) => VString::new(&s).into(),
             ScalarValue::Bytes(b) => VBytes::new(b.as_ref()).into(),
@@ -279,5 +279,64 @@ mod tests {
 
         let v = to_value(&original).unwrap();
         assert_eq!(v, original);
+    }
+
+    #[test]
+    fn test_to_value_char() {
+        // char must be preserved as a Char value via the serializer mapping.
+        let c = 'λ';
+        let v = to_value(&c).unwrap();
+        assert_eq!(v.value_type(), crate::ValueType::Char);
+        assert_eq!(v.as_char(), Some('λ'));
+    }
+
+    #[test]
+    fn test_scalar_128_mapping_preserves_number() {
+        use facet_format::ScalarValue;
+
+        // When a serializer emits the 128-bit scalar variants directly, our
+        // mapping must build a Number (not stringify). (Note: facet-format's
+        // own serializer currently stringifies real u128/i128 values upstream;
+        // this exercises our mapping directly.)
+        let mut ser = ValueSerializer::new();
+        ser.scalar(ScalarValue::U128(u128::MAX)).unwrap();
+        let v = ser.finish();
+        assert_eq!(v.value_type(), crate::ValueType::Number);
+        assert_eq!(v.as_number().unwrap().to_u128(), Some(u128::MAX));
+
+        let mut ser = ValueSerializer::new();
+        ser.scalar(ScalarValue::I128(i128::MIN)).unwrap();
+        let v = ser.finish();
+        assert_eq!(v.value_type(), crate::ValueType::Number);
+        assert_eq!(v.as_number().unwrap().to_i128(), Some(i128::MIN));
+    }
+
+    #[test]
+    fn test_roundtrip_128_and_char_struct() {
+        use crate::from_value;
+        use facet::Facet;
+
+        #[derive(Debug, Facet, PartialEq)]
+        struct Wide {
+            big_u: u128,
+            big_i: i128,
+            letter: char,
+        }
+
+        let original = Wide {
+            big_u: u128::MAX,
+            big_i: i128::MIN,
+            letter: '🦀',
+        };
+
+        // char is preserved as a Char value in the intermediate representation.
+        let v = to_value(&original).unwrap();
+        let obj = v.as_object().unwrap();
+        assert_eq!(obj.get("letter").unwrap().as_char(), Some('🦀'));
+
+        // The full struct must round-trip intact through to_value / from_value,
+        // including the 128-bit fields.
+        let back: Wide = from_value(v).unwrap();
+        assert_eq!(back, original);
     }
 }

@@ -55,7 +55,7 @@ use crate::bytes::VBytes;
 use crate::datetime::VDateTime;
 use crate::number::VNumber;
 use crate::object::VObject;
-use crate::other::{OtherKind, VQName, VUuid, get_other_kind};
+use crate::other::{OtherKind, VChar, VQName, VUuid, get_other_kind};
 use crate::string::{VSafeString, VString};
 
 /// Alignment for heap-allocated values. Using 8-byte alignment gives us 3 tag bits.
@@ -124,6 +124,8 @@ pub enum ValueType {
     QName,
     /// UUID (128-bit universally unique identifier)
     Uuid,
+    /// Unicode scalar value (`char`)
+    Char,
 }
 
 /// A dynamic value that can represent null, booleans, numbers, strings, bytes, arrays, or objects.
@@ -271,6 +273,7 @@ impl Value {
                 match unsafe { get_other_kind(self) } {
                     OtherKind::QName => ValueType::QName,
                     OtherKind::Uuid => ValueType::Uuid,
+                    OtherKind::Char => ValueType::Char,
                 }
             }
 
@@ -365,6 +368,12 @@ impl Value {
     #[must_use]
     pub fn is_uuid(&self) -> bool {
         self.value_type() == ValueType::Uuid
+    }
+
+    /// Returns `true` if this is a char.
+    #[must_use]
+    pub fn is_char(&self) -> bool {
+        self.value_type() == ValueType::Char
     }
 
     // === Conversions to concrete types ===
@@ -559,6 +568,31 @@ impl Value {
         }
     }
 
+    /// Gets a reference to this value as a `VChar`. Returns `None` if not a char.
+    #[must_use]
+    pub fn as_vchar(&self) -> Option<&VChar> {
+        if self.is_char() {
+            Some(unsafe { &*(self as *const Value as *const VChar) })
+        } else {
+            None
+        }
+    }
+
+    /// Gets a mutable reference to this value as a `VChar`.
+    pub fn as_vchar_mut(&mut self) -> Option<&mut VChar> {
+        if self.is_char() {
+            Some(unsafe { &mut *(self as *mut Value as *mut VChar) })
+        } else {
+            None
+        }
+    }
+
+    /// Converts this value to a `char`. Returns `None` if not a char.
+    #[must_use]
+    pub fn as_char(&self) -> Option<char> {
+        self.as_vchar().map(VChar::value)
+    }
+
     /// Takes this value, replacing it with `Value::NULL`.
     pub const fn take(&mut self) -> Value {
         mem::replace(self, Value::NULL)
@@ -582,6 +616,7 @@ impl Clone for Value {
             ValueType::DateTime => unsafe { self.as_datetime().unwrap_unchecked() }.clone_impl(),
             ValueType::QName => unsafe { self.as_qname().unwrap_unchecked() }.clone_impl(),
             ValueType::Uuid => unsafe { self.as_uuid().unwrap_unchecked() }.clone_impl(),
+            ValueType::Char => unsafe { self.as_vchar().unwrap_unchecked() }.clone_impl(),
         }
     }
 }
@@ -602,6 +637,7 @@ impl Drop for Value {
             ValueType::DateTime => unsafe { self.as_datetime_mut().unwrap_unchecked() }.drop_impl(),
             ValueType::QName => unsafe { self.as_qname_mut().unwrap_unchecked() }.drop_impl(),
             ValueType::Uuid => unsafe { self.as_uuid_mut().unwrap_unchecked() }.drop_impl(),
+            ValueType::Char => unsafe { self.as_vchar_mut().unwrap_unchecked() }.drop_impl(),
         }
     }
 }
@@ -640,6 +676,9 @@ impl PartialEq for Value {
             },
             ValueType::Uuid => unsafe {
                 self.as_uuid().unwrap_unchecked() == other.as_uuid().unwrap_unchecked()
+            },
+            ValueType::Char => unsafe {
+                self.as_vchar().unwrap_unchecked() == other.as_vchar().unwrap_unchecked()
             },
         }
     }
@@ -701,6 +740,12 @@ impl PartialOrd for Value {
                     .as_bytes()
                     .partial_cmp(other.as_uuid().unwrap_unchecked().as_bytes())
             },
+            // Chars compare by their scalar value
+            ValueType::Char => unsafe {
+                self.as_char()
+                    .unwrap_unchecked()
+                    .partial_cmp(&other.as_char().unwrap_unchecked())
+            },
         }
     }
 }
@@ -723,6 +768,7 @@ impl Hash for Value {
             ValueType::DateTime => unsafe { self.as_datetime().unwrap_unchecked() }.hash(state),
             ValueType::QName => unsafe { self.as_qname().unwrap_unchecked() }.hash(state),
             ValueType::Uuid => unsafe { self.as_uuid().unwrap_unchecked() }.hash(state),
+            ValueType::Char => unsafe { self.as_vchar().unwrap_unchecked() }.hash(state),
         }
     }
 }
@@ -742,6 +788,7 @@ impl Debug for Value {
             ValueType::DateTime => Debug::fmt(unsafe { self.as_datetime().unwrap_unchecked() }, f),
             ValueType::QName => Debug::fmt(unsafe { self.as_qname().unwrap_unchecked() }, f),
             ValueType::Uuid => Debug::fmt(unsafe { self.as_uuid().unwrap_unchecked() }, f),
+            ValueType::Char => Debug::fmt(unsafe { self.as_vchar().unwrap_unchecked() }, f),
         }
     }
 }
@@ -813,6 +860,8 @@ pub enum Destructured {
     QName(VQName),
     /// UUID value
     Uuid(VUuid),
+    /// Char value
+    Char(char),
 }
 
 /// Enum for destructuring a `Value` by reference.
@@ -839,6 +888,8 @@ pub enum DestructuredRef<'a> {
     QName(&'a VQName),
     /// UUID value
     Uuid(&'a VUuid),
+    /// Char value
+    Char(char),
 }
 
 /// Enum for destructuring a `Value` by mutable reference.
@@ -865,6 +916,8 @@ pub enum DestructuredMut<'a> {
     QName(&'a mut VQName),
     /// UUID value
     Uuid(&'a mut VUuid),
+    /// Char value
+    Char(char),
 }
 
 impl Value {
@@ -882,6 +935,10 @@ impl Value {
             ValueType::DateTime => Destructured::DateTime(VDateTime(self)),
             ValueType::QName => Destructured::QName(VQName(self)),
             ValueType::Uuid => Destructured::Uuid(VUuid(self)),
+            ValueType::Char => {
+                let c = unsafe { self.as_vchar().unwrap_unchecked() }.value();
+                Destructured::Char(c)
+            }
         }
     }
 
@@ -913,6 +970,9 @@ impl Value {
                 DestructuredRef::QName(unsafe { self.as_qname().unwrap_unchecked() })
             }
             ValueType::Uuid => DestructuredRef::Uuid(unsafe { self.as_uuid().unwrap_unchecked() }),
+            ValueType::Char => {
+                DestructuredRef::Char(unsafe { self.as_vchar().unwrap_unchecked() }.value())
+            }
         }
     }
 
@@ -944,6 +1004,9 @@ impl Value {
             }
             ValueType::Uuid => {
                 DestructuredMut::Uuid(unsafe { self.as_uuid_mut().unwrap_unchecked() })
+            }
+            ValueType::Char => {
+                DestructuredMut::Char(unsafe { self.as_vchar().unwrap_unchecked() }.value())
             }
         }
     }
@@ -1001,6 +1064,24 @@ mod tests {
         let v = Value::TRUE;
         let v2 = v.clone();
         assert_eq!(v, v2);
+    }
+
+    #[test]
+    fn test_char_value() {
+        let v = Value::from('λ');
+        assert_eq!(v.value_type(), ValueType::Char);
+        assert!(v.is_char());
+        assert_eq!(v.as_char(), Some('λ'));
+
+        // destructure by value
+        assert_eq!(v.clone().destructure(), Destructured::Char('λ'));
+        // destructure by ref / mut
+        assert_eq!(v.destructure_ref(), DestructuredRef::Char('λ'));
+
+        // survives clone
+        let cloned = v.clone();
+        assert_eq!(cloned.as_char(), Some('λ'));
+        assert_eq!(v, cloned);
     }
 
     #[test]
