@@ -10,11 +10,9 @@
 //! Spec: `docs/content/spec.md` — "Compact mode", "Compatibility", "Decoding",
 //! "Decoding untrusted input".
 
-/// The compact codec: tagless, schema-driven encode and decode, including
-/// alignment padding for borrowable runs.
-///
-/// Spec: "Compact mode" (`r[compact.*]`).
-pub mod compact {}
+pub mod compact;
+
+pub use compact::{CompactError, Registry};
 
 /// Compatibility planning: build a translation plan from writer schema to reader
 /// schema (failing fast if impossible), fuse it with the descriptor, and emit

@@ -344,6 +344,7 @@ dependencies = [
 name = "phon-engine"
 version = "0.1.0"
 dependencies = [
+ "facet-value",
  "phon-ir",
  "phon-schema",
 ]

@@ -142,6 +142,31 @@ pub enum Primitive {
 }
 
 impl Primitive {
+    /// Every primitive, in declaration order.
+    pub const ALL: [Primitive; 21] = [
+        Primitive::Bool,
+        Primitive::U8,
+        Primitive::U16,
+        Primitive::U32,
+        Primitive::U64,
+        Primitive::U128,
+        Primitive::I8,
+        Primitive::I16,
+        Primitive::I32,
+        Primitive::I64,
+        Primitive::I128,
+        Primitive::F32,
+        Primitive::F64,
+        Primitive::Char,
+        Primitive::String,
+        Primitive::Bytes,
+        Primitive::DateTime,
+        Primitive::Uuid,
+        Primitive::QName,
+        Primitive::Unit,
+        Primitive::Never,
+    ];
+
     /// The canonical tag string fed to the identity hash for this primitive.
     ///
     /// Spec: `r[schema-identity.canonical-encoding]` (primitive tags).
