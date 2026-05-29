@@ -399,7 +399,7 @@ use only:
 - The specific generic containers `Vec<T>` and `Option<T>`
 - Primitive types `String`, `u32`, `u64`
 - The phon-defined types `SchemaId`, `SchemaRef`, `Schema`, `SchemaKind`,
-  `Primitive`, `Field`, `Variant`, `VariantPayload`, `Value`
+  `Primitive`, `Field`, `Variant`, `VariantPayload`
 
 > r[type-system.rust-subset]
 >
@@ -706,28 +706,39 @@ A few things worth calling out:
 
 ## Value
 
-`Value` is phon's dynamic value: any phon value held in memory without reference
-to a schema. It is what the self-describing codec produces and consumes, and
-what a `Dynamic` field carries.
+`Value` is phon's dynamic value: a value held without reference to a schema. In
+Rust it *is* `facet_value::Value` — `phon-schema` re-exports it rather than
+defining its own — because putting a `facet_value::Value` on the wire is a
+non-negotiable requirement and the `Dynamic` kind exists to do exactly that. So
+phon's dynamic value and facet's are one type, not two with a conversion between
+them.
 
 > r[value]
 >
-> A `Value` has one case per self-describing kind in the tag table above — unit,
-> bool, each integer and float width, char, string, bytes, list, set, map,
-> array, tuple, struct (named fields), enum (named variant plus payload),
-> option, and tensor. (There is no `channel` or `external` case: those values
-> appear only in compact, schema-known form, never self-describing.) A `Value`
-> is exactly the information a self-describing decode recovers, and exactly what
-> a self-describing encode needs — the two are inverses over `Value`.
+> `Value` is the dynamic-value model the schema-less codec produces and the
+> `Dynamic` kind carries: null, bool, number, string, bytes, array, object, and
+> date/time. (Rust realizes it as `facet_value::Value`, which additionally
+> carries qname and uuid.) It is deliberately *coarser* than the self-describing
+> tag table: one `number`, not the distinct integer and float widths; one
+> `array`, not list/set/tuple/array/tensor; one `object`, not map/struct/enum.
+> Schema-less decode folds the richer wire tags onto these cases; the exact
+> width and precise container kind are recovered only on the typed path, decoding
+> against a schema. `Value` round-trips itself, but `Dynamic` is a coarse escape
+> hatch, not a way to preserve a typed value's exact shape — and it cannot carry
+> what its model can't hold (a `u128`, an `f32`'s narrowness). The per-case wire
+> tag the codec emits for a `Value` is fixed, so `Dynamic` bytes are canonical
+> across implementations. (There is no `channel` or `external` case: those appear
+> only in compact, schema-known form.)
 
-Each implementation maps `Value` onto its native dynamic-value type. In Rust
-that type is `facet_value::Value`; the `phon` binding crate provides a total
-conversion in both directions. A native dynamic type may carry cases phon's tag
-table doesn't — `facet_value::Value`, for instance, has a null and a date/time
-case — and the binding is responsible for mapping those onto phon kinds (null
-to an option's none; a date/time to an agreed struct or integer, since phon has
-no date/time primitive). The wire stays language-neutral; the reconciliation
-lives in the binding, not the format.
+The self-describing tag table stays rich because self-describing mode also
+carries *typed* values at full fidelity — most importantly the schemas exchanged
+during bootstrap, whose `u32` counts and enum variants must survive exactly. A
+reader decoding against a known type keeps every distinction; a schema-less
+reader collapses those same bytes onto the coarser `Value` model. The cases
+facet carries beyond the wire — null, date/time, qname, uuid — are mapped by the
+self-describing codec (null to an option's none; date/time to an agreed
+encoding, since phon has no date/time primitive). The reconciliation lives in the
+codec, not in a separate value type.
 
 # Compact mode
 

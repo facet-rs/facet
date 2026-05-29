@@ -22,13 +22,15 @@ pub mod schema {}
 /// Spec: "Schema identity" (`r[schema-identity.*]`).
 pub mod identity {}
 
-/// phon's dynamic value — what the self-describing codec produces and consumes,
-/// and what a `Dynamic` field carries. Its mapping onto `facet_value::Value`
-/// (including the cases facet has that phon doesn't) is the binding's job, not
-/// this crate's.
+/// phon's dynamic value. In Rust this *is* `facet_value::Value`, re-exported
+/// rather than wrapped — a `Dynamic` field carries one directly. The
+/// self-describing codec maps the cases facet carries beyond the wire tag table
+/// (null, date/time, qname, uuid) onto phon kinds.
 ///
 /// Spec: "Value" (`r[value]`).
-pub mod value {}
+pub mod value {
+    pub use facet_value::Value;
+}
 
 /// The self-describing (tag-led) codec: encode/decode a `Value` with no schema.
 /// The bootstrap mode, and the backing of the `Dynamic` kind.

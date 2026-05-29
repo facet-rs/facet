@@ -24,9 +24,11 @@ pub mod derive {}
 /// Spec: `r[exec.interpreter-baseline]`, `r[exec.jit-optional]`.
 pub mod api {}
 
-/// Conversion between phon's `Value` and Rust's native dynamic value
-/// (`facet_value::Value`), including the cases facet has that phon doesn't
-/// (null, date/time).
+/// phon's dynamic value, re-exported for convenience at the front door. It *is*
+/// `facet_value::Value` (see `phon_schema::value`); there is no separate phon
+/// value type and no conversion between them.
 ///
 /// Spec: "Value" (`r[value]`).
-pub mod value {}
+pub mod value {
+    pub use phon_schema::value::Value;
+}
