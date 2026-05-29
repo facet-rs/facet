@@ -1,0 +1,10 @@
+---
+source: facet-zod/tests/codegen.rs
+expression: output
+---
+export const UserSchema = z.object({
+  name: z.string(),
+  age: z.number().int(),
+  email: z.string().nullable(),
+});
+export type User = z.infer<typeof UserSchema>;

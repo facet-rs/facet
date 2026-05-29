@@ -1,0 +1,6 @@
+---
+source: facet-zod/tests/codegen.rs
+expression: output
+---
+export const StatusSchema = z.enum(["Active", "Inactive", "Banned"]);
+export type Status = z.infer<typeof StatusSchema>;
