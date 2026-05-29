@@ -35,7 +35,6 @@ members = [
 
   # misc.
   "facet-urlencoded",
-  "facet-zod",
 
   # utilities
   "facet-path",

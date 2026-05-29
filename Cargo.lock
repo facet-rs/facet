@@ -666,45 +666,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "facet-dessert"
-version = "0.46.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4505ec8ef086d776fd99b86fb17e3d1c711188d27aa72845e64a30146226e3b"
-dependencies = [
- "facet-core",
- "facet-reflect",
-]
-
-[[package]]
 name = "facet-error"
 version = "0.46.5"
 dependencies = [
  "facet",
-]
-
-[[package]]
-name = "facet-format"
-version = "0.47.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2353807588cc4057a5e31bf459e7304ea84729ad77080e267928b1e09d36235"
-dependencies = [
- "facet-core",
- "facet-dessert",
- "facet-path",
- "facet-reflect",
- "facet-solver",
-]
-
-[[package]]
-name = "facet-json"
-version = "0.46.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6fbb1d8aa586b5e6b189575d1eda196cd3014347aff36be8dd097401024fe6d"
-dependencies = [
- "facet",
- "facet-core",
- "facet-format",
- "facet-reflect",
 ]
 
 [[package]]
@@ -862,16 +827,6 @@ dependencies = [
  "facet",
  "facet-core",
  "regex",
-]
-
-[[package]]
-name = "facet-zod"
-version = "0.46.5"
-dependencies = [
- "facet",
- "facet-core",
- "facet-json",
- "insta",
 ]
 
 [[package]]

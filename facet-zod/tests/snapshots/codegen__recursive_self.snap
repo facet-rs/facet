@@ -1,9 +1,0 @@
----
-source: facet-zod/tests/codegen.rs
-expression: output
----
-export const TreeSchema = z.object({
-  value: z.number().int(),
-  children: z.array(z.lazy(() => TreeSchema)),
-});
-export type Tree = z.infer<typeof TreeSchema>;
