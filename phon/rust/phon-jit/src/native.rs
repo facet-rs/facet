@@ -158,8 +158,10 @@ pub struct NativeDecode {
     /// the stencils read (and the pointers stored in `seq_infos`) stay stable.
     progs: Vec<Vec<u64>>,
     /// One per sequence op: the immediates the sequence stencil reads through its
-    /// prog slot. Heap-stable for the `*const SeqInfo` the prog stream holds.
-    seq_infos: Vec<Box<SeqInfo>>,
+    /// prog slot. The `Vec`'s heap buffer is stable — built once with exact
+    /// capacity, never re-grown, and a `Vec` move leaves the heap in place — so
+    /// the `*const SeqInfo` the prog stream holds stays valid.
+    seq_infos: Vec<SeqInfo>,
 }
 
 /// A compiled element chain: where its first stencil begins in `code`, and which
@@ -289,14 +291,15 @@ impl NativeDecode {
         // pointers in `seq_infos` and the entry pointer alias into these).
         let progs = c.progs;
 
-        // Materialize the `SeqInfo`s now that the code base is known. Box each so
-        // its address is stable for the `*const SeqInfo` the prog slot holds.
-        let mut seq_infos: Vec<Box<SeqInfo>> = Vec::with_capacity(c.seq_infos.len());
+        // Materialize the `SeqInfo`s now that the code base is known. Reserve the
+        // exact capacity so the `Vec` is never re-grown: its heap buffer (and thus
+        // each `&SeqInfo` the prog slots point at) then stays put.
+        let mut seq_infos: Vec<SeqInfo> = Vec::with_capacity(c.seq_infos.len());
         for b in &c.seq_infos {
             // The element chain entry is the stencil at `base + entry_offset`.
             let element_entry: unsafe extern "C" fn(*mut Ctx) =
                 unsafe { core::mem::transmute(base.add(b.element_entry_offset)) };
-            seq_infos.push(Box::new(SeqInfo {
+            seq_infos.push(SeqInfo {
                 field_offset: b.field_offset,
                 stride: b.stride,
                 elem_align: b.elem_align,
@@ -304,10 +307,9 @@ impl NativeDecode {
                 thunks_ctx: b.thunks_ctx,
                 from_raw_parts: b.from_raw_parts,
                 element_entry,
-                // Bound below, once `progs` is owned by `NativeDecode` (the box
-                // above gives us a stable prog stream to point at).
+                // Bound below, once `progs` is owned by `NativeDecode`.
                 element_prog: core::ptr::null(),
-            }));
+            });
         }
 
         let mut nd = NativeDecode {
@@ -324,7 +326,7 @@ impl NativeDecode {
             info.element_prog = nd.progs[b.element_prog_index].as_ptr();
         }
         for f in &c.fixups {
-            let ptr: *const SeqInfo = &*nd.seq_infos[f.seqinfo];
+            let ptr: *const SeqInfo = &nd.seq_infos[f.seqinfo];
             nd.progs[f.prog_index][f.slot] = ptr as u64;
         }
 
