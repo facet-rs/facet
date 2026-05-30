@@ -270,6 +270,18 @@ pub(crate) fn deserialize_map_key_terminal_inner<'input, const BORROW: bool>(
                 wip = wip.set(n)?;
                 return Ok(wip);
             }
+            // A numeric primitive kind added since this match was written.
+            _ => {
+                return Err(DeserializeError {
+                    span: Some(span),
+                    path: None,
+                    kind: DeserializeErrorKind::UnexpectedToken {
+                        expected: "an integer or float numeric type for a map key",
+                        got: alloc::format!("unsupported numeric type for key '{key}'").into(),
+                    },
+                }
+                .into());
+            }
         }
     }
 

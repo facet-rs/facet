@@ -1260,6 +1260,8 @@ fn value_matches_shape(value: &Value, shape: &'static Shape) -> bool {
                 }
             }
             NumericType::Float => value.as_number().and_then(|n| n.to_f64()).is_some(),
+            // A numeric kind added since this match was written: any number matches.
+            _ => value.as_number().is_some(),
         },
         _ => true,
     }

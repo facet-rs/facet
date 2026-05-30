@@ -90,7 +90,8 @@ impl<'input, const BORROW: bool> PathNavigator<'input, BORROW> {
             .iter()
             .filter_map(|s| match s {
                 PathSegment::Field(name) => Some(*name),
-                PathSegment::Variant(_, _) => None,
+                // Variant (and any later segment kind): not a field name.
+                _ => None,
             })
             .collect();
 
@@ -176,7 +177,8 @@ impl<'input, const BORROW: bool> PathNavigator<'input, BORROW> {
                 .iter()
                 .filter_map(|s| match s {
                     PathSegment::Field(f) => Some(*f),
-                    PathSegment::Variant(_, _) => None,
+                    // Variant (and any later segment kind): not a field name.
+                    _ => None,
                 })
                 .collect();
 

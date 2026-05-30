@@ -2156,6 +2156,10 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
             DynValueKind::QName | DynValueKind::Uuid => Err(SerializeError::Unsupported(
                 Cow::Borrowed("dynamic QName/Uuid serialization is not supported"),
             )),
+            // A dynamic value kind added since this match was written.
+            _ => Err(SerializeError::Internal(Cow::Borrowed(
+                "unsupported dynamic value kind",
+            ))),
         }
     }
 
@@ -2282,6 +2286,18 @@ fn format_dyn_datetime(
         }
         DynDateTimeKind::LocalTime => {
             let _ = write!(out, "{:02}:{:02}:{:02}", hour, minute, second);
+            if nanos > 0 {
+                let _ = write!(out, ".{:09}", nanos);
+            }
+        }
+        // A datetime kind added since this match was written: best-effort
+        // date-and-time without zone information.
+        _ => {
+            let _ = write!(
+                out,
+                "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
+                year, month, day, hour, minute, second
+            );
             if nanos > 0 {
                 let _ = write!(out, ".{:09}", nanos);
             }

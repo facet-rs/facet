@@ -140,6 +140,8 @@ fn handle_key<'a>(solver: &mut Solver<'a>, name: Cow<'a, str>) -> Option<Resolut
     match solver.see_key(name) {
         KeyResult::Solved(handle) => Some(handle),
         KeyResult::Unknown | KeyResult::Unambiguous { .. } | KeyResult::Ambiguous { .. } => None,
+        // A key result added since this match was written.
+        _ => None,
     }
 }
 
