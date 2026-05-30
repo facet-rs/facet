@@ -41,6 +41,8 @@ fn main() {
             "pub const SMOKE: &[u8] = &[];\n\
              pub const SCALAR: &[u8] = &[];\n\
              pub const SCALAR_CONT: &[usize] = &[];\n\
+             pub const SEQUENCE: &[u8] = &[];\n\
+             pub const SEQUENCE_CONT: &[usize] = &[];\n\
              pub const DONE: &[u8] = &[];\n",
         )
         .unwrap();
@@ -70,6 +72,7 @@ fn emit_arm64_macos(out: &Path, generated: &Path) {
     let bytes = fs::read(&obj).unwrap();
     let smoke = extract(&bytes, "phon_stencil_smoke");
     let scalar = extract(&bytes, "phon_stencil_scalar");
+    let sequence = extract(&bytes, "phon_stencil_sequence");
     let done = extract(&bytes, "phon_stencil_done");
 
     let mode = if tailcall { "tail-call (nightly become)" } else { "call (stable)" };
@@ -92,6 +95,18 @@ fn emit_arm64_macos(out: &Path, generated: &Path) {
          /// to patch (`BRANCH26`).\n\
          pub const SCALAR_CONT: &[usize] = &{:?};\n",
         scalar.cont_relocs
+    ));
+    src.push_str(&format!(
+        "/// `phon_stencil_sequence` machine code: decode one owned sequence,\n\
+         /// continue. The element body is invoked through `SeqInfo.element_entry`.\n\
+         pub const SEQUENCE: &[u8] = &{:?};\n",
+        sequence.bytes
+    ));
+    src.push_str(&format!(
+        "/// Byte offsets within `SEQUENCE` of the `phon_cont` continuation branch\n\
+         /// to patch (`BRANCH26`).\n\
+         pub const SEQUENCE_CONT: &[usize] = &{:?};\n",
+        sequence.cont_relocs
     ));
     src.push_str(&format!(
         "/// `phon_stencil_done` machine code: a lone `ret`.\n\
@@ -172,10 +187,15 @@ fn extract(obj: &[u8], symbol: &str) -> Stencil {
             .unwrap_or_else(|| panic!("symbol {suffix} not found"))
             .address()
     };
-    let mut boundaries: Vec<u64> = ["phon_stencil_smoke", "phon_stencil_scalar", "phon_stencil_done"]
-        .iter()
-        .map(|s| addr_of(s))
-        .collect();
+    let mut boundaries: Vec<u64> = [
+        "phon_stencil_smoke",
+        "phon_stencil_scalar",
+        "phon_stencil_sequence",
+        "phon_stencil_done",
+    ]
+    .iter()
+    .map(|s| addr_of(s))
+    .collect();
     boundaries.push(data.len() as u64);
     boundaries.sort_unstable();
 
