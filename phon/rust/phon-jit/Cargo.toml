@@ -8,3 +8,4 @@ description = "phon's optional copy-and-patch JIT: lowers the IR to machine code
 
 [dependencies]
 phon-ir.workspace = true
+phon-schema.workspace = true

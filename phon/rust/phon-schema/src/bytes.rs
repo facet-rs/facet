@@ -94,6 +94,16 @@ pub fn write_bytes<S: Sink>(out: &mut S, b: &[u8]) {
     out.put(b);
 }
 
+/// Pad `out` with zero bytes until its length is a multiple of `n`, the encode
+/// side of compact alignment (`r[compact.alignment]`). Shared by the compact
+/// codec, the typed path, and the JIT.
+// r[impl compact.alignment]
+pub fn pad_to(out: &mut Vec<u8>, n: usize) {
+    while !out.len().is_multiple_of(n) {
+        out.push(0);
+    }
+}
+
 // ============================================================================
 // Decode errors
 // ============================================================================
@@ -298,4 +308,16 @@ impl<'a> Reader<'a> {
         }
         Ok(count)
     }
+}
+
+/// Skip padding bytes until the reader's position is a multiple of `n`, the
+/// decode side of compact alignment and the mirror of [`pad_to`]
+/// (`r[compact.alignment]`). Shared by the compact codec, the typed path, and
+/// the JIT.
+// r[impl compact.alignment]
+pub fn skip_pad(r: &mut Reader, n: usize) -> Result<(), DecodeError> {
+    while !r.position().is_multiple_of(n) {
+        r.read_u8()?;
+    }
+    Ok(())
 }

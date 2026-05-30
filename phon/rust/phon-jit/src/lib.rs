@@ -14,15 +14,19 @@
 //! Spec: `docs/content/spec.md` — `r[ir.stencils]`, `r[ir.inlining]`,
 //! `r[ir.memory]`.
 
-/// Stencils: the per-op machine-code fragments, extracted at build time, and
-/// their patch-hole descriptions.
+/// Stencils: one small function per op plus the threaded state ABI. Today they
+/// are called through a function pointer; the machine-code version extracts their
+/// bytes and patches the holes. Same functions, same immediates, same ABI.
 ///
 /// Spec: `r[ir.stencils]`.
-pub mod stencil {}
+pub mod stencil;
 
-/// Lowering: turn a linear IR program into patched executable memory — splicing
-/// inlined chains, emitting `call-program` at cycle re-entry and the size cap,
-/// threading state through the fixed-register ABI.
+/// Lowering: compile a linear IR program into a flat `(stencil, immediates)`
+/// table — the copy-and-patch shape. The machine-code backend will splice and
+/// patch; this stand-in threads through function pointers, identical results.
 ///
-/// Spec: `r[ir.inlining]`, `r[ir.memory]`.
-pub mod lower {}
+/// Spec: `r[ir.inlining]`, `r[ir.memory]`, `r[exec.jit-optional]`.
+pub mod lower;
+
+// r[impl exec.jit-optional]
+pub use lower::{CompiledDecode, CompiledEncode, compile_decode, compile_encode};

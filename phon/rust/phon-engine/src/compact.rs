@@ -195,18 +195,10 @@ pub(crate) fn alignment(p: Primitive) -> usize {
     }
 }
 
-pub(crate) fn pad_to(out: &mut Vec<u8>, n: usize) {
-    while !out.len().is_multiple_of(n) {
-        out.push(0);
-    }
-}
-
-pub(crate) fn skip_pad(r: &mut Reader, n: usize) -> core::result::Result<(), DecodeError> {
-    while !r.position().is_multiple_of(n) {
-        r.read_u8()?;
-    }
-    Ok(())
-}
+// Padding lives in phon-schema (shared with the typed path and the JIT);
+// re-exported so the compact codec, interpreter, and typed path keep reaching it
+// as `compact::pad_to` / `compact::skip_pad`.
+pub(crate) use phon_schema::bytes::{pad_to, skip_pad};
 
 // ============================================================================
 // Public API
