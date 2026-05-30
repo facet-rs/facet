@@ -91,6 +91,9 @@ unsafe fn dyn_set_datetime(
             }
             DynDateTimeKind::LocalDate => VDateTime::new_local_date(year, month, day),
             DynDateTimeKind::LocalTime => VDateTime::new_local_time(hour, minute, second, nanos),
+            // A datetime kind added since this match was written: best-effort
+            // local date-time.
+            _ => VDateTime::new_local_datetime(year, month, day, hour, minute, second, nanos),
         };
         ptr.write(dt.into());
     }

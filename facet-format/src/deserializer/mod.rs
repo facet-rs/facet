@@ -682,6 +682,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                         SatisfyResult::Solved(handle) => break Some(handle),
                         SatisfyResult::NoMatch => break None,
                         SatisfyResult::Continue => {}
+                        // A solver result added since this match was written: keep
+                        // scanning (the loop still terminates on struct end / EOF).
+                        _ => {}
                     }
                 }
             }
@@ -718,6 +721,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                                     pending_ambiguous = Some((name.to_string(), fields));
                                 }
                                 KeyResult::Unknown | KeyResult::Unambiguous { .. } => {
+                                    pending_ambiguous = None;
+                                }
+                                // A key result added since this match was written.
+                                _ => {
                                     pending_ambiguous = None;
                                 }
                             }

@@ -358,7 +358,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             .iter()
             .filter_map(|s| match s {
                 PathSegment::Field(name) => Some(*name),
-                PathSegment::Variant(_, _) => None,
+                // Variant (and any later segment kind): not a field name.
+                _ => None,
             })
             .collect();
 
