@@ -1611,5 +1611,23 @@ mod tests {
             matches!(err, CompactError::Decode(DecodeError::DuplicateKey)),
             "got {err:?}"
         );
+
+        // The engine documents that a mid-decode error leaks the partial value (the
+        // same trivially-droppable limitation as sequences/options): on the
+        // `DuplicateKey` path the `m` field was fully initialized (the duplicate
+        // collapsed into one entry) before the error, while `tag` stayed
+        // uninitialized. Reclaim just that field here so the leak the engine leaves
+        // behind does not trip Miri's leak checker — this only frees what we know is
+        // initialized; it does not change the engine's behavior.
+        let m_field = std::mem::offset_of!(MapHolder, m);
+        // Safety: on `DuplicateKey` the map field is an initialized
+        // `BTreeMap<String, u32>`; we read it out and drop it exactly once.
+        let partial = unsafe {
+            core::ptr::read(slot.as_ptr().cast::<u8>().add(m_field).cast::<
+                std::collections::BTreeMap<String, u32>,
+            >())
+        };
+        assert_eq!(partial.len(), 1);
+        drop(partial);
     }
 }
