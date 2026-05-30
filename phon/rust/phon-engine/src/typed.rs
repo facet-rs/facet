@@ -141,7 +141,7 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
                     field_offset: base,
                     stride,
                     elem_align,
-                    utf8: false,
+                    validate: validate_any,
                     thunks: *thunks,
                 })));
             } else {
@@ -167,7 +167,11 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
                 field_offset: base,
                 stride: 1,
                 elem_align: 1,
-                utf8: matches!(p, Primitive::String),
+                validate: if matches!(p, Primitive::String) {
+                    validate_utf8
+                } else {
+                    validate_any
+                },
                 thunks: *thunks,
             })));
             Ok(())
@@ -176,6 +180,27 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
             "typed: only fixed scalars, in-place records, owned sequences, and strings so far",
         )),
     }
+}
+
+/// [`ByteValidator`] for `String` byte runs: the bytes must be valid UTF-8
+/// (`r[validate.text]`). Both the interpreter and the JIT call this.
+///
+/// # Safety
+/// `ptr` must point to `len` readable bytes (`len == 0` permits any non-null,
+/// aligned `ptr`, which a slice's `as_ptr` always satisfies).
+unsafe extern "C" fn validate_utf8(ptr: *const u8, len: usize) -> bool {
+    // Safety: forwarded — `ptr`/`len` describe a readable byte run.
+    let bytes = unsafe { core::slice::from_raw_parts(ptr, len) };
+    core::str::from_utf8(bytes).is_ok()
+}
+
+/// [`ByteValidator`] for byte runs with no content constraint — `Vec<u8>` and
+/// bulk `Vec<scalar>` runs accept any bytes.
+///
+/// # Safety
+/// Reads nothing; the signature matches [`ByteValidator`].
+unsafe extern "C" fn validate_any(_ptr: *const u8, _len: usize) -> bool {
+    true
 }
 
 // ============================================================================
@@ -320,8 +345,11 @@ unsafe fn decode_program(program: &MemProgram, r: &mut Reader, base: *mut u8) ->
                 skip_pad(r, b.elem_align)?;
                 let total = count * b.stride;
                 let src = r.read_slice(total)?;
-                // r[impl validate.text]
-                if b.utf8 && core::str::from_utf8(src).is_err() {
+                // r[impl validate.text] — validate the run before adopting it
+                // (UTF-8 for `String`, a no-op for `Vec`). The JIT calls the very
+                // same thunk, so both engines share one validation path.
+                // Safety: `src` is `total` readable bytes.
+                if !unsafe { (b.validate)(src.as_ptr(), total) } {
                     return Err(CompactError::Decode(DecodeError::InvalidUtf8));
                 }
                 // Allocate, bulk-copy the run in, adopt it via `from_raw_parts`.

@@ -684,4 +684,59 @@ mod tests {
                 .unwrap_err();
         assert!(matches!(err, CompactError::Decode(DecodeError::InvalidUtf8)));
     }
+
+    // The String bridge through the *JIT*: derive -> lower -> NativeEncode/Decode.
+    // This exercises the real `validate_utf8` thunk the lowering installs, flowing
+    // through the copy-and-patch stencil as an indirect call.
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn derived_string_field_jit_matches_interpreter_and_roundtrips() {
+        use phon_jit::native::{NativeDecode, NativeEncode};
+
+        let d = of::<Named>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+        let program = typed::lower(&d.descriptor, &reg).unwrap();
+        let v = Named {
+            name: "JITful 🐝 héllo wörld".to_string(),
+            id: 0x99,
+        };
+
+        // JIT encode == interpreter encode == byte-identical wire.
+        let jit_bytes =
+            unsafe { NativeEncode::compile(&program).run(core::ptr::from_ref(&v).cast::<u8>()) };
+        let interp_bytes =
+            unsafe { typed::encode(core::ptr::from_ref(&v).cast::<u8>(), &d.descriptor, &reg) }
+                .unwrap();
+        assert_eq!(jit_bytes, interp_bytes);
+
+        // JIT decode round-trips (validating UTF-8 in-stencil).
+        let dec = NativeDecode::compile(&program);
+        let mut slot = std::mem::MaybeUninit::<Named>::uninit();
+        unsafe { dec.run(&jit_bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back.name, v.name);
+        assert_eq!(back.id, v.id);
+    }
+
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn derived_string_field_jit_rejects_invalid_utf8() {
+        use phon_jit::native::NativeDecode;
+        use phon_schema::DecodeError;
+
+        let d = of::<Named>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+        let program = typed::lower(&d.descriptor, &reg).unwrap();
+        let dec = NativeDecode::compile(&program);
+
+        // name = one byte 0xFF (invalid UTF-8), pad to 4, then the u32 id.
+        let mut wire = 1u32.to_le_bytes().to_vec();
+        wire.push(0xFF);
+        wire.extend_from_slice(&[0, 0, 0]);
+        wire.extend_from_slice(&0x99u32.to_le_bytes());
+
+        let mut slot = std::mem::MaybeUninit::<Named>::uninit();
+        let err = unsafe { dec.run(&wire, slot.as_mut_ptr().cast::<u8>()) }.unwrap_err();
+        assert!(matches!(err, DecodeError::InvalidUtf8));
+    }
 }

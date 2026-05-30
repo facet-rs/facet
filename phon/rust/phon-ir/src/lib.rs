@@ -19,7 +19,7 @@ pub use descriptor::{
 
 pub mod ir;
 
-pub use ir::{BytesOp, EnumArm, MemOp, MemProgram, Op, Program, SeqOp, SeqThunks};
+pub use ir::{BytesOp, ByteValidator, EnumArm, MemOp, MemProgram, Op, Program, SeqOp, SeqThunks};
 
 /// Thunk bindings: resolving thunk names to process-local function pointers
 /// before an encoder or decoder is built. An unbound name is a build-time error.

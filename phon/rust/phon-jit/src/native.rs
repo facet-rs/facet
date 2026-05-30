@@ -139,6 +139,7 @@ struct BytesInfo {
     thunks_ctx: *const (),
     from_raw_parts:
         unsafe extern "C" fn(ctx: *const (), list: *mut u8, ptr: *mut u8, len: usize, cap: usize),
+    validate: unsafe extern "C" fn(ptr: *const u8, len: usize) -> bool,
 }
 
 /// Allocate `size` bytes aligned to `align` with the global Rust allocator, so a
@@ -278,10 +279,6 @@ impl Compiler {
                     self.fixups.push(SeqFixup { prog_index, slot, seqinfo });
                 }
                 MemOp::Bytes(b) => {
-                    assert!(
-                        !b.utf8,
-                        "phon-jit: UTF-8 bulk runs (String) are interpreter-only for now"
-                    );
                     self.code.extend_from_slice(BYTES);
                     // The bytes stencil reads one prog slot: a `*const BytesInfo`
                     // filled in pass 2. Reserve it and record the fixup now.
@@ -294,6 +291,9 @@ impl Compiler {
                         elem_align: b.elem_align,
                         thunks_ctx: b.thunks.ctx,
                         from_raw_parts: b.thunks.from_raw_parts,
+                        // String runs validate UTF-8; `Vec` runs accept anything.
+                        // The stencil calls this indirectly, so no relocation.
+                        validate: b.validate,
                     });
                     self.bytes_fixups.push(BytesFixup { prog_index, slot, bytesinfo });
                 }
@@ -419,6 +419,11 @@ impl NativeDecode {
         entry(&mut ctx);
 
         if ctx.status != 0 {
+            // status 2 = content validation failed (e.g. a `String` run was not
+            // UTF-8); anything else is a truncation/bounds failure.
+            if ctx.status == 2 {
+                return Err(DecodeError::InvalidUtf8);
+            }
             let remaining = ctx.wire_end as usize - ctx.wire as usize;
             return Err(DecodeError::UnexpectedEof { needed: 0, remaining });
         }
@@ -599,10 +604,8 @@ impl EncCompiler {
                     self.fixups.push(SeqFixup { prog_index, slot, seqinfo });
                 }
                 MemOp::Bytes(b) => {
-                    assert!(
-                        !b.utf8,
-                        "phon-jit: UTF-8 bulk runs (String) are interpreter-only for now"
-                    );
+                    // Encode never validates — the in-memory `String`/`Vec` is
+                    // already well-formed; we just copy its bytes out.
                     self.code.extend_from_slice(BYTES_ENC);
                     let slot = self.progs[prog_index].len();
                     self.progs[prog_index].push(0);
@@ -1262,7 +1265,7 @@ mod tests {
             field_offset: 0,
             stride: 4,
             elem_align: 4,
-            utf8: false,
+            validate: validate_any,
             thunks: vu32_thunks(),
         }))]
     }
@@ -1397,7 +1400,7 @@ mod tests {
                 field_offset: v_off,
                 stride: 4,
                 elem_align: 4,
-                utf8: false,
+                validate: validate_any,
                 thunks: vu32_thunks(),
             })),
         ];
@@ -1428,32 +1431,108 @@ mod tests {
         assert_eq!(back.v, s.v);
     }
 
-    /// A `utf8: true` bulk run must panic — String-in-the-JIT needs in-stencil
-    /// UTF-8 validation, a separate follow-on.
-    #[test]
-    #[should_panic(expected = "UTF-8 bulk runs (String) are interpreter-only")]
-    fn jit_decode_bytes_utf8_panics() {
-        let program: MemProgram = vec![MemOp::Bytes(Box::new(BytesOp {
-            field_offset: 0,
-            stride: 1,
-            elem_align: 1,
-            utf8: true,
-            thunks: vu32_thunks(),
-        }))];
-        let _ = NativeDecode::compile(&program);
+    // ====================================================================
+    // String: a UTF-8-validated bulk byte run (stride 1) in the JIT
+    // ====================================================================
+
+    /// Validator for `Vec` runs: any bytes are valid.
+    unsafe extern "C" fn validate_any(_ptr: *const u8, _len: usize) -> bool {
+        true
     }
 
-    /// The encode side rejects `utf8: true` the same way.
-    #[test]
-    #[should_panic(expected = "UTF-8 bulk runs (String) are interpreter-only")]
-    fn jit_encode_bytes_utf8_panics() {
-        let program: MemProgram = vec![MemOp::Bytes(Box::new(BytesOp {
+    /// Validator for `String` runs: the bytes must be UTF-8.
+    unsafe extern "C" fn validate_utf8(ptr: *const u8, len: usize) -> bool {
+        let bytes = unsafe { core::slice::from_raw_parts(ptr, len) };
+        core::str::from_utf8(bytes).is_ok()
+    }
+
+    /// Adopt an engine-allocated, already-validated buffer into the `String`.
+    unsafe extern "C" fn str_from_raw_parts(
+        _ctx: *const (),
+        list: *mut u8,
+        ptr: *mut u8,
+        len: usize,
+        cap: usize,
+    ) {
+        let s = unsafe { String::from_raw_parts(ptr, len, cap) };
+        unsafe { core::ptr::write(list.cast::<String>(), s) };
+    }
+    unsafe extern "C" fn str_len(_ctx: *const (), list: *const u8) -> usize {
+        let s: &String = unsafe { &*list.cast::<String>() };
+        s.len()
+    }
+    unsafe extern "C" fn str_data(_ctx: *const (), list: *const u8) -> *const u8 {
+        let s: &String = unsafe { &*list.cast::<String>() };
+        s.as_ptr()
+    }
+    fn str_thunks() -> SeqThunks {
+        SeqThunks {
+            ctx: core::ptr::null(),
+            from_raw_parts: str_from_raw_parts,
+            len: str_len,
+            data: str_data,
+        }
+    }
+
+    /// A root program of a single UTF-8-validated `String` run (stride 1).
+    fn string_program() -> MemProgram {
+        vec![MemOp::Bytes(Box::new(BytesOp {
             field_offset: 0,
             stride: 1,
             elem_align: 1,
-            utf8: true,
-            thunks: vu32_thunks(),
-        }))];
-        let _ = NativeEncode::compile(&program);
+            validate: validate_utf8,
+            thunks: str_thunks(),
+        }))]
+    }
+
+    fn string_wire(s: &str) -> Vec<u8> {
+        let mut wire = (s.len() as u32).to_le_bytes().to_vec();
+        wire.extend_from_slice(s.as_bytes());
+        wire
+    }
+
+    /// JIT-decode valid UTF-8 `String` runs, including the empty case — the
+    /// validator runs in-stencil (indirect call) and accepts them.
+    #[test]
+    fn jit_decode_bytes_string() {
+        let program = string_program();
+        let jit = NativeDecode::compile(&program);
+        for text in ["héllo wörld 🐝", "", "ascii"] {
+            let wire = string_wire(text);
+            let mut slot = MaybeUninit::<String>::uninit();
+            unsafe { jit.run(&wire, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+            let back = unsafe { slot.assume_init() };
+            assert_eq!(back, text);
+        }
+    }
+
+    /// JIT-decode invalid UTF-8 → `InvalidUtf8` (the in-stencil validator sets
+    /// status 2, distinct from EOF), and nothing is adopted.
+    #[test]
+    fn jit_decode_bytes_string_rejects_invalid_utf8() {
+        let program = string_program();
+        let jit = NativeDecode::compile(&program);
+        // count 1, one byte 0xFF (not valid UTF-8).
+        let mut wire = 1u32.to_le_bytes().to_vec();
+        wire.push(0xFF);
+        let mut slot = MaybeUninit::<String>::uninit();
+        let err = unsafe { jit.run(&wire, slot.as_mut_ptr().cast::<u8>()) }.unwrap_err();
+        assert!(matches!(err, DecodeError::InvalidUtf8));
+    }
+
+    /// JIT-encode a `String` (encode never validates) and round-trip it.
+    #[test]
+    fn jit_encode_bytes_string_roundtrips() {
+        let program = string_program();
+        let s = String::from("héllo 🐝");
+        let enc = NativeEncode::compile(&program);
+        let got = unsafe { enc.run(core::ptr::from_ref(&s).cast::<u8>()) };
+        assert_eq!(got, string_wire(&s));
+
+        let dec = NativeDecode::compile(&program);
+        let mut slot = MaybeUninit::<String>::uninit();
+        unsafe { dec.run(&got, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back, s);
     }
 }

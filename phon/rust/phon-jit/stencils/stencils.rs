@@ -88,6 +88,10 @@ pub struct BytesInfo {
     /// `*list = Vec::from_raw_parts(ptr, len, cap)` — `cap == len` (element count).
     pub from_raw_parts:
         unsafe extern "C" fn(ctx: *const (), list: *mut u8, ptr: *mut u8, len: usize, cap: usize),
+    /// Validate the run before adopting it (UTF-8 for `String`, a no-op for `Vec`).
+    /// Reached as an *indirect* call, so it adds no relocation. Returns `true` if
+    /// the bytes are valid; on `false` the stencil reports `status = 2`.
+    pub validate: unsafe extern "C" fn(ptr: *const u8, len: usize) -> bool,
 }
 
 extern "C" {
@@ -261,6 +265,14 @@ pub unsafe extern "C" fn phon_stencil_bytes(cx: *mut Ctx) {
     let total = count * info.stride;
     if (src as usize).wrapping_add(total) > c.wire_end as usize {
         c.status = 1;
+        return;
+    }
+
+    // Validate the run before allocating or adopting it (UTF-8 for `String`, a
+    // no-op for `Vec`). Indirect call through `info.validate` — no relocation.
+    // status 2 marks invalid content, distinct from the EOF/bounds status 1.
+    if !(info.validate)(src, total) {
+        c.status = 2;
         return;
     }
 

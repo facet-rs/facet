@@ -174,6 +174,16 @@ pub struct SeqThunks {
     pub data: unsafe extern "C" fn(ctx: *const (), list: *const u8) -> *const u8,
 }
 
+/// Validates a contiguous byte run before it is adopted into an owned handle:
+/// `String` runs check UTF-8 (`r[validate.text]`), `Vec<u8>`/`Vec<scalar>` runs
+/// accept anything. Returns `true` when the bytes are valid for the target type.
+///
+/// One function pointer, called the same way by both engines: the interpreter
+/// invokes it directly, and the JIT reaches it as an *indirect* call (so it needs
+/// no relocation — the reason in-stencil UTF-8 validation routes through here
+/// rather than calling `core::str::from_utf8` inline).
+pub type ByteValidator = unsafe extern "C" fn(ptr: *const u8, len: usize) -> bool;
+
 /// A bulk byte-run op's payload (boxed in [`MemOp::Bytes`]). The wire form is a
 /// `u32` element count then `count * stride` contiguous bytes — one block copy in
 /// each direction, no per-element loop. `String` and `Vec<u8>` use `stride == 1`;
@@ -186,8 +196,9 @@ pub struct BytesOp {
     pub stride: usize,
     /// Alignment of the contiguous element buffer.
     pub elem_align: usize,
-    /// Validate the bytes as UTF-8 on decode (`r[validate.text]`); set for `String`.
-    pub utf8: bool,
+    /// Validate the contiguous bytes on decode before adopting them. `String` runs
+    /// check UTF-8; `Vec` runs accept anything. See [`ByteValidator`].
+    pub validate: ByteValidator,
     /// Type-erased handle operations (`from_raw_parts` adopts the buffer; `len`
     /// returns the element count; `data` points at the contiguous bytes).
     pub thunks: SeqThunks,
