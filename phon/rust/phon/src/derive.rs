@@ -1485,4 +1485,131 @@ mod tests {
         let err = unsafe { dec.run(&wire, slot.as_mut_ptr().cast::<u8>()) }.unwrap_err();
         assert!(matches!(err, DecodeError::InvalidBool(2)), "got {err:?}");
     }
+
+    // A struct with a `BTreeMap<String, u32>` field: the data-directed map count
+    // loop, a scalar value, and a string key. `BTreeMap` is sorted, so its
+    // iteration order is deterministic; building the oracle `VObject` by inserting
+    // keys in that same sorted order makes both codecs iterate identically (a
+    // `VObject` is insertion-ordered, and the dynamic codec is string-keyed).
+    #[derive(Facet)]
+    struct MapHolder {
+        m: std::collections::BTreeMap<String, u32>,
+        tag: u32,
+    }
+
+    #[test]
+    fn derived_map_string_u32_matches_dynamic_and_roundtrips() {
+        let d = of::<MapHolder>().unwrap();
+        // Two composite schemas: MapHolder (struct) and BTreeMap<String, u32> (map).
+        assert_eq!(d.schemas.len(), 2);
+        let reg = Registry::new(d.schemas.clone());
+
+        let mut m = std::collections::BTreeMap::new();
+        m.insert("alpha".to_string(), 1u32);
+        m.insert("beta".to_string(), 0xCAFEu32);
+        m.insert("gamma".to_string(), 0xDEAD_BEEFu32);
+        let h = MapHolder { m: m.clone(), tag: 0x55 };
+
+        let typed_bytes =
+            unsafe { typed::encode(core::ptr::from_ref(&h).cast::<u8>(), &d.descriptor, &reg) }
+                .unwrap();
+
+        // Oracle: byte-identical to the dynamic codec for the equivalent object.
+        // BTreeMap iterates in sorted key order, so insert into the VObject sorted.
+        let mut mobj = VObject::new();
+        for (k, v) in &m {
+            mobj.insert(VString::new(k.as_str()), Value::from(*v));
+        }
+        let mut obj = VObject::new();
+        obj.insert(VString::new("m"), Value::from(mobj));
+        obj.insert(VString::new("tag"), Value::from(h.tag));
+        let dyn_bytes = compact::to_bytes(&obj.into(), d.root, &reg).unwrap();
+        assert_eq!(typed_bytes, dyn_bytes);
+
+        // Round-trip: decode back into a MapHolder and check the map and scalar.
+        let mut slot = std::mem::MaybeUninit::<MapHolder>::uninit();
+        unsafe { typed::decode(&typed_bytes, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
+            .unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back.m, m);
+        assert_eq!(back.tag, h.tag);
+    }
+
+    // A `BTreeMap<String, String>`: a heap value, exercising the value scratch-move
+    // (the value `String` is decoded into engine scratch, then `insert` moves it
+    // into the map and the scratch is freed without dropping).
+    #[derive(Facet)]
+    struct StrMapHolder {
+        m: std::collections::BTreeMap<String, String>,
+    }
+
+    #[test]
+    fn derived_map_string_string_matches_dynamic_and_roundtrips() {
+        let d = of::<StrMapHolder>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+
+        let mut m = std::collections::BTreeMap::new();
+        m.insert("name".to_string(), "héllo 🐝".to_string());
+        m.insert("other".to_string(), "wörld".to_string());
+        m.insert("zed".to_string(), String::new());
+        let h = StrMapHolder { m: m.clone() };
+
+        let typed_bytes =
+            unsafe { typed::encode(core::ptr::from_ref(&h).cast::<u8>(), &d.descriptor, &reg) }
+                .unwrap();
+
+        let mut mobj = VObject::new();
+        for (k, v) in &m {
+            mobj.insert(VString::new(k.as_str()), Value::from(v.as_str()));
+        }
+        let mut obj = VObject::new();
+        obj.insert(VString::new("m"), Value::from(mobj));
+        let dyn_bytes = compact::to_bytes(&obj.into(), d.root, &reg).unwrap();
+        assert_eq!(typed_bytes, dyn_bytes);
+
+        let mut slot = std::mem::MaybeUninit::<StrMapHolder>::uninit();
+        unsafe { typed::decode(&typed_bytes, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
+            .unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back.m, m);
+    }
+
+    // A wire with a repeated key collapses two entries into one entry in the map;
+    // the typed decode must reject it (count mismatch), matching the dynamic
+    // codec's `DuplicateKey` rejection (the oracle).
+    #[test]
+    fn derived_map_rejects_duplicate_key() {
+        use phon_engine::CompactError;
+        use phon_schema::DecodeError;
+        use phon_schema::bytes::{pad_to, write_u32};
+
+        let d = of::<MapHolder>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+
+        // Hand-build the `m` field's wire: count 2, then the SAME key "k" twice
+        // (each with its own u32 value), then the trailing `tag` u32. The two
+        // entries collapse to one in the BTreeMap, so len(1) != count(2).
+        let mut wire = Vec::new();
+        write_u32(&mut wire, 2); // map entry count
+        for val in [10u32, 20u32] {
+            // key "k": a String (u32 length then bytes).
+            write_u32(&mut wire, 1);
+            wire.push(b'k');
+            // value u32 at its alignment.
+            pad_to(&mut wire, 4);
+            write_u32(&mut wire, val);
+        }
+        // trailing struct field `tag` (u32) at its alignment.
+        pad_to(&mut wire, 4);
+        write_u32(&mut wire, 0x77);
+
+        let mut slot = std::mem::MaybeUninit::<MapHolder>::uninit();
+        let err =
+            unsafe { typed::decode(&wire, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
+                .unwrap_err();
+        assert!(
+            matches!(err, CompactError::Decode(DecodeError::DuplicateKey)),
+            "got {err:?}"
+        );
+    }
 }

@@ -593,10 +593,7 @@ unsafe fn decode_program(program: &MemProgram, r: &mut Reader, base: *mut u8) ->
                     // place, then `insert` moves both out (ptr::read), so we free the
                     // scratch WITHOUT dropping. A zero-size element needs no alloc — a
                     // dangling-but-aligned pointer suffices.
-                    let (key_scratch, key_layout) = match alloc_scratch(m.key_size, m.key_align) {
-                        Ok(s) => s,
-                        Err(e) => return Err(e),
-                    };
+                    let (key_scratch, key_layout) = alloc_scratch(m.key_size, m.key_align)?;
                     let (value_scratch, value_layout) =
                         match alloc_scratch(m.value_size, m.value_align) {
                             Ok(s) => s,
