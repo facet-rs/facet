@@ -22,6 +22,8 @@ pub mod interp;
 
 pub use interp::run;
 
+pub mod typed;
+
 /// The hostile-input validation discipline every decode path enforces: length
 /// and dimension bounds, depth limits, tag/text checks, set/map uniqueness, and
 /// schema-bundle verification.

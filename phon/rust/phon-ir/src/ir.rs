@@ -88,3 +88,27 @@ pub struct EnumArm {
     pub reader_name: String,
     pub payload: Program,
 }
+
+/// A lowered *typed* program: the memory side of the IR. Where [`Program`] builds
+/// a dynamic [`Value`](facet_value::Value) on a stack, a `MemProgram` moves bytes
+/// between the wire and a value's in-memory layout, at offsets the descriptor
+/// supplies (`r[ir.memory]`).
+///
+/// In this first cut — fixed scalars and in-place records — a whole nested
+/// `repr(Rust)` struct dissolves into a flat run of [`MemOp::Scalar`] copies at
+/// folded, base-relative offsets: no branches, the splicing `r[ir.inlining]`
+/// describes taken to its limit. Owned sequences, options, and enums (which
+/// allocate or branch at run time) extend this later.
+pub type MemProgram = Vec<MemOp>;
+
+/// One typed step: a memory move between the wire and a value's layout. The base
+/// pointer is supplied at run time; `offset` is relative to it.
+#[derive(Clone, Debug)]
+pub enum MemOp {
+    /// Copy a fixed-width scalar — `size` bytes — between memory at `offset` and
+    /// the wire, which is first padded to `align` (`r[compact.alignment]`).
+    /// Encode reads memory and writes the wire; decode reads the wire and writes
+    /// memory. Sound only where host byte order equals the wire's
+    /// (little-endian), which every phon target is.
+    Scalar { offset: usize, size: usize, align: usize },
+}
