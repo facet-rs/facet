@@ -14,8 +14,9 @@
 //!
 //! Spec: `r[ir.stencils]`, `r[exec.jit-optional]`.
 
-use phon_ir::ir::{MemOp, MemProgram};
+use phon_ir::ir::{MemOp, MemProgram, SkipOp};
 use phon_schema::DecodeError;
+use phon_schema::bytes::Reader;
 
 // The backend-agnostic copy-and-patch substrate lives in `copypatch`: executable
 // memory (MAP_JIT + W^X + i-cache) and AArch64 relocation patching. This crate
@@ -24,9 +25,10 @@ use phon_schema::DecodeError;
 use copypatch::{ExecBuf, patch_branch26};
 
 use crate::stencils::{
-    BYTES, BYTES_CONT, BYTES_ENC, BYTES_ENC_CONT, DONE, DONE_ENC, ENUM, ENUM_CONT, ENUM_ENC,
-    ENUM_ENC_CONT, OPTION, OPTION_CONT, OPTION_ENC, OPTION_ENC_CONT, SCALAR, SCALAR_CONT,
-    SCALAR_ENC, SCALAR_ENC_CONT, SEQUENCE, SEQUENCE_CONT, SEQUENCE_ENC, SEQUENCE_ENC_CONT,
+    BYTES, BYTES_CONT, BYTES_ENC, BYTES_ENC_CONT, DEFAULT, DEFAULT_CONT, DONE, DONE_ENC, ENUM,
+    ENUM_CONT, ENUM_ENC, ENUM_ENC_CONT, OPTION, OPTION_CONT, OPTION_ENC, OPTION_ENC_CONT, SCALAR,
+    SCALAR_CONT, SCALAR_ENC, SCALAR_ENC_CONT, SEQUENCE, SEQUENCE_CONT, SEQUENCE_ENC,
+    SEQUENCE_ENC_CONT, SKIPWIRE, SKIPWIRE_CONT,
 };
 
 /// Load the smoke stencil into JIT memory and run it: `x * 3 + 1`, computed by
@@ -125,6 +127,59 @@ struct EnumInfo {
     variant_count: usize,
 }
 
+/// A reader-only-default op's immediates, matching `DefaultInfo` in
+/// `stencils/stencils.rs` byte for byte. Reached through a `*const DefaultInfo`
+/// slot in the prog stream. Like [`BytesInfo`] it carries no `ExecBuf`-relative
+/// fields — the default is written by an indirect thunk call, no sub-chain — so it
+/// needs no two-pass code-pointer binding. Decode-only.
+#[repr(C)]
+struct DefaultInfo {
+    offset: usize,
+    ctx: *const (),
+    thunk: unsafe extern "C" fn(ctx: *const (), slot: *mut u8),
+}
+
+/// A writer-only-skip op's immediates, matching `SkipInfo` in
+/// `stencils/stencils.rs` byte for byte. Reached through a `*const SkipInfo` slot
+/// in the prog stream. Like [`BytesInfo`] it carries no `ExecBuf`-relative fields —
+/// the skip is performed by an indirect walk call, no sub-chain. `skip_op` is a raw
+/// pointer into the `SkipOp` owned by the `MemProgram`; the program must outlive
+/// the `NativeDecode` (see the `progs`-pointer stability note on [`NativeDecode`]).
+/// Decode-only.
+#[repr(C)]
+struct SkipInfo {
+    skip_op: *const (),
+    walk: unsafe extern "C" fn(skip_op: *const (), wire: *const u8, wire_end: *const u8)
+        -> *const u8,
+}
+
+/// The `SkipInfo.walk` thunk: advance a cursor over `[wire, wire_end)` past one
+/// writer value described by the `SkipOp` at `skip_op`, sharing the one skip walker
+/// in `phon-ir` with the interpreter. Returns the advanced cursor on success, or
+/// null on a skip failure (truncation, bad presence byte, or unmatched enum index)
+/// — which `phon_stencil_skipwire` maps to `status = 1`.
+///
+/// # Safety
+/// `skip_op` must point to a live [`SkipOp`]; `[wire, wire_end)` must be a valid,
+/// readable byte range (`wire <= wire_end`).
+unsafe extern "C" fn jit_skip_walk(
+    skip_op: *const (),
+    wire: *const u8,
+    wire_end: *const u8,
+) -> *const u8 {
+    let len = (wire_end as usize) - (wire as usize);
+    // Borrow the wire tail as a slice and run the shared walker over a fresh
+    // `Reader`. On success the cursor advanced by `position()` bytes; on any error
+    // signal failure with a null return.
+    let bytes = unsafe { core::slice::from_raw_parts(wire, len) };
+    let mut r = Reader::new(bytes);
+    let op = unsafe { &*skip_op.cast::<SkipOp>() };
+    match phon_ir::ir::skip(&mut r, op) {
+        Ok(()) => unsafe { wire.add(r.position()) },
+        Err(_) => core::ptr::null(),
+    }
+}
+
 /// Allocate `size` bytes aligned to `align` with the global Rust allocator, so a
 /// `Vec` adopting the buffer via `from_raw_parts` frees it with the same
 /// allocator. Returns null on `size == 0`; the stencil substitutes a dangling
@@ -176,6 +231,20 @@ pub struct NativeDecode {
     /// is stable (exact capacity, never re-grown), so the `*const EnumVariantInfo`
     /// in `enum_infos` stays valid.
     enum_variants: Vec<Vec<EnumVariantInfo>>,
+    /// One per reader-only-default op: the immediates the default stencil reads
+    /// through its prog slot. Same stability contract as `seq_infos`.
+    default_infos: Vec<DefaultInfo>,
+    /// One per writer-only-skip op: the immediates the skipwire stencil reads
+    /// through its prog slot. Same stability contract as `seq_infos`. Each
+    /// `SkipInfo.skip_op` points into the matching `Box<SkipOp>` in `skip_ops`.
+    skip_infos: Vec<SkipInfo>,
+    /// One per writer-only-skip op: an owned clone of that op's `SkipOp` tree. Built
+    /// once with exact capacity and never re-grown after `compile` takes the
+    /// `skip_op` pointers, so each element's address is stable — the same contract
+    /// as `seq_infos`/`bytes_infos`. `NativeDecode` only borrows the source program
+    /// during `compile`, so it must own these to point a raw `skip_op` at one for
+    /// the `jit_skip_walk` thunk to dereference.
+    skip_ops: Vec<SkipOp>,
 }
 
 /// A compiled element chain: where its first stencil begins in `code`, and which
@@ -215,6 +284,22 @@ struct EnumFixup {
     prog_index: usize,
     slot: usize,
     enuminfo: usize,
+}
+
+/// A reader-only-default's prog slot to fill once `default_infos` is in its final
+/// home: write `&default_infos[defaultinfo]` into `progs[prog_index][slot]`.
+struct DefaultFixup {
+    prog_index: usize,
+    slot: usize,
+    defaultinfo: usize,
+}
+
+/// A writer-only-skip's prog slot to fill once `skip_infos` is in its final home:
+/// write `&skip_infos[skipinfo]` into `progs[prog_index][slot]`.
+struct SkipFixup {
+    prog_index: usize,
+    slot: usize,
+    skipinfo: usize,
 }
 
 /// A sequence's `SeqInfo` minus the two fields only known after the `ExecBuf` is
@@ -276,6 +361,14 @@ struct Compiler {
     opt_fixups: Vec<OptFixup>,
     enum_infos: Vec<EnumInfoBuild>,
     enum_fixups: Vec<EnumFixup>,
+    /// Built directly (no `ExecBuf`-relative fields): one per reader-only-default op.
+    default_infos: Vec<DefaultInfo>,
+    default_fixups: Vec<DefaultFixup>,
+    /// One owned `SkipOp` clone per writer-only-skip op; the `SkipInfo` for each is
+    /// materialized in `compile()` once these are in their final home (`nd.skip_ops`,
+    /// never re-grown after) so the `skip_op` pointer is stable.
+    skip_ops: Vec<SkipOp>,
+    skip_fixups: Vec<SkipFixup>,
 }
 
 impl Compiler {
@@ -386,10 +479,35 @@ impl Compiler {
                     });
                     self.enum_fixups.push(EnumFixup { prog_index, slot, enuminfo });
                 }
-                MemOp::Map(_) => panic!("phon-jit: maps are interpreter-only for now"),
-                MemOp::SkipWire(_) | MemOp::Default(_) => {
-                    panic!("phon-jit: compat skip/default are interpreter-only for now")
+                MemOp::Default(d) => {
+                    self.code.extend_from_slice(DEFAULT);
+                    // The default stencil reads one prog slot: a `*const DefaultInfo`
+                    // filled in pass 2. Reserve it and record the fixup now.
+                    let slot = self.progs[prog_index].len();
+                    self.progs[prog_index].push(0);
+                    let defaultinfo = self.default_infos.len();
+                    // No `ExecBuf`-relative fields: the default is written by an
+                    // indirect thunk call (no wire, no sub-chain), so build it now.
+                    self.default_infos.push(DefaultInfo {
+                        offset: d.offset,
+                        ctx: d.ctx,
+                        thunk: d.default,
+                    });
+                    self.default_fixups.push(DefaultFixup { prog_index, slot, defaultinfo });
                 }
+                MemOp::SkipWire(s) => {
+                    self.code.extend_from_slice(SKIPWIRE);
+                    // The skipwire stencil reads one prog slot: a `*const SkipInfo`
+                    // filled in pass 2 (its `skip_op` pointer is bound once the
+                    // owned `SkipOp` clone is in its final home). Reserve the slot
+                    // and clone the tree now.
+                    let slot = self.progs[prog_index].len();
+                    self.progs[prog_index].push(0);
+                    let skipinfo = self.skip_ops.len();
+                    self.skip_ops.push((**s).clone());
+                    self.skip_fixups.push(SkipFixup { prog_index, slot, skipinfo });
+                }
+                MemOp::Map(_) => panic!("phon-jit: maps are interpreter-only for now"),
             }
         }
         let done_start = self.code.len();
@@ -406,10 +524,9 @@ impl Compiler {
                 MemOp::Bytes(_) => BYTES_CONT,
                 MemOp::Option(_) => OPTION_CONT,
                 MemOp::Enum(_) => ENUM_CONT,
+                MemOp::Default(_) => DEFAULT_CONT,
+                MemOp::SkipWire(_) => SKIPWIRE_CONT,
                 MemOp::Map(_) => unreachable!("phon-jit: maps are interpreter-only for now"),
-                MemOp::SkipWire(_) | MemOp::Default(_) => {
-                    unreachable!("phon-jit: compat skip/default are interpreter-only for now")
-                }
             };
             for &rel in relocs {
                 patch_branch26(&mut self.code, op_start + rel, next);
@@ -436,6 +553,10 @@ impl NativeDecode {
             opt_fixups: Vec::new(),
             enum_infos: Vec::new(),
             enum_fixups: Vec::new(),
+            default_infos: Vec::new(),
+            default_fixups: Vec::new(),
+            skip_ops: Vec::new(),
+            skip_fixups: Vec::new(),
         };
         let top = c.compile_chain(program);
 
@@ -519,6 +640,13 @@ impl NativeDecode {
             });
         }
 
+        // Materialize the `SkipInfo`s with their `walk` thunk bound; the `skip_op`
+        // pointer is bound below, once `skip_ops` is owned by `NativeDecode` so each
+        // `Box<SkipOp>`'s heap address is final.
+        let skip_infos: Vec<SkipInfo> = (0..c.skip_ops.len())
+            .map(|_| SkipInfo { skip_op: core::ptr::null(), walk: jit_skip_walk })
+            .collect();
+
         let mut nd = NativeDecode {
             buf,
             entry_prog: top.prog_index,
@@ -530,7 +658,24 @@ impl NativeDecode {
             opt_infos,
             enum_infos,
             enum_variants,
+            // The default infos carry no `ExecBuf`-relative fields either.
+            default_infos: c.default_infos,
+            skip_infos,
+            // Move the owned `SkipOp` clones into their final home; the `skip_op`
+            // pointers below alias into these boxes.
+            skip_ops: c.skip_ops,
         };
+
+        // Bind each `SkipInfo.skip_op` to its owned `SkipOp` clone, now that
+        // `nd.skip_ops` is final (a `Box`'s heap stays put across the `Vec` move).
+        let skip_op_ptrs: Vec<*const ()> = nd
+            .skip_ops
+            .iter()
+            .map(|op| core::ptr::from_ref::<SkipOp>(op).cast::<()>())
+            .collect();
+        for (info, &ptr) in nd.skip_infos.iter_mut().zip(skip_op_ptrs.iter()) {
+            info.skip_op = ptr;
+        }
 
         // Now that `nd.progs` is in its final home, bind the prog pointers: each
         // `SeqInfo.element_prog` to its element chain's stream, and each sequence
@@ -569,6 +714,16 @@ impl NativeDecode {
         }
         for f in &c.enum_fixups {
             let ptr: *const EnumInfo = &nd.enum_infos[f.enuminfo];
+            nd.progs[f.prog_index][f.slot] = ptr as u64;
+        }
+        // Bind each reader-only-default's prog slot to its `DefaultInfo` in `nd`.
+        for f in &c.default_fixups {
+            let ptr: *const DefaultInfo = &nd.default_infos[f.defaultinfo];
+            nd.progs[f.prog_index][f.slot] = ptr as u64;
+        }
+        // Bind each writer-only-skip's prog slot to its `SkipInfo` in `nd`.
+        for f in &c.skip_fixups {
+            let ptr: *const SkipInfo = &nd.skip_infos[f.skipinfo];
             nd.progs[f.prog_index][f.slot] = ptr as u64;
         }
 
