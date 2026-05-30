@@ -29,5 +29,19 @@ facet-value = "0.46"
 # facet-value's i128/u128 + native char support is committed locally but not yet
 # released; point at the local checkout until those releases are cut. (The same
 # applies to facet once phon's front door needs unreleased changes.)
+#
+# The facet crates are patched to the local ~/facet checkout: the typed engine's
+# owned-sequence path needs `ListTypeOps::from_raw_parts`, added there but not yet
+# released. facet-value/facet-dessert/facet-format come from the *separate*
+# facet-format workspace and stay on their own local paths above.
 [patch.crates-io]
 facet-value = { path = "../../facet-format/facet-value" }
+facet = { path = "../../facet/facet" }
+facet-core = { path = "../../facet/facet-core" }
+facet-macros = { path = "../../facet/facet-macros" }
+facet-macro-parse = { path = "../../facet/facet-macro-parse" }
+facet-macro-types = { path = "../../facet/facet-macro-types" }
+facet-macros-impl = { path = "../../facet/facet-macros-impl" }
+facet-path = { path = "../../facet/facet-path" }
+facet-reflect = { path = "../../facet/facet-reflect" }
+facet-solver = { path = "../../facet/facet-solver" }

@@ -21,8 +21,11 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use facet::{Facet, ScalarType, Shape, Type, UserType};
-use phon_ir::{Access, Construct, Descriptor, FieldAccess, Layout, RecordAccess};
+use facet::{Def, Facet, ListDef, PtrConst, PtrMut, PtrUninit, ScalarType, Shape, Type, UserType};
+use phon_ir::{
+    Access, Construct, Descriptor, FieldAccess, Layout, RecordAccess, SeqThunks, SequenceAccess,
+    SequenceStorage,
+};
 use phon_schema::{
     Field, Primitive, Schema, SchemaId, SchemaKind, SchemaRef, primitive_id, resolve_ids,
 };
@@ -159,19 +162,42 @@ impl Builder {
         })
     }
 
-    /// The schema reference for a field's type: a primitive's real id, or a
-    /// nested struct's provisional key.
+    /// The schema reference for a field's type: a primitive's real id, a nested
+    /// struct's provisional key, or a `List`'s provisional key.
     fn ref_of(&mut self, shape: &'static Shape) -> Result<SchemaRef, DeriveError> {
         if let Some(p) = scalar_primitive(shape)? {
             Ok(SchemaRef::concrete(primitive_id(p)))
         } else if is_struct(shape) {
             let key = self.intern(shape)?;
             Ok(SchemaRef::concrete(SchemaId(key as u64)))
+        } else if let Some(list_def) = list_def(shape) {
+            let key = self.intern_list(list_def)?;
+            Ok(SchemaRef::concrete(SchemaId(key as u64)))
         } else {
             Err(DeriveError::Unsupported(
-                "derive: only structs of fixed scalars so far",
+                "derive: only structs, lists, and fixed scalars so far",
             ))
         }
+    }
+
+    /// Intern a `List` schema (e.g. `Vec<T>`), returning its provisional key. The
+    /// element reference is resolved first (recursing into composites as needed),
+    /// then a `List` schema is appended. Lists are interned by their `ListDef`
+    /// pointer so two `Vec<T>` of the same `T` dedup.
+    fn intern_list(&mut self, list_def: &'static ListDef) -> Result<usize, DeriveError> {
+        let ptr = core::ptr::from_ref(list_def) as usize;
+        if let Some(&k) = self.by_shape.get(&ptr) {
+            return Ok(k);
+        }
+        let element = self.ref_of(list_def.t())?;
+        let key = self.protos.len();
+        self.by_shape.insert(ptr, key);
+        self.protos.push(Schema {
+            id: SchemaId(key as u64),
+            type_params: Vec::new(),
+            kind: SchemaKind::List { element },
+        });
+        Ok(key)
     }
 }
 
@@ -186,6 +212,18 @@ fn build_descriptor(
             schema: SchemaRef::concrete(primitive_id(p)),
             layout: Layout { size, align },
             access: Access::Scalar,
+        });
+    }
+    if let Some(list_def) = list_def(shape) {
+        let real = real_ids[by_shape[&(core::ptr::from_ref(list_def) as usize)]];
+        let element = build_descriptor(list_def.t(), by_shape, real_ids)?;
+        return Ok(Descriptor {
+            schema: SchemaRef::concrete(real),
+            layout: Layout { size, align },
+            access: Access::Sequence(SequenceAccess {
+                element: Box::new(element),
+                storage: SequenceStorage::Vtable(list_thunks(list_def)),
+            }),
         });
     }
     let fields = struct_fields(shape)?;
@@ -227,6 +265,103 @@ fn layout_of(shape: &Shape) -> Result<(usize, usize), DeriveError> {
     Ok((layout.size(), layout.align()))
 }
 
+/// The `&'static ListDef` behind a list-typed shape (`Vec<T>`, …), or `None`.
+fn list_def(shape: &'static Shape) -> Option<&'static ListDef> {
+    match &shape.def {
+        Def::List(list_def) => Some(list_def),
+        _ => None,
+    }
+}
+
+// ============================================================================
+// Sequence thunks
+// ============================================================================
+//
+// The engine drives owned sequences through three `unsafe extern "C"` function
+// pointers (`SeqThunks`), passing an opaque `ctx`. We use the field's
+// `&'static ListDef` as that `ctx`: each adapter casts it back, wraps the
+// engine's raw `*mut u8`/`*const u8` handle in facet's wide-pointer types, and
+// calls the matching `ListDef` operation. The adapters are fixed — not generated
+// per element type — because the per-`T` knowledge lives in the `ListDef`'s
+// `type_ops`. The engine owns the element buffer; `from_raw_parts` adopts it.
+//
+// Spec: `r[descriptors.thunk-binding]`.
+
+/// Build the [`SeqThunks`] for a list field, with the field's `ListDef` as `ctx`.
+///
+/// # Panics
+/// If the `ListDef` lacks `from_raw_parts` or `as_ptr` (every `Vec<T>` has both;
+/// other list types may not, in which case the typed path cannot carry them).
+fn list_thunks(list_def: &'static ListDef) -> SeqThunks {
+    assert!(
+        list_def.from_raw_parts().is_some(),
+        "list type has no from_raw_parts op; cannot decode through the typed path"
+    );
+    assert!(
+        list_def.vtable.as_ptr.is_some(),
+        "list type is not contiguous (no as_ptr); cannot encode through the typed path"
+    );
+    SeqThunks {
+        ctx: core::ptr::from_ref(list_def).cast::<()>(),
+        from_raw_parts: seq_from_raw_parts,
+        len: seq_len,
+        data: seq_data,
+    }
+}
+
+/// Adopt an engine-allocated buffer of `len` (capacity `cap`) elements into the
+/// list at `list`, via the `ListDef`'s `from_raw_parts`.
+///
+/// # Safety
+/// `ctx` must be a `&'static ListDef` (as set by [`list_thunks`]); `list` must be
+/// uninitialized storage for the list handle; `ptr`/`len`/`cap` must satisfy the
+/// list's `from_raw_parts` contract (the engine guarantees the buffer layout).
+unsafe extern "C" fn seq_from_raw_parts(
+    ctx: *const (),
+    list: *mut u8,
+    ptr: *mut u8,
+    len: usize,
+    cap: usize,
+) {
+    // Safety: `ctx` is the `&'static ListDef` set in `list_thunks`.
+    let list_def = unsafe { &*ctx.cast::<ListDef>() };
+    let from_raw_parts = list_def
+        .from_raw_parts()
+        .expect("from_raw_parts presence checked in list_thunks");
+    // Safety: forwarded from this fn's contract; the list handle and element
+    // buffer are thin pointers, so the facet wide-pointer wrappers are exact.
+    unsafe { from_raw_parts(PtrUninit::new(list), PtrMut::new(ptr), len, cap) };
+}
+
+/// The list's current element count, via the `ListDef` vtable's `len`.
+///
+/// # Safety
+/// `ctx` must be a `&'static ListDef`; `list` must point to an initialized list
+/// handle of the matching type.
+unsafe extern "C" fn seq_len(ctx: *const (), list: *const u8) -> usize {
+    // Safety: `ctx` is the `&'static ListDef` set in `list_thunks`.
+    let list_def = unsafe { &*ctx.cast::<ListDef>() };
+    // Safety: `list` is an initialized handle of the list's type.
+    unsafe { (list_def.vtable.len)(PtrConst::new(list)) }
+}
+
+/// A pointer to the list's contiguous element storage, via the vtable's `as_ptr`.
+///
+/// # Safety
+/// `ctx` must be a `&'static ListDef`; `list` must point to an initialized list
+/// handle of the matching type.
+unsafe extern "C" fn seq_data(ctx: *const (), list: *const u8) -> *const u8 {
+    // Safety: `ctx` is the `&'static ListDef` set in `list_thunks`.
+    let list_def = unsafe { &*ctx.cast::<ListDef>() };
+    let as_ptr = list_def
+        .vtable
+        .as_ptr
+        .expect("as_ptr presence checked in list_thunks");
+    // Safety: `list` is an initialized handle; the data buffer is a thin pointer.
+    let data = unsafe { as_ptr(PtrConst::new(list)) };
+    data.as_byte_ptr()
+}
+
 /// Map a fixed-width scalar shape to a phon primitive. `Ok(None)` when the shape
 /// is not a scalar at all (e.g. a struct); an error for scalar kinds the typed
 /// path cannot yet carry (strings, `usize`/`isize`, net types, …).
@@ -262,7 +397,7 @@ fn scalar_primitive(shape: &Shape) -> Result<Option<Primitive>, DeriveError> {
 mod tests {
     use super::*;
     use facet::Facet;
-    use facet_value::{VObject, VString, Value};
+    use facet_value::{VArray, VObject, VString, Value};
     use phon_engine::{Registry, compact, typed};
 
     // repr(Rust): the compiler may reorder these in memory, so the descriptor's
@@ -362,5 +497,49 @@ mod tests {
         assert_eq!(back.tag, o.tag);
         assert_eq!(back.inner.b, o.inner.b);
         assert_eq!(back.n, o.n);
+    }
+
+    // A struct with an owned `Vec<u32>` field: exercises the sequence bridge end
+    // to end, through real facet reflection (no hand-written thunks).
+    #[derive(Facet)]
+    struct Holder {
+        items: Vec<u32>,
+        tag: u32,
+    }
+
+    #[test]
+    fn derived_vec_field_typed_matches_dynamic_and_roundtrips() {
+        let d = of::<Holder>().unwrap();
+        // Two composite schemas reachable: Holder (struct) and Vec<u32> (list).
+        assert_eq!(d.schemas.len(), 2);
+        let reg = Registry::new(d.schemas.clone());
+
+        let h = Holder {
+            items: vec![1, 2, 999, 0xDEAD_BEEF],
+            tag: 0x55,
+        };
+        let typed_bytes =
+            unsafe { typed::encode(core::ptr::from_ref(&h).cast::<u8>(), &d.descriptor, &reg) }
+                .unwrap();
+
+        // Oracle: byte-identical to the dynamic codec for the equivalent object
+        // (a VArray `items` and a number `tag`).
+        let mut arr = VArray::new();
+        for &v in &h.items {
+            arr.push(Value::from(v));
+        }
+        let mut obj = VObject::new();
+        obj.insert(VString::new("items"), Value::from(arr));
+        obj.insert(VString::new("tag"), Value::from(h.tag));
+        let dyn_bytes = compact::to_bytes(&obj.into(), d.root, &reg).unwrap();
+        assert_eq!(typed_bytes, dyn_bytes);
+
+        // Round-trip: decode back into a Holder and check the Vec and scalar.
+        let mut slot = std::mem::MaybeUninit::<Holder>::uninit();
+        unsafe { typed::decode(&typed_bytes, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
+            .unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back.items, h.items);
+        assert_eq!(back.tag, h.tag);
     }
 }
