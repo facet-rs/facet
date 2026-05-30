@@ -26,7 +26,8 @@
 //!
 //! Spec: "The intermediate representation" (`r[ir.*]`).
 
-use phon_schema::{Primitive, SchemaRef};
+use phon_schema::bytes::{Reader, skip_pad};
+use phon_schema::{DecodeError, Primitive, SchemaRef};
 
 /// A lowered decode program: a straight run of [`Op`]s executed start to finish.
 /// Container bodies (sequence element, map key/value, option payload, enum arm,
@@ -200,6 +201,76 @@ pub enum SkipOp {
     Map(Box<SkipOp>, Box<SkipOp>),
     /// A struct or tuple: skip each field in wire order.
     Struct(Vec<SkipOp>),
+}
+
+/// Advance the reader past one writer value described by `op`, writing nothing to
+/// memory. The wire-shape mirror of the decode cursor moves, sharing the
+/// `read_len`/`skip_pad`/`read_u8`/`read_u32` and bounds checks the decoders use.
+///
+/// One implementation, two consumers: the interpreter's `MemOp::SkipWire` arm and
+/// the JIT's `phon_stencil_skipwire` wrapper both call this, so writer-only fields
+/// are consumed identically regardless of decode engine.
+///
+/// An enum wire index matching no arm is hostile input; here it becomes
+/// [`DecodeError::Malformed`] (the JIT maps its skip-failure status the same way).
+///
+/// Spec: `r[compat.skip-writer-only]`.
+///
+/// # Errors
+/// [`DecodeError`] for truncated input, a bad `Option` presence byte, or an enum
+/// wire index with no matching arm.
+// r[impl compat.skip-writer-only]
+pub fn skip(r: &mut Reader, op: &SkipOp) -> Result<(), DecodeError> {
+    match op {
+        SkipOp::Scalar { size, align } => {
+            skip_pad(r, *align)?;
+            r.read_slice(*size)?;
+            Ok(())
+        }
+        SkipOp::Bytes { stride, elem_align } => {
+            let count = r.read_len((*stride).max(1))?;
+            skip_pad(r, *elem_align)?;
+            r.read_slice(count * stride)?;
+            Ok(())
+        }
+        SkipOp::Seq(element) => {
+            let count = r.read_len(1)?;
+            for _ in 0..count {
+                skip(r, element)?;
+            }
+            Ok(())
+        }
+        SkipOp::Option(inner) => match r.read_u8()? {
+            0 => Ok(()),
+            1 => skip(r, inner),
+            b => Err(DecodeError::InvalidBool(b)),
+        },
+        SkipOp::Enum(arms) => {
+            let wire_index = r.read_u32()?;
+            let (_, fields) = arms
+                .iter()
+                .find(|(idx, _)| *idx == wire_index)
+                .ok_or(DecodeError::Malformed("enum variant index out of range"))?;
+            for f in fields {
+                skip(r, f)?;
+            }
+            Ok(())
+        }
+        SkipOp::Map(key, value) => {
+            let count = r.read_len(1)?;
+            for _ in 0..count {
+                skip(r, key)?;
+                skip(r, value)?;
+            }
+            Ok(())
+        }
+        SkipOp::Struct(fields) => {
+            for f in fields {
+                skip(r, f)?;
+            }
+            Ok(())
+        }
+    }
 }
 
 /// An owned-sequence op's payload (boxed in [`MemOp::Sequence`] to keep `MemOp`

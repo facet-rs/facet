@@ -1193,8 +1193,9 @@ unsafe fn decode_program(program: &MemProgram, r: &mut Reader, base: *mut u8) ->
                 }
             }
             // r[impl compat.skip-writer-only] — consume a writer-only value's wire
-            // bytes; write nothing to memory.
-            MemOp::SkipWire(s) => skip(s, r)?,
+            // bytes; write nothing to memory. The walker lives in `phon-ir` next to
+            // `SkipOp`, shared with the JIT so both decode engines skip identically.
+            MemOp::SkipWire(s) => phon_ir::ir::skip(r, s)?,
             // r[impl compat.reader-only-fields] — write a reader-only field's
             // default in place; read no wire.
             MemOp::Default(d) => {
@@ -1205,62 +1206,6 @@ unsafe fn decode_program(program: &MemProgram, r: &mut Reader, base: *mut u8) ->
         }
     }
     Ok(())
-}
-
-/// Advance the reader past one writer value described by `skel`, writing nothing
-/// to memory. The wire-shape mirror of [`decode_program`]'s cursor moves, sharing
-/// its `read_len`/`skip_pad`/`read_u8`/`read_u32` and bounds checks.
-fn skip(skel: &SkipOp, r: &mut Reader) -> Result<()> {
-    match skel {
-        SkipOp::Scalar { size, align } => {
-            skip_pad(r, *align)?;
-            r.read_slice(*size)?;
-            Ok(())
-        }
-        SkipOp::Bytes { stride, elem_align } => {
-            let count = r.read_len((*stride).max(1))?;
-            skip_pad(r, *elem_align)?;
-            r.read_slice(count * stride)?;
-            Ok(())
-        }
-        SkipOp::Seq(element) => {
-            let count = r.read_len(1)?;
-            for _ in 0..count {
-                skip(element, r)?;
-            }
-            Ok(())
-        }
-        SkipOp::Option(inner) => match r.read_u8()? {
-            0 => Ok(()),
-            1 => skip(inner, r),
-            b => Err(CompactError::Decode(DecodeError::InvalidBool(b))),
-        },
-        SkipOp::Enum(arms) => {
-            let wire_index = r.read_u32()?;
-            let (_, fields) = arms
-                .iter()
-                .find(|(idx, _)| *idx == wire_index)
-                .ok_or(CompactError::BadVariantIndex(wire_index))?;
-            for f in fields {
-                skip(f, r)?;
-            }
-            Ok(())
-        }
-        SkipOp::Map(key, value) => {
-            let count = r.read_len(1)?;
-            for _ in 0..count {
-                skip(key, r)?;
-                skip(value, r)?;
-            }
-            Ok(())
-        }
-        SkipOp::Struct(fields) => {
-            for f in fields {
-                skip(f, r)?;
-            }
-            Ok(())
-        }
-    }
 }
 
 /// Allocate an engine-owned scratch buffer of `size`/`align` for a decoded
