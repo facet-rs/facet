@@ -17,12 +17,9 @@ pub use descriptor::{
     VariantAccess,
 };
 
-/// The intermediate representation in its two forms: the value-shaped tree
-/// produced by planning, and the linear op stream it lowers to. One op
-/// vocabulary serves both encode and decode.
-///
-/// Spec: "The intermediate representation" (`r[ir.*]`).
-pub mod ir {}
+pub mod ir;
+
+pub use ir::{EnumArm, Op, Program};
 
 /// Thunk bindings: resolving thunk names to process-local function pointers
 /// before an encoder or decoder is built. An unbound name is a build-time error.

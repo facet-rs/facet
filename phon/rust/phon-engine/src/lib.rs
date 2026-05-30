@@ -18,11 +18,9 @@ pub mod plan;
 
 pub use plan::Plan;
 
-/// The interpreter: walk the lowered IR directly. The reference semantics every
-/// JIT must match exactly.
-///
-/// Spec: `r[exec.interpreter-baseline]`, `r[ir.total]`.
-pub mod interp {}
+pub mod interp;
+
+pub use interp::run;
 
 /// The hostile-input validation discipline every decode path enforces: length
 /// and dimension bounds, depth limits, tag/text checks, set/map uniqueness, and

@@ -26,6 +26,8 @@ use phon_schema::{
     read_value,
 };
 
+use phon_ir::ir::{EnumArm, Op, Program};
+
 use crate::compact::{self, CompactError, Registry, Resolved};
 
 type Result<T> = core::result::Result<T, CompactError>;
@@ -121,6 +123,23 @@ pub fn decode_with_plan(bytes: &[u8], plan: &Plan, reg: &Registry) -> Result<Val
 pub fn decode(bytes: &[u8], writer_root: SchemaId, reader_root: SchemaId, reg: &Registry) -> Result<Value> {
     let plan = build_plan(writer_root, reader_root, reg)?;
     decode_with_plan(bytes, &plan, reg)
+}
+
+/// Build a plan, lower it to the linear IR, and run the interpreter — the flat
+/// counterpart to [`decode`]. The interpreter must produce the same value the
+/// recursive [`decode_with_plan`] would; the drift tests assert exactly that.
+///
+/// # Errors
+/// As [`build_plan`] and [`crate::interp::run`].
+pub fn decode_via_ir(
+    bytes: &[u8],
+    writer_root: SchemaId,
+    reader_root: SchemaId,
+    reg: &Registry,
+) -> Result<Value> {
+    let plan = build_plan(writer_root, reader_root, reg)?;
+    let program = lower(&plan);
+    crate::interp::run(&program, bytes, reg)
 }
 
 // ============================================================================
@@ -326,6 +345,112 @@ fn plan_payload(
 }
 
 // ============================================================================
+// Lowering the plan to the linear IR
+// ============================================================================
+
+/// Flatten a built plan's `Node` tree into a linear [`Program`]. Every
+/// type-directed decision the tree encodes is resolved here, once; what the
+/// interpreter runs carries only data-directed control flow. A struct of structs
+/// of scalars lowers to a single branch-free run of ops.
+// r[impl ir.two-forms]
+#[must_use]
+pub fn lower(plan: &Plan) -> Program {
+    let mut out = Vec::new();
+    lower_node(&plan.0, &mut out);
+    out
+}
+
+fn lower_subtree(node: &Node) -> Program {
+    let mut out = Vec::new();
+    lower_node(node, &mut out);
+    out
+}
+
+/// Append the ops for `node`. A complete node nets one value on the stack.
+fn lower_node(node: &Node, out: &mut Program) {
+    match node {
+        Node::Scalar(p) => out.push(Op::Scalar(*p)),
+        Node::Dynamic => out.push(Op::Dynamic),
+        Node::Struct(sp) => lower_struct(sp, out),
+        Node::Enum(by_index) => {
+            let mut arms: Vec<EnumArm> = by_index
+                .iter()
+                .map(|(idx, vp)| EnumArm {
+                    writer_index: *idx,
+                    reader_name: vp.reader.clone(),
+                    payload: lower_payload(&vp.payload),
+                })
+                .collect();
+            // Deterministic order; the interpreter dispatches by writer_index.
+            arms.sort_by_key(|a| a.writer_index);
+            out.push(Op::Enum { arms });
+        }
+        Node::Tuple(nodes) => {
+            for n in nodes {
+                lower_node(n, out);
+            }
+            out.push(Op::Array { count: nodes.len() });
+        }
+        Node::Seq { set, element } => out.push(Op::Seq {
+            set: *set,
+            body: lower_subtree(element),
+        }),
+        Node::Map { key, value } => out.push(Op::Map {
+            key: lower_subtree(key),
+            value: lower_subtree(value),
+        }),
+        Node::Array { element, dims } => out.push(Op::FixedArray {
+            dimensions: dims.clone(),
+            body: lower_subtree(element),
+        }),
+        Node::Option(element) => out.push(Op::Option {
+            some: lower_subtree(element),
+        }),
+    }
+}
+
+/// Each writer field in wire order (a matched field's value, or a skip for a
+/// writer-only one), then a null per reader-only default, then assemble the
+/// object. The `keys` track the stack values the `Object` op will name.
+///
+/// A field that is itself a fixed structure splices its ops inline here (via
+/// `lower_node`); only dynamic-length and branching children become sub-programs.
+// r[impl ir.inlining]
+fn lower_struct(sp: &StructPlan, out: &mut Program) {
+    let mut keys = Vec::new();
+    for step in &sp.steps {
+        match step {
+            Step::Take { reader, node } => {
+                lower_node(node, out);
+                keys.push(reader.clone());
+            }
+            Step::Skip(writer_ref) => out.push(Op::Skip(writer_ref.clone())),
+        }
+    }
+    for name in &sp.defaults {
+        out.push(Op::Null);
+        keys.push(name.clone());
+    }
+    out.push(Op::Object { keys });
+}
+
+fn lower_payload(payload: &Payload) -> Program {
+    let mut out = Vec::new();
+    match payload {
+        Payload::Unit => out.push(Op::Null),
+        Payload::Newtype(node) => lower_node(node, &mut out),
+        Payload::Tuple(nodes) => {
+            for n in nodes {
+                lower_node(n, &mut out);
+            }
+            out.push(Op::Array { count: nodes.len() });
+        }
+        Payload::Struct(sp) => lower_struct(sp, &mut out),
+    }
+    out
+}
+
+// ============================================================================
 // Executing the plan
 // ============================================================================
 
@@ -485,6 +610,15 @@ mod tests {
         o.into()
     }
 
+    /// Decode through both the recursive `exec` and the lowered IR, assert they
+    /// agree, and return the value. `exec` is the oracle for the interpreter.
+    fn decode_both(bytes: &[u8], w: SchemaId, r: SchemaId, reg: &Registry) -> Value {
+        let recursive = decode(bytes, w, r, reg).unwrap();
+        let flat = decode_via_ir(bytes, w, r, reg).unwrap();
+        assert_eq!(recursive, flat, "IR interpreter disagreed with recursive exec");
+        recursive
+    }
+
     #[test]
     fn field_reorder_is_transparent() {
         // writer: { x: u32, y: u32 }; reader: { y: u32, x: u32 }
@@ -509,7 +643,7 @@ mod tests {
             &reg,
         )
         .unwrap();
-        let got = decode(&bytes, SchemaId(1), SchemaId(2), &reg).unwrap();
+        let got = decode_both(&bytes, SchemaId(1), SchemaId(2), &reg);
         assert_eq!(got, obj(&[("x", Value::from(7u32)), ("y", Value::from(9u32))]));
     }
 
@@ -531,7 +665,7 @@ mod tests {
             &reg,
         )
         .unwrap();
-        let got = decode(&bytes, SchemaId(1), SchemaId(2), &reg).unwrap();
+        let got = decode_both(&bytes, SchemaId(1), SchemaId(2), &reg);
         assert_eq!(got, obj(&[("x", Value::from(7u32))]));
     }
 
@@ -556,11 +690,15 @@ mod tests {
         let reg = Registry::new([writer, optional, required]);
         let bytes = compact::to_bytes(&obj(&[("x", Value::from(7u32))]), SchemaId(1), &reg).unwrap();
 
-        let got = decode(&bytes, SchemaId(1), SchemaId(2), &reg).unwrap();
+        let got = decode_both(&bytes, SchemaId(1), SchemaId(2), &reg);
         assert_eq!(got, obj(&[("x", Value::from(7u32)), ("extra", Value::NULL)]));
 
         assert!(matches!(
             build_plan(SchemaId(1), SchemaId(3), &reg),
+            Err(CompactError::Incompatible(_))
+        ));
+        assert!(matches!(
+            decode_via_ir(&bytes, SchemaId(1), SchemaId(3), &reg),
             Err(CompactError::Incompatible(_))
         ));
     }
@@ -572,6 +710,10 @@ mod tests {
         let reg = Registry::new([writer, reader]);
         assert!(matches!(
             build_plan(SchemaId(1), SchemaId(2), &reg),
+            Err(CompactError::Incompatible(_))
+        ));
+        assert!(matches!(
+            decode_via_ir(&[], SchemaId(1), SchemaId(2), &reg),
             Err(CompactError::Incompatible(_))
         ));
     }
@@ -626,17 +768,21 @@ mod tests {
         let bytes = compact::to_bytes(&b, SchemaId(1), &reg).unwrap();
 
         // reader_more can read B fine (C just goes unused).
-        assert_eq!(decode(&bytes, SchemaId(1), SchemaId(2), &reg).unwrap(), b);
+        assert_eq!(decode_both(&bytes, SchemaId(1), SchemaId(2), &reg), b);
 
         // reader_fewer plans (A matches), but receiving B is a decode error.
         assert!(matches!(
             decode(&bytes, SchemaId(1), SchemaId(3), &reg),
             Err(CompactError::WriterOnlyVariant(1))
         ));
+        assert!(matches!(
+            decode_via_ir(&bytes, SchemaId(1), SchemaId(3), &reg),
+            Err(CompactError::WriterOnlyVariant(1))
+        ));
         // an A value still decodes against reader_fewer.
         let a = obj(&[("A", Value::NULL)]);
         let a_bytes = compact::to_bytes(&a, SchemaId(1), &reg).unwrap();
-        assert_eq!(decode(&a_bytes, SchemaId(1), SchemaId(3), &reg).unwrap(), a);
+        assert_eq!(decode_both(&a_bytes, SchemaId(1), SchemaId(3), &reg), a);
     }
 
     #[test]
@@ -671,7 +817,7 @@ mod tests {
             &reg,
         )
         .unwrap();
-        let got = decode(&bytes, SchemaId(1), SchemaId(2), &reg).unwrap();
+        let got = decode_both(&bytes, SchemaId(1), SchemaId(2), &reg);
         assert_eq!(
             got,
             obj(&[("inner", obj(&[("a", Value::from(5u32)), ("b", Value::NULL)]))])
