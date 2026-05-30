@@ -72,6 +72,24 @@ pub struct SeqInfo {
     pub element_prog: *const u64,
 }
 
+/// A bulk byte-run op's immediates, reached through a `*const BytesInfo` slot in
+/// `Ctx.prog`. Unlike [`SeqInfo`] there is no element body: the run is one bulk
+/// word-wise copy, no per-element call-program. Mirrors `BytesOp` (non-UTF-8).
+#[repr(C)]
+pub struct BytesInfo {
+    /// Where the owned handle (the `Vec`) lives, relative to `base`.
+    pub field_offset: usize,
+    /// Bytes per element (the element type's size).
+    pub stride: usize,
+    /// Alignment of the contiguous element buffer.
+    pub elem_align: usize,
+    /// Opaque per-type context passed to the thunks.
+    pub thunks_ctx: *const (),
+    /// `*list = Vec::from_raw_parts(ptr, len, cap)` — `cap == len` (element count).
+    pub from_raw_parts:
+        unsafe extern "C" fn(ctx: *const (), list: *mut u8, ptr: *mut u8, len: usize, cap: usize),
+}
+
 extern "C" {
     fn phon_cont(cx: *mut Ctx);
 }
@@ -199,6 +217,98 @@ pub unsafe extern "C" fn phon_stencil_sequence(cx: *mut Ctx) {
     phon_cont(cx);
 }
 
+/// Decode a bulk byte run (non-UTF-8) into `base + field_offset`, then continue.
+///
+/// Reads a `u32` count (bounds-checked against `remaining / stride.max(1)`, like
+/// `read_len`), pads the wire to `elem_align`, then bulk-copies `count * stride`
+/// contiguous bytes from the wire into a freshly allocated, `elem_align`-aligned
+/// buffer (count 0 → dangling pointer, cap 0, no allocation), and adopts it into
+/// the handle via `from_raw_parts` with `cap == count` (the ELEMENT count). No
+/// per-element loop: the run is one word-wise inline copy, so the only relocation
+/// the copied stencil carries is the `phon_cont` `BRANCH26`.
+#[no_mangle]
+pub unsafe extern "C" fn phon_stencil_bytes(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let info = &*(*c.prog as *const BytesInfo);
+    let outer_prog = c.prog.add(1);
+
+    // Read the u32 count with a bounds check (no alignment padding yet, like
+    // `read_len` -> `read_u32`).
+    if (c.wire as usize).wrapping_add(4) > c.wire_end as usize {
+        c.status = 1;
+        return;
+    }
+    let mut count_bytes = [0u8; 4];
+    core::ptr::copy_nonoverlapping(c.wire, count_bytes.as_mut_ptr(), 4);
+    let count = u32::from_le_bytes(count_bytes) as usize;
+    c.wire = c.wire.add(4);
+
+    // Length-vs-remaining check: each element costs at least `stride.max(1)`
+    // bytes (mirrors `read_len(stride.max(1))`), measured before padding.
+    let remaining = (c.wire_end as usize) - (c.wire as usize);
+    let min = if info.stride == 0 { 1 } else { info.stride };
+    if count > remaining / min {
+        c.status = 1;
+        return;
+    }
+
+    // Pad the wire to `elem_align`, measured from the message start.
+    let pos = (c.wire as usize) - (c.wire_start as usize);
+    let pad = info.elem_align.wrapping_sub(pos & (info.elem_align - 1)) & (info.elem_align - 1);
+    let src = c.wire.add(pad);
+
+    // The whole run must fit (the real bounds check for the bulk copy).
+    let total = count * info.stride;
+    if (src as usize).wrapping_add(total) > c.wire_end as usize {
+        c.status = 1;
+        return;
+    }
+
+    // Allocate the element buffer (engine-owned). total 0 -> dangling aligned.
+    let (buffer, cap) = if total == 0 {
+        (info.elem_align as *mut u8, 0usize)
+    } else {
+        let buf = (c.alloc)(total, info.elem_align);
+        // alloc returns null only on size 0; total > 0 here, so null means OOM.
+        if buf.is_null() {
+            c.status = 1;
+            return;
+        }
+        // Word-wise copy of `total` bytes (a runtime length, any value). An inline
+        // copy — never a `memcpy` libcall, which a copied stencil can't relocate.
+        let mut i = 0;
+        while total - i >= 8 {
+            core::ptr::copy_nonoverlapping(src.add(i), buf.add(i), 8);
+            i += 8;
+        }
+        if total - i >= 4 {
+            core::ptr::copy_nonoverlapping(src.add(i), buf.add(i), 4);
+            i += 4;
+        }
+        if total - i >= 2 {
+            core::ptr::copy_nonoverlapping(src.add(i), buf.add(i), 2);
+            i += 2;
+        }
+        if total - i >= 1 {
+            core::ptr::copy_nonoverlapping(src.add(i), buf.add(i), 1);
+        }
+        // cap is the ELEMENT count, not the byte total.
+        (buf, count)
+    };
+
+    c.wire = src.add(total);
+
+    // Adopt the buffer into the handle, then continue.
+    let list = c.base.add(info.field_offset);
+    (info.from_raw_parts)(info.thunks_ctx, list, buffer, count, cap);
+    c.prog = outer_prog;
+
+    #[cfg(tailcall)]
+    become phon_cont(cx);
+    #[cfg(not(tailcall))]
+    phon_cont(cx);
+}
+
 /// Terminal stencil: stop, leaving `status` unchanged (0 = ok).
 #[no_mangle]
 pub unsafe extern "C" fn phon_stencil_done(_cx: *mut Ctx) {}
@@ -269,6 +379,25 @@ pub struct EncSeqInfo {
     pub element_entry: unsafe extern "C" fn(cx: *mut EncCtx),
     /// The element body's immediate triples (reset into `EncCtx.prog` per element).
     pub element_prog: *const u64,
+}
+
+/// An encode bulk byte-run op's immediates, reached through a `*const EncBytesInfo`
+/// slot in `EncCtx.prog`. Mirrors `EncSeqInfo` minus the element body: the run is
+/// one bulk word-wise copy, no per-element loop.
+#[repr(C)]
+pub struct EncBytesInfo {
+    /// Where the owned handle (the `Vec`) lives, relative to `base`.
+    pub field_offset: usize,
+    /// Bytes per element (the element type's size).
+    pub stride: usize,
+    /// Alignment of the contiguous element buffer (wire padding before the run).
+    pub elem_align: usize,
+    /// Opaque per-type context passed to the thunks.
+    pub thunks_ctx: *const (),
+    /// The handle's current element count.
+    pub len: unsafe extern "C" fn(ctx: *const (), list: *const u8) -> usize,
+    /// A pointer to the handle's contiguous element storage (for reading).
+    pub data: unsafe extern "C" fn(ctx: *const (), list: *const u8) -> *const u8,
 }
 
 extern "C" {
@@ -374,6 +503,79 @@ pub unsafe extern "C" fn phon_stencil_sequence_enc(cx: *mut EncCtx) {
 
     // Restore the outer cursors and continue.
     c.base = outer_base;
+    c.prog = outer_prog;
+
+    #[cfg(tailcall)]
+    become phon_econt(cx);
+    #[cfg(not(tailcall))]
+    phon_econt(cx);
+}
+
+/// Encode a bulk byte run (non-UTF-8) from `base + field_offset`, then continue.
+///
+/// Reads the element count via the `len` thunk, writes it as a `u32` (no
+/// alignment, like `write_u32`), pads the output to `elem_align`, gets the
+/// contiguous element storage via the `data` thunk, then bulk-copies
+/// `count * stride` bytes out in one inline word-wise run (no per-element loop, no
+/// `memcpy` libcall). The only relocation the copied stencil carries is the
+/// `phon_econt` `BRANCH26`.
+#[no_mangle]
+pub unsafe extern "C" fn phon_stencil_bytes_enc(cx: *mut EncCtx) {
+    let c = &mut *cx;
+    let info = &*(*c.prog as *const EncBytesInfo);
+    let outer_prog = c.prog.add(1);
+
+    let list = c.base.add(info.field_offset);
+    let count = (info.len)(info.thunks_ctx, list);
+    let total = count * info.stride;
+
+    // Write the u32 count (no alignment padding, like `write_u32`), then pad the
+    // output to `elem_align`, then ensure room for the whole run.
+    let pad = info.elem_align.wrapping_sub((c.out_pos + 4) & (info.elem_align - 1))
+        & (info.elem_align - 1);
+    let need = c.out_pos + 4 + pad + total;
+    if need > c.out_cap {
+        (c.grow)(cx, need);
+    }
+
+    let count_bytes = (count as u32).to_le_bytes();
+    core::ptr::copy_nonoverlapping(count_bytes.as_ptr(), c.out_ptr.add(c.out_pos), 4);
+    c.out_pos += 4;
+
+    // Zero the padding bytes. `write_volatile` keeps LLVM from lowering the loop
+    // to a `bzero`/`memset` libcall a copied stencil can't relocate; `pad < align`
+    // is small.
+    let mut dst = c.out_ptr.add(c.out_pos);
+    let mut k = 0;
+    while k < pad {
+        core::ptr::write_volatile(dst, 0u8);
+        dst = dst.add(1);
+        k += 1;
+    }
+    c.out_pos += pad;
+
+    // Bulk-copy `total` bytes from the contiguous element storage. Word-wise
+    // inline copy of a runtime length — never a `memcpy` libcall.
+    let srcp = (info.data)(info.thunks_ctx, list);
+    let dstp = c.out_ptr.add(c.out_pos);
+    let mut i = 0;
+    while total - i >= 8 {
+        core::ptr::copy_nonoverlapping(srcp.add(i), dstp.add(i), 8);
+        i += 8;
+    }
+    if total - i >= 4 {
+        core::ptr::copy_nonoverlapping(srcp.add(i), dstp.add(i), 4);
+        i += 4;
+    }
+    if total - i >= 2 {
+        core::ptr::copy_nonoverlapping(srcp.add(i), dstp.add(i), 2);
+        i += 2;
+    }
+    if total - i >= 1 {
+        core::ptr::copy_nonoverlapping(srcp.add(i), dstp.add(i), 1);
+    }
+    c.out_pos += total;
+
     c.prog = outer_prog;
 
     #[cfg(tailcall)]

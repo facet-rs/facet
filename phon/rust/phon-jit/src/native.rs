@@ -20,8 +20,8 @@ use phon_ir::ir::{MemOp, MemProgram};
 use phon_schema::DecodeError;
 
 use crate::stencils::{
-    DONE, DONE_ENC, SCALAR, SCALAR_CONT, SCALAR_ENC, SCALAR_ENC_CONT, SEQUENCE, SEQUENCE_CONT,
-    SEQUENCE_ENC, SEQUENCE_ENC_CONT,
+    BYTES, BYTES_CONT, BYTES_ENC, BYTES_ENC_CONT, DONE, DONE_ENC, SCALAR, SCALAR_CONT, SCALAR_ENC,
+    SCALAR_ENC_CONT, SEQUENCE, SEQUENCE_CONT, SEQUENCE_ENC, SEQUENCE_ENC_CONT,
 };
 
 unsafe extern "C" {
@@ -127,6 +127,20 @@ struct SeqInfo {
     element_prog: *const u64,
 }
 
+/// A bulk byte-run op's immediates, matching `BytesInfo` in
+/// `stencils/stencils.rs` byte for byte. Reached through a `*const BytesInfo` slot
+/// in the prog stream. Unlike [`SeqInfo`] there is no element body — the run is one
+/// bulk copy — so it needs no `ExecBuf`-relative binding.
+#[repr(C)]
+struct BytesInfo {
+    field_offset: usize,
+    stride: usize,
+    elem_align: usize,
+    thunks_ctx: *const (),
+    from_raw_parts:
+        unsafe extern "C" fn(ctx: *const (), list: *mut u8, ptr: *mut u8, len: usize, cap: usize),
+}
+
 /// Allocate `size` bytes aligned to `align` with the global Rust allocator, so a
 /// `Vec` adopting the buffer via `from_raw_parts` frees it with the same
 /// allocator. Returns null on `size == 0`; the stencil substitutes a dangling
@@ -165,6 +179,9 @@ pub struct NativeDecode {
     /// capacity, never re-grown, and a `Vec` move leaves the heap in place — so
     /// the `*const SeqInfo` the prog stream holds stays valid.
     seq_infos: Vec<SeqInfo>,
+    /// One per bulk byte-run op: the immediates the bytes stencil reads through its
+    /// prog slot. Same stability contract as `seq_infos`.
+    bytes_infos: Vec<BytesInfo>,
 }
 
 /// A compiled element chain: where its first stencil begins in `code`, and which
@@ -180,6 +197,14 @@ struct SeqFixup {
     prog_index: usize,
     slot: usize,
     seqinfo: usize,
+}
+
+/// A bulk byte-run's prog slot to fill once `bytes_infos` is in its final home:
+/// write `&bytes_infos[bytesinfo]` into `progs[prog_index][slot]`.
+struct BytesFixup {
+    prog_index: usize,
+    slot: usize,
+    bytesinfo: usize,
 }
 
 /// A sequence's `SeqInfo` minus the two fields only known after the `ExecBuf` is
@@ -204,6 +229,9 @@ struct Compiler {
     progs: Vec<Vec<u64>>,
     seq_infos: Vec<SeqInfoBuild>,
     fixups: Vec<SeqFixup>,
+    /// Built directly (no `ExecBuf`-relative fields): one per bulk byte-run op.
+    bytes_infos: Vec<BytesInfo>,
+    bytes_fixups: Vec<BytesFixup>,
 }
 
 impl Compiler {
@@ -249,8 +277,25 @@ impl Compiler {
                     });
                     self.fixups.push(SeqFixup { prog_index, slot, seqinfo });
                 }
-                MemOp::Bytes(_) => {
-                    panic!("phon-jit: bulk byte runs (String) are interpreter-only for now")
+                MemOp::Bytes(b) => {
+                    assert!(
+                        !b.utf8,
+                        "phon-jit: UTF-8 bulk runs (String) are interpreter-only for now"
+                    );
+                    self.code.extend_from_slice(BYTES);
+                    // The bytes stencil reads one prog slot: a `*const BytesInfo`
+                    // filled in pass 2. Reserve it and record the fixup now.
+                    let slot = self.progs[prog_index].len();
+                    self.progs[prog_index].push(0);
+                    let bytesinfo = self.bytes_infos.len();
+                    self.bytes_infos.push(BytesInfo {
+                        field_offset: b.field_offset,
+                        stride: b.stride,
+                        elem_align: b.elem_align,
+                        thunks_ctx: b.thunks.ctx,
+                        from_raw_parts: b.thunks.from_raw_parts,
+                    });
+                    self.bytes_fixups.push(BytesFixup { prog_index, slot, bytesinfo });
                 }
             }
         }
@@ -265,7 +310,7 @@ impl Compiler {
             let relocs = match &program[i] {
                 MemOp::Scalar { .. } => SCALAR_CONT,
                 MemOp::Sequence(_) => SEQUENCE_CONT,
-                MemOp::Bytes(_) => unreachable!("bulk byte runs are rejected in compile_chain"),
+                MemOp::Bytes(_) => BYTES_CONT,
             };
             for &rel in relocs {
                 patch_branch26(&mut self.code, op_start + rel, next);
@@ -286,6 +331,8 @@ impl NativeDecode {
             progs: Vec::new(),
             seq_infos: Vec::new(),
             fixups: Vec::new(),
+            bytes_infos: Vec::new(),
+            bytes_fixups: Vec::new(),
         };
         let top = c.compile_chain(program);
 
@@ -324,6 +371,9 @@ impl NativeDecode {
             entry_prog: top.prog_index,
             progs,
             seq_infos,
+            // Move the byte-run infos into their final home; they carry no
+            // `ExecBuf`-relative fields, so no further binding is needed.
+            bytes_infos: c.bytes_infos,
         };
 
         // Now that `nd.progs` is in its final home, bind the prog pointers: each
@@ -334,6 +384,11 @@ impl NativeDecode {
         }
         for f in &c.fixups {
             let ptr: *const SeqInfo = &nd.seq_infos[f.seqinfo];
+            nd.progs[f.prog_index][f.slot] = ptr as u64;
+        }
+        // Bind each bulk byte-run's prog slot to its `BytesInfo` in `nd`.
+        for f in &c.bytes_fixups {
+            let ptr: *const BytesInfo = &nd.bytes_infos[f.bytesinfo];
             nd.progs[f.prog_index][f.slot] = ptr as u64;
         }
 
@@ -421,6 +476,20 @@ struct EncSeqInfo {
     element_prog: *const u64,
 }
 
+/// An encode bulk byte-run op's immediates, matching `EncBytesInfo` in
+/// `stencils/stencils.rs` byte for byte. Reached through a `*const EncBytesInfo`
+/// slot in the prog stream. Like the decode `BytesInfo`, it carries no
+/// `ExecBuf`-relative fields (no element body).
+#[repr(C)]
+struct EncBytesInfo {
+    field_offset: usize,
+    stride: usize,
+    elem_align: usize,
+    thunks_ctx: *const (),
+    len: unsafe extern "C" fn(ctx: *const (), list: *const u8) -> usize,
+    data: unsafe extern "C" fn(ctx: *const (), list: *const u8) -> *const u8,
+}
+
 /// Grow the engine-owned output `Vec<u8>` to hold at least `needed` bytes, then
 /// write the new data pointer and capacity back into the `EncCtx`. Called
 /// indirectly through `EncCtx.grow`, so the only relocation a copied encode
@@ -462,6 +531,9 @@ pub struct NativeEncode {
     /// prog slot. Built once with exact capacity, never re-grown, so the
     /// `*const EncSeqInfo` the prog stream holds stays valid.
     seq_infos: Vec<EncSeqInfo>,
+    /// One per bulk byte-run op: the immediates the bytes stencil reads through its
+    /// prog slot. Same stability contract as `seq_infos`.
+    bytes_infos: Vec<EncBytesInfo>,
 }
 
 /// An encode sequence's `EncSeqInfo` minus the two fields only known after the
@@ -484,6 +556,9 @@ struct EncCompiler {
     progs: Vec<Vec<u64>>,
     seq_infos: Vec<EncSeqInfoBuild>,
     fixups: Vec<SeqFixup>,
+    /// Built directly (no `ExecBuf`-relative fields): one per bulk byte-run op.
+    bytes_infos: Vec<EncBytesInfo>,
+    bytes_fixups: Vec<BytesFixup>,
 }
 
 impl EncCompiler {
@@ -523,8 +598,24 @@ impl EncCompiler {
                     });
                     self.fixups.push(SeqFixup { prog_index, slot, seqinfo });
                 }
-                MemOp::Bytes(_) => {
-                    panic!("phon-jit: bulk byte runs (String) are interpreter-only for now")
+                MemOp::Bytes(b) => {
+                    assert!(
+                        !b.utf8,
+                        "phon-jit: UTF-8 bulk runs (String) are interpreter-only for now"
+                    );
+                    self.code.extend_from_slice(BYTES_ENC);
+                    let slot = self.progs[prog_index].len();
+                    self.progs[prog_index].push(0);
+                    let bytesinfo = self.bytes_infos.len();
+                    self.bytes_infos.push(EncBytesInfo {
+                        field_offset: b.field_offset,
+                        stride: b.stride,
+                        elem_align: b.elem_align,
+                        thunks_ctx: b.thunks.ctx,
+                        len: b.thunks.len,
+                        data: b.thunks.data,
+                    });
+                    self.bytes_fixups.push(BytesFixup { prog_index, slot, bytesinfo });
                 }
             }
         }
@@ -536,7 +627,7 @@ impl EncCompiler {
             let relocs = match &program[i] {
                 MemOp::Scalar { .. } => SCALAR_ENC_CONT,
                 MemOp::Sequence(_) => SEQUENCE_ENC_CONT,
-                MemOp::Bytes(_) => unreachable!("bulk byte runs are rejected in compile_chain"),
+                MemOp::Bytes(_) => BYTES_ENC_CONT,
             };
             for &rel in relocs {
                 patch_branch26(&mut self.code, op_start + rel, next);
@@ -557,6 +648,8 @@ impl NativeEncode {
             progs: Vec::new(),
             seq_infos: Vec::new(),
             fixups: Vec::new(),
+            bytes_infos: Vec::new(),
+            bytes_fixups: Vec::new(),
         };
         let top = c.compile_chain(program);
 
@@ -585,6 +678,8 @@ impl NativeEncode {
             entry_prog: top.prog_index,
             progs,
             seq_infos,
+            // Move the byte-run infos into their final home; no further binding.
+            bytes_infos: c.bytes_infos,
         };
 
         for (b, info) in c.seq_infos.iter().zip(ne.seq_infos.iter_mut()) {
@@ -592,6 +687,11 @@ impl NativeEncode {
         }
         for f in &c.fixups {
             let ptr: *const EncSeqInfo = &ne.seq_infos[f.seqinfo];
+            ne.progs[f.prog_index][f.slot] = ptr as u64;
+        }
+        // Bind each bulk byte-run's prog slot to its `EncBytesInfo` in `ne`.
+        for f in &c.bytes_fixups {
+            let ptr: *const EncBytesInfo = &ne.bytes_infos[f.bytesinfo];
             ne.progs[f.prog_index][f.slot] = ptr as u64;
         }
 
@@ -709,7 +809,7 @@ mod tests {
     // ====================================================================
 
     use core::mem::MaybeUninit;
-    use phon_ir::ir::SeqOp;
+    use phon_ir::ir::{BytesOp, SeqOp};
     use phon_ir::SeqThunks;
 
     // Hand-written list thunks for `Vec<u32>`, copied from
@@ -1148,5 +1248,212 @@ mod tests {
     unsafe fn jit_encode_vec(program: &MemProgram, values: &Vec<u32>) -> Vec<u8> {
         let jit = NativeEncode::compile(program);
         unsafe { jit.run(core::ptr::from_ref(values).cast::<u8>()) }
+    }
+
+    // ====================================================================
+    // Bulk byte-run (MemOp::Bytes, non-UTF-8) decode + encode
+    // ====================================================================
+
+    /// A root program of a single bulk byte-run representing a `Vec<u32>`: stride
+    /// 4, elem_align 4, non-UTF-8. The same `Vec<u32>` thunks the sequence tests
+    /// use — `from_raw_parts` adopts a buffer, `len`/`data` read it.
+    fn vu32_bytes_program() -> MemProgram {
+        vec![MemOp::Bytes(Box::new(BytesOp {
+            field_offset: 0,
+            stride: 4,
+            elem_align: 4,
+            utf8: false,
+            thunks: vu32_thunks(),
+        }))]
+    }
+
+    /// The wire bytes for a bulk `Vec<u32>` run: a `u32` count then `count * 4`
+    /// contiguous bytes (no padding here — count ends 4-aligned, elem_align is 4).
+    fn vu32_bytes_wire(values: &[u32]) -> Vec<u8> {
+        let mut wire = (values.len() as u32).to_le_bytes().to_vec();
+        for &v in values {
+            wire.extend_from_slice(&v.to_le_bytes());
+        }
+        wire
+    }
+
+    /// JIT-decode a bulk byte run into a `Vec<u32>` and confirm the reconstructed
+    /// `Vec` equals the expected values (one block copy, no per-element loop).
+    #[test]
+    fn jit_decode_bytes_vec_u32() {
+        let program = vu32_bytes_program();
+        let values = [1u32, 2, 999, 0xDEAD_BEEF, 0x0102_0304];
+        let wire = vu32_bytes_wire(&values);
+
+        let jit = NativeDecode::compile(&program);
+        let mut slot = MaybeUninit::<Vec<u32>>::uninit();
+        unsafe { jit.run(&wire, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back, values.to_vec());
+    }
+
+    /// The empty case: count 0, no allocation, an empty `Vec`.
+    #[test]
+    fn jit_decode_bytes_empty() {
+        let program = vu32_bytes_program();
+        let wire = vu32_bytes_wire(&[]);
+        let jit = NativeDecode::compile(&program);
+        let mut slot = MaybeUninit::<Vec<u32>>::uninit();
+        unsafe { jit.run(&wire, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert!(back.is_empty());
+    }
+
+    /// A multi-KB run, exercising the word-wise bulk copy across many words and a
+    /// tail. Decode and check, then re-encode byte-identically.
+    #[test]
+    fn jit_decode_bytes_large() {
+        let program = vu32_bytes_program();
+        let values: Vec<u32> = (0..4096u32).map(|i| i.wrapping_mul(0x9E37_79B9)).collect();
+        let wire = vu32_bytes_wire(&values);
+
+        let jit = NativeDecode::compile(&program);
+        let mut slot = MaybeUninit::<Vec<u32>>::uninit();
+        unsafe { jit.run(&wire, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back, values);
+    }
+
+    /// A hostile count larger than the remaining bytes can supply must be rejected
+    /// (the count bounds check), not allocated.
+    #[test]
+    fn jit_decode_bytes_rejects_huge_count() {
+        let program = vu32_bytes_program();
+        // Claim 1_000_000 elements but supply only one element's bytes.
+        let mut wire = 1_000_000u32.to_le_bytes().to_vec();
+        wire.extend_from_slice(&7u32.to_le_bytes());
+        let jit = NativeDecode::compile(&program);
+        let mut slot = MaybeUninit::<Vec<u32>>::uninit();
+        let err = unsafe { jit.run(&wire, slot.as_mut_ptr().cast::<u8>()) }.unwrap_err();
+        assert!(matches!(err, DecodeError::UnexpectedEof { .. }));
+    }
+
+    /// JIT-encode a `Vec<u32>` bulk byte run and confirm byte-identical wire, plus
+    /// a `NativeDecode` round-trip.
+    #[test]
+    fn jit_encode_bytes_vec_u32() {
+        let program = vu32_bytes_program();
+        let values = vec![1u32, 2, 999, 0xDEAD_BEEF, 0x0102_0304];
+
+        let jit = NativeEncode::compile(&program);
+        let got = unsafe { jit.run(core::ptr::from_ref(&values).cast::<u8>()) };
+        assert_eq!(got, vu32_bytes_wire(&values));
+
+        // Round-trip back into a fresh `Vec<u32>`.
+        let dec = NativeDecode::compile(&program);
+        let mut slot = MaybeUninit::<Vec<u32>>::uninit();
+        unsafe { dec.run(&got, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back, values);
+    }
+
+    /// The empty encode case: just a zero `u32` count.
+    #[test]
+    fn jit_encode_bytes_empty() {
+        let program = vu32_bytes_program();
+        let values: Vec<u32> = Vec::new();
+        let jit = NativeEncode::compile(&program);
+        let got = unsafe { jit.run(core::ptr::from_ref(&values).cast::<u8>()) };
+        assert_eq!(got, 0u32.to_le_bytes().to_vec());
+    }
+
+    /// A large (multi-KB) round-trip: encode then decode, byte-identical wire and
+    /// equal values, forcing the output buffer to grow under the bulk copy.
+    #[test]
+    fn jit_encode_bytes_large_roundtrips() {
+        let program = vu32_bytes_program();
+        let values: Vec<u32> = (0..4096u32).map(|i| i.wrapping_mul(0x85EB_CA77)).collect();
+
+        let jit = NativeEncode::compile(&program);
+        let got = unsafe { jit.run(core::ptr::from_ref(&values).cast::<u8>()) };
+        assert_eq!(got, vu32_bytes_wire(&values));
+
+        let dec = NativeDecode::compile(&program);
+        let mut slot = MaybeUninit::<Vec<u32>>::uninit();
+        unsafe { dec.run(&got, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back, values);
+    }
+
+    /// A bulk byte run embedded after scalars, exercising wire alignment padding
+    /// before the run (`{ u8 @ 0, Vec<u32> @ 8 }` → u8, pad to the count, count,
+    /// then the run padded to elem_align 4).
+    #[test]
+    fn jit_bytes_after_scalar_roundtrips() {
+        #[repr(C)]
+        struct S {
+            tag: u8,
+            v: Vec<u32>,
+        }
+        let v_off = core::mem::offset_of!(S, v);
+        let program: MemProgram = vec![
+            MemOp::Scalar { offset: core::mem::offset_of!(S, tag), size: 1, align: 1 },
+            MemOp::Bytes(Box::new(BytesOp {
+                field_offset: v_off,
+                stride: 4,
+                elem_align: 4,
+                utf8: false,
+                thunks: vu32_thunks(),
+            })),
+        ];
+
+        let s = S { tag: 0xAB, v: vec![10u32, 20, 30] };
+        let base = core::ptr::from_ref(&s).cast::<u8>();
+
+        let enc = NativeEncode::compile(&program);
+        let got = unsafe { enc.run(base) };
+
+        // Known wire: u8 tag, then the count u32 (no pad — count starts at offset 1
+        // and `write_u32` is unaligned), then the run padded to elem_align 4.
+        let mut want = vec![0xABu8];
+        want.extend_from_slice(&(s.v.len() as u32).to_le_bytes());
+        // After 1 + 4 = 5 bytes, pad to a multiple of 4 -> 3 pad bytes to reach 8.
+        want.extend_from_slice(&[0, 0, 0]);
+        for &x in &s.v {
+            want.extend_from_slice(&x.to_le_bytes());
+        }
+        assert_eq!(got, want);
+
+        // Round-trip back into a fresh struct image and compare fields.
+        let dec = NativeDecode::compile(&program);
+        let mut slot = MaybeUninit::<S>::uninit();
+        unsafe { dec.run(&got, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back.tag, s.tag);
+        assert_eq!(back.v, s.v);
+    }
+
+    /// A `utf8: true` bulk run must panic — String-in-the-JIT needs in-stencil
+    /// UTF-8 validation, a separate follow-on.
+    #[test]
+    #[should_panic(expected = "UTF-8 bulk runs (String) are interpreter-only")]
+    fn jit_decode_bytes_utf8_panics() {
+        let program: MemProgram = vec![MemOp::Bytes(Box::new(BytesOp {
+            field_offset: 0,
+            stride: 1,
+            elem_align: 1,
+            utf8: true,
+            thunks: vu32_thunks(),
+        }))];
+        let _ = NativeDecode::compile(&program);
+    }
+
+    /// The encode side rejects `utf8: true` the same way.
+    #[test]
+    #[should_panic(expected = "UTF-8 bulk runs (String) are interpreter-only")]
+    fn jit_encode_bytes_utf8_panics() {
+        let program: MemProgram = vec![MemOp::Bytes(Box::new(BytesOp {
+            field_offset: 0,
+            stride: 1,
+            elem_align: 1,
+            utf8: true,
+            thunks: vu32_thunks(),
+        }))];
+        let _ = NativeEncode::compile(&program);
     }
 }

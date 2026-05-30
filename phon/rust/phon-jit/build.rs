@@ -75,9 +75,11 @@ fn emit_arm64_macos(out: &Path, generated: &Path) {
     let smoke = extract(&bytes, "phon_stencil_smoke", "phon_cont");
     let scalar = extract(&bytes, "phon_stencil_scalar", "phon_cont");
     let sequence = extract(&bytes, "phon_stencil_sequence", "phon_cont");
+    let bytes_dec = extract(&bytes, "phon_stencil_bytes", "phon_cont");
     let done = extract(&bytes, "phon_stencil_done", "phon_cont");
     let scalar_enc = extract(&bytes, "phon_stencil_scalar_enc", "phon_econt");
     let sequence_enc = extract(&bytes, "phon_stencil_sequence_enc", "phon_econt");
+    let bytes_enc = extract(&bytes, "phon_stencil_bytes_enc", "phon_econt");
     let done_enc = extract(&bytes, "phon_stencil_done_enc", "phon_econt");
 
     let mode = if tailcall { "tail-call (nightly become)" } else { "call (stable)" };
@@ -114,6 +116,18 @@ fn emit_arm64_macos(out: &Path, generated: &Path) {
         sequence.cont_relocs
     ));
     src.push_str(&format!(
+        "/// `phon_stencil_bytes` machine code: decode one bulk byte run (non-UTF-8),\n\
+         /// continue. One inline word-wise block copy, no per-element loop.\n\
+         pub const BYTES: &[u8] = &{:?};\n",
+        bytes_dec.bytes
+    ));
+    src.push_str(&format!(
+        "/// Byte offsets within `BYTES` of the `phon_cont` continuation branch to\n\
+         /// patch (`BRANCH26`).\n\
+         pub const BYTES_CONT: &[usize] = &{:?};\n",
+        bytes_dec.cont_relocs
+    ));
+    src.push_str(&format!(
         "/// `phon_stencil_done` machine code: a lone `ret`.\n\
          pub const DONE: &[u8] = &{:?};\n",
         done.bytes
@@ -141,6 +155,18 @@ fn emit_arm64_macos(out: &Path, generated: &Path) {
          /// branch to patch (`BRANCH26`).\n\
          pub const SEQUENCE_ENC_CONT: &[usize] = &{:?};\n",
         sequence_enc.cont_relocs
+    ));
+    src.push_str(&format!(
+        "/// `phon_stencil_bytes_enc` machine code: encode one bulk byte run\n\
+         /// (non-UTF-8), continue. One inline word-wise block copy, no per-element loop.\n\
+         pub const BYTES_ENC: &[u8] = &{:?};\n",
+        bytes_enc.bytes
+    ));
+    src.push_str(&format!(
+        "/// Byte offsets within `BYTES_ENC` of the `phon_econt` continuation branch\n\
+         /// to patch (`BRANCH26`).\n\
+         pub const BYTES_ENC_CONT: &[usize] = &{:?};\n",
+        bytes_enc.cont_relocs
     ));
     src.push_str(&format!(
         "/// `phon_stencil_done_enc` machine code: a lone `ret`.\n\
@@ -230,9 +256,11 @@ fn extract(obj: &[u8], symbol: &str, cont_symbol: &str) -> Stencil {
         "phon_stencil_smoke",
         "phon_stencil_scalar",
         "phon_stencil_sequence",
+        "phon_stencil_bytes",
         "phon_stencil_done",
         "phon_stencil_scalar_enc",
         "phon_stencil_sequence_enc",
+        "phon_stencil_bytes_enc",
         "phon_stencil_done_enc",
     ]
     .iter()
