@@ -131,6 +131,9 @@ pub struct SeqOp {
     /// Bytes between consecutive elements in the sequence's contiguous storage
     /// (the element type's size).
     pub stride: usize,
+    /// Alignment of the element type — the engine allocates the element buffer
+    /// itself with this layout, then hands it to `from_raw_parts`.
+    pub elem_align: usize,
     /// Minimum wire bytes one element occupies (for length-vs-remaining checks,
     /// `r[validate.lengths]`).
     pub min_wire: usize,
@@ -143,15 +146,21 @@ pub struct SeqOp {
 /// the engine may assume, so it never pokes the handle directly — it calls these.
 /// `ctx` is an opaque per-type pointer the front door understands (e.g. the
 /// element's list vtable); the engine passes it back untouched.
+///
+/// Decode is engine-owned: the engine allocates and fills the element buffer
+/// itself, then [`from_raw_parts`](Self::from_raw_parts) adopts it into the
+/// handle in one move — no per-element vtable traffic, and in the JIT the alloc
+/// and fill loop are code the engine emits.
 #[derive(Clone, Copy, Debug)]
 pub struct SeqThunks {
     /// Opaque per-type context, passed to every thunk.
     pub ctx: *const (),
-    /// Initialize an empty sequence at `list` with `capacity`, returning a pointer
-    /// to its (uninitialized) contiguous element storage.
-    pub init: unsafe extern "C" fn(ctx: *const (), list: *mut u8, capacity: usize) -> *mut u8,
-    /// Publish that `len` elements have been written into the storage.
-    pub set_len: unsafe extern "C" fn(ctx: *const (), list: *mut u8, len: usize),
+    /// Construct the sequence at `list` from a buffer of `len` elements the engine
+    /// allocated with `cap` capacity: `*list = Vec::from_raw_parts(ptr, len, cap)`.
+    /// The buffer must have been allocated with the element type's array layout
+    /// (the engine guarantees this).
+    pub from_raw_parts:
+        unsafe extern "C" fn(ctx: *const (), list: *mut u8, ptr: *mut u8, len: usize, cap: usize),
     /// The sequence's current element count.
     pub len: unsafe extern "C" fn(ctx: *const (), list: *const u8) -> usize,
     /// A pointer to the sequence's contiguous element storage (for reading).

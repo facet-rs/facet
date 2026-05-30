@@ -22,6 +22,8 @@
 //!
 //! Spec: "The descriptor model", "Compact mode", `r[ir.memory]`.
 
+use std::alloc;
+
 use phon_ir::ir::{MemOp, MemProgram, SeqOp, fuse};
 use phon_ir::{Access, Construct, Descriptor, SequenceStorage};
 use phon_schema::bytes::{Reader, write_u32};
@@ -126,6 +128,7 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
                 field_offset: base,
                 element: fuse(element),
                 stride: seq.element.layout.size,
+                elem_align: seq.element.layout.align,
                 min_wire: 1,
                 thunks: *thunks,
             })));
@@ -227,15 +230,41 @@ unsafe fn decode_program(program: &MemProgram, r: &mut Reader, base: *mut u8) ->
             }
             MemOp::Sequence(s) => {
                 let count = r.read_len(s.min_wire)?;
-                // Safety: the sequence handle lives at `field_offset`; `init`
-                // returns storage for `count` elements, which we fill before
-                // publishing the length.
-                let list = unsafe { base.add(s.field_offset) };
-                let data = unsafe { (s.thunks.init)(s.thunks.ctx, list, count) };
+                // Engine owns the element buffer: allocate it, fill it directly,
+                // then hand it to the sequence with `from_raw_parts`.
+                let (buffer, cap) = if count == 0 {
+                    // Dangling but aligned; `from_raw_parts` with cap 0 won't touch it.
+                    (s.elem_align as *mut u8, 0usize)
+                } else {
+                    let layout = alloc::Layout::from_size_align(count * s.stride, s.elem_align)
+                        .map_err(|_| {
+                            CompactError::Decode(DecodeError::Malformed("sequence layout overflow"))
+                        })?;
+                    // Safety: layout has non-zero size (count > 0).
+                    let buf = unsafe { alloc::alloc(layout) };
+                    if buf.is_null() {
+                        alloc::handle_alloc_error(layout);
+                    }
+                    (buf, count)
+                };
                 for i in 0..count {
-                    unsafe { decode_program(&s.element, r, data.add(i * s.stride))? };
+                    // Safety: element `i` occupies `buffer + i*stride`.
+                    if let Err(e) = unsafe { decode_program(&s.element, r, buffer.add(i * s.stride)) }
+                    {
+                        // Free the buffer on a mid-fill failure (elements are
+                        // assumed trivially droppable for now).
+                        if cap != 0 {
+                            let layout =
+                                alloc::Layout::from_size_align(cap * s.stride, s.elem_align).unwrap();
+                            unsafe { alloc::dealloc(buffer, layout) };
+                        }
+                        return Err(e);
+                    }
                 }
-                unsafe { (s.thunks.set_len)(s.thunks.ctx, list, count) };
+                // Safety: the handle lives at `field_offset`; the buffer holds
+                // `count` initialized elements allocated with the element layout.
+                let list = unsafe { base.add(s.field_offset) };
+                unsafe { (s.thunks.from_raw_parts)(s.thunks.ctx, list, buffer, count, cap) };
             }
         }
     }
@@ -270,14 +299,17 @@ mod tests {
 
     // Hand-written list thunks for `Vec<u32>`. The facet bridge will generate
     // equivalents from the list vtable; here we wire them by hand to exercise the
-    // engine's sequence machinery on a real `Vec`.
-    unsafe extern "C" fn vu32_init(_ctx: *const (), list: *mut u8, cap: usize) -> *mut u8 {
-        let v = list.cast::<Vec<u32>>();
-        unsafe { core::ptr::write(v, Vec::with_capacity(cap)) };
-        unsafe { (*v).as_mut_ptr().cast::<u8>() }
-    }
-    unsafe extern "C" fn vu32_set_len(_ctx: *const (), list: *mut u8, len: usize) {
-        unsafe { (*list.cast::<Vec<u32>>()).set_len(len) };
+    // engine's sequence machinery on a real `Vec`. The engine allocates the
+    // buffer; `from_raw_parts` adopts it.
+    unsafe extern "C" fn vu32_from_raw_parts(
+        _ctx: *const (),
+        list: *mut u8,
+        ptr: *mut u8,
+        len: usize,
+        cap: usize,
+    ) {
+        let v = unsafe { Vec::<u32>::from_raw_parts(ptr.cast::<u32>(), len, cap) };
+        unsafe { core::ptr::write(list.cast::<Vec<u32>>(), v) };
     }
     unsafe extern "C" fn vu32_len(_ctx: *const (), list: *const u8) -> usize {
         unsafe { (*list.cast::<Vec<u32>>()).len() }
@@ -289,8 +321,7 @@ mod tests {
     fn vu32_thunks() -> SeqThunks {
         SeqThunks {
             ctx: core::ptr::null(),
-            init: vu32_init,
-            set_len: vu32_set_len,
+            from_raw_parts: vu32_from_raw_parts,
             len: vu32_len,
             data: vu32_data,
         }
