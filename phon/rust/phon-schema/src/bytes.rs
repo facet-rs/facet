@@ -136,6 +136,14 @@ pub enum DecodeError {
     UnexpectedTag { expected: &'static str, got: u8 },
     /// A typed decode found an enum variant name it does not recognize.
     UnknownVariant(String),
+    /// A compat decode received an enum variant the writer has but the reader
+    /// removed (`r[compat.enum]`); carries the wire variant index. The
+    /// `DecodeError`-channel counterpart of `CompactError::WriterOnlyVariant`.
+    WriterOnlyVariant(u32),
+    /// A compat decode received an enum variant index in neither the reader's
+    /// variants nor the writer's known set — hostile/garbage. Carries the wire
+    /// index. The `DecodeError`-channel counterpart of `CompactError::BadVariantIndex`.
+    BadVariantIndex(u32),
     /// A typed decode found a structurally wrong value (e.g. an unexpected
     /// struct field count).
     Malformed(&'static str),
@@ -163,6 +171,10 @@ impl fmt::Display for DecodeError {
                 write!(f, "expected {expected}, got tag {got:#04x}")
             }
             DecodeError::UnknownVariant(name) => write!(f, "unknown variant {name:?}"),
+            DecodeError::WriterOnlyVariant(i) => {
+                write!(f, "received enum variant {i} the reader schema does not have")
+            }
+            DecodeError::BadVariantIndex(i) => write!(f, "enum variant index {i} out of range"),
             DecodeError::Malformed(what) => write!(f, "malformed value: {what}"),
             DecodeError::TrailingBytes(n) => write!(f, "{n} trailing bytes after value"),
         }

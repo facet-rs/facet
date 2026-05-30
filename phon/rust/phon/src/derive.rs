@@ -1539,13 +1539,14 @@ mod tests {
         let program = typed::lower(&d.descriptor, &reg).unwrap();
         let dec = NativeDecode::compile(&program);
 
-        // Wire variant index 99 — no such variant.
+        // Wire variant index 99 — no such variant, and not writer-only either.
         let wire = 99u32.to_le_bytes().to_vec();
         let mut slot = std::mem::MaybeUninit::<Msg>::uninit();
         let err = unsafe { dec.run(&wire, slot.as_mut_ptr().cast::<u8>()) }.unwrap_err();
-        // The interpreter is the precise-error path (BadVariantIndex); the JIT
-        // just rejects — it maps an unmatched index to a generic Malformed.
-        assert!(matches!(err, DecodeError::Malformed(_)), "got {err:?}");
+        // A garbage index → BadVariantIndex (the JIT now distinguishes it from a
+        // writer-only variant), carrying the index — the `DecodeError`-channel
+        // counterpart of the interpreter's `CompactError::BadVariantIndex`.
+        assert!(matches!(err, DecodeError::BadVariantIndex(99)), "got {err:?}");
     }
 
     // The JIT must REJECT a hostile `Option` presence byte, never produce a value.
@@ -2252,12 +2253,17 @@ mod tests {
         let reg = merged_registry(&w, &r);
         let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
 
-        // The writer-only variant B is rejected by the JIT.
+        // The writer-only variant B is rejected by the JIT — now distinctly, as
+        // WriterOnlyVariant (the `DecodeError`-channel counterpart of the
+        // interpreter's `CompactError::WriterOnlyVariant`), not a generic error.
         let b_bytes = encode_writer(&EnumW::B(42), &w, &reg);
         let jit = NativeDecode::compile(&program);
         let mut slot = std::mem::MaybeUninit::<EnumRFewer>::uninit();
         let err = unsafe { jit.run(&b_bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap_err();
-        assert!(matches!(err, phon_schema::DecodeError::Malformed(_)), "got {err:?}");
+        assert!(
+            matches!(err, phon_schema::DecodeError::WriterOnlyVariant(1)),
+            "got {err:?}"
+        );
 
         // A still decodes, agreeing with the interpreter.
         let a_bytes = encode_writer(&EnumW::A, &w, &reg);

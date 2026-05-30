@@ -125,6 +125,10 @@ struct EnumInfo {
     tag_width: usize,
     variants: *const EnumVariantInfo,
     variant_count: usize,
+    /// Stable `Vec<u32>` of writer-only wire indices (a removed variant arriving
+    /// here is `WriterOnlyVariant`, not a garbage `BadVariantIndex`).
+    writer_only: *const u32,
+    writer_only_count: usize,
 }
 
 /// A reader-only-default op's immediates, matching `DefaultInfo` in
@@ -231,6 +235,9 @@ pub struct NativeDecode {
     /// is stable (exact capacity, never re-grown), so the `*const EnumVariantInfo`
     /// in `enum_infos` stays valid.
     enum_variants: Vec<Vec<EnumVariantInfo>>,
+    /// One per enum op: that enum's writer-only wire indices. Same stability
+    /// contract as `enum_variants`; the `*const u32` in `enum_infos` aliases here.
+    enum_writer_only: Vec<Vec<u32>>,
     /// One per reader-only-default op: the immediates the default stencil reads
     /// through its prog slot. Same stability contract as `seq_infos`.
     default_infos: Vec<DefaultInfo>,
@@ -344,6 +351,9 @@ struct EnumInfoBuild {
     tag_offset: usize,
     tag_width: usize,
     variants: Vec<EnumVariantInfoBuild>,
+    /// Writer-only wire indices (copied from `EnumOp.writer_only`); pure data, no
+    /// `ExecBuf`-relative binding.
+    writer_only: Vec<u32>,
 }
 
 /// Accumulates the code bytes, per-chain prog streams, and sequence metadata while
@@ -476,6 +486,7 @@ impl Compiler {
                         tag_offset: e.tag_offset,
                         tag_width: e.tag_width,
                         variants,
+                        writer_only: e.writer_only.clone(),
                     });
                     self.enum_fixups.push(EnumFixup { prog_index, slot, enuminfo });
                 }
@@ -628,8 +639,14 @@ impl NativeDecode {
             }
             enum_variants.push(variants);
         }
-        // The `EnumInfo`s themselves (variant pointers bound below, once
-        // `enum_variants` is owned by `NativeDecode` so its heaps are final).
+        // Each enum's writer-only index list (pure data; pointers bound below once
+        // owned by `NativeDecode`). Exact capacity so the heaps stay put.
+        let mut enum_writer_only: Vec<Vec<u32>> = Vec::with_capacity(c.enum_infos.len());
+        for e in &c.enum_infos {
+            enum_writer_only.push(e.writer_only.clone());
+        }
+        // The `EnumInfo`s themselves (variant + writer-only pointers bound below,
+        // once `enum_variants`/`enum_writer_only` are owned by `NativeDecode`).
         let mut enum_infos: Vec<EnumInfo> = Vec::with_capacity(c.enum_infos.len());
         for e in &c.enum_infos {
             enum_infos.push(EnumInfo {
@@ -637,6 +654,8 @@ impl NativeDecode {
                 tag_width: e.tag_width,
                 variants: core::ptr::null(),
                 variant_count: e.variants.len(),
+                writer_only: core::ptr::null(),
+                writer_only_count: e.writer_only.len(),
             });
         }
 
@@ -658,6 +677,7 @@ impl NativeDecode {
             opt_infos,
             enum_infos,
             enum_variants,
+            enum_writer_only,
             // The default infos carry no `ExecBuf`-relative fields either.
             default_infos: c.default_infos,
             skip_infos,
@@ -712,6 +732,12 @@ impl NativeDecode {
         for (info, &ptr) in nd.enum_infos.iter_mut().zip(variant_ptrs.iter()) {
             info.variants = ptr;
         }
+        // Point each `EnumInfo` at its (now stable) writer-only index list.
+        let writer_only_ptrs: Vec<*const u32> =
+            nd.enum_writer_only.iter().map(|w| w.as_ptr()).collect();
+        for (info, &ptr) in nd.enum_infos.iter_mut().zip(writer_only_ptrs.iter()) {
+            info.writer_only = ptr;
+        }
         for f in &c.enum_fixups {
             let ptr: *const EnumInfo = &nd.enum_infos[f.enuminfo];
             nd.progs[f.prog_index][f.slot] = ptr as u64;
@@ -761,10 +787,13 @@ impl NativeDecode {
                 2 => return Err(DecodeError::InvalidUtf8),
                 // Bad `Option` presence byte (the byte is in `aux`).
                 3 => return Err(DecodeError::InvalidBool(ctx.aux as u8)),
-                // Unmatched enum wire index — a malformed/hostile value. There is no
-                // `BadVariantIndex` in `DecodeError` (that is a `CompactError`), so
-                // map it to `Malformed` carrying the meaning.
-                4 => return Err(DecodeError::Malformed("enum variant index out of range")),
+                // A garbage enum wire index in neither the reader's variants nor
+                // the writer's known set (the index is in `aux`).
+                4 => return Err(DecodeError::BadVariantIndex(ctx.aux as u32)),
+                // A variant the writer has but the reader removed (the index is in
+                // `aux`) — the `DecodeError`-channel counterpart of the interpreter's
+                // `CompactError::WriterOnlyVariant`.
+                5 => return Err(DecodeError::WriterOnlyVariant(ctx.aux as u32)),
                 // Anything else is a truncation/bounds failure.
                 _ => {}
             }
@@ -2314,11 +2343,12 @@ mod tests {
     fn jit_enum_rejects_unmatched_index() {
         let program = msg_program();
         let dec = NativeDecode::compile(&program);
-        // Wire variant index 99 — no such variant.
+        // Wire variant index 99 — no such variant, and (single-schema) no
+        // writer-only set, so it's a garbage index → BadVariantIndex.
         let wire = 99u32.to_le_bytes().to_vec();
         let mut slot = MsgImage([0; 12]);
         let err = unsafe { dec.run(&wire, slot.0.as_mut_ptr()) }.unwrap_err();
-        assert!(matches!(err, DecodeError::Malformed(_)), "got {err:?}");
+        assert!(matches!(err, DecodeError::BadVariantIndex(99)), "got {err:?}");
 
         // A truncated index (3 bytes) is an EOF, not a bad-index rejection.
         let mut slot2 = MsgImage([0; 12]);

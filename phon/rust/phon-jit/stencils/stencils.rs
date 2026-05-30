@@ -155,6 +155,13 @@ pub struct EnumInfo {
     pub variants: *const EnumVariantInfo,
     /// Number of variants.
     pub variant_count: usize,
+    /// Pointer to the first of `writer_only_count` `u32` wire indices the writer
+    /// has but the reader removed (`r[compat.enum]`). A received index found here
+    /// is a `WriterOnlyVariant` rejection (`status = 5`), distinct from a garbage
+    /// index (`status = 4`).
+    pub writer_only: *const u32,
+    /// Number of writer-only variant indices.
+    pub writer_only_count: usize,
 }
 
 /// A reader-only-default op's immediates, reached through a `*const DefaultInfo`
@@ -531,10 +538,21 @@ pub unsafe extern "C" fn phon_stencil_enum(cx: *mut Ctx) {
         i += 1;
     }
     if found.is_null() {
-        // Unmatched index is hostile input: reject, carrying the index for a
-        // precise `BadVariantIndex` mapping in `run()`.
-        c.status = 4;
+        // No reader variant. Distinguish a variant the writer has but the reader
+        // removed (writer-only -> status 5, `WriterOnlyVariant`) from a garbage
+        // index in neither set (status 4, `BadVariantIndex`). Scan the writer-only
+        // list by raw pointer (no indexing -> no `panic_bounds_check` libcall).
         c.aux = wire_index as u64;
+        let mut j = 0usize;
+        let mut writer_only = false;
+        while j < info.writer_only_count {
+            if *info.writer_only.add(j) == wire_index {
+                writer_only = true;
+                break;
+            }
+            j += 1;
+        }
+        c.status = if writer_only { 5 } else { 4 };
         return;
     }
     let variant = &*found;
