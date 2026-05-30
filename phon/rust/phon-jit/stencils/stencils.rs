@@ -49,21 +49,23 @@ pub unsafe extern "C" fn phon_stencil_scalar(cx: *mut Ctx) {
         return;
     }
 
+    // Word-wise copy of `size` bytes (size is a fused run length, any value).
     let dst = c.base.add(off);
-    match size {
-        0 => {}
-        1 => core::ptr::copy_nonoverlapping(src, dst, 1),
-        2 => core::ptr::copy_nonoverlapping(src, dst, 2),
-        4 => core::ptr::copy_nonoverlapping(src, dst, 4),
-        8 => core::ptr::copy_nonoverlapping(src, dst, 8),
-        16 => core::ptr::copy_nonoverlapping(src, dst, 16),
-        n => {
-            let mut i = 0;
-            while i < n {
-                *dst.add(i) = *src.add(i);
-                i += 1;
-            }
-        }
+    let mut i = 0;
+    while size - i >= 8 {
+        core::ptr::copy_nonoverlapping(src.add(i), dst.add(i), 8);
+        i += 8;
+    }
+    if size - i >= 4 {
+        core::ptr::copy_nonoverlapping(src.add(i), dst.add(i), 4);
+        i += 4;
+    }
+    if size - i >= 2 {
+        core::ptr::copy_nonoverlapping(src.add(i), dst.add(i), 2);
+        i += 2;
+    }
+    if size - i >= 1 {
+        core::ptr::copy_nonoverlapping(src.add(i), dst.add(i), 1);
     }
 
     c.wire = src.add(size);

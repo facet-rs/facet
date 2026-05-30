@@ -103,12 +103,49 @@ pub type MemProgram = Vec<MemOp>;
 
 /// One typed step: a memory move between the wire and a value's layout. The base
 /// pointer is supplied at run time; `offset` is relative to it.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MemOp {
-    /// Copy a fixed-width scalar — `size` bytes — between memory at `offset` and
-    /// the wire, which is first padded to `align` (`r[compact.alignment]`).
-    /// Encode reads memory and writes the wire; decode reads the wire and writes
-    /// memory. Sound only where host byte order equals the wire's
-    /// (little-endian), which every phon target is.
+    /// Copy a run of `size` bytes between memory at `offset` and the wire, which
+    /// is first padded to `align` (`r[compact.alignment]`). A single scalar, or a
+    /// fused run of adjacent scalars (see [`fuse`]). Encode reads memory and
+    /// writes the wire; decode reads the wire and writes memory. Sound only where
+    /// host byte order equals the wire's (little-endian), which every phon target
+    /// is.
     Scalar { offset: usize, size: usize, align: usize },
+}
+
+/// Coalesce adjacent scalar copies that are contiguous in *both* the wire and
+/// memory into one larger copy — the specialization the IR exists for. A flat
+/// struct whose wire layout matches its memory layout collapses to a single
+/// `memcpy`; a `repr(Rust)` struct collapses to a copy per contiguous run.
+///
+/// Two consecutive ops fuse when the second needs no wire padding after the first
+/// (wire-contiguous) and its memory offset continues the first's (mem-contiguous).
+/// The fused op keeps the run's starting alignment; the bytes it produces are
+/// identical, so this is transparent to correctness — only faster.
+///
+/// Spec: `r[ir.inlining]` (the lowering-time coalescing it describes).
+// r[impl ir.inlining]
+#[must_use]
+pub fn fuse(program: MemProgram) -> MemProgram {
+    let mut out: MemProgram = Vec::with_capacity(program.len());
+    let mut wire_pos: usize = 0;
+    for op in program {
+        let MemOp::Scalar { offset, size, align } = op;
+        let pad = align.wrapping_sub(wire_pos & (align - 1)) & (align - 1);
+        let fuses = pad == 0
+            && matches!(
+                out.last(),
+                Some(MemOp::Scalar { offset: po, size: ps, .. }) if po + ps == offset
+            );
+        if fuses {
+            if let Some(MemOp::Scalar { size: ps, .. }) = out.last_mut() {
+                *ps += size;
+            }
+        } else {
+            out.push(op);
+        }
+        wire_pos += pad + size;
+    }
+    out
 }

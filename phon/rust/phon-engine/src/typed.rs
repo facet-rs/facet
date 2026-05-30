@@ -22,7 +22,7 @@
 //!
 //! Spec: "The descriptor model", "Compact mode", `r[ir.memory]`.
 
-use phon_ir::ir::{MemOp, MemProgram};
+use phon_ir::ir::{MemOp, MemProgram, fuse};
 use phon_ir::{Access, Construct, Descriptor};
 use phon_schema::bytes::Reader;
 use phon_schema::{DecodeError, Primitive, SchemaKind};
@@ -65,7 +65,9 @@ fn fixed_size(p: Primitive) -> Option<usize> {
 pub fn lower(descriptor: &Descriptor, reg: &Registry) -> Result<MemProgram> {
     let mut out = Vec::new();
     lower_node(descriptor, reg, 0, &mut out)?;
-    Ok(out)
+    // Coalesce contiguous scalar runs into single copies (e.g. a flat struct
+    // whose wire and memory layouts match becomes one memcpy).
+    Ok(fuse(out))
 }
 
 // r[impl ir.inlining]
