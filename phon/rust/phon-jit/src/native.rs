@@ -20,8 +20,9 @@ use phon_ir::ir::{MemOp, MemProgram};
 use phon_schema::DecodeError;
 
 use crate::stencils::{
-    BYTES, BYTES_CONT, BYTES_ENC, BYTES_ENC_CONT, DONE, DONE_ENC, SCALAR, SCALAR_CONT, SCALAR_ENC,
-    SCALAR_ENC_CONT, SEQUENCE, SEQUENCE_CONT, SEQUENCE_ENC, SEQUENCE_ENC_CONT,
+    BYTES, BYTES_CONT, BYTES_ENC, BYTES_ENC_CONT, DONE, DONE_ENC, ENUM, ENUM_CONT, ENUM_ENC,
+    ENUM_ENC_CONT, OPTION, OPTION_CONT, OPTION_ENC, OPTION_ENC_CONT, SCALAR, SCALAR_CONT,
+    SCALAR_ENC, SCALAR_ENC_CONT, SEQUENCE, SEQUENCE_CONT, SEQUENCE_ENC, SEQUENCE_ENC_CONT,
 };
 
 unsafe extern "C" {
@@ -108,6 +109,7 @@ struct Ctx {
     base: *mut u8,
     prog: *const u64,
     status: u64,
+    aux: u64,
     alloc: unsafe extern "C" fn(usize, usize) -> *mut u8,
     dealloc: unsafe extern "C" fn(*mut u8, usize, usize),
 }
@@ -140,6 +142,43 @@ struct BytesInfo {
     from_raw_parts:
         unsafe extern "C" fn(ctx: *const (), list: *mut u8, ptr: *mut u8, len: usize, cap: usize),
     validate: unsafe extern "C" fn(ptr: *const u8, len: usize) -> bool,
+}
+
+/// An option op's immediates, matching `OptInfo` in `stencils/stencils.rs` byte
+/// for byte. Reached through a `*const OptInfo` slot in the prog stream. Like
+/// [`SeqInfo`] it carries an `ExecBuf`-relative some-body entry + prog.
+#[repr(C)]
+struct OptInfo {
+    field_offset: usize,
+    inner_size: usize,
+    inner_align: usize,
+    thunks_ctx: *const (),
+    init_none: unsafe extern "C" fn(ctx: *const (), option: *mut u8),
+    init_some: unsafe extern "C" fn(ctx: *const (), option: *mut u8, value: *mut u8),
+    some_entry: unsafe extern "C" fn(cx: *mut Ctx),
+    some_prog: *const u64,
+}
+
+/// One enum variant's decode immediates, matching `EnumVariantInfo` in
+/// `stencils/stencils.rs` byte for byte. The `payload_entry`/`payload_prog` are
+/// `ExecBuf`-relative, bound after layout.
+#[repr(C)]
+struct EnumVariantInfo {
+    wire_index: u32,
+    selector: u64,
+    payload_entry: unsafe extern "C" fn(cx: *mut Ctx),
+    payload_prog: *const u64,
+}
+
+/// An enum op's immediates, matching `EnumInfo` in `stencils/stencils.rs` byte for
+/// byte. Reached through a `*const EnumInfo` slot in the prog stream; `variants`
+/// points at a stable `Vec<EnumVariantInfo>` heap buffer.
+#[repr(C)]
+struct EnumInfo {
+    tag_offset: usize,
+    tag_width: usize,
+    variants: *const EnumVariantInfo,
+    variant_count: usize,
 }
 
 /// Allocate `size` bytes aligned to `align` with the global Rust allocator, so a
@@ -183,6 +222,16 @@ pub struct NativeDecode {
     /// One per bulk byte-run op: the immediates the bytes stencil reads through its
     /// prog slot. Same stability contract as `seq_infos`.
     bytes_infos: Vec<BytesInfo>,
+    /// One per option op: the immediates the option stencil reads through its prog
+    /// slot. Same stability contract as `seq_infos`.
+    opt_infos: Vec<OptInfo>,
+    /// One per enum op: the immediates the enum stencil reads through its prog
+    /// slot. Same stability contract as `seq_infos`.
+    enum_infos: Vec<EnumInfo>,
+    /// One per enum op: that enum's variant table. Each inner `Vec`'s heap buffer
+    /// is stable (exact capacity, never re-grown), so the `*const EnumVariantInfo`
+    /// in `enum_infos` stays valid.
+    enum_variants: Vec<Vec<EnumVariantInfo>>,
 }
 
 /// A compiled element chain: where its first stencil begins in `code`, and which
@@ -208,6 +257,22 @@ struct BytesFixup {
     bytesinfo: usize,
 }
 
+/// An option's prog slot to fill once `opt_infos` is in its final home: write
+/// `&opt_infos[optinfo]` into `progs[prog_index][slot]`.
+struct OptFixup {
+    prog_index: usize,
+    slot: usize,
+    optinfo: usize,
+}
+
+/// An enum's prog slot to fill once `enum_infos` is in its final home: write
+/// `&enum_infos[enuminfo]` into `progs[prog_index][slot]`.
+struct EnumFixup {
+    prog_index: usize,
+    slot: usize,
+    enuminfo: usize,
+}
+
 /// A sequence's `SeqInfo` minus the two fields only known after the `ExecBuf` is
 /// built: the element chain's entry offset and prog index.
 struct SeqInfoBuild {
@@ -222,6 +287,36 @@ struct SeqInfoBuild {
     element_prog_index: usize,
 }
 
+/// An option's `OptInfo` minus the two fields only known after the `ExecBuf` is
+/// built: the some-body chain's entry offset and prog index.
+struct OptInfoBuild {
+    field_offset: usize,
+    inner_size: usize,
+    inner_align: usize,
+    thunks_ctx: *const (),
+    init_none: unsafe extern "C" fn(ctx: *const (), option: *mut u8),
+    init_some: unsafe extern "C" fn(ctx: *const (), option: *mut u8, value: *mut u8),
+    some_entry_offset: usize,
+    some_prog_index: usize,
+}
+
+/// One enum variant minus the two `ExecBuf`-relative fields: the payload chain's
+/// entry offset and prog index.
+struct EnumVariantInfoBuild {
+    wire_index: u32,
+    selector: u64,
+    payload_entry_offset: usize,
+    payload_prog_index: usize,
+}
+
+/// An enum's `EnumInfo` minus the variant table (built once the chains are laid
+/// out and the `ExecBuf` exists).
+struct EnumInfoBuild {
+    tag_offset: usize,
+    tag_width: usize,
+    variants: Vec<EnumVariantInfoBuild>,
+}
+
 /// Accumulates the code bytes, per-chain prog streams, and sequence metadata while
 /// the program is walked. Two passes: lay everything out (this struct), then bind
 /// the `ExecBuf`-relative pointers ([`NativeDecode::compile`]).
@@ -233,6 +328,10 @@ struct Compiler {
     /// Built directly (no `ExecBuf`-relative fields): one per bulk byte-run op.
     bytes_infos: Vec<BytesInfo>,
     bytes_fixups: Vec<BytesFixup>,
+    opt_infos: Vec<OptInfoBuild>,
+    opt_fixups: Vec<OptFixup>,
+    enum_infos: Vec<EnumInfoBuild>,
+    enum_fixups: Vec<EnumFixup>,
 }
 
 impl Compiler {
@@ -297,11 +396,51 @@ impl Compiler {
                     });
                     self.bytes_fixups.push(BytesFixup { prog_index, slot, bytesinfo });
                 }
-                MemOp::Option(_) => {
-                    panic!("phon-jit: Option is interpreter-only for now")
+                MemOp::Option(o) => {
+                    self.code.extend_from_slice(OPTION);
+                    // The option stencil reads one prog slot: a `*const OptInfo`
+                    // filled in pass 2. Reserve it and record the fixup now.
+                    let slot = self.progs[prog_index].len();
+                    self.progs[prog_index].push(0);
+                    // Compile the some-body as its own chain.
+                    let some = self.compile_chain(&o.some);
+                    let optinfo = self.opt_infos.len();
+                    self.opt_infos.push(OptInfoBuild {
+                        field_offset: o.field_offset,
+                        inner_size: o.inner_size,
+                        inner_align: o.inner_align,
+                        thunks_ctx: o.thunks.ctx,
+                        init_none: o.thunks.init_none,
+                        init_some: o.thunks.init_some,
+                        some_entry_offset: some.entry,
+                        some_prog_index: some.prog_index,
+                    });
+                    self.opt_fixups.push(OptFixup { prog_index, slot, optinfo });
                 }
-                MemOp::Enum(_) => {
-                    panic!("phon-jit: enums are interpreter-only for now")
+                MemOp::Enum(e) => {
+                    self.code.extend_from_slice(ENUM);
+                    // The enum stencil reads one prog slot: a `*const EnumInfo`
+                    // filled in pass 2. Reserve it and record the fixup now.
+                    let slot = self.progs[prog_index].len();
+                    self.progs[prog_index].push(0);
+                    // Compile each variant's payload as its own chain.
+                    let mut variants = Vec::with_capacity(e.variants.len());
+                    for v in &e.variants {
+                        let payload = self.compile_chain(&v.payload);
+                        variants.push(EnumVariantInfoBuild {
+                            wire_index: v.wire_index,
+                            selector: v.selector,
+                            payload_entry_offset: payload.entry,
+                            payload_prog_index: payload.prog_index,
+                        });
+                    }
+                    let enuminfo = self.enum_infos.len();
+                    self.enum_infos.push(EnumInfoBuild {
+                        tag_offset: e.tag_offset,
+                        tag_width: e.tag_width,
+                        variants,
+                    });
+                    self.enum_fixups.push(EnumFixup { prog_index, slot, enuminfo });
                 }
             }
         }
@@ -317,8 +456,8 @@ impl Compiler {
                 MemOp::Scalar { .. } => SCALAR_CONT,
                 MemOp::Sequence(_) => SEQUENCE_CONT,
                 MemOp::Bytes(_) => BYTES_CONT,
-                MemOp::Option(_) => unreachable!("Option is rejected in compile_chain"),
-                MemOp::Enum(_) => unreachable!("Enum is rejected in compile_chain"),
+                MemOp::Option(_) => OPTION_CONT,
+                MemOp::Enum(_) => ENUM_CONT,
             };
             for &rel in relocs {
                 patch_branch26(&mut self.code, op_start + rel, next);
@@ -341,6 +480,10 @@ impl NativeDecode {
             fixups: Vec::new(),
             bytes_infos: Vec::new(),
             bytes_fixups: Vec::new(),
+            opt_infos: Vec::new(),
+            opt_fixups: Vec::new(),
+            enum_infos: Vec::new(),
+            enum_fixups: Vec::new(),
         };
         let top = c.compile_chain(program);
 
@@ -374,6 +517,56 @@ impl NativeDecode {
             });
         }
 
+        // Materialize the `OptInfo`s now that the code base is known (exact
+        // capacity, never re-grown — its heap stays put for the prog slots).
+        let mut opt_infos: Vec<OptInfo> = Vec::with_capacity(c.opt_infos.len());
+        for b in &c.opt_infos {
+            let some_entry: unsafe extern "C" fn(*mut Ctx) =
+                unsafe { core::mem::transmute(base.add(b.some_entry_offset)) };
+            opt_infos.push(OptInfo {
+                field_offset: b.field_offset,
+                inner_size: b.inner_size,
+                inner_align: b.inner_align,
+                thunks_ctx: b.thunks_ctx,
+                init_none: b.init_none,
+                init_some: b.init_some,
+                some_entry,
+                // Bound below, once `progs` is owned by `NativeDecode`.
+                some_prog: core::ptr::null(),
+            });
+        }
+
+        // Materialize each enum's variant table (the payload entries are
+        // `ExecBuf`-relative; the payload progs are bound below). Each inner `Vec`
+        // gets exact capacity so its heap stays put for the `EnumInfo` pointer.
+        let mut enum_variants: Vec<Vec<EnumVariantInfo>> =
+            Vec::with_capacity(c.enum_infos.len());
+        for e in &c.enum_infos {
+            let mut variants: Vec<EnumVariantInfo> = Vec::with_capacity(e.variants.len());
+            for v in &e.variants {
+                let payload_entry: unsafe extern "C" fn(*mut Ctx) =
+                    unsafe { core::mem::transmute(base.add(v.payload_entry_offset)) };
+                variants.push(EnumVariantInfo {
+                    wire_index: v.wire_index,
+                    selector: v.selector,
+                    payload_entry,
+                    payload_prog: core::ptr::null(),
+                });
+            }
+            enum_variants.push(variants);
+        }
+        // The `EnumInfo`s themselves (variant pointers bound below, once
+        // `enum_variants` is owned by `NativeDecode` so its heaps are final).
+        let mut enum_infos: Vec<EnumInfo> = Vec::with_capacity(c.enum_infos.len());
+        for e in &c.enum_infos {
+            enum_infos.push(EnumInfo {
+                tag_offset: e.tag_offset,
+                tag_width: e.tag_width,
+                variants: core::ptr::null(),
+                variant_count: e.variants.len(),
+            });
+        }
+
         let mut nd = NativeDecode {
             buf,
             entry_prog: top.prog_index,
@@ -382,6 +575,9 @@ impl NativeDecode {
             // Move the byte-run infos into their final home; they carry no
             // `ExecBuf`-relative fields, so no further binding is needed.
             bytes_infos: c.bytes_infos,
+            opt_infos,
+            enum_infos,
+            enum_variants,
         };
 
         // Now that `nd.progs` is in its final home, bind the prog pointers: each
@@ -397,6 +593,30 @@ impl NativeDecode {
         // Bind each bulk byte-run's prog slot to its `BytesInfo` in `nd`.
         for f in &c.bytes_fixups {
             let ptr: *const BytesInfo = &nd.bytes_infos[f.bytesinfo];
+            nd.progs[f.prog_index][f.slot] = ptr as u64;
+        }
+        // Bind each option's some-body prog and its prog slot to the `OptInfo`.
+        for (b, info) in c.opt_infos.iter().zip(nd.opt_infos.iter_mut()) {
+            info.some_prog = nd.progs[b.some_prog_index].as_ptr();
+        }
+        for f in &c.opt_fixups {
+            let ptr: *const OptInfo = &nd.opt_infos[f.optinfo];
+            nd.progs[f.prog_index][f.slot] = ptr as u64;
+        }
+        // Bind each enum variant's payload prog, point each `EnumInfo` at its
+        // (now stable) variant table, then fill each enum's prog slot.
+        for (eb, variants) in c.enum_infos.iter().zip(nd.enum_variants.iter_mut()) {
+            for (vb, vi) in eb.variants.iter().zip(variants.iter_mut()) {
+                vi.payload_prog = nd.progs[vb.payload_prog_index].as_ptr();
+            }
+        }
+        let variant_ptrs: Vec<*const EnumVariantInfo> =
+            nd.enum_variants.iter().map(|v| v.as_ptr()).collect();
+        for (info, &ptr) in nd.enum_infos.iter_mut().zip(variant_ptrs.iter()) {
+            info.variants = ptr;
+        }
+        for f in &c.enum_fixups {
+            let ptr: *const EnumInfo = &nd.enum_infos[f.enuminfo];
             nd.progs[f.prog_index][f.slot] = ptr as u64;
         }
 
@@ -420,6 +640,7 @@ impl NativeDecode {
             base,
             prog: self.progs[self.entry_prog].as_ptr(),
             status: 0,
+            aux: 0,
             alloc: jit_alloc,
             dealloc: jit_dealloc,
         };
@@ -427,10 +648,18 @@ impl NativeDecode {
         entry(&mut ctx);
 
         if ctx.status != 0 {
-            // status 2 = content validation failed (e.g. a `String` run was not
-            // UTF-8); anything else is a truncation/bounds failure.
-            if ctx.status == 2 {
-                return Err(DecodeError::InvalidUtf8);
+            // Map the stencils' status codes to precise `DecodeError`s.
+            match ctx.status {
+                // Content validation failed (e.g. a `String` run was not UTF-8).
+                2 => return Err(DecodeError::InvalidUtf8),
+                // Bad `Option` presence byte (the byte is in `aux`).
+                3 => return Err(DecodeError::InvalidBool(ctx.aux as u8)),
+                // Unmatched enum wire index — a malformed/hostile value. There is no
+                // `BadVariantIndex` in `DecodeError` (that is a `CompactError`), so
+                // map it to `Malformed` carrying the meaning.
+                4 => return Err(DecodeError::Malformed("enum variant index out of range")),
+                // Anything else is a truncation/bounds failure.
+                _ => {}
             }
             let remaining = ctx.wire_end as usize - ctx.wire as usize;
             return Err(DecodeError::UnexpectedEof { needed: 0, remaining });
@@ -503,6 +732,42 @@ struct EncBytesInfo {
     data: unsafe extern "C" fn(ctx: *const (), list: *const u8) -> *const u8,
 }
 
+/// An encode option op's immediates, matching `EncOptInfo` in
+/// `stencils/stencils.rs` byte for byte. Reached through a `*const EncOptInfo`
+/// slot in the prog stream; carries an `ExecBuf`-relative some-body entry + prog.
+#[repr(C)]
+struct EncOptInfo {
+    field_offset: usize,
+    thunks_ctx: *const (),
+    is_some: unsafe extern "C" fn(ctx: *const (), option: *const u8) -> bool,
+    get_value: unsafe extern "C" fn(ctx: *const (), option: *const u8) -> *const u8,
+    some_entry: unsafe extern "C" fn(cx: *mut EncCtx),
+    some_prog: *const u64,
+}
+
+/// One enum variant's encode immediates, matching `EncEnumVariantInfo` in
+/// `stencils/stencils.rs` byte for byte. The `payload_entry`/`payload_prog` are
+/// `ExecBuf`-relative, bound after layout.
+#[repr(C)]
+struct EncEnumVariantInfo {
+    wire_index: u32,
+    selector: u64,
+    payload_entry: unsafe extern "C" fn(cx: *mut EncCtx),
+    payload_prog: *const u64,
+}
+
+/// An encode enum op's immediates, matching `EncEnumInfo` in
+/// `stencils/stencils.rs` byte for byte. Reached through a `*const EncEnumInfo`
+/// slot in the prog stream; `variants` points at a stable
+/// `Vec<EncEnumVariantInfo>` heap buffer.
+#[repr(C)]
+struct EncEnumInfo {
+    tag_offset: usize,
+    tag_width: usize,
+    variants: *const EncEnumVariantInfo,
+    variant_count: usize,
+}
+
 /// Grow the engine-owned output `Vec<u8>` to hold at least `needed` bytes, then
 /// write the new data pointer and capacity back into the `EncCtx`. Called
 /// indirectly through `EncCtx.grow`, so the only relocation a copied encode
@@ -547,6 +812,12 @@ pub struct NativeEncode {
     /// One per bulk byte-run op: the immediates the bytes stencil reads through its
     /// prog slot. Same stability contract as `seq_infos`.
     bytes_infos: Vec<EncBytesInfo>,
+    /// One per option op. Same stability contract as `seq_infos`.
+    opt_infos: Vec<EncOptInfo>,
+    /// One per enum op. Same stability contract as `seq_infos`.
+    enum_infos: Vec<EncEnumInfo>,
+    /// One per enum op: that enum's variant table (stable heap per inner `Vec`).
+    enum_variants: Vec<Vec<EncEnumVariantInfo>>,
 }
 
 /// An encode sequence's `EncSeqInfo` minus the two fields only known after the
@@ -561,6 +832,31 @@ struct EncSeqInfoBuild {
     element_prog_index: usize,
 }
 
+/// An encode option's `EncOptInfo` minus the two `ExecBuf`-relative fields.
+struct EncOptInfoBuild {
+    field_offset: usize,
+    thunks_ctx: *const (),
+    is_some: unsafe extern "C" fn(ctx: *const (), option: *const u8) -> bool,
+    get_value: unsafe extern "C" fn(ctx: *const (), option: *const u8) -> *const u8,
+    some_entry_offset: usize,
+    some_prog_index: usize,
+}
+
+/// One encode enum variant minus the two `ExecBuf`-relative fields.
+struct EncEnumVariantInfoBuild {
+    wire_index: u32,
+    selector: u64,
+    payload_entry_offset: usize,
+    payload_prog_index: usize,
+}
+
+/// An encode enum's `EncEnumInfo` minus the variant table.
+struct EncEnumInfoBuild {
+    tag_offset: usize,
+    tag_width: usize,
+    variants: Vec<EncEnumVariantInfoBuild>,
+}
+
 /// Accumulates the encode code bytes, per-chain prog streams, and sequence
 /// metadata while the program is walked. Two passes, like the decode [`Compiler`]:
 /// lay everything out, then bind the `ExecBuf`-relative pointers.
@@ -572,6 +868,10 @@ struct EncCompiler {
     /// Built directly (no `ExecBuf`-relative fields): one per bulk byte-run op.
     bytes_infos: Vec<EncBytesInfo>,
     bytes_fixups: Vec<BytesFixup>,
+    opt_infos: Vec<EncOptInfoBuild>,
+    opt_fixups: Vec<OptFixup>,
+    enum_infos: Vec<EncEnumInfoBuild>,
+    enum_fixups: Vec<EnumFixup>,
 }
 
 impl EncCompiler {
@@ -628,11 +928,43 @@ impl EncCompiler {
                     });
                     self.bytes_fixups.push(BytesFixup { prog_index, slot, bytesinfo });
                 }
-                MemOp::Option(_) => {
-                    panic!("phon-jit: Option is interpreter-only for now")
+                MemOp::Option(o) => {
+                    self.code.extend_from_slice(OPTION_ENC);
+                    let slot = self.progs[prog_index].len();
+                    self.progs[prog_index].push(0);
+                    let some = self.compile_chain(&o.some);
+                    let optinfo = self.opt_infos.len();
+                    self.opt_infos.push(EncOptInfoBuild {
+                        field_offset: o.field_offset,
+                        thunks_ctx: o.thunks.ctx,
+                        is_some: o.thunks.is_some,
+                        get_value: o.thunks.get_value,
+                        some_entry_offset: some.entry,
+                        some_prog_index: some.prog_index,
+                    });
+                    self.opt_fixups.push(OptFixup { prog_index, slot, optinfo });
                 }
-                MemOp::Enum(_) => {
-                    panic!("phon-jit: enums are interpreter-only for now")
+                MemOp::Enum(e) => {
+                    self.code.extend_from_slice(ENUM_ENC);
+                    let slot = self.progs[prog_index].len();
+                    self.progs[prog_index].push(0);
+                    let mut variants = Vec::with_capacity(e.variants.len());
+                    for v in &e.variants {
+                        let payload = self.compile_chain(&v.payload);
+                        variants.push(EncEnumVariantInfoBuild {
+                            wire_index: v.wire_index,
+                            selector: v.selector,
+                            payload_entry_offset: payload.entry,
+                            payload_prog_index: payload.prog_index,
+                        });
+                    }
+                    let enuminfo = self.enum_infos.len();
+                    self.enum_infos.push(EncEnumInfoBuild {
+                        tag_offset: e.tag_offset,
+                        tag_width: e.tag_width,
+                        variants,
+                    });
+                    self.enum_fixups.push(EnumFixup { prog_index, slot, enuminfo });
                 }
             }
         }
@@ -645,8 +977,8 @@ impl EncCompiler {
                 MemOp::Scalar { .. } => SCALAR_ENC_CONT,
                 MemOp::Sequence(_) => SEQUENCE_ENC_CONT,
                 MemOp::Bytes(_) => BYTES_ENC_CONT,
-                MemOp::Option(_) => unreachable!("Option is rejected in compile_chain"),
-                MemOp::Enum(_) => unreachable!("Enum is rejected in compile_chain"),
+                MemOp::Option(_) => OPTION_ENC_CONT,
+                MemOp::Enum(_) => ENUM_ENC_CONT,
             };
             for &rel in relocs {
                 patch_branch26(&mut self.code, op_start + rel, next);
@@ -669,6 +1001,10 @@ impl NativeEncode {
             fixups: Vec::new(),
             bytes_infos: Vec::new(),
             bytes_fixups: Vec::new(),
+            opt_infos: Vec::new(),
+            opt_fixups: Vec::new(),
+            enum_infos: Vec::new(),
+            enum_fixups: Vec::new(),
         };
         let top = c.compile_chain(program);
 
@@ -692,6 +1028,50 @@ impl NativeEncode {
             });
         }
 
+        // Materialize the `EncOptInfo`s (some-body entry is `ExecBuf`-relative;
+        // some-body prog bound below).
+        let mut opt_infos: Vec<EncOptInfo> = Vec::with_capacity(c.opt_infos.len());
+        for b in &c.opt_infos {
+            let some_entry: unsafe extern "C" fn(*mut EncCtx) =
+                unsafe { core::mem::transmute(base.add(b.some_entry_offset)) };
+            opt_infos.push(EncOptInfo {
+                field_offset: b.field_offset,
+                thunks_ctx: b.thunks_ctx,
+                is_some: b.is_some,
+                get_value: b.get_value,
+                some_entry,
+                some_prog: core::ptr::null(),
+            });
+        }
+
+        // Materialize each enum's variant table (payload entries `ExecBuf`-relative;
+        // payload progs bound below).
+        let mut enum_variants: Vec<Vec<EncEnumVariantInfo>> =
+            Vec::with_capacity(c.enum_infos.len());
+        for e in &c.enum_infos {
+            let mut variants: Vec<EncEnumVariantInfo> = Vec::with_capacity(e.variants.len());
+            for v in &e.variants {
+                let payload_entry: unsafe extern "C" fn(*mut EncCtx) =
+                    unsafe { core::mem::transmute(base.add(v.payload_entry_offset)) };
+                variants.push(EncEnumVariantInfo {
+                    wire_index: v.wire_index,
+                    selector: v.selector,
+                    payload_entry,
+                    payload_prog: core::ptr::null(),
+                });
+            }
+            enum_variants.push(variants);
+        }
+        let mut enum_infos: Vec<EncEnumInfo> = Vec::with_capacity(c.enum_infos.len());
+        for e in &c.enum_infos {
+            enum_infos.push(EncEnumInfo {
+                tag_offset: e.tag_offset,
+                tag_width: e.tag_width,
+                variants: core::ptr::null(),
+                variant_count: e.variants.len(),
+            });
+        }
+
         let mut ne = NativeEncode {
             buf,
             entry_prog: top.prog_index,
@@ -699,6 +1079,9 @@ impl NativeEncode {
             seq_infos,
             // Move the byte-run infos into their final home; no further binding.
             bytes_infos: c.bytes_infos,
+            opt_infos,
+            enum_infos,
+            enum_variants,
         };
 
         for (b, info) in c.seq_infos.iter().zip(ne.seq_infos.iter_mut()) {
@@ -711,6 +1094,30 @@ impl NativeEncode {
         // Bind each bulk byte-run's prog slot to its `EncBytesInfo` in `ne`.
         for f in &c.bytes_fixups {
             let ptr: *const EncBytesInfo = &ne.bytes_infos[f.bytesinfo];
+            ne.progs[f.prog_index][f.slot] = ptr as u64;
+        }
+        // Bind each option's some-body prog and its prog slot to the `EncOptInfo`.
+        for (b, info) in c.opt_infos.iter().zip(ne.opt_infos.iter_mut()) {
+            info.some_prog = ne.progs[b.some_prog_index].as_ptr();
+        }
+        for f in &c.opt_fixups {
+            let ptr: *const EncOptInfo = &ne.opt_infos[f.optinfo];
+            ne.progs[f.prog_index][f.slot] = ptr as u64;
+        }
+        // Bind each enum variant's payload prog, point each `EncEnumInfo` at its
+        // (now stable) variant table, then fill each enum's prog slot.
+        for (eb, variants) in c.enum_infos.iter().zip(ne.enum_variants.iter_mut()) {
+            for (vb, vi) in eb.variants.iter().zip(variants.iter_mut()) {
+                vi.payload_prog = ne.progs[vb.payload_prog_index].as_ptr();
+            }
+        }
+        let variant_ptrs: Vec<*const EncEnumVariantInfo> =
+            ne.enum_variants.iter().map(|v| v.as_ptr()).collect();
+        for (info, &ptr) in ne.enum_infos.iter_mut().zip(variant_ptrs.iter()) {
+            info.variants = ptr;
+        }
+        for f in &c.enum_fixups {
+            let ptr: *const EncEnumInfo = &ne.enum_infos[f.enuminfo];
             ne.progs[f.prog_index][f.slot] = ptr as u64;
         }
 
@@ -1550,5 +1957,350 @@ mod tests {
         unsafe { dec.run(&got, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
         let back = unsafe { slot.assume_init() };
         assert_eq!(back, s);
+    }
+
+    // ====================================================================
+    // Option: the data-directed presence branch (decode + encode)
+    // ====================================================================
+
+    use phon_ir::ir::{EnumOp, EnumVariantOp, OptionOp};
+    use phon_ir::OptionThunks;
+
+    // Hand-written `Option<u32>` thunks: a scalar inner (no heap), so `init_some`
+    // just copies the four bytes out of scratch.
+    unsafe extern "C" fn ou32_is_some(_ctx: *const (), option: *const u8) -> bool {
+        unsafe { (*option.cast::<Option<u32>>()).is_some() }
+    }
+    unsafe extern "C" fn ou32_get_value(_ctx: *const (), option: *const u8) -> *const u8 {
+        match unsafe { &*option.cast::<Option<u32>>() } {
+            Some(v) => core::ptr::from_ref(v).cast::<u8>(),
+            None => core::ptr::null(),
+        }
+    }
+    unsafe extern "C" fn ou32_init_some(_ctx: *const (), option: *mut u8, value: *mut u8) {
+        let v = unsafe { core::ptr::read(value.cast::<u32>()) };
+        unsafe { core::ptr::write(option.cast::<Option<u32>>(), Some(v)) };
+    }
+    unsafe extern "C" fn ou32_init_none(_ctx: *const (), option: *mut u8) {
+        unsafe { core::ptr::write(option.cast::<Option<u32>>(), None) };
+    }
+    fn ou32_thunks() -> OptionThunks {
+        OptionThunks {
+            ctx: core::ptr::null(),
+            is_some: ou32_is_some,
+            get_value: ou32_get_value,
+            init_some: ou32_init_some,
+            init_none: ou32_init_none,
+        }
+    }
+
+    /// A root program of a single `Option<u32>`.
+    fn ou32_program() -> MemProgram {
+        vec![MemOp::Option(Box::new(OptionOp {
+            field_offset: 0,
+            some: vec![MemOp::Scalar { offset: 0, size: 4, align: 4 }],
+            inner_size: 4,
+            inner_align: 4,
+            thunks: ou32_thunks(),
+        }))]
+    }
+
+    /// `Option<u32>`: none encodes/decodes a lone `0` byte; some encodes `1` then
+    /// the u32. Both directions, both arms, round-tripped.
+    #[test]
+    fn jit_option_u32_none_and_some_roundtrip() {
+        let program = ou32_program();
+        let enc = NativeEncode::compile(&program);
+        let dec = NativeDecode::compile(&program);
+
+        for val in [None, Some(0xDEAD_BEEFu32), Some(0u32)] {
+            let got = unsafe { enc.run(core::ptr::from_ref(&val).cast::<u8>()) };
+            // Known wire: presence byte, then (if some) pad-to-4 + the u32.
+            let mut want = vec![if val.is_some() { 1u8 } else { 0u8 }];
+            if let Some(x) = val {
+                want.extend_from_slice(&[0, 0, 0]); // pad after the 1-byte presence
+                want.extend_from_slice(&x.to_le_bytes());
+            }
+            assert_eq!(got, want, "encode mismatch for {val:?}");
+
+            let mut slot = MaybeUninit::<Option<u32>>::uninit();
+            unsafe { dec.run(&got, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+            let back = unsafe { slot.assume_init() };
+            assert_eq!(back, val, "roundtrip mismatch for {val:?}");
+        }
+    }
+
+    // `Option<String>` thunks: a heap inner — exercises the decode scratch buffer
+    // and the `init_some` move (the `String` is built into scratch, then moved
+    // into the `Option`, then the scratch freed without dropping).
+    unsafe extern "C" fn ostr_is_some(_ctx: *const (), option: *const u8) -> bool {
+        unsafe { (*option.cast::<Option<String>>()).is_some() }
+    }
+    unsafe extern "C" fn ostr_get_value(_ctx: *const (), option: *const u8) -> *const u8 {
+        match unsafe { &*option.cast::<Option<String>>() } {
+            Some(v) => core::ptr::from_ref(v).cast::<u8>(),
+            None => core::ptr::null(),
+        }
+    }
+    unsafe extern "C" fn ostr_init_some(_ctx: *const (), option: *mut u8, value: *mut u8) {
+        let v = unsafe { core::ptr::read(value.cast::<String>()) };
+        unsafe { core::ptr::write(option.cast::<Option<String>>(), Some(v)) };
+    }
+    unsafe extern "C" fn ostr_init_none(_ctx: *const (), option: *mut u8) {
+        unsafe { core::ptr::write(option.cast::<Option<String>>(), None) };
+    }
+    fn ostr_thunks() -> OptionThunks {
+        OptionThunks {
+            ctx: core::ptr::null(),
+            is_some: ostr_is_some,
+            get_value: ostr_get_value,
+            init_some: ostr_init_some,
+            init_none: ostr_init_none,
+        }
+    }
+
+    /// A root program of a single `Option<String>` (the inner is a UTF-8 byte run).
+    fn ostr_program() -> MemProgram {
+        vec![MemOp::Option(Box::new(OptionOp {
+            field_offset: 0,
+            some: vec![MemOp::Bytes(Box::new(BytesOp {
+                field_offset: 0,
+                stride: 1,
+                elem_align: 1,
+                validate: validate_utf8,
+                thunks: str_thunks(),
+            }))],
+            inner_size: core::mem::size_of::<String>(),
+            inner_align: core::mem::align_of::<String>(),
+            thunks: ostr_thunks(),
+        }))]
+    }
+
+    /// `Option<String>`: the some-arm builds a heap `String` into scratch and moves
+    /// it into the option. Both arms, round-tripped, byte-identical wire.
+    #[test]
+    fn jit_option_string_scratch_move_roundtrip() {
+        let program = ostr_program();
+        let enc = NativeEncode::compile(&program);
+        let dec = NativeDecode::compile(&program);
+
+        for val in [None, Some(String::new()), Some("héllo 🐝 wörld".to_string())] {
+            let got = unsafe { enc.run(core::ptr::from_ref(&val).cast::<u8>()) };
+            // Known wire: presence byte, then (if some) the String run (u32 len +
+            // bytes; no pad needed — len starts at offset 1, elem_align 1).
+            let mut want = vec![if val.is_some() { 1u8 } else { 0u8 }];
+            if let Some(s) = &val {
+                want.extend_from_slice(&(s.len() as u32).to_le_bytes());
+                want.extend_from_slice(s.as_bytes());
+            }
+            assert_eq!(got, want, "encode mismatch for {val:?}");
+
+            let mut slot = MaybeUninit::<Option<String>>::uninit();
+            unsafe { dec.run(&got, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+            let back = unsafe { slot.assume_init() };
+            assert_eq!(back, val, "roundtrip mismatch for {val:?}");
+        }
+    }
+
+    /// A presence byte other than 0/1 must reject (`InvalidBool`), never produce a
+    /// value.
+    #[test]
+    fn jit_option_rejects_bad_presence() {
+        let program = ou32_program();
+        let dec = NativeDecode::compile(&program);
+        let mut slot = MaybeUninit::<Option<u32>>::uninit();
+        let err = unsafe { dec.run(&[2u8], slot.as_mut_ptr().cast::<u8>()) }.unwrap_err();
+        assert!(matches!(err, DecodeError::InvalidBool(2)), "got {err:?}");
+
+        // An empty wire (no presence byte at all) is a truncation, not InvalidBool.
+        let mut slot2 = MaybeUninit::<Option<u32>>::uninit();
+        let err2 = unsafe { dec.run(&[], slot2.as_mut_ptr().cast::<u8>()) }.unwrap_err();
+        assert!(matches!(err2, DecodeError::UnexpectedEof { .. }), "got {err2:?}");
+    }
+
+    // ====================================================================
+    // Enum: the data-directed variant branch (decode + encode)
+    // ====================================================================
+
+    // A `#[repr(u8)]`-style enum with three payload shapes mirroring phon's `Msg`:
+    //   Ping        -> unit (no payload)
+    //   Echo(u32)   -> single scalar payload
+    //   Move{x,y}   -> a two-scalar (struct) payload
+    // The discriminant is a u8 at offset 0; the payload fields follow (facet keeps
+    // the discriminant first). We model it over a fixed 12-byte image so x/y have
+    // room at offsets 4 and 8.
+    #[repr(C, align(4))]
+    struct MsgImage([u8; 12]);
+
+    fn msg_program() -> MemProgram {
+        vec![MemOp::Enum(Box::new(EnumOp {
+            tag_offset: 0,
+            tag_width: 1,
+            variants: vec![
+                // Ping: wire index 0, selector 0, no payload.
+                EnumVariantOp { wire_index: 0, selector: 0, payload: vec![] },
+                // Echo(u32): wire index 1, selector 1, one scalar at offset 4.
+                EnumVariantOp {
+                    wire_index: 1,
+                    selector: 1,
+                    payload: vec![MemOp::Scalar { offset: 4, size: 4, align: 4 }],
+                },
+                // Move{x,y}: wire index 2, selector 2, two scalars at 4 and 8.
+                EnumVariantOp {
+                    wire_index: 2,
+                    selector: 2,
+                    payload: vec![
+                        MemOp::Scalar { offset: 4, size: 4, align: 4 },
+                        MemOp::Scalar { offset: 8, size: 4, align: 4 },
+                    ],
+                },
+            ],
+        }))]
+    }
+
+    /// Each enum variant shape (unit, scalar payload, struct payload) encodes to
+    /// the expected wire and round-trips byte-identically.
+    #[test]
+    fn jit_enum_all_variant_shapes_roundtrip() {
+        let program = msg_program();
+        let enc = NativeEncode::compile(&program);
+        let dec = NativeDecode::compile(&program);
+
+        // (image, expected wire) per variant.
+        let mut ping = MsgImage([0; 12]);
+        ping.0[0] = 0; // selector 0
+        let ping_wire = 0u32.to_le_bytes().to_vec();
+
+        let mut echo = MsgImage([0; 12]);
+        echo.0[0] = 1; // selector 1
+        echo.0[4..8].copy_from_slice(&0xCAFE_F00Du32.to_le_bytes());
+        let mut echo_wire = 1u32.to_le_bytes().to_vec();
+        echo_wire.extend_from_slice(&0xCAFE_F00Du32.to_le_bytes());
+
+        let mut mv = MsgImage([0; 12]);
+        mv.0[0] = 2; // selector 2
+        mv.0[4..8].copy_from_slice(&3i32.to_le_bytes());
+        mv.0[8..12].copy_from_slice(&(-4i32).to_le_bytes());
+        let mut mv_wire = 2u32.to_le_bytes().to_vec();
+        mv_wire.extend_from_slice(&3i32.to_le_bytes());
+        mv_wire.extend_from_slice(&(-4i32).to_le_bytes());
+
+        for (img, want) in [(&ping, &ping_wire), (&echo, &echo_wire), (&mv, &mv_wire)] {
+            let got = unsafe { enc.run(img.0.as_ptr()) };
+            assert_eq!(&got, want, "encode mismatch (selector {})", img.0[0]);
+
+            let mut slot = MsgImage([0xFF; 12]);
+            unsafe { dec.run(&got, slot.0.as_mut_ptr()) }.unwrap();
+            // The discriminant is written; payload fields restored. (For Ping the
+            // payload region is untouched, which is fine — only the selector is
+            // semantically live.)
+            assert_eq!(slot.0[0], img.0[0], "selector mismatch");
+            if img.0[0] != 0 {
+                assert_eq!(&slot.0[4..8], &img.0[4..8], "x/scalar mismatch");
+            }
+            if img.0[0] == 2 {
+                assert_eq!(&slot.0[8..12], &img.0[8..12], "y mismatch");
+            }
+        }
+    }
+
+    /// An unmatched wire index must reject, never produce a value.
+    #[test]
+    fn jit_enum_rejects_unmatched_index() {
+        let program = msg_program();
+        let dec = NativeDecode::compile(&program);
+        // Wire variant index 99 — no such variant.
+        let wire = 99u32.to_le_bytes().to_vec();
+        let mut slot = MsgImage([0; 12]);
+        let err = unsafe { dec.run(&wire, slot.0.as_mut_ptr()) }.unwrap_err();
+        assert!(matches!(err, DecodeError::Malformed(_)), "got {err:?}");
+
+        // A truncated index (3 bytes) is an EOF, not a bad-index rejection.
+        let mut slot2 = MsgImage([0; 12]);
+        let err2 = unsafe { dec.run(&[0u8, 0, 0], slot2.0.as_mut_ptr()) }.unwrap_err();
+        assert!(matches!(err2, DecodeError::UnexpectedEof { .. }), "got {err2:?}");
+    }
+
+    /// A wider discriminant (`tag_width = 4`) exercises the multi-byte selector
+    /// read/write path, distinct from the 1-byte `Msg` case.
+    #[test]
+    fn jit_enum_wide_tag_roundtrip() {
+        #[repr(C, align(4))]
+        struct Img([u8; 8]);
+        // Discriminant u32 at offset 0; one u32 payload at offset 4.
+        let program: MemProgram = vec![MemOp::Enum(Box::new(EnumOp {
+            tag_offset: 0,
+            tag_width: 4,
+            variants: vec![
+                EnumVariantOp { wire_index: 0, selector: 0x1111_1111, payload: vec![] },
+                EnumVariantOp {
+                    wire_index: 1,
+                    selector: 0x2222_2222,
+                    payload: vec![MemOp::Scalar { offset: 4, size: 4, align: 4 }],
+                },
+            ],
+        }))];
+        let enc = NativeEncode::compile(&program);
+        let dec = NativeDecode::compile(&program);
+
+        let mut a = Img([0; 8]);
+        a.0[0..4].copy_from_slice(&0x2222_2222u32.to_le_bytes());
+        a.0[4..8].copy_from_slice(&0x0BAD_F00Du32.to_le_bytes());
+        let got = unsafe { enc.run(a.0.as_ptr()) };
+        let mut want = 1u32.to_le_bytes().to_vec();
+        want.extend_from_slice(&0x0BAD_F00Du32.to_le_bytes());
+        assert_eq!(got, want);
+
+        let mut slot = Img([0; 8]);
+        unsafe { dec.run(&got, slot.0.as_mut_ptr()) }.unwrap();
+        assert_eq!(slot.0[0..4], 0x2222_2222u32.to_le_bytes());
+        assert_eq!(slot.0[4..8], 0x0BAD_F00Du32.to_le_bytes());
+    }
+
+    /// An enum nested inside a struct: a leading scalar, then the enum (whose
+    /// payload writes at base-relative offsets past the discriminant). Exercises
+    /// the enum continuing the outer chain after its payload sub-chain.
+    #[test]
+    fn jit_enum_after_scalar_roundtrip() {
+        #[repr(C, align(4))]
+        struct Img([u8; 16]);
+        // u32 @ 0, then an enum with discriminant u8 @ 4 and a u32 payload @ 8.
+        let program: MemProgram = vec![
+            MemOp::Scalar { offset: 0, size: 4, align: 4 },
+            MemOp::Enum(Box::new(EnumOp {
+                tag_offset: 4,
+                tag_width: 1,
+                variants: vec![
+                    EnumVariantOp { wire_index: 0, selector: 0, payload: vec![] },
+                    EnumVariantOp {
+                        wire_index: 1,
+                        selector: 1,
+                        payload: vec![MemOp::Scalar { offset: 8, size: 4, align: 4 }],
+                    },
+                ],
+            })),
+        ];
+        let enc = NativeEncode::compile(&program);
+        let dec = NativeDecode::compile(&program);
+
+        let mut img = Img([0; 16]);
+        img.0[0..4].copy_from_slice(&0xABCD_1234u32.to_le_bytes());
+        img.0[4] = 1; // selector 1
+        img.0[8..12].copy_from_slice(&0x5678_9ABCu32.to_le_bytes());
+        let got = unsafe { enc.run(img.0.as_ptr()) };
+
+        // Known wire: the leading u32, then the enum's u32 wire index, then the
+        // payload u32 (no padding — the enum's u32 index starts 4-aligned and the
+        // payload u32 follows it contiguously).
+        let mut want = 0xABCD_1234u32.to_le_bytes().to_vec();
+        want.extend_from_slice(&1u32.to_le_bytes());
+        want.extend_from_slice(&0x5678_9ABCu32.to_le_bytes());
+        assert_eq!(got, want, "encode wire mismatch");
+
+        let mut slot = Img([0; 16]);
+        unsafe { dec.run(&got, slot.0.as_mut_ptr()) }.unwrap();
+        assert_eq!(slot.0[0..4], 0xABCD_1234u32.to_le_bytes());
+        assert_eq!(slot.0[4], 1);
+        assert_eq!(slot.0[8..12], 0x5678_9ABCu32.to_le_bytes());
     }
 }

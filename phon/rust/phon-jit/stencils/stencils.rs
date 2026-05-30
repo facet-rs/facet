@@ -39,8 +39,14 @@ pub struct Ctx {
     /// `[offset, size, align]` triples (scalars) and `*const SeqInfo` slots
     /// (sequences), consumed in order.
     pub prog: *const u64,
-    /// 0 = ok, 1 = ran out of input / malformed (e.g. length too large).
+    /// 0 = ok, 1 = ran out of input / malformed (e.g. length too large),
+    /// 2 = content validation failed (e.g. non-UTF-8 `String`), 3 = bad `Option`
+    /// presence byte (the byte is in `aux`), 4 = unmatched enum wire index (the
+    /// index is in `aux`).
     pub status: u64,
+    /// Auxiliary value carried alongside a rejection `status`: the bad presence
+    /// byte (`status == 3`) or the unmatched enum wire index (`status == 4`).
+    pub aux: u64,
     /// Allocate `size` bytes aligned to `align` with the global Rust allocator.
     /// Returns null on `size == 0` (the caller substitutes a dangling pointer).
     pub alloc: unsafe extern "C" fn(size: usize, align: usize) -> *mut u8,
@@ -92,6 +98,63 @@ pub struct BytesInfo {
     /// Reached as an *indirect* call, so it adds no relocation. Returns `true` if
     /// the bytes are valid; on `false` the stencil reports `status = 2`.
     pub validate: unsafe extern "C" fn(ptr: *const u8, len: usize) -> bool,
+}
+
+/// An optional op's immediates, reached through a `*const OptInfo` slot in
+/// `Ctx.prog`. The some-body is the chain entered at `some_entry`, driven by the
+/// triples at `some_prog`, and run with `base = scratch` (the engine-allocated
+/// inner buffer) and the shared wire cursor. Mirrors `OptionOp`.
+#[repr(C)]
+pub struct OptInfo {
+    /// Where the `Option<T>` handle lives, relative to `base`.
+    pub field_offset: usize,
+    /// The inner `T`'s size — the decode scratch buffer's size (0 → dangling).
+    pub inner_size: usize,
+    /// The inner `T`'s alignment — the decode scratch buffer's alignment.
+    pub inner_align: usize,
+    /// Opaque per-type context passed to the thunks.
+    pub thunks_ctx: *const (),
+    /// Initialize the option at `option` to `None`.
+    pub init_none: unsafe extern "C" fn(ctx: *const (), option: *mut u8),
+    /// Initialize the option at `option` to `Some(*value)`, moving the inner out
+    /// of `value` (the engine then frees `value`'s storage without dropping).
+    pub init_some: unsafe extern "C" fn(ctx: *const (), option: *mut u8, value: *mut u8),
+    /// Entry to the some-body chain (a `*mut Ctx` function ending in `ret`).
+    pub some_entry: unsafe extern "C" fn(cx: *mut Ctx),
+    /// The some-body's immediate stream (reset into `Ctx.prog` for the inner).
+    pub some_prog: *const u64,
+}
+
+/// One enum variant's decode immediates, pointed at (as an array) by
+/// [`EnumInfo`]. The payload is the chain entered at `payload_entry`, driven by
+/// the triples at `payload_prog`, run with the SAME outer base + shared wire.
+#[repr(C)]
+pub struct EnumVariantInfo {
+    /// The `u32` wire index identifying this variant.
+    pub wire_index: u32,
+    /// The in-memory discriminant value (its low `tag_width` bytes) to write.
+    pub selector: u64,
+    /// Entry to the payload chain (a `*mut Ctx` function ending in `ret`).
+    pub payload_entry: unsafe extern "C" fn(cx: *mut Ctx),
+    /// The payload's immediate stream (reset into `Ctx.prog`).
+    pub payload_prog: *const u64,
+}
+
+/// An enum op's immediates, reached through a `*const EnumInfo` slot in
+/// `Ctx.prog`. Reads a `u32` wire index, finds the matching variant (an ordinary
+/// loop over `variants[..variant_count]`, branches within the stencil — no
+/// relocation), writes its in-memory discriminant, then runs its payload chain.
+/// Mirrors `EnumOp`.
+#[repr(C)]
+pub struct EnumInfo {
+    /// Where the in-memory discriminant lives, relative to `base`.
+    pub tag_offset: usize,
+    /// The discriminant's width in bytes (1/2/4/8).
+    pub tag_width: usize,
+    /// Pointer to the first of `variant_count` `EnumVariantInfo`.
+    pub variants: *const EnumVariantInfo,
+    /// Number of variants.
+    pub variant_count: usize,
 }
 
 extern "C" {
@@ -321,6 +384,159 @@ pub unsafe extern "C" fn phon_stencil_bytes(cx: *mut Ctx) {
     phon_cont(cx);
 }
 
+/// Decode an `Option<T>` into `base + field_offset`, then continue.
+///
+/// Reads a `u8` presence byte (bounds-checked). `0` → `init_none`. `1` → allocate
+/// an `inner_size`/`inner_align` scratch buffer (size 0 → dangling, no alloc), run
+/// the some-body chain at `base = scratch` sharing the wire cursor, then move the
+/// inner into the option via `init_some` and free the scratch WITHOUT dropping
+/// (ownership transferred). Any other presence byte rejects with `status = 3`
+/// (the byte in `aux`). The presence branch is an ordinary `match` — rustc lowers
+/// it to in-stencil branches, so the only relocation is the `phon_cont` BRANCH26.
+#[no_mangle]
+pub unsafe extern "C" fn phon_stencil_option(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let info = &*(*c.prog as *const OptInfo);
+    let outer_prog = c.prog.add(1);
+    let outer_base = c.base;
+
+    // Read the u8 presence byte with a bounds check (like `read_u8`).
+    if (c.wire as usize).wrapping_add(1) > c.wire_end as usize {
+        c.status = 1;
+        return;
+    }
+    let presence = *c.wire;
+    c.wire = c.wire.add(1);
+
+    let option = outer_base.add(info.field_offset);
+    match presence {
+        0 => {
+            (info.init_none)(info.thunks_ctx, option);
+        }
+        1 => {
+            // Allocate scratch for the inner value. size 0 -> dangling aligned.
+            let (scratch, alloc_size) = if info.inner_size == 0 {
+                (info.inner_align as *mut u8, 0usize)
+            } else {
+                let buf = (c.alloc)(info.inner_size, info.inner_align);
+                if buf.is_null() {
+                    c.status = 1;
+                    return;
+                }
+                (buf, info.inner_size)
+            };
+            // Run the some-body at `base = scratch`, sharing the wire cursor.
+            c.prog = info.some_prog;
+            c.base = scratch;
+            (info.some_entry)(cx);
+            if c.status != 0 {
+                if alloc_size != 0 {
+                    (c.dealloc)(scratch, alloc_size, info.inner_align);
+                }
+                return;
+            }
+            // Move the inner into the option, then free the scratch without
+            // dropping (ownership transferred to the option).
+            c.base = outer_base;
+            (info.init_some)(info.thunks_ctx, option, scratch);
+            if alloc_size != 0 {
+                (c.dealloc)(scratch, alloc_size, info.inner_align);
+            }
+        }
+        b => {
+            // A presence byte other than 0/1 is hostile input: reject, carrying
+            // the byte for a precise `InvalidBool` mapping in `run()`.
+            c.status = 3;
+            c.aux = b as u64;
+            return;
+        }
+    }
+
+    c.base = outer_base;
+    c.prog = outer_prog;
+
+    #[cfg(tailcall)]
+    become phon_cont(cx);
+    #[cfg(not(tailcall))]
+    phon_cont(cx);
+}
+
+/// Decode a `#[repr(int)]` enum into the value at `base`, then continue.
+///
+/// Reads a `u32` wire index (bounds-checked), finds the variant whose `wire_index`
+/// matches by an ordinary loop over `variants[..variant_count]` (in-stencil
+/// branches, no relocation). No match → reject with `status = 4` (the index in
+/// `aux`). On a match, writes the in-memory discriminant (`selector`'s low
+/// `tag_width` bytes at `base + tag_offset`, like `write_uint`), then runs the
+/// variant's payload chain at the SAME outer base sharing the wire cursor.
+#[no_mangle]
+pub unsafe extern "C" fn phon_stencil_enum(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let info = &*(*c.prog as *const EnumInfo);
+    let outer_prog = c.prog.add(1);
+    let outer_base = c.base;
+
+    // Read the u32 wire index with a bounds check (like `read_u32`).
+    if (c.wire as usize).wrapping_add(4) > c.wire_end as usize {
+        c.status = 1;
+        return;
+    }
+    let mut idx_bytes = [0u8; 4];
+    core::ptr::copy_nonoverlapping(c.wire, idx_bytes.as_mut_ptr(), 4);
+    let wire_index = u32::from_le_bytes(idx_bytes);
+    c.wire = c.wire.add(4);
+
+    // Linear search for the matching variant (a plain loop — branches within the
+    // stencil, no relocation).
+    let mut found: *const EnumVariantInfo = core::ptr::null();
+    let mut i = 0;
+    while i < info.variant_count {
+        let v = info.variants.add(i);
+        if (*v).wire_index == wire_index {
+            found = v;
+            break;
+        }
+        i += 1;
+    }
+    if found.is_null() {
+        // Unmatched index is hostile input: reject, carrying the index for a
+        // precise `BadVariantIndex` mapping in `run()`.
+        c.status = 4;
+        c.aux = wire_index as u64;
+        return;
+    }
+    let variant = &*found;
+
+    // Write the in-memory discriminant (low `tag_width` bytes of `selector`,
+    // little-endian). A `write_volatile` byte loop shifting bytes out of the
+    // `u64` keeps LLVM from lowering this runtime-length copy to a `memcpy`
+    // libcall (and avoids array indexing that would emit a `panic_bounds_check`
+    // call) — neither relocation a copied stencil can carry; `tag_width <= 8` is
+    // tiny.
+    let disc = outer_base.add(info.tag_offset);
+    let mut w = 0;
+    while w < info.tag_width {
+        core::ptr::write_volatile(disc.add(w), (variant.selector >> (w * 8)) as u8);
+        w += 1;
+    }
+
+    // Run the payload chain at the SAME outer base, sharing the wire cursor.
+    c.prog = variant.payload_prog;
+    c.base = outer_base;
+    (variant.payload_entry)(cx);
+    if c.status != 0 {
+        return;
+    }
+
+    c.base = outer_base;
+    c.prog = outer_prog;
+
+    #[cfg(tailcall)]
+    become phon_cont(cx);
+    #[cfg(not(tailcall))]
+    phon_cont(cx);
+}
+
 /// Terminal stencil: stop, leaving `status` unchanged (0 = ok).
 #[no_mangle]
 pub unsafe extern "C" fn phon_stencil_done(_cx: *mut Ctx) {}
@@ -410,6 +626,57 @@ pub struct EncBytesInfo {
     pub len: unsafe extern "C" fn(ctx: *const (), list: *const u8) -> usize,
     /// A pointer to the handle's contiguous element storage (for reading).
     pub data: unsafe extern "C" fn(ctx: *const (), list: *const u8) -> *const u8,
+}
+
+/// An encode optional op's immediates, reached through a `*const EncOptInfo` slot
+/// in `EncCtx.prog`. Mirrors `OptInfo` minus the decode-only init thunks (plus the
+/// read thunks). The some-body is run with `base = get_value(...)`.
+#[repr(C)]
+pub struct EncOptInfo {
+    /// Where the `Option<T>` handle lives, relative to `base`.
+    pub field_offset: usize,
+    /// Opaque per-type context passed to the thunks.
+    pub thunks_ctx: *const (),
+    /// Whether the option at `option` is `Some`.
+    pub is_some: unsafe extern "C" fn(ctx: *const (), option: *const u8) -> bool,
+    /// A pointer to the contained value (valid only when `is_some`).
+    pub get_value: unsafe extern "C" fn(ctx: *const (), option: *const u8) -> *const u8,
+    /// Entry to the some-body chain (a `*mut EncCtx` function ending in `ret`).
+    pub some_entry: unsafe extern "C" fn(cx: *mut EncCtx),
+    /// The some-body's immediate stream (reset into `EncCtx.prog` for the inner).
+    pub some_prog: *const u64,
+}
+
+/// One enum variant's encode immediates, pointed at (as an array) by
+/// [`EncEnumInfo`]. The payload chain is run with the SAME outer base.
+#[repr(C)]
+pub struct EncEnumVariantInfo {
+    /// The `u32` wire index to write for this variant.
+    pub wire_index: u32,
+    /// The in-memory discriminant value (its low `tag_width` bytes) identifying
+    /// this variant — matched against the read discriminant, masked to `tag_width`.
+    pub selector: u64,
+    /// Entry to the payload chain (a `*mut EncCtx` function ending in `ret`).
+    pub payload_entry: unsafe extern "C" fn(cx: *mut EncCtx),
+    /// The payload's immediate stream (reset into `EncCtx.prog`).
+    pub payload_prog: *const u64,
+}
+
+/// An encode enum op's immediates, reached through a `*const EncEnumInfo` slot in
+/// `EncCtx.prog`. Reads the in-memory discriminant (`tag_width` bytes at
+/// `base + tag_offset`, like `read_uint`), finds the variant whose `selector`
+/// matches (masked to `tag_width`) by a plain loop, writes its `u32` wire index,
+/// then runs its payload chain. Mirrors `EnumOp`.
+#[repr(C)]
+pub struct EncEnumInfo {
+    /// Where the in-memory discriminant lives, relative to `base`.
+    pub tag_offset: usize,
+    /// The discriminant's width in bytes (1/2/4/8).
+    pub tag_width: usize,
+    /// Pointer to the first of `variant_count` `EncEnumVariantInfo`.
+    pub variants: *const EncEnumVariantInfo,
+    /// Number of variants.
+    pub variant_count: usize,
 }
 
 extern "C" {
@@ -588,6 +855,123 @@ pub unsafe extern "C" fn phon_stencil_bytes_enc(cx: *mut EncCtx) {
     }
     c.out_pos += total;
 
+    c.prog = outer_prog;
+
+    #[cfg(tailcall)]
+    become phon_econt(cx);
+    #[cfg(not(tailcall))]
+    phon_econt(cx);
+}
+
+/// Encode an `Option<T>` from `base + field_offset`, then continue.
+///
+/// `is_some`? then write a `u8` `1` and run the some-body chain at
+/// `base = get_value(...)`, sharing the output cursor; else write a `u8` `0`. The
+/// presence branch is an ordinary `if` — rustc lowers it to an in-stencil branch,
+/// so the only relocation is the `phon_econt` BRANCH26.
+#[no_mangle]
+pub unsafe extern "C" fn phon_stencil_option_enc(cx: *mut EncCtx) {
+    let c = &mut *cx;
+    let info = &*(*c.prog as *const EncOptInfo);
+    let outer_prog = c.prog.add(1);
+    let outer_base = c.base;
+
+    let option = outer_base.add(info.field_offset);
+    let present = (info.is_some)(info.thunks_ctx, option);
+
+    // Write the u8 presence byte (no alignment, like `write_u8`).
+    let need = c.out_pos + 1;
+    if need > c.out_cap {
+        (c.grow)(cx, need);
+    }
+    *c.out_ptr.add(c.out_pos) = if present { 1 } else { 0 };
+    c.out_pos += 1;
+
+    if present {
+        // Run the some-body at `base = get_value(...)`, sharing the output cursor.
+        let inner = (info.get_value)(info.thunks_ctx, option);
+        c.prog = info.some_prog;
+        c.base = inner;
+        (info.some_entry)(cx);
+    }
+
+    c.base = outer_base;
+    c.prog = outer_prog;
+
+    #[cfg(tailcall)]
+    become phon_econt(cx);
+    #[cfg(not(tailcall))]
+    phon_econt(cx);
+}
+
+/// Encode a `#[repr(int)]` enum from the value at `base`, then continue.
+///
+/// Reads the in-memory discriminant (`tag_width` bytes at `base + tag_offset`,
+/// like `read_uint`), finds the variant whose `selector` matches (masked to
+/// `tag_width`) by an ordinary loop (in-stencil branches, no relocation), writes
+/// its `u32` wire index, then runs its payload chain at the SAME outer base
+/// sharing the output cursor. An unmatched discriminant cannot arise from a valid
+/// in-memory enum, so (like the interpreter's `.expect`) the loop falls through to
+/// writing nothing and continuing — but a well-formed value always matches.
+#[no_mangle]
+pub unsafe extern "C" fn phon_stencil_enum_enc(cx: *mut EncCtx) {
+    let c = &mut *cx;
+    let info = &*(*c.prog as *const EncEnumInfo);
+    let outer_prog = c.prog.add(1);
+    let outer_base = c.base;
+
+    // Read the in-memory discriminant (low `tag_width` bytes, little-endian),
+    // masked. A `read_volatile` byte loop accumulating with shifts keeps LLVM
+    // from lowering this runtime-length copy to a `memcpy` libcall (and avoids
+    // array indexing that would emit a `panic_bounds_check` call) — neither
+    // relocation a copied stencil can carry; `tag_width <= 8` is tiny.
+    let src = outer_base.add(info.tag_offset);
+    let mut disc: u64 = 0;
+    let mut r = 0;
+    while r < info.tag_width {
+        disc |= (core::ptr::read_volatile(src.add(r)) as u64) << (r * 8);
+        r += 1;
+    }
+    let mask = if info.tag_width >= 8 { u64::MAX } else { (1u64 << (info.tag_width * 8)) - 1 };
+
+    // Linear search for the matching variant (a plain loop — branches within the
+    // stencil, no relocation).
+    let mut found: *const EncEnumVariantInfo = core::ptr::null();
+    let mut i = 0;
+    while i < info.variant_count {
+        let v = info.variants.add(i);
+        if ((*v).selector & mask) == (disc & mask) {
+            found = v;
+            break;
+        }
+        i += 1;
+    }
+    if found.is_null() {
+        // A valid in-memory enum always matches; nothing to write otherwise.
+        c.base = outer_base;
+        c.prog = outer_prog;
+        #[cfg(tailcall)]
+        become phon_econt(cx);
+        #[cfg(not(tailcall))]
+        return phon_econt(cx);
+    }
+    let variant = &*found;
+
+    // Write the u32 wire index (no alignment, like `write_u32`).
+    let need = c.out_pos + 4;
+    if need > c.out_cap {
+        (c.grow)(cx, need);
+    }
+    let idx_bytes = variant.wire_index.to_le_bytes();
+    core::ptr::copy_nonoverlapping(idx_bytes.as_ptr(), c.out_ptr.add(c.out_pos), 4);
+    c.out_pos += 4;
+
+    // Run the payload chain at the SAME outer base, sharing the output cursor.
+    c.prog = variant.payload_prog;
+    c.base = outer_base;
+    (variant.payload_entry)(cx);
+
+    c.base = outer_base;
     c.prog = outer_prog;
 
     #[cfg(tailcall)]

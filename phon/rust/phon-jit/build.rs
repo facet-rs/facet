@@ -76,10 +76,14 @@ fn emit_arm64_macos(out: &Path, generated: &Path) {
     let scalar = extract(&bytes, "phon_stencil_scalar", "phon_cont");
     let sequence = extract(&bytes, "phon_stencil_sequence", "phon_cont");
     let bytes_dec = extract(&bytes, "phon_stencil_bytes", "phon_cont");
+    let option = extract(&bytes, "phon_stencil_option", "phon_cont");
+    let enum_dec = extract(&bytes, "phon_stencil_enum", "phon_cont");
     let done = extract(&bytes, "phon_stencil_done", "phon_cont");
     let scalar_enc = extract(&bytes, "phon_stencil_scalar_enc", "phon_econt");
     let sequence_enc = extract(&bytes, "phon_stencil_sequence_enc", "phon_econt");
     let bytes_enc = extract(&bytes, "phon_stencil_bytes_enc", "phon_econt");
+    let option_enc = extract(&bytes, "phon_stencil_option_enc", "phon_econt");
+    let enum_enc = extract(&bytes, "phon_stencil_enum_enc", "phon_econt");
     let done_enc = extract(&bytes, "phon_stencil_done_enc", "phon_econt");
 
     let mode = if tailcall { "tail-call (nightly become)" } else { "call (stable)" };
@@ -128,6 +132,31 @@ fn emit_arm64_macos(out: &Path, generated: &Path) {
         bytes_dec.cont_relocs
     ));
     src.push_str(&format!(
+        "/// `phon_stencil_option` machine code: decode one `Option<T>` (presence\n\
+         /// branch), continue. The some-body is invoked through `OptInfo.some_entry`.\n\
+         pub const OPTION: &[u8] = &{:?};\n",
+        option.bytes
+    ));
+    src.push_str(&format!(
+        "/// Byte offsets within `OPTION` of the `phon_cont` continuation branch to\n\
+         /// patch (`BRANCH26`).\n\
+         pub const OPTION_CONT: &[usize] = &{:?};\n",
+        option.cont_relocs
+    ));
+    src.push_str(&format!(
+        "/// `phon_stencil_enum` machine code: decode one `#[repr(int)]` enum\n\
+         /// (variant branch), continue. The payload is invoked through\n\
+         /// `EnumVariantInfo.payload_entry`.\n\
+         pub const ENUM: &[u8] = &{:?};\n",
+        enum_dec.bytes
+    ));
+    src.push_str(&format!(
+        "/// Byte offsets within `ENUM` of the `phon_cont` continuation branch to\n\
+         /// patch (`BRANCH26`).\n\
+         pub const ENUM_CONT: &[usize] = &{:?};\n",
+        enum_dec.cont_relocs
+    ));
+    src.push_str(&format!(
         "/// `phon_stencil_done` machine code: a lone `ret`.\n\
          pub const DONE: &[u8] = &{:?};\n",
         done.bytes
@@ -167,6 +196,31 @@ fn emit_arm64_macos(out: &Path, generated: &Path) {
          /// to patch (`BRANCH26`).\n\
          pub const BYTES_ENC_CONT: &[usize] = &{:?};\n",
         bytes_enc.cont_relocs
+    ));
+    src.push_str(&format!(
+        "/// `phon_stencil_option_enc` machine code: encode one `Option<T>` (presence\n\
+         /// branch), continue. The some-body is invoked through `EncOptInfo.some_entry`.\n\
+         pub const OPTION_ENC: &[u8] = &{:?};\n",
+        option_enc.bytes
+    ));
+    src.push_str(&format!(
+        "/// Byte offsets within `OPTION_ENC` of the `phon_econt` continuation branch\n\
+         /// to patch (`BRANCH26`).\n\
+         pub const OPTION_ENC_CONT: &[usize] = &{:?};\n",
+        option_enc.cont_relocs
+    ));
+    src.push_str(&format!(
+        "/// `phon_stencil_enum_enc` machine code: encode one `#[repr(int)]` enum\n\
+         /// (variant branch), continue. The payload is invoked through\n\
+         /// `EncEnumVariantInfo.payload_entry`.\n\
+         pub const ENUM_ENC: &[u8] = &{:?};\n",
+        enum_enc.bytes
+    ));
+    src.push_str(&format!(
+        "/// Byte offsets within `ENUM_ENC` of the `phon_econt` continuation branch\n\
+         /// to patch (`BRANCH26`).\n\
+         pub const ENUM_ENC_CONT: &[usize] = &{:?};\n",
+        enum_enc.cont_relocs
     ));
     src.push_str(&format!(
         "/// `phon_stencil_done_enc` machine code: a lone `ret`.\n\
@@ -257,10 +311,14 @@ fn extract(obj: &[u8], symbol: &str, cont_symbol: &str) -> Stencil {
         "phon_stencil_scalar",
         "phon_stencil_sequence",
         "phon_stencil_bytes",
+        "phon_stencil_option",
+        "phon_stencil_enum",
         "phon_stencil_done",
         "phon_stencil_scalar_enc",
         "phon_stencil_sequence_enc",
         "phon_stencil_bytes_enc",
+        "phon_stencil_option_enc",
+        "phon_stencil_enum_enc",
         "phon_stencil_done_enc",
     ]
     .iter()
