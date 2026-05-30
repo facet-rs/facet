@@ -129,6 +129,12 @@ pub enum MemOp {
     /// *data-directed* op: the branch is taken on a value read at run time, not
     /// resolved at lowering. See [`OptionOp`].
     Option(Box<OptionOp>),
+    /// A `#[repr(uN/iN)]` enum: a `u32` wire variant index then the active variant's
+    /// payload. Encode reads the in-memory discriminant (at `tag_offset`, `tag_width`
+    /// bytes) to pick the variant; decode reads the wire index, writes the
+    /// discriminant, then runs the variant's payload program. Data-directed: the
+    /// active arm is chosen at run time. See [`EnumOp`].
+    Enum(Box<EnumOp>),
 }
 
 /// An owned-sequence op's payload (boxed in [`MemOp::Sequence`] to keep `MemOp`
@@ -251,6 +257,35 @@ pub struct OptionThunks {
     pub init_none: unsafe extern "C" fn(ctx: *const (), option: *mut u8),
 }
 
+/// A `#[repr(int)]` enum op's payload (boxed in [`MemOp::Enum`]). The wire form is
+/// a `u32` variant index then the active variant's fields. In memory the
+/// discriminant lives at `tag_offset` (base-relative), `tag_width` bytes wide; the
+/// variant's fields live at their own base-relative offsets (already past the
+/// discriminant, per facet). Only `#[repr(uN/iN)]` enums lower here — a default
+/// `repr(Rust)` enum has an unspecified discriminant layout.
+#[derive(Clone, Debug)]
+pub struct EnumOp {
+    /// Where the in-memory discriminant lives, relative to the base.
+    pub tag_offset: usize,
+    /// The discriminant's width in bytes (1/2/4/8), from the `#[repr(int)]` type.
+    pub tag_width: usize,
+    /// The variants, each with its wire index, in-memory discriminant, and payload
+    /// program. Looked up by wire index on decode, by discriminant on encode.
+    pub variants: Vec<EnumVariantOp>,
+}
+
+/// One enum variant in a [`MemOp::Enum`].
+#[derive(Clone, Debug)]
+pub struct EnumVariantOp {
+    /// The `u32` written to / read from the wire to identify this variant.
+    pub wire_index: u32,
+    /// The in-memory discriminant value (its low `tag_width` bytes) identifying
+    /// this variant — `i64`-derived, stored as `u64` for width-masked comparison.
+    pub selector: u64,
+    /// The variant's payload fields, with base-relative offsets, in wire order.
+    pub payload: MemProgram,
+}
+
 /// Coalesce adjacent scalar copies that are contiguous in *both* the wire and
 /// memory into one larger copy — the specialization the IR exists for. A flat
 /// struct whose wire layout matches its memory layout collapses to a single
@@ -290,7 +325,7 @@ pub fn fuse(program: MemProgram) -> MemProgram {
             }
             // Variable-length / data-directed ops make the static wire position
             // unknown after them.
-            seq @ (MemOp::Sequence(_) | MemOp::Bytes(_) | MemOp::Option(_)) => {
+            seq @ (MemOp::Sequence(_) | MemOp::Bytes(_) | MemOp::Option(_) | MemOp::Enum(_)) => {
                 out.push(seq);
                 wire_pos = None;
             }

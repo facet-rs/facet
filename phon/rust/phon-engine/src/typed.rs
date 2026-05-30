@@ -24,8 +24,8 @@
 
 use std::alloc;
 
-use phon_ir::ir::{BytesOp, MemOp, MemProgram, OptionOp, SeqOp, fuse};
-use phon_ir::{Access, Construct, Descriptor, Presence, SequenceStorage};
+use phon_ir::ir::{BytesOp, EnumOp, EnumVariantOp, MemOp, MemProgram, OptionOp, SeqOp, fuse};
+use phon_ir::{Access, Construct, Descriptor, Presence, SequenceStorage, Tag};
 use phon_schema::bytes::{Reader, write_u8, write_u32};
 use phon_schema::{DecodeError, Primitive, SchemaKind};
 
@@ -195,9 +195,67 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
             })));
             Ok(())
         }
+        // r[impl ir.memory] — #[repr(int)] enum: a u32 wire index then the payload.
+        (Access::Enum(ea), Resolved::Composite(SchemaKind::Enum { .. })) => {
+            let Tag::Direct { offset, width } = &ea.tag else {
+                return Err(CompactError::Unsupported(
+                    "typed: only #[repr(int)] enums (direct discriminant) so far",
+                ));
+            };
+            let mut variants = Vec::with_capacity(ea.variants.len());
+            for va in &ea.variants {
+                // The variant's fields live at base-relative offsets that already
+                // account for the discriminant (per facet); lower them as a record.
+                let mut payload = Vec::new();
+                for f in &va.payload.fields {
+                    lower_node(&f.descriptor, reg, base + f.offset, &mut payload)?;
+                }
+                variants.push(EnumVariantOp {
+                    wire_index: va.index,
+                    selector: va.selector,
+                    payload: fuse(payload),
+                });
+            }
+            out.push(MemOp::Enum(Box::new(EnumOp {
+                tag_offset: base + *offset,
+                tag_width: *width,
+                variants,
+            })));
+            Ok(())
+        }
         _ => Err(CompactError::Unsupported(
-            "typed: only fixed scalars, in-place records, owned sequences, strings, and options so far",
+            "typed: only fixed scalars, in-place records, owned sequences, strings, options, and #[repr(int)] enums so far",
         )),
+    }
+}
+
+/// Read `width` (1/2/4/8) little-endian bytes at `ptr` as a `u64`.
+///
+/// # Safety
+/// `ptr` must be readable for `width` bytes.
+unsafe fn read_uint(ptr: *const u8, width: usize) -> u64 {
+    let mut buf = [0u8; 8];
+    // Safety: forwarded; `width <= 8`.
+    unsafe { core::ptr::copy_nonoverlapping(ptr, buf.as_mut_ptr(), width) };
+    u64::from_le_bytes(buf)
+}
+
+/// Write the low `width` (1/2/4/8) bytes of `val` little-endian at `ptr`.
+///
+/// # Safety
+/// `ptr` must be writable for `width` bytes.
+unsafe fn write_uint(ptr: *mut u8, width: usize, val: u64) {
+    let bytes = val.to_le_bytes();
+    // Safety: forwarded; `width <= 8`.
+    unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, width) };
+}
+
+/// A mask of the low `width` bytes (`width >= 8` → all ones).
+fn width_mask(width: usize) -> u64 {
+    if width >= 8 {
+        u64::MAX
+    } else {
+        (1u64 << (width * 8)) - 1
     }
 }
 
@@ -281,6 +339,20 @@ unsafe fn encode_program(program: &MemProgram, base: *const u8, out: &mut Vec<u8
                 } else {
                     write_u8(out, 0);
                 }
+            }
+            MemOp::Enum(e) => {
+                // Read the in-memory discriminant to pick the active variant.
+                // Safety: the discriminant lives at base + tag_offset, tag_width wide.
+                let disc = unsafe { read_uint(base.add(e.tag_offset), e.tag_width) };
+                let mask = width_mask(e.tag_width);
+                let variant = e
+                    .variants
+                    .iter()
+                    .find(|v| (v.selector & mask) == (disc & mask))
+                    .expect("enum discriminant matches no modelled variant (invalid value)");
+                write_u32(out, variant.wire_index);
+                // The payload fields live at base-relative offsets (same base).
+                unsafe { encode_program(&variant.payload, base, out) };
             }
         }
     }
@@ -447,6 +519,20 @@ unsafe fn decode_program(program: &MemProgram, r: &mut Reader, base: *mut u8) ->
                     }
                     b => return Err(CompactError::Decode(DecodeError::InvalidBool(b))),
                 }
+            }
+            MemOp::Enum(e) => {
+                let wire_index = r.read_u32()?;
+                let variant = e
+                    .variants
+                    .iter()
+                    .find(|v| v.wire_index == wire_index)
+                    .ok_or(CompactError::BadVariantIndex(wire_index))?;
+                // Write the in-memory discriminant, then decode the payload fields
+                // (disjoint memory: the discriminant precedes every field).
+                // Safety: the discriminant lives at base + tag_offset, tag_width wide.
+                unsafe { write_uint(base.add(e.tag_offset), e.tag_width, variant.selector) };
+                // Safety: payload fields write within the enum's storage at base.
+                unsafe { decode_program(&variant.payload, r, base)? };
             }
         }
     }

@@ -22,14 +22,16 @@ use std::collections::HashMap;
 use std::fmt;
 
 use facet::{
-    Def, Facet, ListDef, OptionDef, PtrConst, PtrMut, PtrUninit, ScalarType, Shape, Type, UserType,
+    Def, EnumRepr, EnumType, Facet, ListDef, OptionDef, PtrConst, PtrMut, PtrUninit, ScalarType,
+    Shape, StructKind, Type, UserType,
 };
 use phon_ir::{
-    Access, Construct, Descriptor, FieldAccess, Layout, OptionAccess, OptionThunks, Presence,
-    RecordAccess, SeqThunks, SequenceAccess, SequenceStorage,
+    Access, Construct, Descriptor, EnumAccess, FieldAccess, Layout, OptionAccess, OptionThunks,
+    Presence, RecordAccess, SeqThunks, SequenceAccess, SequenceStorage, Tag, VariantAccess,
 };
 use phon_schema::{
-    Field, Primitive, Schema, SchemaId, SchemaKind, SchemaRef, primitive_id, resolve_ids,
+    Field, Primitive, Schema, SchemaId, SchemaKind, SchemaRef, Variant, VariantPayload,
+    primitive_id, resolve_ids,
 };
 
 /// phon's view of a Rust type, derived from its facet `Shape`: the resolved
@@ -101,16 +103,20 @@ pub fn of_shape(shape: &'static Shape) -> Result<Derived, DeriveError> {
             },
         });
     }
-    if !is_struct(shape) {
-        return Err(DeriveError::Unsupported(
-            "derive root must be a struct or fixed scalar so far",
-        ));
-    }
-
     // Pass 1: intern composites with provisional dense-index keys, building proto
-    // schemas whose references use those keys (primitives use their real id).
+    // schemas whose references use those keys (primitives use their real id). The
+    // root may be a struct or a `#[repr(int)]` enum (RPC messages are often a
+    // top-level sum type).
     let mut b = Builder::default();
-    let root_key = b.intern(shape)?;
+    let root_key = if is_struct(shape) {
+        b.intern(shape)?
+    } else if let Some(et) = enum_type(shape) {
+        b.intern_enum(shape, et)?
+    } else {
+        return Err(DeriveError::Unsupported(
+            "derive root must be a struct, enum, or fixed scalar so far",
+        ));
+    };
     let by_shape = b.by_shape;
 
     // Resolve provisional keys to real content-derived ids. `resolved[k]` is the
@@ -189,9 +195,12 @@ impl Builder {
         } else if let Some(opt) = option_def(shape) {
             let key = self.intern_option(opt)?;
             Ok(SchemaRef::concrete(SchemaId(key as u64)))
+        } else if let Some(et) = enum_type(shape) {
+            let key = self.intern_enum(shape, et)?;
+            Ok(SchemaRef::concrete(SchemaId(key as u64)))
         } else {
             Err(DeriveError::Unsupported(
-                "derive: only structs, lists, options, and fixed scalars so far",
+                "derive: only structs, lists, options, enums, and fixed scalars so far",
             ))
         }
     }
@@ -233,6 +242,87 @@ impl Builder {
         });
         Ok(key)
     }
+
+    /// Intern an enum schema, returning its provisional key. Only `#[repr(int)]`
+    /// enums are supported (a default `repr(Rust)` discriminant layout is
+    /// unspecified). Interned by the enum's `Shape` pointer, like a struct; the
+    /// slot is reserved before recursing so a self-reference resolves.
+    fn intern_enum(
+        &mut self,
+        shape: &'static Shape,
+        et: &'static EnumType,
+    ) -> Result<usize, DeriveError> {
+        if enum_repr_width(et.enum_repr).is_none() {
+            return Err(DeriveError::Unsupported(
+                "derive: only #[repr(uN/iN)] enums (default repr(Rust) discriminant is unspecified)",
+            ));
+        }
+        let ptr = shape_ptr(shape);
+        if let Some(&k) = self.by_shape.get(&ptr) {
+            return Ok(k);
+        }
+        let key = self.protos.len();
+        self.by_shape.insert(ptr, key);
+        self.protos.push(Schema {
+            id: SchemaId(key as u64),
+            type_params: Vec::new(),
+            kind: SchemaKind::Dynamic, // placeholder until variants resolve
+        });
+        let variants = self.enum_variants(et)?;
+        self.protos[key].kind = SchemaKind::Enum {
+            name: shape.type_identifier.to_string(),
+            variants,
+        };
+        Ok(key)
+    }
+
+    /// Build the schema variants: each gets its position as a stable wire index and
+    /// a payload classified from facet's variant struct kind.
+    fn enum_variants(&mut self, et: &'static EnumType) -> Result<Vec<Variant>, DeriveError> {
+        let mut out = Vec::with_capacity(et.variants.len());
+        for (i, v) in et.variants.iter().enumerate() {
+            out.push(Variant {
+                name: v.name.to_string(),
+                index: i as u32,
+                payload: self.variant_payload(v)?,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Classify a facet variant's payload into a [`VariantPayload`]. The wire bytes
+    /// are the fields in order regardless of this shape; the classification only
+    /// gives the schema its structure.
+    fn variant_payload(&mut self, v: &'static facet::Variant) -> Result<VariantPayload, DeriveError> {
+        let fields = v.data.fields;
+        if fields.is_empty() {
+            return Ok(VariantPayload::Unit);
+        }
+        match v.data.kind {
+            StructKind::Struct => {
+                let mut fs = Vec::with_capacity(fields.len());
+                for f in fields {
+                    fs.push(Field {
+                        name: f.name.to_string(),
+                        schema: self.ref_of(f.shape())?,
+                        required: true,
+                    });
+                }
+                Ok(VariantPayload::Struct(fs))
+            }
+            StructKind::Tuple | StructKind::TupleStruct if fields.len() == 1 => {
+                Ok(VariantPayload::Newtype(self.ref_of(fields[0].shape())?))
+            }
+            StructKind::Tuple | StructKind::TupleStruct => {
+                let mut refs = Vec::with_capacity(fields.len());
+                for f in fields {
+                    refs.push(self.ref_of(f.shape())?);
+                }
+                Ok(VariantPayload::Tuple(refs))
+            }
+            StructKind::Unit => Ok(VariantPayload::Unit),
+        }
+    }
 }
 
 fn build_descriptor(
@@ -272,6 +362,42 @@ fn build_descriptor(
             access: Access::Option(OptionAccess {
                 presence: Presence::Vtable(option_thunks(opt)),
                 some: Box::new(some),
+            }),
+        });
+    }
+    if let Some(et) = enum_type(shape) {
+        let width = enum_repr_width(et.enum_repr).ok_or(DeriveError::Unsupported(
+            "derive: only #[repr(uN/iN)] enums",
+        ))?;
+        let real = real_ids[by_shape[&shape_ptr(shape)]];
+        let mut variants = Vec::with_capacity(et.variants.len());
+        for (i, v) in et.variants.iter().enumerate() {
+            // Variant field offsets already account for the discriminant (facet).
+            let mut fields = Vec::with_capacity(v.data.fields.len());
+            for f in v.data.fields {
+                fields.push(FieldAccess {
+                    offset: f.offset,
+                    descriptor: build_descriptor(f.shape(), by_shape, real_ids)?,
+                });
+            }
+            variants.push(VariantAccess {
+                index: i as u32,
+                // The in-memory discriminant (selector) — explicit value if any,
+                // else the variant position (which is the implicit discriminant).
+                selector: v.discriminant.unwrap_or(i as i64) as u64,
+                payload: RecordAccess {
+                    fields,
+                    construct: Construct::InPlace,
+                },
+            });
+        }
+        return Ok(Descriptor {
+            schema: SchemaRef::concrete(real),
+            layout: Layout { size, align },
+            access: Access::Enum(EnumAccess {
+                // #[repr(int)] enums keep the discriminant first, at offset 0.
+                tag: Tag::Direct { offset: 0, width },
+                variants,
             }),
         });
     }
@@ -328,6 +454,28 @@ fn option_def(shape: &'static Shape) -> Option<&'static OptionDef> {
         Def::Option(opt) => Some(opt),
         _ => None,
     }
+}
+
+/// The `&'static EnumType` behind an enum-typed shape, or `None`.
+fn enum_type(shape: &'static Shape) -> Option<&'static EnumType> {
+    match &shape.ty {
+        Type::User(UserType::Enum(et)) => Some(et),
+        _ => None,
+    }
+}
+
+/// The discriminant width in bytes for a `#[repr(uN/iN)]` enum, or `None` for a
+/// default `repr(Rust)`/niche enum whose discriminant layout is unspecified (and
+/// so cannot be read or written from a layout fact).
+fn enum_repr_width(repr: EnumRepr) -> Option<usize> {
+    Some(match repr {
+        EnumRepr::U8 | EnumRepr::I8 => 1,
+        EnumRepr::U16 | EnumRepr::I16 => 2,
+        EnumRepr::U32 | EnumRepr::I32 => 4,
+        EnumRepr::U64 | EnumRepr::I64 => 8,
+        EnumRepr::USize | EnumRepr::ISize => core::mem::size_of::<usize>(),
+        EnumRepr::Rust | EnumRepr::RustNPO => return None,
+    })
 }
 
 // ============================================================================
@@ -938,6 +1086,72 @@ mod tests {
             assert_eq!(back.s, s);
             assert_eq!(back.n, m.n);
         }
+    }
+
+    // A `#[repr(u8)]` enum root with all three payload shapes — the data-directed
+    // variant branch. Enums are common as top-level RPC message types.
+    #[repr(u8)]
+    #[derive(Facet, Debug, PartialEq)]
+    enum Msg {
+        Ping,
+        Echo(u32),
+        Move { x: i32, y: i32 },
+    }
+
+    fn msg_value(m: &Msg) -> Value {
+        let mut o = VObject::new();
+        match m {
+            Msg::Ping => {
+                o.insert(VString::new("Ping"), Value::NULL);
+            }
+            Msg::Echo(v) => {
+                o.insert(VString::new("Echo"), Value::from(*v));
+            }
+            Msg::Move { x, y } => {
+                let mut inner = VObject::new();
+                inner.insert(VString::new("x"), Value::from(*x));
+                inner.insert(VString::new("y"), Value::from(*y));
+                o.insert(VString::new("Move"), Value::from(inner));
+            }
+        }
+        o.into()
+    }
+
+    #[test]
+    fn derived_enum_matches_dynamic_and_roundtrips() {
+        let d = of::<Msg>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+
+        for m in [Msg::Ping, Msg::Echo(0xCAFE), Msg::Move { x: 3, y: -4 }] {
+            let typed_bytes =
+                unsafe { typed::encode(core::ptr::from_ref(&m).cast::<u8>(), &d.descriptor, &reg) }
+                    .unwrap();
+
+            let dyn_bytes = compact::to_bytes(&msg_value(&m), d.root, &reg).unwrap();
+            assert_eq!(typed_bytes, dyn_bytes, "encode mismatch for {m:?}");
+
+            let mut slot = std::mem::MaybeUninit::<Msg>::uninit();
+            unsafe {
+                typed::decode(&typed_bytes, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>())
+            }
+            .unwrap();
+            let back = unsafe { slot.assume_init() };
+            assert_eq!(back, m, "roundtrip mismatch");
+        }
+    }
+
+    #[test]
+    fn derived_enum_rejects_bad_variant_index() {
+        use phon_engine::CompactError;
+        let d = of::<Msg>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+        // Wire variant index 99 — no such variant.
+        let wire = 99u32.to_le_bytes().to_vec();
+        let mut slot = std::mem::MaybeUninit::<Msg>::uninit();
+        let err =
+            unsafe { typed::decode(&wire, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
+                .unwrap_err();
+        assert!(matches!(err, CompactError::BadVariantIndex(99)));
     }
 
     #[test]

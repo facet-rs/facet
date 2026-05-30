@@ -300,6 +300,9 @@ impl Compiler {
                 MemOp::Option(_) => {
                     panic!("phon-jit: Option is interpreter-only for now")
                 }
+                MemOp::Enum(_) => {
+                    panic!("phon-jit: enums are interpreter-only for now")
+                }
             }
         }
         let done_start = self.code.len();
@@ -315,6 +318,7 @@ impl Compiler {
                 MemOp::Sequence(_) => SEQUENCE_CONT,
                 MemOp::Bytes(_) => BYTES_CONT,
                 MemOp::Option(_) => unreachable!("Option is rejected in compile_chain"),
+                MemOp::Enum(_) => unreachable!("Enum is rejected in compile_chain"),
             };
             for &rel in relocs {
                 patch_branch26(&mut self.code, op_start + rel, next);
@@ -627,6 +631,9 @@ impl EncCompiler {
                 MemOp::Option(_) => {
                     panic!("phon-jit: Option is interpreter-only for now")
                 }
+                MemOp::Enum(_) => {
+                    panic!("phon-jit: enums are interpreter-only for now")
+                }
             }
         }
         let done_start = self.code.len();
@@ -639,6 +646,7 @@ impl EncCompiler {
                 MemOp::Sequence(_) => SEQUENCE_ENC_CONT,
                 MemOp::Bytes(_) => BYTES_ENC_CONT,
                 MemOp::Option(_) => unreachable!("Option is rejected in compile_chain"),
+                MemOp::Enum(_) => unreachable!("Enum is rejected in compile_chain"),
             };
             for &rel in relocs {
                 patch_branch26(&mut self.code, op_start + rel, next);

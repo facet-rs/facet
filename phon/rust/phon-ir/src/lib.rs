@@ -20,8 +20,8 @@ pub use descriptor::{
 pub mod ir;
 
 pub use ir::{
-    BytesOp, ByteValidator, EnumArm, MemOp, MemProgram, Op, OptionOp, OptionThunks, Program, SeqOp,
-    SeqThunks,
+    BytesOp, ByteValidator, EnumArm, EnumOp, EnumVariantOp, MemOp, MemProgram, Op, OptionOp,
+    OptionThunks, Program, SeqOp, SeqThunks,
 };
 
 /// Thunk bindings: resolving thunk names to process-local function pointers

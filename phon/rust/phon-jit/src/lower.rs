@@ -74,6 +74,7 @@ pub fn compile_decode(program: &MemProgram) -> CompiledDecode {
                 panic!("phon-jit: bulk byte runs (String) are interpreter-only for now")
             }
             MemOp::Option(_) => panic!("phon-jit: Option is interpreter-only for now"),
+            MemOp::Enum(_) => panic!("phon-jit: enums are interpreter-only for now"),
         })
         .collect();
     CompiledDecode { steps }
@@ -99,6 +100,7 @@ pub fn compile_encode(program: &MemProgram) -> CompiledEncode {
                 panic!("phon-jit: bulk byte runs (String) are interpreter-only for now")
             }
             MemOp::Option(_) => panic!("phon-jit: Option is interpreter-only for now"),
+            MemOp::Enum(_) => panic!("phon-jit: enums are interpreter-only for now"),
         })
         .collect();
     CompiledEncode { steps }
