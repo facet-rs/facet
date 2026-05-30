@@ -70,6 +70,9 @@ pub fn compile_decode(program: &MemProgram) -> CompiledDecode {
                 imm: [*offset, *size, *align],
             },
             MemOp::Sequence(_) => panic!("phon-jit: sequences are interpreter-only for now"),
+            MemOp::Bytes(_) => {
+                panic!("phon-jit: bulk byte runs (String) are interpreter-only for now")
+            }
         })
         .collect();
     CompiledDecode { steps }
@@ -91,6 +94,9 @@ pub fn compile_encode(program: &MemProgram) -> CompiledEncode {
                 thunks: s.thunks,
                 element: compile_encode(&s.element),
             },
+            MemOp::Bytes(_) => {
+                panic!("phon-jit: bulk byte runs (String) are interpreter-only for now")
+            }
         })
         .collect();
     CompiledEncode { steps }

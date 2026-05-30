@@ -78,6 +78,14 @@ pub fn of<'a, T: Facet<'a>>() -> Result<Derived, DeriveError> {
 /// # Errors
 /// As [`of`].
 pub fn of_shape(shape: &'static Shape) -> Result<Derived, DeriveError> {
+    // A `String` root: a byte sequence with schema `Primitive::String`.
+    if is_string(shape) {
+        return Ok(Derived {
+            root: primitive_id(Primitive::String),
+            schemas: Vec::new(),
+            descriptor: string_descriptor(shape)?,
+        });
+    }
     // A bare scalar root: no composite batch, the id is the primitive's.
     if let Some(p) = scalar_primitive(shape)? {
         let (size, align) = layout_of(shape)?;
@@ -165,6 +173,9 @@ impl Builder {
     /// The schema reference for a field's type: a primitive's real id, a nested
     /// struct's provisional key, or a `List`'s provisional key.
     fn ref_of(&mut self, shape: &'static Shape) -> Result<SchemaRef, DeriveError> {
+        if is_string(shape) {
+            return Ok(SchemaRef::concrete(primitive_id(Primitive::String)));
+        }
         if let Some(p) = scalar_primitive(shape)? {
             Ok(SchemaRef::concrete(primitive_id(p)))
         } else if is_struct(shape) {
@@ -207,6 +218,9 @@ fn build_descriptor(
     real_ids: &[SchemaId],
 ) -> Result<Descriptor, DeriveError> {
     let (size, align) = layout_of(shape)?;
+    if is_string(shape) {
+        return string_descriptor(shape);
+    }
     if let Some(p) = scalar_primitive(shape)? {
         return Ok(Descriptor {
             schema: SchemaRef::concrete(primitive_id(p)),
@@ -362,9 +376,81 @@ unsafe extern "C" fn seq_data(ctx: *const (), list: *const u8) -> *const u8 {
     data.as_byte_ptr()
 }
 
+// ============================================================================
+// String (a bulk byte run, validated as UTF-8)
+// ============================================================================
+//
+// A `String` field's *schema* is `Primitive::String`, but its *descriptor* is an
+// owned byte sequence: the engine bulk-copies the bytes, validates UTF-8, and
+// adopts them via `String::from_raw_parts`. The thunks are concrete — `String` is
+// a single type, so no facet vtable is needed.
+
+fn is_string(shape: &Shape) -> bool {
+    matches!(shape.scalar_type(), Some(ScalarType::String))
+}
+
+/// The descriptor for a `String` field or root: schema `Primitive::String`, an
+/// owned byte-sequence access carrying the concrete `String` thunks.
+fn string_descriptor(shape: &'static Shape) -> Result<Descriptor, DeriveError> {
+    let (size, align) = layout_of(shape)?;
+    Ok(Descriptor {
+        schema: SchemaRef::concrete(primitive_id(Primitive::String)),
+        layout: Layout { size, align },
+        access: Access::Sequence(SequenceAccess {
+            element: Box::new(Descriptor {
+                schema: SchemaRef::concrete(primitive_id(Primitive::U8)),
+                layout: Layout { size: 1, align: 1 },
+                access: Access::Scalar,
+            }),
+            storage: SequenceStorage::Vtable(SeqThunks {
+                ctx: core::ptr::null(),
+                from_raw_parts: string_from_raw_parts,
+                len: string_len,
+                data: string_data,
+            }),
+        }),
+    })
+}
+
+/// Adopt the engine's UTF-8-validated buffer into the `String` at `list`.
+///
+/// # Safety
+/// `list` is uninitialized `String` storage; the engine validated the bytes as
+/// UTF-8 and `ptr`/`len`/`cap` satisfy `String::from_raw_parts`.
+unsafe extern "C" fn string_from_raw_parts(
+    _ctx: *const (),
+    list: *mut u8,
+    ptr: *mut u8,
+    len: usize,
+    cap: usize,
+) {
+    // Safety: forwarded; the engine guarantees valid UTF-8 and a matching layout.
+    let s = unsafe { String::from_raw_parts(ptr, len, cap) };
+    unsafe { core::ptr::write(list.cast::<String>(), s) };
+}
+
+/// The `String`'s byte length.
+///
+/// # Safety
+/// `list` points to an initialized `String`.
+unsafe extern "C" fn string_len(_ctx: *const (), list: *const u8) -> usize {
+    let s: &String = unsafe { &*list.cast::<String>() };
+    s.len()
+}
+
+/// A pointer to the `String`'s bytes.
+///
+/// # Safety
+/// `list` points to an initialized `String`.
+unsafe extern "C" fn string_data(_ctx: *const (), list: *const u8) -> *const u8 {
+    let s: &String = unsafe { &*list.cast::<String>() };
+    s.as_ptr()
+}
+
 /// Map a fixed-width scalar shape to a phon primitive. `Ok(None)` when the shape
 /// is not a scalar at all (e.g. a struct); an error for scalar kinds the typed
-/// path cannot yet carry (strings, `usize`/`isize`, net types, …).
+/// path cannot yet carry (`usize`/`isize`, net types, …). `String` is handled
+/// separately (see [`is_string`]) — it is a byte sequence, not a fixed scalar.
 fn scalar_primitive(shape: &Shape) -> Result<Option<Primitive>, DeriveError> {
     let Some(scalar) = shape.scalar_type() else {
         return Ok(None);
@@ -541,5 +627,61 @@ mod tests {
         let back = unsafe { slot.assume_init() };
         assert_eq!(back.items, h.items);
         assert_eq!(back.tag, h.tag);
+    }
+
+    // A struct with an owned `String` field: the bulk byte run, end to end.
+    #[derive(Facet)]
+    struct Named {
+        name: String,
+        id: u32,
+    }
+
+    #[test]
+    fn derived_string_field_matches_dynamic_and_roundtrips() {
+        let d = of::<Named>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+        let v = Named {
+            name: "héllo wörld 🐝".to_string(),
+            id: 0x42,
+        };
+
+        let typed_bytes =
+            unsafe { typed::encode(core::ptr::from_ref(&v).cast::<u8>(), &d.descriptor, &reg) }
+                .unwrap();
+
+        let mut obj = VObject::new();
+        obj.insert(VString::new("name"), Value::from(v.name.as_str()));
+        obj.insert(VString::new("id"), Value::from(v.id));
+        let dyn_bytes = compact::to_bytes(&obj.into(), d.root, &reg).unwrap();
+        assert_eq!(typed_bytes, dyn_bytes);
+
+        let mut slot = std::mem::MaybeUninit::<Named>::uninit();
+        unsafe { typed::decode(&typed_bytes, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
+            .unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back.name, v.name);
+        assert_eq!(back.id, v.id);
+    }
+
+    #[test]
+    fn derived_string_rejects_invalid_utf8() {
+        use phon_engine::CompactError;
+        use phon_schema::DecodeError;
+
+        let d = of::<Named>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+
+        // name = one byte 0xFF (not valid UTF-8), then the u32 id at its alignment.
+        let mut wire = Vec::new();
+        wire.extend_from_slice(&1u32.to_le_bytes()); // name length 1
+        wire.push(0xFF); // invalid UTF-8
+        wire.extend_from_slice(&[0, 0, 0]); // pad pos 5 -> 8 for the u32
+        wire.extend_from_slice(&0x42u32.to_le_bytes());
+
+        let mut slot = std::mem::MaybeUninit::<Named>::uninit();
+        let err =
+            unsafe { typed::decode(&wire, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
+                .unwrap_err();
+        assert!(matches!(err, CompactError::Decode(DecodeError::InvalidUtf8)));
     }
 }

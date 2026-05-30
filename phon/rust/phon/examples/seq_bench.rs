@@ -67,7 +67,7 @@ fn main() {
     );
 
     println!("decode:");
-    let di = bench("interpreter", || decode_interp(&program, &wire));
+    let _di = bench("interpreter", || decode_interp(&program, &wire));
     #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
     let dj = {
         use phon_jit::native::NativeDecode;
@@ -81,7 +81,7 @@ fn main() {
     };
 
     println!("\nencode:");
-    let ei = bench("interpreter", || encode_interp(&program, base));
+    let _ei = bench("interpreter", || encode_interp(&program, base));
     #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
     let ej = {
         use phon_jit::native::NativeEncode;
@@ -94,6 +94,6 @@ fn main() {
 
     #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
     {
-        println!("\nspeedup (jit vs interpreter):  decode {:.2}x   encode {:.2}x", di / dj, ei / ej);
+        println!("\nspeedup (jit vs interpreter):  decode {:.2}x   encode {:.2}x", _di / dj, _ei / ej);
     }
 }

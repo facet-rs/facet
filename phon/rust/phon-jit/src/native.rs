@@ -249,6 +249,9 @@ impl Compiler {
                     });
                     self.fixups.push(SeqFixup { prog_index, slot, seqinfo });
                 }
+                MemOp::Bytes(_) => {
+                    panic!("phon-jit: bulk byte runs (String) are interpreter-only for now")
+                }
             }
         }
         let done_start = self.code.len();
@@ -262,6 +265,7 @@ impl Compiler {
             let relocs = match &program[i] {
                 MemOp::Scalar { .. } => SCALAR_CONT,
                 MemOp::Sequence(_) => SEQUENCE_CONT,
+                MemOp::Bytes(_) => unreachable!("bulk byte runs are rejected in compile_chain"),
             };
             for &rel in relocs {
                 patch_branch26(&mut self.code, op_start + rel, next);
@@ -519,6 +523,9 @@ impl EncCompiler {
                     });
                     self.fixups.push(SeqFixup { prog_index, slot, seqinfo });
                 }
+                MemOp::Bytes(_) => {
+                    panic!("phon-jit: bulk byte runs (String) are interpreter-only for now")
+                }
             }
         }
         let done_start = self.code.len();
@@ -529,6 +536,7 @@ impl EncCompiler {
             let relocs = match &program[i] {
                 MemOp::Scalar { .. } => SCALAR_ENC_CONT,
                 MemOp::Sequence(_) => SEQUENCE_ENC_CONT,
+                MemOp::Bytes(_) => unreachable!("bulk byte runs are rejected in compile_chain"),
             };
             for &rel in relocs {
                 patch_branch26(&mut self.code, op_start + rel, next);

@@ -24,7 +24,7 @@
 
 use std::alloc;
 
-use phon_ir::ir::{MemOp, MemProgram, SeqOp, fuse};
+use phon_ir::ir::{BytesOp, MemOp, MemProgram, SeqOp, fuse};
 use phon_ir::{Access, Construct, Descriptor, SequenceStorage};
 use phon_schema::bytes::{Reader, write_u32};
 use phon_schema::{DecodeError, Primitive, SchemaKind};
@@ -134,8 +134,24 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
             })));
             Ok(())
         }
+        // r[impl ir.memory] — String/Bytes: a bulk contiguous byte run.
+        (Access::Sequence(seq), Resolved::Primitive(p @ (Primitive::String | Primitive::Bytes))) => {
+            let SequenceStorage::Vtable(thunks) = &seq.storage else {
+                return Err(CompactError::Unsupported(
+                    "typed: string/bytes needs vtable thunks",
+                ));
+            };
+            out.push(MemOp::Bytes(Box::new(BytesOp {
+                field_offset: base,
+                stride: 1,
+                elem_align: 1,
+                utf8: matches!(p, Primitive::String),
+                thunks: *thunks,
+            })));
+            Ok(())
+        }
         _ => Err(CompactError::Unsupported(
-            "typed: only fixed scalars, in-place records, and owned sequences so far",
+            "typed: only fixed scalars, in-place records, owned sequences, and strings so far",
         )),
     }
 }
@@ -176,6 +192,17 @@ unsafe fn encode_program(program: &MemProgram, base: *const u8, out: &mut Vec<u8
                     // Safety: element `i` lives at `data + i*stride`.
                     unsafe { encode_program(&s.element, data.add(i * s.stride), out) };
                 }
+            }
+            MemOp::Bytes(b) => {
+                // Safety: the handle lives at field_offset; one bulk read of its
+                // contiguous `count * stride` bytes.
+                let list = unsafe { base.add(b.field_offset) };
+                let count = unsafe { (b.thunks.len)(b.thunks.ctx, list) };
+                write_u32(out, count as u32);
+                pad_to(out, b.elem_align);
+                let data = unsafe { (b.thunks.data)(b.thunks.ctx, list) };
+                let src = unsafe { core::slice::from_raw_parts(data, count * b.stride) };
+                out.extend_from_slice(src);
             }
         }
     }
@@ -265,6 +292,37 @@ unsafe fn decode_program(program: &MemProgram, r: &mut Reader, base: *mut u8) ->
                 // `count` initialized elements allocated with the element layout.
                 let list = unsafe { base.add(s.field_offset) };
                 unsafe { (s.thunks.from_raw_parts)(s.thunks.ctx, list, buffer, count, cap) };
+            }
+            MemOp::Bytes(b) => {
+                let count = r.read_len(b.stride.max(1))?;
+                skip_pad(r, b.elem_align)?;
+                let total = count * b.stride;
+                let src = r.read_slice(total)?;
+                // r[impl validate.text]
+                if b.utf8 && core::str::from_utf8(src).is_err() {
+                    return Err(CompactError::Decode(DecodeError::InvalidUtf8));
+                }
+                // Allocate, bulk-copy the run in, adopt it via `from_raw_parts`.
+                let (buffer, cap) = if total == 0 {
+                    (b.elem_align as *mut u8, 0usize)
+                } else {
+                    let layout = alloc::Layout::from_size_align(total, b.elem_align)
+                        .map_err(|_| {
+                            CompactError::Decode(DecodeError::Malformed("bytes layout overflow"))
+                        })?;
+                    // Safety: total > 0.
+                    let buf = unsafe { alloc::alloc(layout) };
+                    if buf.is_null() {
+                        alloc::handle_alloc_error(layout);
+                    }
+                    // Safety: src and buf are both `total` bytes, non-overlapping.
+                    unsafe { core::ptr::copy_nonoverlapping(src.as_ptr(), buf, total) };
+                    (buf, count)
+                };
+                // Safety: the handle lives at field_offset; `from_raw_parts` adopts
+                // the `count`-element buffer.
+                let list = unsafe { base.add(b.field_offset) };
+                unsafe { (b.thunks.from_raw_parts)(b.thunks.ctx, list, buffer, count, cap) };
             }
         }
     }

@@ -112,11 +112,18 @@ pub enum MemOp {
     /// host byte order equals the wire's (little-endian), which every phon target
     /// is.
     Scalar { offset: usize, size: usize, align: usize },
-    /// An owned, contiguous sequence (`Vec<T>`, `String` as `Vec<u8>`) at
-    /// `field_offset`: a `u32` count then `count` elements. Decode initializes the
-    /// sequence and fills it; encode reads its length and elements. The element's
-    /// own program runs at each element slot. See [`SeqOp`].
+    /// An owned, contiguous sequence (`Vec<T>`) at `field_offset`: a `u32` count
+    /// then `count` elements, each decoded by the element's own program. Decode
+    /// initializes the sequence and fills it; encode reads its length and
+    /// elements. See [`SeqOp`]. Used when the element has structure; a run of
+    /// trivially-copyable elements uses [`Bytes`](MemOp::Bytes) instead.
     Sequence(Box<SeqOp>),
+    /// A bulk contiguous run of trivially-copyable elements — `String`, `Vec<u8>`,
+    /// or (via bulk-copy lowering) `Vec<u32>`/`Vec<f64>`/… : a `u32` element count
+    /// then `count * stride` contiguous bytes moved in **one block**, no per-element
+    /// loop. Decode optionally validates the bytes as UTF-8 (for `String`). See
+    /// [`BytesOp`].
+    Bytes(Box<BytesOp>),
 }
 
 /// An owned-sequence op's payload (boxed in [`MemOp::Sequence`] to keep `MemOp`
@@ -167,6 +174,25 @@ pub struct SeqThunks {
     pub data: unsafe extern "C" fn(ctx: *const (), list: *const u8) -> *const u8,
 }
 
+/// A bulk byte-run op's payload (boxed in [`MemOp::Bytes`]). The wire form is a
+/// `u32` element count then `count * stride` contiguous bytes — one block copy in
+/// each direction, no per-element loop. `String` and `Vec<u8>` use `stride == 1`;
+/// `Vec<scalar>` uses the element size.
+#[derive(Clone, Debug)]
+pub struct BytesOp {
+    /// Where the owned handle (the `String`/`Vec`) lives, relative to the base.
+    pub field_offset: usize,
+    /// Bytes per element: 1 for `String`/`Vec<u8>`, the element size otherwise.
+    pub stride: usize,
+    /// Alignment of the contiguous element buffer.
+    pub elem_align: usize,
+    /// Validate the bytes as UTF-8 on decode (`r[validate.text]`); set for `String`.
+    pub utf8: bool,
+    /// Type-erased handle operations (`from_raw_parts` adopts the buffer; `len`
+    /// returns the element count; `data` points at the contiguous bytes).
+    pub thunks: SeqThunks,
+}
+
 /// Coalesce adjacent scalar copies that are contiguous in *both* the wire and
 /// memory into one larger copy — the specialization the IR exists for. A flat
 /// struct whose wire layout matches its memory layout collapses to a single
@@ -204,7 +230,8 @@ pub fn fuse(program: MemProgram) -> MemProgram {
                 }
                 wire_pos = wire_pos.map(|p| p + pad.unwrap_or(0) + size);
             }
-            seq @ MemOp::Sequence(_) => {
+            // Variable-length ops make the static wire position unknown after them.
+            seq @ (MemOp::Sequence(_) | MemOp::Bytes(_)) => {
                 out.push(seq);
                 wire_pos = None;
             }
