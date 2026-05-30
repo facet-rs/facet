@@ -2,7 +2,7 @@
 //! compiler-emitted machine code in, flip write-xor-execute, and run it.
 //!
 //! This is the bottom of the copy-and-patch JIT: the part that actually runs
-//! machine code. The bytes it runs are produced by clang at build time and
+//! machine code. The bytes it runs are produced by rustc at build time and
 //! extracted from the object file (see `build.rs`) — nothing here encodes an
 //! instruction. The relocation patching that specializes a stencil sits on top
 //! of this and is added next.

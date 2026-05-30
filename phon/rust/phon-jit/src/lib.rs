@@ -31,7 +31,7 @@ pub mod lower;
 // r[impl exec.jit-optional]
 pub use lower::{CompiledDecode, CompiledEncode, compile_decode, compile_encode};
 
-/// Stencil machine code extracted from clang's object output at build time
+/// Stencil machine code extracted from rustc's object output at build time
 /// (`build.rs`). Empty on targets without the native backend.
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod stencils {
