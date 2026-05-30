@@ -2098,4 +2098,196 @@ mod tests {
             _ => false,
         })
     }
+
+    // ========================================================================
+    // Writer ↔ reader compatibility through the copy-and-patch JIT
+    // ========================================================================
+    //
+    // The same drift cases as the interpreter `compat_*` tests above, but the
+    // reconciliation program runs through `NativeDecode` (the copy-and-patch JIT)
+    // rather than the threaded interpreter. The principle: compatibility is resolved
+    // entirely at lowering — `lower_decode` bakes in the skips, defaults, reorders,
+    // and remaps — so the JIT just compiles that program and decode runs at full
+    // speed regardless of schema drift. The interpreter (`typed::decode_with`) over
+    // the SAME program is the oracle: the two engines must agree byte-for-byte.
+    //
+    // These exercise the `MemOp::SkipWire` stencil (writer-only fields) and the
+    // `MemOp::Default` stencil (reader-only `#[facet(default)]` fields) added to the
+    // JIT here, plus reorder / enum add+remove / nested struct drift.
+
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    use phon_jit::native::NativeDecode;
+
+    /// Decode `bytes` against `program` with BOTH engines into separate reader-typed
+    /// slots; returns `(jit, interp)`. The two must be field-equal — the interpreter
+    /// is the oracle for the JIT.
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    fn decode_both<R>(program: &phon_ir::MemProgram, bytes: &[u8]) -> (R, R) {
+        let jit = NativeDecode::compile(program);
+        let mut jit_slot = std::mem::MaybeUninit::<R>::uninit();
+        unsafe { jit.run(bytes, jit_slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+
+        let mut interp_slot = std::mem::MaybeUninit::<R>::uninit();
+        unsafe { typed::decode_with(program, bytes, interp_slot.as_mut_ptr().cast::<u8>()) }
+            .unwrap();
+
+        (unsafe { jit_slot.assume_init() }, unsafe { interp_slot.assume_init() })
+    }
+
+    /// 1. Field reorder: the JIT decodes reordered scalars into the reader's layout,
+    ///    agreeing with the interpreter and the known values.
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn compat_jit_field_reorder_is_transparent() {
+        let w = of::<ReorderW>().unwrap();
+        let r = of::<ReorderR>().unwrap();
+        let reg = merged_registry(&w, &r);
+
+        let bytes = encode_writer(&ReorderW { a: 7, b: 9 }, &w, &reg);
+        let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
+
+        let (jit, interp) = decode_both::<ReorderR>(&program, &bytes);
+        assert_eq!(jit.a, 7);
+        assert_eq!(jit.b, 9);
+        assert_eq!((jit.a, jit.b), (interp.a, interp.b));
+    }
+
+    /// 2. Writer-only field: the JIT runs the `MemOp::SkipWire` stencil to consume
+    ///    the writer's `String` field, writing nothing for it, and agrees with the
+    ///    interpreter.
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn compat_jit_writer_only_field_is_skipped() {
+        let w = of::<SkipW>().unwrap();
+        let r = of::<SkipR>().unwrap();
+        let reg = merged_registry(&w, &r);
+
+        let value = SkipW { a: 11, b: "discard me".to_string(), c: 22 };
+        let bytes = encode_writer(&value, &w, &reg);
+        let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
+        assert!(has_compat_ops(&program), "expected a SkipWire op in the program");
+
+        let (jit, interp) = decode_both::<SkipR>(&program, &bytes);
+        assert_eq!(jit.a, 11);
+        assert_eq!(jit.c, 22);
+        assert_eq!((jit.a, jit.c), (interp.a, interp.c));
+    }
+
+    /// 3a. Reader-only `#[facet(default)]` field: the JIT runs the `MemOp::Default`
+    ///     stencil (calling the field's default thunk, no wire read) and agrees with
+    ///     the interpreter.
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn compat_jit_reader_only_field_defaults() {
+        let w = of::<DefaultW>().unwrap();
+        let r = of::<DefaultR>().unwrap();
+        let reg = merged_registry(&w, &r);
+
+        let bytes = encode_writer(&DefaultW { a: 7 }, &w, &reg);
+        let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
+        assert!(has_compat_ops(&program), "expected a Default op in the program");
+
+        let (jit, interp) = decode_both::<DefaultR>(&program, &bytes);
+        assert_eq!(jit.a, 7);
+        assert_eq!(jit.b, u32::default()); // 0 — the field's #[facet(default)]
+        assert_eq!((jit.a, jit.b), (interp.a, interp.b));
+    }
+
+    /// 3b. A custom default expression on the reader-only field: the `MemOp::Default`
+    ///     thunk writes the custom value (0xABCD), matching the interpreter.
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn compat_jit_reader_only_field_with_custom_default() {
+        #[derive(Facet)]
+        struct CustomR {
+            a: u32,
+            #[facet(default = 0xABCD)]
+            b: u32,
+        }
+        let w = of::<DefaultW>().unwrap();
+        let r = of::<CustomR>().unwrap();
+        let reg = merged_registry(&w, &r);
+
+        let bytes = encode_writer(&DefaultW { a: 7 }, &w, &reg);
+        let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
+        assert!(has_compat_ops(&program), "expected a Default op in the program");
+
+        let (jit, interp) = decode_both::<CustomR>(&program, &bytes);
+        assert_eq!(jit.a, 7);
+        assert_eq!(jit.b, 0xABCD);
+        assert_eq!((jit.a, jit.b), (interp.a, interp.b));
+    }
+
+    /// 4a. Enum variant added on the reader: the JIT decodes the writer's A and
+    ///     B(42) into the wider reader enum, agreeing with the interpreter (compared
+    ///     directly via the reader enum's `PartialEq`).
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn compat_jit_enum_variant_added_reads_fine() {
+        let w = of::<EnumW>().unwrap();
+        let r = of::<EnumRMore>().unwrap();
+        let reg = merged_registry(&w, &r);
+        let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
+
+        for (val, want) in [
+            (EnumW::B(42), EnumRMore::B(42)),
+            (EnumW::A, EnumRMore::A),
+        ] {
+            let bytes = encode_writer(&val, &w, &reg);
+            let (jit, interp) = decode_both::<EnumRMore>(&program, &bytes);
+            assert_eq!(jit, want);
+            assert_eq!(jit, interp);
+        }
+    }
+
+    /// 4b. Enum variant removed on the reader: receiving the writer-only variant B
+    ///     is a decode error in the JIT (an unmatched wire index, since the JIT enum
+    ///     stencil carries no matching variant), while the surviving variant A still
+    ///     decodes and agrees with the interpreter.
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn compat_jit_enum_variant_removed_rejects_b_reads_a() {
+        let w = of::<EnumW>().unwrap();
+        let r = of::<EnumRFewer>().unwrap();
+        let reg = merged_registry(&w, &r);
+        let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
+
+        // The writer-only variant B is rejected by the JIT.
+        let b_bytes = encode_writer(&EnumW::B(42), &w, &reg);
+        let jit = NativeDecode::compile(&program);
+        let mut slot = std::mem::MaybeUninit::<EnumRFewer>::uninit();
+        let err = unsafe { jit.run(&b_bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap_err();
+        assert!(matches!(err, phon_schema::DecodeError::Malformed(_)), "got {err:?}");
+
+        // A still decodes, agreeing with the interpreter.
+        let a_bytes = encode_writer(&EnumW::A, &w, &reg);
+        let (jit_a, interp_a) = decode_both::<EnumRFewer>(&program, &a_bytes);
+        assert_eq!(jit_a, EnumRFewer::A);
+        assert_eq!(jit_a, interp_a);
+    }
+
+    /// 5. Nested struct drift: the inner struct gains a reader-only `#[facet(default)]`
+    ///    `bool` field. The JIT runs the nested `MemOp::Default` stencil and agrees
+    ///    with the interpreter on every field.
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn compat_jit_nested_struct_drift() {
+        let w = of::<OuterW>().unwrap();
+        let r = of::<OuterR>().unwrap();
+        let reg = merged_registry(&w, &r);
+
+        let value = OuterW { inner: InnerW { a: 5 }, tag: 0x99 };
+        let bytes = encode_writer(&value, &w, &reg);
+        let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
+        assert!(has_compat_ops(&program), "expected a nested Default op in the program");
+
+        let (jit, interp) = decode_both::<OuterR>(&program, &bytes);
+        assert_eq!(jit.inner.a, 5);
+        assert!(!jit.inner.b, "reader-only bool field defaults to false");
+        assert_eq!(jit.tag, 0x99);
+        assert_eq!(
+            (jit.inner.a, jit.inner.b, jit.tag),
+            (interp.inner.a, interp.inner.b, interp.tag),
+        );
+    }
 }
