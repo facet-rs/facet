@@ -122,16 +122,38 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
                 ));
             };
             // Lower the element once; it runs at each element slot (base 0).
+            let stride = seq.element.layout.size;
+            let elem_align = seq.element.layout.align;
             let mut element = Vec::new();
             lower_node(&seq.element, reg, 0, &mut element)?;
-            out.push(MemOp::Sequence(Box::new(SeqOp {
-                field_offset: base,
-                element: fuse(element),
-                stride: seq.element.layout.size,
-                elem_align: seq.element.layout.align,
-                min_wire: 1,
-                thunks: *thunks,
-            })));
+            let element = fuse(element);
+            // Bulk-copy lowering: an element that is a single scalar covering its
+            // whole size, with no inter-element wire padding, decodes/encodes as
+            // ONE block copy — `Vec<u32>`, `Vec<f64>`, `Vec<u8>`, flat `repr(C)`
+            // structs. Anything with structure stays a per-element sequence.
+            let bulk = matches!(
+                element.as_slice(),
+                [MemOp::Scalar { offset: 0, size, align }]
+                    if *size == stride && stride % *align == 0
+            );
+            if bulk {
+                out.push(MemOp::Bytes(Box::new(BytesOp {
+                    field_offset: base,
+                    stride,
+                    elem_align,
+                    utf8: false,
+                    thunks: *thunks,
+                })));
+            } else {
+                out.push(MemOp::Sequence(Box::new(SeqOp {
+                    field_offset: base,
+                    element,
+                    stride,
+                    elem_align,
+                    min_wire: 1,
+                    thunks: *thunks,
+                })));
+            }
             Ok(())
         }
         // r[impl ir.memory] — String/Bytes: a bulk contiguous byte run.
