@@ -14,76 +14,20 @@
 //!
 //! Spec: `r[ir.stencils]`, `r[exec.jit-optional]`.
 
-use core::ffi::c_void;
-
 use phon_ir::ir::{MemOp, MemProgram};
 use phon_schema::DecodeError;
+
+// The backend-agnostic copy-and-patch substrate lives in `copypatch`: executable
+// memory (MAP_JIT + W^X + i-cache) and AArch64 relocation patching. This crate
+// keeps only the phon-specific parts — the stencils, the per-op state, and the
+// IR -> stencil-chain compilation.
+use copypatch::{ExecBuf, patch_branch26};
 
 use crate::stencils::{
     BYTES, BYTES_CONT, BYTES_ENC, BYTES_ENC_CONT, DONE, DONE_ENC, ENUM, ENUM_CONT, ENUM_ENC,
     ENUM_ENC_CONT, OPTION, OPTION_CONT, OPTION_ENC, OPTION_ENC_CONT, SCALAR, SCALAR_CONT,
     SCALAR_ENC, SCALAR_ENC_CONT, SEQUENCE, SEQUENCE_CONT, SEQUENCE_ENC, SEQUENCE_ENC_CONT,
 };
-
-unsafe extern "C" {
-    /// Toggle the calling thread's JIT pages between writable (`0`) and
-    /// executable (`1`).
-    fn pthread_jit_write_protect_np(enabled: i32);
-    /// Flush the instruction cache for a region after writing code into it.
-    fn sys_icache_invalidate(start: *mut c_void, len: usize);
-}
-
-/// A page of executable memory holding copied machine code.
-pub struct ExecBuf {
-    ptr: *mut u8,
-    len: usize,
-}
-
-impl ExecBuf {
-    /// Allocate JIT memory, copy `code` into it, and make it executable.
-    ///
-    /// # Panics
-    /// If `code` is empty or the `MAP_JIT` allocation fails.
-    #[must_use]
-    pub fn new(code: &[u8]) -> ExecBuf {
-        assert!(!code.is_empty(), "cannot execute empty code");
-        let len = code.len();
-        unsafe {
-            let ptr = libc::mmap(
-                core::ptr::null_mut(),
-                len,
-                libc::PROT_READ | libc::PROT_WRITE | libc::PROT_EXEC,
-                libc::MAP_PRIVATE | libc::MAP_ANON | libc::MAP_JIT,
-                -1,
-                0,
-            );
-            assert!(ptr != libc::MAP_FAILED, "mmap(MAP_JIT) failed");
-            let ptr = ptr.cast::<u8>();
-
-            // Writable -> copy -> executable -> flush i-cache.
-            pthread_jit_write_protect_np(0);
-            core::ptr::copy_nonoverlapping(code.as_ptr(), ptr, len);
-            pthread_jit_write_protect_np(1);
-            sys_icache_invalidate(ptr.cast::<c_void>(), len);
-
-            ExecBuf { ptr, len }
-        }
-    }
-
-    /// The entry pointer to the copied code.
-    #[must_use]
-    pub fn as_ptr(&self) -> *const u8 {
-        self.ptr
-    }
-}
-
-impl Drop for ExecBuf {
-    fn drop(&mut self) {
-        unsafe {
-            libc::munmap(self.ptr.cast::<c_void>(), self.len);
-        }
-    }
-}
 
 /// Load the smoke stencil into JIT memory and run it: `x * 3 + 1`, computed by
 /// rustc-emitted machine code executing from a `MAP_JIT` page. A self-test that
@@ -672,17 +616,6 @@ impl NativeDecode {
         }
         Ok(())
     }
-}
-
-/// Patch an AArch64 `B`/`BL` (`BRANCH26`) at `site` in `code` to target byte
-/// offset `target` within the same buffer. Both are buffer-relative; since the
-/// branch is PC-relative the in-memory delta is identical.
-fn patch_branch26(code: &mut [u8], site: usize, target: usize) {
-    let instr = u32::from_le_bytes(code[site..site + 4].try_into().unwrap());
-    let delta = (target as isize - site as isize) >> 2; // in instructions
-    let imm26 = (delta as u32) & 0x03FF_FFFF;
-    let patched = (instr & 0xFC00_0000) | imm26;
-    code[site..site + 4].copy_from_slice(&patched.to_le_bytes());
 }
 
 // ============================================================================

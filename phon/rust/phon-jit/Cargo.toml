@@ -9,9 +9,10 @@ description = "phon's optional copy-and-patch JIT: lowers the IR to machine code
 [dependencies]
 phon-ir.workspace = true
 phon-schema.workspace = true
-
-[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
-libc = "0.2"
+# The backend-agnostic copy-and-patch substrate: executable memory + relocation
+# patching (ExecBuf, patch_branch26).
+copypatch.workspace = true
 
 [build-dependencies]
-object = "0.39"
+# Build-time stencil extraction (compile_object, extract_stencil).
+copypatch = { workspace = true, features = ["build"] }

@@ -1,26 +1,41 @@
 //! Build-time stencil extraction.
 //!
 //! On Apple Silicon, compile the Rust stencils with rustc (`--emit=obj`) and pull
-//! each stencil's machine code — and its `phon_cont` relocation offsets — out of
-//! the object file with the `object` crate, emitting a generated Rust file the
-//! crate `include!`s. rustc (LLVM) performs all instruction selection; this
-//! script only reads bytes and relocation offsets back out.
+//! each stencil's machine code — and its `phon_cont`/`phon_econt` relocation
+//! offsets — out of the object file, emitting a generated Rust file the crate
+//! `include!`s. The compile + extraction machinery is the backend-agnostic
+//! `copypatch::extract` (shared with other stencil JITs); this script supplies
+//! only phon's stencil symbol names and the generated-constant code-gen.
 //!
 //! Prefer nightly with `--cfg tailcall` so the stencils chain via guaranteed
-//! tail calls (`become`) — one stack frame, no per-op call/return. Fall back to a
-//! stable, call-based compile when nightly is absent; both extract identically
-//! (the continuation branch is `BRANCH26` to `phon_cont` either way). When the
-//! tail-call build is used, set `--cfg phon_jit_tailcall` so the crate can report
-//! it.
-//!
-//! Why a separate object at all: copy-and-patch must *patch* the continuation
-//! branch, which needs the relocation table — present only in the pre-link
-//! object, not the linked binary.
+//! tail calls (`become`); fall back to a stable, call-based compile when nightly
+//! is absent (both extract identically). When the tail-call build is used, set
+//! `--cfg phon_jit_tailcall` so the crate can report it.
 //!
 //! On every other target we emit an empty table; the portable threaded executor
 //! is the fallback there.
 
-use std::{env, fs, path::Path, path::PathBuf, process::Command};
+use std::{env, fs, path::Path, path::PathBuf};
+
+use copypatch::extract::{Stencil, compile_object, extract_stencil, nightly_available};
+
+/// Every stencil symbol in the object — `copypatch::extract` needs the full set
+/// to find where each stencil's code ends (the next symbol's address).
+const SYMBOLS: &[&str] = &[
+    "phon_stencil_smoke",
+    "phon_stencil_scalar",
+    "phon_stencil_sequence",
+    "phon_stencil_bytes",
+    "phon_stencil_option",
+    "phon_stencil_enum",
+    "phon_stencil_done",
+    "phon_stencil_scalar_enc",
+    "phon_stencil_sequence_enc",
+    "phon_stencil_bytes_enc",
+    "phon_stencil_option_enc",
+    "phon_stencil_enum_enc",
+    "phon_stencil_done_enc",
+];
 
 fn main() {
     // Declared here (always) so the cfg is known on every target, even those
@@ -56,298 +71,121 @@ fn emit_arm64_macos(out: &Path, generated: &Path) {
 
     let target = env::var("TARGET").expect("TARGET set by cargo");
     let obj = out.join("stencils.o");
+    let src = Path::new("stencils/stencils.rs");
 
     // Prefer nightly tail-call stencils; fall back to stable call-based ones.
-    let tailcall = nightly_available() && compile("rustc", &["+nightly"], &obj, &target, true);
+    let tailcall =
+        nightly_available() && compile_object("rustc", &["+nightly"], src, &obj, &target, true);
     if tailcall {
         println!("cargo:rustc-cfg=phon_jit_tailcall");
     } else {
         let rustc = env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
         assert!(
-            compile(&rustc, &[], &obj, &target, false),
+            compile_object(&rustc, &[], src, &obj, &target, false),
             "rustc failed to compile stencils"
         );
     }
 
     let bytes = fs::read(&obj).unwrap();
+    let get = |symbol: &str, cont: &str| extract_stencil(&bytes, SYMBOLS, symbol, cont);
     // Decode stencils continue through `phon_cont`; encode stencils through
     // `phon_econt`. Each is the sole patched relocation in its stencil.
-    let smoke = extract(&bytes, "phon_stencil_smoke", "phon_cont");
-    let scalar = extract(&bytes, "phon_stencil_scalar", "phon_cont");
-    let sequence = extract(&bytes, "phon_stencil_sequence", "phon_cont");
-    let bytes_dec = extract(&bytes, "phon_stencil_bytes", "phon_cont");
-    let option = extract(&bytes, "phon_stencil_option", "phon_cont");
-    let enum_dec = extract(&bytes, "phon_stencil_enum", "phon_cont");
-    let done = extract(&bytes, "phon_stencil_done", "phon_cont");
-    let scalar_enc = extract(&bytes, "phon_stencil_scalar_enc", "phon_econt");
-    let sequence_enc = extract(&bytes, "phon_stencil_sequence_enc", "phon_econt");
-    let bytes_enc = extract(&bytes, "phon_stencil_bytes_enc", "phon_econt");
-    let option_enc = extract(&bytes, "phon_stencil_option_enc", "phon_econt");
-    let enum_enc = extract(&bytes, "phon_stencil_enum_enc", "phon_econt");
-    let done_enc = extract(&bytes, "phon_stencil_done_enc", "phon_econt");
+    let smoke = get("phon_stencil_smoke", "phon_cont");
+    let scalar = get("phon_stencil_scalar", "phon_cont");
+    let sequence = get("phon_stencil_sequence", "phon_cont");
+    let bytes_dec = get("phon_stencil_bytes", "phon_cont");
+    let option = get("phon_stencil_option", "phon_cont");
+    let enum_dec = get("phon_stencil_enum", "phon_cont");
+    let done = get("phon_stencil_done", "phon_cont");
+    let scalar_enc = get("phon_stencil_scalar_enc", "phon_econt");
+    let sequence_enc = get("phon_stencil_sequence_enc", "phon_econt");
+    let bytes_enc = get("phon_stencil_bytes_enc", "phon_econt");
+    let option_enc = get("phon_stencil_option_enc", "phon_econt");
+    let enum_enc = get("phon_stencil_enum_enc", "phon_econt");
+    let done_enc = get("phon_stencil_done_enc", "phon_econt");
 
     let mode = if tailcall { "tail-call (nightly become)" } else { "call (stable)" };
-    let mut src = String::new();
-    src.push_str(&format!(
+    let mut s = String::new();
+    s.push_str(&format!(
         "// Generated by build.rs from stencils/stencils.rs (rustc --emit=obj, {mode}).\n"
     ));
-    src.push_str(&format!(
-        "/// `phon_stencil_smoke` (x*3+1) machine code; no relocations.\n\
-         pub const SMOKE: &[u8] = &{:?};\n",
-        smoke.bytes
-    ));
-    src.push_str(&format!(
-        "/// `phon_stencil_scalar` machine code: decode one fixed scalar, continue.\n\
-         pub const SCALAR: &[u8] = &{:?};\n",
-        scalar.bytes
-    ));
-    src.push_str(&format!(
-        "/// Byte offsets within `SCALAR` of the `phon_cont` continuation branches\n\
-         /// to patch (`BRANCH26`).\n\
-         pub const SCALAR_CONT: &[usize] = &{:?};\n",
-        scalar.cont_relocs
-    ));
-    src.push_str(&format!(
-        "/// `phon_stencil_sequence` machine code: decode one owned sequence,\n\
-         /// continue. The element body is invoked through `SeqInfo.element_entry`.\n\
-         pub const SEQUENCE: &[u8] = &{:?};\n",
-        sequence.bytes
-    ));
-    src.push_str(&format!(
-        "/// Byte offsets within `SEQUENCE` of the `phon_cont` continuation branch\n\
-         /// to patch (`BRANCH26`).\n\
-         pub const SEQUENCE_CONT: &[usize] = &{:?};\n",
-        sequence.cont_relocs
-    ));
-    src.push_str(&format!(
-        "/// `phon_stencil_bytes` machine code: decode one bulk byte run (non-UTF-8),\n\
-         /// continue. One inline word-wise block copy, no per-element loop.\n\
-         pub const BYTES: &[u8] = &{:?};\n",
-        bytes_dec.bytes
-    ));
-    src.push_str(&format!(
-        "/// Byte offsets within `BYTES` of the `phon_cont` continuation branch to\n\
-         /// patch (`BRANCH26`).\n\
-         pub const BYTES_CONT: &[usize] = &{:?};\n",
-        bytes_dec.cont_relocs
-    ));
-    src.push_str(&format!(
-        "/// `phon_stencil_option` machine code: decode one `Option<T>` (presence\n\
-         /// branch), continue. The some-body is invoked through `OptInfo.some_entry`.\n\
-         pub const OPTION: &[u8] = &{:?};\n",
-        option.bytes
-    ));
-    src.push_str(&format!(
-        "/// Byte offsets within `OPTION` of the `phon_cont` continuation branch to\n\
-         /// patch (`BRANCH26`).\n\
-         pub const OPTION_CONT: &[usize] = &{:?};\n",
-        option.cont_relocs
-    ));
-    src.push_str(&format!(
-        "/// `phon_stencil_enum` machine code: decode one `#[repr(int)]` enum\n\
-         /// (variant branch), continue. The payload is invoked through\n\
-         /// `EnumVariantInfo.payload_entry`.\n\
-         pub const ENUM: &[u8] = &{:?};\n",
-        enum_dec.bytes
-    ));
-    src.push_str(&format!(
-        "/// Byte offsets within `ENUM` of the `phon_cont` continuation branch to\n\
-         /// patch (`BRANCH26`).\n\
-         pub const ENUM_CONT: &[usize] = &{:?};\n",
-        enum_dec.cont_relocs
-    ));
-    src.push_str(&format!(
-        "/// `phon_stencil_done` machine code: a lone `ret`.\n\
-         pub const DONE: &[u8] = &{:?};\n",
-        done.bytes
-    ));
-    src.push_str(&format!(
-        "/// `phon_stencil_scalar_enc` machine code: encode one fixed scalar,\n\
-         /// continue.\n\
-         pub const SCALAR_ENC: &[u8] = &{:?};\n",
-        scalar_enc.bytes
-    ));
-    src.push_str(&format!(
-        "/// Byte offsets within `SCALAR_ENC` of the `phon_econt` continuation\n\
-         /// branches to patch (`BRANCH26`).\n\
-         pub const SCALAR_ENC_CONT: &[usize] = &{:?};\n",
-        scalar_enc.cont_relocs
-    ));
-    src.push_str(&format!(
-        "/// `phon_stencil_sequence_enc` machine code: encode one owned sequence,\n\
-         /// continue. The element body is invoked through `EncSeqInfo.element_entry`.\n\
-         pub const SEQUENCE_ENC: &[u8] = &{:?};\n",
-        sequence_enc.bytes
-    ));
-    src.push_str(&format!(
-        "/// Byte offsets within `SEQUENCE_ENC` of the `phon_econt` continuation\n\
-         /// branch to patch (`BRANCH26`).\n\
-         pub const SEQUENCE_ENC_CONT: &[usize] = &{:?};\n",
-        sequence_enc.cont_relocs
-    ));
-    src.push_str(&format!(
-        "/// `phon_stencil_bytes_enc` machine code: encode one bulk byte run\n\
-         /// (non-UTF-8), continue. One inline word-wise block copy, no per-element loop.\n\
-         pub const BYTES_ENC: &[u8] = &{:?};\n",
-        bytes_enc.bytes
-    ));
-    src.push_str(&format!(
-        "/// Byte offsets within `BYTES_ENC` of the `phon_econt` continuation branch\n\
-         /// to patch (`BRANCH26`).\n\
-         pub const BYTES_ENC_CONT: &[usize] = &{:?};\n",
-        bytes_enc.cont_relocs
-    ));
-    src.push_str(&format!(
-        "/// `phon_stencil_option_enc` machine code: encode one `Option<T>` (presence\n\
-         /// branch), continue. The some-body is invoked through `EncOptInfo.some_entry`.\n\
-         pub const OPTION_ENC: &[u8] = &{:?};\n",
-        option_enc.bytes
-    ));
-    src.push_str(&format!(
-        "/// Byte offsets within `OPTION_ENC` of the `phon_econt` continuation branch\n\
-         /// to patch (`BRANCH26`).\n\
-         pub const OPTION_ENC_CONT: &[usize] = &{:?};\n",
-        option_enc.cont_relocs
-    ));
-    src.push_str(&format!(
-        "/// `phon_stencil_enum_enc` machine code: encode one `#[repr(int)]` enum\n\
-         /// (variant branch), continue. The payload is invoked through\n\
-         /// `EncEnumVariantInfo.payload_entry`.\n\
-         pub const ENUM_ENC: &[u8] = &{:?};\n",
-        enum_enc.bytes
-    ));
-    src.push_str(&format!(
-        "/// Byte offsets within `ENUM_ENC` of the `phon_econt` continuation branch\n\
-         /// to patch (`BRANCH26`).\n\
-         pub const ENUM_ENC_CONT: &[usize] = &{:?};\n",
-        enum_enc.cont_relocs
-    ));
-    src.push_str(&format!(
-        "/// `phon_stencil_done_enc` machine code: a lone `ret`.\n\
-         pub const DONE_ENC: &[u8] = &{:?};\n",
-        done_enc.bytes
-    ));
-    fs::write(generated, src).unwrap();
+    emit(&mut s, "SMOKE", "`phon_stencil_smoke` (x*3+1) machine code; no relocations.", &smoke);
+    emit(&mut s, "SCALAR", "`phon_stencil_scalar`: decode one fixed scalar, continue.", &scalar);
+    emit_cont(&mut s, "SCALAR_CONT", "SCALAR", &scalar);
+    emit(
+        &mut s,
+        "SEQUENCE",
+        "`phon_stencil_sequence`: decode one owned sequence; element body via `SeqInfo.element_entry`.",
+        &sequence,
+    );
+    emit_cont(&mut s, "SEQUENCE_CONT", "SEQUENCE", &sequence);
+    emit(
+        &mut s,
+        "BYTES",
+        "`phon_stencil_bytes`: decode one bulk byte run (non-UTF-8); one inline word-wise block copy.",
+        &bytes_dec,
+    );
+    emit_cont(&mut s, "BYTES_CONT", "BYTES", &bytes_dec);
+    emit(
+        &mut s,
+        "OPTION",
+        "`phon_stencil_option`: decode one `Option<T>` (presence branch); some-body via `OptInfo.some_entry`.",
+        &option,
+    );
+    emit_cont(&mut s, "OPTION_CONT", "OPTION", &option);
+    emit(
+        &mut s,
+        "ENUM",
+        "`phon_stencil_enum`: decode one `#[repr(int)]` enum (variant branch); payload via `EnumVariantInfo.payload_entry`.",
+        &enum_dec,
+    );
+    emit_cont(&mut s, "ENUM_CONT", "ENUM", &enum_dec);
+    emit(&mut s, "DONE", "`phon_stencil_done`: a lone `ret`.", &done);
+    emit(&mut s, "SCALAR_ENC", "`phon_stencil_scalar_enc`: encode one fixed scalar, continue.", &scalar_enc);
+    emit_cont(&mut s, "SCALAR_ENC_CONT", "SCALAR_ENC", &scalar_enc);
+    emit(
+        &mut s,
+        "SEQUENCE_ENC",
+        "`phon_stencil_sequence_enc`: encode one owned sequence; element body via `EncSeqInfo.element_entry`.",
+        &sequence_enc,
+    );
+    emit_cont(&mut s, "SEQUENCE_ENC_CONT", "SEQUENCE_ENC", &sequence_enc);
+    emit(
+        &mut s,
+        "BYTES_ENC",
+        "`phon_stencil_bytes_enc`: encode one bulk byte run (non-UTF-8); one inline word-wise block copy.",
+        &bytes_enc,
+    );
+    emit_cont(&mut s, "BYTES_ENC_CONT", "BYTES_ENC", &bytes_enc);
+    emit(
+        &mut s,
+        "OPTION_ENC",
+        "`phon_stencil_option_enc`: encode one `Option<T>` (presence branch); some-body via `EncOptInfo.some_entry`.",
+        &option_enc,
+    );
+    emit_cont(&mut s, "OPTION_ENC_CONT", "OPTION_ENC", &option_enc);
+    emit(
+        &mut s,
+        "ENUM_ENC",
+        "`phon_stencil_enum_enc`: encode one `#[repr(int)]` enum (variant branch); payload via `EncEnumVariantInfo.payload_entry`.",
+        &enum_enc,
+    );
+    emit_cont(&mut s, "ENUM_ENC_CONT", "ENUM_ENC", &enum_enc);
+    emit(&mut s, "DONE_ENC", "`phon_stencil_done_enc`: a lone `ret`.", &done_enc);
+
+    fs::write(generated, s).unwrap();
 }
 
-fn nightly_available() -> bool {
-    Command::new("rustc")
-        .args(["+nightly", "--version"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+/// Emit a `pub const NAME: &[u8] = &[..];` for a stencil's machine code.
+fn emit(out: &mut String, name: &str, doc: &str, s: &Stencil) {
+    out.push_str(&format!("/// {doc}\npub const {name}: &[u8] = &{:?};\n", s.bytes));
 }
 
-/// Compile the stencils to `obj`. Returns whether it succeeded; output is
-/// captured so a clean build stays quiet (and a failed nightly attempt falls back
-/// silently).
-fn compile(program: &str, pre_args: &[&str], obj: &Path, target: &str, tailcall: bool) -> bool {
-    let mut cmd = Command::new(program);
-    cmd.args(pre_args);
-    cmd.args([
-        "--edition",
-        "2021",
-        "--emit=obj",
-        "--crate-type=lib",
-        "-O",
-        "-C",
-        "panic=abort",
-        "--target",
-        target,
-    ]);
-    if tailcall {
-        cmd.args(["--cfg", "tailcall"]);
-    }
-    cmd.arg("-o").arg(obj).arg("stencils/stencils.rs");
-    match cmd.output() {
-        Ok(o) if o.status.success() => true,
-        Ok(o) => {
-            // Surface the error only for the stable path (the final attempt).
-            if pre_args.is_empty() {
-                eprint!("{}", String::from_utf8_lossy(&o.stderr));
-            }
-            false
-        }
-        Err(_) => false,
-    }
-}
-
-struct Stencil {
-    bytes: Vec<u8>,
-    /// Offsets, relative to the stencil's start, of `BRANCH26` relocations
-    /// targeting `phon_cont`.
-    cont_relocs: Vec<usize>,
-}
-
-/// Extract one stencil's bytes and continuation relocations from the object's
-/// `__text` section by symbol name. `cont_symbol` is the external continuation
-/// the stencil branches to (`phon_cont` for decode, `phon_econt` for encode); its
-/// `BRANCH26` relocations are the only holes the JIT patches.
-fn extract(obj: &[u8], symbol: &str, cont_symbol: &str) -> Stencil {
-    use object::{Object, ObjectSection, ObjectSymbol, RelocationTarget};
-
-    let file = object::File::parse(obj).expect("parse object file");
-    let text = file
-        .sections()
-        .find(|s| s.name() == Ok("__text"))
-        .expect("no __text section");
-    let data = text.data().expect("read __text data");
-    let text_index = text.index();
-
-    let addr_of = |name: &str| -> u64 {
-        file.symbols()
-            .find(|s| {
-                s.section_index() == Some(text_index)
-                    && s.name().is_ok_and(|n| n.ends_with(name))
-                    // Guard the `ends_with` against the `_enc` suffixes sharing a
-                    // prefix: only an exact (de-underscored) match counts.
-                    && s.name().is_ok_and(|n| n == name || n == format!("_{name}"))
-            })
-            .unwrap_or_else(|| panic!("symbol {name} not found"))
-            .address()
-    };
-    let mut boundaries: Vec<u64> = [
-        "phon_stencil_smoke",
-        "phon_stencil_scalar",
-        "phon_stencil_sequence",
-        "phon_stencil_bytes",
-        "phon_stencil_option",
-        "phon_stencil_enum",
-        "phon_stencil_done",
-        "phon_stencil_scalar_enc",
-        "phon_stencil_sequence_enc",
-        "phon_stencil_bytes_enc",
-        "phon_stencil_option_enc",
-        "phon_stencil_enum_enc",
-        "phon_stencil_done_enc",
-    ]
-    .iter()
-    .map(|s| addr_of(s))
-    .collect();
-    boundaries.push(data.len() as u64);
-    boundaries.sort_unstable();
-
-    let start = addr_of(symbol);
-    let end = *boundaries
-        .iter()
-        .find(|&&b| b > start)
-        .expect("a boundary past the stencil");
-
-    let bytes = data[start as usize..end as usize].to_vec();
-
-    let mut cont_relocs = Vec::new();
-    for (offset, reloc) in text.relocations() {
-        if offset < start || offset >= end {
-            continue;
-        }
-        if let RelocationTarget::Symbol(idx) = reloc.target()
-            && let Ok(sym) = file.symbol_by_index(idx)
-            && sym.name().is_ok_and(|n| n == cont_symbol || n == format!("_{cont_symbol}"))
-        {
-            cont_relocs.push((offset - start) as usize);
-        }
-    }
-    cont_relocs.sort_unstable();
-
-    Stencil { bytes, cont_relocs }
+/// Emit a `pub const NAME: &[usize] = &[..];` of a stencil's continuation-reloc offsets.
+fn emit_cont(out: &mut String, name: &str, of: &str, s: &Stencil) {
+    out.push_str(&format!(
+        "/// Byte offsets within `{of}` of the continuation `BRANCH26` relocations to patch.\n\
+         pub const {name}: &[usize] = &{:?};\n",
+        s.cont_relocs
+    ));
 }

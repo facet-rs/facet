@@ -1,0 +1,20 @@
+[package]
+name = "copypatch"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Reusable copy-and-patch JIT substrate: executable memory (W^X), AArch64 relocation patching, and build-time stencil extraction. Backend-agnostic — no IR, no schema."
+
+[dependencies]
+# Only used by the build-time `extract` module (parsing the stencil object file).
+object = { version = "0.39", optional = true }
+
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
+libc = "0.2"
+
+[features]
+# Enable the build-time stencil-extraction module (`copypatch::extract`). Turn
+# this on when depending on copypatch as a `[build-dependencies]` entry; leave it
+# off for the runtime substrate (`ExecBuf`, `patch_branch26`).
+build = ["dep:object"]

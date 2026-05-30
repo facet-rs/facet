@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+  "copypatch",
   "phon-schema",
   "phon-ir",
   "phon-engine",
@@ -17,6 +18,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/bearcove/phon"
 
 [workspace.dependencies]
+copypatch = { path = "copypatch" }
 phon-schema = { path = "phon-schema" }
 phon-ir = { path = "phon-ir" }
 phon-engine = { path = "phon-engine" }
