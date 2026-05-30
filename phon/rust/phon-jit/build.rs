@@ -28,6 +28,8 @@ const SYMBOLS: &[&str] = &[
     "phon_stencil_bytes",
     "phon_stencil_option",
     "phon_stencil_enum",
+    "phon_stencil_default",
+    "phon_stencil_skipwire",
     "phon_stencil_done",
     "phon_stencil_scalar_enc",
     "phon_stencil_sequence_enc",
@@ -96,6 +98,8 @@ fn emit_arm64_macos(out: &Path, generated: &Path) {
     let bytes_dec = get("phon_stencil_bytes", "phon_cont");
     let option = get("phon_stencil_option", "phon_cont");
     let enum_dec = get("phon_stencil_enum", "phon_cont");
+    let default = get("phon_stencil_default", "phon_cont");
+    let skipwire = get("phon_stencil_skipwire", "phon_cont");
     let done = get("phon_stencil_done", "phon_cont");
     let scalar_enc = get("phon_stencil_scalar_enc", "phon_econt");
     let sequence_enc = get("phon_stencil_sequence_enc", "phon_econt");
@@ -140,6 +144,20 @@ fn emit_arm64_macos(out: &Path, generated: &Path) {
         &enum_dec,
     );
     emit_cont(&mut s, "ENUM_CONT", "ENUM", &enum_dec);
+    emit(
+        &mut s,
+        "DEFAULT",
+        "`phon_stencil_default`: write a reader-only field's default (no wire); thunk via `DefaultInfo.thunk`.",
+        &default,
+    );
+    emit_cont(&mut s, "DEFAULT_CONT", "DEFAULT", &default);
+    emit(
+        &mut s,
+        "SKIPWIRE",
+        "`phon_stencil_skipwire`: consume a writer-only value's wire bytes; walker via `SkipInfo.walk`.",
+        &skipwire,
+    );
+    emit_cont(&mut s, "SKIPWIRE_CONT", "SKIPWIRE", &skipwire);
     emit(&mut s, "DONE", "`phon_stencil_done`: a lone `ret`.", &done);
     emit(&mut s, "SCALAR_ENC", "`phon_stencil_scalar_enc`: encode one fixed scalar, continue.", &scalar_enc);
     emit_cont(&mut s, "SCALAR_ENC_CONT", "SCALAR_ENC", &scalar_enc);

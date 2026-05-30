@@ -157,6 +157,38 @@ pub struct EnumInfo {
     pub variant_count: usize,
 }
 
+/// A reader-only-default op's immediates, reached through a `*const DefaultInfo`
+/// slot in `Ctx.prog`. Writes the reader field's default into `base + offset` with
+/// NO wire interaction, by an *indirect* call to `thunk` (so it adds no
+/// relocation). Mirrors `DefaultOp`; decode-only. (`r[compat.reader-only-fields]`.)
+#[repr(C)]
+pub struct DefaultInfo {
+    /// Where the reader field lives, relative to `base`.
+    pub offset: usize,
+    /// Opaque per-field context the front door bound (passed to `thunk`).
+    pub ctx: *const (),
+    /// Initialize the uninitialized reader field at `slot` to its default.
+    pub thunk: unsafe extern "C" fn(ctx: *const (), slot: *mut u8),
+}
+
+/// A writer-only-skip op's immediates, reached through a `*const SkipInfo` slot in
+/// `Ctx.prog`. Advances the wire cursor past one writer value without touching the
+/// reader's memory, by an *indirect* call to `walk` (so it adds no relocation).
+/// Mirrors `SkipOp`; decode-only. (`r[compat.skip-writer-only]`.)
+#[repr(C)]
+pub struct SkipInfo {
+    /// Opaque pointer to the `SkipOp` tree, passed back to `walk` untouched.
+    pub skip_op: *const (),
+    /// Advance a cursor over `[wire, wire_end)` per the `SkipOp` at `skip_op`.
+    /// Returns the new (advanced) cursor on success, or null on a skip failure
+    /// (truncation, bad presence byte, or unmatched enum index).
+    pub walk: unsafe extern "C" fn(
+        skip_op: *const (),
+        wire: *const u8,
+        wire_end: *const u8,
+    ) -> *const u8,
+}
+
 extern "C" {
     fn phon_cont(cx: *mut Ctx);
 }
@@ -529,6 +561,62 @@ pub unsafe extern "C" fn phon_stencil_enum(cx: *mut Ctx) {
     }
 
     c.base = outer_base;
+    c.prog = outer_prog;
+
+    #[cfg(tailcall)]
+    become phon_cont(cx);
+    #[cfg(not(tailcall))]
+    phon_cont(cx);
+}
+
+/// Write a reader-only field's default into `base + offset`, then continue.
+///
+/// Reads a `*const DefaultInfo` from `Ctx.prog`, calls its `thunk(ctx, base +
+/// offset)` to initialize the field in place, and reads NO wire bytes. The thunk
+/// is an *indirect* call through the info struct, so the only relocation the
+/// copied stencil carries is the `phon_cont` `BRANCH26`. Decode-only — the
+/// compatibility decision (this field is reader-only) was made at lowering.
+/// (`r[compat.reader-only-fields]`.)
+#[no_mangle]
+pub unsafe extern "C" fn phon_stencil_default(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let info = &*(*c.prog as *const DefaultInfo);
+    c.prog = c.prog.add(1);
+
+    // Initialize the reader field in place (no wire interaction). Indirect call
+    // through `info.thunk` — no relocation.
+    (info.thunk)(info.ctx, c.base.add(info.offset));
+
+    #[cfg(tailcall)]
+    become phon_cont(cx);
+    #[cfg(not(tailcall))]
+    phon_cont(cx);
+}
+
+/// Consume a writer-only value's wire bytes (writing nothing to memory), then
+/// continue.
+///
+/// Reads a `*const SkipInfo` from `Ctx.prog`, calls its `walk(skip_op, wire,
+/// wire_end)` to advance the cursor past one writer value. A null return is a skip
+/// failure (truncation / bad presence byte / unmatched enum index): reject with
+/// `status = 1`. Otherwise set `c.wire` to the returned advanced cursor and
+/// continue. The walk is an *indirect* call through the info struct, so the only
+/// relocation the copied stencil carries is the `phon_cont` `BRANCH26`. Decode-only.
+/// (`r[compat.skip-writer-only]`.)
+#[no_mangle]
+pub unsafe extern "C" fn phon_stencil_skipwire(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let info = &*(*c.prog as *const SkipInfo);
+    let outer_prog = c.prog.add(1);
+
+    // Advance the cursor over one writer value. Indirect call through `info.walk`
+    // — no relocation. Null => the skip failed (truncated/malformed wire).
+    let advanced = (info.walk)(info.skip_op, c.wire, c.wire_end);
+    if advanced.is_null() {
+        c.status = 1;
+        return;
+    }
+    c.wire = advanced;
     c.prog = outer_prog;
 
     #[cfg(tailcall)]
