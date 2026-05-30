@@ -124,6 +124,11 @@ pub enum MemOp {
     /// loop. Decode optionally validates the bytes as UTF-8 (for `String`). See
     /// [`BytesOp`].
     Bytes(Box<BytesOp>),
+    /// An `Option<T>` at `field_offset`: a `u8` presence byte (`0` none / `1` some),
+    /// then — only when some — the inner `T` decoded by its own program. The first
+    /// *data-directed* op: the branch is taken on a value read at run time, not
+    /// resolved at lowering. See [`OptionOp`].
+    Option(Box<OptionOp>),
 }
 
 /// An owned-sequence op's payload (boxed in [`MemOp::Sequence`] to keep `MemOp`
@@ -204,6 +209,48 @@ pub struct BytesOp {
     pub thunks: SeqThunks,
 }
 
+/// An optional op's payload (boxed in [`MemOp::Option`]). The wire form is a `u8`
+/// presence byte then, only when present, the inner value. The engine never
+/// assumes the in-memory `Option<T>` layout (a repr(Rust) niche or tag); it reads
+/// and builds presence through the [`OptionThunks`] vtable.
+#[derive(Clone, Debug)]
+pub struct OptionOp {
+    /// Where the `Option<T>` handle lives, relative to the base.
+    pub field_offset: usize,
+    /// How to encode/decode the inner `T`, run at the inner value (offsets relative
+    /// to the inner start).
+    pub some: MemProgram,
+    /// The inner `T`'s size and alignment — the engine allocates a scratch buffer
+    /// of this layout on decode, fills it with the inner program, then moves it into
+    /// the `Option` via `init_some`.
+    pub inner_size: usize,
+    /// Alignment of the inner `T` (for the decode scratch buffer).
+    pub inner_align: usize,
+    /// Type-erased presence operations on the `Option` handle (front-door bound).
+    pub thunks: OptionThunks,
+}
+
+/// Type-erased operations on an `Option<T>` handle, supplied by the front door
+/// (`r[descriptors.thunk-binding]`), mirroring [`SeqThunks`]. The engine never
+/// pokes the `Option`'s niche/tag directly — it calls these. `ctx` is an opaque
+/// per-type pointer (the inner type's option vtable) the engine passes back
+/// untouched.
+#[derive(Clone, Copy, Debug)]
+pub struct OptionThunks {
+    /// Opaque per-type context, passed to every thunk.
+    pub ctx: *const (),
+    /// Whether the option at `option` is `Some`.
+    pub is_some: unsafe extern "C" fn(ctx: *const (), option: *const u8) -> bool,
+    /// A pointer to the contained value (valid only when `is_some`).
+    pub get_value: unsafe extern "C" fn(ctx: *const (), option: *const u8) -> *const u8,
+    /// Initialize the uninitialized option at `option` to `Some(*value)`, moving the
+    /// inner value out of `value` (the engine then frees `value`'s storage without
+    /// dropping it).
+    pub init_some: unsafe extern "C" fn(ctx: *const (), option: *mut u8, value: *mut u8),
+    /// Initialize the uninitialized option at `option` to `None`.
+    pub init_none: unsafe extern "C" fn(ctx: *const (), option: *mut u8),
+}
+
 /// Coalesce adjacent scalar copies that are contiguous in *both* the wire and
 /// memory into one larger copy — the specialization the IR exists for. A flat
 /// struct whose wire layout matches its memory layout collapses to a single
@@ -241,8 +288,9 @@ pub fn fuse(program: MemProgram) -> MemProgram {
                 }
                 wire_pos = wire_pos.map(|p| p + pad.unwrap_or(0) + size);
             }
-            // Variable-length ops make the static wire position unknown after them.
-            seq @ (MemOp::Sequence(_) | MemOp::Bytes(_)) => {
+            // Variable-length / data-directed ops make the static wire position
+            // unknown after them.
+            seq @ (MemOp::Sequence(_) | MemOp::Bytes(_) | MemOp::Option(_)) => {
                 out.push(seq);
                 wire_pos = None;
             }

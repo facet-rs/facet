@@ -297,6 +297,9 @@ impl Compiler {
                     });
                     self.bytes_fixups.push(BytesFixup { prog_index, slot, bytesinfo });
                 }
+                MemOp::Option(_) => {
+                    panic!("phon-jit: Option is interpreter-only for now")
+                }
             }
         }
         let done_start = self.code.len();
@@ -311,6 +314,7 @@ impl Compiler {
                 MemOp::Scalar { .. } => SCALAR_CONT,
                 MemOp::Sequence(_) => SEQUENCE_CONT,
                 MemOp::Bytes(_) => BYTES_CONT,
+                MemOp::Option(_) => unreachable!("Option is rejected in compile_chain"),
             };
             for &rel in relocs {
                 patch_branch26(&mut self.code, op_start + rel, next);
@@ -620,6 +624,9 @@ impl EncCompiler {
                     });
                     self.bytes_fixups.push(BytesFixup { prog_index, slot, bytesinfo });
                 }
+                MemOp::Option(_) => {
+                    panic!("phon-jit: Option is interpreter-only for now")
+                }
             }
         }
         let done_start = self.code.len();
@@ -631,6 +638,7 @@ impl EncCompiler {
                 MemOp::Scalar { .. } => SCALAR_ENC_CONT,
                 MemOp::Sequence(_) => SEQUENCE_ENC_CONT,
                 MemOp::Bytes(_) => BYTES_ENC_CONT,
+                MemOp::Option(_) => unreachable!("Option is rejected in compile_chain"),
             };
             for &rel in relocs {
                 patch_branch26(&mut self.code, op_start + rel, next);

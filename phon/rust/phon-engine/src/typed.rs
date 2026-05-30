@@ -24,9 +24,9 @@
 
 use std::alloc;
 
-use phon_ir::ir::{BytesOp, MemOp, MemProgram, SeqOp, fuse};
-use phon_ir::{Access, Construct, Descriptor, SequenceStorage};
-use phon_schema::bytes::{Reader, write_u32};
+use phon_ir::ir::{BytesOp, MemOp, MemProgram, OptionOp, SeqOp, fuse};
+use phon_ir::{Access, Construct, Descriptor, Presence, SequenceStorage};
+use phon_schema::bytes::{Reader, write_u8, write_u32};
 use phon_schema::{DecodeError, Primitive, SchemaKind};
 
 use crate::compact::{self, CompactError, Registry, Resolved, alignment, pad_to, skip_pad};
@@ -176,8 +176,27 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
             })));
             Ok(())
         }
+        // r[impl ir.memory] — Option<T>: a presence byte then the inner value.
+        (Access::Option(opt), Resolved::Composite(SchemaKind::Option { .. })) => {
+            let Presence::Vtable(thunks) = &opt.presence else {
+                return Err(CompactError::Unsupported(
+                    "typed: option needs vtable presence thunks",
+                ));
+            };
+            // The some-payload sub-program runs at the inner value (base 0).
+            let mut some = Vec::new();
+            lower_node(&opt.some, reg, 0, &mut some)?;
+            out.push(MemOp::Option(Box::new(OptionOp {
+                field_offset: base,
+                some: fuse(some),
+                inner_size: opt.some.layout.size,
+                inner_align: opt.some.layout.align,
+                thunks: *thunks,
+            })));
+            Ok(())
+        }
         _ => Err(CompactError::Unsupported(
-            "typed: only fixed scalars, in-place records, owned sequences, and strings so far",
+            "typed: only fixed scalars, in-place records, owned sequences, strings, and options so far",
         )),
     }
 }
@@ -250,6 +269,18 @@ unsafe fn encode_program(program: &MemProgram, base: *const u8, out: &mut Vec<u8
                 let data = unsafe { (b.thunks.data)(b.thunks.ctx, list) };
                 let src = unsafe { core::slice::from_raw_parts(data, count * b.stride) };
                 out.extend_from_slice(src);
+            }
+            MemOp::Option(o) => {
+                // Safety: the option handle lives at field_offset.
+                let option = unsafe { base.add(o.field_offset) };
+                if unsafe { (o.thunks.is_some)(o.thunks.ctx, option) } {
+                    write_u8(out, 1);
+                    // Safety: present, so `get_value` returns a valid inner pointer.
+                    let inner = unsafe { (o.thunks.get_value)(o.thunks.ctx, option) };
+                    unsafe { encode_program(&o.some, inner, out) };
+                } else {
+                    write_u8(out, 0);
+                }
             }
         }
     }
@@ -373,6 +404,49 @@ unsafe fn decode_program(program: &MemProgram, r: &mut Reader, base: *mut u8) ->
                 // the `count`-element buffer.
                 let list = unsafe { base.add(b.field_offset) };
                 unsafe { (b.thunks.from_raw_parts)(b.thunks.ctx, list, buffer, count, cap) };
+            }
+            MemOp::Option(o) => {
+                // Safety: the option handle lives at field_offset.
+                let option = unsafe { base.add(o.field_offset) };
+                match r.read_u8()? {
+                    0 => unsafe { (o.thunks.init_none)(o.thunks.ctx, option) },
+                    1 => {
+                        // Decode the inner into an engine-owned scratch buffer, then
+                        // move it into the Option (init_some does a ptr::read) and
+                        // free the scratch WITHOUT dropping (ownership transferred).
+                        let (scratch, layout) = if o.inner_size == 0 {
+                            (o.inner_align as *mut u8, None)
+                        } else {
+                            let layout =
+                                alloc::Layout::from_size_align(o.inner_size, o.inner_align)
+                                    .map_err(|_| {
+                                        CompactError::Decode(DecodeError::Malformed(
+                                            "option inner layout overflow",
+                                        ))
+                                    })?;
+                            // Safety: inner_size > 0.
+                            let buf = unsafe { alloc::alloc(layout) };
+                            if buf.is_null() {
+                                alloc::handle_alloc_error(layout);
+                            }
+                            (buf, Some(layout))
+                        };
+                        // Safety: scratch is inner_size bytes at inner_align.
+                        if let Err(e) = unsafe { decode_program(&o.some, r, scratch) } {
+                            if let Some(layout) = layout {
+                                unsafe { alloc::dealloc(scratch, layout) };
+                            }
+                            return Err(e);
+                        }
+                        // Safety: scratch holds the initialized inner; init_some moves
+                        // it into the option.
+                        unsafe { (o.thunks.init_some)(o.thunks.ctx, option, scratch) };
+                        if let Some(layout) = layout {
+                            unsafe { alloc::dealloc(scratch, layout) };
+                        }
+                    }
+                    b => return Err(CompactError::Decode(DecodeError::InvalidBool(b))),
+                }
             }
         }
     }

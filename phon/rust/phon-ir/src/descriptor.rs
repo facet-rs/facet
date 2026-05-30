@@ -17,7 +17,7 @@
 
 use phon_schema::SchemaRef;
 
-use crate::ir::SeqThunks;
+use crate::ir::{OptionThunks, SeqThunks};
 
 /// A node of the descriptor tree: the schema it realizes, its process-local
 /// memory layout, and how to read and construct it.
@@ -168,6 +168,11 @@ pub enum Presence {
         set_none: Thunk,
         set_some: Thunk,
     },
+    /// Front-door-bound presence via the inner type's option vtable — the typed
+    /// path's representation, mirroring [`SequenceStorage::Vtable`]. The engine
+    /// reads presence and builds none/some through these thunks, never assuming
+    /// the in-memory niche/tag layout.
+    Vtable(OptionThunks),
 }
 
 /// A dynamic homogeneous sequence or byte sequence: its element and storage.

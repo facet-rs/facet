@@ -21,10 +21,12 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use facet::{Def, Facet, ListDef, PtrConst, PtrMut, PtrUninit, ScalarType, Shape, Type, UserType};
+use facet::{
+    Def, Facet, ListDef, OptionDef, PtrConst, PtrMut, PtrUninit, ScalarType, Shape, Type, UserType,
+};
 use phon_ir::{
-    Access, Construct, Descriptor, FieldAccess, Layout, RecordAccess, SeqThunks, SequenceAccess,
-    SequenceStorage,
+    Access, Construct, Descriptor, FieldAccess, Layout, OptionAccess, OptionThunks, Presence,
+    RecordAccess, SeqThunks, SequenceAccess, SequenceStorage,
 };
 use phon_schema::{
     Field, Primitive, Schema, SchemaId, SchemaKind, SchemaRef, primitive_id, resolve_ids,
@@ -184,9 +186,12 @@ impl Builder {
         } else if let Some(list_def) = list_def(shape) {
             let key = self.intern_list(list_def)?;
             Ok(SchemaRef::concrete(SchemaId(key as u64)))
+        } else if let Some(opt) = option_def(shape) {
+            let key = self.intern_option(opt)?;
+            Ok(SchemaRef::concrete(SchemaId(key as u64)))
         } else {
             Err(DeriveError::Unsupported(
-                "derive: only structs, lists, and fixed scalars so far",
+                "derive: only structs, lists, options, and fixed scalars so far",
             ))
         }
     }
@@ -207,6 +212,24 @@ impl Builder {
             id: SchemaId(key as u64),
             type_params: Vec::new(),
             kind: SchemaKind::List { element },
+        });
+        Ok(key)
+    }
+
+    /// Intern an `Option<T>` schema, returning its provisional key. Interned by the
+    /// `OptionDef` pointer so two `Option<T>` of the same `T` dedup.
+    fn intern_option(&mut self, opt: &'static OptionDef) -> Result<usize, DeriveError> {
+        let ptr = core::ptr::from_ref(opt) as usize;
+        if let Some(&k) = self.by_shape.get(&ptr) {
+            return Ok(k);
+        }
+        let element = self.ref_of(opt.t())?;
+        let key = self.protos.len();
+        self.by_shape.insert(ptr, key);
+        self.protos.push(Schema {
+            id: SchemaId(key as u64),
+            type_params: Vec::new(),
+            kind: SchemaKind::Option { element },
         });
         Ok(key)
     }
@@ -237,6 +260,18 @@ fn build_descriptor(
             access: Access::Sequence(SequenceAccess {
                 element: Box::new(element),
                 storage: SequenceStorage::Vtable(list_thunks(list_def)),
+            }),
+        });
+    }
+    if let Some(opt) = option_def(shape) {
+        let real = real_ids[by_shape[&(core::ptr::from_ref(opt) as usize)]];
+        let some = build_descriptor(opt.t(), by_shape, real_ids)?;
+        return Ok(Descriptor {
+            schema: SchemaRef::concrete(real),
+            layout: Layout { size, align },
+            access: Access::Option(OptionAccess {
+                presence: Presence::Vtable(option_thunks(opt)),
+                some: Box::new(some),
             }),
         });
     }
@@ -283,6 +318,14 @@ fn layout_of(shape: &Shape) -> Result<(usize, usize), DeriveError> {
 fn list_def(shape: &'static Shape) -> Option<&'static ListDef> {
     match &shape.def {
         Def::List(list_def) => Some(list_def),
+        _ => None,
+    }
+}
+
+/// The `&'static OptionDef` behind an `Option<T>`-typed shape, or `None`.
+fn option_def(shape: &'static Shape) -> Option<&'static OptionDef> {
+    match &shape.def {
+        Def::Option(opt) => Some(opt),
         _ => None,
     }
 }
@@ -374,6 +417,77 @@ unsafe extern "C" fn seq_data(ctx: *const (), list: *const u8) -> *const u8 {
     // Safety: `list` is an initialized handle; the data buffer is a thin pointer.
     let data = unsafe { as_ptr(PtrConst::new(list)) };
     data.as_byte_ptr()
+}
+
+// ============================================================================
+// Option thunks
+// ============================================================================
+//
+// Like the sequence thunks, the engine drives an `Option<T>` through type-erased
+// `unsafe extern "C"` function pointers, passing the field's `&'static OptionDef`
+// as `ctx`. Each adapter casts it back, wraps the engine's raw pointer in facet's
+// wide-pointer types, and calls the matching `OptionVTable` operation — so the
+// engine never assumes the in-memory niche/tag layout of `Option<T>`.
+//
+// Spec: `r[descriptors.thunk-binding]`.
+
+/// Build the [`OptionThunks`] for an `Option` field, with its `OptionDef` as `ctx`.
+fn option_thunks(opt: &'static OptionDef) -> OptionThunks {
+    OptionThunks {
+        ctx: core::ptr::from_ref(opt).cast::<()>(),
+        is_some: opt_is_some,
+        get_value: opt_get_value,
+        init_some: opt_init_some,
+        init_none: opt_init_none,
+    }
+}
+
+/// Whether the option at `option` is `Some`, via the `OptionVTable`'s `is_some`.
+///
+/// # Safety
+/// `ctx` is the `&'static OptionDef` set in [`option_thunks`]; `option` points to
+/// an initialized `Option<T>` of the matching type.
+unsafe extern "C" fn opt_is_some(ctx: *const (), option: *const u8) -> bool {
+    // Safety: `ctx` is the `&'static OptionDef`.
+    let opt = unsafe { &*ctx.cast::<OptionDef>() };
+    // Safety: `option` is an initialized handle of the option's type.
+    unsafe { (opt.vtable.is_some)(PtrConst::new(option)) }
+}
+
+/// A pointer to the contained value (valid only when some), via `get_value`.
+///
+/// # Safety
+/// As [`opt_is_some`]; the engine reads the result only when the option is some.
+unsafe extern "C" fn opt_get_value(ctx: *const (), option: *const u8) -> *const u8 {
+    // Safety: `ctx` is the `&'static OptionDef`.
+    let opt = unsafe { &*ctx.cast::<OptionDef>() };
+    // Safety: `option` is an initialized handle.
+    unsafe { (opt.vtable.get_value)(PtrConst::new(option)) }
+}
+
+/// Initialize the uninitialized option at `option` to `Some(*value)`, moving the
+/// inner value out of `value`, via `init_some`.
+///
+/// # Safety
+/// `ctx` is the `&'static OptionDef`; `option` is uninitialized option storage;
+/// `value` points to an initialized inner value that the engine then frees without
+/// dropping (ownership is moved into the option here).
+unsafe extern "C" fn opt_init_some(ctx: *const (), option: *mut u8, value: *mut u8) {
+    // Safety: `ctx` is the `&'static OptionDef`.
+    let opt = unsafe { &*ctx.cast::<OptionDef>() };
+    // Safety: `option` is uninitialized; `value` holds the inner value to move in.
+    unsafe { (opt.vtable.init_some)(PtrUninit::new(option), PtrMut::new(value)) };
+}
+
+/// Initialize the uninitialized option at `option` to `None`, via `init_none`.
+///
+/// # Safety
+/// `ctx` is the `&'static OptionDef`; `option` is uninitialized option storage.
+unsafe extern "C" fn opt_init_none(ctx: *const (), option: *mut u8) {
+    // Safety: `ctx` is the `&'static OptionDef`.
+    let opt = unsafe { &*ctx.cast::<OptionDef>() };
+    // Safety: `option` is uninitialized storage for the option.
+    unsafe { (opt.vtable.init_none)(PtrUninit::new(option)) };
 }
 
 // ============================================================================
@@ -738,5 +852,106 @@ mod tests {
         let mut slot = std::mem::MaybeUninit::<Named>::uninit();
         let err = unsafe { dec.run(&wire, slot.as_mut_ptr().cast::<u8>()) }.unwrap_err();
         assert!(matches!(err, DecodeError::InvalidUtf8));
+    }
+
+    // A struct with an `Option<u32>` field: the data-directed presence branch.
+    #[derive(Facet)]
+    struct Maybe {
+        val: Option<u32>,
+        tag: u32,
+    }
+
+    #[test]
+    fn derived_option_u32_matches_dynamic_and_roundtrips() {
+        let d = of::<Maybe>().unwrap();
+        // Two composite schemas: Maybe (struct) and Option<u32>.
+        assert_eq!(d.schemas.len(), 2);
+        let reg = Registry::new(d.schemas.clone());
+
+        for val in [Some(0xABCDu32), None] {
+            let m = Maybe { val, tag: 0x77 };
+            let typed_bytes =
+                unsafe { typed::encode(core::ptr::from_ref(&m).cast::<u8>(), &d.descriptor, &reg) }
+                    .unwrap();
+
+            let mut obj = VObject::new();
+            obj.insert(
+                VString::new("val"),
+                match val {
+                    Some(x) => Value::from(x),
+                    None => Value::NULL,
+                },
+            );
+            obj.insert(VString::new("tag"), Value::from(m.tag));
+            let dyn_bytes = compact::to_bytes(&obj.into(), d.root, &reg).unwrap();
+            assert_eq!(typed_bytes, dyn_bytes, "val = {val:?}");
+
+            let mut slot = std::mem::MaybeUninit::<Maybe>::uninit();
+            unsafe {
+                typed::decode(&typed_bytes, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>())
+            }
+            .unwrap();
+            let back = unsafe { slot.assume_init() };
+            assert_eq!(back.val, val);
+            assert_eq!(back.tag, m.tag);
+        }
+    }
+
+    // `Option<String>`: a some-payload that owns heap — exercises the decode
+    // scratch buffer + `init_some` move (the inner `String` is built into scratch,
+    // then moved into the `Option`, then the scratch freed without dropping).
+    #[derive(Facet)]
+    struct MaybeStr {
+        s: Option<String>,
+        n: u32,
+    }
+
+    #[test]
+    fn derived_option_string_matches_dynamic_and_roundtrips() {
+        let d = of::<MaybeStr>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+
+        for s in [Some("héllo 🐝".to_string()), None] {
+            let m = MaybeStr { s: s.clone(), n: 0x2A };
+            let typed_bytes =
+                unsafe { typed::encode(core::ptr::from_ref(&m).cast::<u8>(), &d.descriptor, &reg) }
+                    .unwrap();
+
+            let mut obj = VObject::new();
+            obj.insert(
+                VString::new("s"),
+                match &s {
+                    Some(x) => Value::from(x.as_str()),
+                    None => Value::NULL,
+                },
+            );
+            obj.insert(VString::new("n"), Value::from(m.n));
+            let dyn_bytes = compact::to_bytes(&obj.into(), d.root, &reg).unwrap();
+            assert_eq!(typed_bytes, dyn_bytes, "s = {s:?}");
+
+            let mut slot = std::mem::MaybeUninit::<MaybeStr>::uninit();
+            unsafe {
+                typed::decode(&typed_bytes, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>())
+            }
+            .unwrap();
+            let back = unsafe { slot.assume_init() };
+            assert_eq!(back.s, s);
+            assert_eq!(back.n, m.n);
+        }
+    }
+
+    #[test]
+    fn derived_option_rejects_invalid_presence() {
+        use phon_engine::CompactError;
+        use phon_schema::DecodeError;
+        let d = of::<Maybe>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+        // presence byte 2 (neither 0 nor 1) — rejected like the dynamic codec.
+        let wire = vec![2u8];
+        let mut slot = std::mem::MaybeUninit::<Maybe>::uninit();
+        let err =
+            unsafe { typed::decode(&wire, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
+                .unwrap_err();
+        assert!(matches!(err, CompactError::Decode(DecodeError::InvalidBool(2))));
     }
 }
