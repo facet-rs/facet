@@ -23,11 +23,20 @@
 //! Spec: "The descriptor model", "Compact mode", `r[ir.memory]`.
 
 use std::alloc;
+use std::collections::HashMap;
 
-use phon_ir::ir::{BytesOp, EnumOp, EnumVariantOp, MapOp, MemOp, MemProgram, OptionOp, SeqOp, fuse};
-use phon_ir::{Access, Construct, Descriptor, MapStorage, Presence, SequenceStorage, Tag};
+use phon_ir::ir::{
+    BytesOp, DefaultOp, EnumOp, EnumVariantOp, MapOp, MemOp, MemProgram, OptionOp, SeqOp, SkipOp,
+    fuse,
+};
+use phon_ir::{
+    Access, Construct, Descriptor, EnumAccess, MapStorage, Presence, RecordAccess, SequenceStorage,
+    Tag, VariantAccess,
+};
 use phon_schema::bytes::{Reader, write_u8, write_u32};
-use phon_schema::{DecodeError, Primitive, SchemaKind};
+use phon_schema::{
+    DecodeError, Field, Primitive, SchemaId, SchemaKind, SchemaRef, Variant, VariantPayload,
+};
 
 use crate::compact::{self, CompactError, Registry, Resolved, alignment, pad_to, skip_pad};
 
@@ -220,6 +229,7 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
                 tag_offset: base + *offset,
                 tag_width: *width,
                 variants,
+                writer_only: Vec::new(),
             })));
             Ok(())
         }
@@ -250,6 +260,550 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
         _ => Err(CompactError::Unsupported(
             "typed: only fixed scalars, in-place records, owned sequences, strings, options, and #[repr(int)] enums so far",
         )),
+    }
+}
+
+// ============================================================================
+// Decode-compat lowering (writer schema ⋈ reader descriptor)
+// ============================================================================
+
+/// Lower a *writer* schema reconciled against a *reader* [`Descriptor`] into a
+/// flat [`MemProgram`] of reader-memory ops, in WIRE order. This is the typed
+/// (memory-side) analog of `plan::build_plan` + `plan::lower`: it bakes the
+/// writer↔reader compatibility decision in once, at lowering, so decode stays as
+/// fast as the single-schema path — there is no fast/slow path, only one program.
+///
+/// The reconciliation rules mirror `plan.rs` exactly (the cross-engine oracle):
+/// struct fields match by name (writer-only skipped, reader-only defaulted or, if
+/// required, incompatible), enum variants match by name (writer-only → a decode
+/// error), and types match without implicit widening (`r[compat.*]`).
+///
+/// When `writer_root` resolves to the same schema the reader carries, the result
+/// is equivalent to [`lower`] (no skips/defaults) — the drift-free identity.
+///
+/// # Errors
+/// [`CompactError::Incompatible`] (or a resolution error) if the writer and reader
+/// cannot be reconciled, or [`CompactError::Unsupported`] for a kind not yet
+/// carried by the typed path.
+// r[impl compat.plan-first]
+pub fn lower_decode(
+    writer_root: SchemaId,
+    reader: &Descriptor,
+    reg: &Registry,
+) -> Result<MemProgram> {
+    let mut out = Vec::new();
+    lower_decode_node(&SchemaRef::concrete(writer_root), reader, reg, 0, &mut out)?;
+    Ok(fuse(out))
+}
+
+/// Append the reader-memory ops for one (writer schema ⋈ reader descriptor) node,
+/// folding the reader field offset into `base`.
+// r[impl compat.type-match]
+fn lower_decode_node(
+    writer: &SchemaRef,
+    reader: &Descriptor,
+    reg: &Registry,
+    base: usize,
+    out: &mut MemProgram,
+) -> Result<()> {
+    let w = compact::resolve(reg, writer)?;
+    match (&reader.access, w) {
+        // Scalar ⋈ scalar: identical primitives copy through; differing ones are
+        // incompatible — NO implicit numeric widening (`r[compat.type-match]`).
+        (Access::Scalar, Resolved::Primitive(wp)) => {
+            let Resolved::Primitive(rp) = compact::resolve(reg, &reader.schema)? else {
+                return Err(CompactError::TypeMismatch {
+                    expected: "scalar reader schema for a scalar descriptor",
+                });
+            };
+            if wp != rp {
+                return Err(incompatible(format!("primitive {wp:?} is not {rp:?}")));
+            }
+            let size = fixed_size(wp)
+                .ok_or(CompactError::Unsupported("typed: variable-length scalar field"))?;
+            out.push(MemOp::Scalar {
+                offset: base,
+                size,
+                align: alignment(wp),
+            });
+            Ok(())
+        }
+        // Struct ⋈ struct: reconcile fields by name, in WIRE order.
+        (Access::Record(ra), Resolved::Composite(SchemaKind::Struct { fields: wf, .. })) => {
+            lower_decode_struct(&wf, ra, &reader.schema, reg, base, out)
+        }
+        // Enum ⋈ enum: reconcile variants by name.
+        (Access::Enum(ea), Resolved::Composite(SchemaKind::Enum { variants: wv, .. })) => {
+            lower_decode_enum(&wv, ea, &reader.schema, reg, base, out)
+        }
+        // Option ⋈ Option: structural shapes match; reconcile the inner.
+        (Access::Option(opt), Resolved::Composite(SchemaKind::Option { element: we })) => {
+            let Presence::Vtable(thunks) = &opt.presence else {
+                return Err(CompactError::Unsupported(
+                    "typed: option needs vtable presence thunks",
+                ));
+            };
+            let mut some = Vec::new();
+            lower_decode_node(&we, &opt.some, reg, 0, &mut some)?;
+            out.push(MemOp::Option(Box::new(OptionOp {
+                field_offset: base,
+                some: fuse(some),
+                inner_size: opt.some.layout.size,
+                inner_align: opt.some.layout.align,
+                thunks: *thunks,
+            })));
+            Ok(())
+        }
+        // List/Set ⋈ List/Set: reconcile the element.
+        (
+            Access::Sequence(seq),
+            Resolved::Composite(SchemaKind::List { element: we } | SchemaKind::Set { element: we }),
+        ) => {
+            let SequenceStorage::Vtable(thunks) = &seq.storage else {
+                return Err(CompactError::Unsupported(
+                    "typed: only vtable-backed owned sequences so far",
+                ));
+            };
+            let stride = seq.element.layout.size;
+            let elem_align = seq.element.layout.align;
+            let mut element = Vec::new();
+            lower_decode_node(&we, &seq.element, reg, 0, &mut element)?;
+            let element = fuse(element);
+            let bulk = matches!(
+                element.as_slice(),
+                [MemOp::Scalar { offset: 0, size, align }]
+                    if *size == stride && stride % *align == 0
+            );
+            if bulk {
+                out.push(MemOp::Bytes(Box::new(BytesOp {
+                    field_offset: base,
+                    stride,
+                    elem_align,
+                    validate: validate_any,
+                    thunks: *thunks,
+                })));
+            } else {
+                out.push(MemOp::Sequence(Box::new(SeqOp {
+                    field_offset: base,
+                    element,
+                    stride,
+                    elem_align,
+                    min_wire: 1,
+                    thunks: *thunks,
+                })));
+            }
+            Ok(())
+        }
+        // String/Bytes ⋈ String/Bytes: a bulk byte run (no inner drift possible).
+        (
+            Access::Sequence(seq),
+            Resolved::Primitive(p @ (Primitive::String | Primitive::Bytes)),
+        ) => {
+            let Resolved::Primitive(rp) = compact::resolve(reg, &reader.schema)? else {
+                return Err(CompactError::TypeMismatch {
+                    expected: "string/bytes reader schema",
+                });
+            };
+            if p != rp {
+                return Err(incompatible(format!("primitive {p:?} is not {rp:?}")));
+            }
+            let SequenceStorage::Vtable(thunks) = &seq.storage else {
+                return Err(CompactError::Unsupported(
+                    "typed: string/bytes needs vtable thunks",
+                ));
+            };
+            out.push(MemOp::Bytes(Box::new(BytesOp {
+                field_offset: base,
+                stride: 1,
+                elem_align: 1,
+                validate: if matches!(p, Primitive::String) {
+                    validate_utf8
+                } else {
+                    validate_any
+                },
+                thunks: *thunks,
+            })));
+            Ok(())
+        }
+        // Map ⋈ Map: reconcile key and value.
+        (Access::Map(ma), Resolved::Composite(SchemaKind::Map { key: wk, value: wv })) => {
+            let MapStorage::Vtable(thunks) = &ma.storage else {
+                return Err(CompactError::Unsupported("typed: map needs vtable thunks"));
+            };
+            let mut key = Vec::new();
+            lower_decode_node(&wk, &ma.key, reg, 0, &mut key)?;
+            let mut value = Vec::new();
+            lower_decode_node(&wv, &ma.value, reg, 0, &mut value)?;
+            out.push(MemOp::Map(Box::new(MapOp {
+                field_offset: base,
+                key: fuse(key),
+                value: fuse(value),
+                key_size: ma.key.layout.size,
+                key_align: ma.key.layout.align,
+                value_size: ma.value.layout.size,
+                value_align: ma.value.layout.align,
+                thunks: *thunks,
+            })));
+            Ok(())
+        }
+        _ => Err(incompatible("writer and reader schema kinds differ")),
+    }
+}
+
+/// Reconcile a writer struct's wire fields against the reader's record descriptor.
+/// Reader field NAMES come from the reader schema (resolved here), aligned by index
+/// with the descriptor's fields (the bridge builds them in the same order).
+// r[impl compat.field-matching]
+fn lower_decode_struct(
+    w_fields: &[Field],
+    ra: &RecordAccess,
+    reader_schema: &SchemaRef,
+    reg: &Registry,
+    base: usize,
+    out: &mut MemProgram,
+) -> Result<()> {
+    match &ra.construct {
+        Construct::InPlace => {}
+        Construct::Thunk(_) => {
+            return Err(CompactError::Unsupported("typed: thunk construction"));
+        }
+    }
+    // The reader field names, in the same order as `ra.fields`.
+    let r_named = reader_struct_fields(reader_schema, reg)?;
+    if r_named.len() != ra.fields.len() {
+        return Err(CompactError::Malformed("descriptor/schema field count mismatch"));
+    }
+    let reader_by_name: HashMap<&str, usize> = r_named
+        .iter()
+        .enumerate()
+        .map(|(i, f)| (f.name.as_str(), i))
+        .collect();
+
+    // One step per WRITER field, in wire order: take the matched reader field, or
+    // skip the writer-only one.
+    let mut matched = vec![false; ra.fields.len()];
+    for wf in w_fields {
+        if let Some(&ri) = reader_by_name.get(wf.name.as_str()) {
+            let fa = &ra.fields[ri];
+            lower_decode_node(&wf.schema, &fa.descriptor, reg, base + fa.offset, out)?;
+            matched[ri] = true;
+        } else {
+            out.push(MemOp::SkipWire(Box::new(skip_op(&wf.schema, reg)?)));
+        }
+    }
+    // Reader-only fields: default in place, or — if required — incompatible.
+    for (ri, fa) in ra.fields.iter().enumerate() {
+        if matched[ri] {
+            continue;
+        }
+        match fa.default {
+            Some(d) => out.push(MemOp::Default(Box::new(DefaultOp {
+                offset: base + fa.offset,
+                ctx: d.ctx,
+                default: d.thunk,
+            }))),
+            None => {
+                return Err(incompatible(format!(
+                    "required reader field '{}' is absent from the writer",
+                    r_named[ri].name
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Reconcile a writer enum's variants against the reader's enum descriptor, keyed
+/// by WRITER variant index → reader variant matched by NAME. Reader variant names
+/// come from the reader schema (resolved here), aligned by index with `ea.variants`.
+// r[impl compat.enum]
+fn lower_decode_enum(
+    w_variants: &[Variant],
+    ea: &EnumAccess,
+    reader_schema: &SchemaRef,
+    reg: &Registry,
+    base: usize,
+    out: &mut MemProgram,
+) -> Result<()> {
+    let Tag::Direct { offset, width } = &ea.tag else {
+        return Err(CompactError::Unsupported(
+            "typed: only #[repr(int)] enums (direct discriminant) so far",
+        ));
+    };
+    let r_named = reader_enum_variants(reader_schema, reg)?;
+    if r_named.len() != ea.variants.len() {
+        return Err(CompactError::Malformed(
+            "descriptor/schema variant count mismatch",
+        ));
+    }
+    // Reader variant by name -> (descriptor variant access, reader schema variant).
+    let reader_by_name: HashMap<&str, usize> = r_named
+        .iter()
+        .enumerate()
+        .map(|(i, v)| (v.name.as_str(), i))
+        .collect();
+
+    let mut variants = Vec::new();
+    let mut writer_only = Vec::new();
+    for wv in w_variants {
+        let Some(&ri) = reader_by_name.get(wv.name.as_str()) else {
+            // A writer variant the reader lacks: receiving it is a decode error.
+            writer_only.push(wv.index);
+            continue;
+        };
+        let va = &ea.variants[ri];
+        let payload = lower_decode_payload(&wv.payload, va, &r_named[ri].payload, reg, base)?;
+        variants.push(EnumVariantOp {
+            wire_index: wv.index,
+            selector: va.selector,
+            payload,
+        });
+    }
+    out.push(MemOp::Enum(Box::new(EnumOp {
+        tag_offset: base + *offset,
+        tag_width: *width,
+        variants,
+        writer_only,
+    })));
+    Ok(())
+}
+
+/// Reconcile one matched enum variant's payload (writer payload ⋈ reader payload).
+/// The reader payload fields live at base-relative offsets carried by the variant
+/// access; their names come from the reader schema payload.
+fn lower_decode_payload(
+    w: &VariantPayload,
+    va: &VariantAccess,
+    r_schema_payload: &VariantPayload,
+    reg: &Registry,
+    base: usize,
+) -> Result<MemProgram> {
+    let mut payload = Vec::new();
+    match (w, r_schema_payload) {
+        (VariantPayload::Unit, VariantPayload::Unit) => {}
+        (VariantPayload::Newtype(wr), VariantPayload::Newtype(_)) => {
+            // A single payload field at the variant's first field offset.
+            let fa = va
+                .payload
+                .fields
+                .first()
+                .ok_or(CompactError::Malformed("newtype variant has no payload field"))?;
+            lower_decode_node(wr, &fa.descriptor, reg, base + fa.offset, &mut payload)?;
+        }
+        (VariantPayload::Tuple(wrs), VariantPayload::Tuple(rrs)) => {
+            if wrs.len() != rrs.len() || wrs.len() != va.payload.fields.len() {
+                return Err(incompatible("variant tuple arity differs"));
+            }
+            // Tuple fields are positional (no names): reconcile element-wise.
+            for (wr, fa) in wrs.iter().zip(&va.payload.fields) {
+                lower_decode_node(wr, &fa.descriptor, reg, base + fa.offset, &mut payload)?;
+            }
+        }
+        (VariantPayload::Struct(wfs), VariantPayload::Struct(rfs)) => {
+            // A struct-shaped payload reconciles by field name, like a top-level
+            // struct, but at the variant's base-relative offsets. Build a synthetic
+            // reader-schema ref is unnecessary: reconcile against the variant's own
+            // record access and the reader schema payload field list.
+            lower_decode_variant_struct(wfs, &va.payload, rfs, reg, base, &mut payload)?;
+        }
+        _ => return Err(incompatible("variant payload shapes differ")),
+    }
+    Ok(fuse(payload))
+}
+
+/// Reconcile a writer struct-variant payload against the reader's variant record
+/// access (matching by name, defaulting reader-only fields), at base-relative
+/// offsets. Mirrors [`lower_decode_struct`] but the reader names come straight from
+/// the reader schema payload field list (aligned with the variant's fields).
+fn lower_decode_variant_struct(
+    w_fields: &[Field],
+    ra: &RecordAccess,
+    r_fields: &[Field],
+    reg: &Registry,
+    base: usize,
+    out: &mut MemProgram,
+) -> Result<()> {
+    if r_fields.len() != ra.fields.len() {
+        return Err(CompactError::Malformed(
+            "variant descriptor/schema field count mismatch",
+        ));
+    }
+    let reader_by_name: HashMap<&str, usize> = r_fields
+        .iter()
+        .enumerate()
+        .map(|(i, f)| (f.name.as_str(), i))
+        .collect();
+    let mut matched = vec![false; ra.fields.len()];
+    for wf in w_fields {
+        if let Some(&ri) = reader_by_name.get(wf.name.as_str()) {
+            let fa = &ra.fields[ri];
+            lower_decode_node(&wf.schema, &fa.descriptor, reg, base + fa.offset, out)?;
+            matched[ri] = true;
+        } else {
+            out.push(MemOp::SkipWire(Box::new(skip_op(&wf.schema, reg)?)));
+        }
+    }
+    for (ri, fa) in ra.fields.iter().enumerate() {
+        if matched[ri] {
+            continue;
+        }
+        match fa.default {
+            Some(d) => out.push(MemOp::Default(Box::new(DefaultOp {
+                offset: base + fa.offset,
+                ctx: d.ctx,
+                default: d.thunk,
+            }))),
+            None => {
+                return Err(incompatible(format!(
+                    "required reader variant field '{}' is absent from the writer",
+                    r_fields[ri].name
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The reader struct's fields (for names), resolved from a reader schema reference.
+fn reader_struct_fields(r: &SchemaRef, reg: &Registry) -> Result<Vec<Field>> {
+    match compact::resolve(reg, r)? {
+        Resolved::Composite(SchemaKind::Struct { fields, .. }) => Ok(fields),
+        Resolved::Composite(SchemaKind::Tuple { elements }) => {
+            // A tuple reader: positional, synthesize index names so the matcher
+            // lines up with the descriptor's positional fields.
+            Ok(elements
+                .into_iter()
+                .enumerate()
+                .map(|(i, schema)| Field {
+                    name: i.to_string(),
+                    schema,
+                    required: true,
+                })
+                .collect())
+        }
+        _ => Err(CompactError::TypeMismatch {
+            expected: "struct or tuple reader schema for a record descriptor",
+        }),
+    }
+}
+
+/// The reader enum's variants (for names + payload shapes), resolved from a reader
+/// schema reference.
+fn reader_enum_variants(r: &SchemaRef, reg: &Registry) -> Result<Vec<Variant>> {
+    match compact::resolve(reg, r)? {
+        Resolved::Composite(SchemaKind::Enum { variants, .. }) => Ok(variants),
+        _ => Err(CompactError::TypeMismatch {
+            expected: "enum reader schema for an enum descriptor",
+        }),
+    }
+}
+
+fn incompatible(why: impl Into<String>) -> CompactError {
+    CompactError::Incompatible(why.into())
+}
+
+// ============================================================================
+// Wire-skeleton lowering (skip a writer-only value)
+// ============================================================================
+
+/// Resolve a writer schema reference into a [`SkipOp`] wire skeleton — a pre-built
+/// recipe to advance the cursor past one value of that schema without touching
+/// memory. Used for writer-only fields (`r[compat.skip-writer-only]`).
+///
+/// # Errors
+/// [`CompactError::Unsupported`] for a kind the skip walker does not carry, or a
+/// resolution error.
+fn skip_op(writer: &SchemaRef, reg: &Registry) -> Result<SkipOp> {
+    match compact::resolve(reg, writer)? {
+        Resolved::Primitive(p) => match p {
+            Primitive::String | Primitive::Bytes => Ok(SkipOp::Bytes {
+                stride: 1,
+                elem_align: 1,
+            }),
+            other => {
+                let size = fixed_size(other).ok_or(CompactError::Unsupported(
+                    "skip: variable-length scalar (datetime/uuid/qname)",
+                ))?;
+                Ok(SkipOp::Scalar {
+                    size,
+                    align: alignment(other),
+                })
+            }
+        },
+        Resolved::Composite(kind) => match kind {
+            SchemaKind::Struct { fields, .. } => {
+                let mut fs = Vec::with_capacity(fields.len());
+                for f in &fields {
+                    fs.push(skip_op(&f.schema, reg)?);
+                }
+                Ok(SkipOp::Struct(fs))
+            }
+            SchemaKind::Tuple { elements } => {
+                let mut fs = Vec::with_capacity(elements.len());
+                for e in &elements {
+                    fs.push(skip_op(e, reg)?);
+                }
+                Ok(SkipOp::Struct(fs))
+            }
+            SchemaKind::Enum { variants, .. } => {
+                let mut arms = Vec::with_capacity(variants.len());
+                for v in &variants {
+                    let fields = match &v.payload {
+                        VariantPayload::Unit => Vec::new(),
+                        VariantPayload::Newtype(r) => vec![skip_op(r, reg)?],
+                        VariantPayload::Tuple(rs) => {
+                            let mut fs = Vec::with_capacity(rs.len());
+                            for r in rs {
+                                fs.push(skip_op(r, reg)?);
+                            }
+                            fs
+                        }
+                        VariantPayload::Struct(fields) => {
+                            let mut fs = Vec::with_capacity(fields.len());
+                            for f in fields {
+                                fs.push(skip_op(&f.schema, reg)?);
+                            }
+                            fs
+                        }
+                    };
+                    arms.push((v.index, fields));
+                }
+                Ok(SkipOp::Enum(arms))
+            }
+            SchemaKind::List { element } | SchemaKind::Set { element } => {
+                // A bulk byte run when the element is a fixed scalar covering its
+                // own size (no inter-element wire padding), else a per-element seq.
+                if let Resolved::Primitive(ep) = compact::resolve(reg, &element)?
+                    && let Some(size) = fixed_size(ep)
+                    && !matches!(ep, Primitive::String | Primitive::Bytes)
+                {
+                    let align = alignment(ep);
+                    if size % align == 0 {
+                        return Ok(SkipOp::Bytes {
+                            stride: size,
+                            elem_align: align,
+                        });
+                    }
+                }
+                Ok(SkipOp::Seq(Box::new(skip_op(&element, reg)?)))
+            }
+            SchemaKind::Option { element } => {
+                Ok(SkipOp::Option(Box::new(skip_op(&element, reg)?)))
+            }
+            SchemaKind::Map { key, value } => Ok(SkipOp::Map(
+                Box::new(skip_op(&key, reg)?),
+                Box::new(skip_op(&value, reg)?),
+            )),
+            SchemaKind::Array { .. } => Err(CompactError::Unsupported("skip: fixed array")),
+            SchemaKind::Tensor { .. } => Err(CompactError::Unsupported("skip: tensor")),
+            SchemaKind::Channel { .. } => Err(CompactError::Unsupported("skip: channel")),
+            SchemaKind::External { .. } => Err(CompactError::Unsupported("skip: external")),
+            SchemaKind::Dynamic => Err(CompactError::Unsupported("skip: dynamic")),
+            SchemaKind::Primitive(_) => {
+                // A composite that resolved to a primitive kind: treat as scalar.
+                Err(CompactError::Malformed("skip: primitive in composite position"))
+            }
+        },
     }
 }
 
@@ -399,6 +953,11 @@ unsafe fn encode_program(program: &MemProgram, base: *const u8, out: &mut Vec<u8
                 }
                 // Safety: `it` was built by `iter_init` and is freed exactly once.
                 unsafe { (m.thunks.iter_dealloc)(m.thunks.ctx, it) };
+            }
+            // Compat-only decode ops never appear in an encode program (encode is
+            // single-schema: `lower`, not `lower_decode`).
+            MemOp::SkipWire(_) | MemOp::Default(_) => {
+                unreachable!("typed encode never emits compat skip/default ops")
             }
         }
     }
@@ -568,11 +1127,15 @@ unsafe fn decode_program(program: &MemProgram, r: &mut Reader, base: *mut u8) ->
             }
             MemOp::Enum(e) => {
                 let wire_index = r.read_u32()?;
-                let variant = e
-                    .variants
-                    .iter()
-                    .find(|v| v.wire_index == wire_index)
-                    .ok_or(CompactError::BadVariantIndex(wire_index))?;
+                let variant = match e.variants.iter().find(|v| v.wire_index == wire_index) {
+                    Some(v) => v,
+                    None if e.writer_only.contains(&wire_index) => {
+                        // A variant the writer has but the reader lacks
+                        // (`r[compat.enum]`) — the same error plan.rs reports.
+                        return Err(CompactError::WriterOnlyVariant(wire_index));
+                    }
+                    None => return Err(CompactError::BadVariantIndex(wire_index)),
+                };
                 // Write the in-memory discriminant, then decode the payload fields
                 // (disjoint memory: the discriminant precedes every field).
                 // Safety: the discriminant lives at base + tag_offset, tag_width wide.
@@ -629,9 +1192,75 @@ unsafe fn decode_program(program: &MemProgram, r: &mut Reader, base: *mut u8) ->
                     return Err(CompactError::Decode(DecodeError::DuplicateKey));
                 }
             }
+            // r[impl compat.skip-writer-only] — consume a writer-only value's wire
+            // bytes; write nothing to memory.
+            MemOp::SkipWire(s) => skip(s, r)?,
+            // r[impl compat.reader-only-fields] — write a reader-only field's
+            // default in place; read no wire.
+            MemOp::Default(d) => {
+                // Safety: `base + offset` is uninitialized storage of the reader
+                // field's type; the bound thunk initializes it.
+                unsafe { (d.default)(d.ctx, base.add(d.offset)) };
+            }
         }
     }
     Ok(())
+}
+
+/// Advance the reader past one writer value described by `skel`, writing nothing
+/// to memory. The wire-shape mirror of [`decode_program`]'s cursor moves, sharing
+/// its `read_len`/`skip_pad`/`read_u8`/`read_u32` and bounds checks.
+fn skip(skel: &SkipOp, r: &mut Reader) -> Result<()> {
+    match skel {
+        SkipOp::Scalar { size, align } => {
+            skip_pad(r, *align)?;
+            r.read_slice(*size)?;
+            Ok(())
+        }
+        SkipOp::Bytes { stride, elem_align } => {
+            let count = r.read_len((*stride).max(1))?;
+            skip_pad(r, *elem_align)?;
+            r.read_slice(count * stride)?;
+            Ok(())
+        }
+        SkipOp::Seq(element) => {
+            let count = r.read_len(1)?;
+            for _ in 0..count {
+                skip(element, r)?;
+            }
+            Ok(())
+        }
+        SkipOp::Option(inner) => match r.read_u8()? {
+            0 => Ok(()),
+            1 => skip(inner, r),
+            b => Err(CompactError::Decode(DecodeError::InvalidBool(b))),
+        },
+        SkipOp::Enum(arms) => {
+            let wire_index = r.read_u32()?;
+            let (_, fields) = arms
+                .iter()
+                .find(|(idx, _)| *idx == wire_index)
+                .ok_or(CompactError::BadVariantIndex(wire_index))?;
+            for f in fields {
+                skip(f, r)?;
+            }
+            Ok(())
+        }
+        SkipOp::Map(key, value) => {
+            let count = r.read_len(1)?;
+            for _ in 0..count {
+                skip(key, r)?;
+                skip(value, r)?;
+            }
+            Ok(())
+        }
+        SkipOp::Struct(fields) => {
+            for f in fields {
+                skip(f, r)?;
+            }
+            Ok(())
+        }
+    }
 }
 
 /// Allocate an engine-owned scratch buffer of `size`/`align` for a decoded

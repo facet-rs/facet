@@ -387,6 +387,9 @@ impl Compiler {
                     self.enum_fixups.push(EnumFixup { prog_index, slot, enuminfo });
                 }
                 MemOp::Map(_) => panic!("phon-jit: maps are interpreter-only for now"),
+                MemOp::SkipWire(_) | MemOp::Default(_) => {
+                    panic!("phon-jit: compat skip/default are interpreter-only for now")
+                }
             }
         }
         let done_start = self.code.len();
@@ -404,6 +407,9 @@ impl Compiler {
                 MemOp::Option(_) => OPTION_CONT,
                 MemOp::Enum(_) => ENUM_CONT,
                 MemOp::Map(_) => unreachable!("phon-jit: maps are interpreter-only for now"),
+                MemOp::SkipWire(_) | MemOp::Default(_) => {
+                    unreachable!("phon-jit: compat skip/default are interpreter-only for now")
+                }
             };
             for &rel in relocs {
                 patch_branch26(&mut self.code, op_start + rel, next);
@@ -902,6 +908,9 @@ impl EncCompiler {
                     self.enum_fixups.push(EnumFixup { prog_index, slot, enuminfo });
                 }
                 MemOp::Map(_) => panic!("phon-jit: maps are interpreter-only for now"),
+                MemOp::SkipWire(_) | MemOp::Default(_) => {
+                    panic!("phon-jit: compat skip/default are interpreter-only for now")
+                }
             }
         }
         let done_start = self.code.len();
@@ -916,6 +925,9 @@ impl EncCompiler {
                 MemOp::Option(_) => OPTION_ENC_CONT,
                 MemOp::Enum(_) => ENUM_ENC_CONT,
                 MemOp::Map(_) => unreachable!("phon-jit: maps are interpreter-only for now"),
+                MemOp::SkipWire(_) | MemOp::Default(_) => {
+                    unreachable!("phon-jit: compat skip/default are interpreter-only for now")
+                }
             };
             for &rel in relocs {
                 patch_branch26(&mut self.code, op_start + rel, next);
@@ -2092,6 +2104,7 @@ mod tests {
                     ],
                 },
             ],
+            writer_only: Vec::new(),
         }))]
     }
 
@@ -2176,6 +2189,7 @@ mod tests {
                     payload: vec![MemOp::Scalar { offset: 4, size: 4, align: 4 }],
                 },
             ],
+            writer_only: Vec::new(),
         }))];
         let enc = NativeEncode::compile(&program);
         let dec = NativeDecode::compile(&program);
@@ -2215,6 +2229,7 @@ mod tests {
                         payload: vec![MemOp::Scalar { offset: 8, size: 4, align: 4 }],
                     },
                 ],
+                writer_only: Vec::new(),
             })),
         ];
         let enc = NativeEncode::compile(&program);

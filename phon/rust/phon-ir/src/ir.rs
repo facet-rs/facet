@@ -143,6 +143,63 @@ pub enum MemOp {
     /// entry decodes a key+value into engine scratch and inserts (moving both in).
     /// See [`MapOp`].
     Map(Box<MapOp>),
+    /// A writer-only value present on the wire but absent from the reader: consume
+    /// its wire bytes and write NOTHING to memory (`r[compat.skip-writer-only]`).
+    /// Decode-only — it advances the cursor by a pre-built wire skeleton (see
+    /// [`SkipOp`]) without touching the reader value. Net memory effect: none.
+    SkipWire(Box<SkipOp>),
+    /// A reader-only field absent from the writer: write its default into memory at
+    /// `offset` with NO wire read (`r[compat.reader-only-fields]`). Decode-only.
+    /// See [`DefaultOp`].
+    Default(Box<DefaultOp>),
+}
+
+/// A type-erased "write this field's default in place" operation, supplied by the
+/// front door for a reader-only field that carries a `#[facet(default)]`. The
+/// engine never knows the field type; it calls the thunk, passing back the opaque
+/// `ctx` (a `&'static Shape` for a trait default, or a custom default fn) the front
+/// door understands. Mirrors the `ctx`-carrying thunk style of [`SeqThunks`] and
+/// friends — the spec's bare `fn(slot)` cannot close over the per-field type, so
+/// the `ctx` carries it.
+pub type DefaultThunk = unsafe extern "C" fn(ctx: *const (), slot: *mut u8);
+
+/// A reader-only-default op's payload (boxed in [`MemOp::Default`]). Initializes the
+/// reader field at `base + offset` to its default in place, reading no wire bytes.
+#[derive(Clone, Debug)]
+pub struct DefaultOp {
+    /// Where the reader field lives, relative to the base.
+    pub offset: usize,
+    /// Opaque per-field context the front door binds (passed to `default`).
+    pub ctx: *const (),
+    /// Initialize the uninitialized reader field at `slot` to its default.
+    pub default: DefaultThunk,
+}
+
+/// A pre-built wire skeleton of a writer value, advancing the cursor only — never
+/// reading or writing the reader's memory. Built once at lowering from the writer
+/// schema (see `skip_op`), run by the decode interpreter to consume a writer-only
+/// field's bytes (`r[compat.skip-writer-only]`).
+#[derive(Clone, Debug)]
+pub enum SkipOp {
+    /// A fixed scalar: pad the cursor to `align`, then advance `size` bytes.
+    Scalar { size: usize, align: usize },
+    /// A bulk byte run (`String`, `Vec<scalar>`): read a `u32` count, pad to
+    /// `elem_align`, then advance `count * stride` bytes.
+    Bytes { stride: usize, elem_align: usize },
+    /// An owned sequence of structured elements (`Vec<struct>`): read a `u32` count,
+    /// then skip the element `count` times.
+    Seq(Box<SkipOp>),
+    /// An `Option<T>`: read a `u8` presence byte; on `1` skip the inner, on `0`
+    /// nothing, any other byte is a decode error.
+    Option(Box<SkipOp>),
+    /// A `#[repr(int)]` enum: read a `u32` writer variant index, then skip that
+    /// variant's field-skips. An index matching no entry is a decode error.
+    Enum(Vec<(u32, Vec<SkipOp>)>),
+    /// An owned map: read a `u32` entry count, then skip key then value `count`
+    /// times.
+    Map(Box<SkipOp>, Box<SkipOp>),
+    /// A struct or tuple: skip each field in wire order.
+    Struct(Vec<SkipOp>),
 }
 
 /// An owned-sequence op's payload (boxed in [`MemOp::Sequence`] to keep `MemOp`
@@ -280,6 +337,11 @@ pub struct EnumOp {
     /// The variants, each with its wire index, in-memory discriminant, and payload
     /// program. Looked up by wire index on decode, by discriminant on encode.
     pub variants: Vec<EnumVariantOp>,
+    /// Writer variant indices that exist in the *writer* schema but have no reader
+    /// counterpart (the decode-compat path only — empty for a single-schema lower).
+    /// Receiving one of these on the wire is a writer-only-variant decode error
+    /// (`r[compat.enum]`), distinct from a wholly out-of-range index.
+    pub writer_only: Vec<u32>,
 }
 
 /// One enum variant in a [`MemOp::Enum`].
@@ -395,15 +457,21 @@ pub fn fuse(program: MemProgram) -> MemProgram {
                 wire_pos = wire_pos.map(|p| p + pad.unwrap_or(0) + size);
             }
             // Variable-length / data-directed ops make the static wire position
-            // unknown after them.
+            // unknown after them. `SkipWire` consumes opaque writer bytes, so it
+            // too poisons the static position.
             seq @ (MemOp::Sequence(_)
             | MemOp::Bytes(_)
             | MemOp::Option(_)
             | MemOp::Enum(_)
-            | MemOp::Map(_)) => {
+            | MemOp::Map(_)
+            | MemOp::SkipWire(_)) => {
                 out.push(seq);
                 wire_pos = None;
             }
+            // A reader-only default reads no wire bytes, so it leaves the static
+            // wire position untouched; it is not a scalar, so it breaks a fuse run
+            // (a scalar after it cannot fuse with one before it). Just push it.
+            def @ MemOp::Default(_) => out.push(def),
         }
     }
     out

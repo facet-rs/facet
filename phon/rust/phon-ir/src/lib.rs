@@ -12,16 +12,16 @@
 pub mod descriptor;
 
 pub use descriptor::{
-    Access, Construct, Descriptor, EnumAccess, FieldAccess, Layout, MapAccess, MapStorage,
-    OptionAccess, Presence, RecordAccess, SequenceAccess, SequenceStorage, Tag, TensorAccess,
-    Thunk, VariantAccess,
+    Access, Construct, Descriptor, EnumAccess, FieldAccess, FieldDefault, Layout, MapAccess,
+    MapStorage, OptionAccess, Presence, RecordAccess, SequenceAccess, SequenceStorage, Tag,
+    TensorAccess, Thunk, VariantAccess,
 };
 
 pub mod ir;
 
 pub use ir::{
-    BytesOp, ByteValidator, EnumArm, EnumOp, EnumVariantOp, MapOp, MapThunks, MemOp, MemProgram,
-    Op, OptionOp, OptionThunks, Program, SeqOp, SeqThunks,
+    BytesOp, ByteValidator, DefaultOp, DefaultThunk, EnumArm, EnumOp, EnumVariantOp, MapOp,
+    MapThunks, MemOp, MemProgram, Op, OptionOp, OptionThunks, Program, SeqOp, SeqThunks, SkipOp,
 };
 
 /// Thunk bindings: resolving thunk names to process-local function pointers

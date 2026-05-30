@@ -17,7 +17,7 @@
 
 use phon_schema::SchemaRef;
 
-use crate::ir::{MapThunks, OptionThunks, SeqThunks};
+use crate::ir::{DefaultThunk, MapThunks, OptionThunks, SeqThunks};
 
 /// A node of the descriptor tree: the schema it realizes, its process-local
 /// memory layout, and how to read and construct it.
@@ -92,6 +92,24 @@ pub struct RecordAccess {
 pub struct FieldAccess {
     pub offset: usize,
     pub descriptor: Descriptor,
+    /// How to write this field's default in place, for the decode-compat path when
+    /// the field is reader-only (absent from the writer). `Some` for a field the
+    /// language marks defaultable (`#[facet(default)]`); `None` for a required
+    /// field, whose absence from the writer makes the schemas incompatible
+    /// (`r[compat.reader-only-fields]`). The `ctx` is the front-door-bound context
+    /// the thunk understands (passed back untouched).
+    pub default: Option<FieldDefault>,
+}
+
+/// A field's bound default-in-place operation: a [`DefaultThunk`] plus the opaque
+/// `ctx` it is called with. Used only on the decode-compat path for a reader-only
+/// field; ignored when the field is present on the wire.
+#[derive(Clone, Copy, Debug)]
+pub struct FieldDefault {
+    /// Opaque per-field context the front door binds (passed to `thunk`).
+    pub ctx: *const (),
+    /// Initialize the uninitialized field at `slot` to its default.
+    pub thunk: DefaultThunk,
 }
 
 /// How a record is built on decode.

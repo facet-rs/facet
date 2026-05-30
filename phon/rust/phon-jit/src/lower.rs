@@ -76,6 +76,9 @@ pub fn compile_decode(program: &MemProgram) -> CompiledDecode {
             MemOp::Option(_) => panic!("phon-jit: Option is interpreter-only for now"),
             MemOp::Enum(_) => panic!("phon-jit: enums are interpreter-only for now"),
             MemOp::Map(_) => panic!("phon-jit: maps are interpreter-only for now"),
+            MemOp::SkipWire(_) | MemOp::Default(_) => {
+                panic!("phon-jit: compat skip/default are interpreter-only for now")
+            }
         })
         .collect();
     CompiledDecode { steps }
@@ -103,6 +106,9 @@ pub fn compile_encode(program: &MemProgram) -> CompiledEncode {
             MemOp::Option(_) => panic!("phon-jit: Option is interpreter-only for now"),
             MemOp::Enum(_) => panic!("phon-jit: enums are interpreter-only for now"),
             MemOp::Map(_) => panic!("phon-jit: maps are interpreter-only for now"),
+            MemOp::SkipWire(_) | MemOp::Default(_) => {
+                panic!("phon-jit: compat skip/default are interpreter-only for now")
+            }
         })
         .collect();
     CompiledEncode { steps }

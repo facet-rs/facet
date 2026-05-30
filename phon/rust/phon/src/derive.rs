@@ -22,13 +22,13 @@ use std::collections::HashMap;
 use std::fmt;
 
 use facet::{
-    Def, EnumRepr, EnumType, Facet, ListDef, MapDef, OptionDef, PtrConst, PtrMut, PtrUninit,
-    ScalarType, Shape, StructKind, Type, UserType,
+    Def, DefaultSource, EnumRepr, EnumType, Facet, ListDef, MapDef, OptionDef, PtrConst, PtrMut,
+    PtrUninit, ScalarType, Shape, StructKind, Type, UserType,
 };
 use phon_ir::{
-    Access, Construct, Descriptor, EnumAccess, FieldAccess, Layout, MapAccess, MapStorage,
-    MapThunks, OptionAccess, OptionThunks, Presence, RecordAccess, SeqThunks, SequenceAccess,
-    SequenceStorage, Tag, VariantAccess,
+    Access, Construct, Descriptor, EnumAccess, FieldAccess, FieldDefault, Layout, MapAccess,
+    MapStorage, MapThunks, OptionAccess, OptionThunks, Presence, RecordAccess, SeqThunks,
+    SequenceAccess, SequenceStorage, Tag, VariantAccess,
 };
 use phon_schema::{
     Field, Primitive, Schema, SchemaId, SchemaKind, SchemaRef, Variant, VariantPayload,
@@ -170,7 +170,9 @@ impl Builder {
             out.push(Field {
                 name: f.name.to_string(),
                 schema: self.ref_of(f.shape())?,
-                required: true,
+                // A `#[facet(default)]` field can be filled in when the writer
+                // omits it, so it is not required (`r[compat.reader-only-fields]`).
+                required: f.default.is_none(),
             });
         }
         Ok(SchemaKind::Struct {
@@ -330,7 +332,7 @@ impl Builder {
                     fs.push(Field {
                         name: f.name.to_string(),
                         schema: self.ref_of(f.shape())?,
-                        required: true,
+                        required: f.default.is_none(),
                     });
                 }
                 Ok(VariantPayload::Struct(fs))
@@ -417,6 +419,7 @@ fn build_descriptor(
                 fields.push(FieldAccess {
                     offset: f.offset,
                     descriptor: build_descriptor(f.shape(), by_shape, real_ids)?,
+                    default: field_default(f),
                 });
             }
             variants.push(VariantAccess {
@@ -447,6 +450,7 @@ fn build_descriptor(
         accesses.push(FieldAccess {
             offset: f.offset,
             descriptor: build_descriptor(f.shape(), by_shape, real_ids)?,
+            default: field_default(f),
         });
     }
     Ok(Descriptor {
@@ -894,6 +898,83 @@ unsafe extern "C" fn string_len(_ctx: *const (), list: *const u8) -> usize {
 unsafe extern "C" fn string_data(_ctx: *const (), list: *const u8) -> *const u8 {
     let s: &String = unsafe { &*list.cast::<String>() };
     s.as_ptr()
+}
+
+// ============================================================================
+// Field defaults (the reader-only-default compat path)
+// ============================================================================
+//
+// A reader field marked `#[facet(default)]` (or `#[facet(default = expr)]`) can be
+// filled in when the *writer* omitted it (`r[compat.reader-only-fields]`). facet
+// exposes this two ways on a `Field`:
+//   - `DefaultSource::FromTrait`: the field type's `Default` impl, reached through
+//     the field's `&'static Shape` via `Shape::call_default_in_place`.
+//   - `DefaultSource::Custom(DefaultInPlaceFn)`: a custom default expression.
+// Either way we bind a `(ctx, thunk)` pair: the engine calls the ctx-less-looking
+// `extern "C"` thunk, passing back the opaque `ctx` (the `&'static Shape` or the
+// custom fn pointer) it does not interpret. A field with no `#[facet(default)]`
+// yields `None` — and a reader-only field without a default makes the schemas
+// incompatible.
+//
+// Spec: `r[descriptors.thunk-binding]`, `r[compat.reader-only-fields]`.
+
+/// The bound default-in-place operation for a facet field, or `None` when the
+/// field is not defaultable (no `#[facet(default)]`).
+fn field_default(f: &'static facet::Field) -> Option<FieldDefault> {
+    match f.default? {
+        DefaultSource::FromTrait => {
+            // The field type's `Default`, reached through its `&'static Shape`.
+            // (If the type happens not to implement `Default`,
+            // `call_default_in_place` returns `None` at run time and the thunk
+            // panics — but `#[facet(default)]` without an expression only compiles
+            // when the field type is `Default`, so this is unreachable in practice.)
+            Some(FieldDefault {
+                ctx: core::ptr::from_ref::<Shape>(f.shape()).cast::<()>(),
+                thunk: default_from_shape,
+            })
+        }
+        DefaultSource::Custom(custom) => Some(FieldDefault {
+            // Carry the custom default fn pointer itself as the ctx.
+            ctx: custom as *const (),
+            thunk: default_from_custom,
+        }),
+        // `DefaultSource` is `#[non_exhaustive]`; an unrecognized source still means
+        // the field is defaultable, so fall back to the field type's trait default.
+        _ => Some(FieldDefault {
+            ctx: core::ptr::from_ref::<Shape>(f.shape()).cast::<()>(),
+            thunk: default_from_shape,
+        }),
+    }
+}
+
+/// [`DefaultThunk`] for `DefaultSource::FromTrait`: `ctx` is the field's
+/// `&'static Shape`; write its type's `Default` value at `slot`.
+///
+/// # Safety
+/// `ctx` must be the `&'static Shape` set by [`field_default`]; `slot` must be
+/// uninitialized storage of that shape's size and alignment. On return `slot` holds
+/// an initialized value.
+unsafe extern "C" fn default_from_shape(ctx: *const (), slot: *mut u8) {
+    // Safety: `ctx` is the `&'static Shape` set in `field_default`.
+    let shape: &'static Shape = unsafe { &*ctx.cast::<Shape>() };
+    // Safety: `slot` is uninitialized storage matching the shape.
+    unsafe { shape.call_default_in_place(PtrUninit::new(slot)) }
+        .expect("reader-only field marked #[facet(default)] has no default_in_place");
+}
+
+/// [`DefaultThunk`] for `DefaultSource::Custom`: `ctx` is the custom
+/// [`DefaultInPlaceFn`](facet::DefaultInPlaceFn) pointer; call it to write the
+/// custom default at `slot`.
+///
+/// # Safety
+/// `ctx` must be the custom default fn pointer set by [`field_default`]; `slot`
+/// must be uninitialized storage of the field type's size and alignment.
+unsafe extern "C" fn default_from_custom(ctx: *const (), slot: *mut u8) {
+    // Safety: `ctx` is the `DefaultInPlaceFn` set in `field_default`.
+    let custom: facet::DefaultInPlaceFn =
+        unsafe { core::mem::transmute::<*const (), facet::DefaultInPlaceFn>(ctx) };
+    // Safety: `slot` is uninitialized storage for the field type.
+    unsafe { custom(PtrUninit::new(slot)) };
 }
 
 /// Map a fixed-width scalar shape to a phon primitive. `Ok(None)` when the shape
@@ -1629,5 +1710,392 @@ mod tests {
         };
         assert_eq!(partial.len(), 1);
         drop(partial);
+    }
+
+    // ========================================================================
+    // Writer ↔ reader schema compatibility (the typed decode-compat path)
+    // ========================================================================
+    //
+    // Each test derives TWO `#[derive(Facet)]` types — a writer and a reader —
+    // merges both schema batches into one `Registry`, encodes a writer value (typed
+    // encode of the writer type), then `lower_decode(writer.root, &reader.descriptor,
+    // reg)` + `decode_with` into reader memory. Where practical the dynamic
+    // `plan::decode` over the same bytes is asserted as a cross-engine oracle.
+    //
+    // These reproduce `plan.rs`'s six drift cases (`r[compat.*]`) on the MEMORY side.
+
+    use phon_engine::{plan, typed::lower_decode};
+
+    /// Merge two derived schema batches into one registry. Both carry real
+    /// content-derived ids, so identical sub-schemas dedup and distinct ones coexist.
+    fn merged_registry(a: &Derived, b: &Derived) -> Registry {
+        let mut schemas = a.schemas.clone();
+        for s in &b.schemas {
+            if !schemas.iter().any(|x| x.id == s.id) {
+                schemas.push(s.clone());
+            }
+        }
+        Registry::new(schemas)
+    }
+
+    /// Typed-encode a writer value into its compact wire bytes.
+    fn encode_writer<'a, W: Facet<'a>>(w: &W, writer: &Derived, reg: &Registry) -> Vec<u8> {
+        unsafe { typed::encode(core::ptr::from_ref(w).cast::<u8>(), &writer.descriptor, reg) }
+            .unwrap()
+    }
+
+    // ---- 1. Field reorder is transparent --------------------------------------
+
+    #[derive(Facet)]
+    struct ReorderW {
+        a: u32,
+        b: u32,
+    }
+    #[derive(Facet)]
+    struct ReorderR {
+        b: u32,
+        a: u32,
+    }
+
+    #[test]
+    fn compat_field_reorder_is_transparent() {
+        let w = of::<ReorderW>().unwrap();
+        let r = of::<ReorderR>().unwrap();
+        let reg = merged_registry(&w, &r);
+
+        let value = ReorderW { a: 7, b: 9 };
+        let bytes = encode_writer(&value, &w, &reg);
+
+        let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
+        let mut slot = std::mem::MaybeUninit::<ReorderR>::uninit();
+        unsafe { typed::decode_with(&program, &bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back.a, 7);
+        assert_eq!(back.b, 9);
+
+        // Cross-engine oracle: the dynamic plan decodes the same bytes to the
+        // equivalent reader-shaped object.
+        let got = plan::decode(&bytes, w.root, r.root, &reg).unwrap();
+        let mut want = VObject::new();
+        want.insert(VString::new("b"), Value::from(9u32));
+        want.insert(VString::new("a"), Value::from(7u32));
+        assert_eq!(got, Value::from(want));
+    }
+
+    // ---- 2. Writer-only field is skipped --------------------------------------
+
+    #[derive(Facet)]
+    struct SkipW {
+        a: u32,
+        b: String,
+        c: u32,
+    }
+    #[derive(Facet)]
+    struct SkipR {
+        a: u32,
+        c: u32,
+    }
+
+    #[test]
+    fn compat_writer_only_field_is_skipped() {
+        let w = of::<SkipW>().unwrap();
+        let r = of::<SkipR>().unwrap();
+        let reg = merged_registry(&w, &r);
+
+        let value = SkipW {
+            a: 11,
+            b: "discard me".to_string(),
+            c: 22,
+        };
+        let bytes = encode_writer(&value, &w, &reg);
+
+        let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
+        let mut slot = std::mem::MaybeUninit::<SkipR>::uninit();
+        unsafe { typed::decode_with(&program, &bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back.a, 11);
+        assert_eq!(back.c, 22);
+
+        // Oracle.
+        let got = plan::decode(&bytes, w.root, r.root, &reg).unwrap();
+        let mut want = VObject::new();
+        want.insert(VString::new("a"), Value::from(11u32));
+        want.insert(VString::new("c"), Value::from(22u32));
+        assert_eq!(got, Value::from(want));
+    }
+
+    // ---- 3. Reader-only field defaulted (or required → incompatible) ----------
+
+    #[derive(Facet)]
+    struct DefaultW {
+        a: u32,
+    }
+    #[derive(Facet)]
+    struct DefaultR {
+        a: u32,
+        #[facet(default)]
+        b: u32,
+    }
+    // A reader with a NON-defaulted reader-only field: incompatible.
+    #[derive(Facet)]
+    struct RequiredR {
+        a: u32,
+        extra: u32,
+    }
+
+    #[test]
+    fn compat_reader_only_field_defaults() {
+        let w = of::<DefaultW>().unwrap();
+        let r = of::<DefaultR>().unwrap();
+        let reg = merged_registry(&w, &r);
+
+        let value = DefaultW { a: 7 };
+        let bytes = encode_writer(&value, &w, &reg);
+
+        let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
+        let mut slot = std::mem::MaybeUninit::<DefaultR>::uninit();
+        unsafe { typed::decode_with(&program, &bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back.a, 7);
+        assert_eq!(back.b, u32::default()); // 0 — the field's #[facet(default)]
+    }
+
+    #[test]
+    fn compat_reader_only_field_with_custom_default() {
+        // A custom default expression on the reader-only field.
+        #[derive(Facet)]
+        struct CustomR {
+            a: u32,
+            #[facet(default = 0xABCD)]
+            b: u32,
+        }
+        let w = of::<DefaultW>().unwrap();
+        let r = of::<CustomR>().unwrap();
+        let reg = merged_registry(&w, &r);
+
+        let bytes = encode_writer(&DefaultW { a: 7 }, &w, &reg);
+        let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
+        let mut slot = std::mem::MaybeUninit::<CustomR>::uninit();
+        unsafe { typed::decode_with(&program, &bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back.a, 7);
+        assert_eq!(back.b, 0xABCD);
+    }
+
+    #[test]
+    fn compat_reader_only_required_field_is_incompatible() {
+        use phon_engine::CompactError;
+        let w = of::<DefaultW>().unwrap();
+        let r = of::<RequiredR>().unwrap();
+        let reg = merged_registry(&w, &r);
+
+        assert!(matches!(
+            lower_decode(w.root, &r.descriptor, &reg),
+            Err(CompactError::Incompatible(_))
+        ));
+        // Oracle: the dynamic plan is equally incompatible.
+        assert!(matches!(
+            plan::build_plan(w.root, r.root, &reg),
+            Err(CompactError::Incompatible(_))
+        ));
+    }
+
+    // ---- 4. Enum variant added / removed --------------------------------------
+
+    #[repr(u8)]
+    #[derive(Facet, Debug, PartialEq)]
+    enum EnumW {
+        A,
+        B(u32),
+    }
+    // Reader with an ADDED variant C: reads A and B fine.
+    #[repr(u8)]
+    #[derive(Facet, Debug, PartialEq)]
+    enum EnumRMore {
+        A,
+        B(u32),
+        C,
+    }
+    // Reader that LACKS B: receiving B is a writer-only-variant error.
+    #[repr(u8)]
+    #[derive(Facet, Debug, PartialEq)]
+    enum EnumRFewer {
+        A,
+    }
+
+    #[test]
+    fn compat_enum_variant_added_reads_fine() {
+        let w = of::<EnumW>().unwrap();
+        let r = of::<EnumRMore>().unwrap();
+        let reg = merged_registry(&w, &r);
+
+        let bytes = encode_writer(&EnumW::B(42), &w, &reg);
+        let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
+        let mut slot = std::mem::MaybeUninit::<EnumRMore>::uninit();
+        unsafe { typed::decode_with(&program, &bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back, EnumRMore::B(42));
+
+        // The unit variant A round-trips too.
+        let a_bytes = encode_writer(&EnumW::A, &w, &reg);
+        let mut slot = std::mem::MaybeUninit::<EnumRMore>::uninit();
+        unsafe { typed::decode_with(&program, &a_bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        assert_eq!(unsafe { slot.assume_init() }, EnumRMore::A);
+    }
+
+    #[test]
+    fn compat_enum_variant_removed_rejects() {
+        use phon_engine::CompactError;
+        let w = of::<EnumW>().unwrap();
+        let r = of::<EnumRFewer>().unwrap();
+        let reg = merged_registry(&w, &r);
+
+        // The plan builds (A matches), but receiving B is a writer-only-variant error.
+        let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
+        let b_bytes = encode_writer(&EnumW::B(42), &w, &reg);
+        let mut slot = std::mem::MaybeUninit::<EnumRFewer>::uninit();
+        let err =
+            unsafe { typed::decode_with(&program, &b_bytes, slot.as_mut_ptr().cast::<u8>()) }
+                .unwrap_err();
+        // The writer index of B is 1.
+        assert!(matches!(err, CompactError::WriterOnlyVariant(1)), "got {err:?}");
+
+        // Oracle: the dynamic plan reports the same writer-only variant.
+        assert!(matches!(
+            plan::decode(&b_bytes, w.root, r.root, &reg),
+            Err(CompactError::WriterOnlyVariant(1))
+        ));
+
+        // An A value still decodes against the fewer-variant reader.
+        let a_bytes = encode_writer(&EnumW::A, &w, &reg);
+        let mut slot = std::mem::MaybeUninit::<EnumRFewer>::uninit();
+        unsafe { typed::decode_with(&program, &a_bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        assert_eq!(unsafe { slot.assume_init() }, EnumRFewer::A);
+    }
+
+    // ---- 5. No implicit numeric widening --------------------------------------
+
+    #[derive(Facet)]
+    struct WideW {
+        n: u32,
+    }
+    #[derive(Facet)]
+    struct WideR {
+        n: u64,
+    }
+
+    #[test]
+    fn compat_no_implicit_widening() {
+        use phon_engine::CompactError;
+        let w = of::<WideW>().unwrap();
+        let r = of::<WideR>().unwrap();
+        let reg = merged_registry(&w, &r);
+
+        assert!(matches!(
+            lower_decode(w.root, &r.descriptor, &reg),
+            Err(CompactError::Incompatible(_))
+        ));
+        // Oracle.
+        assert!(matches!(
+            plan::build_plan(w.root, r.root, &reg),
+            Err(CompactError::Incompatible(_))
+        ));
+    }
+
+    // ---- 6. Nested struct drift -----------------------------------------------
+
+    #[derive(Facet)]
+    struct InnerW {
+        a: u32,
+    }
+    #[derive(Facet)]
+    struct InnerR {
+        a: u32,
+        #[facet(default)]
+        b: bool,
+    }
+    #[derive(Facet)]
+    struct OuterW {
+        inner: InnerW,
+        tag: u32,
+    }
+    #[derive(Facet)]
+    struct OuterR {
+        inner: InnerR,
+        tag: u32,
+    }
+
+    #[test]
+    fn compat_nested_struct_drift() {
+        let w = of::<OuterW>().unwrap();
+        let r = of::<OuterR>().unwrap();
+        let reg = merged_registry(&w, &r);
+
+        let value = OuterW {
+            inner: InnerW { a: 5 },
+            tag: 0x99,
+        };
+        let bytes = encode_writer(&value, &w, &reg);
+
+        let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
+        let mut slot = std::mem::MaybeUninit::<OuterR>::uninit();
+        unsafe { typed::decode_with(&program, &bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back.inner.a, 5);
+        assert!(!back.inner.b, "reader-only bool field defaults to false");
+        assert_eq!(back.tag, 0x99);
+
+        // Oracle: the dynamic plan decodes to the equivalent nested object.
+        let got = plan::decode(&bytes, w.root, r.root, &reg).unwrap();
+        let mut inner = VObject::new();
+        inner.insert(VString::new("a"), Value::from(5u32));
+        inner.insert(VString::new("b"), Value::NULL); // dynamic default is null
+        let mut outer = VObject::new();
+        outer.insert(VString::new("inner"), Value::from(inner));
+        outer.insert(VString::new("tag"), Value::from(0x99u32));
+        assert_eq!(got, Value::from(outer));
+    }
+
+    // ---- Identity: writer == reader yields a skip/default-free program --------
+
+    #[test]
+    fn compat_identity_matches_single_schema_lower() {
+        // When the writer schema IS the reader schema, lower_decode must produce a
+        // program equivalent to the single-schema typed `lower` (no skips/defaults).
+        let d = of::<Pt>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+
+        let single = typed::lower(&d.descriptor, &reg).unwrap();
+        let compat = lower_decode(d.root, &d.descriptor, &reg).unwrap();
+
+        // No compat-only ops appear, and the op sequence matches the single-schema
+        // lowering byte-for-byte (Debug equality on the IR).
+        assert!(!has_compat_ops(&compat), "identity program leaked skip/default ops");
+        assert_eq!(format!("{single:?}"), format!("{compat:?}"));
+
+        // And it actually round-trips a real value.
+        let p = Pt { a: 0x11, b: 0x2222_2222_2222_2222, c: 0x3333, flag: true };
+        let bytes =
+            unsafe { typed::encode(core::ptr::from_ref(&p).cast::<u8>(), &d.descriptor, &reg) }
+                .unwrap();
+        let mut slot = std::mem::MaybeUninit::<Pt>::uninit();
+        unsafe { typed::decode_with(&compat, &bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back.a, p.a);
+        assert_eq!(back.b, p.b);
+        assert_eq!(back.c, p.c);
+        assert_eq!(back.flag, p.flag);
+    }
+
+    fn has_compat_ops(program: &[phon_ir::MemOp]) -> bool {
+        use phon_ir::MemOp;
+        program.iter().any(|op| match op {
+            MemOp::SkipWire(_) | MemOp::Default(_) => true,
+            MemOp::Sequence(s) => has_compat_ops(&s.element),
+            MemOp::Option(o) => has_compat_ops(&o.some),
+            MemOp::Map(m) => has_compat_ops(&m.key) || has_compat_ops(&m.value),
+            MemOp::Enum(e) => e.variants.iter().any(|v| has_compat_ops(&v.payload)),
+            _ => false,
+        })
     }
 }
