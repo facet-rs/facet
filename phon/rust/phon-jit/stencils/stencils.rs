@@ -208,3 +208,180 @@ pub unsafe extern "C" fn phon_stencil_done(_cx: *mut Ctx) {}
 pub extern "C" fn phon_stencil_smoke(x: i64) -> i64 {
     x.wrapping_mul(3).wrapping_add(1)
 }
+
+// ============================================================================
+// Encode stencils
+// ============================================================================
+//
+// The mirror of decode: instead of reading a fixed wire slice into memory, the
+// encode stencils read a value's in-memory bytes and append them to a *growing*
+// output buffer. That growth is the only real difference from decode — a scalar
+// might need more room than is left, so each stencil ensures capacity by calling
+// the `grow` thunk (indirect through `EncCtx`, so it adds no relocation), then
+// re-reads `out_ptr`/`out_cap`. The engine owns the `Vec<u8>`; `out_handle`
+// points at it so `grow` can reserve through it (keeping its allocator), and the
+// driver sets the `Vec`'s length to `out_pos` after the run.
+//
+// Like decode, the only relocation a copied encode stencil carries is the
+// `BRANCH26` to its continuation (`phon_econt`); every other call is indirect
+// through an `EncCtx` or `EncSeqInfo` field.
+
+/// Encode-side threaded state, mirroring `Ctx`. Matched byte for byte by the Rust
+/// driver in `src/native.rs`.
+#[repr(C)]
+pub struct EncCtx {
+    /// Base pointer of the value being read.
+    pub base: *const u8,
+    /// `&mut Vec<u8>` the engine owns; `grow` reserves through it.
+    pub out_handle: *mut u8,
+    /// The output buffer's data pointer (re-read after every `grow`).
+    pub out_ptr: *mut u8,
+    /// Number of bytes written so far (the live length).
+    pub out_pos: usize,
+    /// The output buffer's current capacity.
+    pub out_cap: usize,
+    /// `[offset, size, align]` triples (scalars) and `*const EncSeqInfo` slots
+    /// (sequences), consumed in order.
+    pub prog: *const u64,
+    /// Reserve so the buffer holds at least `needed` bytes, then write the new
+    /// `out_ptr`/`out_cap` back into the `EncCtx`. The current live length is
+    /// `out_pos`; bytes below it are preserved.
+    pub grow: unsafe extern "C" fn(cx: *mut EncCtx, needed: usize),
+}
+
+/// An encode sequence op's immediates, reached through a `*const EncSeqInfo` slot
+/// in `EncCtx.prog`. The element body is the chain entered at `element_entry`,
+/// driven by the triples at `element_prog`. Mirrors `SeqInfo`, minus the
+/// decode-only `from_raw_parts` (and plus the two read thunks).
+#[repr(C)]
+pub struct EncSeqInfo {
+    /// Where the sequence handle lives, relative to `base`.
+    pub field_offset: usize,
+    /// Bytes between consecutive elements in the buffer (element size).
+    pub stride: usize,
+    /// Opaque per-type context passed to the thunks.
+    pub thunks_ctx: *const (),
+    /// The sequence's current element count.
+    pub len: unsafe extern "C" fn(ctx: *const (), list: *const u8) -> usize,
+    /// A pointer to the sequence's contiguous element storage (for reading).
+    pub data: unsafe extern "C" fn(ctx: *const (), list: *const u8) -> *const u8,
+    /// Entry to the element body chain (an `*mut EncCtx` function ending in `ret`).
+    pub element_entry: unsafe extern "C" fn(cx: *mut EncCtx),
+    /// The element body's immediate triples (reset into `EncCtx.prog` per element).
+    pub element_prog: *const u64,
+}
+
+extern "C" {
+    fn phon_econt(cx: *mut EncCtx);
+}
+
+/// Encode one fixed-width scalar from `base + offset`, then continue.
+///
+/// Pads the output to `align` with zero bytes (measured from the buffer start),
+/// ensures capacity for the pad plus `size` bytes (growing if needed), copies the
+/// scalar's bytes out, and advances `out_pos`.
+#[no_mangle]
+pub unsafe extern "C" fn phon_stencil_scalar_enc(cx: *mut EncCtx) {
+    let c = &mut *cx;
+    let off = *c.prog as usize;
+    let size = *c.prog.add(1) as usize;
+    let align = *c.prog.add(2) as usize;
+    c.prog = c.prog.add(3);
+
+    // Pad to alignment, measured from the output start (the live length).
+    let pad = align.wrapping_sub(c.out_pos & (align - 1)) & (align - 1);
+    let need = c.out_pos + pad + size;
+
+    // Ensure capacity for the padding and the scalar; re-read ptr/cap after.
+    if need > c.out_cap {
+        (c.grow)(cx, need);
+    }
+
+    // Zero the padding bytes, then copy the scalar out. `write_volatile` keeps
+    // LLVM from lowering the loop to a `bzero`/`memset` libcall — that would add
+    // an external relocation a copied stencil can't carry; we only ever patch the
+    // `BRANCH26` to the continuation. `pad < align` is small, so the byte loop is
+    // cheap.
+    let mut dst = c.out_ptr.add(c.out_pos);
+    let mut k = 0;
+    while k < pad {
+        core::ptr::write_volatile(dst, 0u8);
+        dst = dst.add(1);
+        k += 1;
+    }
+
+    let src = c.base.add(off);
+    // Word-wise copy of `size` bytes (size is a fused run length, any value).
+    let mut i = 0;
+    while size - i >= 8 {
+        core::ptr::copy_nonoverlapping(src.add(i), dst.add(i), 8);
+        i += 8;
+    }
+    if size - i >= 4 {
+        core::ptr::copy_nonoverlapping(src.add(i), dst.add(i), 4);
+        i += 4;
+    }
+    if size - i >= 2 {
+        core::ptr::copy_nonoverlapping(src.add(i), dst.add(i), 2);
+        i += 2;
+    }
+    if size - i >= 1 {
+        core::ptr::copy_nonoverlapping(src.add(i), dst.add(i), 1);
+    }
+
+    c.out_pos += pad + size;
+    #[cfg(tailcall)]
+    become phon_econt(cx);
+    #[cfg(not(tailcall))]
+    phon_econt(cx);
+}
+
+/// Encode an owned sequence from `base + field_offset`, then continue.
+///
+/// Reads the element count via the `len` thunk, writes it as a `u32` (no
+/// alignment, like `write_u32`), gets the element storage pointer via the `data`
+/// thunk, and runs the element body once per element with `base = data +
+/// i*stride`. The element body shares the output cursor through `EncCtx`.
+#[no_mangle]
+pub unsafe extern "C" fn phon_stencil_sequence_enc(cx: *mut EncCtx) {
+    let c = &mut *cx;
+    let info = &*(*c.prog as *const EncSeqInfo);
+    let outer_prog = c.prog.add(1);
+    let outer_base = c.base;
+
+    let list = outer_base.add(info.field_offset);
+    let count = (info.len)(info.thunks_ctx, list);
+
+    // Write the u32 count (no alignment padding, like `write_u32`).
+    let need = c.out_pos + 4;
+    if need > c.out_cap {
+        (c.grow)(cx, need);
+    }
+    let count_bytes = (count as u32).to_le_bytes();
+    core::ptr::copy_nonoverlapping(count_bytes.as_ptr(), c.out_ptr.add(c.out_pos), 4);
+    c.out_pos += 4;
+
+    // Encode each element. The body shares the output cursor through `EncCtx`;
+    // reset `prog`/`base` per element.
+    let data = (info.data)(info.thunks_ctx, list);
+    let mut i = 0;
+    while i < count {
+        c.prog = info.element_prog;
+        c.base = data.add(i * info.stride);
+        (info.element_entry)(cx);
+        i += 1;
+    }
+
+    // Restore the outer cursors and continue.
+    c.base = outer_base;
+    c.prog = outer_prog;
+
+    #[cfg(tailcall)]
+    become phon_econt(cx);
+    #[cfg(not(tailcall))]
+    phon_econt(cx);
+}
+
+/// Terminal encode stencil: stop. Mirrors `phon_stencil_done`.
+#[no_mangle]
+pub unsafe extern "C" fn phon_stencil_done_enc(_cx: *mut EncCtx) {}

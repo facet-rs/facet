@@ -70,10 +70,15 @@ fn emit_arm64_macos(out: &Path, generated: &Path) {
     }
 
     let bytes = fs::read(&obj).unwrap();
-    let smoke = extract(&bytes, "phon_stencil_smoke");
-    let scalar = extract(&bytes, "phon_stencil_scalar");
-    let sequence = extract(&bytes, "phon_stencil_sequence");
-    let done = extract(&bytes, "phon_stencil_done");
+    // Decode stencils continue through `phon_cont`; encode stencils through
+    // `phon_econt`. Each is the sole patched relocation in its stencil.
+    let smoke = extract(&bytes, "phon_stencil_smoke", "phon_cont");
+    let scalar = extract(&bytes, "phon_stencil_scalar", "phon_cont");
+    let sequence = extract(&bytes, "phon_stencil_sequence", "phon_cont");
+    let done = extract(&bytes, "phon_stencil_done", "phon_cont");
+    let scalar_enc = extract(&bytes, "phon_stencil_scalar_enc", "phon_econt");
+    let sequence_enc = extract(&bytes, "phon_stencil_sequence_enc", "phon_econt");
+    let done_enc = extract(&bytes, "phon_stencil_done_enc", "phon_econt");
 
     let mode = if tailcall { "tail-call (nightly become)" } else { "call (stable)" };
     let mut src = String::new();
@@ -112,6 +117,35 @@ fn emit_arm64_macos(out: &Path, generated: &Path) {
         "/// `phon_stencil_done` machine code: a lone `ret`.\n\
          pub const DONE: &[u8] = &{:?};\n",
         done.bytes
+    ));
+    src.push_str(&format!(
+        "/// `phon_stencil_scalar_enc` machine code: encode one fixed scalar,\n\
+         /// continue.\n\
+         pub const SCALAR_ENC: &[u8] = &{:?};\n",
+        scalar_enc.bytes
+    ));
+    src.push_str(&format!(
+        "/// Byte offsets within `SCALAR_ENC` of the `phon_econt` continuation\n\
+         /// branches to patch (`BRANCH26`).\n\
+         pub const SCALAR_ENC_CONT: &[usize] = &{:?};\n",
+        scalar_enc.cont_relocs
+    ));
+    src.push_str(&format!(
+        "/// `phon_stencil_sequence_enc` machine code: encode one owned sequence,\n\
+         /// continue. The element body is invoked through `EncSeqInfo.element_entry`.\n\
+         pub const SEQUENCE_ENC: &[u8] = &{:?};\n",
+        sequence_enc.bytes
+    ));
+    src.push_str(&format!(
+        "/// Byte offsets within `SEQUENCE_ENC` of the `phon_econt` continuation\n\
+         /// branch to patch (`BRANCH26`).\n\
+         pub const SEQUENCE_ENC_CONT: &[usize] = &{:?};\n",
+        sequence_enc.cont_relocs
+    ));
+    src.push_str(&format!(
+        "/// `phon_stencil_done_enc` machine code: a lone `ret`.\n\
+         pub const DONE_ENC: &[u8] = &{:?};\n",
+        done_enc.bytes
     ));
     fs::write(generated, src).unwrap();
 }
@@ -166,8 +200,10 @@ struct Stencil {
 }
 
 /// Extract one stencil's bytes and continuation relocations from the object's
-/// `__text` section by symbol name.
-fn extract(obj: &[u8], symbol: &str) -> Stencil {
+/// `__text` section by symbol name. `cont_symbol` is the external continuation
+/// the stencil branches to (`phon_cont` for decode, `phon_econt` for encode); its
+/// `BRANCH26` relocations are the only holes the JIT patches.
+fn extract(obj: &[u8], symbol: &str, cont_symbol: &str) -> Stencil {
     use object::{Object, ObjectSection, ObjectSymbol, RelocationTarget};
 
     let file = object::File::parse(obj).expect("parse object file");
@@ -178,13 +214,16 @@ fn extract(obj: &[u8], symbol: &str) -> Stencil {
     let data = text.data().expect("read __text data");
     let text_index = text.index();
 
-    let addr_of = |suffix: &str| -> u64 {
+    let addr_of = |name: &str| -> u64 {
         file.symbols()
             .find(|s| {
                 s.section_index() == Some(text_index)
-                    && s.name().is_ok_and(|n| n.ends_with(suffix))
+                    && s.name().is_ok_and(|n| n.ends_with(name))
+                    // Guard the `ends_with` against the `_enc` suffixes sharing a
+                    // prefix: only an exact (de-underscored) match counts.
+                    && s.name().is_ok_and(|n| n == name || n == format!("_{name}"))
             })
-            .unwrap_or_else(|| panic!("symbol {suffix} not found"))
+            .unwrap_or_else(|| panic!("symbol {name} not found"))
             .address()
     };
     let mut boundaries: Vec<u64> = [
@@ -192,6 +231,9 @@ fn extract(obj: &[u8], symbol: &str) -> Stencil {
         "phon_stencil_scalar",
         "phon_stencil_sequence",
         "phon_stencil_done",
+        "phon_stencil_scalar_enc",
+        "phon_stencil_sequence_enc",
+        "phon_stencil_done_enc",
     ]
     .iter()
     .map(|s| addr_of(s))
@@ -214,7 +256,7 @@ fn extract(obj: &[u8], symbol: &str) -> Stencil {
         }
         if let RelocationTarget::Symbol(idx) = reloc.target()
             && let Ok(sym) = file.symbol_by_index(idx)
-            && sym.name().is_ok_and(|n| n.ends_with("phon_cont"))
+            && sym.name().is_ok_and(|n| n == cont_symbol || n == format!("_{cont_symbol}"))
         {
             cont_relocs.push((offset - start) as usize);
         }

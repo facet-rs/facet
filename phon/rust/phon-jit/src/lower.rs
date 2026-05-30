@@ -15,8 +15,9 @@
 //! [`Program`]: phon_ir::ir::Program
 
 use phon_ir::ir::{MemOp, MemProgram};
+use phon_ir::SeqThunks;
 use phon_schema::DecodeError;
-use phon_schema::bytes::Reader;
+use phon_schema::bytes::{Reader, write_u32};
 
 use crate::stencil::{self, DecodeCtx, EncodeCtx, Imm};
 
@@ -32,13 +33,29 @@ struct DecodeStep {
 }
 
 /// A compiled encode program.
+///
+/// Scalars are threaded through function-pointer stencils as before; a sequence
+/// holds its element sub-program inline (a recursive [`CompiledEncode`]) plus the
+/// handle thunks, mirroring the native encoder's call-program layout. The portable
+/// oracle for the JIT, so it must handle exactly what the JIT does.
 pub struct CompiledEncode {
     steps: Vec<EncodeStep>,
 }
 
-struct EncodeStep {
-    stencil: unsafe fn(&mut EncodeCtx, &Imm),
-    imm: Imm,
+enum EncodeStep {
+    /// A fixed scalar: a stencil plus its `[offset, size, align]` immediates.
+    Scalar {
+        stencil: unsafe fn(&mut EncodeCtx, &Imm),
+        imm: Imm,
+    },
+    /// An owned sequence: write its `u32` count, then encode each element with the
+    /// element sub-program at `data + i*stride`.
+    Sequence {
+        field_offset: usize,
+        stride: usize,
+        thunks: SeqThunks,
+        element: CompiledEncode,
+    },
 }
 
 /// Compile a typed program for decoding: select a stencil per op and capture its
@@ -64,11 +81,16 @@ pub fn compile_encode(program: &MemProgram) -> CompiledEncode {
     let steps = program
         .iter()
         .map(|op| match op {
-            MemOp::Scalar { offset, size, align } => EncodeStep {
+            MemOp::Scalar { offset, size, align } => EncodeStep::Scalar {
                 stencil: stencil::scalar_encode,
                 imm: [*offset, *size, *align],
             },
-            MemOp::Sequence(_) => panic!("phon-jit: sequences are interpreter-only for now"),
+            MemOp::Sequence(s) => EncodeStep::Sequence {
+                field_offset: s.field_offset,
+                stride: s.stride,
+                thunks: s.thunks,
+                element: compile_encode(&s.element),
+            },
         })
         .collect();
     CompiledEncode { steps }
@@ -107,15 +129,41 @@ impl CompiledEncode {
     /// program was lowered from.
     #[must_use]
     pub unsafe fn run(&self, base: *const u8) -> Vec<u8> {
-        let mut ctx = EncodeCtx {
-            out: Vec::new(),
-            base,
-        };
+        let mut out = Vec::new();
+        // Safety: forwarded from this function's contract.
+        unsafe { self.run_into(base, &mut out) };
+        out
+    }
+
+    /// Append this program's encoding of the value at `base` to `out`.
+    ///
+    /// # Safety
+    /// As [`run`](Self::run); additionally `out` accumulates wire bytes in order.
+    unsafe fn run_into(&self, base: *const u8, out: &mut Vec<u8>) {
         for step in &self.steps {
-            // Safety: forwarded; each step reads within the value's layout.
-            unsafe { (step.stencil)(&mut ctx, &step.imm) };
+            match step {
+                EncodeStep::Scalar { stencil, imm } => {
+                    // The scalar stencil owns its output; lend it the buffer by
+                    // moving it in and back out (no copy — `Vec` move is a pointer
+                    // swap).
+                    let mut ctx = EncodeCtx { out: core::mem::take(out), base };
+                    // Safety: forwarded; the step reads within the value's layout.
+                    unsafe { (stencil)(&mut ctx, imm) };
+                    *out = ctx.out;
+                }
+                EncodeStep::Sequence { field_offset, stride, thunks, element } => {
+                    // Safety: the sequence handle lives at `field_offset`.
+                    let list = unsafe { base.add(*field_offset) };
+                    let n = unsafe { (thunks.len)(thunks.ctx, list) };
+                    write_u32(out, n as u32);
+                    let data = unsafe { (thunks.data)(thunks.ctx, list) };
+                    for i in 0..n {
+                        // Safety: element `i` lives at `data + i*stride`.
+                        unsafe { element.run_into(data.add(i * stride), out) };
+                    }
+                }
+            }
         }
-        ctx.out
     }
 }
 

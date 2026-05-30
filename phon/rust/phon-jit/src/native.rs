@@ -19,7 +19,10 @@ use core::ffi::c_void;
 use phon_ir::ir::{MemOp, MemProgram};
 use phon_schema::DecodeError;
 
-use crate::stencils::{DONE, SCALAR, SCALAR_CONT, SEQUENCE, SEQUENCE_CONT};
+use crate::stencils::{
+    DONE, DONE_ENC, SCALAR, SCALAR_CONT, SCALAR_ENC, SCALAR_ENC_CONT, SEQUENCE, SEQUENCE_CONT,
+    SEQUENCE_ENC, SEQUENCE_ENC_CONT,
+};
 
 unsafe extern "C" {
     /// Toggle the calling thread's JIT pages between writable (`0`) and
@@ -379,6 +382,245 @@ fn patch_branch26(code: &mut [u8], site: usize, target: usize) {
     code[site..site + 4].copy_from_slice(&patched.to_le_bytes());
 }
 
+// ============================================================================
+// The encode JIT
+// ============================================================================
+
+/// The encode-side threaded state, matching `EncCtx` in `stencils/stencils.rs`
+/// byte for byte. Where decode reads a fixed wire slice into memory, encode reads
+/// memory and appends to a *growing* output: that growth is the only structural
+/// difference from decode. The engine owns the `Vec<u8>`; `out_handle` points at
+/// it so [`jit_grow`] can reserve through it (keeping its allocator), and the
+/// driver sets the `Vec`'s length to `out_pos` after the run.
+#[repr(C)]
+struct EncCtx {
+    base: *const u8,
+    out_handle: *mut u8,
+    out_ptr: *mut u8,
+    out_pos: usize,
+    out_cap: usize,
+    prog: *const u64,
+    grow: unsafe extern "C" fn(cx: *mut EncCtx, needed: usize),
+}
+
+/// An encode sequence op's immediates, matching `EncSeqInfo` in
+/// `stencils/stencils.rs` byte for byte. Reached through a `*const EncSeqInfo`
+/// slot in the prog stream.
+#[repr(C)]
+struct EncSeqInfo {
+    field_offset: usize,
+    stride: usize,
+    thunks_ctx: *const (),
+    len: unsafe extern "C" fn(ctx: *const (), list: *const u8) -> usize,
+    data: unsafe extern "C" fn(ctx: *const (), list: *const u8) -> *const u8,
+    element_entry: unsafe extern "C" fn(cx: *mut EncCtx),
+    element_prog: *const u64,
+}
+
+/// Grow the engine-owned output `Vec<u8>` to hold at least `needed` bytes, then
+/// write the new data pointer and capacity back into the `EncCtx`. Called
+/// indirectly through `EncCtx.grow`, so the only relocation a copied encode
+/// stencil carries is still its `phon_econt` `BRANCH26`.
+///
+/// The `Vec`'s live length is tracked in `cx.out_pos`; here we keep the `Vec`'s
+/// own length at 0 and use [`Vec::reserve`] from a 0-length buffer to enlarge it,
+/// so `reserve` never copies bytes it doesn't need to — but the bytes already
+/// written below `out_pos` must survive, so we instead set the `Vec`'s length to
+/// `out_pos` before reserving (preserving them), then drop it back to 0.
+unsafe extern "C" fn jit_grow(cx: *mut EncCtx, needed: usize) {
+    let c = unsafe { &mut *cx };
+    let v = unsafe { &mut *c.out_handle.cast::<Vec<u8>>() };
+    // Make the live bytes part of the Vec's length so `reserve` preserves them on
+    // reallocation, then ask for enough headroom to reach `needed`.
+    unsafe { v.set_len(c.out_pos) };
+    if needed > v.len() {
+        v.reserve(needed - v.len());
+    }
+    // Hand the length back to the driver/stencils via `out_pos`; the Vec carries
+    // no length of its own between calls.
+    unsafe { v.set_len(0) };
+    c.out_ptr = v.as_mut_ptr();
+    c.out_cap = v.capacity();
+}
+
+/// A JIT-compiled encoder for a [`MemProgram`]: a `MAP_JIT` page of copied encode
+/// stencils with their continuations patched to chain, ending at `done`. The
+/// mirror of [`NativeDecode`] — scalars chain straight through; an owned sequence
+/// runs its element body as a separately compiled chain it calls once per element.
+pub struct NativeEncode {
+    buf: ExecBuf,
+    /// Index into `progs` of the top-level chain's immediate stream.
+    entry_prog: usize,
+    /// Every chain's immediate stream: `[offset, size, align]` triples for
+    /// scalars and a `*const EncSeqInfo` slot per sequence.
+    progs: Vec<Vec<u64>>,
+    /// One per sequence op: the immediates the sequence stencil reads through its
+    /// prog slot. Built once with exact capacity, never re-grown, so the
+    /// `*const EncSeqInfo` the prog stream holds stays valid.
+    seq_infos: Vec<EncSeqInfo>,
+}
+
+/// An encode sequence's `EncSeqInfo` minus the two fields only known after the
+/// `ExecBuf` is built: the element chain's entry offset and prog index.
+struct EncSeqInfoBuild {
+    field_offset: usize,
+    stride: usize,
+    thunks_ctx: *const (),
+    len: unsafe extern "C" fn(ctx: *const (), list: *const u8) -> usize,
+    data: unsafe extern "C" fn(ctx: *const (), list: *const u8) -> *const u8,
+    element_entry_offset: usize,
+    element_prog_index: usize,
+}
+
+/// Accumulates the encode code bytes, per-chain prog streams, and sequence
+/// metadata while the program is walked. Two passes, like the decode [`Compiler`]:
+/// lay everything out, then bind the `ExecBuf`-relative pointers.
+struct EncCompiler {
+    code: Vec<u8>,
+    progs: Vec<Vec<u64>>,
+    seq_infos: Vec<EncSeqInfoBuild>,
+    fixups: Vec<SeqFixup>,
+}
+
+impl EncCompiler {
+    /// Lay out one encode chain for `program`: a stencil copy per op, then a
+    /// `done`, with continuations patched to chain to the next op (the last to
+    /// `done`). Recurses into sequence elements, which become their own chains.
+    fn compile_chain(&mut self, program: &MemProgram) -> Chain {
+        let entry = self.code.len();
+        let prog_index = self.progs.len();
+        self.progs.push(Vec::new());
+
+        let mut starts = Vec::with_capacity(program.len());
+        for op in program {
+            starts.push(self.code.len());
+            match op {
+                MemOp::Scalar { offset, size, align } => {
+                    self.code.extend_from_slice(SCALAR_ENC);
+                    let p = &mut self.progs[prog_index];
+                    p.push(*offset as u64);
+                    p.push(*size as u64);
+                    p.push(*align as u64);
+                }
+                MemOp::Sequence(s) => {
+                    self.code.extend_from_slice(SEQUENCE_ENC);
+                    let slot = self.progs[prog_index].len();
+                    self.progs[prog_index].push(0);
+                    let elem = self.compile_chain(&s.element);
+                    let seqinfo = self.seq_infos.len();
+                    self.seq_infos.push(EncSeqInfoBuild {
+                        field_offset: s.field_offset,
+                        stride: s.stride,
+                        thunks_ctx: s.thunks.ctx,
+                        len: s.thunks.len,
+                        data: s.thunks.data,
+                        element_entry_offset: elem.entry,
+                        element_prog_index: elem.prog_index,
+                    });
+                    self.fixups.push(SeqFixup { prog_index, slot, seqinfo });
+                }
+            }
+        }
+        let done_start = self.code.len();
+        self.code.extend_from_slice(DONE_ENC);
+
+        for (i, &op_start) in starts.iter().enumerate() {
+            let next = starts.get(i + 1).copied().unwrap_or(done_start);
+            let relocs = match &program[i] {
+                MemOp::Scalar { .. } => SCALAR_ENC_CONT,
+                MemOp::Sequence(_) => SEQUENCE_ENC_CONT,
+            };
+            for &rel in relocs {
+                patch_branch26(&mut self.code, op_start + rel, next);
+            }
+        }
+
+        Chain { entry, prog_index }
+    }
+}
+
+impl NativeEncode {
+    /// Compile a [`MemProgram`] to native encode machine code.
+    // r[impl ir.stencils]
+    #[must_use]
+    pub fn compile(program: &MemProgram) -> NativeEncode {
+        let mut c = EncCompiler {
+            code: Vec::new(),
+            progs: Vec::new(),
+            seq_infos: Vec::new(),
+            fixups: Vec::new(),
+        };
+        let top = c.compile_chain(program);
+
+        let buf = ExecBuf::new(&c.code);
+        let base = buf.as_ptr();
+        let progs = c.progs;
+
+        let mut seq_infos: Vec<EncSeqInfo> = Vec::with_capacity(c.seq_infos.len());
+        for b in &c.seq_infos {
+            let element_entry: unsafe extern "C" fn(*mut EncCtx) =
+                unsafe { core::mem::transmute(base.add(b.element_entry_offset)) };
+            seq_infos.push(EncSeqInfo {
+                field_offset: b.field_offset,
+                stride: b.stride,
+                thunks_ctx: b.thunks_ctx,
+                len: b.len,
+                data: b.data,
+                element_entry,
+                // Bound below, once `progs` is owned by `NativeEncode`.
+                element_prog: core::ptr::null(),
+            });
+        }
+
+        let mut ne = NativeEncode {
+            buf,
+            entry_prog: top.prog_index,
+            progs,
+            seq_infos,
+        };
+
+        for (b, info) in c.seq_infos.iter().zip(ne.seq_infos.iter_mut()) {
+            info.element_prog = ne.progs[b.element_prog_index].as_ptr();
+        }
+        for f in &c.fixups {
+            let ptr: *const EncSeqInfo = &ne.seq_infos[f.seqinfo];
+            ne.progs[f.prog_index][f.slot] = ptr as u64;
+        }
+
+        ne
+    }
+
+    /// Encode the value at `base` into compact bytes.
+    ///
+    /// # Safety
+    /// `base` must point to an initialized value matching the descriptor this
+    /// program was lowered from, readable for every `offset + size` the program
+    /// touches.
+    #[must_use]
+    pub unsafe fn run(&self, base: *const u8) -> Vec<u8> {
+        // The engine owns the output `Vec`; the stencils write into its buffer and
+        // grow it through `jit_grow`. The `Vec` carries length 0 throughout (the
+        // live length is `ctx.out_pos`); we set its final length at the end.
+        let mut out: Vec<u8> = Vec::new();
+        let mut ctx = EncCtx {
+            base,
+            out_handle: core::ptr::from_mut(&mut out).cast::<u8>(),
+            out_ptr: out.as_mut_ptr(),
+            out_pos: 0,
+            out_cap: out.capacity(),
+            prog: self.progs[self.entry_prog].as_ptr(),
+            grow: jit_grow,
+        };
+        let entry: extern "C" fn(*mut EncCtx) = unsafe { core::mem::transmute(self.buf.as_ptr()) };
+        entry(&mut ctx);
+
+        // Adopt the written bytes: the buffer holds `out_pos` initialized bytes
+        // (the stencils only ever wrote within the capacity `jit_grow` ensured).
+        unsafe { out.set_len(ctx.out_pos) };
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -676,5 +918,227 @@ mod tests {
         let back = unsafe { slot.assume_init() };
         let expected: Vec<Vec<u32>> = rows.iter().map(|r| r.to_vec()).collect();
         assert_eq!(back, expected);
+    }
+
+    // ====================================================================
+    // Encode
+    // ====================================================================
+
+    use crate::lower::compile_encode;
+
+    /// JIT-encode a fixed-scalar program and check it against the threaded encoder
+    /// (the oracle) and the known wire layout: `{ u32 @ 0, u64 @ 8 }` -> u32, pad
+    /// 4, u64.
+    #[test]
+    fn jit_encode_matches_threaded() {
+        let program: MemProgram = vec![
+            MemOp::Scalar { offset: 0, size: 4, align: 4 },
+            MemOp::Scalar { offset: 8, size: 8, align: 8 },
+        ];
+        #[repr(C, align(8))]
+        struct Mem([u8; 16]);
+        let mut mem = Mem([0; 16]);
+        mem.0[0..4].copy_from_slice(&0x1122_3344u32.to_le_bytes());
+        mem.0[8..16].copy_from_slice(&0xAABB_CCDD_EEFF_0011u64.to_le_bytes());
+
+        // Oracle: the portable threaded encoder.
+        let expected = unsafe { compile_encode(&program).run(mem.0.as_ptr()) };
+
+        // JIT: copied encode stencils, run from MAP_JIT.
+        let jit = NativeEncode::compile(&program);
+        let got = unsafe { jit.run(mem.0.as_ptr()) };
+
+        assert_eq!(got, expected, "JIT disagreed with the threaded encoder");
+        // u32 (4) + pad (4) + u64 (8) = 16 wire bytes, byte-for-byte.
+        assert_eq!(got.len(), 16);
+        assert_eq!(&got[0..4], &0x1122_3344u32.to_le_bytes());
+        assert_eq!(&got[4..8], &[0, 0, 0, 0]);
+        assert_eq!(&got[8..16], &0xAABB_CCDD_EEFF_0011u64.to_le_bytes());
+    }
+
+    /// A wider scalar program (every fixed width, reordered offsets), encoded and
+    /// round-tripped back through [`NativeDecode`].
+    #[test]
+    fn jit_encode_many_widths_roundtrips() {
+        let program: MemProgram = vec![
+            MemOp::Scalar { offset: 16, size: 1, align: 1 },
+            MemOp::Scalar { offset: 0, size: 16, align: 16 },
+            MemOp::Scalar { offset: 18, size: 2, align: 2 },
+            MemOp::Scalar { offset: 20, size: 4, align: 4 },
+        ];
+        #[repr(C, align(16))]
+        struct Mem([u8; 24]);
+        let mut mem = Mem([0; 24]);
+        mem.0[16] = 0xEE;
+        mem.0[0..16]
+            .copy_from_slice(&0x0011_2233_4455_6677_8899_AABB_CCDD_EEFFu128.to_le_bytes());
+        mem.0[18..20].copy_from_slice(&0x1234u16.to_le_bytes());
+        mem.0[20..24].copy_from_slice(&0xCAFE_F00Du32.to_le_bytes());
+
+        let expected = unsafe { compile_encode(&program).run(mem.0.as_ptr()) };
+        let jit = NativeEncode::compile(&program);
+        let got = unsafe { jit.run(mem.0.as_ptr()) };
+        assert_eq!(got, expected);
+
+        // Round-trip: decode the JIT-encoded bytes back and compare memory.
+        let dec = NativeDecode::compile(&program);
+        let mut back = Mem([0; 24]);
+        unsafe { dec.run(&got, back.0.as_mut_ptr()) }.unwrap();
+        assert_eq!(back.0, mem.0);
+    }
+
+    /// JIT-encode a single owned `Vec<u32>` sequence and check the wire bytes (a
+    /// `u32` count then each element) and a `NativeDecode` round-trip.
+    #[test]
+    fn jit_encode_sequence_vec_u32() {
+        let program = vu32_program();
+        let values = vec![1u32, 2, 999, 0xDEAD_BEEF];
+
+        // The handle is the engine-owned `Vec<u32>`; encode reads it in place.
+        let got = unsafe { jit_encode_vec(&program, &values) };
+        assert_eq!(got, vu32_wire(&values));
+
+        // Oracle agreement with the threaded encoder.
+        let expected =
+            unsafe { compile_encode(&program).run(core::ptr::from_ref(&values).cast::<u8>()) };
+        assert_eq!(got, expected);
+
+        // Round-trip back into a fresh `Vec<u32>`.
+        let dec = NativeDecode::compile(&program);
+        let mut slot = MaybeUninit::<Vec<u32>>::uninit();
+        unsafe { dec.run(&got, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back, values);
+    }
+
+    /// An empty sequence: count 0, no elements.
+    #[test]
+    fn jit_encode_sequence_empty() {
+        let program = vu32_program();
+        let values: Vec<u32> = Vec::new();
+        let got = unsafe { jit_encode_vec(&program, &values) };
+        assert_eq!(got, vu32_wire(&values));
+        assert_eq!(got, 0u32.to_le_bytes().to_vec());
+    }
+
+    /// A struct with multiple scalars and a trailing `Vec<u32>`:
+    /// `{ u64 @ 0, u32 @ 8, Vec<u32> @ 16 }`. Exercises scalars + a sequence in
+    /// one program, plus a full `NativeDecode` round-trip.
+    #[test]
+    fn jit_encode_struct_with_sequence() {
+        // The in-memory struct: a u64, a u32 (padded to 16 by the Vec's align),
+        // then a `Vec<u32>` handle.
+        #[repr(C)]
+        struct S {
+            a: u64,
+            b: u32,
+            v: Vec<u32>,
+        }
+        let v_off = core::mem::offset_of!(S, v);
+        let program: MemProgram = vec![
+            MemOp::Scalar { offset: core::mem::offset_of!(S, a), size: 8, align: 8 },
+            MemOp::Scalar { offset: core::mem::offset_of!(S, b), size: 4, align: 4 },
+            MemOp::Sequence(Box::new(SeqOp {
+                field_offset: v_off,
+                element: vec![MemOp::Scalar { offset: 0, size: 4, align: 4 }],
+                stride: 4,
+                elem_align: 4,
+                min_wire: 1,
+                thunks: vu32_thunks(),
+            })),
+        ];
+
+        let s = S {
+            a: 0xAABB_CCDD_EEFF_0011,
+            b: 0x1234_5678,
+            v: vec![7u32, 8, 9],
+        };
+        let base = core::ptr::from_ref(&s).cast::<u8>();
+
+        let jit = NativeEncode::compile(&program);
+        let got = unsafe { jit.run(base) };
+
+        // Oracle: the threaded encoder over the same memory.
+        let expected = unsafe { compile_encode(&program).run(base) };
+        assert_eq!(got, expected, "JIT disagreed with the threaded encoder");
+
+        // Known wire layout: u64, u32 (no pad — already 8-aligned), then the
+        // sequence (u32 count + elements).
+        let mut want = Vec::new();
+        want.extend_from_slice(&s.a.to_le_bytes());
+        want.extend_from_slice(&s.b.to_le_bytes());
+        want.extend_from_slice(&(s.v.len() as u32).to_le_bytes());
+        for &x in &s.v {
+            want.extend_from_slice(&x.to_le_bytes());
+        }
+        assert_eq!(got, want);
+
+        // Round-trip: decode back into a fresh struct image and compare fields.
+        let dec = NativeDecode::compile(&program);
+        let mut slot = MaybeUninit::<S>::uninit();
+        unsafe { dec.run(&got, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back.a, s.a);
+        assert_eq!(back.b, s.b);
+        assert_eq!(back.v, s.v);
+    }
+
+    /// A large sequence to force the output buffer to grow several times across
+    /// element encodes (exercising `jit_grow` and the ptr/cap re-read).
+    #[test]
+    fn jit_encode_sequence_grows() {
+        let program = vu32_program();
+        let values: Vec<u32> = (0..5000u32).collect();
+        let got = unsafe { jit_encode_vec(&program, &values) };
+        assert_eq!(got, vu32_wire(&values));
+
+        let dec = NativeDecode::compile(&program);
+        let mut slot = MaybeUninit::<Vec<u32>>::uninit();
+        unsafe { dec.run(&got, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back, values);
+    }
+
+    /// A nested sequence `Vec<Vec<u32>>` encoded and round-tripped, exercising the
+    /// recursive element call-program on the encode side.
+    #[test]
+    fn jit_encode_nested_sequence_roundtrips() {
+        let inner = SeqOp {
+            field_offset: 0,
+            element: vec![MemOp::Scalar { offset: 0, size: 4, align: 4 }],
+            stride: 4,
+            elem_align: 4,
+            min_wire: 1,
+            thunks: vu32_thunks(),
+        };
+        let program: MemProgram = vec![MemOp::Sequence(Box::new(SeqOp {
+            field_offset: 0,
+            element: vec![MemOp::Sequence(Box::new(inner))],
+            stride: core::mem::size_of::<Vec<u32>>(),
+            elem_align: core::mem::align_of::<Vec<u32>>(),
+            min_wire: 1,
+            thunks: vvu32_thunks(),
+        }))];
+
+        let value: Vec<Vec<u32>> = vec![vec![1, 2, 3], vec![], vec![42]];
+        let base = core::ptr::from_ref(&value).cast::<u8>();
+
+        let jit = NativeEncode::compile(&program);
+        let got = unsafe { jit.run(base) };
+        let expected = unsafe { compile_encode(&program).run(base) };
+        assert_eq!(got, expected);
+
+        let dec = NativeDecode::compile(&program);
+        let mut slot = MaybeUninit::<Vec<Vec<u32>>>::uninit();
+        unsafe { dec.run(&got, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back, value);
+    }
+
+    /// JIT-encode a program whose root is a single `Vec<u32>` sequence, reading
+    /// the `Vec` handle directly as the base.
+    unsafe fn jit_encode_vec(program: &MemProgram, values: &Vec<u32>) -> Vec<u8> {
+        let jit = NativeEncode::compile(program);
+        unsafe { jit.run(core::ptr::from_ref(values).cast::<u8>()) }
     }
 }
