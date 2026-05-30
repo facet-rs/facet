@@ -24,8 +24,8 @@
 
 use std::alloc;
 
-use phon_ir::ir::{BytesOp, EnumOp, EnumVariantOp, MemOp, MemProgram, OptionOp, SeqOp, fuse};
-use phon_ir::{Access, Construct, Descriptor, Presence, SequenceStorage, Tag};
+use phon_ir::ir::{BytesOp, EnumOp, EnumVariantOp, MapOp, MemOp, MemProgram, OptionOp, SeqOp, fuse};
+use phon_ir::{Access, Construct, Descriptor, MapStorage, Presence, SequenceStorage, Tag};
 use phon_schema::bytes::{Reader, write_u8, write_u32};
 use phon_schema::{DecodeError, Primitive, SchemaKind};
 
@@ -223,6 +223,30 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
             })));
             Ok(())
         }
+        // r[impl ir.memory] — Map<K, V>: a u32 entry count then key+value pairs.
+        (Access::Map(ma), Resolved::Composite(SchemaKind::Map { .. })) => {
+            let MapStorage::Vtable(thunks) = &ma.storage else {
+                return Err(CompactError::Unsupported(
+                    "typed: map needs vtable thunks",
+                ));
+            };
+            // The key and value sub-programs each run at their own value (base 0).
+            let mut key = Vec::new();
+            lower_node(&ma.key, reg, 0, &mut key)?;
+            let mut value = Vec::new();
+            lower_node(&ma.value, reg, 0, &mut value)?;
+            out.push(MemOp::Map(Box::new(MapOp {
+                field_offset: base,
+                key: fuse(key),
+                value: fuse(value),
+                key_size: ma.key.layout.size,
+                key_align: ma.key.layout.align,
+                value_size: ma.value.layout.size,
+                value_align: ma.value.layout.align,
+                thunks: *thunks,
+            })));
+            Ok(())
+        }
         _ => Err(CompactError::Unsupported(
             "typed: only fixed scalars, in-place records, owned sequences, strings, options, and #[repr(int)] enums so far",
         )),
@@ -353,6 +377,28 @@ unsafe fn encode_program(program: &MemProgram, base: *const u8, out: &mut Vec<u8
                 write_u32(out, variant.wire_index);
                 // The payload fields live at base-relative offsets (same base).
                 unsafe { encode_program(&variant.payload, base, out) };
+            }
+            MemOp::Map(m) => {
+                // Safety: the map handle lives at field_offset.
+                let map = unsafe { base.add(m.field_offset) };
+                let n = unsafe { (m.thunks.len)(m.thunks.ctx, map) };
+                write_u32(out, n as u32);
+                // Drive a stateful iterator over the entries, encoding each
+                // (key, value) pair in turn.
+                let it = unsafe { (m.thunks.iter_init)(m.thunks.ctx, map) };
+                loop {
+                    let mut k: *const u8 = core::ptr::null();
+                    let mut v: *const u8 = core::ptr::null();
+                    // Safety: `it` is a live iterator; the out-params are valid.
+                    if !unsafe { (m.thunks.iter_next)(m.thunks.ctx, it, &mut k, &mut v) } {
+                        break;
+                    }
+                    // Safety: `k`/`v` borrow the current entry's key/value.
+                    unsafe { encode_program(&m.key, k, out) };
+                    unsafe { encode_program(&m.value, v, out) };
+                }
+                // Safety: `it` was built by `iter_init` and is freed exactly once.
+                unsafe { (m.thunks.iter_dealloc)(m.thunks.ctx, it) };
             }
         }
     }
@@ -534,9 +580,90 @@ unsafe fn decode_program(program: &MemProgram, r: &mut Reader, base: *mut u8) ->
                 // Safety: payload fields write within the enum's storage at base.
                 unsafe { decode_program(&variant.payload, r, base)? };
             }
+            MemOp::Map(m) => {
+                let n = r.read_len(1)?;
+                // Safety: the map handle lives at field_offset.
+                let map = unsafe { base.add(m.field_offset) };
+                // Initialize the (uninitialized) map with room for `n` entries.
+                // NOTE: a decode error after this point leaks the partial map — the
+                // same trivially-droppable limitation as sequences/options.
+                unsafe { (m.thunks.init_with_capacity)(m.thunks.ctx, map, n) };
+                for _ in 0..n {
+                    // Engine-owned scratch for the key and value: decode each in
+                    // place, then `insert` moves both out (ptr::read), so we free the
+                    // scratch WITHOUT dropping. A zero-size element needs no alloc — a
+                    // dangling-but-aligned pointer suffices.
+                    let (key_scratch, key_layout) = match alloc_scratch(m.key_size, m.key_align) {
+                        Ok(s) => s,
+                        Err(e) => return Err(e),
+                    };
+                    let (value_scratch, value_layout) =
+                        match alloc_scratch(m.value_size, m.value_align) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                free_scratch(key_scratch, key_layout);
+                                return Err(e);
+                            }
+                        };
+                    // Safety: key_scratch is key_size bytes at key_align.
+                    if let Err(e) = unsafe { decode_program(&m.key, r, key_scratch) } {
+                        free_scratch(key_scratch, key_layout);
+                        free_scratch(value_scratch, value_layout);
+                        return Err(e);
+                    }
+                    // Safety: value_scratch is value_size bytes at value_align.
+                    if let Err(e) = unsafe { decode_program(&m.value, r, value_scratch) } {
+                        free_scratch(key_scratch, key_layout);
+                        free_scratch(value_scratch, value_layout);
+                        return Err(e);
+                    }
+                    // Safety: both scratch buffers hold initialized values; `insert`
+                    // moves them into the map.
+                    unsafe {
+                        (m.thunks.insert)(m.thunks.ctx, map, key_scratch, value_scratch);
+                    }
+                    // The key and value were moved into the map; free without dropping.
+                    free_scratch(key_scratch, key_layout);
+                    free_scratch(value_scratch, value_layout);
+                }
+                // A repeated key collapses two entries into one — reject it, matching
+                // the dynamic codec's duplicate-key rejection (the oracle).
+                if unsafe { (m.thunks.len)(m.thunks.ctx, map) } != n {
+                    return Err(CompactError::Decode(DecodeError::DuplicateKey));
+                }
+            }
         }
     }
     Ok(())
+}
+
+/// Allocate an engine-owned scratch buffer of `size`/`align` for a decoded
+/// key/value before it is moved into a map. A zero-size element needs no
+/// allocation: a dangling-but-aligned pointer suffices (and `free_scratch` then
+/// does nothing for it).
+fn alloc_scratch(size: usize, align: usize) -> Result<(*mut u8, Option<alloc::Layout>)> {
+    if size == 0 {
+        Ok((align as *mut u8, None))
+    } else {
+        let layout = alloc::Layout::from_size_align(size, align)
+            .map_err(|_| CompactError::Decode(DecodeError::Malformed("map scratch layout overflow")))?;
+        // Safety: size > 0.
+        let buf = unsafe { alloc::alloc(layout) };
+        if buf.is_null() {
+            alloc::handle_alloc_error(layout);
+        }
+        Ok((buf, Some(layout)))
+    }
+}
+
+/// Free a scratch buffer from [`alloc_scratch`] WITHOUT dropping its contents
+/// (ownership was moved into the map by `insert`). A `None` layout is a zero-size
+/// dangling pointer that was never allocated.
+fn free_scratch(buf: *mut u8, layout: Option<alloc::Layout>) {
+    if let Some(layout) = layout {
+        // Safety: `buf` was allocated by `alloc_scratch` with this exact layout.
+        unsafe { alloc::dealloc(buf, layout) };
+    }
 }
 
 /// Lower `descriptor` and decode `bytes` into the value at `base` in one step.

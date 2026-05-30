@@ -135,6 +135,14 @@ pub enum MemOp {
     /// discriminant, then runs the variant's payload program. Data-directed: the
     /// active arm is chosen at run time. See [`EnumOp`].
     Enum(Box<EnumOp>),
+    /// An owned map (`BTreeMap<K, V>`, `HashMap<K, V>`, …) at `field_offset`: a
+    /// `u32` entry count then, per entry, the key decoded by its own program then
+    /// the value decoded by its own program. Data-directed: the count drives a
+    /// run-time loop. Encode reads the entry count and iterates the entries through
+    /// a stateful iterator; decode initializes the map with capacity, then for each
+    /// entry decodes a key+value into engine scratch and inserts (moving both in).
+    /// See [`MapOp`].
+    Map(Box<MapOp>),
 }
 
 /// An owned-sequence op's payload (boxed in [`MemOp::Sequence`] to keep `MemOp`
@@ -286,6 +294,69 @@ pub struct EnumVariantOp {
     pub payload: MemProgram,
 }
 
+/// An owned-map op's payload (boxed in [`MemOp::Map`]). The wire form is a `u32`
+/// entry count then, per entry, the key value then the value value (each by its
+/// own sub-program). The engine never assumes the map's in-memory layout: it
+/// reads length, iterates entries, initializes with capacity, and inserts through
+/// the [`MapThunks`] vtable. Mirrors [`OptionOp`] with a key+value sub-program, a
+/// stateful encode iterator, and init+insert on decode.
+#[derive(Clone, Debug)]
+pub struct MapOp {
+    /// Where the map handle lives, relative to the base.
+    pub field_offset: usize,
+    /// How to encode/decode one key (offsets relative to the key value).
+    pub key: MemProgram,
+    /// How to encode/decode one value (offsets relative to the value value).
+    pub value: MemProgram,
+    /// The key type's size and alignment — the engine allocates a scratch buffer of
+    /// this layout on decode, fills it with the key program, then moves it into the
+    /// map via `insert`.
+    pub key_size: usize,
+    /// Alignment of the key type (for the decode scratch buffer).
+    pub key_align: usize,
+    /// The value type's size and alignment (decode scratch buffer).
+    pub value_size: usize,
+    /// Alignment of the value type (for the decode scratch buffer).
+    pub value_align: usize,
+    /// Type-erased operations on the map handle (front-door bound).
+    pub thunks: MapThunks,
+}
+
+/// Type-erased operations on an owned map handle, supplied by the front door
+/// (`r[descriptors.thunk-binding]`), mirroring [`OptionThunks`]. The engine never
+/// pokes the map's in-memory layout directly — it calls these. `ctx` is an opaque
+/// per-type pointer (the map's def) the engine passes back untouched.
+///
+/// Encode is driven by a stateful iterator: `iter_init` builds it, `iter_next`
+/// advances it (yielding borrowed key/value pointers), and `iter_dealloc` frees
+/// it. Decode initializes the map with `init_with_capacity`, then `insert`s each
+/// decoded pair (moving the key and value out of engine scratch).
+#[derive(Clone, Copy, Debug)]
+pub struct MapThunks {
+    /// Opaque per-type context, passed to every thunk.
+    pub ctx: *const (),
+    /// The map's current entry count.
+    pub len: unsafe extern "C" fn(ctx: *const (), map: *const u8) -> usize,
+    /// Initialize the uninitialized map at `map` with room for `cap` entries.
+    pub init_with_capacity: unsafe extern "C" fn(ctx: *const (), map: *mut u8, cap: usize),
+    /// Insert `(*key, *value)` into the initialized map at `map`, moving the key and
+    /// value out of their buffers (the engine then frees both without dropping).
+    pub insert: unsafe extern "C" fn(ctx: *const (), map: *mut u8, key: *mut u8, value: *mut u8),
+    /// Build a stateful iterator over the entries of the initialized map at `map`.
+    pub iter_init: unsafe extern "C" fn(ctx: *const (), map: *const u8) -> *mut (),
+    /// Advance the iterator, writing the next entry's borrowed key and value
+    /// pointers to `key_out`/`value_out` and returning `true`, or returning `false`
+    /// at the end.
+    pub iter_next: unsafe extern "C" fn(
+        ctx: *const (),
+        iter: *mut (),
+        key_out: *mut *const u8,
+        value_out: *mut *const u8,
+    ) -> bool,
+    /// Free the iterator built by `iter_init`.
+    pub iter_dealloc: unsafe extern "C" fn(ctx: *const (), iter: *mut ()),
+}
+
 /// Coalesce adjacent scalar copies that are contiguous in *both* the wire and
 /// memory into one larger copy — the specialization the IR exists for. A flat
 /// struct whose wire layout matches its memory layout collapses to a single
@@ -325,7 +396,11 @@ pub fn fuse(program: MemProgram) -> MemProgram {
             }
             // Variable-length / data-directed ops make the static wire position
             // unknown after them.
-            seq @ (MemOp::Sequence(_) | MemOp::Bytes(_) | MemOp::Option(_) | MemOp::Enum(_)) => {
+            seq @ (MemOp::Sequence(_)
+            | MemOp::Bytes(_)
+            | MemOp::Option(_)
+            | MemOp::Enum(_)
+            | MemOp::Map(_)) => {
                 out.push(seq);
                 wire_pos = None;
             }

@@ -442,6 +442,7 @@ impl Compiler {
                     });
                     self.enum_fixups.push(EnumFixup { prog_index, slot, enuminfo });
                 }
+                MemOp::Map(_) => panic!("phon-jit: maps are interpreter-only for now"),
             }
         }
         let done_start = self.code.len();
@@ -458,6 +459,7 @@ impl Compiler {
                 MemOp::Bytes(_) => BYTES_CONT,
                 MemOp::Option(_) => OPTION_CONT,
                 MemOp::Enum(_) => ENUM_CONT,
+                MemOp::Map(_) => unreachable!("phon-jit: maps are interpreter-only for now"),
             };
             for &rel in relocs {
                 patch_branch26(&mut self.code, op_start + rel, next);
@@ -966,6 +968,7 @@ impl EncCompiler {
                     });
                     self.enum_fixups.push(EnumFixup { prog_index, slot, enuminfo });
                 }
+                MemOp::Map(_) => panic!("phon-jit: maps are interpreter-only for now"),
             }
         }
         let done_start = self.code.len();
@@ -979,6 +982,7 @@ impl EncCompiler {
                 MemOp::Bytes(_) => BYTES_ENC_CONT,
                 MemOp::Option(_) => OPTION_ENC_CONT,
                 MemOp::Enum(_) => ENUM_ENC_CONT,
+                MemOp::Map(_) => unreachable!("phon-jit: maps are interpreter-only for now"),
             };
             for &rel in relocs {
                 patch_branch26(&mut self.code, op_start + rel, next);

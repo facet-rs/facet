@@ -22,12 +22,13 @@ use std::collections::HashMap;
 use std::fmt;
 
 use facet::{
-    Def, EnumRepr, EnumType, Facet, ListDef, OptionDef, PtrConst, PtrMut, PtrUninit, ScalarType,
-    Shape, StructKind, Type, UserType,
+    Def, EnumRepr, EnumType, Facet, ListDef, MapDef, OptionDef, PtrConst, PtrMut, PtrUninit,
+    ScalarType, Shape, StructKind, Type, UserType,
 };
 use phon_ir::{
-    Access, Construct, Descriptor, EnumAccess, FieldAccess, Layout, OptionAccess, OptionThunks,
-    Presence, RecordAccess, SeqThunks, SequenceAccess, SequenceStorage, Tag, VariantAccess,
+    Access, Construct, Descriptor, EnumAccess, FieldAccess, Layout, MapAccess, MapStorage,
+    MapThunks, OptionAccess, OptionThunks, Presence, RecordAccess, SeqThunks, SequenceAccess,
+    SequenceStorage, Tag, VariantAccess,
 };
 use phon_schema::{
     Field, Primitive, Schema, SchemaId, SchemaKind, SchemaRef, Variant, VariantPayload,
@@ -195,12 +196,15 @@ impl Builder {
         } else if let Some(opt) = option_def(shape) {
             let key = self.intern_option(opt)?;
             Ok(SchemaRef::concrete(SchemaId(key as u64)))
+        } else if let Some(map_def) = map_def(shape) {
+            let key = self.intern_map(map_def)?;
+            Ok(SchemaRef::concrete(SchemaId(key as u64)))
         } else if let Some(et) = enum_type(shape) {
             let key = self.intern_enum(shape, et)?;
             Ok(SchemaRef::concrete(SchemaId(key as u64)))
         } else {
             Err(DeriveError::Unsupported(
-                "derive: only structs, lists, options, enums, and fixed scalars so far",
+                "derive: only structs, lists, options, maps, enums, and fixed scalars so far",
             ))
         }
     }
@@ -241,6 +245,27 @@ impl Builder {
             kind: SchemaKind::Option { element },
         });
         Ok(key)
+    }
+
+    /// Intern a `Map<K, V>` schema (e.g. `BTreeMap<K, V>`, `HashMap<K, V>`),
+    /// returning its provisional key. The key and value references are resolved
+    /// first, then a `Map` schema is appended. Interned by the `MapDef` pointer so
+    /// two maps of the same `K`/`V` dedup.
+    fn intern_map(&mut self, map_def: &'static MapDef) -> Result<usize, DeriveError> {
+        let ptr = core::ptr::from_ref(map_def) as usize;
+        if let Some(&k) = self.by_shape.get(&ptr) {
+            return Ok(k);
+        }
+        let key = self.ref_of(map_def.k())?;
+        let value = self.ref_of(map_def.v())?;
+        let slot = self.protos.len();
+        self.by_shape.insert(ptr, slot);
+        self.protos.push(Schema {
+            id: SchemaId(slot as u64),
+            type_params: Vec::new(),
+            kind: SchemaKind::Map { key, value },
+        });
+        Ok(slot)
     }
 
     /// Intern an enum schema, returning its provisional key. Only `#[repr(int)]`
@@ -365,6 +390,20 @@ fn build_descriptor(
             }),
         });
     }
+    if let Some(map_def) = map_def(shape) {
+        let real = real_ids[by_shape[&(core::ptr::from_ref(map_def) as usize)]];
+        let key = build_descriptor(map_def.k(), by_shape, real_ids)?;
+        let value = build_descriptor(map_def.v(), by_shape, real_ids)?;
+        return Ok(Descriptor {
+            schema: SchemaRef::concrete(real),
+            layout: Layout { size, align },
+            access: Access::Map(MapAccess {
+                key: Box::new(key),
+                value: Box::new(value),
+                storage: MapStorage::Vtable(map_thunks(map_def)),
+            }),
+        });
+    }
     if let Some(et) = enum_type(shape) {
         let width = enum_repr_width(et.enum_repr).ok_or(DeriveError::Unsupported(
             "derive: only #[repr(uN/iN)] enums",
@@ -452,6 +491,15 @@ fn list_def(shape: &'static Shape) -> Option<&'static ListDef> {
 fn option_def(shape: &'static Shape) -> Option<&'static OptionDef> {
     match &shape.def {
         Def::Option(opt) => Some(opt),
+        _ => None,
+    }
+}
+
+/// The `&'static MapDef` behind a map-typed shape (`BTreeMap<K, V>`,
+/// `HashMap<K, V>`, …), or `None`.
+fn map_def(shape: &'static Shape) -> Option<&'static MapDef> {
+    match &shape.def {
+        Def::Map(map_def) => Some(map_def),
         _ => None,
     }
 }
@@ -636,6 +684,145 @@ unsafe extern "C" fn opt_init_none(ctx: *const (), option: *mut u8) {
     let opt = unsafe { &*ctx.cast::<OptionDef>() };
     // Safety: `option` is uninitialized storage for the option.
     unsafe { (opt.vtable.init_none)(PtrUninit::new(option)) };
+}
+
+// ============================================================================
+// Map thunks
+// ============================================================================
+//
+// Like the sequence and option thunks, the engine drives an owned map through
+// type-erased `unsafe extern "C"` function pointers, passing the field's
+// `&'static MapDef` as `ctx`. Each adapter casts it back, wraps the engine's raw
+// pointers in facet's wide-pointer types, and calls the matching `MapVTable`
+// operation — so the engine never assumes the map's in-memory layout.
+//
+// The encode iterator needs care: facet's `init_with_value` returns a *wide*
+// `PtrMut` (16 bytes) that cannot pass through the engine as a thin `*mut ()`. We
+// box it: `map_iter_init` returns `Box::into_raw(Box::new(iter_ptr_mut))`, and
+// `map_iter_next`/`map_iter_dealloc` reach the `PtrMut` behind that box (it is
+// `Copy`, and the iterator state lives behind it, so passing a copy advances it).
+//
+// Spec: `r[descriptors.thunk-binding]`.
+
+/// Build the [`MapThunks`] for a map field, with the field's `MapDef` as `ctx`.
+fn map_thunks(map_def: &'static MapDef) -> MapThunks {
+    MapThunks {
+        ctx: core::ptr::from_ref(map_def).cast::<()>(),
+        len: map_len,
+        init_with_capacity: map_init_with_capacity,
+        insert: map_insert,
+        iter_init: map_iter_init,
+        iter_next: map_iter_next,
+        iter_dealloc: map_iter_dealloc,
+    }
+}
+
+/// The map's current entry count, via the `MapVTable`'s `len`.
+///
+/// # Safety
+/// `ctx` must be a `&'static MapDef` (as set by [`map_thunks`]); `map` must point
+/// to an initialized map handle of the matching type.
+unsafe extern "C" fn map_len(ctx: *const (), map: *const u8) -> usize {
+    // Safety: `ctx` is the `&'static MapDef` set in `map_thunks`.
+    let map_def = unsafe { &*ctx.cast::<MapDef>() };
+    // Safety: `map` is an initialized handle of the map's type.
+    unsafe { (map_def.vtable.len)(PtrConst::new(map)) }
+}
+
+/// Initialize the uninitialized map at `map` with room for `cap` entries, via
+/// `init_in_place_with_capacity`.
+///
+/// # Safety
+/// `ctx` must be a `&'static MapDef`; `map` must be uninitialized storage for the
+/// map handle of the matching type.
+unsafe extern "C" fn map_init_with_capacity(ctx: *const (), map: *mut u8, cap: usize) {
+    // Safety: `ctx` is the `&'static MapDef`.
+    let map_def = unsafe { &*ctx.cast::<MapDef>() };
+    // Safety: `map` is uninitialized storage for the map.
+    unsafe { (map_def.vtable.init_in_place_with_capacity)(PtrUninit::new(map), cap) };
+}
+
+/// Insert `(*key, *value)` into the initialized map at `map`, moving the key and
+/// value out of their buffers (the engine then frees both without dropping), via
+/// `insert`.
+///
+/// # Safety
+/// `ctx` must be a `&'static MapDef`; `map` must be an initialized map handle;
+/// `key`/`value` must point to initialized values of the map's key/value types
+/// that the engine then frees without dropping (ownership is moved in here).
+unsafe extern "C" fn map_insert(ctx: *const (), map: *mut u8, key: *mut u8, value: *mut u8) {
+    // Safety: `ctx` is the `&'static MapDef`.
+    let map_def = unsafe { &*ctx.cast::<MapDef>() };
+    // Safety: `map` is initialized; `key`/`value` hold the entry to move in.
+    unsafe { (map_def.vtable.insert)(PtrMut::new(map), PtrMut::new(key), PtrMut::new(value)) };
+}
+
+/// Build a boxed iterator over the entries of the initialized map at `map`, via
+/// the iter vtable's `init_with_value`. The returned wide `PtrMut` is boxed so the
+/// engine can carry it as a thin `*mut ()`.
+///
+/// # Safety
+/// `ctx` must be a `&'static MapDef`; `map` must be an initialized map handle.
+unsafe extern "C" fn map_iter_init(ctx: *const (), map: *const u8) -> *mut () {
+    // Safety: `ctx` is the `&'static MapDef`.
+    let map_def = unsafe { &*ctx.cast::<MapDef>() };
+    let init = map_def
+        .vtable
+        .iter_vtable
+        .init_with_value
+        .expect("map iterator has no init_with_value; cannot encode through the typed path");
+    // Safety: `map` is an initialized handle of the map's type.
+    let it: PtrMut = unsafe { init(PtrConst::new(map)) };
+    // Box the wide `PtrMut` so it fits the engine's thin `*mut ()` handle.
+    Box::into_raw(Box::new(it)).cast::<()>()
+}
+
+/// Advance the boxed iterator, writing the next entry's borrowed key/value byte
+/// pointers and returning `true`, or returning `false` at the end. Via the iter
+/// vtable's `next` (a Rust-ABI fn pointer, called directly).
+///
+/// # Safety
+/// `ctx` must be a `&'static MapDef`; `iter` must be a boxed `PtrMut` from
+/// [`map_iter_init`]; `key_out`/`value_out` must be writable.
+unsafe extern "C" fn map_iter_next(
+    ctx: *const (),
+    iter: *mut (),
+    key_out: *mut *const u8,
+    value_out: *mut *const u8,
+) -> bool {
+    // Safety: `ctx` is the `&'static MapDef`.
+    let map_def = unsafe { &*ctx.cast::<MapDef>() };
+    // Safety: `iter` is the boxed `PtrMut` from `map_iter_init`.
+    let bx = iter.cast::<PtrMut>();
+    // `PtrMut` is `Copy`; the iterator state lives behind it, so passing a copy
+    // advances it.
+    match unsafe { (map_def.vtable.iter_vtable.next)(*bx) } {
+        Some((k, v)) => {
+            // Safety: the out-params are writable.
+            unsafe {
+                *key_out = k.as_byte_ptr();
+                *value_out = v.as_byte_ptr();
+            }
+            true
+        }
+        None => false,
+    }
+}
+
+/// Free the boxed iterator built by [`map_iter_init`], via the iter vtable's
+/// `dealloc` (then the `Box` drops).
+///
+/// # Safety
+/// `ctx` must be a `&'static MapDef`; `iter` must be a boxed `PtrMut` from
+/// [`map_iter_init`], freed exactly once.
+unsafe extern "C" fn map_iter_dealloc(ctx: *const (), iter: *mut ()) {
+    // Safety: `ctx` is the `&'static MapDef`.
+    let map_def = unsafe { &*ctx.cast::<MapDef>() };
+    // Safety: `iter` is the boxed `PtrMut` from `map_iter_init`, taken back exactly
+    // once; the `Box` is dropped at the end of this scope.
+    let bx = unsafe { Box::from_raw(iter.cast::<PtrMut>()) };
+    // Safety: `*bx` is the live iterator built by `init_with_value`.
+    unsafe { (map_def.vtable.iter_vtable.dealloc)(*bx) };
 }
 
 // ============================================================================

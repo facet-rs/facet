@@ -17,7 +17,7 @@
 
 use phon_schema::SchemaRef;
 
-use crate::ir::{OptionThunks, SeqThunks};
+use crate::ir::{MapThunks, OptionThunks, SeqThunks};
 
 /// A node of the descriptor tree: the schema it realizes, its process-local
 /// memory layout, and how to read and construct it.
@@ -210,17 +210,30 @@ pub enum SequenceStorage {
     Vtable(SeqThunks),
 }
 
-/// Key/value pairs accessed through thunks.
+/// Key/value pairs: the key and value descriptors and how the map is stored.
 #[derive(Clone, Debug)]
 pub struct MapAccess {
     pub key: Box<Descriptor>,
     pub value: Box<Descriptor>,
-    /// Encode: entry count.
-    pub len: Thunk,
-    /// Encode: yield `(key, value)` pairs.
-    pub iterate: Thunk,
-    /// Decode: insert a decoded pair.
-    pub insert: Thunk,
+    pub storage: MapStorage,
+}
+
+/// How a map's entries are read and constructed in memory.
+#[derive(Clone, Debug)]
+pub enum MapStorage {
+    /// Named same-language thunks: `len` (entry count, encode), `iterate` (yield
+    /// `(key, value)` pairs, encode), `insert` (a decoded pair, decode). The
+    /// spec'd, binding-resolved representation.
+    Thunk {
+        len: Thunk,
+        iterate: Thunk,
+        insert: Thunk,
+    },
+    /// An owned map reached through the front door's bound map vtable
+    /// (`BTreeMap<K, V>`, `HashMap<K, V>`, …), whose in-memory layout the engine
+    /// does not assume. The typed path's owned-map representation, mirroring
+    /// [`SequenceStorage::Vtable`] (`r[descriptors.thunk-binding]`).
+    Vtable(MapThunks),
 }
 
 /// A runtime-shape tensor.
