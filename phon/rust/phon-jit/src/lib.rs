@@ -30,3 +30,17 @@ pub mod lower;
 
 // r[impl exec.jit-optional]
 pub use lower::{CompiledDecode, CompiledEncode, compile_decode, compile_encode};
+
+/// Stencil machine code extracted from clang's object output at build time
+/// (`build.rs`). Empty on targets without the native backend.
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+mod stencils {
+    include!(concat!(env!("OUT_DIR"), "/stencils.rs"));
+}
+
+/// The native execution substrate: run compiler-emitted machine code from
+/// `MAP_JIT` memory. The foundation the copy-and-patch backend builds on.
+///
+/// Spec: `r[ir.stencils]`.
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+pub mod native;

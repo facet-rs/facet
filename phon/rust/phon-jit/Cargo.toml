@@ -9,3 +9,9 @@ description = "phon's optional copy-and-patch JIT: lowers the IR to machine code
 [dependencies]
 phon-ir.workspace = true
 phon-schema.workspace = true
+
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
+libc = "0.2"
+
+[build-dependencies]
+object = "0.39"
