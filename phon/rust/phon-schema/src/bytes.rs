@@ -201,6 +201,11 @@ impl<'a> Reader<'a> {
         Ok(slice)
     }
 
+    /// Read exactly `n` raw bytes (bounds-checked), borrowed from the buffer.
+    pub fn read_slice(&mut self, n: usize) -> Result<&'a [u8], DecodeError> {
+        self.take(n)
+    }
+
     pub fn read_u8(&mut self) -> Result<u8, DecodeError> {
         Ok(self.take(1)?[0])
     }

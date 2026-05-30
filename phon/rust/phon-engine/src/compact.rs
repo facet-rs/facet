@@ -185,7 +185,7 @@ pub(crate) fn resolve(reg: &Registry, r: &SchemaRef) -> Result<Resolved> {
 // ============================================================================
 
 // r[impl compact.alignment]
-fn alignment(p: Primitive) -> usize {
+pub(crate) fn alignment(p: Primitive) -> usize {
     match p {
         Primitive::U16 | Primitive::I16 => 2,
         Primitive::U32 | Primitive::I32 | Primitive::F32 | Primitive::Char => 4,
@@ -195,13 +195,13 @@ fn alignment(p: Primitive) -> usize {
     }
 }
 
-fn pad_to(out: &mut Vec<u8>, n: usize) {
+pub(crate) fn pad_to(out: &mut Vec<u8>, n: usize) {
     while !out.len().is_multiple_of(n) {
         out.push(0);
     }
 }
 
-fn skip_pad(r: &mut Reader, n: usize) -> core::result::Result<(), DecodeError> {
+pub(crate) fn skip_pad(r: &mut Reader, n: usize) -> core::result::Result<(), DecodeError> {
     while !r.position().is_multiple_of(n) {
         r.read_u8()?;
     }

@@ -9,13 +9,13 @@
 //! Spec: `docs/content/spec.md` — "The descriptor model" and "The intermediate
 //! representation".
 
-/// The descriptor model: how a Rust implementation reads and constructs its own
-/// in-memory values for a given schema. Direct facts (offsets, strides, tags,
-/// niches) and thunks (named same-language helpers). Process-local, never
-/// transmitted, never hashed.
-///
-/// Spec: "The descriptor model" (`r[descriptors.*]`).
-pub mod descriptor {}
+pub mod descriptor;
+
+pub use descriptor::{
+    Access, Construct, Descriptor, EnumAccess, FieldAccess, Layout, MapAccess, OptionAccess,
+    Presence, RecordAccess, SequenceAccess, SequenceStorage, Tag, TensorAccess, Thunk,
+    VariantAccess,
+};
 
 /// The intermediate representation in its two forms: the value-shaped tree
 /// produced by planning, and the linear op stream it lowers to. One op
