@@ -401,6 +401,25 @@ unsafe extern "C" fn vec_capacity<T>(ptr: PtrConst) -> usize {
     }
 }
 
+/// Construct a `Vec<T>` in place from raw parts (for engine-owned direct-fill).
+///
+/// # Safety
+/// - `list` must point to uninitialized memory of sufficient size for `Vec<T>`
+/// - `ptr` must point to a buffer allocated as `[T; capacity]` (or be a dangling
+///   aligned pointer when `capacity` is 0), with the first `len` elements
+///   initialized, and `len <= capacity`
+unsafe extern "C" fn vec_from_raw_parts<T>(
+    list: PtrUninit,
+    ptr: PtrMut,
+    len: usize,
+    capacity: usize,
+) {
+    unsafe {
+        let data = ptr.as_mut_byte_ptr() as *mut T;
+        list.put(Vec::<T>::from_raw_parts(data, len, capacity));
+    }
+}
+
 unsafe extern "C" fn vec_iter_init<T>(ptr: PtrConst) -> PtrMut {
     unsafe {
         let vec = ptr.get::<Vec<T>>();
@@ -453,6 +472,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Vec<T> {
                     .as_mut_ptr_typed(vec_as_mut_ptr_typed::<T>)
                     .reserve(vec_reserve::<T>)
                     .capacity(vec_capacity::<T>)
+                    .from_raw_parts(vec_from_raw_parts::<T>)
                     .iter_vtable(IterVTable {
                         init_with_value: Some(vec_iter_init::<T>),
                         next: vec_iter_next::<T>,

@@ -92,6 +92,12 @@ impl ListDef {
         self.type_ops.and_then(|ops| ops.capacity)
     }
 
+    /// Returns the from_raw_parts function for engine-owned direct-fill.
+    #[inline]
+    pub fn from_raw_parts(&self) -> Option<ListFromRawPartsFn> {
+        self.type_ops.and_then(|ops| ops.from_raw_parts)
+    }
+
     /// Returns the iterator vtable, checking type_ops first.
     ///
     /// Returns `None` if no type_ops is set (no iterator support).
@@ -231,6 +237,25 @@ pub type ListReserveFn = unsafe extern "C" fn(list: PtrMut, additional: usize);
 /// The `list` parameter must point to aligned, initialized memory of the correct type.
 pub type ListCapacityFn = unsafe extern "C" fn(list: PtrConst) -> usize;
 
+/// Construct a list in place from raw parts (for engine-owned direct-fill).
+///
+/// Writes `Vec::from_raw_parts(ptr, len, capacity)` (or the equivalent for the
+/// concrete list type) into the uninitialized `list`. The buffer at `ptr` must
+/// have been allocated with the element type's array layout for `capacity`
+/// elements, and the first `len` of them must be initialized — the list adopts
+/// the buffer and takes ownership of the allocation.
+///
+/// # Safety
+///
+/// - `list` must point to uninitialized memory of sufficient size and alignment
+///   for the concrete list type.
+/// - `ptr` must point to a buffer allocated with the element type's array layout
+///   for `capacity` elements (or be a dangling, aligned pointer when `capacity`
+///   is 0).
+/// - The first `len` elements must be properly initialized, and `len <= capacity`.
+pub type ListFromRawPartsFn =
+    unsafe extern "C" fn(list: PtrUninit, ptr: PtrMut, len: usize, capacity: usize);
+
 //////////////////////////////////////////////////////////////////////
 // ListTypeOps - Per-type operations that must be monomorphized
 //////////////////////////////////////////////////////////////////////
@@ -306,6 +331,13 @@ pub struct ListTypeOps {
     /// - `list` must point to an initialized list
     pub capacity: Option<ListCapacityFn>,
 
+    /// Construct the list from raw parts (per-T, for engine-owned direct-fill).
+    ///
+    /// # Safety
+    /// - `list` must point to uninitialized memory of sufficient size
+    /// - `ptr`/`len`/`capacity` must satisfy [`ListFromRawPartsFn`]'s contract
+    pub from_raw_parts: Option<ListFromRawPartsFn>,
+
     /// Virtual table for list iterator operations (per-T).
     ///
     /// Iterator operations cannot be type-erased because the iterator state
@@ -324,6 +356,7 @@ impl ListTypeOps {
             as_mut_ptr_typed: None,
             reserve: None,
             capacity: None,
+            from_raw_parts: None,
             iter_vtable,
         }
     }
@@ -338,6 +371,7 @@ impl ListTypeOps {
             as_mut_ptr_typed: None,
             reserve: None,
             capacity: None,
+            from_raw_parts: None,
             iter_vtable: None,
         }
     }
@@ -353,6 +387,7 @@ pub struct ListTypeOpsBuilder {
     as_mut_ptr_typed: Option<ListAsMutPtrTypedFn>,
     reserve: Option<ListReserveFn>,
     capacity: Option<ListCapacityFn>,
+    from_raw_parts: Option<ListFromRawPartsFn>,
     iter_vtable: Option<IterVTable<PtrConst>>,
 }
 
@@ -399,6 +434,12 @@ impl ListTypeOpsBuilder {
         self
     }
 
+    /// Set the `from_raw_parts` function (for engine-owned direct-fill).
+    pub const fn from_raw_parts(mut self, f: ListFromRawPartsFn) -> Self {
+        self.from_raw_parts = Some(f);
+        self
+    }
+
     /// Set the iterator vtable.
     pub const fn iter_vtable(mut self, vtable: IterVTable<PtrConst>) -> Self {
         self.iter_vtable = Some(vtable);
@@ -418,6 +459,7 @@ impl ListTypeOpsBuilder {
             as_mut_ptr_typed: self.as_mut_ptr_typed,
             reserve: self.reserve,
             capacity: self.capacity,
+            from_raw_parts: self.from_raw_parts,
             iter_vtable: match self.iter_vtable {
                 Some(vt) => vt,
                 None => panic!("ListTypeOps requires iter_vtable to be set"),
