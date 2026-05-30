@@ -1168,4 +1168,134 @@ mod tests {
                 .unwrap_err();
         assert!(matches!(err, CompactError::Decode(DecodeError::InvalidBool(2))));
     }
+
+    // The `Option<u32>` bridge through the *JIT*: derive -> lower ->
+    // NativeEncode/Decode. JIT encode == interpreter encode (byte-identical), and
+    // JIT decode round-trips, for both presence arms.
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn derived_option_u32_jit_matches_interpreter_and_roundtrips() {
+        use phon_jit::native::{NativeDecode, NativeEncode};
+
+        let d = of::<Maybe>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+        let program = typed::lower(&d.descriptor, &reg).unwrap();
+        let enc = NativeEncode::compile(&program);
+        let dec = NativeDecode::compile(&program);
+
+        for val in [Some(0xABCDu32), None, Some(0u32)] {
+            let m = Maybe { val, tag: 0x77 };
+            let base = core::ptr::from_ref(&m).cast::<u8>();
+
+            let jit_bytes = unsafe { enc.run(base) };
+            let interp_bytes =
+                unsafe { typed::encode(base, &d.descriptor, &reg) }.unwrap();
+            assert_eq!(jit_bytes, interp_bytes, "encode mismatch for {val:?}");
+
+            let mut slot = std::mem::MaybeUninit::<Maybe>::uninit();
+            unsafe { dec.run(&jit_bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+            let back = unsafe { slot.assume_init() };
+            assert_eq!(back.val, val, "roundtrip mismatch for {val:?}");
+            assert_eq!(back.tag, m.tag);
+        }
+    }
+
+    // `Option<String>` through the JIT: the some-arm builds a heap `String` into
+    // the engine scratch buffer, then `init_some` moves it into the `Option`.
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn derived_option_string_jit_matches_interpreter_and_roundtrips() {
+        use phon_jit::native::{NativeDecode, NativeEncode};
+
+        let d = of::<MaybeStr>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+        let program = typed::lower(&d.descriptor, &reg).unwrap();
+        let enc = NativeEncode::compile(&program);
+        let dec = NativeDecode::compile(&program);
+
+        for s in [Some("héllo 🐝 wörld".to_string()), None, Some(String::new())] {
+            let m = MaybeStr { s: s.clone(), n: 0x2A };
+            let base = core::ptr::from_ref(&m).cast::<u8>();
+
+            let jit_bytes = unsafe { enc.run(base) };
+            let interp_bytes =
+                unsafe { typed::encode(base, &d.descriptor, &reg) }.unwrap();
+            assert_eq!(jit_bytes, interp_bytes, "encode mismatch for {s:?}");
+
+            let mut slot = std::mem::MaybeUninit::<MaybeStr>::uninit();
+            unsafe { dec.run(&jit_bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+            let back = unsafe { slot.assume_init() };
+            assert_eq!(back.s, s, "roundtrip mismatch for {s:?}");
+            assert_eq!(back.n, m.n);
+        }
+    }
+
+    // The `#[repr(u8)]` enum bridge through the JIT, all three variant shapes
+    // (unit, scalar payload, struct payload): JIT encode == interpreter encode and
+    // JIT decode round-trips.
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn derived_enum_jit_matches_interpreter_and_roundtrips() {
+        use phon_jit::native::{NativeDecode, NativeEncode};
+
+        let d = of::<Msg>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+        let program = typed::lower(&d.descriptor, &reg).unwrap();
+        let enc = NativeEncode::compile(&program);
+        let dec = NativeDecode::compile(&program);
+
+        for m in [Msg::Ping, Msg::Echo(0xCAFE), Msg::Move { x: 3, y: -4 }] {
+            let base = core::ptr::from_ref(&m).cast::<u8>();
+
+            let jit_bytes = unsafe { enc.run(base) };
+            let interp_bytes =
+                unsafe { typed::encode(base, &d.descriptor, &reg) }.unwrap();
+            assert_eq!(jit_bytes, interp_bytes, "encode mismatch for {m:?}");
+
+            let mut slot = std::mem::MaybeUninit::<Msg>::uninit();
+            unsafe { dec.run(&jit_bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+            let back = unsafe { slot.assume_init() };
+            assert_eq!(back, m, "roundtrip mismatch for {m:?}");
+        }
+    }
+
+    // The JIT must REJECT a hostile enum wire index, never produce a value.
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn derived_enum_jit_rejects_bad_variant_index() {
+        use phon_jit::native::NativeDecode;
+        use phon_schema::DecodeError;
+
+        let d = of::<Msg>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+        let program = typed::lower(&d.descriptor, &reg).unwrap();
+        let dec = NativeDecode::compile(&program);
+
+        // Wire variant index 99 — no such variant.
+        let wire = 99u32.to_le_bytes().to_vec();
+        let mut slot = std::mem::MaybeUninit::<Msg>::uninit();
+        let err = unsafe { dec.run(&wire, slot.as_mut_ptr().cast::<u8>()) }.unwrap_err();
+        // The interpreter is the precise-error path (BadVariantIndex); the JIT
+        // just rejects — it maps an unmatched index to a generic Malformed.
+        assert!(matches!(err, DecodeError::Malformed(_)), "got {err:?}");
+    }
+
+    // The JIT must REJECT a hostile `Option` presence byte, never produce a value.
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn derived_option_jit_rejects_invalid_presence() {
+        use phon_jit::native::NativeDecode;
+        use phon_schema::DecodeError;
+
+        let d = of::<Maybe>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+        let program = typed::lower(&d.descriptor, &reg).unwrap();
+        let dec = NativeDecode::compile(&program);
+
+        // presence byte 2 (neither 0 nor 1) — the JIT carries it into InvalidBool.
+        let wire = vec![2u8];
+        let mut slot = std::mem::MaybeUninit::<Maybe>::uninit();
+        let err = unsafe { dec.run(&wire, slot.as_mut_ptr().cast::<u8>()) }.unwrap_err();
+        assert!(matches!(err, DecodeError::InvalidBool(2)), "got {err:?}");
+    }
 }
