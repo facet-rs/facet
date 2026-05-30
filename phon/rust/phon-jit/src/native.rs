@@ -131,6 +131,9 @@ impl NativeDecode {
                     prog.push(*size as u64);
                     prog.push(*align as u64);
                 }
+                MemOp::Sequence(_) => {
+                    panic!("phon-jit native: sequences are interpreter-only for now")
+                }
             }
         }
         let n_ops = program.len();

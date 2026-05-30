@@ -52,6 +52,7 @@ pub fn compile_decode(program: &MemProgram) -> CompiledDecode {
                 stencil: stencil::scalar_decode,
                 imm: [*offset, *size, *align],
             },
+            MemOp::Sequence(_) => panic!("phon-jit: sequences are interpreter-only for now"),
         })
         .collect();
     CompiledDecode { steps }
@@ -67,6 +68,7 @@ pub fn compile_encode(program: &MemProgram) -> CompiledEncode {
                 stencil: stencil::scalar_encode,
                 imm: [*offset, *size, *align],
             },
+            MemOp::Sequence(_) => panic!("phon-jit: sequences are interpreter-only for now"),
         })
         .collect();
     CompiledEncode { steps }

@@ -17,6 +17,8 @@
 
 use phon_schema::SchemaRef;
 
+use crate::ir::SeqThunks;
+
 /// A node of the descriptor tree: the schema it realizes, its process-local
 /// memory layout, and how to read and construct it.
 #[derive(Clone, Debug)]
@@ -196,6 +198,11 @@ pub enum SequenceStorage {
     /// Non-flat storage: length and per-element access go through thunks (linked
     /// lists, copy-on-write buffers, anything not a contiguous run).
     Thunk { len: Thunk, get: Thunk, push: Thunk },
+    /// An owned contiguous sequence reached through the front door's bound list
+    /// vtable (`Vec<T>`, `String`), whose `(ptr, len, cap)` layout the engine does
+    /// not assume. The typed path's owned-sequence representation
+    /// (`r[descriptors.thunk-binding]`).
+    Vtable(SeqThunks),
 }
 
 /// Key/value pairs accessed through thunks.

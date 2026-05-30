@@ -101,9 +101,9 @@ pub struct EnumArm {
 /// allocate or branch at run time) extend this later.
 pub type MemProgram = Vec<MemOp>;
 
-/// One typed step: a memory move between the wire and a value's layout. The base
-/// pointer is supplied at run time; `offset` is relative to it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// One typed step. The base pointer is supplied at run time; `offset` is relative
+/// to it.
+#[derive(Clone, Debug)]
 pub enum MemOp {
     /// Copy a run of `size` bytes between memory at `offset` and the wire, which
     /// is first padded to `align` (`r[compact.alignment]`). A single scalar, or a
@@ -112,6 +112,50 @@ pub enum MemOp {
     /// host byte order equals the wire's (little-endian), which every phon target
     /// is.
     Scalar { offset: usize, size: usize, align: usize },
+    /// An owned, contiguous sequence (`Vec<T>`, `String` as `Vec<u8>`) at
+    /// `field_offset`: a `u32` count then `count` elements. Decode initializes the
+    /// sequence and fills it; encode reads its length and elements. The element's
+    /// own program runs at each element slot. See [`SeqOp`].
+    Sequence(Box<SeqOp>),
+}
+
+/// An owned-sequence op's payload (boxed in [`MemOp::Sequence`] to keep `MemOp`
+/// small).
+#[derive(Clone, Debug)]
+pub struct SeqOp {
+    /// Where the sequence handle (e.g. the `Vec`) lives, relative to the base.
+    pub field_offset: usize,
+    /// How to encode/decode one element, run at each element slot (offsets
+    /// relative to the element).
+    pub element: MemProgram,
+    /// Bytes between consecutive elements in the sequence's contiguous storage
+    /// (the element type's size).
+    pub stride: usize,
+    /// Minimum wire bytes one element occupies (for length-vs-remaining checks,
+    /// `r[validate.lengths]`).
+    pub min_wire: usize,
+    /// Type-erased operations on the sequence handle (front-door bound).
+    pub thunks: SeqThunks,
+}
+
+/// Type-erased operations on an owned sequence handle, supplied by the front door
+/// (`r[descriptors.thunk-binding]`). A `Vec`'s in-memory layout is not something
+/// the engine may assume, so it never pokes the handle directly — it calls these.
+/// `ctx` is an opaque per-type pointer the front door understands (e.g. the
+/// element's list vtable); the engine passes it back untouched.
+#[derive(Clone, Copy, Debug)]
+pub struct SeqThunks {
+    /// Opaque per-type context, passed to every thunk.
+    pub ctx: *const (),
+    /// Initialize an empty sequence at `list` with `capacity`, returning a pointer
+    /// to its (uninitialized) contiguous element storage.
+    pub init: unsafe extern "C" fn(ctx: *const (), list: *mut u8, capacity: usize) -> *mut u8,
+    /// Publish that `len` elements have been written into the storage.
+    pub set_len: unsafe extern "C" fn(ctx: *const (), list: *mut u8, len: usize),
+    /// The sequence's current element count.
+    pub len: unsafe extern "C" fn(ctx: *const (), list: *const u8) -> usize,
+    /// A pointer to the sequence's contiguous element storage (for reading).
+    pub data: unsafe extern "C" fn(ctx: *const (), list: *const u8) -> *const u8,
 }
 
 /// Coalesce adjacent scalar copies that are contiguous in *both* the wire and
@@ -129,23 +173,33 @@ pub enum MemOp {
 #[must_use]
 pub fn fuse(program: MemProgram) -> MemProgram {
     let mut out: MemProgram = Vec::with_capacity(program.len());
-    let mut wire_pos: usize = 0;
+    // `None` once a variable-length op (a sequence) makes the static wire
+    // position unknown; scalars after that can't be proven contiguous, so they
+    // aren't fused (their padding is still handled at run time).
+    let mut wire_pos: Option<usize> = Some(0);
     for op in program {
-        let MemOp::Scalar { offset, size, align } = op;
-        let pad = align.wrapping_sub(wire_pos & (align - 1)) & (align - 1);
-        let fuses = pad == 0
-            && matches!(
-                out.last(),
-                Some(MemOp::Scalar { offset: po, size: ps, .. }) if po + ps == offset
-            );
-        if fuses {
-            if let Some(MemOp::Scalar { size: ps, .. }) = out.last_mut() {
-                *ps += size;
+        match op {
+            MemOp::Scalar { offset, size, align } => {
+                let pad = wire_pos.map(|p| align.wrapping_sub(p & (align - 1)) & (align - 1));
+                let fuses = pad == Some(0)
+                    && matches!(
+                        out.last(),
+                        Some(MemOp::Scalar { offset: po, size: ps, .. }) if po + ps == offset
+                    );
+                if fuses {
+                    if let Some(MemOp::Scalar { size: ps, .. }) = out.last_mut() {
+                        *ps += size;
+                    }
+                } else {
+                    out.push(MemOp::Scalar { offset, size, align });
+                }
+                wire_pos = wire_pos.map(|p| p + pad.unwrap_or(0) + size);
             }
-        } else {
-            out.push(op);
+            seq @ MemOp::Sequence(_) => {
+                out.push(seq);
+                wire_pos = None;
+            }
         }
-        wire_pos += pad + size;
     }
     out
 }

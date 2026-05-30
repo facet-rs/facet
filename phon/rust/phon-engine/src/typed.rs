@@ -22,9 +22,9 @@
 //!
 //! Spec: "The descriptor model", "Compact mode", `r[ir.memory]`.
 
-use phon_ir::ir::{MemOp, MemProgram, fuse};
-use phon_ir::{Access, Construct, Descriptor};
-use phon_schema::bytes::Reader;
+use phon_ir::ir::{MemOp, MemProgram, SeqOp, fuse};
+use phon_ir::{Access, Construct, Descriptor, SequenceStorage};
+use phon_schema::bytes::{Reader, write_u32};
 use phon_schema::{DecodeError, Primitive, SchemaKind};
 
 use crate::compact::{self, CompactError, Registry, Resolved, alignment, pad_to, skip_pad};
@@ -109,8 +109,30 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
             }
             Ok(())
         }
+        // r[impl ir.memory]
+        (
+            Access::Sequence(seq),
+            Resolved::Composite(SchemaKind::List { .. } | SchemaKind::Set { .. }),
+        ) => {
+            let SequenceStorage::Vtable(thunks) = &seq.storage else {
+                return Err(CompactError::Unsupported(
+                    "typed: only vtable-backed owned sequences so far",
+                ));
+            };
+            // Lower the element once; it runs at each element slot (base 0).
+            let mut element = Vec::new();
+            lower_node(&seq.element, reg, 0, &mut element)?;
+            out.push(MemOp::Sequence(Box::new(SeqOp {
+                field_offset: base,
+                element: fuse(element),
+                stride: seq.element.layout.size,
+                min_wire: 1,
+                thunks: *thunks,
+            })));
+            Ok(())
+        }
         _ => Err(CompactError::Unsupported(
-            "typed: only fixed scalars and in-place records so far",
+            "typed: only fixed scalars, in-place records, and owned sequences so far",
         )),
     }
 }
@@ -127,17 +149,33 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
 #[must_use]
 pub unsafe fn encode_with(program: &MemProgram, base: *const u8) -> Vec<u8> {
     let mut out = Vec::new();
+    // Safety: forwarded from this function's contract.
+    unsafe { encode_program(program, base, &mut out) };
+    out
+}
+
+unsafe fn encode_program(program: &MemProgram, base: *const u8, out: &mut Vec<u8>) {
     for op in program {
         match op {
             MemOp::Scalar { offset, size, align } => {
-                pad_to(&mut out, *align);
+                pad_to(out, *align);
                 // Safety: the value is valid for reads over this field's bytes.
                 let src = unsafe { core::slice::from_raw_parts(base.add(*offset), *size) };
                 out.extend_from_slice(src);
             }
+            MemOp::Sequence(s) => {
+                // Safety: the sequence handle lives at `field_offset`.
+                let list = unsafe { base.add(s.field_offset) };
+                let n = unsafe { (s.thunks.len)(s.thunks.ctx, list) };
+                write_u32(out, n as u32);
+                let data = unsafe { (s.thunks.data)(s.thunks.ctx, list) };
+                for i in 0..n {
+                    // Safety: element `i` lives at `data + i*stride`.
+                    unsafe { encode_program(&s.element, data.add(i * s.stride), out) };
+                }
+            }
         }
     }
-    out
 }
 
 /// Lower `descriptor` and encode the value at `base` in one step.
@@ -169,19 +207,37 @@ pub unsafe fn encode(base: *const u8, descriptor: &Descriptor, reg: &Registry) -
 /// [`CompactError`] for malformed or trailing input.
 pub unsafe fn decode_with(program: &MemProgram, bytes: &[u8], base: *mut u8) -> Result<()> {
     let mut r = Reader::new(bytes);
+    // Safety: forwarded from this function's contract.
+    unsafe { decode_program(program, &mut r, base)? };
+    if r.remaining() != 0 {
+        return Err(CompactError::Decode(DecodeError::TrailingBytes(r.remaining())));
+    }
+    Ok(())
+}
+
+unsafe fn decode_program(program: &MemProgram, r: &mut Reader, base: *mut u8) -> Result<()> {
     for op in program {
         match op {
             MemOp::Scalar { offset, size, align } => {
-                skip_pad(&mut r, *align)?;
+                skip_pad(r, *align)?;
                 let src = r.read_slice(*size)?;
                 // Safety: `base` is valid for writes over this field's bytes, and
                 // the wire bytes equal the in-memory bytes for a fixed scalar.
                 unsafe { core::ptr::copy_nonoverlapping(src.as_ptr(), base.add(*offset), *size) };
             }
+            MemOp::Sequence(s) => {
+                let count = r.read_len(s.min_wire)?;
+                // Safety: the sequence handle lives at `field_offset`; `init`
+                // returns storage for `count` elements, which we fill before
+                // publishing the length.
+                let list = unsafe { base.add(s.field_offset) };
+                let data = unsafe { (s.thunks.init)(s.thunks.ctx, list, count) };
+                for i in 0..count {
+                    unsafe { decode_program(&s.element, r, data.add(i * s.stride))? };
+                }
+                unsafe { (s.thunks.set_len)(s.thunks.ctx, list, count) };
+            }
         }
-    }
-    if r.remaining() != 0 {
-        return Err(CompactError::Decode(DecodeError::TrailingBytes(r.remaining())));
     }
     Ok(())
 }
@@ -202,4 +258,91 @@ pub unsafe fn decode(
     let program = lower(descriptor, reg)?;
     // Safety: forwarded from this function's contract.
     unsafe { decode_with(&program, bytes, base) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::mem::{MaybeUninit, align_of, size_of};
+    use facet_value::{VArray, Value};
+    use phon_ir::{Layout, SeqThunks, SequenceAccess};
+    use phon_schema::{Schema, SchemaId, SchemaRef, primitive_id};
+
+    // Hand-written list thunks for `Vec<u32>`. The facet bridge will generate
+    // equivalents from the list vtable; here we wire them by hand to exercise the
+    // engine's sequence machinery on a real `Vec`.
+    unsafe extern "C" fn vu32_init(_ctx: *const (), list: *mut u8, cap: usize) -> *mut u8 {
+        let v = list.cast::<Vec<u32>>();
+        unsafe { core::ptr::write(v, Vec::with_capacity(cap)) };
+        unsafe { (*v).as_mut_ptr().cast::<u8>() }
+    }
+    unsafe extern "C" fn vu32_set_len(_ctx: *const (), list: *mut u8, len: usize) {
+        unsafe { (*list.cast::<Vec<u32>>()).set_len(len) };
+    }
+    unsafe extern "C" fn vu32_len(_ctx: *const (), list: *const u8) -> usize {
+        unsafe { (*list.cast::<Vec<u32>>()).len() }
+    }
+    unsafe extern "C" fn vu32_data(_ctx: *const (), list: *const u8) -> *const u8 {
+        unsafe { (*list.cast::<Vec<u32>>()).as_ptr().cast::<u8>() }
+    }
+
+    fn vu32_thunks() -> SeqThunks {
+        SeqThunks {
+            ctx: core::ptr::null(),
+            init: vu32_init,
+            set_len: vu32_set_len,
+            len: vu32_len,
+            data: vu32_data,
+        }
+    }
+
+    #[test]
+    fn owned_vec_u32_roundtrips_and_matches_dynamic() {
+        // Root type: List<u32> / Vec<u32>.
+        let list = Schema {
+            id: SchemaId(1),
+            type_params: Vec::new(),
+            kind: SchemaKind::List {
+                element: SchemaRef::concrete(primitive_id(Primitive::U32)),
+            },
+        };
+        let reg = Registry::new([list]);
+
+        let desc = Descriptor {
+            schema: SchemaRef::concrete(SchemaId(1)),
+            layout: Layout {
+                size: size_of::<Vec<u32>>(),
+                align: align_of::<Vec<u32>>(),
+            },
+            access: Access::Sequence(SequenceAccess {
+                element: Box::new(Descriptor {
+                    schema: SchemaRef::concrete(primitive_id(Primitive::U32)),
+                    layout: Layout { size: 4, align: 4 },
+                    access: Access::Scalar,
+                }),
+                storage: SequenceStorage::Vtable(vu32_thunks()),
+            }),
+        };
+
+        let values = [1u32, 2, 999, 0xDEAD_BEEF];
+
+        // Oracle: the dynamic List<u32> codec over the equivalent array.
+        let mut arr = VArray::new();
+        for &v in &values {
+            arr.push(Value::from(v));
+        }
+        let dyn_bytes = compact::to_bytes(&Value::from(arr), SchemaId(1), &reg).unwrap();
+
+        // Typed encode of a real Vec<u32> must produce identical bytes.
+        let v: Vec<u32> = values.to_vec();
+        let typed_bytes =
+            unsafe { encode(core::ptr::from_ref(&v).cast::<u8>(), &desc, &reg) }.unwrap();
+        assert_eq!(typed_bytes, dyn_bytes);
+
+        // Typed decode reconstructs the Vec.
+        let mut slot = MaybeUninit::<Vec<u32>>::uninit();
+        unsafe { decode(&typed_bytes, &desc, &reg, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back, values.to_vec());
+    }
 }
