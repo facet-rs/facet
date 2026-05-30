@@ -1,0 +1,366 @@
+//! The facet bridge: turn a `#[derive(Facet)]` type's `Shape` into a phon schema
+//! batch and a [`Descriptor`].
+//!
+//! This is the **only** place field offsets come from — facet's
+//! [`Field::offset`](facet::Field), read off the reflected `Shape`. The engine
+//! never computes layout and `offset_of!` never appears: facet is exactly the
+//! tool that hands us offsets, sizes, and alignments for any reflected type.
+//!
+//! Two products fall out of one walk of the `Shape`:
+//! - a **schema batch** with real content-derived ids (via
+//!   [`resolve_ids`](phon_schema::resolve_ids)), for a registry — the *wire* view;
+//! - a **descriptor** carrying those same ids plus the memory offsets — the
+//!   *memory* view.
+//!
+//! First cut: structs of fixed-width scalars (and nested structs), in-place
+//! construction. Sequences, options, enums, and maps extend this as the typed
+//! engine path grows.
+//!
+//! Spec: "Rust" (language section), `r[descriptors.fact-driven]`.
+
+use std::collections::HashMap;
+use std::fmt;
+
+use facet::{Facet, ScalarType, Shape, Type, UserType};
+use phon_ir::{Access, Construct, Descriptor, FieldAccess, Layout, RecordAccess};
+use phon_schema::{
+    Field, Primitive, Schema, SchemaId, SchemaKind, SchemaRef, primitive_id, resolve_ids,
+};
+
+/// phon's view of a Rust type, derived from its facet `Shape`: the resolved
+/// schema batch (for a [`Registry`](phon_engine::Registry)), the root schema id,
+/// and the descriptor.
+#[derive(Clone, Debug)]
+pub struct Derived {
+    /// The root type's content-derived schema id.
+    pub root: SchemaId,
+    /// Every composite schema reachable from the root, with real ids; feed this
+    /// to a registry. Primitives are intrinsic and not listed.
+    pub schemas: Vec<Schema>,
+    /// The root type's descriptor (memory layout + how to build it).
+    pub descriptor: Descriptor,
+}
+
+/// Why a `Shape` could not (yet) be lowered to phon.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DeriveError {
+    /// A kind the bridge does not handle yet (only structs of fixed scalars).
+    Unsupported(&'static str),
+    /// An unsized type has no layout to describe.
+    Unsized,
+}
+
+impl fmt::Display for DeriveError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DeriveError::Unsupported(what) => write!(f, "cannot derive phon from this type: {what}"),
+            DeriveError::Unsized => write!(f, "cannot derive phon from an unsized type"),
+        }
+    }
+}
+
+impl std::error::Error for DeriveError {}
+
+/// Derive phon's view of the `#[derive(Facet)]` type `T`.
+///
+/// # Errors
+/// [`DeriveError`] if `T` uses a shape the bridge does not handle yet.
+pub fn of<'a, T: Facet<'a>>() -> Result<Derived, DeriveError> {
+    of_shape(T::SHAPE)
+}
+
+/// Derive phon's view from a reflected `Shape` directly.
+///
+/// # Errors
+/// As [`of`].
+pub fn of_shape(shape: &'static Shape) -> Result<Derived, DeriveError> {
+    // A bare scalar root: no composite batch, the id is the primitive's.
+    if let Some(p) = scalar_primitive(shape)? {
+        let (size, align) = layout_of(shape)?;
+        return Ok(Derived {
+            root: primitive_id(p),
+            schemas: Vec::new(),
+            descriptor: Descriptor {
+                schema: SchemaRef::concrete(primitive_id(p)),
+                layout: Layout { size, align },
+                access: Access::Scalar,
+            },
+        });
+    }
+    if !is_struct(shape) {
+        return Err(DeriveError::Unsupported(
+            "derive root must be a struct or fixed scalar so far",
+        ));
+    }
+
+    // Pass 1: intern composites with provisional dense-index keys, building proto
+    // schemas whose references use those keys (primitives use their real id).
+    let mut b = Builder::default();
+    let root_key = b.intern(shape)?;
+    let by_shape = b.by_shape;
+
+    // Resolve provisional keys to real content-derived ids. `resolved[k]` is the
+    // schema interned at provisional key `k`, so its id is that key's real id.
+    let resolved = resolve_ids(b.protos);
+    let real_ids: Vec<SchemaId> = resolved.iter().map(|s| s.id).collect();
+
+    // Pass 2: build the descriptor with the real ids and facet's offsets.
+    let descriptor = build_descriptor(shape, &by_shape, &real_ids)?;
+
+    Ok(Derived {
+        root: real_ids[root_key],
+        schemas: resolved,
+        descriptor,
+    })
+}
+
+/// Pass 1 state: composites interned to provisional keys (= indices into
+/// `protos`), deduplicated by their `Shape` pointer.
+#[derive(Default)]
+struct Builder {
+    protos: Vec<Schema>,
+    by_shape: HashMap<usize, usize>,
+}
+
+impl Builder {
+    /// Intern a struct shape, returning its provisional key. The slot is reserved
+    /// before recursing so a self- or mutual reference resolves to a key.
+    fn intern(&mut self, shape: &'static Shape) -> Result<usize, DeriveError> {
+        let ptr = shape_ptr(shape);
+        if let Some(&k) = self.by_shape.get(&ptr) {
+            return Ok(k);
+        }
+        let key = self.protos.len();
+        self.by_shape.insert(ptr, key);
+        self.protos.push(Schema {
+            id: SchemaId(key as u64),
+            type_params: Vec::new(),
+            kind: SchemaKind::Dynamic, // placeholder, replaced once fields resolve
+        });
+        let kind = self.struct_kind(shape)?;
+        self.protos[key].kind = kind;
+        Ok(key)
+    }
+
+    fn struct_kind(&mut self, shape: &'static Shape) -> Result<SchemaKind, DeriveError> {
+        let fields = struct_fields(shape)?;
+        let mut out = Vec::with_capacity(fields.len());
+        for f in fields {
+            out.push(Field {
+                name: f.name.to_string(),
+                schema: self.ref_of(f.shape())?,
+                required: true,
+            });
+        }
+        Ok(SchemaKind::Struct {
+            name: shape.type_identifier.to_string(),
+            fields: out,
+        })
+    }
+
+    /// The schema reference for a field's type: a primitive's real id, or a
+    /// nested struct's provisional key.
+    fn ref_of(&mut self, shape: &'static Shape) -> Result<SchemaRef, DeriveError> {
+        if let Some(p) = scalar_primitive(shape)? {
+            Ok(SchemaRef::concrete(primitive_id(p)))
+        } else if is_struct(shape) {
+            let key = self.intern(shape)?;
+            Ok(SchemaRef::concrete(SchemaId(key as u64)))
+        } else {
+            Err(DeriveError::Unsupported(
+                "derive: only structs of fixed scalars so far",
+            ))
+        }
+    }
+}
+
+fn build_descriptor(
+    shape: &'static Shape,
+    by_shape: &HashMap<usize, usize>,
+    real_ids: &[SchemaId],
+) -> Result<Descriptor, DeriveError> {
+    let (size, align) = layout_of(shape)?;
+    if let Some(p) = scalar_primitive(shape)? {
+        return Ok(Descriptor {
+            schema: SchemaRef::concrete(primitive_id(p)),
+            layout: Layout { size, align },
+            access: Access::Scalar,
+        });
+    }
+    let fields = struct_fields(shape)?;
+    let real = real_ids[by_shape[&shape_ptr(shape)]];
+    let mut accesses = Vec::with_capacity(fields.len());
+    for f in fields {
+        accesses.push(FieldAccess {
+            offset: f.offset,
+            descriptor: build_descriptor(f.shape(), by_shape, real_ids)?,
+        });
+    }
+    Ok(Descriptor {
+        schema: SchemaRef::concrete(real),
+        layout: Layout { size, align },
+        access: Access::Record(RecordAccess {
+            fields: accesses,
+            construct: Construct::InPlace,
+        }),
+    })
+}
+
+fn shape_ptr(shape: &'static Shape) -> usize {
+    core::ptr::from_ref(shape) as usize
+}
+
+fn is_struct(shape: &Shape) -> bool {
+    matches!(&shape.ty, Type::User(UserType::Struct(_)))
+}
+
+fn struct_fields(shape: &'static Shape) -> Result<&'static [facet::Field], DeriveError> {
+    match &shape.ty {
+        Type::User(UserType::Struct(st)) => Ok(st.fields),
+        _ => Err(DeriveError::Unsupported("derive: expected a struct")),
+    }
+}
+
+fn layout_of(shape: &Shape) -> Result<(usize, usize), DeriveError> {
+    let layout = shape.layout.sized_layout().map_err(|_| DeriveError::Unsized)?;
+    Ok((layout.size(), layout.align()))
+}
+
+/// Map a fixed-width scalar shape to a phon primitive. `Ok(None)` when the shape
+/// is not a scalar at all (e.g. a struct); an error for scalar kinds the typed
+/// path cannot yet carry (strings, `usize`/`isize`, net types, …).
+fn scalar_primitive(shape: &Shape) -> Result<Option<Primitive>, DeriveError> {
+    let Some(scalar) = shape.scalar_type() else {
+        return Ok(None);
+    };
+    Ok(Some(match scalar {
+        ScalarType::Unit => Primitive::Unit,
+        ScalarType::Bool => Primitive::Bool,
+        ScalarType::Char => Primitive::Char,
+        ScalarType::U8 => Primitive::U8,
+        ScalarType::U16 => Primitive::U16,
+        ScalarType::U32 => Primitive::U32,
+        ScalarType::U64 => Primitive::U64,
+        ScalarType::U128 => Primitive::U128,
+        ScalarType::I8 => Primitive::I8,
+        ScalarType::I16 => Primitive::I16,
+        ScalarType::I32 => Primitive::I32,
+        ScalarType::I64 => Primitive::I64,
+        ScalarType::I128 => Primitive::I128,
+        ScalarType::F32 => Primitive::F32,
+        ScalarType::F64 => Primitive::F64,
+        _ => {
+            return Err(DeriveError::Unsupported(
+                "derive: scalar type not supported yet (string, usize/isize, net, …)",
+            ));
+        }
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use facet::Facet;
+    use facet_value::{VObject, VString, Value};
+    use phon_engine::{Registry, compact, typed};
+
+    // repr(Rust): the compiler may reorder these in memory, so the descriptor's
+    // offsets (from facet) are not the schema/wire order. The cross-check below
+    // only passes if the bridge reads real offsets — exactly what offset_of! used
+    // to fake.
+    #[derive(Facet)]
+    struct Pt {
+        a: u8,
+        b: u64,
+        c: u16,
+        flag: bool,
+    }
+
+    #[derive(Facet)]
+    struct Outer {
+        tag: u8,
+        inner: Pt,
+        n: u32,
+    }
+
+    fn pt_object(a: u8, b: u64, c: u16, flag: bool) -> Value {
+        let mut o = VObject::new();
+        o.insert(VString::new("a"), Value::from(a));
+        o.insert(VString::new("b"), Value::from(b));
+        o.insert(VString::new("c"), Value::from(c));
+        o.insert(VString::new("flag"), Value::from(flag));
+        o.into()
+    }
+
+    #[test]
+    fn derived_struct_typed_matches_dynamic_and_roundtrips() {
+        let d = of::<Pt>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+
+        let p = Pt {
+            a: 0x11,
+            b: 0x2222_2222_2222_2222,
+            c: 0x3333,
+            flag: true,
+        };
+        let typed_bytes =
+            unsafe { typed::encode(core::ptr::from_ref(&p).cast::<u8>(), &d.descriptor, &reg) }
+                .unwrap();
+
+        // Oracle: byte-identical to the dynamic codec for the equivalent object.
+        let dyn_bytes =
+            compact::to_bytes(&pt_object(p.a, p.b, p.c, p.flag), d.root, &reg).unwrap();
+        assert_eq!(typed_bytes, dyn_bytes);
+
+        // Round-trip back into a Pt.
+        let mut slot = std::mem::MaybeUninit::<Pt>::uninit();
+        unsafe { typed::decode(&typed_bytes, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
+            .unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back.a, p.a);
+        assert_eq!(back.b, p.b);
+        assert_eq!(back.c, p.c);
+        assert_eq!(back.flag, p.flag);
+    }
+
+    #[test]
+    fn derived_nested_struct_matches_dynamic() {
+        let d = of::<Outer>().unwrap();
+        // Two composite schemas reachable: Outer and Pt.
+        assert_eq!(d.schemas.len(), 2);
+        let reg = Registry::new(d.schemas.clone());
+
+        let o = Outer {
+            tag: 0x77,
+            inner: Pt {
+                a: 1,
+                b: 1 << 40,
+                c: 9,
+                flag: false,
+            },
+            n: 0xDEAD_BEEF,
+        };
+        let typed_bytes =
+            unsafe { typed::encode(core::ptr::from_ref(&o).cast::<u8>(), &d.descriptor, &reg) }
+                .unwrap();
+
+        let mut obj = VObject::new();
+        obj.insert(VString::new("tag"), Value::from(o.tag));
+        obj.insert(
+            VString::new("inner"),
+            pt_object(o.inner.a, o.inner.b, o.inner.c, o.inner.flag),
+        );
+        obj.insert(VString::new("n"), Value::from(o.n));
+        let dyn_bytes = compact::to_bytes(&obj.into(), d.root, &reg).unwrap();
+        assert_eq!(typed_bytes, dyn_bytes);
+
+        let mut slot = std::mem::MaybeUninit::<Outer>::uninit();
+        unsafe { typed::decode(&typed_bytes, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
+            .unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back.tag, o.tag);
+        assert_eq!(back.inner.b, o.inner.b);
+        assert_eq!(back.n, o.n);
+    }
+}

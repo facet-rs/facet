@@ -15,6 +15,7 @@ jit = ["dep:phon-jit"]
 
 [dependencies]
 phon-schema.workspace = true
+phon-ir.workspace = true
 phon-engine.workspace = true
 phon-jit = { workspace = true, optional = true }
 facet.workspace = true

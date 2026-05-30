@@ -318,6 +318,7 @@ dependencies = [
  "facet",
  "facet-value",
  "phon-engine",
+ "phon-ir",
  "phon-jit",
  "phon-schema",
 ]

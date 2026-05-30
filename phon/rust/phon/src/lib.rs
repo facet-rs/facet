@@ -11,12 +11,7 @@
 
 pub use phon_schema as schema_contract;
 
-/// Derive a phon [`Schema`](phon_schema::schema) and a `phon-ir` descriptor from
-/// a facet `Shape`. The bridge from Rust's type metadata to phon's portable
-/// schema and process-local descriptor.
-///
-/// Spec: "Rust" (language section), `r[descriptors.fact-driven]`.
-pub mod derive {}
+pub mod derive;
 
 /// The ergonomic typed API: `encode::<T>` and `decode::<T>`, resolving thunk
 /// bindings and selecting interpreter vs. JIT.
