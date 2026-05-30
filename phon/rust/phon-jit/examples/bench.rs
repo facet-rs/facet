@@ -58,13 +58,19 @@ fn main() {
         let enc = phon_jit::compile_encode(&program);
         unsafe { enc.run(src.as_ptr()) }
     };
+    #[cfg(phon_jit_tailcall)]
+    let stencil_mode = "tail-call (nightly become)";
+    #[cfg(not(phon_jit_tailcall))]
+    let stencil_mode = "call (stable)";
+
     let fused = fuse(program.clone());
     println!(
-        "program: {} scalar ops -> {} after fusion, {} wire bytes\n",
+        "program: {} scalar ops -> {} after fusion, {} wire bytes",
         program.len(),
         fused.len(),
         wire.len(),
     );
+    println!("jit stencils: {stencil_mode}\n");
 
     let mut out = vec![0u8; memsize];
     println!("                  unfused      fused");

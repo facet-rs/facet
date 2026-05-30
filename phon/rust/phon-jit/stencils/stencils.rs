@@ -3,10 +3,15 @@
 //! machine code — and its `phon_cont` relocations — by symbol.
 //!
 //! The decode stencils thread state through a `*mut Ctx` and reach the next op by
-//! calling the external `phon_cont`; that call's `BRANCH26` relocation is the
-//! hole we patch at compile time to chain copies. Per-op immediates ride in
-//! `Ctx.prog` for now (baking them into the code is the later step).
+//! tail-calling the external `phon_cont`; that branch's `BRANCH26` relocation is
+//! the hole we patch at compile time to chain copies. Per-op immediates ride in
+//! `Ctx.prog`.
+//!
+//! With `--cfg tailcall` (nightly), the continuation is a guaranteed tail call
+//! (`become`): the whole chain runs in one stack frame as a series of jumps, no
+//! per-op call/return. Without it (stable), it falls back to an ordinary call.
 
+#![cfg_attr(tailcall, feature(explicit_tail_calls))]
 #![allow(clippy::missing_safety_doc)]
 
 #[repr(C)]
@@ -69,6 +74,9 @@ pub unsafe extern "C" fn phon_stencil_scalar(cx: *mut Ctx) {
     }
 
     c.wire = src.add(size);
+    #[cfg(tailcall)]
+    become phon_cont(cx);
+    #[cfg(not(tailcall))]
     phon_cont(cx);
 }
 
