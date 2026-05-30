@@ -26,6 +26,21 @@ pub struct Stencil {
     pub cont_relocs: Vec<usize>,
 }
 
+/// One extracted stencil with relocations grouped by **several** continuation
+/// symbols — for a stencil that branches to more than one successor, e.g. a
+/// conditional branch whose `then`/`else` are two distinct external tail-calls.
+/// (The conditional test itself stays internal to the stencil — a local branch,
+/// no relocation — so only the unconditional continuations need patching.)
+pub struct StencilN {
+    /// The stencil's machine-code bytes (a slice of `__text`).
+    pub bytes: Vec<u8>,
+    /// `cont_relocs[i]` are the offsets within `bytes` of the `BRANCH26`
+    /// relocations targeting `cont_symbols[i]` (the holes the JIT patches with
+    /// [`patch_branch26`](crate::patch_branch26)), aligned to the `cont_symbols`
+    /// argument order.
+    pub cont_relocs: Vec<Vec<usize>>,
+}
+
 /// Whether a `+nightly` rustc toolchain is available (for tail-call stencils).
 #[must_use]
 pub fn nightly_available() -> bool {
@@ -91,6 +106,9 @@ pub fn compile_object(
 /// `BRANCH26` relocations are reported (the holes the JIT patches). Symbol names
 /// match with or without a leading underscore (Mach-O's C symbol mangling).
 ///
+/// For a stencil with more than one successor (a conditional branch), use
+/// [`extract_stencil_n`].
+///
 /// # Panics
 /// If the object can't be parsed, has no `__text`, or `symbol` is absent.
 #[must_use]
@@ -100,6 +118,28 @@ pub fn extract_stencil(
     symbol: &str,
     cont_symbol: &str,
 ) -> Stencil {
+    let mut s = extract_stencil_n(obj, all_symbols, symbol, &[cont_symbol]);
+    Stencil {
+        bytes: s.bytes,
+        cont_relocs: s.cont_relocs.pop().expect("one cont symbol requested"),
+    }
+}
+
+/// Extract one stencil's bytes and its continuation relocations grouped by
+/// **several** continuation symbols (e.g. a conditional branch's `then`/`else`).
+/// `cont_relocs[i]` are the `BRANCH26` holes targeting `cont_symbols[i]`, aligned
+/// to argument order; a symbol with no relocations in the stencil yields an empty
+/// inner vec. See [`extract_stencil`] for `all_symbols`/`symbol` semantics.
+///
+/// # Panics
+/// If the object can't be parsed, has no `__text`, or `symbol` is absent.
+#[must_use]
+pub fn extract_stencil_n(
+    obj: &[u8],
+    all_symbols: &[&str],
+    symbol: &str,
+    cont_symbols: &[&str],
+) -> StencilN {
     use object::{Object, ObjectSection, ObjectSymbol, RelocationTarget};
 
     let file = object::File::parse(obj).expect("parse object file");
@@ -132,21 +172,25 @@ pub fn extract_stencil(
 
     let bytes = data[start as usize..end as usize].to_vec();
 
-    let mut cont_relocs = Vec::new();
+    let mut cont_relocs: Vec<Vec<usize>> = vec![Vec::new(); cont_symbols.len()];
     for (offset, reloc) in text.relocations() {
         if offset < start || offset >= end {
             continue;
         }
         if let RelocationTarget::Symbol(idx) = reloc.target()
             && let Ok(sym) = file.symbol_by_index(idx)
-            && sym
-                .name()
-                .is_ok_and(|n| n == cont_symbol || n == format!("_{cont_symbol}"))
+            && let Ok(name) = sym.name()
         {
-            cont_relocs.push((offset - start) as usize);
+            for (i, cont) in cont_symbols.iter().enumerate() {
+                if name == *cont || name == format!("_{cont}") {
+                    cont_relocs[i].push((offset - start) as usize);
+                }
+            }
         }
     }
-    cont_relocs.sort_unstable();
+    for relocs in &mut cont_relocs {
+        relocs.sort_unstable();
+    }
 
-    Stencil { bytes, cont_relocs }
+    StencilN { bytes, cont_relocs }
 }
