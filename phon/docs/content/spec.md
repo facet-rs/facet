@@ -1144,13 +1144,20 @@ all of them.
 > r[validate.lengths]
 >
 > Every length or count read from the wire is checked against the bytes
-> remaining in the buffer before any allocation or iteration. Because every
-> element has a nonzero minimum wire size, a count may never drive a
-> pre-allocation larger than `bytes_remaining / min_element_size` — that ratio
-> is the true ceiling, regardless of what the count claims. A length or count
-> that exceeds what remains is a decode error. (A u32 can claim four billion
-> elements in a twelve-byte message; this rule is what stops the resulting
-> allocation bomb.)
+> remaining in the buffer before any allocation or iteration. When an element
+> has a nonzero minimum wire size, a count may never drive a pre-allocation
+> larger than `bytes_remaining / min_element_size` — that ratio is the true
+> ceiling, regardless of what the count claims. A length or count that exceeds
+> what remains is a decode error. (A u32 can claim four billion elements in a
+> twelve-byte message; this rule is what stops the resulting allocation bomb.)
+>
+> A zero-sized element (every field zero-sized — an empty struct, a unit, a
+> nullary enum) is the one case the ratio cannot bound: it contributes no wire
+> bytes, so the collection encodes to just its count and `bytes_remaining`
+> stops constraining it. Such a count is instead capped at a fixed ceiling
+> (`2^24` elements); a count above the cap is a decode error. This bounds the
+> only allocation the count drives — the element handles themselves — since the
+> zero-sized payload needs no backing storage.
 
 > r[validate.dimensions]
 >
