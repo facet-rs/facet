@@ -53,6 +53,33 @@ pub fn render(module: &Module) -> String {
     r.render()
 }
 
+/// Render JUST a named phon `Registry` for `module`'s schemas (no type
+/// declarations, no `schemaId`): the `SCHEMA_BYTES`/`PRIMITIVES` tables and an
+/// `export const <name> = new Registry(...)`. The arrays are name-prefixed so
+/// several registries can coexist in one module. Used by RPC codegen, which
+/// supplies its own (channel-aware) type declarations.
+#[must_use]
+pub fn render_registry(module: &Module, name: &str) -> String {
+    let mut out = String::new();
+    let _ = writeln!(out, "const {name}_SCHEMA_BYTES: string[] = [");
+    for schema in &module.schemas {
+        let _ = writeln!(out, "  \"{}\",", hex(&schema_to_bytes(schema)));
+    }
+    out.push_str("];\n\n");
+
+    let _ = writeln!(out, "const {name}_PRIMITIVES: [string, Primitive][] = [");
+    for &p in &PRIMITIVES {
+        let _ = writeln!(out, "  [\"{:016x}\", \"{}\"],", primitive_id(p).0, p.tag());
+    }
+    out.push_str("];\n\n");
+
+    let _ = writeln!(
+        out,
+        "export const {name} = new Registry(\n  {name}_SCHEMA_BYTES.map((b) => schemaFromBytes(hexToBytes(b))),\n  {name}_PRIMITIVES.map(([id, tag]) => ({{ id: BigInt(`0x${{id}}`), tag }})),\n);\n"
+    );
+    out
+}
+
 struct Renderer<'m> {
     module: &'m Module,
     prims: HashMap<u64, Primitive>,
