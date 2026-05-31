@@ -1531,8 +1531,8 @@ mod tests {
             (wire_start..wire_end).contains(&blob_ptr),
             "decoded &[u8] does not point into the input buffer (not zero-copy)"
         );
-        // `wire` is dropped at the end of this scope — `back` must not outlive it.
-        drop(back);
+        // `back` borrows `wire`; the borrow checker keeps `wire` alive through the
+        // last use above (the zero-copy contract enforced statically).
     }
 
     #[test]
@@ -1612,8 +1612,7 @@ mod tests {
         let wire_end = wire_start + wire.len();
         assert!((wire_start..wire_end).contains(&(jback.name.as_ptr() as usize)));
         assert!((wire_start..wire_end).contains(&(jback.blob.as_ptr() as usize)));
-        drop(jback);
-        drop(iback);
+        // Both decoded values borrow `wire`, kept alive through their last use above.
     }
 
     #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
