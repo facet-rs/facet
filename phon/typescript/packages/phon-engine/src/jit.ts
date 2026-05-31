@@ -248,7 +248,12 @@ function scalarWrite(p: Primitive, v: string): string {
 
 class EncCodegen {
   private counter = 0;
-  constructor(private readonly reg: Registry) {}
+  private readonly reg: Registry;
+  // Explicit field assignment (not a constructor parameter property), so Node's
+  // strip-only TypeScript loader can run this module without a compile step.
+  constructor(reg: Registry) {
+    this.reg = reg;
+  }
 
   private fresh(prefix: string): string {
     return `_${prefix}${this.counter++}`;
