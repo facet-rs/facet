@@ -1071,7 +1071,11 @@ unsafe fn encode_program(program: &MemProgram, base: *const u8, out: &mut Vec<u8
                 let list = unsafe { base.add(b.field_offset) };
                 let count = unsafe { (b.thunks.len)(b.thunks.ctx, list) };
                 write_u32(out, count as u32);
-                pad_to(out, b.elem_align);
+                // Alignment pads BEFORE an element's bytes; an empty run has no
+                // elements, so it writes no padding (`r[compact.alignment]`).
+                if count > 0 {
+                    pad_to(out, b.elem_align);
+                }
                 let data = unsafe { (b.thunks.data)(b.thunks.ctx, list) };
                 let src = unsafe { core::slice::from_raw_parts(data, count * b.stride) };
                 out.extend_from_slice(src);
@@ -1084,7 +1088,11 @@ unsafe fn encode_program(program: &MemProgram, base: *const u8, out: &mut Vec<u8
                 let field = unsafe { base.add(b.field_offset) };
                 let count = unsafe { (b.thunks.len)(b.thunks.ctx, field) };
                 write_u32(out, count as u32);
-                pad_to(out, b.elem_align);
+                // Alignment pads BEFORE an element's bytes; an empty run has no
+                // elements, so it writes no padding (`r[compact.alignment]`).
+                if count > 0 {
+                    pad_to(out, b.elem_align);
+                }
                 let data = unsafe { (b.thunks.data)(b.thunks.ctx, field) };
                 let src = unsafe { core::slice::from_raw_parts(data, count * b.stride) };
                 out.extend_from_slice(src);
@@ -1283,7 +1291,10 @@ unsafe fn decode_program(program: &MemProgram, r: &mut Reader, base: *mut u8) ->
             }
             MemOp::Bytes(b) => {
                 let count = r.read_len(b.stride.max(1))?;
-                skip_pad(r, b.elem_align)?;
+                // Symmetric with encode: only an empty run skips no padding.
+                if count > 0 {
+                    skip_pad(r, b.elem_align)?;
+                }
                 let total = count * b.stride;
                 let src = r.read_slice(total)?;
                 // r[impl validate.text] — validate the run before adopting it
@@ -1322,7 +1333,10 @@ unsafe fn decode_program(program: &MemProgram, r: &mut Reader, base: *mut u8) ->
             // standard zero-copy contract, documented on `decode_with`'s `Safety`).
             MemOp::Borrow(b) => {
                 let count = r.read_len(b.stride.max(1))?;
-                skip_pad(r, b.elem_align)?;
+                // Symmetric with encode: only an empty run skips no padding.
+                if count > 0 {
+                    skip_pad(r, b.elem_align)?;
+                }
                 let total = count * b.stride;
                 // `src` is a slice INTO the input `bytes` (no copy): the borrowed
                 // value will point at exactly these bytes.
