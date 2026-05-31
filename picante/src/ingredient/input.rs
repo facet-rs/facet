@@ -413,6 +413,10 @@ where
 
         // Value changed, take write lock
         let rev = db.runtime().bump_revision();
+        // r[snapshot.divergent]
+        // Mutating an input makes a snapshot diverge from its family, so it must
+        // stop sharing computed results via the cross-snapshot cache.
+        db.runtime().mark_divergent();
         {
             let mut entries = self.core.entries.write();
             entries.insert(
@@ -466,6 +470,8 @@ where
 
         // Need to remove, take write lock
         let rev = db.runtime().bump_revision();
+        // r[snapshot.divergent]
+        db.runtime().mark_divergent();
         {
             let mut entries = self.core.entries.write();
             entries.insert(

@@ -430,7 +430,7 @@ impl DerivedCore {
             // 3) Check shared completed-result cache for cross-snapshot memoization.
             //    Unlike the in-flight registry, this persists after the leader finishes.
             if let Some(record) =
-                inflight::shared_cache_get(db.runtime().id(), self.kind, &requested.key)
+                inflight::shared_cache_get(db.runtime().cache_scope_id(), self.kind, &requested.key)
             {
                 let can_adopt = if record.verified_at == rev {
                     true
@@ -456,7 +456,7 @@ impl DerivedCore {
 
                     // Update the shared cache's verified_at so future lookups can skip revalidation.
                     inflight::shared_cache_put(
-                        db.runtime().id(),
+                        db.runtime().cache_scope_id(),
                         self.kind,
                         requested.key.clone(),
                         SharedCacheRecord {
@@ -484,7 +484,7 @@ impl DerivedCore {
             // 3) Check global in-flight registry for cross-snapshot deduplication.
             //    This allows concurrent queries from different snapshots to share work.
             let inflight_key = InFlightKey {
-                runtime_id: db.runtime().id(),
+                runtime_id: db.runtime().cache_scope_id(),
                 revision: rev,
                 kind: self.kind,
                 key: requested.key.clone(),
@@ -551,7 +551,7 @@ impl DerivedCore {
 
                                 // Store in shared completed-result cache for future snapshots.
                                 inflight::shared_cache_put(
-                                    db.runtime().id(),
+                                    db.runtime().cache_scope_id(),
                                     self.kind,
                                     requested.key.clone(),
                                     SharedCacheRecord {
@@ -677,7 +677,7 @@ impl DerivedCore {
 
                             // Store in shared completed-result cache for future snapshots.
                             inflight::shared_cache_put(
-                                db.runtime().id(),
+                                db.runtime().cache_scope_id(),
                                 self.kind,
                                 requested.key.clone(),
                                 SharedCacheRecord {

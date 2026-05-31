@@ -34,6 +34,18 @@ impl RuntimeId {
 pub struct Runtime {
     /// Unique identifier for this runtime family (shared with snapshots).
     id: RuntimeId,
+    /// Whether this runtime backs a snapshot (vs. a live database).
+    is_snapshot: bool,
+    // r[snapshot.divergent]
+    /// A cross-snapshot cache scope id, assigned lazily the first time an input
+    /// is mutated on a *snapshot* runtime. `0` means "not divergent": the runtime
+    /// uses the shared family `id` for the inflight registry and shared result
+    /// cache (so read-only snapshots still dedup). Once a snapshot is mutated its
+    /// state diverges from its siblings/parent, so it switches to this private id
+    /// and stops sharing computed results — which would otherwise be unsound,
+    /// since sibling snapshots have independent revision counters from the same
+    /// base and thus produce colliding, incomparable revisions.
+    divergent_scope: AtomicU64,
     current_revision: AtomicU64,
     // r[event.channel]
     revision_tx: watch::Sender<Revision>,
@@ -63,6 +75,8 @@ impl Runtime {
         let (events_tx, _) = broadcast::channel(1024);
         Self {
             id: parent_id,
+            is_snapshot: true,
+            divergent_scope: AtomicU64::new(0),
             current_revision: AtomicU64::new(0),
             revision_tx,
             events_tx,
@@ -76,6 +90,38 @@ impl Runtime {
     /// This ID is shared between a database and all snapshots created from it.
     pub fn id(&self) -> RuntimeId {
         self.id
+    }
+
+    // r[snapshot.divergent]
+    /// The scope id used to key the inflight registry and shared result cache.
+    ///
+    /// Returns the shared family [`id`](Self::id) unless this is a snapshot that
+    /// has been mutated, in which case it returns a private id so the snapshot's
+    /// computed results neither leak into nor adopt from its siblings/parent.
+    pub fn cache_scope_id(&self) -> RuntimeId {
+        let scope = self.divergent_scope.load(Ordering::Acquire);
+        if scope != 0 {
+            RuntimeId(scope)
+        } else {
+            self.id
+        }
+    }
+
+    /// Mark this runtime as divergent (an input was mutated). No-op for a live
+    /// database — only snapshots diverge from their family. Assigns a private
+    /// cache scope id exactly once.
+    pub fn mark_divergent(&self) {
+        if !self.is_snapshot {
+            return;
+        }
+        if self.divergent_scope.load(Ordering::Acquire) != 0 {
+            return;
+        }
+        let fresh = RUNTIME_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
+        // First writer wins; a concurrent caller may have set it already.
+        let _ =
+            self.divergent_scope
+                .compare_exchange(0, fresh, Ordering::AcqRel, Ordering::Acquire);
     }
 
     /// Read the current revision.
@@ -269,6 +315,8 @@ impl Default for Runtime {
         let (events_tx, _) = broadcast::channel(1024);
         Self {
             id: RuntimeId::new_unique(),
+            is_snapshot: false,
+            divergent_scope: AtomicU64::new(0),
             current_revision: AtomicU64::new(0),
             revision_tx,
             events_tx,

@@ -276,3 +276,30 @@ async fn snapshot_override_registry_entity_invalidates_outer() -> PicanteResult<
     assert_eq!(total_len(&db).await?, 2); // host untouched
     Ok(())
 }
+
+/// Two snapshots derived from the same db share a RuntimeId (for inflight dedup)
+/// but have independent revision counters starting from the same base. A query
+/// result computed in snapshot A must NOT leak into snapshot B and make B's own
+/// override look stale. This mirrors dodeca's editor: an auto-preview snapshot
+/// followed by a user-edit snapshot.
+#[tokio_test_lite::test]
+async fn two_snapshots_independent_overrides() -> PicanteResult<()> {
+    let db = Database::new();
+    Config::set(&db, "base".into())?; // len 4
+    assert_eq!(config_len(&db).await?, 4); // compute on host
+
+    // Snapshot A: override + compute (this is the "auto-preview").
+    let snap_a = DatabaseSnapshot::from_database(&db).await;
+    Config::set(&snap_a, "AAAAAAAAAAAAAAAAAAAA".into())?; // len 20
+    assert_eq!(config_len(&snap_a).await?, 20);
+
+    // Snapshot B: a DIFFERENT override. Must reflect B's value, not A's.
+    let snap_b = DatabaseSnapshot::from_database(&db).await;
+    Config::set(&snap_b, "BBB".into())?; // len 3
+    assert_eq!(
+        config_len(&snap_b).await?,
+        3,
+        "snapshot B must see its own override, not snapshot A's leaked result"
+    );
+    Ok(())
+}
