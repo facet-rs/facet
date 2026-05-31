@@ -195,6 +195,18 @@ export class Registry {
     return this.composites.get(id);
   }
 
+  /// A new registry with `extra` composite schemas merged in, sharing this
+  /// registry's primitive table. Used to reconcile a peer's exchanged schemas
+  /// (a writer closure) against the local reader registry for compat decode.
+  /// Colliding ids are content-hashes, so an overwrite is identity.
+  with(extra: Iterable<Schema>): Registry {
+    const r = new Registry([], []);
+    for (const [id, s] of this.composites) r.composites.set(id, s);
+    for (const [id, t] of this.primitives) r.primitives.set(id, t);
+    for (const s of extra) r.composites.set(s.id, s);
+    return r;
+  }
+
   /// Resolve a concrete ref to a Var-free kind. A parametric schema's type
   /// parameters are substituted by the ref's args, eagerly and per-reference, so
   /// the walker never meets a `Var` (`r[type-system.generic-resolution]`). Each
