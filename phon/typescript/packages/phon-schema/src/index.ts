@@ -11,3 +11,18 @@
 // "Self-describing mode".
 
 export const PHON_SCHEMA_PACKAGE = "@bearcove/phon-schema";
+
+export {
+  Tag,
+  DecodeError,
+  EncodeError,
+  decodeValue,
+  encodeValue,
+} from "./value.ts";
+export type {
+  Value,
+  PhonChar,
+  PhonUuid,
+  PhonQName,
+  PhonDateTime,
+} from "./value.ts";
