@@ -135,3 +135,28 @@ async fn multiple_snapshots_are_independent() -> PicanteResult<()> {
 
     Ok(())
 }
+
+/// Overriding an input on a snapshot must invalidate the snapshot's deep-cloned
+/// memo for derived queries that depend on it — otherwise "what-if" overlays on
+/// a snapshot (e.g. an editor preview) silently render stale results.
+#[tokio_test_lite::test]
+async fn snapshot_input_override_invalidates_derived_query() -> PicanteResult<()> {
+    let db = Database::new();
+    let item = Item::new(&db, 1, "hello".into())?; // len 5
+    assert_eq!(item_length(&db, item).await?, 5); // memoize on db
+
+    let snapshot = DatabaseSnapshot::from_database(&db).await; // deep-clones the memo
+    assert_eq!(item_length(&snapshot, item).await?, 5);
+
+    // Override the input ON THE SNAPSHOT (isolated from db).
+    Item::new(&snapshot, 1, "hello world!!!".into())?; // len 14
+
+    // The input itself reflects the override...
+    assert_eq!(item.value(&snapshot)?, "hello world!!!".to_string());
+    // ...and so must the derived query (this is the one that currently fails).
+    assert_eq!(item_length(&snapshot, item).await?, 14);
+
+    // The host db is untouched.
+    assert_eq!(item_length(&db, item).await?, 5);
+    Ok(())
+}
