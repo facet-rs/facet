@@ -182,6 +182,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-json"
+version = "0.46.1"
+dependencies = [
+ "facet",
+ "facet-core",
+ "facet-format",
+ "facet-reflect",
+]
+
+[[package]]
 name = "facet-macro-parse"
 version = "0.46.5"
 dependencies = [
@@ -507,7 +517,10 @@ dependencies = [
 name = "phon-conformance"
 version = "0.1.0"
 dependencies = [
+ "facet",
+ "facet-json",
  "facet-value",
+ "phon-engine",
  "phon-schema",
  "tracing",
  "tracing-subscriber",

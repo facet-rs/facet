@@ -7,8 +7,8 @@
 //
 // It is *coarse* on purpose (spec `r[value]`): the rich wire tag set folds onto
 // one number, one array, one object — the exact integer width and precise
-// container kind are recovered only on the typed path, which is out of scope
-// here. What this codec guarantees is that the bytes round-trip: decode then
+// container kind are recovered only on the typed path (@bearcove/phon-engine).
+// What this codec guarantees is that the bytes round-trip: decode then
 // re-encode reproduces the input byte for byte, the cross-language oracle for
 // the `conformance/values/*.phon` corpus.
 //
@@ -17,50 +17,29 @@
 // qname decode to small tagged objects so they re-encode under their own tag
 // rather than collapsing into a plain string.
 //
+// The byte-level primitives (tags, Reader, ByteSink, errors) live in wire.ts so
+// the compact/typed engine shares them.
+//
 // Spec: docs/content/spec.md — "Self-describing mode", `r[value]`,
 // `r[value.extended-kinds]`.
 
-// ============================================================================
-// Self-describing tag bytes (`r[self-describing.tag-led]`).
-// Must match `mod tag` in rust/phon-schema/src/selfdescribing.rs exactly.
-// ============================================================================
+import {
+  ByteSink,
+  DecodeError,
+  EncodeError,
+  I64_MAX,
+  I64_MIN,
+  I128_MAX,
+  I128_MIN,
+  MAX_DEPTH,
+  Reader,
+  Tag,
+  U64_MAX,
+  U128_MAX,
+  hex,
+} from "./wire.ts";
 
-export const Tag = {
-  UNIT: 0x00,
-  BOOL: 0x01,
-  U8: 0x02,
-  U16: 0x03,
-  U32: 0x04,
-  U64: 0x05,
-  U128: 0x06,
-  I8: 0x07,
-  I16: 0x08,
-  I32: 0x09,
-  I64: 0x0a,
-  I128: 0x0b,
-  F32: 0x0c,
-  F64: 0x0d,
-  CHAR: 0x0e,
-  STRING: 0x0f,
-  BYTES: 0x10,
-  LIST: 0x11,
-  SET: 0x12,
-  MAP: 0x13,
-  ARRAY: 0x14,
-  TUPLE: 0x15,
-  STRUCT: 0x16,
-  ENUM: 0x17,
-  OPTION_NONE: 0x18,
-  OPTION_SOME: 0x19,
-  TENSOR: 0x1a,
-  DATETIME: 0x1b,
-  UUID: 0x1c,
-  QNAME: 0x1d,
-} as const;
-
-/// Maximum nesting depth accepted on decode (`r[validate.depth]`), matching the
-/// Rust `MAX_DEPTH`. Deeper nesting is a decode error, not a stack overflow.
-const MAX_DEPTH = 128;
+export { Tag, DecodeError, EncodeError } from "./wire.ts";
 
 // ============================================================================
 // The Value model
@@ -130,7 +109,7 @@ export type PhonDateTime =
 ///  - `PhonChar`           — char
 ///  - `Value[]`            — list / set / tuple / array / tensor
 ///  - `Map<string, Value>` — map (string keys) / struct / enum
-///  - `PhonValue[]` pairs  — map with non-string keys (array of [k, v] pairs)
+///  - `Value[]` pairs      — map with non-string keys (array of [k, v] pairs)
 ///  - `PhonDateTime` / `PhonUuid` / `PhonQName` — the extended kinds
 export type Value =
   | null
@@ -145,200 +124,6 @@ export type Value =
   | PhonDateTime
   | Value[]
   | Map<string, Value>;
-
-// ============================================================================
-// Errors
-// ============================================================================
-
-/// Thrown for any malformed input. A crafted message must never crash the
-/// decoder; it becomes one of these (mirrors Rust's `DecodeError`).
-export class DecodeError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "DecodeError";
-  }
-}
-
-/// Thrown when a `Value` cannot be encoded (e.g. an integer outside u128/i128
-/// range, which no wire tag can hold).
-export class EncodeError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "EncodeError";
-  }
-}
-
-// ============================================================================
-// Reader — a validating little-endian cursor (mirror of rust bytes::Reader)
-// ============================================================================
-
-const U64_MAX = (1n << 64n) - 1n;
-const U128_MAX = (1n << 128n) - 1n;
-const I64_MIN = -(1n << 63n);
-const I64_MAX = (1n << 63n) - 1n;
-const I128_MIN = -(1n << 127n);
-const I128_MAX = (1n << 127n) - 1n;
-
-class Reader {
-  private readonly view: DataView;
-  private readonly bytes: Uint8Array;
-  private pos = 0;
-
-  constructor(bytes: Uint8Array) {
-    this.bytes = bytes;
-    this.view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  }
-
-  remaining(): number {
-    return this.bytes.length - this.pos;
-  }
-
-  private need(n: number): void {
-    if (this.remaining() < n) {
-      throw new DecodeError(`unexpected end of input: need ${n}, have ${this.remaining()}`);
-    }
-  }
-
-  readU8(): number {
-    this.need(1);
-    return this.view.getUint8(this.pos++);
-  }
-
-  readU16(): bigint {
-    this.need(2);
-    const v = this.view.getUint16(this.pos, true);
-    this.pos += 2;
-    return BigInt(v);
-  }
-
-  readU32raw(): number {
-    this.need(4);
-    const v = this.view.getUint32(this.pos, true);
-    this.pos += 4;
-    return v;
-  }
-
-  readU32(): bigint {
-    return BigInt(this.readU32raw());
-  }
-
-  readU64(): bigint {
-    this.need(8);
-    const v = this.view.getBigUint64(this.pos, true);
-    this.pos += 8;
-    return v;
-  }
-
-  readU128(): bigint {
-    const lo = this.readU64();
-    const hi = this.readU64();
-    return lo | (hi << 64n);
-  }
-
-  readI8(): bigint {
-    this.need(1);
-    return BigInt(this.view.getInt8(this.pos++));
-  }
-
-  readI16(): bigint {
-    this.need(2);
-    const v = this.view.getInt16(this.pos, true);
-    this.pos += 2;
-    return BigInt(v);
-  }
-
-  readI32(): bigint {
-    this.need(4);
-    const v = this.view.getInt32(this.pos, true);
-    this.pos += 4;
-    return BigInt(v);
-  }
-
-  readI64(): bigint {
-    this.need(8);
-    const v = this.view.getBigInt64(this.pos, true);
-    this.pos += 8;
-    return v;
-  }
-
-  readI128(): bigint {
-    const lo = this.readU64();
-    const hi = this.readU64();
-    const u = lo | (hi << 64n);
-    return u > I128_MAX ? u - (1n << 128n) : u;
-  }
-
-  readF32(): number {
-    this.need(4);
-    const v = this.view.getFloat32(this.pos, true);
-    this.pos += 4;
-    return v;
-  }
-
-  readF64(): number {
-    this.need(8);
-    const v = this.view.getFloat64(this.pos, true);
-    this.pos += 8;
-    return v;
-  }
-
-  readBool(): boolean {
-    const b = this.readU8();
-    if (b === 0) return false;
-    if (b === 1) return true;
-    throw new DecodeError(`invalid bool byte ${hex(b)}`);
-  }
-
-  readChar(): PhonChar {
-    const n = this.readU32raw();
-    // A Unicode scalar value: 0..=0x10FFFF, excluding the surrogate range.
-    if (n > 0x10ffff || (n >= 0xd800 && n <= 0xdfff)) {
-      throw new DecodeError(`invalid Unicode scalar ${hex(n)}`);
-    }
-    return { kind: "char", value: String.fromCodePoint(n) };
-  }
-
-  /// A u32 count/length, checked so it cannot drive a read or allocation larger
-  /// than the buffer allows (`r[validate.lengths]`).
-  readLen(minElemSize: number): number {
-    const count = this.readU32raw();
-    const max = Math.floor(this.remaining() / Math.max(minElemSize, 1));
-    if (count > max) {
-      throw new DecodeError(`length ${count} exceeds ${this.remaining()} bytes remaining`);
-    }
-    return count;
-  }
-
-  readSlice(n: number): Uint8Array {
-    this.need(n);
-    const slice = this.bytes.subarray(this.pos, this.pos + n);
-    this.pos += n;
-    return slice;
-  }
-
-  readStr(): string {
-    const len = this.readLen(1);
-    const slice = this.readSlice(len);
-    try {
-      return UTF8_DECODER.decode(slice);
-    } catch {
-      throw new DecodeError("invalid UTF-8 in string");
-    }
-  }
-
-  readBytes(): Uint8Array {
-    const len = this.readLen(1);
-    // Copy so the returned value owns its memory independent of the input buffer.
-    return new Uint8Array(this.readSlice(len));
-  }
-}
-
-const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
-const UTF8_ENCODER = new TextEncoder();
-
-function hex(n: number): string {
-  return `0x${n.toString(16).padStart(2, "0")}`;
-}
 
 // ============================================================================
 // Decode
@@ -396,7 +181,7 @@ function decValue(r: Reader, depth: number): Value {
     case Tag.F64:
       return r.readF64();
     case Tag.CHAR:
-      return r.readChar();
+      return { kind: "char", value: String.fromCodePoint(r.readCharCode()) };
     case Tag.STRING:
       return r.readStr();
     case Tag.BYTES:
@@ -515,7 +300,7 @@ function decEnum(r: Reader, depth: number): Value {
 /// A structural key for uniqueness checks, matching Rust's value equality:
 /// numbers compare by mathematical value regardless of width, so a u64 `1` and
 /// an i64 `1` collide as the Rust `HashSet<Value>` would.
-function canonicalKey(v: Value): string {
+export function canonicalKey(v: Value): string {
   if (v === null) return "null";
   if (typeof v === "boolean") return `b:${v}`;
   if (typeof v === "bigint") return `n:${v}`;
@@ -548,81 +333,6 @@ export function encodeValue(value: Value): Uint8Array {
   const out = new ByteSink();
   writeValue(out, value);
   return out.finish();
-}
-
-class ByteSink {
-  private buf = new Uint8Array(64);
-  private len = 0;
-
-  private reserve(n: number): void {
-    if (this.len + n <= this.buf.length) return;
-    let cap = this.buf.length * 2;
-    while (cap < this.len + n) cap *= 2;
-    const next = new Uint8Array(cap);
-    next.set(this.buf.subarray(0, this.len));
-    this.buf = next;
-  }
-
-  u8(n: number): void {
-    this.reserve(1);
-    this.buf[this.len++] = n & 0xff;
-  }
-
-  raw(bytes: Uint8Array): void {
-    this.reserve(bytes.length);
-    this.buf.set(bytes, this.len);
-    this.len += bytes.length;
-  }
-
-  u32(n: number): void {
-    this.reserve(4);
-    const v = new DataView(this.buf.buffer, this.buf.byteOffset + this.len, 4);
-    v.setUint32(0, n >>> 0, true);
-    this.len += 4;
-  }
-
-  u64(n: bigint): void {
-    this.reserve(8);
-    const v = new DataView(this.buf.buffer, this.buf.byteOffset + this.len, 8);
-    v.setBigUint64(0, BigInt.asUintN(64, n), true);
-    this.len += 8;
-  }
-
-  u128(n: bigint): void {
-    const u = BigInt.asUintN(128, n);
-    this.u64(u & U64_MAX);
-    this.u64(u >> 64n);
-  }
-
-  i64(n: bigint): void {
-    this.u64(BigInt.asUintN(64, n));
-  }
-
-  i128(n: bigint): void {
-    this.u128(BigInt.asUintN(128, n));
-  }
-
-  f64(n: number): void {
-    this.reserve(8);
-    const v = new DataView(this.buf.buffer, this.buf.byteOffset + this.len, 8);
-    v.setFloat64(0, n, true);
-    this.len += 8;
-  }
-
-  str(s: string): void {
-    const bytes = UTF8_ENCODER.encode(s);
-    this.u32(bytes.length);
-    this.raw(bytes);
-  }
-
-  bytes(b: Uint8Array): void {
-    this.u32(b.length);
-    this.raw(b);
-  }
-
-  finish(): Uint8Array {
-    return this.buf.subarray(0, this.len);
-  }
 }
 
 // Mirror of Rust `write_value`: each coarse Value case has one fixed tag, so the
@@ -716,10 +426,11 @@ function encNumber(out: ByteSink, n: bigint): void {
 
 // ============================================================================
 // Extended kinds — canonical string formats (`r[value.extended-kinds]`)
+// Exported so the compact/typed engine reuses the exact same parse/format.
 // ============================================================================
 
 /// `550e8400-e29b-41d4-a716-446655440000` (lowercase, hyphenated).
-function parseUuid(s: string): PhonUuid {
+export function parseUuid(s: string): PhonUuid {
   const hexStr = s.replace(/-/g, "");
   if (hexStr.length !== 32 || !/^[0-9a-fA-F]{32}$/.test(hexStr)) {
     throw new DecodeError("malformed value: uuid");
@@ -731,7 +442,7 @@ function parseUuid(s: string): PhonUuid {
 }
 
 /// James Clark notation: `{namespace}local`, or `local` with no namespace.
-function parseQName(s: string): PhonQName {
+export function parseQName(s: string): PhonQName {
   if (s.startsWith("{")) {
     const close = s.indexOf("}");
     if (close < 0) throw new DecodeError("malformed value: qname");
@@ -740,7 +451,7 @@ function parseQName(s: string): PhonQName {
   return { kind: "qname", namespace: null, local: s };
 }
 
-function formatQName(q: PhonQName): string {
+export function formatQName(q: PhonQName): string {
   return q.namespace === null ? q.local : `{${q.namespace}}${q.local}`;
 }
 
@@ -751,7 +462,7 @@ function pad(n: number, width: number): string {
 /// RFC 3339 / ISO 8601 (`r[value.extended-kinds]`): `T` marks a datetime, `:` a
 /// time, `-` a date; fractional seconds are `.` plus nine digits when nonzero;
 /// the offset is `Z` or `±HH:MM`. Mirrors Rust `datetime_string`.
-function formatDatetime(d: PhonDateTime): string {
+export function formatDatetime(d: PhonDateTime): string {
   const date = () => `${pad((d as { year: number }).year, 4)}-${pad((d as { month: number }).month, 2)}-${pad((d as { day: number }).day, 2)}`;
   const time = () => {
     const dt = d as { hour: number; minute: number; second: number; nanos: number };
@@ -780,7 +491,7 @@ function formatDatetime(d: PhonDateTime): string {
   }
 }
 
-function parseDatetime(s: string): PhonDateTime {
+export function parseDatetime(s: string): PhonDateTime {
   const bad = () => new DecodeError("malformed value: datetime");
   const tIdx = s.indexOf("T");
   if (tIdx >= 0) {

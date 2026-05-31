@@ -10,8 +10,15 @@ description = "Generator and Rust loader for phon's cross-language conformance c
 name = "phon-conformance"
 path = "src/main.rs"
 
+[[bin]]
+name = "gen_compat_vectors"
+path = "src/bin/gen_compat_vectors.rs"
+
 [dependencies]
 phon-schema.workspace = true
+phon-engine.workspace = true
 facet-value.workspace = true
+facet = { workspace = true }
+facet-json = { path = "../../../facet-format/facet-json" }
 tracing = "0.1"
 tracing-subscriber = "0.3"
