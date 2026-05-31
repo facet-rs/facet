@@ -17,7 +17,24 @@ pub async fn item_length<DB: DatabaseTrait>(db: &DB, item: Item) -> PicanteResul
     Ok(item.value(db)?.len() as u64)
 }
 
-#[picante::db(inputs(Item), interned(Label), tracked(item_length))]
+/// Singleton input (no key) — like dodeca's `SourceRegistry`.
+#[picante::input]
+pub struct Config {
+    pub setting: String,
+}
+
+/// A *no-argument* tracked query reading a singleton input (keyed by `()`),
+/// mirroring dodeca's `build_tree`.
+#[picante::tracked]
+pub async fn config_len<DB: DatabaseTrait>(db: &DB) -> PicanteResult<u64> {
+    Ok(Config::setting(db)?.unwrap_or_default().len() as u64)
+}
+
+#[picante::db(
+    inputs(Item, Config),
+    interned(Label),
+    tracked(item_length, config_len)
+)]
 pub struct Database {}
 
 #[tokio_test_lite::test]
@@ -158,5 +175,29 @@ async fn snapshot_input_override_invalidates_derived_query() -> PicanteResult<()
 
     // The host db is untouched.
     assert_eq!(item_length(&db, item).await?, 5);
+    Ok(())
+}
+
+/// A *no-argument* tracked query over a singleton input must invalidate on a
+/// snapshot when the singleton is overridden — this is what dodeca's build_tree
+/// (over SourceRegistry) needs for editor previews.
+#[tokio_test_lite::test]
+async fn snapshot_override_invalidates_singleton_query() -> PicanteResult<()> {
+    let db = Database::new();
+    Config::set(&db, "hello".into())?; // len 5
+    assert_eq!(config_len(&db).await?, 5); // memoize on db
+
+    let snapshot = DatabaseSnapshot::from_database(&db).await; // deep-clones memo
+    assert_eq!(config_len(&snapshot).await?, 5);
+
+    // Override the singleton ON THE SNAPSHOT.
+    Config::set(&snapshot, "much longer value".into())?; // len 17
+
+    assert_eq!(
+        Config::setting(&snapshot)?,
+        Some("much longer value".into())
+    );
+    assert_eq!(config_len(&snapshot).await?, 17); // the query must recompute
+    assert_eq!(config_len(&db).await?, 5); // host untouched
     Ok(())
 }
