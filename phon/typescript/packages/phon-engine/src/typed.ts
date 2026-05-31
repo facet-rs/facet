@@ -125,9 +125,16 @@ function valueToTyped(v: Value, kind: SchemaKind, reg: Registry): Typed {
       return (v as Value[]).map((e, i) => valueToTypedRef(e, kind.elements[i]!, reg));
     case "list":
     case "set":
-      return (v as Value[]).map((e) => valueToTypedRef(e, kind.element, reg));
-    case "array":
-      return (v as Value[]).map((e) => valueToTypedRef(e, kind.element, reg));
+    case "array": {
+      const arr = (v as Value[]).map((e) => valueToTypedRef(e, kind.element, reg));
+      // A list/set/array of `u8` surfaces as a `Uint8Array` (matching Rust
+      // `Vec<u8>` ↔ TS `Uint8Array`), the inverse of the encode-side tolerance.
+      const elem = reg.resolve(kind.element);
+      if (elem.kind === "primitive" && elem.primitive === "u8") {
+        return Uint8Array.from(arr as number[]);
+      }
+      return arr;
+    }
     case "map": {
       const m = v as Map<string, Value>;
       const out = new Map<string, Typed>();
@@ -215,9 +222,12 @@ function typedToValue(t: Typed, kind: SchemaKind, reg: Registry): Value {
       return (t as Typed[]).map((e, i) => typedToValueRef(e, kind.elements[i]!, reg));
     case "list":
     case "set":
-      return (t as Typed[]).map((e) => typedToValueRef(e, kind.element, reg));
-    case "array":
-      return (t as Typed[]).map((e) => typedToValueRef(e, kind.element, reg));
+    case "array": {
+      // A list/set/array of `u8` is ergonomically a `Uint8Array` on the TS side
+      // (matching Rust `Vec<u8>`); accept it transparently here.
+      const items = t instanceof Uint8Array ? Array.from(t) : (t as Typed[]);
+      return items.map((e) => typedToValueRef(e, kind.element, reg));
+    }
     case "map": {
       const m = t as Map<string, Typed>;
       const out = new Map<string, Value>();
