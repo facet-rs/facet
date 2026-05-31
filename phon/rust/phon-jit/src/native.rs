@@ -14,6 +14,8 @@
 //!
 //! Spec: `r[ir.stencils]`, `r[exec.jit-optional]`.
 
+use core::sync::atomic::{AtomicUsize, Ordering};
+
 use phon_ir::ir::{MemOp, MemProgram, SkipOp};
 use phon_schema::DecodeError;
 use phon_schema::bytes::Reader;
@@ -1000,6 +1002,11 @@ pub struct NativeEncode {
     enum_infos: Vec<EncEnumInfo>,
     /// One per enum op: that enum's variant table (stable heap per inner `Vec`).
     enum_variants: Vec<Vec<EncEnumVariantInfo>>,
+    /// Byte length the previous `run` produced. The next `run` pre-reserves this,
+    /// so a steady stream of similar-sized values pays no buffer-grow cost after
+    /// warmup (the cap-0 cold path costs ~log2(size) reallocations + copies).
+    /// `Relaxed`: a sizing hint, never a correctness input.
+    last_size: AtomicUsize,
 }
 
 /// An encode sequence's `EncSeqInfo` minus the two fields only known after the
@@ -1291,6 +1298,7 @@ impl NativeEncode {
             opt_infos,
             enum_infos,
             enum_variants,
+            last_size: AtomicUsize::new(0),
         };
 
         for (b, info) in c.seq_infos.iter().zip(ne.seq_infos.iter_mut()) {
@@ -1344,7 +1352,9 @@ impl NativeEncode {
         // The engine owns the output `Vec`; the stencils write into its buffer and
         // grow it through `jit_grow`. The `Vec` carries length 0 throughout (the
         // live length is `ctx.out_pos`); we set its final length at the end.
-        let mut out: Vec<u8> = Vec::new();
+        // Pre-reserve to the previous output size so a steady stream of
+        // similar-sized values writes with zero buffer grows after the first call.
+        let mut out: Vec<u8> = Vec::with_capacity(self.last_size.load(Ordering::Relaxed));
         let mut ctx = EncCtx {
             base,
             out_handle: core::ptr::from_mut(&mut out).cast::<u8>(),
@@ -1360,6 +1370,7 @@ impl NativeEncode {
         // Adopt the written bytes: the buffer holds `out_pos` initialized bytes
         // (the stencils only ever wrote within the capacity `jit_grow` ensured).
         unsafe { out.set_len(ctx.out_pos) };
+        self.last_size.fetch_max(ctx.out_pos, Ordering::Relaxed);
         out
     }
 }
