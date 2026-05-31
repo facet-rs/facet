@@ -26,8 +26,8 @@ use std::alloc;
 use std::collections::HashMap;
 
 use phon_ir::ir::{
-    BorrowOp, BytesOp, DefaultOp, EnumOp, EnumVariantOp, MapOp, MemOp, MemProgram, OptionOp, SeqOp,
-    SkipOp, fuse,
+    BorrowOp, BytesOp, DefaultOp, EnumOp, EnumVariantOp, MapOp, MemOp, MemProgram, OpaqueOp,
+    OptionOp, SeqOp, SkipOp, fuse,
 };
 use phon_ir::{
     Access, Construct, Descriptor, EnumAccess, MapStorage, Presence, RecordAccess, SequenceStorage,
@@ -283,8 +283,18 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
             })));
             Ok(())
         }
+        // r[impl ir.memory] — opaque field: a length-prefixed blob (wire-identical
+        // to a `Primitive::Bytes` run); the engine frames it and the thunks fill /
+        // consume the inner span.
+        (Access::Opaque(thunks), Resolved::Primitive(Primitive::Bytes)) => {
+            out.push(MemOp::Opaque(Box::new(OpaqueOp {
+                field_offset: base,
+                thunks: *thunks,
+            })));
+            Ok(())
+        }
         _ => Err(CompactError::Unsupported(
-            "typed: only fixed scalars, in-place records, owned sequences, strings, options, and #[repr(int)] enums so far",
+            "typed: only fixed scalars, in-place records, owned sequences, strings, options, #[repr(int)] enums, and opaque fields so far",
         )),
     }
 }
@@ -481,6 +491,16 @@ fn lower_decode_node(
                 key_align: ma.key.layout.align,
                 value_size: ma.value.layout.size,
                 value_align: ma.value.layout.align,
+                thunks: *thunks,
+            })));
+            Ok(())
+        }
+        // Opaque ⋈ Bytes: the writer wire is a `Primitive::Bytes` run; the reader
+        // carries an opaque adapter. The inner bytes are never reconciled here — the
+        // adapter owns the inner type — so this is the single-schema op verbatim.
+        (Access::Opaque(thunks), Resolved::Primitive(Primitive::Bytes)) => {
+            out.push(MemOp::Opaque(Box::new(OpaqueOp {
+                field_offset: base,
                 thunks: *thunks,
             })));
             Ok(())
@@ -1006,6 +1026,22 @@ unsafe fn encode_program(program: &MemProgram, base: *const u8, out: &mut Vec<u8
                 // Safety: `it` was built by `iter_init` and is freed exactly once.
                 unsafe { (m.thunks.iter_dealloc)(m.thunks.ctx, it) };
             }
+            // r[impl zerocopy.framing.value.opaque] — opaque field: reserve a `u32`
+            // length (align 1 — wire-identical to a `Primitive::Bytes` run, so no
+            // pre-pad), append the inner bytes via the thunk, then backpatch the
+            // length. The backpatch is what fixed-width (non-varint) framing buys.
+            MemOp::Opaque(o) => {
+                // Safety: the opaque field lives at `field_offset`.
+                let field = unsafe { base.add(o.field_offset) };
+                let len_pos = out.len();
+                write_u32(out, 0); // length placeholder, backpatched below
+                let start = out.len();
+                // Safety: `field` points at the opaque field; the thunk appends the
+                // inner value's encoded bytes to `out`.
+                unsafe { (o.thunks.encode)(o.thunks.ctx, field, core::ptr::from_mut(out)) };
+                let inner_len = (out.len() - start) as u32;
+                out[len_pos..len_pos + 4].copy_from_slice(&inner_len.to_le_bytes());
+            }
             // Compat-only decode ops never appear in an encode program (encode is
             // single-schema: `lower`, not `lower_decode`).
             MemOp::SkipWire(_) | MemOp::Default(_) => {
@@ -1283,6 +1319,24 @@ unsafe fn decode_program(program: &MemProgram, r: &mut Reader, base: *mut u8) ->
                 // Safety: `base + offset` is uninitialized storage of the reader
                 // field's type; the bound thunk initializes it.
                 unsafe { (d.default)(d.ctx, base.add(d.offset)) };
+            }
+            // r[impl zerocopy.framing.value.opaque] — opaque field: read the `u32`
+            // length (bounds-checked), borrow the inner span from the input, and hand
+            // it to the adapter. The decoded value may borrow that span (zero-copy),
+            // so the caller must keep the input alive as long as it (the contract on
+            // `decode_with`). The inner schema is never known here.
+            MemOp::Opaque(o) => {
+                let len = r.read_len(1)?;
+                let span = r.read_slice(len)?;
+                // Safety: the opaque field lives at `field_offset`; the decode thunk
+                // builds it from the borrowed span. `false` ⇒ the adapter rejected it,
+                // leaving `slot` uninitialized.
+                let slot = unsafe { base.add(o.field_offset) };
+                if !unsafe { (o.thunks.decode)(o.thunks.ctx, span.as_ptr(), len, slot) } {
+                    return Err(CompactError::Decode(DecodeError::Malformed(
+                        "opaque adapter rejected input",
+                    )));
+                }
             }
         }
     }

@@ -178,6 +178,15 @@ pub enum MemOp {
     /// `offset` with NO wire read (`r[compat.reader-only-fields]`). Decode-only.
     /// See [`DefaultOp`].
     Default(Box<DefaultOp>),
+    /// An opaque field (`#[facet(opaque = ...)]`) at `field_offset`: a `u32` byte
+    /// length then that many bytes of an inner encoding the engine never interprets.
+    /// On the wire it is IDENTICAL to a `Primitive::Bytes` run (a `u32` count + raw
+    /// bytes), so a cross-impl peer reads it as opaque bytes. Encode reserves the
+    /// `u32`, calls the [`OpaqueThunks`] encode thunk to append the inner bytes, then
+    /// backpatches the length (newly possible because phon is fixed-width, not
+    /// varints). Decode reads the length, borrows the span from the input, and hands
+    /// it to the decode thunk — zero-copy, the inner schema unknown. See [`OpaqueOp`].
+    Opaque(Box<OpaqueOp>),
 }
 
 /// A type-erased "write this field's default in place" operation, supplied by the
@@ -559,6 +568,45 @@ pub struct MapThunks {
     pub iter_dealloc: unsafe extern "C" fn(ctx: *const (), iter: *mut ()),
 }
 
+/// An opaque-field op's payload (boxed in [`MemOp::Opaque`]). The wire form is a
+/// `u32` byte length then that many inner bytes — IDENTICAL to a `Primitive::Bytes`
+/// run, so a peer that does not know the inner type reads it as opaque bytes. The
+/// engine frames it (reserve the `u32`, backpatch after sub-encoding); the
+/// [`OpaqueThunks`] fill (encode) or consume (decode) the inner span.
+#[derive(Clone, Debug)]
+pub struct OpaqueOp {
+    /// Where the opaque field (e.g. a `Payload` enum) lives, relative to the base.
+    pub field_offset: usize,
+    /// Type-erased encode/decode of the inner value (front-door bound).
+    pub thunks: OpaqueThunks,
+}
+
+/// Type-erased operations on an opaque field (`#[facet(opaque = ...)]`), supplied
+/// by the front door (`r[descriptors.thunk-binding]`), mirroring [`SeqThunks`]. The
+/// engine never knows the inner type — it frames the field as a length-prefixed
+/// blob and delegates the inner bytes to these thunks. `ctx` is an opaque per-field
+/// pointer (the field's opaque-adapter definition) the engine passes back untouched.
+///
+/// Encode reserves a `u32` length, calls [`encode`](Self::encode) to APPEND the
+/// inner value's bytes to `out`, then backpatches the length. Decode reads the
+/// length, borrows the inner span from the reader's input, and calls
+/// [`decode`](Self::decode) to build the value at `slot` — the decoded value may
+/// borrow that span (the standard zero-copy contract).
+#[derive(Clone, Copy, Debug)]
+pub struct OpaqueThunks {
+    /// Opaque per-field context, passed to every thunk.
+    pub ctx: *const (),
+    /// Append the inner value's encoded bytes to `out`. `field` points at the
+    /// opaque field in memory; the engine has already reserved (and will backpatch)
+    /// the `u32` length prefix, so this writes ONLY the inner bytes.
+    pub encode: unsafe extern "C" fn(ctx: *const (), field: *const u8, out: *mut Vec<u8>),
+    /// Build the opaque value at `slot` from the inner span `bytes[..len]` (borrowed
+    /// from the reader's input). Returns `false` if the adapter rejects the input,
+    /// which the engine maps to a decode error (the field is left uninitialized then).
+    pub decode:
+        unsafe extern "C" fn(ctx: *const (), bytes: *const u8, len: usize, slot: *mut u8) -> bool,
+}
+
 /// Coalesce adjacent scalar copies that are contiguous in *both* the wire and
 /// memory into one larger copy — the specialization the IR exists for. A flat
 /// struct whose wire layout matches its memory layout collapses to a single
@@ -605,6 +653,7 @@ pub fn fuse(program: MemProgram) -> MemProgram {
             | MemOp::Option(_)
             | MemOp::Enum(_)
             | MemOp::Map(_)
+            | MemOp::Opaque(_)
             | MemOp::SkipWire(_)) => {
                 out.push(seq);
                 wire_pos = None;

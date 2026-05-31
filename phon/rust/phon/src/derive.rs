@@ -20,15 +20,18 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::{LazyLock, RwLock};
 
 use facet::{
-    Def, DefaultSource, EnumRepr, EnumType, Facet, ListDef, MapDef, OptionDef, PtrConst, PtrMut,
-    PtrUninit, ScalarType, Shape, StructKind, Type, UserType,
+    Def, DefaultSource, EnumRepr, EnumType, Facet, ListDef, MapDef, OpaqueAdapterDef,
+    OpaqueDeserialize, OpaqueSerialize, OptionDef, PtrConst, PtrMut, PtrUninit, ScalarType, Shape,
+    StructKind, Type, UserType,
 };
+use phon_engine::{Registry, typed};
 use phon_ir::{
     Access, BorrowThunks, Construct, Descriptor, EnumAccess, FieldAccess, FieldDefault, Layout,
-    MapAccess, MapStorage, MapThunks, OptionAccess, OptionThunks, Presence, RecordAccess, SeqThunks,
-    SequenceAccess, SequenceStorage, Tag, VariantAccess,
+    MapAccess, MapStorage, MapThunks, MemProgram, OpaqueThunks, OptionAccess, OptionThunks,
+    Presence, RecordAccess, SeqThunks, SequenceAccess, SequenceStorage, Tag, VariantAccess,
 };
 use phon_schema::{
     Field, Primitive, Schema, SchemaId, SchemaKind, SchemaRef, Variant, VariantPayload,
@@ -83,6 +86,16 @@ pub fn of<'a, T: Facet<'a>>() -> Result<Derived, DeriveError> {
 /// # Errors
 /// As [`of`].
 pub fn of_shape(shape: &'static Shape) -> Result<Derived, DeriveError> {
+    // An opaque-adapter type (`#[facet(opaque = ...)]`): on the wire it is a
+    // `Primitive::Bytes` run (a `u32` length + inner bytes); the adapter owns the
+    // inner type, so the engine only frames it. (`r[zerocopy.framing.value.opaque]`)
+    if shape.has_opaque_adapter() {
+        return Ok(Derived {
+            root: primitive_id(Primitive::Bytes),
+            schemas: Vec::new(),
+            descriptor: opaque_descriptor(shape)?,
+        });
+    }
     // A `String` root: a byte sequence with schema `Primitive::String`.
     if is_string(shape) {
         return Ok(Derived {
@@ -193,6 +206,11 @@ impl Builder {
     /// The schema reference for a field's type: a primitive's real id, a nested
     /// struct's provisional key, or a `List`'s provisional key.
     fn ref_of(&mut self, shape: &'static Shape) -> Result<SchemaRef, DeriveError> {
+        // An opaque-adapter field is a `Primitive::Bytes` run on the wire (only the
+        // adapter knows the inner type) — `r[zerocopy.framing.value.opaque]`.
+        if shape.has_opaque_adapter() {
+            return Ok(SchemaRef::concrete(primitive_id(Primitive::Bytes)));
+        }
         if is_string(shape) {
             return Ok(SchemaRef::concrete(primitive_id(Primitive::String)));
         }
@@ -372,6 +390,9 @@ fn build_descriptor(
     real_ids: &[SchemaId],
 ) -> Result<Descriptor, DeriveError> {
     let (size, align) = layout_of(shape)?;
+    if shape.has_opaque_adapter() {
+        return opaque_descriptor(shape);
+    }
     if is_string(shape) {
         return string_descriptor(shape);
     }
@@ -1099,6 +1120,133 @@ unsafe extern "C" fn string_len(_ctx: *const (), list: *const u8) -> usize {
 unsafe extern "C" fn string_data(_ctx: *const (), list: *const u8) -> *const u8 {
     let s: &String = unsafe { &*list.cast::<String>() };
     s.as_ptr()
+}
+
+// ============================================================================
+// Opaque fields (`#[facet(opaque = ...)]`)
+// ============================================================================
+//
+// An opaque field's *schema* is `Primitive::Bytes` (a `u32` length + inner bytes),
+// so a cross-impl peer reads it as opaque bytes — only the adapter knows the inner
+// type. The *descriptor* carries `Access::Opaque(OpaqueThunks)`; the engine frames
+// the field (reserve the `u32`, backpatch after sub-encoding) and these thunks fill
+// / consume the inner span.
+//
+// Encode is option B (inline sub-encode): the encode thunk calls the adapter's
+// `serialize` to get the inner `(ptr, shape)`, resolves that shape to a phon
+// program (cached per shape pointer — `of_shape` lives here, above the engine), and
+// appends the inner value's compact bytes. Decode hands the borrowed span straight
+// to the adapter's `deserialize`, which builds the value lazily (it may borrow the
+// span — zero-copy).
+//
+// Spec: `r[zerocopy.framing.value.opaque]`, `r[descriptors.thunk-binding]`.
+
+/// The descriptor for an opaque field or root: schema `Primitive::Bytes`, an
+/// [`Access::Opaque`] carrying thunks bound to the field's opaque-adapter def
+/// (its `ctx`).
+fn opaque_descriptor(shape: &'static Shape) -> Result<Descriptor, DeriveError> {
+    let (size, align) = layout_of(shape)?;
+    let adapter = shape
+        .opaque_adapter
+        .ok_or(DeriveError::Unsupported("opaque field without an adapter def"))?;
+    Ok(Descriptor {
+        schema: SchemaRef::concrete(primitive_id(Primitive::Bytes)),
+        layout: Layout { size, align },
+        access: Access::Opaque(OpaqueThunks {
+            ctx: core::ptr::from_ref(adapter).cast::<()>(),
+            encode: opaque_encode,
+            decode: opaque_decode,
+        }),
+    })
+}
+
+/// Per-inner-shape cache of the lowered encode program. The encode thunk runs on
+/// every send, so resolving the inner shape (a full `of_shape` walk + lowering) is
+/// done once per distinct inner type and reused. Keyed by the inner `&'static
+/// Shape` pointer; the program is leaked to a `'static` reference (bounded by the
+/// number of distinct inner types ever sent).
+///
+/// A cached [`MemProgram`] carries thunk `ctx` pointers (all `&'static` references —
+/// the adapter / list / option / map defs — cast to `*const ()`) and `extern "C"`
+/// fn pointers: morally `Send + Sync`, but the raw-pointer representation loses the
+/// auto-trait. The wrapper re-asserts it — a built program is immutable and only
+/// ever read.
+struct ProgramCache(RwLock<HashMap<usize, &'static MemProgram>>);
+// Safety: cached programs are immutable after build; their thunk pointers are
+// `&'static` / stateless, sound to read from and move between any threads.
+unsafe impl Sync for ProgramCache {}
+unsafe impl Send for ProgramCache {}
+
+static INNER_PROGRAMS: LazyLock<ProgramCache> =
+    LazyLock::new(|| ProgramCache(RwLock::new(HashMap::new())));
+
+/// The lowered phon encode program for an opaque field's inner `shape`, built once
+/// and cached. A racing build is harmless — the program is deterministic, so a
+/// double-build just leaks one extra program.
+///
+/// # Panics
+/// If the inner type is not phon-derivable or cannot be lowered: a programming error
+/// (the inner type of an opaque field must be a phon type).
+fn inner_program(shape: &'static Shape) -> &'static MemProgram {
+    let key = core::ptr::from_ref(shape) as usize;
+    if let Some(p) = INNER_PROGRAMS.0.read().unwrap().get(&key) {
+        return p;
+    }
+    let derived = of_shape(shape).unwrap_or_else(|e| {
+        panic!(
+            "opaque inner type {} is not phon-derivable: {e}",
+            shape.type_identifier
+        )
+    });
+    let reg = Registry::new(derived.schemas);
+    let program = typed::lower(&derived.descriptor, &reg).unwrap_or_else(|e| {
+        panic!(
+            "opaque inner type {} cannot be lowered: {e:?}",
+            shape.type_identifier
+        )
+    });
+    let leaked: &'static MemProgram = Box::leak(Box::new(program));
+    INNER_PROGRAMS.0.write().unwrap().entry(key).or_insert(leaked)
+}
+
+/// [`OpaqueThunks::encode`]: map the opaque field to its inner `(ptr, shape)` via the
+/// adapter, then append the inner value's compact bytes to `out`. The engine frames
+/// the `u32` length around this.
+///
+/// # Safety
+/// `ctx` must be the `&'static OpaqueAdapterDef` set in [`opaque_descriptor`];
+/// `field` must point to an initialized opaque field; `out` must be a live `Vec<u8>`.
+unsafe extern "C" fn opaque_encode(ctx: *const (), field: *const u8, out: *mut Vec<u8>) {
+    // Safety: `ctx` is the `&'static OpaqueAdapterDef`.
+    let adapter = unsafe { &*ctx.cast::<OpaqueAdapterDef>() };
+    // Safety: `field` points at the opaque field; the adapter maps it to the inner
+    // value's `(ptr, shape)`.
+    let OpaqueSerialize { ptr, shape } = unsafe { (adapter.serialize)(PtrConst::new(field)) };
+    let program = inner_program(shape);
+    // Safety: `ptr` points at an initialized value of `shape`, which `program` was
+    // lowered to encode.
+    let bytes = unsafe { typed::encode_with(program, ptr.as_byte_ptr()) };
+    // Safety: `out` is a live `Vec<u8>`.
+    unsafe { (*out).extend_from_slice(&bytes) };
+}
+
+/// [`OpaqueThunks::decode`]: build the opaque value at `slot` from the borrowed inner
+/// span, via the adapter's `deserialize`. The decoded value may borrow the span
+/// (zero-copy).
+///
+/// # Safety
+/// `ctx` must be the `&'static OpaqueAdapterDef`; `bytes[..len]` must be a readable
+/// span that outlives the decoded value; `slot` must be uninitialized storage for the
+/// opaque type.
+unsafe extern "C" fn opaque_decode(ctx: *const (), bytes: *const u8, len: usize, slot: *mut u8) -> bool {
+    // Safety: `ctx` is the `&'static OpaqueAdapterDef`.
+    let adapter = unsafe { &*ctx.cast::<OpaqueAdapterDef>() };
+    // Safety: `bytes[..len]` is a readable span borrowed from the reader's input.
+    let span = unsafe { core::slice::from_raw_parts(bytes, len) };
+    let input = OpaqueDeserialize::Borrowed(span);
+    // Safety: `slot` is uninitialized storage for the opaque type; the adapter
+    // initializes it on `Ok`.
+    unsafe { (adapter.deserialize)(input, PtrUninit::new(slot)) }.is_ok()
 }
 
 // ============================================================================
@@ -2842,5 +2990,166 @@ mod tests {
         let back = unsafe { slot.assume_init() };
         assert_eq!(back.items.len(), 3);
         assert_eq!(back.tag, v.tag);
+    }
+
+    // ========================================================================
+    // Opaque fields (`#[facet(opaque = ...)]`)
+    // ========================================================================
+    //
+    // An opaque field encodes as a length-prefixed blob, wire-IDENTICAL to a
+    // `Primitive::Bytes` run carrying the inner value's compact bytes. The engine
+    // frames it (reserve a `u32`, backpatch); the adapter supplies the inner
+    // `(ptr, shape)` on encode and lazily wraps the borrowed span on decode. The
+    // oracle is a borrowed `&[u8]` field (also `Primitive::Bytes`): the two wires
+    // must match byte-for-byte. (`r[zerocopy.framing.value.opaque]`)
+
+    use std::marker::PhantomData;
+
+    #[derive(Debug, Facet)]
+    #[repr(u8)]
+    #[facet(opaque = TestPayloadAdapter, traits(Debug))]
+    enum TestPayload<'a> {
+        Outgoing {
+            ptr: PtrConst,
+            shape: &'static Shape,
+            _lt: PhantomData<&'a ()>,
+        },
+        Incoming(&'a [u8]),
+    }
+
+    struct TestPayloadAdapter;
+
+    impl facet::FacetOpaqueAdapter for TestPayloadAdapter {
+        type Error = String;
+        type SendValue<'a> = TestPayload<'a>;
+        type RecvValue<'de> = TestPayload<'de>;
+
+        fn serialize_map(value: &Self::SendValue<'_>) -> OpaqueSerialize {
+            match value {
+                TestPayload::Outgoing { ptr, shape, .. } => OpaqueSerialize { ptr: *ptr, shape },
+                // The recv→relay (passthrough) arm: the send path is always
+                // Outgoing, so these tests never exercise it.
+                TestPayload::Incoming(_) => unreachable!("relay/passthrough not under test"),
+            }
+        }
+
+        fn deserialize_build<'de>(
+            input: OpaqueDeserialize<'de>,
+        ) -> Result<Self::RecvValue<'de>, Self::Error> {
+            match input {
+                OpaqueDeserialize::Borrowed(bytes) => Ok(TestPayload::Incoming(bytes)),
+                OpaqueDeserialize::Owned(_) => Err("must be borrowed".into()),
+            }
+        }
+    }
+
+    // The inner value the opaque field carries — a real phon type.
+    #[derive(Facet, Debug, PartialEq)]
+    struct Inner {
+        x: u32,
+        y: u64,
+    }
+
+    // The envelope: a scalar, the opaque payload, and a trailing scalar (so the
+    // length prefix's framing is exercised against a following field).
+    #[derive(Facet)]
+    struct Envelope<'a> {
+        id: u32,
+        payload: TestPayload<'a>,
+        tag: u32,
+    }
+
+    // The byte-identity oracle: a borrowed `&[u8]` field is ALSO `Primitive::Bytes`,
+    // so an envelope carrying the inner's compact bytes there must produce the same
+    // wire as the opaque envelope.
+    #[derive(Facet)]
+    struct EnvelopeOracle<'a> {
+        id: u32,
+        payload: &'a [u8],
+        tag: u32,
+    }
+
+    #[test]
+    fn derived_opaque_field_schema_is_bytes() {
+        let d = of::<Envelope>().unwrap();
+        // One composite schema: the Envelope struct. The payload field resolves to
+        // the intrinsic `Primitive::Bytes` (only the adapter knows the inner type).
+        assert_eq!(d.schemas.len(), 1);
+        let SchemaKind::Struct { fields, .. } = &d.schemas[0].kind else {
+            panic!("envelope is a struct");
+        };
+        let payload = fields.iter().find(|f| f.name == "payload").unwrap();
+        assert_eq!(
+            payload.schema,
+            SchemaRef::concrete(primitive_id(Primitive::Bytes))
+        );
+    }
+
+    #[test]
+    fn derived_opaque_field_roundtrips_and_matches_bytes_oracle() {
+        let d = of::<Envelope>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+
+        let inner = Inner { x: 0xCAFE, y: 0x1122_3344_5566_7788 };
+
+        // The inner value's standalone compact encoding — what the opaque frame
+        // must carry verbatim.
+        let inner_bytes = {
+            let di = of::<Inner>().unwrap();
+            let regi = Registry::new(di.schemas.clone());
+            unsafe {
+                typed::encode(core::ptr::from_ref(&inner).cast::<u8>(), &di.descriptor, &regi)
+            }
+            .unwrap()
+        };
+
+        let env = Envelope {
+            id: 7,
+            payload: TestPayload::Outgoing {
+                ptr: PtrConst::new(core::ptr::from_ref(&inner).cast::<u8>()),
+                shape: <Inner as Facet>::SHAPE,
+                _lt: PhantomData,
+            },
+            tag: 0x99,
+        };
+        let bytes =
+            unsafe { typed::encode(core::ptr::from_ref(&env).cast::<u8>(), &d.descriptor, &reg) }
+                .unwrap();
+
+        // Oracle: a borrowed `&[u8]` field carrying the same inner bytes — also
+        // `Primitive::Bytes`, so the wire must be byte-identical.
+        let od = of::<EnvelopeOracle>().unwrap();
+        let oreg = Registry::new(od.schemas.clone());
+        let oracle = EnvelopeOracle { id: 7, payload: &inner_bytes, tag: 0x99 };
+        let obytes = unsafe {
+            typed::encode(core::ptr::from_ref(&oracle).cast::<u8>(), &od.descriptor, &oreg)
+        }
+        .unwrap();
+        assert_eq!(bytes, obytes, "opaque frame must equal a Primitive::Bytes run");
+
+        // Decode the envelope: the payload becomes a borrowed span (Incoming).
+        let mut slot = std::mem::MaybeUninit::<Envelope>::uninit();
+        unsafe { typed::decode(&bytes, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
+            .unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back.id, 7);
+        assert_eq!(back.tag, 0x99);
+        let span = match back.payload {
+            TestPayload::Incoming(b) => b,
+            TestPayload::Outgoing { .. } => panic!("decode yields a borrowed span"),
+        };
+        // The span IS the inner's compact bytes (a zero-copy borrow of the input).
+        assert_eq!(span, inner_bytes.as_slice());
+        // ZERO-COPY: the span points INTO the `bytes` buffer.
+        let start = bytes.as_ptr() as usize;
+        assert!((start..start + bytes.len()).contains(&(span.as_ptr() as usize)));
+
+        // And it decodes back to the original inner value.
+        let di = of::<Inner>().unwrap();
+        let regi = Registry::new(di.schemas.clone());
+        let mut islot = std::mem::MaybeUninit::<Inner>::uninit();
+        unsafe { typed::decode(span, &di.descriptor, &regi, islot.as_mut_ptr().cast::<u8>()) }
+            .unwrap();
+        assert_eq!(unsafe { islot.assume_init() }, inner);
     }
 }

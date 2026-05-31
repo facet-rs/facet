@@ -17,7 +17,7 @@
 
 use phon_schema::SchemaRef;
 
-use crate::ir::{BorrowThunks, DefaultThunk, MapThunks, OptionThunks, SeqThunks};
+use crate::ir::{BorrowThunks, DefaultThunk, MapThunks, OpaqueThunks, OptionThunks, SeqThunks};
 
 /// A node of the descriptor tree: the schema it realizes, its process-local
 /// memory layout, and how to read and construct it.
@@ -73,11 +73,13 @@ pub enum Access {
     /// A `Dynamic` value: no layout to describe. The engine decodes/encodes a
     /// `Value` through the self-describing codec and hands it over as-is.
     Dynamic,
-    /// The whole subtree is handled by thunks: no direct facts apply. How
-    /// `Channel` and `External` are accessed (the binding turns a local endpoint
-    /// or external buffer into a handle on encode and back on decode), and the
-    /// fallback for any kind a producer can't reduce to layout facts.
-    Opaque { encode: Thunk, decode: Thunk },
+    /// An opaque field (`#[facet(opaque = ...)]`): no layout to describe, no inner
+    /// schema the engine reads. The front-door-bound [`OpaqueThunks`] encode the
+    /// inner value (appended after a backpatched `u32` length) and decode it from
+    /// the borrowed span; on the wire it is a `Primitive::Bytes` run. This is how
+    /// `Channel`/`External` bindings (a local endpoint or external buffer becoming a
+    /// handle) and any kind a producer can't reduce to layout facts are carried.
+    Opaque(OpaqueThunks),
 }
 
 /// A struct or tuple: its fields at offsets, with how to construct it.

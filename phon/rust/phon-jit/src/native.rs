@@ -647,6 +647,7 @@ impl Compiler {
                     });
                     self.map_fixups.push(MapFixup { prog_index, slot, mapinfo });
                 }
+                MemOp::Opaque(_) => panic!("phon-jit: opaque fields are interpreter-only for now"),
             }
         }
         let done_start = self.code.len();
@@ -667,6 +668,7 @@ impl Compiler {
                 MemOp::Default(_) => DEFAULT_CONT,
                 MemOp::SkipWire(_) => SKIPWIRE_CONT,
                 MemOp::Map(_) => MAP_CONT,
+                MemOp::Opaque(_) => panic!("phon-jit: opaque fields are interpreter-only for now"),
             };
             for &rel in relocs {
                 patch_branch26(&mut self.code, op_start + rel, next);
@@ -1369,6 +1371,7 @@ impl EncCompiler {
                 MemOp::SkipWire(_) | MemOp::Default(_) => {
                     panic!("phon-jit: compat skip/default are interpreter-only for now")
                 }
+                MemOp::Opaque(_) => panic!("phon-jit: opaque fields are interpreter-only for now"),
             }
         }
         let done_start = self.code.len();
@@ -1386,6 +1389,7 @@ impl EncCompiler {
                 MemOp::SkipWire(_) | MemOp::Default(_) => {
                     unreachable!("phon-jit: compat skip/default are interpreter-only for now")
                 }
+                MemOp::Opaque(_) => panic!("phon-jit: opaque fields are interpreter-only for now"),
             };
             for &rel in relocs {
                 patch_branch26(&mut self.code, op_start + rel, next);
