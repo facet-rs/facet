@@ -76,8 +76,8 @@ fn exec_op(op: &Op, r: &mut Reader, reg: &Registry, stack: &mut Vec<Value>) -> R
             }
             stack.push(arr.into());
         }
-        Op::Seq { set, body } => {
-            let n = r.read_len(1)?;
+        Op::Seq { set, min_wire, body } => {
+            let n = r.read_len(*min_wire)?;
             let mut arr = VArray::new();
             let mut seen = if *set { Some(HashSet::new()) } else { None };
             for _ in 0..n {
@@ -109,14 +109,13 @@ fn exec_op(op: &Op, r: &mut Reader, reg: &Registry, stack: &mut Vec<Value>) -> R
             }
             stack.push(obj.into());
         }
-        Op::FixedArray { dimensions, body } => {
+        Op::FixedArray {
+            dimensions,
+            min_wire,
+            body,
+        } => {
             let count = compact::product(dimensions)?;
-            if count > r.remaining() as u64 {
-                return Err(CompactError::Decode(DecodeError::LengthTooLarge {
-                    count,
-                    remaining: r.remaining(),
-                }));
-            }
+            compact::check_fixed_count(count, *min_wire, r.remaining())?;
             let mut arr = VArray::new();
             for _ in 0..count {
                 exec_ops(body, r, reg, stack)?;

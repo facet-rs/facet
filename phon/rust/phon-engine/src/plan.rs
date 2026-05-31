@@ -50,10 +50,21 @@ enum Node {
     /// absent here is a writer-only variant: a decode error if it arrives.
     Enum(HashMap<u32, VariantPlan>),
     Tuple(Vec<Node>),
-    /// A `list` (`set == false`) or `set` (`set == true`).
-    Seq { set: bool, element: Box<Node> },
+    /// A `list` (`set == false`) or `set` (`set == true`). `min_wire` is the
+    /// element's minimum wire size for the `r[validate.lengths]` count guard —
+    /// `0` for a zero-sized element (an empty struct, `unit`, …), else `1`.
+    Seq {
+        set: bool,
+        element: Box<Node>,
+        min_wire: usize,
+    },
     Map { key: Box<Node>, value: Box<Node> },
-    Array { element: Box<Node>, dims: Vec<u64> },
+    /// A fixed-shape array. `min_wire` bounds `product(dims)` exactly as in `Seq`.
+    Array {
+        element: Box<Node>,
+        dims: Vec<u64>,
+        min_wire: usize,
+    },
     Option(Box<Node>),
     Dynamic,
 }
@@ -199,10 +210,12 @@ fn plan_kind(wk: SchemaKind, rk: SchemaKind, reg: &Registry, depth: usize) -> Re
         }
         (SchemaKind::List { element: we }, SchemaKind::List { element: re }) => Ok(Node::Seq {
             set: false,
+            min_wire: compact::min_wire_size_ref(reg, &we),
             element: Box::new(plan_ref(&we, &re, reg, depth + 1)?),
         }),
         (SchemaKind::Set { element: we }, SchemaKind::Set { element: re }) => Ok(Node::Seq {
             set: true,
+            min_wire: compact::min_wire_size_ref(reg, &we),
             element: Box::new(plan_ref(&we, &re, reg, depth + 1)?),
         }),
         (SchemaKind::Option { element: we }, SchemaKind::Option { element: re }) => {
@@ -229,6 +242,7 @@ fn plan_kind(wk: SchemaKind, rk: SchemaKind, reg: &Registry, depth: usize) -> Re
                 return Err(incompatible("array dimensions differ"));
             }
             Ok(Node::Array {
+                min_wire: compact::min_wire_size_ref(reg, &we),
                 element: Box::new(plan_ref(&we, &re, reg, depth + 1)?),
                 dims: wd,
             })
@@ -391,16 +405,26 @@ fn lower_node(node: &Node, out: &mut Program) {
             }
             out.push(Op::Array { count: nodes.len() });
         }
-        Node::Seq { set, element } => out.push(Op::Seq {
+        Node::Seq {
+            set,
+            element,
+            min_wire,
+        } => out.push(Op::Seq {
             set: *set,
+            min_wire: *min_wire,
             body: lower_subtree(element),
         }),
         Node::Map { key, value } => out.push(Op::Map {
             key: lower_subtree(key),
             value: lower_subtree(value),
         }),
-        Node::Array { element, dims } => out.push(Op::FixedArray {
+        Node::Array {
+            element,
+            dims,
+            min_wire,
+        } => out.push(Op::FixedArray {
             dimensions: dims.clone(),
+            min_wire: *min_wire,
             body: lower_subtree(element),
         }),
         Node::Option(element) => out.push(Op::Option {
@@ -478,8 +502,12 @@ fn exec(node: &Node, r: &mut Reader, reg: &Registry, depth: usize) -> Result<Val
             }
             Ok(a.into())
         }
-        Node::Seq { set, element } => {
-            let n = r.read_len(1)?;
+        Node::Seq {
+            set,
+            element,
+            min_wire,
+        } => {
+            let n = r.read_len(*min_wire)?;
             let mut a = VArray::new();
             let mut seen = if *set { Some(HashSet::new()) } else { None };
             for _ in 0..n {
@@ -508,14 +536,13 @@ fn exec(node: &Node, r: &mut Reader, reg: &Registry, depth: usize) -> Result<Val
             }
             Ok(obj.into())
         }
-        Node::Array { element, dims } => {
+        Node::Array {
+            element,
+            dims,
+            min_wire,
+        } => {
             let count = compact::product(dims)?;
-            if count > r.remaining() as u64 {
-                return Err(CompactError::Decode(DecodeError::LengthTooLarge {
-                    count,
-                    remaining: r.remaining(),
-                }));
-            }
+            compact::check_fixed_count(count, *min_wire, r.remaining())?;
             let mut a = VArray::new();
             for _ in 0..count {
                 a.push(exec(element, r, reg, depth + 1)?);
@@ -822,5 +849,60 @@ mod tests {
             got,
             obj(&[("inner", obj(&[("a", Value::from(5u32)), ("b", Value::NULL)]))])
         );
+    }
+
+    /// Regression (found by `tests/compat_fuzz.rs`): a `list` of *zero-sized*
+    /// elements (an empty struct) encodes to nothing but its count, so after the
+    /// count is read the buffer is empty. The `r[validate.lengths]` guard wrongly
+    /// rejected this — it assumed every element costs at least one wire byte —
+    /// even at writer==reader. The element's true minimum wire size (0 here) now
+    /// flows into the guard, which falls back to a fixed count cap for zero-sized
+    /// elements. Both decode paths must accept `[{}, {}, {}]`.
+    #[test]
+    fn list_of_zero_sized_structs_decodes() {
+        // Inner = empty struct; List<Inner>.
+        let inner = point_struct(1, vec![]);
+        let list = schema(2, SchemaKind::List { element: SchemaRef::concrete(SchemaId(1)) });
+        let reg = Registry::new([inner, list]);
+
+        // [ {}, {}, {} ] — three empty structs, zero payload bytes each.
+        let mut arr = VArray::new();
+        for _ in 0..3 {
+            arr.push(obj(&[]));
+        }
+        let value = Value::from(arr);
+        let bytes = compact::to_bytes(&value, SchemaId(2), &reg).unwrap();
+        // The whole message is just the u32 count: 4 bytes.
+        assert_eq!(bytes.len(), 4);
+
+        let got = decode_both(&bytes, SchemaId(2), SchemaId(2), &reg);
+        assert_eq!(got, value);
+    }
+
+    /// Regression: a fixed `array` of zero-sized elements has element count from
+    /// the schema (here `[3]`) but zero wire bytes, so the in-decoder count bound
+    /// (`count > remaining`) wrongly rejected it. The fixed-count check now uses
+    /// the same zero-sized fallback as the wire-driven path.
+    #[test]
+    fn array_of_zero_sized_units_decodes() {
+        // Array<unit, 3> — three units, zero payload bytes total.
+        let arr_schema = schema(
+            1,
+            SchemaKind::Array {
+                element: prim(Primitive::Unit),
+                dimensions: vec![3],
+            },
+        );
+        let reg = Registry::new([arr_schema]);
+        let mut arr = VArray::new();
+        for _ in 0..3 {
+            arr.push(Value::NULL);
+        }
+        let value = Value::from(arr);
+        let bytes = compact::to_bytes(&value, SchemaId(1), &reg).unwrap();
+        assert_eq!(bytes.len(), 0);
+
+        let got = decode_both(&bytes, SchemaId(1), SchemaId(1), &reg);
+        assert_eq!(got, value);
     }
 }

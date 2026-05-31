@@ -309,18 +309,38 @@ impl<'a> Reader<'a> {
     /// pre-allocation larger than the buffer allows: with each element costing at
     /// least `min_elem_size` bytes, the count may not exceed
     /// `remaining / min_elem_size` (`r[validate.lengths]`).
+    ///
+    /// A `min_elem_size` of `0` marks a *zero-sized* element — `unit`, an empty
+    /// struct, or an aggregate of only such (an empty list `[{}, {}, ...]` is a
+    /// run of zero-byte elements after the count). The byte buffer gives no bound
+    /// on these, so the count is bounded instead by a fixed cap
+    /// ([`ZST_COUNT_CAP`]), the wire-driven counterpart of the schema-side cap on
+    /// zero-wire fixed arrays (`r[validate.bundles]`). Without this a valid
+    /// `list`/`set` of zero-sized elements would fail to decode the moment the
+    /// buffer is exhausted by the count alone.
     pub fn read_len(&mut self, min_elem_size: usize) -> Result<usize, DecodeError> {
         let count = self.read_u32()? as usize;
-        let max = self.remaining() / min_elem_size.max(1);
+        let remaining = self.remaining();
+        // `checked_div` is `None` exactly when `min_elem_size == 0` — the
+        // zero-sized case, where the buffer gives no bound and the fixed cap
+        // applies.
+        let max = remaining.checked_div(min_elem_size).unwrap_or(ZST_COUNT_CAP);
         if count > max {
             return Err(DecodeError::LengthTooLarge {
                 count: count as u64,
-                remaining: self.remaining(),
+                remaining,
             });
         }
         Ok(count)
     }
 }
+
+/// The fixed ceiling on a wire-driven count of *zero-sized* elements, where the
+/// buffer offers no bound (`r[validate.lengths]`). A `u32` count already caps at
+/// ~4 billion; this is the smaller, explicit cap that keeps a malicious count
+/// from driving an unbounded construction loop. Mirrors the schema-side cap on
+/// zero-wire fixed arrays in `r[validate.bundles]`.
+pub const ZST_COUNT_CAP: usize = 1 << 24;
 
 /// Skip padding bytes until the reader's position is a multiple of `n`, the
 /// decode side of compact alignment and the mirror of [`pad_to`]

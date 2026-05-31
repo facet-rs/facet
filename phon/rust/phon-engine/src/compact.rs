@@ -201,6 +201,69 @@ pub(crate) fn alignment(p: Primitive) -> usize {
 pub(crate) use phon_schema::bytes::{pad_to, skip_pad};
 
 // ============================================================================
+// Minimum wire size
+// ============================================================================
+//
+// The length guard `r[validate.lengths]` bounds a wire-driven count by
+// `bytes_remaining / min_element_size`. That premise breaks for *zero-sized*
+// elements (`unit`, an empty struct, an aggregate of only those), whose wire
+// footprint is 0: a list of them is just the count, and the buffer empties
+// immediately, so the buffer offers no honest bound. `read_len(0)` switches to a
+// fixed cap for exactly that case.
+//
+// This helper computes whether a referenced element is zero-sized, returning the
+// minimum wire size to hand `read_len`: `0` for a zero-sized element, `1`
+// otherwise. We need only the zero/nonzero distinction — `1` is the same loose
+// lower bound the codec has always used for nonzero elements — so anything we
+// cannot prove zero-sized (an unresolvable ref, a cycle, an unsupported kind)
+// conservatively reports `1`.
+
+const MIN_WIRE_DEPTH: usize = 64;
+
+/// The minimum wire size to pass `read_len` for a sequence element of schema
+/// `rf`: `0` only when the element provably encodes to zero bytes, else `1`.
+pub(crate) fn min_wire_size_ref(reg: &Registry, rf: &SchemaRef) -> usize {
+    usize::from(!is_zero_sized_ref(reg, rf, 0))
+}
+
+fn is_zero_sized_ref(reg: &Registry, rf: &SchemaRef, depth: usize) -> bool {
+    if depth > MIN_WIRE_DEPTH {
+        return false;
+    }
+    match resolve(reg, rf) {
+        Ok(Resolved::Primitive(p)) => is_zero_sized_primitive(p),
+        Ok(Resolved::Composite(kind)) => is_zero_sized_kind(reg, &kind, depth),
+        Err(_) => false,
+    }
+}
+
+fn is_zero_sized_primitive(p: Primitive) -> bool {
+    // `unit` writes nothing; `never` is uninhabited (it can't appear as a real
+    // element, but reporting it nonzero is the safe default). Every other
+    // primitive writes at least one byte.
+    matches!(p, Primitive::Unit)
+}
+
+fn is_zero_sized_kind(reg: &Registry, kind: &SchemaKind, depth: usize) -> bool {
+    match kind {
+        SchemaKind::Primitive(p) => is_zero_sized_primitive(*p),
+        // A struct/tuple is zero-sized iff every field/element is.
+        SchemaKind::Struct { fields, .. } => fields
+            .iter()
+            .all(|f| is_zero_sized_ref(reg, &f.schema, depth + 1)),
+        SchemaKind::Tuple { elements } => elements
+            .iter()
+            .all(|e| is_zero_sized_ref(reg, e, depth + 1)),
+        // A fixed array is zero-sized iff its element is (regardless of dims).
+        SchemaKind::Array { element, .. } => is_zero_sized_ref(reg, element, depth + 1),
+        // Everything else carries at least one wire byte: a list/set/map writes a
+        // u32 count; an option a presence byte; an enum a u32 tag; dynamic a tag;
+        // strings/bytes a length. None are zero-sized.
+        _ => false,
+    }
+}
+
+// ============================================================================
 // Public API
 // ============================================================================
 
@@ -469,6 +532,26 @@ pub(crate) fn product(dimensions: &[u64]) -> Result<u64> {
     Ok(p)
 }
 
+/// Bound a *fixed-array* element `count` (`product(dimensions)`) before the
+/// construction loop. With each element costing at least `min_wire` bytes the
+/// count may not exceed `remaining / min_wire`; for a zero-sized element
+/// (`min_wire == 0`) the buffer gives no bound, so a fixed cap applies — the
+/// decoder-side mirror of the schema-side cap in `r[validate.bundles]`.
+/// (`r[validate.dimensions]`.)
+pub(crate) fn check_fixed_count(count: u64, min_wire: usize, remaining: usize) -> Result<()> {
+    // `checked_div` is `None` exactly when `min_wire == 0` — the zero-sized case,
+    // where the buffer offers no bound and the fixed cap applies.
+    let max =
+        remaining.checked_div(min_wire).unwrap_or(phon_schema::bytes::ZST_COUNT_CAP) as u64;
+    if count > max {
+        return Err(CompactError::Decode(DecodeError::LengthTooLarge {
+            count,
+            remaining,
+        }));
+    }
+    Ok(())
+}
+
 // ============================================================================
 // Generic resolution
 // ============================================================================
@@ -661,7 +744,7 @@ fn decode_kind(r: &mut Reader, kind: &SchemaKind, reg: &Registry, depth: usize) 
             Ok(arr.into())
         }
         SchemaKind::List { element } => {
-            let n = r.read_len(1)?;
+            let n = r.read_len(min_wire_size_ref(reg, element))?;
             let mut arr = VArray::new();
             for _ in 0..n {
                 arr.push(decode_ref(r, element, reg, depth)?);
@@ -669,7 +752,7 @@ fn decode_kind(r: &mut Reader, kind: &SchemaKind, reg: &Registry, depth: usize) 
             Ok(arr.into())
         }
         SchemaKind::Set { element } => {
-            let n = r.read_len(1)?;
+            let n = r.read_len(min_wire_size_ref(reg, element))?;
             let mut arr = VArray::new();
             let mut seen = std::collections::HashSet::new();
             for _ in 0..n {
@@ -686,12 +769,7 @@ fn decode_kind(r: &mut Reader, kind: &SchemaKind, reg: &Registry, depth: usize) 
             dimensions,
         } => {
             let count = product(dimensions)?;
-            if count > r.remaining() as u64 {
-                return Err(CompactError::Decode(DecodeError::LengthTooLarge {
-                    count,
-                    remaining: r.remaining(),
-                }));
-            }
+            check_fixed_count(count, min_wire_size_ref(reg, element), r.remaining())?;
             let mut arr = VArray::new();
             for _ in 0..count {
                 arr.push(decode_ref(r, element, reg, depth)?);
@@ -1043,6 +1121,46 @@ mod tests {
             to_bytes(&bv.into(), SchemaId(13), &reg2),
             Err(CompactError::GenericArity { .. })
         ));
+    }
+
+    /// Regression (found by `tests/compat_fuzz.rs`): a `list`/`set` of zero-sized
+    /// elements — an empty struct, a `unit` — encodes to just its u32 count, so
+    /// the buffer is empty afterward. The `r[validate.lengths]` count guard
+    /// assumed every element costs at least one byte and rejected the decode of a
+    /// value it had just encoded. The element's true minimum wire size now flows
+    /// into the guard. This is a plain encode↔decode roundtrip — no drift — so it
+    /// pins the fix at the codec level, not just the planner.
+    #[test]
+    fn zero_sized_collections_roundtrip() {
+        let empty = schema(1, SchemaKind::Struct { name: "Z".into(), fields: vec![] });
+        let list = schema(2, SchemaKind::List { element: SchemaRef::concrete(SchemaId(1)) });
+        let set = schema(3, SchemaKind::List { element: prim(Primitive::Unit) });
+        let array = schema(
+            4,
+            SchemaKind::Array { element: prim(Primitive::Unit), dimensions: vec![4] },
+        );
+        let reg = Registry::new([empty, list, set, array]);
+
+        // list<empty-struct> with several elements.
+        let mut a = VArray::new();
+        for _ in 0..5 {
+            a.push(Value::from(VObject::new()));
+        }
+        rt(Value::from(a), SchemaId(2), &reg);
+
+        // list<unit> with several elements.
+        let mut u = VArray::new();
+        for _ in 0..3 {
+            u.push(Value::NULL);
+        }
+        rt(Value::from(u), SchemaId(3), &reg);
+
+        // array<unit, 4>.
+        let mut fa = VArray::new();
+        for _ in 0..4 {
+            fa.push(Value::NULL);
+        }
+        rt(Value::from(fa), SchemaId(4), &reg);
     }
 
     #[test]

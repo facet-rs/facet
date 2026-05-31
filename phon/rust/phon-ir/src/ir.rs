@@ -63,14 +63,27 @@ pub enum Op {
     /// Read a `u32` length `n`; run `body` `n` times (each leaves one element on
     /// the stack); collect the `n` elements into an array, rejecting duplicates
     /// when `set`. Push the array. Net `+1`.
-    Seq { set: bool, body: Program },
+    ///
+    /// `min_wire` is the element's minimum wire size for the `r[validate.lengths]`
+    /// count guard: `0` for a zero-sized element (an empty struct, `unit`, …),
+    /// else `1`. A `0` switches the guard to a fixed cap, since the buffer cannot
+    /// bound a count of zero-byte elements.
+    Seq {
+        set: bool,
+        min_wire: usize,
+        body: Program,
+    },
     /// Read a `u32` length `n`; run `key` then `value` `n` times; assemble an
     /// object (string keys), rejecting duplicate keys. Push it. Net `+1`.
     Map { key: Program, value: Program },
     /// Run `body` `product(dimensions)` times (a fixed-shape array); collect into
     /// an array; push it. The product is computed at run time so lowering stays
-    /// infallible. Net `+1`.
-    FixedArray { dimensions: Vec<u64>, body: Program },
+    /// infallible. `min_wire` bounds the product exactly as in [`Op::Seq`]. Net `+1`.
+    FixedArray {
+        dimensions: Vec<u64>,
+        min_wire: usize,
+        body: Program,
+    },
     /// Read a presence byte; on `1` run `some` (leaving its value), on `0` push
     /// null. Net `+1`.
     Option { some: Program },
