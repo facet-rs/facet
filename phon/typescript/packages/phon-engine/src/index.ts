@@ -25,6 +25,6 @@ export {
 } from "./plan.ts";
 export type { Plan, Node, Step, Payload, StructPlan, VariantPlan } from "./plan.ts";
 
-// The new Function JIT.
-export { compile, compilePlan, compiledSource } from "./jit.ts";
+// The new Function JIT (with transparent interpreter fallback under strict CSP).
+export { compile, compilePlan, interpretPlan, compiledSource, jitAvailable } from "./jit.ts";
 export type { CompiledDecoder } from "./jit.ts";

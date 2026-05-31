@@ -12,6 +12,10 @@
 // data-driven control flow (sequence/map/array loops, the option presence byte,
 // the enum switch) survives, exactly as in the interpreter but unrolled.
 //
+// `new Function` is unavailable under a strict Content-Security-Policy (no
+// `'unsafe-eval'`), so `compile` transparently falls back to the interpreter;
+// `compilePlan` is the strict primitive that throws if codegen is blocked.
+//
 // The compiled function is verified against the interpreter (plan.ts) on every
 // conformance vector: same bytes -> same Value, same errors.
 //
@@ -22,7 +26,7 @@ import { canonicalKey, parseDatetime, parseQName, parseUuid } from "@bearcove/ph
 import type { Primitive, SchemaRef, Value } from "@bearcove/phon-schema";
 import { checkFixedCount, decodeRef, product } from "./compact.ts";
 import type { Node, Payload, Plan, StructPlan } from "./plan.ts";
-import { buildPlan, WriterOnlyVariantError } from "./plan.ts";
+import { buildPlan, decodeWithPlan, WriterOnlyVariantError } from "./plan.ts";
 
 /// The fixed helper surface the generated code closes over. `new Function` has no
 /// access to module scope, so everything it needs is passed in as an argument.
@@ -56,10 +60,27 @@ const HELPERS: Helpers = {
 /// bytes. Throws the same errors the interpreter would.
 export type CompiledDecoder = (bytes: Uint8Array) => Value;
 
-/// Compile a built plan to a specialized decoder via `new Function`.
+/// Whether `new Function` is usable here. Memoized: a strict CSP disables it
+/// process-wide, so probe once. When false, `compile` uses the interpreter.
+let jitCapable: boolean | undefined;
+export function jitAvailable(): boolean {
+  if (jitCapable === undefined) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-implied-eval
+      new Function("return 1")();
+      jitCapable = true;
+    } catch {
+      jitCapable = false;
+    }
+  }
+  return jitCapable;
+}
+
+/// Compile a built plan to a specialized decoder via `new Function`. Throws if
+/// codegen is unavailable (strict CSP) — use `compile` for transparent fallback.
 export function compilePlan(plan: Plan, reg: Registry): CompiledDecoder {
   const cg = new Codegen();
-  const body = cg.genStmt(plan.root, "__root");
+  const body = cg.genStmt(plan.root, "__root", 0);
   const src =
     `"use strict";\n` +
     `const r = new H.Reader(bytes);\n` +
@@ -78,15 +99,46 @@ export function compilePlan(plan: Plan, reg: Registry): CompiledDecoder {
   return (bytes: Uint8Array) => fn(bytes, reg, skipRefs, HELPERS);
 }
 
-/// Build a plan and compile it in one step.
-export function compile(writerRoot: bigint, readerRoot: bigint, reg: Registry): CompiledDecoder {
-  return compilePlan(buildPlan(writerRoot, readerRoot, reg), reg);
+/// An interpreter-backed decoder over a built plan — the CSP fallback, and what
+/// `compile(..., { jit: false })` returns.
+export function interpretPlan(plan: Plan, reg: Registry): CompiledDecoder {
+  return (bytes: Uint8Array) => decodeWithPlan(bytes, plan, reg);
+}
+
+// A per-registry cache of compiled decoders, keyed by writer:reader:engine. A
+// Registry is immutable after construction, so a plan depends only on the
+// schemas reachable from the roots — caching by registry identity is sound. The
+// WeakMap lets a dropped registry's cache be collected.
+const decoderCache = new WeakMap<Registry, Map<string, CompiledDecoder>>();
+
+/// Build a plan and return a decoder for `writerRoot -> readerRoot`, cached per
+/// registry. Uses the JIT when `new Function` is available, else the
+/// interpreter; pass `{ jit: true }` to require the JIT (throwing under CSP) or
+/// `{ jit: false }` to force the interpreter.
+export function compile(
+  writerRoot: bigint,
+  readerRoot: bigint,
+  reg: Registry,
+  opts?: { jit?: boolean },
+): CompiledDecoder {
+  const useJit = opts?.jit ?? jitAvailable();
+  const key = `${writerRoot.toString(16)}:${readerRoot.toString(16)}:${useJit ? "j" : "i"}`;
+  let perReg = decoderCache.get(reg);
+  if (!perReg) {
+    perReg = new Map();
+    decoderCache.set(reg, perReg);
+  }
+  const hit = perReg.get(key);
+  if (hit) return hit;
+  const plan = buildPlan(writerRoot, readerRoot, reg);
+  const decoder = useJit ? compilePlan(plan, reg) : interpretPlan(plan, reg);
+  perReg.set(key, decoder);
+  return decoder;
 }
 
 /// The generated source of a plan's decoder, for inspection/debugging.
 export function compiledSource(plan: Plan): string {
-  const cg = new Codegen();
-  return cg.genStmt(plan.root, "__root");
+  return new Codegen().genStmt(plan.root, "__root", 0);
 }
 
 // ============================================================================
@@ -131,8 +183,10 @@ class Codegen {
   }
 
   /// Emit statements that decode `node` (reading from `r`) and assign the value
-  /// to the already-declared variable `target`.
-  genStmt(node: Node, target: string): string {
+  /// to the already-declared variable `target`. `depth` is the compile-time
+  /// nesting level — threaded so writer-only-field skips pass the SAME depth the
+  /// interpreter would, keeping the hostile-input depth limit identical.
+  genStmt(node: Node, target: string, depth: number): string {
     switch (node.kind) {
       case "scalar": {
         const a = alignment(node.primitive);
@@ -140,13 +194,13 @@ class Codegen {
         return `${pad}${target} = ${scalarExpr(node.primitive)};\n`;
       }
       case "struct":
-        return this.genStruct(node.plan, target);
+        return this.genStruct(node.plan, target, depth);
       case "tuple": {
         const a = this.fresh("a");
         let out = `const ${a} = [];\n`;
         for (const n of node.nodes) {
           const e = this.fresh("e");
-          out += `let ${e};\n${this.genStmt(n, e)}${a}.push(${e});\n`;
+          out += `let ${e};\n${this.genStmt(n, e, depth + 1)}${a}.push(${e});\n`;
         }
         return out + `${target} = ${a};\n`;
       }
@@ -158,7 +212,7 @@ class Codegen {
         out += `switch (${idx}) {\n`;
         for (const [index, vp] of node.byIndex) {
           const p = this.fresh("p");
-          out += `case ${index}: {\nlet ${p};\n${this.genPayload(vp.payload, p)}`;
+          out += `case ${index}: {\nlet ${p};\n${this.genPayload(vp.payload, p, depth)}`;
           out += `${res} = new Map([[${JSON.stringify(vp.reader)}, ${p}]]);\nbreak;\n}\n`;
         }
         out += `default: throw new H.WriterOnlyVariantError(${idx});\n`;
@@ -182,7 +236,7 @@ class Codegen {
             `if (${seen}.has(${k})) throw new H.DecodeError("duplicate set element");\n` +
             `${seen}.add(${k});\n`;
         }
-        out += `for (let ${i} = 0; ${i} < ${n}; ${i}++) {\nlet ${e};\n${this.genStmt(node.element, e)}${dup}${a}.push(${e});\n}\n`;
+        out += `for (let ${i} = 0; ${i} < ${n}; ${i}++) {\nlet ${e};\n${this.genStmt(node.element, e, depth + 1)}${dup}${a}.push(${e});\n}\n`;
         return out + `${target} = ${a};\n`;
       }
       case "map": {
@@ -194,8 +248,8 @@ class Codegen {
         let out = `const ${n} = r.readLen(1);\n`;
         out += `const ${m} = new Map();\n`;
         out += `for (let ${i} = 0; ${i} < ${n}; ${i}++) {\n`;
-        out += `let ${k};\n${this.genStmt(node.key, k)}`;
-        out += `let ${v};\n${this.genStmt(node.value, v)}`;
+        out += `let ${k};\n${this.genStmt(node.key, k, depth + 1)}`;
+        out += `let ${v};\n${this.genStmt(node.value, v, depth + 1)}`;
         out += `if (typeof ${k} !== "string") throw new H.DecodeError("map with non-string keys");\n`;
         out += `if (${m}.has(${k})) throw new H.DecodeError("duplicate map key");\n`;
         out += `${m}.set(${k}, ${v});\n}\n`;
@@ -210,7 +264,7 @@ class Codegen {
         let out = `const ${count} = H.product(${dims});\n`;
         out += `H.checkFixedCount(${count}, ${node.minWire}, r.remaining());\n`;
         out += `const ${a} = [];\n`;
-        out += `for (let ${i} = 0n; ${i} < ${count}; ${i}++) {\nlet ${e};\n${this.genStmt(node.element, e)}${a}.push(${e});\n}\n`;
+        out += `for (let ${i} = 0n; ${i} < ${count}; ${i}++) {\nlet ${e};\n${this.genStmt(node.element, e, depth + 1)}${a}.push(${e});\n}\n`;
         return out + `${target} = ${a};\n`;
       }
       case "option": {
@@ -218,7 +272,7 @@ class Codegen {
         const inner = this.fresh("inner");
         let out = `const ${b} = r.readU8();\n`;
         out += `if (${b} === 0) ${target} = null;\n`;
-        out += `else if (${b} === 1) {\nlet ${inner};\n${this.genStmt(node.element, inner)}${target} = ${inner};\n}\n`;
+        out += `else if (${b} === 1) {\nlet ${inner};\n${this.genStmt(node.element, inner, depth + 1)}${target} = ${inner};\n}\n`;
         out += `else throw new H.DecodeError("invalid bool byte 0x" + ${b}.toString(16));\n`;
         return out;
       }
@@ -227,16 +281,18 @@ class Codegen {
     }
   }
 
-  private genStruct(plan: StructPlan, target: string): string {
+  private genStruct(plan: StructPlan, target: string, depth: number): string {
     const m = this.fresh("m");
     let out = `const ${m} = new Map();\n`;
     for (const step of plan.steps) {
       if (step.kind === "take") {
         const f = this.fresh("f");
-        out += `let ${f};\n${this.genStmt(step.node, f)}${m}.set(${JSON.stringify(step.reader)}, ${f});\n`;
+        out += `let ${f};\n${this.genStmt(step.node, f, depth + 1)}${m}.set(${JSON.stringify(step.reader)}, ${f});\n`;
       } else {
         const k = this.skipRefs.push(step.ref) - 1;
-        out += `H.decodeRef(r, skipRefs[${k}], reg, 0);\n`;
+        // Same depth the interpreter passes (`depth + 1`): the writer-only field
+        // sits one level below this struct.
+        out += `H.decodeRef(r, skipRefs[${k}], reg, ${depth + 1});\n`;
       }
     }
     for (const name of plan.defaults) {
@@ -245,23 +301,23 @@ class Codegen {
     return out + `${target} = ${m};\n`;
   }
 
-  private genPayload(p: Payload, target: string): string {
+  private genPayload(p: Payload, target: string, depth: number): string {
     switch (p.kind) {
       case "unit":
         return `${target} = null;\n`;
       case "newtype":
-        return this.genStmt(p.node, target);
+        return this.genStmt(p.node, target, depth + 1);
       case "tuple": {
         const a = this.fresh("a");
         let out = `const ${a} = [];\n`;
         for (const n of p.nodes) {
           const e = this.fresh("e");
-          out += `let ${e};\n${this.genStmt(n, e)}${a}.push(${e});\n`;
+          out += `let ${e};\n${this.genStmt(n, e, depth + 1)}${a}.push(${e});\n`;
         }
         return out + `${target} = ${a};\n`;
       }
       case "struct":
-        return this.genStruct(p.plan, target);
+        return this.genStruct(p.plan, target, depth);
     }
   }
 }
