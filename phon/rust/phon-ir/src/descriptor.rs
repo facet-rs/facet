@@ -17,7 +17,7 @@
 
 use phon_schema::SchemaRef;
 
-use crate::ir::{DefaultThunk, MapThunks, OptionThunks, SeqThunks};
+use crate::ir::{BorrowThunks, DefaultThunk, MapThunks, OptionThunks, SeqThunks};
 
 /// A node of the descriptor tree: the schema it realizes, its process-local
 /// memory layout, and how to read and construct it.
@@ -226,6 +226,15 @@ pub enum SequenceStorage {
     /// not assume. The typed path's owned-sequence representation
     /// (`r[descriptors.thunk-binding]`).
     Vtable(SeqThunks),
+    /// A BORROWED, zero-copy contiguous byte run reached through the front door's
+    /// bound borrow thunks (`&str`, `&[u8]`), whose fat-pointer layout the engine
+    /// does not assume. Decode writes a fat pointer INTO the reader's input buffer
+    /// (no allocation, no copy); the decoded value borrows the input. The typed
+    /// path's borrowed-leaf representation, mirroring [`Vtable`](Self::Vtable) but
+    /// thunk-built rather than allocated. Distinct from the layout-fact
+    /// [`Borrowed`](Self::Borrowed), which carries raw `(ptr, len)` offsets
+    /// (`r[descriptors.thunk-binding]`).
+    BorrowedVtable(BorrowThunks),
 }
 
 /// Key/value pairs: the key and value descriptors and how the map is stored.

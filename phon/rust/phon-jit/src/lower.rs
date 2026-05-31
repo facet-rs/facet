@@ -73,6 +73,9 @@ pub fn compile_decode(program: &MemProgram) -> CompiledDecode {
             MemOp::Bytes(_) => {
                 panic!("phon-jit: bulk byte runs (String) are interpreter-only for now")
             }
+            MemOp::Borrow(_) => {
+                panic!("phon-jit: borrowed leaves (&str/&[u8]) are interpreter-only for now")
+            }
             MemOp::Option(_) => panic!("phon-jit: Option is interpreter-only for now"),
             MemOp::Enum(_) => panic!("phon-jit: enums are interpreter-only for now"),
             MemOp::Map(_) => panic!("phon-jit: maps are interpreter-only for now"),
@@ -102,6 +105,9 @@ pub fn compile_encode(program: &MemProgram) -> CompiledEncode {
             },
             MemOp::Bytes(_) => {
                 panic!("phon-jit: bulk byte runs (String) are interpreter-only for now")
+            }
+            MemOp::Borrow(_) => {
+                panic!("phon-jit: borrowed leaves (&str/&[u8]) are interpreter-only for now")
             }
             MemOp::Option(_) => panic!("phon-jit: Option is interpreter-only for now"),
             MemOp::Enum(_) => panic!("phon-jit: enums are interpreter-only for now"),

@@ -100,6 +100,30 @@ pub struct BytesInfo {
     pub validate: unsafe extern "C" fn(ptr: *const u8, len: usize) -> bool,
 }
 
+/// A borrowed, zero-copy byte-run op's immediates, reached through a
+/// `*const BorrowInfo` slot in `Ctx.prog`. Like [`BytesInfo`] there is no element
+/// body, and like it the run is bounds-checked — but decode writes a fat pointer
+/// straight INTO the input (no allocation, no copy) via the `set_borrowed`
+/// construct thunk. Mirrors `BorrowOp`.
+#[repr(C)]
+pub struct BorrowInfo {
+    /// Where the borrowed handle (the `&str`/`&[u8]` fat pointer) lives, relative
+    /// to `base`.
+    pub field_offset: usize,
+    /// Bytes per element (1 for `&str`/`&[u8]`).
+    pub stride: usize,
+    /// Alignment of the borrowed run on the wire (1 for `&str`/`&[u8]`).
+    pub elem_align: usize,
+    /// Opaque per-type context passed to the thunk.
+    pub thunks_ctx: *const (),
+    /// Construct the borrowed value at `field`, pointing it at `ptr[..len]` (a run
+    /// INTO the input). Reached as an *indirect* call, so it adds no relocation.
+    /// Returns `true` if the content is valid; on `false` the stencil reports
+    /// `status = 2` (e.g. non-UTF-8 `&str`).
+    pub set_borrowed:
+        unsafe extern "C" fn(ctx: *const (), field: *mut u8, ptr: *const u8, len: usize) -> bool,
+}
+
 /// An optional op's immediates, reached through a `*const OptInfo` slot in
 /// `Ctx.prog`. The some-body is the chain entered at `some_entry`, driven by the
 /// triples at `some_prog`, and run with `base = scratch` (the engine-allocated
@@ -415,6 +439,74 @@ pub unsafe extern "C" fn phon_stencil_bytes(cx: *mut Ctx) {
     // Adopt the buffer into the handle, then continue.
     let list = c.base.add(info.field_offset);
     (info.from_raw_parts)(info.thunks_ctx, list, buffer, count, cap);
+    c.prog = outer_prog;
+
+    #[cfg(tailcall)]
+    become phon_cont(cx);
+    #[cfg(not(tailcall))]
+    phon_cont(cx);
+}
+
+/// Decode a BORROWED, zero-copy byte run (`&str`/`&[u8]`) into `base +
+/// field_offset`, then continue.
+///
+/// Reads a `u32` count (bounds-checked against `remaining / stride.max(1)`, like
+/// `read_len`), pads the wire to `elem_align`, then bounds-checks the
+/// `count * stride` run. Rather than allocate and copy (as `phon_stencil_bytes`
+/// does), it calls `set_borrowed(ctx, base + field_offset, src, count)` where `src`
+/// is the wire cursor pointing INTO the input — NO allocation, NO copy. The written
+/// `&str`/`&[u8]` borrows the input buffer, which the caller keeps alive. On a
+/// `false` return (invalid content, e.g. non-UTF-8) it reports `status = 2`
+/// (`InvalidUtf8`). The thunk is reached as an *indirect* call, so the only
+/// relocation the copied stencil carries is the `phon_cont` `BRANCH26`.
+#[no_mangle]
+pub unsafe extern "C" fn phon_stencil_borrow(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let info = &*(*c.prog as *const BorrowInfo);
+    let outer_prog = c.prog.add(1);
+
+    // Read the u32 count with a bounds check (no alignment padding yet, like
+    // `read_len` -> `read_u32`).
+    if (c.wire as usize).wrapping_add(4) > c.wire_end as usize {
+        c.status = 1;
+        return;
+    }
+    let mut count_bytes = [0u8; 4];
+    core::ptr::copy_nonoverlapping(c.wire, count_bytes.as_mut_ptr(), 4);
+    let count = u32::from_le_bytes(count_bytes) as usize;
+    c.wire = c.wire.add(4);
+
+    // Length-vs-remaining check: each element costs at least `stride.max(1)` bytes
+    // (mirrors `read_len(stride.max(1))`), measured before padding.
+    let remaining = (c.wire_end as usize) - (c.wire as usize);
+    let min = if info.stride == 0 { 1 } else { info.stride };
+    if count > remaining / min {
+        c.status = 1;
+        return;
+    }
+
+    // Pad the wire to `elem_align`, measured from the message start.
+    let pos = (c.wire as usize) - (c.wire_start as usize);
+    let pad = info.elem_align.wrapping_sub(pos & (info.elem_align - 1)) & (info.elem_align - 1);
+    let src = c.wire.add(pad);
+
+    // The whole run must fit (the real bounds check for the borrowed slice).
+    let total = count * info.stride;
+    if (src as usize).wrapping_add(total) > c.wire_end as usize {
+        c.status = 1;
+        return;
+    }
+
+    // Construct the borrowed value at `base + field_offset`, pointing INTO the
+    // input — NO alloc, NO copy. Indirect call through `info.set_borrowed`, so no
+    // relocation. status 2 marks invalid content (e.g. non-UTF-8 `&str`).
+    let field = c.base.add(info.field_offset);
+    if !(info.set_borrowed)(info.thunks_ctx, field, src, count) {
+        c.status = 2;
+        return;
+    }
+
+    c.wire = src.add(total);
     c.prog = outer_prog;
 
     #[cfg(tailcall)]

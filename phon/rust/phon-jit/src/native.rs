@@ -25,10 +25,10 @@ use phon_schema::bytes::Reader;
 use copypatch::{ExecBuf, patch_branch26};
 
 use crate::stencils::{
-    BYTES, BYTES_CONT, BYTES_ENC, BYTES_ENC_CONT, DEFAULT, DEFAULT_CONT, DONE, DONE_ENC, ENUM,
-    ENUM_CONT, ENUM_ENC, ENUM_ENC_CONT, OPTION, OPTION_CONT, OPTION_ENC, OPTION_ENC_CONT, SCALAR,
-    SCALAR_CONT, SCALAR_ENC, SCALAR_ENC_CONT, SEQUENCE, SEQUENCE_CONT, SEQUENCE_ENC,
-    SEQUENCE_ENC_CONT, SKIPWIRE, SKIPWIRE_CONT,
+    BORROW, BORROW_CONT, BYTES, BYTES_CONT, BYTES_ENC, BYTES_ENC_CONT, DEFAULT, DEFAULT_CONT, DONE,
+    DONE_ENC, ENUM, ENUM_CONT, ENUM_ENC, ENUM_ENC_CONT, OPTION, OPTION_CONT, OPTION_ENC,
+    OPTION_ENC_CONT, SCALAR, SCALAR_CONT, SCALAR_ENC, SCALAR_ENC_CONT, SEQUENCE, SEQUENCE_CONT,
+    SEQUENCE_ENC, SEQUENCE_ENC_CONT, SKIPWIRE, SKIPWIRE_CONT,
 };
 
 /// Load the smoke stencil into JIT memory and run it: `x * 3 + 1`, computed by
@@ -88,6 +88,21 @@ struct BytesInfo {
     from_raw_parts:
         unsafe extern "C" fn(ctx: *const (), list: *mut u8, ptr: *mut u8, len: usize, cap: usize),
     validate: unsafe extern "C" fn(ptr: *const u8, len: usize) -> bool,
+}
+
+/// A borrowed, zero-copy byte-run op's immediates, matching `BorrowInfo` in
+/// `stencils/stencils.rs` byte for byte. Reached through a `*const BorrowInfo` slot
+/// in the prog stream. Like [`BytesInfo`] it carries no `ExecBuf`-relative fields —
+/// decode writes a fat pointer into the input via the `set_borrowed` thunk, no
+/// sub-chain — so it is built directly.
+#[repr(C)]
+struct BorrowInfo {
+    field_offset: usize,
+    stride: usize,
+    elem_align: usize,
+    thunks_ctx: *const (),
+    set_borrowed:
+        unsafe extern "C" fn(ctx: *const (), field: *mut u8, ptr: *const u8, len: usize) -> bool,
 }
 
 /// An option op's immediates, matching `OptInfo` in `stencils/stencils.rs` byte
@@ -225,6 +240,9 @@ pub struct NativeDecode {
     /// One per bulk byte-run op: the immediates the bytes stencil reads through its
     /// prog slot. Same stability contract as `seq_infos`.
     bytes_infos: Vec<BytesInfo>,
+    /// One per borrowed (zero-copy) byte-run op: the immediates the borrow stencil
+    /// reads through its prog slot. Same stability contract as `seq_infos`.
+    borrow_infos: Vec<BorrowInfo>,
     /// One per option op: the immediates the option stencil reads through its prog
     /// slot. Same stability contract as `seq_infos`.
     opt_infos: Vec<OptInfo>,
@@ -275,6 +293,14 @@ struct BytesFixup {
     prog_index: usize,
     slot: usize,
     bytesinfo: usize,
+}
+
+/// A borrowed byte-run's prog slot to fill once `borrow_infos` is in its final
+/// home: write `&borrow_infos[borrowinfo]` into `progs[prog_index][slot]`.
+struct BorrowFixup {
+    prog_index: usize,
+    slot: usize,
+    borrowinfo: usize,
 }
 
 /// An option's prog slot to fill once `opt_infos` is in its final home: write
@@ -367,6 +393,9 @@ struct Compiler {
     /// Built directly (no `ExecBuf`-relative fields): one per bulk byte-run op.
     bytes_infos: Vec<BytesInfo>,
     bytes_fixups: Vec<BytesFixup>,
+    /// Built directly (no `ExecBuf`-relative fields): one per borrowed byte-run op.
+    borrow_infos: Vec<BorrowInfo>,
+    borrow_fixups: Vec<BorrowFixup>,
     opt_infos: Vec<OptInfoBuild>,
     opt_fixups: Vec<OptFixup>,
     enum_infos: Vec<EnumInfoBuild>,
@@ -442,6 +471,24 @@ impl Compiler {
                         validate: b.validate,
                     });
                     self.bytes_fixups.push(BytesFixup { prog_index, slot, bytesinfo });
+                }
+                MemOp::Borrow(b) => {
+                    self.code.extend_from_slice(BORROW);
+                    // The borrow stencil reads one prog slot: a `*const BorrowInfo`
+                    // filled in pass 2. Reserve it and record the fixup now. No
+                    // `ExecBuf`-relative fields (the fat pointer is built into the
+                    // input by an indirect thunk, no sub-chain), so build it now.
+                    let slot = self.progs[prog_index].len();
+                    self.progs[prog_index].push(0);
+                    let borrowinfo = self.borrow_infos.len();
+                    self.borrow_infos.push(BorrowInfo {
+                        field_offset: b.field_offset,
+                        stride: b.stride,
+                        elem_align: b.elem_align,
+                        thunks_ctx: b.thunks.ctx,
+                        set_borrowed: b.thunks.set_borrowed,
+                    });
+                    self.borrow_fixups.push(BorrowFixup { prog_index, slot, borrowinfo });
                 }
                 MemOp::Option(o) => {
                     self.code.extend_from_slice(OPTION);
@@ -533,6 +580,7 @@ impl Compiler {
                 MemOp::Scalar { .. } => SCALAR_CONT,
                 MemOp::Sequence(_) => SEQUENCE_CONT,
                 MemOp::Bytes(_) => BYTES_CONT,
+                MemOp::Borrow(_) => BORROW_CONT,
                 MemOp::Option(_) => OPTION_CONT,
                 MemOp::Enum(_) => ENUM_CONT,
                 MemOp::Default(_) => DEFAULT_CONT,
@@ -560,6 +608,8 @@ impl NativeDecode {
             fixups: Vec::new(),
             bytes_infos: Vec::new(),
             bytes_fixups: Vec::new(),
+            borrow_infos: Vec::new(),
+            borrow_fixups: Vec::new(),
             opt_infos: Vec::new(),
             opt_fixups: Vec::new(),
             enum_infos: Vec::new(),
@@ -674,6 +724,8 @@ impl NativeDecode {
             // Move the byte-run infos into their final home; they carry no
             // `ExecBuf`-relative fields, so no further binding is needed.
             bytes_infos: c.bytes_infos,
+            // The borrow infos carry no `ExecBuf`-relative fields either.
+            borrow_infos: c.borrow_infos,
             opt_infos,
             enum_infos,
             enum_variants,
@@ -710,6 +762,11 @@ impl NativeDecode {
         // Bind each bulk byte-run's prog slot to its `BytesInfo` in `nd`.
         for f in &c.bytes_fixups {
             let ptr: *const BytesInfo = &nd.bytes_infos[f.bytesinfo];
+            nd.progs[f.prog_index][f.slot] = ptr as u64;
+        }
+        // Bind each borrowed byte-run's prog slot to its `BorrowInfo` in `nd`.
+        for f in &c.borrow_fixups {
+            let ptr: *const BorrowInfo = &nd.borrow_infos[f.borrowinfo];
             nd.progs[f.prog_index][f.slot] = ptr as u64;
         }
         // Bind each option's some-body prog and its prog slot to the `OptInfo`.
@@ -1053,6 +1110,25 @@ impl EncCompiler {
                     });
                     self.bytes_fixups.push(BytesFixup { prog_index, slot, bytesinfo });
                 }
+                MemOp::Borrow(b) => {
+                    // Encode of a borrowed leaf is byte-identical to the owned bulk
+                    // run: the same `BYTES_ENC` stencil reads the `&str`/`&[u8]`
+                    // length + bytes through the borrow thunks (whose `len`/`data`
+                    // share `SeqThunks`' signatures) and writes the wire run.
+                    self.code.extend_from_slice(BYTES_ENC);
+                    let slot = self.progs[prog_index].len();
+                    self.progs[prog_index].push(0);
+                    let bytesinfo = self.bytes_infos.len();
+                    self.bytes_infos.push(EncBytesInfo {
+                        field_offset: b.field_offset,
+                        stride: b.stride,
+                        elem_align: b.elem_align,
+                        thunks_ctx: b.thunks.ctx,
+                        len: b.thunks.len,
+                        data: b.thunks.data,
+                    });
+                    self.bytes_fixups.push(BytesFixup { prog_index, slot, bytesinfo });
+                }
                 MemOp::Option(o) => {
                     self.code.extend_from_slice(OPTION_ENC);
                     let slot = self.progs[prog_index].len();
@@ -1105,7 +1181,7 @@ impl EncCompiler {
             let relocs = match &program[i] {
                 MemOp::Scalar { .. } => SCALAR_ENC_CONT,
                 MemOp::Sequence(_) => SEQUENCE_ENC_CONT,
-                MemOp::Bytes(_) => BYTES_ENC_CONT,
+                MemOp::Bytes(_) | MemOp::Borrow(_) => BYTES_ENC_CONT,
                 MemOp::Option(_) => OPTION_ENC_CONT,
                 MemOp::Enum(_) => ENUM_ENC_CONT,
                 MemOp::Map(_) => unreachable!("phon-jit: maps are interpreter-only for now"),

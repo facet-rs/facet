@@ -26,8 +26,8 @@ use std::alloc;
 use std::collections::HashMap;
 
 use phon_ir::ir::{
-    BytesOp, DefaultOp, EnumOp, EnumVariantOp, MapOp, MemOp, MemProgram, OptionOp, SeqOp, SkipOp,
-    fuse,
+    BorrowOp, BytesOp, DefaultOp, EnumOp, EnumVariantOp, MapOp, MemOp, MemProgram, OptionOp, SeqOp,
+    SkipOp, fuse,
 };
 use phon_ir::{
     Access, Construct, Descriptor, EnumAccess, MapStorage, Presence, RecordAccess, SequenceStorage,
@@ -167,23 +167,36 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
         }
         // r[impl ir.memory] — String/Bytes: a bulk contiguous byte run.
         (Access::Sequence(seq), Resolved::Primitive(p @ (Primitive::String | Primitive::Bytes))) => {
-            let SequenceStorage::Vtable(thunks) = &seq.storage else {
-                return Err(CompactError::Unsupported(
+            match &seq.storage {
+                // A BORROWED leaf (`&str`/`&[u8]`): same wire as the owned run, but
+                // decode writes a fat pointer into the input (no alloc, no copy).
+                SequenceStorage::BorrowedVtable(thunks) => {
+                    out.push(MemOp::Borrow(Box::new(BorrowOp {
+                        field_offset: base,
+                        stride: 1,
+                        elem_align: 1,
+                        thunks: *thunks,
+                    })));
+                    Ok(())
+                }
+                SequenceStorage::Vtable(thunks) => {
+                    out.push(MemOp::Bytes(Box::new(BytesOp {
+                        field_offset: base,
+                        stride: 1,
+                        elem_align: 1,
+                        validate: if matches!(p, Primitive::String) {
+                            validate_utf8
+                        } else {
+                            validate_any
+                        },
+                        thunks: *thunks,
+                    })));
+                    Ok(())
+                }
+                _ => Err(CompactError::Unsupported(
                     "typed: string/bytes needs vtable thunks",
-                ));
-            };
-            out.push(MemOp::Bytes(Box::new(BytesOp {
-                field_offset: base,
-                stride: 1,
-                elem_align: 1,
-                validate: if matches!(p, Primitive::String) {
-                    validate_utf8
-                } else {
-                    validate_any
-                },
-                thunks: *thunks,
-            })));
-            Ok(())
+                )),
+            }
         }
         // r[impl ir.memory] — Option<T>: a presence byte then the inner value.
         (Access::Option(opt), Resolved::Composite(SchemaKind::Option { .. })) => {
@@ -407,23 +420,35 @@ fn lower_decode_node(
             if p != rp {
                 return Err(incompatible(format!("primitive {p:?} is not {rp:?}")));
             }
-            let SequenceStorage::Vtable(thunks) = &seq.storage else {
-                return Err(CompactError::Unsupported(
+            match &seq.storage {
+                // A BORROWED leaf (`&str`/`&[u8]`): same wire, zero-copy decode.
+                SequenceStorage::BorrowedVtable(thunks) => {
+                    out.push(MemOp::Borrow(Box::new(BorrowOp {
+                        field_offset: base,
+                        stride: 1,
+                        elem_align: 1,
+                        thunks: *thunks,
+                    })));
+                    Ok(())
+                }
+                SequenceStorage::Vtable(thunks) => {
+                    out.push(MemOp::Bytes(Box::new(BytesOp {
+                        field_offset: base,
+                        stride: 1,
+                        elem_align: 1,
+                        validate: if matches!(p, Primitive::String) {
+                            validate_utf8
+                        } else {
+                            validate_any
+                        },
+                        thunks: *thunks,
+                    })));
+                    Ok(())
+                }
+                _ => Err(CompactError::Unsupported(
                     "typed: string/bytes needs vtable thunks",
-                ));
-            };
-            out.push(MemOp::Bytes(Box::new(BytesOp {
-                field_offset: base,
-                stride: 1,
-                elem_align: 1,
-                validate: if matches!(p, Primitive::String) {
-                    validate_utf8
-                } else {
-                    validate_any
-                },
-                thunks: *thunks,
-            })));
-            Ok(())
+                )),
+            }
         }
         // Map ⋈ Map: reconcile key and value.
         (Access::Map(ma), Resolved::Composite(SchemaKind::Map { key: wk, value: wv })) => {
@@ -906,6 +931,19 @@ unsafe fn encode_program(program: &MemProgram, base: *const u8, out: &mut Vec<u8
                 let src = unsafe { core::slice::from_raw_parts(data, count * b.stride) };
                 out.extend_from_slice(src);
             }
+            // Encode of a borrowed leaf is byte-identical to the owned bulk run: the
+            // `&str`/`&[u8]` reads its length and contiguous bytes through the borrow
+            // thunks and writes them as a `u32` count + `count * stride` bytes.
+            MemOp::Borrow(b) => {
+                // Safety: the borrowed handle (fat pointer) lives at field_offset.
+                let field = unsafe { base.add(b.field_offset) };
+                let count = unsafe { (b.thunks.len)(b.thunks.ctx, field) };
+                write_u32(out, count as u32);
+                pad_to(out, b.elem_align);
+                let data = unsafe { (b.thunks.data)(b.thunks.ctx, field) };
+                let src = unsafe { core::slice::from_raw_parts(data, count * b.stride) };
+                out.extend_from_slice(src);
+            }
             MemOp::Option(o) => {
                 // Safety: the option handle lives at field_offset.
                 let option = unsafe { base.add(o.field_offset) };
@@ -1081,6 +1119,26 @@ unsafe fn decode_program(program: &MemProgram, r: &mut Reader, base: *mut u8) ->
                 // the `count`-element buffer.
                 let list = unsafe { base.add(b.field_offset) };
                 unsafe { (b.thunks.from_raw_parts)(b.thunks.ctx, list, buffer, count, cap) };
+            }
+            // r[impl ir.memory] — BORROWED, zero-copy `&str`/`&[u8]`: same wire as
+            // `Bytes`, but write a fat pointer INTO the input `bytes` — NO alloc, NO
+            // copy. The written `&str`/`&[u8]` borrows the reader's input buffer, so
+            // the caller must keep `bytes` alive as long as the decoded value (the
+            // standard zero-copy contract, documented on `decode_with`'s `Safety`).
+            MemOp::Borrow(b) => {
+                let count = r.read_len(b.stride.max(1))?;
+                skip_pad(r, b.elem_align)?;
+                let total = count * b.stride;
+                // `src` is a slice INTO the input `bytes` (no copy): the borrowed
+                // value will point at exactly these bytes.
+                let src = r.read_slice(total)?;
+                // Safety: the borrowed handle lives at field_offset; the construct
+                // thunk builds the `&str`/`&[u8]` fat pointer there, pointing into the
+                // input. Returns false on invalid content (e.g. non-UTF-8 `&str`).
+                let field = unsafe { base.add(b.field_offset) };
+                if !unsafe { (b.thunks.set_borrowed)(b.thunks.ctx, field, src.as_ptr(), count) } {
+                    return Err(CompactError::Decode(DecodeError::InvalidUtf8));
+                }
             }
             MemOp::Option(o) => {
                 // Safety: the option handle lives at field_offset.

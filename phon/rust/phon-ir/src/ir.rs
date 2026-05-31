@@ -125,6 +125,18 @@ pub enum MemOp {
     /// loop. Decode optionally validates the bytes as UTF-8 (for `String`). See
     /// [`BytesOp`].
     Bytes(Box<BytesOp>),
+    /// A BORROWED, zero-copy contiguous byte run — `&str` or `&[u8]` — at
+    /// `field_offset`. The wire form is IDENTICAL to [`Bytes`](MemOp::Bytes) (a
+    /// `u32` element count then `count * stride` contiguous bytes), so a borrowed
+    /// peer interoperates byte-for-byte with an owned peer. Where decode of an owned
+    /// run allocates and bulk-copies, decode of a borrowed run writes a fat pointer
+    /// straight INTO the reader's input buffer — no allocation, no copy. The decoded
+    /// `&str`/`&[u8]` borrows the input; the caller must keep the input bytes alive
+    /// as long as the decoded value (the standard zero-copy contract). The fat
+    /// pointer is never written at a fixed offset (the `&str`/`&[T]` layout is
+    /// unspecified) — a [`BorrowThunks`] construct thunk builds it where the type is
+    /// concrete. See [`BorrowOp`].
+    Borrow(Box<BorrowOp>),
     /// An `Option<T>` at `field_offset`: a `u8` presence byte (`0` none / `1` some),
     /// then — only when some — the inner `T` decoded by its own program. The first
     /// *data-directed* op: the branch is taken on a value read at run time, not
@@ -351,6 +363,50 @@ pub struct BytesOp {
     pub thunks: SeqThunks,
 }
 
+/// A borrowed, zero-copy byte-run op's payload (boxed in [`MemOp::Borrow`]). The
+/// wire form is a `u32` element count then `count * stride` contiguous bytes —
+/// IDENTICAL to [`BytesOp`] — but decode writes a fat pointer into the input
+/// buffer rather than allocating and copying. `&str` and `&[u8]` use `stride == 1`
+/// and `elem_align == 1`.
+#[derive(Clone, Debug)]
+pub struct BorrowOp {
+    /// Where the borrowed handle (the `&str`/`&[u8]` fat pointer) lives, relative
+    /// to the base.
+    pub field_offset: usize,
+    /// Bytes per element: 1 for `&str`/`&[u8]`.
+    pub stride: usize,
+    /// Alignment of the borrowed run on the wire (1 for `&str`/`&[u8]`).
+    pub elem_align: usize,
+    /// Type-erased construct/read operations on the borrowed handle (front-door
+    /// bound).
+    pub thunks: BorrowThunks,
+}
+
+/// Type-erased operations on a BORROWED contiguous byte run (`&str`/`&[u8]`),
+/// supplied by the front door (`r[descriptors.thunk-binding]`), mirroring
+/// [`SeqThunks`]. The `&str`/`&[T]` fat-pointer layout is unspecified, so the
+/// engine never writes it at a fixed offset — it calls [`set_borrowed`](Self::set_borrowed),
+/// where the type is concrete, to build the fat pointer pointing into the input.
+/// `ctx` is an opaque per-type pointer the engine passes back untouched (it can be
+/// null for the concrete `&str`/`&[u8]` thunks, which need no per-type context).
+#[derive(Clone, Copy, Debug)]
+pub struct BorrowThunks {
+    /// Opaque per-type context, passed to every thunk.
+    pub ctx: *const (),
+    /// Construct the borrowed value at `field`, pointing it at `ptr[..len]` (a run
+    /// INTO the reader's input). For `&str`:
+    /// `core::ptr::write(field.cast::<&str>(), core::str::from_utf8(slice::from_raw_parts(ptr, len))?)`;
+    /// for `&[u8]`: `core::ptr::write(field.cast::<&[u8]>(), slice::from_raw_parts(ptr, len))`.
+    /// Returns `false` on invalid content (e.g. non-UTF-8 for `&str`), which the
+    /// engine maps to a decode error; the field is left uninitialized then.
+    pub set_borrowed:
+        unsafe extern "C" fn(ctx: *const (), field: *mut u8, ptr: *const u8, len: usize) -> bool,
+    /// The borrowed run's element count (its byte length for `&str`/`&[u8]`).
+    pub len: unsafe extern "C" fn(ctx: *const (), field: *const u8) -> usize,
+    /// A pointer to the borrowed run's contiguous bytes (for reading on encode).
+    pub data: unsafe extern "C" fn(ctx: *const (), field: *const u8) -> *const u8,
+}
+
 /// An optional op's payload (boxed in [`MemOp::Option`]). The wire form is a `u8`
 /// presence byte then, only when present, the inner value. The engine never
 /// assumes the in-memory `Option<T>` layout (a repr(Rust) niche or tag); it reads
@@ -532,6 +588,7 @@ pub fn fuse(program: MemProgram) -> MemProgram {
             // too poisons the static position.
             seq @ (MemOp::Sequence(_)
             | MemOp::Bytes(_)
+            | MemOp::Borrow(_)
             | MemOp::Option(_)
             | MemOp::Enum(_)
             | MemOp::Map(_)

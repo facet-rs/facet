@@ -26,8 +26,8 @@ use facet::{
     PtrUninit, ScalarType, Shape, StructKind, Type, UserType,
 };
 use phon_ir::{
-    Access, Construct, Descriptor, EnumAccess, FieldAccess, FieldDefault, Layout, MapAccess,
-    MapStorage, MapThunks, OptionAccess, OptionThunks, Presence, RecordAccess, SeqThunks,
+    Access, BorrowThunks, Construct, Descriptor, EnumAccess, FieldAccess, FieldDefault, Layout,
+    MapAccess, MapStorage, MapThunks, OptionAccess, OptionThunks, Presence, RecordAccess, SeqThunks,
     SequenceAccess, SequenceStorage, Tag, VariantAccess,
 };
 use phon_schema::{
@@ -89,6 +89,15 @@ pub fn of_shape(shape: &'static Shape) -> Result<Derived, DeriveError> {
             root: primitive_id(Primitive::String),
             schemas: Vec::new(),
             descriptor: string_descriptor(shape)?,
+        });
+    }
+    // A borrowed `&str`/`&[u8]` root: same wire primitive as its owned peer, a
+    // zero-copy byte sequence.
+    if let Some(kind) = borrowed_kind(shape)? {
+        return Ok(Derived {
+            root: primitive_id(borrow_primitive(kind)),
+            schemas: Vec::new(),
+            descriptor: borrowed_descriptor(shape, kind)?,
         });
     }
     // A bare scalar root: no composite batch, the id is the primitive's.
@@ -186,6 +195,11 @@ impl Builder {
     fn ref_of(&mut self, shape: &'static Shape) -> Result<SchemaRef, DeriveError> {
         if is_string(shape) {
             return Ok(SchemaRef::concrete(primitive_id(Primitive::String)));
+        }
+        // A borrowed `&str`/`&[u8]` field: the SAME wire primitive as its owned peer
+        // (`String`/`Vec<u8>`), so the schema id matches an owned peer's exactly.
+        if let Some(kind) = borrowed_kind(shape)? {
+            return Ok(SchemaRef::concrete(primitive_id(borrow_primitive(kind))));
         }
         if let Some(p) = scalar_primitive(shape)? {
             Ok(SchemaRef::concrete(primitive_id(p)))
@@ -360,6 +374,11 @@ fn build_descriptor(
     let (size, align) = layout_of(shape)?;
     if is_string(shape) {
         return string_descriptor(shape);
+    }
+    // A borrowed `&str`/`&[u8]` field: a zero-copy byte-sequence descriptor (same
+    // wire as its owned peer).
+    if let Some(kind) = borrowed_kind(shape)? {
+        return borrowed_descriptor(shape, kind);
     }
     if let Some(p) = scalar_primitive(shape)? {
         return Ok(Descriptor {
@@ -842,6 +861,188 @@ fn is_string(shape: &Shape) -> bool {
     matches!(shape.scalar_type(), Some(ScalarType::String))
 }
 
+/// Which borrowed, zero-copy leaf a `Shape` is, if any.
+#[derive(Clone, Copy)]
+enum BorrowKind {
+    /// `&str`: schema `Primitive::String`, validated as UTF-8 on construct.
+    Str,
+    /// `&[u8]`: schema `Primitive::Bytes`, no content constraint.
+    Bytes,
+}
+
+/// Classify a `Shape` as a borrowed leaf. `&str` is a `ScalarType::Str` scalar;
+/// `&[u8]` is a `&T` reference (`Def::Pointer`) whose pointee is a `[u8]` slice
+/// (`Def::Slice` with a `u8` element). A borrowed slice of a non-`u8` element is
+/// the common-RPC-leaf scope's boundary: it is rejected as unsupported (other
+/// `&[T]` are not the zero-copy leaves this targets — `r[descriptors.thunk-binding]`).
+///
+/// Returns `Ok(None)` when the shape is not a borrowed leaf at all (so the caller
+/// falls through to its other arms).
+///
+/// # Errors
+/// [`DeriveError::Unsupported`] for a borrowed slice of a non-`u8` element.
+fn borrowed_kind(shape: &Shape) -> Result<Option<BorrowKind>, DeriveError> {
+    // `&str` — facet special-cases it as a `ScalarType::Str` scalar.
+    if matches!(shape.scalar_type(), Some(ScalarType::Str)) {
+        return Ok(Some(BorrowKind::Str));
+    }
+    // `&[T]` — a shared reference whose pointee is a slice. Only `&[u8]` is carried.
+    if let Def::Pointer(ptr) = &shape.def
+        && let Some(pointee) = ptr.pointee
+        && let Def::Slice(slice_def) = &pointee.def
+    {
+        if matches!(slice_def.t().scalar_type(), Some(ScalarType::U8)) {
+            return Ok(Some(BorrowKind::Bytes));
+        }
+        return Err(DeriveError::Unsupported(
+            "borrowed slice of non-u8 not supported yet",
+        ));
+    }
+    Ok(None)
+}
+
+/// The wire primitive a borrowed leaf encodes as — IDENTICAL to its owned peer, so
+/// the schema id matches (`&str` ⟷ `String`, `&[u8]` ⟷ `Vec<u8>`).
+fn borrow_primitive(kind: BorrowKind) -> Primitive {
+    match kind {
+        BorrowKind::Str => Primitive::String,
+        BorrowKind::Bytes => Primitive::Bytes,
+    }
+}
+
+/// The descriptor for a borrowed leaf (`&str`/`&[u8]`): the same wire primitive as
+/// its owned peer, a byte-sequence access carrying the concrete borrow thunks. The
+/// thunks are concrete — `&str`/`&[u8]` are single types, so no facet vtable is
+/// needed and `ctx` is null.
+fn borrowed_descriptor(
+    shape: &'static Shape,
+    kind: BorrowKind,
+) -> Result<Descriptor, DeriveError> {
+    let (size, align) = layout_of(shape)?;
+    let p = borrow_primitive(kind);
+    let thunks = match kind {
+        BorrowKind::Str => BorrowThunks {
+            ctx: core::ptr::null(),
+            set_borrowed: str_set_borrowed,
+            len: str_len,
+            data: str_data,
+        },
+        BorrowKind::Bytes => BorrowThunks {
+            ctx: core::ptr::null(),
+            set_borrowed: bytes_set_borrowed,
+            len: bytes_len,
+            data: bytes_data,
+        },
+    };
+    Ok(Descriptor {
+        schema: SchemaRef::concrete(primitive_id(p)),
+        layout: Layout { size, align },
+        access: Access::Sequence(SequenceAccess {
+            element: Box::new(Descriptor {
+                schema: SchemaRef::concrete(primitive_id(Primitive::U8)),
+                layout: Layout { size: 1, align: 1 },
+                access: Access::Scalar,
+            }),
+            storage: SequenceStorage::BorrowedVtable(thunks),
+        }),
+    })
+}
+
+// ----------------------------------------------------------------------------
+// Borrowed `&str` thunks (a UTF-8-validated fat pointer into the input).
+// ----------------------------------------------------------------------------
+//
+// The fat-pointer layout of `&str` is unspecified, so the engine never writes it
+// at a fixed offset — these concrete thunks build it where the type is known. They
+// use explicit `&*` references (not `field.cast::<&str>().len()`) so the
+// implicit-autoref lint stays quiet, mirroring `string_len`.
+
+/// Construct `*field = &str` borrowing `ptr[..len]` (a run INTO the reader's
+/// input). Returns `false` when the bytes are not valid UTF-8 (the field is left
+/// uninitialized then).
+///
+/// # Safety
+/// `field` must be writable, uninitialized `&str` storage; `ptr[..len]` must be a
+/// readable byte run that outlives the written `&str` (the zero-copy contract).
+unsafe extern "C" fn str_set_borrowed(
+    _ctx: *const (),
+    field: *mut u8,
+    ptr: *const u8,
+    len: usize,
+) -> bool {
+    // Safety: `ptr[..len]` is a readable byte run.
+    let bytes = unsafe { core::slice::from_raw_parts(ptr, len) };
+    match core::str::from_utf8(bytes) {
+        Ok(s) => {
+            // Safety: `field` is uninitialized `&str` storage; the borrowed `&str`
+            // points into the input (which the caller keeps alive).
+            unsafe { core::ptr::write(field.cast::<&str>(), s) };
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+/// The borrowed `&str`'s byte length.
+///
+/// # Safety
+/// `field` points to an initialized `&str`.
+unsafe extern "C" fn str_len(_ctx: *const (), field: *const u8) -> usize {
+    // Safety: `field` is an initialized `&str`.
+    (unsafe { &*field.cast::<&str>() }).len()
+}
+
+/// A pointer to the borrowed `&str`'s bytes.
+///
+/// # Safety
+/// `field` points to an initialized `&str`.
+unsafe extern "C" fn str_data(_ctx: *const (), field: *const u8) -> *const u8 {
+    // Safety: `field` is an initialized `&str`.
+    (unsafe { &*field.cast::<&str>() }).as_ptr()
+}
+
+// ----------------------------------------------------------------------------
+// Borrowed `&[u8]` thunks (a raw fat pointer into the input, no validation).
+// ----------------------------------------------------------------------------
+
+/// Construct `*field = &[u8]` borrowing `ptr[..len]`. Always succeeds (any bytes
+/// are valid `&[u8]`).
+///
+/// # Safety
+/// `field` must be writable, uninitialized `&[u8]` storage; `ptr[..len]` must be a
+/// readable byte run that outlives the written `&[u8]` (the zero-copy contract).
+unsafe extern "C" fn bytes_set_borrowed(
+    _ctx: *const (),
+    field: *mut u8,
+    ptr: *const u8,
+    len: usize,
+) -> bool {
+    // Safety: `ptr[..len]` is a readable byte run.
+    let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
+    // Safety: `field` is uninitialized `&[u8]` storage; the borrowed slice points
+    // into the input (which the caller keeps alive).
+    unsafe { core::ptr::write(field.cast::<&[u8]>(), slice) };
+    true
+}
+
+/// The borrowed `&[u8]`'s length.
+///
+/// # Safety
+/// `field` points to an initialized `&[u8]`.
+unsafe extern "C" fn bytes_len(_ctx: *const (), field: *const u8) -> usize {
+    // Safety: `field` is an initialized `&[u8]`.
+    (unsafe { &*field.cast::<&[u8]>() }).len()
+}
+
+/// A pointer to the borrowed `&[u8]`'s bytes.
+///
+/// # Safety
+/// `field` points to an initialized `&[u8]`.
+unsafe extern "C" fn bytes_data(_ctx: *const (), field: *const u8) -> *const u8 {
+    // Safety: `field` is an initialized `&[u8]`.
+    (unsafe { &*field.cast::<&[u8]>() }).as_ptr()
+}
+
 /// The descriptor for a `String` field or root: schema `Primitive::String`, an
 /// owned byte-sequence access carrying the concrete `String` thunks.
 fn string_descriptor(shape: &'static Shape) -> Result<Descriptor, DeriveError> {
@@ -1213,6 +1414,229 @@ mod tests {
             unsafe { typed::decode(&wire, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
                 .unwrap_err();
         assert!(matches!(err, CompactError::Decode(DecodeError::InvalidUtf8)));
+    }
+
+    // ========================================================================
+    // Borrowed / zero-copy leaves: `&str` and `&[u8]`
+    // ========================================================================
+    //
+    // A `&str`/`&[u8]` field decodes by writing a fat pointer straight INTO the
+    // input buffer — no allocation, no copy. The wire is byte-identical to the
+    // owned `String`/`Vec<u8>` peer (same `u32` count + bytes), so a borrowed peer
+    // interoperates with an owned one. These tests prove the wire identity, the
+    // zero-copy (the decoded pointers point INTO the input), and the UTF-8
+    // rejection — and (jit-gated) that NativeDecode agrees.
+
+    // The borrowed test struct: a `&str`, a `&[u8]`, and a trailing scalar.
+    #[derive(Facet)]
+    struct Borrowed<'a> {
+        name: &'a str,
+        blob: &'a [u8],
+        tag: u32,
+    }
+
+    // The owned equivalent — same field names, same wire. Used as the byte-identity
+    // oracle: a borrowed peer's wire must equal an owned peer's wire exactly.
+    #[derive(Facet)]
+    struct OwnedEquiv {
+        name: String,
+        blob: Vec<u8>,
+        tag: u32,
+    }
+
+    /// Build a `Borrowed` wire by encoding the owned equivalent (the wire is
+    /// IDENTICAL, which `derived_borrowed_wire_matches_owned` asserts).
+    fn borrowed_wire(name: &str, blob: &[u8], tag: u32) -> Vec<u8> {
+        let d = of::<OwnedEquiv>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+        let v = OwnedEquiv { name: name.to_string(), blob: blob.to_vec(), tag };
+        unsafe { typed::encode(core::ptr::from_ref(&v).cast::<u8>(), &d.descriptor, &reg) }.unwrap()
+    }
+
+    #[test]
+    fn derived_borrowed_wire_matches_owned() {
+        // The borrowed type encodes byte-for-byte like its owned peer (same schema
+        // primitives, same wire), so they interoperate.
+        let bd = of::<Borrowed>().unwrap();
+        let od = of::<OwnedEquiv>().unwrap();
+
+        // The borrowed leaves resolve to the SAME wire primitives as the owned peer:
+        // `&str` field -> `Primitive::String`, `&[u8]` field -> `Primitive::Bytes`.
+        // (The root struct ids differ only because the struct NAMES differ, which is
+        // not on the wire — the leaf primitives, and thus the bytes, are identical.)
+        let bfields = struct_fields(<Borrowed as Facet>::SHAPE).unwrap();
+        let name_shape = bfields[0].shape();
+        let blob_shape = bfields[1].shape();
+        assert_eq!(
+            borrow_primitive(borrowed_kind(name_shape).unwrap().unwrap()),
+            Primitive::String,
+        );
+        assert_eq!(
+            borrow_primitive(borrowed_kind(blob_shape).unwrap().unwrap()),
+            Primitive::Bytes,
+        );
+
+        let breg = Registry::new(bd.schemas.clone());
+        let oreg = Registry::new(od.schemas.clone());
+
+        let name = "héllo wörld 🐝";
+        let blob: &[u8] = &[0x00, 0xFF, 0x42, 0x99, 0xAB];
+        let tag = 0xDEAD_BEEFu32;
+
+        let b = Borrowed { name, blob, tag };
+        let o = OwnedEquiv { name: name.to_string(), blob: blob.to_vec(), tag };
+
+        let b_bytes =
+            unsafe { typed::encode(core::ptr::from_ref(&b).cast::<u8>(), &bd.descriptor, &breg) }
+                .unwrap();
+        let o_bytes =
+            unsafe { typed::encode(core::ptr::from_ref(&o).cast::<u8>(), &od.descriptor, &oreg) }
+                .unwrap();
+        assert_eq!(b_bytes, o_bytes, "borrowed wire != owned wire");
+    }
+
+    #[test]
+    fn derived_borrowed_decode_is_zero_copy() {
+        let d = of::<Borrowed>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+
+        let name = "héllo wörld 🐝";
+        let blob: &[u8] = &[0x00, 0xFF, 0x42, 0x99, 0xAB];
+        let tag = 0x1234_5678u32;
+
+        // Keep `wire` alive for the whole scope: the decoded `&str`/`&[u8]` borrow it.
+        let wire = borrowed_wire(name, blob, tag);
+
+        let mut slot = std::mem::MaybeUninit::<Borrowed>::uninit();
+        unsafe { typed::decode(&wire, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
+            .unwrap();
+        let back = unsafe { slot.assume_init() };
+
+        // Values match the originals.
+        assert_eq!(back.name, name);
+        assert_eq!(back.blob, blob);
+        assert_eq!(back.tag, tag);
+
+        // ZERO-COPY: the decoded pointers point INTO the `wire` buffer (not a fresh
+        // allocation). The wire start + offset of each run lies within `wire`.
+        let wire_start = wire.as_ptr() as usize;
+        let wire_end = wire_start + wire.len();
+        let name_ptr = back.name.as_ptr() as usize;
+        let blob_ptr = back.blob.as_ptr() as usize;
+        assert!(
+            (wire_start..wire_end).contains(&name_ptr),
+            "decoded &str does not point into the input buffer (not zero-copy)"
+        );
+        assert!(
+            (wire_start..wire_end).contains(&blob_ptr),
+            "decoded &[u8] does not point into the input buffer (not zero-copy)"
+        );
+        // `wire` is dropped at the end of this scope — `back` must not outlive it.
+        drop(back);
+    }
+
+    #[test]
+    fn derived_borrowed_rejects_invalid_utf8() {
+        use phon_engine::CompactError;
+        use phon_schema::DecodeError;
+
+        let d = of::<Borrowed>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+
+        // name = one byte 0xFF (not valid UTF-8). The `&str` construct thunk returns
+        // false → InvalidUtf8.
+        let mut wire = Vec::new();
+        wire.extend_from_slice(&1u32.to_le_bytes()); // name length 1
+        wire.push(0xFF); // invalid UTF-8
+        // blob (Vec<u8>): count 0. Then the u32 tag at its alignment.
+        wire.extend_from_slice(&0u32.to_le_bytes());
+        phon_schema::bytes::pad_to(&mut wire, 4);
+        wire.extend_from_slice(&0x42u32.to_le_bytes());
+
+        let mut slot = std::mem::MaybeUninit::<Borrowed>::uninit();
+        let err =
+            unsafe { typed::decode(&wire, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
+                .unwrap_err();
+        assert!(matches!(err, CompactError::Decode(DecodeError::InvalidUtf8)), "got {err:?}");
+    }
+
+    #[test]
+    fn derived_borrowed_slice_non_u8_is_unsupported() {
+        // A borrowed slice of a non-`u8` element is out of scope (only `&str`/`&[u8]`
+        // are the carried zero-copy leaves).
+        #[derive(Facet)]
+        struct BadBorrow<'a> {
+            xs: &'a [u32],
+        }
+        assert!(matches!(
+            of::<BadBorrow>(),
+            Err(DeriveError::Unsupported("borrowed slice of non-u8 not supported yet"))
+        ));
+    }
+
+    // The borrowed leaves through the *JIT*: derive -> lower -> NativeDecode. The
+    // interpreter is the oracle. The decoded `&str`/`&[u8]` must still point INTO
+    // the input buffer (zero-copy), and the JIT must reject invalid UTF-8.
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn derived_borrowed_jit_matches_interpreter_and_is_zero_copy() {
+        use phon_jit::native::NativeDecode;
+
+        let d = of::<Borrowed>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+        let program = typed::lower(&d.descriptor, &reg).unwrap();
+
+        let name = "JITful 🐝 héllo";
+        let blob: &[u8] = &[0xAB, 0xCD, 0x00, 0xFF, 0x10, 0x20];
+        let tag = 0x0BAD_F00Du32;
+        let wire = borrowed_wire(name, blob, tag);
+
+        // Interpreter (oracle).
+        let mut islot = std::mem::MaybeUninit::<Borrowed>::uninit();
+        unsafe { typed::decode_with(&program, &wire, islot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let iback = unsafe { islot.assume_init() };
+
+        // JIT.
+        let dec = NativeDecode::compile(&program);
+        let mut jslot = std::mem::MaybeUninit::<Borrowed>::uninit();
+        unsafe { dec.run(&wire, jslot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let jback = unsafe { jslot.assume_init() };
+
+        assert_eq!(jback.name, name);
+        assert_eq!(jback.blob, blob);
+        assert_eq!(jback.tag, tag);
+        assert_eq!((jback.name, jback.blob, jback.tag), (iback.name, iback.blob, iback.tag));
+
+        // ZERO-COPY through the JIT: the decoded pointers point INTO `wire`.
+        let wire_start = wire.as_ptr() as usize;
+        let wire_end = wire_start + wire.len();
+        assert!((wire_start..wire_end).contains(&(jback.name.as_ptr() as usize)));
+        assert!((wire_start..wire_end).contains(&(jback.blob.as_ptr() as usize)));
+        drop(jback);
+        drop(iback);
+    }
+
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn derived_borrowed_jit_rejects_invalid_utf8() {
+        use phon_jit::native::NativeDecode;
+        use phon_schema::DecodeError;
+
+        let d = of::<Borrowed>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+        let program = typed::lower(&d.descriptor, &reg).unwrap();
+        let dec = NativeDecode::compile(&program);
+
+        // name = one byte 0xFF (invalid UTF-8), blob count 0, then tag.
+        let mut wire = 1u32.to_le_bytes().to_vec();
+        wire.push(0xFF);
+        wire.extend_from_slice(&0u32.to_le_bytes());
+        phon_schema::bytes::pad_to(&mut wire, 4);
+        wire.extend_from_slice(&0x42u32.to_le_bytes());
+
+        let mut slot = std::mem::MaybeUninit::<Borrowed>::uninit();
+        let err = unsafe { dec.run(&wire, slot.as_mut_ptr().cast::<u8>()) }.unwrap_err();
+        assert!(matches!(err, DecodeError::InvalidUtf8), "got {err:?}");
     }
 
     // The String bridge through the *JIT*: derive -> lower -> NativeEncode/Decode.

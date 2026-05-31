@@ -26,6 +26,7 @@ const SYMBOLS: &[&str] = &[
     "phon_stencil_scalar",
     "phon_stencil_sequence",
     "phon_stencil_bytes",
+    "phon_stencil_borrow",
     "phon_stencil_option",
     "phon_stencil_enum",
     "phon_stencil_default",
@@ -96,6 +97,7 @@ fn emit_arm64_macos(out: &Path, generated: &Path) {
     let scalar = get("phon_stencil_scalar", "phon_cont");
     let sequence = get("phon_stencil_sequence", "phon_cont");
     let bytes_dec = get("phon_stencil_bytes", "phon_cont");
+    let borrow = get("phon_stencil_borrow", "phon_cont");
     let option = get("phon_stencil_option", "phon_cont");
     let enum_dec = get("phon_stencil_enum", "phon_cont");
     let default = get("phon_stencil_default", "phon_cont");
@@ -130,6 +132,13 @@ fn emit_arm64_macos(out: &Path, generated: &Path) {
         &bytes_dec,
     );
     emit_cont(&mut s, "BYTES_CONT", "BYTES", &bytes_dec);
+    emit(
+        &mut s,
+        "BORROW",
+        "`phon_stencil_borrow`: decode one borrowed, zero-copy byte run (`&str`/`&[u8]`); fat pointer INTO the input via `BorrowInfo.set_borrowed`.",
+        &borrow,
+    );
+    emit_cont(&mut s, "BORROW_CONT", "BORROW", &borrow);
     emit(
         &mut s,
         "OPTION",
