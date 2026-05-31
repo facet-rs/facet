@@ -22,7 +22,7 @@
 // Spec: docs/content/spec.md — "Compact mode", "Compatibility", "TypeScript".
 
 import { DecodeError, Reader, Registry, alignment } from "@bearcove/phon-schema";
-import { canonicalKey, parseDatetime, parseQName, parseUuid } from "@bearcove/phon-schema";
+import { canonicalKey, parseDatetime, parseQName, parseUuid, readValue } from "@bearcove/phon-schema";
 import type { Primitive, SchemaRef, Value } from "@bearcove/phon-schema";
 import { checkFixedCount, decodeRef, product } from "./compact.ts";
 import type { Node, Payload, Plan, StructPlan } from "./plan.ts";
@@ -39,6 +39,7 @@ interface Helpers {
   parseDatetime: typeof parseDatetime;
   parseUuid: typeof parseUuid;
   parseQName: typeof parseQName;
+  readValue: typeof readValue;
   product: typeof product;
   checkFixedCount: typeof checkFixedCount;
 }
@@ -52,6 +53,7 @@ const HELPERS: Helpers = {
   parseDatetime,
   parseUuid,
   parseQName,
+  readValue,
   product,
   checkFixedCount,
 };
@@ -277,7 +279,7 @@ class Codegen {
         return out;
       }
       case "dynamic":
-        return `throw new H.DecodeError("dynamic kind is not yet supported in the TS engine");\n`;
+        return `${target} = H.readValue(r, ${depth});\n`;
     }
   }
 

@@ -29,6 +29,8 @@ export {
 export {
   decodeValue,
   encodeValue,
+  readValue,
+  writeValueInto,
   canonicalKey,
   parseUuid,
   parseQName,

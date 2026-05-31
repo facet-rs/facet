@@ -20,6 +20,7 @@
 import {
   DecodeError,
   minWireSizeRef,
+  readValue,
   Reader,
   Registry,
 } from "@bearcove/phon-schema";
@@ -291,7 +292,7 @@ function exec(node: Node, r: Reader, reg: Registry, depth: number): Value {
       throw new DecodeError(`invalid bool byte 0x${b.toString(16)}`);
     }
     case "dynamic":
-      throw new DecodeError("dynamic kind is not yet supported in the TS engine");
+      return readValue(r, depth);
   }
 }
 

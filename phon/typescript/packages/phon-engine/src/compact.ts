@@ -28,8 +28,10 @@ import {
   parseDatetime,
   parseQName,
   parseUuid,
+  readValue,
   Reader,
   Registry,
+  writeValueInto,
 } from "@bearcove/phon-schema";
 import type {
   PhonDateTime,
@@ -134,6 +136,8 @@ function encodeKind(out: ByteSink, value: Value, kind: SchemaKind, reg: Registry
       return;
     }
     case "dynamic":
+      writeValueInto(out, value);
+      return;
     case "tensor":
     case "channel":
     case "external":
@@ -306,6 +310,7 @@ function decodeKind(r: Reader, kind: SchemaKind, reg: Registry, depth: number): 
       return new Map<string, Value>([[variant.name, payload]]);
     }
     case "dynamic":
+      return readValue(r, depth);
     case "tensor":
     case "channel":
     case "external":

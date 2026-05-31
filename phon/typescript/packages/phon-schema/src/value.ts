@@ -146,6 +146,19 @@ function checkDepth(depth: number): void {
   }
 }
 
+/// Read one self-describing Value from an existing `Reader` (no trailing-byte
+/// check) — what the compact engine calls for a `dynamic` field. Mirrors Rust
+/// `read_value`.
+export function readValue(r: Reader, depth = 0): Value {
+  return decValue(r, depth);
+}
+
+/// Write one self-describing Value into an existing `ByteSink` — the compact
+/// engine's `dynamic` field encoder. Mirrors Rust `write_value`.
+export function writeValueInto(out: ByteSink, value: Value): void {
+  writeValue(out, value);
+}
+
 // Mirror of Rust `dec_value`: read a tag, then fold its body onto a coarse Value.
 function decValue(r: Reader, depth: number): Value {
   checkDepth(depth);

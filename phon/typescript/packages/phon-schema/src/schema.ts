@@ -195,8 +195,10 @@ export class Registry {
     return this.composites.get(id);
   }
 
-  /// Resolve a concrete ref to its kind. Type variables and generic args are not
-  /// yet supported by the TS engine (no corpus case needs them).
+  /// Resolve a concrete ref to a Var-free kind. A parametric schema's type
+  /// parameters are substituted by the ref's args, eagerly and per-reference, so
+  /// the walker never meets a `Var` (`r[type-system.generic-resolution]`). Each
+  /// arg carries its own binding forward, so no environment is threaded.
   resolve(ref: SchemaRef): SchemaKind {
     if (ref.kind === "var") {
       throw new DecodeError("unbound type variable");
@@ -210,10 +212,82 @@ export class Registry {
     if (schema === undefined) {
       throw new DecodeError(`unknown schema id ${ref.id.toString(16)}`);
     }
-    if (schema.typeParams.length !== 0 || ref.args.length !== 0) {
-      throw new DecodeError("generic schemas are not yet supported in the TS engine");
+    if (schema.typeParams.length !== ref.args.length) {
+      throw new DecodeError(
+        `generic expects ${schema.typeParams.length} type arguments, got ${ref.args.length}`,
+      );
     }
-    return schema.kind;
+    if (ref.args.length === 0) return schema.kind;
+    return substituteKind(schema.kind, schema.typeParams, ref.args);
+  }
+}
+
+// ============================================================================
+// Generic substitution (mirror of compact.rs substitute_kind/substitute_ref)
+// ============================================================================
+
+function substituteRef(ref: SchemaRef, params: string[], args: SchemaRef[]): SchemaRef {
+  if (ref.kind === "var") {
+    const i = params.indexOf(ref.name);
+    return i >= 0 ? args[i]! : ref;
+  }
+  // A concrete ref keeps its id; substitute within its own type args so nested
+  // parametric refs (`Holder<T>` inside `Wrapper<T>`) carry the binding forward.
+  return { kind: "concrete", id: ref.id, args: ref.args.map((a) => substituteRef(a, params, args)) };
+}
+
+function substituteField(f: Field, params: string[], args: SchemaRef[]): Field {
+  return { name: f.name, schema: substituteRef(f.schema, params, args), required: f.required };
+}
+
+function substitutePayload(p: VariantPayload, params: string[], args: SchemaRef[]): VariantPayload {
+  switch (p.kind) {
+    case "unit":
+      return p;
+    case "newtype":
+      return { kind: "newtype", ref: substituteRef(p.ref, params, args) };
+    case "tuple":
+      return { kind: "tuple", refs: p.refs.map((r) => substituteRef(r, params, args)) };
+    case "struct":
+      return { kind: "struct", fields: p.fields.map((f) => substituteField(f, params, args)) };
+  }
+}
+
+function substituteKind(kind: SchemaKind, params: string[], args: SchemaRef[]): SchemaKind {
+  switch (kind.kind) {
+    case "primitive":
+    case "dynamic":
+      return kind;
+    case "struct":
+      return { kind: "struct", name: kind.name, fields: kind.fields.map((f) => substituteField(f, params, args)) };
+    case "enum":
+      return {
+        kind: "enum",
+        name: kind.name,
+        variants: kind.variants.map((v) => ({ name: v.name, index: v.index, payload: substitutePayload(v.payload, params, args) })),
+      };
+    case "tuple":
+      return { kind: "tuple", elements: kind.elements.map((e) => substituteRef(e, params, args)) };
+    case "list":
+      return { kind: "list", element: substituteRef(kind.element, params, args) };
+    case "set":
+      return { kind: "set", element: substituteRef(kind.element, params, args) };
+    case "option":
+      return { kind: "option", element: substituteRef(kind.element, params, args) };
+    case "map":
+      return { kind: "map", key: substituteRef(kind.key, params, args), value: substituteRef(kind.value, params, args) };
+    case "array":
+      return { kind: "array", element: substituteRef(kind.element, params, args), dimensions: kind.dimensions };
+    case "tensor":
+      return { kind: "tensor", element: substituteRef(kind.element, params, args), rank: kind.rank };
+    case "channel":
+      return { kind: "channel", direction: kind.direction, element: substituteRef(kind.element, params, args) };
+    case "external":
+      return {
+        kind: "external",
+        external: kind.external,
+        metadata: kind.metadata ? substituteRef(kind.metadata, params, args) : null,
+      };
   }
 }
 

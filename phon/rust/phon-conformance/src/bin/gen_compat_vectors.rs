@@ -616,6 +616,55 @@ fn build_cases(b: &mut Batch) -> Vec<PlannedCase> {
         push("extended_kinds", root.clone(), root, value);
     }
 
+    // 20. generic_pair — a parametric Pair<A,B> instantiated as Pair<u32, string>
+    // inside a Holder struct. Exercises eager per-reference type substitution.
+    {
+        let pair_ref = b.add_parametric(
+            &["A", "B"],
+            SchemaKind::Struct {
+                name: "Pair".to_string(),
+                fields: vec![
+                    field("a", SchemaRef::var("A"), true),
+                    field("b", SchemaRef::var("B"), true),
+                ],
+            },
+        );
+        let SchemaRef::Concrete { id: pair_id, .. } = pair_ref else {
+            unreachable!("add_parametric returns a concrete ref")
+        };
+        let root = b.add(SchemaKind::Struct {
+            name: "Holder".to_string(),
+            fields: vec![field(
+                "pair",
+                SchemaRef::generic(pair_id, vec![prim(Primitive::U32), prim(Primitive::String)]),
+                true,
+            )],
+        });
+        let value = obj(&[(
+            "pair",
+            obj(&[("a", Value::from(5u32)), ("b", Value::from(VString::new("x")))]),
+        )]);
+        push("generic_pair", root.clone(), root, value);
+    }
+
+    // 21. dynamic_field — a struct with a `dynamic` field (self-describing on the
+    // wire). The reconciled value round-trips through read_value/write_value.
+    {
+        let dyn_ref = b.add(SchemaKind::Dynamic);
+        let root = b.add(SchemaKind::Struct {
+            name: "Dyn".to_string(),
+            fields: vec![
+                field("tag", prim(Primitive::U32), true),
+                field("payload", dyn_ref, true),
+            ],
+        });
+        let value = obj(&[
+            ("tag", Value::from(7u32)),
+            ("payload", Value::from(VString::new("dyn"))),
+        ]);
+        push("dynamic_field", root.clone(), root, value);
+    }
+
     cases
 }
 
