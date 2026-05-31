@@ -510,6 +510,7 @@ name = "phon-codegen"
 version = "0.1.0"
 dependencies = [
  "facet",
+ "phon",
  "phon-schema",
 ]
 
