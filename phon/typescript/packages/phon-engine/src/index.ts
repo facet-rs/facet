@@ -26,8 +26,16 @@ export {
 export type { Plan, Node, Step, Payload, StructPlan, VariantPlan } from "./plan.ts";
 
 // The new Function JIT (with transparent interpreter fallback under strict CSP).
-export { compile, compilePlan, interpretPlan, compiledSource, jitAvailable } from "./jit.ts";
-export type { CompiledDecoder } from "./jit.ts";
+export {
+  compile,
+  compilePlan,
+  interpretPlan,
+  compiledSource,
+  jitAvailable,
+  compileEncoder,
+  compiledEncoderSource,
+} from "./jit.ts";
+export type { CompiledDecoder, CompiledEncoder } from "./jit.ts";
 
 // The ergonomic typed front door (plain objects, numbers, {tag,value} enums).
 export { decodeTyped, encodeTyped } from "./typed.ts";

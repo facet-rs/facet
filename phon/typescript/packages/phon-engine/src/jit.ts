@@ -21,10 +21,19 @@
 //
 // Spec: docs/content/spec.md — "Compact mode", "Compatibility", "TypeScript".
 
-import { DecodeError, Reader, Registry, alignment } from "@bearcove/phon-schema";
-import { canonicalKey, parseDatetime, parseQName, parseUuid, readValue } from "@bearcove/phon-schema";
-import type { Primitive, SchemaRef, Value } from "@bearcove/phon-schema";
-import { checkFixedCount, decodeRef, product } from "./compact.ts";
+import { ByteSink, DecodeError, EncodeError, Reader, Registry, alignment } from "@bearcove/phon-schema";
+import {
+  canonicalKey,
+  formatDatetime,
+  formatQName,
+  parseDatetime,
+  parseQName,
+  parseUuid,
+  readValue,
+  writeValueInto,
+} from "@bearcove/phon-schema";
+import type { Primitive, SchemaKind, SchemaRef, Value, VariantPayload } from "@bearcove/phon-schema";
+import { checkFixedCount, decodeRef, encode, product } from "./compact.ts";
 import type { Node, Payload, Plan, StructPlan } from "./plan.ts";
 import { buildPlan, decodeWithPlan, WriterOnlyVariantError } from "./plan.ts";
 
@@ -141,6 +150,204 @@ export function compile(
 /// The generated source of a plan's decoder, for inspection/debugging.
 export function compiledSource(plan: Plan): string {
   return new Codegen().genStmt(plan.root, "__root", 0);
+}
+
+// ============================================================================
+// Encode JIT — compile a schema to a specialized Value -> bytes encoder
+// ============================================================================
+//
+// Encoding takes one schema (the local one) — there is no writer<->reader
+// reconciliation — so the encoder compiles directly from the resolved schema,
+// inlining the structural walk just as the decoder does. A coarse `Value` goes
+// in; compact bytes come out, byte-identical to the recursive `encode`.
+
+/// A compiled encoder: a coarse Value -> compact bytes for one schema.
+export type CompiledEncoder = (value: Value) => Uint8Array;
+
+interface EncHelpers {
+  ByteSink: typeof ByteSink;
+  writeValueInto: typeof writeValueInto;
+  formatDatetime: typeof formatDatetime;
+  formatQName: typeof formatQName;
+  EncodeError: typeof EncodeError;
+}
+
+const ENC_HELPERS: EncHelpers = { ByteSink, writeValueInto, formatDatetime, formatQName, EncodeError };
+
+const encoderCache = new WeakMap<Registry, Map<string, CompiledEncoder>>();
+
+/// Compile (and cache per registry) a Value->bytes encoder for `root`. Uses the
+/// JIT when `new Function` is available and the schema is non-recursive; falls
+/// back to the recursive `encode` otherwise.
+export function compileEncoder(root: bigint, reg: Registry, opts?: { jit?: boolean }): CompiledEncoder {
+  const useJit = opts?.jit ?? jitAvailable();
+  const key = `${root.toString(16)}:${useJit ? "j" : "i"}`;
+  let perReg = encoderCache.get(reg);
+  if (!perReg) {
+    perReg = new Map();
+    encoderCache.set(reg, perReg);
+  }
+  const hit = perReg.get(key);
+  if (hit) return hit;
+
+  const interp: CompiledEncoder = (value) => encode(value, root, reg);
+  let encoder: CompiledEncoder = interp;
+  if (useJit) {
+    try {
+      const eg = new EncCodegen(reg);
+      const body = eg.genEnc(reg.resolve({ kind: "concrete", id: root, args: [] }), "value", 0);
+      const src = `"use strict";\nconst out = new H.ByteSink();\n${body}return out.finish();\n`;
+      // eslint-disable-next-line @typescript-eslint/no-implied-eval
+      const fn = new Function("value", "H", src) as (value: Value, H: EncHelpers) => Uint8Array;
+      encoder = (value: Value) => fn(value, ENC_HELPERS);
+    } catch {
+      // Recursive schema (codegen depth guard) or no `new Function`: interpret.
+      encoder = interp;
+    }
+  }
+  perReg.set(key, encoder);
+  return encoder;
+}
+
+/// The generated source of a schema's encoder, for inspection/debugging.
+export function compiledEncoderSource(root: bigint, reg: Registry): string {
+  return new EncCodegen(reg).genEnc(reg.resolve({ kind: "concrete", id: root, args: [] }), "value", 0);
+}
+
+const ENC_MAX_DEPTH = 128;
+
+/// The JS write statements for a primitive scalar (a ByteSink `out` is in scope;
+/// `v` is the value expression). Mirrors compact.ts encodePrimitive.
+function scalarWrite(p: Primitive, v: string): string {
+  const a = alignment(p);
+  const pad = a > 1 ? `out.padTo(${a});\n` : "";
+  switch (p) {
+    case "bool": return `${pad}out.u8(${v} ? 1 : 0);\n`;
+    case "u8": return `${pad}out.u8(Number(BigInt.asUintN(8, ${v})));\n`;
+    case "u16": return `${pad}out.u16(${v});\n`;
+    case "u32": return `${pad}out.u32(Number(BigInt.asUintN(32, ${v})));\n`;
+    case "u64": return `${pad}out.u64(${v});\n`;
+    case "u128": return `${pad}out.u128(${v});\n`;
+    case "i8": return `${pad}out.u8(Number(BigInt.asUintN(8, ${v})));\n`;
+    case "i16": return `${pad}out.i16(${v});\n`;
+    case "i32": return `${pad}out.i32(${v});\n`;
+    case "i64": return `${pad}out.i64(${v});\n`;
+    case "i128": return `${pad}out.i128(${v});\n`;
+    case "f32": return `${pad}out.f32(Number(${v}));\n`;
+    case "f64": return `${pad}out.f64(Number(${v}));\n`;
+    case "char": return `${pad}out.u32(${v}.value.codePointAt(0));\n`;
+    case "string": return `out.str(${v});\n`;
+    case "bytes": return `out.bytes(${v});\n`;
+    case "unit": return "";
+    case "never": return `throw new H.EncodeError("never is uninhabited");\n`;
+    case "datetime": return `out.str(H.formatDatetime(${v}));\n`;
+    case "uuid": return `out.str(${v}.text);\n`;
+    case "qname": return `out.str(H.formatQName(${v}));\n`;
+  }
+}
+
+class EncCodegen {
+  private counter = 0;
+  constructor(private readonly reg: Registry) {}
+
+  private fresh(prefix: string): string {
+    return `_${prefix}${this.counter++}`;
+  }
+
+  /// Emit statements writing the value at `vexpr` against `kind`. Refs are
+  /// resolved at compile time and inlined; a recursive schema trips the depth
+  /// guard (caught by compileEncoder, which then interprets).
+  genEnc(kind: SchemaKind, vexpr: string, depth: number): string {
+    if (depth > ENC_MAX_DEPTH) throw new Error("schema too deep to compile (recursive?)");
+    switch (kind.kind) {
+      case "primitive":
+        return scalarWrite(kind.primitive, vexpr);
+      case "struct": {
+        let out = "";
+        for (const f of kind.fields) {
+          out += this.genEnc(this.reg.resolve(f.schema), `${vexpr}.get(${JSON.stringify(f.name)})`, depth + 1);
+        }
+        return out;
+      }
+      case "tuple": {
+        let out = "";
+        kind.elements.forEach((e, i) => {
+          out += this.genEnc(this.reg.resolve(e), `${vexpr}[${i}]`, depth + 1);
+        });
+        return out;
+      }
+      case "list":
+      case "set": {
+        const a = this.fresh("a");
+        const e = this.fresh("e");
+        const body = this.genEnc(this.reg.resolve(kind.element), e, depth + 1);
+        return `const ${a} = ${vexpr};\nout.u32(${a}.length);\nfor (const ${e} of ${a}) {\n${body}}\n`;
+      }
+      case "array": {
+        const a = this.fresh("a");
+        const e = this.fresh("e");
+        const body = this.genEnc(this.reg.resolve(kind.element), e, depth + 1);
+        return `const ${a} = ${vexpr};\nfor (const ${e} of ${a}) {\n${body}}\n`;
+      }
+      case "map": {
+        const m = this.fresh("m");
+        const k = this.fresh("k");
+        const v = this.fresh("v");
+        const kb = this.genEnc(this.reg.resolve(kind.key), k, depth + 1);
+        const vb = this.genEnc(this.reg.resolve(kind.value), v, depth + 1);
+        return `const ${m} = ${vexpr};\nout.u32(${m}.size);\nfor (const [${k}, ${v}] of ${m}) {\n${kb}${vb}}\n`;
+      }
+      case "option": {
+        const o = this.fresh("o");
+        const body = this.genEnc(this.reg.resolve(kind.element), o, depth + 1);
+        return `const ${o} = ${vexpr};\nif (${o} === null) out.u8(0);\nelse {\nout.u8(1);\n${body}}\n`;
+      }
+      case "enum": {
+        const ent = this.fresh("ent");
+        const name = this.fresh("name");
+        const pl = this.fresh("pl");
+        let out = `const ${ent} = ${vexpr}.entries().next().value;\n`;
+        out += `const ${name} = ${ent}[0];\nconst ${pl} = ${ent}[1];\n`;
+        out += `switch (${name}) {\n`;
+        for (const variant of kind.variants) {
+          out += `case ${JSON.stringify(variant.name)}: {\nout.u32(${variant.index});\n`;
+          out += this.genPayload(variant.payload, pl, depth + 1);
+          out += `break;\n}\n`;
+        }
+        out += `default: throw new H.EncodeError("unknown variant " + ${name});\n}\n`;
+        return out;
+      }
+      case "dynamic":
+        return `H.writeValueInto(out, ${vexpr});\n`;
+      case "tensor":
+      case "channel":
+      case "external":
+        throw new Error(`compact encode unsupported for kind '${kind.kind}'`);
+    }
+  }
+
+  private genPayload(p: VariantPayload, vexpr: string, depth: number): string {
+    switch (p.kind) {
+      case "unit":
+        return "";
+      case "newtype":
+        return this.genEnc(this.reg.resolve(p.ref), vexpr, depth + 1);
+      case "tuple": {
+        let out = "";
+        p.refs.forEach((r, i) => {
+          out += this.genEnc(this.reg.resolve(r), `${vexpr}[${i}]`, depth + 1);
+        });
+        return out;
+      }
+      case "struct": {
+        let out = "";
+        for (const f of p.fields) {
+          out += this.genEnc(this.reg.resolve(f.schema), `${vexpr}.get(${JSON.stringify(f.name)})`, depth + 1);
+        }
+        return out;
+      }
+    }
+  }
 }
 
 // ============================================================================

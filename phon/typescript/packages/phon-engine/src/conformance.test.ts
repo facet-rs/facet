@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { Registry, bytesToHex, hexToBytes, schemaFromBytes } from "@bearcove/phon-schema";
 import type { Primitive } from "@bearcove/phon-schema";
-import { buildPlan, decodeWithPlan, encode, WriterOnlyVariantError } from "./index.ts";
+import { buildPlan, compileEncoder, decodeWithPlan, encode, WriterOnlyVariantError } from "./index.ts";
 import { compilePlan } from "./jit.ts";
 
 interface Case {
@@ -69,9 +69,13 @@ describe("compat conformance corpus", () => {
 
       const interpHex = bytesToHex(encode(interpValue, readerRoot, reg));
       const jitHex = bytesToHex(encode(jitValue, readerRoot, reg));
+      // The encode JIT must also reproduce the reconciled reader bytes.
+      const encJit = compileEncoder(readerRoot, reg, { jit: true });
+      const encJitHex = bytesToHex(encJit(interpValue));
 
       expect(interpHex).toBe(c.reader_hex);
       expect(jitHex).toBe(c.reader_hex);
+      expect(encJitHex).toBe(c.reader_hex);
     });
   }
 
