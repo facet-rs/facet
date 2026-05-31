@@ -1,5 +1,7 @@
 use core::{fmt::Debug, mem::offset_of};
-use facet::{Facet, SequenceType, Shape, StructKind, StructType, Type, UserType};
+use facet::{
+    Facet, PtrConst, SequenceType, Shape, StructKind, StructType, TryFromOutcome, Type, UserType,
+};
 
 #[test]
 fn unit_struct() {
@@ -1709,4 +1711,72 @@ fn skip_unless_truthy_on_option_ref_with_lifetime_compiles() {
     } else {
         panic!("Expected struct type");
     }
+}
+
+fn try_from<'a, T: Facet<'a>, U: Facet<'a>>(v: T) -> Result<U, String> {
+    let result = U::SHAPE
+        .allocate()
+        .map_err(|e| format!("allocation failed: {e:?}"))?;
+    let outcome = unsafe {
+        U::SHAPE
+            .call_try_from(T::SHAPE, PtrConst::new(&v), result)
+            .ok_or_else(|| "try_from not supported")?
+    };
+    match outcome {
+        TryFromOutcome::Converted => unsafe {
+            let ptr = result.assume_init();
+            let result = ptr.read();
+            ptr.drop_in_place::<U>();
+            U::SHAPE.deallocate_mut(ptr).unwrap();
+            Ok(result)
+        },
+        TryFromOutcome::Unsupported => Err("unsupported source type".to_string()),
+        TryFromOutcome::Failed(e) => {
+            std::mem::forget(v);
+            Err(format!("conversion failed: {e:?}"))
+        }
+    }
+}
+
+mod my {
+    use super::*;
+
+    #[allow(non_camel_case_types)]
+    #[derive(Debug, Facet)]
+    pub struct u64;
+}
+
+#[test]
+fn try_from_u32_works() {
+    assert_eq!(try_from::<_, u32>(1u64), Ok(1u32));
+}
+
+#[test]
+fn try_from_u32_fails_with_custom_u64_type() {
+    assert_eq!(
+        try_from::<_, u32>(my::u64),
+        Err("unsupported source type".to_string())
+    );
+}
+
+#[cfg(feature = "nonzero")]
+#[test]
+fn try_from_nonzero_works() {
+    use std::num::NonZero;
+
+    assert_eq!(
+        try_from::<_, NonZero<u64>>(1u64),
+        Ok(const { NonZero::new(1u64).unwrap() })
+    );
+}
+
+#[cfg(feature = "nonzero")]
+#[test]
+fn try_from_nonzero_fails_with_custom_u64_type() {
+    use std::num::NonZero;
+
+    assert_eq!(
+        try_from::<_, NonZero<u64>>(my::u64),
+        Err("unsupported source type".to_string())
+    );
 }
