@@ -147,11 +147,14 @@ pub fn of_shape(shape: &'static Shape) -> Result<Derived, DeriveError> {
     // schemas whose references use those keys (primitives use their real id). The
     // root may be a struct or a `#[repr(int)]` enum (RPC messages are often a
     // top-level sum type).
+    //
+    // Check the dedicated `Def`s (Option/Result/List/Map/Dynamic) BEFORE the
+    // generic enum path: `Option`/`Result` are facet enums too, so `enum_type`
+    // would match them and then reject their `repr(Rust)` discriminant — they must
+    // be routed to their own ops instead.
     let mut b = Builder::default();
     let root_key = if is_struct(shape) {
         b.intern(shape)?
-    } else if let Some(et) = enum_type(shape) {
-        b.intern_enum(shape, et)?
     } else if is_dynamic_value(shape) {
         b.intern_dynamic(shape)?
     } else if let Some(rd) = result_def(shape) {
@@ -162,6 +165,8 @@ pub fn of_shape(shape: &'static Shape) -> Result<Derived, DeriveError> {
         b.intern_option(opt)?
     } else if let Some(md) = map_def(shape) {
         b.intern_map(md)?
+    } else if let Some(et) = enum_type(shape) {
+        b.intern_enum(shape, et)?
     } else {
         return Err(DeriveError::Unsupported(
             "derive root must be a struct, enum, Result, list, option, map, or fixed scalar so far",
