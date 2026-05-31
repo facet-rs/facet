@@ -25,14 +25,15 @@ use std::sync::{LazyLock, RwLock};
 
 use facet::{
     Def, DefaultSource, EnumRepr, EnumType, Facet, KnownPointer, ListDef, MapDef, OpaqueAdapterDef,
-    OpaqueDeserialize, OpaqueSerialize, OptionDef, PtrConst, PtrMut, PtrUninit, ScalarType, Shape,
-    StructKind, Type, UserType,
+    OpaqueDeserialize, OpaqueSerialize, OptionDef, PtrConst, PtrMut, PtrUninit, ResultDef,
+    ScalarType, Shape, StructKind, Type, UserType,
 };
 use phon_engine::{Registry, typed};
 use phon_ir::{
     Access, BorrowThunks, Construct, Descriptor, EnumAccess, FieldAccess, FieldDefault, Layout,
     MapAccess, MapStorage, MapThunks, MemProgram, OpaqueThunks, OptionAccess, OptionThunks,
-    Presence, RecordAccess, SeqThunks, SequenceAccess, SequenceStorage, Tag, VariantAccess,
+    Presence, RecordAccess, ResultAccess, ResultThunks, SeqThunks, SequenceAccess, SequenceStorage,
+    Tag, VariantAccess,
 };
 use phon_schema::{
     Field, Primitive, Schema, SchemaId, SchemaKind, SchemaRef, Variant, VariantPayload,
@@ -151,9 +152,17 @@ pub fn of_shape(shape: &'static Shape) -> Result<Derived, DeriveError> {
         b.intern(shape)?
     } else if let Some(et) = enum_type(shape) {
         b.intern_enum(shape, et)?
+    } else if let Some(rd) = result_def(shape) {
+        b.intern_result(rd, shape)?
+    } else if let Some(ld) = list_def(shape) {
+        b.intern_list(ld)?
+    } else if let Some(opt) = option_def(shape) {
+        b.intern_option(opt)?
+    } else if let Some(md) = map_def(shape) {
+        b.intern_map(md)?
     } else {
         return Err(DeriveError::Unsupported(
-            "derive root must be a struct, enum, or fixed scalar so far",
+            "derive root must be a struct, enum, Result, list, option, map, or fixed scalar so far",
         ));
     };
     let by_shape = b.by_shape;
@@ -257,12 +266,15 @@ impl Builder {
         } else if let Some(map_def) = map_def(shape) {
             let key = self.intern_map(map_def)?;
             Ok(SchemaRef::concrete(SchemaId(key as u64)))
+        } else if let Some(rd) = result_def(shape) {
+            let key = self.intern_result(rd, shape)?;
+            Ok(SchemaRef::concrete(SchemaId(key as u64)))
         } else if let Some(et) = enum_type(shape) {
             let key = self.intern_enum(shape, et)?;
             Ok(SchemaRef::concrete(SchemaId(key as u64)))
         } else {
             Err(DeriveError::Unsupported(
-                "derive: only structs, lists, options, maps, enums, and fixed scalars so far",
+                "derive: only structs, lists, options, maps, results, enums, and fixed scalars so far",
             ))
         }
     }
@@ -324,6 +336,45 @@ impl Builder {
             kind: SchemaKind::Map { key, value },
         });
         Ok(slot)
+    }
+
+    /// Intern a `Result<T, E>` schema as the two-variant enum `Ok(T)` / `Err(E)` —
+    /// the canonical wire shape (matching every other vox/phon implementation). The
+    /// slot is reserved before resolving the arms so a self-reference resolves.
+    fn intern_result(
+        &mut self,
+        rd: &'static ResultDef,
+        shape: &'static Shape,
+    ) -> Result<usize, DeriveError> {
+        let ptr = shape_ptr(shape);
+        if let Some(&k) = self.by_shape.get(&ptr) {
+            return Ok(k);
+        }
+        let key = self.protos.len();
+        self.by_shape.insert(ptr, key);
+        self.protos.push(Schema {
+            id: SchemaId(key as u64),
+            type_params: Vec::new(),
+            kind: SchemaKind::Dynamic, // placeholder until arms resolve
+        });
+        let ok = self.ref_of(rd.t())?;
+        let err = self.ref_of(rd.e())?;
+        self.protos[key].kind = SchemaKind::Enum {
+            name: shape.type_identifier.to_string(),
+            variants: vec![
+                Variant {
+                    name: "Ok".to_string(),
+                    index: 0,
+                    payload: VariantPayload::Newtype(ok),
+                },
+                Variant {
+                    name: "Err".to_string(),
+                    index: 1,
+                    payload: VariantPayload::Newtype(err),
+                },
+            ],
+        };
+        Ok(key)
     }
 
     /// Intern an enum schema, returning its provisional key. Only `#[repr(int)]`
@@ -478,6 +529,20 @@ fn build_descriptor(
             }),
         });
     }
+    if let Some(rd) = result_def(shape) {
+        let real = real_ids[by_shape[&shape_ptr(shape)]];
+        let ok = build_descriptor(rd.t(), by_shape, real_ids)?;
+        let err = build_descriptor(rd.e(), by_shape, real_ids)?;
+        return Ok(Descriptor {
+            schema: SchemaRef::concrete(real),
+            layout: Layout { size, align },
+            access: Access::Result(ResultAccess {
+                ok: Box::new(ok),
+                err: Box::new(err),
+                thunks: result_thunks(rd),
+            }),
+        });
+    }
     if let Some(et) = enum_type(shape) {
         let width = enum_repr_width(et.enum_repr).ok_or(DeriveError::Unsupported(
             "derive: only #[repr(uN/iN)] enums",
@@ -576,6 +641,15 @@ fn option_def(shape: &'static Shape) -> Option<&'static OptionDef> {
 fn map_def(shape: &'static Shape) -> Option<&'static MapDef> {
     match &shape.def {
         Def::Map(map_def) => Some(map_def),
+        _ => None,
+    }
+}
+
+/// The `&'static ResultDef` behind a `Result<T, E>`-typed shape, or `None`. `Result`
+/// is `repr(Rust)` with a vtable (no layout facts), so it is driven through thunks.
+fn result_def(shape: &'static Shape) -> Option<&'static ResultDef> {
+    match &shape.def {
+        Def::Result(result_def) => Some(result_def),
         _ => None,
     }
 }
@@ -899,6 +973,89 @@ unsafe extern "C" fn map_iter_dealloc(ctx: *const (), iter: *mut ()) {
     let bx = unsafe { Box::from_raw(iter.cast::<PtrMut>()) };
     // Safety: `*bx` is the live iterator built by `init_with_value`.
     unsafe { (map_def.vtable.iter_vtable.dealloc)(*bx) };
+}
+
+// ============================================================================
+// Result thunks
+// ============================================================================
+//
+// `Result<T, E>` is `repr(Rust)` (unspecified discriminant/layout), so the engine
+// drives it through facet's `ResultVTable` rather than layout facts — exactly like
+// `Option`, but with two value-carrying arms. The field's `&'static ResultDef` is
+// the `ctx`; each adapter casts it back and calls the matching vtable op.
+//
+// Spec: `r[descriptors.thunk-binding]`.
+
+/// Build the [`ResultThunks`] for a `Result` field, with its `ResultDef` as `ctx`.
+fn result_thunks(rd: &'static ResultDef) -> ResultThunks {
+    ResultThunks {
+        ctx: core::ptr::from_ref(rd).cast::<()>(),
+        is_ok: res_is_ok,
+        get_ok: res_get_ok,
+        get_err: res_get_err,
+        init_ok: res_init_ok,
+        init_err: res_init_err,
+    }
+}
+
+/// Whether the result at `result` is `Ok`, via the `ResultVTable`'s `is_ok`.
+///
+/// # Safety
+/// `ctx` is the `&'static ResultDef` set in [`result_thunks`]; `result` points to an
+/// initialized `Result<T, E>` of the matching type.
+unsafe extern "C" fn res_is_ok(ctx: *const (), result: *const u8) -> bool {
+    // Safety: `ctx` is the `&'static ResultDef`.
+    let rd = unsafe { &*ctx.cast::<ResultDef>() };
+    // Safety: `result` is an initialized handle of the result's type.
+    unsafe { (rd.vtable.is_ok)(PtrConst::new(result)) }
+}
+
+/// A pointer to the contained `Ok` value (valid only when `is_ok`), via `get_ok`.
+///
+/// # Safety
+/// As [`res_is_ok`]; the engine reads the result only when the result is `Ok`.
+unsafe extern "C" fn res_get_ok(ctx: *const (), result: *const u8) -> *const u8 {
+    // Safety: `ctx` is the `&'static ResultDef`.
+    let rd = unsafe { &*ctx.cast::<ResultDef>() };
+    // Safety: `result` is an initialized handle.
+    unsafe { (rd.vtable.get_ok)(PtrConst::new(result)) }
+}
+
+/// A pointer to the contained `Err` value (valid only when not `is_ok`), via `get_err`.
+///
+/// # Safety
+/// As [`res_is_ok`]; the engine reads the result only when the result is `Err`.
+unsafe extern "C" fn res_get_err(ctx: *const (), result: *const u8) -> *const u8 {
+    // Safety: `ctx` is the `&'static ResultDef`.
+    let rd = unsafe { &*ctx.cast::<ResultDef>() };
+    // Safety: `result` is an initialized handle.
+    unsafe { (rd.vtable.get_err)(PtrConst::new(result)) }
+}
+
+/// Initialize the uninitialized result at `result` to `Ok(*value)`, moving the inner
+/// value out of `value`, via `init_ok`.
+///
+/// # Safety
+/// `ctx` is the `&'static ResultDef`; `result` is uninitialized result storage;
+/// `value` points to an initialized `Ok` payload the engine then frees without
+/// dropping (ownership is moved into the result here).
+unsafe extern "C" fn res_init_ok(ctx: *const (), result: *mut u8, value: *mut u8) {
+    // Safety: `ctx` is the `&'static ResultDef`.
+    let rd = unsafe { &*ctx.cast::<ResultDef>() };
+    // Safety: `result` is uninitialized; `value` holds the Ok payload to move in.
+    let _ = unsafe { (rd.vtable.init_ok)(PtrUninit::new(result), PtrMut::new(value)) };
+}
+
+/// Initialize the uninitialized result at `result` to `Err(*value)`, moving the inner
+/// value out of `value`, via `init_err`.
+///
+/// # Safety
+/// As [`res_init_ok`], for the `Err` arm.
+unsafe extern "C" fn res_init_err(ctx: *const (), result: *mut u8, value: *mut u8) {
+    // Safety: `ctx` is the `&'static ResultDef`.
+    let rd = unsafe { &*ctx.cast::<ResultDef>() };
+    // Safety: `result` is uninitialized; `value` holds the Err payload to move in.
+    let _ = unsafe { (rd.vtable.init_err)(PtrUninit::new(result), PtrMut::new(value)) };
 }
 
 // ============================================================================
@@ -3197,6 +3354,98 @@ mod tests {
         let back = unsafe { slot.assume_init() };
         assert_eq!(back.items.len(), 3);
         assert_eq!(back.tag, v.tag);
+    }
+
+    // ========================================================================
+    // Result<T, E> (thunk-driven two-armed sum)
+    // ========================================================================
+    //
+    // `Result` is `repr(Rust)` and driven by facet's `ResultVTable`. Its schema is
+    // the two-variant enum `Ok(T)`/`Err(E)`, so its wire is byte-identical to a
+    // `#[repr(int)]` enum — the dynamic codec over the equivalent single-key object
+    // is the oracle. Round-trips both arms, and reconciles a writer↔reader payload
+    // drift inside the arms (compat).
+
+    #[test]
+    fn derived_result_matches_dynamic_and_roundtrips() {
+        // A struct field, to exercise Result both as a root and nested.
+        #[derive(Facet, Debug, PartialEq)]
+        struct Holder {
+            r: Result<u32, String>,
+            tag: u32,
+        }
+
+        let d = of::<Holder>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+
+        for r in [Ok(0xCAFEu32), Err("boom".to_string())] {
+            let h = Holder { r: r.clone(), tag: 0x55 };
+            let typed_bytes =
+                unsafe { typed::encode(core::ptr::from_ref(&h).cast::<u8>(), &d.descriptor, &reg) }
+                    .unwrap();
+
+            // Oracle: the dynamic codec over { r: {Ok|Err: payload}, tag }.
+            let mut robj = VObject::new();
+            match &r {
+                Ok(v) => robj.insert(VString::new("Ok"), Value::from(*v)),
+                Err(s) => robj.insert(VString::new("Err"), Value::from(s.as_str())),
+            };
+            let mut obj = VObject::new();
+            obj.insert(VString::new("r"), Value::from(robj));
+            obj.insert(VString::new("tag"), Value::from(h.tag));
+            let dyn_bytes = compact::to_bytes(&obj.into(), d.root, &reg).unwrap();
+            assert_eq!(typed_bytes, dyn_bytes, "encode mismatch for {r:?}");
+
+            let mut slot = std::mem::MaybeUninit::<Holder>::uninit();
+            unsafe {
+                typed::decode(&typed_bytes, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>())
+            }
+            .unwrap();
+            let back = unsafe { slot.assume_init() };
+            assert_eq!(back, h, "roundtrip mismatch for {r:?}");
+        }
+    }
+
+    #[test]
+    fn derived_result_root_roundtrips() {
+        // `Result` as the ROOT type — the response wire shape.
+        let d = of::<Result<String, u32>>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+        for r in [Ok("hi".to_string()), Err(7u32)] {
+            let bytes =
+                unsafe { typed::encode(core::ptr::from_ref(&r).cast::<u8>(), &d.descriptor, &reg) }
+                    .unwrap();
+            let mut slot = std::mem::MaybeUninit::<Result<String, u32>>::uninit();
+            unsafe { typed::decode(&bytes, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
+                .unwrap();
+            assert_eq!(unsafe { slot.assume_init() }, r);
+        }
+    }
+
+    #[test]
+    fn compat_result_ok_payload_field_drift() {
+        // The Ok payload is a struct that gains a reader-only `#[facet(default)]`
+        // field: the writer↔reader drift is reconciled INSIDE the Result arm.
+        #[derive(Facet)]
+        struct OkW {
+            a: u32,
+        }
+        #[derive(Facet, Debug, PartialEq)]
+        struct OkR {
+            a: u32,
+            #[facet(default)]
+            b: u32,
+        }
+        let w = of::<Result<OkW, String>>().unwrap();
+        let r = of::<Result<OkR, String>>().unwrap();
+        let reg = merged_registry(&w, &r);
+
+        let value: Result<OkW, String> = Ok(OkW { a: 9 });
+        let bytes = encode_writer(&value, &w, &reg);
+        let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
+        let mut slot = std::mem::MaybeUninit::<Result<OkR, String>>::uninit();
+        unsafe { typed::decode_with(&program, &bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        assert_eq!(unsafe { slot.assume_init() }, Ok(OkR { a: 9, b: 0 }));
     }
 
     // ========================================================================

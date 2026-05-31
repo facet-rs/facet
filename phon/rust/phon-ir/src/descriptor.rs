@@ -17,7 +17,9 @@
 
 use phon_schema::SchemaRef;
 
-use crate::ir::{BorrowThunks, DefaultThunk, MapThunks, OpaqueThunks, OptionThunks, SeqThunks};
+use crate::ir::{
+    BorrowThunks, DefaultThunk, MapThunks, OpaqueThunks, OptionThunks, ResultThunks, SeqThunks,
+};
 
 /// A node of the descriptor tree: the schema it realizes, its process-local
 /// memory layout, and how to read and construct it.
@@ -70,6 +72,11 @@ pub enum Access {
     Sequence(SequenceAccess),
     /// Key / value pairs.
     Map(MapAccess),
+    /// A `Result<T, E>`: a thunk-driven two-armed sum (`Ok`/`Err`) whose
+    /// `repr(Rust)` layout the engine never assumes — presence and construction go
+    /// through the front-door [`ResultThunks`] vtable. On the wire it is a
+    /// two-variant enum (`r[compat.enum]`).
+    Result(ResultAccess),
     /// A `Dynamic` value: no layout to describe. The engine decodes/encodes a
     /// `Value` through the self-describing codec and hands it over as-is.
     Dynamic,
@@ -237,6 +244,16 @@ pub enum SequenceStorage {
     /// [`Borrowed`](Self::Borrowed), which carries raw `(ptr, len)` offsets
     /// (`r[descriptors.thunk-binding]`).
     BorrowedVtable(BorrowThunks),
+}
+
+/// A `Result<T, E>`: the `Ok` and `Err` payload descriptors and the vtable that
+/// reads which arm is active and builds it (the engine never assumes the
+/// `repr(Rust)` layout).
+#[derive(Clone, Debug)]
+pub struct ResultAccess {
+    pub ok: Box<Descriptor>,
+    pub err: Box<Descriptor>,
+    pub thunks: ResultThunks,
 }
 
 /// Key/value pairs: the key and value descriptors and how the map is stored.

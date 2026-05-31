@@ -27,11 +27,11 @@ use std::collections::HashMap;
 
 use phon_ir::ir::{
     BorrowOp, BytesOp, DefaultOp, EnumOp, EnumVariantOp, MapOp, MemOp, MemProgram, OpaqueOp,
-    OptionOp, SeqOp, SkipOp, fuse,
+    OptionOp, ResultOp, SeqOp, SkipOp, fuse,
 };
 use phon_ir::{
-    Access, Construct, Descriptor, EnumAccess, MapStorage, Presence, RecordAccess, SequenceStorage,
-    Tag, VariantAccess,
+    Access, Construct, Descriptor, EnumAccess, MapStorage, Presence, RecordAccess, ResultAccess,
+    SequenceStorage, Tag, VariantAccess,
 };
 use phon_schema::bytes::{Reader, write_u8, write_u32};
 use phon_schema::{
@@ -283,6 +283,13 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
             })));
             Ok(())
         }
+        // r[impl ir.memory] — Result<T, E>: a u32 wire index then the active arm's
+        // payload (wire-identical to a two-variant enum). The schema gives the Ok/Err
+        // wire indices; the thunks drive the repr(Rust) layout.
+        (Access::Result(ra), Resolved::Composite(SchemaKind::Enum { variants, .. })) => {
+            out.push(MemOp::Result(Box::new(lower_result(ra, &variants, reg, base)?)));
+            Ok(())
+        }
         // r[impl ir.memory] — opaque field: a length-prefixed blob (wire-identical
         // to a `Primitive::Bytes` run); the engine frames it and the thunks fill /
         // consume the inner span.
@@ -493,6 +500,12 @@ fn lower_decode_node(
                 value_align: ma.value.layout.align,
                 thunks: *thunks,
             })));
+            Ok(())
+        }
+        // Result ⋈ enum: the writer's Result wire is a two-variant enum; match Ok/Err
+        // by name and reconcile each arm's payload (writer Ok ⋈ reader Ok, etc.).
+        (Access::Result(ra), Resolved::Composite(SchemaKind::Enum { variants: wv, .. })) => {
+            out.push(MemOp::Result(Box::new(lower_decode_result(&wv, ra, reg, base)?)));
             Ok(())
         }
         // Opaque ⋈ Bytes: the writer wire is a `Primitive::Bytes` run; the reader
@@ -761,6 +774,89 @@ fn incompatible(why: impl Into<String>) -> CompactError {
     CompactError::Incompatible(why.into())
 }
 
+/// The wire index of the schema enum variant named `name` (`Ok`/`Err` for a
+/// `Result`), for lowering a [`ResultOp`].
+fn variant_index_by_name(variants: &[Variant], name: &str) -> Result<u32> {
+    variants
+        .iter()
+        .find(|v| v.name == name)
+        .map(|v| v.index)
+        .ok_or(CompactError::Malformed("Result schema missing Ok or Err variant"))
+}
+
+/// Lower a single-schema [`ResultOp`]: take the Ok/Err wire indices from the schema
+/// and the Ok/Err payload sub-programs from the descriptor.
+fn lower_result(
+    ra: &ResultAccess,
+    variants: &[Variant],
+    reg: &Registry,
+    base: usize,
+) -> Result<ResultOp> {
+    let ok_wire_index = variant_index_by_name(variants, "Ok")?;
+    let err_wire_index = variant_index_by_name(variants, "Err")?;
+    let mut ok = Vec::new();
+    lower_node(&ra.ok, reg, 0, &mut ok)?;
+    let mut err = Vec::new();
+    lower_node(&ra.err, reg, 0, &mut err)?;
+    Ok(ResultOp {
+        field_offset: base,
+        ok: fuse(ok),
+        ok_size: ra.ok.layout.size,
+        ok_align: ra.ok.layout.align,
+        ok_wire_index,
+        err: fuse(err),
+        err_size: ra.err.layout.size,
+        err_align: ra.err.layout.align,
+        err_wire_index,
+        thunks: ra.thunks,
+    })
+}
+
+/// Lower a decode-compat [`ResultOp`]: match the writer enum's Ok/Err variants by
+/// name and reconcile each arm's payload against the reader's Ok/Err descriptor.
+fn lower_decode_result(
+    wv: &[Variant],
+    ra: &ResultAccess,
+    reg: &Registry,
+    base: usize,
+) -> Result<ResultOp> {
+    let ok_wv = wv
+        .iter()
+        .find(|v| v.name == "Ok")
+        .ok_or_else(|| incompatible("writer Result schema missing Ok variant"))?;
+    let err_wv = wv
+        .iter()
+        .find(|v| v.name == "Err")
+        .ok_or_else(|| incompatible("writer Result schema missing Err variant"))?;
+    Ok(ResultOp {
+        field_offset: base,
+        ok: lower_decode_result_arm(&ok_wv.payload, &ra.ok, reg)?,
+        ok_size: ra.ok.layout.size,
+        ok_align: ra.ok.layout.align,
+        ok_wire_index: ok_wv.index,
+        err: lower_decode_result_arm(&err_wv.payload, &ra.err, reg)?,
+        err_size: ra.err.layout.size,
+        err_align: ra.err.layout.align,
+        err_wire_index: err_wv.index,
+        thunks: ra.thunks,
+    })
+}
+
+/// Reconcile one `Result` arm: the writer payload is a newtype (`Ok(T)`/`Err(E)`),
+/// reconciled against the reader arm's descriptor at offset 0 (the arm value start).
+fn lower_decode_result_arm(
+    w: &VariantPayload,
+    reader: &Descriptor,
+    reg: &Registry,
+) -> Result<MemProgram> {
+    let VariantPayload::Newtype(wr) = w else {
+        return Err(incompatible("Result arm payload must be a newtype"));
+    };
+    let mut prog = Vec::new();
+    lower_decode_node(wr, reader, reg, 0, &mut prog)?;
+    Ok(fuse(prog))
+}
+
 // ============================================================================
 // Wire-skeleton lowering (skip a writer-only value)
 // ============================================================================
@@ -1025,6 +1121,24 @@ unsafe fn encode_program(program: &MemProgram, base: *const u8, out: &mut Vec<u8
                 }
                 // Safety: `it` was built by `iter_init` and is freed exactly once.
                 unsafe { (m.thunks.iter_dealloc)(m.thunks.ctx, it) };
+            }
+            // r[impl ir.memory] — Result<T, E>: read which arm is active via the
+            // vtable, write its wire index, then encode that arm's payload at the
+            // pointer the getter returns (the repr(Rust) layout is never assumed).
+            MemOp::Result(rs) => {
+                // Safety: the result handle lives at field_offset.
+                let result = unsafe { base.add(rs.field_offset) };
+                if unsafe { (rs.thunks.is_ok)(rs.thunks.ctx, result) } {
+                    write_u32(out, rs.ok_wire_index);
+                    // Safety: Ok, so `get_ok` returns a valid inner pointer.
+                    let ok = unsafe { (rs.thunks.get_ok)(rs.thunks.ctx, result) };
+                    unsafe { encode_program(&rs.ok, ok, out) };
+                } else {
+                    write_u32(out, rs.err_wire_index);
+                    // Safety: Err, so `get_err` returns a valid inner pointer.
+                    let err = unsafe { (rs.thunks.get_err)(rs.thunks.ctx, result) };
+                    unsafe { encode_program(&rs.err, err, out) };
+                }
             }
             // r[impl zerocopy.framing.value.opaque] — opaque field: reserve a `u32`
             // length (align 1 — wire-identical to a `Primitive::Bytes` run, so no
@@ -1309,6 +1423,46 @@ unsafe fn decode_program(program: &MemProgram, r: &mut Reader, base: *mut u8) ->
                     return Err(CompactError::Decode(DecodeError::DuplicateKey));
                 }
             }
+            // r[impl ir.memory] — Result<T, E>: read the u32 wire index, decode the
+            // matching arm's payload into an engine scratch buffer, then move it into
+            // the Result via `init_ok`/`init_err` (the repr(Rust) layout is built by
+            // the vtable, mirroring the Option some-arm). An index matching neither
+            // arm is a decode error.
+            MemOp::Result(rs) => {
+                let idx = r.read_u32()?;
+                // Safety: the result handle lives at field_offset.
+                let result = unsafe { base.add(rs.field_offset) };
+                if idx == rs.ok_wire_index {
+                    // Safety: `result` is uninitialized Result storage; `init_ok`
+                    // moves the decoded Ok payload in.
+                    unsafe {
+                        decode_into_via_init(
+                            &rs.ok,
+                            rs.ok_size,
+                            rs.ok_align,
+                            r,
+                            rs.thunks.ctx,
+                            result,
+                            rs.thunks.init_ok,
+                        )?
+                    };
+                } else if idx == rs.err_wire_index {
+                    // Safety: as above, `init_err` moves the decoded Err payload in.
+                    unsafe {
+                        decode_into_via_init(
+                            &rs.err,
+                            rs.err_size,
+                            rs.err_align,
+                            r,
+                            rs.thunks.ctx,
+                            result,
+                            rs.thunks.init_err,
+                        )?
+                    };
+                } else {
+                    return Err(CompactError::BadVariantIndex(idx));
+                }
+            }
             // r[impl compat.skip-writer-only] — consume a writer-only value's wire
             // bytes; write nothing to memory. The walker lives in `phon-ir` next to
             // `SkipOp`, shared with the JIT so both decode engines skip identically.
@@ -1370,6 +1524,36 @@ fn free_scratch(buf: *mut u8, layout: Option<alloc::Layout>) {
         // Safety: `buf` was allocated by `alloc_scratch` with this exact layout.
         unsafe { alloc::dealloc(buf, layout) };
     }
+}
+
+/// Decode one `program`'s value of `size`/`align` into an engine-owned scratch
+/// buffer, then move it into `handle` via the `init` thunk (which `ptr::read`s the
+/// scratch), freeing the scratch WITHOUT dropping. The construction half of a
+/// [`MemOp::Result`] arm (and the same shape as the Option some-arm); `init` is
+/// `init_ok` or `init_err`.
+///
+/// # Safety
+/// `handle` must be uninitialized storage for the containing type; `program` must
+/// match the arm payload of `size`/`align`; `ctx`/`init` are the bound result thunks.
+unsafe fn decode_into_via_init(
+    program: &MemProgram,
+    size: usize,
+    align: usize,
+    r: &mut Reader,
+    ctx: *const (),
+    handle: *mut u8,
+    init: unsafe extern "C" fn(ctx: *const (), handle: *mut u8, value: *mut u8),
+) -> Result<()> {
+    let (scratch, layout) = alloc_scratch(size, align)?;
+    // Safety: scratch is `size` bytes at `align`.
+    if let Err(e) = unsafe { decode_program(program, r, scratch) } {
+        free_scratch(scratch, layout);
+        return Err(e);
+    }
+    // Safety: scratch holds the initialized arm payload; `init` moves it into `handle`.
+    unsafe { init(ctx, handle, scratch) };
+    free_scratch(scratch, layout);
+    Ok(())
 }
 
 /// Lower `descriptor` and decode `bytes` into the value at `base` in one step.

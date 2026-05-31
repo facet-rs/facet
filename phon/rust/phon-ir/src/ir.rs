@@ -169,6 +169,14 @@ pub enum MemOp {
     /// entry decodes a key+value into engine scratch and inserts (moving both in).
     /// See [`MapOp`].
     Map(Box<MapOp>),
+    /// A `Result<T, E>` at `field_offset`: a `u32` wire variant index then the
+    /// active arm's payload — IDENTICAL wire to a two-variant `#[repr(int)]` enum
+    /// (`Ok` and `Err`). But `Result`'s in-memory layout is `repr(Rust)`
+    /// (unspecified), so the engine never reads a discriminant or a payload offset:
+    /// it drives presence and construction through the [`ResultThunks`] vtable
+    /// (`is_ok` / `get_ok` / `get_err` / `init_ok` / `init_err`), exactly as
+    /// [`Option`](MemOp::Option) does for one arm. Data-directed. See [`ResultOp`].
+    Result(Box<ResultOp>),
     /// A writer-only value present on the wire but absent from the reader: consume
     /// its wire bytes and write NOTHING to memory (`r[compat.skip-writer-only]`).
     /// Decode-only — it advances the cursor by a pre-built wire skeleton (see
@@ -568,6 +576,62 @@ pub struct MapThunks {
     pub iter_dealloc: unsafe extern "C" fn(ctx: *const (), iter: *mut ()),
 }
 
+/// A `Result<T, E>` op's payload (boxed in [`MemOp::Result`]). The wire form is a
+/// `u32` variant index (`ok_wire_index` for `Ok`, `err_wire_index` for `Err`) then
+/// that arm's payload. The engine never assumes the in-memory `Result` layout; it
+/// reads which arm is active and builds it through the [`ResultThunks`] vtable,
+/// mirroring [`OptionOp`] but with two value-carrying arms.
+#[derive(Clone, Debug)]
+pub struct ResultOp {
+    /// Where the `Result<T, E>` handle lives, relative to the base.
+    pub field_offset: usize,
+    /// How to encode/decode the `Ok` payload `T` (offsets relative to its start).
+    pub ok: MemProgram,
+    /// The `Ok` payload's size and alignment — the engine allocates a decode
+    /// scratch buffer of this layout, fills it with `ok`, then moves it in via
+    /// `init_ok`.
+    pub ok_size: usize,
+    /// Alignment of the `Ok` payload (for the decode scratch buffer).
+    pub ok_align: usize,
+    /// The `u32` written to / read from the wire identifying the `Ok` arm (`0` for a
+    /// single-schema lower; the writer schema's `Ok` index on the compat path).
+    pub ok_wire_index: u32,
+    /// How to encode/decode the `Err` payload `E` (offsets relative to its start).
+    pub err: MemProgram,
+    /// The `Err` payload's size and alignment (decode scratch buffer).
+    pub err_size: usize,
+    /// Alignment of the `Err` payload (for the decode scratch buffer).
+    pub err_align: usize,
+    /// The `u32` identifying the `Err` arm (`1` for a single-schema lower).
+    pub err_wire_index: u32,
+    /// Type-erased presence/construction operations on the `Result` (front-door bound).
+    pub thunks: ResultThunks,
+}
+
+/// Type-erased operations on a `Result<T, E>` handle, supplied by the front door
+/// (`r[descriptors.thunk-binding]`), mirroring [`OptionThunks`] with two
+/// value-carrying arms. The engine never pokes the `Result`'s niche/tag directly —
+/// it calls these. `ctx` is an opaque per-type pointer (the result's def) the engine
+/// passes back untouched.
+#[derive(Clone, Copy, Debug)]
+pub struct ResultThunks {
+    /// Opaque per-type context, passed to every thunk.
+    pub ctx: *const (),
+    /// Whether the result at `result` is `Ok`.
+    pub is_ok: unsafe extern "C" fn(ctx: *const (), result: *const u8) -> bool,
+    /// A pointer to the contained `Ok` value (valid only when `is_ok`).
+    pub get_ok: unsafe extern "C" fn(ctx: *const (), result: *const u8) -> *const u8,
+    /// A pointer to the contained `Err` value (valid only when not `is_ok`).
+    pub get_err: unsafe extern "C" fn(ctx: *const (), result: *const u8) -> *const u8,
+    /// Initialize the uninitialized result at `result` to `Ok(*value)`, moving the
+    /// inner value out of `value` (the engine then frees `value`'s storage without
+    /// dropping it).
+    pub init_ok: unsafe extern "C" fn(ctx: *const (), result: *mut u8, value: *mut u8),
+    /// Initialize the uninitialized result at `result` to `Err(*value)`, moving the
+    /// inner value out of `value`.
+    pub init_err: unsafe extern "C" fn(ctx: *const (), result: *mut u8, value: *mut u8),
+}
+
 /// An opaque-field op's payload (boxed in [`MemOp::Opaque`]). The wire form is a
 /// `u32` byte length then that many inner bytes — IDENTICAL to a `Primitive::Bytes`
 /// run, so a peer that does not know the inner type reads it as opaque bytes. The
@@ -653,6 +717,7 @@ pub fn fuse(program: MemProgram) -> MemProgram {
             | MemOp::Option(_)
             | MemOp::Enum(_)
             | MemOp::Map(_)
+            | MemOp::Result(_)
             | MemOp::Opaque(_)
             | MemOp::SkipWire(_)) => {
                 out.push(seq);
