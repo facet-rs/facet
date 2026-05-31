@@ -2074,14 +2074,16 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 .with_lifetime(LifetimeName(format_ident!("ʄ")));
             let bgp_def_for_helper = helper_bgp.display_with_bounds();
 
-            let adapter_where = {
-                let additional_clauses = quote! { #adapter_type: #facet_crate::FacetOpaqueAdapter };
-                if where_clauses.is_empty() {
-                    quote! { where #additional_clauses }
-                } else {
-                    quote! { #where_clauses, #additional_clauses }
-                }
-            };
+            // NOTE: we deliberately do NOT add `#adapter_type: FacetOpaqueAdapter`
+            // to this inherent impl's where-clause. The bound is redundant — the
+            // adapter always has a concrete or blanket impl in scope, so the
+            // projection `<#adapter_type as FacetOpaqueAdapter>::SendValue` is
+            // already nameable — and for a *generic* adapter type (e.g.
+            // `Adapter<T>`) the where-bound shadows the concrete associated type
+            // (rust-lang/rust#152409), breaking the `assert_*_type` helpers below.
+            // Keeping only the container's own where-clauses fixes generic opaque
+            // adapters while leaving non-generic ones (Fd, Payload) unchanged.
+            let adapter_where = where_clauses.clone();
 
             let adapter_impl = quote! {
                 #[doc(hidden)]
