@@ -648,6 +648,7 @@ impl Compiler {
                     self.map_fixups.push(MapFixup { prog_index, slot, mapinfo });
                 }
                 MemOp::Result(_) => panic!("phon-jit: Result is interpreter-only for now"),
+                MemOp::Dynamic { .. } => panic!("phon-jit: dynamic Value is interpreter-only for now"),
                 MemOp::Opaque(_) => panic!("phon-jit: opaque fields are interpreter-only for now"),
             }
         }
@@ -670,6 +671,7 @@ impl Compiler {
                 MemOp::SkipWire(_) => SKIPWIRE_CONT,
                 MemOp::Map(_) => MAP_CONT,
                 MemOp::Result(_) => panic!("phon-jit: Result is interpreter-only for now"),
+                MemOp::Dynamic { .. } => panic!("phon-jit: dynamic Value is interpreter-only for now"),
                 MemOp::Opaque(_) => panic!("phon-jit: opaque fields are interpreter-only for now"),
             };
             for &rel in relocs {
@@ -1374,6 +1376,7 @@ impl EncCompiler {
                     panic!("phon-jit: compat skip/default are interpreter-only for now")
                 }
                 MemOp::Result(_) => panic!("phon-jit: Result is interpreter-only for now"),
+                MemOp::Dynamic { .. } => panic!("phon-jit: dynamic Value is interpreter-only for now"),
                 MemOp::Opaque(_) => panic!("phon-jit: opaque fields are interpreter-only for now"),
             }
         }
@@ -1393,6 +1396,7 @@ impl EncCompiler {
                     unreachable!("phon-jit: compat skip/default are interpreter-only for now")
                 }
                 MemOp::Result(_) => panic!("phon-jit: Result is interpreter-only for now"),
+                MemOp::Dynamic { .. } => panic!("phon-jit: dynamic Value is interpreter-only for now"),
                 MemOp::Opaque(_) => panic!("phon-jit: opaque fields are interpreter-only for now"),
             };
             for &rel in relocs {

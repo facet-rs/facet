@@ -152,6 +152,8 @@ pub fn of_shape(shape: &'static Shape) -> Result<Derived, DeriveError> {
         b.intern(shape)?
     } else if let Some(et) = enum_type(shape) {
         b.intern_enum(shape, et)?
+    } else if is_dynamic_value(shape) {
+        b.intern_dynamic(shape)?
     } else if let Some(rd) = result_def(shape) {
         b.intern_result(rd, shape)?
     } else if let Some(ld) = list_def(shape) {
@@ -243,6 +245,11 @@ impl Builder {
         // A `Cow<str>` / `Cow<[u8]>` field: the SAME wire primitive as its owned peer.
         if let Some(leaf) = cow_kind(shape) {
             return Ok(SchemaRef::concrete(primitive_id(cow_primitive(leaf))));
+        }
+        // A self-describing dynamic `Value` field.
+        if is_dynamic_value(shape) {
+            let key = self.intern_dynamic(shape)?;
+            return Ok(SchemaRef::concrete(SchemaId(key as u64)));
         }
         if is_string(shape) {
             return Ok(SchemaRef::concrete(primitive_id(Primitive::String)));
@@ -377,6 +384,24 @@ impl Builder {
         Ok(key)
     }
 
+    /// Intern a self-describing dynamic `Value` schema (`SchemaKind::Dynamic`),
+    /// returning its provisional key. All `Value` fields share one `Shape`, so they
+    /// dedup to a single Dynamic schema.
+    fn intern_dynamic(&mut self, shape: &'static Shape) -> Result<usize, DeriveError> {
+        let ptr = shape_ptr(shape);
+        if let Some(&k) = self.by_shape.get(&ptr) {
+            return Ok(k);
+        }
+        let key = self.protos.len();
+        self.by_shape.insert(ptr, key);
+        self.protos.push(Schema {
+            id: SchemaId(key as u64),
+            type_params: Vec::new(),
+            kind: SchemaKind::Dynamic,
+        });
+        Ok(key)
+    }
+
     /// Intern an enum schema, returning its provisional key. Only `#[repr(int)]`
     /// enums are supported (a default `repr(Rust)` discriminant layout is
     /// unspecified). Interned by the enum's `Shape` pointer, like a struct; the
@@ -475,6 +500,16 @@ fn build_descriptor(
     }
     if let Some(leaf) = cow_kind(shape) {
         return cow_descriptor(shape, leaf);
+    }
+    // A self-describing dynamic `Value` field: no fixed layout to describe; the
+    // engine reads/writes the `Value` at this offset through the self-describing codec.
+    if is_dynamic_value(shape) {
+        let real = real_ids[by_shape[&shape_ptr(shape)]];
+        return Ok(Descriptor {
+            schema: SchemaRef::concrete(real),
+            layout: Layout { size, align },
+            access: Access::Dynamic,
+        });
     }
     if is_string(shape) {
         return string_descriptor(shape);
@@ -652,6 +687,13 @@ fn result_def(shape: &'static Shape) -> Option<&'static ResultDef> {
         Def::Result(result_def) => Some(result_def),
         _ => None,
     }
+}
+
+/// Whether `shape` is a self-describing dynamic `Value` (`facet_value::Value`,
+/// `Def::DynamicValue`). Such a field is carried as a phon `Dynamic` — encoded /
+/// decoded by the self-describing codec, never schematized into a fixed layout.
+fn is_dynamic_value(shape: &Shape) -> bool {
+    matches!(&shape.def, Def::DynamicValue(_))
 }
 
 /// The `&'static EnumType` behind an enum-typed shape, or `None`.
@@ -3446,6 +3488,84 @@ mod tests {
         let mut slot = std::mem::MaybeUninit::<Result<OkR, String>>::uninit();
         unsafe { typed::decode_with(&program, &bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
         assert_eq!(unsafe { slot.assume_init() }, Ok(OkR { a: 9, b: 0 }));
+    }
+
+    // ========================================================================
+    // Self-describing dynamic `Value` fields
+    // ========================================================================
+    //
+    // A `facet_value::Value` field is carried as phon `Dynamic`: encoded/decoded by
+    // the self-describing codec, self-delimiting on the wire. The dynamic codec over
+    // the equivalent object is the oracle (it encodes a `Dynamic` field the same way).
+
+    #[derive(Facet)]
+    struct DynHolder {
+        tag: u32,
+        meta: facet_value::Value,
+    }
+
+    #[test]
+    fn derived_dynamic_value_field_matches_dynamic_and_roundtrips() {
+        let d = of::<DynHolder>().unwrap();
+        // One composite schema reachable: DynHolder (the Dynamic field's schema
+        // dedups to a Dynamic entry — count is DynHolder + Dynamic = 2).
+        let reg = Registry::new(d.schemas.clone());
+
+        let mut meta_obj = VObject::new();
+        meta_obj.insert(VString::new("service"), Value::from("hash"));
+        meta_obj.insert(VString::new("n"), Value::from(42u32));
+        let meta: Value = meta_obj.into();
+
+        let h = DynHolder { tag: 0x55, meta: meta.clone() };
+        let typed_bytes =
+            unsafe { typed::encode(core::ptr::from_ref(&h).cast::<u8>(), &d.descriptor, &reg) }
+                .unwrap();
+
+        // Oracle: the dynamic codec encodes a Dynamic field via the same write_value.
+        let mut top = VObject::new();
+        top.insert(VString::new("tag"), Value::from(h.tag));
+        top.insert(VString::new("meta"), meta.clone());
+        let dyn_bytes = compact::to_bytes(&top.into(), d.root, &reg).unwrap();
+        assert_eq!(typed_bytes, dyn_bytes);
+
+        let mut slot = std::mem::MaybeUninit::<DynHolder>::uninit();
+        unsafe { typed::decode(&typed_bytes, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
+            .unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back.tag, 0x55);
+        assert_eq!(back.meta, meta);
+    }
+
+    #[test]
+    fn compat_dynamic_field_with_struct_drift() {
+        // The Dynamic field is a self-describing passthrough; surrounding struct
+        // fields still reconcile (a writer-only field is skipped around it).
+        #[derive(Facet)]
+        struct W {
+            a: u32,
+            gone: u32,
+            meta: facet_value::Value,
+        }
+        #[derive(Facet)]
+        struct R {
+            a: u32,
+            meta: facet_value::Value,
+        }
+        let w = of::<W>().unwrap();
+        let r = of::<R>().unwrap();
+        let reg = merged_registry(&w, &r);
+
+        let mut m = VObject::new();
+        m.insert(VString::new("k"), Value::from("v"));
+        let meta: Value = m.into();
+        let value = W { a: 7, gone: 99, meta: meta.clone() };
+        let bytes = encode_writer(&value, &w, &reg);
+        let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
+        let mut slot = std::mem::MaybeUninit::<R>::uninit();
+        unsafe { typed::decode_with(&program, &bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back.a, 7);
+        assert_eq!(back.meta, meta);
     }
 
     // ========================================================================

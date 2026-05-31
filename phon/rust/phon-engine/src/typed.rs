@@ -35,7 +35,8 @@ use phon_ir::{
 };
 use phon_schema::bytes::{Reader, write_u8, write_u32};
 use phon_schema::{
-    DecodeError, Field, Primitive, SchemaId, SchemaKind, SchemaRef, Variant, VariantPayload,
+    DecodeError, Field, Primitive, SchemaId, SchemaKind, SchemaRef, Value, Variant, VariantPayload,
+    read_value, write_value,
 };
 
 use crate::compact::{self, CompactError, Registry, Resolved, alignment, pad_to, skip_pad};
@@ -283,6 +284,12 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
             })));
             Ok(())
         }
+        // r[impl ir.memory] — a self-describing dynamic `Value` field: encoded /
+        // decoded by the self-describing codec, self-delimiting on the wire.
+        (Access::Dynamic, Resolved::Composite(SchemaKind::Dynamic)) => {
+            out.push(MemOp::Dynamic { field_offset: base });
+            Ok(())
+        }
         // r[impl ir.memory] — Result<T, E>: a u32 wire index then the active arm's
         // payload (wire-identical to a two-variant enum). The schema gives the Ok/Err
         // wire indices; the thunks drive the repr(Rust) layout.
@@ -500,6 +507,12 @@ fn lower_decode_node(
                 value_align: ma.value.layout.align,
                 thunks: *thunks,
             })));
+            Ok(())
+        }
+        // Dynamic ⋈ Dynamic: both sides are self-describing; the value carries its
+        // own structure, so there is nothing to reconcile — passthrough.
+        (Access::Dynamic, Resolved::Composite(SchemaKind::Dynamic)) => {
+            out.push(MemOp::Dynamic { field_offset: base });
             Ok(())
         }
         // Result ⋈ enum: the writer's Result wire is a two-variant enum; match Ok/Err
@@ -953,7 +966,9 @@ fn skip_op(writer: &SchemaRef, reg: &Registry) -> Result<SkipOp> {
             SchemaKind::Tensor { .. } => Err(CompactError::Unsupported("skip: tensor")),
             SchemaKind::Channel { .. } => Err(CompactError::Unsupported("skip: channel")),
             SchemaKind::External { .. } => Err(CompactError::Unsupported("skip: external")),
-            SchemaKind::Dynamic => Err(CompactError::Unsupported("skip: dynamic")),
+            // A self-describing value is self-delimiting: skip it by decoding one
+            // value and discarding it.
+            SchemaKind::Dynamic => Ok(SkipOp::Dynamic),
             SchemaKind::Primitive(_) => {
                 // A composite that resolved to a primitive kind: treat as scalar.
                 Err(CompactError::Malformed("skip: primitive in composite position"))
@@ -1121,6 +1136,13 @@ unsafe fn encode_program(program: &MemProgram, base: *const u8, out: &mut Vec<u8
                 }
                 // Safety: `it` was built by `iter_init` and is freed exactly once.
                 unsafe { (m.thunks.iter_dealloc)(m.thunks.ctx, it) };
+            }
+            // r[impl ir.memory] — a self-describing dynamic `Value`: write it through
+            // the self-describing codec (self-delimiting; no length prefix).
+            MemOp::Dynamic { field_offset } => {
+                // Safety: the field at `field_offset` is an initialized `Value`.
+                let v = unsafe { &*base.add(*field_offset).cast::<Value>() };
+                write_value(out, v).expect("dynamic value is encodable by the self-describing codec");
             }
             // r[impl ir.memory] — Result<T, E>: read which arm is active via the
             // vtable, write its wire index, then encode that arm's payload at the
@@ -1422,6 +1444,14 @@ unsafe fn decode_program(program: &MemProgram, r: &mut Reader, base: *mut u8) ->
                 if unsafe { (m.thunks.len)(m.thunks.ctx, map) } != n {
                     return Err(CompactError::Decode(DecodeError::DuplicateKey));
                 }
+            }
+            // r[impl ir.memory] — a self-describing dynamic `Value`: decode one value
+            // (self-delimiting) and write it into the field.
+            MemOp::Dynamic { field_offset } => {
+                let v = read_value(r)?;
+                // Safety: `base + field_offset` is uninitialized `Value` storage; we
+                // move the decoded value in.
+                unsafe { core::ptr::write(base.add(*field_offset).cast::<Value>(), v) };
             }
             // r[impl ir.memory] — Result<T, E>: read the u32 wire index, decode the
             // matching arm's payload into an engine scratch buffer, then move it into

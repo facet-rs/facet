@@ -169,6 +169,12 @@ pub enum MemOp {
     /// entry decodes a key+value into engine scratch and inserts (moving both in).
     /// See [`MapOp`].
     Map(Box<MapOp>),
+    /// A self-describing dynamic `Value` at `field_offset`: encoded/decoded by the
+    /// self-describing value codec (`write_value`/`read_value`), self-delimiting on
+    /// the wire (no length prefix). The in-memory field IS a `phon_schema::Value`
+    /// (a concrete type, not facet-bound), so the engine reads/writes it directly at
+    /// the offset. Used for open-ended payloads like metadata.
+    Dynamic { field_offset: usize },
     /// A `Result<T, E>` at `field_offset`: a `u32` wire variant index then the
     /// active arm's payload — IDENTICAL wire to a two-variant `#[repr(int)]` enum
     /// (`Ok` and `Err`). But `Result`'s in-memory layout is `repr(Rust)`
@@ -243,6 +249,10 @@ pub enum SkipOp {
     Map(Box<SkipOp>, Box<SkipOp>),
     /// A struct or tuple: skip each field in wire order.
     Struct(Vec<SkipOp>),
+    /// A self-describing dynamic `Value`: read one value and discard it (the
+    /// self-describing codec is self-delimiting, so this consumes exactly the
+    /// value's bytes).
+    Dynamic,
 }
 
 /// Advance the reader past one writer value described by `op`, writing nothing to
@@ -312,6 +322,9 @@ pub fn skip(r: &mut Reader, op: &SkipOp) -> Result<(), DecodeError> {
             }
             Ok(())
         }
+        // The self-describing codec is self-delimiting: decode one value (consuming
+        // exactly its bytes) and discard it.
+        SkipOp::Dynamic => phon_schema::read_value(r).map(|_| ()),
     }
 }
 
@@ -718,6 +731,7 @@ pub fn fuse(program: MemProgram) -> MemProgram {
             | MemOp::Enum(_)
             | MemOp::Map(_)
             | MemOp::Result(_)
+            | MemOp::Dynamic { .. }
             | MemOp::Opaque(_)
             | MemOp::SkipWire(_)) => {
                 out.push(seq);
