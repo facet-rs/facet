@@ -31,9 +31,9 @@ pub async fn config_len<DB: DatabaseTrait>(db: &DB) -> PicanteResult<u64> {
 }
 
 #[picante::db(
-    inputs(Item, Config),
+    inputs(Item, Config, Doc, Registry),
     interned(Label),
-    tracked(item_length, config_len)
+    tracked(item_length, config_len, item_length_via, doc_body_len, total_len)
 )]
 pub struct Database {}
 
@@ -199,5 +199,80 @@ async fn snapshot_override_invalidates_singleton_query() -> PicanteResult<()> {
     );
     assert_eq!(config_len(&snapshot).await?, 17); // the query must recompute
     assert_eq!(config_len(&db).await?, 5); // host untouched
+    Ok(())
+}
+
+/// A tracked query that calls ANOTHER tracked query (not just an input) must
+/// also invalidate on a snapshot override. dodeca's build_tree calls parse_file,
+/// which reads the source content — this is the transitive case.
+#[picante::tracked]
+pub async fn item_length_via<DB: DatabaseTrait>(db: &DB, item: Item) -> PicanteResult<u64> {
+    item_length(db, item).await
+}
+
+#[tokio_test_lite::test]
+async fn snapshot_override_invalidates_transitive_query() -> PicanteResult<()> {
+    let db = Database::new();
+    let item = Item::new(&db, 1, "hello".into())?;
+    assert_eq!(item_length_via(&db, item).await?, 5); // memoize BOTH layers on db
+
+    let snapshot = DatabaseSnapshot::from_database(&db).await;
+    assert_eq!(item_length_via(&snapshot, item).await?, 5);
+
+    Item::new(&snapshot, 1, "hello world!!!".into())?; // len 14
+
+    // inner query recomputes...
+    assert_eq!(item_length(&snapshot, item).await?, 14);
+    // ...and so must the outer query that calls it (the dodeca case).
+    assert_eq!(item_length_via(&snapshot, item).await?, 14);
+    Ok(())
+}
+
+// ---- Exact dodeca shape: registry of keyed entities + iterate + sub-query ----
+#[picante::input]
+pub struct Doc {
+    #[key]
+    pub path: String,
+    pub body: String,
+}
+
+#[picante::input]
+pub struct Registry {
+    pub docs: Vec<Doc>,
+}
+
+#[picante::tracked]
+pub async fn doc_body_len<DB: DatabaseTrait>(db: &DB, doc: Doc) -> PicanteResult<u64> {
+    Ok(doc.body(db)?.len() as u64)
+}
+
+/// build_tree analog: iterate a singleton registry, call a sub-query per entity.
+#[picante::tracked]
+pub async fn total_len<DB: DatabaseTrait>(db: &DB) -> PicanteResult<u64> {
+    let docs = Registry::docs(db)?.unwrap_or_default();
+    let mut total = 0;
+    for doc in docs {
+        total += doc_body_len(db, doc).await?;
+    }
+    Ok(total)
+}
+
+#[tokio_test_lite::test]
+async fn snapshot_override_registry_entity_invalidates_outer() -> PicanteResult<()> {
+    let db = Database::new();
+    let doc = Doc::new(&db, "a".into(), "xx".into())?; // len 2
+    Registry::set(&db, vec![doc])?;
+    assert_eq!(total_len(&db).await?, 2); // memoize on db
+
+    let snapshot = DatabaseSnapshot::from_database(&db).await;
+    assert_eq!(total_len(&snapshot).await?, 2);
+
+    // Override the doc's content (same key) and re-set the registry — exactly
+    // what dodeca's preview_overlay does.
+    let doc2 = Doc::new(&snapshot, "a".into(), "yyyy".into())?; // len 4
+    Registry::set(&snapshot, vec![doc2])?;
+
+    assert_eq!(total_len(&snapshot).await?, 4); // must recompute (4, not stale 2)
+    assert_eq!(total_len(&db).await?, 2); // host untouched
     Ok(())
 }
