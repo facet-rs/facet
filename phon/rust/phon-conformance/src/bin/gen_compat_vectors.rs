@@ -581,6 +581,36 @@ fn build_cases(b: &mut Batch) -> Vec<PlannedCase> {
         );
     }
 
+    // 17b. enum_struct_variant — an enum carrying a struct variant (named fields),
+    // so the typed front door's `{ tag, ...fields }` inlining is round-tripped.
+    {
+        let variants = vec![
+            Variant {
+                name: "Move".to_string(),
+                index: 0,
+                payload: VariantPayload::Struct(vec![
+                    field("x", prim(Primitive::U32), true),
+                    field("y", prim(Primitive::U32), true),
+                ]),
+            },
+            Variant {
+                name: "Stop".to_string(),
+                index: 1,
+                payload: VariantPayload::Unit,
+            },
+        ];
+        let root = b.add(SchemaKind::Enum {
+            name: "Cmd".to_string(),
+            variants,
+        });
+        push(
+            "enum_struct_variant",
+            root.clone(),
+            root,
+            enum_val("Move", obj(&[("x", Value::from(3u32)), ("y", Value::from(4u32))])),
+        );
+    }
+
     // 18. char_value — primitive char = 'λ'.
     push(
         "char_value",

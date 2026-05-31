@@ -81,15 +81,18 @@ describe("typed front door — ergonomic shapes", () => {
     expect(t.h).toBe("hi");
   });
 
-  it("enums decode to a { tag, value } discriminated union", () => {
+  it("enums decode to an inlined { tag, … } discriminated union", () => {
+    // newtype -> { tag, value }
     const t = typedRoundTrip(caseByName("enum_same")) as TypedEnum;
     expect(t.tag).toBe("B");
     expect(t.value).toBe(42); // newtype u32 -> number
-    const unit = typedRoundTrip(caseByName("enum_unit_variant")) as TypedEnum;
-    expect(unit).toEqual({ tag: "A", value: null });
+    // unit -> { tag } (no value)
+    expect(typedRoundTrip(caseByName("enum_unit_variant"))).toEqual({ tag: "A" });
+    // tuple -> { tag, value: [...] }
     const tup = typedRoundTrip(caseByName("enum_tuple_variant")) as TypedEnum;
-    expect(tup.tag).toBe("C");
-    expect(tup.value).toEqual([1, 2]); // tuple of u8 -> number[]
+    expect(tup).toEqual({ tag: "C", value: [1, 2] }); // tuple of u8 -> number[]
+    // struct variant -> { tag, ...fields } (fields inlined)
+    expect(typedRoundTrip(caseByName("enum_struct_variant"))).toEqual({ tag: "Move", x: 3, y: 4 });
   });
 
   it("char decodes to a string", () => {

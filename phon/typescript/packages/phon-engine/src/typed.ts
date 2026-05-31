@@ -50,13 +50,11 @@ import type {
 import { encode } from "./compact.ts";
 import { compile } from "./jit.ts";
 
-/// A discriminated-union enum value: the variant name plus its (typed) payload —
-/// `null` for a unit variant, the inner value for a newtype, an array for a
-/// tuple variant, an object for a struct variant.
-export interface TypedEnum {
-  readonly tag: string;
-  readonly value: Typed;
-}
+/// A discriminated-union enum value: the variant name in `tag`, plus its payload
+/// inlined per the variant shape — nothing more for a unit variant, `value` for a
+/// newtype, `value` (an array) for a tuple variant, or the named fields for a
+/// struct variant. Matches what phon-codegen emits.
+export type TypedEnum = { readonly tag: string } & { readonly [field: string]: Typed };
 
 /// An ergonomic decoded value (see the module header for the full mapping).
 export type Typed =
@@ -121,7 +119,7 @@ function valueToTyped(v: Value, kind: SchemaKind, reg: Registry): Typed {
       const [tag, payload] = m.entries().next().value as [string, Value];
       const variant = kind.variants.find((vt) => vt.name === tag);
       if (!variant) throw new Error(`enum value tag '${tag}' not in schema`);
-      return { tag, value: payloadValueToTyped(payload, variant.payload, reg) };
+      return enumValueToTyped(tag, payload, variant.payload, reg);
     }
     case "tuple":
       return (v as Value[]).map((e, i) => valueToTypedRef(e, kind.elements[i]!, reg));
@@ -147,17 +145,20 @@ function valueToTyped(v: Value, kind: SchemaKind, reg: Registry): Typed {
   }
 }
 
-function payloadValueToTyped(v: Value, payload: VariantPayload, reg: Registry): Typed {
+/// Build the inlined enum shape: `{ tag }` for unit, `{ tag, value }` for a
+/// newtype, `{ tag, value: [...] }` for a tuple variant, `{ tag, ...fields }` for
+/// a struct variant.
+function enumValueToTyped(tag: string, v: Value, payload: VariantPayload, reg: Registry): Typed {
   switch (payload.kind) {
     case "unit":
-      return null;
+      return { tag };
     case "newtype":
-      return valueToTypedRef(v, payload.ref, reg);
+      return { tag, value: valueToTypedRef(v, payload.ref, reg) };
     case "tuple":
-      return (v as Value[]).map((e, i) => valueToTypedRef(e, payload.refs[i]!, reg));
+      return { tag, value: (v as Value[]).map((e, i) => valueToTypedRef(e, payload.refs[i]!, reg)) };
     case "struct": {
       const m = v as Map<string, Value>;
-      const o: { [field: string]: Typed } = {};
+      const o: { [field: string]: Typed } = { tag };
       for (const f of payload.fields) o[f.name] = valueToTypedRef(m.get(f.name) as Value, f.schema, reg);
       return o;
     }
@@ -205,10 +206,10 @@ function typedToValue(t: Typed, kind: SchemaKind, reg: Registry): Value {
       return m;
     }
     case "enum": {
-      const e = t as TypedEnum;
+      const e = t as { tag: string; [field: string]: Typed };
       const variant = kind.variants.find((vt) => vt.name === e.tag);
       if (!variant) throw new Error(`enum tag '${e.tag}' not in schema`);
-      return new Map<string, Value>([[e.tag, payloadTypedToValue(e.value, variant.payload, reg)]]);
+      return new Map<string, Value>([[e.tag, enumTypedToValue(e, variant.payload, reg)]]);
     }
     case "tuple":
       return (t as Typed[]).map((e, i) => typedToValueRef(e, kind.elements[i]!, reg));
@@ -234,18 +235,20 @@ function typedToValue(t: Typed, kind: SchemaKind, reg: Registry): Value {
   }
 }
 
-function payloadTypedToValue(t: Typed, payload: VariantPayload, reg: Registry): Value {
+/// Reconstruct the payload Value from the inlined enum shape (the inverse of
+/// `enumValueToTyped`): `value` for newtype/tuple, the named fields for a struct
+/// variant, nothing for unit.
+function enumTypedToValue(e: { [field: string]: Typed }, payload: VariantPayload, reg: Registry): Value {
   switch (payload.kind) {
     case "unit":
       return null;
     case "newtype":
-      return typedToValueRef(t, payload.ref, reg);
+      return typedToValueRef(e.value as Typed, payload.ref, reg);
     case "tuple":
-      return (t as Typed[]).map((e, i) => typedToValueRef(e, payload.refs[i]!, reg));
+      return (e.value as Typed[]).map((x, i) => typedToValueRef(x, payload.refs[i]!, reg));
     case "struct": {
-      const o = t as { [field: string]: Typed };
       const m = new Map<string, Value>();
-      for (const f of payload.fields) m.set(f.name, typedToValueRef(o[f.name] as Typed, f.schema, reg));
+      for (const f of payload.fields) m.set(f.name, typedToValueRef(e[f.name] as Typed, f.schema, reg));
       return m;
     }
   }

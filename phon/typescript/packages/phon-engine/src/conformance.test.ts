@@ -80,6 +80,6 @@ describe("compat conformance corpus", () => {
   }
 
   it("covers every corpus case", () => {
-    expect(corpus.cases.length).toBe(25);
+    expect(corpus.cases.length).toBe(26);
   });
 });
