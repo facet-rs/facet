@@ -18,12 +18,13 @@
 //!
 //! Spec: "Rust" (language section), `r[descriptors.fact-driven]`.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::{LazyLock, RwLock};
 
 use facet::{
-    Def, DefaultSource, EnumRepr, EnumType, Facet, ListDef, MapDef, OpaqueAdapterDef,
+    Def, DefaultSource, EnumRepr, EnumType, Facet, KnownPointer, ListDef, MapDef, OpaqueAdapterDef,
     OpaqueDeserialize, OpaqueSerialize, OptionDef, PtrConst, PtrMut, PtrUninit, ScalarType, Shape,
     StructKind, Type, UserType,
 };
@@ -94,6 +95,21 @@ pub fn of_shape(shape: &'static Shape) -> Result<Derived, DeriveError> {
             root: primitive_id(Primitive::Bytes),
             schemas: Vec::new(),
             descriptor: opaque_descriptor(shape)?,
+        });
+    }
+    // A transparent newtype (`#[repr(transparent)]` / `#[facet(transparent)]`):
+    // same wire, same schema, same layout as its inner type (id newtypes over
+    // `u64`, `MetadataFlags`, …). Resolve through to the inner shape.
+    if let Some(inner) = transparent_inner(shape) {
+        return of_shape(inner);
+    }
+    // A `Cow<str>` / `Cow<[u8]>` root: a borrowed, zero-copy byte sequence with the
+    // same wire primitive as `String`/`Vec<u8>`.
+    if let Some(leaf) = cow_kind(shape) {
+        return Ok(Derived {
+            root: primitive_id(cow_primitive(leaf)),
+            schemas: Vec::new(),
+            descriptor: cow_descriptor(shape, leaf)?,
         });
     }
     // A `String` root: a byte sequence with schema `Primitive::String`.
@@ -210,6 +226,14 @@ impl Builder {
         // adapter knows the inner type) — `r[zerocopy.framing.value.opaque]`.
         if shape.has_opaque_adapter() {
             return Ok(SchemaRef::concrete(primitive_id(Primitive::Bytes)));
+        }
+        // A transparent newtype resolves to its inner type's schema (same wire).
+        if let Some(inner) = transparent_inner(shape) {
+            return self.ref_of(inner);
+        }
+        // A `Cow<str>` / `Cow<[u8]>` field: the SAME wire primitive as its owned peer.
+        if let Some(leaf) = cow_kind(shape) {
+            return Ok(SchemaRef::concrete(primitive_id(cow_primitive(leaf))));
         }
         if is_string(shape) {
             return Ok(SchemaRef::concrete(primitive_id(Primitive::String)));
@@ -392,6 +416,14 @@ fn build_descriptor(
     let (size, align) = layout_of(shape)?;
     if shape.has_opaque_adapter() {
         return opaque_descriptor(shape);
+    }
+    // A transparent newtype: its inner type's descriptor carries the right access,
+    // and (being transparent) the same layout at offset 0.
+    if let Some(inner) = transparent_inner(shape) {
+        return build_descriptor(inner, by_shape, real_ids);
+    }
+    if let Some(leaf) = cow_kind(shape) {
+        return cow_descriptor(shape, leaf);
     }
     if is_string(shape) {
         return string_descriptor(shape);
@@ -1062,6 +1094,181 @@ unsafe extern "C" fn bytes_len(_ctx: *const (), field: *const u8) -> usize {
 unsafe extern "C" fn bytes_data(_ctx: *const (), field: *const u8) -> *const u8 {
     // Safety: `field` is an initialized `&[u8]`.
     (unsafe { &*field.cast::<&[u8]>() }).as_ptr()
+}
+
+// ============================================================================
+// Transparent newtypes (`#[repr(transparent)]` / `#[facet(transparent)]`)
+// ============================================================================
+
+/// The inner shape of a transparent newtype, which shares its wire form, schema,
+/// AND layout (offset 0) — id newtypes over `u64`, `MetadataFlags`, `NonZero`, … so
+/// the bridge resolves straight through to the inner. `None` for a non-transparent
+/// shape (the caller falls through). A `Cow`/`Arc` sets `Shape::inner` but is NOT
+/// `is_transparent()`, so it is correctly excluded here and handled on its own.
+fn transparent_inner(shape: &Shape) -> Option<&'static Shape> {
+    if shape.is_transparent() {
+        shape.inner
+    } else {
+        None
+    }
+}
+
+// ============================================================================
+// `Cow<str>` / `Cow<[u8]>` (borrowed, zero-copy leaves)
+// ============================================================================
+//
+// A `Cow<'a, str>`/`Cow<'a, [u8]>` field decodes zero-copy into `Cow::Borrowed`
+// pointing INTO the reader's input — byte-identical wire to its owned peer
+// (`String`/`Vec<u8>`), so a peer reading `Primitive::String`/`Bytes` interoperates.
+// Encode reads the length and bytes through the `Cow`'s `Deref` target. Modelled as
+// a `BorrowedVtable` leaf with concrete thunks, mirroring the `&str`/`&[u8]` leaves.
+
+/// Which borrowed `Cow` leaf a `Shape` is, if any.
+#[derive(Clone, Copy)]
+enum CowLeaf {
+    /// `Cow<str>`: schema `Primitive::String`, validated as UTF-8 on construct.
+    Str,
+    /// `Cow<[u8]>`: schema `Primitive::Bytes`, no content constraint.
+    Bytes,
+}
+
+/// Classify a `Shape` as a borrowed `Cow` leaf. `Cow<str>` is a `ScalarType::CowStr`
+/// scalar; `Cow<[u8]>` is a `Def::Pointer` (`KnownPointer::Cow`) whose pointee is a
+/// `[u8]` slice. `None` when the shape is not a `Cow` leaf (the caller falls through).
+fn cow_kind(shape: &Shape) -> Option<CowLeaf> {
+    if matches!(shape.scalar_type(), Some(ScalarType::CowStr)) {
+        return Some(CowLeaf::Str);
+    }
+    if let Def::Pointer(ptr) = &shape.def
+        && matches!(ptr.known, Some(KnownPointer::Cow))
+        && let Some(pointee) = ptr.pointee
+        && let Def::Slice(slice) = &pointee.def
+        && matches!(slice.t().scalar_type(), Some(ScalarType::U8))
+    {
+        return Some(CowLeaf::Bytes);
+    }
+    None
+}
+
+/// The wire primitive a `Cow` leaf encodes as — IDENTICAL to its owned peer.
+fn cow_primitive(leaf: CowLeaf) -> Primitive {
+    match leaf {
+        CowLeaf::Str => Primitive::String,
+        CowLeaf::Bytes => Primitive::Bytes,
+    }
+}
+
+/// The descriptor for a `Cow<str>`/`Cow<[u8]>` field or root: the same wire
+/// primitive as its owned peer, a byte-sequence access carrying the concrete `Cow`
+/// borrow thunks (`ctx` is null — a single concrete type each).
+fn cow_descriptor(shape: &'static Shape, leaf: CowLeaf) -> Result<Descriptor, DeriveError> {
+    let (size, align) = layout_of(shape)?;
+    let thunks = match leaf {
+        CowLeaf::Str => BorrowThunks {
+            ctx: core::ptr::null(),
+            set_borrowed: cow_str_set_borrowed,
+            len: cow_str_len,
+            data: cow_str_data,
+        },
+        CowLeaf::Bytes => BorrowThunks {
+            ctx: core::ptr::null(),
+            set_borrowed: cow_bytes_set_borrowed,
+            len: cow_bytes_len,
+            data: cow_bytes_data,
+        },
+    };
+    Ok(Descriptor {
+        schema: SchemaRef::concrete(primitive_id(cow_primitive(leaf))),
+        layout: Layout { size, align },
+        access: Access::Sequence(SequenceAccess {
+            element: Box::new(Descriptor {
+                schema: SchemaRef::concrete(primitive_id(Primitive::U8)),
+                layout: Layout { size: 1, align: 1 },
+                access: Access::Scalar,
+            }),
+            storage: SequenceStorage::BorrowedVtable(thunks),
+        }),
+    })
+}
+
+/// Construct `*field = Cow::Borrowed(&str)` borrowing `ptr[..len]` (a run INTO the
+/// reader's input). Returns `false` on invalid UTF-8 (the field stays uninitialized).
+///
+/// # Safety
+/// `field` must be writable, uninitialized `Cow<str>` storage; `ptr[..len]` must be a
+/// readable byte run that outlives the written value (the zero-copy contract).
+unsafe extern "C" fn cow_str_set_borrowed(
+    _ctx: *const (),
+    field: *mut u8,
+    ptr: *const u8,
+    len: usize,
+) -> bool {
+    // Safety: `ptr[..len]` is a readable byte run.
+    let bytes = unsafe { core::slice::from_raw_parts(ptr, len) };
+    match core::str::from_utf8(bytes) {
+        Ok(s) => {
+            // Safety: `field` is uninitialized `Cow<str>` storage; the borrowed `&str`
+            // points into the input (which the caller keeps alive).
+            unsafe { core::ptr::write(field.cast::<Cow<'static, str>>(), Cow::Borrowed(s)) };
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+/// The `Cow<str>`'s byte length (through its `Deref` to `str`).
+///
+/// # Safety
+/// `field` points to an initialized `Cow<str>`.
+unsafe extern "C" fn cow_str_len(_ctx: *const (), field: *const u8) -> usize {
+    // Safety: `field` is an initialized `Cow<str>`.
+    (unsafe { &*field.cast::<Cow<'static, str>>() }).len()
+}
+
+/// A pointer to the `Cow<str>`'s bytes (through its `Deref` to `str`).
+///
+/// # Safety
+/// `field` points to an initialized `Cow<str>`.
+unsafe extern "C" fn cow_str_data(_ctx: *const (), field: *const u8) -> *const u8 {
+    // Safety: `field` is an initialized `Cow<str>`.
+    (unsafe { &*field.cast::<Cow<'static, str>>() }).as_ptr()
+}
+
+/// Construct `*field = Cow::Borrowed(&[u8])` borrowing `ptr[..len]`. Always succeeds.
+///
+/// # Safety
+/// `field` must be writable, uninitialized `Cow<[u8]>` storage; `ptr[..len]` must be a
+/// readable byte run that outlives the written value (the zero-copy contract).
+unsafe extern "C" fn cow_bytes_set_borrowed(
+    _ctx: *const (),
+    field: *mut u8,
+    ptr: *const u8,
+    len: usize,
+) -> bool {
+    // Safety: `ptr[..len]` is a readable byte run.
+    let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
+    // Safety: `field` is uninitialized `Cow<[u8]>` storage; the borrowed slice points
+    // into the input (which the caller keeps alive).
+    unsafe { core::ptr::write(field.cast::<Cow<'static, [u8]>>(), Cow::Borrowed(slice)) };
+    true
+}
+
+/// The `Cow<[u8]>`'s length (through its `Deref` to `[u8]`).
+///
+/// # Safety
+/// `field` points to an initialized `Cow<[u8]>`.
+unsafe extern "C" fn cow_bytes_len(_ctx: *const (), field: *const u8) -> usize {
+    // Safety: `field` is an initialized `Cow<[u8]>`.
+    (unsafe { &*field.cast::<Cow<'static, [u8]>>() }).len()
+}
+
+/// A pointer to the `Cow<[u8]>`'s bytes (through its `Deref` to `[u8]`).
+///
+/// # Safety
+/// `field` points to an initialized `Cow<[u8]>`.
+unsafe extern "C" fn cow_bytes_data(_ctx: *const (), field: *const u8) -> *const u8 {
+    // Safety: `field` is an initialized `Cow<[u8]>`.
+    (unsafe { &*field.cast::<Cow<'static, [u8]>>() }).as_ptr()
 }
 
 /// The descriptor for a `String` field or root: schema `Primitive::String`, an
