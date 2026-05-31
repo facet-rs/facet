@@ -1628,12 +1628,45 @@ unsafe extern "C" fn opaque_encode(ctx: *const (), field: *const u8, out: *mut V
     // Safety: `field` points at the opaque field; the adapter maps it to the inner
     // value's `(ptr, shape)`.
     let OpaqueSerialize { ptr, shape } = unsafe { (adapter.serialize)(PtrConst::new(field)) };
+    // Passthrough: an adapter may hand back already-encoded inner bytes (e.g. a
+    // proxied/forwarded payload re-sent verbatim). Emit them as-is — the engine
+    // still frames the `u32` length around them — without re-deriving the inner
+    // type. (`r[zerocopy.framing.value.opaque]`)
+    if core::ptr::eq(shape, &RAW_OPAQUE_BYTES_SHAPE) {
+        // Safety: the sentinel shape guarantees `ptr` points at a `RawOpaqueBytes`.
+        let raw = unsafe { &*ptr.as_byte_ptr().cast::<RawOpaqueBytes>() };
+        // Safety: `out` is a live `Vec<u8>`.
+        unsafe { (*out).extend_from_slice(raw.0) };
+        return;
+    }
     let program = inner_program(shape);
     // Safety: `ptr` points at an initialized value of `shape`, which `program` was
     // lowered to encode.
     let bytes = unsafe { typed::encode_with(program, ptr.as_byte_ptr()) };
     // Safety: `out` is a live `Vec<u8>`.
     unsafe { (*out).extend_from_slice(&bytes) };
+}
+
+/// Sentinel wrapper for opaque passthrough: an [`OpaqueSerialize`] whose `shape`
+/// is [`RAW_OPAQUE_BYTES_SHAPE`] and whose `ptr` points at a `RawOpaqueBytes`
+/// means "these bytes are already the encoded inner payload — emit them verbatim".
+/// Lets an opaque adapter forward an already-encoded field (e.g. a proxied RPC
+/// payload) without re-deriving or re-encoding its inner type.
+#[repr(transparent)]
+pub struct RawOpaqueBytes<'a>(pub &'a [u8]);
+
+/// The sentinel shape recognized by [`opaque_encode`] for passthrough bytes.
+pub static RAW_OPAQUE_BYTES_SHAPE: Shape =
+    Shape::builder_for_sized::<RawOpaqueBytes<'static>>("RawOpaqueBytes").build();
+
+/// Build an [`OpaqueSerialize`] that passes `bytes` through verbatim as the
+/// opaque inner content (see [`RAW_OPAQUE_BYTES_SHAPE`]). Pass a reference to the
+/// borrowed slice so its address is stable for the returned `PtrConst`.
+pub fn raw_opaque_bytes(bytes: &&[u8]) -> OpaqueSerialize {
+    OpaqueSerialize {
+        ptr: PtrConst::new((bytes as *const &[u8]).cast::<RawOpaqueBytes<'_>>()),
+        shape: &RAW_OPAQUE_BYTES_SHAPE,
+    }
 }
 
 /// [`OpaqueThunks::decode`]: build the opaque value at `slot` from the borrowed inner
