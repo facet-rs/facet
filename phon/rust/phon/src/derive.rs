@@ -2136,6 +2136,81 @@ mod tests {
         drop(partial);
     }
 
+    // A struct holding BOTH a `BTreeMap<String, u32>` (scalar value) and a
+    // `BTreeMap<String, String>` (heap value) — the full-path map bridge through
+    // the JIT: derive -> typed::lower -> NativeEncode/NativeDecode. Exercises both
+    // map shapes (scalar + heap value scratch) in one program.
+    #[derive(Facet)]
+    struct MapPair {
+        m: std::collections::BTreeMap<String, u32>,
+        s: std::collections::BTreeMap<String, String>,
+    }
+
+    // The map bridge through the *JIT*: JIT encode == interpreter encode
+    // (byte-identical) and JIT decode round-trips, for both map fields.
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn derived_map_jit_matches_interpreter_and_roundtrips() {
+        use phon_jit::native::{NativeDecode, NativeEncode};
+
+        let d = of::<MapPair>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+        let program = typed::lower(&d.descriptor, &reg).unwrap();
+        let enc = NativeEncode::compile(&program);
+        let dec = NativeDecode::compile(&program);
+
+        let mut m = std::collections::BTreeMap::new();
+        m.insert("alpha".to_string(), 1u32);
+        m.insert("beta".to_string(), 0xCAFEu32);
+        m.insert("gamma".to_string(), 0xDEAD_BEEFu32);
+        let mut s = std::collections::BTreeMap::new();
+        s.insert("name".to_string(), "héllo 🐝".to_string());
+        s.insert("other".to_string(), "wörld".to_string());
+        s.insert("zed".to_string(), String::new());
+        let h = MapPair { m: m.clone(), s: s.clone() };
+        let base = core::ptr::from_ref(&h).cast::<u8>();
+
+        let jit_bytes = unsafe { enc.run(base) };
+        let interp_bytes = unsafe { typed::encode(base, &d.descriptor, &reg) }.unwrap();
+        assert_eq!(jit_bytes, interp_bytes, "JIT encode disagreed with the interpreter");
+
+        let mut slot = std::mem::MaybeUninit::<MapPair>::uninit();
+        unsafe { dec.run(&jit_bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back.m, m);
+        assert_eq!(back.s, s);
+    }
+
+    // The empty-map case through the JIT (count 0, no entries, no allocation),
+    // byte-identical to the interpreter and round-tripped.
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn derived_map_jit_empty_matches_interpreter_and_roundtrips() {
+        use phon_jit::native::{NativeDecode, NativeEncode};
+
+        let d = of::<MapPair>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+        let program = typed::lower(&d.descriptor, &reg).unwrap();
+        let enc = NativeEncode::compile(&program);
+        let dec = NativeDecode::compile(&program);
+
+        let h = MapPair {
+            m: std::collections::BTreeMap::new(),
+            s: std::collections::BTreeMap::new(),
+        };
+        let base = core::ptr::from_ref(&h).cast::<u8>();
+
+        let jit_bytes = unsafe { enc.run(base) };
+        let interp_bytes = unsafe { typed::encode(base, &d.descriptor, &reg) }.unwrap();
+        assert_eq!(jit_bytes, interp_bytes);
+
+        let mut slot = std::mem::MaybeUninit::<MapPair>::uninit();
+        unsafe { dec.run(&jit_bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert!(back.m.is_empty());
+        assert!(back.s.is_empty());
+    }
+
     // ========================================================================
     // Writer ↔ reader schema compatibility (the typed decode-compat path)
     // ========================================================================
