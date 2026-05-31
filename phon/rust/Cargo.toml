@@ -27,6 +27,7 @@ phon-jit = { path = "phon-jit" }
 blake3 = "1.8"
 facet = "0.46"
 facet-value = "0.46"
+proptest = "1.11"
 
 # facet-value's i128/u128 + native char support is committed locally but not yet
 # released; point at the local checkout until those releases are cut. (The same

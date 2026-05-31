@@ -10,3 +10,6 @@ description = "phon's backend-blind baseline: compact codec, compatibility plann
 phon-schema.workspace = true
 phon-ir.workspace = true
 facet-value.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
