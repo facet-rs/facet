@@ -336,16 +336,23 @@ pub unsafe extern "C" fn phon_stencil_sequence(cx: *mut Ctx) {
     c.wire = c.wire.add(4);
 
     // Length-vs-remaining check: each element costs at least `min_wire` bytes.
+    // A zero-sized element (`min_wire == 0`, e.g. an empty struct) leaves the
+    // count unbounded by the buffer, so a fixed cap applies — mirroring
+    // `Reader::read_len`'s `ZST_COUNT_CAP` (1 << 24).
     let remaining = (c.wire_end as usize) - (c.wire as usize);
-    let min = if info.min_wire == 0 { 1 } else { info.min_wire };
-    if count > remaining / min {
+    let max = if info.min_wire == 0 { 1usize << 24 } else { remaining / info.min_wire };
+    if count > max {
         c.status = 1;
         return;
     }
 
-    // Allocate the element buffer (engine-owned). count 0 -> dangling aligned.
-    let (buffer, cap, alloc_size) = if count == 0 {
-        (info.elem_align as *mut u8, 0usize, 0usize)
+    // Allocate the element buffer (engine-owned). A zero total byte size — an
+    // empty sequence OR any number of zero-sized elements (`stride == 0`) — must
+    // not reach the allocator (a zero-size request is UB / returns null). Use a
+    // dangling aligned pointer with cap == count, exactly as `Vec` does for ZSTs
+    // (`size_of::<T>() * cap == 0` matches the empty allocation).
+    let (buffer, cap, alloc_size) = if count == 0 || info.stride == 0 {
+        (info.elem_align as *mut u8, count, 0usize)
     } else {
         let size = count * info.stride;
         let buf = (c.alloc)(size, info.elem_align);
@@ -366,7 +373,9 @@ pub unsafe extern "C" fn phon_stencil_sequence(cx: *mut Ctx) {
         (info.element_entry)(cx);
         if c.status != 0 {
             // Free the buffer on a mid-fill failure (elements trivially droppable).
-            if cap != 0 {
+            // Only a real, non-zero-size allocation needs freeing (a ZST run has a
+            // dangling pointer and `alloc_size == 0`).
+            if alloc_size != 0 {
                 (c.dealloc)(buffer, alloc_size, info.elem_align);
             }
             return;

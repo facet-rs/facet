@@ -2794,4 +2794,53 @@ mod tests {
             (interp.inner.a, interp.inner.b, interp.tag),
         );
     }
+
+    // A `Vec` of a zero-sized element: encodes to just the u32 count (no element
+    // bytes), so the length guard's old hardcoded `min_wire = 1` rejected it. The
+    // element's min wire size is now 0, switching the count check to the ZST cap.
+    #[derive(Facet, Debug, PartialEq)]
+    struct Empty {}
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct ZstHolder {
+        items: Vec<Empty>,
+        tag: u32,
+    }
+
+    #[test]
+    fn derived_zst_seq_roundtrips() {
+        let d = of::<ZstHolder>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+        let v = ZstHolder { items: vec![Empty {}, Empty {}, Empty {}], tag: 0x99 };
+
+        let bytes =
+            unsafe { typed::encode(core::ptr::from_ref(&v).cast::<u8>(), &d.descriptor, &reg) }
+                .unwrap();
+
+        let mut slot = std::mem::MaybeUninit::<ZstHolder>::uninit();
+        unsafe { typed::decode(&bytes, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
+            .unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back.items.len(), 3, "three zero-sized elements survive");
+        assert_eq!(back.tag, v.tag);
+    }
+
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn derived_zst_seq_jit_roundtrips() {
+        use phon_jit::native::{NativeDecode, NativeEncode};
+        let d = of::<ZstHolder>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+        let program = typed::lower(&d.descriptor, &reg).unwrap();
+        let v = ZstHolder { items: vec![Empty {}, Empty {}, Empty {}], tag: 0x99 };
+
+        let bytes =
+            unsafe { NativeEncode::compile(&program).run(core::ptr::from_ref(&v).cast::<u8>()) };
+        let dec = NativeDecode::compile(&program);
+        let mut slot = std::mem::MaybeUninit::<ZstHolder>::uninit();
+        unsafe { dec.run(&bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back.items.len(), 3);
+        assert_eq!(back.tag, v.tag);
+    }
 }

@@ -72,6 +72,18 @@ fn fixed_size(p: Primitive) -> Option<usize> {
 /// # Errors
 /// [`CompactError`] if a referenced schema is missing, the descriptor and schema
 /// disagree, or a kind this first cut does not handle is reached.
+/// The minimum wire bytes one owned-sequence element occupies, for the
+/// length-vs-remaining guard (`r[validate.lengths]`). `0` when the element is
+/// zero-sized (an empty / all-ZST struct encodes to nothing, so the count is
+/// unbounded by the buffer and a fixed cap applies in `read_len` / the JIT
+/// stencil); `1` otherwise. An empty program is vacuously zero-sized.
+fn elem_min_wire(element: &MemProgram) -> usize {
+    let zero_sized = element
+        .iter()
+        .all(|op| matches!(op, MemOp::Scalar { size: 0, .. }));
+    usize::from(!zero_sized)
+}
+
 // r[impl ir.memory]
 pub fn lower(descriptor: &Descriptor, reg: &Registry) -> Result<MemProgram> {
     let mut out = Vec::new();
@@ -154,12 +166,13 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
                     thunks: *thunks,
                 })));
             } else {
+                let min_wire = elem_min_wire(&element);
                 out.push(MemOp::Sequence(Box::new(SeqOp {
                     field_offset: base,
                     element,
                     stride,
                     elem_align,
-                    min_wire: 1,
+                    min_wire,
                     thunks: *thunks,
                 })));
             }
@@ -396,12 +409,13 @@ fn lower_decode_node(
                     thunks: *thunks,
                 })));
             } else {
+                let min_wire = elem_min_wire(&element);
                 out.push(MemOp::Sequence(Box::new(SeqOp {
                     field_offset: base,
                     element,
                     stride,
                     elem_align,
-                    min_wire: 1,
+                    min_wire,
                     thunks: *thunks,
                 })));
             }
@@ -1052,15 +1066,20 @@ unsafe fn decode_program(program: &MemProgram, r: &mut Reader, base: *mut u8) ->
                 let count = r.read_len(s.min_wire)?;
                 // Engine owns the element buffer: allocate it, fill it directly,
                 // then hand it to the sequence with `from_raw_parts`.
-                let (buffer, cap) = if count == 0 {
-                    // Dangling but aligned; `from_raw_parts` with cap 0 won't touch it.
-                    (s.elem_align as *mut u8, 0usize)
+                // A zero total byte size — an empty sequence, OR any number of
+                // zero-sized elements (`stride == 0`) — must not reach the
+                // allocator: a zero-size `Layout` is UB to allocate. Use a
+                // dangling-but-aligned pointer, exactly as `Vec` does for ZSTs;
+                // `from_raw_parts` then adopts `count` elements over no bytes
+                // (`size_of::<T>() * cap == 0` matches the empty allocation).
+                let (buffer, cap) = if count == 0 || s.stride == 0 {
+                    (s.elem_align as *mut u8, count)
                 } else {
                     let layout = alloc::Layout::from_size_align(count * s.stride, s.elem_align)
                         .map_err(|_| {
                             CompactError::Decode(DecodeError::Malformed("sequence layout overflow"))
                         })?;
-                    // Safety: layout has non-zero size (count > 0).
+                    // Safety: layout has non-zero size (count > 0 and stride > 0).
                     let buf = unsafe { alloc::alloc(layout) };
                     if buf.is_null() {
                         alloc::handle_alloc_error(layout);
@@ -1068,12 +1087,16 @@ unsafe fn decode_program(program: &MemProgram, r: &mut Reader, base: *mut u8) ->
                     (buf, count)
                 };
                 for i in 0..count {
-                    // Safety: element `i` occupies `buffer + i*stride`.
+                    // Safety: element `i` occupies `buffer + i*stride`. For a ZST
+                    // (`stride == 0`) every element shares the dangling pointer and
+                    // `.add(0)` is sound (provenance is only required for non-zero
+                    // offsets); the element program touches no buffer bytes.
                     if let Err(e) = unsafe { decode_program(&s.element, r, buffer.add(i * s.stride)) }
                     {
                         // Free the buffer on a mid-fill failure (elements are
-                        // assumed trivially droppable for now).
-                        if cap != 0 {
+                        // assumed trivially droppable for now). Only a real,
+                        // non-zero-size allocation needs freeing.
+                        if cap != 0 && s.stride != 0 {
                             let layout =
                                 alloc::Layout::from_size_align(cap * s.stride, s.elem_align).unwrap();
                             unsafe { alloc::dealloc(buffer, layout) };
