@@ -28,9 +28,10 @@ use copypatch::{ExecBuf, patch_branch26};
 
 use crate::stencils::{
     BORROW, BORROW_CONT, BYTES, BYTES_CONT, BYTES_ENC, BYTES_ENC_CONT, DEFAULT, DEFAULT_CONT, DONE,
-    DONE_ENC, ENUM, ENUM_CONT, ENUM_ENC, ENUM_ENC_CONT, OPTION, OPTION_CONT, OPTION_ENC,
-    OPTION_ENC_CONT, SCALAR, SCALAR_CONT, SCALAR_ENC, SCALAR_ENC_CONT, SEQUENCE, SEQUENCE_CONT,
-    SEQUENCE_ENC, SEQUENCE_ENC_CONT, SKIPWIRE, SKIPWIRE_CONT,
+    DONE_ENC, ENUM, ENUM_CONT, ENUM_ENC, ENUM_ENC_CONT, MAP, MAP_CONT, MAP_ENC, MAP_ENC_CONT,
+    OPTION, OPTION_CONT, OPTION_ENC, OPTION_ENC_CONT, SCALAR, SCALAR_CONT, SCALAR_ENC,
+    SCALAR_ENC_CONT, SEQUENCE, SEQUENCE_CONT, SEQUENCE_ENC, SEQUENCE_ENC_CONT, SKIPWIRE,
+    SKIPWIRE_CONT,
 };
 
 /// Load the smoke stencil into JIT memory and run it: `x * 3 + 1`, computed by
@@ -120,6 +121,27 @@ struct OptInfo {
     init_some: unsafe extern "C" fn(ctx: *const (), option: *mut u8, value: *mut u8),
     some_entry: unsafe extern "C" fn(cx: *mut Ctx),
     some_prog: *const u64,
+}
+
+/// An owned-map op's immediates, matching `MapInfo` in `stencils/stencils.rs` byte
+/// for byte. Reached through a `*const MapInfo` slot in the prog stream. Like
+/// [`SeqInfo`] it carries `ExecBuf`-relative sub-chain entries + progs — but TWO of
+/// them (key + value), the only op with two sub-chains.
+#[repr(C)]
+struct MapInfo {
+    field_offset: usize,
+    key_size: usize,
+    key_align: usize,
+    value_size: usize,
+    value_align: usize,
+    thunks_ctx: *const (),
+    len: unsafe extern "C" fn(ctx: *const (), map: *const u8) -> usize,
+    init_with_capacity: unsafe extern "C" fn(ctx: *const (), map: *mut u8, cap: usize),
+    insert: unsafe extern "C" fn(ctx: *const (), map: *mut u8, key: *mut u8, value: *mut u8),
+    key_entry: unsafe extern "C" fn(cx: *mut Ctx),
+    key_prog: *const u64,
+    value_entry: unsafe extern "C" fn(cx: *mut Ctx),
+    value_prog: *const u64,
 }
 
 /// One enum variant's decode immediates, matching `EnumVariantInfo` in
@@ -248,6 +270,9 @@ pub struct NativeDecode {
     /// One per option op: the immediates the option stencil reads through its prog
     /// slot. Same stability contract as `seq_infos`.
     opt_infos: Vec<OptInfo>,
+    /// One per map op: the immediates the map stencil reads through its prog slot.
+    /// Same stability contract as `seq_infos`.
+    map_infos: Vec<MapInfo>,
     /// One per enum op: the immediates the enum stencil reads through its prog
     /// slot. Same stability contract as `seq_infos`.
     enum_infos: Vec<EnumInfo>,
@@ -313,6 +338,14 @@ struct OptFixup {
     optinfo: usize,
 }
 
+/// A map's prog slot to fill once `map_infos` is in its final home: write
+/// `&map_infos[mapinfo]` into `progs[prog_index][slot]`.
+struct MapFixup {
+    prog_index: usize,
+    slot: usize,
+    mapinfo: usize,
+}
+
 /// An enum's prog slot to fill once `enum_infos` is in its final home: write
 /// `&enum_infos[enuminfo]` into `progs[prog_index][slot]`.
 struct EnumFixup {
@@ -364,6 +397,24 @@ struct OptInfoBuild {
     some_prog_index: usize,
 }
 
+/// A map's `MapInfo` minus the four fields only known after the `ExecBuf` is
+/// built: the key and value sub-chains' entry offsets and prog indices.
+struct MapInfoBuild {
+    field_offset: usize,
+    key_size: usize,
+    key_align: usize,
+    value_size: usize,
+    value_align: usize,
+    thunks_ctx: *const (),
+    len: unsafe extern "C" fn(ctx: *const (), map: *const u8) -> usize,
+    init_with_capacity: unsafe extern "C" fn(ctx: *const (), map: *mut u8, cap: usize),
+    insert: unsafe extern "C" fn(ctx: *const (), map: *mut u8, key: *mut u8, value: *mut u8),
+    key_entry_offset: usize,
+    key_prog_index: usize,
+    value_entry_offset: usize,
+    value_prog_index: usize,
+}
+
 /// One enum variant minus the two `ExecBuf`-relative fields: the payload chain's
 /// entry offset and prog index.
 struct EnumVariantInfoBuild {
@@ -400,6 +451,8 @@ struct Compiler {
     borrow_fixups: Vec<BorrowFixup>,
     opt_infos: Vec<OptInfoBuild>,
     opt_fixups: Vec<OptFixup>,
+    map_infos: Vec<MapInfoBuild>,
+    map_fixups: Vec<MapFixup>,
     enum_infos: Vec<EnumInfoBuild>,
     enum_fixups: Vec<EnumFixup>,
     /// Built directly (no `ExecBuf`-relative fields): one per reader-only-default op.
@@ -567,7 +620,33 @@ impl Compiler {
                     self.skip_ops.push((**s).clone());
                     self.skip_fixups.push(SkipFixup { prog_index, slot, skipinfo });
                 }
-                MemOp::Map(_) => panic!("phon-jit: maps are interpreter-only for now"),
+                MemOp::Map(m) => {
+                    self.code.extend_from_slice(MAP);
+                    // The map stencil reads one prog slot: a `*const MapInfo`
+                    // filled in pass 2. Reserve it and record the fixup now.
+                    let slot = self.progs[prog_index].len();
+                    self.progs[prog_index].push(0);
+                    // Compile the key and value sub-bodies as their own chains.
+                    let key = self.compile_chain(&m.key);
+                    let value = self.compile_chain(&m.value);
+                    let mapinfo = self.map_infos.len();
+                    self.map_infos.push(MapInfoBuild {
+                        field_offset: m.field_offset,
+                        key_size: m.key_size,
+                        key_align: m.key_align,
+                        value_size: m.value_size,
+                        value_align: m.value_align,
+                        thunks_ctx: m.thunks.ctx,
+                        len: m.thunks.len,
+                        init_with_capacity: m.thunks.init_with_capacity,
+                        insert: m.thunks.insert,
+                        key_entry_offset: key.entry,
+                        key_prog_index: key.prog_index,
+                        value_entry_offset: value.entry,
+                        value_prog_index: value.prog_index,
+                    });
+                    self.map_fixups.push(MapFixup { prog_index, slot, mapinfo });
+                }
             }
         }
         let done_start = self.code.len();
@@ -587,7 +666,7 @@ impl Compiler {
                 MemOp::Enum(_) => ENUM_CONT,
                 MemOp::Default(_) => DEFAULT_CONT,
                 MemOp::SkipWire(_) => SKIPWIRE_CONT,
-                MemOp::Map(_) => unreachable!("phon-jit: maps are interpreter-only for now"),
+                MemOp::Map(_) => MAP_CONT,
             };
             for &rel in relocs {
                 patch_branch26(&mut self.code, op_start + rel, next);
@@ -614,6 +693,8 @@ impl NativeDecode {
             borrow_fixups: Vec::new(),
             opt_infos: Vec::new(),
             opt_fixups: Vec::new(),
+            map_infos: Vec::new(),
+            map_fixups: Vec::new(),
             enum_infos: Vec::new(),
             enum_fixups: Vec::new(),
             default_infos: Vec::new(),
@@ -669,6 +750,33 @@ impl NativeDecode {
                 some_entry,
                 // Bound below, once `progs` is owned by `NativeDecode`.
                 some_prog: core::ptr::null(),
+            });
+        }
+
+        // Materialize the `MapInfo`s now that the code base is known (exact
+        // capacity, never re-grown — its heap stays put for the prog slots). The
+        // key and value sub-chain entries are `ExecBuf`-relative; the progs are
+        // bound below once `progs` is owned by `NativeDecode`.
+        let mut map_infos: Vec<MapInfo> = Vec::with_capacity(c.map_infos.len());
+        for b in &c.map_infos {
+            let key_entry: unsafe extern "C" fn(*mut Ctx) =
+                unsafe { core::mem::transmute(base.add(b.key_entry_offset)) };
+            let value_entry: unsafe extern "C" fn(*mut Ctx) =
+                unsafe { core::mem::transmute(base.add(b.value_entry_offset)) };
+            map_infos.push(MapInfo {
+                field_offset: b.field_offset,
+                key_size: b.key_size,
+                key_align: b.key_align,
+                value_size: b.value_size,
+                value_align: b.value_align,
+                thunks_ctx: b.thunks_ctx,
+                len: b.len,
+                init_with_capacity: b.init_with_capacity,
+                insert: b.insert,
+                key_entry,
+                key_prog: core::ptr::null(),
+                value_entry,
+                value_prog: core::ptr::null(),
             });
         }
 
@@ -729,6 +837,7 @@ impl NativeDecode {
             // The borrow infos carry no `ExecBuf`-relative fields either.
             borrow_infos: c.borrow_infos,
             opt_infos,
+            map_infos,
             enum_infos,
             enum_variants,
             enum_writer_only,
@@ -777,6 +886,17 @@ impl NativeDecode {
         }
         for f in &c.opt_fixups {
             let ptr: *const OptInfo = &nd.opt_infos[f.optinfo];
+            nd.progs[f.prog_index][f.slot] = ptr as u64;
+        }
+        // Bind each map's key and value sub-chain progs, then its prog slot to the
+        // `MapInfo` (the two sub-chains are bound like the sequence/option ones,
+        // but there are two of them).
+        for (b, info) in c.map_infos.iter().zip(nd.map_infos.iter_mut()) {
+            info.key_prog = nd.progs[b.key_prog_index].as_ptr();
+            info.value_prog = nd.progs[b.value_prog_index].as_ptr();
+        }
+        for f in &c.map_fixups {
+            let ptr: *const MapInfo = &nd.map_infos[f.mapinfo];
             nd.progs[f.prog_index][f.slot] = ptr as u64;
         }
         // Bind each enum variant's payload prog, point each `EnumInfo` at its
@@ -853,6 +973,9 @@ impl NativeDecode {
                 // `aux`) — the `DecodeError`-channel counterpart of the interpreter's
                 // `CompactError::WriterOnlyVariant`.
                 5 => return Err(DecodeError::WriterOnlyVariant(ctx.aux as u32)),
+                // A repeated map key collapsed two entries into one (the post-loop
+                // `len != count` check) — the interpreter's `DuplicateKey`.
+                6 => return Err(DecodeError::DuplicateKey),
                 // Anything else is a truncation/bounds failure.
                 _ => {}
             }
@@ -929,6 +1052,29 @@ struct EncOptInfo {
     some_prog: *const u64,
 }
 
+/// An encode owned-map op's immediates, matching `EncMapInfo` in
+/// `stencils/stencils.rs` byte for byte. Reached through a `*const EncMapInfo` slot
+/// in the prog stream; carries TWO `ExecBuf`-relative sub-chain (entry, prog) pairs
+/// (key + value).
+#[repr(C)]
+struct EncMapInfo {
+    field_offset: usize,
+    thunks_ctx: *const (),
+    len: unsafe extern "C" fn(ctx: *const (), map: *const u8) -> usize,
+    iter_init: unsafe extern "C" fn(ctx: *const (), map: *const u8) -> *mut (),
+    iter_next: unsafe extern "C" fn(
+        ctx: *const (),
+        iter: *mut (),
+        key_out: *mut *const u8,
+        value_out: *mut *const u8,
+    ) -> bool,
+    iter_dealloc: unsafe extern "C" fn(ctx: *const (), iter: *mut ()),
+    key_entry: unsafe extern "C" fn(cx: *mut EncCtx),
+    key_prog: *const u64,
+    value_entry: unsafe extern "C" fn(cx: *mut EncCtx),
+    value_prog: *const u64,
+}
+
 /// One enum variant's encode immediates, matching `EncEnumVariantInfo` in
 /// `stencils/stencils.rs` byte for byte. The `payload_entry`/`payload_prog` are
 /// `ExecBuf`-relative, bound after layout.
@@ -998,6 +1144,8 @@ pub struct NativeEncode {
     bytes_infos: Vec<EncBytesInfo>,
     /// One per option op. Same stability contract as `seq_infos`.
     opt_infos: Vec<EncOptInfo>,
+    /// One per map op. Same stability contract as `seq_infos`.
+    map_infos: Vec<EncMapInfo>,
     /// One per enum op. Same stability contract as `seq_infos`.
     enum_infos: Vec<EncEnumInfo>,
     /// One per enum op: that enum's variant table (stable heap per inner `Vec`).
@@ -1031,6 +1179,26 @@ struct EncOptInfoBuild {
     some_prog_index: usize,
 }
 
+/// An encode map's `EncMapInfo` minus the four `ExecBuf`-relative fields: the key
+/// and value sub-chains' entry offsets and prog indices.
+struct EncMapInfoBuild {
+    field_offset: usize,
+    thunks_ctx: *const (),
+    len: unsafe extern "C" fn(ctx: *const (), map: *const u8) -> usize,
+    iter_init: unsafe extern "C" fn(ctx: *const (), map: *const u8) -> *mut (),
+    iter_next: unsafe extern "C" fn(
+        ctx: *const (),
+        iter: *mut (),
+        key_out: *mut *const u8,
+        value_out: *mut *const u8,
+    ) -> bool,
+    iter_dealloc: unsafe extern "C" fn(ctx: *const (), iter: *mut ()),
+    key_entry_offset: usize,
+    key_prog_index: usize,
+    value_entry_offset: usize,
+    value_prog_index: usize,
+}
+
 /// One encode enum variant minus the two `ExecBuf`-relative fields.
 struct EncEnumVariantInfoBuild {
     wire_index: u32,
@@ -1059,6 +1227,8 @@ struct EncCompiler {
     bytes_fixups: Vec<BytesFixup>,
     opt_infos: Vec<EncOptInfoBuild>,
     opt_fixups: Vec<OptFixup>,
+    map_infos: Vec<EncMapInfoBuild>,
+    map_fixups: Vec<MapFixup>,
     enum_infos: Vec<EncEnumInfoBuild>,
     enum_fixups: Vec<EnumFixup>,
 }
@@ -1174,7 +1344,28 @@ impl EncCompiler {
                     });
                     self.enum_fixups.push(EnumFixup { prog_index, slot, enuminfo });
                 }
-                MemOp::Map(_) => panic!("phon-jit: maps are interpreter-only for now"),
+                MemOp::Map(m) => {
+                    self.code.extend_from_slice(MAP_ENC);
+                    let slot = self.progs[prog_index].len();
+                    self.progs[prog_index].push(0);
+                    // Compile the key and value sub-bodies as their own chains.
+                    let key = self.compile_chain(&m.key);
+                    let value = self.compile_chain(&m.value);
+                    let mapinfo = self.map_infos.len();
+                    self.map_infos.push(EncMapInfoBuild {
+                        field_offset: m.field_offset,
+                        thunks_ctx: m.thunks.ctx,
+                        len: m.thunks.len,
+                        iter_init: m.thunks.iter_init,
+                        iter_next: m.thunks.iter_next,
+                        iter_dealloc: m.thunks.iter_dealloc,
+                        key_entry_offset: key.entry,
+                        key_prog_index: key.prog_index,
+                        value_entry_offset: value.entry,
+                        value_prog_index: value.prog_index,
+                    });
+                    self.map_fixups.push(MapFixup { prog_index, slot, mapinfo });
+                }
                 MemOp::SkipWire(_) | MemOp::Default(_) => {
                     panic!("phon-jit: compat skip/default are interpreter-only for now")
                 }
@@ -1191,7 +1382,7 @@ impl EncCompiler {
                 MemOp::Bytes(_) | MemOp::Borrow(_) => BYTES_ENC_CONT,
                 MemOp::Option(_) => OPTION_ENC_CONT,
                 MemOp::Enum(_) => ENUM_ENC_CONT,
-                MemOp::Map(_) => unreachable!("phon-jit: maps are interpreter-only for now"),
+                MemOp::Map(_) => MAP_ENC_CONT,
                 MemOp::SkipWire(_) | MemOp::Default(_) => {
                     unreachable!("phon-jit: compat skip/default are interpreter-only for now")
                 }
@@ -1219,6 +1410,8 @@ impl NativeEncode {
             bytes_fixups: Vec::new(),
             opt_infos: Vec::new(),
             opt_fixups: Vec::new(),
+            map_infos: Vec::new(),
+            map_fixups: Vec::new(),
             enum_infos: Vec::new(),
             enum_fixups: Vec::new(),
         };
@@ -1260,6 +1453,28 @@ impl NativeEncode {
             });
         }
 
+        // Materialize the `EncMapInfo`s (key/value sub-chain entries are
+        // `ExecBuf`-relative; the progs are bound below).
+        let mut map_infos: Vec<EncMapInfo> = Vec::with_capacity(c.map_infos.len());
+        for b in &c.map_infos {
+            let key_entry: unsafe extern "C" fn(*mut EncCtx) =
+                unsafe { core::mem::transmute(base.add(b.key_entry_offset)) };
+            let value_entry: unsafe extern "C" fn(*mut EncCtx) =
+                unsafe { core::mem::transmute(base.add(b.value_entry_offset)) };
+            map_infos.push(EncMapInfo {
+                field_offset: b.field_offset,
+                thunks_ctx: b.thunks_ctx,
+                len: b.len,
+                iter_init: b.iter_init,
+                iter_next: b.iter_next,
+                iter_dealloc: b.iter_dealloc,
+                key_entry,
+                key_prog: core::ptr::null(),
+                value_entry,
+                value_prog: core::ptr::null(),
+            });
+        }
+
         // Materialize each enum's variant table (payload entries `ExecBuf`-relative;
         // payload progs bound below).
         let mut enum_variants: Vec<Vec<EncEnumVariantInfo>> =
@@ -1296,6 +1511,7 @@ impl NativeEncode {
             // Move the byte-run infos into their final home; no further binding.
             bytes_infos: c.bytes_infos,
             opt_infos,
+            map_infos,
             enum_infos,
             enum_variants,
             last_size: AtomicUsize::new(0),
@@ -1319,6 +1535,16 @@ impl NativeEncode {
         }
         for f in &c.opt_fixups {
             let ptr: *const EncOptInfo = &ne.opt_infos[f.optinfo];
+            ne.progs[f.prog_index][f.slot] = ptr as u64;
+        }
+        // Bind each map's key and value sub-chain progs, then its prog slot to the
+        // `EncMapInfo` (two sub-chains, like the decode side).
+        for (b, info) in c.map_infos.iter().zip(ne.map_infos.iter_mut()) {
+            info.key_prog = ne.progs[b.key_prog_index].as_ptr();
+            info.value_prog = ne.progs[b.value_prog_index].as_ptr();
+        }
+        for f in &c.map_fixups {
+            let ptr: *const EncMapInfo = &ne.map_infos[f.mapinfo];
             ne.progs[f.prog_index][f.slot] = ptr as u64;
         }
         // Bind each enum variant's payload prog, point each `EncEnumInfo` at its
@@ -2526,5 +2752,317 @@ mod tests {
         assert_eq!(slot.0[0..4], 0xABCD_1234u32.to_le_bytes());
         assert_eq!(slot.0[4], 1);
         assert_eq!(slot.0[8..12], 0x5678_9ABCu32.to_le_bytes());
+    }
+
+    // ====================================================================
+    // Map: a LOOP with TWO sub-chains (key program + value program), plus
+    // per-pair allocation + insert on decode and a stateful iterator on encode
+    // ====================================================================
+
+    use phon_ir::ir::MapOp;
+    use phon_ir::MapThunks;
+    use std::collections::BTreeMap;
+
+    // Hand-written `BTreeMap<String, u32>` thunks, mirroring the interpreter's map
+    // test thunks: the engine decodes a key+value into scratch and `insert` moves
+    // both in; encode reads length and iterates entries through a stateful iterator.
+    type SU32 = BTreeMap<String, u32>;
+
+    unsafe extern "C" fn su32_len(_ctx: *const (), map: *const u8) -> usize {
+        unsafe { (*map.cast::<SU32>()).len() }
+    }
+    unsafe extern "C" fn su32_init_with_capacity(_ctx: *const (), map: *mut u8, _cap: usize) {
+        // `BTreeMap` has no with_capacity; an empty map is the right starting point.
+        unsafe { core::ptr::write(map.cast::<SU32>(), BTreeMap::new()) };
+    }
+    unsafe extern "C" fn su32_insert(_ctx: *const (), map: *mut u8, key: *mut u8, value: *mut u8) {
+        // Move the key and value out of the engine scratch (the engine then frees
+        // both WITHOUT dropping).
+        let k = unsafe { core::ptr::read(key.cast::<String>()) };
+        let v = unsafe { core::ptr::read(value.cast::<u32>()) };
+        unsafe { (*map.cast::<SU32>()).insert(k, v) };
+    }
+    // The boxed iterator state: the borrowed (key, value) pointers collected up
+    // front (BTreeMap iteration is sorted/stable), plus a cursor. The pointers
+    // borrow the map's own storage, so encode reads the real bytes.
+    struct SU32Iter {
+        pairs: Vec<(*const u8, *const u8)>,
+        pos: usize,
+    }
+    unsafe extern "C" fn su32_iter_init(_ctx: *const (), map: *const u8) -> *mut () {
+        let m = unsafe { &*map.cast::<SU32>() };
+        let pairs: Vec<(*const u8, *const u8)> = m
+            .iter()
+            .map(|(k, v)| {
+                (core::ptr::from_ref(k).cast::<u8>(), core::ptr::from_ref(v).cast::<u8>())
+            })
+            .collect();
+        Box::into_raw(Box::new(SU32Iter { pairs, pos: 0 })).cast::<()>()
+    }
+    unsafe extern "C" fn su32_iter_next(
+        _ctx: *const (),
+        iter: *mut (),
+        key_out: *mut *const u8,
+        value_out: *mut *const u8,
+    ) -> bool {
+        let it = unsafe { &mut *iter.cast::<SU32Iter>() };
+        if it.pos >= it.pairs.len() {
+            return false;
+        }
+        let (k, v) = it.pairs[it.pos];
+        it.pos += 1;
+        unsafe {
+            *key_out = k;
+            *value_out = v;
+        }
+        true
+    }
+    unsafe extern "C" fn su32_iter_dealloc(_ctx: *const (), iter: *mut ()) {
+        drop(unsafe { Box::from_raw(iter.cast::<SU32Iter>()) });
+    }
+    fn su32_thunks() -> MapThunks {
+        MapThunks {
+            ctx: core::ptr::null(),
+            len: su32_len,
+            init_with_capacity: su32_init_with_capacity,
+            insert: su32_insert,
+            iter_init: su32_iter_init,
+            iter_next: su32_iter_next,
+            iter_dealloc: su32_iter_dealloc,
+        }
+    }
+
+    /// A root program of a single owned `BTreeMap<String, u32>`. Key sub-chain: a
+    /// UTF-8-validated `String` run; value sub-chain: a u32 scalar.
+    fn su32_program() -> MemProgram {
+        vec![MemOp::Map(Box::new(MapOp {
+            field_offset: 0,
+            key: vec![MemOp::Bytes(Box::new(BytesOp {
+                field_offset: 0,
+                stride: 1,
+                elem_align: 1,
+                validate: validate_utf8,
+                thunks: str_thunks(),
+            }))],
+            value: vec![MemOp::Scalar { offset: 0, size: 4, align: 4 }],
+            key_size: core::mem::size_of::<String>(),
+            key_align: core::mem::align_of::<String>(),
+            value_size: 4,
+            value_align: 4,
+            thunks: su32_thunks(),
+        }))]
+    }
+
+    /// Build the wire bytes for a `BTreeMap<String, u32>`: a `u32` entry count then,
+    /// per entry (in the map's sorted iteration order), the key `String` (u32 len +
+    /// bytes) then the value u32 padded to its 4-byte alignment.
+    fn su32_wire(m: &SU32) -> Vec<u8> {
+        let mut wire = (m.len() as u32).to_le_bytes().to_vec();
+        for (k, v) in m {
+            wire.extend_from_slice(&(k.len() as u32).to_le_bytes());
+            wire.extend_from_slice(k.as_bytes());
+            // Pad to the value u32's 4-byte alignment, measured from the start.
+            while !wire.len().is_multiple_of(4) {
+                wire.push(0);
+            }
+            wire.extend_from_slice(&v.to_le_bytes());
+        }
+        wire
+    }
+
+    /// JIT-decode a `BTreeMap<String, u32>` (a loop with two sub-chains, per-pair
+    /// scratch alloc + insert) and confirm the reconstructed map equals the input.
+    #[test]
+    fn jit_decode_map_string_u32() {
+        let program = su32_program();
+        let mut m = BTreeMap::new();
+        m.insert("alpha".to_string(), 1u32);
+        m.insert("beta".to_string(), 0xCAFEu32);
+        m.insert("gamma".to_string(), 0xDEAD_BEEFu32);
+        let wire = su32_wire(&m);
+
+        let jit = NativeDecode::compile(&program);
+        let mut slot = MaybeUninit::<SU32>::uninit();
+        unsafe { jit.run(&wire, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back, m);
+    }
+
+    /// JIT-encode a `BTreeMap<String, u32>` and confirm byte-identical wire (the
+    /// stateful iterator path) plus a `NativeDecode` round-trip.
+    #[test]
+    fn jit_encode_map_string_u32_roundtrips() {
+        let program = su32_program();
+        let mut m = BTreeMap::new();
+        m.insert("alpha".to_string(), 1u32);
+        m.insert("beta".to_string(), 0xCAFEu32);
+        m.insert("gamma".to_string(), 0xDEAD_BEEFu32);
+
+        let enc = NativeEncode::compile(&program);
+        let got = unsafe { enc.run(core::ptr::from_ref(&m).cast::<u8>()) };
+        assert_eq!(got, su32_wire(&m));
+
+        let dec = NativeDecode::compile(&program);
+        let mut slot = MaybeUninit::<SU32>::uninit();
+        unsafe { dec.run(&got, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back, m);
+    }
+
+    /// An empty map: count 0, no entries, no allocation, the map is empty.
+    #[test]
+    fn jit_map_empty_roundtrips() {
+        let program = su32_program();
+        let m: SU32 = BTreeMap::new();
+
+        let enc = NativeEncode::compile(&program);
+        let got = unsafe { enc.run(core::ptr::from_ref(&m).cast::<u8>()) };
+        assert_eq!(got, 0u32.to_le_bytes().to_vec());
+
+        let dec = NativeDecode::compile(&program);
+        let mut slot = MaybeUninit::<SU32>::uninit();
+        unsafe { dec.run(&got, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert!(back.is_empty());
+    }
+
+    /// A wire with a repeated key collapses two entries into one in the `BTreeMap`,
+    /// so `len(1) != count(2)`: the JIT must reject with `DuplicateKey`.
+    #[test]
+    fn jit_map_rejects_duplicate_key() {
+        let program = su32_program();
+        // count 2, then the SAME key "k" twice (each with its own u32 value padded
+        // to 4-byte alignment).
+        let mut wire = 2u32.to_le_bytes().to_vec();
+        for val in [10u32, 20u32] {
+            wire.extend_from_slice(&1u32.to_le_bytes()); // key length 1
+            wire.push(b'k');
+            while !wire.len().is_multiple_of(4) {
+                wire.push(0);
+            }
+            wire.extend_from_slice(&val.to_le_bytes());
+        }
+
+        let dec = NativeDecode::compile(&program);
+        let mut slot = MaybeUninit::<SU32>::uninit();
+        let err = unsafe { dec.run(&wire, slot.as_mut_ptr().cast::<u8>()) }.unwrap_err();
+        assert!(matches!(err, DecodeError::DuplicateKey), "got {err:?}");
+
+        // The duplicate collapsed into one entry before the rejection; the engine
+        // documents the partial-map leak (matching the interpreter). Reclaim the
+        // initialized map so the leak does not trip Miri (this path never runs under
+        // Miri — JIT code can't — but keeps the test self-consistent).
+        let partial = unsafe { core::ptr::read(slot.as_ptr().cast::<SU32>()) };
+        assert_eq!(partial.len(), 1);
+        drop(partial);
+    }
+
+    /// A `BTreeMap<String, String>`: a heap value, exercising BOTH sub-chains'
+    /// scratch-move (the key AND value `String`s are decoded into engine scratch,
+    /// then `insert` moves them into the map and the scratch is freed without
+    /// dropping).
+    #[test]
+    fn jit_map_string_string_roundtrips() {
+        type SS = BTreeMap<String, String>;
+
+        unsafe extern "C" fn ss_len(_ctx: *const (), map: *const u8) -> usize {
+            unsafe { (*map.cast::<SS>()).len() }
+        }
+        unsafe extern "C" fn ss_init(_ctx: *const (), map: *mut u8, _cap: usize) {
+            unsafe { core::ptr::write(map.cast::<SS>(), BTreeMap::new()) };
+        }
+        unsafe extern "C" fn ss_insert(_ctx: *const (), map: *mut u8, key: *mut u8, value: *mut u8) {
+            let k = unsafe { core::ptr::read(key.cast::<String>()) };
+            let v = unsafe { core::ptr::read(value.cast::<String>()) };
+            unsafe { (*map.cast::<SS>()).insert(k, v) };
+        }
+        struct SSIter {
+            pairs: Vec<(*const u8, *const u8)>,
+            pos: usize,
+        }
+        unsafe extern "C" fn ss_iter_init(_ctx: *const (), map: *const u8) -> *mut () {
+            let m = unsafe { &*map.cast::<SS>() };
+            let pairs = m
+                .iter()
+                .map(|(k, v)| {
+                    (core::ptr::from_ref(k).cast::<u8>(), core::ptr::from_ref(v).cast::<u8>())
+                })
+                .collect();
+            Box::into_raw(Box::new(SSIter { pairs, pos: 0 })).cast::<()>()
+        }
+        unsafe extern "C" fn ss_iter_next(
+            _ctx: *const (),
+            iter: *mut (),
+            key_out: *mut *const u8,
+            value_out: *mut *const u8,
+        ) -> bool {
+            let it = unsafe { &mut *iter.cast::<SSIter>() };
+            if it.pos >= it.pairs.len() {
+                return false;
+            }
+            let (k, v) = it.pairs[it.pos];
+            it.pos += 1;
+            unsafe {
+                *key_out = k;
+                *value_out = v;
+            }
+            true
+        }
+        unsafe extern "C" fn ss_iter_dealloc(_ctx: *const (), iter: *mut ()) {
+            drop(unsafe { Box::from_raw(iter.cast::<SSIter>()) });
+        }
+
+        let str_run = || {
+            MemOp::Bytes(Box::new(BytesOp {
+                field_offset: 0,
+                stride: 1,
+                elem_align: 1,
+                validate: validate_utf8,
+                thunks: str_thunks(),
+            }))
+        };
+        let program: MemProgram = vec![MemOp::Map(Box::new(MapOp {
+            field_offset: 0,
+            key: vec![str_run()],
+            value: vec![str_run()],
+            key_size: core::mem::size_of::<String>(),
+            key_align: core::mem::align_of::<String>(),
+            value_size: core::mem::size_of::<String>(),
+            value_align: core::mem::align_of::<String>(),
+            thunks: MapThunks {
+                ctx: core::ptr::null(),
+                len: ss_len,
+                init_with_capacity: ss_init,
+                insert: ss_insert,
+                iter_init: ss_iter_init,
+                iter_next: ss_iter_next,
+                iter_dealloc: ss_iter_dealloc,
+            },
+        }))];
+
+        let mut m: SS = BTreeMap::new();
+        m.insert("name".to_string(), "héllo 🐝".to_string());
+        m.insert("other".to_string(), "wörld".to_string());
+        m.insert("zed".to_string(), String::new());
+
+        // Known wire: count, then per sorted entry the key String run (no pad — len
+        // and bytes are byte-aligned) then the value String run.
+        let mut want = (m.len() as u32).to_le_bytes().to_vec();
+        for (k, v) in &m {
+            want.extend_from_slice(&(k.len() as u32).to_le_bytes());
+            want.extend_from_slice(k.as_bytes());
+            want.extend_from_slice(&(v.len() as u32).to_le_bytes());
+            want.extend_from_slice(v.as_bytes());
+        }
+
+        let enc = NativeEncode::compile(&program);
+        let got = unsafe { enc.run(core::ptr::from_ref(&m).cast::<u8>()) };
+        assert_eq!(got, want, "encode wire mismatch");
+
+        let dec = NativeDecode::compile(&program);
+        let mut slot = MaybeUninit::<SS>::uninit();
+        unsafe { dec.run(&got, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back, m);
     }
 }

@@ -42,7 +42,8 @@ pub struct Ctx {
     /// 0 = ok, 1 = ran out of input / malformed (e.g. length too large),
     /// 2 = content validation failed (e.g. non-UTF-8 `String`), 3 = bad `Option`
     /// presence byte (the byte is in `aux`), 4 = unmatched enum wire index (the
-    /// index is in `aux`).
+    /// index is in `aux`), 5 = writer-only enum variant (the index is in `aux`),
+    /// 6 = duplicate map key.
     pub status: u64,
     /// Auxiliary value carried alongside a rejection `status`: the bad presence
     /// byte (`status == 3`) or the unmatched enum wire index (`status == 4`).
@@ -147,6 +148,44 @@ pub struct OptInfo {
     pub some_entry: unsafe extern "C" fn(cx: *mut Ctx),
     /// The some-body's immediate stream (reset into `Ctx.prog` for the inner).
     pub some_prog: *const u64,
+}
+
+/// An owned-map op's immediates, reached through a `*const MapInfo` slot in
+/// `Ctx.prog`. A map is the most involved op: a LOOP with TWO sub-chains. The key
+/// sub-chain is entered at `key_entry` driven by `key_prog`; the value sub-chain
+/// at `value_entry` driven by `value_prog`. Each runs with `base = scratch` (the
+/// engine-allocated key/value buffer) and the shared wire cursor. Mirrors `MapOp`:
+/// per entry decode a key+value into scratch, `insert` (moving both in), then free
+/// the scratch WITHOUT dropping.
+#[repr(C)]
+pub struct MapInfo {
+    /// Where the map handle lives, relative to `base`.
+    pub field_offset: usize,
+    /// The key type's size — the decode key-scratch size (0 → dangling).
+    pub key_size: usize,
+    /// The key type's alignment — the decode key-scratch alignment.
+    pub key_align: usize,
+    /// The value type's size — the decode value-scratch size (0 → dangling).
+    pub value_size: usize,
+    /// The value type's alignment — the decode value-scratch alignment.
+    pub value_align: usize,
+    /// Opaque per-type context passed to the thunks.
+    pub thunks_ctx: *const (),
+    /// The map's current entry count (for the post-loop duplicate-key check).
+    pub len: unsafe extern "C" fn(ctx: *const (), map: *const u8) -> usize,
+    /// Initialize the uninitialized map at `map` with room for `cap` entries.
+    pub init_with_capacity: unsafe extern "C" fn(ctx: *const (), map: *mut u8, cap: usize),
+    /// Insert `(*key, *value)` into the initialized map, moving both out of their
+    /// buffers (the engine then frees both without dropping).
+    pub insert: unsafe extern "C" fn(ctx: *const (), map: *mut u8, key: *mut u8, value: *mut u8),
+    /// Entry to the key sub-chain (a `*mut Ctx` function ending in `ret`).
+    pub key_entry: unsafe extern "C" fn(cx: *mut Ctx),
+    /// The key sub-chain's immediate stream (reset into `Ctx.prog`).
+    pub key_prog: *const u64,
+    /// Entry to the value sub-chain (a `*mut Ctx` function ending in `ret`).
+    pub value_entry: unsafe extern "C" fn(cx: *mut Ctx),
+    /// The value sub-chain's immediate stream (reset into `Ctx.prog`).
+    pub value_prog: *const u64,
 }
 
 /// One enum variant's decode immediates, pointed at (as an array) by
@@ -592,6 +631,136 @@ pub unsafe extern "C" fn phon_stencil_option(cx: *mut Ctx) {
     phon_cont(cx);
 }
 
+/// Decode an owned map into `base + field_offset`, then continue.
+///
+/// Reads a `u32` entry count (bounds-checked like `read_len`),
+/// `init_with_capacity(map, count)`, then loops `count` times: allocate a key
+/// scratch (`key_size`/`key_align`; size 0 → dangling) and a value scratch, run the
+/// key sub-chain at `base = key_scratch` then the value sub-chain at
+/// `base = value_scratch` (sharing the wire cursor), `insert` (moving both in), and
+/// free both scratch buffers WITHOUT dropping (ownership transferred). A mid-loop
+/// sub-chain error frees the scratch and bails. After the loop, if
+/// `len(map) != count` a key collapsed (duplicate): reject with `status = 6`
+/// (`DuplicateKey`). Every call (sub-chain entries, thunks, alloc) is indirect, so
+/// the only relocation a copied stencil carries is the `phon_cont` BRANCH26.
+#[no_mangle]
+pub unsafe extern "C" fn phon_stencil_map(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let info = &*(*c.prog as *const MapInfo);
+    let outer_prog = c.prog.add(1);
+    let outer_base = c.base;
+
+    // Read the u32 entry count with a bounds check (each entry costs at least 1
+    // byte, like `read_len(1)` -> `read_u32`).
+    if (c.wire as usize).wrapping_add(4) > c.wire_end as usize {
+        c.status = 1;
+        return;
+    }
+    let mut count_bytes = [0u8; 4];
+    core::ptr::copy_nonoverlapping(c.wire, count_bytes.as_mut_ptr(), 4);
+    let count = u32::from_le_bytes(count_bytes) as usize;
+    c.wire = c.wire.add(4);
+
+    // Length-vs-remaining check: each entry costs at least 1 wire byte
+    // (mirrors `read_len(1)`).
+    let remaining = (c.wire_end as usize) - (c.wire as usize);
+    if count > remaining {
+        c.status = 1;
+        return;
+    }
+
+    // Initialize the (uninitialized) map with room for `count` entries. NOTE: a
+    // decode error after this point leaks the partial map — the same
+    // trivially-droppable limitation the interpreter documents.
+    let map = outer_base.add(info.field_offset);
+    (info.init_with_capacity)(info.thunks_ctx, map, count);
+
+    let mut entry = 0;
+    while entry < count {
+        // Engine-owned scratch for the key and value. size 0 -> dangling aligned.
+        let (key_scratch, key_alloc) = if info.key_size == 0 {
+            (info.key_align as *mut u8, 0usize)
+        } else {
+            let buf = (c.alloc)(info.key_size, info.key_align);
+            if buf.is_null() {
+                c.status = 1;
+                return;
+            }
+            (buf, info.key_size)
+        };
+        let (value_scratch, value_alloc) = if info.value_size == 0 {
+            (info.value_align as *mut u8, 0usize)
+        } else {
+            let buf = (c.alloc)(info.value_size, info.value_align);
+            if buf.is_null() {
+                if key_alloc != 0 {
+                    (c.dealloc)(key_scratch, key_alloc, info.key_align);
+                }
+                c.status = 1;
+                return;
+            }
+            (buf, info.value_size)
+        };
+
+        // Run the key sub-chain at `base = key_scratch`, sharing the wire cursor.
+        c.prog = info.key_prog;
+        c.base = key_scratch;
+        (info.key_entry)(cx);
+        if c.status != 0 {
+            if key_alloc != 0 {
+                (c.dealloc)(key_scratch, key_alloc, info.key_align);
+            }
+            if value_alloc != 0 {
+                (c.dealloc)(value_scratch, value_alloc, info.value_align);
+            }
+            return;
+        }
+
+        // Run the value sub-chain at `base = value_scratch`.
+        c.prog = info.value_prog;
+        c.base = value_scratch;
+        (info.value_entry)(cx);
+        if c.status != 0 {
+            if key_alloc != 0 {
+                (c.dealloc)(key_scratch, key_alloc, info.key_align);
+            }
+            if value_alloc != 0 {
+                (c.dealloc)(value_scratch, value_alloc, info.value_align);
+            }
+            return;
+        }
+
+        // Move both into the map, then free the scratch WITHOUT dropping
+        // (ownership transferred to the map).
+        c.base = outer_base;
+        (info.insert)(info.thunks_ctx, map, key_scratch, value_scratch);
+        if key_alloc != 0 {
+            (c.dealloc)(key_scratch, key_alloc, info.key_align);
+        }
+        if value_alloc != 0 {
+            (c.dealloc)(value_scratch, value_alloc, info.value_align);
+        }
+
+        entry += 1;
+    }
+
+    // A repeated key collapses two entries into one — reject it (the dynamic
+    // codec's `DuplicateKey`, the oracle). status 6 is mapped to `DuplicateKey`
+    // in `run()`.
+    if (info.len)(info.thunks_ctx, map) != count {
+        c.status = 6;
+        return;
+    }
+
+    c.base = outer_base;
+    c.prog = outer_prog;
+
+    #[cfg(tailcall)]
+    become phon_cont(cx);
+    #[cfg(not(tailcall))]
+    phon_cont(cx);
+}
+
 /// Decode a `#[repr(int)]` enum into the value at `base`, then continue.
 ///
 /// Reads a `u32` wire index (bounds-checked), finds the variant whose `wire_index`
@@ -845,6 +1014,41 @@ pub struct EncOptInfo {
     pub some_prog: *const u64,
 }
 
+/// An encode owned-map op's immediates, reached through a `*const EncMapInfo` slot
+/// in `EncCtx.prog`. Mirrors `MapInfo` minus the decode-only init/insert thunks
+/// (plus the stateful iterator thunks). The key sub-chain is run with
+/// `base = k` and the value sub-chain with `base = v`, where `(k, v)` are the
+/// borrowed pointers `iter_next` yields.
+#[repr(C)]
+pub struct EncMapInfo {
+    /// Where the map handle lives, relative to `base`.
+    pub field_offset: usize,
+    /// Opaque per-type context passed to the thunks.
+    pub thunks_ctx: *const (),
+    /// The map's current entry count (written as the `u32` count prefix).
+    pub len: unsafe extern "C" fn(ctx: *const (), map: *const u8) -> usize,
+    /// Build a stateful iterator over the entries of the initialized map.
+    pub iter_init: unsafe extern "C" fn(ctx: *const (), map: *const u8) -> *mut (),
+    /// Advance the iterator, writing the next entry's borrowed key/value pointers
+    /// to `key_out`/`value_out` and returning `true`, or `false` at the end.
+    pub iter_next: unsafe extern "C" fn(
+        ctx: *const (),
+        iter: *mut (),
+        key_out: *mut *const u8,
+        value_out: *mut *const u8,
+    ) -> bool,
+    /// Free the iterator built by `iter_init`.
+    pub iter_dealloc: unsafe extern "C" fn(ctx: *const (), iter: *mut ()),
+    /// Entry to the key sub-chain (a `*mut EncCtx` function ending in `ret`).
+    pub key_entry: unsafe extern "C" fn(cx: *mut EncCtx),
+    /// The key sub-chain's immediate stream (reset into `EncCtx.prog`).
+    pub key_prog: *const u64,
+    /// Entry to the value sub-chain (a `*mut EncCtx` function ending in `ret`).
+    pub value_entry: unsafe extern "C" fn(cx: *mut EncCtx),
+    /// The value sub-chain's immediate stream (reset into `EncCtx.prog`).
+    pub value_prog: *const u64,
+}
+
 /// One enum variant's encode immediates, pointed at (as an array) by
 /// [`EncEnumInfo`]. The payload chain is run with the SAME outer base.
 #[repr(C)]
@@ -1092,6 +1296,63 @@ pub unsafe extern "C" fn phon_stencil_option_enc(cx: *mut EncCtx) {
         c.base = inner;
         (info.some_entry)(cx);
     }
+
+    c.base = outer_base;
+    c.prog = outer_prog;
+
+    #[cfg(tailcall)]
+    become phon_econt(cx);
+    #[cfg(not(tailcall))]
+    phon_econt(cx);
+}
+
+/// Encode an owned map from `base + field_offset`, then continue.
+///
+/// Reads the entry count via `len`, writes it as a `u32` (no alignment, like
+/// `write_u32`), builds a stateful iterator via `iter_init`, then loops: `iter_next`
+/// yields the next entry's borrowed key/value pointers (false → break); run the key
+/// sub-chain at `base = k` then the value sub-chain at `base = v` (both reading
+/// memory and appending to the shared output cursor). Finally `iter_dealloc`. Every
+/// call is indirect, so the only relocation a copied stencil carries is the
+/// `phon_econt` BRANCH26.
+#[no_mangle]
+pub unsafe extern "C" fn phon_stencil_map_enc(cx: *mut EncCtx) {
+    let c = &mut *cx;
+    let info = &*(*c.prog as *const EncMapInfo);
+    let outer_prog = c.prog.add(1);
+    let outer_base = c.base;
+
+    let map = outer_base.add(info.field_offset);
+    let count = (info.len)(info.thunks_ctx, map);
+
+    // Write the u32 count (no alignment padding, like `write_u32`).
+    let need = c.out_pos + 4;
+    if need > c.out_cap {
+        (c.grow)(cx, need);
+    }
+    let count_bytes = (count as u32).to_le_bytes();
+    core::ptr::copy_nonoverlapping(count_bytes.as_ptr(), c.out_ptr.add(c.out_pos), 4);
+    c.out_pos += 4;
+
+    // Drive a stateful iterator over the entries, encoding each (key, value) pair
+    // in turn. The sub-chains share the output cursor through `EncCtx`.
+    let iter = (info.iter_init)(info.thunks_ctx, map);
+    loop {
+        let mut k: *const u8 = core::ptr::null();
+        let mut v: *const u8 = core::ptr::null();
+        if !(info.iter_next)(info.thunks_ctx, iter, &mut k, &mut v) {
+            break;
+        }
+        // Key sub-chain at `base = k`.
+        c.prog = info.key_prog;
+        c.base = k;
+        (info.key_entry)(cx);
+        // Value sub-chain at `base = v`.
+        c.prog = info.value_prog;
+        c.base = v;
+        (info.value_entry)(cx);
+    }
+    (info.iter_dealloc)(info.thunks_ctx, iter);
 
     c.base = outer_base;
     c.prog = outer_prog;

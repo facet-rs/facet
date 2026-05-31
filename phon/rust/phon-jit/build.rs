@@ -28,6 +28,7 @@ const SYMBOLS: &[&str] = &[
     "phon_stencil_bytes",
     "phon_stencil_borrow",
     "phon_stencil_option",
+    "phon_stencil_map",
     "phon_stencil_enum",
     "phon_stencil_default",
     "phon_stencil_skipwire",
@@ -36,6 +37,7 @@ const SYMBOLS: &[&str] = &[
     "phon_stencil_sequence_enc",
     "phon_stencil_bytes_enc",
     "phon_stencil_option_enc",
+    "phon_stencil_map_enc",
     "phon_stencil_enum_enc",
     "phon_stencil_done_enc",
 ];
@@ -99,6 +101,7 @@ fn emit_arm64_macos(out: &Path, generated: &Path) {
     let bytes_dec = get("phon_stencil_bytes", "phon_cont");
     let borrow = get("phon_stencil_borrow", "phon_cont");
     let option = get("phon_stencil_option", "phon_cont");
+    let map_dec = get("phon_stencil_map", "phon_cont");
     let enum_dec = get("phon_stencil_enum", "phon_cont");
     let default = get("phon_stencil_default", "phon_cont");
     let skipwire = get("phon_stencil_skipwire", "phon_cont");
@@ -107,6 +110,7 @@ fn emit_arm64_macos(out: &Path, generated: &Path) {
     let sequence_enc = get("phon_stencil_sequence_enc", "phon_econt");
     let bytes_enc = get("phon_stencil_bytes_enc", "phon_econt");
     let option_enc = get("phon_stencil_option_enc", "phon_econt");
+    let map_enc = get("phon_stencil_map_enc", "phon_econt");
     let enum_enc = get("phon_stencil_enum_enc", "phon_econt");
     let done_enc = get("phon_stencil_done_enc", "phon_econt");
 
@@ -146,6 +150,13 @@ fn emit_arm64_macos(out: &Path, generated: &Path) {
         &option,
     );
     emit_cont(&mut s, "OPTION_CONT", "OPTION", &option);
+    emit(
+        &mut s,
+        "MAP",
+        "`phon_stencil_map`: decode one owned map (count loop, key+value sub-chains); key/value bodies via `MapInfo.key_entry`/`value_entry`.",
+        &map_dec,
+    );
+    emit_cont(&mut s, "MAP_CONT", "MAP", &map_dec);
     emit(
         &mut s,
         "ENUM",
@@ -191,6 +202,13 @@ fn emit_arm64_macos(out: &Path, generated: &Path) {
         &option_enc,
     );
     emit_cont(&mut s, "OPTION_ENC_CONT", "OPTION_ENC", &option_enc);
+    emit(
+        &mut s,
+        "MAP_ENC",
+        "`phon_stencil_map_enc`: encode one owned map (count + iterator loop, key+value sub-chains); key/value bodies via `EncMapInfo.key_entry`/`value_entry`.",
+        &map_enc,
+    );
+    emit_cont(&mut s, "MAP_ENC_CONT", "MAP_ENC", &map_enc);
     emit(
         &mut s,
         "ENUM_ENC",
