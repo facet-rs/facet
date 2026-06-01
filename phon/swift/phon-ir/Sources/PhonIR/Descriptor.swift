@@ -69,6 +69,54 @@ public indirect enum Access {
     /// A sum type: a tag selecting the active variant, per-variant payloads, and
     /// the witnesses that read the active variant and project/inject its payload.
     case enumeration(EnumAccess)
+    /// A dynamic homogeneous sequence (`list`/`set`) of *structured* elements
+    /// (`[Struct]`): a `u32` count then each element by its own program. Scalar
+    /// element sequences use the bulk `bytes` path instead.
+    case sequence(SequenceAccess)
+}
+
+/// A homogeneous sequence of structured elements. The witnesses read the count
+/// and the contiguous element storage (encode) and build the handle (decode);
+/// the engine runs `element`'s program once per element slot.
+///
+/// First cut: trivially-copyable elements (the engine bitwise-copies element
+/// storage to/from its scratch buffer). Elements with managed payloads
+/// (`[String]`, `[[T]]`) come later.
+public struct SequenceAccess {
+    public var element: Descriptor
+    /// Bytes between consecutive elements in contiguous storage (the element's
+    /// stride).
+    public var stride: Int
+    /// Alignment of the element buffer.
+    public var elemAlign: Int
+    public var witness: SeqWitness
+
+    public init(element: Descriptor, stride: Int, elemAlign: Int, witness: SeqWitness) {
+        self.element = element
+        self.stride = stride
+        self.elemAlign = elemAlign
+        self.witness = witness
+    }
+}
+
+/// Witnesses over an owned sequence handle (`[T]`).
+public struct SeqWitness {
+    /// The element count.
+    public var count: (_ handle: UnsafeRawPointer) -> Int
+    /// Copy the `count * stride` contiguous element bytes into `dst`.
+    public var copyElements: (_ handle: UnsafeRawPointer, _ dst: UnsafeMutableRawPointer) -> Void
+    /// Build the handle at `handle` from `count` elements at `src`.
+    public var construct: (_ handle: UnsafeMutableRawPointer, _ src: UnsafeRawPointer, _ count: Int) -> Void
+
+    public init(
+        count: @escaping (UnsafeRawPointer) -> Int,
+        copyElements: @escaping (UnsafeRawPointer, UnsafeMutableRawPointer) -> Void,
+        construct: @escaping (UnsafeMutableRawPointer, UnsafeRawPointer, Int) -> Void
+    ) {
+        self.count = count
+        self.copyElements = copyElements
+        self.construct = construct
+    }
 }
 
 /// A sum type whose in-memory layout the engine never assumes — it reads the

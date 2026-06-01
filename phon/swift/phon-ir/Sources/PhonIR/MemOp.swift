@@ -37,6 +37,29 @@ public indirect enum MemOp {
     /// payload into scratch, and encodes it; decode reads the index, decodes the
     /// payload into scratch, and injects the variant.
     case enumeration(EnumOp)
+    /// An owned sequence of structured elements at `offset`: a `u32` count then
+    /// each element by its own program.
+    case sequence(SeqOp)
+}
+
+/// An owned-sequence op's payload (in `MemOp.sequence`).
+public struct SeqOp {
+    public var offset: Int
+    public var element: MemProgram
+    public var stride: Int
+    public var elemAlign: Int
+    /// Minimum wire bytes one element occupies (`0` for a zero-sized element).
+    public var minWire: Int
+    public var witness: SeqWitness
+
+    public init(offset: Int, element: MemProgram, stride: Int, elemAlign: Int, minWire: Int, witness: SeqWitness) {
+        self.offset = offset
+        self.element = element
+        self.stride = stride
+        self.elemAlign = elemAlign
+        self.minWire = minWire
+        self.witness = witness
+    }
 }
 
 /// A sum-type op's payload (in `MemOp.enumeration`).

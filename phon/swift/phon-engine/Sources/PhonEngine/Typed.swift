@@ -31,6 +31,17 @@ func fixedSize(_ p: Primitive) -> Int? {
     }
 }
 
+/// The minimum wire bytes one owned-sequence element occupies, for the
+/// length-vs-remaining guard. `0` when the element is zero-sized (all-ZST), else
+/// `1`. An empty program is vacuously zero-sized.
+func elemMinWire(_ element: MemProgram) -> Int {
+    let zeroSized = element.allSatisfy {
+        if case .scalar(_, 0, _) = $0 { return true }
+        return false
+    }
+    return zeroSized ? 0 : 1
+}
+
 // MARK: - Lowering
 
 /// Lower a descriptor into a flat `MemProgram`: base-relative memory copies, in
@@ -118,6 +129,18 @@ private func lowerTypedNode(_ d: Descriptor, _ reg: Registry, _ base: Int, _ out
             inject: ea.inject,
             variants: variantOps
         )))
+    case (.sequence(let sa), .composite(.list)), (.sequence(let sa), .composite(.set)):
+        // The element runs at its own slot (base 0).
+        var element: MemProgram = []
+        try lowerTypedNode(sa.element, reg, 0, &element)
+        out.append(.sequence(SeqOp(
+            offset: base,
+            element: element,
+            stride: sa.stride,
+            elemAlign: sa.elemAlign,
+            minWire: elemMinWire(element),
+            witness: sa.witness
+        )))
     default:
         throw CompactError.unsupported("typed: unhandled descriptor/schema combination")
     }
@@ -175,6 +198,18 @@ private func encodeTypedProgram(_ program: MemProgram, _ base: UnsafeRawPointer,
             defer { scratch.deallocate() }
             e.projectPayload(value, localIndex, scratch)
             encodeTypedProgram(variant.payload, UnsafeRawPointer(scratch), &out)
+        case .sequence(let s):
+            let handle = base.advanced(by: s.offset)
+            let n = s.witness.count(handle)
+            out.writeU32(UInt32(n))
+            guard n > 0 else { continue }
+            let buf = UnsafeMutableRawPointer.allocate(
+                byteCount: n * s.stride, alignment: max(s.elemAlign, 1))
+            defer { buf.deallocate() }
+            s.witness.copyElements(handle, buf)
+            for i in 0..<n {
+                encodeTypedProgram(s.element, UnsafeRawPointer(buf).advanced(by: i * s.stride), &out)
+            }
         }
     }
 }
@@ -249,6 +284,16 @@ private func decodeTypedProgram(_ program: MemProgram, _ r: inout Reader, _ base
             defer { scratch.deallocate() }
             try decodeTypedProgram(variant.payload, &r, scratch)
             e.inject(slot, localIndex, UnsafeRawPointer(scratch))
+        case .sequence(let s):
+            let handle = base.advanced(by: s.offset)
+            let n = try r.readLen(minElemSize: s.minWire)
+            let buf = UnsafeMutableRawPointer.allocate(
+                byteCount: max(n * s.stride, 1), alignment: max(s.elemAlign, 1))
+            defer { buf.deallocate() }
+            for i in 0..<n {
+                try decodeTypedProgram(s.element, &r, buf.advanced(by: i * s.stride))
+            }
+            s.witness.construct(handle, UnsafeRawPointer(buf), n)
         }
     }
 }

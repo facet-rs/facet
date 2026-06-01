@@ -359,3 +359,83 @@ func typedEnumMatchesValueOracleAndRoundTrips() throws {
         #expect(decoded == value, "enum \(value): decode did not round-trip")
     }
 }
+
+// A list of structured (trivially-copyable) elements — get_points / swap_pair.
+private struct Pair: Equatable {
+    var a: UInt32
+    var b: UInt32
+}
+
+private func pairDescriptor() -> Descriptor {
+    Descriptor(
+        schema: .concrete(SchemaId(2)),
+        layout: Layout(size: MemoryLayout<Pair>.size, align: MemoryLayout<Pair>.alignment),
+        access: .record(RecordAccess(
+            fields: [
+                FieldAccess(offset: MemoryLayout<Pair>.offset(of: \Pair.a)!, descriptor: scalarDesc(.u32)),
+                FieldAccess(offset: MemoryLayout<Pair>.offset(of: \Pair.b)!, descriptor: scalarDesc(.u32)),
+            ],
+            construct: .inPlace
+        ))
+    )
+}
+
+private func pairSeqWitness() -> SeqWitness {
+    SeqWitness(
+        count: { handle in handle.assumingMemoryBound(to: [Pair].self).pointee.count },
+        copyElements: { handle, dst in
+            handle.assumingMemoryBound(to: [Pair].self).pointee.withUnsafeBytes { buf in
+                if buf.count > 0 { dst.copyMemory(from: buf.baseAddress!, byteCount: buf.count) }
+            }
+        },
+        construct: { handle, src, count in
+            let buf = UnsafeBufferPointer(start: src.assumingMemoryBound(to: Pair.self), count: count)
+            handle.assumingMemoryBound(to: [Pair].self).initialize(to: Array(buf))
+        }
+    )
+}
+
+@Test
+func typedSequenceMatchesValueOracleAndRoundTrips() throws {
+    let pairSchema = Schema(
+        id: SchemaId(2),
+        kind: .structure(name: "Pair", fields: [
+            Field(name: "a", schema: .concrete(primitiveId(.u32)), required: true),
+            Field(name: "b", schema: .concrete(primitiveId(.u32)), required: true),
+        ])
+    )
+    let listSchema = Schema(id: SchemaId(1), kind: .list(element: .concrete(SchemaId(2))))
+    let reg = Registry([pairSchema, listSchema])
+
+    let listDesc = Descriptor(
+        schema: .concrete(SchemaId(1)),
+        layout: Layout(size: MemoryLayout<[Pair]>.size, align: MemoryLayout<[Pair]>.alignment),
+        access: .sequence(SequenceAccess(
+            element: pairDescriptor(),
+            stride: MemoryLayout<Pair>.stride,
+            elemAlign: MemoryLayout<Pair>.alignment,
+            witness: pairSeqWitness()
+        ))
+    )
+    let program = try lowerTyped(listDesc, reg)
+
+    for value in [[Pair(a: 1, b: 2), Pair(a: 3, b: 4)], [], [Pair(a: 9, b: 9)]] {
+        let typedBytes = withUnsafeBytes(of: value) { encodeWith(program, $0.baseAddress!) }
+
+        let oracle: Value = .array(value.map {
+            .object([
+                .init(key: "a", value: .number(.canonical(unsigned: UInt128($0.a)))),
+                .init(key: "b", value: .number(.canonical(unsigned: UInt128($0.b)))),
+            ])
+        })
+        let oracleBytes = try encode(oracle, SchemaId(1), reg)
+        #expect(typedBytes == oracleBytes, "sequence \(value): typed bytes diverge from oracle")
+
+        let raw = UnsafeMutableRawPointer.allocate(
+            byteCount: MemoryLayout<[Pair]>.size, alignment: MemoryLayout<[Pair]>.alignment)
+        defer { raw.deallocate() }
+        try decodeInto(program, typedBytes, raw)
+        let decoded = raw.assumingMemoryBound(to: [Pair].self).move()
+        #expect(decoded == value, "sequence \(value): decode did not round-trip")
+    }
+}
