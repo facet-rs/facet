@@ -511,6 +511,7 @@ func typedMapMatchesValueOracleAndRoundTrips() throws {
         ))
     )
     let program = try lowerTyped(mapDesc, reg)
+    let decProgram = try lowerDecode(mapDesc, reg)
 
     for value: [String: UInt32] in [["banana": 2, "apple": 1, "cherry": 3], [:], ["solo": 9]] {
         let typedBytes = withUnsafeBytes(of: value) { encodeWith(program, $0.baseAddress!) }
@@ -524,7 +525,7 @@ func typedMapMatchesValueOracleAndRoundTrips() throws {
         let raw = UnsafeMutableRawPointer.allocate(
             byteCount: MemoryLayout<[String: UInt32]>.size, alignment: MemoryLayout<[String: UInt32]>.alignment)
         defer { raw.deallocate() }
-        try decodeInto(program, typedBytes, raw)
+        try decodeInto(decProgram, typedBytes, raw)
         let decoded = raw.assumingMemoryBound(to: [String: UInt32].self).move()
         #expect(decoded == value, "map \(value): decode did not round-trip")
     }
@@ -631,6 +632,9 @@ func typedCompositeMatchesValueOracleAndRoundTrips() throws {
         ], construct: .inPlace))
     )
     let program = try lowerTyped(rootDesc, reg)
+    // Decode through the single reconciling path (same-schema = no skips/defaults),
+    // exercising lowerDecode for scalar/record/option/string/sequence/enum/dynamic.
+    let decProgram = try lowerDecode(rootDesc, reg)
 
     let meta: Value = .object([.init(key: "k", value: .bool(true))])
     let value = Envelopeish(id: 0xDEAD_BEEF, label: "hï", hint: 7, pairs: [Pair(a: 1, b: 2)], choice: .c(3, 4), meta: meta)
@@ -653,7 +657,7 @@ func typedCompositeMatchesValueOracleAndRoundTrips() throws {
 
     let raw = UnsafeMutableRawPointer.allocate(byteCount: MemoryLayout<Envelopeish>.size, alignment: MemoryLayout<Envelopeish>.alignment)
     defer { raw.deallocate() }
-    try decodeInto(program, typedBytes, raw)
+    try decodeInto(decProgram, typedBytes, raw)
     let decoded = raw.assumingMemoryBound(to: Envelopeish.self).move()
     #expect(decoded.id == value.id && decoded.label == value.label && decoded.hint == value.hint
         && decoded.pairs == value.pairs && decoded.choice == value.choice && decoded.meta == value.meta,

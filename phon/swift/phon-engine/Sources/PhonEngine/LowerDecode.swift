@@ -28,6 +28,16 @@ public func lowerDecode(_ writerRoot: SchemaId, _ reader: Descriptor, _ reg: Reg
     return out
 }
 
+/// The same-schema decode: the writer is the schema the reader carries. The
+/// resulting program has no skips/defaults — the drift-free identity. (There is
+/// no separate same-schema decoder; this is `lowerDecode` with writer == reader.)
+public func lowerDecode(_ reader: Descriptor, _ reg: Registry) throws -> MemProgram {
+    guard case .concrete(let id, _) = reader.schema else {
+        throw CompactError.malformed("lowerDecode: root descriptor schema must be concrete")
+    }
+    return try lowerDecode(id, reader, reg)
+}
+
 private func lowerDecodeNode(_ writer: SchemaRef, _ reader: Descriptor, _ reg: Registry, _ base: Int, _ out: inout MemProgram) throws {
     let w = try resolve(reg, writer)
     switch (reader.access, w) {
