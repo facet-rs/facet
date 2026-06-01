@@ -11,6 +11,16 @@ use crate::{
     TypeOpsDirect, VTableDirect, type_ops_direct, vtable_direct,
 };
 
+macro_rules! match_integer_shape {
+    ($id:expr, $convert:ident; $($src_ty:ty),+ $(,)?) => {
+        // Match on the source shape to determine its type.
+        match $id {
+            $(id if id == <$src_ty>::SHAPE.id => $convert!($src_ty),)+
+            _ => return TryFromOutcome::Unsupported,
+        }
+    };
+}
+
 /// Generate a try_from function for an integer type that converts from any other integer.
 macro_rules! integer_try_from {
     ($target:ty) => {{
@@ -27,9 +37,6 @@ macro_rules! integer_try_from {
             // Note: integers are Copy, so reading doesn't consume in a meaningful way
             macro_rules! convert {
                 ($src_ty:ty) => {{
-                    if (src_shape.id != <$src_ty>::SHAPE.id) {
-                        return TryFromOutcome::Unsupported;
-                    }
                     let src_val = unsafe { *(src.as_byte_ptr() as *const $src_ty) };
                     <$src_ty as TryInto<$target>>::try_into(src_val).map_err(|_| {
                         alloc::format!(
@@ -41,23 +48,8 @@ macro_rules! integer_try_from {
                     })
                 }};
             }
-
-            // Match on the source shape to determine its type
-            let result: Result<$target, alloc::string::String> = match src_shape.type_identifier {
-                "i8" => convert!(i8),
-                "i16" => convert!(i16),
-                "i32" => convert!(i32),
-                "i64" => convert!(i64),
-                "i128" => convert!(i128),
-                "isize" => convert!(isize),
-                "u8" => convert!(u8),
-                "u16" => convert!(u16),
-                "u32" => convert!(u32),
-                "u64" => convert!(u64),
-                "u128" => convert!(u128),
-                "usize" => convert!(usize),
-                _ => return TryFromOutcome::Unsupported,
-            };
+            let result: Result<$target, alloc::string::String> =
+                match_integer_shape!(src_shape.id, convert; i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize);
 
             match result {
                 Ok(value) => {
