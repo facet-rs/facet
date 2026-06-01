@@ -273,7 +273,7 @@ private func decodeTypedProgram(_ program: MemProgram, _ r: inout Reader, _ base
                     byteCount: max(o.innerSize, 1), alignment: o.innerAlign)
                 defer { scratch.deallocate() }
                 try decodeTypedProgram(o.some, &r, scratch)
-                o.witness.initSome(option, UnsafeRawPointer(scratch))
+                o.witness.initSome(option, scratch)
             case let b:
                 throw CompactError.decode(.invalidBool(b))
             }

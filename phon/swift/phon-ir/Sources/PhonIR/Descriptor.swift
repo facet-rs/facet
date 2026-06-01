@@ -301,15 +301,15 @@ public struct OptionWitness {
     /// Copy the inner value into `scratch` (the inner's layout) if present;
     /// return whether it was present.
     public var projectSome: (_ option: UnsafeRawPointer, _ scratch: UnsafeMutableRawPointer) -> Bool
-    /// Initialize the uninitialized option at `option` to `Some`, taking the inner
-    /// value the engine decoded into `value`.
-    public var initSome: (_ option: UnsafeMutableRawPointer, _ value: UnsafeRawPointer) -> Void
+    /// Initialize the uninitialized option at `option` to `Some`, **moving** the
+    /// inner value the engine decoded into `value` (engine scratch).
+    public var initSome: (_ option: UnsafeMutableRawPointer, _ value: UnsafeMutableRawPointer) -> Void
     /// Initialize the uninitialized option at `option` to `None`.
     public var initNone: (_ option: UnsafeMutableRawPointer) -> Void
 
     public init(
         projectSome: @escaping (UnsafeRawPointer, UnsafeMutableRawPointer) -> Bool,
-        initSome: @escaping (UnsafeMutableRawPointer, UnsafeRawPointer) -> Void,
+        initSome: @escaping (UnsafeMutableRawPointer, UnsafeMutableRawPointer) -> Void,
         initNone: @escaping (UnsafeMutableRawPointer) -> Void
     ) {
         self.projectSome = projectSome
