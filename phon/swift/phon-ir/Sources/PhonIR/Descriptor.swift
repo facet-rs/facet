@@ -200,21 +200,26 @@ public struct EnumAccess {
     /// The active variant's local index (its position in `variants`).
     public var tag: (_ value: UnsafeRawPointer) -> Int
     /// Copy variant `localIndex`'s payload from `value` into `scratch`
-    /// (`payloadLayout`-shaped). A no-op for a unit variant.
+    /// (`payloadLayout`-shaped), as retained copies. A no-op for a unit variant.
     public var projectPayload: (_ value: UnsafeRawPointer, _ localIndex: Int, _ scratch: UnsafeMutableRawPointer) -> Void
-    /// Construct the enum at `slot` for variant `localIndex` from the payload the
-    /// engine decoded into `scratch`.
-    public var inject: (_ slot: UnsafeMutableRawPointer, _ localIndex: Int, _ scratch: UnsafeRawPointer) -> Void
+    /// Deinitialize the payload `projectPayload` wrote into `scratch` (after the
+    /// engine has encoded it). A no-op for unit / trivial payloads.
+    public var destroyPayload: (_ scratch: UnsafeMutableRawPointer, _ localIndex: Int) -> Void
+    /// Construct the enum at `slot` for variant `localIndex`, **moving** the
+    /// payload the engine decoded into `scratch`.
+    public var inject: (_ slot: UnsafeMutableRawPointer, _ localIndex: Int, _ scratch: UnsafeMutableRawPointer) -> Void
     public var variants: [VariantAccess]
 
     public init(
         tag: @escaping (UnsafeRawPointer) -> Int,
         projectPayload: @escaping (UnsafeRawPointer, Int, UnsafeMutableRawPointer) -> Void,
-        inject: @escaping (UnsafeMutableRawPointer, Int, UnsafeRawPointer) -> Void,
+        destroyPayload: @escaping (UnsafeMutableRawPointer, Int) -> Void = { _, _ in },
+        inject: @escaping (UnsafeMutableRawPointer, Int, UnsafeMutableRawPointer) -> Void,
         variants: [VariantAccess]
     ) {
         self.tag = tag
         self.projectPayload = projectPayload
+        self.destroyPayload = destroyPayload
         self.inject = inject
         self.variants = variants
     }

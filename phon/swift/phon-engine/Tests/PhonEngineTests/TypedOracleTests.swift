@@ -288,7 +288,7 @@ private func enumDescriptor() -> Descriptor {
             scratch.storeBytes(of: b, toByteOffset: 1, as: UInt8.self)
         }
     }
-    let inject: (UnsafeMutableRawPointer, Int, UnsafeRawPointer) -> Void = { slot, localIndex, scratch in
+    let inject: (UnsafeMutableRawPointer, Int, UnsafeMutableRawPointer) -> Void = { slot, localIndex, scratch in
         let e: E
         switch localIndex {
         case 0: e = .a

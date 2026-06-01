@@ -126,6 +126,7 @@ private func lowerTypedNode(_ d: Descriptor, _ reg: Registry, _ base: Int, _ out
             offset: base,
             tag: ea.tag,
             projectPayload: ea.projectPayload,
+            destroyPayload: ea.destroyPayload,
             inject: ea.inject,
             variants: variantOps
         )))
@@ -209,6 +210,7 @@ private func encodeTypedProgram(_ program: MemProgram, _ base: UnsafeRawPointer,
             defer { scratch.deallocate() }
             e.projectPayload(value, localIndex, scratch)
             encodeTypedProgram(variant.payload, UnsafeRawPointer(scratch), &out)
+            e.destroyPayload(scratch, localIndex)
         case .sequence(let s):
             let handle = base.advanced(by: s.offset)
             let n = s.witness.count(handle)
@@ -308,7 +310,7 @@ private func decodeTypedProgram(_ program: MemProgram, _ r: inout Reader, _ base
                 byteCount: max(variant.payloadSize, 1), alignment: max(variant.payloadAlign, 1))
             defer { scratch.deallocate() }
             try decodeTypedProgram(variant.payload, &r, scratch)
-            e.inject(slot, localIndex, UnsafeRawPointer(scratch))
+            e.inject(slot, localIndex, scratch)
         case .sequence(let s):
             let handle = base.advanced(by: s.offset)
             let n = try r.readLen(minElemSize: s.minWire)

@@ -87,3 +87,73 @@ func sequenceWitnessFactoryHandlesStrings() throws {
     try decodeInto(program, typedBytes, raw)
     #expect(raw.assumingMemoryBound(to: [String].self).move() == value)
 }
+
+// A newtype enum wrapping a managed payload — the MessagePayload shape. Exercises
+// projectPayload(retain) + destroyPayload(deinit) + inject(move).
+private enum Wrap: Equatable {
+    case empty
+    case text(String)
+}
+
+@Test
+func enumNewtypeManagedPayloadRoundTrips() throws {
+    let eSchema = Schema(id: SchemaId(1), kind: .enumeration(name: "Wrap", variants: [
+        Variant(name: "Empty", index: 0, payload: .unit),
+        Variant(name: "Text", index: 1, payload: .newtype(.concrete(primitiveId(.string)))),
+    ]))
+    let reg = Registry([eSchema])
+
+    let strDesc = Descriptor(
+        schema: .concrete(primitiveId(.string)),
+        layout: Layout(size: MemoryLayout<String>.size, align: MemoryLayout<String>.alignment),
+        access: .bytes(BytesAccess(stride: 1, elemAlign: 1, witness: .string))
+    )
+    let desc = Descriptor(
+        schema: .concrete(SchemaId(1)),
+        layout: Layout(size: MemoryLayout<Wrap>.size, align: MemoryLayout<Wrap>.alignment),
+        access: .enumeration(EnumAccess(
+            tag: { ptr in
+                switch ptr.assumingMemoryBound(to: Wrap.self).pointee {
+                case .empty: return 0
+                case .text: return 1
+                }
+            },
+            projectPayload: { value, _, scratch in
+                switch value.assumingMemoryBound(to: Wrap.self).pointee {
+                case .empty: break
+                case .text(let s): scratch.assumingMemoryBound(to: String.self).initialize(to: s)
+                }
+            },
+            destroyPayload: { scratch, localIndex in
+                if localIndex == 1 { scratch.assumingMemoryBound(to: String.self).deinitialize(count: 1) }
+            },
+            inject: { slot, localIndex, scratch in
+                let w: Wrap = localIndex == 1 ? .text(scratch.assumingMemoryBound(to: String.self).move()) : .empty
+                slot.assumingMemoryBound(to: Wrap.self).initialize(to: w)
+            },
+            variants: [
+                VariantAccess(wireIndex: 0, payloadFields: [], payloadLayout: Layout(size: 0, align: 1)),
+                VariantAccess(wireIndex: 1, payloadFields: [FieldAccess(offset: 0, descriptor: strDesc)],
+                              payloadLayout: Layout(size: MemoryLayout<String>.size, align: MemoryLayout<String>.alignment)),
+            ]
+        ))
+    )
+    let program = try lowerTyped(desc, reg)
+
+    for value in [Wrap.text("héllo"), .empty, .text("")] {
+        let typedBytes = withUnsafeBytes(of: value) { encodeWith(program, $0.baseAddress!) }
+        let oracle: Value = {
+            switch value {
+            case .empty: return .object([.init(key: "Empty", value: .null)])
+            case .text(let s): return .object([.init(key: "Text", value: .string(s))])
+            }
+        }()
+        #expect(typedBytes == (try encode(oracle, SchemaId(1), reg)), "enum<string> \(value): bytes diverge")
+
+        let raw = UnsafeMutableRawPointer.allocate(
+            byteCount: MemoryLayout<Wrap>.size, alignment: MemoryLayout<Wrap>.alignment)
+        defer { raw.deallocate() }
+        try decodeInto(program, typedBytes, raw)
+        #expect(raw.assumingMemoryBound(to: Wrap.self).move() == value, "enum<string> \(value): decode mismatch")
+    }
+}

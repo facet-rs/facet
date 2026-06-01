@@ -98,19 +98,22 @@ public struct EnumOp {
     public var offset: Int
     public var tag: (_ value: UnsafeRawPointer) -> Int
     public var projectPayload: (_ value: UnsafeRawPointer, _ localIndex: Int, _ scratch: UnsafeMutableRawPointer) -> Void
-    public var inject: (_ slot: UnsafeMutableRawPointer, _ localIndex: Int, _ scratch: UnsafeRawPointer) -> Void
+    public var destroyPayload: (_ scratch: UnsafeMutableRawPointer, _ localIndex: Int) -> Void
+    public var inject: (_ slot: UnsafeMutableRawPointer, _ localIndex: Int, _ scratch: UnsafeMutableRawPointer) -> Void
     public var variants: [EnumVariantOp]
 
     public init(
         offset: Int,
         tag: @escaping (UnsafeRawPointer) -> Int,
         projectPayload: @escaping (UnsafeRawPointer, Int, UnsafeMutableRawPointer) -> Void,
-        inject: @escaping (UnsafeMutableRawPointer, Int, UnsafeRawPointer) -> Void,
+        destroyPayload: @escaping (UnsafeMutableRawPointer, Int) -> Void,
+        inject: @escaping (UnsafeMutableRawPointer, Int, UnsafeMutableRawPointer) -> Void,
         variants: [EnumVariantOp]
     ) {
         self.offset = offset
         self.tag = tag
         self.projectPayload = projectPayload
+        self.destroyPayload = destroyPayload
         self.inject = inject
         self.variants = variants
     }
