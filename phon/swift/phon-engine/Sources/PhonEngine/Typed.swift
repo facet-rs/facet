@@ -141,6 +141,17 @@ private func lowerTypedNode(_ d: Descriptor, _ reg: Registry, _ base: Int, _ out
             minWire: elemMinWire(element),
             witness: sa.witness
         )))
+    case (.map(let ma), .composite(.map)):
+        var key: MemProgram = []
+        try lowerTypedNode(ma.key, reg, 0, &key)
+        var value: MemProgram = []
+        try lowerTypedNode(ma.value, reg, 0, &value)
+        out.append(.map(MapOp(
+            offset: base, key: key, value: value,
+            keyStride: ma.keyStride, keyAlign: ma.keyAlign,
+            valueStride: ma.valueStride, valueAlign: ma.valueAlign,
+            witness: ma.witness
+        )))
     default:
         throw CompactError.unsupported("typed: unhandled descriptor/schema combination")
     }
@@ -210,6 +221,20 @@ private func encodeTypedProgram(_ program: MemProgram, _ base: UnsafeRawPointer,
             for i in 0..<n {
                 encodeTypedProgram(s.element, UnsafeRawPointer(buf).advanced(by: i * s.stride), &out)
             }
+        case .map(let m):
+            let handle = base.advanced(by: m.offset)
+            let n = m.witness.count(handle)
+            out.writeU32(UInt32(n))
+            guard n > 0 else { continue }
+            let keys = UnsafeMutableRawPointer.allocate(byteCount: n * m.keyStride, alignment: max(m.keyAlign, 1))
+            let values = UnsafeMutableRawPointer.allocate(byteCount: n * m.valueStride, alignment: max(m.valueAlign, 1))
+            defer { keys.deallocate(); values.deallocate() }
+            m.witness.projectEntries(handle, keys, values)
+            for i in 0..<n {
+                encodeTypedProgram(m.key, UnsafeRawPointer(keys).advanced(by: i * m.keyStride), &out)
+                encodeTypedProgram(m.value, UnsafeRawPointer(values).advanced(by: i * m.valueStride), &out)
+            }
+            m.witness.destroyEntries(keys, values, n)
         }
     }
 }
@@ -294,6 +319,23 @@ private func decodeTypedProgram(_ program: MemProgram, _ r: inout Reader, _ base
                 try decodeTypedProgram(s.element, &r, buf.advanced(by: i * s.stride))
             }
             s.witness.construct(handle, buf, n)
+        case .map(let m):
+            let handle = base.advanced(by: m.offset)
+            let n = try r.readLen(minElemSize: 1)
+            m.witness.initWithCapacity(handle, n)
+            for _ in 0..<n {
+                let keyScratch = UnsafeMutableRawPointer.allocate(byteCount: max(m.keyStride, 1), alignment: max(m.keyAlign, 1))
+                let valueScratch = UnsafeMutableRawPointer.allocate(byteCount: max(m.valueStride, 1), alignment: max(m.valueAlign, 1))
+                defer { keyScratch.deallocate(); valueScratch.deallocate() }
+                try decodeTypedProgram(m.key, &r, keyScratch)
+                try decodeTypedProgram(m.value, &r, valueScratch)
+                m.witness.insert(handle, keyScratch, valueScratch)
+            }
+            // A repeated key collapses two entries into one — reject it, matching
+            // the dynamic codec's duplicate-key rejection (the oracle).
+            if m.witness.count(handle) != n {
+                throw CompactError.decode(.duplicateKey)
+            }
         }
     }
 }

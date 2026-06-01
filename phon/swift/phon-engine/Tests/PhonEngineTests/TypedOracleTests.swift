@@ -457,6 +457,79 @@ func typedStringSequenceMatchesValueOracleAndRoundTrips() throws {
     }
 }
 
+// A string-keyed map ([String: UInt32]) — entries emitted in sorted-key order.
+private func stringU32MapWitness() -> MapWitness {
+    let kStride = MemoryLayout<String>.stride
+    let vStride = MemoryLayout<UInt32>.stride
+    return MapWitness(
+        count: { handle in handle.assumingMemoryBound(to: [String: UInt32].self).pointee.count },
+        projectEntries: { handle, keys, values in
+            let dict = handle.assumingMemoryBound(to: [String: UInt32].self).pointee
+            for (i, e) in dict.sorted(by: { $0.key < $1.key }).enumerated() {
+                keys.advanced(by: i * kStride).assumingMemoryBound(to: String.self).initialize(to: e.key)
+                values.advanced(by: i * vStride).storeBytes(of: e.value, as: UInt32.self)
+            }
+        },
+        destroyEntries: { keys, _, count in
+            for i in 0..<count {
+                keys.advanced(by: i * kStride).assumingMemoryBound(to: String.self).deinitialize(count: 1)
+            }
+        },
+        initWithCapacity: { handle, cap in
+            handle.assumingMemoryBound(to: [String: UInt32].self).initialize(to: .init(minimumCapacity: cap))
+        },
+        insert: { handle, key, value in
+            let k = key.assumingMemoryBound(to: String.self).move()
+            let v = value.load(as: UInt32.self)
+            handle.assumingMemoryBound(to: [String: UInt32].self).pointee[k] = v
+        }
+    )
+}
+
+@Test
+func typedMapMatchesValueOracleAndRoundTrips() throws {
+    let mapSchema = Schema(
+        id: SchemaId(1),
+        kind: .map(key: .concrete(primitiveId(.string)), value: .concrete(primitiveId(.u32)))
+    )
+    let reg = Registry([mapSchema])
+
+    let keyDesc = Descriptor(
+        schema: .concrete(primitiveId(.string)),
+        layout: Layout(size: MemoryLayout<String>.size, align: MemoryLayout<String>.alignment),
+        access: .bytes(BytesAccess(stride: 1, elemAlign: 1, witness: stringWitness()))
+    )
+    let mapDesc = Descriptor(
+        schema: .concrete(SchemaId(1)),
+        layout: Layout(size: MemoryLayout<[String: UInt32]>.size, align: MemoryLayout<[String: UInt32]>.alignment),
+        access: .map(MapAccess(
+            key: keyDesc,
+            value: scalarDesc(.u32),
+            keyStride: MemoryLayout<String>.stride, keyAlign: MemoryLayout<String>.alignment,
+            valueStride: MemoryLayout<UInt32>.stride, valueAlign: MemoryLayout<UInt32>.alignment,
+            witness: stringU32MapWitness()
+        ))
+    )
+    let program = try lowerTyped(mapDesc, reg)
+
+    for value: [String: UInt32] in [["banana": 2, "apple": 1, "cherry": 3], [:], ["solo": 9]] {
+        let typedBytes = withUnsafeBytes(of: value) { encodeWith(program, $0.baseAddress!) }
+        // Oracle: an object with entries in sorted-key order (matching projectEntries).
+        let oracle: Value = .object(value.sorted(by: { $0.key < $1.key }).map {
+            .init(key: $0.key, value: .number(.canonical(unsigned: UInt128($0.value))))
+        })
+        let oracleBytes = try encode(oracle, SchemaId(1), reg)
+        #expect(typedBytes == oracleBytes, "map \(value): typed bytes diverge from oracle")
+
+        let raw = UnsafeMutableRawPointer.allocate(
+            byteCount: MemoryLayout<[String: UInt32]>.size, alignment: MemoryLayout<[String: UInt32]>.alignment)
+        defer { raw.deallocate() }
+        try decodeInto(program, typedBytes, raw)
+        let decoded = raw.assumingMemoryBound(to: [String: UInt32].self).move()
+        #expect(decoded == value, "map \(value): decode did not round-trip")
+    }
+}
+
 @Test
 func typedSequenceMatchesValueOracleAndRoundTrips() throws {
     let pairSchema = Schema(

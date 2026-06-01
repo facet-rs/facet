@@ -73,6 +73,70 @@ public indirect enum Access {
     /// (`[Struct]`): a `u32` count then each element by its own program. Scalar
     /// element sequences use the bulk `bytes` path instead.
     case sequence(SequenceAccess)
+    /// An owned map (`[K: V]`): a `u32` entry count then, per entry, the key by
+    /// its program then the value by its program. Entries are emitted in a
+    /// deterministic (sorted-key) order so the bytes are stable.
+    case map(MapAccess)
+}
+
+/// An owned map: key and value descriptors, their scratch layouts, and the
+/// witnesses that enumerate/build the concrete `[K: V]`.
+public struct MapAccess {
+    public var key: Descriptor
+    public var value: Descriptor
+    public var keyStride: Int
+    public var keyAlign: Int
+    public var valueStride: Int
+    public var valueAlign: Int
+    public var witness: MapWitness
+
+    public init(
+        key: Descriptor, value: Descriptor,
+        keyStride: Int, keyAlign: Int, valueStride: Int, valueAlign: Int,
+        witness: MapWitness
+    ) {
+        self.key = key
+        self.value = value
+        self.keyStride = keyStride
+        self.keyAlign = keyAlign
+        self.valueStride = valueStride
+        self.valueAlign = valueAlign
+        self.witness = witness
+    }
+}
+
+/// Witnesses over an owned map handle. Encode copies entries (in sorted-key
+/// order) into engine key/value buffers as proper retained copies — so they
+/// outlive the witness call — and `destroyEntries` deinitializes them after the
+/// engine has read them. Decode inits the map then inserts each decoded entry,
+/// moving key+value out of scratch; a repeated key collapses two entries into one
+/// and is rejected via the final count.
+public struct MapWitness {
+    /// The entry count.
+    public var count: (_ handle: UnsafeRawPointer) -> Int
+    /// Copy the `count` entries into `keys`/`values` (each its stride apart), in a
+    /// deterministic sorted-key order, as retained copies.
+    public var projectEntries: (_ handle: UnsafeRawPointer, _ keys: UnsafeMutableRawPointer, _ values: UnsafeMutableRawPointer) -> Void
+    /// Deinitialize the `count` projected entries (a no-op for trivial K/V).
+    public var destroyEntries: (_ keys: UnsafeMutableRawPointer, _ values: UnsafeMutableRawPointer, _ count: Int) -> Void
+    /// Initialize the uninitialized map at `handle` with room for `capacity`.
+    public var initWithCapacity: (_ handle: UnsafeMutableRawPointer, _ capacity: Int) -> Void
+    /// Insert one entry, moving key and value out of the engine scratch.
+    public var insert: (_ handle: UnsafeMutableRawPointer, _ key: UnsafeMutableRawPointer, _ value: UnsafeMutableRawPointer) -> Void
+
+    public init(
+        count: @escaping (UnsafeRawPointer) -> Int,
+        projectEntries: @escaping (UnsafeRawPointer, UnsafeMutableRawPointer, UnsafeMutableRawPointer) -> Void,
+        destroyEntries: @escaping (UnsafeMutableRawPointer, UnsafeMutableRawPointer, Int) -> Void,
+        initWithCapacity: @escaping (UnsafeMutableRawPointer, Int) -> Void,
+        insert: @escaping (UnsafeMutableRawPointer, UnsafeMutableRawPointer, UnsafeMutableRawPointer) -> Void
+    ) {
+        self.count = count
+        self.projectEntries = projectEntries
+        self.destroyEntries = destroyEntries
+        self.initWithCapacity = initWithCapacity
+        self.insert = insert
+    }
 }
 
 /// A homogeneous sequence of structured elements. The witnesses read the count

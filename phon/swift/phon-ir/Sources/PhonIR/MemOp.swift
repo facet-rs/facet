@@ -40,6 +40,37 @@ public indirect enum MemOp {
     /// An owned sequence of structured elements at `offset`: a `u32` count then
     /// each element by its own program.
     case sequence(SeqOp)
+    /// An owned map at `offset`: a `u32` entry count then per-entry key+value
+    /// programs. Encode emits entries in sorted-key order; decode rejects a
+    /// repeated key.
+    case map(MapOp)
+}
+
+/// An owned-map op's payload (in `MemOp.map`).
+public struct MapOp {
+    public var offset: Int
+    public var key: MemProgram
+    public var value: MemProgram
+    public var keyStride: Int
+    public var keyAlign: Int
+    public var valueStride: Int
+    public var valueAlign: Int
+    public var witness: MapWitness
+
+    public init(
+        offset: Int, key: MemProgram, value: MemProgram,
+        keyStride: Int, keyAlign: Int, valueStride: Int, valueAlign: Int,
+        witness: MapWitness
+    ) {
+        self.offset = offset
+        self.key = key
+        self.value = value
+        self.keyStride = keyStride
+        self.keyAlign = keyAlign
+        self.valueStride = valueStride
+        self.valueAlign = valueAlign
+        self.witness = witness
+    }
 }
 
 /// An owned-sequence op's payload (in `MemOp.sequence`).
