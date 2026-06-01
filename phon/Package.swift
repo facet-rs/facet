@@ -17,6 +17,11 @@ let package = Package(
     products: [
         .library(name: "Phon", targets: ["Phon"]),
         .library(name: "PhonSchema", targets: ["PhonSchema"]),
+        // The execution vocabulary (descriptors + IR) and the backend-blind
+        // engine — consumed by a binding (e.g. vox-runtime) that supplies
+        // descriptors and drives the typed codec.
+        .library(name: "PhonIR", targets: ["PhonIR"]),
+        .library(name: "PhonEngine", targets: ["PhonEngine"]),
         // The JIT is reached only by opting in to this product; the baseline is
         // PhonEngine's interpreter (r[crates.jit-opt-in]).
         .library(name: "PhonJIT", targets: ["PhonJIT"]),
