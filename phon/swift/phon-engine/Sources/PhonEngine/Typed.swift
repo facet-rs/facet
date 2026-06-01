@@ -51,7 +51,7 @@ func elemMinWire(_ element: MemProgram) -> Int {
 public func lowerTyped(_ descriptor: Descriptor, _ reg: Registry) throws -> MemProgram {
     var out: MemProgram = []
     try lowerTypedNode(descriptor, reg, 0, &out)
-    return out
+    return fuse(out)
 }
 
 private func lowerTypedNode(_ d: Descriptor, _ reg: Registry, _ base: Int, _ out: inout MemProgram) throws {
@@ -87,7 +87,7 @@ private func lowerTypedNode(_ d: Descriptor, _ reg: Registry, _ base: Int, _ out
         try lowerTypedNode(oa.some, reg, 0, &some)
         out.append(.option(OptionOp(
             offset: base,
-            some: some,
+            some: fuse(some),
             innerSize: oa.some.layout.size,
             innerAlign: oa.some.layout.align,
             witness: oa.witness
@@ -119,7 +119,7 @@ private func lowerTypedNode(_ d: Descriptor, _ reg: Registry, _ base: Int, _ out
             variantOps.append(EnumVariantOp(
                 wireIndex: va.wireIndex,
                 readerLocalIndex: localIndex,
-                payload: payload,
+                payload: fuse(payload),
                 payloadSize: va.payloadLayout.size,
                 payloadAlign: va.payloadLayout.align
             ))
@@ -138,7 +138,7 @@ private func lowerTypedNode(_ d: Descriptor, _ reg: Registry, _ base: Int, _ out
         try lowerTypedNode(sa.element, reg, 0, &element)
         out.append(.sequence(SeqOp(
             offset: base,
-            element: element,
+            element: fuse(element),
             stride: sa.stride,
             elemAlign: sa.elemAlign,
             minWire: elemMinWire(element),
@@ -150,7 +150,7 @@ private func lowerTypedNode(_ d: Descriptor, _ reg: Registry, _ base: Int, _ out
         var value: MemProgram = []
         try lowerTypedNode(ma.value, reg, 0, &value)
         out.append(.map(MapOp(
-            offset: base, key: key, value: value,
+            offset: base, key: fuse(key), value: fuse(value),
             keyStride: ma.keyStride, keyAlign: ma.keyAlign,
             valueStride: ma.valueStride, valueAlign: ma.valueAlign,
             witness: ma.witness

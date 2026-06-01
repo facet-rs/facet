@@ -25,7 +25,7 @@ import PhonSchema
 public func lowerDecode(_ writerRoot: SchemaId, _ reader: Descriptor, _ reg: Registry) throws -> MemProgram {
     var out: MemProgram = []
     try lowerDecodeNode(.concrete(id: writerRoot, args: []), reader, reg, 0, &out)
-    return out
+    return fuse(out)
 }
 
 /// The same-schema decode: the writer is the schema the reader carries. The
@@ -62,7 +62,7 @@ private func lowerDecodeNode(_ writer: SchemaRef, _ reader: Descriptor, _ reg: R
         var some: MemProgram = []
         try lowerDecodeNode(we, oa.some, reg, 0, &some)
         out.append(.option(OptionOp(
-            offset: base, some: some,
+            offset: base, some: fuse(some),
             innerSize: oa.some.layout.size, innerAlign: oa.some.layout.align,
             witness: oa.witness)))
 
@@ -80,7 +80,7 @@ private func lowerDecodeNode(_ writer: SchemaRef, _ reader: Descriptor, _ reg: R
         var element: MemProgram = []
         try lowerDecodeNode(we, sa.element, reg, 0, &element)
         out.append(.sequence(SeqOp(
-            offset: base, element: element, stride: sa.stride, elemAlign: sa.elemAlign,
+            offset: base, element: fuse(element), stride: sa.stride, elemAlign: sa.elemAlign,
             minWire: elemMinWire(element), witness: sa.witness)))
 
     case (.map(let ma), .composite(.map(let wk, let wv))):
@@ -89,7 +89,7 @@ private func lowerDecodeNode(_ writer: SchemaRef, _ reader: Descriptor, _ reg: R
         var value: MemProgram = []
         try lowerDecodeNode(wv, ma.value, reg, 0, &value)
         out.append(.map(MapOp(
-            offset: base, key: key, value: value,
+            offset: base, key: fuse(key), value: fuse(value),
             keyStride: ma.keyStride, keyAlign: ma.keyAlign,
             valueStride: ma.valueStride, valueAlign: ma.valueAlign, witness: ma.witness)))
 
@@ -197,7 +197,7 @@ private func lowerDecodePayload(_ w: VariantPayload, _ va: VariantAccess, _ rPay
     default:
         throw CompactError.incompatible("variant payload shapes differ")
     }
-    return payload
+    return fuse(payload)
 }
 
 private func lowerDecodeVariantStruct(_ wFields: [Field], _ va: VariantAccess, _ rFields: [Field], _ reg: Registry, _ out: inout MemProgram) throws {

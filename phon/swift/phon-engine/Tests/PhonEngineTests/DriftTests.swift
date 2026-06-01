@@ -118,6 +118,53 @@ func driftReaderOnlyFieldDefaulted() throws {
     ]))
 }
 
+// MARK: - fuse: the same-schema fast path emerges from lowering
+
+private struct Triple: Equatable {
+    var a: UInt32
+    var b: UInt32
+    var c: UInt32
+}
+
+@Test
+func fuseCollapsesFlatStructToOneCopy() throws {
+    // { a: u32, b: u32, c: u32 } — contiguous in wire AND memory, so the three
+    // scalar copies fuse into one 12-byte memcpy.
+    let schema = Schema(id: SchemaId(1), kind: .structure(name: "T", fields: [
+        u32Field("a"), u32Field("b"), u32Field("c"),
+    ]))
+    let reg = Registry([schema])
+    let desc = Descriptor(
+        schema: .concrete(SchemaId(1)),
+        layout: MemoryLayout<Triple>.phonLayout,
+        access: .record(RecordAccess(fields: [
+            FieldAccess(offset: MemoryLayout<Triple>.offset(of: \Triple.a)!, descriptor: u32Desc()),
+            FieldAccess(offset: MemoryLayout<Triple>.offset(of: \Triple.b)!, descriptor: u32Desc()),
+            FieldAccess(offset: MemoryLayout<Triple>.offset(of: \Triple.c)!, descriptor: u32Desc()),
+        ], construct: .inPlace))
+    )
+    let program = try lowerTyped(desc, reg)
+    #expect(program.count == 1, "flat all-u32 struct fuses to one copy, got \(program.count)")
+    if case .scalar(let offset, let size, _) = program[0] {
+        #expect(offset == 0 && size == 12, "fused to scalar(offset: 0, size: 12)")
+    } else {
+        Issue.record("fused op is not a scalar")
+    }
+
+    // Byte-neutral: still matches the Value oracle and round-trips.
+    let value = Triple(a: 1, b: 2, c: 3)
+    let bytes = withUnsafeBytes(of: value) { encodeWith(program, $0.baseAddress!) }
+    let oracle = try encode(.object([
+        .init(key: "a", value: .number(.canonical(unsigned: 1))),
+        .init(key: "b", value: .number(.canonical(unsigned: 2))),
+        .init(key: "c", value: .number(.canonical(unsigned: 3))),
+    ]), SchemaId(1), reg)
+    #expect(bytes == oracle)
+    var decoded = Triple(a: 0, b: 0, c: 0)
+    try withUnsafeMutableBytes(of: &decoded) { try decodeInto(try lowerDecode(desc, reg), bytes, $0.baseAddress!) }
+    #expect(decoded == value)
+}
+
 // MARK: - Same-schema is the no-skip identity
 
 @Test
