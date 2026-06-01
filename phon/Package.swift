@@ -64,5 +64,10 @@ let package = Package(
             dependencies: ["PhonSchema"],
             path: "swift/phon-schema/Tests/PhonSchemaTests"
         ),
+        .testTarget(
+            name: "PhonEngineTests",
+            dependencies: ["PhonEngine", "PhonIR", "PhonSchema"],
+            path: "swift/phon-engine/Tests/PhonEngineTests"
+        ),
     ]
 )

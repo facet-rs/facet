@@ -76,4 +76,13 @@ public struct ByteSink: Sink {
         guard b.count > 0 else { return }
         bytes.append(contentsOf: b)
     }
+
+    /// Bytes written so far.
+    public var count: Int { bytes.count }
+
+    /// Pad with zero bytes until the length is a multiple of `align`, the encode
+    /// side of compact alignment (`r[compact.alignment]`).
+    public mutating func padTo(_ align: Int) {
+        while bytes.count % align != 0 { bytes.append(0) }
+    }
 }

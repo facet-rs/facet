@@ -117,6 +117,12 @@ public struct Reader {
         return count
     }
 
+    /// Skip padding bytes until the position is a multiple of `align`, the decode
+    /// side of compact alignment (`r[compact.alignment]`).
+    public mutating func skipPad(_ align: Int) throws {
+        while pos % align != 0 { _ = try readU8() }
+    }
+
     /// Read a fixed-width little-endian integer.
     private mutating func readLE<T: FixedWidthInteger & UnsignedInteger>() throws -> T {
         let s = try take(MemoryLayout<T>.size)

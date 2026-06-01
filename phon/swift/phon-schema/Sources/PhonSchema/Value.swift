@@ -18,7 +18,7 @@ public enum Number: Hashable, Sendable {
 
     /// Canonicalize a non-negative magnitude: the narrowest of `i64`/`u64`/`i128`/
     /// `u128` that holds it.
-    static func canonical(unsigned v: UInt128) -> Number {
+    public static func canonical(unsigned v: UInt128) -> Number {
         if v <= UInt128(Int64.max) { return .i64(Int64(v)) }
         if v <= UInt128(UInt64.max) { return .u64(UInt64(v)) }
         if v <= UInt128(Int128.max) { return .i128(Int128(v)) }
@@ -27,7 +27,7 @@ public enum Number: Hashable, Sendable {
 
     /// Canonicalize a signed value: `i64` when it fits, else `u64` when it fits a
     /// non-negative `u64`, else `i128` (always holds a 128-bit signed value).
-    static func canonical(signed v: Int128) -> Number {
+    public static func canonical(signed v: Int128) -> Number {
         if v >= Int128(Int64.min) && v <= Int128(Int64.max) { return .i64(Int64(v)) }
         if v >= 0 && v <= Int128(UInt64.max) { return .u64(UInt64(v)) }
         return .i128(v)
@@ -57,6 +57,90 @@ public indirect enum Value: Hashable, Sendable {
         public init(key: String, value: Value) {
             self.key = key
             self.value = value
+        }
+    }
+}
+
+// MARK: - Accessors
+
+public extension Value {
+    var isNull: Bool { if case .null = self { return true }; return false }
+
+    var asBool: Bool? { if case .bool(let b) = self { return b }; return nil }
+    var asNumber: Number? { if case .number(let n) = self { return n }; return nil }
+    var asString: String? { if case .string(let s) = self { return s }; return nil }
+    var asBytes: [UInt8]? { if case .bytes(let b) = self { return b }; return nil }
+    var asChar: Unicode.Scalar? { if case .char(let c) = self { return c }; return nil }
+    var asArray: [Value]? { if case .array(let a) = self { return a }; return nil }
+    var asObject: [Entry]? { if case .object(let o) = self { return o }; return nil }
+
+    /// Look up a key in an `object` value (linear scan; objects are small and
+    /// ordered).
+    func get(_ key: String) -> Value? {
+        guard case .object(let entries) = self else { return nil }
+        return entries.first { $0.key == key }?.value
+    }
+}
+
+// MARK: - Number conversions
+//
+// Lossy width conversions matching `facet_value::VNumber`'s accessors, used by
+// the compact codec when writing a number at a fixed primitive width. `nil` means
+// "does not fit / not an integer of that signedness" (the codec then writes 0).
+
+public extension Number {
+    /// The value as `u64` if it is a non-negative integer that fits.
+    var toU64: UInt64? {
+        switch self {
+        case .i64(let v): return v >= 0 ? UInt64(v) : nil
+        case .u64(let v): return v
+        case .i128(let v): return (v >= 0 && v <= Int128(UInt64.max)) ? UInt64(v) : nil
+        case .u128(let v): return v <= UInt128(UInt64.max) ? UInt64(truncatingIfNeeded: v) : nil
+        case .f64: return nil
+        }
+    }
+
+    /// The value as `i64` if it is an integer that fits.
+    var toI64: Int64? {
+        switch self {
+        case .i64(let v): return v
+        case .u64(let v): return v <= UInt64(Int64.max) ? Int64(v) : nil
+        case .i128(let v): return (v >= Int128(Int64.min) && v <= Int128(Int64.max)) ? Int64(v) : nil
+        case .u128(let v): return v <= UInt128(Int64.max) ? Int64(truncatingIfNeeded: v) : nil
+        case .f64: return nil
+        }
+    }
+
+    /// The value as `u128` if it is a non-negative integer.
+    var toU128: UInt128? {
+        switch self {
+        case .i64(let v): return v >= 0 ? UInt128(v) : nil
+        case .u64(let v): return UInt128(v)
+        case .i128(let v): return v >= 0 ? UInt128(v) : nil
+        case .u128(let v): return v
+        case .f64: return nil
+        }
+    }
+
+    /// The value as `i128` if it is an integer.
+    var toI128: Int128? {
+        switch self {
+        case .i64(let v): return Int128(v)
+        case .u64(let v): return Int128(v)
+        case .i128(let v): return v
+        case .u128(let v): return v <= UInt128(Int128.max) ? Int128(v) : nil
+        case .f64: return nil
+        }
+    }
+
+    /// The value as `f64`, lossily (an integer is converted to the nearest double).
+    var toF64Lossy: Double {
+        switch self {
+        case .f64(let v): return v
+        case .i64(let v): return Double(v)
+        case .u64(let v): return Double(v)
+        case .i128(let v): return Double(v)
+        case .u128(let v): return Double(v)
         }
     }
 }

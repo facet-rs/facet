@@ -226,3 +226,39 @@ func parseQName(_ s: String) throws -> (namespace: String?, local: String) {
     }
     return (nil, s)
 }
+
+// MARK: - Value <-> canonical string
+
+/// The canonical string of an extended-kind value (`datetime`/`uuid`/`qname`),
+/// or `nil` if `value` is not that kind. Shared by the compact codec so the
+/// canonical form lives in one place.
+public func extendedToString(_ value: Value, _ primitive: Primitive) -> String? {
+    switch primitive {
+    case .datetime:
+        guard case .datetime(let d) = value else { return nil }
+        return datetimeString(d)
+    case .uuid:
+        guard case .uuid(let n) = value else { return nil }
+        return uuidString(n)
+    case .qname:
+        guard case .qname(let ns, let local) = value else { return nil }
+        return qnameString(ns, local)
+    default:
+        return nil
+    }
+}
+
+/// Parse the canonical string of an extended-kind primitive into a `Value`.
+public func extendedFromString(_ s: String, _ primitive: Primitive) throws -> Value {
+    switch primitive {
+    case .datetime:
+        return .datetime(try parseDatetime(s))
+    case .uuid:
+        return .uuid(try parseUuid(s))
+    case .qname:
+        let (ns, local) = try parseQName(s)
+        return .qname(namespace: ns, local: local)
+    default:
+        throw DecodeError.malformed("not an extended-kind primitive")
+    }
+}
