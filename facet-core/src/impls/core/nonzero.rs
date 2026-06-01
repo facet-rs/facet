@@ -45,7 +45,7 @@ macro_rules! impl_facet_for_nonzero {
                             src: PtrConst,
                         ) -> TryFromOutcome {
                             // Only accept the inner type
-                            if src_shape.type_identifier != stringify!($type) {
+                            if src_shape.id != <$type>::SHAPE.id {
                                 return TryFromOutcome::Unsupported;
                             }
                             unsafe {
