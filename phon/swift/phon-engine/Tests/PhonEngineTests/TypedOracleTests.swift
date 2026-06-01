@@ -366,9 +366,9 @@ private struct Pair: Equatable {
     var b: UInt32
 }
 
-private func pairDescriptor() -> Descriptor {
+private func pairDescriptor(_ id: SchemaId = SchemaId(2)) -> Descriptor {
     Descriptor(
-        schema: .concrete(SchemaId(2)),
+        schema: .concrete(id),
         layout: Layout(size: MemoryLayout<Pair>.size, align: MemoryLayout<Pair>.alignment),
         access: .record(RecordAccess(
             fields: [
@@ -438,4 +438,89 @@ func typedSequenceMatchesValueOracleAndRoundTrips() throws {
         let decoded = raw.assumingMemoryBound(to: [Pair].self).move()
         #expect(decoded == value, "sequence \(value): decode did not round-trip")
     }
+}
+
+// A nested struct mixing every landed shape — the envelope's complexity in
+// miniature: a scalar, a String, an Option, a list<struct>, an enum, and a
+// Dynamic field. Proves the shapes compose.
+private struct Envelopeish {
+    var id: UInt64
+    var label: String
+    var hint: UInt32?
+    var pairs: [Pair]
+    var choice: E
+    var meta: Value
+}
+
+@Test
+func typedCompositeMatchesValueOracleAndRoundTrips() throws {
+    // Schemas: id u64, label string, hint option<u32>, pairs list<Pair>,
+    // choice E, meta dynamic.
+    let pairSchema = Schema(id: SchemaId(10), kind: .structure(name: "Pair", fields: [
+        Field(name: "a", schema: .concrete(primitiveId(.u32)), required: true),
+        Field(name: "b", schema: .concrete(primitiveId(.u32)), required: true),
+    ]))
+    let listSchema = Schema(id: SchemaId(11), kind: .list(element: .concrete(SchemaId(10))))
+    let optSchema = Schema(id: SchemaId(12), kind: .option(element: .concrete(primitiveId(.u32))))
+    let eSchema = Schema(id: SchemaId(13), kind: .enumeration(name: "E", variants: [
+        Variant(name: "A", index: 0, payload: .unit),
+        Variant(name: "B", index: 1, payload: .newtype(.concrete(primitiveId(.u32)))),
+        Variant(name: "C", index: 2, payload: .tuple([.concrete(primitiveId(.u8)), .concrete(primitiveId(.u8))])),
+    ]))
+    let dynSchema = Schema(id: SchemaId(14), kind: .dynamic)
+    let root = Schema(id: SchemaId(1), kind: .structure(name: "Envelopeish", fields: [
+        Field(name: "id", schema: .concrete(primitiveId(.u64)), required: true),
+        Field(name: "label", schema: .concrete(primitiveId(.string)), required: true),
+        Field(name: "hint", schema: .concrete(SchemaId(12)), required: true),
+        Field(name: "pairs", schema: .concrete(SchemaId(11)), required: true),
+        Field(name: "choice", schema: .concrete(SchemaId(13)), required: true),
+        Field(name: "meta", schema: .concrete(SchemaId(14)), required: true),
+    ]))
+    let reg = Registry([pairSchema, listSchema, optSchema, eSchema, dynSchema, root])
+
+    func fieldDesc(_ off: Int, _ schema: SchemaRef, _ access: Access, _ layout: Layout) -> FieldAccess {
+        FieldAccess(offset: off, descriptor: Descriptor(schema: schema, layout: layout, access: access))
+    }
+    var enumDesc = enumDescriptor()
+    enumDesc.schema = .concrete(SchemaId(13))
+    let rootDesc = Descriptor(
+        schema: .concrete(SchemaId(1)),
+        layout: Layout(size: MemoryLayout<Envelopeish>.size, align: MemoryLayout<Envelopeish>.alignment),
+        access: .record(RecordAccess(fields: [
+            fieldDesc(MemoryLayout<Envelopeish>.offset(of: \Envelopeish.id)!, .concrete(primitiveId(.u64)), .scalar, Layout(size: 8, align: 8)),
+            fieldDesc(MemoryLayout<Envelopeish>.offset(of: \Envelopeish.label)!, .concrete(primitiveId(.string)), .bytes(BytesAccess(stride: 1, elemAlign: 1, witness: stringWitness())), Layout(size: MemoryLayout<String>.size, align: MemoryLayout<String>.alignment)),
+            fieldDesc(MemoryLayout<Envelopeish>.offset(of: \Envelopeish.hint)!, .concrete(SchemaId(12)), .option(OptionAccess(witness: uint32OptionWitness(), some: scalarDesc(.u32))), Layout(size: MemoryLayout<UInt32?>.size, align: MemoryLayout<UInt32?>.alignment)),
+            fieldDesc(MemoryLayout<Envelopeish>.offset(of: \Envelopeish.pairs)!, .concrete(SchemaId(11)), .sequence(SequenceAccess(element: pairDescriptor(SchemaId(10)), stride: MemoryLayout<Pair>.stride, elemAlign: MemoryLayout<Pair>.alignment, witness: pairSeqWitness())), Layout(size: MemoryLayout<[Pair]>.size, align: MemoryLayout<[Pair]>.alignment)),
+            FieldAccess(offset: MemoryLayout<Envelopeish>.offset(of: \Envelopeish.choice)!, descriptor: enumDesc),
+            fieldDesc(MemoryLayout<Envelopeish>.offset(of: \Envelopeish.meta)!, .concrete(SchemaId(14)), .dynamic, Layout(size: MemoryLayout<Value>.size, align: MemoryLayout<Value>.alignment)),
+        ], construct: .inPlace))
+    )
+    let program = try lowerTyped(rootDesc, reg)
+
+    let meta: Value = .object([.init(key: "k", value: .bool(true))])
+    let value = Envelopeish(id: 0xDEAD_BEEF, label: "hï", hint: 7, pairs: [Pair(a: 1, b: 2)], choice: .c(3, 4), meta: meta)
+
+    let typedBytes = withUnsafeBytes(of: value) { encodeWith(program, $0.baseAddress!) }
+    let oracle: Value = .object([
+        .init(key: "id", value: .number(.canonical(unsigned: 0xDEAD_BEEF))),
+        .init(key: "label", value: .string("hï")),
+        .init(key: "hint", value: .number(.canonical(unsigned: 7))),
+        .init(key: "pairs", value: .array([.object([
+            .init(key: "a", value: .number(.canonical(unsigned: 1))),
+            .init(key: "b", value: .number(.canonical(unsigned: 2))),
+        ])])),
+        .init(key: "choice", value: .object([.init(key: "C", value: .array([
+            .number(.canonical(unsigned: 3)), .number(.canonical(unsigned: 4)),
+        ]))])),
+        .init(key: "meta", value: meta),
+    ])
+    #expect(typedBytes == (try encode(oracle, SchemaId(1), reg)), "composite: typed bytes diverge from oracle")
+
+    let raw = UnsafeMutableRawPointer.allocate(byteCount: MemoryLayout<Envelopeish>.size, alignment: MemoryLayout<Envelopeish>.alignment)
+    defer { raw.deallocate() }
+    try decodeInto(program, typedBytes, raw)
+    let decoded = raw.assumingMemoryBound(to: Envelopeish.self).move()
+    #expect(decoded.id == value.id && decoded.label == value.label && decoded.hint == value.hint
+        && decoded.pairs == value.pairs && decoded.choice == value.choice && decoded.meta == value.meta,
+        "composite: decode did not round-trip")
 }
