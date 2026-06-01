@@ -148,3 +148,53 @@ func typedOptionMatchesValueOracleAndRoundTrips() throws {
         #expect(decoded == holder, "option \(String(describing: holder.v)): decode did not round-trip")
     }
 }
+
+// A struct with a Dynamic (self-describing Value) field — the metadata shape.
+private struct DynHolder {
+    var meta: Value
+}
+
+@Test
+func typedDynamicMatchesValueOracleAndRoundTrips() throws {
+    let dyn = Schema(id: SchemaId(2), kind: .dynamic)
+    let holder = Schema(
+        id: SchemaId(1),
+        kind: .structure(name: "DynHolder", fields: [
+            Field(name: "meta", schema: .concrete(SchemaId(2)), required: true),
+        ])
+    )
+    let reg = Registry([dyn, holder])
+
+    let dynDesc = Descriptor(
+        schema: .concrete(SchemaId(2)),
+        layout: Layout(size: MemoryLayout<Value>.size, align: MemoryLayout<Value>.alignment),
+        access: .dynamic
+    )
+    let holderDesc = Descriptor(
+        schema: .concrete(SchemaId(1)),
+        layout: Layout(size: MemoryLayout<DynHolder>.size, align: MemoryLayout<DynHolder>.alignment),
+        access: .record(RecordAccess(
+            fields: [FieldAccess(offset: MemoryLayout<DynHolder>.offset(of: \DynHolder.meta)!, descriptor: dynDesc)],
+            construct: .inPlace
+        ))
+    )
+    let program = try lowerTyped(holderDesc, reg)
+
+    let meta: Value = .object([
+        .init(key: "k", value: .number(.canonical(unsigned: 1))),
+        .init(key: "flag", value: .bool(true)),
+    ])
+    let holderVal = DynHolder(meta: meta)
+
+    let typedBytes = withUnsafeBytes(of: holderVal) { encodeWith(program, $0.baseAddress!) }
+    let oracleBytes = try encode(.object([.init(key: "meta", value: meta)]), SchemaId(1), reg)
+    #expect(typedBytes == oracleBytes, "dynamic: typed bytes diverge from oracle")
+
+    // Decode into uninitialized storage (the field is a non-trivial Value).
+    let raw = UnsafeMutableRawPointer.allocate(
+        byteCount: MemoryLayout<DynHolder>.size, alignment: MemoryLayout<DynHolder>.alignment)
+    defer { raw.deallocate() }
+    try decodeInto(program, typedBytes, raw)
+    let decoded = raw.assumingMemoryBound(to: DynHolder.self).move()
+    #expect(decoded.meta == meta, "dynamic: decode did not round-trip")
+}

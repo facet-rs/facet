@@ -81,6 +81,8 @@ private func lowerTypedNode(_ d: Descriptor, _ reg: Registry, _ base: Int, _ out
             innerAlign: oa.some.layout.align,
             witness: oa.witness
         )))
+    case (.dynamic, .composite(.dynamic)):
+        out.append(.dynamic(offset: base))
     default:
         throw CompactError.unsupported("typed: unhandled descriptor/schema combination")
     }
@@ -113,6 +115,9 @@ private func encodeTypedProgram(_ program: MemProgram, _ base: UnsafeRawPointer,
             } else {
                 out.writeU8(0)
             }
+        case .dynamic(let offset):
+            let v = base.advanced(by: offset).assumingMemoryBound(to: Value.self).pointee
+            writeValue(&out, v)
         }
     }
 }
@@ -155,6 +160,9 @@ private func decodeTypedProgram(_ program: MemProgram, _ r: inout Reader, _ base
             case let b:
                 throw CompactError.decode(.invalidBool(b))
             }
+        case .dynamic(let offset):
+            let v = try readValue(&r)
+            base.advanced(by: offset).assumingMemoryBound(to: Value.self).initialize(to: v)
         }
     }
 }

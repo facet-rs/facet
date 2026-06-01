@@ -57,6 +57,10 @@ public indirect enum Access {
     /// An optional value: presence/construction via witnesses, plus the
     /// some-payload descriptor.
     case option(OptionAccess)
+    /// A `Dynamic` value: no layout to describe. The in-memory field IS a
+    /// `PhonSchema.Value`; the engine reads/writes it through the self-describing
+    /// codec at the field offset.
+    case dynamic
 }
 
 /// An optional value: how presence is read/written (witnesses), and the

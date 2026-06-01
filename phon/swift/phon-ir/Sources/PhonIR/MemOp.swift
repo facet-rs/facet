@@ -24,6 +24,10 @@ public indirect enum MemOp {
     /// the inner `T` by its own program. Presence and construction go through the
     /// witnesses; the engine never assumes the niche/tag layout.
     case option(OptionOp)
+    /// A self-describing `Value` at `offset` (the in-memory field is a concrete
+    /// `PhonSchema.Value`): encoded/decoded by the self-describing codec,
+    /// self-delimiting on the wire (no length prefix).
+    case dynamic(offset: Int)
 }
 
 /// An optional op's payload (in `MemOp.option`). `innerSize`/`innerAlign` size
