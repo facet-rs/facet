@@ -83,6 +83,16 @@ private func lowerTypedNode(_ d: Descriptor, _ reg: Registry, _ base: Int, _ out
         )))
     case (.dynamic, .composite(.dynamic)):
         out.append(.dynamic(offset: base))
+    case (.bytes(let ba), let resolved):
+        switch resolved {
+        case .primitive(.string), .primitive(.bytes),
+             .composite(.list), .composite(.set):
+            break
+        default:
+            throw CompactError.unsupported("typed: bulk-bytes descriptor over a non-bulk schema")
+        }
+        out.append(.bytes(BytesOp(
+            offset: base, stride: ba.stride, elemAlign: ba.elemAlign, witness: ba.witness)))
     default:
         throw CompactError.unsupported("typed: unhandled descriptor/schema combination")
     }
@@ -118,6 +128,18 @@ private func encodeTypedProgram(_ program: MemProgram, _ base: UnsafeRawPointer,
         case .dynamic(let offset):
             let v = base.advanced(by: offset).assumingMemoryBound(to: Value.self).pointee
             writeValue(&out, v)
+        case .bytes(let b):
+            let field = base.advanced(by: b.offset)
+            let n = b.witness.count(field)
+            out.writeU32(UInt32(n))
+            guard n > 0 else { continue }
+            // Alignment pads BEFORE the run; an empty run writes no padding.
+            out.padTo(b.elemAlign)
+            let byteCount = n * b.stride
+            let scratch = UnsafeMutableRawPointer.allocate(byteCount: byteCount, alignment: max(b.elemAlign, 1))
+            defer { scratch.deallocate() }
+            b.witness.copyInto(field, scratch)
+            out.put(UnsafeRawBufferPointer(start: scratch, count: byteCount))
         }
     }
 }
@@ -163,6 +185,23 @@ private func decodeTypedProgram(_ program: MemProgram, _ r: inout Reader, _ base
         case .dynamic(let offset):
             let v = try readValue(&r)
             base.advanced(by: offset).assumingMemoryBound(to: Value.self).initialize(to: v)
+        case .bytes(let b):
+            let field = base.advanced(by: b.offset)
+            let n = try r.readLen(minElemSize: max(b.stride, 1))
+            if n > 0 {
+                try r.skipPad(b.elemAlign)
+                let slice = try r.readSlice(n * b.stride)
+                let ok = slice.withUnsafeBytes { buf in
+                    b.witness.construct(field, buf.baseAddress!, n)
+                }
+                guard ok else { throw CompactError.decode(.invalidUtf8) }
+            } else {
+                var dummy: UInt8 = 0
+                let ok = withUnsafePointer(to: &dummy) {
+                    b.witness.construct(field, UnsafeRawPointer($0), 0)
+                }
+                guard ok else { throw CompactError.decode(.invalidUtf8) }
+            }
         }
     }
 }

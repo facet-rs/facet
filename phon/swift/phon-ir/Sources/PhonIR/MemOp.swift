@@ -28,6 +28,25 @@ public indirect enum MemOp {
     /// `PhonSchema.Value`): encoded/decoded by the self-describing codec,
     /// self-delimiting on the wire (no length prefix).
     case dynamic(offset: Int)
+    /// A bulk byte/scalar run at `offset`: a `u32` element count, padding to
+    /// `elemAlign` when non-empty, then `count * stride` contiguous bytes — one
+    /// block copy in each direction.
+    case bytes(BytesOp)
+}
+
+/// A bulk byte-run op's payload (in `MemOp.bytes`).
+public struct BytesOp {
+    public var offset: Int
+    public var stride: Int
+    public var elemAlign: Int
+    public var witness: BytesWitness
+
+    public init(offset: Int, stride: Int, elemAlign: Int, witness: BytesWitness) {
+        self.offset = offset
+        self.stride = stride
+        self.elemAlign = elemAlign
+        self.witness = witness
+    }
 }
 
 /// An optional op's payload (in `MemOp.option`). `innerSize`/`innerAlign` size

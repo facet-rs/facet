@@ -198,3 +198,66 @@ func typedDynamicMatchesValueOracleAndRoundTrips() throws {
     let decoded = raw.assumingMemoryBound(to: DynHolder.self).move()
     #expect(decoded.meta == meta, "dynamic: decode did not round-trip")
 }
+
+// A struct with a String field — the bulk byte-run path that echo needs.
+private struct StrHolder {
+    var s: String
+}
+
+private func stringWitness() -> BytesWitness {
+    BytesWitness(
+        count: { field in field.assumingMemoryBound(to: String.self).pointee.utf8.count },
+        copyInto: { field, dst in
+            var s = field.assumingMemoryBound(to: String.self).pointee
+            s.withUTF8 { buf in
+                if buf.count > 0 { dst.copyMemory(from: buf.baseAddress!, byteCount: buf.count) }
+            }
+        },
+        construct: { field, src, count in
+            let buf = UnsafeBufferPointer(start: src.assumingMemoryBound(to: UInt8.self), count: count)
+            guard let s = String(validating: buf, as: UTF8.self) else { return false }
+            field.assumingMemoryBound(to: String.self).initialize(to: s)
+            return true
+        }
+    )
+}
+
+@Test
+func typedStringMatchesValueOracleAndRoundTrips() throws {
+    let holderSchema = Schema(
+        id: SchemaId(1),
+        kind: .structure(name: "StrHolder", fields: [
+            Field(name: "s", schema: .concrete(primitiveId(.string)), required: true),
+        ])
+    )
+    let reg = Registry([holderSchema])
+
+    let strDesc = Descriptor(
+        schema: .concrete(primitiveId(.string)),
+        layout: Layout(size: MemoryLayout<String>.size, align: MemoryLayout<String>.alignment),
+        access: .bytes(BytesAccess(stride: 1, elemAlign: 1, witness: stringWitness()))
+    )
+    let holderDesc = Descriptor(
+        schema: .concrete(SchemaId(1)),
+        layout: Layout(size: MemoryLayout<StrHolder>.size, align: MemoryLayout<StrHolder>.alignment),
+        access: .record(RecordAccess(
+            fields: [FieldAccess(offset: MemoryLayout<StrHolder>.offset(of: \StrHolder.s)!, descriptor: strDesc)],
+            construct: .inPlace
+        ))
+    )
+    let program = try lowerTyped(holderDesc, reg)
+
+    for text in ["héllo λ", "", "plain ascii"] {
+        let holder = StrHolder(s: text)
+        let typedBytes = withUnsafeBytes(of: holder) { encodeWith(program, $0.baseAddress!) }
+        let oracleBytes = try encode(.object([.init(key: "s", value: .string(text))]), SchemaId(1), reg)
+        #expect(typedBytes == oracleBytes, "string \(text.debugDescription): typed bytes diverge from oracle")
+
+        let raw = UnsafeMutableRawPointer.allocate(
+            byteCount: MemoryLayout<StrHolder>.size, alignment: MemoryLayout<StrHolder>.alignment)
+        defer { raw.deallocate() }
+        try decodeInto(program, typedBytes, raw)
+        let decoded = raw.assumingMemoryBound(to: StrHolder.self).move()
+        #expect(decoded.s == text, "string \(text.debugDescription): decode did not round-trip")
+    }
+}

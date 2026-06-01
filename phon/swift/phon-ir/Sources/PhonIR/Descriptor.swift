@@ -61,6 +61,53 @@ public indirect enum Access {
     /// `PhonSchema.Value`; the engine reads/writes it through the self-describing
     /// codec at the field offset.
     case dynamic
+    /// A bulk contiguous run of `stride`-byte elements: `String`, `[UInt8]`, or a
+    /// `[scalar]` whose element copies as one block (`u32` count then
+    /// `count * stride` contiguous bytes). The wire form is identical to a
+    /// `list`/`set` of that scalar; the witnesses own the concrete handle.
+    case bytes(BytesAccess)
+}
+
+/// A bulk byte/scalar run: its element stride/alignment and the witnesses that
+/// read and build the concrete handle (`String`/`[UInt8]`/`[scalar]`).
+public struct BytesAccess {
+    /// Bytes per element: 1 for `String`/`[UInt8]`, the element size otherwise.
+    public var stride: Int
+    /// Alignment of the contiguous element buffer (pads before the run on the
+    /// wire when non-empty).
+    public var elemAlign: Int
+    public var witness: BytesWitness
+
+    public init(stride: Int, elemAlign: Int, witness: BytesWitness) {
+        self.stride = stride
+        self.elemAlign = elemAlign
+        self.witness = witness
+    }
+}
+
+/// Witnesses over a contiguous bulk handle. Encode copies the run into an
+/// engine-owned scratch buffer (the inout-sink rule again); decode builds the
+/// handle from the wire bytes, rejecting invalid content (non-UTF-8 for
+/// `String`).
+public struct BytesWitness {
+    /// The element count (its UTF-8 byte length for `String`).
+    public var count: (_ field: UnsafeRawPointer) -> Int
+    /// Copy the `count * stride` contiguous element bytes into `dst`.
+    public var copyInto: (_ field: UnsafeRawPointer, _ dst: UnsafeMutableRawPointer) -> Void
+    /// Build the handle at `field` from `count` elements at `src`; return `false`
+    /// on invalid content. `src` is valid for `count * stride` bytes (a dummy when
+    /// `count == 0`).
+    public var construct: (_ field: UnsafeMutableRawPointer, _ src: UnsafeRawPointer, _ count: Int) -> Bool
+
+    public init(
+        count: @escaping (UnsafeRawPointer) -> Int,
+        copyInto: @escaping (UnsafeRawPointer, UnsafeMutableRawPointer) -> Void,
+        construct: @escaping (UnsafeMutableRawPointer, UnsafeRawPointer, Int) -> Bool
+    ) {
+        self.count = count
+        self.copyInto = copyInto
+        self.construct = construct
+    }
 }
 
 /// An optional value: how presence is read/written (witnesses), and the
