@@ -1,0 +1,124 @@
+// The typed path: lower a `Descriptor` (which carries its schema) into a flat
+// `MemProgram`, then run it to encode or decode a value living in this process's
+// memory.
+//
+// This is the memory counterpart to the dynamic `Value` path. The schema
+// (resolved through the registry) decides the wire bytes and their order; the
+// descriptor says where each field lives in memory. Because the wire is
+// schema-driven, a typed value produces byte-identical output to the dynamic
+// codec for the same logical value — that equivalence is the oracle the tests
+// check.
+//
+// Mirrors `rust/phon-engine/src/typed.rs`. First cut: fixed-width scalars and
+// in-place records (struct/tuple). A nested fixed struct dissolves into a flat
+// run of scalar copies — folded, base-relative offsets, no per-decode descriptor
+// walk. Owned sequences, options, enums, and maps come next.
+
+import PhonIR
+import PhonSchema
+
+/// The in-memory (and wire) size of a fixed-width scalar, or `nil` for the
+/// variable-length and uninhabited primitives.
+func fixedSize(_ p: Primitive) -> Int? {
+    switch p {
+    case .unit: return 0
+    case .bool, .u8, .i8: return 1
+    case .u16, .i16: return 2
+    case .u32, .i32, .f32, .char: return 4
+    case .u64, .i64, .f64: return 8
+    case .u128, .i128: return 16
+    case .string, .bytes, .never, .datetime, .uuid, .qname: return nil
+    }
+}
+
+// MARK: - Lowering
+
+/// Lower a descriptor into a flat `MemProgram`: base-relative memory copies, in
+/// wire order. Build it once, run it many times. The program is wire-ordered with
+/// memory offsets, so the same program drives both encode and decode in the
+/// no-drift case.
+public func lowerTyped(_ descriptor: Descriptor, _ reg: Registry) throws -> MemProgram {
+    var out: MemProgram = []
+    try lowerTypedNode(descriptor, reg, 0, &out)
+    return out
+}
+
+private func lowerTypedNode(_ d: Descriptor, _ reg: Registry, _ base: Int, _ out: inout MemProgram) throws {
+    let resolved = try resolve(reg, d.schema)
+    switch (d.access, resolved) {
+    case (.scalar, .primitive(let p)):
+        guard let size = fixedSize(p) else {
+            throw CompactError.unsupported("typed: variable-length scalar field")
+        }
+        out.append(.scalar(offset: base, size: size, align: alignment(p)))
+    case (.record(let ra), .composite(let kind)):
+        let arity: Int
+        switch kind {
+        case .structure(_, let fields): arity = fields.count
+        case .tuple(let elements): arity = elements.count
+        default:
+            throw CompactError.typeMismatch(expected: "struct or tuple for a record descriptor")
+        }
+        guard arity == ra.fields.count else {
+            throw CompactError.malformed("descriptor/schema field count mismatch")
+        }
+        switch ra.construct {
+        case .inPlace: break
+        case .thunk: throw CompactError.unsupported("typed: thunk construction")
+        }
+        // Splice each field in wire order, folding its memory offset into the base.
+        for fa in ra.fields {
+            try lowerTypedNode(fa.descriptor, reg, base + fa.offset, &out)
+        }
+    default:
+        throw CompactError.unsupported("typed: unhandled descriptor/schema combination")
+    }
+}
+
+// MARK: - Encode
+
+/// Encode the value at `base` (described by `program`) to compact bytes.
+public func encodeWith(_ program: MemProgram, _ base: UnsafeRawPointer) -> [UInt8] {
+    var out = ByteSink()
+    encodeTypedProgram(program, base, &out)
+    return out.bytes
+}
+
+private func encodeTypedProgram(_ program: MemProgram, _ base: UnsafeRawPointer, _ out: inout ByteSink) {
+    for op in program {
+        switch op {
+        case .scalar(let offset, let size, let align):
+            out.padTo(align)
+            guard size > 0 else { continue }
+            out.put(UnsafeRawBufferPointer(start: base.advanced(by: offset), count: size))
+        }
+    }
+}
+
+// MARK: - Decode
+
+/// Decode compact `bytes` (described by `program`) into the value-shaped storage
+/// at `base`, rejecting trailing bytes. `base` must point at uninitialized
+/// storage of the value's layout; on success every field has been written.
+public func decodeInto(_ program: MemProgram, _ bytes: [UInt8], _ base: UnsafeMutableRawPointer) throws {
+    var r = Reader(bytes)
+    try decodeTypedProgram(program, &r, base)
+    if r.remaining != 0 {
+        throw CompactError.decode(.trailingBytes(r.remaining))
+    }
+}
+
+private func decodeTypedProgram(_ program: MemProgram, _ r: inout Reader, _ base: UnsafeMutableRawPointer) throws {
+    for op in program {
+        switch op {
+        case .scalar(let offset, let size, let align):
+            try r.skipPad(align)
+            guard size > 0 else { continue }
+            let slice = try r.readSlice(size)
+            let dst = base.advanced(by: offset)
+            slice.withUnsafeBytes { buf in
+                dst.copyMemory(from: buf.baseAddress!, byteCount: size)
+            }
+        }
+    }
+}
