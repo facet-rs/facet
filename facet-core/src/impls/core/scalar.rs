@@ -27,6 +27,9 @@ macro_rules! integer_try_from {
             // Note: integers are Copy, so reading doesn't consume in a meaningful way
             macro_rules! convert {
                 ($src_ty:ty) => {{
+                    if (src_shape.id != <$src_ty>::SHAPE.id) {
+                        return TryFromOutcome::Unsupported;
+                    }
                     let src_val = unsafe { *(src.as_byte_ptr() as *const $src_ty) };
                     <$src_ty as TryInto<$target>>::try_into(src_val).map_err(|_| {
                         alloc::format!(
