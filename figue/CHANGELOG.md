@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.4](https://github.com/bearcove/figue/compare/figue-v4.0.3...figue-v4.0.4) - 2026-06-01
+
+### Other
+
+- Accept rootless single-root config files
+
 ## [4.0.3](https://github.com/bearcove/figue/compare/figue-v4.0.2...figue-v4.0.3) - 2026-05-18
 
 ### Other
