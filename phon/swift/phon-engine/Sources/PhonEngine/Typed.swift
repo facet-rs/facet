@@ -93,6 +93,31 @@ private func lowerTypedNode(_ d: Descriptor, _ reg: Registry, _ base: Int, _ out
         }
         out.append(.bytes(BytesOp(
             offset: base, stride: ba.stride, elemAlign: ba.elemAlign, witness: ba.witness)))
+    case (.enumeration(let ea), .composite(.enumeration(_, let schemaVariants))):
+        var variantOps: [EnumVariantOp] = []
+        for va in ea.variants {
+            guard schemaVariants.contains(where: { $0.index == va.wireIndex }) else {
+                throw CompactError.malformed("descriptor variant has no schema counterpart")
+            }
+            // The variant's payload fields lay out a record in the variant scratch.
+            var payload: MemProgram = []
+            for fa in va.payloadFields {
+                try lowerTypedNode(fa.descriptor, reg, fa.offset, &payload)
+            }
+            variantOps.append(EnumVariantOp(
+                wireIndex: va.wireIndex,
+                payload: payload,
+                payloadSize: va.payloadLayout.size,
+                payloadAlign: va.payloadLayout.align
+            ))
+        }
+        out.append(.enumeration(EnumOp(
+            offset: base,
+            tag: ea.tag,
+            projectPayload: ea.projectPayload,
+            inject: ea.inject,
+            variants: variantOps
+        )))
     default:
         throw CompactError.unsupported("typed: unhandled descriptor/schema combination")
     }
@@ -140,6 +165,16 @@ private func encodeTypedProgram(_ program: MemProgram, _ base: UnsafeRawPointer,
             defer { scratch.deallocate() }
             b.witness.copyInto(field, scratch)
             out.put(UnsafeRawBufferPointer(start: scratch, count: byteCount))
+        case .enumeration(let e):
+            let value = base.advanced(by: e.offset)
+            let localIndex = e.tag(value)
+            let variant = e.variants[localIndex]
+            out.writeU32(variant.wireIndex)
+            let scratch = UnsafeMutableRawPointer.allocate(
+                byteCount: max(variant.payloadSize, 1), alignment: max(variant.payloadAlign, 1))
+            defer { scratch.deallocate() }
+            e.projectPayload(value, localIndex, scratch)
+            encodeTypedProgram(variant.payload, UnsafeRawPointer(scratch), &out)
         }
     }
 }
@@ -202,6 +237,18 @@ private func decodeTypedProgram(_ program: MemProgram, _ r: inout Reader, _ base
                 }
                 guard ok else { throw CompactError.decode(.invalidUtf8) }
             }
+        case .enumeration(let e):
+            let slot = base.advanced(by: e.offset)
+            let wireIndex = try r.readU32()
+            guard let localIndex = e.variants.firstIndex(where: { $0.wireIndex == wireIndex }) else {
+                throw CompactError.badVariantIndex(wireIndex)
+            }
+            let variant = e.variants[localIndex]
+            let scratch = UnsafeMutableRawPointer.allocate(
+                byteCount: max(variant.payloadSize, 1), alignment: max(variant.payloadAlign, 1))
+            defer { scratch.deallocate() }
+            try decodeTypedProgram(variant.payload, &r, scratch)
+            e.inject(slot, localIndex, UnsafeRawPointer(scratch))
         }
     }
 }

@@ -66,6 +66,56 @@ public indirect enum Access {
     /// `count * stride` contiguous bytes). The wire form is identical to a
     /// `list`/`set` of that scalar; the witnesses own the concrete handle.
     case bytes(BytesAccess)
+    /// A sum type: a tag selecting the active variant, per-variant payloads, and
+    /// the witnesses that read the active variant and project/inject its payload.
+    case enumeration(EnumAccess)
+}
+
+/// A sum type whose in-memory layout the engine never assumes — it reads the
+/// active variant and projects/injects payloads through witnesses (Swift's
+/// generated `tag`/`project`/`inject`).
+///
+/// The `variants` array order defines the *local index*: `tag` returns the active
+/// variant's position in this array, and `projectPayload`/`inject` take that same
+/// local index. Each variant's payload is treated as a record laid out in an
+/// engine-owned scratch buffer (`payloadLayout`); `payloadFields` give the field
+/// offsets within it.
+public struct EnumAccess {
+    /// The active variant's local index (its position in `variants`).
+    public var tag: (_ value: UnsafeRawPointer) -> Int
+    /// Copy variant `localIndex`'s payload from `value` into `scratch`
+    /// (`payloadLayout`-shaped). A no-op for a unit variant.
+    public var projectPayload: (_ value: UnsafeRawPointer, _ localIndex: Int, _ scratch: UnsafeMutableRawPointer) -> Void
+    /// Construct the enum at `slot` for variant `localIndex` from the payload the
+    /// engine decoded into `scratch`.
+    public var inject: (_ slot: UnsafeMutableRawPointer, _ localIndex: Int, _ scratch: UnsafeRawPointer) -> Void
+    public var variants: [VariantAccess]
+
+    public init(
+        tag: @escaping (UnsafeRawPointer) -> Int,
+        projectPayload: @escaping (UnsafeRawPointer, Int, UnsafeMutableRawPointer) -> Void,
+        inject: @escaping (UnsafeMutableRawPointer, Int, UnsafeRawPointer) -> Void,
+        variants: [VariantAccess]
+    ) {
+        self.tag = tag
+        self.projectPayload = projectPayload
+        self.inject = inject
+        self.variants = variants
+    }
+}
+
+/// One variant: its schema wire index, its payload fields (at offsets within the
+/// variant's scratch buffer; empty for a unit variant), and the scratch layout.
+public struct VariantAccess {
+    public var wireIndex: UInt32
+    public var payloadFields: [FieldAccess]
+    public var payloadLayout: Layout
+
+    public init(wireIndex: UInt32, payloadFields: [FieldAccess], payloadLayout: Layout) {
+        self.wireIndex = wireIndex
+        self.payloadFields = payloadFields
+        self.payloadLayout = payloadLayout
+    }
 }
 
 /// A bulk byte/scalar run: its element stride/alignment and the witnesses that

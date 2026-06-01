@@ -261,3 +261,101 @@ func typedStringMatchesValueOracleAndRoundTrips() throws {
         #expect(decoded.s == text, "string \(text.debugDescription): decode did not round-trip")
     }
 }
+
+// An enum with all three payload shapes that lower here: unit, newtype, tuple.
+private enum E: Equatable {
+    case a
+    case b(UInt32)
+    case c(UInt8, UInt8)
+}
+
+private func enumDescriptor() -> Descriptor {
+    let tag: (UnsafeRawPointer) -> Int = { ptr in
+        switch ptr.assumingMemoryBound(to: E.self).pointee {
+        case .a: return 0
+        case .b: return 1
+        case .c: return 2
+        }
+    }
+    let projectPayload: (UnsafeRawPointer, Int, UnsafeMutableRawPointer) -> Void = { value, _, scratch in
+        switch value.assumingMemoryBound(to: E.self).pointee {
+        case .a:
+            break
+        case .b(let x):
+            scratch.storeBytes(of: x, as: UInt32.self)
+        case .c(let a, let b):
+            scratch.storeBytes(of: a, toByteOffset: 0, as: UInt8.self)
+            scratch.storeBytes(of: b, toByteOffset: 1, as: UInt8.self)
+        }
+    }
+    let inject: (UnsafeMutableRawPointer, Int, UnsafeRawPointer) -> Void = { slot, localIndex, scratch in
+        let e: E
+        switch localIndex {
+        case 0: e = .a
+        case 1: e = .b(scratch.load(as: UInt32.self))
+        case 2: e = .c(scratch.load(as: UInt8.self), scratch.load(fromByteOffset: 1, as: UInt8.self))
+        default: fatalError("bad variant index")
+        }
+        slot.assumingMemoryBound(to: E.self).initialize(to: e)
+    }
+    return Descriptor(
+        schema: .concrete(SchemaId(1)),
+        layout: Layout(size: MemoryLayout<E>.size, align: MemoryLayout<E>.alignment),
+        access: .enumeration(EnumAccess(
+            tag: tag,
+            projectPayload: projectPayload,
+            inject: inject,
+            variants: [
+                VariantAccess(wireIndex: 0, payloadFields: [], payloadLayout: Layout(size: 0, align: 1)),
+                VariantAccess(
+                    wireIndex: 1,
+                    payloadFields: [FieldAccess(offset: 0, descriptor: scalarDesc(.u32))],
+                    payloadLayout: Layout(size: 4, align: 4)
+                ),
+                VariantAccess(
+                    wireIndex: 2,
+                    payloadFields: [
+                        FieldAccess(offset: 0, descriptor: scalarDesc(.u8)),
+                        FieldAccess(offset: 1, descriptor: scalarDesc(.u8)),
+                    ],
+                    payloadLayout: Layout(size: 2, align: 1)
+                ),
+            ]
+        ))
+    )
+}
+
+@Test
+func typedEnumMatchesValueOracleAndRoundTrips() throws {
+    let eSchema = Schema(
+        id: SchemaId(1),
+        kind: .enumeration(name: "E", variants: [
+            Variant(name: "A", index: 0, payload: .unit),
+            Variant(name: "B", index: 1, payload: .newtype(.concrete(primitiveId(.u32)))),
+            Variant(name: "C", index: 2, payload: .tuple([.concrete(primitiveId(.u8)), .concrete(primitiveId(.u8))])),
+        ])
+    )
+    let reg = Registry([eSchema])
+    let program = try lowerTyped(enumDescriptor(), reg)
+
+    let cases: [(E, Value)] = [
+        (.a, .object([.init(key: "A", value: .null)])),
+        (.b(42), .object([.init(key: "B", value: .number(.canonical(unsigned: 42)))])),
+        (.c(1, 2), .object([.init(key: "C", value: .array([
+            .number(.canonical(unsigned: 1)), .number(.canonical(unsigned: 2)),
+        ]))])),
+    ]
+
+    for (value, oracle) in cases {
+        let typedBytes = withUnsafeBytes(of: value) { encodeWith(program, $0.baseAddress!) }
+        let oracleBytes = try encode(oracle, SchemaId(1), reg)
+        #expect(typedBytes == oracleBytes, "enum \(value): typed bytes diverge from oracle")
+
+        let raw = UnsafeMutableRawPointer.allocate(
+            byteCount: max(MemoryLayout<E>.size, 1), alignment: MemoryLayout<E>.alignment)
+        defer { raw.deallocate() }
+        try decodeInto(program, typedBytes, raw)
+        let decoded = raw.assumingMemoryBound(to: E.self).move()
+        #expect(decoded == value, "enum \(value): decode did not round-trip")
+    }
+}

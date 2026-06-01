@@ -32,6 +32,50 @@ public indirect enum MemOp {
     /// `elemAlign` when non-empty, then `count * stride` contiguous bytes — one
     /// block copy in each direction.
     case bytes(BytesOp)
+    /// A sum type at `offset`: a `u32` wire variant index then the active
+    /// variant's payload. Encode reads the active variant via `tag`, projects its
+    /// payload into scratch, and encodes it; decode reads the index, decodes the
+    /// payload into scratch, and injects the variant.
+    case enumeration(EnumOp)
+}
+
+/// A sum-type op's payload (in `MemOp.enumeration`).
+public struct EnumOp {
+    public var offset: Int
+    public var tag: (_ value: UnsafeRawPointer) -> Int
+    public var projectPayload: (_ value: UnsafeRawPointer, _ localIndex: Int, _ scratch: UnsafeMutableRawPointer) -> Void
+    public var inject: (_ slot: UnsafeMutableRawPointer, _ localIndex: Int, _ scratch: UnsafeRawPointer) -> Void
+    public var variants: [EnumVariantOp]
+
+    public init(
+        offset: Int,
+        tag: @escaping (UnsafeRawPointer) -> Int,
+        projectPayload: @escaping (UnsafeRawPointer, Int, UnsafeMutableRawPointer) -> Void,
+        inject: @escaping (UnsafeMutableRawPointer, Int, UnsafeRawPointer) -> Void,
+        variants: [EnumVariantOp]
+    ) {
+        self.offset = offset
+        self.tag = tag
+        self.projectPayload = projectPayload
+        self.inject = inject
+        self.variants = variants
+    }
+}
+
+/// One enum variant in a `MemOp.enumeration`: its wire index, the payload program
+/// (offsets into the variant scratch), and the scratch layout.
+public struct EnumVariantOp {
+    public var wireIndex: UInt32
+    public var payload: MemProgram
+    public var payloadSize: Int
+    public var payloadAlign: Int
+
+    public init(wireIndex: UInt32, payload: MemProgram, payloadSize: Int, payloadAlign: Int) {
+        self.wireIndex = wireIndex
+        self.payload = payload
+        self.payloadSize = payloadSize
+        self.payloadAlign = payloadAlign
+    }
 }
 
 /// A bulk byte-run op's payload (in `MemOp.bytes`).
