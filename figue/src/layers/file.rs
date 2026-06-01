@@ -444,6 +444,17 @@ impl<'a> FileParseContext<'a> {
             };
         };
 
+        if schema.configs().len() == 1 {
+            let config_schema = &schema.configs()[0];
+            if let Some(field_name) = config_schema.field_name()
+                && !parsed_obj.value.contains_key(field_name)
+            {
+                let mut targeted_values = IndexMap::default();
+                targeted_values.insert(field_name.to_string(), parsed.clone());
+                return Self::targeted_config_output(schema, &targeted_values, diagnostics);
+            }
+        }
+
         for (key, value) in &parsed_obj.value {
             let known_root = schema
                 .configs()
@@ -660,6 +671,27 @@ mod tests {
     #[test]
     fn test_parse_simple_json() {
         let file = create_temp_json(r#"{"config": {"port": 8080, "host": "localhost"}}"#);
+        let path = Utf8PathBuf::from_path_buf(file.path().to_path_buf()).unwrap();
+
+        let schema = Schema::from_shape(ArgsWithConfig::SHAPE).unwrap();
+        let config = FileConfig::new().path(path);
+
+        let result = parse_file(&schema, &config);
+
+        assert!(result.output.diagnostics.is_empty());
+        assert!(result.output.unused_keys.is_empty());
+
+        let value = result.output.value.expect("should have value");
+        let port = get_nested(&value, &["config", "port"]).expect("config.port");
+        assert_eq!(get_integer(port), Some(8080));
+
+        let host = get_nested(&value, &["config", "host"]).expect("config.host");
+        assert_eq!(get_string(host), Some("localhost"));
+    }
+
+    #[test]
+    fn test_parse_single_config_root_without_wrapper() {
+        let file = create_temp_json(r#"{"port": 8080, "host": "localhost"}"#);
         let path = Utf8PathBuf::from_path_buf(file.path().to_path_buf()).unwrap();
 
         let schema = Schema::from_shape(ArgsWithConfig::SHAPE).unwrap();
