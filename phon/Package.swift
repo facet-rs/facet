@@ -20,8 +20,16 @@ let package = Package(
         .library(name: "PhonJIT", targets: ["PhonJIT"]),
     ],
     targets: [
+        // Vendored portable C BLAKE3 — content-hash schema identity. Portable
+        // path only (the x86 SIMD sources are not vendored; arm64 excludes them).
+        .target(
+            name: "CBlake3",
+            path: "swift/cblake3/Sources/CBlake3",
+            cSettings: [.define("BLAKE3_USE_NEON", to: "0")]
+        ),
         .target(
             name: "PhonSchema",
+            dependencies: ["CBlake3"],
             path: "swift/phon-schema/Sources/PhonSchema"
         ),
         .target(
@@ -48,6 +56,11 @@ let package = Package(
             name: "PhonTests",
             dependencies: ["Phon", "PhonSchema"],
             path: "swift/phon/Tests/PhonTests"
+        ),
+        .testTarget(
+            name: "PhonSchemaTests",
+            dependencies: ["PhonSchema"],
+            path: "swift/phon-schema/Tests/PhonSchemaTests"
         ),
     ]
 )
