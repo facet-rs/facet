@@ -71,3 +71,27 @@ func schemaCorpusRoundTripsAndIsSelfConsistent() throws {
     }
     #expect(checked > 0, "corpus produced no checks")
 }
+
+@Test
+func valueCorpusRoundTrips() throws {
+    let valuesDir = conformanceDir().appendingPathComponent("values")
+    let files = try FileManager.default
+        .contentsOfDirectory(at: valuesDir, includingPropertiesForKeys: nil)
+        .filter { $0.pathExtension == "phon" }
+        .sorted { $0.lastPathComponent < $1.lastPathComponent }
+
+    #expect(!files.isEmpty, "conformance/values is empty")
+
+    for file in files {
+        let name = file.deletingPathExtension().lastPathComponent
+        let committed = [UInt8](try Data(contentsOf: file))
+
+        // round-trip: committed bytes decode to a value and re-encode equal
+        // (values carry no schema and no id, so this is the whole oracle).
+        let decoded = try valueFromBytes(committed)
+        #expect(
+            valueToBytes(decoded) == committed,
+            "\(name): re-encode differs from committed bytes"
+        )
+    }
+}

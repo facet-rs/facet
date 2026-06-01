@@ -11,11 +11,14 @@ public let zstCountCap = 1 << 24
 
 public enum DecodeError: Error, Equatable, Sendable {
     case unexpectedEof(needed: Int, remaining: Int)
+    case unknownTag(UInt8)
     case invalidBool(UInt8)
     case invalidUtf8
     case invalidChar(UInt32)
     case lengthTooLarge(count: UInt64, remaining: Int)
     case depthExceeded
+    case duplicateKey
+    case duplicateElement
     case unexpectedTag(expected: String, got: UInt8)
     case unknownVariant(String)
     case malformed(String)
@@ -56,6 +59,13 @@ public struct Reader {
     public mutating func readU16() throws -> UInt16 { try readLE() }
     public mutating func readU32() throws -> UInt32 { try readLE() }
     public mutating func readU64() throws -> UInt64 { try readLE() }
+    public mutating func readU128() throws -> UInt128 { try readLE() }
+
+    public mutating func readI8() throws -> Int8 { Int8(bitPattern: try readU8()) }
+    public mutating func readI16() throws -> Int16 { Int16(bitPattern: try readU16()) }
+    public mutating func readI32() throws -> Int32 { Int32(bitPattern: try readU32()) }
+    public mutating func readI64() throws -> Int64 { Int64(bitPattern: try readU64()) }
+    public mutating func readI128() throws -> Int128 { Int128(bitPattern: try readU128()) }
 
     public mutating func readF32() throws -> Float { Float(bitPattern: try readLE()) }
     public mutating func readF64() throws -> Double { Double(bitPattern: try readLE()) }
@@ -66,6 +76,16 @@ public struct Reader {
         case 1: return true
         case let b: throw DecodeError.invalidBool(b)
         }
+    }
+
+    /// A `char`: 4 LE bytes validated as a Unicode scalar value (rejects
+    /// surrogates and out-of-range code points).
+    public mutating func readChar() throws -> Unicode.Scalar {
+        let n = try readU32()
+        guard let s = Unicode.Scalar(n) else {
+            throw DecodeError.invalidChar(n)
+        }
+        return s
     }
 
     /// A length-prefixed UTF-8 string (owned). Strict validation — rejects

@@ -266,12 +266,7 @@ private func encFieldList<S: Sink>(_ out: inout S, _ fields: [Field]) {
 }
 
 // MARK: - Decoding — helpers
-
-private func checkDepth(_ depth: Int) throws {
-    if depth > maxDepth {
-        throw DecodeError.depthExceeded
-    }
-}
+// (`checkDepth` is shared with the value codec; see Tags.swift.)
 
 private func expect(_ r: inout Reader, _ t: UInt8, _ what: String) throws {
     let got = try r.readU8()

@@ -35,13 +35,8 @@ public extension Sink {
     mutating func writeF32(_ v: Float) { putScalar(v.bitPattern.littleEndian) }
     mutating func writeF64(_ v: Double) { putScalar(v.bitPattern.littleEndian) }
 
-    // 128-bit values are written as two little-endian `u64` halves (low then
-    // high) — identical bytes to a single LE `u128`, but available before
-    // macOS 15's `UInt128`. Used by the value codec, not by identity.
-    mutating func writeU128(low: UInt64, high: UInt64) {
-        putScalar(low.littleEndian)
-        putScalar(high.littleEndian)
-    }
+    mutating func writeU128(_ v: UInt128) { putScalar(v.littleEndian) }
+    mutating func writeI128(_ v: Int128) { putScalar(v.littleEndian) }
 
     mutating func writeBool(_ v: Bool) { putScalar(UInt8(v ? 1 : 0)) }
 
