@@ -20,4 +20,26 @@ public indirect enum MemOp {
     /// writes memory. Sound only where host byte order equals the wire's
     /// (little-endian), which every phon target is.
     case scalar(offset: Int, size: Int, align: Int)
+    /// An `Option<T>` at `offset`: a `u8` presence byte then, only when present,
+    /// the inner `T` by its own program. Presence and construction go through the
+    /// witnesses; the engine never assumes the niche/tag layout.
+    case option(OptionOp)
+}
+
+/// An optional op's payload (in `MemOp.option`). `innerSize`/`innerAlign` size
+/// the scratch buffer the engine projects into (encode) / decodes into (decode).
+public struct OptionOp {
+    public var offset: Int
+    public var some: MemProgram
+    public var innerSize: Int
+    public var innerAlign: Int
+    public var witness: OptionWitness
+
+    public init(offset: Int, some: MemProgram, innerSize: Int, innerAlign: Int, witness: OptionWitness) {
+        self.offset = offset
+        self.some = some
+        self.innerSize = innerSize
+        self.innerAlign = innerAlign
+        self.witness = witness
+    }
 }

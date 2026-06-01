@@ -70,6 +70,17 @@ private func lowerTypedNode(_ d: Descriptor, _ reg: Registry, _ base: Int, _ out
         for fa in ra.fields {
             try lowerTypedNode(fa.descriptor, reg, base + fa.offset, &out)
         }
+    case (.option(let oa), .composite(.option)):
+        // The inner runs at its own value (base 0).
+        var some: MemProgram = []
+        try lowerTypedNode(oa.some, reg, 0, &some)
+        out.append(.option(OptionOp(
+            offset: base,
+            some: some,
+            innerSize: oa.some.layout.size,
+            innerAlign: oa.some.layout.align,
+            witness: oa.witness
+        )))
     default:
         throw CompactError.unsupported("typed: unhandled descriptor/schema combination")
     }
@@ -91,6 +102,17 @@ private func encodeTypedProgram(_ program: MemProgram, _ base: UnsafeRawPointer,
             out.padTo(align)
             guard size > 0 else { continue }
             out.put(UnsafeRawBufferPointer(start: base.advanced(by: offset), count: size))
+        case .option(let o):
+            let option = base.advanced(by: o.offset)
+            let scratch = UnsafeMutableRawPointer.allocate(
+                byteCount: max(o.innerSize, 1), alignment: o.innerAlign)
+            defer { scratch.deallocate() }
+            if o.witness.projectSome(option, scratch) {
+                out.writeU8(1)
+                encodeTypedProgram(o.some, UnsafeRawPointer(scratch), &out)
+            } else {
+                out.writeU8(0)
+            }
         }
     }
 }
@@ -118,6 +140,20 @@ private func decodeTypedProgram(_ program: MemProgram, _ r: inout Reader, _ base
             let dst = base.advanced(by: offset)
             slice.withUnsafeBytes { buf in
                 dst.copyMemory(from: buf.baseAddress!, byteCount: size)
+            }
+        case .option(let o):
+            let option = base.advanced(by: o.offset)
+            switch try r.readU8() {
+            case 0:
+                o.witness.initNone(option)
+            case 1:
+                let scratch = UnsafeMutableRawPointer.allocate(
+                    byteCount: max(o.innerSize, 1), alignment: o.innerAlign)
+                defer { scratch.deallocate() }
+                try decodeTypedProgram(o.some, &r, scratch)
+                o.witness.initSome(option, UnsafeRawPointer(scratch))
+            case let b:
+                throw CompactError.decode(.invalidBool(b))
             }
         }
     }

@@ -54,6 +54,51 @@ public indirect enum Access {
     case scalar
     /// A struct or tuple: fields at fixed offsets.
     case record(RecordAccess)
+    /// An optional value: presence/construction via witnesses, plus the
+    /// some-payload descriptor.
+    case option(OptionAccess)
+}
+
+/// An optional value: how presence is read/written (witnesses), and the
+/// some-payload descriptor.
+public struct OptionAccess {
+    public var witness: OptionWitness
+    public var some: Descriptor
+
+    public init(witness: OptionWitness, some: Descriptor) {
+        self.witness = witness
+        self.some = some
+    }
+}
+
+/// Witnesses over an `Optional<T>` whose niche/tag layout the engine never
+/// assumes.
+///
+/// Encode projects the inner value (when present) into an engine-owned scratch
+/// buffer the engine then reads — a borrow-read, so a non-trivial inner (a
+/// `String`, a `Vec`) is bitwise-copied without ownership transfer. (A closure
+/// can't capture the `inout` byte sink, so the engine can't be called back
+/// mid-projection; the scratch hop sidesteps that.) Decode builds none/some in
+/// place.
+public struct OptionWitness {
+    /// Copy the inner value into `scratch` (the inner's layout) if present;
+    /// return whether it was present.
+    public var projectSome: (_ option: UnsafeRawPointer, _ scratch: UnsafeMutableRawPointer) -> Bool
+    /// Initialize the uninitialized option at `option` to `Some`, taking the inner
+    /// value the engine decoded into `value`.
+    public var initSome: (_ option: UnsafeMutableRawPointer, _ value: UnsafeRawPointer) -> Void
+    /// Initialize the uninitialized option at `option` to `None`.
+    public var initNone: (_ option: UnsafeMutableRawPointer) -> Void
+
+    public init(
+        projectSome: @escaping (UnsafeRawPointer, UnsafeMutableRawPointer) -> Bool,
+        initSome: @escaping (UnsafeMutableRawPointer, UnsafeRawPointer) -> Void,
+        initNone: @escaping (UnsafeMutableRawPointer) -> Void
+    ) {
+        self.projectSome = projectSome
+        self.initSome = initSome
+        self.initNone = initNone
+    }
 }
 
 /// A struct or tuple: its fields at offsets, with how to construct it.

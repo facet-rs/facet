@@ -82,3 +82,69 @@ func typedRecordMatchesValueOracleAndRoundTrips() throws {
     try withUnsafeMutableBytes(of: &decoded) { try decodeInto(program, typedBytes, $0.baseAddress!) }
     #expect(decoded == value, "typed decode did not round-trip")
 }
+
+// A struct with an optional scalar field — validates the witness-through-engine
+// mechanism (project into scratch on encode, init in place on decode).
+private struct OptHolder: Equatable {
+    var v: UInt32?
+}
+
+private func uint32OptionWitness() -> OptionWitness {
+    OptionWitness(
+        projectSome: { option, scratch in
+            guard let v = option.load(as: UInt32?.self) else { return false }
+            scratch.storeBytes(of: v, as: UInt32.self)
+            return true
+        },
+        initSome: { option, value in
+            option.storeBytes(of: UInt32?(value.load(as: UInt32.self)), as: UInt32?.self)
+        },
+        initNone: { option in
+            option.storeBytes(of: UInt32?.none, as: UInt32?.self)
+        }
+    )
+}
+
+private func optHolderSetup() -> (root: SchemaId, reg: Registry, desc: Descriptor) {
+    let optU32 = Schema(id: SchemaId(2), kind: .option(element: .concrete(primitiveId(.u32))))
+    let holder = Schema(
+        id: SchemaId(1),
+        kind: .structure(name: "OptHolder", fields: [
+            Field(name: "v", schema: .concrete(SchemaId(2)), required: true),
+        ])
+    )
+    let reg = Registry([optU32, holder])
+
+    let optDesc = Descriptor(
+        schema: .concrete(SchemaId(2)),
+        layout: Layout(size: MemoryLayout<UInt32?>.size, align: MemoryLayout<UInt32?>.alignment),
+        access: .option(OptionAccess(witness: uint32OptionWitness(), some: scalarDesc(.u32)))
+    )
+    let holderDesc = Descriptor(
+        schema: .concrete(SchemaId(1)),
+        layout: Layout(size: MemoryLayout<OptHolder>.size, align: MemoryLayout<OptHolder>.alignment),
+        access: .record(RecordAccess(
+            fields: [FieldAccess(offset: MemoryLayout<OptHolder>.offset(of: \OptHolder.v)!, descriptor: optDesc)],
+            construct: .inPlace
+        ))
+    )
+    return (SchemaId(1), reg, holderDesc)
+}
+
+@Test
+func typedOptionMatchesValueOracleAndRoundTrips() throws {
+    let (root, reg, desc) = optHolderSetup()
+    let program = try lowerTyped(desc, reg)
+
+    for holder in [OptHolder(v: 42), OptHolder(v: nil)] {
+        let typedBytes = withUnsafeBytes(of: holder) { encodeWith(program, $0.baseAddress!) }
+
+        let oracleField: Value = holder.v.map { .number(.canonical(unsigned: UInt128($0))) } ?? .null
+        let oracleBytes = try encode(.object([.init(key: "v", value: oracleField)]), root, reg)
+        #expect(typedBytes == oracleBytes, "option \(String(describing: holder.v)): typed bytes diverge from oracle")
+
+        var decoded = OptHolder(v: 0)
+        try withUnsafeMutableBytes(of: &decoded) { try decodeInto(program, typedBytes, $0.baseAddress!) }
+        #expect(decoded == holder, "option \(String(describing: holder.v)): decode did not round-trip")
+    }
+}
