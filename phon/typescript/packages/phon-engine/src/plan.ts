@@ -172,13 +172,25 @@ function planStruct(wFields: Field[], rFields: Field[], reg: Registry, depth: nu
   const defaults: string[] = [];
   for (const rf of rFields) {
     if (!matched.has(rf.name)) {
-      if (rf.required) {
+      // An `Option<T>` reader field can always default to `None` when the writer
+      // omits it (`r[compat.reader-only-fields]`), independent of the `required`
+      // bit — a writer that added an optional field stays compatible.
+      if (rf.required && !isOptionalRef(rf.schema, reg)) {
         throw new IncompatibleError(`required reader field '${rf.name}' is absent from the writer`);
       }
       defaults.push(rf.name);
     }
   }
   return { steps, defaults };
+}
+
+/** Whether a reader field's schema resolves to an `Option` (defaultable to None). */
+function isOptionalRef(ref: SchemaRef, reg: Registry): boolean {
+  try {
+    return reg.resolve(ref).kind === "option";
+  } catch {
+    return false;
+  }
 }
 
 function planEnum(wVariants: Variant[], rVariants: Variant[], reg: Registry, depth: number): Node {
