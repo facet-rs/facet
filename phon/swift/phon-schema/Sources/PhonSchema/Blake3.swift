@@ -10,11 +10,9 @@ public struct Blake3: Sink {
 
     public init() { blake3_hasher_init(&hasher) }
 
-    public mutating func put(_ bytes: ArraySlice<UInt8>) {
-        guard !bytes.isEmpty else { return }
-        bytes.withUnsafeBufferPointer { buf in
-            blake3_hasher_update(&hasher, buf.baseAddress, buf.count)
-        }
+    public mutating func put(_ bytes: UnsafeRawBufferPointer) {
+        guard let base = bytes.baseAddress, bytes.count > 0 else { return }
+        blake3_hasher_update(&hasher, base, bytes.count)
     }
 
     /// The full 32-byte digest. `finalize` is non-destructive (it reads a const
