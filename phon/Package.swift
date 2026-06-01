@@ -10,7 +10,9 @@ import PackageDescription
 let package = Package(
     name: "phon",
     platforms: [
-        .macOS(.v13)
+        // macOS 15: native `UInt128`/`Int128` (the 128-bit value widths) and
+        // `String(validating:as:)` (strict UTF-8 decode).
+        .macOS(.v15)
     ],
     products: [
         .library(name: "Phon", targets: ["Phon"]),
