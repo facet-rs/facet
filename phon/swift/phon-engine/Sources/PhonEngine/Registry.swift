@@ -79,6 +79,30 @@ public struct Registry {
 
     func primitive(_ id: SchemaId) -> Primitive? { primitives[id] }
     func composite(_ id: SchemaId) -> Schema? { composites[id] }
+
+    /// A new registry with additional composite schemas merged in — used when a
+    /// peer advertises its (writer) schema closure on top of the local one.
+    public func with(_ extra: [Schema]) -> Registry {
+        Registry(Array(composites.values) + extra)
+    }
+}
+
+/// Parse a vox schema-closure blob into its root id and composite schemas:
+/// `[u64 root LE][u32 count LE]` then `count` schemas each as
+/// `[u32 len LE][self-describing schema bytes]`. The framing shared with Rust
+/// (`vox_phon::parse_schema_bytes`) and TypeScript (`parseSchemaClosure`).
+public func parseSchemaClosure(_ bytes: [UInt8]) throws -> (root: SchemaId, schemas: [Schema]) {
+    var r = Reader(bytes)
+    let root = SchemaId(try r.readU64())
+    let count = try r.readU32()
+    var schemas: [Schema] = []
+    schemas.reserveCapacity(Int(count))
+    for _ in 0..<count {
+        let len = Int(try r.readU32())
+        let slice = try r.readSlice(len)
+        schemas.append(try schemaFromBytes(Array(slice)))
+    }
+    return (root, schemas)
 }
 
 /// A reference resolved to either a primitive or a fully type-substituted kind.
