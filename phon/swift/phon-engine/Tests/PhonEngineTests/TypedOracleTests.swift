@@ -389,10 +389,72 @@ private func pairSeqWitness() -> SeqWitness {
             }
         },
         construct: { handle, src, count in
-            let buf = UnsafeBufferPointer(start: src.assumingMemoryBound(to: Pair.self), count: count)
-            handle.assumingMemoryBound(to: [Pair].self).initialize(to: Array(buf))
+            handle.assumingMemoryBound(to: [Pair].self).initialize(to: Array(unsafeUninitializedCapacity: count) { dst, n in
+                if count > 0 {
+                    dst.baseAddress!.moveInitialize(from: src.assumingMemoryBound(to: Pair.self), count: count)
+                }
+                n = count
+            })
         }
     )
+}
+
+// Witnesses for [String] — managed (non-trivial) elements; decode must MOVE the
+// decoded Strings out of scratch, not copy them.
+private func stringSeqWitness() -> SeqWitness {
+    SeqWitness(
+        count: { handle in handle.assumingMemoryBound(to: [String].self).pointee.count },
+        copyElements: { handle, dst in
+            handle.assumingMemoryBound(to: [String].self).pointee.withUnsafeBytes { buf in
+                if buf.count > 0 { dst.copyMemory(from: buf.baseAddress!, byteCount: buf.count) }
+            }
+        },
+        construct: { handle, src, count in
+            handle.assumingMemoryBound(to: [String].self).initialize(to: Array(unsafeUninitializedCapacity: count) { dst, n in
+                if count > 0 {
+                    dst.baseAddress!.moveInitialize(from: src.assumingMemoryBound(to: String.self), count: count)
+                }
+                n = count
+            })
+        }
+    )
+}
+
+@Test
+func typedStringSequenceMatchesValueOracleAndRoundTrips() throws {
+    let listSchema = Schema(id: SchemaId(1), kind: .list(element: .concrete(primitiveId(.string))))
+    let reg = Registry([listSchema])
+
+    let elemDesc = Descriptor(
+        schema: .concrete(primitiveId(.string)),
+        layout: Layout(size: MemoryLayout<String>.size, align: MemoryLayout<String>.alignment),
+        access: .bytes(BytesAccess(stride: 1, elemAlign: 1, witness: stringWitness()))
+    )
+    let listDesc = Descriptor(
+        schema: .concrete(SchemaId(1)),
+        layout: Layout(size: MemoryLayout<[String]>.size, align: MemoryLayout<[String]>.alignment),
+        access: .sequence(SequenceAccess(
+            element: elemDesc,
+            stride: MemoryLayout<String>.stride,
+            elemAlign: MemoryLayout<String>.alignment,
+            witness: stringSeqWitness()
+        ))
+    )
+    let program = try lowerTyped(listDesc, reg)
+
+    for value in [["alpha", "βeta", ""], [], ["solo"]] {
+        let typedBytes = withUnsafeBytes(of: value) { encodeWith(program, $0.baseAddress!) }
+        let oracle: Value = .array(value.map { .string($0) })
+        let oracleBytes = try encode(oracle, SchemaId(1), reg)
+        #expect(typedBytes == oracleBytes, "string-seq \(value): typed bytes diverge from oracle")
+
+        let raw = UnsafeMutableRawPointer.allocate(
+            byteCount: MemoryLayout<[String]>.size, alignment: MemoryLayout<[String]>.alignment)
+        defer { raw.deallocate() }
+        try decodeInto(program, typedBytes, raw)
+        let decoded = raw.assumingMemoryBound(to: [String].self).move()
+        #expect(decoded == value, "string-seq \(value): decode did not round-trip")
+    }
 }
 
 @Test

@@ -103,15 +103,19 @@ public struct SequenceAccess {
 public struct SeqWitness {
     /// The element count.
     public var count: (_ handle: UnsafeRawPointer) -> Int
-    /// Copy the `count * stride` contiguous element bytes into `dst`.
+    /// Copy (bitwise-borrow) the `count * stride` contiguous element bytes into
+    /// `dst` for reading. A non-trivial element (`String`) is copied without a
+    /// retain — the handle still owns it — and the engine only reads `dst`.
     public var copyElements: (_ handle: UnsafeRawPointer, _ dst: UnsafeMutableRawPointer) -> Void
-    /// Build the handle at `handle` from `count` elements at `src`.
-    public var construct: (_ handle: UnsafeMutableRawPointer, _ src: UnsafeRawPointer, _ count: Int) -> Void
+    /// Build the handle at `handle` by **moving** the `count` elements out of
+    /// `src` (the engine's scratch, which it then frees without deinitializing).
+    /// `moveInitialize` is correct for both trivial and managed elements.
+    public var construct: (_ handle: UnsafeMutableRawPointer, _ src: UnsafeMutableRawPointer, _ count: Int) -> Void
 
     public init(
         count: @escaping (UnsafeRawPointer) -> Int,
         copyElements: @escaping (UnsafeRawPointer, UnsafeMutableRawPointer) -> Void,
-        construct: @escaping (UnsafeMutableRawPointer, UnsafeRawPointer, Int) -> Void
+        construct: @escaping (UnsafeMutableRawPointer, UnsafeMutableRawPointer, Int) -> Void
     ) {
         self.count = count
         self.copyElements = copyElements

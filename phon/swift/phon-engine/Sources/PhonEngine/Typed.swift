@@ -293,7 +293,7 @@ private func decodeTypedProgram(_ program: MemProgram, _ r: inout Reader, _ base
             for i in 0..<n {
                 try decodeTypedProgram(s.element, &r, buf.advanced(by: i * s.stride))
             }
-            s.witness.construct(handle, UnsafeRawPointer(buf), n)
+            s.witness.construct(handle, buf, n)
         }
     }
 }
