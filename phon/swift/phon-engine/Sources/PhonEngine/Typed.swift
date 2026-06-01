@@ -106,7 +106,8 @@ private func lowerTypedNode(_ d: Descriptor, _ reg: Registry, _ base: Int, _ out
             offset: base, stride: ba.stride, elemAlign: ba.elemAlign, witness: ba.witness)))
     case (.enumeration(let ea), .composite(.enumeration(_, let schemaVariants))):
         var variantOps: [EnumVariantOp] = []
-        for va in ea.variants {
+        // Single-schema lower: wire index == reader local index (no drift).
+        for (localIndex, va) in ea.variants.enumerated() {
             guard schemaVariants.contains(where: { $0.index == va.wireIndex }) else {
                 throw CompactError.malformed("descriptor variant has no schema counterpart")
             }
@@ -117,6 +118,7 @@ private func lowerTypedNode(_ d: Descriptor, _ reg: Registry, _ base: Int, _ out
             }
             variantOps.append(EnumVariantOp(
                 wireIndex: va.wireIndex,
+                readerLocalIndex: localIndex,
                 payload: payload,
                 payloadSize: va.payloadLayout.size,
                 payloadAlign: va.payloadLayout.align
@@ -237,6 +239,9 @@ private func encodeTypedProgram(_ program: MemProgram, _ base: UnsafeRawPointer,
                 encodeTypedProgram(m.value, UnsafeRawPointer(values).advanced(by: i * m.valueStride), &out)
             }
             m.witness.destroyEntries(keys, values, n)
+        case .skipWire, .writeDefault:
+            // Decode-only ops; an encode program (from `lowerTyped`) never holds them.
+            break
         }
     }
 }
@@ -302,15 +307,18 @@ private func decodeTypedProgram(_ program: MemProgram, _ r: inout Reader, _ base
         case .enumeration(let e):
             let slot = base.advanced(by: e.offset)
             let wireIndex = try r.readU32()
-            guard let localIndex = e.variants.firstIndex(where: { $0.wireIndex == wireIndex }) else {
+            guard let variant = e.variants.first(where: { $0.wireIndex == wireIndex }) else {
+                // A writer variant the reader lacks vs. a wholly out-of-range index.
+                if e.writerOnly.contains(wireIndex) {
+                    throw CompactError.writerOnlyVariant(wireIndex)
+                }
                 throw CompactError.badVariantIndex(wireIndex)
             }
-            let variant = e.variants[localIndex]
             let scratch = UnsafeMutableRawPointer.allocate(
                 byteCount: max(variant.payloadSize, 1), alignment: max(variant.payloadAlign, 1))
             defer { scratch.deallocate() }
             try decodeTypedProgram(variant.payload, &r, scratch)
-            e.inject(slot, localIndex, scratch)
+            e.inject(slot, variant.readerLocalIndex, scratch)
         case .sequence(let s):
             let handle = base.advanced(by: s.offset)
             let n = try r.readLen(minElemSize: s.minWire)
@@ -338,6 +346,12 @@ private func decodeTypedProgram(_ program: MemProgram, _ r: inout Reader, _ base
             if m.witness.count(handle) != n {
                 throw CompactError.decode(.duplicateKey)
             }
+        case .skipWire(let op):
+            // Advance past a writer-only field, writing nothing to memory.
+            try skip(&r, op)
+        case .writeDefault(let d):
+            // Write a reader-only field's default in place, no wire read.
+            d.initFn(base.advanced(by: d.offset))
         }
     }
 }

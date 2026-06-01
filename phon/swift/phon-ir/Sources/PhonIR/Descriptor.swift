@@ -46,6 +46,11 @@ public struct Layout: Equatable {
     }
 }
 
+public extension MemoryLayout {
+    /// The phon `Layout` (size + alignment) for `T` — a convenience for codegen.
+    static var phonLayout: Layout { Layout(size: size, align: alignment) }
+}
+
 /// How a value's bytes are read and constructed.
 public indirect enum Access {
     /// A fixed-width scalar whose in-memory bytes equal its wire bytes (bool, the

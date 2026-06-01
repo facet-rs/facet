@@ -44,6 +44,48 @@ public indirect enum MemOp {
     /// programs. Encode emits entries in sorted-key order; decode rejects a
     /// repeated key.
     case map(MapOp)
+    /// A writer-only value present on the wire but absent from the reader: consume
+    /// its wire bytes (by the writer's skip skeleton) and write nothing to memory.
+    /// Decode-only (`r[compat.skip-writer-only]`).
+    case skipWire(SkipOp)
+    /// A reader-only field absent from the writer: write its default into memory at
+    /// `offset` with no wire read. Decode-only (`r[compat.reader-only-fields]`).
+    case writeDefault(DefaultOp)
+}
+
+/// A reader-only default op: initialize the reader field at `offset` to its
+/// default in place, reading no wire bytes.
+public struct DefaultOp {
+    public var offset: Int
+    public var initFn: (_ slot: UnsafeMutableRawPointer) -> Void
+
+    public init(offset: Int, initFn: @escaping (UnsafeMutableRawPointer) -> Void) {
+        self.offset = offset
+        self.initFn = initFn
+    }
+}
+
+/// A pre-built skeleton of a writer value, used to advance the reader past a
+/// writer-only field without touching reader memory (`r[compat.skip-writer-only]`).
+/// Built once at lowering from the writer schema. Mirrors `phon-ir/ir.rs::SkipOp`.
+public indirect enum SkipOp {
+    /// A fixed scalar: pad to `align`, advance `size` bytes.
+    case scalar(size: Int, align: Int)
+    /// A bulk byte run: a `u32` count, pad to `elemAlign`, advance `count * stride`.
+    case bytes(stride: Int, elemAlign: Int)
+    /// An owned sequence of structured elements: a `u32` count, then skip the
+    /// element that many times.
+    case seq(SkipOp)
+    /// An `Option<T>`: a `u8` presence byte; on `1` skip the inner.
+    case option(SkipOp)
+    /// An enum: a `u32` writer variant index, then skip that variant's field skips.
+    case enumeration([(wireIndex: UInt32, fields: [SkipOp])])
+    /// An owned map: a `u32` entry count, then skip key then value each time.
+    case map(SkipOp, SkipOp)
+    /// A struct/tuple: skip each field in wire order.
+    case structure([SkipOp])
+    /// A self-describing dynamic value: decode one value and discard it.
+    case dynamic
 }
 
 /// An owned-map op's payload (in `MemOp.map`).
@@ -101,6 +143,9 @@ public struct EnumOp {
     public var destroyPayload: (_ scratch: UnsafeMutableRawPointer, _ localIndex: Int) -> Void
     public var inject: (_ slot: UnsafeMutableRawPointer, _ localIndex: Int, _ scratch: UnsafeMutableRawPointer) -> Void
     public var variants: [EnumVariantOp]
+    /// Writer variant indices the reader lacks: receiving one is a
+    /// writer-only-variant decode error (empty for a single-schema lower).
+    public var writerOnly: [UInt32]
 
     public init(
         offset: Int,
@@ -108,7 +153,8 @@ public struct EnumOp {
         projectPayload: @escaping (UnsafeRawPointer, Int, UnsafeMutableRawPointer) -> Void,
         destroyPayload: @escaping (UnsafeMutableRawPointer, Int) -> Void,
         inject: @escaping (UnsafeMutableRawPointer, Int, UnsafeMutableRawPointer) -> Void,
-        variants: [EnumVariantOp]
+        variants: [EnumVariantOp],
+        writerOnly: [UInt32] = []
     ) {
         self.offset = offset
         self.tag = tag
@@ -116,19 +162,24 @@ public struct EnumOp {
         self.destroyPayload = destroyPayload
         self.inject = inject
         self.variants = variants
+        self.writerOnly = writerOnly
     }
 }
 
-/// One enum variant in a `MemOp.enumeration`: its wire index, the payload program
-/// (offsets into the variant scratch), and the scratch layout.
+/// One enum variant in a `MemOp.enumeration`: the `u32` index read from the wire
+/// (the *writer's* index), the reader's local variant index used to inject, the
+/// payload program, and the scratch layout. On a single-schema lower the wire and
+/// reader indices coincide.
 public struct EnumVariantOp {
     public var wireIndex: UInt32
+    public var readerLocalIndex: Int
     public var payload: MemProgram
     public var payloadSize: Int
     public var payloadAlign: Int
 
-    public init(wireIndex: UInt32, payload: MemProgram, payloadSize: Int, payloadAlign: Int) {
+    public init(wireIndex: UInt32, readerLocalIndex: Int, payload: MemProgram, payloadSize: Int, payloadAlign: Int) {
         self.wireIndex = wireIndex
+        self.readerLocalIndex = readerLocalIndex
         self.payload = payload
         self.payloadSize = payloadSize
         self.payloadAlign = payloadAlign

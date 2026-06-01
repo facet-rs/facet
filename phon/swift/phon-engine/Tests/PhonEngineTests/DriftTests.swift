@@ -1,0 +1,147 @@
+// The reconciling typed decode (`lowerDecode`) under schema drift — the whole
+// reason the typed path exists. Each case builds writer bytes via the Value codec,
+// decodes them into a concrete reader Swift value through `lowerDecode(writer →
+// reader)`, and checks the result against the Value-path planner (`planDecode`,
+// the cross-engine oracle). Same-schema is verified to be the no-skip identity.
+
+import Testing
+
+@testable import PhonEngine
+import PhonIR
+import PhonSchema
+
+private func u32Desc() -> Descriptor {
+    Descriptor(
+        schema: .concrete(primitiveId(.u32)),
+        layout: Layout(size: 4, align: 4),
+        access: .scalar
+    )
+}
+
+private func u32Field(_ name: String) -> Field {
+    Field(name: name, schema: .concrete(primitiveId(.u32)), required: true)
+}
+
+// MARK: - Writer-only field is skipped (forward compat)
+
+private struct ReaderX: Equatable { var x: UInt32 }
+
+@Test
+func driftWriterOnlyFieldSkipped() throws {
+    // writer { x: u32, y: u32 } ; reader { x: u32 } — y is writer-only.
+    let batch = resolveIds([
+        Schema(id: SchemaId(1), kind: .structure(name: "P", fields: [u32Field("x"), u32Field("y")])),
+        Schema(id: SchemaId(2), kind: .structure(name: "P", fields: [u32Field("x")])),
+    ])
+    let writerRoot = batch[0].id
+    let readerRoot = batch[1].id
+    let reg = Registry(batch)
+
+    let writerBytes = try encode(.object([
+        .init(key: "x", value: .number(.canonical(unsigned: 7))),
+        .init(key: "y", value: .number(.canonical(unsigned: 99))),
+    ]), writerRoot, reg)
+
+    let readerDesc = Descriptor(
+        schema: .concrete(readerRoot),
+        layout: Layout(size: MemoryLayout<ReaderX>.size, align: MemoryLayout<ReaderX>.alignment),
+        access: .record(RecordAccess(
+            fields: [FieldAccess(offset: MemoryLayout<ReaderX>.offset(of: \ReaderX.x)!, descriptor: u32Desc())],
+            construct: .inPlace))
+    )
+    let program = try lowerDecode(writerRoot, readerDesc, reg)
+
+    var decoded = ReaderX(x: 0)
+    try withUnsafeMutableBytes(of: &decoded) { try decodeInto(program, writerBytes, $0.baseAddress!) }
+    #expect(decoded.x == 7, "x decodes, y is skipped")
+
+    // Oracle: the Value planner reconciles to { x: 7 }.
+    let oracle = try planDecode(writerBytes, writerRoot, readerRoot, reg)
+    #expect(oracle == .object([.init(key: "x", value: .number(.canonical(unsigned: 7)))]))
+}
+
+// MARK: - Reader-only field is defaulted (backward compat)
+
+private struct ReaderXC: Equatable {
+    var x: UInt32
+    var c: UInt32?
+}
+
+@Test
+func driftReaderOnlyFieldDefaulted() throws {
+    // writer { x: u32 } ; reader { x: u32, c: option<u32> (non-required) }.
+    let batch = resolveIds([
+        Schema(id: SchemaId(1), kind: .structure(name: "P", fields: [u32Field("x")])),
+        Schema(id: SchemaId(2), kind: .structure(name: "P", fields: [
+            u32Field("x"),
+            Field(name: "c", schema: .concrete(SchemaId(3)), required: false),
+        ])),
+        Schema(id: SchemaId(3), kind: .option(element: .concrete(primitiveId(.u32)))),
+    ])
+    let writerRoot = batch[0].id
+    let readerRoot = batch[1].id
+    let optRoot = batch[2].id
+    let reg = Registry(batch)
+
+    let writerBytes = try encode(.object([
+        .init(key: "x", value: .number(.canonical(unsigned: 7))),
+    ]), writerRoot, reg)
+
+    let optDesc = Descriptor(
+        schema: .concrete(optRoot),
+        layout: Layout(size: MemoryLayout<UInt32?>.size, align: MemoryLayout<UInt32?>.alignment),
+        access: .option(OptionAccess(witness: .of(UInt32.self), some: u32Desc()))
+    )
+    let readerDesc = Descriptor(
+        schema: .concrete(readerRoot),
+        layout: Layout(size: MemoryLayout<ReaderXC>.size, align: MemoryLayout<ReaderXC>.alignment),
+        access: .record(RecordAccess(fields: [
+            FieldAccess(offset: MemoryLayout<ReaderXC>.offset(of: \ReaderXC.x)!, descriptor: u32Desc()),
+            FieldAccess(
+                offset: MemoryLayout<ReaderXC>.offset(of: \ReaderXC.c)!,
+                descriptor: optDesc,
+                defaultInit: { $0.assumingMemoryBound(to: UInt32?.self).initialize(to: nil) }
+            ),
+        ], construct: .inPlace))
+    )
+    let program = try lowerDecode(writerRoot, readerDesc, reg)
+
+    var decoded = ReaderXC(x: 0, c: 12345)
+    try withUnsafeMutableBytes(of: &decoded) { try decodeInto(program, writerBytes, $0.baseAddress!) }
+    #expect(decoded.x == 7, "x decodes")
+    #expect(decoded.c == nil, "reader-only c defaults to nil, no wire read")
+
+    let oracle = try planDecode(writerBytes, writerRoot, readerRoot, reg)
+    #expect(oracle == .object([
+        .init(key: "x", value: .number(.canonical(unsigned: 7))),
+        .init(key: "c", value: .null),
+    ]))
+}
+
+// MARK: - Same-schema is the no-skip identity
+
+@Test
+func sameSchemaLowerDecodeIsIdentity() throws {
+    let schema = Schema(id: SchemaId(1), kind: .structure(name: "P", fields: [u32Field("x")]))
+    let reg = Registry([schema])
+    let desc = Descriptor(
+        schema: .concrete(SchemaId(1)),
+        layout: Layout(size: MemoryLayout<ReaderX>.size, align: MemoryLayout<ReaderX>.alignment),
+        access: .record(RecordAccess(
+            fields: [FieldAccess(offset: MemoryLayout<ReaderX>.offset(of: \ReaderX.x)!, descriptor: u32Desc())],
+            construct: .inPlace))
+    )
+    // lowerDecode(S, S) carries no skips/defaults — equivalent to the encode lowering.
+    let decProgram = try lowerDecode(SchemaId(1), desc, reg)
+    for op in decProgram {
+        if case .skipWire = op { Issue.record("same-schema decode must have no skipWire") }
+        if case .writeDefault = op { Issue.record("same-schema decode must have no writeDefault") }
+    }
+
+    let value = ReaderX(x: 42)
+    let encProgram = try lowerTyped(desc, reg)
+    let bytes = withUnsafeBytes(of: value) { encodeWith(encProgram, $0.baseAddress!) }
+    var decoded = ReaderX(x: 0)
+    try withUnsafeMutableBytes(of: &decoded) { try decodeInto(decProgram, bytes, $0.baseAddress!) }
+    #expect(decoded == value)
+}
