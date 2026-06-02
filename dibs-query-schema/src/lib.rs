@@ -402,6 +402,8 @@ pub struct Params {
 pub enum ParamType {
     String,
     Int,
+    /// `f64` / `DOUBLE PRECISION`.
+    Float,
     Bool,
     Uuid,
     Decimal,

@@ -942,6 +942,7 @@ fn param_type_to_rust(ty: &dibs_query_schema::ParamType) -> String {
     match ty {
         ParamType::String => "String".to_string(),
         ParamType::Int => "i64".to_string(),
+        ParamType::Float => "f64".to_string(),
         ParamType::Bool => "bool".to_string(),
         ParamType::Uuid => "Uuid".to_string(),
         ParamType::Decimal => "Decimal".to_string(),

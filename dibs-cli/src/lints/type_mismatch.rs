@@ -48,6 +48,7 @@ fn param_type_name(param_type: &ParamType) -> String {
     match param_type {
         ParamType::String => "string".to_string(),
         ParamType::Int => "int".to_string(),
+        ParamType::Float => "float".to_string(),
         ParamType::Bool => "bool".to_string(),
         ParamType::Uuid => "uuid".to_string(),
         ParamType::Decimal => "decimal".to_string(),

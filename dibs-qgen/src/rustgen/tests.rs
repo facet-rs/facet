@@ -113,6 +113,35 @@ ProductByHandle @select{
 }
 
 #[test]
+fn test_generate_query_with_float_param() {
+    // A `@float` param binds an `f64` against a DOUBLE PRECISION column.
+    let source = r#"
+ClipsLongerThan @select{
+  params { min_seconds @float }
+  from clip
+  where { duration_s @gte($min_seconds) }
+  fields { id, duration_s }
+}
+"#;
+    let (file, qsource) = parse_test(source);
+    let schema = make_test_schema(vec![make_test_table(
+        "clip",
+        &[
+            ("id", PgType::BigInt, false),
+            ("duration_s", PgType::DoublePrecision, false),
+        ],
+        vec![],
+    )]);
+    let code = generate_rust_code(&file, &schema, qsource).unwrap();
+
+    assert!(
+        code.code.contains("min_seconds: &f64"),
+        "float param should generate an &f64 argument. Got:\n{}",
+        code.code
+    );
+}
+
+#[test]
 fn test_generate_query_with_relation() {
     let source = r#"
 ProductListing @select{
