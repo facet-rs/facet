@@ -1,6 +1,6 @@
 [package]
 name = "dibs"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 authors = ["Amos Wenger <amos@bearcove.eu>"]
 description = "Postgres toolkit for Rust, powered by facet reflection"
