@@ -25,6 +25,9 @@ let package = Package(
         // The JIT is reached only by opting in to this product; the baseline is
         // PhonEngine's interpreter (r[crates.jit-opt-in]).
         .library(name: "PhonJIT", targets: ["PhonJIT"]),
+        // Cross-engine equivalence harness (tree-walk vs interpreter vs JIT), shared by
+        // phon's own tests and downstream consumers (vox) so the engine list lives once.
+        .library(name: "PhonEngineTestSupport", targets: ["PhonEngineTestSupport"]),
     ],
     targets: [
         // Vendored portable C BLAKE3 — content-hash schema identity. Portable
@@ -69,9 +72,14 @@ let package = Package(
             dependencies: ["PhonSchema"],
             path: "swift/phon-schema/Tests/PhonSchemaTests"
         ),
+        .target(
+            name: "PhonEngineTestSupport",
+            dependencies: ["PhonEngine", "PhonIR", "PhonSchema"],
+            path: "swift/phon-engine-test-support/Sources/PhonEngineTestSupport"
+        ),
         .testTarget(
             name: "PhonEngineTests",
-            dependencies: ["PhonEngine", "PhonIR", "PhonSchema"],
+            dependencies: ["PhonEngine", "PhonEngineTestSupport", "PhonIR", "PhonSchema"],
             path: "swift/phon-engine/Tests/PhonEngineTests"
         ),
     ]
