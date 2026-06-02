@@ -565,6 +565,47 @@ pub fn resolve_ids(batch: Vec<Schema>) -> Vec<Schema> {
         .collect()
 }
 
+/// The ids of schemas that are part of a reference cycle — a self-reference or a
+/// mutual-recursion group. These are the schemas an engine must lower to a callable
+/// block (rather than inline) so a recursive type's descriptor/program stays finite;
+/// every non-cyclic schema can still be inlined. Computed by the same SCC pass that
+/// resolves cyclic ids: any SCC of size > 1 is recursive, and a singleton SCC is
+/// recursive iff the node references itself.
+#[must_use]
+pub fn recursive_schema_ids(schemas: &[Schema]) -> std::collections::BTreeSet<SchemaId> {
+    let n = schemas.len();
+    let mut id_to_index: HashMap<u64, NodeIx> = HashMap::with_capacity(n);
+    for (i, s) in schemas.iter().enumerate() {
+        id_to_index.insert(s.id.0, NodeIx::of(i));
+    }
+    let mut adj: Vec<Vec<NodeIx>> = vec![Vec::new(); n];
+    let mut self_edge = vec![false; n];
+    for (i, s) in schemas.iter().enumerate() {
+        let mut seen = HashSet::new();
+        visit_kind_targets(&s.kind, &mut |id| {
+            if let Some(&j) = id_to_index.get(&id.0) {
+                if j.ix() == i {
+                    self_edge[i] = true;
+                }
+                if seen.insert(j) {
+                    adj[i].push(j);
+                }
+            }
+        });
+    }
+
+    let mut out = std::collections::BTreeSet::new();
+    for scc in Tarjan::run(&adj) {
+        let recursive = scc.len() > 1 || (scc.len() == 1 && self_edge[scc[0].ix()]);
+        if recursive {
+            for ix in scc {
+                out.insert(schemas[ix.ix()].id);
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -745,6 +786,27 @@ mod tests {
         } else {
             vec![opt, node]
         }
+    }
+
+    #[test]
+    fn recursive_schema_ids_flags_the_cycle() {
+        // Every schema in the `Node`/`Option<Node>` cycle is recursive.
+        let resolved = resolve_ids(linked_list(true));
+        let rec = recursive_schema_ids(&resolved);
+        assert_eq!(rec.len(), 2);
+        for s in &resolved {
+            assert!(rec.contains(&s.id), "{:?} should be flagged recursive", s.id);
+        }
+
+        // A flat, non-recursive struct flags nothing.
+        let flat = resolve_ids(vec![proto(
+            10,
+            SchemaKind::Struct {
+                name: "Flat".to_string(),
+                fields: vec![field("a", SchemaRef::concrete(primitive_id(Primitive::U32)))],
+            },
+        )]);
+        assert!(recursive_schema_ids(&flat).is_empty());
     }
 
     #[test]
