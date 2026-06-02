@@ -14,17 +14,17 @@ import PhonSchema
 /// Encode a typed value through a (pre-lowered) program: the value's in-memory bytes
 /// are read by the program's witnesses. The one place the unsafe value→bytes boundary
 /// lives.
-public func encodeTyped<T>(_ value: T, _ program: MemProgram) -> [UInt8] {
+public func encodeTyped<T>(_ value: T, _ lowered: Lowered) -> [UInt8] {
     var v = value
-    return withUnsafeBytes(of: &v) { encodeWith(program, $0.baseAddress!) }
+    return withUnsafeBytes(of: &v) { encodeWith(lowered, $0.baseAddress!) }
 }
 
 /// Decode a typed value through a (pre-lowered) program into a fresh `T`.
-public func decodeTyped<T>(_ program: MemProgram, _ bytes: [UInt8]) throws -> T {
+public func decodeTyped<T>(_ lowered: Lowered, _ bytes: [UInt8]) throws -> T {
     let raw = UnsafeMutableRawPointer.allocate(
         byteCount: MemoryLayout<T>.size, alignment: MemoryLayout<T>.alignment)
     defer { raw.deallocate() }
-    try decodeInto(program, bytes, raw)
+    try decodeInto(lowered, bytes, raw)
     return raw.assumingMemoryBound(to: T.self).move()
 }
 

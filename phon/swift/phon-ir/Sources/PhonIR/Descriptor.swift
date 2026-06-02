@@ -82,6 +82,13 @@ public indirect enum Access {
     /// its program then the value by its program. Entries are emitted in a
     /// deterministic (sorted-key) order so the bytes are stable.
     case map(MapAccess)
+    /// A back-edge to a recursive (cyclic) schema: this position holds a value of
+    /// the schema named by this node's `schema`, whose full descriptor lives in the
+    /// recursion block registry rather than being inlined here (an inlined recursive
+    /// descriptor would be infinite). The engine lowers it to a
+    /// `MemOp.callBlock` — a call into that schema's block program, run at the
+    /// current value pointer. (`r[descriptors.recursion]`)
+    case recurse
 }
 
 /// An owned map: key and value descriptors, their scratch layouts, and the

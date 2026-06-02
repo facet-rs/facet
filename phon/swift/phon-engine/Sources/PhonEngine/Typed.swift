@@ -44,17 +44,43 @@ func elemMinWire(_ element: MemProgram) -> Int {
 
 // MARK: - Lowering
 
-/// Lower a descriptor into a flat `MemProgram`: base-relative memory copies, in
-/// wire order. Build it once, run it many times. The program is wire-ordered with
-/// memory offsets, so the same program drives both encode and decode in the
+/// Lower a descriptor that may be recursive into a `Lowered`: the root op stream
+/// plus a block program per recursive (cyclic) schema, each lowered once from
+/// `descriptorBlocks` (which the codegen emits). A `callBlock` op resolves into
+/// `Lowered.blocks` at run time. For a non-recursive type `descriptorBlocks` is
+/// empty and the result is the familiar flat program with no blocks
+/// (`r[ir.recursion]`). Build it once, run it many times; the program is
+/// wire-ordered with memory offsets, so it drives both encode and decode in the
 /// no-drift case.
-public func lowerTyped(_ descriptor: Descriptor, _ reg: Registry) throws -> MemProgram {
-    var out: MemProgram = []
-    try lowerTypedNode(descriptor, reg, 0, &out)
-    return fuse(out)
+public func lowerTyped(
+    _ descriptor: Descriptor,
+    _ reg: Registry,
+    _ descriptorBlocks: [SchemaId: Descriptor] = [:]
+) throws -> Lowered {
+    var root: MemProgram = []
+    try lowerTypedNode(descriptor, reg, 0, &root)
+    var blocks: [SchemaId: MemProgram] = [:]
+    for (id, body) in descriptorBlocks {
+        // A block's ops are relative to the recursive value's own start (base 0); a
+        // `callBlock` supplies the actual pointer at run time.
+        var ops: MemProgram = []
+        try lowerTypedNode(body, reg, 0, &ops)
+        blocks[id] = fuse(ops)
+    }
+    return Lowered(program: fuse(root), blocks: blocks)
 }
 
 private func lowerTypedNode(_ d: Descriptor, _ reg: Registry, _ base: Int, _ out: inout MemProgram) throws {
+    // A back-edge to a recursive schema: emit a call into that schema's block, run
+    // at `base + offset` (the recursive value's location). The block itself is
+    // lowered once by `lowerTyped` from `descriptorBlocks`. (`r[ir.recursion]`)
+    if case .recurse = d.access {
+        guard case .concrete(let id, _) = d.schema else {
+            throw CompactError.unsupported("typed: recursion via type-var ref")
+        }
+        out.append(.callBlock(schema: id, offset: base))
+        return
+    }
     let resolved = try resolve(reg, d.schema)
     switch (d.access, resolved) {
     case (.scalar, .primitive(let p)):
@@ -162,16 +188,25 @@ private func lowerTypedNode(_ d: Descriptor, _ reg: Registry, _ base: Int, _ out
 
 // MARK: - Encode
 
-/// Encode the value at `base` (described by `program`) to compact bytes.
-public func encodeWith(_ program: MemProgram, _ base: UnsafeRawPointer) -> [UInt8] {
+/// Encode the value at `base` (described by `lowered`) to compact bytes.
+public func encodeWith(_ lowered: Lowered, _ base: UnsafeRawPointer) -> [UInt8] {
     var out = ByteSink()
-    encodeTypedProgram(program, base, &out)
+    encodeTypedProgram(lowered.program, base, &out, lowered.blocks)
     return out.bytes
 }
 
-private func encodeTypedProgram(_ program: MemProgram, _ base: UnsafeRawPointer, _ out: inout ByteSink) {
+private func encodeTypedProgram(
+    _ program: MemProgram, _ base: UnsafeRawPointer, _ out: inout ByteSink,
+    _ blocks: [SchemaId: MemProgram]
+) {
     for op in program {
         switch op {
+        case .callBlock(let schema, let offset):
+            // A recursive back-edge: run the callee schema's block at `base + offset`.
+            guard let block = blocks[schema] else {
+                fatalError("CallBlock references a lowered recursion block")
+            }
+            encodeTypedProgram(block, base.advanced(by: offset), &out, blocks)
         case .scalar(let offset, let size, let align):
             out.padTo(align)
             guard size > 0 else { continue }
@@ -183,7 +218,7 @@ private func encodeTypedProgram(_ program: MemProgram, _ base: UnsafeRawPointer,
             defer { scratch.deallocate() }
             if o.witness.projectSome(option, scratch) {
                 out.writeU8(1)
-                encodeTypedProgram(o.some, UnsafeRawPointer(scratch), &out)
+                encodeTypedProgram(o.some, UnsafeRawPointer(scratch), &out, blocks)
             } else {
                 out.writeU8(0)
             }
@@ -211,7 +246,7 @@ private func encodeTypedProgram(_ program: MemProgram, _ base: UnsafeRawPointer,
                 byteCount: max(variant.payloadSize, 1), alignment: max(variant.payloadAlign, 1))
             defer { scratch.deallocate() }
             e.projectPayload(value, localIndex, scratch)
-            encodeTypedProgram(variant.payload, UnsafeRawPointer(scratch), &out)
+            encodeTypedProgram(variant.payload, UnsafeRawPointer(scratch), &out, blocks)
             e.destroyPayload(scratch, localIndex)
         case .sequence(let s):
             let handle = base.advanced(by: s.offset)
@@ -223,7 +258,7 @@ private func encodeTypedProgram(_ program: MemProgram, _ base: UnsafeRawPointer,
             defer { buf.deallocate() }
             s.witness.copyElements(handle, buf)
             for i in 0..<n {
-                encodeTypedProgram(s.element, UnsafeRawPointer(buf).advanced(by: i * s.stride), &out)
+                encodeTypedProgram(s.element, UnsafeRawPointer(buf).advanced(by: i * s.stride), &out, blocks)
             }
         case .map(let m):
             let handle = base.advanced(by: m.offset)
@@ -235,8 +270,8 @@ private func encodeTypedProgram(_ program: MemProgram, _ base: UnsafeRawPointer,
             defer { keys.deallocate(); values.deallocate() }
             m.witness.projectEntries(handle, keys, values)
             for i in 0..<n {
-                encodeTypedProgram(m.key, UnsafeRawPointer(keys).advanced(by: i * m.keyStride), &out)
-                encodeTypedProgram(m.value, UnsafeRawPointer(values).advanced(by: i * m.valueStride), &out)
+                encodeTypedProgram(m.key, UnsafeRawPointer(keys).advanced(by: i * m.keyStride), &out, blocks)
+                encodeTypedProgram(m.value, UnsafeRawPointer(values).advanced(by: i * m.valueStride), &out, blocks)
             }
             m.witness.destroyEntries(keys, values, n)
         case .skipWire, .writeDefault:
@@ -251,17 +286,26 @@ private func encodeTypedProgram(_ program: MemProgram, _ base: UnsafeRawPointer,
 /// Decode compact `bytes` (described by `program`) into the value-shaped storage
 /// at `base`, rejecting trailing bytes. `base` must point at uninitialized
 /// storage of the value's layout; on success every field has been written.
-public func decodeInto(_ program: MemProgram, _ bytes: [UInt8], _ base: UnsafeMutableRawPointer) throws {
+public func decodeInto(_ lowered: Lowered, _ bytes: [UInt8], _ base: UnsafeMutableRawPointer) throws {
     var r = Reader(bytes)
-    try decodeTypedProgram(program, &r, base)
+    try decodeTypedProgram(lowered.program, &r, base, lowered.blocks)
     if r.remaining != 0 {
         throw CompactError.decode(.trailingBytes(r.remaining))
     }
 }
 
-private func decodeTypedProgram(_ program: MemProgram, _ r: inout Reader, _ base: UnsafeMutableRawPointer) throws {
+private func decodeTypedProgram(
+    _ program: MemProgram, _ r: inout Reader, _ base: UnsafeMutableRawPointer,
+    _ blocks: [SchemaId: MemProgram]
+) throws {
     for op in program {
         switch op {
+        case .callBlock(let schema, let offset):
+            // A recursive back-edge: run the callee schema's block at `base + offset`.
+            guard let block = blocks[schema] else {
+                throw CompactError.unsupported("CallBlock references a missing recursion block")
+            }
+            try decodeTypedProgram(block, &r, base.advanced(by: offset), blocks)
         case .scalar(let offset, let size, let align):
             try r.skipPad(align)
             guard size > 0 else { continue }
@@ -279,7 +323,7 @@ private func decodeTypedProgram(_ program: MemProgram, _ r: inout Reader, _ base
                 let scratch = UnsafeMutableRawPointer.allocate(
                     byteCount: max(o.innerSize, 1), alignment: o.innerAlign)
                 defer { scratch.deallocate() }
-                try decodeTypedProgram(o.some, &r, scratch)
+                try decodeTypedProgram(o.some, &r, scratch, blocks)
                 o.witness.initSome(option, scratch)
             case let b:
                 throw CompactError.decode(.invalidBool(b))
@@ -317,7 +361,7 @@ private func decodeTypedProgram(_ program: MemProgram, _ r: inout Reader, _ base
             let scratch = UnsafeMutableRawPointer.allocate(
                 byteCount: max(variant.payloadSize, 1), alignment: max(variant.payloadAlign, 1))
             defer { scratch.deallocate() }
-            try decodeTypedProgram(variant.payload, &r, scratch)
+            try decodeTypedProgram(variant.payload, &r, scratch, blocks)
             e.inject(slot, variant.readerLocalIndex, scratch)
         case .sequence(let s):
             let handle = base.advanced(by: s.offset)
@@ -326,7 +370,7 @@ private func decodeTypedProgram(_ program: MemProgram, _ r: inout Reader, _ base
                 byteCount: max(n * s.stride, 1), alignment: max(s.elemAlign, 1))
             defer { buf.deallocate() }
             for i in 0..<n {
-                try decodeTypedProgram(s.element, &r, buf.advanced(by: i * s.stride))
+                try decodeTypedProgram(s.element, &r, buf.advanced(by: i * s.stride), blocks)
             }
             s.witness.construct(handle, buf, n)
         case .map(let m):
@@ -337,8 +381,8 @@ private func decodeTypedProgram(_ program: MemProgram, _ r: inout Reader, _ base
                 let keyScratch = UnsafeMutableRawPointer.allocate(byteCount: max(m.keyStride, 1), alignment: max(m.keyAlign, 1))
                 let valueScratch = UnsafeMutableRawPointer.allocate(byteCount: max(m.valueStride, 1), alignment: max(m.valueAlign, 1))
                 defer { keyScratch.deallocate(); valueScratch.deallocate() }
-                try decodeTypedProgram(m.key, &r, keyScratch)
-                try decodeTypedProgram(m.value, &r, valueScratch)
+                try decodeTypedProgram(m.key, &r, keyScratch, blocks)
+                try decodeTypedProgram(m.value, &r, valueScratch, blocks)
                 m.witness.insert(handle, keyScratch, valueScratch)
             }
             // A repeated key collapses two entries into one — reject it, matching

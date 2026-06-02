@@ -144,8 +144,8 @@ func fuseCollapsesFlatStructToOneCopy() throws {
         ], construct: .inPlace))
     )
     let program = try lowerTyped(desc, reg)
-    #expect(program.count == 1, "flat all-u32 struct fuses to one copy, got \(program.count)")
-    if case .scalar(let offset, let size, _) = program[0] {
+    #expect(program.program.count == 1, "flat all-u32 struct fuses to one copy, got \(program.program.count)")
+    if case .scalar(let offset, let size, _) = program.program[0] {
         #expect(offset == 0 && size == 12, "fused to scalar(offset: 0, size: 12)")
     } else {
         Issue.record("fused op is not a scalar")
@@ -180,7 +180,7 @@ func sameSchemaLowerDecodeIsIdentity() throws {
     )
     // lowerDecode(S, S) carries no skips/defaults — equivalent to the encode lowering.
     let decProgram = try lowerDecode(SchemaId(1), desc, reg)
-    for op in decProgram {
+    for op in decProgram.program {
         if case .skipWire = op { Issue.record("same-schema decode must have no skipWire") }
         if case .writeDefault = op { Issue.record("same-schema decode must have no writeDefault") }
     }

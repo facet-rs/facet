@@ -8,8 +8,25 @@
 // nested fixed struct dissolves into a flat run of `scalar` copies). Owned
 // sequences, options, enums, and maps grow this enum as the engine learns them.
 
+import PhonSchema
+
 /// A lowered typed program: base-relative memory copies, in wire order.
 public typealias MemProgram = [MemOp]
+
+/// A lowered typed program: the root op stream plus the per-schema block programs
+/// that `MemOp.callBlock` calls into. For a non-recursive type `blocks` is empty
+/// and `program` is the familiar flat op stream; a recursive type lowers each of
+/// its cyclic schemas to a block here, so `program` (and every block) stays finite.
+/// Mirrors `rust/phon-ir/src/ir.rs::Lowered`.
+public struct Lowered {
+    public var program: MemProgram
+    public var blocks: [SchemaId: MemProgram]
+
+    public init(program: MemProgram, blocks: [SchemaId: MemProgram] = [:]) {
+        self.program = program
+        self.blocks = blocks
+    }
+}
 
 /// One typed step. The base pointer is supplied at run time; `offset` is relative
 /// to it.
@@ -51,6 +68,15 @@ public indirect enum MemOp {
     /// A reader-only field absent from the writer: write its default into memory at
     /// `offset` with no wire read. Decode-only (`r[compat.reader-only-fields]`).
     case writeDefault(DefaultOp)
+    /// A call into a recursive schema's block program, run at `base + offset` (the
+    /// recursive value sits at `offset` from the enclosing base — a struct field, or
+    /// `0` for a sequence element / option payload / map value reached at its own
+    /// base). This is how a recursive type stays finite: the cyclic schema is lowered
+    /// once into a block (resolved from `Lowered.blocks` by `schema`, with offsets
+    /// relative to the recursive value's start), and every reference to it is a
+    /// `callBlock` rather than an inlined subtree. Encode and decode both recurse into
+    /// the block. (`r[ir.recursion]`)
+    case callBlock(schema: SchemaId, offset: Int)
 }
 
 /// A reader-only default op: initialize the reader field at `offset` to its

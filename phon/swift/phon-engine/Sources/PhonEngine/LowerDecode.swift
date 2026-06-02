@@ -22,16 +22,23 @@ import PhonSchema
 
 /// Lower `(writer schema ⋈ reader descriptor)` into the reader-memory decode
 /// program, in wire order.
-public func lowerDecode(_ writerRoot: SchemaId, _ reader: Descriptor, _ reg: Registry) throws -> MemProgram {
+///
+/// Recursive reconciling decode (a cyclic reader descriptor) is a tracked
+/// follow-up: the reconciling walker would lower a block per reader recursion
+/// target against the writer's matching schema. For now the reconciling path is
+/// non-recursive, so the block registry is empty (a `.recurse` reader node errors
+/// cleanly via the node walker's default). Same-schema recursive decode goes
+/// through `lowerTyped` instead, which does build blocks.
+public func lowerDecode(_ writerRoot: SchemaId, _ reader: Descriptor, _ reg: Registry) throws -> Lowered {
     var out: MemProgram = []
     try lowerDecodeNode(.concrete(id: writerRoot, args: []), reader, reg, 0, &out)
-    return fuse(out)
+    return Lowered(program: fuse(out), blocks: [:])
 }
 
 /// The same-schema decode: the writer is the schema the reader carries. The
 /// resulting program has no skips/defaults — the drift-free identity. (There is
 /// no separate same-schema decoder; this is `lowerDecode` with writer == reader.)
-public func lowerDecode(_ reader: Descriptor, _ reg: Registry) throws -> MemProgram {
+public func lowerDecode(_ reader: Descriptor, _ reg: Registry) throws -> Lowered {
     guard case .concrete(let id, _) = reader.schema else {
         throw CompactError.malformed("lowerDecode: root descriptor schema must be concrete")
     }
