@@ -116,3 +116,46 @@ describe("typed front door — ergonomic shapes", () => {
     expect(t).toEqual({ x: 7, extra: null });
   });
 });
+
+describe("typed front door — recursion", () => {
+  it("a recursive Tree round-trips through encodeTyped/decodeTyped", () => {
+    // Tree { value: u32, children: list<Tree> } — both Tree and the list are on the
+    // cycle, so each lowers to a callable block (callBlock) and the plan stays finite.
+    const u32Id = BigInt(`0x${corpus.primitives.find((p) => p.tag === "u32")!.id}`);
+    const treeId = 0x1111_1111n;
+    const vecId = 0x2222_2222n;
+    const tree = {
+      id: treeId,
+      typeParams: [] as string[],
+      kind: {
+        kind: "struct" as const,
+        name: "Tree",
+        fields: [
+          { name: "value", schema: { kind: "concrete" as const, id: u32Id, args: [] }, required: true },
+          { name: "children", schema: { kind: "concrete" as const, id: vecId, args: [] }, required: true },
+        ],
+      },
+    };
+    const vec = {
+      id: vecId,
+      typeParams: [] as string[],
+      kind: { kind: "list" as const, element: { kind: "concrete" as const, id: treeId, args: [] } },
+    };
+    const recReg = new Registry(
+      [tree, vec],
+      corpus.primitives.map((p) => ({ id: BigInt(`0x${p.id}`), tag: p.tag as Primitive })),
+    );
+
+    const value: Typed = {
+      value: 1,
+      children: [
+        { value: 2, children: [] },
+        { value: 3, children: [{ value: 4, children: [] }] },
+      ],
+    };
+    const wire = encodeTyped(value, treeId, recReg);
+    // Same-schema decode reconciles treeId -> treeId through the recursion blocks.
+    const back = decodeTyped(wire, treeId, treeId, recReg);
+    expect(back).toEqual(value);
+  });
+});

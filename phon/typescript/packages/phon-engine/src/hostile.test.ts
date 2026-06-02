@@ -11,7 +11,8 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { ByteSink, DecodeError, Registry, hexToBytes, schemaFromBytes } from "@bearcove/phon-schema";
 import type { Primitive } from "@bearcove/phon-schema";
-import { compile, decode, decodeCompact, WriterOnlyVariantError } from "./index.ts";
+import { compile, decode, decodeCompact, encode, WriterOnlyVariantError } from "./index.ts";
+import type { Value } from "@bearcove/phon-schema";
 
 interface VectorFile {
   schemas: string[];
@@ -103,10 +104,10 @@ describe("hostile input — interpreter and JIT reject identically", () => {
     expect(() => decodeCompact(idx99, root, reg)).toThrow(/bad variant index/);
   });
 
-  it("a self-recursive schema is rejected at plan time, not at decode", () => {
-    // A list whose element refers back to itself: planning recurses until the
-    // depth guard fires (mirrors Rust plan_ref's MAX_DEPTH). Both engines route
-    // through buildPlan, so neither can be built — no infinite loop, no crash.
+  it("a self-recursive schema plans (callBlock) and round-trips", () => {
+    // A list whose element refers back to itself: the cyclic schema lowers to a
+    // callable block (`callBlock`) instead of inlining forever, so the plan stays
+    // finite and a nested rose-list value round-trips (`r[ir.recursion]`).
     const selfId = 0xdead_beefn;
     const recursive = {
       id: selfId,
@@ -117,6 +118,10 @@ describe("hostile input — interpreter and JIT reject identically", () => {
       [recursive],
       corpus.primitives.map((p) => ({ id: BigInt(`0x${p.id}`), tag: p.tag as Primitive })),
     );
-    expect(() => compile(selfId, selfId, recReg)).toThrow(/nests too deep/);
+    const value: Value = [[], [[]]];
+    const wire = encode(value, selfId, recReg);
+    // Same-schema decode reconciles selfId -> selfId through the recursion blocks.
+    expect(compile(selfId, selfId, recReg)(wire)).toEqual(value);
+    expect(decode(wire, selfId, selfId, recReg)).toEqual(value);
   });
 });

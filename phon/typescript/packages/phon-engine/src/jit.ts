@@ -142,7 +142,10 @@ export function compile(
   const hit = perReg.get(key);
   if (hit) return hit;
   const plan = buildPlan(writerRoot, readerRoot, reg);
-  const decoder = useJit ? compilePlan(plan, reg) : interpretPlan(plan, reg);
+  // A recursive plan (cyclic schema → `callBlock` blocks) runs on the interpreter;
+  // the JIT's `callBlock` codegen is a follow-up, mirroring the Rust JIT (CallBlock
+  // is interpreter-only there too).
+  const decoder = useJit && plan.blocks.size === 0 ? compilePlan(plan, reg) : interpretPlan(plan, reg);
   perReg.set(key, decoder);
   return decoder;
 }
@@ -492,6 +495,11 @@ class Codegen {
       }
       case "dynamic":
         return `${target} = H.readValue(r, ${depth});\n`;
+      case "callBlock":
+        // A recursive plan is decoded by the interpreter (`compile` falls back when
+        // `plan.blocks` is non-empty); the JIT for `callBlock` is a follow-up, as in
+        // the Rust copy-and-patch JIT. Reaching here means that guard was bypassed.
+        throw new Error("JIT codegen does not support recursive (callBlock) plans");
     }
   }
 
