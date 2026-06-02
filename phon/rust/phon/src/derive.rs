@@ -19,7 +19,7 @@
 //! Spec: "Rust" (language section), `r[descriptors.fact-driven]`.
 
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::{LazyLock, RwLock};
 
@@ -50,8 +50,14 @@ pub struct Derived {
     /// Every composite schema reachable from the root, with real ids; feed this
     /// to a registry. Primitives are intrinsic and not listed.
     pub schemas: Vec<Schema>,
-    /// The root type's descriptor (memory layout + how to build it).
+    /// The root type's descriptor (memory layout + how to build it). For a recursive
+    /// type the descriptor is an [`Access::Recurse`] stand-in whose body lives in
+    /// [`Self::descriptor_blocks`].
     pub descriptor: Descriptor,
+    /// Block descriptors for the recursive (cyclic) schemas reachable from the root:
+    /// the full body of each, keyed by its schema id. Empty for a non-recursive type.
+    /// The engine lowers each into a callable block ([`MemOp::CallBlock`]).
+    pub descriptor_blocks: std::collections::HashMap<SchemaId, Descriptor>,
 }
 
 /// Why a `Shape` could not (yet) be lowered to phon.
@@ -97,6 +103,7 @@ pub fn of_shape(shape: &'static Shape) -> Result<Derived, DeriveError> {
         return Ok(Derived {
             root: primitive_id(Primitive::Bytes),
             schemas: Vec::new(),
+            descriptor_blocks: HashMap::new(),
             descriptor: opaque_descriptor(shape)?,
         });
     }
@@ -112,6 +119,7 @@ pub fn of_shape(shape: &'static Shape) -> Result<Derived, DeriveError> {
         return Ok(Derived {
             root: primitive_id(cow_primitive(leaf)),
             schemas: Vec::new(),
+            descriptor_blocks: HashMap::new(),
             descriptor: cow_descriptor(shape, leaf)?,
         });
     }
@@ -120,6 +128,7 @@ pub fn of_shape(shape: &'static Shape) -> Result<Derived, DeriveError> {
         return Ok(Derived {
             root: primitive_id(Primitive::String),
             schemas: Vec::new(),
+            descriptor_blocks: HashMap::new(),
             descriptor: string_descriptor(shape)?,
         });
     }
@@ -129,6 +138,7 @@ pub fn of_shape(shape: &'static Shape) -> Result<Derived, DeriveError> {
         return Ok(Derived {
             root: primitive_id(borrow_primitive(kind)),
             schemas: Vec::new(),
+            descriptor_blocks: HashMap::new(),
             descriptor: borrowed_descriptor(shape, kind)?,
         });
     }
@@ -138,6 +148,7 @@ pub fn of_shape(shape: &'static Shape) -> Result<Derived, DeriveError> {
         return Ok(Derived {
             root: primitive_id(p),
             schemas: Vec::new(),
+            descriptor_blocks: HashMap::new(),
             descriptor: Descriptor {
                 schema: SchemaRef::concrete(primitive_id(p)),
                 layout: Layout { size, align },
@@ -181,13 +192,23 @@ pub fn of_shape(shape: &'static Shape) -> Result<Derived, DeriveError> {
     let resolved = resolve_ids(b.protos);
     let real_ids: Vec<SchemaId> = resolved.iter().map(|s| s.id).collect();
 
-    // Pass 2: build the descriptor with the real ids and facet's offsets.
-    let descriptor = build_descriptor(shape, &by_shape, &real_ids)?;
+    // Pass 2: build the descriptor with the real ids and facet's offsets. Cyclic
+    // schemas (a recursive or mutually-recursive type) become `Access::Recurse`
+    // stand-ins whose block bodies collect in `rec.blocks`, so the descriptor tree
+    // stays finite (`r[descriptors.recursion]`).
+    let rec_ids = phon_schema::identity::recursive_schema_ids(&resolved);
+    let mut rec = RecCtx {
+        ids: &rec_ids,
+        blocks: HashMap::new(),
+        building: HashSet::new(),
+    };
+    let descriptor = build_descriptor(shape, &by_shape, &real_ids, &mut rec)?;
 
     Ok(Derived {
         root: real_ids[root_key],
         schemas: resolved,
         descriptor,
+        descriptor_blocks: rec.blocks,
     })
 }
 
@@ -494,10 +515,56 @@ impl Builder {
     }
 }
 
+/// Recursion context for [`build_descriptor`]: which schema ids are cyclic, the block
+/// bodies built so far, and the ids currently being built (to detect a back-edge).
+struct RecCtx<'a> {
+    ids: &'a std::collections::BTreeSet<SchemaId>,
+    blocks: HashMap<SchemaId, Descriptor>,
+    building: HashSet<SchemaId>,
+}
+
+impl RecCtx<'_> {
+    /// Before building a composite's body: if `real` is recursive and already built (or
+    /// in progress, i.e. a back-edge), return the [`Access::Recurse`] stand-in to splice
+    /// in; otherwise mark it in-progress (when recursive) and return `None` so the caller
+    /// builds the body.
+    fn enter(&mut self, real: SchemaId, layout: Layout) -> Option<Descriptor> {
+        if self.ids.contains(&real) {
+            if self.blocks.contains_key(&real) || self.building.contains(&real) {
+                return Some(Descriptor {
+                    schema: SchemaRef::concrete(real),
+                    layout,
+                    access: Access::Recurse,
+                });
+            }
+            self.building.insert(real);
+        }
+        None
+    }
+
+    /// After building `desc` for `real`: if recursive, file it as a block and return the
+    /// [`Access::Recurse`] stand-in; otherwise return it inline unchanged.
+    fn exit(&mut self, real: SchemaId, desc: Descriptor) -> Descriptor {
+        if self.ids.contains(&real) {
+            self.building.remove(&real);
+            let layout = desc.layout;
+            self.blocks.insert(real, desc);
+            Descriptor {
+                schema: SchemaRef::concrete(real),
+                layout,
+                access: Access::Recurse,
+            }
+        } else {
+            desc
+        }
+    }
+}
+
 fn build_descriptor(
     shape: &'static Shape,
     by_shape: &HashMap<usize, usize>,
     real_ids: &[SchemaId],
+    rec: &mut RecCtx,
 ) -> Result<Descriptor, DeriveError> {
     let (size, align) = layout_of(shape)?;
     if shape.has_opaque_adapter() {
@@ -506,7 +573,7 @@ fn build_descriptor(
     // A transparent newtype: its inner type's descriptor carries the right access,
     // and (being transparent) the same layout at offset 0.
     if let Some(inner) = transparent_inner(shape) {
-        return build_descriptor(inner, by_shape, real_ids);
+        return build_descriptor(inner, by_shape, real_ids, rec);
     }
     if let Some(leaf) = cow_kind(shape) {
         return cow_descriptor(shape, leaf);
@@ -538,61 +605,85 @@ fn build_descriptor(
     }
     if let Some(list_def) = list_def(shape) {
         let real = real_ids[by_shape[&(core::ptr::from_ref(list_def) as usize)]];
-        let element = build_descriptor(list_def.t(), by_shape, real_ids)?;
-        return Ok(Descriptor {
+        let layout = Layout { size, align };
+        if let Some(d) = rec.enter(real, layout) {
+            return Ok(d);
+        }
+        let element = build_descriptor(list_def.t(), by_shape, real_ids, rec)?;
+        let desc = Descriptor {
             schema: SchemaRef::concrete(real),
-            layout: Layout { size, align },
+            layout,
             access: Access::Sequence(SequenceAccess {
                 element: Box::new(element),
                 storage: SequenceStorage::Vtable(list_thunks(list_def)),
             }),
-        });
+        };
+        return Ok(rec.exit(real, desc));
     }
     if let Some(opt) = option_def(shape) {
         let real = real_ids[by_shape[&(core::ptr::from_ref(opt) as usize)]];
-        let some = build_descriptor(opt.t(), by_shape, real_ids)?;
-        return Ok(Descriptor {
+        let layout = Layout { size, align };
+        if let Some(d) = rec.enter(real, layout) {
+            return Ok(d);
+        }
+        let some = build_descriptor(opt.t(), by_shape, real_ids, rec)?;
+        let desc = Descriptor {
             schema: SchemaRef::concrete(real),
-            layout: Layout { size, align },
+            layout,
             access: Access::Option(OptionAccess {
                 presence: Presence::Vtable(option_thunks(opt)),
                 some: Box::new(some),
             }),
-        });
+        };
+        return Ok(rec.exit(real, desc));
     }
     if let Some(map_def) = map_def(shape) {
         let real = real_ids[by_shape[&(core::ptr::from_ref(map_def) as usize)]];
-        let key = build_descriptor(map_def.k(), by_shape, real_ids)?;
-        let value = build_descriptor(map_def.v(), by_shape, real_ids)?;
-        return Ok(Descriptor {
+        let layout = Layout { size, align };
+        if let Some(d) = rec.enter(real, layout) {
+            return Ok(d);
+        }
+        let key = build_descriptor(map_def.k(), by_shape, real_ids, rec)?;
+        let value = build_descriptor(map_def.v(), by_shape, real_ids, rec)?;
+        let desc = Descriptor {
             schema: SchemaRef::concrete(real),
-            layout: Layout { size, align },
+            layout,
             access: Access::Map(MapAccess {
                 key: Box::new(key),
                 value: Box::new(value),
                 storage: MapStorage::Vtable(map_thunks(map_def)),
             }),
-        });
+        };
+        return Ok(rec.exit(real, desc));
     }
     if let Some(rd) = result_def(shape) {
         let real = real_ids[by_shape[&shape_ptr(shape)]];
-        let ok = build_descriptor(rd.t(), by_shape, real_ids)?;
-        let err = build_descriptor(rd.e(), by_shape, real_ids)?;
-        return Ok(Descriptor {
+        let layout = Layout { size, align };
+        if let Some(d) = rec.enter(real, layout) {
+            return Ok(d);
+        }
+        let ok = build_descriptor(rd.t(), by_shape, real_ids, rec)?;
+        let err = build_descriptor(rd.e(), by_shape, real_ids, rec)?;
+        let desc = Descriptor {
             schema: SchemaRef::concrete(real),
-            layout: Layout { size, align },
+            layout,
             access: Access::Result(ResultAccess {
                 ok: Box::new(ok),
                 err: Box::new(err),
                 thunks: result_thunks(rd),
             }),
-        });
+        };
+        return Ok(rec.exit(real, desc));
     }
     if let Some(et) = enum_type(shape) {
         let width = enum_repr_width(et.enum_repr).ok_or(DeriveError::Unsupported(
             "derive: only #[repr(uN/iN)] enums",
         ))?;
         let real = real_ids[by_shape[&shape_ptr(shape)]];
+        let layout = Layout { size, align };
+        if let Some(d) = rec.enter(real, layout) {
+            return Ok(d);
+        }
         let mut variants = Vec::with_capacity(et.variants.len());
         for (i, v) in et.variants.iter().enumerate() {
             // Variant field offsets already account for the discriminant (facet).
@@ -600,7 +691,7 @@ fn build_descriptor(
             for f in v.data.fields {
                 fields.push(FieldAccess {
                     offset: f.offset,
-                    descriptor: build_descriptor(f.shape(), by_shape, real_ids)?,
+                    descriptor: build_descriptor(f.shape(), by_shape, real_ids, rec)?,
                     default: field_default(f),
                 });
             }
@@ -615,34 +706,40 @@ fn build_descriptor(
                 },
             });
         }
-        return Ok(Descriptor {
+        let desc = Descriptor {
             schema: SchemaRef::concrete(real),
-            layout: Layout { size, align },
+            layout,
             access: Access::Enum(EnumAccess {
                 // #[repr(int)] enums keep the discriminant first, at offset 0.
                 tag: Tag::Direct { offset: 0, width },
                 variants,
             }),
-        });
+        };
+        return Ok(rec.exit(real, desc));
     }
     let fields = struct_fields(shape)?;
     let real = real_ids[by_shape[&shape_ptr(shape)]];
+    let layout = Layout { size, align };
+    if let Some(d) = rec.enter(real, layout) {
+        return Ok(d);
+    }
     let mut accesses = Vec::with_capacity(fields.len());
     for f in fields {
         accesses.push(FieldAccess {
             offset: f.offset,
-            descriptor: build_descriptor(f.shape(), by_shape, real_ids)?,
+            descriptor: build_descriptor(f.shape(), by_shape, real_ids, rec)?,
             default: field_default(f),
         });
     }
-    Ok(Descriptor {
+    let desc = Descriptor {
         schema: SchemaRef::concrete(real),
-        layout: Layout { size, align },
+        layout,
         access: Access::Record(RecordAccess {
             fields: accesses,
             construct: Construct::InPlace,
         }),
-    })
+    };
+    Ok(rec.exit(real, desc))
 }
 
 fn shape_ptr(shape: &'static Shape) -> usize {
