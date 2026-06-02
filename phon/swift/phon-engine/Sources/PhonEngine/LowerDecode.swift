@@ -23,29 +23,50 @@ import PhonSchema
 /// Lower `(writer schema ⋈ reader descriptor)` into the reader-memory decode
 /// program, in wire order.
 ///
-/// Recursive reconciling decode (a cyclic reader descriptor) is a tracked
-/// follow-up: the reconciling walker would lower a block per reader recursion
-/// target against the writer's matching schema. For now the reconciling path is
-/// non-recursive, so the block registry is empty (a `.recurse` reader node errors
-/// cleanly via the node walker's default). Same-schema recursive decode goes
-/// through `lowerTyped` instead, which does build blocks.
-public func lowerDecode(_ writerRoot: SchemaId, _ reader: Descriptor, _ reg: Registry) throws -> Lowered {
+/// A recursive reader lowers each of its cyclic schemas to a callable block, just
+/// as `lowerTyped` does — a `.recurse` reader node becomes a `.callBlock` into one
+/// of these. For the reconciled (same-schema) path the writer's schema at every
+/// `.recurse` position is that same schema, so a block reconciles
+/// `concrete(R) ⋈ readerBlocks[R]` — the drift-free identity. (Drift ACROSS a
+/// recursion boundary is the tracked follow-up; here the block's writer ref is the
+/// reader schema id.)
+public func lowerDecode(
+    _ writerRoot: SchemaId, _ reader: Descriptor, _ reg: Registry,
+    _ readerBlocks: [SchemaId: Descriptor] = [:]
+) throws -> Lowered {
     var out: MemProgram = []
     try lowerDecodeNode(.concrete(id: writerRoot, args: []), reader, reg, 0, &out)
-    return Lowered(program: fuse(out), blocks: [:])
+    var blocks: [SchemaId: MemProgram] = [:]
+    for (id, body) in readerBlocks {
+        var ops: MemProgram = []
+        try lowerDecodeNode(.concrete(id: id, args: []), body, reg, 0, &ops)
+        blocks[id] = fuse(ops)
+    }
+    return Lowered(program: fuse(out), blocks: blocks)
 }
 
 /// The same-schema decode: the writer is the schema the reader carries. The
 /// resulting program has no skips/defaults — the drift-free identity. (There is
 /// no separate same-schema decoder; this is `lowerDecode` with writer == reader.)
-public func lowerDecode(_ reader: Descriptor, _ reg: Registry) throws -> Lowered {
+public func lowerDecode(
+    _ reader: Descriptor, _ reg: Registry, _ readerBlocks: [SchemaId: Descriptor] = [:]
+) throws -> Lowered {
     guard case .concrete(let id, _) = reader.schema else {
         throw CompactError.malformed("lowerDecode: root descriptor schema must be concrete")
     }
-    return try lowerDecode(id, reader, reg)
+    return try lowerDecode(id, reader, reg, readerBlocks)
 }
 
 private func lowerDecodeNode(_ writer: SchemaRef, _ reader: Descriptor, _ reg: Registry, _ base: Int, _ out: inout MemProgram) throws {
+    // A recursive reader back-edge: emit a call into that schema's block, run at
+    // `base + offset`. `lowerDecode` lowers the block itself from `readerBlocks`.
+    if case .recurse = reader.access {
+        guard case .concrete(let id, _) = reader.schema else {
+            throw CompactError.unsupported("typed: recursion via type-var ref (decode)")
+        }
+        out.append(.callBlock(schema: id, offset: base))
+        return
+    }
     let w = try resolve(reg, writer)
     switch (reader.access, w) {
     case (.scalar, .primitive(let wp)):
