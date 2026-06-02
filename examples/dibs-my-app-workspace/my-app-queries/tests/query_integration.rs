@@ -475,10 +475,7 @@ async fn test_update_jsonb_metadata() {
         .unwrap();
     let stored = read.metadata.unwrap().0;
     let stored_obj = stored.as_object().unwrap();
-    assert_eq!(
-        stored_obj.get("v").and_then(|v| v.as_number()).is_some(),
-        true
-    );
+    assert!(stored_obj.get("v").and_then(|v| v.as_number()).is_some(),);
     assert_eq!(
         stored_obj
             .get("tag")
