@@ -2,6 +2,8 @@
 name = "dibs-qgen"
 version = "0.1.0"
 edition = "2024"
+description = "Query DSL code generator for dibs (parses .styx query files into Rust and SQL)"
+license = "MIT OR Apache-2.0"
 
 [package.metadata]
 
@@ -9,9 +11,9 @@ edition = "2024"
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-dibs-db-schema = { path = "../dibs-db-schema" }
+dibs-db-schema = { version = "0.1.0", path = "../dibs-db-schema" }
 dibs-query-schema.workspace = true
-dibs-sql = { path = "../dibs-sql" }
+dibs-sql = { version = "0.1.0", path = "../dibs-sql" }
 facet-styx = { workspace = true, features = ["tracing"] }
 codegen.workspace = true
 ariadne.workspace = true
