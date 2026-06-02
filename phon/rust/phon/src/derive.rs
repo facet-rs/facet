@@ -2186,6 +2186,55 @@ mod tests {
         assert_eq!(unsafe { slot.assume_init() }, t);
     }
 
+    #[test]
+    fn reconciling_decode_recurses_for_a_cyclic_type() {
+        // The RECONCILING decode path (`lower_decode` — the one vox's RPC args/response
+        // decode through) must also handle a recursive reader: a `Recurse` node lowers to
+        // a `CallBlock` and the cyclic schema's block is built from `descriptor_blocks`.
+        // Same-schema here (writer == reader == Tree) — the cross-language matrix case.
+        let d = of::<Tree>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+
+        let t = Tree {
+            value: 10,
+            children: vec![
+                Tree {
+                    value: 20,
+                    children: vec![],
+                },
+                Tree {
+                    value: 30,
+                    children: vec![Tree {
+                        value: 40,
+                        children: vec![],
+                    }],
+                },
+            ],
+        };
+
+        // Encode through the typed (same-schema) path.
+        let bytes = unsafe {
+            typed::encode(
+                core::ptr::from_ref(&t).cast::<u8>(),
+                &d.descriptor,
+                &d.descriptor_blocks,
+                &reg,
+            )
+        }
+        .unwrap();
+
+        // Decode through the reconciling path with writer == reader.
+        let program =
+            typed::lower_decode(d.root, &d.descriptor, &d.descriptor_blocks, &reg).unwrap();
+        assert!(
+            !program.blocks.is_empty(),
+            "a recursive reconciling decode must build at least one block"
+        );
+        let mut slot = std::mem::MaybeUninit::<Tree>::uninit();
+        unsafe { typed::decode_with(&program, &bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        assert_eq!(unsafe { slot.assume_init() }, t);
+    }
+
     // A struct with an owned `String` field: the bulk byte run, end to end.
     #[derive(Facet)]
     struct Named {
@@ -3294,7 +3343,7 @@ mod tests {
         let value = ReorderW { a: 7, b: 9 };
         let bytes = encode_writer(&value, &w, &reg);
 
-        let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
+        let program = lower_decode(w.root, &r.descriptor, &r.descriptor_blocks, &reg).unwrap();
         let mut slot = std::mem::MaybeUninit::<ReorderR>::uninit();
         unsafe { typed::decode_with(&program, &bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
         let back = unsafe { slot.assume_init() };
@@ -3337,7 +3386,7 @@ mod tests {
         };
         let bytes = encode_writer(&value, &w, &reg);
 
-        let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
+        let program = lower_decode(w.root, &r.descriptor, &r.descriptor_blocks, &reg).unwrap();
         let mut slot = std::mem::MaybeUninit::<SkipR>::uninit();
         unsafe { typed::decode_with(&program, &bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
         let back = unsafe { slot.assume_init() };
@@ -3380,7 +3429,7 @@ mod tests {
         let value = DefaultW { a: 7 };
         let bytes = encode_writer(&value, &w, &reg);
 
-        let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
+        let program = lower_decode(w.root, &r.descriptor, &r.descriptor_blocks, &reg).unwrap();
         let mut slot = std::mem::MaybeUninit::<DefaultR>::uninit();
         unsafe { typed::decode_with(&program, &bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
         let back = unsafe { slot.assume_init() };
@@ -3402,7 +3451,7 @@ mod tests {
         let reg = merged_registry(&w, &r);
 
         let bytes = encode_writer(&DefaultW { a: 7 }, &w, &reg);
-        let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
+        let program = lower_decode(w.root, &r.descriptor, &r.descriptor_blocks, &reg).unwrap();
         let mut slot = std::mem::MaybeUninit::<CustomR>::uninit();
         unsafe { typed::decode_with(&program, &bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
         let back = unsafe { slot.assume_init() };
@@ -3418,7 +3467,7 @@ mod tests {
         let reg = merged_registry(&w, &r);
 
         assert!(matches!(
-            lower_decode(w.root, &r.descriptor, &reg),
+            lower_decode(w.root, &r.descriptor, &r.descriptor_blocks, &reg),
             Err(CompactError::Incompatible(_))
         ));
         // Oracle: the dynamic plan is equally incompatible.
@@ -3458,7 +3507,7 @@ mod tests {
         let reg = merged_registry(&w, &r);
 
         let bytes = encode_writer(&EnumW::B(42), &w, &reg);
-        let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
+        let program = lower_decode(w.root, &r.descriptor, &r.descriptor_blocks, &reg).unwrap();
         let mut slot = std::mem::MaybeUninit::<EnumRMore>::uninit();
         unsafe { typed::decode_with(&program, &bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
         let back = unsafe { slot.assume_init() };
@@ -3479,7 +3528,7 @@ mod tests {
         let reg = merged_registry(&w, &r);
 
         // The plan builds (A matches), but receiving B is a writer-only-variant error.
-        let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
+        let program = lower_decode(w.root, &r.descriptor, &r.descriptor_blocks, &reg).unwrap();
         let b_bytes = encode_writer(&EnumW::B(42), &w, &reg);
         let mut slot = std::mem::MaybeUninit::<EnumRFewer>::uninit();
         let err = unsafe { typed::decode_with(&program, &b_bytes, slot.as_mut_ptr().cast::<u8>()) }
@@ -3522,7 +3571,7 @@ mod tests {
         let reg = merged_registry(&w, &r);
 
         assert!(matches!(
-            lower_decode(w.root, &r.descriptor, &reg),
+            lower_decode(w.root, &r.descriptor, &r.descriptor_blocks, &reg),
             Err(CompactError::Incompatible(_))
         ));
         // Oracle.
@@ -3567,7 +3616,7 @@ mod tests {
         };
         let bytes = encode_writer(&value, &w, &reg);
 
-        let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
+        let program = lower_decode(w.root, &r.descriptor, &r.descriptor_blocks, &reg).unwrap();
         let mut slot = std::mem::MaybeUninit::<OuterR>::uninit();
         unsafe { typed::decode_with(&program, &bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
         let back = unsafe { slot.assume_init() };
@@ -3596,7 +3645,7 @@ mod tests {
         let reg = Registry::new(d.schemas.clone());
 
         let single = typed::lower(&d.descriptor, &reg).unwrap();
-        let compat = lower_decode(d.root, &d.descriptor, &reg).unwrap();
+        let compat = lower_decode(d.root, &d.descriptor, &d.descriptor_blocks, &reg).unwrap();
 
         // No compat-only ops appear, and the op sequence matches the single-schema
         // lowering byte-for-byte (Debug equality on the IR).
@@ -3690,7 +3739,7 @@ mod tests {
         let reg = merged_registry(&w, &r);
 
         let bytes = encode_writer(&ReorderW { a: 7, b: 9 }, &w, &reg);
-        let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
+        let program = lower_decode(w.root, &r.descriptor, &r.descriptor_blocks, &reg).unwrap();
 
         let (jit, interp) = decode_both::<ReorderR>(&program, &bytes);
         assert_eq!(jit.a, 7);
@@ -3714,7 +3763,7 @@ mod tests {
             c: 22,
         };
         let bytes = encode_writer(&value, &w, &reg);
-        let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
+        let program = lower_decode(w.root, &r.descriptor, &r.descriptor_blocks, &reg).unwrap();
         assert!(
             has_compat_ops(&program),
             "expected a SkipWire op in the program"
@@ -3737,7 +3786,7 @@ mod tests {
         let reg = merged_registry(&w, &r);
 
         let bytes = encode_writer(&DefaultW { a: 7 }, &w, &reg);
-        let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
+        let program = lower_decode(w.root, &r.descriptor, &r.descriptor_blocks, &reg).unwrap();
         assert!(
             has_compat_ops(&program),
             "expected a Default op in the program"
@@ -3765,7 +3814,7 @@ mod tests {
         let reg = merged_registry(&w, &r);
 
         let bytes = encode_writer(&DefaultW { a: 7 }, &w, &reg);
-        let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
+        let program = lower_decode(w.root, &r.descriptor, &r.descriptor_blocks, &reg).unwrap();
         assert!(
             has_compat_ops(&program),
             "expected a Default op in the program"
@@ -3786,7 +3835,7 @@ mod tests {
         let w = of::<EnumW>().unwrap();
         let r = of::<EnumRMore>().unwrap();
         let reg = merged_registry(&w, &r);
-        let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
+        let program = lower_decode(w.root, &r.descriptor, &r.descriptor_blocks, &reg).unwrap();
 
         for (val, want) in [(EnumW::B(42), EnumRMore::B(42)), (EnumW::A, EnumRMore::A)] {
             let bytes = encode_writer(&val, &w, &reg);
@@ -3806,7 +3855,7 @@ mod tests {
         let w = of::<EnumW>().unwrap();
         let r = of::<EnumRFewer>().unwrap();
         let reg = merged_registry(&w, &r);
-        let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
+        let program = lower_decode(w.root, &r.descriptor, &r.descriptor_blocks, &reg).unwrap();
 
         // The writer-only variant B is rejected by the JIT — now distinctly, as
         // WriterOnlyVariant (the `DecodeError`-channel counterpart of the
@@ -3842,7 +3891,7 @@ mod tests {
             tag: 0x99,
         };
         let bytes = encode_writer(&value, &w, &reg);
-        let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
+        let program = lower_decode(w.root, &r.descriptor, &r.descriptor_blocks, &reg).unwrap();
         assert!(
             has_compat_ops(&program),
             "expected a nested Default op in the program"
@@ -4042,7 +4091,7 @@ mod tests {
 
         let value: Result<OkW, String> = Ok(OkW { a: 9 });
         let bytes = encode_writer(&value, &w, &reg);
-        let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
+        let program = lower_decode(w.root, &r.descriptor, &r.descriptor_blocks, &reg).unwrap();
         let mut slot = std::mem::MaybeUninit::<Result<OkR, String>>::uninit();
         unsafe { typed::decode_with(&program, &bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
         assert_eq!(unsafe { slot.assume_init() }, Ok(OkR { a: 9, b: 0 }));
@@ -4139,7 +4188,7 @@ mod tests {
             meta: meta.clone(),
         };
         let bytes = encode_writer(&value, &w, &reg);
-        let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
+        let program = lower_decode(w.root, &r.descriptor, &r.descriptor_blocks, &reg).unwrap();
         let mut slot = std::mem::MaybeUninit::<R>::uninit();
         unsafe { typed::decode_with(&program, &bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
         let back = unsafe { slot.assume_init() };

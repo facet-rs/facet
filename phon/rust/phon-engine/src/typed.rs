@@ -386,16 +386,30 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
 /// cannot be reconciled, or [`CompactError::Unsupported`] for a kind not yet
 /// carried by the typed path.
 // r[impl compat.plan-first]
-pub fn lower_decode(writer_root: SchemaId, reader: &Descriptor, reg: &Registry) -> Result<Lowered> {
+pub fn lower_decode(
+    writer_root: SchemaId,
+    reader: &Descriptor,
+    reader_blocks: &HashMap<SchemaId, Descriptor>,
+    reg: &Registry,
+) -> Result<Lowered> {
     let mut out = Vec::new();
     lower_decode_node(&SchemaRef::concrete(writer_root), reader, reg, 0, &mut out)?;
-    // Recursive reconciling decode (a cyclic reader descriptor) is a follow-up: the
-    // reconciling walker would lower a block per reader recursion target against the
-    // writer's matching schema. For now the reconciling path is non-recursive, so the
-    // block registry is empty (a `Recurse` reader node errors cleanly upstream).
+    // A recursive reader lowers each of its cyclic schemas to a callable block, just
+    // as `lower_typed` does — a `Recurse` reader node became a `CallBlock` into one of
+    // these. For the reconciled (same-schema) path the writer's schema at every
+    // `Recurse` position is that same schema, so a block reconciles
+    // `concrete(R) ⋈ reader_blocks[R]` — the drift-free identity. (Drift ACROSS a
+    // recursion boundary — a writer whose cyclic schema differs from the reader's — is
+    // the tracked follow-up; here the block's writer ref is the reader schema id.)
+    let mut blocks = BTreeMap::new();
+    for (id, body) in reader_blocks {
+        let mut ops = Vec::new();
+        lower_decode_node(&SchemaRef::concrete(*id), body, reg, 0, &mut ops)?;
+        blocks.insert(*id, fuse(ops));
+    }
     Ok(Lowered {
         program: fuse(out),
-        blocks: BTreeMap::new(),
+        blocks,
     })
 }
 
@@ -409,6 +423,24 @@ fn lower_decode_node(
     base: usize,
     out: &mut MemProgram,
 ) -> Result<()> {
+    // A recursive reader back-edge: emit a call into that schema's block, run at
+    // `base + offset`. `lower_decode` lowers the block itself from `reader_blocks`.
+    // (`r[ir.recursion]`)
+    if matches!(reader.access, Access::Recurse) {
+        let schema = match &reader.schema {
+            SchemaRef::Concrete { id, .. } => *id,
+            SchemaRef::Var { .. } => {
+                return Err(CompactError::Unsupported(
+                    "typed: recursion via type-var ref (decode)",
+                ));
+            }
+        };
+        out.push(MemOp::CallBlock {
+            schema,
+            offset: base,
+        });
+        return Ok(());
+    }
     let w = compact::resolve(reg, writer)?;
     match (&reader.access, w) {
         // Scalar ⋈ scalar: identical primitives copy through; differing ones are
