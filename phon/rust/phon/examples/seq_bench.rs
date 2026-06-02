@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use facet::Facet;
 use phon_engine::{Registry, typed};
-use phon_ir::MemProgram;
+use phon_ir::Lowered;
 
 #[derive(Facet)]
 struct Msg {
@@ -23,14 +23,14 @@ struct Msg {
 
 const ITERS: u64 = 5_000_000;
 
-fn decode_interp(program: &MemProgram, wire: &[u8]) {
+fn decode_interp(program: &Lowered, wire: &[u8]) {
     let mut slot = MaybeUninit::<Msg>::uninit();
     unsafe { typed::decode_with(program, wire, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
     let msg = unsafe { slot.assume_init() };
     black_box(&msg);
 }
 
-fn encode_interp(program: &MemProgram, base: *const u8) {
+fn encode_interp(program: &Lowered, base: *const u8) {
     let bytes = unsafe { typed::encode_with(program, base) };
     black_box(&bytes);
 }
@@ -52,7 +52,7 @@ fn main() {
     let n_items = 32usize;
     let d = phon::derive::of::<Msg>().unwrap();
     let reg = Registry::new(d.schemas.clone());
-    let program = typed::lower(&d.descriptor, &reg).unwrap();
+    let program = typed::lower_typed(&d.descriptor, &d.descriptor_blocks, &reg).unwrap();
 
     let msg = Msg {
         a: 0x1122_3344_5566_7788,

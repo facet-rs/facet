@@ -215,14 +215,15 @@ pub enum MemOp {
     /// varints). Decode reads the length, borrows the span from the input, and hands
     /// it to the decode thunk — zero-copy, the inner schema unknown. See [`OpaqueOp`].
     Opaque(Box<OpaqueOp>),
-    /// A call into a recursive schema's block program, run at the CURRENT value
-    /// pointer (the same base the enclosing op established — a field offset, a
-    /// sequence element address, an option payload, …). This is how a recursive type
-    /// stays finite: the cyclic schema is lowered once into a block (resolved from the
-    /// [`Lowered::blocks`] registry by `schema`), and every reference to it is a
-    /// `CallBlock` rather than an inlined subtree. Encode and decode both recurse into
-    /// the block. (`r[ir.recursion]`)
-    CallBlock { schema: SchemaId },
+    /// A call into a recursive schema's block program, run at `base + offset` (the
+    /// recursive value sits at `offset` from the enclosing base — a struct field, or
+    /// `0` for a sequence element / option payload / map value reached at its own
+    /// base). This is how a recursive type stays finite: the cyclic schema is lowered
+    /// once into a block (resolved from the [`Lowered::blocks`] registry by `schema`,
+    /// with offsets relative to the recursive value's start), and every reference to it
+    /// is a `CallBlock` rather than an inlined subtree. Encode and decode both recurse
+    /// into the block. (`r[ir.recursion]`)
+    CallBlock { schema: SchemaId, offset: usize },
 }
 
 /// A type-erased "write this field's default in place" operation, supplied by the

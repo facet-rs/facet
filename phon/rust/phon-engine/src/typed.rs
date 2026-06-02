@@ -23,11 +23,11 @@
 //! Spec: "The descriptor model", "Compact mode", `r[ir.memory]`.
 
 use std::alloc;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use phon_ir::ir::{
-    BorrowOp, BytesOp, DefaultOp, EnumOp, EnumVariantOp, MapOp, MemOp, MemProgram, OpaqueOp,
-    OptionOp, ResultOp, SeqOp, SkipOp, fuse,
+    BorrowOp, BytesOp, DefaultOp, EnumOp, EnumVariantOp, Lowered, MapOp, MemOp, MemProgram,
+    OpaqueOp, OptionOp, ResultOp, SeqOp, SkipOp, fuse,
 };
 use phon_ir::{
     Access, Construct, Descriptor, EnumAccess, MapStorage, Presence, RecordAccess, ResultAccess,
@@ -94,8 +94,52 @@ pub fn lower(descriptor: &Descriptor, reg: &Registry) -> Result<MemProgram> {
     Ok(fuse(out))
 }
 
+/// Lower a descriptor that may be recursive: the root program plus a block program per
+/// recursive (cyclic) schema, each lowered once from `descriptor_blocks` (which
+/// `phon::derive` collected). A `CallBlock` op resolves into [`Lowered::blocks`] at run
+/// time. For a non-recursive type `descriptor_blocks` is empty and the result is the
+/// familiar flat program with no blocks (`r[ir.recursion]`).
+pub fn lower_typed(
+    descriptor: &Descriptor,
+    descriptor_blocks: &HashMap<SchemaId, Descriptor>,
+    reg: &Registry,
+) -> Result<Lowered> {
+    let mut root = Vec::new();
+    lower_node(descriptor, reg, 0, &mut root)?;
+    let mut blocks = BTreeMap::new();
+    for (id, body) in descriptor_blocks {
+        // A block's ops are relative to the recursive value's own start (base 0); a
+        // `CallBlock` supplies the actual pointer at run time.
+        let mut ops = Vec::new();
+        lower_node(body, reg, 0, &mut ops)?;
+        blocks.insert(*id, fuse(ops));
+    }
+    Ok(Lowered {
+        program: fuse(root),
+        blocks,
+    })
+}
+
 // r[impl ir.inlining]
 fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram) -> Result<()> {
+    // A back-edge to a recursive schema: emit a call into that schema's block, run at
+    // `base + offset` (the recursive value's location). The block itself is lowered once
+    // by `lower_typed` from `Derived::descriptor_blocks`. (`r[ir.recursion]`)
+    if matches!(d.access, Access::Recurse) {
+        let schema = match &d.schema {
+            SchemaRef::Concrete { id, .. } => *id,
+            SchemaRef::Var { .. } => {
+                return Err(CompactError::Unsupported(
+                    "typed: recursion via type-var ref",
+                ));
+            }
+        };
+        out.push(MemOp::CallBlock {
+            schema,
+            offset: base,
+        });
+        return Ok(());
+    }
     match (&d.access, compact::resolve(reg, &d.schema)?) {
         (Access::Scalar, Resolved::Primitive(p)) => {
             let size = fixed_size(p).ok_or(CompactError::Unsupported(
@@ -342,14 +386,17 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
 /// cannot be reconciled, or [`CompactError::Unsupported`] for a kind not yet
 /// carried by the typed path.
 // r[impl compat.plan-first]
-pub fn lower_decode(
-    writer_root: SchemaId,
-    reader: &Descriptor,
-    reg: &Registry,
-) -> Result<MemProgram> {
+pub fn lower_decode(writer_root: SchemaId, reader: &Descriptor, reg: &Registry) -> Result<Lowered> {
     let mut out = Vec::new();
     lower_decode_node(&SchemaRef::concrete(writer_root), reader, reg, 0, &mut out)?;
-    Ok(fuse(out))
+    // Recursive reconciling decode (a cyclic reader descriptor) is a follow-up: the
+    // reconciling walker would lower a block per reader recursion target against the
+    // writer's matching schema. For now the reconciling path is non-recursive, so the
+    // block registry is empty (a `Recurse` reader node errors cleanly upstream).
+    Ok(Lowered {
+        program: fuse(out),
+        blocks: BTreeMap::new(),
+    })
 }
 
 /// Append the reader-memory ops for one (writer schema ⋈ reader descriptor) node,
@@ -1049,19 +1096,29 @@ unsafe extern "C" fn validate_any(_ptr: *const u8, _len: usize) -> bool {
 /// `base` must point to an initialized value matching the descriptor the program
 /// was lowered from, readable for every `offset + size` the program touches.
 #[must_use]
-pub unsafe fn encode_with(program: &MemProgram, base: *const u8) -> Vec<u8> {
+pub unsafe fn encode_with(lowered: &Lowered, base: *const u8) -> Vec<u8> {
     let mut out = Vec::new();
     // Safety: forwarded from this function's contract.
-    unsafe { encode_program(program, base, &mut out) };
+    unsafe { encode_program(&lowered.program, base, &mut out, &lowered.blocks) };
     out
 }
 
-unsafe fn encode_program(program: &MemProgram, base: *const u8, out: &mut Vec<u8>) {
+unsafe fn encode_program(
+    program: &MemProgram,
+    base: *const u8,
+    out: &mut Vec<u8>,
+    blocks: &BTreeMap<SchemaId, MemProgram>,
+) {
     for op in program {
         match op {
-            // The recursion-aware executor (which threads the block registry) replaces
-            // this path; the current flat executor never emits a `CallBlock`.
-            MemOp::CallBlock { .. } => unreachable!("CallBlock requires the recursion executor"),
+            // A recursive back-edge: run the callee schema's block at `base + offset`.
+            MemOp::CallBlock { schema, offset } => {
+                let block = blocks
+                    .get(schema)
+                    .expect("CallBlock references a lowered recursion block");
+                // Safety: the recursive value lives at `base + offset`.
+                unsafe { encode_program(block, base.add(*offset), out, blocks) };
+            }
             MemOp::Scalar {
                 offset,
                 size,
@@ -1080,7 +1137,7 @@ unsafe fn encode_program(program: &MemProgram, base: *const u8, out: &mut Vec<u8
                 let data = unsafe { (s.thunks.data)(s.thunks.ctx, list) };
                 for i in 0..n {
                     // Safety: element `i` lives at `data + i*stride`.
-                    unsafe { encode_program(&s.element, data.add(i * s.stride), out) };
+                    unsafe { encode_program(&s.element, data.add(i * s.stride), out, blocks) };
                 }
             }
             MemOp::Bytes(b) => {
@@ -1122,7 +1179,7 @@ unsafe fn encode_program(program: &MemProgram, base: *const u8, out: &mut Vec<u8
                     write_u8(out, 1);
                     // Safety: present, so `get_value` returns a valid inner pointer.
                     let inner = unsafe { (o.thunks.get_value)(o.thunks.ctx, option) };
-                    unsafe { encode_program(&o.some, inner, out) };
+                    unsafe { encode_program(&o.some, inner, out, blocks) };
                 } else {
                     write_u8(out, 0);
                 }
@@ -1139,7 +1196,7 @@ unsafe fn encode_program(program: &MemProgram, base: *const u8, out: &mut Vec<u8
                     .expect("enum discriminant matches no modelled variant (invalid value)");
                 write_u32(out, variant.wire_index);
                 // The payload fields live at base-relative offsets (same base).
-                unsafe { encode_program(&variant.payload, base, out) };
+                unsafe { encode_program(&variant.payload, base, out, blocks) };
             }
             MemOp::Map(m) => {
                 // Safety: the map handle lives at field_offset.
@@ -1157,8 +1214,8 @@ unsafe fn encode_program(program: &MemProgram, base: *const u8, out: &mut Vec<u8
                         break;
                     }
                     // Safety: `k`/`v` borrow the current entry's key/value.
-                    unsafe { encode_program(&m.key, k, out) };
-                    unsafe { encode_program(&m.value, v, out) };
+                    unsafe { encode_program(&m.key, k, out, blocks) };
+                    unsafe { encode_program(&m.value, v, out, blocks) };
                 }
                 // Safety: `it` was built by `iter_init` and is freed exactly once.
                 unsafe { (m.thunks.iter_dealloc)(m.thunks.ctx, it) };
@@ -1181,12 +1238,12 @@ unsafe fn encode_program(program: &MemProgram, base: *const u8, out: &mut Vec<u8
                     write_u32(out, rs.ok_wire_index);
                     // Safety: Ok, so `get_ok` returns a valid inner pointer.
                     let ok = unsafe { (rs.thunks.get_ok)(rs.thunks.ctx, result) };
-                    unsafe { encode_program(&rs.ok, ok, out) };
+                    unsafe { encode_program(&rs.ok, ok, out, blocks) };
                 } else {
                     write_u32(out, rs.err_wire_index);
                     // Safety: Err, so `get_err` returns a valid inner pointer.
                     let err = unsafe { (rs.thunks.get_err)(rs.thunks.ctx, result) };
-                    unsafe { encode_program(&rs.err, err, out) };
+                    unsafe { encode_program(&rs.err, err, out, blocks) };
                 }
             }
             // r[impl zerocopy.framing.value.opaque] — opaque field: reserve a `u32`
@@ -1221,10 +1278,15 @@ unsafe fn encode_program(program: &MemProgram, base: *const u8, out: &mut Vec<u8
 ///
 /// # Errors
 /// As [`lower`].
-pub unsafe fn encode(base: *const u8, descriptor: &Descriptor, reg: &Registry) -> Result<Vec<u8>> {
-    let program = lower(descriptor, reg)?;
+pub unsafe fn encode(
+    base: *const u8,
+    descriptor: &Descriptor,
+    descriptor_blocks: &HashMap<SchemaId, Descriptor>,
+    reg: &Registry,
+) -> Result<Vec<u8>> {
+    let lowered = lower_typed(descriptor, descriptor_blocks, reg)?;
     // Safety: forwarded from this function's contract.
-    Ok(unsafe { encode_with(&program, base) })
+    Ok(unsafe { encode_with(&lowered, base) })
 }
 
 // ============================================================================
@@ -1241,10 +1303,10 @@ pub unsafe fn encode(base: *const u8, descriptor: &Descriptor, reg: &Registry) -
 ///
 /// # Errors
 /// [`CompactError`] for malformed or trailing input.
-pub unsafe fn decode_with(program: &MemProgram, bytes: &[u8], base: *mut u8) -> Result<()> {
+pub unsafe fn decode_with(lowered: &Lowered, bytes: &[u8], base: *mut u8) -> Result<()> {
     let mut r = Reader::new(bytes);
     // Safety: forwarded from this function's contract.
-    unsafe { decode_program(program, &mut r, base)? };
+    unsafe { decode_program(&lowered.program, &mut r, base, &lowered.blocks)? };
     if r.remaining() != 0 {
         return Err(CompactError::Decode(DecodeError::TrailingBytes(
             r.remaining(),
@@ -1253,15 +1315,21 @@ pub unsafe fn decode_with(program: &MemProgram, bytes: &[u8], base: *mut u8) -> 
     Ok(())
 }
 
-unsafe fn decode_program(program: &MemProgram, r: &mut Reader, base: *mut u8) -> Result<()> {
+unsafe fn decode_program(
+    program: &MemProgram,
+    r: &mut Reader,
+    base: *mut u8,
+    blocks: &BTreeMap<SchemaId, MemProgram>,
+) -> Result<()> {
     for op in program {
         match op {
-            // The recursion-aware executor (which threads the block registry) replaces
-            // this path; the current flat executor never emits a `CallBlock`.
-            MemOp::CallBlock { .. } => {
-                return Err(CompactError::Unsupported(
-                    "CallBlock requires the recursion executor",
-                ));
+            // A recursive back-edge: run the callee schema's block at `base + offset`.
+            MemOp::CallBlock { schema, offset } => {
+                let block = blocks
+                    .get(schema)
+                    .expect("CallBlock references a lowered recursion block");
+                // Safety: the recursive value lives at `base + offset`.
+                unsafe { decode_program(block, r, base.add(*offset), blocks)? };
             }
             MemOp::Scalar {
                 offset,
@@ -1304,7 +1372,7 @@ unsafe fn decode_program(program: &MemProgram, r: &mut Reader, base: *mut u8) ->
                     // `.add(0)` is sound (provenance is only required for non-zero
                     // offsets); the element program touches no buffer bytes.
                     if let Err(e) =
-                        unsafe { decode_program(&s.element, r, buffer.add(i * s.stride)) }
+                        unsafe { decode_program(&s.element, r, buffer.add(i * s.stride), blocks) }
                     {
                         // Free the buffer on a mid-fill failure (elements are
                         // assumed trivially droppable for now). Only a real,
@@ -1410,7 +1478,7 @@ unsafe fn decode_program(program: &MemProgram, r: &mut Reader, base: *mut u8) ->
                             (buf, Some(layout))
                         };
                         // Safety: scratch is inner_size bytes at inner_align.
-                        if let Err(e) = unsafe { decode_program(&o.some, r, scratch) } {
+                        if let Err(e) = unsafe { decode_program(&o.some, r, scratch, blocks) } {
                             if let Some(layout) = layout {
                                 unsafe { alloc::dealloc(scratch, layout) };
                             }
@@ -1442,7 +1510,7 @@ unsafe fn decode_program(program: &MemProgram, r: &mut Reader, base: *mut u8) ->
                 // Safety: the discriminant lives at base + tag_offset, tag_width wide.
                 unsafe { write_uint(base.add(e.tag_offset), e.tag_width, variant.selector) };
                 // Safety: payload fields write within the enum's storage at base.
-                unsafe { decode_program(&variant.payload, r, base)? };
+                unsafe { decode_program(&variant.payload, r, base, blocks)? };
             }
             MemOp::Map(m) => {
                 let n = r.read_len(1)?;
@@ -1467,13 +1535,13 @@ unsafe fn decode_program(program: &MemProgram, r: &mut Reader, base: *mut u8) ->
                             }
                         };
                     // Safety: key_scratch is key_size bytes at key_align.
-                    if let Err(e) = unsafe { decode_program(&m.key, r, key_scratch) } {
+                    if let Err(e) = unsafe { decode_program(&m.key, r, key_scratch, blocks) } {
                         free_scratch(key_scratch, key_layout);
                         free_scratch(value_scratch, value_layout);
                         return Err(e);
                     }
                     // Safety: value_scratch is value_size bytes at value_align.
-                    if let Err(e) = unsafe { decode_program(&m.value, r, value_scratch) } {
+                    if let Err(e) = unsafe { decode_program(&m.value, r, value_scratch, blocks) } {
                         free_scratch(key_scratch, key_layout);
                         free_scratch(value_scratch, value_layout);
                         return Err(e);
@@ -1522,6 +1590,7 @@ unsafe fn decode_program(program: &MemProgram, r: &mut Reader, base: *mut u8) ->
                             rs.thunks.ctx,
                             result,
                             rs.thunks.init_ok,
+                            blocks,
                         )?
                     };
                 } else if idx == rs.err_wire_index {
@@ -1535,6 +1604,7 @@ unsafe fn decode_program(program: &MemProgram, r: &mut Reader, base: *mut u8) ->
                             rs.thunks.ctx,
                             result,
                             rs.thunks.init_err,
+                            blocks,
                         )?
                     };
                 } else {
@@ -1622,10 +1692,11 @@ unsafe fn decode_into_via_init(
     ctx: *const (),
     handle: *mut u8,
     init: unsafe extern "C" fn(ctx: *const (), handle: *mut u8, value: *mut u8),
+    blocks: &BTreeMap<SchemaId, MemProgram>,
 ) -> Result<()> {
     let (scratch, layout) = alloc_scratch(size, align)?;
     // Safety: scratch is `size` bytes at `align`.
-    if let Err(e) = unsafe { decode_program(program, r, scratch) } {
+    if let Err(e) = unsafe { decode_program(program, r, scratch, blocks) } {
         free_scratch(scratch, layout);
         return Err(e);
     }
@@ -1645,12 +1716,13 @@ unsafe fn decode_into_via_init(
 pub unsafe fn decode(
     bytes: &[u8],
     descriptor: &Descriptor,
+    descriptor_blocks: &HashMap<SchemaId, Descriptor>,
     reg: &Registry,
     base: *mut u8,
 ) -> Result<()> {
-    let program = lower(descriptor, reg)?;
+    let lowered = lower_typed(descriptor, descriptor_blocks, reg)?;
     // Safety: forwarded from this function's contract.
-    unsafe { decode_with(&program, bytes, base) }
+    unsafe { decode_with(&lowered, bytes, base) }
 }
 
 #[cfg(test)]
@@ -1730,13 +1802,16 @@ mod tests {
 
         // Typed encode of a real Vec<u32> must produce identical bytes.
         let v: Vec<u32> = values.to_vec();
+        let no_blocks = HashMap::new();
         let typed_bytes =
-            unsafe { encode(core::ptr::from_ref(&v).cast::<u8>(), &desc, &reg) }.unwrap();
+            unsafe { encode(core::ptr::from_ref(&v).cast::<u8>(), &desc, &no_blocks, &reg) }
+                .unwrap();
         assert_eq!(typed_bytes, dyn_bytes);
 
         // Typed decode reconstructs the Vec.
         let mut slot = MaybeUninit::<Vec<u32>>::uninit();
-        unsafe { decode(&typed_bytes, &desc, &reg, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        unsafe { decode(&typed_bytes, &desc, &no_blocks, &reg, slot.as_mut_ptr().cast::<u8>()) }
+            .unwrap();
         let back = unsafe { slot.assume_init() };
         assert_eq!(back, values.to_vec());
     }

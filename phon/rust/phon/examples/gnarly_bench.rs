@@ -23,7 +23,7 @@ use std::time::Instant;
 
 use facet::Facet;
 use phon_engine::{Registry, typed};
-use phon_ir::MemProgram;
+use phon_ir::Lowered;
 
 // ---- copied from vox `spec-proto` (owned variants) -------------------------
 
@@ -165,7 +165,7 @@ fn make_gnarly_payload(entry_count: usize) -> GnarlyPayload {
 
 // ---- bench plumbing --------------------------------------------------------
 
-fn decode_interp(program: &MemProgram, wire: &[u8]) {
+fn decode_interp(program: &Lowered, wire: &[u8]) {
     let mut slot = MaybeUninit::<GnarlyPayload>::uninit();
     unsafe { typed::decode_with(program, wire, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
     let v = unsafe { slot.assume_init() };
@@ -174,14 +174,14 @@ fn decode_interp(program: &MemProgram, wire: &[u8]) {
 
 // Decode into the BORROWED payload: the decoded `&str`/`&[u8]` borrow `wire`, so
 // `wire` (held by the caller across the timed loop) must outlive each `v`.
-fn decode_interp_borrowed(program: &MemProgram, wire: &[u8]) {
+fn decode_interp_borrowed(program: &Lowered, wire: &[u8]) {
     let mut slot = MaybeUninit::<GnarlyPayloadBorrowed<'_>>::uninit();
     unsafe { typed::decode_with(program, wire, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
     let v = unsafe { slot.assume_init() };
     black_box(&v);
 }
 
-fn encode_interp(program: &MemProgram, base: *const u8) {
+fn encode_interp(program: &Lowered, base: *const u8) {
     let bytes = unsafe { typed::encode_with(program, base) };
     black_box(&bytes);
 }
@@ -205,12 +205,12 @@ fn main() {
 
     let d = phon::derive::of::<GnarlyPayload>().unwrap();
     let reg = Registry::new(d.schemas.clone());
-    let program = typed::lower(&d.descriptor, &reg).unwrap();
+    let program = typed::lower_typed(&d.descriptor, &d.descriptor_blocks, &reg).unwrap();
 
     // The borrowed mirror: same wire, so the owned-encoded bytes decode into it.
     let db = phon::derive::of::<GnarlyPayloadBorrowed>().unwrap();
     let regb = Registry::new(db.schemas.clone());
-    let program_b = typed::lower(&db.descriptor, &regb).unwrap();
+    let program_b = typed::lower_typed(&db.descriptor, &db.descriptor_blocks, &regb).unwrap();
 
     let payload = make_gnarly_payload(n_entries);
     let base = core::ptr::from_ref(&payload).cast::<u8>();

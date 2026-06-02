@@ -31,9 +31,9 @@ use facet::{
 use phon_engine::{Registry, typed};
 use phon_ir::{
     Access, BorrowThunks, Construct, Descriptor, EnumAccess, FieldAccess, FieldDefault, Layout,
-    MapAccess, MapStorage, MapThunks, MemProgram, OpaqueThunks, OptionAccess, OptionThunks,
-    Presence, RecordAccess, ResultAccess, ResultThunks, SeqThunks, SequenceAccess, SequenceStorage,
-    Tag, VariantAccess,
+    Lowered, MapAccess, MapStorage, MapThunks, OpaqueThunks, OptionAccess, OptionThunks, Presence,
+    RecordAccess, ResultAccess, ResultThunks, SeqThunks, SequenceAccess, SequenceStorage, Tag,
+    VariantAccess,
 };
 use phon_schema::{
     Field, Primitive, Schema, SchemaId, SchemaKind, SchemaRef, Variant, VariantPayload,
@@ -1684,7 +1684,7 @@ fn opaque_descriptor(shape: &'static Shape) -> Result<Descriptor, DeriveError> {
 /// fn pointers: morally `Send + Sync`, but the raw-pointer representation loses the
 /// auto-trait. The wrapper re-asserts it — a built program is immutable and only
 /// ever read.
-struct ProgramCache(RwLock<HashMap<usize, &'static MemProgram>>);
+struct ProgramCache(RwLock<HashMap<usize, &'static Lowered>>);
 // Safety: cached programs are immutable after build; their thunk pointers are
 // `&'static` / stateless, sound to read from and move between any threads.
 unsafe impl Sync for ProgramCache {}
@@ -1700,7 +1700,7 @@ static INNER_PROGRAMS: LazyLock<ProgramCache> =
 /// # Panics
 /// If the inner type is not phon-derivable or cannot be lowered: a programming error
 /// (the inner type of an opaque field must be a phon type).
-fn inner_program(shape: &'static Shape) -> &'static MemProgram {
+fn inner_program(shape: &'static Shape) -> &'static Lowered {
     let key = core::ptr::from_ref(shape) as usize;
     if let Some(p) = INNER_PROGRAMS.0.read().unwrap().get(&key) {
         return p;
@@ -1712,13 +1712,14 @@ fn inner_program(shape: &'static Shape) -> &'static MemProgram {
         )
     });
     let reg = Registry::new(derived.schemas);
-    let program = typed::lower(&derived.descriptor, &reg).unwrap_or_else(|e| {
-        panic!(
-            "opaque inner type {} cannot be lowered: {e:?}",
-            shape.type_identifier
-        )
-    });
-    let leaked: &'static MemProgram = Box::leak(Box::new(program));
+    let program = typed::lower_typed(&derived.descriptor, &derived.descriptor_blocks, &reg)
+        .unwrap_or_else(|e| {
+            panic!(
+                "opaque inner type {} cannot be lowered: {e:?}",
+                shape.type_identifier
+            )
+        });
+    let leaked: &'static Lowered = Box::leak(Box::new(program));
     INNER_PROGRAMS
         .0
         .write()
@@ -1960,9 +1961,15 @@ mod tests {
             c: 0x3333,
             flag: true,
         };
-        let typed_bytes =
-            unsafe { typed::encode(core::ptr::from_ref(&p).cast::<u8>(), &d.descriptor, &reg) }
-                .unwrap();
+        let typed_bytes = unsafe {
+            typed::encode(
+                core::ptr::from_ref(&p).cast::<u8>(),
+                &d.descriptor,
+                &d.descriptor_blocks,
+                &reg,
+            )
+        }
+        .unwrap();
 
         // Oracle: byte-identical to the dynamic codec for the equivalent object.
         let dyn_bytes = compact::to_bytes(&pt_object(p.a, p.b, p.c, p.flag), d.root, &reg).unwrap();
@@ -1974,6 +1981,7 @@ mod tests {
             typed::decode(
                 &typed_bytes,
                 &d.descriptor,
+                &d.descriptor_blocks,
                 &reg,
                 slot.as_mut_ptr().cast::<u8>(),
             )
@@ -2003,9 +2011,15 @@ mod tests {
             },
             n: 0xDEAD_BEEF,
         };
-        let typed_bytes =
-            unsafe { typed::encode(core::ptr::from_ref(&o).cast::<u8>(), &d.descriptor, &reg) }
-                .unwrap();
+        let typed_bytes = unsafe {
+            typed::encode(
+                core::ptr::from_ref(&o).cast::<u8>(),
+                &d.descriptor,
+                &d.descriptor_blocks,
+                &reg,
+            )
+        }
+        .unwrap();
 
         let mut obj = VObject::new();
         obj.insert(VString::new("tag"), Value::from(o.tag));
@@ -2022,6 +2036,7 @@ mod tests {
             typed::decode(
                 &typed_bytes,
                 &d.descriptor,
+                &d.descriptor_blocks,
                 &reg,
                 slot.as_mut_ptr().cast::<u8>(),
             )
@@ -2052,9 +2067,15 @@ mod tests {
             items: vec![1, 2, 999, 0xDEAD_BEEF],
             tag: 0x55,
         };
-        let typed_bytes =
-            unsafe { typed::encode(core::ptr::from_ref(&h).cast::<u8>(), &d.descriptor, &reg) }
-                .unwrap();
+        let typed_bytes = unsafe {
+            typed::encode(
+                core::ptr::from_ref(&h).cast::<u8>(),
+                &d.descriptor,
+                &d.descriptor_blocks,
+                &reg,
+            )
+        }
+        .unwrap();
 
         // Oracle: byte-identical to the dynamic codec for the equivalent object
         // (a VArray `items` and a number `tag`).
@@ -2074,6 +2095,7 @@ mod tests {
             typed::decode(
                 &typed_bytes,
                 &d.descriptor,
+                &d.descriptor_blocks,
                 &reg,
                 slot.as_mut_ptr().cast::<u8>(),
             )
@@ -2082,6 +2104,86 @@ mod tests {
         let back = unsafe { slot.assume_init() };
         assert_eq!(back.items, h.items);
         assert_eq!(back.tag, h.tag);
+    }
+
+    // A self-recursive type: a tree whose children are more trees. Derivation must
+    // produce a finite descriptor (an `Access::Recurse` block) and the typed engine
+    // must encode/decode it via `CallBlock`, byte-identical to the dynamic oracle.
+    #[derive(Facet, Debug, PartialEq)]
+    struct Tree {
+        value: u32,
+        children: Vec<Tree>,
+    }
+
+    fn tree_object(t: &Tree) -> Value {
+        let mut kids = VArray::new();
+        for c in &t.children {
+            kids.push(tree_object(c));
+        }
+        let mut o = VObject::new();
+        o.insert(VString::new("value"), Value::from(t.value));
+        o.insert(VString::new("children"), Value::from(kids));
+        o.into()
+    }
+
+    #[test]
+    fn derived_recursive_typed_matches_dynamic_and_roundtrips() {
+        let d = of::<Tree>().unwrap();
+        // The cyclic schema (Tree, and the Vec<Tree> in its cycle) is collected as a
+        // block, not inlined.
+        assert!(
+            !d.descriptor_blocks.is_empty(),
+            "a recursive type must lower to at least one block"
+        );
+        let reg = Registry::new(d.schemas.clone());
+
+        let t = Tree {
+            value: 1,
+            children: vec![
+                Tree {
+                    value: 2,
+                    children: vec![],
+                },
+                Tree {
+                    value: 3,
+                    children: vec![Tree {
+                        value: 4,
+                        children: vec![],
+                    }],
+                },
+            ],
+        };
+
+        let typed_bytes = unsafe {
+            typed::encode(
+                core::ptr::from_ref(&t).cast::<u8>(),
+                &d.descriptor,
+                &d.descriptor_blocks,
+                &reg,
+            )
+        }
+        .unwrap();
+
+        // Oracle: byte-identical to the dynamic codec for the equivalent nested object.
+        let dyn_bytes = compact::to_bytes(&tree_object(&t), d.root, &reg).unwrap();
+        assert_eq!(
+            typed_bytes, dyn_bytes,
+            "typed recursion bytes must match the dynamic oracle"
+        );
+
+        // Round-trip the whole tree back.
+        let mut slot = std::mem::MaybeUninit::<Tree>::uninit();
+        unsafe {
+            typed::decode(
+                &typed_bytes,
+                &d.descriptor,
+                &d.descriptor_blocks,
+                &reg,
+                slot.as_mut_ptr().cast::<u8>(),
+            )
+        }
+        .unwrap();
+        assert_eq!(unsafe { slot.assume_init() }, t);
     }
 
     // A struct with an owned `String` field: the bulk byte run, end to end.
@@ -2100,9 +2202,15 @@ mod tests {
             id: 0x42,
         };
 
-        let typed_bytes =
-            unsafe { typed::encode(core::ptr::from_ref(&v).cast::<u8>(), &d.descriptor, &reg) }
-                .unwrap();
+        let typed_bytes = unsafe {
+            typed::encode(
+                core::ptr::from_ref(&v).cast::<u8>(),
+                &d.descriptor,
+                &d.descriptor_blocks,
+                &reg,
+            )
+        }
+        .unwrap();
 
         let mut obj = VObject::new();
         obj.insert(VString::new("name"), Value::from(v.name.as_str()));
@@ -2115,6 +2223,7 @@ mod tests {
             typed::decode(
                 &typed_bytes,
                 &d.descriptor,
+                &d.descriptor_blocks,
                 &reg,
                 slot.as_mut_ptr().cast::<u8>(),
             )
@@ -2141,9 +2250,16 @@ mod tests {
         wire.extend_from_slice(&0x42u32.to_le_bytes());
 
         let mut slot = std::mem::MaybeUninit::<Named>::uninit();
-        let err =
-            unsafe { typed::decode(&wire, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
-                .unwrap_err();
+        let err = unsafe {
+            typed::decode(
+                &wire,
+                &d.descriptor,
+                &d.descriptor_blocks,
+                &reg,
+                slot.as_mut_ptr().cast::<u8>(),
+            )
+        }
+        .unwrap_err();
         assert!(matches!(
             err,
             CompactError::Decode(DecodeError::InvalidUtf8)
@@ -2188,7 +2304,15 @@ mod tests {
             blob: blob.to_vec(),
             tag,
         };
-        unsafe { typed::encode(core::ptr::from_ref(&v).cast::<u8>(), &d.descriptor, &reg) }.unwrap()
+        unsafe {
+            typed::encode(
+                core::ptr::from_ref(&v).cast::<u8>(),
+                &d.descriptor,
+                &d.descriptor_blocks,
+                &reg,
+            )
+        }
+        .unwrap()
     }
 
     #[test]
@@ -2228,12 +2352,24 @@ mod tests {
             tag,
         };
 
-        let b_bytes =
-            unsafe { typed::encode(core::ptr::from_ref(&b).cast::<u8>(), &bd.descriptor, &breg) }
-                .unwrap();
-        let o_bytes =
-            unsafe { typed::encode(core::ptr::from_ref(&o).cast::<u8>(), &od.descriptor, &oreg) }
-                .unwrap();
+        let b_bytes = unsafe {
+            typed::encode(
+                core::ptr::from_ref(&b).cast::<u8>(),
+                &bd.descriptor,
+                &bd.descriptor_blocks,
+                &breg,
+            )
+        }
+        .unwrap();
+        let o_bytes = unsafe {
+            typed::encode(
+                core::ptr::from_ref(&o).cast::<u8>(),
+                &od.descriptor,
+                &od.descriptor_blocks,
+                &oreg,
+            )
+        }
+        .unwrap();
         assert_eq!(b_bytes, o_bytes, "borrowed wire != owned wire");
     }
 
@@ -2250,8 +2386,16 @@ mod tests {
         let wire = borrowed_wire(name, blob, tag);
 
         let mut slot = std::mem::MaybeUninit::<Borrowed>::uninit();
-        unsafe { typed::decode(&wire, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
-            .unwrap();
+        unsafe {
+            typed::decode(
+                &wire,
+                &d.descriptor,
+                &d.descriptor_blocks,
+                &reg,
+                slot.as_mut_ptr().cast::<u8>(),
+            )
+        }
+        .unwrap();
         let back = unsafe { slot.assume_init() };
 
         // Values match the originals.
@@ -2296,9 +2440,16 @@ mod tests {
         wire.extend_from_slice(&0x42u32.to_le_bytes());
 
         let mut slot = std::mem::MaybeUninit::<Borrowed>::uninit();
-        let err =
-            unsafe { typed::decode(&wire, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
-                .unwrap_err();
+        let err = unsafe {
+            typed::decode(
+                &wire,
+                &d.descriptor,
+                &d.descriptor_blocks,
+                &reg,
+                slot.as_mut_ptr().cast::<u8>(),
+            )
+        }
+        .unwrap_err();
         assert!(
             matches!(err, CompactError::Decode(DecodeError::InvalidUtf8)),
             "got {err:?}"
@@ -2407,9 +2558,15 @@ mod tests {
         // JIT encode == interpreter encode == byte-identical wire.
         let jit_bytes =
             unsafe { NativeEncode::compile(&program).run(core::ptr::from_ref(&v).cast::<u8>()) };
-        let interp_bytes =
-            unsafe { typed::encode(core::ptr::from_ref(&v).cast::<u8>(), &d.descriptor, &reg) }
-                .unwrap();
+        let interp_bytes = unsafe {
+            typed::encode(
+                core::ptr::from_ref(&v).cast::<u8>(),
+                &d.descriptor,
+                &d.descriptor_blocks,
+                &reg,
+            )
+        }
+        .unwrap();
         assert_eq!(jit_bytes, interp_bytes);
 
         // JIT decode round-trips (validating UTF-8 in-stencil).
@@ -2459,9 +2616,15 @@ mod tests {
 
         for val in [Some(0xABCDu32), None] {
             let m = Maybe { val, tag: 0x77 };
-            let typed_bytes =
-                unsafe { typed::encode(core::ptr::from_ref(&m).cast::<u8>(), &d.descriptor, &reg) }
-                    .unwrap();
+            let typed_bytes = unsafe {
+                typed::encode(
+                    core::ptr::from_ref(&m).cast::<u8>(),
+                    &d.descriptor,
+                    &d.descriptor_blocks,
+                    &reg,
+                )
+            }
+            .unwrap();
 
             let mut obj = VObject::new();
             obj.insert(
@@ -2480,6 +2643,7 @@ mod tests {
                 typed::decode(
                     &typed_bytes,
                     &d.descriptor,
+                    &d.descriptor_blocks,
                     &reg,
                     slot.as_mut_ptr().cast::<u8>(),
                 )
@@ -2510,9 +2674,15 @@ mod tests {
                 s: s.clone(),
                 n: 0x2A,
             };
-            let typed_bytes =
-                unsafe { typed::encode(core::ptr::from_ref(&m).cast::<u8>(), &d.descriptor, &reg) }
-                    .unwrap();
+            let typed_bytes = unsafe {
+                typed::encode(
+                    core::ptr::from_ref(&m).cast::<u8>(),
+                    &d.descriptor,
+                    &d.descriptor_blocks,
+                    &reg,
+                )
+            }
+            .unwrap();
 
             let mut obj = VObject::new();
             obj.insert(
@@ -2531,6 +2701,7 @@ mod tests {
                 typed::decode(
                     &typed_bytes,
                     &d.descriptor,
+                    &d.descriptor_blocks,
                     &reg,
                     slot.as_mut_ptr().cast::<u8>(),
                 )
@@ -2577,9 +2748,15 @@ mod tests {
         let reg = Registry::new(d.schemas.clone());
 
         for m in [Msg::Ping, Msg::Echo(0xCAFE), Msg::Move { x: 3, y: -4 }] {
-            let typed_bytes =
-                unsafe { typed::encode(core::ptr::from_ref(&m).cast::<u8>(), &d.descriptor, &reg) }
-                    .unwrap();
+            let typed_bytes = unsafe {
+                typed::encode(
+                    core::ptr::from_ref(&m).cast::<u8>(),
+                    &d.descriptor,
+                    &d.descriptor_blocks,
+                    &reg,
+                )
+            }
+            .unwrap();
 
             let dyn_bytes = compact::to_bytes(&msg_value(&m), d.root, &reg).unwrap();
             assert_eq!(typed_bytes, dyn_bytes, "encode mismatch for {m:?}");
@@ -2589,6 +2766,7 @@ mod tests {
                 typed::decode(
                     &typed_bytes,
                     &d.descriptor,
+                    &d.descriptor_blocks,
                     &reg,
                     slot.as_mut_ptr().cast::<u8>(),
                 )
@@ -2607,9 +2785,16 @@ mod tests {
         // Wire variant index 99 — no such variant.
         let wire = 99u32.to_le_bytes().to_vec();
         let mut slot = std::mem::MaybeUninit::<Msg>::uninit();
-        let err =
-            unsafe { typed::decode(&wire, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
-                .unwrap_err();
+        let err = unsafe {
+            typed::decode(
+                &wire,
+                &d.descriptor,
+                &d.descriptor_blocks,
+                &reg,
+                slot.as_mut_ptr().cast::<u8>(),
+            )
+        }
+        .unwrap_err();
         assert!(matches!(err, CompactError::BadVariantIndex(99)));
     }
 
@@ -2622,9 +2807,16 @@ mod tests {
         // presence byte 2 (neither 0 nor 1) — rejected like the dynamic codec.
         let wire = vec![2u8];
         let mut slot = std::mem::MaybeUninit::<Maybe>::uninit();
-        let err =
-            unsafe { typed::decode(&wire, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
-                .unwrap_err();
+        let err = unsafe {
+            typed::decode(
+                &wire,
+                &d.descriptor,
+                &d.descriptor_blocks,
+                &reg,
+                slot.as_mut_ptr().cast::<u8>(),
+            )
+        }
+        .unwrap_err();
         assert!(matches!(
             err,
             CompactError::Decode(DecodeError::InvalidBool(2))
@@ -2650,7 +2842,8 @@ mod tests {
             let base = core::ptr::from_ref(&m).cast::<u8>();
 
             let jit_bytes = unsafe { enc.run(base) };
-            let interp_bytes = unsafe { typed::encode(base, &d.descriptor, &reg) }.unwrap();
+            let interp_bytes =
+                unsafe { typed::encode(base, &d.descriptor, &d.descriptor_blocks, &reg) }.unwrap();
             assert_eq!(jit_bytes, interp_bytes, "encode mismatch for {val:?}");
 
             let mut slot = std::mem::MaybeUninit::<Maybe>::uninit();
@@ -2686,7 +2879,8 @@ mod tests {
             let base = core::ptr::from_ref(&m).cast::<u8>();
 
             let jit_bytes = unsafe { enc.run(base) };
-            let interp_bytes = unsafe { typed::encode(base, &d.descriptor, &reg) }.unwrap();
+            let interp_bytes =
+                unsafe { typed::encode(base, &d.descriptor, &d.descriptor_blocks, &reg) }.unwrap();
             assert_eq!(jit_bytes, interp_bytes, "encode mismatch for {s:?}");
 
             let mut slot = std::mem::MaybeUninit::<MaybeStr>::uninit();
@@ -2715,7 +2909,8 @@ mod tests {
             let base = core::ptr::from_ref(&m).cast::<u8>();
 
             let jit_bytes = unsafe { enc.run(base) };
-            let interp_bytes = unsafe { typed::encode(base, &d.descriptor, &reg) }.unwrap();
+            let interp_bytes =
+                unsafe { typed::encode(base, &d.descriptor, &d.descriptor_blocks, &reg) }.unwrap();
             assert_eq!(jit_bytes, interp_bytes, "encode mismatch for {m:?}");
 
             let mut slot = std::mem::MaybeUninit::<Msg>::uninit();
@@ -2796,9 +2991,15 @@ mod tests {
             tag: 0x55,
         };
 
-        let typed_bytes =
-            unsafe { typed::encode(core::ptr::from_ref(&h).cast::<u8>(), &d.descriptor, &reg) }
-                .unwrap();
+        let typed_bytes = unsafe {
+            typed::encode(
+                core::ptr::from_ref(&h).cast::<u8>(),
+                &d.descriptor,
+                &d.descriptor_blocks,
+                &reg,
+            )
+        }
+        .unwrap();
 
         // Oracle: byte-identical to the dynamic codec for the equivalent object.
         // BTreeMap iterates in sorted key order, so insert into the VObject sorted.
@@ -2818,6 +3019,7 @@ mod tests {
             typed::decode(
                 &typed_bytes,
                 &d.descriptor,
+                &d.descriptor_blocks,
                 &reg,
                 slot.as_mut_ptr().cast::<u8>(),
             )
@@ -2847,9 +3049,15 @@ mod tests {
         m.insert("zed".to_string(), String::new());
         let h = StrMapHolder { m: m.clone() };
 
-        let typed_bytes =
-            unsafe { typed::encode(core::ptr::from_ref(&h).cast::<u8>(), &d.descriptor, &reg) }
-                .unwrap();
+        let typed_bytes = unsafe {
+            typed::encode(
+                core::ptr::from_ref(&h).cast::<u8>(),
+                &d.descriptor,
+                &d.descriptor_blocks,
+                &reg,
+            )
+        }
+        .unwrap();
 
         let mut mobj = VObject::new();
         for (k, v) in &m {
@@ -2865,6 +3073,7 @@ mod tests {
             typed::decode(
                 &typed_bytes,
                 &d.descriptor,
+                &d.descriptor_blocks,
                 &reg,
                 slot.as_mut_ptr().cast::<u8>(),
             )
@@ -2904,9 +3113,16 @@ mod tests {
         write_u32(&mut wire, 0x77);
 
         let mut slot = std::mem::MaybeUninit::<MapHolder>::uninit();
-        let err =
-            unsafe { typed::decode(&wire, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
-                .unwrap_err();
+        let err = unsafe {
+            typed::decode(
+                &wire,
+                &d.descriptor,
+                &d.descriptor_blocks,
+                &reg,
+                slot.as_mut_ptr().cast::<u8>(),
+            )
+        }
+        .unwrap_err();
         assert!(
             matches!(err, CompactError::Decode(DecodeError::DuplicateKey)),
             "got {err:?}"
@@ -2972,7 +3188,8 @@ mod tests {
         let base = core::ptr::from_ref(&h).cast::<u8>();
 
         let jit_bytes = unsafe { enc.run(base) };
-        let interp_bytes = unsafe { typed::encode(base, &d.descriptor, &reg) }.unwrap();
+        let interp_bytes =
+            unsafe { typed::encode(base, &d.descriptor, &d.descriptor_blocks, &reg) }.unwrap();
         assert_eq!(
             jit_bytes, interp_bytes,
             "JIT encode disagreed with the interpreter"
@@ -3005,7 +3222,8 @@ mod tests {
         let base = core::ptr::from_ref(&h).cast::<u8>();
 
         let jit_bytes = unsafe { enc.run(base) };
-        let interp_bytes = unsafe { typed::encode(base, &d.descriptor, &reg) }.unwrap();
+        let interp_bytes =
+            unsafe { typed::encode(base, &d.descriptor, &d.descriptor_blocks, &reg) }.unwrap();
         assert_eq!(jit_bytes, interp_bytes);
 
         let mut slot = std::mem::MaybeUninit::<MapPair>::uninit();
@@ -3043,8 +3261,15 @@ mod tests {
 
     /// Typed-encode a writer value into its compact wire bytes.
     fn encode_writer<'a, W: Facet<'a>>(w: &W, writer: &Derived, reg: &Registry) -> Vec<u8> {
-        unsafe { typed::encode(core::ptr::from_ref(w).cast::<u8>(), &writer.descriptor, reg) }
-            .unwrap()
+        unsafe {
+            typed::encode(
+                core::ptr::from_ref(w).cast::<u8>(),
+                &writer.descriptor,
+                &writer.descriptor_blocks,
+                reg,
+            )
+        }
+        .unwrap()
     }
 
     // ---- 1. Field reorder is transparent --------------------------------------
@@ -3376,10 +3601,10 @@ mod tests {
         // No compat-only ops appear, and the op sequence matches the single-schema
         // lowering byte-for-byte (Debug equality on the IR).
         assert!(
-            !has_compat_ops(&compat),
+            !has_compat_ops(&compat.program),
             "identity program leaked skip/default ops"
         );
-        assert_eq!(format!("{single:?}"), format!("{compat:?}"));
+        assert_eq!(format!("{single:?}"), format!("{:?}", compat.program));
 
         // And it actually round-trips a real value.
         let p = Pt {
@@ -3388,9 +3613,15 @@ mod tests {
             c: 0x3333,
             flag: true,
         };
-        let bytes =
-            unsafe { typed::encode(core::ptr::from_ref(&p).cast::<u8>(), &d.descriptor, &reg) }
-                .unwrap();
+        let bytes = unsafe {
+            typed::encode(
+                core::ptr::from_ref(&p).cast::<u8>(),
+                &d.descriptor,
+                &d.descriptor_blocks,
+                &reg,
+            )
+        }
+        .unwrap();
         let mut slot = std::mem::MaybeUninit::<Pt>::uninit();
         unsafe { typed::decode_with(&compat, &bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
         let back = unsafe { slot.assume_init() };
@@ -3648,13 +3879,27 @@ mod tests {
             tag: 0x99,
         };
 
-        let bytes =
-            unsafe { typed::encode(core::ptr::from_ref(&v).cast::<u8>(), &d.descriptor, &reg) }
-                .unwrap();
+        let bytes = unsafe {
+            typed::encode(
+                core::ptr::from_ref(&v).cast::<u8>(),
+                &d.descriptor,
+                &d.descriptor_blocks,
+                &reg,
+            )
+        }
+        .unwrap();
 
         let mut slot = std::mem::MaybeUninit::<ZstHolder>::uninit();
-        unsafe { typed::decode(&bytes, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
-            .unwrap();
+        unsafe {
+            typed::decode(
+                &bytes,
+                &d.descriptor,
+                &d.descriptor_blocks,
+                &reg,
+                slot.as_mut_ptr().cast::<u8>(),
+            )
+        }
+        .unwrap();
         let back = unsafe { slot.assume_init() };
         assert_eq!(back.items.len(), 3, "three zero-sized elements survive");
         assert_eq!(back.tag, v.tag);
@@ -3709,9 +3954,15 @@ mod tests {
                 r: r.clone(),
                 tag: 0x55,
             };
-            let typed_bytes =
-                unsafe { typed::encode(core::ptr::from_ref(&h).cast::<u8>(), &d.descriptor, &reg) }
-                    .unwrap();
+            let typed_bytes = unsafe {
+                typed::encode(
+                    core::ptr::from_ref(&h).cast::<u8>(),
+                    &d.descriptor,
+                    &d.descriptor_blocks,
+                    &reg,
+                )
+            }
+            .unwrap();
 
             // Oracle: the dynamic codec over { r: {Ok|Err: payload}, tag }.
             let mut robj = VObject::new();
@@ -3730,6 +3981,7 @@ mod tests {
                 typed::decode(
                     &typed_bytes,
                     &d.descriptor,
+                    &d.descriptor_blocks,
                     &reg,
                     slot.as_mut_ptr().cast::<u8>(),
                 )
@@ -3746,12 +3998,26 @@ mod tests {
         let d = of::<Result<String, u32>>().unwrap();
         let reg = Registry::new(d.schemas.clone());
         for r in [Ok("hi".to_string()), Err(7u32)] {
-            let bytes =
-                unsafe { typed::encode(core::ptr::from_ref(&r).cast::<u8>(), &d.descriptor, &reg) }
-                    .unwrap();
+            let bytes = unsafe {
+                typed::encode(
+                    core::ptr::from_ref(&r).cast::<u8>(),
+                    &d.descriptor,
+                    &d.descriptor_blocks,
+                    &reg,
+                )
+            }
+            .unwrap();
             let mut slot = std::mem::MaybeUninit::<Result<String, u32>>::uninit();
-            unsafe { typed::decode(&bytes, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
-                .unwrap();
+            unsafe {
+                typed::decode(
+                    &bytes,
+                    &d.descriptor,
+                    &d.descriptor_blocks,
+                    &reg,
+                    slot.as_mut_ptr().cast::<u8>(),
+                )
+            }
+            .unwrap();
             assert_eq!(unsafe { slot.assume_init() }, r);
         }
     }
@@ -3812,9 +4078,15 @@ mod tests {
             tag: 0x55,
             meta: meta.clone(),
         };
-        let typed_bytes =
-            unsafe { typed::encode(core::ptr::from_ref(&h).cast::<u8>(), &d.descriptor, &reg) }
-                .unwrap();
+        let typed_bytes = unsafe {
+            typed::encode(
+                core::ptr::from_ref(&h).cast::<u8>(),
+                &d.descriptor,
+                &d.descriptor_blocks,
+                &reg,
+            )
+        }
+        .unwrap();
 
         // Oracle: the dynamic codec encodes a Dynamic field via the same write_value.
         let mut top = VObject::new();
@@ -3828,6 +4100,7 @@ mod tests {
             typed::decode(
                 &typed_bytes,
                 &d.descriptor,
+                &d.descriptor_blocks,
                 &reg,
                 slot.as_mut_ptr().cast::<u8>(),
             )
@@ -3986,6 +4259,7 @@ mod tests {
                 typed::encode(
                     core::ptr::from_ref(&inner).cast::<u8>(),
                     &di.descriptor,
+                    &di.descriptor_blocks,
                     &regi,
                 )
             }
@@ -4001,9 +4275,15 @@ mod tests {
             },
             tag: 0x99,
         };
-        let bytes =
-            unsafe { typed::encode(core::ptr::from_ref(&env).cast::<u8>(), &d.descriptor, &reg) }
-                .unwrap();
+        let bytes = unsafe {
+            typed::encode(
+                core::ptr::from_ref(&env).cast::<u8>(),
+                &d.descriptor,
+                &d.descriptor_blocks,
+                &reg,
+            )
+        }
+        .unwrap();
 
         // Oracle: a borrowed `&[u8]` field carrying the same inner bytes — also
         // `Primitive::Bytes`, so the wire must be byte-identical.
@@ -4018,6 +4298,7 @@ mod tests {
             typed::encode(
                 core::ptr::from_ref(&oracle).cast::<u8>(),
                 &od.descriptor,
+                &od.descriptor_blocks,
                 &oreg,
             )
         }
@@ -4029,8 +4310,16 @@ mod tests {
 
         // Decode the envelope: the payload becomes a borrowed span (Incoming).
         let mut slot = std::mem::MaybeUninit::<Envelope>::uninit();
-        unsafe { typed::decode(&bytes, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
-            .unwrap();
+        unsafe {
+            typed::decode(
+                &bytes,
+                &d.descriptor,
+                &d.descriptor_blocks,
+                &reg,
+                slot.as_mut_ptr().cast::<u8>(),
+            )
+        }
+        .unwrap();
         let back = unsafe { slot.assume_init() };
         assert_eq!(back.id, 7);
         assert_eq!(back.tag, 0x99);
@@ -4048,8 +4337,16 @@ mod tests {
         let di = of::<Inner>().unwrap();
         let regi = Registry::new(di.schemas.clone());
         let mut islot = std::mem::MaybeUninit::<Inner>::uninit();
-        unsafe { typed::decode(span, &di.descriptor, &regi, islot.as_mut_ptr().cast::<u8>()) }
-            .unwrap();
+        unsafe {
+            typed::decode(
+                span,
+                &di.descriptor,
+                &di.descriptor_blocks,
+                &regi,
+                islot.as_mut_ptr().cast::<u8>(),
+            )
+        }
+        .unwrap();
         assert_eq!(unsafe { islot.assume_init() }, inner);
     }
 }
