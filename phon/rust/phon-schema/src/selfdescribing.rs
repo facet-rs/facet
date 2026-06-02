@@ -27,7 +27,7 @@ use facet_value::{
 };
 
 use crate::bytes::{
-    DecodeError, Reader, Sink, write_bool, write_bytes, write_f64, write_i128, write_i64,
+    DecodeError, Reader, Sink, write_bool, write_bytes, write_f64, write_i64, write_i128,
     write_str, write_u8, write_u32, write_u64, write_u128,
 };
 use crate::schema::{
@@ -387,7 +387,10 @@ fn expect(r: &mut Reader, t: u8, what: &'static str) -> Result<(), DecodeError> 
     if got == t {
         Ok(())
     } else {
-        Err(DecodeError::UnexpectedTag { expected: what, got })
+        Err(DecodeError::UnexpectedTag {
+            expected: what,
+            got,
+        })
     }
 }
 
@@ -547,7 +550,12 @@ fn dec_kind(r: &mut Reader, depth: usize) -> Result<SchemaKind, DecodeError> {
             let rank = match r.read_u8()? {
                 tag::OPTION_NONE => None,
                 tag::OPTION_SOME => Some(d_u32(r)?),
-                got => return Err(DecodeError::UnexpectedTag { expected: "option", got }),
+                got => {
+                    return Err(DecodeError::UnexpectedTag {
+                        expected: "option",
+                        got,
+                    });
+                }
             };
             SchemaKind::Tensor { element, rank }
         }
@@ -571,7 +579,12 @@ fn dec_kind(r: &mut Reader, depth: usize) -> Result<SchemaKind, DecodeError> {
             let metadata = match r.read_u8()? {
                 tag::OPTION_NONE => None,
                 tag::OPTION_SOME => Some(dec_ref(r, depth + 1)?),
-                got => return Err(DecodeError::UnexpectedTag { expected: "option", got }),
+                got => {
+                    return Err(DecodeError::UnexpectedTag {
+                        expected: "option",
+                        got,
+                    });
+                }
             };
             SchemaKind::External { kind, metadata }
         }
@@ -805,7 +818,10 @@ fn enc_number<S: Sink>(out: &mut S, n: &VNumber) {
         write_i128(out, i);
     } else {
         write_u8(out, tag::U128);
-        write_u128(out, n.to_u128().expect("a non-float integer fits one width"));
+        write_u128(
+            out,
+            n.to_u128().expect("a non-float integer fits one width"),
+        );
     }
 }
 
@@ -1139,7 +1155,10 @@ fn dec_map(r: &mut Reader, depth: usize) -> Result<Value, DecodeError> {
 // r[impl validate.dimensions]
 fn dec_dimensioned(r: &mut Reader, depth: usize) -> Result<Value, DecodeError> {
     let rank = r.read_u32()? as usize;
-    if rank.checked_mul(8).is_none_or(|bytes| bytes > r.remaining()) {
+    if rank
+        .checked_mul(8)
+        .is_none_or(|bytes| bytes > r.remaining())
+    {
         return Err(DecodeError::LengthTooLarge {
             count: rank as u64,
             remaining: r.remaining(),
@@ -1486,10 +1505,7 @@ mod tests {
         write_u32(&mut bytes, 2);
         bytes.extend(ival(9));
         bytes.extend(ival(9));
-        assert_eq!(
-            value_from_bytes(&bytes),
-            Err(DecodeError::DuplicateElement)
-        );
+        assert_eq!(value_from_bytes(&bytes), Err(DecodeError::DuplicateElement));
     }
 
     #[test]
@@ -1544,13 +1560,19 @@ mod tests {
         for n in 0..3 {
             bytes.extend(ival(n));
         }
-        assert_eq!(value_from_bytes(&bytes).unwrap().as_array().unwrap().len(), 3);
+        assert_eq!(
+            value_from_bytes(&bytes).unwrap().as_array().unwrap().len(),
+            3
+        );
     }
 
     #[test]
     fn value_rejects_malformed_input() {
         // unknown tag
-        assert_eq!(value_from_bytes(&[0x7F]), Err(DecodeError::UnknownTag(0x7F)));
+        assert_eq!(
+            value_from_bytes(&[0x7F]),
+            Err(DecodeError::UnknownTag(0x7F))
+        );
         // truncated string value
         let mut s = sval("hello");
         s.truncate(s.len() - 2);
@@ -1591,7 +1613,11 @@ mod tests {
         let s = std::str::from_utf8(&bytes[5..]).unwrap();
         assert_eq!(s, "00000000-0000-0000-0000-000000000000");
 
-        let dt = value_to_bytes(&VDateTime::new_offset(2026, 5, 29, 7, 32, 0, 0, 0).into()).unwrap();
-        assert_eq!(std::str::from_utf8(&dt[5..]).unwrap(), "2026-05-29T07:32:00Z");
+        let dt =
+            value_to_bytes(&VDateTime::new_offset(2026, 5, 29, 7, 32, 0, 0, 0).into()).unwrap();
+        assert_eq!(
+            std::str::from_utf8(&dt[5..]).unwrap(),
+            "2026-05-29T07:32:00Z"
+        );
     }
 }

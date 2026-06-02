@@ -30,9 +30,18 @@ use phon_ir::MemProgram;
 #[repr(u8)]
 #[derive(Debug, Clone, PartialEq, Facet)]
 enum GnarlyKind {
-    File { mime: String, tags: Vec<String> } = 0,
-    Directory { child_count: u32, children: Vec<String> } = 1,
-    Symlink { target: String, hops: Vec<u32> } = 2,
+    File {
+        mime: String,
+        tags: Vec<String>,
+    } = 0,
+    Directory {
+        child_count: u32,
+        children: Vec<String>,
+    } = 1,
+    Symlink {
+        target: String,
+        hops: Vec<u32>,
+    } = 2,
 }
 
 #[derive(Debug, Clone, PartialEq, Facet)]
@@ -68,9 +77,18 @@ struct GnarlyPayload {
 #[repr(u8)]
 #[derive(Debug, Clone, PartialEq, Facet)]
 enum GnarlyKindBorrowed<'a> {
-    File { mime: &'a str, tags: Vec<&'a str> } = 0,
-    Directory { child_count: u32, children: Vec<&'a str> } = 1,
-    Symlink { target: &'a str, hops: Vec<u32> } = 2,
+    File {
+        mime: &'a str,
+        tags: Vec<&'a str>,
+    } = 0,
+    Directory {
+        child_count: u32,
+        children: Vec<&'a str>,
+    } = 1,
+    Symlink {
+        target: &'a str,
+        hops: Vec<u32>,
+    } = 2,
 }
 
 #[derive(Debug, Clone, PartialEq, Facet)]
@@ -122,8 +140,14 @@ fn make_gnarly_payload(entry_count: usize) -> GnarlyPayload {
                 name: format!("entry-{i:05}"),
                 path: format!("/mnt/store/bucket-{i:03}/object-{i:08x}.bin"),
                 attrs: vec![
-                    GnarlyAttr { key: "owner".to_string(), value: format!("user{i}") },
-                    GnarlyAttr { key: "etag".to_string(), value: format!("{i:016x}") },
+                    GnarlyAttr {
+                        key: "owner".to_string(),
+                        value: format!("user{i}"),
+                    },
+                    GnarlyAttr {
+                        key: "etag".to_string(),
+                        value: format!("{i:016x}"),
+                    },
                 ],
                 chunks: (0..3).map(|c| vec![(i + c) as u8; 16 + c * 8]).collect(),
                 kind,
@@ -206,11 +230,23 @@ fn main() {
         unsafe { typed::decode_with(&program_b, &wire, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
         let back = unsafe { slot.assume_init() };
         // Re-encode the borrowed value and check it equals the owned wire.
-        let rewire = unsafe { typed::encode_with(&program_b, core::ptr::from_ref(&back).cast::<u8>()) };
+        let rewire =
+            unsafe { typed::encode_with(&program_b, core::ptr::from_ref(&back).cast::<u8>()) };
         assert_eq!(rewire, wire, "borrowed wire != owned wire");
-        assert_eq!(back.mount, payload.mount, "borrowed decode mismatch (mount)");
-        assert_eq!(back.digest, payload.digest.as_slice(), "borrowed decode mismatch (digest)");
-        assert_eq!(back.entries.len(), payload.entries.len(), "borrowed entry count mismatch");
+        assert_eq!(
+            back.mount, payload.mount,
+            "borrowed decode mismatch (mount)"
+        );
+        assert_eq!(
+            back.digest,
+            payload.digest.as_slice(),
+            "borrowed decode mismatch (digest)"
+        );
+        assert_eq!(
+            back.entries.len(),
+            payload.entries.len(),
+            "borrowed entry count mismatch"
+        );
     }
 
     println!(
@@ -221,8 +257,12 @@ fn main() {
     );
 
     println!("decode (owned vs borrowed / zero-copy):");
-    let di = bench("interpreter owned", iters, || decode_interp(&program, &wire));
-    let dib = bench("interpreter borrowed", iters, || decode_interp_borrowed(&program_b, &wire));
+    let di = bench("interpreter owned", iters, || {
+        decode_interp(&program, &wire)
+    });
+    let dib = bench("interpreter borrowed", iters, || {
+        decode_interp_borrowed(&program_b, &wire)
+    });
     #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
     let (dj, djb) = {
         use phon_jit::native::NativeDecode;
@@ -255,10 +295,16 @@ fn main() {
         })
     };
 
-    println!("\nspeedup (borrowed vs owned decode):  interpreter {:.2}x", di / dib);
+    println!(
+        "\nspeedup (borrowed vs owned decode):  interpreter {:.2}x",
+        di / dib
+    );
     #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
     {
-        println!("                                     jit         {:.2}x", dj / djb);
+        println!(
+            "                                     jit         {:.2}x",
+            dj / djb
+        );
         println!(
             "speedup (jit vs interpreter):  decode owned {:.2}x  borrowed {:.2}x  encode {:.2}x",
             di / dj,

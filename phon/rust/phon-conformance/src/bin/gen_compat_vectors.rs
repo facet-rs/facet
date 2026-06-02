@@ -315,7 +315,11 @@ fn build_cases(b: &mut Batch) -> Vec<PlannedCase> {
         let root = b.add(SchemaKind::Set {
             element: prim(Primitive::U32),
         });
-        let value = arr(vec![Value::from(3u32), Value::from(1u32), Value::from(2u32)]);
+        let value = arr(vec![
+            Value::from(3u32),
+            Value::from(1u32),
+            Value::from(2u32),
+        ]);
         push("set_u32", root.clone(), root, value);
     }
 
@@ -347,7 +351,11 @@ fn build_cases(b: &mut Batch) -> Vec<PlannedCase> {
     // 10. tuple_mixed — tuple(u32, bool, string).
     {
         let root = b.add(SchemaKind::Tuple {
-            elements: vec![prim(Primitive::U32), prim(Primitive::Bool), prim(Primitive::String)],
+            elements: vec![
+                prim(Primitive::U32),
+                prim(Primitive::Bool),
+                prim(Primitive::String),
+            ],
         });
         let value = arr(vec![
             Value::from(42u32),
@@ -374,7 +382,10 @@ fn build_cases(b: &mut Batch) -> Vec<PlannedCase> {
             ],
         });
         let value = obj(&[
-            ("inner", obj(&[("x", Value::from(11u32)), ("y", Value::from(22u32))])),
+            (
+                "inner",
+                obj(&[("x", Value::from(11u32)), ("y", Value::from(22u32))]),
+            ),
             ("tag", Value::from(99u32)),
         ]);
         push("nested_struct", root.clone(), root, value);
@@ -607,7 +618,10 @@ fn build_cases(b: &mut Batch) -> Vec<PlannedCase> {
             "enum_struct_variant",
             root.clone(),
             root,
-            enum_val("Move", obj(&[("x", Value::from(3u32)), ("y", Value::from(4u32))])),
+            enum_val(
+                "Move",
+                obj(&[("x", Value::from(3u32)), ("y", Value::from(4u32))]),
+            ),
         );
     }
 
@@ -672,7 +686,10 @@ fn build_cases(b: &mut Batch) -> Vec<PlannedCase> {
         });
         let value = obj(&[(
             "pair",
-            obj(&[("a", Value::from(5u32)), ("b", Value::from(VString::new("x")))]),
+            obj(&[
+                ("a", Value::from(5u32)),
+                ("b", Value::from(VString::new("x"))),
+            ]),
         )]);
         push("generic_pair", root.clone(), root, value);
     }
@@ -783,34 +800,35 @@ fn main() -> Result<(), Box<dyn Error>> {
         let writer_bytes = compact::to_bytes(&pc.value, writer_root, &reg)
             .unwrap_or_else(|e| panic!("case {}: writer encode failed: {e}", pc.name));
 
-        let (reader_hex, error_kind) = match plan::decode(&writer_bytes, writer_root, reader_root, &reg) {
-            Ok(reader_value) => {
-                let reader_bytes = compact::to_bytes(&reader_value, reader_root, &reg)
-                    .unwrap_or_else(|e| {
-                        panic!("case {}: reader re-encode failed: {e}", pc.name)
-                    });
-                tracing::debug!(
-                    case = %pc.name,
-                    writer = %id_hex(writer_root),
-                    reader = %id_hex(reader_root),
-                    writer_len = writer_bytes.len(),
-                    reader_len = reader_bytes.len(),
-                    "decoded ok"
-                );
-                (Some(hex(&reader_bytes)), None)
-            }
-            Err(e) => {
-                let kind = error_kind_name(&e);
-                tracing::debug!(
-                    case = %pc.name,
-                    writer = %id_hex(writer_root),
-                    reader = %id_hex(reader_root),
-                    error = %kind,
-                    "decode errored (expected for negative cases)"
-                );
-                (None, Some(kind.to_string()))
-            }
-        };
+        let (reader_hex, error_kind) =
+            match plan::decode(&writer_bytes, writer_root, reader_root, &reg) {
+                Ok(reader_value) => {
+                    let reader_bytes = compact::to_bytes(&reader_value, reader_root, &reg)
+                        .unwrap_or_else(|e| {
+                            panic!("case {}: reader re-encode failed: {e}", pc.name)
+                        });
+                    tracing::debug!(
+                        case = %pc.name,
+                        writer = %id_hex(writer_root),
+                        reader = %id_hex(reader_root),
+                        writer_len = writer_bytes.len(),
+                        reader_len = reader_bytes.len(),
+                        "decoded ok"
+                    );
+                    (Some(hex(&reader_bytes)), None)
+                }
+                Err(e) => {
+                    let kind = error_kind_name(&e);
+                    tracing::debug!(
+                        case = %pc.name,
+                        writer = %id_hex(writer_root),
+                        reader = %id_hex(reader_root),
+                        error = %kind,
+                        "decode errored (expected for negative cases)"
+                    );
+                    (None, Some(kind.to_string()))
+                }
+            };
 
         cases.push(Case {
             name: pc.name.clone(),

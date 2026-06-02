@@ -87,6 +87,13 @@ pub enum Access {
     /// `Channel`/`External` bindings (a local endpoint or external buffer becoming a
     /// handle) and any kind a producer can't reduce to layout facts are carried.
     Opaque(OpaqueThunks),
+    /// A back-edge to a recursive (cyclic) schema: this position holds a value of the
+    /// schema named by this node's [`Descriptor::schema`], whose full descriptor lives
+    /// in the recursion block registry rather than being inlined here (an inlined
+    /// recursive descriptor would be infinite). The engine lowers it to a
+    /// [`MemOp::CallBlock`](crate::ir::MemOp::CallBlock) — a call into that schema's
+    /// block program, run at the current value pointer (`r[descriptors.recursion]`).
+    Recurse,
 }
 
 /// A struct or tuple: its fields at offsets, with how to construct it.
@@ -226,7 +233,10 @@ pub enum SequenceStorage {
     /// Borrowed contiguous run: `(ptr, len)` at offsets, no capacity, no
     /// allocation. Decode points `ptr` into the input (or a decode-scoped arena)
     /// and writes `len`. `&str`, `&[u8]`, `&[T]` for scalar `T`.
-    Borrowed { ptr_offset: usize, len_offset: usize },
+    Borrowed {
+        ptr_offset: usize,
+        len_offset: usize,
+    },
     /// Non-flat storage: length and per-element access go through thunks (linked
     /// lists, copy-on-write buffers, anything not a contiguous run).
     Thunk { len: Thunk, get: Thunk, push: Thunk },

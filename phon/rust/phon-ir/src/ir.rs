@@ -27,7 +27,7 @@
 //! Spec: "The intermediate representation" (`r[ir.*]`).
 
 use phon_schema::bytes::{Reader, skip_pad};
-use phon_schema::{DecodeError, Primitive, SchemaRef};
+use phon_schema::{DecodeError, Primitive, SchemaId, SchemaRef};
 
 /// A lowered decode program: a straight run of [`Op`]s executed start to finish.
 /// Container bodies (sequence element, map key/value, option payload, enum arm,
@@ -115,6 +115,16 @@ pub struct EnumArm {
 /// allocate or branch at run time) extend this later.
 pub type MemProgram = Vec<MemOp>;
 
+/// A lowered typed program: the root op stream plus the per-schema block programs
+/// that [`MemOp::CallBlock`] calls into. For a non-recursive type `blocks` is empty
+/// and `program` is the familiar flat op stream; a recursive type lowers each of its
+/// cyclic schemas to a block here, so `program` (and every block) stays finite.
+#[derive(Clone, Debug, Default)]
+pub struct Lowered {
+    pub program: MemProgram,
+    pub blocks: std::collections::BTreeMap<SchemaId, MemProgram>,
+}
+
 /// One typed step. The base pointer is supplied at run time; `offset` is relative
 /// to it.
 #[derive(Clone, Debug)]
@@ -125,7 +135,11 @@ pub enum MemOp {
     /// writes the wire; decode reads the wire and writes memory. Sound only where
     /// host byte order equals the wire's (little-endian), which every phon target
     /// is.
-    Scalar { offset: usize, size: usize, align: usize },
+    Scalar {
+        offset: usize,
+        size: usize,
+        align: usize,
+    },
     /// An owned, contiguous sequence (`Vec<T>`) at `field_offset`: a `u32` count
     /// then `count` elements, each decoded by the element's own program. Decode
     /// initializes the sequence and fills it; encode reads its length and
@@ -201,6 +215,14 @@ pub enum MemOp {
     /// varints). Decode reads the length, borrows the span from the input, and hands
     /// it to the decode thunk — zero-copy, the inner schema unknown. See [`OpaqueOp`].
     Opaque(Box<OpaqueOp>),
+    /// A call into a recursive schema's block program, run at the CURRENT value
+    /// pointer (the same base the enclosing op established — a field offset, a
+    /// sequence element address, an option payload, …). This is how a recursive type
+    /// stays finite: the cyclic schema is lowered once into a block (resolved from the
+    /// [`Lowered::blocks`] registry by `schema`), and every reference to it is a
+    /// `CallBlock` rather than an inlined subtree. Encode and decode both recurse into
+    /// the block. (`r[ir.recursion]`)
+    CallBlock { schema: SchemaId },
 }
 
 /// A type-erased "write this field's default in place" operation, supplied by the
@@ -705,7 +727,11 @@ pub fn fuse(program: MemProgram) -> MemProgram {
     let mut wire_pos: Option<usize> = Some(0);
     for op in program {
         match op {
-            MemOp::Scalar { offset, size, align } => {
+            MemOp::Scalar {
+                offset,
+                size,
+                align,
+            } => {
                 let pad = wire_pos.map(|p| align.wrapping_sub(p & (align - 1)) & (align - 1));
                 let fuses = pad == Some(0)
                     && matches!(
@@ -717,7 +743,11 @@ pub fn fuse(program: MemProgram) -> MemProgram {
                         *ps += size;
                     }
                 } else {
-                    out.push(MemOp::Scalar { offset, size, align });
+                    out.push(MemOp::Scalar {
+                        offset,
+                        size,
+                        align,
+                    });
                 }
                 wire_pos = wire_pos.map(|p| p + pad.unwrap_or(0) + size);
             }
@@ -733,6 +763,7 @@ pub fn fuse(program: MemProgram) -> MemProgram {
             | MemOp::Result(_)
             | MemOp::Dynamic { .. }
             | MemOp::Opaque(_)
+            | MemOp::CallBlock { .. }
             | MemOp::SkipWire(_)) => {
                 out.push(seq);
                 wire_pos = None;

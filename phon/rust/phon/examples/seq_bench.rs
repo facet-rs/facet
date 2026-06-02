@@ -94,6 +94,10 @@ fn main() {
 
     #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
     {
-        println!("\nspeedup (jit vs interpreter):  decode {:.2}x   encode {:.2}x", _di / dj, _ei / ej);
+        println!(
+            "\nspeedup (jit vs interpreter):  decode {:.2}x   encode {:.2}x",
+            _di / dj,
+            _ei / ej
+        );
     }
 }

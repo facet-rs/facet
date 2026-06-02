@@ -15,7 +15,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::bytes::{Sink, write_bool, write_str, write_u32, write_u64, write_u8};
+use crate::bytes::{Sink, write_bool, write_str, write_u8, write_u32, write_u64};
 use crate::schema::{
     ChannelDirection, Field, Primitive, Schema, SchemaId, SchemaKind, SchemaRef, VariantPayload,
 };
@@ -371,9 +371,10 @@ impl Walk<'_> {
                     }
                     Some(&target) => {
                         // A different, already-processed component: feed its id.
-                        let rid = self.assigned.get(&target).copied().expect(
-                            "dependency component must be assigned before its dependents",
-                        );
+                        let rid =
+                            self.assigned.get(&target).copied().expect(
+                                "dependency component must be assigned before its dependents",
+                            );
                         write_str(out, "concrete");
                         write_u64(out, rid.0);
                     }
@@ -693,10 +694,7 @@ mod tests {
     fn scc_partitions_independent_cycles_chains_and_isolates() {
         // {0,1} cycle; 2 -> 0 (depends on the cycle); {3} self-loop;
         // {4,5} independent cycle; {6} isolated.
-        let comps = run_scc(
-            7,
-            &[(0, 1), (1, 0), (2, 0), (3, 3), (4, 5), (5, 4)],
-        );
+        let comps = run_scc(7, &[(0, 1), (1, 0), (2, 0), (3, 3), (4, 5), (5, 4)]);
         assert_eq!(
             as_set(&comps),
             as_set(&[vec![0, 1], vec![2], vec![3], vec![4, 5], vec![6]])
@@ -795,7 +793,11 @@ mod tests {
         let rec = recursive_schema_ids(&resolved);
         assert_eq!(rec.len(), 2);
         for s in &resolved {
-            assert!(rec.contains(&s.id), "{:?} should be flagged recursive", s.id);
+            assert!(
+                rec.contains(&s.id),
+                "{:?} should be flagged recursive",
+                s.id
+            );
         }
 
         // A flat, non-recursive struct flags nothing.
@@ -803,7 +805,10 @@ mod tests {
             10,
             SchemaKind::Struct {
                 name: "Flat".to_string(),
-                fields: vec![field("a", SchemaRef::concrete(primitive_id(Primitive::U32)))],
+                fields: vec![field(
+                    "a",
+                    SchemaRef::concrete(primitive_id(Primitive::U32)),
+                )],
             },
         )]);
         assert!(recursive_schema_ids(&flat).is_empty());

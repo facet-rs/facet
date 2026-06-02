@@ -73,7 +73,10 @@ mod tests {
         let ts = typescript::render(&module());
 
         // Struct -> interface with the ergonomic scalar mapping.
-        assert!(ts.contains("export interface Person {"), "missing Person:\n{ts}");
+        assert!(
+            ts.contains("export interface Person {"),
+            "missing Person:\n{ts}"
+        );
         assert!(ts.contains("name: string;"));
         assert!(ts.contains("age: number;")); // u32 -> number
         assert!(ts.contains("big: bigint;")); // u64 -> bigint

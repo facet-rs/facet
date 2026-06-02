@@ -24,7 +24,8 @@ use phon_schema::bytes::{
 };
 use phon_schema::{
     DecodeError, EncodeError, Field, Primitive, Schema, SchemaId, SchemaKind, SchemaRef, Variant,
-    VariantPayload, extended_from_string, extended_to_string, primitive_id, read_value, write_value,
+    VariantPayload, extended_from_string, extended_to_string, primitive_id, read_value,
+    write_value,
 };
 
 /// Maximum nesting depth on decode (`r[validate.depth]`).
@@ -43,9 +44,7 @@ pub enum CompactError {
     /// A kind or feature not yet implemented in this codec.
     Unsupported(&'static str),
     /// The value's shape does not match the schema it is being encoded against.
-    TypeMismatch {
-        expected: &'static str,
-    },
+    TypeMismatch { expected: &'static str },
     /// An enum value names a variant the schema does not have.
     UnknownVariant(String),
     /// A decoded enum variant index is out of range.
@@ -82,7 +81,9 @@ impl core::fmt::Display for CompactError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             CompactError::UnknownSchema(id) => write!(f, "unknown schema {id}"),
-            CompactError::Unsupported(what) => write!(f, "compact codec does not support {what} yet"),
+            CompactError::Unsupported(what) => {
+                write!(f, "compact codec does not support {what} yet")
+            }
             CompactError::TypeMismatch { expected } => {
                 write!(f, "value does not match schema (expected {expected})")
             }
@@ -94,7 +95,10 @@ impl core::fmt::Display for CompactError {
             CompactError::Malformed(what) => write!(f, "malformed schema: {what}"),
             CompactError::Incompatible(why) => write!(f, "incompatible schemas: {why}"),
             CompactError::WriterOnlyVariant(i) => {
-                write!(f, "received enum variant {i} the reader schema does not have")
+                write!(
+                    f,
+                    "received enum variant {i} the reader schema does not have"
+                )
             }
             CompactError::Decode(e) => write!(f, "decode: {e}"),
             CompactError::Encode(e) => write!(f, "encode: {e}"),
@@ -286,7 +290,9 @@ pub fn from_bytes(bytes: &[u8], root: SchemaId, registry: &Registry) -> Result<V
     let mut r = Reader::new(bytes);
     let v = decode_ref(&mut r, &SchemaRef::concrete(root), registry, 0)?;
     if r.remaining() != 0 {
-        return Err(CompactError::Decode(DecodeError::TrailingBytes(r.remaining())));
+        return Err(CompactError::Decode(DecodeError::TrailingBytes(
+            r.remaining(),
+        )));
     }
     Ok(v)
 }
@@ -398,7 +404,9 @@ fn encode_kind(value: &Value, kind: &SchemaKind, reg: &Registry, out: &mut Vec<u
             for field in fields {
                 let fv = obj
                     .get(&VString::new(&field.name))
-                    .ok_or(CompactError::TypeMismatch { expected: "struct field" })?;
+                    .ok_or(CompactError::TypeMismatch {
+                        expected: "struct field",
+                    })?;
                 encode_ref(fv, &field.schema, reg, out)?;
             }
             Ok(())
@@ -408,7 +416,9 @@ fn encode_kind(value: &Value, kind: &SchemaKind, reg: &Registry, out: &mut Vec<u
                 .as_array()
                 .ok_or(CompactError::TypeMismatch { expected: "tuple" })?;
             if arr.len() != elements.len() {
-                return Err(CompactError::TypeMismatch { expected: "tuple arity" });
+                return Err(CompactError::TypeMismatch {
+                    expected: "tuple arity",
+                });
             }
             for (i, e) in elements.iter().enumerate() {
                 encode_ref(arr.get(i).unwrap(), e, reg, out)?;
@@ -434,7 +444,9 @@ fn encode_kind(value: &Value, kind: &SchemaKind, reg: &Registry, out: &mut Vec<u
                 .as_array()
                 .ok_or(CompactError::TypeMismatch { expected: "array" })?;
             if arr.len() as u64 != count {
-                return Err(CompactError::TypeMismatch { expected: "array shape" });
+                return Err(CompactError::TypeMismatch {
+                    expected: "array shape",
+                });
             }
             for i in 0..arr.len() {
                 encode_ref(arr.get(i).unwrap(), element, reg, out)?;
@@ -462,11 +474,13 @@ fn encode_kind(value: &Value, kind: &SchemaKind, reg: &Registry, out: &mut Vec<u
             Ok(())
         }
         SchemaKind::Enum { variants, .. } => {
-            let obj = value
-                .as_object()
-                .ok_or(CompactError::TypeMismatch { expected: "enum object" })?;
+            let obj = value.as_object().ok_or(CompactError::TypeMismatch {
+                expected: "enum object",
+            })?;
             if obj.len() != 1 {
-                return Err(CompactError::TypeMismatch { expected: "single-variant enum object" });
+                return Err(CompactError::TypeMismatch {
+                    expected: "single-variant enum object",
+                });
             }
             let (name, payload) = obj.iter().next().unwrap();
             let variant = variants
@@ -496,11 +510,13 @@ fn encode_payload(
         VariantPayload::Unit => Ok(()),
         VariantPayload::Newtype(r) => encode_ref(value, r, reg, out),
         VariantPayload::Tuple(refs) => {
-            let arr = value
-                .as_array()
-                .ok_or(CompactError::TypeMismatch { expected: "tuple variant" })?;
+            let arr = value.as_array().ok_or(CompactError::TypeMismatch {
+                expected: "tuple variant",
+            })?;
             if arr.len() != refs.len() {
-                return Err(CompactError::TypeMismatch { expected: "tuple variant arity" });
+                return Err(CompactError::TypeMismatch {
+                    expected: "tuple variant arity",
+                });
             }
             for (i, r) in refs.iter().enumerate() {
                 encode_ref(arr.get(i).unwrap(), r, reg, out)?;
@@ -508,13 +524,15 @@ fn encode_payload(
             Ok(())
         }
         VariantPayload::Struct(fields) => {
-            let obj = value
-                .as_object()
-                .ok_or(CompactError::TypeMismatch { expected: "struct variant" })?;
+            let obj = value.as_object().ok_or(CompactError::TypeMismatch {
+                expected: "struct variant",
+            })?;
             for field in fields {
                 let fv = obj
                     .get(&VString::new(&field.name))
-                    .ok_or(CompactError::TypeMismatch { expected: "struct variant field" })?;
+                    .ok_or(CompactError::TypeMismatch {
+                        expected: "struct variant field",
+                    })?;
                 encode_ref(fv, &field.schema, reg, out)?;
             }
             Ok(())
@@ -527,7 +545,9 @@ pub(crate) fn product(dimensions: &[u64]) -> Result<u64> {
     for &d in dimensions {
         p = p
             .checked_mul(d)
-            .ok_or(CompactError::Decode(DecodeError::Malformed("array dimensions overflow")))?;
+            .ok_or(CompactError::Decode(DecodeError::Malformed(
+                "array dimensions overflow",
+            )))?;
     }
     Ok(p)
 }
@@ -541,8 +561,9 @@ pub(crate) fn product(dimensions: &[u64]) -> Result<u64> {
 pub(crate) fn check_fixed_count(count: u64, min_wire: usize, remaining: usize) -> Result<()> {
     // `checked_div` is `None` exactly when `min_wire == 0` — the zero-sized case,
     // where the buffer offers no bound and the fixed cap applies.
-    let max =
-        remaining.checked_div(min_wire).unwrap_or(phon_schema::bytes::ZST_COUNT_CAP) as u64;
+    let max = remaining
+        .checked_div(min_wire)
+        .unwrap_or(phon_schema::bytes::ZST_COUNT_CAP) as u64;
     if count > max {
         return Err(CompactError::Decode(DecodeError::LengthTooLarge {
             count,
@@ -613,7 +634,9 @@ fn substitute_kind(kind: &SchemaKind, params: &[String], args: &[SchemaRef]) -> 
                             rs.iter().map(|r| substitute_ref(r, params, args)).collect(),
                         ),
                         VariantPayload::Struct(fs) => VariantPayload::Struct(
-                            fs.iter().map(|f| substitute_field(f, params, args)).collect(),
+                            fs.iter()
+                                .map(|f| substitute_field(f, params, args))
+                                .collect(),
                         ),
                     },
                 })
@@ -664,7 +687,12 @@ fn substitute_kind(kind: &SchemaKind, params: &[String], args: &[SchemaRef]) -> 
 // Decoding
 // ============================================================================
 
-pub(crate) fn decode_ref(r: &mut Reader, rf: &SchemaRef, reg: &Registry, depth: usize) -> Result<Value> {
+pub(crate) fn decode_ref(
+    r: &mut Reader,
+    rf: &SchemaRef,
+    reg: &Registry,
+    depth: usize,
+) -> Result<Value> {
     if depth > MAX_DEPTH {
         return Err(CompactError::Decode(DecodeError::DepthExceeded));
     }
@@ -717,7 +745,9 @@ pub(crate) fn decode_primitive(r: &mut Reader, p: Primitive) -> Result<Value> {
         Primitive::Bytes => VBytes::new(r.read_bytes()?).into(),
         Primitive::Unit => Value::NULL,
         Primitive::Never => {
-            return Err(CompactError::Decode(DecodeError::Malformed("never is uninhabited")));
+            return Err(CompactError::Decode(DecodeError::Malformed(
+                "never is uninhabited",
+            )));
         }
         Primitive::DateTime | Primitive::Uuid | Primitive::QName => {
             extended_from_string(r.read_str()?, p).map_err(CompactError::Decode)?
@@ -939,7 +969,10 @@ mod tests {
                     Variant {
                         name: "C".to_string(),
                         index: 2,
-                        payload: VariantPayload::Tuple(vec![prim(Primitive::U8), prim(Primitive::U8)]),
+                        payload: VariantPayload::Tuple(vec![
+                            prim(Primitive::U8),
+                            prim(Primitive::U8),
+                        ]),
                     },
                 ],
             },
@@ -1132,12 +1165,31 @@ mod tests {
     /// pins the fix at the codec level, not just the planner.
     #[test]
     fn zero_sized_collections_roundtrip() {
-        let empty = schema(1, SchemaKind::Struct { name: "Z".into(), fields: vec![] });
-        let list = schema(2, SchemaKind::List { element: SchemaRef::concrete(SchemaId(1)) });
-        let set = schema(3, SchemaKind::List { element: prim(Primitive::Unit) });
+        let empty = schema(
+            1,
+            SchemaKind::Struct {
+                name: "Z".into(),
+                fields: vec![],
+            },
+        );
+        let list = schema(
+            2,
+            SchemaKind::List {
+                element: SchemaRef::concrete(SchemaId(1)),
+            },
+        );
+        let set = schema(
+            3,
+            SchemaKind::List {
+                element: prim(Primitive::Unit),
+            },
+        );
         let array = schema(
             4,
-            SchemaKind::Array { element: prim(Primitive::Unit), dimensions: vec![4] },
+            SchemaKind::Array {
+                element: prim(Primitive::Unit),
+                dimensions: vec![4],
+            },
         );
         let reg = Registry::new([empty, list, set, array]);
 

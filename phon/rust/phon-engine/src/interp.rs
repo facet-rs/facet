@@ -37,11 +37,15 @@ pub fn run(program: &Program, bytes: &[u8], reg: &Registry) -> Result<Value> {
     let mut stack: Vec<Value> = Vec::new();
     exec_ops(program, &mut r, reg, &mut stack)?;
     if r.remaining() != 0 {
-        return Err(CompactError::Decode(DecodeError::TrailingBytes(r.remaining())));
+        return Err(CompactError::Decode(DecodeError::TrailingBytes(
+            r.remaining(),
+        )));
     }
     stack
         .pop()
-        .ok_or(CompactError::Decode(DecodeError::Malformed("program produced no value")))
+        .ok_or(CompactError::Decode(DecodeError::Malformed(
+            "program produced no value",
+        )))
 }
 
 fn exec_ops(ops: &[Op], r: &mut Reader, reg: &Registry, stack: &mut Vec<Value>) -> Result<()> {
@@ -76,7 +80,11 @@ fn exec_op(op: &Op, r: &mut Reader, reg: &Registry, stack: &mut Vec<Value>) -> R
             }
             stack.push(arr.into());
         }
-        Op::Seq { set, min_wire, body } => {
+        Op::Seq {
+            set,
+            min_wire,
+            body,
+        } => {
             let n = r.read_len(*min_wire)?;
             let mut arr = VArray::new();
             let mut seen = if *set { Some(HashSet::new()) } else { None };
@@ -178,8 +186,18 @@ mod tests {
     #[test]
     fn ir_roundtrips_containers() {
         let reg = Registry::new([
-            schema(1, SchemaKind::List { element: prim(Primitive::U64) }),
-            schema(2, SchemaKind::Set { element: prim(Primitive::U32) }),
+            schema(
+                1,
+                SchemaKind::List {
+                    element: prim(Primitive::U64),
+                },
+            ),
+            schema(
+                2,
+                SchemaKind::Set {
+                    element: prim(Primitive::U32),
+                },
+            ),
             schema(
                 3,
                 SchemaKind::Map {
@@ -187,7 +205,12 @@ mod tests {
                     value: prim(Primitive::U32),
                 },
             ),
-            schema(4, SchemaKind::Option { element: prim(Primitive::U32) }),
+            schema(
+                4,
+                SchemaKind::Option {
+                    element: prim(Primitive::U32),
+                },
+            ),
             schema(
                 5,
                 SchemaKind::Array {

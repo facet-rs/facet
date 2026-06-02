@@ -155,7 +155,10 @@ impl fmt::Display for DecodeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             DecodeError::UnexpectedEof { needed, remaining } => {
-                write!(f, "unexpected end of input: need {needed}, have {remaining}")
+                write!(
+                    f,
+                    "unexpected end of input: need {needed}, have {remaining}"
+                )
             }
             DecodeError::UnknownTag(t) => write!(f, "unknown tag {t:#04x}"),
             DecodeError::InvalidBool(b) => write!(f, "invalid bool byte {b:#04x}"),
@@ -172,7 +175,10 @@ impl fmt::Display for DecodeError {
             }
             DecodeError::UnknownVariant(name) => write!(f, "unknown variant {name:?}"),
             DecodeError::WriterOnlyVariant(i) => {
-                write!(f, "received enum variant {i} the reader schema does not have")
+                write!(
+                    f,
+                    "received enum variant {i} the reader schema does not have"
+                )
             }
             DecodeError::BadVariantIndex(i) => write!(f, "enum variant index {i} out of range"),
             DecodeError::Malformed(what) => write!(f, "malformed value: {what}"),
@@ -324,7 +330,9 @@ impl<'a> Reader<'a> {
         // `checked_div` is `None` exactly when `min_elem_size == 0` — the
         // zero-sized case, where the buffer gives no bound and the fixed cap
         // applies.
-        let max = remaining.checked_div(min_elem_size).unwrap_or(ZST_COUNT_CAP);
+        let max = remaining
+            .checked_div(min_elem_size)
+            .unwrap_or(ZST_COUNT_CAP);
         if count > max {
             return Err(DecodeError::LengthTooLarge {
                 count: count as u64,

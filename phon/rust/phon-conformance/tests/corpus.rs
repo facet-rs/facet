@@ -90,7 +90,11 @@ fn value_corpus_is_golden_and_self_consistent() {
 
         // golden: the current code reproduces the committed bytes.
         let fresh = value_to_bytes(&vc.value).expect("sample value must encode");
-        assert_eq!(fresh, committed, "{}: value bytes drifted — regenerate", vc.name);
+        assert_eq!(
+            fresh, committed,
+            "{}: value bytes drifted — regenerate",
+            vc.name
+        );
 
         // round-trip: committed bytes decode to the expected value and back.
         let decoded = value_from_bytes(&committed)

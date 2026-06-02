@@ -58,7 +58,10 @@ enum Node {
         element: Box<Node>,
         min_wire: usize,
     },
-    Map { key: Box<Node>, value: Box<Node> },
+    Map {
+        key: Box<Node>,
+        value: Box<Node>,
+    },
     /// A fixed-shape array. `min_wire` bounds `product(dims)` exactly as in `Seq`.
     Array {
         element: Box<Node>,
@@ -122,7 +125,9 @@ pub fn decode_with_plan(bytes: &[u8], plan: &Plan, reg: &Registry) -> Result<Val
     let mut r = Reader::new(bytes);
     let v = exec(&plan.0, &mut r, reg, 0)?;
     if r.remaining() != 0 {
-        return Err(CompactError::Decode(DecodeError::TrailingBytes(r.remaining())));
+        return Err(CompactError::Decode(DecodeError::TrailingBytes(
+            r.remaining(),
+        )));
     }
     Ok(v)
 }
@@ -131,7 +136,12 @@ pub fn decode_with_plan(bytes: &[u8], plan: &Plan, reg: &Registry) -> Result<Val
 ///
 /// # Errors
 /// As [`build_plan`] and [`decode_with_plan`].
-pub fn decode(bytes: &[u8], writer_root: SchemaId, reader_root: SchemaId, reg: &Registry) -> Result<Value> {
+pub fn decode(
+    bytes: &[u8],
+    writer_root: SchemaId,
+    reader_root: SchemaId,
+    reg: &Registry,
+) -> Result<Value> {
     let plan = build_plan(writer_root, reader_root, reg)?;
     decode_with_plan(bytes, &plan, reg)
 }
@@ -165,7 +175,12 @@ fn plan_ref(w: &SchemaRef, r: &SchemaRef, reg: &Registry, depth: usize) -> Resul
     if depth > MAX_DEPTH {
         return Err(incompatible("schema nests too deep"));
     }
-    plan_resolved(compact::resolve(reg, w)?, compact::resolve(reg, r)?, reg, depth)
+    plan_resolved(
+        compact::resolve(reg, w)?,
+        compact::resolve(reg, r)?,
+        reg,
+        depth,
+    )
 }
 
 fn plan_resolved(w: Resolved, r: Resolved, reg: &Registry, depth: usize) -> Result<Node> {
@@ -221,13 +236,12 @@ fn plan_kind(wk: SchemaKind, rk: SchemaKind, reg: &Registry, depth: usize) -> Re
         (SchemaKind::Option { element: we }, SchemaKind::Option { element: re }) => {
             Ok(Node::Option(Box::new(plan_ref(&we, &re, reg, depth + 1)?)))
         }
-        (
-            SchemaKind::Map { key: wk, value: wv },
-            SchemaKind::Map { key: rk, value: rv },
-        ) => Ok(Node::Map {
-            key: Box::new(plan_ref(&wk, &rk, reg, depth + 1)?),
-            value: Box::new(plan_ref(&wv, &rv, reg, depth + 1)?),
-        }),
+        (SchemaKind::Map { key: wk, value: wv }, SchemaKind::Map { key: rk, value: rv }) => {
+            Ok(Node::Map {
+                key: Box::new(plan_ref(&wk, &rk, reg, depth + 1)?),
+                value: Box::new(plan_ref(&wv, &rv, reg, depth + 1)?),
+            })
+        }
         (
             SchemaKind::Array {
                 element: we,
@@ -338,9 +352,9 @@ fn plan_payload(
 ) -> Result<Payload> {
     match (w, r) {
         (VariantPayload::Unit, VariantPayload::Unit) => Ok(Payload::Unit),
-        (VariantPayload::Newtype(wr), VariantPayload::Newtype(rr)) => {
-            Ok(Payload::Newtype(Box::new(plan_ref(wr, rr, reg, depth + 1)?)))
-        }
+        (VariantPayload::Newtype(wr), VariantPayload::Newtype(rr)) => Ok(Payload::Newtype(
+            Box::new(plan_ref(wr, rr, reg, depth + 1)?),
+        )),
         (VariantPayload::Tuple(wrs), VariantPayload::Tuple(rrs)) => {
             if wrs.len() != rrs.len() {
                 return Err(incompatible("variant tuple arity differs"));
@@ -642,7 +656,10 @@ mod tests {
     fn decode_both(bytes: &[u8], w: SchemaId, r: SchemaId, reg: &Registry) -> Value {
         let recursive = decode(bytes, w, r, reg).unwrap();
         let flat = decode_via_ir(bytes, w, r, reg).unwrap();
-        assert_eq!(recursive, flat, "IR interpreter disagreed with recursive exec");
+        assert_eq!(
+            recursive, flat,
+            "IR interpreter disagreed with recursive exec"
+        );
         recursive
     }
 
@@ -671,7 +688,10 @@ mod tests {
         )
         .unwrap();
         let got = decode_both(&bytes, SchemaId(1), SchemaId(2), &reg);
-        assert_eq!(got, obj(&[("x", Value::from(7u32)), ("y", Value::from(9u32))]));
+        assert_eq!(
+            got,
+            obj(&[("x", Value::from(7u32)), ("y", Value::from(9u32))])
+        );
     }
 
     #[test]
@@ -715,10 +735,14 @@ mod tests {
             ],
         );
         let reg = Registry::new([writer, optional, required]);
-        let bytes = compact::to_bytes(&obj(&[("x", Value::from(7u32))]), SchemaId(1), &reg).unwrap();
+        let bytes =
+            compact::to_bytes(&obj(&[("x", Value::from(7u32))]), SchemaId(1), &reg).unwrap();
 
         let got = decode_both(&bytes, SchemaId(1), SchemaId(2), &reg);
-        assert_eq!(got, obj(&[("x", Value::from(7u32)), ("extra", Value::NULL)]));
+        assert_eq!(
+            got,
+            obj(&[("x", Value::from(7u32)), ("extra", Value::NULL)])
+        );
 
         assert!(matches!(
             build_plan(SchemaId(1), SchemaId(3), &reg),
@@ -732,8 +756,18 @@ mod tests {
 
     #[test]
     fn numeric_widening_is_not_implicit() {
-        let writer = schema(1, SchemaKind::List { element: prim(Primitive::U32) });
-        let reader = schema(2, SchemaKind::List { element: prim(Primitive::U64) });
+        let writer = schema(
+            1,
+            SchemaKind::List {
+                element: prim(Primitive::U32),
+            },
+        );
+        let reader = schema(
+            2,
+            SchemaKind::List {
+                element: prim(Primitive::U64),
+            },
+        );
         let reg = Registry::new([writer, reader]);
         assert!(matches!(
             build_plan(SchemaId(1), SchemaId(2), &reg),
@@ -753,7 +787,11 @@ mod tests {
             SchemaKind::Enum {
                 name: "E".to_string(),
                 variants: vec![
-                    Variant { name: "A".to_string(), index: 0, payload: VariantPayload::Unit },
+                    Variant {
+                        name: "A".to_string(),
+                        index: 0,
+                        payload: VariantPayload::Unit,
+                    },
                     Variant {
                         name: "B".to_string(),
                         index: 1,
@@ -767,13 +805,21 @@ mod tests {
             SchemaKind::Enum {
                 name: "E".to_string(),
                 variants: vec![
-                    Variant { name: "A".to_string(), index: 0, payload: VariantPayload::Unit },
+                    Variant {
+                        name: "A".to_string(),
+                        index: 0,
+                        payload: VariantPayload::Unit,
+                    },
                     Variant {
                         name: "B".to_string(),
                         index: 1,
                         payload: VariantPayload::Newtype(prim(Primitive::U32)),
                     },
-                    Variant { name: "C".to_string(), index: 2, payload: VariantPayload::Unit },
+                    Variant {
+                        name: "C".to_string(),
+                        index: 2,
+                        payload: VariantPayload::Unit,
+                    },
                 ],
             },
         );
@@ -847,7 +893,10 @@ mod tests {
         let got = decode_both(&bytes, SchemaId(1), SchemaId(2), &reg);
         assert_eq!(
             got,
-            obj(&[("inner", obj(&[("a", Value::from(5u32)), ("b", Value::NULL)]))])
+            obj(&[(
+                "inner",
+                obj(&[("a", Value::from(5u32)), ("b", Value::NULL)])
+            )])
         );
     }
 
@@ -862,7 +911,12 @@ mod tests {
     fn list_of_zero_sized_structs_decodes() {
         // Inner = empty struct; List<Inner>.
         let inner = point_struct(1, vec![]);
-        let list = schema(2, SchemaKind::List { element: SchemaRef::concrete(SchemaId(1)) });
+        let list = schema(
+            2,
+            SchemaKind::List {
+                element: SchemaRef::concrete(SchemaId(1)),
+            },
+        );
         let reg = Registry::new([inner, list]);
 
         // [ {}, {}, {} ] — three empty structs, zero payload bytes each.

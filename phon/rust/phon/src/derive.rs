@@ -67,7 +67,9 @@ pub enum DeriveError {
 impl fmt::Display for DeriveError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            DeriveError::Unsupported(what) => write!(f, "cannot derive phon from this type: {what}"),
+            DeriveError::Unsupported(what) => {
+                write!(f, "cannot derive phon from this type: {what}")
+            }
             DeriveError::Unsized => write!(f, "cannot derive phon from an unsized type"),
         }
     }
@@ -457,7 +459,10 @@ impl Builder {
     /// Classify a facet variant's payload into a [`VariantPayload`]. The wire bytes
     /// are the fields in order regardless of this shape; the classification only
     /// gives the schema its structure.
-    fn variant_payload(&mut self, v: &'static facet::Variant) -> Result<VariantPayload, DeriveError> {
+    fn variant_payload(
+        &mut self,
+        v: &'static facet::Variant,
+    ) -> Result<VariantPayload, DeriveError> {
         let fields = v.data.fields;
         if fields.is_empty() {
             return Ok(VariantPayload::Unit);
@@ -656,7 +661,10 @@ fn struct_fields(shape: &'static Shape) -> Result<&'static [facet::Field], Deriv
 }
 
 fn layout_of(shape: &Shape) -> Result<(usize, usize), DeriveError> {
-    let layout = shape.layout.sized_layout().map_err(|_| DeriveError::Unsized)?;
+    let layout = shape
+        .layout
+        .sized_layout()
+        .map_err(|_| DeriveError::Unsized)?;
     Ok((layout.size(), layout.align()))
 }
 
@@ -1171,10 +1179,7 @@ fn borrow_primitive(kind: BorrowKind) -> Primitive {
 /// its owned peer, a byte-sequence access carrying the concrete borrow thunks. The
 /// thunks are concrete — `&str`/`&[u8]` are single types, so no facet vtable is
 /// needed and `ctx` is null.
-fn borrowed_descriptor(
-    shape: &'static Shape,
-    kind: BorrowKind,
-) -> Result<Descriptor, DeriveError> {
+fn borrowed_descriptor(shape: &'static Shape, kind: BorrowKind) -> Result<Descriptor, DeriveError> {
     let (size, align) = layout_of(shape)?;
     let p = borrow_primitive(kind);
     let thunks = match kind {
@@ -1557,9 +1562,9 @@ unsafe extern "C" fn string_data(_ctx: *const (), list: *const u8) -> *const u8 
 /// (its `ctx`).
 fn opaque_descriptor(shape: &'static Shape) -> Result<Descriptor, DeriveError> {
     let (size, align) = layout_of(shape)?;
-    let adapter = shape
-        .opaque_adapter
-        .ok_or(DeriveError::Unsupported("opaque field without an adapter def"))?;
+    let adapter = shape.opaque_adapter.ok_or(DeriveError::Unsupported(
+        "opaque field without an adapter def",
+    ))?;
     Ok(Descriptor {
         schema: SchemaRef::concrete(primitive_id(Primitive::Bytes)),
         layout: Layout { size, align },
@@ -1617,7 +1622,12 @@ fn inner_program(shape: &'static Shape) -> &'static MemProgram {
         )
     });
     let leaked: &'static MemProgram = Box::leak(Box::new(program));
-    INNER_PROGRAMS.0.write().unwrap().entry(key).or_insert(leaked)
+    INNER_PROGRAMS
+        .0
+        .write()
+        .unwrap()
+        .entry(key)
+        .or_insert(leaked)
 }
 
 /// [`OpaqueThunks::encode`]: map the opaque field to its inner `(ptr, shape)` via the
@@ -1682,7 +1692,12 @@ pub fn raw_opaque_bytes(bytes: &&[u8]) -> OpaqueSerialize {
 /// `ctx` must be the `&'static OpaqueAdapterDef`; `bytes[..len]` must be a readable
 /// span that outlives the decoded value; `slot` must be uninitialized storage for the
 /// opaque type.
-unsafe extern "C" fn opaque_decode(ctx: *const (), bytes: *const u8, len: usize, slot: *mut u8) -> bool {
+unsafe extern "C" fn opaque_decode(
+    ctx: *const (),
+    bytes: *const u8,
+    len: usize,
+    slot: *mut u8,
+) -> bool {
     // Safety: `ctx` is the `&'static OpaqueAdapterDef`.
     let adapter = unsafe { &*ctx.cast::<OpaqueAdapterDef>() };
     // Safety: `bytes[..len]` is a readable span borrowed from the reader's input.
@@ -1853,14 +1868,20 @@ mod tests {
                 .unwrap();
 
         // Oracle: byte-identical to the dynamic codec for the equivalent object.
-        let dyn_bytes =
-            compact::to_bytes(&pt_object(p.a, p.b, p.c, p.flag), d.root, &reg).unwrap();
+        let dyn_bytes = compact::to_bytes(&pt_object(p.a, p.b, p.c, p.flag), d.root, &reg).unwrap();
         assert_eq!(typed_bytes, dyn_bytes);
 
         // Round-trip back into a Pt.
         let mut slot = std::mem::MaybeUninit::<Pt>::uninit();
-        unsafe { typed::decode(&typed_bytes, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
-            .unwrap();
+        unsafe {
+            typed::decode(
+                &typed_bytes,
+                &d.descriptor,
+                &reg,
+                slot.as_mut_ptr().cast::<u8>(),
+            )
+        }
+        .unwrap();
         let back = unsafe { slot.assume_init() };
         assert_eq!(back.a, p.a);
         assert_eq!(back.b, p.b);
@@ -1900,8 +1921,15 @@ mod tests {
         assert_eq!(typed_bytes, dyn_bytes);
 
         let mut slot = std::mem::MaybeUninit::<Outer>::uninit();
-        unsafe { typed::decode(&typed_bytes, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
-            .unwrap();
+        unsafe {
+            typed::decode(
+                &typed_bytes,
+                &d.descriptor,
+                &reg,
+                slot.as_mut_ptr().cast::<u8>(),
+            )
+        }
+        .unwrap();
         let back = unsafe { slot.assume_init() };
         assert_eq!(back.tag, o.tag);
         assert_eq!(back.inner.b, o.inner.b);
@@ -1945,8 +1973,15 @@ mod tests {
 
         // Round-trip: decode back into a Holder and check the Vec and scalar.
         let mut slot = std::mem::MaybeUninit::<Holder>::uninit();
-        unsafe { typed::decode(&typed_bytes, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
-            .unwrap();
+        unsafe {
+            typed::decode(
+                &typed_bytes,
+                &d.descriptor,
+                &reg,
+                slot.as_mut_ptr().cast::<u8>(),
+            )
+        }
+        .unwrap();
         let back = unsafe { slot.assume_init() };
         assert_eq!(back.items, h.items);
         assert_eq!(back.tag, h.tag);
@@ -1979,8 +2014,15 @@ mod tests {
         assert_eq!(typed_bytes, dyn_bytes);
 
         let mut slot = std::mem::MaybeUninit::<Named>::uninit();
-        unsafe { typed::decode(&typed_bytes, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
-            .unwrap();
+        unsafe {
+            typed::decode(
+                &typed_bytes,
+                &d.descriptor,
+                &reg,
+                slot.as_mut_ptr().cast::<u8>(),
+            )
+        }
+        .unwrap();
         let back = unsafe { slot.assume_init() };
         assert_eq!(back.name, v.name);
         assert_eq!(back.id, v.id);
@@ -2005,7 +2047,10 @@ mod tests {
         let err =
             unsafe { typed::decode(&wire, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
                 .unwrap_err();
-        assert!(matches!(err, CompactError::Decode(DecodeError::InvalidUtf8)));
+        assert!(matches!(
+            err,
+            CompactError::Decode(DecodeError::InvalidUtf8)
+        ));
     }
 
     // ========================================================================
@@ -2041,7 +2086,11 @@ mod tests {
     fn borrowed_wire(name: &str, blob: &[u8], tag: u32) -> Vec<u8> {
         let d = of::<OwnedEquiv>().unwrap();
         let reg = Registry::new(d.schemas.clone());
-        let v = OwnedEquiv { name: name.to_string(), blob: blob.to_vec(), tag };
+        let v = OwnedEquiv {
+            name: name.to_string(),
+            blob: blob.to_vec(),
+            tag,
+        };
         unsafe { typed::encode(core::ptr::from_ref(&v).cast::<u8>(), &d.descriptor, &reg) }.unwrap()
     }
 
@@ -2076,7 +2125,11 @@ mod tests {
         let tag = 0xDEAD_BEEFu32;
 
         let b = Borrowed { name, blob, tag };
-        let o = OwnedEquiv { name: name.to_string(), blob: blob.to_vec(), tag };
+        let o = OwnedEquiv {
+            name: name.to_string(),
+            blob: blob.to_vec(),
+            tag,
+        };
 
         let b_bytes =
             unsafe { typed::encode(core::ptr::from_ref(&b).cast::<u8>(), &bd.descriptor, &breg) }
@@ -2149,7 +2202,10 @@ mod tests {
         let err =
             unsafe { typed::decode(&wire, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
                 .unwrap_err();
-        assert!(matches!(err, CompactError::Decode(DecodeError::InvalidUtf8)), "got {err:?}");
+        assert!(
+            matches!(err, CompactError::Decode(DecodeError::InvalidUtf8)),
+            "got {err:?}"
+        );
     }
 
     #[test]
@@ -2162,7 +2218,9 @@ mod tests {
         }
         assert!(matches!(
             of::<BadBorrow>(),
-            Err(DeriveError::Unsupported("borrowed slice of non-u8 not supported yet"))
+            Err(DeriveError::Unsupported(
+                "borrowed slice of non-u8 not supported yet"
+            ))
         ));
     }
 
@@ -2197,7 +2255,10 @@ mod tests {
         assert_eq!(jback.name, name);
         assert_eq!(jback.blob, blob);
         assert_eq!(jback.tag, tag);
-        assert_eq!((jback.name, jback.blob, jback.tag), (iback.name, iback.blob, iback.tag));
+        assert_eq!(
+            (jback.name, jback.blob, jback.tag),
+            (iback.name, iback.blob, iback.tag)
+        );
 
         // ZERO-COPY through the JIT: the decoded pointers point INTO `wire`.
         let wire_start = wire.as_ptr() as usize;
@@ -2319,7 +2380,12 @@ mod tests {
 
             let mut slot = std::mem::MaybeUninit::<Maybe>::uninit();
             unsafe {
-                typed::decode(&typed_bytes, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>())
+                typed::decode(
+                    &typed_bytes,
+                    &d.descriptor,
+                    &reg,
+                    slot.as_mut_ptr().cast::<u8>(),
+                )
             }
             .unwrap();
             let back = unsafe { slot.assume_init() };
@@ -2343,7 +2409,10 @@ mod tests {
         let reg = Registry::new(d.schemas.clone());
 
         for s in [Some("héllo 🐝".to_string()), None] {
-            let m = MaybeStr { s: s.clone(), n: 0x2A };
+            let m = MaybeStr {
+                s: s.clone(),
+                n: 0x2A,
+            };
             let typed_bytes =
                 unsafe { typed::encode(core::ptr::from_ref(&m).cast::<u8>(), &d.descriptor, &reg) }
                     .unwrap();
@@ -2362,7 +2431,12 @@ mod tests {
 
             let mut slot = std::mem::MaybeUninit::<MaybeStr>::uninit();
             unsafe {
-                typed::decode(&typed_bytes, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>())
+                typed::decode(
+                    &typed_bytes,
+                    &d.descriptor,
+                    &reg,
+                    slot.as_mut_ptr().cast::<u8>(),
+                )
             }
             .unwrap();
             let back = unsafe { slot.assume_init() };
@@ -2415,7 +2489,12 @@ mod tests {
 
             let mut slot = std::mem::MaybeUninit::<Msg>::uninit();
             unsafe {
-                typed::decode(&typed_bytes, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>())
+                typed::decode(
+                    &typed_bytes,
+                    &d.descriptor,
+                    &reg,
+                    slot.as_mut_ptr().cast::<u8>(),
+                )
             }
             .unwrap();
             let back = unsafe { slot.assume_init() };
@@ -2449,7 +2528,10 @@ mod tests {
         let err =
             unsafe { typed::decode(&wire, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
                 .unwrap_err();
-        assert!(matches!(err, CompactError::Decode(DecodeError::InvalidBool(2))));
+        assert!(matches!(
+            err,
+            CompactError::Decode(DecodeError::InvalidBool(2))
+        ));
     }
 
     // The `Option<u32>` bridge through the *JIT*: derive -> lower ->
@@ -2471,8 +2553,7 @@ mod tests {
             let base = core::ptr::from_ref(&m).cast::<u8>();
 
             let jit_bytes = unsafe { enc.run(base) };
-            let interp_bytes =
-                unsafe { typed::encode(base, &d.descriptor, &reg) }.unwrap();
+            let interp_bytes = unsafe { typed::encode(base, &d.descriptor, &reg) }.unwrap();
             assert_eq!(jit_bytes, interp_bytes, "encode mismatch for {val:?}");
 
             let mut slot = std::mem::MaybeUninit::<Maybe>::uninit();
@@ -2496,13 +2577,19 @@ mod tests {
         let enc = NativeEncode::compile(&program);
         let dec = NativeDecode::compile(&program);
 
-        for s in [Some("héllo 🐝 wörld".to_string()), None, Some(String::new())] {
-            let m = MaybeStr { s: s.clone(), n: 0x2A };
+        for s in [
+            Some("héllo 🐝 wörld".to_string()),
+            None,
+            Some(String::new()),
+        ] {
+            let m = MaybeStr {
+                s: s.clone(),
+                n: 0x2A,
+            };
             let base = core::ptr::from_ref(&m).cast::<u8>();
 
             let jit_bytes = unsafe { enc.run(base) };
-            let interp_bytes =
-                unsafe { typed::encode(base, &d.descriptor, &reg) }.unwrap();
+            let interp_bytes = unsafe { typed::encode(base, &d.descriptor, &reg) }.unwrap();
             assert_eq!(jit_bytes, interp_bytes, "encode mismatch for {s:?}");
 
             let mut slot = std::mem::MaybeUninit::<MaybeStr>::uninit();
@@ -2531,8 +2618,7 @@ mod tests {
             let base = core::ptr::from_ref(&m).cast::<u8>();
 
             let jit_bytes = unsafe { enc.run(base) };
-            let interp_bytes =
-                unsafe { typed::encode(base, &d.descriptor, &reg) }.unwrap();
+            let interp_bytes = unsafe { typed::encode(base, &d.descriptor, &reg) }.unwrap();
             assert_eq!(jit_bytes, interp_bytes, "encode mismatch for {m:?}");
 
             let mut slot = std::mem::MaybeUninit::<Msg>::uninit();
@@ -2561,7 +2647,10 @@ mod tests {
         // A garbage index → BadVariantIndex (the JIT now distinguishes it from a
         // writer-only variant), carrying the index — the `DecodeError`-channel
         // counterpart of the interpreter's `CompactError::BadVariantIndex`.
-        assert!(matches!(err, DecodeError::BadVariantIndex(99)), "got {err:?}");
+        assert!(
+            matches!(err, DecodeError::BadVariantIndex(99)),
+            "got {err:?}"
+        );
     }
 
     // The JIT must REJECT a hostile `Option` presence byte, never produce a value.
@@ -2605,7 +2694,10 @@ mod tests {
         m.insert("alpha".to_string(), 1u32);
         m.insert("beta".to_string(), 0xCAFEu32);
         m.insert("gamma".to_string(), 0xDEAD_BEEFu32);
-        let h = MapHolder { m: m.clone(), tag: 0x55 };
+        let h = MapHolder {
+            m: m.clone(),
+            tag: 0x55,
+        };
 
         let typed_bytes =
             unsafe { typed::encode(core::ptr::from_ref(&h).cast::<u8>(), &d.descriptor, &reg) }
@@ -2625,8 +2717,15 @@ mod tests {
 
         // Round-trip: decode back into a MapHolder and check the map and scalar.
         let mut slot = std::mem::MaybeUninit::<MapHolder>::uninit();
-        unsafe { typed::decode(&typed_bytes, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
-            .unwrap();
+        unsafe {
+            typed::decode(
+                &typed_bytes,
+                &d.descriptor,
+                &reg,
+                slot.as_mut_ptr().cast::<u8>(),
+            )
+        }
+        .unwrap();
         let back = unsafe { slot.assume_init() };
         assert_eq!(back.m, m);
         assert_eq!(back.tag, h.tag);
@@ -2665,8 +2764,15 @@ mod tests {
         assert_eq!(typed_bytes, dyn_bytes);
 
         let mut slot = std::mem::MaybeUninit::<StrMapHolder>::uninit();
-        unsafe { typed::decode(&typed_bytes, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
-            .unwrap();
+        unsafe {
+            typed::decode(
+                &typed_bytes,
+                &d.descriptor,
+                &reg,
+                slot.as_mut_ptr().cast::<u8>(),
+            )
+        }
+        .unwrap();
         let back = unsafe { slot.assume_init() };
         assert_eq!(back.m, m);
     }
@@ -2720,9 +2826,12 @@ mod tests {
         // Safety: on `DuplicateKey` the map field is an initialized
         // `BTreeMap<String, u32>`; we read it out and drop it exactly once.
         let partial = unsafe {
-            core::ptr::read(slot.as_ptr().cast::<u8>().add(m_field).cast::<
-                std::collections::BTreeMap<String, u32>,
-            >())
+            core::ptr::read(
+                slot.as_ptr()
+                    .cast::<u8>()
+                    .add(m_field)
+                    .cast::<std::collections::BTreeMap<String, u32>>(),
+            )
         };
         assert_eq!(partial.len(), 1);
         drop(partial);
@@ -2759,12 +2868,18 @@ mod tests {
         s.insert("name".to_string(), "héllo 🐝".to_string());
         s.insert("other".to_string(), "wörld".to_string());
         s.insert("zed".to_string(), String::new());
-        let h = MapPair { m: m.clone(), s: s.clone() };
+        let h = MapPair {
+            m: m.clone(),
+            s: s.clone(),
+        };
         let base = core::ptr::from_ref(&h).cast::<u8>();
 
         let jit_bytes = unsafe { enc.run(base) };
         let interp_bytes = unsafe { typed::encode(base, &d.descriptor, &reg) }.unwrap();
-        assert_eq!(jit_bytes, interp_bytes, "JIT encode disagreed with the interpreter");
+        assert_eq!(
+            jit_bytes, interp_bytes,
+            "JIT encode disagreed with the interpreter"
+        );
 
         let mut slot = std::mem::MaybeUninit::<MapPair>::uninit();
         unsafe { dec.run(&jit_bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
@@ -3045,11 +3160,13 @@ mod tests {
         let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
         let b_bytes = encode_writer(&EnumW::B(42), &w, &reg);
         let mut slot = std::mem::MaybeUninit::<EnumRFewer>::uninit();
-        let err =
-            unsafe { typed::decode_with(&program, &b_bytes, slot.as_mut_ptr().cast::<u8>()) }
-                .unwrap_err();
+        let err = unsafe { typed::decode_with(&program, &b_bytes, slot.as_mut_ptr().cast::<u8>()) }
+            .unwrap_err();
         // The writer index of B is 1.
-        assert!(matches!(err, CompactError::WriterOnlyVariant(1)), "got {err:?}");
+        assert!(
+            matches!(err, CompactError::WriterOnlyVariant(1)),
+            "got {err:?}"
+        );
 
         // Oracle: the dynamic plan reports the same writer-only variant.
         assert!(matches!(
@@ -3161,11 +3278,19 @@ mod tests {
 
         // No compat-only ops appear, and the op sequence matches the single-schema
         // lowering byte-for-byte (Debug equality on the IR).
-        assert!(!has_compat_ops(&compat), "identity program leaked skip/default ops");
+        assert!(
+            !has_compat_ops(&compat),
+            "identity program leaked skip/default ops"
+        );
         assert_eq!(format!("{single:?}"), format!("{compat:?}"));
 
         // And it actually round-trips a real value.
-        let p = Pt { a: 0x11, b: 0x2222_2222_2222_2222, c: 0x3333, flag: true };
+        let p = Pt {
+            a: 0x11,
+            b: 0x2222_2222_2222_2222,
+            c: 0x3333,
+            flag: true,
+        };
         let bytes =
             unsafe { typed::encode(core::ptr::from_ref(&p).cast::<u8>(), &d.descriptor, &reg) }
                 .unwrap();
@@ -3222,7 +3347,9 @@ mod tests {
         unsafe { typed::decode_with(program, bytes, interp_slot.as_mut_ptr().cast::<u8>()) }
             .unwrap();
 
-        (unsafe { jit_slot.assume_init() }, unsafe { interp_slot.assume_init() })
+        (unsafe { jit_slot.assume_init() }, unsafe {
+            interp_slot.assume_init()
+        })
     }
 
     /// 1. Field reorder: the JIT decodes reordered scalars into the reader's layout,
@@ -3253,10 +3380,17 @@ mod tests {
         let r = of::<SkipR>().unwrap();
         let reg = merged_registry(&w, &r);
 
-        let value = SkipW { a: 11, b: "discard me".to_string(), c: 22 };
+        let value = SkipW {
+            a: 11,
+            b: "discard me".to_string(),
+            c: 22,
+        };
         let bytes = encode_writer(&value, &w, &reg);
         let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
-        assert!(has_compat_ops(&program), "expected a SkipWire op in the program");
+        assert!(
+            has_compat_ops(&program),
+            "expected a SkipWire op in the program"
+        );
 
         let (jit, interp) = decode_both::<SkipR>(&program, &bytes);
         assert_eq!(jit.a, 11);
@@ -3276,7 +3410,10 @@ mod tests {
 
         let bytes = encode_writer(&DefaultW { a: 7 }, &w, &reg);
         let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
-        assert!(has_compat_ops(&program), "expected a Default op in the program");
+        assert!(
+            has_compat_ops(&program),
+            "expected a Default op in the program"
+        );
 
         let (jit, interp) = decode_both::<DefaultR>(&program, &bytes);
         assert_eq!(jit.a, 7);
@@ -3301,7 +3438,10 @@ mod tests {
 
         let bytes = encode_writer(&DefaultW { a: 7 }, &w, &reg);
         let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
-        assert!(has_compat_ops(&program), "expected a Default op in the program");
+        assert!(
+            has_compat_ops(&program),
+            "expected a Default op in the program"
+        );
 
         let (jit, interp) = decode_both::<CustomR>(&program, &bytes);
         assert_eq!(jit.a, 7);
@@ -3320,10 +3460,7 @@ mod tests {
         let reg = merged_registry(&w, &r);
         let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
 
-        for (val, want) in [
-            (EnumW::B(42), EnumRMore::B(42)),
-            (EnumW::A, EnumRMore::A),
-        ] {
+        for (val, want) in [(EnumW::B(42), EnumRMore::B(42)), (EnumW::A, EnumRMore::A)] {
             let bytes = encode_writer(&val, &w, &reg);
             let (jit, interp) = decode_both::<EnumRMore>(&program, &bytes);
             assert_eq!(jit, want);
@@ -3372,10 +3509,16 @@ mod tests {
         let r = of::<OuterR>().unwrap();
         let reg = merged_registry(&w, &r);
 
-        let value = OuterW { inner: InnerW { a: 5 }, tag: 0x99 };
+        let value = OuterW {
+            inner: InnerW { a: 5 },
+            tag: 0x99,
+        };
         let bytes = encode_writer(&value, &w, &reg);
         let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
-        assert!(has_compat_ops(&program), "expected a nested Default op in the program");
+        assert!(
+            has_compat_ops(&program),
+            "expected a nested Default op in the program"
+        );
 
         let (jit, interp) = decode_both::<OuterR>(&program, &bytes);
         assert_eq!(jit.inner.a, 5);
@@ -3403,7 +3546,10 @@ mod tests {
     fn derived_zst_seq_roundtrips() {
         let d = of::<ZstHolder>().unwrap();
         let reg = Registry::new(d.schemas.clone());
-        let v = ZstHolder { items: vec![Empty {}, Empty {}, Empty {}], tag: 0x99 };
+        let v = ZstHolder {
+            items: vec![Empty {}, Empty {}, Empty {}],
+            tag: 0x99,
+        };
 
         let bytes =
             unsafe { typed::encode(core::ptr::from_ref(&v).cast::<u8>(), &d.descriptor, &reg) }
@@ -3424,7 +3570,10 @@ mod tests {
         let d = of::<ZstHolder>().unwrap();
         let reg = Registry::new(d.schemas.clone());
         let program = typed::lower(&d.descriptor, &reg).unwrap();
-        let v = ZstHolder { items: vec![Empty {}, Empty {}, Empty {}], tag: 0x99 };
+        let v = ZstHolder {
+            items: vec![Empty {}, Empty {}, Empty {}],
+            tag: 0x99,
+        };
 
         let bytes =
             unsafe { NativeEncode::compile(&program).run(core::ptr::from_ref(&v).cast::<u8>()) };
@@ -3459,7 +3608,10 @@ mod tests {
         let reg = Registry::new(d.schemas.clone());
 
         for r in [Ok(0xCAFEu32), Err("boom".to_string())] {
-            let h = Holder { r: r.clone(), tag: 0x55 };
+            let h = Holder {
+                r: r.clone(),
+                tag: 0x55,
+            };
             let typed_bytes =
                 unsafe { typed::encode(core::ptr::from_ref(&h).cast::<u8>(), &d.descriptor, &reg) }
                     .unwrap();
@@ -3478,7 +3630,12 @@ mod tests {
 
             let mut slot = std::mem::MaybeUninit::<Holder>::uninit();
             unsafe {
-                typed::decode(&typed_bytes, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>())
+                typed::decode(
+                    &typed_bytes,
+                    &d.descriptor,
+                    &reg,
+                    slot.as_mut_ptr().cast::<u8>(),
+                )
             }
             .unwrap();
             let back = unsafe { slot.assume_init() };
@@ -3554,7 +3711,10 @@ mod tests {
         meta_obj.insert(VString::new("n"), Value::from(42u32));
         let meta: Value = meta_obj.into();
 
-        let h = DynHolder { tag: 0x55, meta: meta.clone() };
+        let h = DynHolder {
+            tag: 0x55,
+            meta: meta.clone(),
+        };
         let typed_bytes =
             unsafe { typed::encode(core::ptr::from_ref(&h).cast::<u8>(), &d.descriptor, &reg) }
                 .unwrap();
@@ -3567,8 +3727,15 @@ mod tests {
         assert_eq!(typed_bytes, dyn_bytes);
 
         let mut slot = std::mem::MaybeUninit::<DynHolder>::uninit();
-        unsafe { typed::decode(&typed_bytes, &d.descriptor, &reg, slot.as_mut_ptr().cast::<u8>()) }
-            .unwrap();
+        unsafe {
+            typed::decode(
+                &typed_bytes,
+                &d.descriptor,
+                &reg,
+                slot.as_mut_ptr().cast::<u8>(),
+            )
+        }
+        .unwrap();
         let back = unsafe { slot.assume_init() };
         assert_eq!(back.tag, 0x55);
         assert_eq!(back.meta, meta);
@@ -3596,7 +3763,11 @@ mod tests {
         let mut m = VObject::new();
         m.insert(VString::new("k"), Value::from("v"));
         let meta: Value = m.into();
-        let value = W { a: 7, gone: 99, meta: meta.clone() };
+        let value = W {
+            a: 7,
+            gone: 99,
+            meta: meta.clone(),
+        };
         let bytes = encode_writer(&value, &w, &reg);
         let program = lower_decode(w.root, &r.descriptor, &reg).unwrap();
         let mut slot = std::mem::MaybeUninit::<R>::uninit();
@@ -3704,7 +3875,10 @@ mod tests {
         let d = of::<Envelope>().unwrap();
         let reg = Registry::new(d.schemas.clone());
 
-        let inner = Inner { x: 0xCAFE, y: 0x1122_3344_5566_7788 };
+        let inner = Inner {
+            x: 0xCAFE,
+            y: 0x1122_3344_5566_7788,
+        };
 
         // The inner value's standalone compact encoding — what the opaque frame
         // must carry verbatim.
@@ -3712,7 +3886,11 @@ mod tests {
             let di = of::<Inner>().unwrap();
             let regi = Registry::new(di.schemas.clone());
             unsafe {
-                typed::encode(core::ptr::from_ref(&inner).cast::<u8>(), &di.descriptor, &regi)
+                typed::encode(
+                    core::ptr::from_ref(&inner).cast::<u8>(),
+                    &di.descriptor,
+                    &regi,
+                )
             }
             .unwrap()
         };
@@ -3734,12 +3912,23 @@ mod tests {
         // `Primitive::Bytes`, so the wire must be byte-identical.
         let od = of::<EnvelopeOracle>().unwrap();
         let oreg = Registry::new(od.schemas.clone());
-        let oracle = EnvelopeOracle { id: 7, payload: &inner_bytes, tag: 0x99 };
+        let oracle = EnvelopeOracle {
+            id: 7,
+            payload: &inner_bytes,
+            tag: 0x99,
+        };
         let obytes = unsafe {
-            typed::encode(core::ptr::from_ref(&oracle).cast::<u8>(), &od.descriptor, &oreg)
+            typed::encode(
+                core::ptr::from_ref(&oracle).cast::<u8>(),
+                &od.descriptor,
+                &oreg,
+            )
         }
         .unwrap();
-        assert_eq!(bytes, obytes, "opaque frame must equal a Primitive::Bytes run");
+        assert_eq!(
+            bytes, obytes,
+            "opaque frame must equal a Primitive::Bytes run"
+        );
 
         // Decode the envelope: the payload becomes a borrowed span (Incoming).
         let mut slot = std::mem::MaybeUninit::<Envelope>::uninit();

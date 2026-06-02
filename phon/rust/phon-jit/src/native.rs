@@ -192,8 +192,8 @@ struct DefaultInfo {
 #[repr(C)]
 struct SkipInfo {
     skip_op: *const (),
-    walk: unsafe extern "C" fn(skip_op: *const (), wire: *const u8, wire_end: *const u8)
-        -> *const u8,
+    walk:
+        unsafe extern "C" fn(skip_op: *const (), wire: *const u8, wire_end: *const u8) -> *const u8,
 }
 
 /// The `SkipInfo.walk` thunk: advance a cursor over `[wire, wire_end)` past one
@@ -480,7 +480,11 @@ impl Compiler {
         for op in program {
             starts.push(self.code.len());
             match op {
-                MemOp::Scalar { offset, size, align } => {
+                MemOp::Scalar {
+                    offset,
+                    size,
+                    align,
+                } => {
                     self.code.extend_from_slice(SCALAR);
                     let p = &mut self.progs[prog_index];
                     p.push(*offset as u64);
@@ -506,7 +510,11 @@ impl Compiler {
                         element_entry_offset: elem.entry,
                         element_prog_index: elem.prog_index,
                     });
-                    self.fixups.push(SeqFixup { prog_index, slot, seqinfo });
+                    self.fixups.push(SeqFixup {
+                        prog_index,
+                        slot,
+                        seqinfo,
+                    });
                 }
                 MemOp::Bytes(b) => {
                     self.code.extend_from_slice(BYTES);
@@ -525,7 +533,11 @@ impl Compiler {
                         // The stencil calls this indirectly, so no relocation.
                         validate: b.validate,
                     });
-                    self.bytes_fixups.push(BytesFixup { prog_index, slot, bytesinfo });
+                    self.bytes_fixups.push(BytesFixup {
+                        prog_index,
+                        slot,
+                        bytesinfo,
+                    });
                 }
                 MemOp::Borrow(b) => {
                     self.code.extend_from_slice(BORROW);
@@ -543,7 +555,11 @@ impl Compiler {
                         thunks_ctx: b.thunks.ctx,
                         set_borrowed: b.thunks.set_borrowed,
                     });
-                    self.borrow_fixups.push(BorrowFixup { prog_index, slot, borrowinfo });
+                    self.borrow_fixups.push(BorrowFixup {
+                        prog_index,
+                        slot,
+                        borrowinfo,
+                    });
                 }
                 MemOp::Option(o) => {
                     self.code.extend_from_slice(OPTION);
@@ -564,7 +580,11 @@ impl Compiler {
                         some_entry_offset: some.entry,
                         some_prog_index: some.prog_index,
                     });
-                    self.opt_fixups.push(OptFixup { prog_index, slot, optinfo });
+                    self.opt_fixups.push(OptFixup {
+                        prog_index,
+                        slot,
+                        optinfo,
+                    });
                 }
                 MemOp::Enum(e) => {
                     self.code.extend_from_slice(ENUM);
@@ -590,7 +610,11 @@ impl Compiler {
                         variants,
                         writer_only: e.writer_only.clone(),
                     });
-                    self.enum_fixups.push(EnumFixup { prog_index, slot, enuminfo });
+                    self.enum_fixups.push(EnumFixup {
+                        prog_index,
+                        slot,
+                        enuminfo,
+                    });
                 }
                 MemOp::Default(d) => {
                     self.code.extend_from_slice(DEFAULT);
@@ -606,7 +630,11 @@ impl Compiler {
                         ctx: d.ctx,
                         thunk: d.default,
                     });
-                    self.default_fixups.push(DefaultFixup { prog_index, slot, defaultinfo });
+                    self.default_fixups.push(DefaultFixup {
+                        prog_index,
+                        slot,
+                        defaultinfo,
+                    });
                 }
                 MemOp::SkipWire(s) => {
                     self.code.extend_from_slice(SKIPWIRE);
@@ -618,7 +646,11 @@ impl Compiler {
                     self.progs[prog_index].push(0);
                     let skipinfo = self.skip_ops.len();
                     self.skip_ops.push((**s).clone());
-                    self.skip_fixups.push(SkipFixup { prog_index, slot, skipinfo });
+                    self.skip_fixups.push(SkipFixup {
+                        prog_index,
+                        slot,
+                        skipinfo,
+                    });
                 }
                 MemOp::Map(m) => {
                     self.code.extend_from_slice(MAP);
@@ -645,11 +677,20 @@ impl Compiler {
                         value_entry_offset: value.entry,
                         value_prog_index: value.prog_index,
                     });
-                    self.map_fixups.push(MapFixup { prog_index, slot, mapinfo });
+                    self.map_fixups.push(MapFixup {
+                        prog_index,
+                        slot,
+                        mapinfo,
+                    });
                 }
                 MemOp::Result(_) => panic!("phon-jit: Result is interpreter-only for now"),
-                MemOp::Dynamic { .. } => panic!("phon-jit: dynamic Value is interpreter-only for now"),
+                MemOp::Dynamic { .. } => {
+                    panic!("phon-jit: dynamic Value is interpreter-only for now")
+                }
                 MemOp::Opaque(_) => panic!("phon-jit: opaque fields are interpreter-only for now"),
+                MemOp::CallBlock { .. } => {
+                    panic!("phon-jit: recursion is interpreter-only for now")
+                }
             }
         }
         let done_start = self.code.len();
@@ -671,8 +712,13 @@ impl Compiler {
                 MemOp::SkipWire(_) => SKIPWIRE_CONT,
                 MemOp::Map(_) => MAP_CONT,
                 MemOp::Result(_) => panic!("phon-jit: Result is interpreter-only for now"),
-                MemOp::Dynamic { .. } => panic!("phon-jit: dynamic Value is interpreter-only for now"),
+                MemOp::Dynamic { .. } => {
+                    panic!("phon-jit: dynamic Value is interpreter-only for now")
+                }
                 MemOp::Opaque(_) => panic!("phon-jit: opaque fields are interpreter-only for now"),
+                MemOp::CallBlock { .. } => {
+                    panic!("phon-jit: recursion is interpreter-only for now")
+                }
             };
             for &rel in relocs {
                 patch_branch26(&mut self.code, op_start + rel, next);
@@ -789,8 +835,7 @@ impl NativeDecode {
         // Materialize each enum's variant table (the payload entries are
         // `ExecBuf`-relative; the payload progs are bound below). Each inner `Vec`
         // gets exact capacity so its heap stays put for the `EnumInfo` pointer.
-        let mut enum_variants: Vec<Vec<EnumVariantInfo>> =
-            Vec::with_capacity(c.enum_infos.len());
+        let mut enum_variants: Vec<Vec<EnumVariantInfo>> = Vec::with_capacity(c.enum_infos.len());
         for e in &c.enum_infos {
             let mut variants: Vec<EnumVariantInfo> = Vec::with_capacity(e.variants.len());
             for v in &e.variants {
@@ -829,7 +874,10 @@ impl NativeDecode {
         // pointer is bound below, once `skip_ops` is owned by `NativeDecode` so each
         // `Box<SkipOp>`'s heap address is final.
         let skip_infos: Vec<SkipInfo> = (0..c.skip_ops.len())
-            .map(|_| SkipInfo { skip_op: core::ptr::null(), walk: jit_skip_walk })
+            .map(|_| SkipInfo {
+                skip_op: core::ptr::null(),
+                walk: jit_skip_walk,
+            })
             .collect();
 
         let mut nd = NativeDecode {
@@ -986,7 +1034,10 @@ impl NativeDecode {
                 _ => {}
             }
             let remaining = ctx.wire_end as usize - ctx.wire as usize;
-            return Err(DecodeError::UnexpectedEof { needed: 0, remaining });
+            return Err(DecodeError::UnexpectedEof {
+                needed: 0,
+                remaining,
+            });
         }
         let consumed = ctx.wire as usize - start as usize;
         if consumed != bytes.len() {
@@ -1252,7 +1303,11 @@ impl EncCompiler {
         for op in program {
             starts.push(self.code.len());
             match op {
-                MemOp::Scalar { offset, size, align } => {
+                MemOp::Scalar {
+                    offset,
+                    size,
+                    align,
+                } => {
                     self.code.extend_from_slice(SCALAR_ENC);
                     let p = &mut self.progs[prog_index];
                     p.push(*offset as u64);
@@ -1274,7 +1329,11 @@ impl EncCompiler {
                         element_entry_offset: elem.entry,
                         element_prog_index: elem.prog_index,
                     });
-                    self.fixups.push(SeqFixup { prog_index, slot, seqinfo });
+                    self.fixups.push(SeqFixup {
+                        prog_index,
+                        slot,
+                        seqinfo,
+                    });
                 }
                 MemOp::Bytes(b) => {
                     // Encode never validates — the in-memory `String`/`Vec` is
@@ -1291,7 +1350,11 @@ impl EncCompiler {
                         len: b.thunks.len,
                         data: b.thunks.data,
                     });
-                    self.bytes_fixups.push(BytesFixup { prog_index, slot, bytesinfo });
+                    self.bytes_fixups.push(BytesFixup {
+                        prog_index,
+                        slot,
+                        bytesinfo,
+                    });
                 }
                 MemOp::Borrow(b) => {
                     // Encode of a borrowed leaf is byte-identical to the owned bulk
@@ -1310,7 +1373,11 @@ impl EncCompiler {
                         len: b.thunks.len,
                         data: b.thunks.data,
                     });
-                    self.bytes_fixups.push(BytesFixup { prog_index, slot, bytesinfo });
+                    self.bytes_fixups.push(BytesFixup {
+                        prog_index,
+                        slot,
+                        bytesinfo,
+                    });
                 }
                 MemOp::Option(o) => {
                     self.code.extend_from_slice(OPTION_ENC);
@@ -1326,7 +1393,11 @@ impl EncCompiler {
                         some_entry_offset: some.entry,
                         some_prog_index: some.prog_index,
                     });
-                    self.opt_fixups.push(OptFixup { prog_index, slot, optinfo });
+                    self.opt_fixups.push(OptFixup {
+                        prog_index,
+                        slot,
+                        optinfo,
+                    });
                 }
                 MemOp::Enum(e) => {
                     self.code.extend_from_slice(ENUM_ENC);
@@ -1348,7 +1419,11 @@ impl EncCompiler {
                         tag_width: e.tag_width,
                         variants,
                     });
-                    self.enum_fixups.push(EnumFixup { prog_index, slot, enuminfo });
+                    self.enum_fixups.push(EnumFixup {
+                        prog_index,
+                        slot,
+                        enuminfo,
+                    });
                 }
                 MemOp::Map(m) => {
                     self.code.extend_from_slice(MAP_ENC);
@@ -1370,14 +1445,23 @@ impl EncCompiler {
                         value_entry_offset: value.entry,
                         value_prog_index: value.prog_index,
                     });
-                    self.map_fixups.push(MapFixup { prog_index, slot, mapinfo });
+                    self.map_fixups.push(MapFixup {
+                        prog_index,
+                        slot,
+                        mapinfo,
+                    });
                 }
                 MemOp::SkipWire(_) | MemOp::Default(_) => {
                     panic!("phon-jit: compat skip/default are interpreter-only for now")
                 }
                 MemOp::Result(_) => panic!("phon-jit: Result is interpreter-only for now"),
-                MemOp::Dynamic { .. } => panic!("phon-jit: dynamic Value is interpreter-only for now"),
+                MemOp::Dynamic { .. } => {
+                    panic!("phon-jit: dynamic Value is interpreter-only for now")
+                }
                 MemOp::Opaque(_) => panic!("phon-jit: opaque fields are interpreter-only for now"),
+                MemOp::CallBlock { .. } => {
+                    panic!("phon-jit: recursion is interpreter-only for now")
+                }
             }
         }
         let done_start = self.code.len();
@@ -1396,8 +1480,13 @@ impl EncCompiler {
                     unreachable!("phon-jit: compat skip/default are interpreter-only for now")
                 }
                 MemOp::Result(_) => panic!("phon-jit: Result is interpreter-only for now"),
-                MemOp::Dynamic { .. } => panic!("phon-jit: dynamic Value is interpreter-only for now"),
+                MemOp::Dynamic { .. } => {
+                    panic!("phon-jit: dynamic Value is interpreter-only for now")
+                }
                 MemOp::Opaque(_) => panic!("phon-jit: opaque fields are interpreter-only for now"),
+                MemOp::CallBlock { .. } => {
+                    panic!("phon-jit: recursion is interpreter-only for now")
+                }
             };
             for &rel in relocs {
                 patch_branch26(&mut self.code, op_start + rel, next);
@@ -1632,8 +1721,16 @@ mod tests {
     fn jit_decode_matches_threaded() {
         // { u32 @ 0, u64 @ 8 }. Wire: u32, pad 4, u64.
         let program: MemProgram = vec![
-            MemOp::Scalar { offset: 0, size: 4, align: 4 },
-            MemOp::Scalar { offset: 8, size: 8, align: 8 },
+            MemOp::Scalar {
+                offset: 0,
+                size: 4,
+                align: 4,
+            },
+            MemOp::Scalar {
+                offset: 8,
+                size: 8,
+                align: 8,
+            },
         ];
         let mut wire = Vec::new();
         wire.extend_from_slice(&0x1122_3344u32.to_le_bytes());
@@ -1658,10 +1755,26 @@ mod tests {
     #[test]
     fn jit_decode_many_widths() {
         let program: MemProgram = vec![
-            MemOp::Scalar { offset: 16, size: 1, align: 1 },
-            MemOp::Scalar { offset: 0, size: 16, align: 16 },
-            MemOp::Scalar { offset: 18, size: 2, align: 2 },
-            MemOp::Scalar { offset: 20, size: 4, align: 4 },
+            MemOp::Scalar {
+                offset: 16,
+                size: 1,
+                align: 1,
+            },
+            MemOp::Scalar {
+                offset: 0,
+                size: 16,
+                align: 16,
+            },
+            MemOp::Scalar {
+                offset: 18,
+                size: 2,
+                align: 2,
+            },
+            MemOp::Scalar {
+                offset: 20,
+                size: 4,
+                align: 4,
+            },
         ];
         // Wire order is program order: u8 @0, pad to 16, u128, u16, pad 2, u32.
         let mut wire = vec![0xEE];
@@ -1681,7 +1794,11 @@ mod tests {
 
     #[test]
     fn jit_decode_rejects_trailing() {
-        let program: MemProgram = vec![MemOp::Scalar { offset: 0, size: 4, align: 4 }];
+        let program: MemProgram = vec![MemOp::Scalar {
+            offset: 0,
+            size: 4,
+            align: 4,
+        }];
         let jit = NativeDecode::compile(&program);
         let mut out = [0u8; 4];
         let err = unsafe { jit.run(&[1, 2, 3, 4, 5], out.as_mut_ptr()) }.unwrap_err();
@@ -1693,8 +1810,8 @@ mod tests {
     // ====================================================================
 
     use core::mem::MaybeUninit;
-    use phon_ir::ir::{BytesOp, SeqOp};
     use phon_ir::SeqThunks;
+    use phon_ir::ir::{BytesOp, SeqOp};
 
     // Hand-written list thunks for `Vec<u32>`, copied from
     // `phon-engine::typed`'s test: the engine allocates the buffer, then
@@ -1755,7 +1872,11 @@ mod tests {
     fn vu32_program() -> MemProgram {
         vec![MemOp::Sequence(Box::new(SeqOp {
             field_offset: 0,
-            element: vec![MemOp::Scalar { offset: 0, size: 4, align: 4 }],
+            element: vec![MemOp::Scalar {
+                offset: 0,
+                size: 4,
+                align: 4,
+            }],
             stride: 4,
             elem_align: 4,
             min_wire: 1,
@@ -1824,8 +1945,16 @@ mod tests {
         let program: MemProgram = vec![MemOp::Sequence(Box::new(SeqOp {
             field_offset: 0,
             element: vec![
-                MemOp::Scalar { offset: 0, size: 4, align: 4 },
-                MemOp::Scalar { offset: 4, size: 4, align: 4 },
+                MemOp::Scalar {
+                    offset: 0,
+                    size: 4,
+                    align: 4,
+                },
+                MemOp::Scalar {
+                    offset: 4,
+                    size: 4,
+                    align: 4,
+                },
             ],
             stride: 8,
             elem_align: 4,
@@ -1843,7 +1972,10 @@ mod tests {
         unsafe { jit.run(&wire, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
         let back = unsafe { slot.assume_init() };
         // Each element is two LE u32 halves contiguous = one LE u64.
-        let expected: Vec<u64> = pairs.iter().map(|&(a, b)| (a as u64) | ((b as u64) << 32)).collect();
+        let expected: Vec<u64> = pairs
+            .iter()
+            .map(|&(a, b)| (a as u64) | ((b as u64) << 32))
+            .collect();
         assert_eq!(back, expected);
     }
 
@@ -1880,7 +2012,11 @@ mod tests {
     fn jit_decode_nested_sequence() {
         let inner = SeqOp {
             field_offset: 0,
-            element: vec![MemOp::Scalar { offset: 0, size: 4, align: 4 }],
+            element: vec![MemOp::Scalar {
+                offset: 0,
+                size: 4,
+                align: 4,
+            }],
             stride: 4,
             elem_align: 4,
             min_wire: 1,
@@ -1924,8 +2060,16 @@ mod tests {
     #[test]
     fn jit_encode_matches_threaded() {
         let program: MemProgram = vec![
-            MemOp::Scalar { offset: 0, size: 4, align: 4 },
-            MemOp::Scalar { offset: 8, size: 8, align: 8 },
+            MemOp::Scalar {
+                offset: 0,
+                size: 4,
+                align: 4,
+            },
+            MemOp::Scalar {
+                offset: 8,
+                size: 8,
+                align: 8,
+            },
         ];
         #[repr(C, align(8))]
         struct Mem([u8; 16]);
@@ -1953,17 +2097,32 @@ mod tests {
     #[test]
     fn jit_encode_many_widths_roundtrips() {
         let program: MemProgram = vec![
-            MemOp::Scalar { offset: 16, size: 1, align: 1 },
-            MemOp::Scalar { offset: 0, size: 16, align: 16 },
-            MemOp::Scalar { offset: 18, size: 2, align: 2 },
-            MemOp::Scalar { offset: 20, size: 4, align: 4 },
+            MemOp::Scalar {
+                offset: 16,
+                size: 1,
+                align: 1,
+            },
+            MemOp::Scalar {
+                offset: 0,
+                size: 16,
+                align: 16,
+            },
+            MemOp::Scalar {
+                offset: 18,
+                size: 2,
+                align: 2,
+            },
+            MemOp::Scalar {
+                offset: 20,
+                size: 4,
+                align: 4,
+            },
         ];
         #[repr(C, align(16))]
         struct Mem([u8; 24]);
         let mut mem = Mem([0; 24]);
         mem.0[16] = 0xEE;
-        mem.0[0..16]
-            .copy_from_slice(&0x0011_2233_4455_6677_8899_AABB_CCDD_EEFFu128.to_le_bytes());
+        mem.0[0..16].copy_from_slice(&0x0011_2233_4455_6677_8899_AABB_CCDD_EEFFu128.to_le_bytes());
         mem.0[18..20].copy_from_slice(&0x1234u16.to_le_bytes());
         mem.0[20..24].copy_from_slice(&0xCAFE_F00Du32.to_le_bytes());
 
@@ -2028,11 +2187,23 @@ mod tests {
         }
         let v_off = core::mem::offset_of!(S, v);
         let program: MemProgram = vec![
-            MemOp::Scalar { offset: core::mem::offset_of!(S, a), size: 8, align: 8 },
-            MemOp::Scalar { offset: core::mem::offset_of!(S, b), size: 4, align: 4 },
+            MemOp::Scalar {
+                offset: core::mem::offset_of!(S, a),
+                size: 8,
+                align: 8,
+            },
+            MemOp::Scalar {
+                offset: core::mem::offset_of!(S, b),
+                size: 4,
+                align: 4,
+            },
             MemOp::Sequence(Box::new(SeqOp {
                 field_offset: v_off,
-                element: vec![MemOp::Scalar { offset: 0, size: 4, align: 4 }],
+                element: vec![MemOp::Scalar {
+                    offset: 0,
+                    size: 4,
+                    align: 4,
+                }],
                 stride: 4,
                 elem_align: 4,
                 min_wire: 1,
@@ -2097,7 +2268,11 @@ mod tests {
     fn jit_encode_nested_sequence_roundtrips() {
         let inner = SeqOp {
             field_offset: 0,
-            element: vec![MemOp::Scalar { offset: 0, size: 4, align: 4 }],
+            element: vec![MemOp::Scalar {
+                offset: 0,
+                size: 4,
+                align: 4,
+            }],
             stride: 4,
             elem_align: 4,
             min_wire: 1,
@@ -2276,7 +2451,11 @@ mod tests {
         }
         let v_off = core::mem::offset_of!(S, v);
         let program: MemProgram = vec![
-            MemOp::Scalar { offset: core::mem::offset_of!(S, tag), size: 1, align: 1 },
+            MemOp::Scalar {
+                offset: core::mem::offset_of!(S, tag),
+                size: 1,
+                align: 1,
+            },
             MemOp::Bytes(Box::new(BytesOp {
                 field_offset: v_off,
                 stride: 4,
@@ -2286,7 +2465,10 @@ mod tests {
             })),
         ];
 
-        let s = S { tag: 0xAB, v: vec![10u32, 20, 30] };
+        let s = S {
+            tag: 0xAB,
+            v: vec![10u32, 20, 30],
+        };
         let base = core::ptr::from_ref(&s).cast::<u8>();
 
         let enc = NativeEncode::compile(&program);
@@ -2421,8 +2603,8 @@ mod tests {
     // Option: the data-directed presence branch (decode + encode)
     // ====================================================================
 
-    use phon_ir::ir::{EnumOp, EnumVariantOp, OptionOp};
     use phon_ir::OptionThunks;
+    use phon_ir::ir::{EnumOp, EnumVariantOp, OptionOp};
 
     // Hand-written `Option<u32>` thunks: a scalar inner (no heap), so `init_some`
     // just copies the four bytes out of scratch.
@@ -2456,7 +2638,11 @@ mod tests {
     fn ou32_program() -> MemProgram {
         vec![MemOp::Option(Box::new(OptionOp {
             field_offset: 0,
-            some: vec![MemOp::Scalar { offset: 0, size: 4, align: 4 }],
+            some: vec![MemOp::Scalar {
+                offset: 0,
+                size: 4,
+                align: 4,
+            }],
             inner_size: 4,
             inner_align: 4,
             thunks: ou32_thunks(),
@@ -2542,7 +2728,11 @@ mod tests {
         let enc = NativeEncode::compile(&program);
         let dec = NativeDecode::compile(&program);
 
-        for val in [None, Some(String::new()), Some("héllo 🐝 wörld".to_string())] {
+        for val in [
+            None,
+            Some(String::new()),
+            Some("héllo 🐝 wörld".to_string()),
+        ] {
             let got = unsafe { enc.run(core::ptr::from_ref(&val).cast::<u8>()) };
             // Known wire: presence byte, then (if some) the String run (u32 len +
             // bytes; no pad needed — len starts at offset 1, elem_align 1).
@@ -2573,7 +2763,10 @@ mod tests {
         // An empty wire (no presence byte at all) is a truncation, not InvalidBool.
         let mut slot2 = MaybeUninit::<Option<u32>>::uninit();
         let err2 = unsafe { dec.run(&[], slot2.as_mut_ptr().cast::<u8>()) }.unwrap_err();
-        assert!(matches!(err2, DecodeError::UnexpectedEof { .. }), "got {err2:?}");
+        assert!(
+            matches!(err2, DecodeError::UnexpectedEof { .. }),
+            "got {err2:?}"
+        );
     }
 
     // ====================================================================
@@ -2596,20 +2789,36 @@ mod tests {
             tag_width: 1,
             variants: vec![
                 // Ping: wire index 0, selector 0, no payload.
-                EnumVariantOp { wire_index: 0, selector: 0, payload: vec![] },
+                EnumVariantOp {
+                    wire_index: 0,
+                    selector: 0,
+                    payload: vec![],
+                },
                 // Echo(u32): wire index 1, selector 1, one scalar at offset 4.
                 EnumVariantOp {
                     wire_index: 1,
                     selector: 1,
-                    payload: vec![MemOp::Scalar { offset: 4, size: 4, align: 4 }],
+                    payload: vec![MemOp::Scalar {
+                        offset: 4,
+                        size: 4,
+                        align: 4,
+                    }],
                 },
                 // Move{x,y}: wire index 2, selector 2, two scalars at 4 and 8.
                 EnumVariantOp {
                     wire_index: 2,
                     selector: 2,
                     payload: vec![
-                        MemOp::Scalar { offset: 4, size: 4, align: 4 },
-                        MemOp::Scalar { offset: 8, size: 4, align: 4 },
+                        MemOp::Scalar {
+                            offset: 4,
+                            size: 4,
+                            align: 4,
+                        },
+                        MemOp::Scalar {
+                            offset: 8,
+                            size: 4,
+                            align: 4,
+                        },
                     ],
                 },
             ],
@@ -2673,12 +2882,18 @@ mod tests {
         let wire = 99u32.to_le_bytes().to_vec();
         let mut slot = MsgImage([0; 12]);
         let err = unsafe { dec.run(&wire, slot.0.as_mut_ptr()) }.unwrap_err();
-        assert!(matches!(err, DecodeError::BadVariantIndex(99)), "got {err:?}");
+        assert!(
+            matches!(err, DecodeError::BadVariantIndex(99)),
+            "got {err:?}"
+        );
 
         // A truncated index (3 bytes) is an EOF, not a bad-index rejection.
         let mut slot2 = MsgImage([0; 12]);
         let err2 = unsafe { dec.run(&[0u8, 0, 0], slot2.0.as_mut_ptr()) }.unwrap_err();
-        assert!(matches!(err2, DecodeError::UnexpectedEof { .. }), "got {err2:?}");
+        assert!(
+            matches!(err2, DecodeError::UnexpectedEof { .. }),
+            "got {err2:?}"
+        );
     }
 
     /// A wider discriminant (`tag_width = 4`) exercises the multi-byte selector
@@ -2692,11 +2907,19 @@ mod tests {
             tag_offset: 0,
             tag_width: 4,
             variants: vec![
-                EnumVariantOp { wire_index: 0, selector: 0x1111_1111, payload: vec![] },
+                EnumVariantOp {
+                    wire_index: 0,
+                    selector: 0x1111_1111,
+                    payload: vec![],
+                },
                 EnumVariantOp {
                     wire_index: 1,
                     selector: 0x2222_2222,
-                    payload: vec![MemOp::Scalar { offset: 4, size: 4, align: 4 }],
+                    payload: vec![MemOp::Scalar {
+                        offset: 4,
+                        size: 4,
+                        align: 4,
+                    }],
                 },
             ],
             writer_only: Vec::new(),
@@ -2727,16 +2950,28 @@ mod tests {
         struct Img([u8; 16]);
         // u32 @ 0, then an enum with discriminant u8 @ 4 and a u32 payload @ 8.
         let program: MemProgram = vec![
-            MemOp::Scalar { offset: 0, size: 4, align: 4 },
+            MemOp::Scalar {
+                offset: 0,
+                size: 4,
+                align: 4,
+            },
             MemOp::Enum(Box::new(EnumOp {
                 tag_offset: 4,
                 tag_width: 1,
                 variants: vec![
-                    EnumVariantOp { wire_index: 0, selector: 0, payload: vec![] },
+                    EnumVariantOp {
+                        wire_index: 0,
+                        selector: 0,
+                        payload: vec![],
+                    },
                     EnumVariantOp {
                         wire_index: 1,
                         selector: 1,
-                        payload: vec![MemOp::Scalar { offset: 8, size: 4, align: 4 }],
+                        payload: vec![MemOp::Scalar {
+                            offset: 8,
+                            size: 4,
+                            align: 4,
+                        }],
                     },
                 ],
                 writer_only: Vec::new(),
@@ -2771,8 +3006,8 @@ mod tests {
     // per-pair allocation + insert on decode and a stateful iterator on encode
     // ====================================================================
 
-    use phon_ir::ir::MapOp;
     use phon_ir::MapThunks;
+    use phon_ir::ir::MapOp;
     use std::collections::BTreeMap;
 
     // Hand-written `BTreeMap<String, u32>` thunks, mirroring the interpreter's map
@@ -2806,7 +3041,10 @@ mod tests {
         let pairs: Vec<(*const u8, *const u8)> = m
             .iter()
             .map(|(k, v)| {
-                (core::ptr::from_ref(k).cast::<u8>(), core::ptr::from_ref(v).cast::<u8>())
+                (
+                    core::ptr::from_ref(k).cast::<u8>(),
+                    core::ptr::from_ref(v).cast::<u8>(),
+                )
             })
             .collect();
         Box::into_raw(Box::new(SU32Iter { pairs, pos: 0 })).cast::<()>()
@@ -2856,7 +3094,11 @@ mod tests {
                 validate: validate_utf8,
                 thunks: str_thunks(),
             }))],
-            value: vec![MemOp::Scalar { offset: 0, size: 4, align: 4 }],
+            value: vec![MemOp::Scalar {
+                offset: 0,
+                size: 4,
+                align: 4,
+            }],
             key_size: core::mem::size_of::<String>(),
             key_align: core::mem::align_of::<String>(),
             value_size: 4,
@@ -2983,7 +3225,12 @@ mod tests {
         unsafe extern "C" fn ss_init(_ctx: *const (), map: *mut u8, _cap: usize) {
             unsafe { core::ptr::write(map.cast::<SS>(), BTreeMap::new()) };
         }
-        unsafe extern "C" fn ss_insert(_ctx: *const (), map: *mut u8, key: *mut u8, value: *mut u8) {
+        unsafe extern "C" fn ss_insert(
+            _ctx: *const (),
+            map: *mut u8,
+            key: *mut u8,
+            value: *mut u8,
+        ) {
             let k = unsafe { core::ptr::read(key.cast::<String>()) };
             let v = unsafe { core::ptr::read(value.cast::<String>()) };
             unsafe { (*map.cast::<SS>()).insert(k, v) };
@@ -2997,7 +3244,10 @@ mod tests {
             let pairs = m
                 .iter()
                 .map(|(k, v)| {
-                    (core::ptr::from_ref(k).cast::<u8>(), core::ptr::from_ref(v).cast::<u8>())
+                    (
+                        core::ptr::from_ref(k).cast::<u8>(),
+                        core::ptr::from_ref(v).cast::<u8>(),
+                    )
                 })
                 .collect();
             Box::into_raw(Box::new(SSIter { pairs, pos: 0 })).cast::<()>()

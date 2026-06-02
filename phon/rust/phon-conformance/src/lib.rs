@@ -120,7 +120,14 @@ fn labeled(label: &str, schema: Schema) -> LabeledSchema {
 /// container kind, and the special kinds.
 #[must_use]
 pub fn cases() -> Vec<Case> {
-    vec![point(), enum_shapes(), linked_list(), generics(), containers(), special()]
+    vec![
+        point(),
+        enum_shapes(),
+        linked_list(),
+        generics(),
+        containers(),
+        special(),
+    ]
 }
 
 fn point() -> Case {
@@ -227,7 +234,10 @@ fn generics() -> Case {
             fields: vec![
                 field(
                     "pair",
-                    SchemaRef::generic(SchemaId(1), vec![SchemaRef::var("T"), prim(Primitive::U32)]),
+                    SchemaRef::generic(
+                        SchemaId(1),
+                        vec![SchemaRef::var("T"), prim(Primitive::U32)],
+                    ),
                     true,
                 ),
                 field("tag", prim(Primitive::String), true),
@@ -398,7 +408,10 @@ pub fn value_cases() -> Vec<ValueCase> {
         value_case("char", 'λ'),
         value_case("array", array),
         value_case("object", object),
-        value_case("uuid", VUuid::from_u128(0x0123_4567_89ab_cdef_fedc_ba98_7654_3210)),
+        value_case(
+            "uuid",
+            VUuid::from_u128(0x0123_4567_89ab_cdef_fedc_ba98_7654_3210),
+        ),
         value_case(
             "qname_namespaced",
             VQName::new(VString::new("http://ex.com/ns"), VString::new("el")),

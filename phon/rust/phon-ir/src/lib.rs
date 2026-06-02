@@ -13,14 +13,14 @@ pub mod descriptor;
 
 pub use descriptor::{
     Access, Construct, Descriptor, EnumAccess, FieldAccess, FieldDefault, Layout, MapAccess,
-    MapStorage, OptionAccess, Presence, RecordAccess, ResultAccess, SequenceAccess, SequenceStorage,
-    Tag, TensorAccess, Thunk, VariantAccess,
+    MapStorage, OptionAccess, Presence, RecordAccess, ResultAccess, SequenceAccess,
+    SequenceStorage, Tag, TensorAccess, Thunk, VariantAccess,
 };
 
 pub mod ir;
 
 pub use ir::{
-    BorrowOp, BorrowThunks, BytesOp, ByteValidator, DefaultOp, DefaultThunk, EnumArm, EnumOp,
+    BorrowOp, BorrowThunks, ByteValidator, BytesOp, DefaultOp, DefaultThunk, EnumArm, EnumOp,
     EnumVariantOp, MapOp, MapThunks, MemOp, MemProgram, Op, OpaqueOp, OpaqueThunks, OptionOp,
     OptionThunks, Program, ResultOp, ResultThunks, SeqOp, SeqThunks, SkipOp,
 };

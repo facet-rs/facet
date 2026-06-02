@@ -36,7 +36,8 @@ use phon_engine::CompactError;
 use phon_engine::compact::{self, Registry};
 use phon_engine::plan::{decode, decode_via_ir};
 use phon_schema::{
-    Field, Primitive, Schema, SchemaId, SchemaKind, SchemaRef, Variant, VariantPayload, primitive_id,
+    Field, Primitive, Schema, SchemaId, SchemaKind, SchemaRef, Variant, VariantPayload,
+    primitive_id,
 };
 use proptest::prelude::*;
 
@@ -119,10 +120,8 @@ fn name_strategy() -> impl Strategy<Value = String> {
 }
 
 fn variant_name_strategy() -> impl Strategy<Value = String> {
-    prop::sample::select(vec![
-        "Va", "Vb", "Vc", "Vd", "Ve", "Vf", "Vg", "Vh",
-    ])
-    .prop_map(String::from)
+    prop::sample::select(vec!["Va", "Vb", "Vc", "Vd", "Ve", "Vf", "Vg", "Vh"])
+        .prop_map(String::from)
 }
 
 /// A bounded `Ty` of nesting depth at most `depth`. At depth 0 only scalars are
@@ -154,8 +153,11 @@ fn ty_strategy(depth: u32) -> BoxedStrategy<Ty> {
 }
 
 fn field_strategy(depth: u32) -> impl Strategy<Value = FieldTy> {
-    (name_strategy(), ty_strategy(depth), any::<bool>())
-        .prop_map(|(name, ty, required)| FieldTy { name, ty, required })
+    (name_strategy(), ty_strategy(depth), any::<bool>()).prop_map(|(name, ty, required)| FieldTy {
+        name,
+        ty,
+        required,
+    })
 }
 
 fn variant_strategy(depth: u32) -> impl Strategy<Value = VariantTy> {
@@ -175,9 +177,7 @@ fn payload_strategy(depth: u32) -> impl Strategy<Value = PayloadTy> {
 
 /// Drop later fields whose name already appeared (struct field-matching keys on
 /// name; duplicates would make the model ambiguous).
-fn dedup_fields(
-    s: impl Strategy<Value = Vec<FieldTy>>,
-) -> impl Strategy<Value = Vec<FieldTy>> {
+fn dedup_fields(s: impl Strategy<Value = Vec<FieldTy>>) -> impl Strategy<Value = Vec<FieldTy>> {
     s.prop_map(|fields| {
         let mut seen = std::collections::HashSet::new();
         fields
@@ -359,17 +359,15 @@ fn value_for(ty: &Ty) -> BoxedStrategy<Value> {
             // vec, which the enum's >=1 variant floor guarantees.
             prop::strategy::Union::new(arms).boxed()
         }
-        Ty::List(inner) => {
-            prop::collection::vec(value_for(inner), 0..4)
-                .prop_map(|vs| {
-                    let mut arr = VArray::new();
-                    for v in vs {
-                        arr.push(v);
-                    }
-                    Value::from(arr)
-                })
-                .boxed()
-        }
+        Ty::List(inner) => prop::collection::vec(value_for(inner), 0..4)
+            .prop_map(|vs| {
+                let mut arr = VArray::new();
+                for v in vs {
+                    arr.push(v);
+                }
+                Value::from(arr)
+            })
+            .boxed(),
         Ty::Option(inner) => {
             let inner_s = value_for(inner);
             prop_oneof![
@@ -395,8 +393,7 @@ fn value_for(ty: &Ty) -> BoxedStrategy<Value> {
             .boxed()
         }
         Ty::Tuple(elems) => {
-            let children: Vec<BoxedStrategy<Value>> =
-                elems.iter().map(value_for).collect();
+            let children: Vec<BoxedStrategy<Value>> = elems.iter().map(value_for).collect();
             children
                 .prop_map(|vals| {
                     let mut arr = VArray::new();
@@ -455,7 +452,9 @@ fn prim_value(p: Primitive) -> BoxedStrategy<Value> {
         Primitive::U64 => any::<u64>().prop_map(Value::from).boxed(),
         Primitive::I32 => any::<i32>().prop_map(Value::from).boxed(),
         Primitive::I64 => any::<i64>().prop_map(Value::from).boxed(),
-        Primitive::String => "[a-z]{0,6}".prop_map(|s| Value::from(VString::new(&s))).boxed(),
+        Primitive::String => "[a-z]{0,6}"
+            .prop_map(|s| Value::from(VString::new(&s)))
+            .boxed(),
         Primitive::Bytes => prop::collection::vec(any::<u8>(), 0..6)
             .prop_map(|b| Value::from(VBytes::new(&b)))
             .boxed(),
@@ -648,24 +647,21 @@ fn case_strategy() -> impl Strategy<Value = Case> {
                 variant_name_strategy(),
             )
         })
-        .prop_map(
-            |(writer, value, seed, fname, scalar, vname)| {
-                let (reader, expect) =
-                    apply_drift(&writer, &value, seed, &fname, scalar, &vname);
-                let (expect_tag, expected_value) = match expect {
-                    Expect::Ok(v) => (ExpectTag::Ok, Some(v)),
-                    Expect::Incompatible => (ExpectTag::Incompatible, None),
-                    Expect::WriterOnlyVariant => (ExpectTag::WriterOnlyVariant, None),
-                };
-                Case {
-                    writer,
-                    value,
-                    reader,
-                    expect_tag,
-                    expected_value,
-                }
-            },
-        )
+        .prop_map(|(writer, value, seed, fname, scalar, vname)| {
+            let (reader, expect) = apply_drift(&writer, &value, seed, &fname, scalar, &vname);
+            let (expect_tag, expected_value) = match expect {
+                Expect::Ok(v) => (ExpectTag::Ok, Some(v)),
+                Expect::Incompatible => (ExpectTag::Incompatible, None),
+                Expect::WriterOnlyVariant => (ExpectTag::WriterOnlyVariant, None),
+            };
+            Case {
+                writer,
+                value,
+                reader,
+                expect_tag,
+                expected_value,
+            }
+        })
 }
 
 // ============================================================================
@@ -725,7 +721,9 @@ fn check_case(case: &Case) {
         (Err(a), Err(b)) => assert!(
             same_err_kind(a, b),
             "CROSS-ENGINE DISAGREEMENT (errors differ)\n  writer={:?}\n  reader={:?}\n  value={:?}\n  recursive={a:?}\n  flat={b:?}",
-            case.writer, case.reader, case.value
+            case.writer,
+            case.reader,
+            case.value
         ),
         _ => panic!(
             "CROSS-ENGINE DISAGREEMENT (one Ok, one Err)\n  writer={:?}\n  reader={:?}\n  value={:?}\n  recursive={recursive:?}\n  flat={flat:?}",
@@ -753,14 +751,17 @@ fn check_case(case: &Case) {
             assert!(
                 matches!(recursive, Err(CompactError::Incompatible(_))),
                 "expected Incompatible, got {recursive:?}\n  writer={:?}\n  reader={:?}",
-                case.writer, case.reader
+                case.writer,
+                case.reader
             );
         }
         ExpectTag::WriterOnlyVariant => {
             assert!(
                 matches!(recursive, Err(CompactError::WriterOnlyVariant(_))),
                 "expected WriterOnlyVariant, got {recursive:?}\n  writer={:?}\n  reader={:?}\n  value={:?}",
-                case.writer, case.reader, case.value
+                case.writer,
+                case.reader,
+                case.value
             );
         }
     }

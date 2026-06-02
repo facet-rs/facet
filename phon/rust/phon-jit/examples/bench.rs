@@ -41,14 +41,46 @@ fn time_jit(program: &MemProgram, wire: &[u8], out: &mut [u8]) -> f64 {
 fn main() {
     // A struct of mixed-width scalars (offsets/aligns as a real layout).
     let program: MemProgram = vec![
-        MemOp::Scalar { offset: 0, size: 8, align: 8 },
-        MemOp::Scalar { offset: 8, size: 4, align: 4 },
-        MemOp::Scalar { offset: 12, size: 2, align: 2 },
-        MemOp::Scalar { offset: 14, size: 1, align: 1 },
-        MemOp::Scalar { offset: 16, size: 8, align: 8 },
-        MemOp::Scalar { offset: 24, size: 4, align: 4 },
-        MemOp::Scalar { offset: 28, size: 4, align: 4 },
-        MemOp::Scalar { offset: 32, size: 8, align: 8 },
+        MemOp::Scalar {
+            offset: 0,
+            size: 8,
+            align: 8,
+        },
+        MemOp::Scalar {
+            offset: 8,
+            size: 4,
+            align: 4,
+        },
+        MemOp::Scalar {
+            offset: 12,
+            size: 2,
+            align: 2,
+        },
+        MemOp::Scalar {
+            offset: 14,
+            size: 1,
+            align: 1,
+        },
+        MemOp::Scalar {
+            offset: 16,
+            size: 8,
+            align: 8,
+        },
+        MemOp::Scalar {
+            offset: 24,
+            size: 4,
+            align: 4,
+        },
+        MemOp::Scalar {
+            offset: 28,
+            size: 4,
+            align: 4,
+        },
+        MemOp::Scalar {
+            offset: 32,
+            size: 8,
+            align: 8,
+        },
     ];
     let memsize = 40;
 

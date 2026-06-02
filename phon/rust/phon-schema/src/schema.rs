@@ -46,18 +46,47 @@ pub struct Schema {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum SchemaKind {
     Primitive(Primitive),
-    Struct { name: String, fields: Vec<Field> },
-    Enum { name: String, variants: Vec<Variant> },
-    Tuple { elements: Vec<SchemaRef> },
-    List { element: SchemaRef },
-    Set { element: SchemaRef },
-    Map { key: SchemaRef, value: SchemaRef },
-    Array { element: SchemaRef, dimensions: Vec<u64> },
-    Tensor { element: SchemaRef, rank: Option<u32> },
-    Option { element: SchemaRef },
-    Channel { direction: ChannelDirection, element: SchemaRef },
+    Struct {
+        name: String,
+        fields: Vec<Field>,
+    },
+    Enum {
+        name: String,
+        variants: Vec<Variant>,
+    },
+    Tuple {
+        elements: Vec<SchemaRef>,
+    },
+    List {
+        element: SchemaRef,
+    },
+    Set {
+        element: SchemaRef,
+    },
+    Map {
+        key: SchemaRef,
+        value: SchemaRef,
+    },
+    Array {
+        element: SchemaRef,
+        dimensions: Vec<u64>,
+    },
+    Tensor {
+        element: SchemaRef,
+        rank: Option<u32>,
+    },
+    Option {
+        element: SchemaRef,
+    },
+    Channel {
+        direction: ChannelDirection,
+        element: SchemaRef,
+    },
     Dynamic,
-    External { kind: String, metadata: Option<SchemaRef> },
+    External {
+        kind: String,
+        metadata: Option<SchemaRef>,
+    },
 }
 
 /// The direction of a streaming channel.

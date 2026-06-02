@@ -98,8 +98,9 @@ pub fn lower(descriptor: &Descriptor, reg: &Registry) -> Result<MemProgram> {
 fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram) -> Result<()> {
     match (&d.access, compact::resolve(reg, &d.schema)?) {
         (Access::Scalar, Resolved::Primitive(p)) => {
-            let size = fixed_size(p)
-                .ok_or(CompactError::Unsupported("typed: variable-length scalar field"))?;
+            let size = fixed_size(p).ok_or(CompactError::Unsupported(
+                "typed: variable-length scalar field",
+            ))?;
             out.push(MemOp::Scalar {
                 offset: base,
                 size,
@@ -118,7 +119,9 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
                 }
             };
             if arity != ra.fields.len() {
-                return Err(CompactError::Malformed("descriptor/schema field count mismatch"));
+                return Err(CompactError::Malformed(
+                    "descriptor/schema field count mismatch",
+                ));
             }
             match &ra.construct {
                 Construct::InPlace => {}
@@ -180,7 +183,10 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
             Ok(())
         }
         // r[impl ir.memory] — String/Bytes: a bulk contiguous byte run.
-        (Access::Sequence(seq), Resolved::Primitive(p @ (Primitive::String | Primitive::Bytes))) => {
+        (
+            Access::Sequence(seq),
+            Resolved::Primitive(p @ (Primitive::String | Primitive::Bytes)),
+        ) => {
             match &seq.storage {
                 // A BORROWED leaf (`&str`/`&[u8]`): same wire as the owned run, but
                 // decode writes a fat pointer into the input (no alloc, no copy).
@@ -263,9 +269,7 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
         // r[impl ir.memory] — Map<K, V>: a u32 entry count then key+value pairs.
         (Access::Map(ma), Resolved::Composite(SchemaKind::Map { .. })) => {
             let MapStorage::Vtable(thunks) = &ma.storage else {
-                return Err(CompactError::Unsupported(
-                    "typed: map needs vtable thunks",
-                ));
+                return Err(CompactError::Unsupported("typed: map needs vtable thunks"));
             };
             // The key and value sub-programs each run at their own value (base 0).
             let mut key = Vec::new();
@@ -294,7 +298,9 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
         // payload (wire-identical to a two-variant enum). The schema gives the Ok/Err
         // wire indices; the thunks drive the repr(Rust) layout.
         (Access::Result(ra), Resolved::Composite(SchemaKind::Enum { variants, .. })) => {
-            out.push(MemOp::Result(Box::new(lower_result(ra, &variants, reg, base)?)));
+            out.push(MemOp::Result(Box::new(lower_result(
+                ra, &variants, reg, base,
+            )?)));
             Ok(())
         }
         // r[impl ir.memory] — opaque field: a length-prefixed blob (wire-identical
@@ -369,8 +375,9 @@ fn lower_decode_node(
             if wp != rp {
                 return Err(incompatible(format!("primitive {wp:?} is not {rp:?}")));
             }
-            let size = fixed_size(wp)
-                .ok_or(CompactError::Unsupported("typed: variable-length scalar field"))?;
+            let size = fixed_size(wp).ok_or(CompactError::Unsupported(
+                "typed: variable-length scalar field",
+            ))?;
             out.push(MemOp::Scalar {
                 offset: base,
                 size,
@@ -518,7 +525,9 @@ fn lower_decode_node(
         // Result ⋈ enum: the writer's Result wire is a two-variant enum; match Ok/Err
         // by name and reconcile each arm's payload (writer Ok ⋈ reader Ok, etc.).
         (Access::Result(ra), Resolved::Composite(SchemaKind::Enum { variants: wv, .. })) => {
-            out.push(MemOp::Result(Box::new(lower_decode_result(&wv, ra, reg, base)?)));
+            out.push(MemOp::Result(Box::new(lower_decode_result(
+                &wv, ra, reg, base,
+            )?)));
             Ok(())
         }
         // Opaque ⋈ Bytes: the writer wire is a `Primitive::Bytes` run; the reader
@@ -556,7 +565,9 @@ fn lower_decode_struct(
     // The reader field names, in the same order as `ra.fields`.
     let r_named = reader_struct_fields(reader_schema, reg)?;
     if r_named.len() != ra.fields.len() {
-        return Err(CompactError::Malformed("descriptor/schema field count mismatch"));
+        return Err(CompactError::Malformed(
+            "descriptor/schema field count mismatch",
+        ));
     }
     let reader_by_name: HashMap<&str, usize> = r_named
         .iter()
@@ -668,11 +679,9 @@ fn lower_decode_payload(
         (VariantPayload::Unit, VariantPayload::Unit) => {}
         (VariantPayload::Newtype(wr), VariantPayload::Newtype(_)) => {
             // A single payload field at the variant's first field offset.
-            let fa = va
-                .payload
-                .fields
-                .first()
-                .ok_or(CompactError::Malformed("newtype variant has no payload field"))?;
+            let fa = va.payload.fields.first().ok_or(CompactError::Malformed(
+                "newtype variant has no payload field",
+            ))?;
             lower_decode_node(wr, &fa.descriptor, reg, base + fa.offset, &mut payload)?;
         }
         (VariantPayload::Tuple(wrs), VariantPayload::Tuple(rrs)) => {
@@ -794,7 +803,9 @@ fn variant_index_by_name(variants: &[Variant], name: &str) -> Result<u32> {
         .iter()
         .find(|v| v.name == name)
         .map(|v| v.index)
-        .ok_or(CompactError::Malformed("Result schema missing Ok or Err variant"))
+        .ok_or(CompactError::Malformed(
+            "Result schema missing Ok or Err variant",
+        ))
 }
 
 /// Lower a single-schema [`ResultOp`]: take the Ok/Err wire indices from the schema
@@ -955,9 +966,7 @@ fn skip_op(writer: &SchemaRef, reg: &Registry) -> Result<SkipOp> {
                 }
                 Ok(SkipOp::Seq(Box::new(skip_op(&element, reg)?)))
             }
-            SchemaKind::Option { element } => {
-                Ok(SkipOp::Option(Box::new(skip_op(&element, reg)?)))
-            }
+            SchemaKind::Option { element } => Ok(SkipOp::Option(Box::new(skip_op(&element, reg)?))),
             SchemaKind::Map { key, value } => Ok(SkipOp::Map(
                 Box::new(skip_op(&key, reg)?),
                 Box::new(skip_op(&value, reg)?),
@@ -971,7 +980,9 @@ fn skip_op(writer: &SchemaRef, reg: &Registry) -> Result<SkipOp> {
             SchemaKind::Dynamic => Ok(SkipOp::Dynamic),
             SchemaKind::Primitive(_) => {
                 // A composite that resolved to a primitive kind: treat as scalar.
-                Err(CompactError::Malformed("skip: primitive in composite position"))
+                Err(CompactError::Malformed(
+                    "skip: primitive in composite position",
+                ))
             }
         },
     }
@@ -1048,7 +1059,14 @@ pub unsafe fn encode_with(program: &MemProgram, base: *const u8) -> Vec<u8> {
 unsafe fn encode_program(program: &MemProgram, base: *const u8, out: &mut Vec<u8>) {
     for op in program {
         match op {
-            MemOp::Scalar { offset, size, align } => {
+            // The recursion-aware executor (which threads the block registry) replaces
+            // this path; the current flat executor never emits a `CallBlock`.
+            MemOp::CallBlock { .. } => unreachable!("CallBlock requires the recursion executor"),
+            MemOp::Scalar {
+                offset,
+                size,
+                align,
+            } => {
                 pad_to(out, *align);
                 // Safety: the value is valid for reads over this field's bytes.
                 let src = unsafe { core::slice::from_raw_parts(base.add(*offset), *size) };
@@ -1150,7 +1168,8 @@ unsafe fn encode_program(program: &MemProgram, base: *const u8, out: &mut Vec<u8
             MemOp::Dynamic { field_offset } => {
                 // Safety: the field at `field_offset` is an initialized `Value`.
                 let v = unsafe { &*base.add(*field_offset).cast::<Value>() };
-                write_value(out, v).expect("dynamic value is encodable by the self-describing codec");
+                write_value(out, v)
+                    .expect("dynamic value is encodable by the self-describing codec");
             }
             // r[impl ir.memory] — Result<T, E>: read which arm is active via the
             // vtable, write its wire index, then encode that arm's payload at the
@@ -1227,7 +1246,9 @@ pub unsafe fn decode_with(program: &MemProgram, bytes: &[u8], base: *mut u8) -> 
     // Safety: forwarded from this function's contract.
     unsafe { decode_program(program, &mut r, base)? };
     if r.remaining() != 0 {
-        return Err(CompactError::Decode(DecodeError::TrailingBytes(r.remaining())));
+        return Err(CompactError::Decode(DecodeError::TrailingBytes(
+            r.remaining(),
+        )));
     }
     Ok(())
 }
@@ -1235,7 +1256,18 @@ pub unsafe fn decode_with(program: &MemProgram, bytes: &[u8], base: *mut u8) -> 
 unsafe fn decode_program(program: &MemProgram, r: &mut Reader, base: *mut u8) -> Result<()> {
     for op in program {
         match op {
-            MemOp::Scalar { offset, size, align } => {
+            // The recursion-aware executor (which threads the block registry) replaces
+            // this path; the current flat executor never emits a `CallBlock`.
+            MemOp::CallBlock { .. } => {
+                return Err(CompactError::Unsupported(
+                    "CallBlock requires the recursion executor",
+                ));
+            }
+            MemOp::Scalar {
+                offset,
+                size,
+                align,
+            } => {
                 skip_pad(r, *align)?;
                 let src = r.read_slice(*size)?;
                 // Safety: `base` is valid for writes over this field's bytes, and
@@ -1271,14 +1303,16 @@ unsafe fn decode_program(program: &MemProgram, r: &mut Reader, base: *mut u8) ->
                     // (`stride == 0`) every element shares the dangling pointer and
                     // `.add(0)` is sound (provenance is only required for non-zero
                     // offsets); the element program touches no buffer bytes.
-                    if let Err(e) = unsafe { decode_program(&s.element, r, buffer.add(i * s.stride)) }
+                    if let Err(e) =
+                        unsafe { decode_program(&s.element, r, buffer.add(i * s.stride)) }
                     {
                         // Free the buffer on a mid-fill failure (elements are
                         // assumed trivially droppable for now). Only a real,
                         // non-zero-size allocation needs freeing.
                         if cap != 0 && s.stride != 0 {
                             let layout =
-                                alloc::Layout::from_size_align(cap * s.stride, s.elem_align).unwrap();
+                                alloc::Layout::from_size_align(cap * s.stride, s.elem_align)
+                                    .unwrap();
                             unsafe { alloc::dealloc(buffer, layout) };
                         }
                         return Err(e);
@@ -1308,8 +1342,8 @@ unsafe fn decode_program(program: &MemProgram, r: &mut Reader, base: *mut u8) ->
                 let (buffer, cap) = if total == 0 {
                     (b.elem_align as *mut u8, 0usize)
                 } else {
-                    let layout = alloc::Layout::from_size_align(total, b.elem_align)
-                        .map_err(|_| {
+                    let layout =
+                        alloc::Layout::from_size_align(total, b.elem_align).map_err(|_| {
                             CompactError::Decode(DecodeError::Malformed("bytes layout overflow"))
                         })?;
                     // Safety: total > 0.
@@ -1549,8 +1583,9 @@ fn alloc_scratch(size: usize, align: usize) -> Result<(*mut u8, Option<alloc::La
     if size == 0 {
         Ok((align as *mut u8, None))
     } else {
-        let layout = alloc::Layout::from_size_align(size, align)
-            .map_err(|_| CompactError::Decode(DecodeError::Malformed("map scratch layout overflow")))?;
+        let layout = alloc::Layout::from_size_align(size, align).map_err(|_| {
+            CompactError::Decode(DecodeError::Malformed("map scratch layout overflow"))
+        })?;
         // Safety: size > 0.
         let buf = unsafe { alloc::alloc(layout) };
         if buf.is_null() {

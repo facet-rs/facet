@@ -14,8 +14,8 @@
 //!
 //! [`Program`]: phon_ir::ir::Program
 
-use phon_ir::ir::{MemOp, MemProgram};
 use phon_ir::SeqThunks;
+use phon_ir::ir::{MemOp, MemProgram};
 use phon_schema::DecodeError;
 use phon_schema::bytes::{Reader, write_u32};
 
@@ -65,7 +65,11 @@ pub fn compile_decode(program: &MemProgram) -> CompiledDecode {
     let steps = program
         .iter()
         .map(|op| match op {
-            MemOp::Scalar { offset, size, align } => DecodeStep {
+            MemOp::Scalar {
+                offset,
+                size,
+                align,
+            } => DecodeStep {
                 stencil: stencil::scalar_decode,
                 imm: [*offset, *size, *align],
             },
@@ -82,6 +86,7 @@ pub fn compile_decode(program: &MemProgram) -> CompiledDecode {
             MemOp::Result(_) => panic!("phon-jit: Result is interpreter-only for now"),
             MemOp::Dynamic { .. } => panic!("phon-jit: dynamic Value is interpreter-only for now"),
             MemOp::Opaque(_) => panic!("phon-jit: opaque fields are interpreter-only for now"),
+            MemOp::CallBlock { .. } => panic!("phon-jit: recursion is interpreter-only for now"),
             MemOp::SkipWire(_) | MemOp::Default(_) => {
                 panic!("phon-jit: compat skip/default are interpreter-only for now")
             }
@@ -96,7 +101,11 @@ pub fn compile_encode(program: &MemProgram) -> CompiledEncode {
     let steps = program
         .iter()
         .map(|op| match op {
-            MemOp::Scalar { offset, size, align } => EncodeStep::Scalar {
+            MemOp::Scalar {
+                offset,
+                size,
+                align,
+            } => EncodeStep::Scalar {
                 stencil: stencil::scalar_encode,
                 imm: [*offset, *size, *align],
             },
@@ -118,6 +127,7 @@ pub fn compile_encode(program: &MemProgram) -> CompiledEncode {
             MemOp::Result(_) => panic!("phon-jit: Result is interpreter-only for now"),
             MemOp::Dynamic { .. } => panic!("phon-jit: dynamic Value is interpreter-only for now"),
             MemOp::Opaque(_) => panic!("phon-jit: opaque fields are interpreter-only for now"),
+            MemOp::CallBlock { .. } => panic!("phon-jit: recursion is interpreter-only for now"),
             MemOp::SkipWire(_) | MemOp::Default(_) => {
                 panic!("phon-jit: compat skip/default are interpreter-only for now")
             }
@@ -176,12 +186,20 @@ impl CompiledEncode {
                     // The scalar stencil owns its output; lend it the buffer by
                     // moving it in and back out (no copy — `Vec` move is a pointer
                     // swap).
-                    let mut ctx = EncodeCtx { out: core::mem::take(out), base };
+                    let mut ctx = EncodeCtx {
+                        out: core::mem::take(out),
+                        base,
+                    };
                     // Safety: forwarded; the step reads within the value's layout.
                     unsafe { (stencil)(&mut ctx, imm) };
                     *out = ctx.out;
                 }
-                EncodeStep::Sequence { field_offset, stride, thunks, element } => {
+                EncodeStep::Sequence {
+                    field_offset,
+                    stride,
+                    thunks,
+                    element,
+                } => {
                     // Safety: the sequence handle lives at `field_offset`.
                     let list = unsafe { base.add(*field_offset) };
                     let n = unsafe { (thunks.len)(thunks.ctx, list) };
@@ -210,8 +228,16 @@ mod tests {
     #[test]
     fn jit_encode_matches_layout_and_decode_roundtrips() {
         let program: MemProgram = vec![
-            MemOp::Scalar { offset: 0, size: 4, align: 4 },
-            MemOp::Scalar { offset: 8, size: 8, align: 8 },
+            MemOp::Scalar {
+                offset: 0,
+                size: 4,
+                align: 4,
+            },
+            MemOp::Scalar {
+                offset: 8,
+                size: 8,
+                align: 8,
+            },
         ];
         let enc = compile_encode(&program);
         let dec = compile_decode(&program);
@@ -235,7 +261,11 @@ mod tests {
 
     #[test]
     fn jit_decode_rejects_trailing_bytes() {
-        let program: MemProgram = vec![MemOp::Scalar { offset: 0, size: 4, align: 4 }];
+        let program: MemProgram = vec![MemOp::Scalar {
+            offset: 0,
+            size: 4,
+            align: 4,
+        }];
         let dec = compile_decode(&program);
         let mut out = [0u8; 4];
         // 4 bytes of value + 1 stray byte.
