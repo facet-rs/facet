@@ -100,11 +100,11 @@ func typedRecursiveTreeMatchesValueOracleAndRoundTrips() throws {
     // The RECONCILING decode path (lowerDecode — what vox's RPC args/response decode
     // through) must also handle the cyclic reader. Same-schema here (writer == reader).
     let decProgram = try lowerDecode(treeId, recurseTree, reg, blocks)
-    #expect(!decProgram.blocks.isEmpty, "a recursive reconciling decode must build blocks")
+    #expect(!decProgram.blocks.isEmpty, "a recursive compat decode must build blocks")
     let raw2 = UnsafeMutableRawPointer.allocate(
         byteCount: MemoryLayout<Tree>.size, alignment: MemoryLayout<Tree>.alignment)
     defer { raw2.deallocate() }
     try decodeInto(decProgram, typedBytes, raw2)
-    let reconciled = raw2.assumingMemoryBound(to: Tree.self).move()
-    #expect(reconciled == t, "reconciling recursion did not round-trip")
+    let compatDecoded = raw2.assumingMemoryBound(to: Tree.self).move()
+    #expect(compatDecoded == t, "compat recursion did not round-trip")
 }

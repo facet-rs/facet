@@ -1,13 +1,13 @@
-// The reconciling typed decode lowering.
+// The compat typed decode lowering.
 //
 // `lowerDecode` walks a *writer* schema against the *reader* descriptor and bakes
 // the writer↔reader compatibility decision in ONCE, at lowering, producing a flat
 // `MemProgram` of reader-memory ops in WIRE order. There is no fast/slow path:
 // when the writer schema is the one the reader carries, the result has no skips or
-// defaults and is equivalent to `lowerTyped` — the drift-free identity. This is the
+// defaults and is equivalent to `lowerTyped` — the identity case. This is the
 // ONLY typed decode lowering; `lowerTyped` is encode-only.
 //
-// Reconciliation mirrors `Plan.swift` (the cross-engine oracle): struct fields and
+// Compatibility mirrors `Plan.swift` (the cross-engine oracle): struct fields and
 // enum variants match by name, writer-only fields are skipped, reader-only fields
 // default (or fail if required), and primitives match with no implicit widening.
 //
@@ -25,11 +25,12 @@ import PhonSchema
 ///
 /// A recursive reader lowers each of its cyclic schemas to a callable block, just
 /// as `lowerTyped` does — a `.recurse` reader node becomes a `.callBlock` into one
-/// of these. For the reconciled (same-schema) path the writer's schema at every
-/// `.recurse` position is that same schema, so a block reconciles
-/// `concrete(R) ⋈ readerBlocks[R]` — the drift-free identity. (Drift ACROSS a
-/// recursion boundary is the tracked follow-up; here the block's writer ref is the
-/// reader schema id.)
+/// of these. For the same-schema path the writer's schema at every `.recurse`
+/// position is that same schema, so a block translates
+/// `concrete(R) ⋈ readerBlocks[R]` — the identity case. Compatibility across a
+/// recursion boundary is the tracked follow-up; here the block's writer ref is
+/// the reader schema id.
+// r[impl compat.plan-first]
 public func lowerDecode(
     _ writerRoot: SchemaId, _ reader: Descriptor, _ reg: Registry,
     _ readerBlocks: [SchemaId: Descriptor] = [:]
@@ -46,7 +47,7 @@ public func lowerDecode(
 }
 
 /// The same-schema decode: the writer is the schema the reader carries. The
-/// resulting program has no skips/defaults — the drift-free identity. (There is
+/// resulting program has no skips/defaults — the identity case. (There is
 /// no separate same-schema decoder; this is `lowerDecode` with writer == reader.)
 public func lowerDecode(
     _ reader: Descriptor, _ reg: Registry, _ readerBlocks: [SchemaId: Descriptor] = [:]
@@ -57,6 +58,7 @@ public func lowerDecode(
     return try lowerDecode(id, reader, reg, readerBlocks)
 }
 
+// r[impl compat.type-match]
 private func lowerDecodeNode(_ writer: SchemaRef, _ reader: Descriptor, _ reg: Registry, _ base: Int, _ out: inout MemProgram) throws {
     // A recursive reader back-edge: emit a call into that schema's block, run at
     // `base + offset`. `lowerDecode` lowers the block itself from `readerBlocks`.
@@ -87,6 +89,7 @@ private func lowerDecodeNode(_ writer: SchemaRef, _ reader: Descriptor, _ reg: R
         try lowerDecodeEnum(wv, ea, reader.schema, reg, base, &out)
 
     case (.option(let oa), .composite(.option(let we))):
+        try requireReaderOption(reader.schema, reg)
         var some: MemProgram = []
         try lowerDecodeNode(we, oa.some, reg, 0, &some)
         out.append(.option(OptionOp(
@@ -95,16 +98,19 @@ private func lowerDecodeNode(_ writer: SchemaRef, _ reader: Descriptor, _ reg: R
             witness: oa.witness)))
 
     case (.bytes(let ba), let resolved):
-        switch resolved {
-        case .primitive(.string), .primitive(.bytes), .composite(.list), .composite(.set):
-            break
-        default:
-            throw CompactError.incompatible("writer is not a bulk byte run for a bytes descriptor")
-        }
+        try requireReaderBulk(reader.schema, matches: resolved, reg)
         out.append(.bytes(BytesOp(offset: base, stride: ba.stride, elemAlign: ba.elemAlign, witness: ba.witness)))
 
-    case (.sequence(let sa), .composite(.list(let we))),
-         (.sequence(let sa), .composite(.set(let we))):
+    case (.sequence(let sa), .composite(.list(let we))):
+        try requireReaderList(reader.schema, reg)
+        var element: MemProgram = []
+        try lowerDecodeNode(we, sa.element, reg, 0, &element)
+        out.append(.sequence(SeqOp(
+            offset: base, element: fuse(element), stride: sa.stride, elemAlign: sa.elemAlign,
+            minWire: elemMinWire(element), witness: sa.witness)))
+
+    case (.sequence(let sa), .composite(.set(let we))):
+        try requireReaderSet(reader.schema, reg)
         var element: MemProgram = []
         try lowerDecodeNode(we, sa.element, reg, 0, &element)
         out.append(.sequence(SeqOp(
@@ -112,6 +118,7 @@ private func lowerDecodeNode(_ writer: SchemaRef, _ reader: Descriptor, _ reg: R
             minWire: elemMinWire(element), witness: sa.witness)))
 
     case (.map(let ma), .composite(.map(let wk, let wv))):
+        try requireReaderMap(reader.schema, reg)
         var key: MemProgram = []
         try lowerDecodeNode(wk, ma.key, reg, 0, &key)
         var value: MemProgram = []
@@ -122,6 +129,7 @@ private func lowerDecodeNode(_ writer: SchemaRef, _ reader: Descriptor, _ reg: R
             valueStride: ma.valueStride, valueAlign: ma.valueAlign, witness: ma.witness)))
 
     case (.dynamic, .composite(.dynamic)):
+        try requireReaderDynamic(reader.schema, reg)
         out.append(.dynamic(offset: base))
 
     default:
@@ -129,8 +137,55 @@ private func lowerDecodeNode(_ writer: SchemaRef, _ reader: Descriptor, _ reg: R
     }
 }
 
-// MARK: - Struct reconciliation
+private func requireReaderOption(_ reader: SchemaRef, _ reg: Registry) throws {
+    guard case .composite(.option) = try resolve(reg, reader) else {
+        throw CompactError.typeMismatch(expected: "option reader schema")
+    }
+}
 
+private func requireReaderList(_ reader: SchemaRef, _ reg: Registry) throws {
+    guard case .composite(.list) = try resolve(reg, reader) else {
+        throw CompactError.typeMismatch(expected: "list reader schema")
+    }
+}
+
+private func requireReaderSet(_ reader: SchemaRef, _ reg: Registry) throws {
+    guard case .composite(.set) = try resolve(reg, reader) else {
+        throw CompactError.typeMismatch(expected: "set reader schema")
+    }
+}
+
+private func requireReaderMap(_ reader: SchemaRef, _ reg: Registry) throws {
+    guard case .composite(.map) = try resolve(reg, reader) else {
+        throw CompactError.typeMismatch(expected: "map reader schema")
+    }
+}
+
+private func requireReaderDynamic(_ reader: SchemaRef, _ reg: Registry) throws {
+    guard case .composite(.dynamic) = try resolve(reg, reader) else {
+        throw CompactError.typeMismatch(expected: "dynamic reader schema")
+    }
+}
+
+private func requireReaderBulk(_ reader: SchemaRef, matches writer: Resolved, _ reg: Registry) throws {
+    let r = try resolve(reg, reader)
+    switch (writer, r) {
+    case (.primitive(.string), .primitive(.string)),
+         (.primitive(.bytes), .primitive(.bytes)),
+         (.composite(.list), .composite(.list)),
+         (.composite(.set), .composite(.set)):
+        return
+    default:
+        throw CompactError.incompatible("writer and reader bulk schema kinds differ")
+    }
+}
+
+// MARK: - Struct compat
+
+// r[impl compat.field-matching]
+// r[impl compat.skip-writer-only]
+// r[impl compat.reader-only-fields]
+// r[impl compat.defaults-are-reader-side]
 private func lowerDecodeStruct(_ wFields: [Field], _ ra: RecordAccess, _ readerSchema: SchemaRef, _ reg: Registry, _ base: Int, _ out: inout MemProgram) throws {
     switch ra.construct {
     case .inPlace: break
@@ -166,8 +221,9 @@ private func lowerDecodeStruct(_ wFields: [Field], _ ra: RecordAccess, _ readerS
     }
 }
 
-// MARK: - Enum reconciliation
+// MARK: - Enum compat
 
+// r[impl compat.enum]
 private func lowerDecodeEnum(_ wVariants: [Variant], _ ea: EnumAccess, _ readerSchema: SchemaRef, _ reg: Registry, _ base: Int, _ out: inout MemProgram) throws {
     let rNamed = try readerEnumVariants(readerSchema, reg)
     guard rNamed.count == ea.variants.count else {

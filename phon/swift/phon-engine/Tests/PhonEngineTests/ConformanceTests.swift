@@ -4,7 +4,7 @@
 // For each case we build the writer->reader plan and decode the writer bytes with
 // BOTH the recursive planner and the lowered-IR interpreter (they must agree),
 // re-encode the result through the reader schema, and assert the bytes equal
-// Rust's reconciled reader bytes (the oracle). Error cases assert decode fails
+// Rust's reader-shaped bytes (the oracle). Error cases assert decode fails
 // with the expected CompactError variant.
 
 import Foundation
@@ -62,12 +62,19 @@ private func loadCorpus() throws -> VectorFile {
     return try decoder.decode(VectorFile.self, from: data)
 }
 
+// r[verify compat.plan-first]
+// r[verify compat.field-matching]
+// r[verify compat.skip-writer-only]
+// r[verify compat.reader-only-fields]
+// r[verify compat.defaults-are-reader-side]
+// r[verify compat.type-match]
+// r[verify compat.enum]
 @Test
 func compatConformanceCorpus() throws {
     let corpus = try loadCorpus()
     let reg = Registry(try corpus.schemas.map { try schemaFromBytes(hexToBytes($0)) })
 
-    #expect(corpus.cases.count == 26, "corpus case count drifted")
+    #expect(corpus.cases.count == 26, "corpus case count changed")
 
     for c in corpus.cases {
         let writerRoot = schemaId(c.writerRoot)
@@ -96,9 +103,39 @@ func compatConformanceCorpus() throws {
         let irValue = try decodeViaIr(writerBytes, writerRoot, readerRoot, reg)
         #expect(interpValue == irValue, "\(c.name): IR interpreter disagreed with recursive exec")
 
-        // Re-encoding through the reader schema must reproduce Rust's reconciled
+        // Re-encoding through the reader schema must reproduce Rust's reader-shaped
         // reader bytes.
         let reencoded = bytesToHex(try encode(interpValue, readerRoot, reg))
-        #expect(reencoded == c.readerHex, "\(c.name): reconciled reader bytes differ")
+        #expect(reencoded == c.readerHex, "\(c.name): reader bytes differ")
     }
+}
+
+// r[verify compat.direction]
+@Test
+func compatDirectionReport() throws {
+    func u32Field(_ name: String, required: Bool = true) -> Field {
+        Field(name: name, schema: .concrete(primitiveId(.u32)), required: required)
+    }
+    let schemas = [
+        Schema(id: SchemaId(1), kind: .structure(name: "P", fields: [u32Field("x")])),
+        Schema(id: SchemaId(2), kind: .structure(name: "P", fields: [
+            u32Field("x"), u32Field("y", required: false),
+        ])),
+        Schema(id: SchemaId(3), kind: .structure(name: "P", fields: [
+            u32Field("x"), u32Field("y"),
+        ])),
+        Schema(id: SchemaId(4), kind: .structure(name: "P", fields: [
+            u32Field("x"), u32Field("y"),
+        ])),
+        Schema(id: SchemaId(5), kind: .structure(name: "P", fields: [u32Field("x")])),
+        Schema(id: SchemaId(6), kind: .structure(name: "P", fields: [
+            Field(name: "x", schema: .concrete(primitiveId(.u64)), required: true),
+        ])),
+    ]
+    let reg = Registry(schemas)
+
+    #expect(compatDirection(SchemaId(1), SchemaId(2), reg) == .bidirectional)
+    #expect(compatDirection(SchemaId(1), SchemaId(3), reg) == .forward)
+    #expect(compatDirection(SchemaId(4), SchemaId(5), reg) == .backward)
+    #expect(compatDirection(SchemaId(1), SchemaId(6), reg) == .incompatible)
 }

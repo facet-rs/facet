@@ -33,7 +33,7 @@ public func decodeTyped<T>(_ lowered: Lowered, _ bytes: [UInt8]) throws -> T {
 /// A prepared encoder: read a value at `base` and emit its wire bytes. Not `@Sendable`
 /// — it captures the (non-Sendable) lowered program; callers run it locally.
 public typealias TypedEncodeFn = (_ base: UnsafeRawPointer) -> [UInt8]
-/// A prepared decoder: reconcile `bytes` into the reader value at `out`.
+/// A prepared decoder: translate `bytes` into the reader value at `out`.
 public typealias TypedDecodeFn = (_ bytes: [UInt8], _ out: UnsafeMutableRawPointer) throws -> Void
 
 /// A typed codec backend. Each `compile*` lowers the descriptor to a `MemProgram` and
@@ -43,7 +43,7 @@ public protocol TypedEngine: Sendable {
     var name: String { get }
     /// Prepare an own-schema encoder for `descriptor`.
     func compileEncode(_ descriptor: Descriptor, _ reg: Registry) throws -> TypedEncodeFn
-    /// Prepare a reconciling decoder: `writerRoot` → `reader` (same root ⇒ the fused identity).
+    /// Prepare a compat decoder: `writerRoot` → `reader` (same root ⇒ the fused identity).
     func compileDecode(_ writerRoot: SchemaId, _ reader: Descriptor, _ reg: Registry) throws -> TypedDecodeFn
 }
 

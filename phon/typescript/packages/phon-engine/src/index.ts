@@ -18,12 +18,13 @@ export { encode, decode as decodeCompact, encodeRef, decodeRef, decodePrimitive,
 // Compatibility planning + interpreter.
 export {
   buildPlan,
+  compatDirection,
   decodeWithPlan,
   decode,
   IncompatibleError,
   WriterOnlyVariantError,
 } from "./plan.ts";
-export type { Plan, Node, Step, Payload, StructPlan, VariantPlan } from "./plan.ts";
+export type { CompatDirection, Plan, Node, Step, Payload, StructPlan, VariantPlan } from "./plan.ts";
 
 // The new Function JIT (with transparent interpreter fallback under strict CSP).
 export {

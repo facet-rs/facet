@@ -3,15 +3,15 @@
 //
 // For each case we build the writer->reader plan, decode the writer bytes with
 // BOTH the interpreter and the new Function JIT, re-encode each result through
-// the reader schema, and assert the bytes equal Rust's reconciled reader bytes
+// the reader schema, and assert the bytes equal Rust's reader-shaped bytes
 // (the oracle). Error cases assert both engines throw the expected error.
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { Registry, bytesToHex, hexToBytes, schemaFromBytes } from "@bearcove/phon-schema";
-import type { Primitive } from "@bearcove/phon-schema";
-import { buildPlan, compileEncoder, decodeWithPlan, encode, WriterOnlyVariantError } from "./index.ts";
+import type { Field, Primitive, Schema, SchemaRef } from "@bearcove/phon-schema";
+import { buildPlan, compatDirection, compileEncoder, decodeWithPlan, encode, IncompatibleError, WriterOnlyVariantError } from "./index.ts";
 import { compilePlan } from "./jit.ts";
 
 interface Case {
@@ -39,6 +39,32 @@ function buildRegistry(corpus: VectorFile): Registry {
   return new Registry(schemas, primitives);
 }
 
+function primitiveRef(corpus: VectorFile, tag: Primitive): SchemaRef {
+  const found = corpus.primitives.find((p) => p.tag === tag);
+  if (!found) throw new Error(`missing primitive ${tag}`);
+  return { kind: "concrete", id: BigInt(`0x${found.id}`), args: [] };
+}
+
+function schema(id: bigint, kind: Schema["kind"]): Schema {
+  return { id, typeParams: [], kind };
+}
+
+function field(name: string, ref: SchemaRef, required: boolean): Field {
+  return { name, schema: ref, required };
+}
+
+function localRegistry(corpus: VectorFile, schemas: Schema[]): Registry {
+  const primitives = corpus.primitives.map((p) => ({ id: BigInt(`0x${p.id}`), tag: p.tag as Primitive }));
+  return new Registry(schemas, primitives);
+}
+
+// r[verify compat.plan-first]
+// r[verify compat.field-matching]
+// r[verify compat.skip-writer-only]
+// r[verify compat.reader-only-fields]
+// r[verify compat.defaults-are-reader-side]
+// r[verify compat.type-match]
+// r[verify compat.enum]
 describe("compat conformance corpus", () => {
   const corpus = loadCorpus();
   const reg = buildRegistry(corpus);
@@ -63,13 +89,13 @@ describe("compat conformance corpus", () => {
       }
 
       // Interpreter and JIT both decode; re-encoding through the reader schema
-      // must reproduce Rust's reconciled reader bytes.
+      // must reproduce Rust's reader-shaped bytes.
       const interpValue = decodeWithPlan(writerBytes, plan, reg);
       const jitValue = jit(writerBytes);
 
       const interpHex = bytesToHex(encode(interpValue, readerRoot, reg));
       const jitHex = bytesToHex(encode(jitValue, readerRoot, reg));
-      // The encode JIT must also reproduce the reconciled reader bytes.
+      // The encode JIT must also reproduce the reader-shaped bytes.
       const encJit = compileEncoder(readerRoot, reg, { jit: true });
       const encJitHex = bytesToHex(encJit(interpValue));
 
@@ -81,5 +107,64 @@ describe("compat conformance corpus", () => {
 
   it("covers every corpus case", () => {
     expect(corpus.cases.length).toBe(26);
+  });
+
+  it("rejects required reader-only option fields", () => {
+    const u32 = primitiveRef(corpus, "u32");
+    const optionId = 0x7000_0000_0000_0001n;
+    const writerId = 0x7000_0000_0000_0002n;
+    const readerId = 0x7000_0000_0000_0003n;
+    const schemas = [
+      schema(optionId, { kind: "option", element: u32 }),
+      schema(writerId, { kind: "struct", name: "P", fields: [field("x", u32, true)] }),
+      schema(readerId, {
+        kind: "struct",
+        name: "P",
+        fields: [
+          field("x", u32, true),
+          field("maybe", { kind: "concrete", id: optionId, args: [] }, true),
+        ],
+      }),
+    ];
+
+    expect(() => buildPlan(writerId, readerId, localRegistry(corpus, schemas))).toThrow(IncompatibleError);
+  });
+
+  // r[verify compat.direction]
+  it("reports compat direction by planning both ways", () => {
+    const u32 = primitiveRef(corpus, "u32");
+    const u64 = primitiveRef(corpus, "u64");
+    const oldId = 0x7000_0000_0000_0010n;
+    const newOptionalId = 0x7000_0000_0000_0011n;
+    const newRequiredId = 0x7000_0000_0000_0012n;
+    const oldRequiredId = 0x7000_0000_0000_0013n;
+    const newRemovedId = 0x7000_0000_0000_0014n;
+    const differentId = 0x7000_0000_0000_0015n;
+    const schemas = [
+      schema(oldId, { kind: "struct", name: "P", fields: [field("x", u32, true)] }),
+      schema(newOptionalId, {
+        kind: "struct",
+        name: "P",
+        fields: [field("x", u32, true), field("y", u32, false)],
+      }),
+      schema(newRequiredId, {
+        kind: "struct",
+        name: "P",
+        fields: [field("x", u32, true), field("y", u32, true)],
+      }),
+      schema(oldRequiredId, {
+        kind: "struct",
+        name: "P",
+        fields: [field("x", u32, true), field("y", u32, true)],
+      }),
+      schema(newRemovedId, { kind: "struct", name: "P", fields: [field("x", u32, true)] }),
+      schema(differentId, { kind: "struct", name: "P", fields: [field("x", u64, true)] }),
+    ];
+    const local = localRegistry(corpus, schemas);
+
+    expect(compatDirection(oldId, newOptionalId, local)).toBe("bidirectional");
+    expect(compatDirection(oldId, newRequiredId, local)).toBe("forward");
+    expect(compatDirection(oldRequiredId, newRemovedId, local)).toBe("backward");
+    expect(compatDirection(oldId, differentId, local)).toBe("incompatible");
   });
 });

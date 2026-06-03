@@ -4,7 +4,7 @@ import Testing
 
 // The cross-language golden: every primitive's content-hash id, as produced by
 // the Rust source of truth (and matched by TypeScript). If BLAKE3, the canonical
-// encoding (length-prefixed tag string), or the LE truncation drifts, one of
+// encoding (length-prefixed tag string), or the LE truncation changes, one of
 // these fails immediately.
 @Test
 func primitiveIdsMatchGolden() {

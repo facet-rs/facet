@@ -504,33 +504,36 @@ export function formatDatetime(d: PhonDateTime): string {
   }
 }
 
+function malformedDatetime(): DecodeError {
+  return new DecodeError("malformed value: datetime");
+}
+
 export function parseDatetime(s: string): PhonDateTime {
-  const bad = () => new DecodeError("malformed value: datetime");
   const tIdx = s.indexOf("T");
   if (tIdx >= 0) {
     const datePart = s.slice(0, tIdx);
     const rest = s.slice(tIdx + 1);
-    const { year, month, day } = parseDate(datePart, bad);
+    const { year, month, day } = parseDate(datePart, malformedDatetime);
     // The offset starts at a trailing `Z`, `+`, or `-`; the time has none.
     const offIdx = findOffset(rest);
     const timePart = offIdx >= 0 ? rest.slice(0, offIdx) : rest;
     const offPart = offIdx >= 0 ? rest.slice(offIdx) : null;
-    const { hour, minute, second, nanos } = parseTime(timePart, bad);
+    const { hour, minute, second, nanos } = parseTime(timePart, malformedDatetime);
     if (offPart === null) {
       return { kind: "datetime", shape: "localDateTime", year, month, day, hour, minute, second, nanos };
     }
-    const offsetMinutes = parseOffset(offPart, bad);
+    const offsetMinutes = parseOffset(offPart, malformedDatetime);
     return { kind: "datetime", shape: "offset", year, month, day, hour, minute, second, nanos, offsetMinutes };
   }
   if (s.includes(":")) {
-    const { hour, minute, second, nanos } = parseTime(s, bad);
+    const { hour, minute, second, nanos } = parseTime(s, malformedDatetime);
     return { kind: "datetime", shape: "time", hour, minute, second, nanos };
   }
   if (s.includes("-")) {
-    const { year, month, day } = parseDate(s, bad);
+    const { year, month, day } = parseDate(s, malformedDatetime);
     return { kind: "datetime", shape: "date", year, month, day };
   }
-  throw bad();
+  throw malformedDatetime();
 }
 
 /// The offset starts at a trailing `Z`, `+`, or `-` in the time portion (which

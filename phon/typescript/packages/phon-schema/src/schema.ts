@@ -196,7 +196,7 @@ export class Registry {
   }
 
   /// A new registry with `extra` composite schemas merged in, sharing this
-  /// registry's primitive table. Used to reconcile a peer's exchanged schemas
+  /// registry's primitive table. Used to combine a peer's exchanged schemas
   /// (a writer closure) against the local reader registry for compat decode.
   /// Colliding ids are content-hashes, so an overwrite is identity.
   with(extra: Iterable<Schema>): Registry {

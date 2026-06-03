@@ -51,7 +51,7 @@ func elemMinWire(_ element: MemProgram) -> Int {
 /// empty and the result is the familiar flat program with no blocks
 /// (`r[ir.recursion]`). Build it once, run it many times; the program is
 /// wire-ordered with memory offsets, so it drives both encode and decode in the
-/// no-drift case.
+/// same-schema case.
 public func lowerTyped(
     _ descriptor: Descriptor,
     _ reg: Registry,
@@ -132,7 +132,7 @@ private func lowerTypedNode(_ d: Descriptor, _ reg: Registry, _ base: Int, _ out
             offset: base, stride: ba.stride, elemAlign: ba.elemAlign, witness: ba.witness)))
     case (.enumeration(let ea), .composite(.enumeration(_, let schemaVariants))):
         var variantOps: [EnumVariantOp] = []
-        // Single-schema lower: wire index == reader local index (no drift).
+        // Single-schema lower: wire index == reader local index.
         for (localIndex, va) in ea.variants.enumerated() {
             guard schemaVariants.contains(where: { $0.index == va.wireIndex }) else {
                 throw CompactError.malformed("descriptor variant has no schema counterpart")

@@ -368,23 +368,23 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
 // Decode-compat lowering (writer schema ⋈ reader descriptor)
 // ============================================================================
 
-/// Lower a *writer* schema reconciled against a *reader* [`Descriptor`] into a
+/// Lower a *writer* schema translated against a *reader* [`Descriptor`] into a
 /// flat [`MemProgram`] of reader-memory ops, in WIRE order. This is the typed
 /// (memory-side) analog of `plan::build_plan` + `plan::lower`: it bakes the
 /// writer↔reader compatibility decision in once, at lowering, so decode stays as
 /// fast as the single-schema path — there is no fast/slow path, only one program.
 ///
-/// The reconciliation rules mirror `plan.rs` exactly (the cross-engine oracle):
+/// The compat rules mirror `plan.rs` exactly (the cross-engine oracle):
 /// struct fields match by name (writer-only skipped, reader-only defaulted or, if
 /// required, incompatible), enum variants match by name (writer-only → a decode
 /// error), and types match without implicit widening (`r[compat.*]`).
 ///
 /// When `writer_root` resolves to the same schema the reader carries, the result
-/// is equivalent to [`lower`] (no skips/defaults) — the drift-free identity.
+/// is equivalent to [`lower`] (no skips/defaults) — the identity case.
 ///
 /// # Errors
 /// [`CompactError::Incompatible`] (or a resolution error) if the writer and reader
-/// cannot be reconciled, or [`CompactError::Unsupported`] for a kind not yet
+/// cannot be translated, or [`CompactError::Unsupported`] for a kind not yet
 /// carried by the typed path.
 // r[impl compat.plan-first]
 pub fn lower_decode(
@@ -397,11 +397,11 @@ pub fn lower_decode(
     lower_decode_node(&SchemaRef::concrete(writer_root), reader, reg, 0, &mut out)?;
     // A recursive reader lowers each of its cyclic schemas to a callable block, just
     // as `lower_typed` does — a `Recurse` reader node became a `CallBlock` into one of
-    // these. For the reconciled (same-schema) path the writer's schema at every
-    // `Recurse` position is that same schema, so a block reconciles
-    // `concrete(R) ⋈ reader_blocks[R]` — the drift-free identity. (Drift ACROSS a
-    // recursion boundary — a writer whose cyclic schema differs from the reader's — is
-    // the tracked follow-up; here the block's writer ref is the reader schema id.)
+    // these. For the same-schema path the writer's schema at every `Recurse`
+    // position is that same schema, so a block translates
+    // `concrete(R) ⋈ reader_blocks[R]` — the identity case. Compatibility across
+    // differing recursive schemas is the tracked follow-up; here the block's writer
+    // ref is the reader schema id.
     let mut blocks = BTreeMap::new();
     for (id, body) in reader_blocks {
         let mut ops = Vec::new();
@@ -465,7 +465,7 @@ fn lower_decode_node(
             });
             Ok(())
         }
-        // Struct ⋈ struct: reconcile fields by name, in WIRE order.
+        // Struct ⋈ struct: match fields by name, in WIRE order.
         (Access::Record(ra), Resolved::Composite(SchemaKind::Struct { fields: wf, .. })) => {
             lower_decode_record(&wf, ra, &reader.schema, RecordKind::Struct, reg, base, out)
         }
@@ -475,11 +475,11 @@ fn lower_decode_node(
             let wf = tuple_fields(elements);
             lower_decode_record(&wf, ra, &reader.schema, RecordKind::Tuple, reg, base, out)
         }
-        // Enum ⋈ enum: reconcile variants by name.
+        // Enum ⋈ enum: match variants by name.
         (Access::Enum(ea), Resolved::Composite(SchemaKind::Enum { variants: wv, .. })) => {
             lower_decode_enum(&wv, ea, &reader.schema, reg, base, out)
         }
-        // Option ⋈ Option: structural shapes match; reconcile the inner.
+        // Option ⋈ Option: structural shapes match; translate the inner.
         (Access::Option(opt), Resolved::Composite(SchemaKind::Option { element: we })) => {
             require_reader_option(&reader.schema, reg)?;
             let Presence::Vtable(thunks) = &opt.presence else {
@@ -498,17 +498,17 @@ fn lower_decode_node(
             })));
             Ok(())
         }
-        // List ⋈ List: reconcile the element.
+        // List ⋈ List: translate the element.
         (Access::Sequence(seq), Resolved::Composite(SchemaKind::List { element: we })) => {
             require_reader_list(&reader.schema, reg)?;
             lower_decode_sequence(&we, seq, reg, base, out)
         }
-        // Set ⋈ Set: reconcile the element.
+        // Set ⋈ Set: translate the element.
         (Access::Sequence(seq), Resolved::Composite(SchemaKind::Set { element: we })) => {
             require_reader_set(&reader.schema, reg)?;
             lower_decode_sequence(&we, seq, reg, base, out)
         }
-        // String/Bytes ⋈ String/Bytes: a bulk byte run (no inner drift possible).
+        // String/Bytes ⋈ String/Bytes: a bulk byte run (no element translation).
         (
             Access::Sequence(seq),
             Resolved::Primitive(p @ (Primitive::String | Primitive::Bytes)),
@@ -551,7 +551,7 @@ fn lower_decode_node(
                 )),
             }
         }
-        // Map ⋈ Map: reconcile key and value.
+        // Map ⋈ Map: translate key and value.
         (Access::Map(ma), Resolved::Composite(SchemaKind::Map { key: wk, value: wv })) => {
             require_reader_map(&reader.schema, reg)?;
             let MapStorage::Vtable(thunks) = &ma.storage else {
@@ -574,14 +574,14 @@ fn lower_decode_node(
             Ok(())
         }
         // Dynamic ⋈ Dynamic: both sides are self-describing; the value carries its
-        // own structure, so there is nothing to reconcile — passthrough.
+        // own structure, so there is nothing to translate — passthrough.
         (Access::Dynamic, Resolved::Composite(SchemaKind::Dynamic)) => {
             require_reader_dynamic(&reader.schema, reg)?;
             out.push(MemOp::Dynamic { field_offset: base });
             Ok(())
         }
         // Result ⋈ enum: the writer's Result wire is a two-variant enum; match Ok/Err
-        // by name and reconcile each arm's payload (writer Ok ⋈ reader Ok, etc.).
+        // by name and translate each arm's payload (writer Ok ⋈ reader Ok, etc.).
         (Access::Result(ra), Resolved::Composite(SchemaKind::Enum { variants: wv, .. })) => {
             out.push(MemOp::Result(Box::new(lower_decode_result(
                 &wv, ra, reg, base,
@@ -589,7 +589,7 @@ fn lower_decode_node(
             Ok(())
         }
         // Opaque ⋈ Bytes: the writer wire is a `Primitive::Bytes` run; the reader
-        // carries an opaque adapter. The inner bytes are never reconciled here — the
+        // carries an opaque adapter. The inner bytes are never translated here — the
         // adapter owns the inner type — so this is the single-schema op verbatim.
         (Access::Opaque(thunks), Resolved::Primitive(Primitive::Bytes)) => {
             require_reader_bytes(&reader.schema, reg)?;
@@ -652,7 +652,7 @@ enum RecordKind {
     Tuple,
 }
 
-/// Reconcile a writer struct's wire fields against the reader's record descriptor.
+/// Translate a writer struct's wire fields against the reader's record descriptor.
 /// Reader field NAMES come from the reader schema (resolved here), aligned by index
 /// with the descriptor's fields (the bridge builds them in the same order).
 // r[impl compat.field-matching]
@@ -720,7 +720,7 @@ fn lower_decode_record(
     Ok(())
 }
 
-/// Reconcile a writer enum's variants against the reader's enum descriptor, keyed
+/// Translate a writer enum's variants against the reader's enum descriptor, keyed
 /// by WRITER variant index → reader variant matched by NAME. Reader variant names
 /// come from the reader schema (resolved here), aligned by index with `ea.variants`.
 // r[impl compat.enum]
@@ -774,7 +774,7 @@ fn lower_decode_enum(
     Ok(())
 }
 
-/// Reconcile one matched enum variant's payload (writer payload ⋈ reader payload).
+/// Translate one matched enum variant's payload (writer payload ⋈ reader payload).
 /// The reader payload fields live at base-relative offsets carried by the variant
 /// access; their names come from the reader schema payload.
 fn lower_decode_payload(
@@ -798,15 +798,15 @@ fn lower_decode_payload(
             if wrs.len() != rrs.len() || wrs.len() != va.payload.fields.len() {
                 return Err(incompatible("variant tuple arity differs"));
             }
-            // Tuple fields are positional (no names): reconcile element-wise.
+            // Tuple fields are positional (no names): translate element-wise.
             for (wr, fa) in wrs.iter().zip(&va.payload.fields) {
                 lower_decode_node(wr, &fa.descriptor, reg, base + fa.offset, &mut payload)?;
             }
         }
         (VariantPayload::Struct(wfs), VariantPayload::Struct(rfs)) => {
-            // A struct-shaped payload reconciles by field name, like a top-level
+            // A struct-shaped payload matches by field name, like a top-level
             // struct, but at the variant's base-relative offsets. Build a synthetic
-            // reader-schema ref is unnecessary: reconcile against the variant's own
+            // reader-schema ref is unnecessary: translate against the variant's own
             // record access and the reader schema payload field list.
             lower_decode_variant_struct(wfs, &va.payload, rfs, reg, base, &mut payload)?;
         }
@@ -815,7 +815,7 @@ fn lower_decode_payload(
     Ok(fuse(payload))
 }
 
-/// Reconcile a writer struct-variant payload against the reader's variant record
+/// Translate a writer struct-variant payload against the reader's variant record
 /// access (matching by name, defaulting reader-only fields), at base-relative
 /// offsets. Mirrors [`lower_decode_struct`] but the reader names come straight from
 /// the reader schema payload field list (aligned with the variant's fields).
@@ -994,7 +994,7 @@ fn lower_result(
 }
 
 /// Lower a decode-compat [`ResultOp`]: match the writer enum's Ok/Err variants by
-/// name and reconcile each arm's payload against the reader's Ok/Err descriptor.
+/// name and translate each arm's payload against the reader's Ok/Err descriptor.
 fn lower_decode_result(
     wv: &[Variant],
     ra: &ResultAccess,
@@ -1023,8 +1023,8 @@ fn lower_decode_result(
     })
 }
 
-/// Reconcile one `Result` arm: the writer payload is a newtype (`Ok(T)`/`Err(E)`),
-/// reconciled against the reader arm's descriptor at offset 0 (the arm value start).
+/// Translate one `Result` arm: the writer payload is a newtype (`Ok(T)`/`Err(E)`),
+/// translated against the reader arm's descriptor at offset 0 (the arm value start).
 fn lower_decode_result_arm(
     w: &VariantPayload,
     reader: &Descriptor,
@@ -1356,7 +1356,7 @@ unsafe fn encode_program(
                     unsafe { encode_program(&rs.err, err, out, blocks) };
                 }
             }
-            // r[impl zerocopy.framing.value.opaque] — opaque field: reserve a `u32`
+            // r[impl ir.memory] — opaque field: reserve a `u32`
             // length (align 1 — wire-identical to a `Primitive::Bytes` run, so no
             // pre-pad), append the inner bytes via the thunk, then backpatch the
             // length. The backpatch is what fixed-width (non-varint) framing buys.
@@ -1729,14 +1729,15 @@ unsafe fn decode_program(
             // bytes; write nothing to memory. The walker lives in `phon-ir` next to
             // `SkipOp`, shared with the JIT so both decode engines skip identically.
             MemOp::SkipWire(s) => phon_ir::ir::skip(r, s)?,
-            // r[impl compat.reader-only-fields] — write a reader-only field's
-            // default in place; read no wire.
+            // r[impl compat.reader-only-fields]
+            // r[impl compat.defaults-are-reader-side]
+            // Write a reader-only field's default in place; read no wire.
             MemOp::Default(d) => {
                 // Safety: `base + offset` is uninitialized storage of the reader
                 // field's type; the bound thunk initializes it.
                 unsafe { (d.default)(d.ctx, base.add(d.offset)) };
             }
-            // r[impl zerocopy.framing.value.opaque] — opaque field: read the `u32`
+            // r[impl ir.memory] — opaque field: read the `u32`
             // length (bounds-checked), borrow the inner span from the input, and hand
             // it to the adapter. The decoded value may borrow that span (zero-copy),
             // so the caller must keep the input alive as long as it (the contract on

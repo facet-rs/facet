@@ -77,7 +77,7 @@ const SMALL_INTS = new Set<Primitive>(["u8", "u16", "u32", "i8", "i16", "i32"]);
 // ============================================================================
 
 /// Decode writer compact `bytes` into an ergonomic typed value shaped by the
-/// reader schema, reconciling writer<->reader drift. Uses the JIT when
+/// reader schema, translating writer<->reader schema differences. Uses the JIT when
 /// available (interpreter fallback under strict CSP); pass `{ jit }` to force.
 export function decodeTyped(
   bytes: Uint8Array,

@@ -98,7 +98,7 @@ pub fn of<'a, T: Facet<'a>>() -> Result<Derived, DeriveError> {
 pub fn of_shape(shape: &'static Shape) -> Result<Derived, DeriveError> {
     // An opaque-adapter type (`#[facet(opaque = ...)]`): on the wire it is a
     // `Primitive::Bytes` run (a `u32` length + inner bytes); the adapter owns the
-    // inner type, so the engine only frames it. (`r[zerocopy.framing.value.opaque]`)
+    // inner type, so the engine only frames it.
     if shape.has_opaque_adapter() {
         return Ok(Derived {
             root: primitive_id(Primitive::Bytes),
@@ -261,8 +261,8 @@ impl Builder {
     /// The schema reference for a field's type: a primitive's real id, a nested
     /// struct's provisional key, or a `List`'s provisional key.
     fn ref_of(&mut self, shape: &'static Shape) -> Result<SchemaRef, DeriveError> {
-        // An opaque-adapter field is a `Primitive::Bytes` run on the wire (only the
-        // adapter knows the inner type) — `r[zerocopy.framing.value.opaque]`.
+        // An opaque-adapter field is a `Primitive::Bytes` run on the wire; only the
+        // adapter knows the inner type.
         if shape.has_opaque_adapter() {
             return Ok(SchemaRef::concrete(primitive_id(Primitive::Bytes)));
         }
@@ -1652,7 +1652,7 @@ unsafe extern "C" fn string_data(_ctx: *const (), list: *const u8) -> *const u8 
 // to the adapter's `deserialize`, which builds the value lazily (it may borrow the
 // span — zero-copy).
 //
-// Spec: `r[zerocopy.framing.value.opaque]`, `r[descriptors.thunk-binding]`.
+// Spec: `r[descriptors.thunk-binding]`.
 
 /// The descriptor for an opaque field or root: schema `Primitive::Bytes`, an
 /// [`Access::Opaque`] carrying thunks bound to the field's opaque-adapter def
@@ -1744,7 +1744,7 @@ unsafe extern "C" fn opaque_encode(ctx: *const (), field: *const u8, out: *mut V
     // Passthrough: an adapter may hand back already-encoded inner bytes (e.g. a
     // proxied/forwarded payload re-sent verbatim). Emit them as-is — the engine
     // still frames the `u32` length around them — without re-deriving the inner
-    // type. (`r[zerocopy.framing.value.opaque]`)
+    // type.
     if core::ptr::eq(shape, &RAW_OPAQUE_BYTES_SHAPE) {
         // Safety: the sentinel shape guarantees `ptr` points at a `RawOpaqueBytes`.
         let raw = unsafe { &*ptr.as_byte_ptr().cast::<RawOpaqueBytes>() };
@@ -2187,7 +2187,7 @@ mod tests {
     }
 
     #[test]
-    fn reconciling_decode_recurses_for_a_cyclic_type() {
+    fn compat_decode_recurses_for_a_cyclic_type() {
         // The RECONCILING decode path (`lower_decode` — the one vox's RPC args/response
         // decode through) must also handle a recursive reader: a `Recurse` node lowers to
         // a `CallBlock` and the cyclic schema's block is built from `descriptor_blocks`.
@@ -2223,12 +2223,12 @@ mod tests {
         }
         .unwrap();
 
-        // Decode through the reconciling path with writer == reader.
+        // Decode through the compat path with writer == reader.
         let program =
             typed::lower_decode(d.root, &d.descriptor, &d.descriptor_blocks, &reg).unwrap();
         assert!(
             !program.blocks.is_empty(),
-            "a recursive reconciling decode must build at least one block"
+            "a recursive compat decode must build at least one block"
         );
         let mut slot = std::mem::MaybeUninit::<Tree>::uninit();
         unsafe { typed::decode_with(&program, &bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
@@ -3292,7 +3292,7 @@ mod tests {
     // reg)` + `decode_with` into reader memory. Where practical the dynamic
     // `plan::decode` over the same bytes is asserted as a cross-engine oracle.
     //
-    // These reproduce `plan.rs`'s six drift cases (`r[compat.*]`) on the MEMORY side.
+    // These reproduce `plan.rs`'s six compat cases on the memory side.
 
     use phon_engine::{plan, typed::lower_decode};
 
@@ -3334,6 +3334,7 @@ mod tests {
         a: u32,
     }
 
+    // r[verify compat.field-matching]
     #[test]
     fn compat_field_reorder_is_transparent() {
         let w = of::<ReorderW>().unwrap();
@@ -3373,6 +3374,7 @@ mod tests {
         c: u32,
     }
 
+    // r[verify compat.skip-writer-only]
     #[test]
     fn compat_writer_only_field_is_skipped() {
         let w = of::<SkipW>().unwrap();
@@ -3420,6 +3422,8 @@ mod tests {
         extra: u32,
     }
 
+    // r[verify compat.reader-only-fields]
+    // r[verify compat.defaults-are-reader-side]
     #[test]
     fn compat_reader_only_field_defaults() {
         let w = of::<DefaultW>().unwrap();
@@ -3437,6 +3441,7 @@ mod tests {
         assert_eq!(back.b, u32::default()); // 0 — the field's #[facet(default)]
     }
 
+    // r[verify compat.defaults-are-reader-side]
     #[test]
     fn compat_reader_only_field_with_custom_default() {
         // A custom default expression on the reader-only field.
@@ -3459,6 +3464,8 @@ mod tests {
         assert_eq!(back.b, 0xABCD);
     }
 
+    // r[verify compat.plan-first]
+    // r[verify compat.reader-only-fields]
     #[test]
     fn compat_reader_only_required_field_is_incompatible() {
         use phon_engine::CompactError;
@@ -3500,6 +3507,7 @@ mod tests {
         A,
     }
 
+    // r[verify compat.enum]
     #[test]
     fn compat_enum_variant_added_reads_fine() {
         let w = of::<EnumW>().unwrap();
@@ -3520,6 +3528,7 @@ mod tests {
         assert_eq!(unsafe { slot.assume_init() }, EnumRMore::A);
     }
 
+    // r[verify compat.enum]
     #[test]
     fn compat_enum_variant_removed_rejects() {
         use phon_engine::CompactError;
@@ -3563,6 +3572,7 @@ mod tests {
         n: u64,
     }
 
+    // r[verify compat.type-match]
     #[test]
     fn compat_no_implicit_widening() {
         use phon_engine::CompactError;
@@ -3581,7 +3591,7 @@ mod tests {
         ));
     }
 
-    // ---- 6. Nested struct drift -----------------------------------------------
+    // ---- 6. Nested struct compat ----------------------------------------------
 
     #[derive(Facet)]
     struct InnerW {
@@ -3604,8 +3614,11 @@ mod tests {
         tag: u32,
     }
 
+    // r[verify compat.field-matching]
+    // r[verify compat.reader-only-fields]
+    // r[verify compat.defaults-are-reader-side]
     #[test]
-    fn compat_nested_struct_drift() {
+    fn compat_nested_struct_with_reader_only_field() {
         let w = of::<OuterW>().unwrap();
         let r = of::<OuterR>().unwrap();
         let reg = merged_registry(&w, &r);
@@ -3696,17 +3709,17 @@ mod tests {
     // Writer ↔ reader compatibility through the copy-and-patch JIT
     // ========================================================================
     //
-    // The same drift cases as the interpreter `compat_*` tests above, but the
-    // reconciliation program runs through `NativeDecode` (the copy-and-patch JIT)
+    // The same compat cases as the interpreter `compat_*` tests above, but the
+    // compat program runs through `NativeDecode` (the copy-and-patch JIT)
     // rather than the threaded interpreter. The principle: compatibility is resolved
     // entirely at lowering — `lower_decode` bakes in the skips, defaults, reorders,
     // and remaps — so the JIT just compiles that program and decode runs at full
-    // speed regardless of schema drift. The interpreter (`typed::decode_with`) over
+    // speed regardless of schema version differences. The interpreter (`typed::decode_with`) over
     // the SAME program is the oracle: the two engines must agree byte-for-byte.
     //
     // These exercise the `MemOp::SkipWire` stencil (writer-only fields) and the
     // `MemOp::Default` stencil (reader-only `#[facet(default)]` fields) added to the
-    // JIT here, plus reorder / enum add+remove / nested struct drift.
+    // JIT here, plus reorder / enum add+remove / nested struct compat.
 
     #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
     use phon_jit::native::NativeDecode;
@@ -3876,12 +3889,12 @@ mod tests {
         assert_eq!(jit_a, interp_a);
     }
 
-    /// 5. Nested struct drift: the inner struct gains a reader-only `#[facet(default)]`
+    /// 5. Nested struct compat: the inner struct gains a reader-only `#[facet(default)]`
     ///    `bool` field. The JIT runs the nested `MemOp::Default` stencil and agrees
     ///    with the interpreter on every field.
     #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
     #[test]
-    fn compat_jit_nested_struct_drift() {
+    fn compat_jit_nested_struct_with_reader_only_field() {
         let w = of::<OuterW>().unwrap();
         let r = of::<OuterR>().unwrap();
         let reg = merged_registry(&w, &r);
@@ -3983,8 +3996,8 @@ mod tests {
     // `Result` is `repr(Rust)` and driven by facet's `ResultVTable`. Its schema is
     // the two-variant enum `Ok(T)`/`Err(E)`, so its wire is byte-identical to a
     // `#[repr(int)]` enum — the dynamic codec over the equivalent single-key object
-    // is the oracle. Round-trips both arms, and reconciles a writer↔reader payload
-    // drift inside the arms (compat).
+    // is the oracle. Round-trips both arms, and translates a writer↔reader payload
+    // change inside the arms (compat).
 
     #[test]
     fn derived_result_matches_dynamic_and_roundtrips() {
@@ -4072,9 +4085,9 @@ mod tests {
     }
 
     #[test]
-    fn compat_result_ok_payload_field_drift() {
+    fn compat_result_ok_payload_field_change() {
         // The Ok payload is a struct that gains a reader-only `#[facet(default)]`
-        // field: the writer↔reader drift is reconciled INSIDE the Result arm.
+        // field: the writer↔reader change is translated inside the Result arm.
         #[derive(Facet)]
         struct OkW {
             a: u32,
@@ -4161,9 +4174,9 @@ mod tests {
     }
 
     #[test]
-    fn compat_dynamic_field_with_struct_drift() {
+    fn compat_dynamic_field_with_struct_change() {
         // The Dynamic field is a self-describing passthrough; surrounding struct
-        // fields still reconcile (a writer-only field is skipped around it).
+        // fields still translate (a writer-only field is skipped around it).
         #[derive(Facet)]
         struct W {
             a: u32,
@@ -4205,7 +4218,7 @@ mod tests {
     // frames it (reserve a `u32`, backpatch); the adapter supplies the inner
     // `(ptr, shape)` on encode and lazily wraps the borrowed span on decode. The
     // oracle is a borrowed `&[u8]` field (also `Primitive::Bytes`): the two wires
-    // must match byte-for-byte. (`r[zerocopy.framing.value.opaque]`)
+    // must match byte-for-byte.
 
     use std::marker::PhantomData;
 

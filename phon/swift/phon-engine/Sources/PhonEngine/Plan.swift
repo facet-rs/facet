@@ -1,5 +1,5 @@
-// Compatibility planning: reconcile a writer schema with a reader schema into a
-// translation plan, then decode the writer's compact bytes into a reader-shaped
+// Compatibility planning: translate a writer schema with a reader schema into a
+// plan, then decode the writer's compact bytes into a reader-shaped
 // `Value`.
 //
 // The plan is built from the two schemas alone, before any payload is touched: if
@@ -23,6 +23,17 @@ private let planMaxDepth = 128
 /// A built translation plan from a writer schema to a reader schema.
 public struct Plan {
     let root: Node
+}
+
+public enum CompatDirection: Equatable {
+    /// The newer schema can read bytes written by the older schema.
+    case backward
+    /// The older schema can read bytes written by the newer schema.
+    case forward
+    /// Both schema versions can read each other's bytes.
+    case bidirectional
+    /// Neither schema version can read the other's bytes.
+    case incompatible
 }
 
 indirect enum Node {
@@ -70,6 +81,7 @@ enum Payload {
 // MARK: - Public API
 
 /// Build the translation plan from `writerRoot` to `readerRoot`.
+// r[impl compat.plan-first]
 public func buildPlan(_ writerRoot: SchemaId, _ readerRoot: SchemaId, _ reg: Registry) throws -> Plan {
     let node = try planRef(
         .concrete(id: writerRoot, args: []),
@@ -77,6 +89,20 @@ public func buildPlan(_ writerRoot: SchemaId, _ readerRoot: SchemaId, _ reg: Reg
         reg, 0
     )
     return Plan(root: node)
+}
+
+/// Classify compatibility between an older and newer schema by planning both
+/// directions. This is tooling over `buildPlan`, not a decode path.
+// r[impl compat.direction]
+public func compatDirection(_ olderRoot: SchemaId, _ newerRoot: SchemaId, _ reg: Registry) -> CompatDirection {
+    let backward = (try? buildPlan(olderRoot, newerRoot, reg)) != nil
+    let forward = (try? buildPlan(newerRoot, olderRoot, reg)) != nil
+    switch (backward, forward) {
+    case (true, true): return .bidirectional
+    case (true, false): return .backward
+    case (false, true): return .forward
+    case (false, false): return .incompatible
+    }
 }
 
 /// Decode writer compact `bytes` into a reader-shaped value using a prebuilt plan.
@@ -125,6 +151,7 @@ private func planResolved(_ w: Resolved, _ r: Resolved, _ reg: Registry, _ depth
     }
 }
 
+// r[impl compat.type-match]
 private func planKind(_ wk: SchemaKind, _ rk: SchemaKind, _ reg: Registry, _ depth: Int) throws -> Node {
     switch (wk, rk) {
     case (.primitive(let wp), .primitive(let rp)):
@@ -163,6 +190,10 @@ private func planKind(_ wk: SchemaKind, _ rk: SchemaKind, _ reg: Registry, _ dep
     }
 }
 
+// r[impl compat.field-matching]
+// r[impl compat.skip-writer-only]
+// r[impl compat.reader-only-fields]
+// r[impl compat.defaults-are-reader-side]
 private func planStruct(_ wFields: [Field], _ rFields: [Field], _ reg: Registry, _ depth: Int) throws -> StructPlan {
     var readerByName: [String: Field] = [:]
     for f in rFields { readerByName[f.name] = f }
@@ -190,6 +221,7 @@ private func planStruct(_ wFields: [Field], _ rFields: [Field], _ reg: Registry,
     return StructPlan(steps: steps, defaults: defaults)
 }
 
+// r[impl compat.enum]
 private func planEnum(_ wVariants: [Variant], _ rVariants: [Variant], _ reg: Registry, _ depth: Int) throws -> Node {
     var readerByName: [String: Variant] = [:]
     for v in rVariants { readerByName[v.name] = v }

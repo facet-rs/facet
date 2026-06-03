@@ -55,7 +55,7 @@ export function encode(value: Value, root: bigint, reg: Registry): Uint8Array {
 }
 
 /// Decode a value of schema `root` from `bytes`, rejecting trailing bytes. This
-/// is the same-schema decoder (no reconciliation); compat decode lives in
+/// is the same-schema decoder (no compat translation); compat decode lives in
 /// plan.ts.
 export function decode(bytes: Uint8Array, root: bigint, reg: Registry): Value {
   const r = new Reader(bytes);
@@ -455,7 +455,7 @@ function charCode(v: Value): number {
   }
   throw new EncodeError("expected char");
 }
-function asDateTime(v: Value): import("@bearcove/phon-schema").PhonDateTime {
+function asDateTime(v: Value): PhonDateTime {
   if (typeof v === "object" && v !== null && "kind" in v && v.kind === "datetime") return v;
   throw new EncodeError("expected datetime");
 }
@@ -463,7 +463,7 @@ function asUuid(v: Value): string {
   if (typeof v === "object" && v !== null && "kind" in v && v.kind === "uuid") return v.text;
   throw new EncodeError("expected uuid");
 }
-function asQName(v: Value): import("@bearcove/phon-schema").PhonQName {
+function asQName(v: Value): PhonQName {
   if (typeof v === "object" && v !== null && "kind" in v && v.kind === "qname") return v;
   throw new EncodeError("expected qname");
 }

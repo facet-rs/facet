@@ -1,5 +1,5 @@
-//! Compatibility planning: reconcile a *writer* schema with a *reader* schema
-//! into a translation [`Plan`], then decode the writer's compact bytes into a
+//! Compatibility planning: translate a *writer* schema with a *reader* schema
+//! into a [`Plan`], then decode the writer's compact bytes into a
 //! reader-shaped [`Value`].
 //!
 //! The plan is built from the two schemas alone, before any payload is touched
@@ -103,11 +103,24 @@ enum Payload {
 // Public API
 // ============================================================================
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CompatDirection {
+    /// The newer schema can read bytes written by the older schema.
+    Backward,
+    /// The older schema can read bytes written by the newer schema.
+    Forward,
+    /// Both schema versions can read each other's bytes.
+    Bidirectional,
+    /// Neither schema version can read the other's bytes.
+    Incompatible,
+}
+
 /// Build the translation plan from `writer_root` to `reader_root`.
 ///
 /// # Errors
 /// [`CompactError::Incompatible`] (or a resolution error) if the schemas cannot
-/// be reconciled.
+/// be translated.
+// r[impl compat.plan-first]
 pub fn build_plan(writer_root: SchemaId, reader_root: SchemaId, reg: &Registry) -> Result<Plan> {
     let node = plan_ref(
         &SchemaRef::concrete(writer_root),
@@ -116,6 +129,25 @@ pub fn build_plan(writer_root: SchemaId, reader_root: SchemaId, reg: &Registry) 
         0,
     )?;
     Ok(Plan(node))
+}
+
+/// Classify compatibility between an older and newer schema by planning both
+/// directions. This is tooling over [`build_plan`], not a decode path.
+// r[impl compat.direction]
+#[must_use]
+pub fn compatibility_direction(
+    older_root: SchemaId,
+    newer_root: SchemaId,
+    reg: &Registry,
+) -> CompatDirection {
+    let backward = build_plan(older_root, newer_root, reg).is_ok();
+    let forward = build_plan(newer_root, older_root, reg).is_ok();
+    match (backward, forward) {
+        (true, true) => CompatDirection::Bidirectional,
+        (true, false) => CompatDirection::Backward,
+        (false, true) => CompatDirection::Forward,
+        (false, false) => CompatDirection::Incompatible,
+    }
 }
 
 /// Decode writer compact `bytes` into a reader-shaped value using a prebuilt plan.
@@ -149,7 +181,7 @@ pub fn decode(
 
 /// Build a plan, lower it to the linear IR, and run the interpreter — the flat
 /// counterpart to [`decode`]. The interpreter must produce the same value the
-/// recursive [`decode_with_plan`] would; the drift tests assert exactly that.
+/// recursive [`decode_with_plan`] would; the compat tests assert exactly that.
 ///
 /// # Errors
 /// As [`build_plan`] and [`crate::interp::run`].
@@ -273,6 +305,9 @@ fn plan_kind(wk: SchemaKind, rk: SchemaKind, reg: &Registry, depth: usize) -> Re
 }
 
 // r[impl compat.field-matching]
+// r[impl compat.skip-writer-only]
+// r[impl compat.reader-only-fields]
+// r[impl compat.defaults-are-reader-side]
 fn plan_struct(
     w_fields: &[Field],
     r_fields: &[Field],
@@ -662,6 +697,7 @@ mod tests {
         recursive
     }
 
+    // r[verify compat.field-matching]
     #[test]
     fn field_reorder_is_transparent() {
         // writer: { x: u32, y: u32 }; reader: { y: u32, x: u32 }
@@ -693,6 +729,7 @@ mod tests {
         );
     }
 
+    // r[verify compat.skip-writer-only]
     #[test]
     fn writer_only_field_is_skipped() {
         // writer: { x: u32, gone: string }; reader: { x: u32 }
@@ -715,6 +752,9 @@ mod tests {
         assert_eq!(got, obj(&[("x", Value::from(7u32))]));
     }
 
+    // r[verify compat.plan-first]
+    // r[verify compat.reader-only-fields]
+    // r[verify compat.defaults-are-reader-side]
     #[test]
     fn reader_only_field_defaults_or_fails() {
         // writer: { x: u32 }; reader: { x: u32, extra: u32 }
@@ -753,6 +793,7 @@ mod tests {
         ));
     }
 
+    // r[verify compat.type-match]
     #[test]
     fn numeric_widening_is_not_implicit() {
         let writer = schema(
@@ -778,6 +819,7 @@ mod tests {
         ));
     }
 
+    // r[verify compat.enum]
     #[test]
     fn enum_variant_added_and_removed() {
         // writer enum { A, B(u32) }; reader enum { A, B(u32), C } (C added).
@@ -858,8 +900,8 @@ mod tests {
     }
 
     #[test]
-    fn nested_struct_drift() {
-        // Inner drifts (field added); Outer holds an Inner.
+    fn nested_struct_compat() {
+        // Inner differs (field added); Outer holds an Inner.
         let w_inner = point_struct(10, vec![field("a", prim(Primitive::U32), true)]);
         let r_inner = point_struct(
             20,
@@ -896,6 +938,41 @@ mod tests {
                 "inner",
                 obj(&[("a", Value::from(5u32)), ("b", Value::NULL)])
             )])
+        );
+    }
+
+    // r[verify compat.direction]
+    #[test]
+    fn compatibility_direction_reports_both_ways() {
+        let older = point_struct(1, vec![field("x", prim(Primitive::U32), true)]);
+        let newer_optional = point_struct(
+            2,
+            vec![
+                field("x", prim(Primitive::U32), true),
+                field("y", prim(Primitive::U32), false),
+            ],
+        );
+        let newer_required = point_struct(
+            3,
+            vec![
+                field("x", prim(Primitive::U32), true),
+                field("y", prim(Primitive::U32), true),
+            ],
+        );
+        let different = point_struct(4, vec![field("x", prim(Primitive::U64), true)]);
+        let reg = Registry::new([older, newer_optional, newer_required, different]);
+
+        assert_eq!(
+            compatibility_direction(SchemaId(1), SchemaId(2), &reg),
+            CompatDirection::Bidirectional
+        );
+        assert_eq!(
+            compatibility_direction(SchemaId(1), SchemaId(3), &reg),
+            CompatDirection::Forward
+        );
+        assert_eq!(
+            compatibility_direction(SchemaId(1), SchemaId(4), &reg),
+            CompatDirection::Incompatible
         );
     }
 

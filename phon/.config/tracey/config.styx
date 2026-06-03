@@ -9,7 +9,17 @@ specs (
                 name rust
                 include (rust/**/*.rs)
             }
+            {
+                name typescript
+                include (
+                    typescript/packages/phon-engine/src/**/*.ts
+                    typescript/packages/phon-schema/src/**/*.ts
+                )
+            }
+            {
+                name swift
+                include (swift/**/*.swift)
+            }
         )
     }
 )
-

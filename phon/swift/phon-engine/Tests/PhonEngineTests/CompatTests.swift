@@ -1,8 +1,8 @@
-// The reconciling typed decode (`lowerDecode`) under schema drift — the whole
-// reason the typed path exists. Each case builds writer bytes via the Value codec,
-// decodes them into a concrete reader Swift value through `lowerDecode(writer →
-// reader)`, and checks the result against the Value-path planner (`planDecode`,
-// the cross-engine oracle). Same-schema is verified to be the no-skip identity.
+// The typed compat decode (`lowerDecode`) under schema differences. Each case
+// builds writer bytes via the Value codec, decodes them into a concrete reader
+// Swift value through `lowerDecode(writer -> reader)`, and checks the result
+// against the Value-path planner (`planDecode`, the cross-engine oracle).
+// Same-schema is verified to be the no-skip identity.
 
 import Testing
 
@@ -26,8 +26,10 @@ private func u32Field(_ name: String) -> Field {
 
 private struct ReaderX: Equatable { var x: UInt32 }
 
+// r[verify compat.skip-writer-only]
+// r[verify compat.field-matching]
 @Test
-func driftWriterOnlyFieldSkipped() throws {
+func compatWriterOnlyFieldSkipped() throws {
     // writer { x: u32, y: u32 } ; reader { x: u32 } — y is writer-only.
     let batch = resolveIds([
         Schema(id: SchemaId(1), kind: .structure(name: "P", fields: [u32Field("x"), u32Field("y")])),
@@ -55,7 +57,7 @@ func driftWriterOnlyFieldSkipped() throws {
     try withUnsafeMutableBytes(of: &decoded) { try decodeInto(program, writerBytes, $0.baseAddress!) }
     #expect(decoded.x == 7, "x decodes, y is skipped")
 
-    // Oracle: the Value planner reconciles to { x: 7 }.
+    // Oracle: the Value planner translates to { x: 7 }.
     let oracle = try planDecode(writerBytes, writerRoot, readerRoot, reg)
     #expect(oracle == .object([.init(key: "x", value: .number(.canonical(unsigned: 7)))]))
 }
@@ -67,8 +69,10 @@ private struct ReaderXC: Equatable {
     var c: UInt32?
 }
 
+// r[verify compat.reader-only-fields]
+// r[verify compat.defaults-are-reader-side]
 @Test
-func driftReaderOnlyFieldDefaulted() throws {
+func compatReaderOnlyFieldDefaulted() throws {
     // writer { x: u32 } ; reader { x: u32, c: option<u32> (non-required) }.
     let batch = resolveIds([
         Schema(id: SchemaId(1), kind: .structure(name: "P", fields: [u32Field("x")])),
@@ -116,6 +120,69 @@ func driftReaderOnlyFieldDefaulted() throws {
         .init(key: "x", value: .number(.canonical(unsigned: 7))),
         .init(key: "c", value: .null),
     ]))
+}
+
+// r[verify compat.plan-first]
+@Test
+func compatRequiredReaderOnlyOptionIsIncompatible() throws {
+    let batch = resolveIds([
+        Schema(id: SchemaId(1), kind: .structure(name: "P", fields: [u32Field("x")])),
+        Schema(id: SchemaId(2), kind: .structure(name: "P", fields: [
+            u32Field("x"),
+            Field(name: "c", schema: .concrete(SchemaId(3)), required: true),
+        ])),
+        Schema(id: SchemaId(3), kind: .option(element: .concrete(primitiveId(.u32)))),
+    ])
+    let writerRoot = batch[0].id
+    let readerRoot = batch[1].id
+    let optRoot = batch[2].id
+    let reg = Registry(batch)
+
+    let optDesc = Descriptor(
+        schema: .concrete(optRoot),
+        layout: Layout(size: MemoryLayout<UInt32?>.size, align: MemoryLayout<UInt32?>.alignment),
+        access: .option(OptionAccess(witness: .of(UInt32.self), some: u32Desc()))
+    )
+    let readerDesc = Descriptor(
+        schema: .concrete(readerRoot),
+        layout: Layout(size: MemoryLayout<ReaderXC>.size, align: MemoryLayout<ReaderXC>.alignment),
+        access: .record(RecordAccess(fields: [
+            FieldAccess(offset: MemoryLayout<ReaderXC>.offset(of: \ReaderXC.x)!, descriptor: u32Desc()),
+            FieldAccess(offset: MemoryLayout<ReaderXC>.offset(of: \ReaderXC.c)!, descriptor: optDesc),
+        ], construct: .inPlace))
+    )
+
+    #expect(throws: CompactError.self) {
+        _ = try lowerDecode(writerRoot, readerDesc, reg)
+    }
+    #expect(throws: CompactError.self) {
+        _ = try buildPlan(writerRoot, readerRoot, reg)
+    }
+}
+
+// r[verify compat.type-match]
+@Test
+func compatRejectsListSetKindMismatch() throws {
+    let writer = Schema(id: SchemaId(1), kind: .set(element: .concrete(primitiveId(.u32))))
+    let reader = Schema(id: SchemaId(2), kind: .list(element: .concrete(primitiveId(.u32))))
+    let reg = Registry([writer, reader])
+    let readerDesc = Descriptor(
+        schema: .concrete(SchemaId(2)),
+        layout: Layout(size: MemoryLayout<[UInt32]>.size, align: MemoryLayout<[UInt32]>.alignment),
+        access: .sequence(SequenceAccess(
+            element: u32Desc(),
+            stride: MemoryLayout<UInt32>.stride,
+            elemAlign: MemoryLayout<UInt32>.alignment,
+            witness: .of(UInt32.self)
+        ))
+    )
+
+    #expect(throws: CompactError.self) {
+        _ = try lowerDecode(SchemaId(1), readerDesc, reg)
+    }
+    #expect(throws: CompactError.self) {
+        _ = try buildPlan(SchemaId(1), SchemaId(2), reg)
+    }
 }
 
 // MARK: - fuse: the same-schema fast path emerges from lowering

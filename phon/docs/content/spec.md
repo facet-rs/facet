@@ -134,7 +134,8 @@ Not only must we assume that the wire representation is completely different
 from the runtime representation, we must also assume that the remote schema is
 different from the local schema. By only implementing and only attempting to
 optimize for the worst possible case, we ensure that performance is consistent
-throughout, no matter the language pair, and amount of drift between two peers. 
+throughout, no matter the language pair or amount of schema difference between
+two peers.
 
 Thirdly, the time and frequency at which schemas are sent matter. 
 
@@ -570,7 +571,7 @@ Everything structural is in the hash; there is nothing non-structural in a
 phon schema to leave out (no doc comments, no annotations travel on the wire).
 
 Names are part of identity on purpose. phon matches struct fields and enum
-variants by name when reconciling two schema versions — that's how a field
+variants by name when translating between two schema versions — that's how a field
 survives being reordered. So two structs with the same field types but
 different field names are genuinely different schemas and hash differently, and
 a struct named `Request` is distinct from a structurally identical one named
@@ -779,7 +780,7 @@ reader decoding against a known type keeps every distinction; a schema-less
 reader collapses those same bytes onto the coarser `Value` model. The cases
 facet carries beyond the wire are mapped by the self-describing codec: null to an
 option's none, and date/time, qname, and uuid to the `datetime`/`uuid`/`qname`
-primitive tags of `r[value.extended-kinds]`. The reconciliation lives in the
+primitive tags of `r[value.extended-kinds]`. The mapping lives in the
 codec, not in a separate value type.
 
 # Compact mode
@@ -995,9 +996,25 @@ about the stream lives above phon.
 
 # Compatibility
 
-Two peers drift. The reader receives bytes written against the writer's schema
-and has to produce a value of its own type. Compatibility is whether that's
-possible; translation is how it's done.
+Two peers may have different schema versions. The reader receives bytes written
+against the writer's schema and has to produce a value of its own type.
+Compatibility is whether that's possible; translation is how it's done.
+
+The compatibility algorithm is:
+
+1. Resolve the writer and reader schema references first, including parametric
+   references per `r[type-system.generic-resolution]`.
+2. Build a translation plan from writer schema to reader schema before reading
+   compact bytes.
+3. Recursively match only compatible schema kinds. Struct fields and enum
+   variants match by name; tuple elements match by position.
+4. Record one wire-order action for each writer field or variant payload:
+   take a matched value, skip a writer-only value, or arrange a reader-side
+   default for a reader-only field.
+5. Execute that already-built plan over the payload. The executor consumes bytes
+   in writer wire order and produces the reader shape.
+6. A direction report is separate tooling over this same planner: plan older to
+   newer and newer to older, then classify the pair.
 
 > r[compat.plan-first]
 >

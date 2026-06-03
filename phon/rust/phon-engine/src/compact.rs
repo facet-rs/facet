@@ -54,7 +54,7 @@ pub enum CompactError {
     /// A structurally malformed schema (e.g. an unbound type variable, or a
     /// primitive carrying type arguments).
     Malformed(&'static str),
-    /// Two schemas cannot be reconciled into a translation plan (`r[compat.*]`).
+    /// Two schemas cannot be translated by a compatibility plan (`r[compat.*]`).
     Incompatible(String),
     /// A decoded enum variant exists in the writer schema but has no counterpart
     /// in the reader schema (`r[compat.enum]`).
@@ -1161,7 +1161,7 @@ mod tests {
     /// the buffer is empty afterward. The `r[validate.lengths]` count guard
     /// assumed every element costs at least one byte and rejected the decode of a
     /// value it had just encoded. The element's true minimum wire size now flows
-    /// into the guard. This is a plain encode↔decode roundtrip — no drift — so it
+    /// into the guard. This is a plain encode↔decode roundtrip, so it
     /// pins the fix at the codec level, not just the planner.
     #[test]
     fn zero_sized_collections_roundtrip() {

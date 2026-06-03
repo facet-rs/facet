@@ -120,7 +120,7 @@ describe("hostile input — interpreter and JIT reject identically", () => {
     );
     const value: Value = [[], [[]]];
     const wire = encode(value, selfId, recReg);
-    // Same-schema decode reconciles selfId -> selfId through the recursion blocks.
+    // Same-schema decode translates selfId -> selfId through the recursion blocks.
     expect(compile(selfId, selfId, recReg)(wire)).toEqual(value);
     expect(decode(wire, selfId, selfId, recReg)).toEqual(value);
   });

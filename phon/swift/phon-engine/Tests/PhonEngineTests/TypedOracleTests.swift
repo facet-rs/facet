@@ -13,7 +13,7 @@ import PhonSchema
 
 // A struct of mixed-alignment scalars. Swift lays x at 0, then pads to 8 for y;
 // the wire pads after x's 4 bytes to 8-align y — different layouts, identical
-// bytes, which is exactly what the typed path must reconcile.
+// bytes, which is exactly what the typed path must translate.
 private struct Point: Equatable {
     var x: UInt32
     var y: Double
@@ -632,7 +632,7 @@ func typedCompositeMatchesValueOracleAndRoundTrips() throws {
         ], construct: .inPlace))
     )
     let program = try lowerTyped(rootDesc, reg)
-    // Decode through the single reconciling path (same-schema = no skips/defaults),
+    // Decode through the single compat path (same-schema = no skips/defaults),
     // exercising lowerDecode for scalar/record/option/string/sequence/enum/dynamic.
     let decProgram = try lowerDecode(rootDesc, reg)
 

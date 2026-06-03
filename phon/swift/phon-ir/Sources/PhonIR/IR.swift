@@ -1,7 +1,7 @@
 // The intermediate representation: a decode plan lowered to a straight,
 // pre-sequenced run of `Op`s.
 //
-// Compatibility planning (in PhonEngine) reconciles a writer schema with a reader
+// Compatibility planning (in PhonEngine) translates a writer schema with a reader
 // schema into a value-shaped tree; lowering flattens that tree into a `Program`.
 // Every type-directed decision — which primitive, which field order, which fields
 // to skip or default, how enum variants map — is made once, during lowering, and

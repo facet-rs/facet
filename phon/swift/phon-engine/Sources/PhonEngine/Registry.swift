@@ -26,7 +26,7 @@ public enum CompactError: Error {
     /// A structurally malformed schema (unbound type variable, primitive carrying
     /// type arguments, …).
     case malformed(String)
-    /// Two schemas cannot be reconciled into a translation plan.
+    /// Two schemas cannot be translated by a compatibility plan.
     case incompatible(String)
     /// A decoded enum variant exists in the writer schema but not the reader.
     case writerOnlyVariant(UInt32)

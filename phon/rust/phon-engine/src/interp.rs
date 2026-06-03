@@ -9,7 +9,7 @@
 //! single result.
 //!
 //! It is the flat counterpart to `plan::exec` (which walks the `Node` tree
-//! recursively). The two must agree value-for-value; the planner's drift tests
+//! recursively). The two must agree value-for-value; the planner's compat tests
 //! assert exactly that, with `exec` as the oracle.
 //!
 //! Spec: `r[exec.interpreter-baseline]`, `r[ir.total]`.
@@ -169,7 +169,7 @@ mod tests {
         }
     }
 
-    /// No-drift roundtrip (`writer == reader`): encode with the compact codec,
+    /// Same-schema roundtrip (`writer == reader`): encode with the compact codec,
     /// decode through the lowered IR, and check the value survives and that the
     /// IR agrees with the recursive compact decoder.
     fn rt_ir(value: Value, root: SchemaId, reg: &Registry) {

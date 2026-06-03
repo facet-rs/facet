@@ -160,7 +160,7 @@ export function compiledSource(plan: Plan): string {
 // ============================================================================
 //
 // Encoding takes one schema (the local one) — there is no writer<->reader
-// reconciliation — so the encoder compiles directly from the resolved schema,
+// compat translation — so the encoder compiles directly from the resolved schema,
 // inlining the structural walk just as the decoder does. A coarse `Value` goes
 // in; compact bytes come out, byte-identical to the recursive `encode`.
 

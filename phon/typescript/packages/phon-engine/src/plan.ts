@@ -1,5 +1,5 @@
-// Compatibility planning for TypeScript: reconcile a *writer* schema with a
-// *reader* schema into a translation Plan, then decode the writer's compact
+// Compatibility planning for TypeScript: translate a *writer* schema with a
+// *reader* schema into a Plan, then decode the writer's compact
 // bytes into a reader-shaped Value. Mirrors Rust `phon-engine/src/plan.rs`.
 //
 // The plan is built from the two schemas alone, before any payload is touched
@@ -34,7 +34,7 @@ const MAX_DEPTH = 128;
 // Errors
 // ============================================================================
 
-/// Two schemas cannot be reconciled — raised while building the plan, before any
+/// Two schemas cannot be translated — raised while building the plan, before any
 /// bytes are read (mirror of Rust `CompactError::Incompatible`).
 export class IncompatibleError extends Error {
   constructor(message: string) {
@@ -103,6 +103,8 @@ export interface Plan {
   blocks: Map<bigint, Node>;
 }
 
+export type CompatDirection = "backward" | "forward" | "bidirectional" | "incompatible";
+
 // ============================================================================
 // Building the plan
 // ============================================================================
@@ -110,7 +112,7 @@ export interface Plan {
 /// Planning context: the registry, the reader schema ids on a cycle (so they lower
 /// to callable blocks rather than inline, keeping a recursive plan finite), the
 /// built block plans, and the reader ids whose block is in progress (to break a
-/// back-edge). Mirrors Rust's `RecCtx` over the reconciling walk.
+/// back-edge). Mirrors Rust's `RecCtx` over the compat walk.
 interface PlanCtx {
   reg: Registry;
   recIds: Set<bigint>;
@@ -119,7 +121,8 @@ interface PlanCtx {
 }
 
 /// Build the translation plan from `writerRoot` to `readerRoot`. Throws
-/// `IncompatibleError` if the schemas cannot be reconciled.
+/// `IncompatibleError` if the schemas cannot be translated.
+// r[impl compat.plan-first]
 export function buildPlan(writerRoot: bigint, readerRoot: bigint, reg: Registry): Plan {
   const ctx: PlanCtx = {
     reg,
@@ -136,11 +139,32 @@ export function buildPlan(writerRoot: bigint, readerRoot: bigint, reg: Registry)
   return { root, blocks: ctx.blocks };
 }
 
+/// Classify compatibility between an older and newer schema by planning both ways.
+/// This is tooling over `buildPlan`, not a decode path.
+// r[impl compat.direction]
+export function compatDirection(olderRoot: bigint, newerRoot: bigint, reg: Registry): CompatDirection {
+  const backward = canBuildPlan(olderRoot, newerRoot, reg);
+  const forward = canBuildPlan(newerRoot, olderRoot, reg);
+  if (backward && forward) return "bidirectional";
+  if (backward) return "backward";
+  if (forward) return "forward";
+  return "incompatible";
+}
+
+function canBuildPlan(writerRoot: bigint, readerRoot: bigint, reg: Registry): boolean {
+  try {
+    buildPlan(writerRoot, readerRoot, reg);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function planRef(w: SchemaRef, r: SchemaRef, ctx: PlanCtx, depth: number): Node {
   if (depth > MAX_DEPTH) throw new IncompatibleError("schema nests too deep");
   // A recursive (cyclic) reader schema lowers to a callable block: emit a
-  // `callBlock` back-edge and build the block once (its body reconciles the writer
-  // against the reader at that position — the same-schema identity in the reconciled
+  // `callBlock` back-edge and build the block once (its body translates the writer
+  // against the reader at that position — the same-schema identity in the compat
   // matrix case). (`r[ir.recursion]`)
   const rId = r.kind === "concrete" ? r.id : null;
   if (rId !== null && ctx.recIds.has(rId)) {
@@ -155,6 +179,7 @@ function planRef(w: SchemaRef, r: SchemaRef, ctx: PlanCtx, depth: number): Node 
   return planKind(ctx.reg.resolve(w), ctx.reg.resolve(r), ctx, depth);
 }
 
+// r[impl compat.type-match]
 function planKind(wk: SchemaKind, rk: SchemaKind, ctx: PlanCtx, depth: number): Node {
   if (wk.kind === "primitive" && rk.kind === "primitive") {
     if (wk.primitive !== rk.primitive) {
@@ -195,6 +220,10 @@ function planKind(wk: SchemaKind, rk: SchemaKind, ctx: PlanCtx, depth: number): 
   throw new IncompatibleError(`schema kinds differ (${wk.kind} vs ${rk.kind})`);
 }
 
+// r[impl compat.field-matching]
+// r[impl compat.skip-writer-only]
+// r[impl compat.reader-only-fields]
+// r[impl compat.defaults-are-reader-side]
 function planStruct(wFields: Field[], rFields: Field[], ctx: PlanCtx, depth: number): StructPlan {
   const readerByName = new Map(rFields.map((f) => [f.name, f]));
   const steps: Step[] = [];
@@ -211,10 +240,7 @@ function planStruct(wFields: Field[], rFields: Field[], ctx: PlanCtx, depth: num
   const defaults: string[] = [];
   for (const rf of rFields) {
     if (!matched.has(rf.name)) {
-      // An `Option<T>` reader field can always default to `None` when the writer
-      // omits it (`r[compat.reader-only-fields]`), independent of the `required`
-      // bit — a writer that added an optional field stays compatible.
-      if (rf.required && !isOptionalRef(rf.schema, ctx.reg)) {
+      if (rf.required) {
         throw new IncompatibleError(`required reader field '${rf.name}' is absent from the writer`);
       }
       defaults.push(rf.name);
@@ -223,15 +249,7 @@ function planStruct(wFields: Field[], rFields: Field[], ctx: PlanCtx, depth: num
   return { steps, defaults };
 }
 
-/** Whether a reader field's schema resolves to an `Option` (defaultable to None). */
-function isOptionalRef(ref: SchemaRef, reg: Registry): boolean {
-  try {
-    return reg.resolve(ref).kind === "option";
-  } catch {
-    return false;
-  }
-}
-
+// r[impl compat.enum]
 function planEnum(wVariants: Variant[], rVariants: Variant[], ctx: PlanCtx, depth: number): Node {
   const readerByName = new Map(rVariants.map((v) => [v.name, v]));
   const byIndex = new Map<number, VariantPlan>();

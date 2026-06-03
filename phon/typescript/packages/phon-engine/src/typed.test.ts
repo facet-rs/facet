@@ -1,7 +1,7 @@
 // The typed front door against the Rust oracle: for every well-formed corpus
 // case, decode the writer bytes into an ergonomic typed value shaped by the
 // reader schema, re-encode it through the reader schema, and assert the bytes
-// equal Rust's reconciled reader bytes. This proves the typed remap is
+// equal Rust's reader-shaped bytes. This proves the typed remap is
 // information-preserving: a vox TS peer can decode to ergonomic objects and
 // re-encode them losslessly.
 //
@@ -154,7 +154,7 @@ describe("typed front door — recursion", () => {
       ],
     };
     const wire = encodeTyped(value, treeId, recReg);
-    // Same-schema decode reconciles treeId -> treeId through the recursion blocks.
+    // Same-schema decode translates treeId -> treeId through the recursion blocks.
     const back = decodeTyped(wire, treeId, treeId, recReg);
     expect(back).toEqual(value);
   });
