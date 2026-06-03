@@ -58,6 +58,7 @@ mod tests {
     }
 
     #[test]
+    // r[verify codegen.schema-is-source-of-truth]
     fn every_schema_byte_blob_round_trips() {
         let m = module();
         assert!(!m.schemas.is_empty());
@@ -69,6 +70,8 @@ mod tests {
     }
 
     #[test]
+    // r[verify codegen.emits]
+    // r[verify codegen.schema-is-source-of-truth]
     fn typescript_renders_the_expected_shapes() {
         let ts = typescript::render(&module());
 

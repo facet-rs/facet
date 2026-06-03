@@ -47,6 +47,8 @@ const PRIMITIVES: [Primitive; 21] = [
 ];
 
 /// Render a whole [`Module`] to a single TypeScript source file.
+// r[impl codegen.emits]
+// r[impl codegen.schema-is-source-of-truth]
 #[must_use]
 pub fn render(module: &Module) -> String {
     let r = Renderer::new(module);
@@ -58,6 +60,7 @@ pub fn render(module: &Module) -> String {
 /// `export const <name> = new Registry(...)`. The arrays are name-prefixed so
 /// several registries can coexist in one module. Used by RPC codegen, which
 /// supplies its own (channel-aware) type declarations.
+// r[impl codegen.schema-is-source-of-truth]
 #[must_use]
 pub fn render_registry(module: &Module, name: &str) -> String {
     let mut out = String::new();
