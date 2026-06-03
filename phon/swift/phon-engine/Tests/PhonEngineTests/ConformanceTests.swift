@@ -69,6 +69,7 @@ private func loadCorpus() throws -> VectorFile {
 // r[verify compat.defaults-are-reader-side]
 // r[verify compat.type-match]
 // r[verify compat.enum]
+// r[verify exec.interpreter-baseline]
 @Test
 func compatConformanceCorpus() throws {
     let corpus = try loadCorpus()

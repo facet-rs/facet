@@ -65,6 +65,8 @@ function localRegistry(corpus: VectorFile, schemas: Schema[]): Registry {
 // r[verify compat.defaults-are-reader-side]
 // r[verify compat.type-match]
 // r[verify compat.enum]
+// r[verify exec.interpreter-baseline]
+// r[verify exec.jit-optional]
 describe("compat conformance corpus", () => {
   const corpus = loadCorpus();
   const reg = buildRegistry(corpus);

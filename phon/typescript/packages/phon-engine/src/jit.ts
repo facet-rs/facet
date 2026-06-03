@@ -89,6 +89,7 @@ export function jitAvailable(): boolean {
 
 /// Compile a built plan to a specialized decoder via `new Function`. Throws if
 /// codegen is unavailable (strict CSP) — use `compile` for transparent fallback.
+// r[impl exec.jit-optional]
 export function compilePlan(plan: Plan, reg: Registry): CompiledDecoder {
   const cg = new Codegen();
   const body = cg.genStmt(plan.root, "__root", 0);
@@ -112,6 +113,7 @@ export function compilePlan(plan: Plan, reg: Registry): CompiledDecoder {
 
 /// An interpreter-backed decoder over a built plan — the CSP fallback, and what
 /// `compile(..., { jit: false })` returns.
+// r[impl exec.interpreter-baseline]
 export function interpretPlan(plan: Plan, reg: Registry): CompiledDecoder {
   return (bytes: Uint8Array) => decodeWithPlan(bytes, plan, reg);
 }
@@ -126,6 +128,7 @@ const decoderCache = new WeakMap<Registry, Map<string, CompiledDecoder>>();
 /// registry. Uses the JIT when `new Function` is available, else the
 /// interpreter; pass `{ jit: true }` to require the JIT (throwing under CSP) or
 /// `{ jit: false }` to force the interpreter.
+// r[impl exec.jit-optional]
 export function compile(
   writerRoot: bigint,
   readerRoot: bigint,
