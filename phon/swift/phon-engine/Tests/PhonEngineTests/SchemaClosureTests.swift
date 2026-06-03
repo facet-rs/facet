@@ -31,9 +31,10 @@ func parseSchemaClosureRoundTripsAndMerges() throws {
         body.withUnsafeBytes { blob.put($0) }
     }
 
-    let (parsedRoot, parsedSchemas) = try parseSchemaClosure(blob.bytes)
+    let (parsedRoot, parsedSchemas, auxiliaryRoots) = try parseSchemaClosure(blob.bytes)
     #expect(parsedRoot == root)
     #expect(Set(parsedSchemas) == Set(batch), "parsed closure schemas differ")
+    #expect(auxiliaryRoots.isEmpty)
 
     // Merge onto an empty registry and confirm the root is now resolvable: encode
     // a value of P against it.
@@ -44,4 +45,21 @@ func parseSchemaClosureRoundTripsAndMerges() throws {
     ])
     let bytes = try encode(value, root, reg)
     #expect(try decode(bytes, root, reg) == value, "round-trip through merged registry failed")
+}
+
+@Test
+func parseSchemaClosureReadsAuxiliaryRoots() throws {
+    var blob = ByteSink()
+    blob.writeU64(1)
+    blob.writeU32(0)
+    blob.writeU32(1)
+    blob.writeStr("channel.arg.0.tx.element")
+    blob.writeU64(2)
+
+    let parsed = try parseSchemaClosure(blob.bytes)
+    #expect(parsed.root == SchemaId(1))
+    #expect(parsed.schemas.isEmpty)
+    #expect(parsed.auxiliaryRoots == [
+        AuxiliaryRoot(role: "channel.arg.0.tx.element", root: SchemaId(2))
+    ])
 }

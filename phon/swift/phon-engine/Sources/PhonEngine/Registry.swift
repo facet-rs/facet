@@ -87,11 +87,26 @@ public struct Registry {
     }
 }
 
-/// Parse a vox schema-closure blob into its root id and composite schemas:
+/// An additional writer root carried by the same schema binding, keyed by role.
+public struct AuxiliaryRoot: Sendable, Hashable {
+    public let role: String
+    public let root: SchemaId
+
+    public init(role: String, root: SchemaId) {
+        self.role = role
+        self.root = root
+    }
+}
+
+/// Parse a vox schema-binding blob into its primary root id and composite schemas:
 /// `[u64 root LE][u32 count LE]` then `count` schemas each as
-/// `[u32 len LE][self-describing schema bytes]`. The framing shared with Rust
-/// (`vox_phon::parse_schema_bytes`) and TypeScript (`parseSchemaClosure`).
-public func parseSchemaClosure(_ bytes: [UInt8]) throws -> (root: SchemaId, schemas: [Schema]) {
+/// `[u32 len LE][self-describing schema bytes]`, optionally followed by auxiliary
+/// roots as `[u32 count][u32 role_len][role UTF-8][u64 root]...`. The framing
+/// shared with Rust (`vox_phon::parse_schema_bytes`) and TypeScript
+/// (`parseSchemaClosure`).
+public func parseSchemaClosure(_ bytes: [UInt8]) throws -> (
+    root: SchemaId, schemas: [Schema], auxiliaryRoots: [AuxiliaryRoot]
+) {
     var r = Reader(bytes)
     let root = SchemaId(try r.readU64())
     let count = try r.readU32()
@@ -102,7 +117,22 @@ public func parseSchemaClosure(_ bytes: [UInt8]) throws -> (root: SchemaId, sche
         let slice = try r.readSlice(len)
         schemas.append(try schemaFromBytes(Array(slice)))
     }
-    return (root, schemas)
+    var auxiliaryRoots: [AuxiliaryRoot] = []
+    if r.remaining > 0 {
+        let auxCount = try r.readU32()
+        auxiliaryRoots.reserveCapacity(Int(auxCount))
+        for _ in 0..<auxCount {
+            let roleLen = Int(try r.readU32())
+            let roleBytes = try r.readSlice(roleLen)
+            let role = String(decoding: roleBytes, as: UTF8.self)
+            let auxRoot = SchemaId(try r.readU64())
+            auxiliaryRoots.append(AuxiliaryRoot(role: role, root: auxRoot))
+        }
+    }
+    if r.remaining != 0 {
+        throw DecodeError.trailingBytes(r.remaining)
+    }
+    return (root, schemas, auxiliaryRoots)
 }
 
 /// A reference resolved to either a primitive or a fully type-substituted kind.
