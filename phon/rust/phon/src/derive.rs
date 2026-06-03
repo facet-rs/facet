@@ -43,6 +43,7 @@ use phon_schema::{
 /// phon's view of a Rust type, derived from its facet `Shape`: the resolved
 /// schema batch (for a [`Registry`](phon_engine::Registry)), the root schema id,
 /// and the descriptor.
+// r[impl schema-identity.closure]
 #[derive(Clone, Debug)]
 pub struct Derived {
     /// The root type's content-derived schema id.
@@ -2011,6 +2012,7 @@ mod tests {
     }
 
     #[test]
+    // r[verify schema-identity.closure]
     fn derived_nested_struct_matches_dynamic() {
         let d = of::<Outer>().unwrap();
         // Two composite schemas reachable: Outer and Pt.

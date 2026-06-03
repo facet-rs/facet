@@ -78,6 +78,8 @@ mod tag {
 // ============================================================================
 
 /// Encode a schema to self-describing bytes.
+// r[impl self-describing.bootstraps-schemas]
+// r[impl self-describing.tag-led]
 #[must_use]
 pub fn schema_to_bytes(schema: &Schema) -> Vec<u8> {
     let mut out = Vec::new();
@@ -91,6 +93,8 @@ pub fn schema_to_bytes(schema: &Schema) -> Vec<u8> {
 /// Returns a [`DecodeError`] for any malformed input — out-of-range tags,
 /// lengths beyond the buffer, excessive nesting, invalid UTF-8, or leftover
 /// bytes.
+// r[impl self-describing.bootstraps-schemas]
+// r[impl self-describing.tag-led]
 pub fn schema_from_bytes(buf: &[u8]) -> Result<Schema, DecodeError> {
     let mut r = Reader::new(buf);
     let schema = dec_schema(&mut r, 0)?;
@@ -1052,6 +1056,8 @@ pub fn extended_from_string(s: &str, primitive: Primitive) -> Result<Value, Deco
 ///
 /// # Errors
 /// [`DecodeError`] for any malformed input.
+// r[impl self-describing.tag-led]
+// r[impl self-describing.no-extra-kinds]
 pub fn read_value(r: &mut Reader) -> Result<Value, DecodeError> {
     dec_value(r, 0)
 }
@@ -1250,6 +1256,7 @@ mod tests {
     }
 
     #[test]
+    // r[verify self-describing.enum-payload]
     fn roundtrip_enum_all_payload_shapes() {
         roundtrip(&Schema {
             id: SchemaId(7),
@@ -1290,6 +1297,8 @@ mod tests {
     }
 
     #[test]
+    // r[verify self-describing.bootstraps-schemas]
+    // r[verify self-describing.tag-led]
     fn roundtrip_every_kind() {
         let r = concrete(Primitive::U32);
         let kinds = vec![
@@ -1393,6 +1402,7 @@ mod tests {
     }
 
     #[test]
+    // r[verify self-describing.tag-led]
     fn rejects_unknown_tag() {
         // Replace the leading struct tag with an undefined tag byte.
         let mut bytes = schema_to_bytes(&Schema {
@@ -1567,6 +1577,7 @@ mod tests {
     }
 
     #[test]
+    // r[verify self-describing.no-extra-kinds]
     fn value_rejects_malformed_input() {
         // unknown tag
         assert_eq!(

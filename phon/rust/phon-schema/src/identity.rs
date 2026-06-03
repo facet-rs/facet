@@ -645,6 +645,7 @@ mod tests {
     // --- Sink ---------------------------------------------------------------
 
     #[test]
+    // r[verify schema-identity.canonical-encoding]
     fn vec_sink_captures_canonical_bytes() {
         let mut buf: Vec<u8> = Vec::new();
         write_str(&mut buf, Primitive::U32.tag());
@@ -718,6 +719,7 @@ mod tests {
     // --- identity hashing ---------------------------------------------------
 
     #[test]
+    // r[verify schema-identity.content-hash]
     fn primitive_ids_are_distinct_and_stable() {
         assert_eq!(primitive_id(Primitive::U32), primitive_id(Primitive::U32));
         assert_ne!(primitive_id(Primitive::U32), primitive_id(Primitive::U64));
@@ -729,6 +731,7 @@ mod tests {
     }
 
     #[test]
+    // r[verify schema-identity.computation]
     fn struct_id_is_deterministic() {
         let a = resolve_ids(vec![point("Point", "x", "y")])[0].id;
         let b = resolve_ids(vec![point("Point", "x", "y")])[0].id;
@@ -736,6 +739,7 @@ mod tests {
     }
 
     #[test]
+    // r[verify schema-identity.canonical-encoding]
     fn name_and_field_order_matter() {
         let base = resolve_ids(vec![point("Point", "x", "y")])[0].id;
         let renamed = resolve_ids(vec![point("Vec2", "x", "y")])[0].id;
@@ -747,6 +751,7 @@ mod tests {
     }
 
     #[test]
+    // r[verify schema-identity.canonical-encoding]
     fn required_flag_is_part_of_identity() {
         let required = point("Point", "x", "y");
         let mut optional = point("Point", "x", "y");
@@ -815,6 +820,7 @@ mod tests {
     }
 
     #[test]
+    // r[verify schema-identity.computation]
     fn recursive_schema_terminates_and_is_order_independent() {
         let forward = resolve_ids(linked_list(true));
         let reversed = resolve_ids(linked_list(false));

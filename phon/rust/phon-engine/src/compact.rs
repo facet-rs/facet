@@ -40,6 +40,7 @@ const MAX_DEPTH: usize = 128;
 #[non_exhaustive]
 pub enum CompactError {
     /// A referenced schema id is not in the registry (`r[schema-identity.unknown-is-error]`).
+    // r[impl schema-identity.unknown-is-error]
     UnknownSchema(SchemaId),
     /// A kind or feature not yet implemented in this codec.
     Unsupported(&'static str),
@@ -1055,6 +1056,7 @@ mod tests {
     }
 
     #[test]
+    // r[verify schema-identity.unknown-is-error]
     fn unknown_schema_and_type_mismatch() {
         let reg = Registry::new([]);
         // u32 primitive is intrinsic; a bogus composite id is unknown.
