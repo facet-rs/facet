@@ -795,6 +795,7 @@ proptest! {
 
     /// The omnibus property: generate a writer schema + conforming value, derive
     /// a tagged drift, and assert cross-engine agreement plus the tagged outcome.
+    // r[verify ir.two-forms]
     #[test]
     fn reconciliation_matches_expectation(case in case_strategy()) {
         check_case(&case);

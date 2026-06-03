@@ -3734,6 +3734,7 @@ mod tests {
 
     // ---- Identity: writer == reader yields a skip/default-free program --------
 
+    // r[verify ir.one-vocabulary]
     #[test]
     fn compat_identity_matches_single_schema_lower() {
         // When the writer schema IS the reader schema, lower_decode must produce a

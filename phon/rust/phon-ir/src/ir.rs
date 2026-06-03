@@ -106,13 +106,16 @@ pub struct EnumArm {
 /// A lowered *typed* program: the memory side of the IR. Where [`Program`] builds
 /// a dynamic [`Value`](facet_value::Value) on a stack, a `MemProgram` moves bytes
 /// between the wire and a value's in-memory layout, at offsets the descriptor
-/// supplies (`r[ir.memory]`).
+/// supplies (`r[ir.memory]`). The same op stream is consumed by encode and decode;
+/// direction is selected by the executor, and decode-only compat ops simply never
+/// appear in encode programs.
 ///
 /// In this first cut — fixed scalars and in-place records — a whole nested
 /// `repr(Rust)` struct dissolves into a flat run of [`MemOp::Scalar`] copies at
 /// folded, base-relative offsets: no branches, the splicing `r[ir.inlining]`
 /// describes taken to its limit. Owned sequences, options, and enums (which
 /// allocate or branch at run time) extend this later.
+// r[impl ir.one-vocabulary]
 pub type MemProgram = Vec<MemOp>;
 
 /// A lowered typed program: the root op stream plus the per-schema block programs

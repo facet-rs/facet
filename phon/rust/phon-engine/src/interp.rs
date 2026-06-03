@@ -183,6 +183,8 @@ mod tests {
         );
     }
 
+    // r[verify exec.interpreter-baseline]
+    // r[verify ir.total]
     #[test]
     fn ir_roundtrips_containers() {
         let reg = Registry::new([
