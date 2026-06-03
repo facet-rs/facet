@@ -2186,6 +2186,50 @@ mod tests {
         assert_eq!(unsafe { slot.assume_init() }, t);
     }
 
+    // r[verify exec.jit-optional]
+    // r[verify ir.stencils]
+    // r[verify ir.inlining]
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn derived_recursive_jit_matches_interpreter_and_roundtrips() {
+        use phon_jit::native::{NativeDecode, NativeEncode};
+
+        let d = of::<Tree>().unwrap();
+        assert!(
+            !d.descriptor_blocks.is_empty(),
+            "a recursive type must lower to at least one block"
+        );
+        let reg = Registry::new(d.schemas.clone());
+        let lowered = typed::lower_typed(&d.descriptor, &d.descriptor_blocks, &reg).unwrap();
+
+        let t = Tree {
+            value: 1,
+            children: vec![
+                Tree {
+                    value: 2,
+                    children: vec![],
+                },
+                Tree {
+                    value: 3,
+                    children: vec![Tree {
+                        value: 4,
+                        children: vec![],
+                    }],
+                },
+            ],
+        };
+
+        let interp_bytes = unsafe { typed::encode_with(&lowered, core::ptr::from_ref(&t).cast()) };
+        let jit_bytes =
+            unsafe { NativeEncode::compile_lowered(&lowered).run(core::ptr::from_ref(&t).cast()) };
+        assert_eq!(jit_bytes, interp_bytes);
+
+        let dec = NativeDecode::compile_lowered(&lowered);
+        let mut slot = std::mem::MaybeUninit::<Tree>::uninit();
+        unsafe { dec.run(&jit_bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        assert_eq!(unsafe { slot.assume_init() }, t);
+    }
+
     #[test]
     fn compat_decode_recurses_for_a_cyclic_type() {
         // The RECONCILING decode path (`lower_decode` — the one vox's RPC args/response
@@ -4084,6 +4128,47 @@ mod tests {
         }
     }
 
+    // r[verify exec.jit-optional]
+    // r[verify ir.stencils]
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn derived_result_jit_matches_interpreter_and_roundtrips() {
+        use phon_jit::native::{NativeDecode, NativeEncode};
+
+        // `Result` as the ROOT type — the response wire shape vox uses.
+        let d = of::<Result<String, u32>>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+        let program = typed::lower(&d.descriptor, &reg).unwrap();
+        let enc = NativeEncode::compile(&program);
+        let dec = NativeDecode::compile(&program);
+
+        for r in [Ok("hi".to_string()), Err(7u32)] {
+            let interp_bytes = unsafe {
+                typed::encode(
+                    core::ptr::from_ref(&r).cast::<u8>(),
+                    &d.descriptor,
+                    &d.descriptor_blocks,
+                    &reg,
+                )
+            }
+            .unwrap();
+            let jit_bytes = unsafe { enc.run(core::ptr::from_ref(&r).cast::<u8>()) };
+            assert_eq!(jit_bytes, interp_bytes, "encode mismatch for {r:?}");
+
+            let mut slot = std::mem::MaybeUninit::<Result<String, u32>>::uninit();
+            unsafe { dec.run(&jit_bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+            assert_eq!(unsafe { slot.assume_init() }, r);
+        }
+
+        let mut slot = std::mem::MaybeUninit::<Result<String, u32>>::uninit();
+        let err =
+            unsafe { dec.run(&7u32.to_le_bytes(), slot.as_mut_ptr().cast::<u8>()) }.unwrap_err();
+        assert!(
+            matches!(err, phon_schema::DecodeError::BadVariantIndex(7)),
+            "got {err:?}"
+        );
+    }
+
     #[test]
     fn compat_result_ok_payload_field_change() {
         // The Ok payload is a struct that gains a reader-only `#[facet(default)]`
@@ -4171,6 +4256,54 @@ mod tests {
         let back = unsafe { slot.assume_init() };
         assert_eq!(back.tag, 0x55);
         assert_eq!(back.meta, meta);
+    }
+
+    // r[verify exec.jit-optional]
+    // r[verify ir.stencils]
+    // r[verify ir.memory]
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn derived_dynamic_value_field_jit_matches_interpreter_and_roundtrips() {
+        use phon_jit::native::{NativeDecode, NativeEncode};
+
+        let d = of::<DynHolder>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+        let program = typed::lower(&d.descriptor, &reg).unwrap();
+
+        let mut meta_obj = VObject::new();
+        meta_obj.insert(VString::new("service"), Value::from("hash"));
+        meta_obj.insert(VString::new("n"), Value::from(42u32));
+        let meta: Value = meta_obj.into();
+
+        let h = DynHolder {
+            tag: 0x55,
+            meta: meta.clone(),
+        };
+        let interp_bytes = unsafe {
+            typed::encode(
+                core::ptr::from_ref(&h).cast::<u8>(),
+                &d.descriptor,
+                &d.descriptor_blocks,
+                &reg,
+            )
+        }
+        .unwrap();
+        let jit_bytes =
+            unsafe { NativeEncode::compile(&program).run(core::ptr::from_ref(&h).cast::<u8>()) };
+        assert_eq!(jit_bytes, interp_bytes);
+
+        let dec = NativeDecode::compile(&program);
+        let mut slot = std::mem::MaybeUninit::<DynHolder>::uninit();
+        unsafe { dec.run(&jit_bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back.tag, 0x55);
+        assert_eq!(back.meta, meta);
+
+        let mut bad = 0x55u32.to_le_bytes().to_vec();
+        bad.push(0xFF);
+        let mut slot = std::mem::MaybeUninit::<DynHolder>::uninit();
+        let err = unsafe { dec.run(&bad, slot.as_mut_ptr().cast::<u8>()) }.unwrap_err();
+        assert!(matches!(err, phon_schema::DecodeError::UnknownTag(0xFF)));
     }
 
     #[test]
@@ -4410,5 +4543,73 @@ mod tests {
         }
         .unwrap();
         assert_eq!(unsafe { islot.assume_init() }, inner);
+    }
+
+    // r[verify exec.jit-optional]
+    // r[verify ir.stencils]
+    // r[verify ir.memory]
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn derived_opaque_field_jit_matches_interpreter_and_roundtrips() {
+        use phon_jit::native::{NativeDecode, NativeEncode};
+
+        let d = of::<Envelope>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+        let program = typed::lower(&d.descriptor, &reg).unwrap();
+
+        let inner = Inner {
+            x: 0xCAFE,
+            y: 0x1122_3344_5566_7788,
+        };
+        let inner_bytes = {
+            let di = of::<Inner>().unwrap();
+            let regi = Registry::new(di.schemas.clone());
+            unsafe {
+                typed::encode(
+                    core::ptr::from_ref(&inner).cast::<u8>(),
+                    &di.descriptor,
+                    &di.descriptor_blocks,
+                    &regi,
+                )
+            }
+            .unwrap()
+        };
+
+        let env = Envelope {
+            id: 7,
+            payload: TestPayload::Outgoing {
+                ptr: PtrConst::new(core::ptr::from_ref(&inner).cast::<u8>()),
+                shape: <Inner as Facet>::SHAPE,
+                _lt: PhantomData,
+            },
+            tag: 0x99,
+        };
+
+        let interp_bytes = unsafe {
+            typed::encode(
+                core::ptr::from_ref(&env).cast::<u8>(),
+                &d.descriptor,
+                &d.descriptor_blocks,
+                &reg,
+            )
+        }
+        .unwrap();
+        let jit_bytes =
+            unsafe { NativeEncode::compile(&program).run(core::ptr::from_ref(&env).cast::<u8>()) };
+        assert_eq!(jit_bytes, interp_bytes);
+
+        let dec = NativeDecode::compile(&program);
+        let mut slot = std::mem::MaybeUninit::<Envelope>::uninit();
+        unsafe { dec.run(&jit_bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back.id, 7);
+        assert_eq!(back.tag, 0x99);
+        let span = match back.payload {
+            TestPayload::Incoming(b) => b,
+            TestPayload::Outgoing { .. } => panic!("decode yields a borrowed span"),
+        };
+        assert_eq!(span, inner_bytes.as_slice());
+        let start = jit_bytes.as_ptr() as usize;
+        assert!((start..start + jit_bytes.len()).contains(&(span.as_ptr() as usize)));
     }
 }

@@ -15,10 +15,12 @@
 //! Spec: `r[ir.stencils]`, `r[exec.jit-optional]`.
 
 use core::sync::atomic::{AtomicUsize, Ordering};
+use std::collections::BTreeMap;
+use std::mem::MaybeUninit;
 
-use phon_ir::ir::{MemOp, MemProgram, SkipOp};
-use phon_schema::DecodeError;
+use phon_ir::ir::{Lowered, MemOp, MemProgram, SkipOp};
 use phon_schema::bytes::Reader;
+use phon_schema::{DecodeError, SchemaId, Value, read_value, write_value};
 
 // The backend-agnostic copy-and-patch substrate lives in `copypatch`: executable
 // memory (MAP_JIT + W^X + i-cache) and AArch64 relocation patching. This crate
@@ -27,11 +29,13 @@ use phon_schema::bytes::Reader;
 use copypatch::{ExecBuf, patch_branch26};
 
 use crate::stencils::{
-    BORROW, BORROW_CONT, BYTES, BYTES_CONT, BYTES_ENC, BYTES_ENC_CONT, DEFAULT, DEFAULT_CONT, DONE,
-    DONE_ENC, ENUM, ENUM_CONT, ENUM_ENC, ENUM_ENC_CONT, MAP, MAP_CONT, MAP_ENC, MAP_ENC_CONT,
-    OPTION, OPTION_CONT, OPTION_ENC, OPTION_ENC_CONT, SCALAR, SCALAR_CONT, SCALAR_ENC,
-    SCALAR_ENC_CONT, SEQUENCE, SEQUENCE_CONT, SEQUENCE_ENC, SEQUENCE_ENC_CONT, SKIPWIRE,
-    SKIPWIRE_CONT,
+    BORROW, BORROW_CONT, BYTES, BYTES_CONT, BYTES_ENC, BYTES_ENC_CONT, CALLBLOCK, CALLBLOCK_CONT,
+    CALLBLOCK_ENC, CALLBLOCK_ENC_CONT, DEFAULT, DEFAULT_CONT, DONE, DONE_ENC, DYNAMIC,
+    DYNAMIC_CONT, DYNAMIC_ENC, DYNAMIC_ENC_CONT, ENUM, ENUM_CONT, ENUM_ENC, ENUM_ENC_CONT, MAP,
+    MAP_CONT, MAP_ENC, MAP_ENC_CONT, OPAQUE, OPAQUE_CONT, OPAQUE_ENC, OPAQUE_ENC_CONT, OPTION,
+    OPTION_CONT, OPTION_ENC, OPTION_ENC_CONT, RESULT, RESULT_CONT, RESULT_ENC, RESULT_ENC_CONT,
+    SCALAR, SCALAR_CONT, SCALAR_ENC, SCALAR_ENC_CONT, SEQUENCE, SEQUENCE_CONT, SEQUENCE_ENC,
+    SEQUENCE_ENC_CONT, SKIPWIRE, SKIPWIRE_CONT,
 };
 
 /// Load the smoke stencil into JIT memory and run it: `x * 3 + 1`, computed by
@@ -59,6 +63,7 @@ struct Ctx {
     prog: *const u64,
     status: u64,
     aux: u64,
+    error: *mut (),
     alloc: unsafe extern "C" fn(usize, usize) -> *mut u8,
     dealloc: unsafe extern "C" fn(*mut u8, usize, usize),
 }
@@ -121,6 +126,61 @@ struct OptInfo {
     init_some: unsafe extern "C" fn(ctx: *const (), option: *mut u8, value: *mut u8),
     some_entry: unsafe extern "C" fn(cx: *mut Ctx),
     some_prog: *const u64,
+}
+
+/// A result op's immediates, matching `ResultInfo` in `stencils/stencils.rs` byte
+/// for byte. Reached through a `*const ResultInfo` slot in the prog stream. Like
+/// [`OptInfo`], but with two value-carrying branches and writer-schema wire
+/// indices for the Ok and Err arms.
+#[repr(C)]
+struct ResultInfo {
+    field_offset: usize,
+    ok_size: usize,
+    ok_align: usize,
+    err_size: usize,
+    err_align: usize,
+    ok_wire_index: u32,
+    err_wire_index: u32,
+    thunks_ctx: *const (),
+    init_ok: unsafe extern "C" fn(ctx: *const (), result: *mut u8, value: *mut u8),
+    init_err: unsafe extern "C" fn(ctx: *const (), result: *mut u8, value: *mut u8),
+    ok_entry: unsafe extern "C" fn(cx: *mut Ctx),
+    ok_prog: *const u64,
+    err_entry: unsafe extern "C" fn(cx: *mut Ctx),
+    err_prog: *const u64,
+}
+
+/// An opaque op's immediates, matching `OpaqueInfo` in `stencils/stencils.rs` byte
+/// for byte. Reached through a `*const OpaqueInfo` slot in the prog stream.
+#[repr(C)]
+struct OpaqueInfo {
+    field_offset: usize,
+    thunks_ctx: *const (),
+    decode:
+        unsafe extern "C" fn(ctx: *const (), bytes: *const u8, len: usize, slot: *mut u8) -> bool,
+}
+
+/// A dynamic `Value` op's immediates, matching `DynamicInfo` in
+/// `stencils/stencils.rs` byte for byte.
+#[repr(C)]
+struct DynamicInfo {
+    field_offset: usize,
+    read: unsafe extern "C" fn(
+        wire: *const u8,
+        len: usize,
+        slot: *mut u8,
+        consumed: *mut usize,
+        error: *mut (),
+    ) -> bool,
+}
+
+/// A recursive block call's immediates, matching `CallBlockInfo` in
+/// `stencils/stencils.rs` byte for byte.
+#[repr(C)]
+struct CallBlockInfo {
+    offset: usize,
+    entry: unsafe extern "C" fn(cx: *mut Ctx),
+    prog: *const u64,
 }
 
 /// An owned-map op's immediates, matching `MapInfo` in `stencils/stencils.rs` byte
@@ -244,6 +304,33 @@ unsafe extern "C" fn jit_dealloc(ptr: *mut u8, size: usize, align: usize) {
     unsafe { std::alloc::dealloc(ptr, layout) };
 }
 
+/// Decode one self-describing `Value` through the normal schema reader. Reached
+/// indirectly from the Dynamic stencil, so the copied stencil carries no relocation
+/// to `read_value`.
+unsafe extern "C" fn jit_read_value(
+    wire: *const u8,
+    len: usize,
+    slot: *mut u8,
+    consumed: *mut usize,
+    error: *mut (),
+) -> bool {
+    let bytes = unsafe { core::slice::from_raw_parts(wire, len) };
+    let mut reader = Reader::new(bytes);
+    match read_value(&mut reader) {
+        Ok(value) => {
+            unsafe {
+                core::ptr::write(slot.cast::<Value>(), value);
+                *consumed = reader.position();
+            }
+            true
+        }
+        Err(err) => {
+            unsafe { core::ptr::write(error.cast::<DecodeError>(), err) };
+            false
+        }
+    }
+}
+
 /// A JIT-compiled decoder for a [`MemProgram`]: a `MAP_JIT` page of copied
 /// stencils with their continuations patched to chain, ending at `done`. Scalars
 /// chain straight through; an owned sequence runs its element body as a
@@ -270,6 +357,17 @@ pub struct NativeDecode {
     /// One per option op: the immediates the option stencil reads through its prog
     /// slot. Same stability contract as `seq_infos`.
     opt_infos: Vec<OptInfo>,
+    /// One per result op: the immediates the result stencil reads through its prog
+    /// slot. Same stability contract as `seq_infos`.
+    result_infos: Vec<ResultInfo>,
+    /// One per opaque op: the immediates the opaque stencil reads through its prog
+    /// slot. Same stability contract as `seq_infos`.
+    opaque_infos: Vec<OpaqueInfo>,
+    /// One per dynamic op: the immediates the dynamic stencil reads through its prog
+    /// slot. Same stability contract as `seq_infos`.
+    dynamic_infos: Vec<DynamicInfo>,
+    /// One per recursive block call. Same stability contract as `seq_infos`.
+    callblock_infos: Vec<CallBlockInfo>,
     /// One per map op: the immediates the map stencil reads through its prog slot.
     /// Same stability contract as `seq_infos`.
     map_infos: Vec<MapInfo>,
@@ -301,6 +399,7 @@ pub struct NativeDecode {
 
 /// A compiled element chain: where its first stencil begins in `code`, and which
 /// `progs` entry feeds it.
+#[derive(Clone, Copy)]
 struct Chain {
     entry: usize,
     prog_index: usize,
@@ -336,6 +435,38 @@ struct OptFixup {
     prog_index: usize,
     slot: usize,
     optinfo: usize,
+}
+
+/// A result's prog slot to fill once `result_infos` is in its final home: write
+/// `&result_infos[resultinfo]` into `progs[prog_index][slot]`.
+struct ResultFixup {
+    prog_index: usize,
+    slot: usize,
+    resultinfo: usize,
+}
+
+/// An opaque field's prog slot to fill once `opaque_infos` is in its final home:
+/// write `&opaque_infos[opaqueinfo]` into `progs[prog_index][slot]`.
+struct OpaqueFixup {
+    prog_index: usize,
+    slot: usize,
+    opaqueinfo: usize,
+}
+
+/// A dynamic field's prog slot to fill once `dynamic_infos` is in its final home:
+/// write `&dynamic_infos[dynamicinfo]` into `progs[prog_index][slot]`.
+struct DynamicFixup {
+    prog_index: usize,
+    slot: usize,
+    dynamicinfo: usize,
+}
+
+/// A recursive block call's prog slot to fill once `callblock_infos` is in its
+/// final home: write `&callblock_infos[callinfo]` into `progs[prog_index][slot]`.
+struct CallBlockFixup {
+    prog_index: usize,
+    slot: usize,
+    callinfo: usize,
 }
 
 /// A map's prog slot to fill once `map_infos` is in its final home: write
@@ -397,6 +528,32 @@ struct OptInfoBuild {
     some_prog_index: usize,
 }
 
+/// A result's `ResultInfo` minus the four fields only known after the `ExecBuf`
+/// is built: the Ok/Err body entries and prog indices.
+struct ResultInfoBuild {
+    field_offset: usize,
+    ok_size: usize,
+    ok_align: usize,
+    err_size: usize,
+    err_align: usize,
+    ok_wire_index: u32,
+    err_wire_index: u32,
+    thunks_ctx: *const (),
+    init_ok: unsafe extern "C" fn(ctx: *const (), result: *mut u8, value: *mut u8),
+    init_err: unsafe extern "C" fn(ctx: *const (), result: *mut u8, value: *mut u8),
+    ok_entry_offset: usize,
+    ok_prog_index: usize,
+    err_entry_offset: usize,
+    err_prog_index: usize,
+}
+
+/// A recursive block call's `CallBlockInfo` minus the two fields known after all
+/// chains are compiled and the `ExecBuf` is built.
+struct CallBlockInfoBuild {
+    offset: usize,
+    schema: SchemaId,
+}
+
 /// A map's `MapInfo` minus the four fields only known after the `ExecBuf` is
 /// built: the key and value sub-chains' entry offsets and prog indices.
 struct MapInfoBuild {
@@ -451,6 +608,15 @@ struct Compiler {
     borrow_fixups: Vec<BorrowFixup>,
     opt_infos: Vec<OptInfoBuild>,
     opt_fixups: Vec<OptFixup>,
+    result_infos: Vec<ResultInfoBuild>,
+    result_fixups: Vec<ResultFixup>,
+    opaque_infos: Vec<OpaqueInfo>,
+    opaque_fixups: Vec<OpaqueFixup>,
+    dynamic_infos: Vec<DynamicInfo>,
+    dynamic_fixups: Vec<DynamicFixup>,
+    callblock_infos: Vec<CallBlockInfoBuild>,
+    callblock_fixups: Vec<CallBlockFixup>,
+    block_chains: BTreeMap<SchemaId, Chain>,
     map_infos: Vec<MapInfoBuild>,
     map_fixups: Vec<MapFixup>,
     enum_infos: Vec<EnumInfoBuild>,
@@ -586,6 +752,84 @@ impl Compiler {
                         optinfo,
                     });
                 }
+                MemOp::Result(r) => {
+                    self.code.extend_from_slice(RESULT);
+                    // The result stencil reads one prog slot: a `*const ResultInfo`
+                    // filled in pass 2. Reserve it and record the fixup now.
+                    let slot = self.progs[prog_index].len();
+                    self.progs[prog_index].push(0);
+                    // Compile each arm body as its own chain.
+                    let ok = self.compile_chain(&r.ok);
+                    let err = self.compile_chain(&r.err);
+                    let resultinfo = self.result_infos.len();
+                    self.result_infos.push(ResultInfoBuild {
+                        field_offset: r.field_offset,
+                        ok_size: r.ok_size,
+                        ok_align: r.ok_align,
+                        err_size: r.err_size,
+                        err_align: r.err_align,
+                        ok_wire_index: r.ok_wire_index,
+                        err_wire_index: r.err_wire_index,
+                        thunks_ctx: r.thunks.ctx,
+                        init_ok: r.thunks.init_ok,
+                        init_err: r.thunks.init_err,
+                        ok_entry_offset: ok.entry,
+                        ok_prog_index: ok.prog_index,
+                        err_entry_offset: err.entry,
+                        err_prog_index: err.prog_index,
+                    });
+                    self.result_fixups.push(ResultFixup {
+                        prog_index,
+                        slot,
+                        resultinfo,
+                    });
+                }
+                MemOp::Opaque(o) => {
+                    self.code.extend_from_slice(OPAQUE);
+                    let slot = self.progs[prog_index].len();
+                    self.progs[prog_index].push(0);
+                    let opaqueinfo = self.opaque_infos.len();
+                    self.opaque_infos.push(OpaqueInfo {
+                        field_offset: o.field_offset,
+                        thunks_ctx: o.thunks.ctx,
+                        decode: o.thunks.decode,
+                    });
+                    self.opaque_fixups.push(OpaqueFixup {
+                        prog_index,
+                        slot,
+                        opaqueinfo,
+                    });
+                }
+                MemOp::Dynamic { field_offset } => {
+                    self.code.extend_from_slice(DYNAMIC);
+                    let slot = self.progs[prog_index].len();
+                    self.progs[prog_index].push(0);
+                    let dynamicinfo = self.dynamic_infos.len();
+                    self.dynamic_infos.push(DynamicInfo {
+                        field_offset: *field_offset,
+                        read: jit_read_value,
+                    });
+                    self.dynamic_fixups.push(DynamicFixup {
+                        prog_index,
+                        slot,
+                        dynamicinfo,
+                    });
+                }
+                MemOp::CallBlock { schema, offset } => {
+                    self.code.extend_from_slice(CALLBLOCK);
+                    let slot = self.progs[prog_index].len();
+                    self.progs[prog_index].push(0);
+                    let callinfo = self.callblock_infos.len();
+                    self.callblock_infos.push(CallBlockInfoBuild {
+                        offset: *offset,
+                        schema: *schema,
+                    });
+                    self.callblock_fixups.push(CallBlockFixup {
+                        prog_index,
+                        slot,
+                        callinfo,
+                    });
+                }
                 MemOp::Enum(e) => {
                     self.code.extend_from_slice(ENUM);
                     // The enum stencil reads one prog slot: a `*const EnumInfo`
@@ -683,14 +927,6 @@ impl Compiler {
                         mapinfo,
                     });
                 }
-                MemOp::Result(_) => panic!("phon-jit: Result is interpreter-only for now"),
-                MemOp::Dynamic { .. } => {
-                    panic!("phon-jit: dynamic Value is interpreter-only for now")
-                }
-                MemOp::Opaque(_) => panic!("phon-jit: opaque fields are interpreter-only for now"),
-                MemOp::CallBlock { .. } => {
-                    panic!("phon-jit: recursion is interpreter-only for now")
-                }
             }
         }
         let done_start = self.code.len();
@@ -707,18 +943,14 @@ impl Compiler {
                 MemOp::Bytes(_) => BYTES_CONT,
                 MemOp::Borrow(_) => BORROW_CONT,
                 MemOp::Option(_) => OPTION_CONT,
+                MemOp::Result(_) => RESULT_CONT,
+                MemOp::Opaque(_) => OPAQUE_CONT,
+                MemOp::Dynamic { .. } => DYNAMIC_CONT,
+                MemOp::CallBlock { .. } => CALLBLOCK_CONT,
                 MemOp::Enum(_) => ENUM_CONT,
                 MemOp::Default(_) => DEFAULT_CONT,
                 MemOp::SkipWire(_) => SKIPWIRE_CONT,
                 MemOp::Map(_) => MAP_CONT,
-                MemOp::Result(_) => panic!("phon-jit: Result is interpreter-only for now"),
-                MemOp::Dynamic { .. } => {
-                    panic!("phon-jit: dynamic Value is interpreter-only for now")
-                }
-                MemOp::Opaque(_) => panic!("phon-jit: opaque fields are interpreter-only for now"),
-                MemOp::CallBlock { .. } => {
-                    panic!("phon-jit: recursion is interpreter-only for now")
-                }
             };
             for &rel in relocs {
                 patch_branch26(&mut self.code, op_start + rel, next);
@@ -734,6 +966,21 @@ impl NativeDecode {
     // r[impl ir.stencils]
     #[must_use]
     pub fn compile(program: &MemProgram) -> NativeDecode {
+        let blocks = BTreeMap::new();
+        Self::compile_with_blocks(program, &blocks)
+    }
+
+    /// Compile a lowered typed program, including recursive call blocks.
+    // r[impl ir.inlining]
+    #[must_use]
+    pub fn compile_lowered(lowered: &Lowered) -> NativeDecode {
+        Self::compile_with_blocks(&lowered.program, &lowered.blocks)
+    }
+
+    fn compile_with_blocks(
+        program: &MemProgram,
+        blocks: &BTreeMap<SchemaId, MemProgram>,
+    ) -> NativeDecode {
         let mut c = Compiler {
             code: Vec::new(),
             progs: Vec::new(),
@@ -745,6 +992,15 @@ impl NativeDecode {
             borrow_fixups: Vec::new(),
             opt_infos: Vec::new(),
             opt_fixups: Vec::new(),
+            result_infos: Vec::new(),
+            result_fixups: Vec::new(),
+            opaque_infos: Vec::new(),
+            opaque_fixups: Vec::new(),
+            dynamic_infos: Vec::new(),
+            dynamic_fixups: Vec::new(),
+            callblock_infos: Vec::new(),
+            callblock_fixups: Vec::new(),
+            block_chains: BTreeMap::new(),
             map_infos: Vec::new(),
             map_fixups: Vec::new(),
             enum_infos: Vec::new(),
@@ -755,6 +1011,10 @@ impl NativeDecode {
             skip_fixups: Vec::new(),
         };
         let top = c.compile_chain(program);
+        for (schema, block) in blocks {
+            let chain = c.compile_chain(block);
+            c.block_chains.insert(*schema, chain);
+        }
 
         // The code layout is final; make it executable. Pointers into it are now
         // stable for the lifetime of the `ExecBuf`.
@@ -802,6 +1062,51 @@ impl NativeDecode {
                 some_entry,
                 // Bound below, once `progs` is owned by `NativeDecode`.
                 some_prog: core::ptr::null(),
+            });
+        }
+
+        // Materialize the `ResultInfo`s now that the code base is known. Both arm
+        // entries are `ExecBuf`-relative; the progs are bound below once `progs`
+        // is owned by `NativeDecode`.
+        let mut result_infos: Vec<ResultInfo> = Vec::with_capacity(c.result_infos.len());
+        for b in &c.result_infos {
+            let ok_entry: unsafe extern "C" fn(*mut Ctx) =
+                unsafe { core::mem::transmute(base.add(b.ok_entry_offset)) };
+            let err_entry: unsafe extern "C" fn(*mut Ctx) =
+                unsafe { core::mem::transmute(base.add(b.err_entry_offset)) };
+            result_infos.push(ResultInfo {
+                field_offset: b.field_offset,
+                ok_size: b.ok_size,
+                ok_align: b.ok_align,
+                err_size: b.err_size,
+                err_align: b.err_align,
+                ok_wire_index: b.ok_wire_index,
+                err_wire_index: b.err_wire_index,
+                thunks_ctx: b.thunks_ctx,
+                init_ok: b.init_ok,
+                init_err: b.init_err,
+                ok_entry,
+                ok_prog: core::ptr::null(),
+                err_entry,
+                err_prog: core::ptr::null(),
+            });
+        }
+
+        // Materialize recursive block call infos. The target entries are
+        // `ExecBuf`-relative; target progs are bound below once `progs` is owned by
+        // `NativeDecode`.
+        let mut callblock_infos: Vec<CallBlockInfo> = Vec::with_capacity(c.callblock_infos.len());
+        for b in &c.callblock_infos {
+            let chain = c
+                .block_chains
+                .get(&b.schema)
+                .expect("CallBlock references a lowered recursion block");
+            let entry: unsafe extern "C" fn(*mut Ctx) =
+                unsafe { core::mem::transmute(base.add(chain.entry)) };
+            callblock_infos.push(CallBlockInfo {
+                offset: b.offset,
+                entry,
+                prog: core::ptr::null(),
             });
         }
 
@@ -891,6 +1196,10 @@ impl NativeDecode {
             // The borrow infos carry no `ExecBuf`-relative fields either.
             borrow_infos: c.borrow_infos,
             opt_infos,
+            result_infos,
+            opaque_infos: c.opaque_infos,
+            dynamic_infos: c.dynamic_infos,
+            callblock_infos,
             map_infos,
             enum_infos,
             enum_variants,
@@ -940,6 +1249,37 @@ impl NativeDecode {
         }
         for f in &c.opt_fixups {
             let ptr: *const OptInfo = &nd.opt_infos[f.optinfo];
+            nd.progs[f.prog_index][f.slot] = ptr as u64;
+        }
+        // Bind each result's Ok/Err body progs and its prog slot to the `ResultInfo`.
+        for (b, info) in c.result_infos.iter().zip(nd.result_infos.iter_mut()) {
+            info.ok_prog = nd.progs[b.ok_prog_index].as_ptr();
+            info.err_prog = nd.progs[b.err_prog_index].as_ptr();
+        }
+        for f in &c.result_fixups {
+            let ptr: *const ResultInfo = &nd.result_infos[f.resultinfo];
+            nd.progs[f.prog_index][f.slot] = ptr as u64;
+        }
+        // Bind each opaque field's prog slot to its `OpaqueInfo`.
+        for f in &c.opaque_fixups {
+            let ptr: *const OpaqueInfo = &nd.opaque_infos[f.opaqueinfo];
+            nd.progs[f.prog_index][f.slot] = ptr as u64;
+        }
+        // Bind each dynamic field's prog slot to its `DynamicInfo`.
+        for f in &c.dynamic_fixups {
+            let ptr: *const DynamicInfo = &nd.dynamic_infos[f.dynamicinfo];
+            nd.progs[f.prog_index][f.slot] = ptr as u64;
+        }
+        // Bind each recursive call's target prog and prog slot.
+        for (b, info) in c.callblock_infos.iter().zip(nd.callblock_infos.iter_mut()) {
+            let chain = c
+                .block_chains
+                .get(&b.schema)
+                .expect("CallBlock references a lowered recursion block");
+            info.prog = nd.progs[chain.prog_index].as_ptr();
+        }
+        for f in &c.callblock_fixups {
+            let ptr: *const CallBlockInfo = &nd.callblock_infos[f.callinfo];
             nd.progs[f.prog_index][f.slot] = ptr as u64;
         }
         // Bind each map's key and value sub-chain progs, then its prog slot to the
@@ -999,6 +1339,7 @@ impl NativeDecode {
     /// [`DecodeError`] for truncated or trailing input.
     pub unsafe fn run(&self, bytes: &[u8], base: *mut u8) -> Result<(), DecodeError> {
         let start = bytes.as_ptr();
+        let mut direct_error = MaybeUninit::<DecodeError>::uninit();
         let mut ctx = Ctx {
             wire: start,
             wire_start: start,
@@ -1007,6 +1348,7 @@ impl NativeDecode {
             prog: self.progs[self.entry_prog].as_ptr(),
             status: 0,
             aux: 0,
+            error: direct_error.as_mut_ptr().cast::<()>(),
             alloc: jit_alloc,
             dealloc: jit_dealloc,
         };
@@ -1030,6 +1372,10 @@ impl NativeDecode {
                 // A repeated map key collapsed two entries into one (the post-loop
                 // `len != count` check) — the interpreter's `DuplicateKey`.
                 6 => return Err(DecodeError::DuplicateKey),
+                // An opaque adapter rejected its borrowed byte span.
+                7 => return Err(DecodeError::Malformed("opaque adapter rejected input")),
+                // A helper wrote the exact error into the direct-error slot.
+                8 => return Err(unsafe { direct_error.assume_init() }),
                 // Anything else is a truncation/bounds failure.
                 _ => {}
             }
@@ -1109,6 +1455,51 @@ struct EncOptInfo {
     some_prog: *const u64,
 }
 
+/// An encode result op's immediates, matching `EncResultInfo` in
+/// `stencils/stencils.rs` byte for byte. Reached through a `*const EncResultInfo`
+/// slot in the prog stream; carries two `ExecBuf`-relative arm chains.
+#[repr(C)]
+struct EncResultInfo {
+    field_offset: usize,
+    ok_wire_index: u32,
+    err_wire_index: u32,
+    thunks_ctx: *const (),
+    is_ok: unsafe extern "C" fn(ctx: *const (), result: *const u8) -> bool,
+    get_ok: unsafe extern "C" fn(ctx: *const (), result: *const u8) -> *const u8,
+    get_err: unsafe extern "C" fn(ctx: *const (), result: *const u8) -> *const u8,
+    ok_entry: unsafe extern "C" fn(cx: *mut EncCtx),
+    ok_prog: *const u64,
+    err_entry: unsafe extern "C" fn(cx: *mut EncCtx),
+    err_prog: *const u64,
+}
+
+/// An encode opaque op's immediates, matching `EncOpaqueInfo` in
+/// `stencils/stencils.rs` byte for byte. Reached through a `*const EncOpaqueInfo`
+/// slot in the prog stream.
+#[repr(C)]
+struct EncOpaqueInfo {
+    field_offset: usize,
+    thunks_ctx: *const (),
+    encode: unsafe extern "C" fn(ctx: *const (), field: *const u8, out: *mut Vec<u8>),
+}
+
+/// An encode dynamic `Value` op's immediates, matching `EncDynamicInfo` in
+/// `stencils/stencils.rs` byte for byte.
+#[repr(C)]
+struct EncDynamicInfo {
+    field_offset: usize,
+    write: unsafe extern "C" fn(value: *const u8, out: *mut Vec<u8>),
+}
+
+/// An encode recursive block call's immediates, matching `EncCallBlockInfo` in
+/// `stencils/stencils.rs` byte for byte.
+#[repr(C)]
+struct EncCallBlockInfo {
+    offset: usize,
+    entry: unsafe extern "C" fn(cx: *mut EncCtx),
+    prog: *const u64,
+}
+
 /// An encode owned-map op's immediates, matching `EncMapInfo` in
 /// `stencils/stencils.rs` byte for byte. Reached through a `*const EncMapInfo` slot
 /// in the prog stream; carries TWO `ExecBuf`-relative sub-chain (entry, prog) pairs
@@ -1181,6 +1572,14 @@ unsafe extern "C" fn jit_grow(cx: *mut EncCtx, needed: usize) {
     c.out_cap = v.capacity();
 }
 
+/// Encode one self-describing `Value` through the normal schema writer. Reached
+/// indirectly from the Dynamic encode stencil.
+unsafe extern "C" fn jit_write_value(value: *const u8, out: *mut Vec<u8>) {
+    let value = unsafe { &*value.cast::<Value>() };
+    let out = unsafe { &mut *out };
+    write_value(out, value).expect("dynamic value is encodable by the self-describing codec");
+}
+
 /// A JIT-compiled encoder for a [`MemProgram`]: a `MAP_JIT` page of copied encode
 /// stencils with their continuations patched to chain, ending at `done`. The
 /// mirror of [`NativeDecode`] — scalars chain straight through; an owned sequence
@@ -1201,6 +1600,14 @@ pub struct NativeEncode {
     bytes_infos: Vec<EncBytesInfo>,
     /// One per option op. Same stability contract as `seq_infos`.
     opt_infos: Vec<EncOptInfo>,
+    /// One per result op. Same stability contract as `seq_infos`.
+    result_infos: Vec<EncResultInfo>,
+    /// One per opaque op. Same stability contract as `seq_infos`.
+    opaque_infos: Vec<EncOpaqueInfo>,
+    /// One per dynamic op. Same stability contract as `seq_infos`.
+    dynamic_infos: Vec<EncDynamicInfo>,
+    /// One per recursive block call. Same stability contract as `seq_infos`.
+    callblock_infos: Vec<EncCallBlockInfo>,
     /// One per map op. Same stability contract as `seq_infos`.
     map_infos: Vec<EncMapInfo>,
     /// One per enum op. Same stability contract as `seq_infos`.
@@ -1234,6 +1641,22 @@ struct EncOptInfoBuild {
     get_value: unsafe extern "C" fn(ctx: *const (), option: *const u8) -> *const u8,
     some_entry_offset: usize,
     some_prog_index: usize,
+}
+
+/// An encode result's `EncResultInfo` minus the four `ExecBuf`-relative fields:
+/// the Ok/Err arm entries and prog indices.
+struct EncResultInfoBuild {
+    field_offset: usize,
+    ok_wire_index: u32,
+    err_wire_index: u32,
+    thunks_ctx: *const (),
+    is_ok: unsafe extern "C" fn(ctx: *const (), result: *const u8) -> bool,
+    get_ok: unsafe extern "C" fn(ctx: *const (), result: *const u8) -> *const u8,
+    get_err: unsafe extern "C" fn(ctx: *const (), result: *const u8) -> *const u8,
+    ok_entry_offset: usize,
+    ok_prog_index: usize,
+    err_entry_offset: usize,
+    err_prog_index: usize,
 }
 
 /// An encode map's `EncMapInfo` minus the four `ExecBuf`-relative fields: the key
@@ -1284,6 +1707,15 @@ struct EncCompiler {
     bytes_fixups: Vec<BytesFixup>,
     opt_infos: Vec<EncOptInfoBuild>,
     opt_fixups: Vec<OptFixup>,
+    result_infos: Vec<EncResultInfoBuild>,
+    result_fixups: Vec<ResultFixup>,
+    opaque_infos: Vec<EncOpaqueInfo>,
+    opaque_fixups: Vec<OpaqueFixup>,
+    dynamic_infos: Vec<EncDynamicInfo>,
+    dynamic_fixups: Vec<DynamicFixup>,
+    callblock_infos: Vec<CallBlockInfoBuild>,
+    callblock_fixups: Vec<CallBlockFixup>,
+    block_chains: BTreeMap<SchemaId, Chain>,
     map_infos: Vec<EncMapInfoBuild>,
     map_fixups: Vec<MapFixup>,
     enum_infos: Vec<EncEnumInfoBuild>,
@@ -1399,6 +1831,78 @@ impl EncCompiler {
                         optinfo,
                     });
                 }
+                MemOp::Result(r) => {
+                    self.code.extend_from_slice(RESULT_ENC);
+                    let slot = self.progs[prog_index].len();
+                    self.progs[prog_index].push(0);
+                    let ok = self.compile_chain(&r.ok);
+                    let err = self.compile_chain(&r.err);
+                    let resultinfo = self.result_infos.len();
+                    self.result_infos.push(EncResultInfoBuild {
+                        field_offset: r.field_offset,
+                        ok_wire_index: r.ok_wire_index,
+                        err_wire_index: r.err_wire_index,
+                        thunks_ctx: r.thunks.ctx,
+                        is_ok: r.thunks.is_ok,
+                        get_ok: r.thunks.get_ok,
+                        get_err: r.thunks.get_err,
+                        ok_entry_offset: ok.entry,
+                        ok_prog_index: ok.prog_index,
+                        err_entry_offset: err.entry,
+                        err_prog_index: err.prog_index,
+                    });
+                    self.result_fixups.push(ResultFixup {
+                        prog_index,
+                        slot,
+                        resultinfo,
+                    });
+                }
+                MemOp::Opaque(o) => {
+                    self.code.extend_from_slice(OPAQUE_ENC);
+                    let slot = self.progs[prog_index].len();
+                    self.progs[prog_index].push(0);
+                    let opaqueinfo = self.opaque_infos.len();
+                    self.opaque_infos.push(EncOpaqueInfo {
+                        field_offset: o.field_offset,
+                        thunks_ctx: o.thunks.ctx,
+                        encode: o.thunks.encode,
+                    });
+                    self.opaque_fixups.push(OpaqueFixup {
+                        prog_index,
+                        slot,
+                        opaqueinfo,
+                    });
+                }
+                MemOp::Dynamic { field_offset } => {
+                    self.code.extend_from_slice(DYNAMIC_ENC);
+                    let slot = self.progs[prog_index].len();
+                    self.progs[prog_index].push(0);
+                    let dynamicinfo = self.dynamic_infos.len();
+                    self.dynamic_infos.push(EncDynamicInfo {
+                        field_offset: *field_offset,
+                        write: jit_write_value,
+                    });
+                    self.dynamic_fixups.push(DynamicFixup {
+                        prog_index,
+                        slot,
+                        dynamicinfo,
+                    });
+                }
+                MemOp::CallBlock { schema, offset } => {
+                    self.code.extend_from_slice(CALLBLOCK_ENC);
+                    let slot = self.progs[prog_index].len();
+                    self.progs[prog_index].push(0);
+                    let callinfo = self.callblock_infos.len();
+                    self.callblock_infos.push(CallBlockInfoBuild {
+                        offset: *offset,
+                        schema: *schema,
+                    });
+                    self.callblock_fixups.push(CallBlockFixup {
+                        prog_index,
+                        slot,
+                        callinfo,
+                    });
+                }
                 MemOp::Enum(e) => {
                     self.code.extend_from_slice(ENUM_ENC);
                     let slot = self.progs[prog_index].len();
@@ -1454,14 +1958,6 @@ impl EncCompiler {
                 MemOp::SkipWire(_) | MemOp::Default(_) => {
                     panic!("phon-jit: compat skip/default are interpreter-only for now")
                 }
-                MemOp::Result(_) => panic!("phon-jit: Result is interpreter-only for now"),
-                MemOp::Dynamic { .. } => {
-                    panic!("phon-jit: dynamic Value is interpreter-only for now")
-                }
-                MemOp::Opaque(_) => panic!("phon-jit: opaque fields are interpreter-only for now"),
-                MemOp::CallBlock { .. } => {
-                    panic!("phon-jit: recursion is interpreter-only for now")
-                }
             }
         }
         let done_start = self.code.len();
@@ -1474,18 +1970,14 @@ impl EncCompiler {
                 MemOp::Sequence(_) => SEQUENCE_ENC_CONT,
                 MemOp::Bytes(_) | MemOp::Borrow(_) => BYTES_ENC_CONT,
                 MemOp::Option(_) => OPTION_ENC_CONT,
+                MemOp::Result(_) => RESULT_ENC_CONT,
+                MemOp::Opaque(_) => OPAQUE_ENC_CONT,
+                MemOp::Dynamic { .. } => DYNAMIC_ENC_CONT,
+                MemOp::CallBlock { .. } => CALLBLOCK_ENC_CONT,
                 MemOp::Enum(_) => ENUM_ENC_CONT,
                 MemOp::Map(_) => MAP_ENC_CONT,
                 MemOp::SkipWire(_) | MemOp::Default(_) => {
                     unreachable!("phon-jit: compat skip/default are interpreter-only for now")
-                }
-                MemOp::Result(_) => panic!("phon-jit: Result is interpreter-only for now"),
-                MemOp::Dynamic { .. } => {
-                    panic!("phon-jit: dynamic Value is interpreter-only for now")
-                }
-                MemOp::Opaque(_) => panic!("phon-jit: opaque fields are interpreter-only for now"),
-                MemOp::CallBlock { .. } => {
-                    panic!("phon-jit: recursion is interpreter-only for now")
                 }
             };
             for &rel in relocs {
@@ -1502,6 +1994,21 @@ impl NativeEncode {
     // r[impl ir.stencils]
     #[must_use]
     pub fn compile(program: &MemProgram) -> NativeEncode {
+        let blocks = BTreeMap::new();
+        Self::compile_with_blocks(program, &blocks)
+    }
+
+    /// Compile a lowered typed encode program, including recursive call blocks.
+    // r[impl ir.inlining]
+    #[must_use]
+    pub fn compile_lowered(lowered: &Lowered) -> NativeEncode {
+        Self::compile_with_blocks(&lowered.program, &lowered.blocks)
+    }
+
+    fn compile_with_blocks(
+        program: &MemProgram,
+        blocks: &BTreeMap<SchemaId, MemProgram>,
+    ) -> NativeEncode {
         let mut c = EncCompiler {
             code: Vec::new(),
             progs: Vec::new(),
@@ -1511,12 +2018,25 @@ impl NativeEncode {
             bytes_fixups: Vec::new(),
             opt_infos: Vec::new(),
             opt_fixups: Vec::new(),
+            result_infos: Vec::new(),
+            result_fixups: Vec::new(),
+            opaque_infos: Vec::new(),
+            opaque_fixups: Vec::new(),
+            dynamic_infos: Vec::new(),
+            dynamic_fixups: Vec::new(),
+            callblock_infos: Vec::new(),
+            callblock_fixups: Vec::new(),
+            block_chains: BTreeMap::new(),
             map_infos: Vec::new(),
             map_fixups: Vec::new(),
             enum_infos: Vec::new(),
             enum_fixups: Vec::new(),
         };
         let top = c.compile_chain(program);
+        for (schema, block) in blocks {
+            let chain = c.compile_chain(block);
+            c.block_chains.insert(*schema, chain);
+        }
 
         let buf = ExecBuf::new(&c.code);
         let base = buf.as_ptr();
@@ -1551,6 +2071,47 @@ impl NativeEncode {
                 get_value: b.get_value,
                 some_entry,
                 some_prog: core::ptr::null(),
+            });
+        }
+
+        // Materialize the `EncResultInfo`s (arm entries are `ExecBuf`-relative;
+        // arm progs are bound below).
+        let mut result_infos: Vec<EncResultInfo> = Vec::with_capacity(c.result_infos.len());
+        for b in &c.result_infos {
+            let ok_entry: unsafe extern "C" fn(*mut EncCtx) =
+                unsafe { core::mem::transmute(base.add(b.ok_entry_offset)) };
+            let err_entry: unsafe extern "C" fn(*mut EncCtx) =
+                unsafe { core::mem::transmute(base.add(b.err_entry_offset)) };
+            result_infos.push(EncResultInfo {
+                field_offset: b.field_offset,
+                ok_wire_index: b.ok_wire_index,
+                err_wire_index: b.err_wire_index,
+                thunks_ctx: b.thunks_ctx,
+                is_ok: b.is_ok,
+                get_ok: b.get_ok,
+                get_err: b.get_err,
+                ok_entry,
+                ok_prog: core::ptr::null(),
+                err_entry,
+                err_prog: core::ptr::null(),
+            });
+        }
+
+        // Materialize recursive encode block call infos. Target progs are bound
+        // below once `progs` is owned by `NativeEncode`.
+        let mut callblock_infos: Vec<EncCallBlockInfo> =
+            Vec::with_capacity(c.callblock_infos.len());
+        for b in &c.callblock_infos {
+            let chain = c
+                .block_chains
+                .get(&b.schema)
+                .expect("CallBlock references a lowered recursion block");
+            let entry: unsafe extern "C" fn(*mut EncCtx) =
+                unsafe { core::mem::transmute(base.add(chain.entry)) };
+            callblock_infos.push(EncCallBlockInfo {
+                offset: b.offset,
+                entry,
+                prog: core::ptr::null(),
             });
         }
 
@@ -1612,6 +2173,10 @@ impl NativeEncode {
             // Move the byte-run infos into their final home; no further binding.
             bytes_infos: c.bytes_infos,
             opt_infos,
+            result_infos,
+            opaque_infos: c.opaque_infos,
+            dynamic_infos: c.dynamic_infos,
+            callblock_infos,
             map_infos,
             enum_infos,
             enum_variants,
@@ -1636,6 +2201,37 @@ impl NativeEncode {
         }
         for f in &c.opt_fixups {
             let ptr: *const EncOptInfo = &ne.opt_infos[f.optinfo];
+            ne.progs[f.prog_index][f.slot] = ptr as u64;
+        }
+        // Bind each result's Ok/Err arm progs and its prog slot to the `EncResultInfo`.
+        for (b, info) in c.result_infos.iter().zip(ne.result_infos.iter_mut()) {
+            info.ok_prog = ne.progs[b.ok_prog_index].as_ptr();
+            info.err_prog = ne.progs[b.err_prog_index].as_ptr();
+        }
+        for f in &c.result_fixups {
+            let ptr: *const EncResultInfo = &ne.result_infos[f.resultinfo];
+            ne.progs[f.prog_index][f.slot] = ptr as u64;
+        }
+        // Bind each opaque field's prog slot to the `EncOpaqueInfo`.
+        for f in &c.opaque_fixups {
+            let ptr: *const EncOpaqueInfo = &ne.opaque_infos[f.opaqueinfo];
+            ne.progs[f.prog_index][f.slot] = ptr as u64;
+        }
+        // Bind each dynamic field's prog slot to the `EncDynamicInfo`.
+        for f in &c.dynamic_fixups {
+            let ptr: *const EncDynamicInfo = &ne.dynamic_infos[f.dynamicinfo];
+            ne.progs[f.prog_index][f.slot] = ptr as u64;
+        }
+        // Bind each recursive call's target prog and prog slot.
+        for (b, info) in c.callblock_infos.iter().zip(ne.callblock_infos.iter_mut()) {
+            let chain = c
+                .block_chains
+                .get(&b.schema)
+                .expect("CallBlock references a lowered recursion block");
+            info.prog = ne.progs[chain.prog_index].as_ptr();
+        }
+        for f in &c.callblock_fixups {
+            let ptr: *const EncCallBlockInfo = &ne.callblock_infos[f.callinfo];
             ne.progs[f.prog_index][f.slot] = ptr as u64;
         }
         // Bind each map's key and value sub-chain progs, then its prog slot to the

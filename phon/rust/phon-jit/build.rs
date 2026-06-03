@@ -28,6 +28,10 @@ const SYMBOLS: &[&str] = &[
     "phon_stencil_bytes",
     "phon_stencil_borrow",
     "phon_stencil_option",
+    "phon_stencil_result",
+    "phon_stencil_opaque",
+    "phon_stencil_dynamic",
+    "phon_stencil_callblock",
     "phon_stencil_map",
     "phon_stencil_enum",
     "phon_stencil_default",
@@ -37,6 +41,10 @@ const SYMBOLS: &[&str] = &[
     "phon_stencil_sequence_enc",
     "phon_stencil_bytes_enc",
     "phon_stencil_option_enc",
+    "phon_stencil_result_enc",
+    "phon_stencil_opaque_enc",
+    "phon_stencil_dynamic_enc",
+    "phon_stencil_callblock_enc",
     "phon_stencil_map_enc",
     "phon_stencil_enum_enc",
     "phon_stencil_done_enc",
@@ -101,6 +109,10 @@ fn emit_arm64_macos(out: &Path, generated: &Path) {
     let bytes_dec = get("phon_stencil_bytes", "phon_cont");
     let borrow = get("phon_stencil_borrow", "phon_cont");
     let option = get("phon_stencil_option", "phon_cont");
+    let result = get("phon_stencil_result", "phon_cont");
+    let opaque = get("phon_stencil_opaque", "phon_cont");
+    let dynamic = get("phon_stencil_dynamic", "phon_cont");
+    let callblock = get("phon_stencil_callblock", "phon_cont");
     let map_dec = get("phon_stencil_map", "phon_cont");
     let enum_dec = get("phon_stencil_enum", "phon_cont");
     let default = get("phon_stencil_default", "phon_cont");
@@ -110,6 +122,10 @@ fn emit_arm64_macos(out: &Path, generated: &Path) {
     let sequence_enc = get("phon_stencil_sequence_enc", "phon_econt");
     let bytes_enc = get("phon_stencil_bytes_enc", "phon_econt");
     let option_enc = get("phon_stencil_option_enc", "phon_econt");
+    let result_enc = get("phon_stencil_result_enc", "phon_econt");
+    let opaque_enc = get("phon_stencil_opaque_enc", "phon_econt");
+    let dynamic_enc = get("phon_stencil_dynamic_enc", "phon_econt");
+    let callblock_enc = get("phon_stencil_callblock_enc", "phon_econt");
     let map_enc = get("phon_stencil_map_enc", "phon_econt");
     let enum_enc = get("phon_stencil_enum_enc", "phon_econt");
     let done_enc = get("phon_stencil_done_enc", "phon_econt");
@@ -164,6 +180,34 @@ fn emit_arm64_macos(out: &Path, generated: &Path) {
         &option,
     );
     emit_cont(&mut s, "OPTION_CONT", "OPTION", &option);
+    emit(
+        &mut s,
+        "RESULT",
+        "`phon_stencil_result`: decode one `Result<T, E>` (Ok/Err branch); arm bodies via `ResultInfo` entries.",
+        &result,
+    );
+    emit_cont(&mut s, "RESULT_CONT", "RESULT", &result);
+    emit(
+        &mut s,
+        "OPAQUE",
+        "`phon_stencil_opaque`: decode one opaque adapter field (length-prefixed bytes); thunk builds value.",
+        &opaque,
+    );
+    emit_cont(&mut s, "OPAQUE_CONT", "OPAQUE", &opaque);
+    emit(
+        &mut s,
+        "DYNAMIC",
+        "`phon_stencil_dynamic`: decode one self-describing `Value`; helper preserves exact decode errors.",
+        &dynamic,
+    );
+    emit_cont(&mut s, "DYNAMIC_CONT", "DYNAMIC", &dynamic);
+    emit(
+        &mut s,
+        "CALLBLOCK",
+        "`phon_stencil_callblock`: call a precompiled recursive decode block.",
+        &callblock,
+    );
+    emit_cont(&mut s, "CALLBLOCK_CONT", "CALLBLOCK", &callblock);
     emit(
         &mut s,
         "MAP",
@@ -221,6 +265,39 @@ fn emit_arm64_macos(out: &Path, generated: &Path) {
         &option_enc,
     );
     emit_cont(&mut s, "OPTION_ENC_CONT", "OPTION_ENC", &option_enc);
+    emit(
+        &mut s,
+        "RESULT_ENC",
+        "`phon_stencil_result_enc`: encode one `Result<T, E>` (Ok/Err branch); arm bodies via `EncResultInfo` entries.",
+        &result_enc,
+    );
+    emit_cont(&mut s, "RESULT_ENC_CONT", "RESULT_ENC", &result_enc);
+    emit(
+        &mut s,
+        "OPAQUE_ENC",
+        "`phon_stencil_opaque_enc`: encode one opaque adapter field (length-prefixed bytes); thunk appends inner bytes.",
+        &opaque_enc,
+    );
+    emit_cont(&mut s, "OPAQUE_ENC_CONT", "OPAQUE_ENC", &opaque_enc);
+    emit(
+        &mut s,
+        "DYNAMIC_ENC",
+        "`phon_stencil_dynamic_enc`: encode one self-describing `Value`; helper appends bytes.",
+        &dynamic_enc,
+    );
+    emit_cont(&mut s, "DYNAMIC_ENC_CONT", "DYNAMIC_ENC", &dynamic_enc);
+    emit(
+        &mut s,
+        "CALLBLOCK_ENC",
+        "`phon_stencil_callblock_enc`: call a precompiled recursive encode block.",
+        &callblock_enc,
+    );
+    emit_cont(
+        &mut s,
+        "CALLBLOCK_ENC_CONT",
+        "CALLBLOCK_ENC",
+        &callblock_enc,
+    );
     emit(
         &mut s,
         "MAP_ENC",

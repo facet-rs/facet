@@ -43,11 +43,14 @@ pub struct Ctx {
     /// 2 = content validation failed (e.g. non-UTF-8 `String`), 3 = bad `Option`
     /// presence byte (the byte is in `aux`), 4 = unmatched enum wire index (the
     /// index is in `aux`), 5 = writer-only enum variant (the index is in `aux`),
-    /// 6 = duplicate map key.
+    /// 6 = duplicate map key, 7 = opaque adapter rejected input.
     pub status: u64,
     /// Auxiliary value carried alongside a rejection `status`: the bad presence
     /// byte (`status == 3`) or the unmatched enum wire index (`status == 4`).
     pub aux: u64,
+    /// Optional caller-owned error slot. `status == 8` means a helper wrote the
+    /// exact `DecodeError` here.
+    pub error: *mut (),
     /// Allocate `size` bytes aligned to `align` with the global Rust allocator.
     /// Returns null on `size == 0` (the caller substitutes a dangling pointer).
     pub alloc: unsafe extern "C" fn(size: usize, align: usize) -> *mut u8,
@@ -148,6 +151,79 @@ pub struct OptInfo {
     pub some_entry: unsafe extern "C" fn(cx: *mut Ctx),
     /// The some-body's immediate stream (reset into `Ctx.prog` for the inner).
     pub some_prog: *const u64,
+}
+
+/// A result op's immediates, reached through a `*const ResultInfo` slot in
+/// `Ctx.prog`. Mirrors `ResultOp`: a `u32` wire index dispatches to the Ok or Err
+/// sub-chain, each decoded into scratch and moved into the uninitialized
+/// `Result<T, E>` through the bound result thunk.
+#[repr(C)]
+pub struct ResultInfo {
+    /// Where the `Result<T, E>` handle lives, relative to `base`.
+    pub field_offset: usize,
+    /// The Ok payload's scratch size and alignment.
+    pub ok_size: usize,
+    pub ok_align: usize,
+    /// The Err payload's scratch size and alignment.
+    pub err_size: usize,
+    pub err_align: usize,
+    /// Wire indices for the Ok and Err arms (single-schema or compat writer indices).
+    pub ok_wire_index: u32,
+    pub err_wire_index: u32,
+    /// Opaque per-type context passed to the thunks.
+    pub thunks_ctx: *const (),
+    /// Initialize the result at `result` to `Ok(*value)`.
+    pub init_ok: unsafe extern "C" fn(ctx: *const (), result: *mut u8, value: *mut u8),
+    /// Initialize the result at `result` to `Err(*value)`.
+    pub init_err: unsafe extern "C" fn(ctx: *const (), result: *mut u8, value: *mut u8),
+    /// Entry/prog for the Ok arm body.
+    pub ok_entry: unsafe extern "C" fn(cx: *mut Ctx),
+    pub ok_prog: *const u64,
+    /// Entry/prog for the Err arm body.
+    pub err_entry: unsafe extern "C" fn(cx: *mut Ctx),
+    pub err_prog: *const u64,
+}
+
+/// An opaque op's immediates, reached through a `*const OpaqueInfo` slot in
+/// `Ctx.prog`. Mirrors `OpaqueOp`: the stencil frames a length-prefixed byte span
+/// and the adapter thunk builds the field value from a borrowed slice.
+#[repr(C)]
+pub struct OpaqueInfo {
+    /// Where the opaque field lives, relative to `base`.
+    pub field_offset: usize,
+    /// Opaque per-field context passed to the thunk.
+    pub thunks_ctx: *const (),
+    /// Build the opaque value at `slot` from `bytes[..len]`.
+    pub decode:
+        unsafe extern "C" fn(ctx: *const (), bytes: *const u8, len: usize, slot: *mut u8) -> bool,
+}
+
+/// A dynamic `Value` op's immediates, reached through a `*const DynamicInfo` slot
+/// in `Ctx.prog`. The helper owns the self-describing decoder and writes the exact
+/// `DecodeError` through `Ctx.error` on failure.
+#[repr(C)]
+pub struct DynamicInfo {
+    /// Where the `Value` lives, relative to `base`.
+    pub field_offset: usize,
+    /// Decode one self-describing value from `wire[..len]` into `slot`.
+    pub read: unsafe extern "C" fn(
+        wire: *const u8,
+        len: usize,
+        slot: *mut u8,
+        consumed: *mut usize,
+        error: *mut (),
+    ) -> bool,
+}
+
+/// A recursive block call's immediates, reached through a `*const CallBlockInfo`
+/// slot in `Ctx.prog`.
+#[repr(C)]
+pub struct CallBlockInfo {
+    /// Where the recursive value lives, relative to the current base.
+    pub offset: usize,
+    /// Entry/prog for the precompiled recursive block.
+    pub entry: unsafe extern "C" fn(cx: *mut Ctx),
+    pub prog: *const u64,
 }
 
 /// An owned-map op's immediates, reached through a `*const MapInfo` slot in
@@ -640,6 +716,190 @@ pub unsafe extern "C" fn phon_stencil_option(cx: *mut Ctx) {
     phon_cont(cx);
 }
 
+/// Decode a `Result<T, E>` into `base + field_offset`, then continue.
+///
+/// Reads a `u32` wire index, selects the matching Ok/Err arm, allocates scratch
+/// for that arm payload, runs the arm body at `base = scratch` sharing the wire
+/// cursor, then moves the arm into the result with `init_ok`/`init_err`. A wire
+/// index matching neither arm rejects with `status = 4` (`BadVariantIndex`).
+#[no_mangle]
+pub unsafe extern "C" fn phon_stencil_result(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let info = &*(*c.prog as *const ResultInfo);
+    let outer_prog = c.prog.add(1);
+    let outer_base = c.base;
+
+    // Read the u32 arm index with a bounds check (like `read_u32`).
+    if (c.wire as usize).wrapping_add(4) > c.wire_end as usize {
+        c.status = 1;
+        return;
+    }
+    let mut idx_bytes = [0u8; 4];
+    core::ptr::copy_nonoverlapping(c.wire, idx_bytes.as_mut_ptr(), 4);
+    let wire_index = u32::from_le_bytes(idx_bytes);
+    c.wire = c.wire.add(4);
+
+    let (size, align, arm_prog, arm_entry, init): (
+        usize,
+        usize,
+        *const u64,
+        unsafe extern "C" fn(*mut Ctx),
+        unsafe extern "C" fn(*const (), *mut u8, *mut u8),
+    ) = if wire_index == info.ok_wire_index {
+        (
+            info.ok_size,
+            info.ok_align,
+            info.ok_prog,
+            info.ok_entry,
+            info.init_ok,
+        )
+    } else if wire_index == info.err_wire_index {
+        (
+            info.err_size,
+            info.err_align,
+            info.err_prog,
+            info.err_entry,
+            info.init_err,
+        )
+    } else {
+        c.status = 4;
+        c.aux = wire_index as u64;
+        return;
+    };
+
+    // Allocate scratch for the selected arm. size 0 -> dangling aligned.
+    let (scratch, alloc_size) = if size == 0 {
+        (align as *mut u8, 0usize)
+    } else {
+        let buf = (c.alloc)(size, align);
+        if buf.is_null() {
+            c.status = 1;
+            return;
+        }
+        (buf, size)
+    };
+
+    // Run the selected arm body at `base = scratch`, sharing the wire cursor.
+    c.prog = arm_prog;
+    c.base = scratch;
+    (arm_entry)(cx);
+    if c.status != 0 {
+        if alloc_size != 0 {
+            (c.dealloc)(scratch, alloc_size, align);
+        }
+        return;
+    }
+
+    // Move the decoded arm into the result, then free scratch without dropping.
+    c.base = outer_base;
+    let result = outer_base.add(info.field_offset);
+    (init)(info.thunks_ctx, result, scratch);
+    if alloc_size != 0 {
+        (c.dealloc)(scratch, alloc_size, align);
+    }
+
+    c.prog = outer_prog;
+
+    #[cfg(tailcall)]
+    become phon_cont(cx);
+    #[cfg(not(tailcall))]
+    phon_cont(cx);
+}
+
+/// Decode an opaque adapter field from a length-prefixed byte span, then continue.
+///
+/// The wire is `Primitive::Bytes`: a little-endian `u32` length and exactly that
+/// many bytes, no padding. The adapter receives a borrowed pointer into the input
+/// and initializes `base + field_offset`. A rejected adapter reports `status = 7`.
+#[no_mangle]
+pub unsafe extern "C" fn phon_stencil_opaque(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let info = &*(*c.prog as *const OpaqueInfo);
+    let outer_prog = c.prog.add(1);
+
+    if (c.wire as usize).wrapping_add(4) > c.wire_end as usize {
+        c.status = 1;
+        return;
+    }
+    let mut len_bytes = [0u8; 4];
+    core::ptr::copy_nonoverlapping(c.wire, len_bytes.as_mut_ptr(), 4);
+    let len = u32::from_le_bytes(len_bytes) as usize;
+    c.wire = c.wire.add(4);
+
+    let remaining = (c.wire_end as usize) - (c.wire as usize);
+    if len > remaining {
+        c.status = 1;
+        return;
+    }
+
+    let span = c.wire;
+    let slot = c.base.add(info.field_offset);
+    if !(info.decode)(info.thunks_ctx, span, len, slot) {
+        c.status = 7;
+        return;
+    }
+
+    c.wire = c.wire.add(len);
+    c.prog = outer_prog;
+
+    #[cfg(tailcall)]
+    become phon_cont(cx);
+    #[cfg(not(tailcall))]
+    phon_cont(cx);
+}
+
+/// Decode one self-describing dynamic `Value`, then continue.
+///
+/// The value is self-delimiting, so the helper reports exactly how many input bytes
+/// it consumed. On failure it writes the precise `DecodeError` through `Ctx.error`
+/// and this stencil sets `status = 8`.
+#[no_mangle]
+pub unsafe extern "C" fn phon_stencil_dynamic(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let info = &*(*c.prog as *const DynamicInfo);
+    let outer_prog = c.prog.add(1);
+
+    let remaining = (c.wire_end as usize) - (c.wire as usize);
+    let mut consumed = 0usize;
+    let slot = c.base.add(info.field_offset);
+    if !(info.read)(c.wire, remaining, slot, &mut consumed, c.error) {
+        c.status = 8;
+        return;
+    }
+
+    c.wire = c.wire.add(consumed);
+    c.prog = outer_prog;
+
+    #[cfg(tailcall)]
+    become phon_cont(cx);
+    #[cfg(not(tailcall))]
+    phon_cont(cx);
+}
+
+/// Call a precompiled recursive block at `base + offset`, then continue.
+#[no_mangle]
+pub unsafe extern "C" fn phon_stencil_callblock(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let info = &*(*c.prog as *const CallBlockInfo);
+    let outer_prog = c.prog.add(1);
+    let outer_base = c.base;
+
+    c.prog = info.prog;
+    c.base = outer_base.add(info.offset);
+    (info.entry)(cx);
+    if c.status != 0 {
+        return;
+    }
+
+    c.base = outer_base;
+    c.prog = outer_prog;
+
+    #[cfg(tailcall)]
+    become phon_cont(cx);
+    #[cfg(not(tailcall))]
+    phon_cont(cx);
+}
+
 /// Decode an owned map into `base + field_offset`, then continue.
 ///
 /// Reads a `u32` entry count (bounds-checked like `read_len`),
@@ -1023,6 +1283,66 @@ pub struct EncOptInfo {
     pub some_prog: *const u64,
 }
 
+/// An encode result op's immediates, reached through a `*const EncResultInfo` slot
+/// in `EncCtx.prog`. Reads the active arm through result thunks, writes that arm's
+/// wire index, then runs the matching sub-chain with `base` set to the arm value.
+#[repr(C)]
+pub struct EncResultInfo {
+    /// Where the `Result<T, E>` handle lives, relative to `base`.
+    pub field_offset: usize,
+    /// Wire indices for the Ok and Err arms.
+    pub ok_wire_index: u32,
+    pub err_wire_index: u32,
+    /// Opaque per-type context passed to the thunks.
+    pub thunks_ctx: *const (),
+    /// Whether the result is Ok.
+    pub is_ok: unsafe extern "C" fn(ctx: *const (), result: *const u8) -> bool,
+    /// Pointer to the Ok payload, valid only when Ok.
+    pub get_ok: unsafe extern "C" fn(ctx: *const (), result: *const u8) -> *const u8,
+    /// Pointer to the Err payload, valid only when Err.
+    pub get_err: unsafe extern "C" fn(ctx: *const (), result: *const u8) -> *const u8,
+    /// Entry/prog for the Ok arm body.
+    pub ok_entry: unsafe extern "C" fn(cx: *mut EncCtx),
+    pub ok_prog: *const u64,
+    /// Entry/prog for the Err arm body.
+    pub err_entry: unsafe extern "C" fn(cx: *mut EncCtx),
+    pub err_prog: *const u64,
+}
+
+/// An encode opaque op's immediates, reached through a `*const EncOpaqueInfo` slot
+/// in `EncCtx.prog`. The stencil frames the field as a `Primitive::Bytes` run and
+/// delegates appending the inner bytes to the adapter thunk.
+#[repr(C)]
+pub struct EncOpaqueInfo {
+    /// Where the opaque field lives, relative to `base`.
+    pub field_offset: usize,
+    /// Opaque per-field context passed to the thunk.
+    pub thunks_ctx: *const (),
+    /// Append the opaque inner bytes to the output `Vec<u8>`.
+    pub encode: unsafe extern "C" fn(ctx: *const (), field: *const u8, out: *mut Vec<u8>),
+}
+
+/// An encode dynamic `Value` op's immediates, reached through a
+/// `*const EncDynamicInfo` slot in `EncCtx.prog`.
+#[repr(C)]
+pub struct EncDynamicInfo {
+    /// Where the `Value` lives, relative to `base`.
+    pub field_offset: usize,
+    /// Append the self-describing value bytes to the output `Vec<u8>`.
+    pub write: unsafe extern "C" fn(value: *const u8, out: *mut Vec<u8>),
+}
+
+/// An encode recursive block call's immediates, reached through a
+/// `*const EncCallBlockInfo` slot in `EncCtx.prog`.
+#[repr(C)]
+pub struct EncCallBlockInfo {
+    /// Where the recursive value lives, relative to the current base.
+    pub offset: usize,
+    /// Entry/prog for the precompiled recursive block.
+    pub entry: unsafe extern "C" fn(cx: *mut EncCtx),
+    pub prog: *const u64,
+}
+
 /// An encode owned-map op's immediates, reached through a `*const EncMapInfo` slot
 /// in `EncCtx.prog`. Mirrors `MapInfo` minus the decode-only init/insert thunks
 /// (plus the stateful iterator thunks). The key sub-chain is run with
@@ -1305,6 +1625,147 @@ pub unsafe extern "C" fn phon_stencil_option_enc(cx: *mut EncCtx) {
         c.base = inner;
         (info.some_entry)(cx);
     }
+
+    c.base = outer_base;
+    c.prog = outer_prog;
+
+    #[cfg(tailcall)]
+    become phon_econt(cx);
+    #[cfg(not(tailcall))]
+    phon_econt(cx);
+}
+
+/// Encode a `Result<T, E>` from `base + field_offset`, then continue.
+///
+/// Uses the bound result thunks to select Ok or Err, writes that arm's `u32` wire
+/// index, then runs the matching arm body at the contained value pointer. The
+/// arm body shares the output cursor through `EncCtx`.
+#[no_mangle]
+pub unsafe extern "C" fn phon_stencil_result_enc(cx: *mut EncCtx) {
+    let c = &mut *cx;
+    let info = &*(*c.prog as *const EncResultInfo);
+    let outer_prog = c.prog.add(1);
+    let outer_base = c.base;
+
+    let result = outer_base.add(info.field_offset);
+    let ok = (info.is_ok)(info.thunks_ctx, result);
+    let (wire_index, arm_prog, arm_entry, arm_value) = if ok {
+        (
+            info.ok_wire_index,
+            info.ok_prog,
+            info.ok_entry,
+            (info.get_ok)(info.thunks_ctx, result),
+        )
+    } else {
+        (
+            info.err_wire_index,
+            info.err_prog,
+            info.err_entry,
+            (info.get_err)(info.thunks_ctx, result),
+        )
+    };
+
+    // Write the u32 arm index (no alignment, like `write_u32`).
+    let need = c.out_pos + 4;
+    if need > c.out_cap {
+        (c.grow)(cx, need);
+    }
+    let idx_bytes = wire_index.to_le_bytes();
+    core::ptr::copy_nonoverlapping(idx_bytes.as_ptr(), c.out_ptr.add(c.out_pos), 4);
+    c.out_pos += 4;
+
+    // Run the selected arm body at the contained value pointer.
+    c.prog = arm_prog;
+    c.base = arm_value;
+    (arm_entry)(cx);
+
+    c.base = outer_base;
+    c.prog = outer_prog;
+
+    #[cfg(tailcall)]
+    become phon_econt(cx);
+    #[cfg(not(tailcall))]
+    phon_econt(cx);
+}
+
+/// Encode an opaque adapter field as a length-prefixed byte span, then continue.
+///
+/// Synchronizes the raw output cursor into the backing `Vec`, lets the adapter
+/// append inner bytes, refreshes the raw cursor after any reallocation, and
+/// backpatches the `u32` byte length.
+#[no_mangle]
+pub unsafe extern "C" fn phon_stencil_opaque_enc(cx: *mut EncCtx) {
+    let c = &mut *cx;
+    let info = &*(*c.prog as *const EncOpaqueInfo);
+    let outer_prog = c.prog.add(1);
+
+    let len_pos = c.out_pos;
+    let need = c.out_pos + 4;
+    if need > c.out_cap {
+        (c.grow)(cx, need);
+    }
+    core::ptr::write_bytes(c.out_ptr.add(len_pos), 0, 4);
+    c.out_pos += 4;
+    let start = c.out_pos;
+
+    let out = &mut *c.out_handle.cast::<Vec<u8>>();
+    out.set_len(c.out_pos);
+    let field = c.base.add(info.field_offset);
+    (info.encode)(info.thunks_ctx, field, c.out_handle.cast::<Vec<u8>>());
+    let end = out.len();
+    let inner_len = (end - start) as u32;
+
+    c.out_ptr = out.as_mut_ptr();
+    c.out_cap = out.capacity();
+    c.out_pos = end;
+    core::ptr::copy_nonoverlapping(inner_len.to_le_bytes().as_ptr(), c.out_ptr.add(len_pos), 4);
+
+    c.prog = outer_prog;
+
+    #[cfg(tailcall)]
+    become phon_econt(cx);
+    #[cfg(not(tailcall))]
+    phon_econt(cx);
+}
+
+/// Encode one self-describing dynamic `Value`, then continue.
+///
+/// Like opaque encode, this synchronizes the raw output cursor into the backing
+/// `Vec` before calling the helper, then refreshes the raw pointer/capacity after
+/// any reallocation.
+#[no_mangle]
+pub unsafe extern "C" fn phon_stencil_dynamic_enc(cx: *mut EncCtx) {
+    let c = &mut *cx;
+    let info = &*(*c.prog as *const EncDynamicInfo);
+    let outer_prog = c.prog.add(1);
+
+    let out = &mut *c.out_handle.cast::<Vec<u8>>();
+    out.set_len(c.out_pos);
+    let value = c.base.add(info.field_offset);
+    (info.write)(value, c.out_handle.cast::<Vec<u8>>());
+
+    c.out_ptr = out.as_mut_ptr();
+    c.out_cap = out.capacity();
+    c.out_pos = out.len();
+    c.prog = outer_prog;
+
+    #[cfg(tailcall)]
+    become phon_econt(cx);
+    #[cfg(not(tailcall))]
+    phon_econt(cx);
+}
+
+/// Call a precompiled recursive encode block at `base + offset`, then continue.
+#[no_mangle]
+pub unsafe extern "C" fn phon_stencil_callblock_enc(cx: *mut EncCtx) {
+    let c = &mut *cx;
+    let info = &*(*c.prog as *const EncCallBlockInfo);
+    let outer_prog = c.prog.add(1);
+    let outer_base = c.base;
+
+    c.prog = info.prog;
+    c.base = outer_base.add(info.offset);
+    (info.entry)(cx);
 
     c.base = outer_base;
     c.prog = outer_prog;

@@ -108,9 +108,9 @@ pub mod api {
             #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
             {
                 let native_decode = native_decode_supported(&lowered)
-                    .then(|| phon_jit::native::NativeDecode::compile(&lowered.program));
+                    .then(|| phon_jit::native::NativeDecode::compile_lowered(&lowered));
                 let native_encode = native_encode_supported(&lowered)
-                    .then(|| phon_jit::native::NativeEncode::compile(&lowered.program));
+                    .then(|| phon_jit::native::NativeEncode::compile_lowered(&lowered));
                 Ok(Codec {
                     lowered,
                     native_decode,
@@ -213,12 +213,20 @@ pub mod api {
 
     #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
     fn native_decode_supported(lowered: &Lowered) -> bool {
-        lowered.blocks.is_empty() && decode_program_supported(&lowered.program)
+        decode_program_supported(&lowered.program)
+            && lowered
+                .blocks
+                .values()
+                .all(|block| decode_program_supported(block))
     }
 
     #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
     fn native_encode_supported(lowered: &Lowered) -> bool {
-        lowered.blocks.is_empty() && encode_program_supported(&lowered.program)
+        encode_program_supported(&lowered.program)
+            && lowered
+                .blocks
+                .values()
+                .all(|block| encode_program_supported(block))
     }
 
     #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
@@ -236,10 +244,8 @@ pub mod api {
                 .iter()
                 .all(|variant| decode_program_supported(&variant.payload)),
             MemOp::Map(m) => decode_program_supported(&m.key) && decode_program_supported(&m.value),
-            MemOp::Result(_)
-            | MemOp::Dynamic { .. }
-            | MemOp::Opaque(_)
-            | MemOp::CallBlock { .. } => false,
+            MemOp::Result(r) => decode_program_supported(&r.ok) && decode_program_supported(&r.err),
+            MemOp::Opaque(_) | MemOp::Dynamic { .. } | MemOp::CallBlock { .. } => true,
         })
     }
 
@@ -254,12 +260,9 @@ pub mod api {
                 .iter()
                 .all(|variant| encode_program_supported(&variant.payload)),
             MemOp::Map(m) => encode_program_supported(&m.key) && encode_program_supported(&m.value),
-            MemOp::SkipWire(_)
-            | MemOp::Default(_)
-            | MemOp::Result(_)
-            | MemOp::Dynamic { .. }
-            | MemOp::Opaque(_)
-            | MemOp::CallBlock { .. } => false,
+            MemOp::Result(r) => encode_program_supported(&r.ok) && encode_program_supported(&r.err),
+            MemOp::SkipWire(_) | MemOp::Default(_) => false,
+            MemOp::Opaque(_) | MemOp::Dynamic { .. } | MemOp::CallBlock { .. } => true,
         })
     }
 }
@@ -313,15 +316,29 @@ mod tests {
         value: Result<u32, u32>,
     }
 
+    // r[verify exec.jit-optional]
     #[test]
-    fn api_falls_back_for_uncompiled_ops() {
+    fn api_result_uses_native_jit_when_available() {
         let codec = api::Codec::<ApiResultMsg>::new().unwrap();
-        assert!(!codec.decode_uses_native_jit());
-        assert!(!codec.encode_uses_native_jit());
+        #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+        {
+            assert!(codec.decode_uses_native_jit());
+            assert!(codec.encode_uses_native_jit());
+        }
+        #[cfg(not(all(feature = "jit", target_os = "macos", target_arch = "aarch64")))]
+        {
+            assert!(!codec.decode_uses_native_jit());
+            assert!(!codec.encode_uses_native_jit());
+        }
 
         let msg = ApiResultMsg { value: Ok(0xABCD) };
         let bytes = api::encode(&msg).unwrap();
         let back: ApiResultMsg = codec.decode(&bytes).unwrap();
+        assert_eq!(back, msg);
+
+        let msg = ApiResultMsg { value: Err(0x1234) };
+        let bytes = codec.encode(&msg).unwrap();
+        let back = codec.decode(&bytes).unwrap();
         assert_eq!(back, msg);
     }
 }
