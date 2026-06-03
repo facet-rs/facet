@@ -95,6 +95,8 @@ pub fn of<'a, T: Facet<'a>>() -> Result<Derived, DeriveError> {
 ///
 /// # Errors
 /// As [`of`].
+// r[impl descriptors.fact-driven]
+// r[impl descriptors.separate-implementations]
 pub fn of_shape(shape: &'static Shape) -> Result<Derived, DeriveError> {
     // An opaque-adapter type (`#[facet(opaque = ...)]`): on the wire it is a
     // `Primitive::Bytes` run (a `u32` length + inner bytes); the adapter owns the
@@ -1274,6 +1276,7 @@ fn borrow_primitive(kind: BorrowKind) -> Primitive {
 /// its owned peer, a byte-sequence access carrying the concrete borrow thunks. The
 /// thunks are concrete — `&str`/`&[u8]` are single types, so no facet vtable is
 /// needed and `ctx` is null.
+// r[impl descriptors.borrowed]
 fn borrowed_descriptor(shape: &'static Shape, kind: BorrowKind) -> Result<Descriptor, DeriveError> {
     let (size, align) = layout_of(shape)?;
     let p = borrow_primitive(kind);
@@ -1962,6 +1965,8 @@ mod tests {
     }
 
     #[test]
+    // r[verify descriptors.fact-driven]
+    // r[verify descriptors.separate-implementations]
     fn derived_struct_typed_matches_dynamic_and_roundtrips() {
         let d = of::<Pt>().unwrap();
         let reg = Registry::new(d.schemas.clone());
@@ -2478,6 +2483,7 @@ mod tests {
     }
 
     #[test]
+    // r[verify descriptors.borrowed]
     fn derived_borrowed_decode_is_zero_copy() {
         let d = of::<Borrowed>().unwrap();
         let reg = Registry::new(d.schemas.clone());
@@ -2561,6 +2567,7 @@ mod tests {
     }
 
     #[test]
+    // r[verify descriptors.borrowed]
     fn derived_borrowed_slice_non_u8_is_unsupported() {
         // A borrowed slice of a non-`u8` element is out of scope (only `&str`/`&[u8]`
         // are the carried zero-copy leaves).
@@ -4108,6 +4115,7 @@ mod tests {
     // change inside the arms (compat).
 
     #[test]
+    // r[verify descriptors.encode-decode-asymmetry]
     fn derived_result_matches_dynamic_and_roundtrips() {
         // A struct field, to exercise Result both as a root and nested.
         #[derive(Facet, Debug, PartialEq)]

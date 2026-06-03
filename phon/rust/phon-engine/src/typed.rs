@@ -87,6 +87,7 @@ fn elem_min_wire(element: &MemProgram) -> usize {
 }
 
 // r[impl ir.memory]
+// r[impl descriptors.fact-driven]
 pub fn lower(descriptor: &Descriptor, reg: &Registry) -> Result<MemProgram> {
     let mut out = Vec::new();
     lower_node(descriptor, reg, 0, &mut out)?;
@@ -100,6 +101,7 @@ pub fn lower(descriptor: &Descriptor, reg: &Registry) -> Result<MemProgram> {
 /// `phon::derive` collected). A `CallBlock` op resolves into [`Lowered::blocks`] at run
 /// time. For a non-recursive type `descriptor_blocks` is empty and the result is the
 /// familiar flat program with no blocks (`r[ir.recursion]`).
+// r[impl descriptors.separate-implementations]
 pub fn lower_typed(
     descriptor: &Descriptor,
     descriptor_blocks: &HashMap<SchemaId, Descriptor>,

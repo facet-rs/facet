@@ -23,6 +23,8 @@ use crate::ir::{
 
 /// A node of the descriptor tree: the schema it realizes, its process-local
 /// memory layout, and how to read and construct it.
+// r[impl descriptors.separate-implementations]
+// r[impl descriptors.fact-driven]
 #[derive(Clone, Debug)]
 pub struct Descriptor {
     /// The schema this node realizes.
@@ -45,6 +47,7 @@ pub struct Layout {
 /// Direct-fact variants are producer-optional (`r[descriptors.facts-are-optional]`):
 /// a producer emits them when it can prove the layout and falls back to a thunk
 /// otherwise; an engine must accept a descriptor that uses only thunks.
+// r[impl descriptors.encode-decode-asymmetry]
 #[derive(Clone, Debug)]
 pub enum Access {
     /// A fixed-width scalar whose in-memory bytes equal its wire bytes (bool, the
@@ -218,6 +221,7 @@ pub struct SequenceAccess {
 }
 
 /// How a sequence's elements are stored in memory.
+// r[impl descriptors.borrowed]
 #[derive(Clone, Debug)]
 pub enum SequenceStorage {
     /// Owned contiguous run: `(ptr, len, capacity)` at offsets, elements
