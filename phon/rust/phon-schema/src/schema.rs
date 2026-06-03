@@ -33,6 +33,7 @@ impl fmt::Display for SchemaId {
 /// the schema is parametric, and a kind describing what it represents.
 ///
 /// Spec: "Type system" — `Schema`.
+// r[impl type-system.canonical-form]
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Schema {
     pub id: SchemaId,
@@ -43,6 +44,7 @@ pub struct Schema {
 /// What a schema represents.
 ///
 /// Spec: "Type system" — `SchemaKind`.
+// r[impl type-system.rust-subset]
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum SchemaKind {
     Primitive(Primitive),
@@ -67,10 +69,12 @@ pub enum SchemaKind {
         key: SchemaRef,
         value: SchemaRef,
     },
+    // r[impl type-system.array]
     Array {
         element: SchemaRef,
         dimensions: Vec<u64>,
     },
+    // r[impl type-system.tensor]
     Tensor {
         element: SchemaRef,
         rank: Option<u32>,
@@ -78,11 +82,14 @@ pub enum SchemaKind {
     Option {
         element: SchemaRef,
     },
+    // r[impl type-system.channel]
     Channel {
         direction: ChannelDirection,
         element: SchemaRef,
     },
+    // r[impl type-system.dynamic]
     Dynamic,
+    // r[impl type-system.external]
     External {
         kind: String,
         metadata: Option<SchemaRef>,
@@ -107,6 +114,7 @@ pub enum ChannelDirection {
 /// declared by an enclosing schema's `type_params`.
 ///
 /// Spec: "Type system" — `SchemaRef`, `r[type-system.generics]`.
+// r[impl type-system.generics]
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum SchemaRef {
     Concrete { id: SchemaId, args: Vec<SchemaRef> },

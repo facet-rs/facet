@@ -1233,6 +1233,7 @@ mod tests {
     }
 
     #[test]
+    // r[verify type-system.canonical-form]
     fn roundtrip_struct() {
         roundtrip(&Schema {
             id: SchemaId(0xABCD),
@@ -1257,6 +1258,7 @@ mod tests {
 
     #[test]
     // r[verify self-describing.enum-payload]
+    // r[verify type-system.variant-payloads]
     fn roundtrip_enum_all_payload_shapes() {
         roundtrip(&Schema {
             id: SchemaId(7),
@@ -1299,6 +1301,12 @@ mod tests {
     #[test]
     // r[verify self-describing.bootstraps-schemas]
     // r[verify self-describing.tag-led]
+    // r[verify type-system.array]
+    // r[verify type-system.tensor]
+    // r[verify type-system.channel]
+    // r[verify type-system.dynamic]
+    // r[verify type-system.external]
+    // r[verify type-system.rust-subset]
     fn roundtrip_every_kind() {
         let r = concrete(Primitive::U32);
         let kinds = vec![
@@ -1349,6 +1357,7 @@ mod tests {
     }
 
     #[test]
+    // r[verify type-system.generics]
     fn roundtrip_generic_with_var_and_args() {
         // A parametric schema with a Var, and a concrete ref carrying args.
         roundtrip(&Schema {

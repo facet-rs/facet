@@ -1072,6 +1072,7 @@ mod tests {
     }
 
     #[test]
+    // r[verify type-system.generic-resolution]
     fn generics_resolve() {
         // Pair<A, B> = (A, B); Holder<T> = { pair: Pair<T, u32>, tag: string };
         // Root = { h: Holder<u8> } (concrete).
