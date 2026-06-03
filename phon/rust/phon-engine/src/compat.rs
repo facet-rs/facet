@@ -40,6 +40,10 @@ pub(crate) fn incompatible(why: impl Into<String>) -> CompactError {
     CompactError::Incompatible(why.into())
 }
 
+// r[impl compat.field-matching]
+// r[impl compat.skip-writer-only]
+// r[impl compat.reader-only-fields]
+// r[impl compat.defaults-are-reader-side]
 pub(crate) fn match_fields<'a>(
     w_fields: &'a [Field],
     r_fields: &'a [Field],
@@ -80,6 +84,7 @@ pub(crate) fn match_fields<'a>(
     Ok(steps)
 }
 
+// r[impl compat.enum]
 pub(crate) fn match_variants<'a>(
     w_variants: &'a [Variant],
     r_variants: &'a [Variant],
