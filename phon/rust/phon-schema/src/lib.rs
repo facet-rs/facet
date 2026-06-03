@@ -9,6 +9,7 @@
 //! Spec: `docs/content/spec.md` — "Type system", "Schema identity",
 //! "Self-describing mode", and `r[crates.concern-separation]`.
 
+// r[impl crates.concern-separation]
 pub mod bytes;
 pub mod identity;
 pub mod schema;

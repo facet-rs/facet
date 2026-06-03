@@ -8,8 +8,10 @@
 //! IR and reaches for no reflection (`r[crates.engine-is-binding-free]`).
 //!
 //! Spec: `docs/content/spec.md` — "Compact mode", "Compatibility", "Decoding",
-//! "Decoding untrusted input".
+//! "Decoding untrusted input", and `r[crates.concern-separation]`.
 
+// r[impl crates.concern-separation]
+// r[impl crates.engine-is-binding-free]
 pub mod compact;
 
 pub use compact::{CompactError, Registry};

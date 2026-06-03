@@ -9,6 +9,7 @@
 //! Spec: `docs/content/spec.md` — "The descriptor model" and "The intermediate
 //! representation".
 
+// r[impl crates.engine-is-binding-free]
 pub mod descriptor;
 
 pub use descriptor::{

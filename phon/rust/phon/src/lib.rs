@@ -1,5 +1,5 @@
 //! The phon front door — the only crate (besides `phon-codegen`) that depends on
-//! facet.
+//! facet (`r[crates.concern-separation]`).
 //!
 //! This is where Rust types become phon: facet metadata is turned into a
 //! [`schema`] and a [`descriptor`], and the typed `encode::<T>` / `decode::<T>`
@@ -11,6 +11,7 @@
 //!
 //! Spec: `docs/content/spec.md` — "Crates and packages" and "Rust".
 
+// r[impl crates.concern-separation]
 pub use phon_schema as schema_contract;
 
 pub mod derive;

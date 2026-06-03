@@ -9,16 +9,19 @@
 //! This crate is reached only through the `jit` Cargo feature on the `phon`
 //! front door, so the baseline pays nothing for it and platforms that forbid
 //! executable memory omit it entirely (`r[crates.jit-opt-in]`). Like the engine,
-//! it is binding-free — it consumes only the IR.
+//! it is binding-free — it consumes only the IR
+//! (`r[crates.engine-is-binding-free]`).
 //!
 //! Spec: `docs/content/spec.md` — `r[ir.stencils]`, `r[ir.inlining]`,
-//! `r[ir.memory]`.
+//! `r[ir.memory]`, and `r[crates.concern-separation]`.
 
 /// Stencils: one small function per op plus the threaded state ABI. Today they
 /// are called through a function pointer; the machine-code version extracts their
 /// bytes and patches the holes. Same functions, same immediates, same ABI.
 ///
 /// Spec: `r[ir.stencils]`.
+// r[impl crates.concern-separation]
+// r[impl crates.engine-is-binding-free]
 pub mod stencil;
 
 /// Lowering: compile a linear IR program into a flat `(stencil, immediates)`
