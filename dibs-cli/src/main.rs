@@ -1375,10 +1375,10 @@ fn generate_migration(db_config: &DbConfig, name: &str) {
         r#"//! Migration: {name}
 //! Created: {created}
 
-use dibs::{{MigrationContext, Result}};
+use dibs::{{MigrationContext, MigrationResult}};
 
 #[dibs::migration("{version}")]
-pub async fn migrate(ctx: &mut MigrationContext<'_>) -> Result<()> {{
+pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
     // Add your migration SQL here
     // ctx.execute("CREATE TABLE ...").await?;
 
