@@ -31,7 +31,7 @@ use phon_ir::ir::{
 };
 use phon_ir::{
     Access, Construct, Descriptor, EnumAccess, MapStorage, Presence, RecordAccess, ResultAccess,
-    SequenceStorage, Tag, VariantAccess,
+    SequenceAccess, SequenceStorage, Tag, VariantAccess,
 };
 use phon_schema::bytes::{Reader, write_u8, write_u32};
 use phon_schema::{
@@ -40,6 +40,7 @@ use phon_schema::{
 };
 
 use crate::compact::{self, CompactError, Registry, Resolved, alignment, pad_to, skip_pad};
+use crate::compat::{self, FieldMatch, VariantMatch, incompatible};
 
 type Result<T> = core::result::Result<T, CompactError>;
 
@@ -203,7 +204,7 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
             let bulk = matches!(
                 element.as_slice(),
                 [MemOp::Scalar { offset: 0, size, align }]
-                    if *size == stride && stride % *align == 0
+                    if *size == stride && stride.is_multiple_of(*align)
             );
             if bulk {
                 out.push(MemOp::Bytes(Box::new(BytesOp {
@@ -466,7 +467,13 @@ fn lower_decode_node(
         }
         // Struct ⋈ struct: reconcile fields by name, in WIRE order.
         (Access::Record(ra), Resolved::Composite(SchemaKind::Struct { fields: wf, .. })) => {
-            lower_decode_struct(&wf, ra, &reader.schema, reg, base, out)
+            lower_decode_record(&wf, ra, &reader.schema, RecordKind::Struct, reg, base, out)
+        }
+        // Tuple ⋈ tuple: positional record fields, carried as synthetic index names
+        // through the same field matcher.
+        (Access::Record(ra), Resolved::Composite(SchemaKind::Tuple { elements })) => {
+            let wf = tuple_fields(elements);
+            lower_decode_record(&wf, ra, &reader.schema, RecordKind::Tuple, reg, base, out)
         }
         // Enum ⋈ enum: reconcile variants by name.
         (Access::Enum(ea), Resolved::Composite(SchemaKind::Enum { variants: wv, .. })) => {
@@ -474,6 +481,7 @@ fn lower_decode_node(
         }
         // Option ⋈ Option: structural shapes match; reconcile the inner.
         (Access::Option(opt), Resolved::Composite(SchemaKind::Option { element: we })) => {
+            require_reader_option(&reader.schema, reg)?;
             let Presence::Vtable(thunks) = &opt.presence else {
                 return Err(CompactError::Unsupported(
                     "typed: option needs vtable presence thunks",
@@ -490,46 +498,15 @@ fn lower_decode_node(
             })));
             Ok(())
         }
-        // List/Set ⋈ List/Set: reconcile the element.
-        (
-            Access::Sequence(seq),
-            Resolved::Composite(SchemaKind::List { element: we } | SchemaKind::Set { element: we }),
-        ) => {
-            let SequenceStorage::Vtable(thunks) = &seq.storage else {
-                return Err(CompactError::Unsupported(
-                    "typed: only vtable-backed owned sequences so far",
-                ));
-            };
-            let stride = seq.element.layout.size;
-            let elem_align = seq.element.layout.align;
-            let mut element = Vec::new();
-            lower_decode_node(&we, &seq.element, reg, 0, &mut element)?;
-            let element = fuse(element);
-            let bulk = matches!(
-                element.as_slice(),
-                [MemOp::Scalar { offset: 0, size, align }]
-                    if *size == stride && stride % *align == 0
-            );
-            if bulk {
-                out.push(MemOp::Bytes(Box::new(BytesOp {
-                    field_offset: base,
-                    stride,
-                    elem_align,
-                    validate: validate_any,
-                    thunks: *thunks,
-                })));
-            } else {
-                let min_wire = elem_min_wire(&element);
-                out.push(MemOp::Sequence(Box::new(SeqOp {
-                    field_offset: base,
-                    element,
-                    stride,
-                    elem_align,
-                    min_wire,
-                    thunks: *thunks,
-                })));
-            }
-            Ok(())
+        // List ⋈ List: reconcile the element.
+        (Access::Sequence(seq), Resolved::Composite(SchemaKind::List { element: we })) => {
+            require_reader_list(&reader.schema, reg)?;
+            lower_decode_sequence(&we, seq, reg, base, out)
+        }
+        // Set ⋈ Set: reconcile the element.
+        (Access::Sequence(seq), Resolved::Composite(SchemaKind::Set { element: we })) => {
+            require_reader_set(&reader.schema, reg)?;
+            lower_decode_sequence(&we, seq, reg, base, out)
         }
         // String/Bytes ⋈ String/Bytes: a bulk byte run (no inner drift possible).
         (
@@ -576,6 +553,7 @@ fn lower_decode_node(
         }
         // Map ⋈ Map: reconcile key and value.
         (Access::Map(ma), Resolved::Composite(SchemaKind::Map { key: wk, value: wv })) => {
+            require_reader_map(&reader.schema, reg)?;
             let MapStorage::Vtable(thunks) = &ma.storage else {
                 return Err(CompactError::Unsupported("typed: map needs vtable thunks"));
             };
@@ -598,6 +576,7 @@ fn lower_decode_node(
         // Dynamic ⋈ Dynamic: both sides are self-describing; the value carries its
         // own structure, so there is nothing to reconcile — passthrough.
         (Access::Dynamic, Resolved::Composite(SchemaKind::Dynamic)) => {
+            require_reader_dynamic(&reader.schema, reg)?;
             out.push(MemOp::Dynamic { field_offset: base });
             Ok(())
         }
@@ -613,6 +592,7 @@ fn lower_decode_node(
         // carries an opaque adapter. The inner bytes are never reconciled here — the
         // adapter owns the inner type — so this is the single-schema op verbatim.
         (Access::Opaque(thunks), Resolved::Primitive(Primitive::Bytes)) => {
+            require_reader_bytes(&reader.schema, reg)?;
             out.push(MemOp::Opaque(Box::new(OpaqueOp {
                 field_offset: base,
                 thunks: *thunks,
@@ -623,14 +603,64 @@ fn lower_decode_node(
     }
 }
 
+fn lower_decode_sequence(
+    writer_element: &SchemaRef,
+    seq: &SequenceAccess,
+    reg: &Registry,
+    base: usize,
+    out: &mut MemProgram,
+) -> Result<()> {
+    let SequenceStorage::Vtable(thunks) = &seq.storage else {
+        return Err(CompactError::Unsupported(
+            "typed: only vtable-backed owned sequences so far",
+        ));
+    };
+    let stride = seq.element.layout.size;
+    let elem_align = seq.element.layout.align;
+    let mut element = Vec::new();
+    lower_decode_node(writer_element, &seq.element, reg, 0, &mut element)?;
+    let element = fuse(element);
+    let bulk = matches!(
+        element.as_slice(),
+        [MemOp::Scalar { offset: 0, size, align }]
+            if *size == stride && stride.is_multiple_of(*align)
+    );
+    if bulk {
+        out.push(MemOp::Bytes(Box::new(BytesOp {
+            field_offset: base,
+            stride,
+            elem_align,
+            validate: validate_any,
+            thunks: *thunks,
+        })));
+    } else {
+        let min_wire = elem_min_wire(&element);
+        out.push(MemOp::Sequence(Box::new(SeqOp {
+            field_offset: base,
+            element,
+            stride,
+            elem_align,
+            min_wire,
+            thunks: *thunks,
+        })));
+    }
+    Ok(())
+}
+
+enum RecordKind {
+    Struct,
+    Tuple,
+}
+
 /// Reconcile a writer struct's wire fields against the reader's record descriptor.
 /// Reader field NAMES come from the reader schema (resolved here), aligned by index
 /// with the descriptor's fields (the bridge builds them in the same order).
 // r[impl compat.field-matching]
-fn lower_decode_struct(
+fn lower_decode_record(
     w_fields: &[Field],
     ra: &RecordAccess,
     reader_schema: &SchemaRef,
+    record_kind: RecordKind,
     reg: &Registry,
     base: usize,
     out: &mut MemProgram,
@@ -642,46 +672,48 @@ fn lower_decode_struct(
         }
     }
     // The reader field names, in the same order as `ra.fields`.
-    let r_named = reader_struct_fields(reader_schema, reg)?;
+    let r_named = reader_record_fields(reader_schema, record_kind, reg)?;
     if r_named.len() != ra.fields.len() {
         return Err(CompactError::Malformed(
             "descriptor/schema field count mismatch",
         ));
     }
-    let reader_by_name: HashMap<&str, usize> = r_named
-        .iter()
-        .enumerate()
-        .map(|(i, f)| (f.name.as_str(), i))
-        .collect();
 
-    // One step per WRITER field, in wire order: take the matched reader field, or
-    // skip the writer-only one.
-    let mut matched = vec![false; ra.fields.len()];
-    for wf in w_fields {
-        if let Some(&ri) = reader_by_name.get(wf.name.as_str()) {
-            let fa = &ra.fields[ri];
-            lower_decode_node(&wf.schema, &fa.descriptor, reg, base + fa.offset, out)?;
-            matched[ri] = true;
-        } else {
-            out.push(MemOp::SkipWire(Box::new(skip_op(&wf.schema, reg)?)));
-        }
-    }
-    // Reader-only fields: default in place, or — if required — incompatible.
-    for (ri, fa) in ra.fields.iter().enumerate() {
-        if matched[ri] {
-            continue;
-        }
-        match fa.default {
-            Some(d) => out.push(MemOp::Default(Box::new(DefaultOp {
-                offset: base + fa.offset,
-                ctx: d.ctx,
-                default: d.thunk,
-            }))),
-            None => {
-                return Err(incompatible(format!(
-                    "required reader field '{}' is absent from the writer",
-                    r_named[ri].name
-                )));
+    for step in compat::match_fields(
+        w_fields,
+        &r_named,
+        |ri, _| ra.fields[ri].default.is_some(),
+        |rf| {
+            incompatible(format!(
+                "required reader field '{}' is absent from the writer",
+                rf.name
+            ))
+        },
+    )? {
+        match step {
+            FieldMatch::Take {
+                writer,
+                reader_index: ri,
+            } => {
+                let fa = &ra.fields[ri];
+                lower_decode_node(&writer.schema, &fa.descriptor, reg, base + fa.offset, out)?;
+            }
+            FieldMatch::Skip { writer } => {
+                out.push(MemOp::SkipWire(Box::new(skip_op(&writer.schema, reg)?)));
+            }
+            FieldMatch::Default { reader_index: ri } => {
+                let fa = &ra.fields[ri];
+                let Some(d) = fa.default else {
+                    return Err(incompatible(format!(
+                        "required reader field '{}' is absent from the writer",
+                        r_named[ri].name
+                    )));
+                };
+                out.push(MemOp::Default(Box::new(DefaultOp {
+                    offset: base + fa.offset,
+                    ctx: d.ctx,
+                    default: d.thunk,
+                })));
             }
         }
     }
@@ -711,28 +743,27 @@ fn lower_decode_enum(
             "descriptor/schema variant count mismatch",
         ));
     }
-    // Reader variant by name -> (descriptor variant access, reader schema variant).
-    let reader_by_name: HashMap<&str, usize> = r_named
-        .iter()
-        .enumerate()
-        .map(|(i, v)| (v.name.as_str(), i))
-        .collect();
-
     let mut variants = Vec::new();
     let mut writer_only = Vec::new();
-    for wv in w_variants {
-        let Some(&ri) = reader_by_name.get(wv.name.as_str()) else {
-            // A writer variant the reader lacks: receiving it is a decode error.
-            writer_only.push(wv.index);
-            continue;
-        };
-        let va = &ea.variants[ri];
-        let payload = lower_decode_payload(&wv.payload, va, &r_named[ri].payload, reg, base)?;
-        variants.push(EnumVariantOp {
-            wire_index: wv.index,
-            selector: va.selector,
-            payload,
-        });
+    for step in compat::match_variants(w_variants, &r_named) {
+        match step {
+            VariantMatch::Take {
+                writer,
+                reader_index: ri,
+            } => {
+                let va = &ea.variants[ri];
+                let payload =
+                    lower_decode_payload(&writer.payload, va, &r_named[ri].payload, reg, base)?;
+                variants.push(EnumVariantOp {
+                    wire_index: writer.index,
+                    selector: va.selector,
+                    payload,
+                });
+            }
+            VariantMatch::WriterOnly { writer } => {
+                writer_only.push(writer.index);
+            }
+        }
     }
     out.push(MemOp::Enum(Box::new(EnumOp {
         tag_offset: base + *offset,
@@ -801,62 +832,71 @@ fn lower_decode_variant_struct(
             "variant descriptor/schema field count mismatch",
         ));
     }
-    let reader_by_name: HashMap<&str, usize> = r_fields
-        .iter()
-        .enumerate()
-        .map(|(i, f)| (f.name.as_str(), i))
-        .collect();
-    let mut matched = vec![false; ra.fields.len()];
-    for wf in w_fields {
-        if let Some(&ri) = reader_by_name.get(wf.name.as_str()) {
-            let fa = &ra.fields[ri];
-            lower_decode_node(&wf.schema, &fa.descriptor, reg, base + fa.offset, out)?;
-            matched[ri] = true;
-        } else {
-            out.push(MemOp::SkipWire(Box::new(skip_op(&wf.schema, reg)?)));
-        }
-    }
-    for (ri, fa) in ra.fields.iter().enumerate() {
-        if matched[ri] {
-            continue;
-        }
-        match fa.default {
-            Some(d) => out.push(MemOp::Default(Box::new(DefaultOp {
-                offset: base + fa.offset,
-                ctx: d.ctx,
-                default: d.thunk,
-            }))),
-            None => {
-                return Err(incompatible(format!(
-                    "required reader variant field '{}' is absent from the writer",
-                    r_fields[ri].name
-                )));
+    for step in compat::match_fields(
+        w_fields,
+        r_fields,
+        |ri, _| ra.fields[ri].default.is_some(),
+        |rf| {
+            incompatible(format!(
+                "required reader variant field '{}' is absent from the writer",
+                rf.name
+            ))
+        },
+    )? {
+        match step {
+            FieldMatch::Take {
+                writer,
+                reader_index: ri,
+            } => {
+                let fa = &ra.fields[ri];
+                lower_decode_node(&writer.schema, &fa.descriptor, reg, base + fa.offset, out)?;
+            }
+            FieldMatch::Skip { writer } => {
+                out.push(MemOp::SkipWire(Box::new(skip_op(&writer.schema, reg)?)));
+            }
+            FieldMatch::Default { reader_index: ri } => {
+                let fa = &ra.fields[ri];
+                let Some(d) = fa.default else {
+                    return Err(incompatible(format!(
+                        "required reader variant field '{}' is absent from the writer",
+                        r_fields[ri].name
+                    )));
+                };
+                out.push(MemOp::Default(Box::new(DefaultOp {
+                    offset: base + fa.offset,
+                    ctx: d.ctx,
+                    default: d.thunk,
+                })));
             }
         }
     }
     Ok(())
 }
 
-/// The reader struct's fields (for names), resolved from a reader schema reference.
-fn reader_struct_fields(r: &SchemaRef, reg: &Registry) -> Result<Vec<Field>> {
-    match compact::resolve(reg, r)? {
-        Resolved::Composite(SchemaKind::Struct { fields, .. }) => Ok(fields),
-        Resolved::Composite(SchemaKind::Tuple { elements }) => {
-            // A tuple reader: positional, synthesize index names so the matcher
-            // lines up with the descriptor's positional fields.
-            Ok(elements
-                .into_iter()
-                .enumerate()
-                .map(|(i, schema)| Field {
-                    name: i.to_string(),
-                    schema,
-                    required: true,
-                })
-                .collect())
+fn tuple_fields(elements: Vec<SchemaRef>) -> Vec<Field> {
+    elements
+        .into_iter()
+        .enumerate()
+        .map(|(i, schema)| Field {
+            name: i.to_string(),
+            schema,
+            required: true,
+        })
+        .collect()
+}
+
+/// The reader record's fields (for names), resolved from a reader schema reference.
+fn reader_record_fields(
+    r: &SchemaRef,
+    record_kind: RecordKind,
+    reg: &Registry,
+) -> Result<Vec<Field>> {
+    match (record_kind, compact::resolve(reg, r)?) {
+        (RecordKind::Struct, Resolved::Composite(SchemaKind::Struct { fields, .. })) => Ok(fields),
+        (RecordKind::Tuple, Resolved::Composite(SchemaKind::Tuple { elements })) => {
+            Ok(tuple_fields(elements))
         }
-        _ => Err(CompactError::TypeMismatch {
-            expected: "struct or tuple reader schema for a record descriptor",
-        }),
+        _ => Err(incompatible("schema kinds differ")),
     }
 }
 
@@ -871,8 +911,46 @@ fn reader_enum_variants(r: &SchemaRef, reg: &Registry) -> Result<Vec<Variant>> {
     }
 }
 
-fn incompatible(why: impl Into<String>) -> CompactError {
-    CompactError::Incompatible(why.into())
+fn require_reader_list(r: &SchemaRef, reg: &Registry) -> Result<()> {
+    match compact::resolve(reg, r)? {
+        Resolved::Composite(SchemaKind::List { .. }) => Ok(()),
+        _ => Err(incompatible("schema kinds differ")),
+    }
+}
+
+fn require_reader_set(r: &SchemaRef, reg: &Registry) -> Result<()> {
+    match compact::resolve(reg, r)? {
+        Resolved::Composite(SchemaKind::Set { .. }) => Ok(()),
+        _ => Err(incompatible("schema kinds differ")),
+    }
+}
+
+fn require_reader_option(r: &SchemaRef, reg: &Registry) -> Result<()> {
+    match compact::resolve(reg, r)? {
+        Resolved::Composite(SchemaKind::Option { .. }) => Ok(()),
+        _ => Err(incompatible("schema kinds differ")),
+    }
+}
+
+fn require_reader_map(r: &SchemaRef, reg: &Registry) -> Result<()> {
+    match compact::resolve(reg, r)? {
+        Resolved::Composite(SchemaKind::Map { .. }) => Ok(()),
+        _ => Err(incompatible("schema kinds differ")),
+    }
+}
+
+fn require_reader_dynamic(r: &SchemaRef, reg: &Registry) -> Result<()> {
+    match compact::resolve(reg, r)? {
+        Resolved::Composite(SchemaKind::Dynamic) => Ok(()),
+        _ => Err(incompatible("schema kinds differ")),
+    }
+}
+
+fn require_reader_bytes(r: &SchemaRef, reg: &Registry) -> Result<()> {
+    match compact::resolve(reg, r)? {
+        Resolved::Primitive(Primitive::Bytes) => Ok(()),
+        _ => Err(incompatible("primitive Bytes is not reader schema")),
+    }
 }
 
 /// The wire index of the schema enum variant named `name` (`Ok`/`Err` for a
@@ -1619,9 +1697,11 @@ unsafe fn decode_program(
                             rs.ok_size,
                             rs.ok_align,
                             r,
-                            rs.thunks.ctx,
-                            result,
-                            rs.thunks.init_ok,
+                            InitTarget {
+                                ctx: rs.thunks.ctx,
+                                handle: result,
+                                init: rs.thunks.init_ok,
+                            },
                             blocks,
                         )?
                     };
@@ -1633,9 +1713,11 @@ unsafe fn decode_program(
                             rs.err_size,
                             rs.err_align,
                             r,
-                            rs.thunks.ctx,
-                            result,
-                            rs.thunks.init_err,
+                            InitTarget {
+                                ctx: rs.thunks.ctx,
+                                handle: result,
+                                init: rs.thunks.init_err,
+                            },
                             blocks,
                         )?
                     };
@@ -1707,6 +1789,12 @@ fn free_scratch(buf: *mut u8, layout: Option<alloc::Layout>) {
     }
 }
 
+struct InitTarget {
+    ctx: *const (),
+    handle: *mut u8,
+    init: unsafe extern "C" fn(ctx: *const (), handle: *mut u8, value: *mut u8),
+}
+
 /// Decode one `program`'s value of `size`/`align` into an engine-owned scratch
 /// buffer, then move it into `handle` via the `init` thunk (which `ptr::read`s the
 /// scratch), freeing the scratch WITHOUT dropping. The construction half of a
@@ -1721,9 +1809,7 @@ unsafe fn decode_into_via_init(
     size: usize,
     align: usize,
     r: &mut Reader,
-    ctx: *const (),
-    handle: *mut u8,
-    init: unsafe extern "C" fn(ctx: *const (), handle: *mut u8, value: *mut u8),
+    target: InitTarget,
     blocks: &BTreeMap<SchemaId, MemProgram>,
 ) -> Result<()> {
     let (scratch, layout) = alloc_scratch(size, align)?;
@@ -1733,7 +1819,7 @@ unsafe fn decode_into_via_init(
         return Err(e);
     }
     // Safety: scratch holds the initialized arm payload; `init` moves it into `handle`.
-    unsafe { init(ctx, handle, scratch) };
+    unsafe { (target.init)(target.ctx, target.handle, scratch) };
     free_scratch(scratch, layout);
     Ok(())
 }
@@ -1795,20 +1881,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn owned_vec_u32_roundtrips_and_matches_dynamic() {
-        // Root type: List<u32> / Vec<u32>.
-        let list = Schema {
-            id: SchemaId(1),
-            type_params: Vec::new(),
-            kind: SchemaKind::List {
-                element: SchemaRef::concrete(primitive_id(Primitive::U32)),
-            },
-        };
-        let reg = Registry::new([list]);
-
-        let desc = Descriptor {
-            schema: SchemaRef::concrete(SchemaId(1)),
+    fn vec_u32_descriptor(schema: SchemaId) -> Descriptor {
+        Descriptor {
+            schema: SchemaRef::concrete(schema),
             layout: Layout {
                 size: size_of::<Vec<u32>>(),
                 align: align_of::<Vec<u32>>(),
@@ -1821,7 +1896,22 @@ mod tests {
                 }),
                 storage: SequenceStorage::Vtable(vu32_thunks()),
             }),
+        }
+    }
+
+    #[test]
+    fn owned_vec_u32_roundtrips_and_matches_dynamic() {
+        // Root type: List<u32> / Vec<u32>.
+        let list = Schema {
+            id: SchemaId(1),
+            type_params: Vec::new(),
+            kind: SchemaKind::List {
+                element: SchemaRef::concrete(primitive_id(Primitive::U32)),
+            },
         };
+        let reg = Registry::new([list]);
+
+        let desc = vec_u32_descriptor(SchemaId(1));
 
         let values = [1u32, 2, 999, 0xDEAD_BEEF];
 
@@ -1835,16 +1925,62 @@ mod tests {
         // Typed encode of a real Vec<u32> must produce identical bytes.
         let v: Vec<u32> = values.to_vec();
         let no_blocks = HashMap::new();
-        let typed_bytes =
-            unsafe { encode(core::ptr::from_ref(&v).cast::<u8>(), &desc, &no_blocks, &reg) }
-                .unwrap();
+        let typed_bytes = unsafe {
+            encode(
+                core::ptr::from_ref(&v).cast::<u8>(),
+                &desc,
+                &no_blocks,
+                &reg,
+            )
+        }
+        .unwrap();
         assert_eq!(typed_bytes, dyn_bytes);
 
         // Typed decode reconstructs the Vec.
         let mut slot = MaybeUninit::<Vec<u32>>::uninit();
-        unsafe { decode(&typed_bytes, &desc, &no_blocks, &reg, slot.as_mut_ptr().cast::<u8>()) }
-            .unwrap();
+        unsafe {
+            decode(
+                &typed_bytes,
+                &desc,
+                &no_blocks,
+                &reg,
+                slot.as_mut_ptr().cast::<u8>(),
+            )
+        }
+        .unwrap();
         let back = unsafe { slot.assume_init() };
         assert_eq!(back, values.to_vec());
+    }
+
+    #[test]
+    fn decode_compat_rejects_list_set_kind_mismatch() {
+        let element = SchemaRef::concrete(primitive_id(Primitive::U32));
+        let writer = Schema {
+            id: SchemaId(1),
+            type_params: Vec::new(),
+            kind: SchemaKind::Set {
+                element: element.clone(),
+            },
+        };
+        let reader = Schema {
+            id: SchemaId(2),
+            type_params: Vec::new(),
+            kind: SchemaKind::List { element },
+        };
+        let reg = Registry::new([writer, reader]);
+        let desc = vec_u32_descriptor(SchemaId(2));
+        let no_blocks = HashMap::new();
+
+        let typed = lower_decode(SchemaId(1), &desc, &no_blocks, &reg);
+        assert!(
+            matches!(typed, Err(CompactError::Incompatible(_))),
+            "typed compat accepted Set writer for List reader: {typed:?}"
+        );
+
+        let dynamic = crate::plan::build_plan(SchemaId(1), SchemaId(2), &reg);
+        assert!(
+            matches!(dynamic, Err(CompactError::Incompatible(_))),
+            "dynamic compat unexpectedly accepted Set writer for List reader"
+        );
     }
 }

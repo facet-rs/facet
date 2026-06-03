@@ -25,7 +25,9 @@ pub mod api {
 
     use facet::Facet;
     use phon_engine::{CompactError, Registry, typed};
-    use phon_ir::{Lowered, MemOp};
+    use phon_ir::Lowered;
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    use phon_ir::MemOp;
     use phon_schema::DecodeError;
 
     use crate::derive::{self, DeriveError};
@@ -130,7 +132,7 @@ pub mod api {
         pub(crate) fn decode_uses_native_jit(&self) -> bool {
             #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
             {
-                return self.native_decode.is_some();
+                self.native_decode.is_some()
             }
             #[cfg(not(all(feature = "jit", target_os = "macos", target_arch = "aarch64")))]
             {
@@ -142,7 +144,7 @@ pub mod api {
         pub(crate) fn encode_uses_native_jit(&self) -> bool {
             #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
             {
-                return self.native_encode.is_some();
+                self.native_encode.is_some()
             }
             #[cfg(not(all(feature = "jit", target_os = "macos", target_arch = "aarch64")))]
             {

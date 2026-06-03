@@ -29,6 +29,7 @@ use phon_schema::{
 use phon_ir::ir::{EnumArm, Op, Program};
 
 use crate::compact::{self, CompactError, Registry, Resolved};
+use crate::compat::{self, FieldMatch, VariantMatch, incompatible};
 
 type Result<T> = core::result::Result<T, CompactError>;
 
@@ -167,10 +168,6 @@ pub fn decode_via_ir(
 // Building the plan
 // ============================================================================
 
-fn incompatible(why: impl Into<String>) -> CompactError {
-    CompactError::Incompatible(why.into())
-}
-
 fn plan_ref(w: &SchemaRef, r: &SchemaRef, reg: &Registry, depth: usize) -> Result<Node> {
     if depth > MAX_DEPTH {
         return Err(incompatible("schema nests too deep"));
@@ -282,34 +279,35 @@ fn plan_struct(
     reg: &Registry,
     depth: usize,
 ) -> Result<StructPlan> {
-    let reader_by_name: HashMap<&str, &Field> =
-        r_fields.iter().map(|f| (f.name.as_str(), f)).collect();
-
     let mut steps = Vec::with_capacity(w_fields.len());
-    let mut matched: HashSet<&str> = HashSet::new();
-    for wf in w_fields {
-        if let Some(rf) = reader_by_name.get(wf.name.as_str()) {
-            let node = plan_ref(&wf.schema, &rf.schema, reg, depth + 1)?;
-            steps.push(Step::Take {
-                reader: rf.name.clone(),
-                node,
-            });
-            matched.insert(rf.name.as_str());
-        } else {
-            steps.push(Step::Skip(wf.schema.clone()));
-        }
-    }
-
     let mut defaults = Vec::new();
-    for rf in r_fields {
-        if !matched.contains(rf.name.as_str()) {
-            if rf.required {
-                return Err(incompatible(format!(
-                    "required reader field '{}' is absent from the writer",
-                    rf.name
-                )));
+    for step in compat::match_fields(
+        w_fields,
+        r_fields,
+        |_, rf| !rf.required,
+        |rf| {
+            incompatible(format!(
+                "required reader field '{}' is absent from the writer",
+                rf.name
+            ))
+        },
+    )? {
+        match step {
+            FieldMatch::Take {
+                writer,
+                reader_index,
+            } => {
+                let rf = &r_fields[reader_index];
+                let node = plan_ref(&writer.schema, &rf.schema, reg, depth + 1)?;
+                steps.push(Step::Take {
+                    reader: rf.name.clone(),
+                    node,
+                });
             }
-            defaults.push(rf.name.clone());
+            FieldMatch::Skip { writer } => steps.push(Step::Skip(writer.schema.clone())),
+            FieldMatch::Default { reader_index } => {
+                defaults.push(r_fields[reader_index].name.clone());
+            }
         }
     }
 
@@ -323,23 +321,24 @@ fn plan_enum(
     reg: &Registry,
     depth: usize,
 ) -> Result<Node> {
-    let reader_by_name: HashMap<&str, &Variant> =
-        r_variants.iter().map(|v| (v.name.as_str(), v)).collect();
-
     let mut by_index = HashMap::new();
-    for wv in w_variants {
-        // A writer variant the reader lacks gets no entry: receiving it at
-        // runtime is a decode error, but its absence here is fine.
-        if let Some(rv) = reader_by_name.get(wv.name.as_str()) {
-            let payload = plan_payload(&wv.payload, &rv.payload, reg, depth)?;
-            by_index.insert(
-                wv.index,
-                VariantPlan {
-                    reader: rv.name.clone(),
-                    payload,
-                },
-            );
-        }
+    for step in compat::match_variants(w_variants, r_variants) {
+        let VariantMatch::Take {
+            writer,
+            reader_index,
+        } = step
+        else {
+            continue;
+        };
+        let rv = &r_variants[reader_index];
+        let payload = plan_payload(&writer.payload, &rv.payload, reg, depth)?;
+        by_index.insert(
+            writer.index,
+            VariantPlan {
+                reader: rv.name.clone(),
+                payload,
+            },
+        );
     }
     Ok(Node::Enum(by_index))
 }

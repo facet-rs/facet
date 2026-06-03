@@ -14,6 +14,8 @@ pub mod compact;
 
 pub use compact::{CompactError, Registry};
 
+mod compat;
+
 pub mod plan;
 
 pub use plan::Plan;
