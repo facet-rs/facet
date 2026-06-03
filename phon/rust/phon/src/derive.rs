@@ -2531,7 +2531,7 @@ mod tests {
 
         let d = of::<Borrowed>().unwrap();
         let reg = Registry::new(d.schemas.clone());
-        let program = typed::lower(&d.descriptor, &reg).unwrap();
+        let program = typed::lower_typed(&d.descriptor, &d.descriptor_blocks, &reg).unwrap();
 
         let name = "JITful 🐝 héllo";
         let blob: &[u8] = &[0xAB, 0xCD, 0x00, 0xFF, 0x10, 0x20];
@@ -2544,7 +2544,7 @@ mod tests {
         let iback = unsafe { islot.assume_init() };
 
         // JIT.
-        let dec = NativeDecode::compile(&program);
+        let dec = NativeDecode::compile(&program.program);
         let mut jslot = std::mem::MaybeUninit::<Borrowed>::uninit();
         unsafe { dec.run(&wire, jslot.as_mut_ptr().cast::<u8>()) }.unwrap();
         let jback = unsafe { jslot.assume_init() };
@@ -3715,8 +3715,8 @@ mod tests {
     /// slots; returns `(jit, interp)`. The two must be field-equal — the interpreter
     /// is the oracle for the JIT.
     #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
-    fn decode_both<R>(program: &phon_ir::MemProgram, bytes: &[u8]) -> (R, R) {
-        let jit = NativeDecode::compile(program);
+    fn decode_both<R>(program: &phon_ir::Lowered, bytes: &[u8]) -> (R, R) {
+        let jit = NativeDecode::compile(&program.program);
         let mut jit_slot = std::mem::MaybeUninit::<R>::uninit();
         unsafe { jit.run(bytes, jit_slot.as_mut_ptr().cast::<u8>()) }.unwrap();
 
@@ -3765,7 +3765,7 @@ mod tests {
         let bytes = encode_writer(&value, &w, &reg);
         let program = lower_decode(w.root, &r.descriptor, &r.descriptor_blocks, &reg).unwrap();
         assert!(
-            has_compat_ops(&program),
+            has_compat_ops(&program.program),
             "expected a SkipWire op in the program"
         );
 
@@ -3788,7 +3788,7 @@ mod tests {
         let bytes = encode_writer(&DefaultW { a: 7 }, &w, &reg);
         let program = lower_decode(w.root, &r.descriptor, &r.descriptor_blocks, &reg).unwrap();
         assert!(
-            has_compat_ops(&program),
+            has_compat_ops(&program.program),
             "expected a Default op in the program"
         );
 
@@ -3816,7 +3816,7 @@ mod tests {
         let bytes = encode_writer(&DefaultW { a: 7 }, &w, &reg);
         let program = lower_decode(w.root, &r.descriptor, &r.descriptor_blocks, &reg).unwrap();
         assert!(
-            has_compat_ops(&program),
+            has_compat_ops(&program.program),
             "expected a Default op in the program"
         );
 
@@ -3861,7 +3861,7 @@ mod tests {
         // WriterOnlyVariant (the `DecodeError`-channel counterpart of the
         // interpreter's `CompactError::WriterOnlyVariant`), not a generic error.
         let b_bytes = encode_writer(&EnumW::B(42), &w, &reg);
-        let jit = NativeDecode::compile(&program);
+        let jit = NativeDecode::compile(&program.program);
         let mut slot = std::mem::MaybeUninit::<EnumRFewer>::uninit();
         let err = unsafe { jit.run(&b_bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap_err();
         assert!(
@@ -3893,7 +3893,7 @@ mod tests {
         let bytes = encode_writer(&value, &w, &reg);
         let program = lower_decode(w.root, &r.descriptor, &r.descriptor_blocks, &reg).unwrap();
         assert!(
-            has_compat_ops(&program),
+            has_compat_ops(&program.program),
             "expected a nested Default op in the program"
         );
 

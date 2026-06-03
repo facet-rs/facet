@@ -71,7 +71,7 @@ fn main() {
     #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
     let dj = {
         use phon_jit::native::NativeDecode;
-        let jit = NativeDecode::compile(&program);
+        let jit = NativeDecode::compile(&program.program);
         bench("jit", || {
             let mut slot = MaybeUninit::<Msg>::uninit();
             unsafe { jit.run(&wire, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
@@ -85,7 +85,7 @@ fn main() {
     #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
     let ej = {
         use phon_jit::native::NativeEncode;
-        let jit = NativeEncode::compile(&program);
+        let jit = NativeEncode::compile(&program.program);
         bench("jit", || {
             let bytes = unsafe { jit.run(base) };
             black_box(&bytes);

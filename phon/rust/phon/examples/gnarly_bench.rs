@@ -266,14 +266,14 @@ fn main() {
     #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
     let (dj, djb) = {
         use phon_jit::native::NativeDecode;
-        let jit = NativeDecode::compile(&program);
+        let jit = NativeDecode::compile(&program.program);
         let dj = bench("jit owned", iters, || {
             let mut slot = MaybeUninit::<GnarlyPayload>::uninit();
             unsafe { jit.run(&wire, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
             let v = unsafe { slot.assume_init() };
             black_box(&v);
         });
-        let jitb = NativeDecode::compile(&program_b);
+        let jitb = NativeDecode::compile(&program_b.program);
         let djb = bench("jit borrowed", iters, || {
             let mut slot = MaybeUninit::<GnarlyPayloadBorrowed<'_>>::uninit();
             unsafe { jitb.run(&wire, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
@@ -288,7 +288,7 @@ fn main() {
     #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
     let ej = {
         use phon_jit::native::NativeEncode;
-        let jit = NativeEncode::compile(&program);
+        let jit = NativeEncode::compile(&program.program);
         bench("jit owned", iters, || {
             let bytes = unsafe { jit.run(base) };
             black_box(&bytes);
