@@ -325,11 +325,14 @@ pub struct DefaultInfo {
 pub struct SkipInfo {
     /// Opaque pointer to the `SkipOp` tree, passed back to `walk` untouched.
     pub skip_op: *const (),
-    /// Advance a cursor over `[wire, wire_end)` per the `SkipOp` at `skip_op`.
-    /// Returns the new (advanced) cursor on success, or null on a skip failure
-    /// (truncation, bad presence byte, or unmatched enum index).
+    /// Advance `wire` over `[wire_start, wire_end)` per the `SkipOp` at
+    /// `skip_op`. `wire_start` preserves compact alignment semantics for
+    /// writer-only values skipped mid-message. Returns the new (advanced) cursor
+    /// on success, or null on a skip failure (truncation, bad presence byte, or
+    /// unmatched enum index).
     pub walk: unsafe extern "C" fn(
         skip_op: *const (),
+        wire_start: *const u8,
         wire: *const u8,
         wire_end: *const u8,
     ) -> *const u8,
@@ -480,6 +483,7 @@ pub unsafe extern "C" fn phon_stencil_sequence(cx: *mut Ctx) {
 /// the handle via `from_raw_parts` with `cap == count` (the ELEMENT count). No
 /// per-element loop: the run is one word-wise inline copy, so the only relocation
 /// the copied stencil carries is the `phon_cont` `BRANCH26`.
+// r[impl compact.alignment]
 #[no_mangle]
 pub unsafe extern "C" fn phon_stencil_bytes(cx: *mut Ctx) {
     let c = &mut *cx;
@@ -506,9 +510,15 @@ pub unsafe extern "C" fn phon_stencil_bytes(cx: *mut Ctx) {
         return;
     }
 
-    // Pad the wire to `elem_align`, measured from the message start.
-    let pos = (c.wire as usize) - (c.wire_start as usize);
-    let pad = info.elem_align.wrapping_sub(pos & (info.elem_align - 1)) & (info.elem_align - 1);
+    // Pad before element bytes only when there is at least one element. An empty
+    // run has no element storage, so the following field starts right after the
+    // count, matching the interpreter.
+    let pad = if count > 0 {
+        let pos = (c.wire as usize) - (c.wire_start as usize);
+        info.elem_align.wrapping_sub(pos & (info.elem_align - 1)) & (info.elem_align - 1)
+    } else {
+        0
+    };
     let src = c.wire.add(pad);
 
     // The whole run must fit (the real bounds check for the bulk copy).
@@ -583,6 +593,7 @@ pub unsafe extern "C" fn phon_stencil_bytes(cx: *mut Ctx) {
 /// `false` return (invalid content, e.g. non-UTF-8) it reports `status = 2`
 /// (`InvalidUtf8`). The thunk is reached as an *indirect* call, so the only
 /// relocation the copied stencil carries is the `phon_cont` `BRANCH26`.
+// r[impl compact.alignment]
 #[no_mangle]
 pub unsafe extern "C" fn phon_stencil_borrow(cx: *mut Ctx) {
     let c = &mut *cx;
@@ -609,9 +620,15 @@ pub unsafe extern "C" fn phon_stencil_borrow(cx: *mut Ctx) {
         return;
     }
 
-    // Pad the wire to `elem_align`, measured from the message start.
-    let pos = (c.wire as usize) - (c.wire_start as usize);
-    let pad = info.elem_align.wrapping_sub(pos & (info.elem_align - 1)) & (info.elem_align - 1);
+    // Pad before element bytes only when there is at least one element. An empty
+    // run has no element storage, so the following field starts right after the
+    // count, matching the interpreter.
+    let pad = if count > 0 {
+        let pos = (c.wire as usize) - (c.wire_start as usize);
+        info.elem_align.wrapping_sub(pos & (info.elem_align - 1)) & (info.elem_align - 1)
+    } else {
+        0
+    };
     let src = c.wire.add(pad);
 
     // The whole run must fit (the real bounds check for the borrowed slice).
@@ -1144,13 +1161,13 @@ pub unsafe extern "C" fn phon_stencil_default(cx: *mut Ctx) {
 /// Consume a writer-only value's wire bytes (writing nothing to memory), then
 /// continue.
 ///
-/// Reads a `*const SkipInfo` from `Ctx.prog`, calls its `walk(skip_op, wire,
-/// wire_end)` to advance the cursor past one writer value. A null return is a skip
-/// failure (truncation / bad presence byte / unmatched enum index): reject with
-/// `status = 1`. Otherwise set `c.wire` to the returned advanced cursor and
-/// continue. The walk is an *indirect* call through the info struct, so the only
-/// relocation the copied stencil carries is the `phon_cont` `BRANCH26`. Decode-only.
-/// (`r[compat.skip-writer-only]`.)
+/// Reads a `*const SkipInfo` from `Ctx.prog`, calls
+/// `walk(skip_op, wire_start, wire, wire_end)` to advance the cursor past one
+/// writer value. A null return is a skip failure (truncation / bad presence byte
+/// / unmatched enum index): reject with `status = 1`. Otherwise set `c.wire` to
+/// the returned advanced cursor and continue. The walk is an *indirect* call
+/// through the info struct, so the only relocation the copied stencil carries is
+/// the `phon_cont` `BRANCH26`. Decode-only. (`r[compat.skip-writer-only]`.)
 #[no_mangle]
 pub unsafe extern "C" fn phon_stencil_skipwire(cx: *mut Ctx) {
     let c = &mut *cx;
@@ -1159,7 +1176,7 @@ pub unsafe extern "C" fn phon_stencil_skipwire(cx: *mut Ctx) {
 
     // Advance the cursor over one writer value. Indirect call through `info.walk`
     // — no relocation. Null => the skip failed (truncated/malformed wire).
-    let advanced = (info.walk)(info.skip_op, c.wire, c.wire_end);
+    let advanced = (info.walk)(info.skip_op, c.wire_start, c.wire, c.wire_end);
     if advanced.is_null() {
         c.status = 1;
         return;
@@ -1529,6 +1546,7 @@ pub unsafe extern "C" fn phon_stencil_sequence_enc(cx: *mut EncCtx) {
 /// `count * stride` bytes out in one inline word-wise run (no per-element loop, no
 /// `memcpy` libcall). The only relocation the copied stencil carries is the
 /// `phon_econt` `BRANCH26`.
+// r[impl compact.alignment]
 #[no_mangle]
 pub unsafe extern "C" fn phon_stencil_bytes_enc(cx: *mut EncCtx) {
     let c = &mut *cx;
@@ -1539,10 +1557,14 @@ pub unsafe extern "C" fn phon_stencil_bytes_enc(cx: *mut EncCtx) {
     let count = (info.len)(info.thunks_ctx, list);
     let total = count * info.stride;
 
-    // Write the u32 count (no alignment padding, like `write_u32`), then pad the
-    // output to `elem_align`, then ensure room for the whole run.
-    let pad = info.elem_align.wrapping_sub((c.out_pos + 4) & (info.elem_align - 1))
-        & (info.elem_align - 1);
+    // Write the u32 count (no alignment padding, like `write_u32`), then pad
+    // before element bytes only when there is at least one element.
+    let pad = if count > 0 {
+        info.elem_align.wrapping_sub((c.out_pos + 4) & (info.elem_align - 1))
+            & (info.elem_align - 1)
+    } else {
+        0
+    };
     let need = c.out_pos + 4 + pad + total;
     if need > c.out_cap {
         (c.grow)(cx, need);

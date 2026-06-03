@@ -227,12 +227,13 @@ pub enum MemOp {
 }
 
 /// A type-erased "write this field's default in place" operation, supplied by the
-/// front door for a reader-only field that carries a `#[facet(default)]`. The
-/// engine never knows the field type; it calls the thunk, passing back the opaque
-/// `ctx` (a `&'static Shape` for a trait default, or a custom default fn) the front
-/// door understands. Mirrors the `ctx`-carrying thunk style of [`SeqThunks`] and
-/// friends — the spec's bare `fn(slot)` cannot close over the per-field type, so
-/// the `ctx` carries it.
+/// front door for a reader-only field that can be filled locally
+/// (`#[facet(default)]` or an implicit `Option<T>`/`None` default). The engine
+/// never knows the field type; it calls the thunk, passing back the opaque `ctx` (a
+/// `&'static Shape` for a trait default, or a custom default fn) the front door
+/// understands. Mirrors the `ctx`-carrying thunk style of [`SeqThunks`] and friends
+/// — the spec's bare `fn(slot)` cannot close over the per-field type, so the `ctx`
+/// carries it.
 pub type DefaultThunk = unsafe extern "C" fn(ctx: *const (), slot: *mut u8);
 
 /// A reader-only-default op's payload (boxed in [`MemOp::Default`]). Initializes the
@@ -289,12 +290,13 @@ pub enum SkipOp {
 /// An enum wire index matching no arm is hostile input; here it becomes
 /// [`DecodeError::Malformed`] (the JIT maps its skip-failure status the same way).
 ///
-/// Spec: `r[compat.skip-writer-only]`.
+/// Spec: `r[compat.skip-writer-only]`, `r[compact.alignment]`.
 ///
 /// # Errors
 /// [`DecodeError`] for truncated input, a bad `Option` presence byte, or an enum
 /// wire index with no matching arm.
 // r[impl compat.skip-writer-only]
+// r[impl compact.alignment]
 pub fn skip(r: &mut Reader, op: &SkipOp) -> Result<(), DecodeError> {
     match op {
         SkipOp::Scalar { size, align } => {
@@ -304,7 +306,9 @@ pub fn skip(r: &mut Reader, op: &SkipOp) -> Result<(), DecodeError> {
         }
         SkipOp::Bytes { stride, elem_align } => {
             let count = r.read_len((*stride).max(1))?;
-            skip_pad(r, *elem_align)?;
+            if count > 0 {
+                skip_pad(r, *elem_align)?;
+            }
             r.read_slice(count * stride)?;
             Ok(())
         }

@@ -252,33 +252,51 @@ struct DefaultInfo {
 #[repr(C)]
 struct SkipInfo {
     skip_op: *const (),
-    walk:
-        unsafe extern "C" fn(skip_op: *const (), wire: *const u8, wire_end: *const u8) -> *const u8,
+    walk: unsafe extern "C" fn(
+        skip_op: *const (),
+        wire_start: *const u8,
+        wire: *const u8,
+        wire_end: *const u8,
+    ) -> *const u8,
 }
 
-/// The `SkipInfo.walk` thunk: advance a cursor over `[wire, wire_end)` past one
-/// writer value described by the `SkipOp` at `skip_op`, sharing the one skip walker
-/// in `phon-ir` with the interpreter. Returns the advanced cursor on success, or
-/// null on a skip failure (truncation, bad presence byte, or unmatched enum index)
-/// — which `phon_stencil_skipwire` maps to `status = 1`.
+/// The `SkipInfo.walk` thunk: advance a cursor over `[wire_start, wire_end)` past
+/// one writer value described by the `SkipOp` at `skip_op`, sharing the one skip
+/// walker in `phon-ir` with the interpreter. `wire` is the current position;
+/// `wire_start` keeps compact alignment message-relative even when the skipped
+/// value starts mid-message. Returns the advanced cursor on success, or null on a
+/// skip failure (truncation, bad presence byte, or unmatched enum index) — which
+/// `phon_stencil_skipwire` maps to `status = 1`.
 ///
 /// # Safety
-/// `skip_op` must point to a live [`SkipOp`]; `[wire, wire_end)` must be a valid,
-/// readable byte range (`wire <= wire_end`).
+/// `skip_op` must point to a live [`SkipOp`]; `[wire_start, wire_end)` must be a
+/// valid, readable byte range (`wire_start <= wire <= wire_end`).
 unsafe extern "C" fn jit_skip_walk(
     skip_op: *const (),
+    wire_start: *const u8,
     wire: *const u8,
     wire_end: *const u8,
 ) -> *const u8 {
-    let len = (wire_end as usize) - (wire as usize);
-    // Borrow the wire tail as a slice and run the shared walker over a fresh
-    // `Reader`. On success the cursor advanced by `position()` bytes; on any error
-    // signal failure with a null return.
-    let bytes = unsafe { core::slice::from_raw_parts(wire, len) };
+    let prefix = (wire as usize).checked_sub(wire_start as usize);
+    let len = (wire_end as usize).checked_sub(wire_start as usize);
+    let (Some(prefix), Some(len)) = (prefix, len) else {
+        return core::ptr::null();
+    };
+    if prefix > len {
+        return core::ptr::null();
+    }
+
+    // Borrow the full message tail and advance to `wire` before running the
+    // shared walker, so `skip_pad` observes the same message-relative position as
+    // the interpreter's long-lived Reader.
+    let bytes = unsafe { core::slice::from_raw_parts(wire_start, len) };
     let mut r = Reader::new(bytes);
+    if r.read_slice(prefix).is_err() {
+        return core::ptr::null();
+    }
     let op = unsafe { &*skip_op.cast::<SkipOp>() };
     match phon_ir::ir::skip(&mut r, op) {
-        Ok(()) => unsafe { wire.add(r.position()) },
+        Ok(()) => unsafe { wire_start.add(r.position()) },
         Err(_) => core::ptr::null(),
     }
 }
@@ -3088,6 +3106,57 @@ mod tests {
         let back = unsafe { slot.assume_init() };
         assert_eq!(back.tag, s.tag);
         assert_eq!(back.v, s.v);
+    }
+
+    // r[verify compact.alignment]
+    #[test]
+    fn jit_empty_bytes_run_does_not_pad_before_next_field() {
+        #[repr(C)]
+        struct S {
+            tag: u8,
+            v: Vec<u32>,
+            tail: u8,
+        }
+        let program: MemProgram = vec![
+            MemOp::Scalar {
+                offset: core::mem::offset_of!(S, tag),
+                size: 1,
+                align: 1,
+            },
+            MemOp::Bytes(Box::new(BytesOp {
+                field_offset: core::mem::offset_of!(S, v),
+                stride: 4,
+                elem_align: 4,
+                validate: validate_any,
+                thunks: vu32_thunks(),
+            })),
+            MemOp::Scalar {
+                offset: core::mem::offset_of!(S, tail),
+                size: 1,
+                align: 1,
+            },
+        ];
+
+        let s = S {
+            tag: 0xAB,
+            v: Vec::new(),
+            tail: 0xCD,
+        };
+
+        let enc = NativeEncode::compile(&program);
+        let got = unsafe { enc.run(core::ptr::from_ref(&s).cast::<u8>()) };
+        let mut want = vec![0xABu8];
+        want.extend_from_slice(&0u32.to_le_bytes());
+        want.push(0xCD);
+        assert_eq!(got, want);
+
+        let dec = NativeDecode::compile(&program);
+        let mut slot = MaybeUninit::<S>::uninit();
+        unsafe { dec.run(&got, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back.tag, s.tag);
+        assert!(back.v.is_empty());
+        assert_eq!(back.tail, s.tail);
     }
 
     // ====================================================================

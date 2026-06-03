@@ -247,9 +247,7 @@ impl Builder {
             out.push(Field {
                 name: f.name.to_string(),
                 schema: self.ref_of(f.shape())?,
-                // A `#[facet(default)]` field can be filled in when the writer
-                // omits it, so it is not required (`r[compat.reader-only-fields]`).
-                required: f.default.is_none(),
+                required: field_required(f),
             });
         }
         Ok(SchemaKind::Struct {
@@ -495,7 +493,7 @@ impl Builder {
                     fs.push(Field {
                         name: f.name.to_string(),
                         schema: self.ref_of(f.shape())?,
-                        required: f.default.is_none(),
+                        required: field_required(f),
                     });
                 }
                 Ok(VariantPayload::Struct(fs))
@@ -1810,25 +1808,33 @@ unsafe extern "C" fn opaque_decode(
 // Field defaults (the reader-only-default compat path)
 // ============================================================================
 //
-// A reader field marked `#[facet(default)]` (or `#[facet(default = expr)]`) can be
-// filled in when the *writer* omitted it (`r[compat.reader-only-fields]`). facet
-// exposes this two ways on a `Field`:
+// A reader field that can be filled in when the *writer* omitted it is
+// non-required (`r[compat.reader-only-fields]`). facet exposes explicit field
+// defaults two ways on a `Field`:
 //   - `DefaultSource::FromTrait`: the field type's `Default` impl, reached through
 //     the field's `&'static Shape` via `Shape::call_default_in_place`.
 //   - `DefaultSource::Custom(DefaultInPlaceFn)`: a custom default expression.
+// Plain `Option<T>` fields are also defaultable: their absent reader-side value is
+// `None`, reached through the same type-level `default_in_place`.
 // Either way we bind a `(ctx, thunk)` pair: the engine calls the ctx-less-looking
 // `extern "C"` thunk, passing back the opaque `ctx` (the `&'static Shape` or the
-// custom fn pointer) it does not interpret. A field with no `#[facet(default)]`
-// yields `None` — and a reader-only field without a default makes the schemas
+// custom fn pointer) it does not interpret. A field with no default source yields
+// `None` — and a reader-only field without a default makes the schemas
 // incompatible.
 //
 // Spec: `r[descriptors.thunk-binding]`, `r[compat.reader-only-fields]`.
 
+// r[impl compat.reader-only-fields]
+// r[impl compat.defaults-are-reader-side]
+fn field_required(f: &'static facet::Field) -> bool {
+    field_default(f).is_none()
+}
+
 /// The bound default-in-place operation for a facet field, or `None` when the
-/// field is not defaultable (no `#[facet(default)]`).
+/// field is not defaultable.
 fn field_default(f: &'static facet::Field) -> Option<FieldDefault> {
-    match f.default? {
-        DefaultSource::FromTrait => {
+    match f.default {
+        Some(DefaultSource::FromTrait) => {
             // The field type's `Default`, reached through its `&'static Shape`.
             // (If the type happens not to implement `Default`,
             // `call_default_in_place` returns `None` at run time and the thunk
@@ -1839,17 +1845,22 @@ fn field_default(f: &'static facet::Field) -> Option<FieldDefault> {
                 thunk: default_from_shape,
             })
         }
-        DefaultSource::Custom(custom) => Some(FieldDefault {
+        Some(DefaultSource::Custom(custom)) => Some(FieldDefault {
             // Carry the custom default fn pointer itself as the ctx.
             ctx: custom as *const (),
             thunk: default_from_custom,
         }),
         // `DefaultSource` is `#[non_exhaustive]`; an unrecognized source still means
         // the field is defaultable, so fall back to the field type's trait default.
-        _ => Some(FieldDefault {
+        Some(_) => Some(FieldDefault {
             ctx: core::ptr::from_ref::<Shape>(f.shape()).cast::<()>(),
             thunk: default_from_shape,
         }),
+        None if option_def(f.shape()).is_some() => Some(FieldDefault {
+            ctx: core::ptr::from_ref::<Shape>(f.shape()).cast::<()>(),
+            thunk: default_from_shape,
+        }),
+        None => None,
     }
 }
 
@@ -3465,6 +3476,11 @@ mod tests {
         a: u32,
         extra: u32,
     }
+    #[derive(Facet)]
+    struct OptionDefaultR {
+        a: u32,
+        avatar: Option<String>,
+    }
 
     // r[verify compat.reader-only-fields]
     // r[verify compat.defaults-are-reader-side]
@@ -3506,6 +3522,30 @@ mod tests {
         let back = unsafe { slot.assume_init() };
         assert_eq!(back.a, 7);
         assert_eq!(back.b, 0xABCD);
+    }
+
+    // r[verify compat.reader-only-fields]
+    // r[verify compat.defaults-are-reader-side]
+    #[test]
+    fn compat_reader_only_option_field_defaults_to_none() {
+        let w = of::<DefaultW>().unwrap();
+        let r = of::<OptionDefaultR>().unwrap();
+        let reg = merged_registry(&w, &r);
+
+        let r_root = r.schemas.iter().find(|s| s.id == r.root).unwrap();
+        let SchemaKind::Struct { fields, .. } = &r_root.kind else {
+            panic!("OptionDefaultR should lower to a struct schema");
+        };
+        let avatar = fields.iter().find(|f| f.name == "avatar").unwrap();
+        assert!(!avatar.required, "Option<T> fields are reader-defaultable");
+
+        let bytes = encode_writer(&DefaultW { a: 7 }, &w, &reg);
+        let program = lower_decode(w.root, &r.descriptor, &r.descriptor_blocks, &reg).unwrap();
+        let mut slot = std::mem::MaybeUninit::<OptionDefaultR>::uninit();
+        unsafe { typed::decode_with(&program, &bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back.a, 7);
+        assert_eq!(back.avatar, None);
     }
 
     // r[verify compat.plan-first]
@@ -3881,6 +3921,29 @@ mod tests {
         assert_eq!(jit.a, 7);
         assert_eq!(jit.b, 0xABCD);
         assert_eq!((jit.a, jit.b), (interp.a, interp.b));
+    }
+
+    /// 3c. A reader-only `Option<T>` field defaults to `None` without an explicit
+    ///     `#[facet(default)]`, and the JIT runs the same reader-default op as the
+    ///     interpreter.
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn compat_jit_reader_only_option_field_defaults_to_none() {
+        let w = of::<DefaultW>().unwrap();
+        let r = of::<OptionDefaultR>().unwrap();
+        let reg = merged_registry(&w, &r);
+
+        let bytes = encode_writer(&DefaultW { a: 7 }, &w, &reg);
+        let program = lower_decode(w.root, &r.descriptor, &r.descriptor_blocks, &reg).unwrap();
+        assert!(
+            has_compat_ops(&program.program),
+            "expected a Default op in the program"
+        );
+
+        let (jit, interp) = decode_both::<OptionDefaultR>(&program, &bytes);
+        assert_eq!(jit.a, 7);
+        assert_eq!(jit.avatar, None);
+        assert_eq!((jit.a, jit.avatar), (interp.a, interp.avatar));
     }
 
     /// 4a. Enum variant added on the reader: the JIT decodes the writer's A and

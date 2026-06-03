@@ -110,10 +110,11 @@ pub struct FieldAccess {
     pub descriptor: Descriptor,
     /// How to write this field's default in place, for the decode-compat path when
     /// the field is reader-only (absent from the writer). `Some` for a field the
-    /// language marks defaultable (`#[facet(default)]`); `None` for a required
-    /// field, whose absence from the writer makes the schemas incompatible
-    /// (`r[compat.reader-only-fields]`). The `ctx` is the front-door-bound context
-    /// the thunk understands (passed back untouched).
+    /// language marks defaultable (`#[facet(default)]`, or an implicit
+    /// `Option<T>`/`None` default); `None` for a required field, whose absence from
+    /// the writer makes the schemas incompatible (`r[compat.reader-only-fields]`).
+    /// The `ctx` is the front-door-bound context the thunk understands (passed back
+    /// untouched).
     pub default: Option<FieldDefault>,
 }
 

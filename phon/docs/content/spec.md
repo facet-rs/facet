@@ -370,7 +370,9 @@ it when a writer doesn't (see [Compatibility](#compatibility)). The default
 *value* is reader-side — the schema records only the boolean. `required` is part
 of schema identity, because required-versus-optional is a real contract
 difference. Optionality of the value itself — none-or-some — is a separate thing,
-expressed by the field's schema being an `Option`.
+expressed by the field's schema being an `Option`. A field whose schema is
+`Option<T>` is defaultable even without an explicit field-level default: its
+reader-side default is `None`.
 
 ## Variants
 
@@ -1050,8 +1052,9 @@ The compatibility algorithm is:
 > real contract difference. The schema does not carry the default *value*: that
 > is the reader's business, living in the reader's language mapping (Rust's
 > `Default`, a codegen-emitted initializer), and applied when a non-required
-> field is absent from the writer. Two readers of the same schema may fill
-> different values; both are correct. Tooling may track the value for
+> field is absent from the writer. `Option<T>` fields are non-required by
+> default and fill as `None` when reader-only. Two readers of the same schema
+> may fill different values; both are correct. Tooling may track the value for
 > cross-language analysis, but the schema records only the boolean.
 
 > r[compat.type-match]
