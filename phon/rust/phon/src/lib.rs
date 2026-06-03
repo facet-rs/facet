@@ -81,6 +81,7 @@ pub mod api {
     ///
     /// Build it once and reuse it to avoid re-deriving schemas or recompiling the
     /// JIT on every message.
+    // r[impl crates.jit-opt-in]
     pub struct Codec<T> {
         lowered: Lowered,
         #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
@@ -316,6 +317,7 @@ mod tests {
         value: Result<u32, u32>,
     }
 
+    // r[verify crates.jit-opt-in]
     // r[verify exec.jit-optional]
     #[test]
     fn api_result_uses_native_jit_when_available() {
