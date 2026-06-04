@@ -10,13 +10,14 @@
 //! This approach uses facet-tokio-postgres for all deserialization, which
 //! properly handles complex types like `Jsonb<T>` via reflection.
 
+use crate::error::QErrorKind;
 use crate::sqlgen::SqlGenContext;
 use crate::{QError, QSource};
 use codegen::{Block, Function, Scope, Struct};
 use dibs_db_schema::Schema;
 use dibs_query_schema::{
     Decl, Delete, FieldDef, Insert, InsertMany, Meta, Params, QueryFile, Returning, Returns,
-    Select, SelectFields, Update, Upsert, UpsertMany,
+    Select, SelectFields, Span, Update, Upsert, UpsertMany,
 };
 use std::sync::Arc;
 
@@ -75,6 +76,35 @@ impl CodegenContext<'_> {
         schema_column_type(self.schema, table, column)
     }
 
+    /// Look up the Rust type for a column referenced in the query at `span`,
+    /// erroring if the table or column can't be resolved from the schema.
+    ///
+    /// Use this for every column whose type ends up in a generated result/param
+    /// struct. A missing column means the schema handed to codegen is wrong or
+    /// empty (e.g. a build script that forgot to link its table definitions);
+    /// silently falling back to `String` there generates wrong-typed structs
+    /// that compile fine and corrupt data at runtime.
+    fn column_type_at(&self, table: &str, column: &str, span: Span) -> Result<String, QError> {
+        if let Some(ty) = schema_column_type(self.schema, table, column) {
+            return Ok(ty);
+        }
+        let kind = if self.schema.get_table(table).is_none() {
+            QErrorKind::TableNotFound {
+                table: table.to_string(),
+            }
+        } else {
+            QErrorKind::ColumnNotFound {
+                table: table.to_string(),
+                column: column.to_string(),
+            }
+        };
+        Err(QError {
+            source: self.source.clone(),
+            span,
+            kind,
+        })
+    }
+
     /// Create an SqlGenContext for this codegen context.
     fn sqlgen_ctx(&self) -> SqlGenContext<'_> {
         SqlGenContext::new(self.schema, self.source.clone())
@@ -107,19 +137,19 @@ pub fn generate_rust_code(
     for (name_meta, decl) in &file.0 {
         match decl {
             Decl::Select(select) => {
-                generate_select_code(&ctx, name_meta, select, &mut scope);
+                generate_select_code(&ctx, name_meta, select, &mut scope)?;
             }
             Decl::Insert(insert) => {
-                generate_insert_code(&ctx, name_meta, insert, &mut scope);
+                generate_insert_code(&ctx, name_meta, insert, &mut scope)?;
             }
             Decl::InsertMany(insert_many) => {
-                generate_insert_many_code(&ctx, name_meta, insert_many, &mut scope);
+                generate_insert_many_code(&ctx, name_meta, insert_many, &mut scope)?;
             }
             Decl::Upsert(upsert) => {
-                generate_upsert_code(&ctx, name_meta, upsert, &mut scope);
+                generate_upsert_code(&ctx, name_meta, upsert, &mut scope)?;
             }
             Decl::UpsertMany(upsert_many) => {
-                generate_upsert_many_code(&ctx, name_meta, upsert_many, &mut scope);
+                generate_upsert_many_code(&ctx, name_meta, upsert_many, &mut scope)?;
             }
             Decl::Update(update) => {
                 generate_update_code(&ctx, name_meta, update, &mut scope)?;
@@ -140,19 +170,19 @@ fn generate_select_code(
     name_meta: &Meta<String>,
     select: &Select,
     scope: &mut Scope,
-) {
+) -> Result<(), QError> {
     let name = &name_meta.value;
     let struct_name = format!("{}Result", name);
 
     // Generate result struct(s)
     if let Some(from) = &select.from {
         if select.fields.is_some() {
-            generate_result_struct(ctx, select, name_meta, &struct_name, from, scope);
+            generate_result_struct(ctx, select, name_meta, &struct_name, from, scope)?;
 
             // For queries with relations, also generate a flat row struct for deserialization
             if select.has_relations() {
                 let flat_struct_name = format!("{}Row", name);
-                generate_flat_row_struct(ctx, select, &flat_struct_name, from, scope);
+                generate_flat_row_struct(ctx, select, &flat_struct_name, from, scope)?;
             }
         }
     } else if let Some(returns) = &select.returns {
@@ -161,7 +191,8 @@ fn generate_select_code(
     }
 
     // Generate query function
-    generate_select_function(ctx, name_meta, select, &struct_name, scope);
+    generate_select_function(ctx, name_meta, select, &struct_name, scope)?;
+    Ok(())
 }
 
 /// Generate a flat row struct that matches the SQL result columns exactly.
@@ -192,7 +223,7 @@ fn generate_flat_row_struct(
     struct_name: &str,
     table: &Meta<dibs_sql::TableName>,
     scope: &mut Scope,
-) {
+) -> Result<(), QError> {
     let mut st = Struct::new(struct_name);
     // Internal struct - not pub
     st.derive("Debug");
@@ -204,10 +235,11 @@ fn generate_flat_row_struct(
 
     if let Some(select_fields) = &select.fields {
         // Add root table columns
-        add_flat_fields_for_select(ctx, &mut st, table_name, "", select_fields);
+        add_flat_fields_for_select(ctx, &mut st, table_name, "", select_fields)?;
     }
 
     scope.push_struct(st);
+    Ok(())
 }
 
 /// Recursively add fields to the flat row struct for a SelectFields.
@@ -217,16 +249,14 @@ fn add_flat_fields_for_select(
     table_name: &str,
     prefix: &str,
     select_fields: &SelectFields,
-) {
+) -> Result<(), QError> {
     for (field_name_meta, field_def) in &select_fields.fields {
         let field_name = field_name_meta.value.as_str();
 
         match field_def {
             None => {
                 // Simple column
-                let rust_ty = ctx
-                    .column_type(table_name, field_name)
-                    .unwrap_or_else(|| "String".to_string());
+                let rust_ty = ctx.column_type_at(table_name, field_name, field_name_meta.span)?;
 
                 let flat_field_name = if prefix.is_empty() {
                     field_name.to_string()
@@ -257,7 +287,7 @@ fn add_flat_fields_for_select(
                 };
 
                 if let Some(rel_fields) = &rel.fields {
-                    add_flat_fields_for_select(ctx, st, rel_table, &new_prefix, rel_fields);
+                    add_flat_fields_for_select(ctx, st, rel_table, &new_prefix, rel_fields)?;
                 }
             }
             Some(FieldDef::Count(_)) => {
@@ -271,6 +301,7 @@ fn add_flat_fields_for_select(
             }
         }
     }
+    Ok(())
 }
 
 fn generate_raw_sql_result_struct(struct_name: &str, returns: &Returns, scope: &mut Scope) {
@@ -297,7 +328,7 @@ fn generate_result_struct(
     struct_name: &str,
     table: &Meta<dibs_sql::TableName>,
     scope: &mut Scope,
-) {
+) -> Result<(), QError> {
     let mut st = Struct::new(struct_name);
     st.vis("pub");
     st.derive("Debug");
@@ -315,9 +346,8 @@ fn generate_result_struct(
             match field_def {
                 None => {
                     // Simple column
-                    let rust_ty = ctx
-                        .column_type(table_name, field_name)
-                        .unwrap_or_else(|| "String".to_string());
+                    let rust_ty =
+                        ctx.column_type_at(table_name, field_name, field_name_meta.span)?;
                     st.field(format!("pub {}", field_name), &rust_ty);
                 }
                 Some(FieldDef::Rel(rel)) => {
@@ -340,8 +370,9 @@ fn generate_result_struct(
 
     // Generate nested structs for relations (recursively)
     if let Some(select_fields) = &select.fields {
-        generate_nested_structs(ctx, parent_prefix, select_fields, scope);
+        generate_nested_structs(ctx, parent_prefix, select_fields, scope)?;
     }
+    Ok(())
 }
 
 /// Recursively generate structs for nested relations.
@@ -353,7 +384,7 @@ fn generate_nested_structs(
     parent_prefix: &str,
     select_fields: &SelectFields,
     scope: &mut Scope,
-) {
+) -> Result<(), QError> {
     for (field_name_meta, field_def) in &select_fields.fields {
         if let Some(FieldDef::Rel(rel)) = field_def {
             let field_name = field_name_meta.value.as_str();
@@ -373,9 +404,11 @@ fn generate_nested_structs(
                     match rel_field_def {
                         None => {
                             // Simple column
-                            let rust_ty = ctx
-                                .column_type(rel_table, rel_field_name)
-                                .unwrap_or_else(|| "String".to_string());
+                            let rust_ty = ctx.column_type_at(
+                                rel_table,
+                                rel_field_name,
+                                rel_field_name_meta.span,
+                            )?;
                             nested_st.field(format!("pub {}", rel_field_name), &rust_ty);
                         }
                         Some(FieldDef::Rel(nested_rel)) => {
@@ -400,10 +433,11 @@ fn generate_nested_structs(
 
             // Recursively generate structs for nested relations
             if let Some(rel_fields) = &rel.fields {
-                generate_nested_structs(ctx, &nested_name, rel_fields, scope);
+                generate_nested_structs(ctx, &nested_name, rel_fields, scope)?;
             }
         }
     }
+    Ok(())
 }
 
 fn generate_select_function(
@@ -412,7 +446,7 @@ fn generate_select_function(
     query: &Select,
     struct_name: &str,
     scope: &mut Scope,
-) {
+) -> Result<(), QError> {
     let name = &name_meta.value;
     let fn_name = to_snake_case(name);
 
@@ -452,18 +486,23 @@ fn generate_select_function(
     let body = if let Some(raw_sql_meta) = &query.sql {
         block_to_string(&generate_raw_query_body(query, &raw_sql_meta.value))
     } else {
-        generate_query_body(ctx, query, struct_name)
+        generate_query_body(ctx, query, struct_name)?
     };
     func.line(wrap_with_trace_err(&body, &fn_name));
 
     scope.push_fn(func);
+    Ok(())
 }
 
 /// Generate query body for all queries (with or without JOINs).
 ///
 /// For queries without relations: use `from_row()` directly into the result struct.
 /// For queries with relations: deserialize into flat row struct, then transform.
-fn generate_query_body(ctx: &CodegenContext, query: &Select, struct_name: &str) -> String {
+fn generate_query_body(
+    ctx: &CodegenContext,
+    query: &Select,
+    struct_name: &str,
+) -> Result<String, QError> {
     let sqlgen_ctx = ctx.sqlgen_ctx();
     let generated = match crate::sqlgen::generate_select_sql(&sqlgen_ctx, query) {
         Ok(g) => g,
@@ -509,7 +548,7 @@ fn generate_query_body(ctx: &CodegenContext, query: &Select, struct_name: &str) 
         } else {
             block.line("rows.iter().map(|row| Ok(from_row(row)?)).collect()");
         }
-        return block_to_string(&block);
+        return Ok(block_to_string(&block));
     }
 
     // For queries with relations, deserialize into flat row struct then transform
@@ -527,7 +566,7 @@ fn generate_query_body(ctx: &CodegenContext, query: &Select, struct_name: &str) 
     let Some(select_fields) = &query.fields else {
         // No fields - shouldn't happen for queries with relations
         block.line("Ok(vec![])".to_string());
-        return block_to_string(&block);
+        return Ok(block_to_string(&block));
     };
 
     let root_table = query
@@ -543,9 +582,9 @@ fn generate_query_body(ctx: &CodegenContext, query: &Select, struct_name: &str) 
         struct_name,
         root_table,
         is_first,
-    ));
+    )?);
 
-    block_to_string(&block)
+    Ok(block_to_string(&block))
 }
 
 /// Generate code to transform flat rows into nested result structs.
@@ -555,7 +594,7 @@ fn generate_flat_to_nested_transform(
     struct_name: &str,
     root_table: &str,
     is_first: bool,
-) -> String {
+) -> Result<String, QError> {
     let mut block = Block::new("");
 
     // Find the ID column for grouping (typically "id")
@@ -577,7 +616,7 @@ fn generate_flat_to_nested_transform(
         ));
 
         // Track seen relation IDs to avoid duplicates from JOINs
-        generate_seen_id_declarations(&mut block, ctx, select_fields, &id_type, "");
+        generate_seen_id_declarations(&mut block, ctx, select_fields, &id_type, "")?;
 
         block.line("");
 
@@ -622,7 +661,7 @@ fn generate_flat_to_nested_transform(
             parent_prefix,
             "",
             &id_type,
-        );
+        )?;
 
         block.push_block(for_block);
         block.line("");
@@ -670,9 +709,11 @@ fn generate_flat_to_nested_transform(
                                 let inner_name = inner_field_meta.value.as_str();
                                 if inner_def.is_none() {
                                     let alias = format!("{field_name}_{inner_name}");
-                                    let rust_ty = ctx
-                                        .column_type(rel_table, inner_name)
-                                        .unwrap_or_else(|| "String".to_string());
+                                    let rust_ty = ctx.column_type_at(
+                                        rel_table,
+                                        inner_name,
+                                        inner_field_meta.span,
+                                    )?;
 
                                     // Unwrap the Option from LEFT JOIN
                                     if rust_ty.starts_with("Option<") {
@@ -714,7 +755,7 @@ fn generate_flat_to_nested_transform(
         }
     }
 
-    block_to_string(&block)
+    Ok(block_to_string(&block))
 }
 
 /// Generate declarations for tracking seen relation IDs (for deduplication).
@@ -724,7 +765,7 @@ fn generate_seen_id_declarations(
     select_fields: &SelectFields,
     parent_id_type: &str,
     prefix: &str,
-) {
+) -> Result<(), QError> {
     for (field_name_meta, field_def) in &select_fields.fields {
         if let Some(FieldDef::Rel(rel)) = field_def {
             let field_name = field_name_meta.value.as_str();
@@ -755,11 +796,12 @@ fn generate_seen_id_declarations(
                     };
 
                     // For nested relations, the parent ID is now this relation's ID
-                    generate_seen_id_declarations(block, ctx, rel_fields, &id_type, &new_prefix);
+                    generate_seen_id_declarations(block, ctx, rel_fields, &id_type, &new_prefix)?;
                 }
             }
         }
     }
+    Ok(())
 }
 
 /// Generate code to assemble relations from flat row data.
@@ -770,7 +812,7 @@ fn generate_relation_assembly(
     parent_prefix: &str,
     flat_prefix: &str,
     _parent_id_type: &str,
-) {
+) -> Result<(), QError> {
     for (field_name_meta, field_def) in &select_fields.fields {
         if let Some(FieldDef::Rel(rel)) = field_def {
             let field_name = field_name_meta.value.as_str();
@@ -810,7 +852,7 @@ fn generate_relation_assembly(
                         rel_fields,
                         rel_table,
                         &flat_field_prefix,
-                    );
+                    )?;
                     some_block.after(");");
                     if_block.push_block(some_block);
 
@@ -839,7 +881,7 @@ fn generate_relation_assembly(
                         rel_fields,
                         rel_table,
                         &flat_field_prefix,
-                    );
+                    )?;
                     push_block.after(");");
                     if_insert.push_block(push_block);
 
@@ -850,6 +892,7 @@ fn generate_relation_assembly(
             }
         }
     }
+    Ok(())
 }
 
 /// Generate field assignments for a relation struct.
@@ -859,16 +902,14 @@ fn generate_relation_fields(
     select_fields: &SelectFields,
     table_name: &str,
     flat_prefix: &str,
-) {
+) -> Result<(), QError> {
     for (field_name_meta, field_def) in &select_fields.fields {
         let field_name = field_name_meta.value.as_str();
         let alias = format!("{flat_prefix}_{field_name}");
 
         match field_def {
             None => {
-                let rust_ty = ctx
-                    .column_type(table_name, field_name)
-                    .unwrap_or_else(|| "String".to_string());
+                let rust_ty = ctx.column_type_at(table_name, field_name, field_name_meta.span)?;
 
                 // Flat struct has Option<T> for relation columns due to LEFT JOIN
                 // Need to unwrap unless the original type was already Option
@@ -896,6 +937,7 @@ fn generate_relation_fields(
             }
         }
     }
+    Ok(())
 }
 
 fn generate_raw_query_body(query: &Select, raw_sql: &str) -> Block {
@@ -1019,7 +1061,7 @@ fn generate_insert_code(
     name_meta: &Meta<String>,
     insert: &Insert,
     scope: &mut Scope,
-) {
+) -> Result<(), QError> {
     let name = &name_meta.value;
     let fn_name = to_snake_case(name);
     let generated = crate::sqlgen::generate_insert_sql(insert);
@@ -1037,7 +1079,7 @@ fn generate_insert_code(
                 insert.into.value.as_str(),
                 returning,
                 scope,
-            );
+            )?;
         }
         format!("Result<Option<{}>, QueryError>", struct_name)
     };
@@ -1070,6 +1112,7 @@ fn generate_insert_code(
     func.line(wrap_with_trace_err(&block_to_string(&body), &fn_name));
 
     scope.push_fn(func);
+    Ok(())
 }
 
 fn generate_upsert_code(
@@ -1077,7 +1120,7 @@ fn generate_upsert_code(
     name_meta: &Meta<String>,
     upsert: &Upsert,
     scope: &mut Scope,
-) {
+) -> Result<(), QError> {
     let name = &name_meta.value;
     let fn_name = to_snake_case(name);
     let generated = crate::sqlgen::generate_upsert_sql(upsert);
@@ -1094,7 +1137,7 @@ fn generate_upsert_code(
                 upsert.into.value.as_str(),
                 returning,
                 scope,
-            );
+            )?;
         }
         format!("Result<Option<{}>, QueryError>", struct_name)
     };
@@ -1127,6 +1170,7 @@ fn generate_upsert_code(
     func.line(wrap_with_trace_err(&block_to_string(&body), &fn_name));
 
     scope.push_fn(func);
+    Ok(())
 }
 
 fn generate_insert_many_code(
@@ -1134,7 +1178,7 @@ fn generate_insert_many_code(
     name_meta: &Meta<String>,
     insert: &InsertMany,
     scope: &mut Scope,
-) {
+) -> Result<(), QError> {
     let name = &name_meta.value;
     let fn_name = to_snake_case(name);
     let generated = crate::sqlgen::generate_insert_many_sql(insert);
@@ -1164,7 +1208,7 @@ fn generate_insert_many_code(
                 insert.into.value.as_str(),
                 returning,
                 scope,
-            );
+            )?;
         }
         format!("Result<Vec<{}>, QueryError>", struct_name)
     };
@@ -1190,6 +1234,7 @@ fn generate_insert_many_code(
     func.line(wrap_with_trace_err(&block_to_string(&body), &fn_name));
 
     scope.push_fn(func);
+    Ok(())
 }
 
 fn generate_upsert_many_code(
@@ -1197,7 +1242,7 @@ fn generate_upsert_many_code(
     name_meta: &Meta<String>,
     upsert: &UpsertMany,
     scope: &mut Scope,
-) {
+) -> Result<(), QError> {
     let name = &name_meta.value;
     let fn_name = to_snake_case(name);
     let generated = crate::sqlgen::generate_upsert_many_sql(upsert);
@@ -1227,7 +1272,7 @@ fn generate_upsert_many_code(
                 upsert.into.value.as_str(),
                 returning,
                 scope,
-            );
+            )?;
         }
         format!("Result<Vec<{}>, QueryError>", struct_name)
     };
@@ -1253,6 +1298,7 @@ fn generate_upsert_many_code(
     func.line(wrap_with_trace_err(&block_to_string(&body), &fn_name));
 
     scope.push_fn(func);
+    Ok(())
 }
 
 /// Generate a params struct for bulk operations.
@@ -1350,7 +1396,7 @@ fn generate_update_code(
                 update.table.value.as_str(),
                 returning,
                 scope,
-            );
+            )?;
         }
         format!("Result<Option<{}>, QueryError>", struct_name)
     };
@@ -1409,7 +1455,7 @@ fn generate_delete_code(
                 delete.from.value.as_str(),
                 returning,
                 scope,
-            );
+            )?;
         }
         format!("Result<Option<{}>, QueryError>", struct_name)
     };
@@ -1451,7 +1497,7 @@ fn generate_mutation_result_struct(
     table: &str,
     returning: &Returning,
     scope: &mut Scope,
-) {
+) -> Result<(), QError> {
     let mut st = Struct::new(struct_name);
     st.vis("pub");
     st.derive("Debug");
@@ -1461,13 +1507,12 @@ fn generate_mutation_result_struct(
 
     for (col_name_meta, _) in &returning.columns {
         let col_name = col_name_meta.value.as_str();
-        let rust_ty = ctx
-            .column_type(table, col_name)
-            .unwrap_or_else(|| "String".to_string());
+        let rust_ty = ctx.column_type_at(table, col_name, col_name_meta.span)?;
         st.field(format!("pub {col_name}"), &rust_ty);
     }
 
     scope.push_struct(st);
+    Ok(())
 }
 
 fn generate_mutation_body(

@@ -36,35 +36,30 @@ my-app-db = { path = "../my-app-db" }
 Create `crates/my-app-queries/build.rs`:
 
 ```rust
-use dibs::{parse_query_file, generate_rust_code_with_planner};
-use std::{env, fs, path::Path};
-
 fn main() {
-    println!("cargo::rerun-if-changed=.dibs-queries/queries.styx");
+    // Force the linker to include my_app_db's inventory submissions.
+    // This MUST be a real symbol reference (a function call). A
+    // `std::any::TypeId::of::<my_app_db::User>()` or `type_name` reference is a
+    // const intrinsic and does NOT pull the crate's `inventory::submit!` statics
+    // into the build — the schema would come back empty and codegen would fall
+    // back to wrong column types.
+    my_app_db::ensure_linked();
 
-    // Force the linker to include my_app_db's inventory submissions
-    // by referencing a type from the crate
-    let _ = std::any::TypeId::of::<my_app_db::User>();
-
-    // Collect schema from registered tables via inventory
-    let schema = dibs::Schema::collect();
-
-    // Parse and generate
-    let queries_path = Path::new(".dibs-queries/queries.styx");
-    let source = fs::read_to_string(queries_path)
-        .expect("Failed to read .dibs-queries/queries.styx");
-
-    let file = parse_query_file(&source)
-        .expect("Failed to parse .dibs-queries/queries.styx");
-
-    let generated = generate_rust_code_with_planner(&file, &schema, None);
-
-    let out_dir = env::var("OUT_DIR").expect("OUT_DIR not set");
-    let dest_path = Path::new(&out_dir).join("queries.rs");
-
-    fs::write(&dest_path, &generated.code)
-        .expect("Failed to write generated queries.rs");
+    // Collects the schema from inventory, parses the query file, generates the
+    // Rust code, and writes it to OUT_DIR. Panics with a helpful message if the
+    // schema is empty (i.e. you forgot the `ensure_linked()` call above).
+    dibs::build_queries(".dibs-queries/queries.styx");
 }
+```
+
+Your `my-app-db` crate needs to expose `ensure_linked()` — an empty `pub fn`
+whose call forces the linker to keep the crate's table submissions:
+
+```rust
+// in my-app-db/src/lib.rs
+/// Call this from build scripts so the linker keeps this crate's
+/// `#[facet(dibs::table)]` inventory submissions.
+pub fn ensure_linked() {}
 ```
 
 Create `crates/my-app-queries/src/lib.rs`:

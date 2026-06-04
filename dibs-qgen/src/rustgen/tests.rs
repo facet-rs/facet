@@ -577,7 +577,17 @@ CreateUser @insert{
 }
 "#;
     let (file, qsource) = parse_test(source);
-    let code = generate_rust_code(&file, &empty_schema(), qsource).unwrap();
+    let schema = make_test_schema(vec![make_test_table(
+        "users",
+        &[
+            ("id", PgType::BigInt, false),
+            ("name", PgType::Text, false),
+            ("email", PgType::Text, false),
+            ("created_at", PgType::Timestamptz, false),
+        ],
+        vec![],
+    )]);
+    let code = generate_rust_code(&file, &schema, qsource).unwrap();
 
     assert!(code.code.contains("pub struct CreateUserResult"));
     assert!(code.code.contains("pub async fn create_user"));
@@ -606,7 +616,17 @@ UpsertProduct @upsert{
 }
 "#;
     let (file, qsource) = parse_test(source);
-    let code = generate_rust_code(&file, &empty_schema(), qsource).unwrap();
+    let schema = make_test_schema(vec![make_test_table(
+        "products",
+        &[
+            ("id", PgType::Uuid, false),
+            ("name", PgType::Text, false),
+            ("price", PgType::Numeric, false),
+            ("updated_at", PgType::Timestamptz, false),
+        ],
+        vec![],
+    )]);
+    let code = generate_rust_code(&file, &schema, qsource).unwrap();
 
     assert!(code.code.contains("pub struct UpsertProductResult"));
     assert!(code.code.contains("pub async fn upsert_product"));
@@ -627,7 +647,16 @@ UpdateUserEmail @update{
 }
 "#;
     let (file, qsource) = parse_test(source);
-    let code = generate_rust_code(&file, &empty_schema(), qsource).unwrap();
+    let schema = make_test_schema(vec![make_test_table(
+        "users",
+        &[
+            ("id", PgType::Uuid, false),
+            ("email", PgType::Text, false),
+            ("updated_at", PgType::Timestamptz, false),
+        ],
+        vec![],
+    )]);
+    let code = generate_rust_code(&file, &schema, qsource).unwrap();
 
     assert!(code.code.contains("pub struct UpdateUserEmailResult"));
     assert!(code.code.contains("pub async fn update_user_email"));
@@ -647,7 +676,12 @@ DeleteUser @delete{
 }
 "#;
     let (file, qsource) = parse_test(source);
-    let code = generate_rust_code(&file, &empty_schema(), qsource).unwrap();
+    let schema = make_test_schema(vec![make_test_table(
+        "users",
+        &[("id", PgType::Uuid, false)],
+        vec![],
+    )]);
+    let code = generate_rust_code(&file, &schema, qsource).unwrap();
 
     assert!(code.code.contains("pub struct DeleteUserResult"));
     assert!(code.code.contains("pub async fn delete_user"));
@@ -686,7 +720,16 @@ BulkCreateProducts @insert-many{
 }
 "#;
     let (file, qsource) = parse_test(source);
-    let code = generate_rust_code(&file, &empty_schema(), qsource).unwrap();
+    let schema = make_test_schema(vec![make_test_table(
+        "products",
+        &[
+            ("id", PgType::BigInt, false),
+            ("handle", PgType::Text, false),
+            ("status", PgType::Text, false),
+        ],
+        vec![],
+    )]);
+    let code = generate_rust_code(&file, &schema, qsource).unwrap();
 
     // Should generate params struct
     assert!(
@@ -754,7 +797,16 @@ BulkUpsertProducts @upsert-many{
 }
 "#;
     let (file, qsource) = parse_test(source);
-    let code = generate_rust_code(&file, &empty_schema(), qsource).unwrap();
+    let schema = make_test_schema(vec![make_test_table(
+        "products",
+        &[
+            ("id", PgType::BigInt, false),
+            ("handle", PgType::Text, false),
+            ("status", PgType::Text, false),
+        ],
+        vec![],
+    )]);
+    let code = generate_rust_code(&file, &schema, qsource).unwrap();
 
     // Should generate params struct
     assert!(

@@ -44,8 +44,11 @@ Create `crates/my-app-db/src/main.rs`:
 
 ```rust
 fn main() {
-    // Touch the types so they're not eliminated by dead code optimization
-    let _ = std::any::type_name::<my_app_db::User>();
+    // Force the linker to keep this crate's table submissions. Must be a real
+    // symbol reference (a function call) — a `type_name`/`TypeId::of` reference
+    // is a const intrinsic and does NOT link the crate's inventory statics, so
+    // dibs would discover zero tables.
+    my_app_db::ensure_linked();
 
     dibs::run_service();
 }
@@ -53,7 +56,7 @@ fn main() {
 
 This binary is spawned by the dibs CLI to answer schema requests. You don't run it directly.
 
-The `type_name` call ensures your table types are included in the binary so dibs can discover them via inventory.
+The `ensure_linked()` call ensures your table types are included in the binary so dibs can discover them via inventory. Define it once in your crate as an empty `pub fn ensure_linked() {}`.
 
 ## Configure dibs
 

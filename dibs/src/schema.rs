@@ -185,6 +185,17 @@ pub fn index_column_to_sql(col: &IndexColumn) -> String {
 /// Collect schema from all registered table types.
 ///
 /// This uses facet reflection to inspect types marked with `#[facet(dibs::table)]`.
+///
+/// # Panics
+///
+/// Panics if no tables are registered. An empty schema is never something a
+/// caller actually wants — it almost always means the crate defining your
+/// `#[facet(dibs::table)]` types wasn't linked in, so `inventory` saw nothing.
+/// Build scripts and binaries must force the linker to keep those submissions
+/// by calling the db crate's `ensure_linked()` (a real symbol reference; a
+/// `TypeId::of`/`type_name` reference is a const intrinsic and does NOT link
+/// the crate's statics). Silently returning an empty schema instead would make
+/// codegen fall back to wrong column types and corrupt data at runtime.
 pub fn collect_schema() -> Schema {
     let tables = inventory::iter::<TableDef>
         .into_iter()
@@ -192,7 +203,20 @@ pub fn collect_schema() -> Schema {
         .map(|t| (t.name.clone(), t))
         .collect();
 
-    Schema { tables }
+    let schema = Schema { tables };
+
+    assert!(
+        !schema.tables.is_empty(),
+        "dibs::collect_schema() found zero registered tables.\n\
+         This almost always means the crate defining your #[facet(dibs::table)] \
+         types was not linked in, so inventory saw no submissions.\n\
+         In your build.rs / binary, call your db crate's `ensure_linked()` before \
+         collecting the schema, e.g. `my_app_db::ensure_linked();`.\n\
+         A `TypeId::of::<_>()` / `type_name::<_>()` reference is NOT enough — it is \
+         a const intrinsic that creates no link-time dependency on the crate's statics."
+    );
+
+    schema
 }
 
 #[cfg(test)]
