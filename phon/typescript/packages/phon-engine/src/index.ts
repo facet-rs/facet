@@ -35,8 +35,9 @@ export {
   jitAvailable,
   compileEncoder,
   compiledEncoderSource,
+  recordJitFallbacks,
 } from "./jit.ts";
-export type { CompiledDecoder, CompiledEncoder } from "./jit.ts";
+export type { CompiledDecoder, CompiledEncoder, JitFallbackRecord } from "./jit.ts";
 
 // The ergonomic typed front door (plain objects, numbers, {tag,value} enums).
 export { decodeTyped, encodeTyped } from "./typed.ts";

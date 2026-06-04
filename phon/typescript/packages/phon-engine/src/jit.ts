@@ -71,6 +71,11 @@ const HELPERS: Helpers = {
 /// bytes. Throws the same errors the interpreter would.
 export type CompiledDecoder = (bytes: Uint8Array) => Value;
 
+export interface JitFallbackRecord {
+  path: string;
+  reason: string;
+}
+
 /// Whether `new Function` is usable here. Memoized: a strict CSP disables it
 /// process-wide, so probe once. When false, `compile` uses the interpreter.
 let jitCapable: boolean | undefined;
@@ -118,6 +123,70 @@ export function interpretPlan(plan: Plan, reg: Registry): CompiledDecoder {
   return (bytes: Uint8Array) => decodeWithPlan(bytes, plan, reg);
 }
 
+// r[impl exec.strict-recording]
+export function recordJitFallbacks(plan: Plan): JitFallbackRecord[] {
+  const records: JitFallbackRecord[] = [];
+  recordNodeFallbacks(plan.root, "$", records);
+  for (const [schema, block] of plan.blocks) {
+    recordNodeFallbacks(block, `$block[0x${schema.toString(16)}]`, records);
+  }
+  return records;
+}
+
+function recordNodeFallbacks(node: Node, path: string, out: JitFallbackRecord[]): void {
+  switch (node.kind) {
+    case "callBlock":
+      out.push({
+        path,
+        reason: "recursive callBlock is interpreted by the TypeScript JIT fallback",
+      });
+      return;
+    case "struct":
+      node.plan.steps.forEach((step, i) => {
+        if (step.kind === "take") recordNodeFallbacks(step.node, `${path}.field[${i}]`, out);
+      });
+      return;
+    case "enum":
+      for (const [index, variant] of node.byIndex) {
+        recordPayloadFallbacks(variant.payload, `${path}.variant[${index}]`, out);
+      }
+      return;
+    case "tuple":
+      node.nodes.forEach((child, i) => recordNodeFallbacks(child, `${path}.tuple[${i}]`, out));
+      return;
+    case "seq":
+    case "array":
+    case "option":
+      recordNodeFallbacks(node.element, `${path}.element`, out);
+      return;
+    case "map":
+      recordNodeFallbacks(node.key, `${path}.key`, out);
+      recordNodeFallbacks(node.value, `${path}.value`, out);
+      return;
+    case "scalar":
+    case "dynamic":
+      return;
+  }
+}
+
+function recordPayloadFallbacks(payload: Payload, path: string, out: JitFallbackRecord[]): void {
+  switch (payload.kind) {
+    case "unit":
+      return;
+    case "newtype":
+      recordNodeFallbacks(payload.node, `${path}.value`, out);
+      return;
+    case "tuple":
+      payload.nodes.forEach((child, i) => recordNodeFallbacks(child, `${path}.tuple[${i}]`, out));
+      return;
+    case "struct":
+      payload.plan.steps.forEach((step, i) => {
+        if (step.kind === "take") recordNodeFallbacks(step.node, `${path}.field[${i}]`, out);
+      });
+      return;
+  }
+}
+
 // A per-registry cache of compiled decoders, keyed by writer:reader:engine. A
 // Registry is immutable after construction, so a plan depends only on the
 // schemas reachable from the roots — caching by registry identity is sound. The
@@ -145,10 +214,8 @@ export function compile(
   const hit = perReg.get(key);
   if (hit) return hit;
   const plan = buildPlan(writerRoot, readerRoot, reg);
-  // A recursive plan (cyclic schema → `callBlock` blocks) runs on the interpreter;
-  // the JIT's `callBlock` codegen is a follow-up, mirroring the Rust JIT (CallBlock
-  // is interpreter-only there too).
-  const decoder = useJit && plan.blocks.size === 0 ? compilePlan(plan, reg) : interpretPlan(plan, reg);
+  const fallbacks = recordJitFallbacks(plan);
+  const decoder = useJit && fallbacks.length === 0 ? compilePlan(plan, reg) : interpretPlan(plan, reg);
   perReg.set(key, decoder);
   return decoder;
 }

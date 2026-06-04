@@ -36,6 +36,41 @@ public typealias TypedEncodeFn = (_ base: UnsafeRawPointer) -> [UInt8]
 /// A prepared decoder: translate `bytes` into the reader value at `out`.
 public typealias TypedDecodeFn = (_ bytes: [UInt8], _ out: UnsafeMutableRawPointer) throws -> Void
 
+public struct JitFallbackRecord: Equatable, Sendable {
+    public var path: String
+    public var reason: String
+
+    public init(path: String, reason: String) {
+        self.path = path
+        self.reason = reason
+    }
+}
+
+public struct JitFallbackReport: Equatable, Sendable {
+    public var decode: [JitFallbackRecord]
+    public var encode: [JitFallbackRecord]
+
+    public init(decode: [JitFallbackRecord] = [], encode: [JitFallbackRecord] = []) {
+        self.decode = decode
+        self.encode = encode
+    }
+
+    public var isEmpty: Bool {
+        decode.isEmpty && encode.isEmpty
+    }
+}
+
+// r[impl exec.jit-optional]
+// r[impl exec.strict-recording]
+public func recordJitFallbacks(_ lowered: Lowered) -> JitFallbackReport {
+    _ = lowered
+    let record = JitFallbackRecord(
+        path: "$",
+        reason: "Swift PhonEngine currently uses the interpreter backend; no JIT backend is selected"
+    )
+    return JitFallbackReport(decode: [record], encode: [record])
+}
+
 /// A typed codec backend. Each `compile*` lowers the descriptor to a `MemProgram` and
 /// prepares its representation — the interpreter keeps the program; the JIT compiles it
 /// to machine code. Both must produce byte-identical output for any value.

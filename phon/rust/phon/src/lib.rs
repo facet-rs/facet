@@ -78,6 +78,43 @@ pub mod api {
         }
     }
 
+    /// One diagnostic record explaining why a subtree is not handled by the
+    /// native JIT and therefore falls back to the interpreter.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct JitFallbackRecord {
+        pub path: String,
+        pub reason: &'static str,
+    }
+
+    /// Diagnostic report for the optional native JIT. It is a development aid,
+    /// not an execution mode: encode/decode selection is unchanged.
+    // r[impl exec.strict-recording]
+    #[derive(Clone, Debug, Default, PartialEq, Eq)]
+    pub struct JitFallbackReport {
+        pub decode: Vec<JitFallbackRecord>,
+        pub encode: Vec<JitFallbackRecord>,
+    }
+
+    impl JitFallbackReport {
+        pub fn is_empty(&self) -> bool {
+            self.decode.is_empty() && self.encode.is_empty()
+        }
+
+        #[cfg(not(all(feature = "jit", target_os = "macos", target_arch = "aarch64")))]
+        fn unavailable(reason: &'static str) -> Self {
+            Self {
+                decode: vec![JitFallbackRecord {
+                    path: "$".to_string(),
+                    reason,
+                }],
+                encode: vec![JitFallbackRecord {
+                    path: "$".to_string(),
+                    reason,
+                }],
+            }
+        }
+    }
+
     /// A derived, lowered typed codec for `T`.
     ///
     /// Build it once and reuse it to avoid re-deriving schemas or recompiling the
@@ -154,6 +191,41 @@ pub mod api {
             }
         }
 
+        /// Report the subtrees that make this codec fall back from the native JIT.
+        ///
+        /// This is strict-recording diagnostics only. It does not change whether
+        /// encode/decode run with the native JIT or the interpreter.
+        pub fn jit_fallback_report(&self) -> JitFallbackReport {
+            #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+            {
+                let mut report = JitFallbackReport::default();
+                record_decode_fallbacks(&self.lowered.program, "$", &mut report.decode);
+                record_encode_fallbacks(&self.lowered.program, "$", &mut report.encode);
+                for (schema, block) in &self.lowered.blocks {
+                    let path = format!("$block[{schema}]");
+                    record_decode_fallbacks(block, &path, &mut report.decode);
+                    record_encode_fallbacks(block, &path, &mut report.encode);
+                }
+                if self.native_decode.is_none() && report.decode.is_empty() {
+                    report.decode.push(JitFallbackRecord {
+                        path: "$".to_string(),
+                        reason: "native decode JIT was not compiled for this program",
+                    });
+                }
+                if self.native_encode.is_none() && report.encode.is_empty() {
+                    report.encode.push(JitFallbackRecord {
+                        path: "$".to_string(),
+                        reason: "native encode JIT was not compiled for this program",
+                    });
+                }
+                report
+            }
+            #[cfg(not(all(feature = "jit", target_os = "macos", target_arch = "aarch64")))]
+            {
+                JitFallbackReport::unavailable("native JIT is not enabled for this build target")
+            }
+        }
+
         /// Encode `value` into compact phon bytes.
         ///
         /// # Errors
@@ -220,6 +292,64 @@ pub mod api {
                 .blocks
                 .values()
                 .all(|block| decode_program_supported(block))
+    }
+
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    fn record_decode_fallbacks(program: &[MemOp], path: &str, out: &mut Vec<JitFallbackRecord>) {
+        walk_nested_programs(program, path, out, record_decode_fallbacks);
+    }
+
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    fn record_encode_fallbacks(program: &[MemOp], path: &str, out: &mut Vec<JitFallbackRecord>) {
+        for (idx, op) in program.iter().enumerate() {
+            let op_path = format!("{path}.{idx}");
+            match op {
+                MemOp::SkipWire(_) => out.push(JitFallbackRecord {
+                    path: op_path,
+                    reason: "native encode JIT cannot emit decode-only skip-wire ops",
+                }),
+                MemOp::Default(_) => out.push(JitFallbackRecord {
+                    path: op_path,
+                    reason: "native encode JIT cannot emit decode-only default ops",
+                }),
+                _ => {}
+            }
+        }
+        walk_nested_programs(program, path, out, record_encode_fallbacks);
+    }
+
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    fn walk_nested_programs(
+        program: &[MemOp],
+        path: &str,
+        out: &mut Vec<JitFallbackRecord>,
+        visit: fn(&[MemOp], &str, &mut Vec<JitFallbackRecord>),
+    ) {
+        for (idx, op) in program.iter().enumerate() {
+            let op_path = format!("{path}.{idx}");
+            match op {
+                MemOp::Sequence(seq) => visit(&seq.element, &format!("{op_path}.element"), out),
+                MemOp::Option(option) => visit(&option.some, &format!("{op_path}.some"), out),
+                MemOp::Enum(en) => {
+                    for variant in &en.variants {
+                        visit(
+                            &variant.payload,
+                            &format!("{op_path}.variant[{}]", variant.wire_index),
+                            out,
+                        );
+                    }
+                }
+                MemOp::Map(map) => {
+                    visit(&map.key, &format!("{op_path}.key"), out);
+                    visit(&map.value, &format!("{op_path}.value"), out);
+                }
+                MemOp::Result(result) => {
+                    visit(&result.ok, &format!("{op_path}.ok"), out);
+                    visit(&result.err, &format!("{op_path}.err"), out);
+                }
+                _ => {}
+            }
+        }
     }
 
     #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
@@ -290,6 +420,7 @@ mod tests {
         items: Vec<u32>,
     }
 
+    // r[verify exec.strict-recording]
     #[test]
     fn api_roundtrips_and_reports_supported_backend() {
         let codec = api::Codec::<ApiMsg>::new().unwrap();
@@ -297,11 +428,15 @@ mod tests {
         {
             assert!(codec.decode_uses_native_jit());
             assert!(codec.encode_uses_native_jit());
+            assert!(codec.jit_fallback_report().is_empty());
         }
         #[cfg(not(all(feature = "jit", target_os = "macos", target_arch = "aarch64")))]
         {
             assert!(!codec.decode_uses_native_jit());
             assert!(!codec.encode_uses_native_jit());
+            let report = codec.jit_fallback_report();
+            assert!(!report.decode.is_empty());
+            assert!(!report.encode.is_empty());
         }
 
         let msg = ApiMsg {

@@ -11,6 +11,7 @@ import Foundation
 import Testing
 
 @testable import PhonEngine
+import PhonIR
 import PhonSchema
 
 private struct VectorFile: Decodable {
@@ -109,6 +110,27 @@ func compatConformanceCorpus() throws {
         let reencoded = bytesToHex(try encode(interpValue, readerRoot, reg))
         #expect(reencoded == c.readerHex, "\(c.name): reader bytes differ")
     }
+}
+
+// r[verify exec.jit-optional]
+// r[verify exec.strict-recording]
+@Test
+func swiftEngineRecordsInterpreterOnlyJitFallback() {
+    let report = recordJitFallbacks(
+        Lowered(program: [.scalar(offset: 0, size: 4, align: 4)])
+    )
+    #expect(report.decode == [
+        JitFallbackRecord(
+            path: "$",
+            reason: "Swift PhonEngine currently uses the interpreter backend; no JIT backend is selected"
+        )
+    ])
+    #expect(report.encode == [
+        JitFallbackRecord(
+            path: "$",
+            reason: "Swift PhonEngine currently uses the interpreter backend; no JIT backend is selected"
+        )
+    ])
 }
 
 // r[verify compat.direction]

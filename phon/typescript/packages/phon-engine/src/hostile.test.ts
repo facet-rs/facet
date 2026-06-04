@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { ByteSink, DecodeError, Registry, hexToBytes, schemaFromBytes } from "@bearcove/phon-schema";
 import type { Primitive } from "@bearcove/phon-schema";
-import { compile, decode, decodeCompact, encode, WriterOnlyVariantError } from "./index.ts";
+import { buildPlan, compile, decode, decodeCompact, encode, recordJitFallbacks, WriterOnlyVariantError } from "./index.ts";
 import type { Value } from "@bearcove/phon-schema";
 
 interface VectorFile {
@@ -120,6 +120,11 @@ describe("hostile input — interpreter and JIT reject identically", () => {
     );
     const value: Value = [[], [[]]];
     const wire = encode(value, selfId, recReg);
+    // r[verify exec.strict-recording]
+    expect(recordJitFallbacks(buildPlan(selfId, selfId, recReg))).toContainEqual({
+      path: "$",
+      reason: "recursive callBlock is interpreted by the TypeScript JIT fallback",
+    });
     // Same-schema decode translates selfId -> selfId through the recursion blocks.
     expect(compile(selfId, selfId, recReg)(wire)).toEqual(value);
     expect(decode(wire, selfId, selfId, recReg)).toEqual(value);
