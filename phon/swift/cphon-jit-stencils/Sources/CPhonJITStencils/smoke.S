@@ -102,6 +102,161 @@ _phon_jit_scalar_encode_next:
 .globl _phon_jit_scalar_encode_end
 _phon_jit_scalar_encode_end:
 
+.globl _phon_jit_option_decode_start
+_phon_jit_option_decode_start:
+    stp x29, x30, [sp, #-16]!
+    stp x19, x20, [sp, #-16]!
+    stp x21, x22, [sp, #-16]!
+    stp x23, x24, [sp, #-16]!
+
+    mov x19, x0
+    ldr x1, [x19, #32]
+    ldr x20, [x1], #8
+    mov x21, x1
+    ldr x22, [x19, #24]
+
+    ldr x3, [x19, #0]
+    ldr x4, [x19, #16]
+    add x5, x3, #1
+    cmp x5, x4
+    b.hi 9f
+    ldrb w6, [x3]
+    str x5, [x19, #0]
+
+    ldr x7, [x20, #0]
+    add x23, x22, x7
+    cbz x6, 1f
+    cmp x6, #1
+    b.eq 2f
+    mov x7, #2
+    str x7, [x19, #40]
+    str x6, [x19, #48]
+    b 10f
+
+1:
+    ldr x0, [x20, #32]
+    mov x1, x23
+    ldr x12, [x20, #56]
+    blr x12
+    b 8f
+
+2:
+    ldr x24, [x19, #56]
+    ldr x7, [x20, #8]
+    add x24, x24, x7
+    ldr x7, [x20, #24]
+    str x7, [x19, #32]
+    str x24, [x19, #24]
+    ldr x12, [x20, #16]
+    mov x0, x19
+    blr x12
+    ldr x7, [x19, #40]
+    cbnz x7, 7f
+    str x22, [x19, #24]
+    ldr x0, [x20, #32]
+    mov x1, x23
+    mov x2, x24
+    ldr x12, [x20, #48]
+    blr x12
+    b 8f
+
+7:
+    str x22, [x19, #24]
+    str x21, [x19, #32]
+    b 10f
+
+8:
+    str x22, [x19, #24]
+    str x21, [x19, #32]
+    ldp x23, x24, [sp], #16
+    ldp x21, x22, [sp], #16
+    ldp x19, x20, [sp], #16
+    ldp x29, x30, [sp], #16
+.globl _phon_jit_option_decode_next
+_phon_jit_option_decode_next:
+    b _phon_jit_option_decode_next
+
+9:
+    mov x7, #1
+    str x7, [x19, #40]
+10:
+    ldp x23, x24, [sp], #16
+    ldp x21, x22, [sp], #16
+    ldp x19, x20, [sp], #16
+    ldp x29, x30, [sp], #16
+    ret
+.globl _phon_jit_option_decode_end
+_phon_jit_option_decode_end:
+
+.globl _phon_jit_option_encode_start
+_phon_jit_option_encode_start:
+    stp x29, x30, [sp, #-16]!
+    stp x19, x20, [sp, #-16]!
+    stp x21, x22, [sp, #-16]!
+    stp x23, x24, [sp, #-16]!
+
+    mov x19, x0
+    ldr x1, [x19, #8]
+    ldr x20, [x1], #8
+    mov x21, x1
+    ldr x22, [x19, #0]
+
+    ldr x7, [x20, #0]
+    add x23, x22, x7
+    ldr x24, [x19, #48]
+    ldr x7, [x20, #8]
+    add x24, x24, x7
+
+    ldr x0, [x20, #32]
+    mov x1, x23
+    mov x2, x24
+    ldr x12, [x20, #40]
+    blr x12
+    and x14, x0, #1
+
+    ldr x5, [x19, #16]
+    ldr x6, [x19, #32]
+    add x7, x5, #1
+    cmp x7, x6
+    b.hi 9f
+    strb w14, [x5]
+    str x7, [x19, #16]
+
+    cbz x14, 8f
+    ldr x7, [x20, #24]
+    str x7, [x19, #8]
+    str x24, [x19, #0]
+    ldr x12, [x20, #16]
+    mov x0, x19
+    blr x12
+    ldr x7, [x19, #40]
+    cbnz x7, 10f
+
+8:
+    str x22, [x19, #0]
+    str x21, [x19, #8]
+    ldp x23, x24, [sp], #16
+    ldp x21, x22, [sp], #16
+    ldp x19, x20, [sp], #16
+    ldp x29, x30, [sp], #16
+.globl _phon_jit_option_encode_next
+_phon_jit_option_encode_next:
+    b _phon_jit_option_encode_next
+
+9:
+    mov x7, #1
+    str x7, [x19, #40]
+10:
+    str x22, [x19, #0]
+    str x21, [x19, #8]
+    ldp x23, x24, [sp], #16
+    ldp x21, x22, [sp], #16
+    ldp x19, x20, [sp], #16
+    ldp x29, x30, [sp], #16
+    ret
+.globl _phon_jit_option_encode_end
+_phon_jit_option_encode_end:
+
 .globl _phon_jit_done_start
 _phon_jit_done_start:
     ret

@@ -36,7 +36,7 @@ public struct JITEngine: TypedEngine {
     // r[impl ir.stencils]
     public func compileEncode(_ descriptor: Descriptor, _ reg: Registry) throws -> TypedEncodeFn {
         let lowered = try lowerTyped(descriptor, reg)
-        if let native = try NativeScalarEncode.compile(lowered) {
+        if let native = try NativeEncode.compile(lowered) {
             return { base in native.run(base) }
         }
         return { base in encodeWith(lowered, base) }
@@ -46,7 +46,7 @@ public struct JITEngine: TypedEngine {
     // r[impl ir.stencils]
     public func compileDecode(_ writerRoot: SchemaId, _ reader: Descriptor, _ reg: Registry) throws -> TypedDecodeFn {
         let lowered = try lowerDecode(writerRoot, reader, reg)
-        if let native = try NativeScalarDecode.compile(lowered) {
+        if let native = try NativeDecode.compile(lowered) {
             return { bytes, out in try native.run(bytes, out) }
         }
         return { bytes, out in try decodeInto(lowered, bytes, out) }
@@ -85,36 +85,205 @@ private struct NativeStencil {
 }
 
 // r[impl ir.stencils]
-private struct ScalarProgram {
-    var words: [UInt64]
-    var wireSize: Int
+private enum NativeMode {
+    case decode
+    case encode
+}
+
+// r[impl ir.stencils]
+private final class WordBuffer {
+    let pointer: UnsafePointer<UInt64>
 
     // r[impl ir.stencils]
-    var opCount: Int {
-        words.count / 3
+    init(_ words: [UInt64]) {
+        let count = max(words.count, 1)
+        let storage = UnsafeMutablePointer<UInt64>.allocate(capacity: count)
+        storage.initialize(repeating: 0, count: count)
+        for (index, word) in words.enumerated() {
+            storage.advanced(by: index).pointee = word
+        }
+        self.storage = storage
+        pointer = UnsafePointer(storage)
+        allocatedCount = count
+    }
+
+    private let storage: UnsafeMutablePointer<UInt64>
+    private let allocatedCount: Int
+
+    // r[impl ir.stencils]
+    deinit {
+        storage.deinitialize(count: allocatedCount)
+        storage.deallocate()
     }
 }
 
 // r[impl ir.stencils]
-final class NativeScalarDecode {
-    private let code: ExecutableBuffer
-    private let program: [UInt64]
+private final class OptionWitnessBox {
+    let witness: OptionWitness
 
     // r[impl ir.stencils]
-    static func compile(_ lowered: Lowered) throws -> NativeScalarDecode? {
-        guard let scalar = scalarProgram(lowered) else {
-            return nil
-        }
-        return try NativeScalarDecode(scalar)
+    init(_ witness: OptionWitness) {
+        self.witness = witness
+    }
+}
+
+// r[impl ir.stencils]
+private final class OptionInfoAllocation {
+    let pointer: UnsafeMutablePointer<PhonJITOptionInfo>
+
+    // r[impl ir.stencils]
+    init(
+        fieldOffset: Int,
+        scratchOffset: Int,
+        child: NativeProgram,
+        witnessBox: OptionWitnessBox
+    ) {
+        pointer = UnsafeMutablePointer<PhonJITOptionInfo>.allocate(capacity: 1)
+        pointer.initialize(to: PhonJITOptionInfo())
+        pointer.pointee.field_offset = UInt64(fieldOffset)
+        pointer.pointee.scratch_offset = UInt64(scratchOffset)
+        pointer.pointee.some_entry = pointerUInt(child.code.entry)
+        pointer.pointee.some_prog = pointerUInt(child.words.pointer)
+        pointer.pointee.witness_ctx = pointerUInt(Unmanaged.passUnretained(witnessBox).toOpaque())
+        pointer.pointee.project_some = phon_jit_option_project_some_ptr()
+        pointer.pointee.init_some = phon_jit_option_init_some_ptr()
+        pointer.pointee.init_none = phon_jit_option_init_none_ptr()
     }
 
     // r[impl ir.stencils]
-    private init(_ scalar: ScalarProgram) throws {
-        program = scalar.words
-        code = try ExecutableBuffer.compileChain(
-            opCount: scalar.opCount,
-            stencil: try scalarDecodeStencil()
+    deinit {
+        pointer.deinitialize(count: 1)
+        pointer.deallocate()
+    }
+}
+
+// r[impl ir.stencils]
+private struct ScratchAllocator {
+    var size = 0
+    var alignment = 1
+
+    // r[impl ir.stencils]
+    mutating func allocate(byteCount: Int, alignment requestedAlignment: Int) -> Int {
+        let align = max(requestedAlignment, 1)
+        alignment = max(alignment, align)
+        size = alignUp(size, align)
+        let offset = size
+        size += max(byteCount, 1)
+        return offset
+    }
+}
+
+// r[impl ir.stencils]
+private final class NativeProgram {
+    let code: ExecutableBuffer
+    let words: WordBuffer
+    let maxWireSize: Int
+
+    private let children: [NativeProgram]
+    private let infos: [OptionInfoAllocation]
+    private let witnessBoxes: [OptionWitnessBox]
+
+    // r[impl ir.stencils]
+    static func compile(
+        _ program: MemProgram,
+        mode: NativeMode,
+        scratch: inout ScratchAllocator
+    ) throws -> NativeProgram? {
+        var words: [UInt64] = []
+        var stencils: [NativeStencil] = []
+        var children: [NativeProgram] = []
+        var infos: [OptionInfoAllocation] = []
+        var witnessBoxes: [OptionWitnessBox] = []
+        var maxWireSize = 0
+
+        for op in program {
+            switch op {
+            case .scalar(let offset, let size, let align):
+                guard appendScalar(offset: offset, size: size, align: align, to: &words) else {
+                    return nil
+                }
+                stencils.append(try mode == .decode ? scalarDecodeStencil() : scalarEncodeStencil())
+                maxWireSize += max(align - 1, 0) + size
+            case .option(let option):
+                guard option.offset >= 0 else {
+                    return nil
+                }
+                guard let child = try NativeProgram.compile(option.some, mode: mode, scratch: &scratch) else {
+                    return nil
+                }
+                let scratchOffset = scratch.allocate(
+                    byteCount: option.innerSize,
+                    alignment: option.innerAlign
+                )
+                let witnessBox = OptionWitnessBox(option.witness)
+                let info = OptionInfoAllocation(
+                    fieldOffset: option.offset,
+                    scratchOffset: scratchOffset,
+                    child: child,
+                    witnessBox: witnessBox
+                )
+                words.append(pointerWord(info.pointer))
+                stencils.append(try mode == .decode ? optionDecodeStencil() : optionEncodeStencil())
+                maxWireSize += 1 + child.maxWireSize
+                children.append(child)
+                infos.append(info)
+                witnessBoxes.append(witnessBox)
+            default:
+                return nil
+            }
+        }
+
+        return try NativeProgram(
+            code: ExecutableBuffer.compileChain(stencils),
+            words: WordBuffer(words),
+            maxWireSize: maxWireSize,
+            children: children,
+            infos: infos,
+            witnessBoxes: witnessBoxes
         )
+    }
+
+    // r[impl ir.stencils]
+    private init(
+        code: ExecutableBuffer,
+        words: WordBuffer,
+        maxWireSize: Int,
+        children: [NativeProgram],
+        infos: [OptionInfoAllocation],
+        witnessBoxes: [OptionWitnessBox]
+    ) {
+        self.code = code
+        self.words = words
+        self.maxWireSize = maxWireSize
+        self.children = children
+        self.infos = infos
+        self.witnessBoxes = witnessBoxes
+    }
+}
+
+// r[impl ir.stencils]
+final class NativeDecode {
+    private let program: NativeProgram
+    private let scratchSize: Int
+    private let scratchAlignment: Int
+
+    // r[impl ir.stencils]
+    static func compile(_ lowered: Lowered) throws -> NativeDecode? {
+        guard lowered.blocks.isEmpty else {
+            return nil
+        }
+        var scratch = ScratchAllocator()
+        guard let program = try NativeProgram.compile(lowered.program, mode: .decode, scratch: &scratch) else {
+            return nil
+        }
+        return NativeDecode(program: program, scratch: scratch)
+    }
+
+    // r[impl ir.stencils]
+    private init(program: NativeProgram, scratch: ScratchAllocator) {
+        self.program = program
+        scratchSize = scratch.size
+        scratchAlignment = scratch.alignment
     }
 
     // r[impl ir.stencils]
@@ -123,10 +292,11 @@ final class NativeScalarDecode {
 
         var dummyWire: UInt8 = 0
         var status: UInt64 = 0
+        var aux: UInt64 = 0
         var remaining = 0
-        let fn = unsafeBitCast(code.entry, to: DecodeFn.self)
+        let fn = unsafeBitCast(program.code.entry, to: DecodeFn.self)
 
-        program.withUnsafeBufferPointer { prog in
+        withScratch(byteCount: scratchSize, alignment: scratchAlignment) { scratch in
             bytes.withUnsafeBytes { raw in
                 withUnsafePointer(to: &dummyWire) { dummy in
                     let wire = raw.baseAddress?.assumingMemoryBound(to: UInt8.self) ?? dummy
@@ -135,18 +305,28 @@ final class NativeScalarDecode {
                         wire_start: wire,
                         wire_end: wire.advanced(by: bytes.count),
                         base: out.assumingMemoryBound(to: UInt8.self),
-                        prog: prog.baseAddress,
-                        status: 0
+                        prog: program.words.pointer,
+                        status: 0,
+                        aux: 0,
+                        scratch: scratch.assumingMemoryBound(to: UInt8.self)
                     )
                     withUnsafeMutablePointer(to: &ctx) { fn($0) }
                     status = ctx.status
+                    aux = ctx.aux
                     remaining = ctx.wire.distance(to: ctx.wire_end)
                 }
             }
         }
 
-        if status != 0 {
+        switch status {
+        case 0:
+            break
+        case 1:
             throw CompactError.decode(.unexpectedEof(needed: 1, remaining: 0))
+        case 2:
+            throw CompactError.decode(.invalidBool(UInt8(truncatingIfNeeded: aux)))
+        default:
+            throw CompactError.decode(.malformed("jit status \(status)"))
         }
         if remaining != 0 {
             throw CompactError.decode(.trailingBytes(remaining))
@@ -155,59 +335,63 @@ final class NativeScalarDecode {
 }
 
 // r[impl ir.stencils]
-final class NativeScalarEncode {
-    private let code: ExecutableBuffer
-    private let program: [UInt64]
-    private let wireSize: Int
+final class NativeEncode {
+    private let program: NativeProgram
+    private let scratchSize: Int
+    private let scratchAlignment: Int
 
     // r[impl ir.stencils]
-    static func compile(_ lowered: Lowered) throws -> NativeScalarEncode? {
-        guard let scalar = scalarProgram(lowered) else {
+    static func compile(_ lowered: Lowered) throws -> NativeEncode? {
+        guard lowered.blocks.isEmpty else {
             return nil
         }
-        return try NativeScalarEncode(scalar)
+        var scratch = ScratchAllocator()
+        guard let program = try NativeProgram.compile(lowered.program, mode: .encode, scratch: &scratch) else {
+            return nil
+        }
+        return NativeEncode(program: program, scratch: scratch)
     }
 
     // r[impl ir.stencils]
-    private init(_ scalar: ScalarProgram) throws {
-        program = scalar.words
-        wireSize = scalar.wireSize
-        code = try ExecutableBuffer.compileChain(
-            opCount: scalar.opCount,
-            stencil: try scalarEncodeStencil()
-        )
+    private init(program: NativeProgram, scratch: ScratchAllocator) {
+        self.program = program
+        scratchSize = scratch.size
+        scratchAlignment = scratch.alignment
     }
 
     // r[impl ir.stencils]
     func run(_ base: UnsafeRawPointer) -> [UInt8] {
         typealias EncodeFn = @convention(c) (UnsafeMutablePointer<PhonJITEncodeCtx>) -> Void
 
-        var bytes = [UInt8](repeating: 0, count: wireSize)
+        var bytes = [UInt8](repeating: 0, count: program.maxWireSize)
         let byteCount = bytes.count
         var dummyOut: UInt8 = 0
         var status: UInt64 = 0
-        let fn = unsafeBitCast(code.entry, to: EncodeFn.self)
+        var written = 0
+        let fn = unsafeBitCast(program.code.entry, to: EncodeFn.self)
 
-        program.withUnsafeBufferPointer { prog in
+        withScratch(byteCount: scratchSize, alignment: scratchAlignment) { scratch in
             bytes.withUnsafeMutableBytes { raw in
                 withUnsafeMutablePointer(to: &dummyOut) { dummy in
                     let out = raw.baseAddress?.assumingMemoryBound(to: UInt8.self) ?? dummy
                     var ctx = PhonJITEncodeCtx(
                         base: base.assumingMemoryBound(to: UInt8.self),
-                        prog: prog.baseAddress,
+                        prog: program.words.pointer,
                         out: out,
                         out_start: out,
                         out_end: out.advanced(by: byteCount),
-                        status: 0
+                        status: 0,
+                        scratch: scratch.assumingMemoryBound(to: UInt8.self)
                     )
                     withUnsafeMutablePointer(to: &ctx) { fn($0) }
                     status = ctx.status
+                    written = ctx.out_start.distance(to: ctx.out)
                 }
             }
         }
 
         precondition(status == 0, "phon JIT encode wrote past its precomputed buffer")
-        return bytes
+        return Array(bytes.prefix(written))
     }
 }
 
@@ -260,13 +444,13 @@ private final class ExecutableBuffer {
     }
 
     // r[impl ir.stencils]
-    static func compileChain(opCount: Int, stencil: NativeStencil) throws -> ExecutableBuffer {
+    static func compileChain(_ stencils: [NativeStencil]) throws -> ExecutableBuffer {
         let done = try doneStencil()
-        let totalSize = opCount * stencil.bytes.count + done.bytes.count
+        let totalSize = stencils.reduce(done.bytes.count) { $0 + $1.bytes.count }
         return try ExecutableBuffer(byteCount: totalSize) { dst in
             var opStarts: [UnsafeMutableRawPointer] = []
             var cursor = dst
-            for _ in 0..<opCount {
+            for stencil in stencils {
                 opStarts.append(cursor)
                 memcpy(cursor, stencil.bytes.baseAddress!, stencil.bytes.count)
                 cursor = cursor.advanced(by: stencil.bytes.count)
@@ -275,10 +459,10 @@ private final class ExecutableBuffer {
             let doneStart = cursor
             memcpy(doneStart, done.bytes.baseAddress!, done.bytes.count)
 
-            guard let branchOffset = stencil.branchOffset else {
-                return
-            }
             for (index, opStart) in opStarts.enumerated() {
+                guard let branchOffset = stencils[index].branchOffset else {
+                    continue
+                }
                 let target = index + 1 < opStarts.count ? opStarts[index + 1] : doneStart
                 try patchBranch26(at: opStart.advanced(by: branchOffset), to: target)
             }
@@ -292,34 +476,20 @@ private final class ExecutableBuffer {
 }
 
 // r[impl ir.stencils]
-private func scalarProgram(_ lowered: Lowered) -> ScalarProgram? {
-    guard lowered.blocks.isEmpty else {
-        return nil
+private func appendScalar(offset: Int, size: Int, align: Int, to words: inout [UInt64]) -> Bool {
+    guard offset >= 0, size >= 0, align > 0, align & (align - 1) == 0 else {
+        return false
     }
-
-    var words: [UInt64] = []
-    var wireSize = 0
-    for op in lowered.program {
-        guard case .scalar(let offset, let size, let align) = op else {
-            return nil
-        }
-        guard offset >= 0, size >= 0, align > 0, align & (align - 1) == 0 else {
-            return nil
-        }
-        guard let offsetWord = UInt64(exactly: offset),
-              let sizeWord = UInt64(exactly: size),
-              let alignWord = UInt64(exactly: align)
-        else {
-            return nil
-        }
-        let pad = (align - (wireSize & (align - 1))) & (align - 1)
-        wireSize += pad + size
-        words.append(offsetWord)
-        words.append(sizeWord)
-        words.append(alignWord)
+    guard let offsetWord = UInt64(exactly: offset),
+          let sizeWord = UInt64(exactly: size),
+          let alignWord = UInt64(exactly: align)
+    else {
+        return false
     }
-
-    return ScalarProgram(words: words, wireSize: wireSize)
+    words.append(offsetWord)
+    words.append(sizeWord)
+    words.append(alignWord)
+    return true
 }
 
 // r[impl ir.stencils]
@@ -361,6 +531,24 @@ private func scalarEncodeStencil() throws -> NativeStencil {
 }
 
 // r[impl ir.stencils]
+private func optionDecodeStencil() throws -> NativeStencil {
+    try staticStencil(
+        phon_jit_option_decode_bytes(),
+        phon_jit_option_decode_len(),
+        branchOffset: phon_jit_option_decode_branch_offset()
+    )
+}
+
+// r[impl ir.stencils]
+private func optionEncodeStencil() throws -> NativeStencil {
+    try staticStencil(
+        phon_jit_option_encode_bytes(),
+        phon_jit_option_encode_len(),
+        branchOffset: phon_jit_option_encode_branch_offset()
+    )
+}
+
+// r[impl ir.stencils]
 private func doneStencil() throws -> NativeStencil {
     try staticStencil(phon_jit_done_bytes(), phon_jit_done_len())
 }
@@ -382,4 +570,80 @@ private func patchBranch26(at site: UnsafeMutableRawPointer, to target: UnsafeMu
     let original = UInt32(littleEndian: slot.pointee)
     let imm26 = UInt32(bitPattern: Int32(wordOffset)) & 0x03ff_ffff
     slot.pointee = ((original & 0xfc00_0000) | imm26).littleEndian
+}
+
+// r[impl ir.stencils]
+private func alignUp(_ value: Int, _ alignment: Int) -> Int {
+    let mask = alignment - 1
+    return (value + mask) & ~mask
+}
+
+// r[impl ir.stencils]
+private func pointerUInt(_ pointer: UnsafeRawPointer) -> UInt {
+    UInt(bitPattern: pointer)
+}
+
+// r[impl ir.stencils]
+private func pointerUInt<T>(_ pointer: UnsafePointer<T>) -> UInt {
+    UInt(bitPattern: pointer)
+}
+
+// r[impl ir.stencils]
+private func pointerWord<T>(_ pointer: UnsafePointer<T>) -> UInt64 {
+    UInt64(pointerUInt(pointer))
+}
+
+// r[impl ir.stencils]
+private func withScratch<T>(
+    byteCount: Int,
+    alignment: Int,
+    _ body: (UnsafeMutableRawPointer) throws -> T
+) rethrows -> T {
+    let scratch = UnsafeMutableRawPointer.allocate(
+        byteCount: max(byteCount, 1),
+        alignment: max(alignment, 1)
+    )
+    defer { scratch.deallocate() }
+    return try body(scratch)
+}
+
+// r[impl ir.stencils]
+@_cdecl("phon_jit_option_project_some")
+func phonJitOptionProjectSome(
+    _ ctx: UnsafeRawPointer?,
+    _ option: UnsafeRawPointer?,
+    _ scratch: UnsafeMutableRawPointer?
+) -> Bool {
+    guard let ctx, let option, let scratch else {
+        return false
+    }
+    let box = Unmanaged<OptionWitnessBox>.fromOpaque(ctx).takeUnretainedValue()
+    return box.witness.projectSome(option, scratch)
+}
+
+// r[impl ir.stencils]
+@_cdecl("phon_jit_option_init_some")
+func phonJitOptionInitSome(
+    _ ctx: UnsafeRawPointer?,
+    _ option: UnsafeMutableRawPointer?,
+    _ scratch: UnsafeMutableRawPointer?
+) {
+    guard let ctx, let option, let scratch else {
+        return
+    }
+    let box = Unmanaged<OptionWitnessBox>.fromOpaque(ctx).takeUnretainedValue()
+    box.witness.initSome(option, scratch)
+}
+
+// r[impl ir.stencils]
+@_cdecl("phon_jit_option_init_none")
+func phonJitOptionInitNone(
+    _ ctx: UnsafeRawPointer?,
+    _ option: UnsafeMutableRawPointer?
+) {
+    guard let ctx, let option else {
+        return
+    }
+    let box = Unmanaged<OptionWitnessBox>.fromOpaque(ctx).takeUnretainedValue()
+    box.witness.initNone(option)
 }
