@@ -18,7 +18,10 @@ specs (
             }
             {
                 name swift
-                include (swift/**/*.swift)
+                include (
+                    swift/**/*.swift
+                    swift/cphon-jit-stencils/**/*.c
+                )
             }
         )
     }

@@ -53,8 +53,13 @@ let package = Package(
             path: "swift/phon-engine/Sources/PhonEngine"
         ),
         .target(
+            name: "CPhonJITStencils",
+            path: "swift/cphon-jit-stencils/Sources/CPhonJITStencils",
+            publicHeadersPath: "include"
+        ),
+        .target(
             name: "PhonJIT",
-            dependencies: ["PhonIR"],
+            dependencies: ["CPhonJITStencils", "PhonEngine", "PhonIR", "PhonSchema"],
             path: "swift/phon-jit/Sources/PhonJIT"
         ),
         .target(
@@ -74,13 +79,18 @@ let package = Package(
         ),
         .target(
             name: "PhonEngineTestSupport",
-            dependencies: ["PhonEngine", "PhonIR", "PhonSchema"],
+            dependencies: ["PhonEngine", "PhonIR", "PhonJIT", "PhonSchema"],
             path: "swift/phon-engine-test-support/Sources/PhonEngineTestSupport"
         ),
         .testTarget(
             name: "PhonEngineTests",
             dependencies: ["PhonEngine", "PhonEngineTestSupport", "PhonIR", "PhonSchema"],
             path: "swift/phon-engine/Tests/PhonEngineTests"
+        ),
+        .testTarget(
+            name: "PhonJITTests",
+            dependencies: ["PhonEngine", "PhonIR", "PhonJIT", "PhonSchema"],
+            path: "swift/phon-jit/Tests/PhonJITTests"
         ),
     ]
 )

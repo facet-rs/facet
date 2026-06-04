@@ -33,6 +33,8 @@ private struct Pair: Equatable {
                 FieldAccess(offset: MemoryLayout<Pair>.offset(of: \Pair.a)!, descriptor: u32Desc()),
                 FieldAccess(offset: MemoryLayout<Pair>.offset(of: \Pair.b)!, descriptor: u32Desc()),
             ], construct: .inPlace)))
+    // r[verify ir.stencils]
+    // r[verify exec.jit-optional]
     try assertTypedEquivalence(Pair(a: 7, b: 99), descriptor: desc, registry: reg, "record")
 }
 

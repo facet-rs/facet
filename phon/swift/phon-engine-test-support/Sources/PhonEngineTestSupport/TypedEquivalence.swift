@@ -9,10 +9,11 @@ import Testing
 
 import PhonEngine
 import PhonIR
+import PhonJIT
 import PhonSchema
 
 /// Backends every equivalence check runs through. The JIT appends here once it lands.
-public let allTypedEngines: [any TypedEngine] = [InterpreterEngine()]
+public let allTypedEngines: [any TypedEngine] = [InterpreterEngine(), JITEngine()]
 
 /// Encode `value` with each engine and assert: (1) every engine agrees byte-for-byte,
 /// (2) the bytes are canonical phon — the tree-walk decodes and re-emits them
