@@ -31,7 +31,11 @@ pub fn generate_select_sql(ctx: &SqlGenContext, query: &Select) -> Result<Genera
     let plan = planner.plan(query).map_err(|e| {
         use crate::{QErrorKind, planner::PlanError};
         let kind = match e {
-            PlanError::TableNotFound { table } => QErrorKind::TableNotFound { table },
+            PlanError::TableNotFound { table } => {
+                let mut available: Vec<String> = ctx.schema.tables.keys().cloned().collect();
+                available.sort();
+                QErrorKind::TableNotFound { table, available }
+            }
             PlanError::NoForeignKey { from, to } => QErrorKind::PlanMissing {
                 reason: format!("no FK relationship between {from} and {to}"),
             },

@@ -14,7 +14,7 @@ use crate::error::QErrorKind;
 use crate::sqlgen::SqlGenContext;
 use crate::{QError, QSource};
 use codegen::{Block, Function, Scope, Struct};
-use dibs_db_schema::Schema;
+use dibs_db_schema::{Schema, Table};
 use dibs_query_schema::{
     Decl, Delete, FieldDef, Insert, InsertMany, Meta, Params, QueryFile, Returning, Returns,
     Select, SelectFields, Span, Update, Upsert, UpsertMany,
@@ -76,6 +76,32 @@ impl CodegenContext<'_> {
         schema_column_type(self.schema, table, column)
     }
 
+    /// Build a `TableNotFound` error pointing at `span`, listing the tables the
+    /// schema *does* contain (empty list ⇒ the schema itself is empty, which the
+    /// error renders as a "you forgot ensure_linked()" hint).
+    fn table_not_found(&self, table: &str, span: Span) -> QError {
+        let mut available: Vec<String> = self.schema.tables.keys().cloned().collect();
+        available.sort();
+        QError {
+            source: self.source.clone(),
+            span,
+            kind: QErrorKind::TableNotFound {
+                table: table.to_string(),
+                available,
+            },
+        }
+    }
+
+    /// Resolve a table that is referenced in the query at `span`, erroring (with
+    /// the span pointing at the table reference, not some column) if it isn't in
+    /// the schema. Call this once per table reference before looking up its
+    /// columns, so a missing/empty schema is reported against the table.
+    fn require_table(&self, table: &str, span: Span) -> Result<&Table, QError> {
+        self.schema
+            .get_table(table)
+            .ok_or_else(|| self.table_not_found(table, span))
+    }
+
     /// Look up the Rust type for a column referenced in the query at `span`,
     /// erroring if the table or column can't be resolved from the schema.
     ///
@@ -85,23 +111,18 @@ impl CodegenContext<'_> {
     /// silently falling back to `String` there generates wrong-typed structs
     /// that compile fine and corrupt data at runtime.
     fn column_type_at(&self, table: &str, column: &str, span: Span) -> Result<String, QError> {
+        let table_info = self.require_table(table, span)?;
         if let Some(ty) = schema_column_type(self.schema, table, column) {
             return Ok(ty);
         }
-        let kind = if self.schema.get_table(table).is_none() {
-            QErrorKind::TableNotFound {
-                table: table.to_string(),
-            }
-        } else {
-            QErrorKind::ColumnNotFound {
-                table: table.to_string(),
-                column: column.to_string(),
-            }
-        };
         Err(QError {
             source: self.source.clone(),
             span,
-            kind,
+            kind: QErrorKind::ColumnNotFound {
+                table: table.to_string(),
+                column: column.to_string(),
+                available: table_info.columns.iter().map(|c| c.name.clone()).collect(),
+            },
         })
     }
 
@@ -232,6 +253,7 @@ fn generate_flat_row_struct(
     st.attr("facet(crate = dibs_runtime::facet)");
 
     let table_name = table.value.as_str();
+    ctx.require_table(table_name, table.span)?;
 
     if let Some(select_fields) = &select.fields {
         // Add root table columns
@@ -280,6 +302,12 @@ fn add_flat_fields_for_select(
             Some(FieldDef::Rel(rel)) => {
                 // Recurse into relation
                 let rel_table = rel.table_name().unwrap_or(field_name);
+                let rel_span = rel
+                    .from
+                    .as_ref()
+                    .map(|m| m.span)
+                    .unwrap_or(field_name_meta.span);
+                ctx.require_table(rel_table, rel_span)?;
                 let new_prefix = if prefix.is_empty() {
                     field_name.to_string()
                 } else {
@@ -339,6 +367,9 @@ fn generate_result_struct(
     // Regular query - use select fields
     let parent_prefix = &name_meta.value;
     let table_name = table.value.as_str();
+    // Resolve the table once up front so a missing/empty schema is reported
+    // against the `from` clause rather than the first selected column.
+    ctx.require_table(table_name, table.span)?;
 
     if let Some(select_fields) = &select.fields {
         for (field_name_meta, field_def) in &select_fields.fields {
@@ -390,6 +421,12 @@ fn generate_nested_structs(
             let field_name = field_name_meta.value.as_str();
             let nested_name = format!("{}{}", parent_prefix, to_pascal_case(field_name));
             let rel_table = rel.table_name().unwrap_or(field_name);
+            let rel_span = rel
+                .from
+                .as_ref()
+                .map(|m| m.span)
+                .unwrap_or(field_name_meta.span);
+            ctx.require_table(rel_table, rel_span)?;
 
             let mut nested_st = Struct::new(&nested_name);
             nested_st.vis("pub");
@@ -1077,6 +1114,7 @@ fn generate_insert_code(
                 _ctx,
                 &struct_name,
                 insert.into.value.as_str(),
+                insert.into.span,
                 returning,
                 scope,
             )?;
@@ -1135,6 +1173,7 @@ fn generate_upsert_code(
                 _ctx,
                 &struct_name,
                 upsert.into.value.as_str(),
+                upsert.into.span,
                 returning,
                 scope,
             )?;
@@ -1206,6 +1245,7 @@ fn generate_insert_many_code(
                 ctx,
                 &struct_name,
                 insert.into.value.as_str(),
+                insert.into.span,
                 returning,
                 scope,
             )?;
@@ -1270,6 +1310,7 @@ fn generate_upsert_many_code(
                 ctx,
                 &struct_name,
                 upsert.into.value.as_str(),
+                upsert.into.span,
                 returning,
                 scope,
             )?;
@@ -1394,6 +1435,7 @@ fn generate_update_code(
                 ctx,
                 &struct_name,
                 update.table.value.as_str(),
+                update.table.span,
                 returning,
                 scope,
             )?;
@@ -1453,6 +1495,7 @@ fn generate_delete_code(
                 ctx,
                 &struct_name,
                 delete.from.value.as_str(),
+                delete.from.span,
                 returning,
                 scope,
             )?;
@@ -1495,9 +1538,14 @@ fn generate_mutation_result_struct(
     ctx: &CodegenContext,
     struct_name: &str,
     table: &str,
+    table_span: Span,
     returning: &Returning,
     scope: &mut Scope,
 ) -> Result<(), QError> {
+    // Resolve the table once so a missing/empty schema is reported against the
+    // mutation's table clause rather than the first RETURNING column.
+    ctx.require_table(table, table_span)?;
+
     let mut st = Struct::new(struct_name);
     st.vis("pub");
     st.derive("Debug");

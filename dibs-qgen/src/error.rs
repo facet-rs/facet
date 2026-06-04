@@ -42,12 +42,19 @@ pub enum QErrorKind {
 
         /// The column that was not found.
         column: String,
+
+        /// The columns that the table *does* have (for "did you mean" hints).
+        available: Vec<String>,
     },
 
     /// A table referenced in the query does not exist in the schema.
     TableNotFound {
         /// The table that was not found.
         table: String,
+
+        /// The tables that the schema *does* have. Empty means the schema
+        /// itself is empty — almost always a missing `ensure_linked()` call.
+        available: Vec<String>,
     },
 
     /// The query references a column that exists but has incompatible properties.
@@ -99,11 +106,36 @@ pub enum QErrorKind {
 impl fmt::Display for QErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            QErrorKind::ColumnNotFound { table, column } => {
-                write!(f, "column '{}' not found in table '{}'", column, table)
+            QErrorKind::ColumnNotFound {
+                table,
+                column,
+                available,
+            } => {
+                write!(f, "column '{}' not found in table '{}'", column, table)?;
+                if available.is_empty() {
+                    write!(f, " (table has no columns)")
+                } else {
+                    write!(f, " (table has: {})", available.join(", "))
+                }
             }
-            QErrorKind::TableNotFound { table } => {
-                write!(f, "table '{}' not found", table)
+            QErrorKind::TableNotFound { table, available } => {
+                if available.is_empty() {
+                    write!(
+                        f,
+                        "table '{table}' not found: the schema is empty (0 tables). \
+                         The crate defining your #[facet(dibs::table)] types was probably \
+                         not linked, so dibs collected zero tables — call its \
+                         `ensure_linked()` in build.rs before generating queries (a \
+                         `TypeId::of`/`type_name` reference does NOT force linkage)."
+                    )
+                } else {
+                    write!(
+                        f,
+                        "table '{table}' not found: the schema has {} table(s): {}",
+                        available.len(),
+                        available.join(", ")
+                    )
+                }
             }
             QErrorKind::SchemaMismatch {
                 table,
