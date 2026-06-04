@@ -429,6 +429,9 @@ fn generate_select_function(
     }
     func.vis("pub");
     func.set_async(true);
+    // Generated query fns take one arg per bound param; wide tables legitimately
+    // exceed clippy's threshold. Harmless (no warning) on narrow queries.
+    func.attr("allow(clippy::too_many_arguments)");
     func.generic("C");
     func.arg("client", "&C");
     // Allow clone_on_copy since we generate .clone() calls on parent IDs that might be Copy types
@@ -1046,6 +1049,9 @@ fn generate_insert_code(
     }
     func.vis("pub");
     func.set_async(true);
+    // Generated query fns take one arg per bound param; wide tables legitimately
+    // exceed clippy's threshold. Harmless (no warning) on narrow queries.
+    func.attr("allow(clippy::too_many_arguments)");
     func.generic("C");
     func.arg("client", "&C");
 
@@ -1100,6 +1106,9 @@ fn generate_upsert_code(
     }
     func.vis("pub");
     func.set_async(true);
+    // Generated query fns take one arg per bound param; wide tables legitimately
+    // exceed clippy's threshold. Harmless (no warning) on narrow queries.
+    func.attr("allow(clippy::too_many_arguments)");
     func.generic("C");
     func.arg("client", "&C");
 
@@ -1167,6 +1176,9 @@ fn generate_insert_many_code(
     }
     func.vis("pub");
     func.set_async(true);
+    // Generated query fns take one arg per bound param; wide tables legitimately
+    // exceed clippy's threshold. Harmless (no warning) on narrow queries.
+    func.attr("allow(clippy::too_many_arguments)");
     func.generic("C");
     func.arg("client", "&C");
     func.arg("items", format!("&[{}]", params_struct_name));
@@ -1227,6 +1239,9 @@ fn generate_upsert_many_code(
     }
     func.vis("pub");
     func.set_async(true);
+    // Generated query fns take one arg per bound param; wide tables legitimately
+    // exceed clippy's threshold. Harmless (no warning) on narrow queries.
+    func.attr("allow(clippy::too_many_arguments)");
     func.generic("C");
     func.arg("client", "&C");
     func.arg("items", format!("&[{}]", params_struct_name));
@@ -1347,6 +1362,9 @@ fn generate_update_code(
     }
     func.vis("pub");
     func.set_async(true);
+    // Generated query fns take one arg per bound param; wide tables legitimately
+    // exceed clippy's threshold. Harmless (no warning) on narrow queries.
+    func.attr("allow(clippy::too_many_arguments)");
     func.generic("C");
     func.arg("client", "&C");
 
@@ -1403,6 +1421,9 @@ fn generate_delete_code(
     }
     func.vis("pub");
     func.set_async(true);
+    // Generated query fns take one arg per bound param; wide tables legitimately
+    // exceed clippy's threshold. Harmless (no warning) on narrow queries.
+    func.attr("allow(clippy::too_many_arguments)");
     func.generic("C");
     func.arg("client", "&C");
 
