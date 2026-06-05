@@ -371,21 +371,28 @@ Verified in the Vox checkout during the bridge audit:
 - TypeScript `vox-core` passes its focused runtime suite with 54 tests, and
   `vox-tcp` passes its focused transport suite with 2 tests.
 - Vox Tracey validation is clean across Rust, Swift, and TypeScript. Current
-  coverage is Rust 175/175 implemented and 127/175 verified, Swift 156/175
-  implemented and 91/175 verified, and TypeScript 175/175 implemented and
-  105/175 verified. That is not a global Vox Tracey completion claim: the
+  coverage is Rust 175/175 implemented and 128/175 verified, Swift 156/175
+  implemented and 92/175 verified, and TypeScript 175/175 implemented and
+  106/175 verified. That is not a global Vox Tracey completion claim: the
   remaining unverified rules include broad transport/session/RPC surfaces
   outside this Phon ecosystem bridge roadmap.
 - The roadmap-relevant Vox rules for subject teardown, channel shape, channel
   allocation/direction/lifecycle, channel payload indexes, connection-close
   channel errors, virtual connection opening/acceptance, keepalive teardown, and
-  nested-channel rejection are traced with implementation and verification
-  references: `hosted.subject.lifecycle`, `rpc.channel`,
+  nested-channel rejection, plus the Rust-trait source-of-truth rule for
+  generated service surfaces, are traced with implementation and verification
+  references: `hosted.subject.lifecycle`, `service-macro.is-source-of-truth`,
+  `rpc.channel`,
   `rpc.channel.allocation`, `rpc.channel.direction`, `rpc.channel.lifecycle`,
   `rpc.channel.payload-encoding`, `connection.virtual`,
   `rpc.virtual-connection.open`, `rpc.virtual-connection.accept`,
   `rpc.channel.connection-closure`, `session.keepalive`,
   `rpc.channel.direct-args`, and `rpc.channel.no-collections`.
+- Vox `service-macro.is-source-of-truth` now has Tracey-backed proof across
+  Rust, Swift, and TypeScript: the Rust `#[vox::service]` macro end-to-end
+  test exercises generated client/dispatcher plumbing from a Rust trait, while
+  Swift and TypeScript codegen tests prove generated method tables, schema
+  closures, and method IDs are derived from the Rust `ServiceDescriptor`.
 - Swift inbound virtual connection acceptance now has focused runtime coverage
   in `swift test --package-path swift/vox-runtime --filter
   ConnectionFailureTests`: `inboundOpenConnectionAcceptsAndDispatchesOnVirtualConnection`
