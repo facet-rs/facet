@@ -651,7 +651,7 @@ closure:
   codegen refuses fd-bearing service surfaces. Subject teardown has focused
   disconnect coverage across Rust TCP, Swift TCP, TypeScript TCP, and
   TypeScript WebSocket, plus clean post-run process sweeps after the current
-  416-case ecosystem bridge matrix; longer repeated-run stress can still be
+  424-case ecosystem bridge matrix; longer repeated-run stress can still be
   added, but there is no current subject accumulation after the roadmap bridge
   gate.
 - Benchmarks exist for Bee, the Rust ecosystem payload families including Dibs
@@ -674,7 +674,10 @@ closure:
   bridge breadth and codegen parity for any consumer roots not yet in the
   matrix, while recursive fixture roots already run through generated call-block
   functions in both decoder and encoder JIT paths with empty decoder fallback
-  reports.
+  reports. Direct-shape TypeScript JIT stays measured and useful, but it only
+  moves onto the Vox 1.0 blocking path if a browser or websocket consumer
+  benchmark proves that TypeScript-side encode/decode is the migration
+  bottleneck.
 - Phon Swift still has no in-package codegen module by design, so the Phon-side
   `codegen.*` Tracey holes remain out-of-package rather than missing Swift
   implementation work. Vox generated Swift bridge coverage exists for the
