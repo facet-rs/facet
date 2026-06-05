@@ -377,9 +377,9 @@ Verified in the Vox checkout during the bridge audit:
   session/schema/channel runtime slice passes 50 tests, `vox-wire` passes 20
   tests, and `vox-tcp` passes its focused transport suite with 2 tests.
 - Vox Tracey validation is clean across Rust, Swift, and TypeScript. Current
-  coverage is Rust 175/175 implemented and 131/175 verified, Swift 160/175
+  coverage is Rust 175/175 implemented and 135/175 verified, Swift 160/175
   implemented and 113/175 verified, and TypeScript 175/175 implemented and
-  145/175 verified. That is not a global Vox Tracey completion claim: the
+  150/175 verified. That is not a global Vox Tracey completion claim: the
   remaining unverified rules include broad transport/session/RPC surfaces
   outside this Phon ecosystem bridge roadmap.
 - The roadmap-relevant Vox rules for subject teardown, channel shape, channel
@@ -465,6 +465,17 @@ Verified in the Vox checkout during the bridge audit:
   capacity is released, while `src/channeling/registry.test.ts` proves
   per-channel credit exhaustion blocks outgoing data until credit is granted.
   Tracey now reports no remaining untested TypeScript `rpc.flow-control` rule.
+- TypeScript generated RPC caller, service, handler, and session setup surfaces
+  now have Tracey-backed codegen coverage. The `vox-codegen` TypeScript target
+  test `generated_typescript_emits_rpc_caller_handler_and_session_shapes`
+  proves generated callers expose async methods that route through
+  `Caller.call` with descriptor, method-schema, and registry data;
+  `connect<Service>` builds a generated client from the established root
+  connection; generated handler interfaces preserve service method signatures;
+  and generated dispatchers expose one service descriptor, route by method ID,
+  invoke the handler, and reply through `VoxCall`. Tracey now reports no
+  remaining untested TypeScript `rpc.caller`, `rpc.handler`,
+  `rpc.service.*`, or `rpc.session-setup` rules.
 - Swift inbound virtual connection acceptance now has focused runtime coverage
   in `swift test --package-path swift/vox-runtime --filter
   ConnectionFailureTests`: `inboundOpenConnectionAcceptsAndDispatchesOnVirtualConnection`
