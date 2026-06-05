@@ -57,6 +57,9 @@ pub struct Product {
     #[facet(dibs::unique, dibs::subtype = "slug")]
     pub handle: String,
 
+    /// Human-readable description
+    pub description: Option<String>,
+
     /// Product status
     #[facet(dibs::default = "'draft'")]
     pub status: String, // 'draft', 'published', 'archived'
