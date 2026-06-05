@@ -380,7 +380,7 @@ Verified in the Vox checkout during the bridge audit:
   passes its focused transport suite with 1 test.
 - Vox Tracey validation is clean across Rust, Swift, and TypeScript. Current
   coverage is Rust 175/175 implemented and 135/175 verified, Swift 160/175
-  implemented and 118/175 verified, and TypeScript 175/175 implemented and
+  implemented and 132/175 verified, and TypeScript 175/175 implemented and
   173/175 verified. That is not a global Vox Tracey completion claim: the
   remaining TypeScript unverified rules are the broad `rpc` and
   `rpc.one-service-per-connection` umbrella surfaces.
@@ -433,6 +433,23 @@ Verified in the Vox checkout during the bridge audit:
   messages, allocates request IDs, and observes one response per request.
   Tracey now reports no remaining untested Swift `session.handshake.*`,
   `session.message.*`, `rpc.request.*`, or `rpc.response.*` rules.
+- Swift session settings, role/peer tracking, protocol-error teardown, and
+  outbound request-limit behavior now have focused Tracey-backed runtime
+  coverage in `ConnectionFailureTests`. The initiator handshake test proves the
+  root `Hello` carries parity, `ConnectionSettings`, and the default
+  `max_concurrent_requests`; the acceptor setup test proves a fresh session
+  exposes role, root connection, dispatcher wiring, and peer metadata; the
+  virtual-connection test observes the emitted `OpenConnection` settings and
+  parity-based request IDs; the new
+  `outboundMaxConcurrentRequestsWaitsForPeerLimit` test proves a peer limit of
+  one blocks the second request until the first response releases capacity; and
+  the unknown-response test proves a protocol error frame is sent while pending
+  calls fail. Tracey now reports no remaining untested Swift `session`,
+  `session.peer`, `session.role`, `session.parity`,
+  `session.connection-settings*`, `session.protocol-error`,
+  `rpc.flow-control`, `rpc.flow-control.max-concurrent-requests*`, or
+  `rpc.observability.session-errors` rules except for the still-unimplemented
+  Swift inbound max-concurrent enforcement rule.
 - TypeScript core session/RPC envelope behavior now has matching Tracey-backed
   runtime coverage in `src/session.test.ts`: the phon self-describing handshake
   exchanges the Message schema closure, rejects invalid peer Message schemas
@@ -543,7 +560,7 @@ Verified in the Vox checkout during the bridge audit:
   `src/session.test.ts` verifies the last virtual caller sends
   `ConnectionClose`, verifies receiving `ConnectionClose` marks the virtual
   handle closed, and verifies a later peer request on the closed ID sends a
-  `ProtocolError`. The focused Swift suite passes 24/24, the focused TypeScript
+  `ProtocolError`. The focused Swift suite passes 25/25, the focused TypeScript
   session suite now passes 26/26, and Vox `pnpm check` remains green.
 - TypeScript caller liveness is now fully Tracey-verified: the focused
   `vox-core` session suite proves virtual connections stay live while any
@@ -555,8 +572,8 @@ Verified in the Vox checkout during the bridge audit:
   virtual `Connection` reference sends `ConnectionClose`; dropping the root
   `Connection` marks the session internally closed without sending a root close
   frame and waits for retained virtual connections before driver teardown. The
-  focused Swift suite passes 24/24, the full Swift `vox-runtime` package test
-  suite passes 44/44, and
+  focused Swift suite passes 25/25, the full Swift `vox-runtime` package test
+  suite passes 45/45, and
   `swift build --package-path swift/subject` still builds the generated Swift
   subject package.
 - Vox `session.keepalive` now has Tracey-backed protocol keepalive coverage
