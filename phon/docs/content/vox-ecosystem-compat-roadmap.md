@@ -373,17 +373,17 @@ Verified in the Vox checkout during the bridge audit:
 
 - TypeScript packages, generated TypeScript, and the sibling Phon TypeScript
   packages pass `pnpm check` from `~/vox`.
-- TypeScript `vox-core` passes its full Vitest suite with 70 tests; the focused
-  session/schema/channel runtime slice passes 50 tests, `vox-wire` passes 20
+- TypeScript `vox-core` passes its full Vitest suite with 73 tests; the focused
+  session/schema/channel runtime slice passes 51 tests, `vox-wire` passes 20
   tests, `vox-inprocess` passes its focused transport suite with 1 test,
   `vox-tcp` passes its focused transport suite with 5 tests, and `vox-ws`
   passes its focused transport suite with 1 test.
 - Vox Tracey validation is clean across Rust, Swift, and TypeScript. Current
   coverage is Rust 175/175 implemented and 135/175 verified, Swift 160/175
   implemented and 118/175 verified, and TypeScript 175/175 implemented and
-  169/175 verified. That is not a global Vox Tracey completion claim: the
-  remaining TypeScript unverified rules are runtime observability plus broad
-  `rpc` and `rpc.one-service-per-connection` umbrella surfaces.
+  173/175 verified. That is not a global Vox Tracey completion claim: the
+  remaining TypeScript unverified rules are the broad `rpc` and
+  `rpc.one-service-per-connection` umbrella surfaces.
 - The roadmap-relevant Vox rules for subject teardown, channel shape, channel
   allocation/direction/lifecycle, channel payload indexes, connection-close
   channel errors, root and virtual connection behavior, virtual connection
@@ -495,6 +495,17 @@ Verified in the Vox checkout during the bridge audit:
   `vox-ws` proves WebSocket link/source construction, send/recv forwarding, and
   EOF after close. Tracey now reports no remaining untested TypeScript `link.*`
   or `transport.*` rules.
+- TypeScript runtime observability now has Tracey-backed coverage for its
+  local-only diagnostics surfaces. `vox-core` `src/observer.test.ts` proves
+  `setVoxLogger` installs and clears a local runtime observer without a
+  telemetry backend. `src/channeling/registry.test.ts` proves channel
+  open/receive/send/credit/close events are emitted through the installed
+  logger while existing debug snapshots keep channel context. `src/logging.test.ts`
+  proves server request/failed-response diagnostics include service, method,
+  outcome, duration, and error data. `src/session.test.ts` proves protocol
+  violations are surfaced as `ProtocolError` frames and session teardown rather
+  than ordinary EOF. Tracey now reports no remaining untested TypeScript
+  `rpc.observability.*` rules.
 - TypeScript generated RPC caller, service, handler, and session setup surfaces
   now have Tracey-backed codegen coverage. The `vox-codegen` TypeScript target
   test `generated_typescript_emits_rpc_caller_handler_and_session_shapes`
