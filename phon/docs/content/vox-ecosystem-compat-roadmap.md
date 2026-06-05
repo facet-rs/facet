@@ -70,6 +70,11 @@ should only chase direct public-shape source specialization for measured
 client/browser bottlenecks; it should not recreate the Rust/Swift
 descriptor-memory model in JavaScript.
 
+Roadmap accounting rule: a TypeScript proof that succeeds only by routing an
+ordinary generated DTO through generic Phon `Value` counts as interpreter,
+oracle, fallback, or dynamic-API coverage. It does not count as generated
+TypeScript bridge completion, and it does not count as TypeScript JIT parity.
+
 ## Current implementation snapshot
 
 This is the state this roadmap starts from. It should be updated as milestones
@@ -1815,11 +1820,11 @@ Use this as the objective for a long-running implementation goal:
 > Finish the Vox ecosystem compatibility roadmap in
 > `docs/content/vox-ecosystem-compat-roadmap.md`: turn the real Vox consumer
 > surfaces from Bee, Dodeca, Dibs, Styx, Stax, Helix, Hotmeal, and Tracey
-> migration into checked-in fixtures; make the interpreter, Rust JIT, Swift JIT,
-> TypeScript engine/codegen, and generated Vox bridges handle those fixtures
-> through plan-based Phon typed programs; prioritize Rust and Swift JIT for the
-> hot paths, keep TypeScript generated APIs on ordinary public shapes with
-> source-specialized JIT only where benchmarks justify it, keep only the two
-> runtime modes, reject nested channels, preserve subject teardown, add
-> benchmarks for the hot families, and use Tracey annotations/tests to prove the
-> roadmap's spec rules are implemented and verified.
+> migration into checked-in fixtures; make the interpreter and generated Vox
+> bridges handle those fixtures through plan-based Phon typed programs; keep
+> Rust JIT and Swift JIT native-clean for the hot paths; keep TypeScript
+> engine/codegen on ordinary public shapes with source-specialized JIT only
+> where benchmarks justify it; keep only the two runtime modes, reject nested
+> channels, preserve subject teardown, add benchmarks for the hot families, and
+> use Tracey annotations/tests to prove the roadmap's spec rules are implemented
+> and verified.
