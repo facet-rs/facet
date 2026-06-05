@@ -79,7 +79,12 @@ from chat memory.
 Already in place on the Phon side:
 
 - Bee Rust fixtures for the mirrored engine and IME hot roots.
-- Bee Rust benchmark entry point for cached typed encode/decode.
+- Bee Rust benchmark entry point for cached typed encode/decode. The current
+  `cargo run -p phon --features jit --example bee_surface_bench` run completes
+  and reports JIT speedups for the checked-in Bee roots, including 1.41x/1.37x
+  encode/decode for `feed(args)`, 13.09x/4.99x for `feed(response)`,
+  4.95x/3.87x for `setMarkedText(args)`, 4.98x/3.88x for
+  `advanceTranscript(args)`, and 4.95x/3.17x for `imeKeyEvent(args)`.
 - Swift JIT smoke/fixture coverage for the Bee-relevant IME and feed shapes.
 - Method/path-scoped fallback reporting in the typed front door.
 - Initial Rust ecosystem fixture coverage for Dodeca-shaped maps, sets, tuple
@@ -156,33 +161,25 @@ Already in place on the Phon side:
   includes both the recursive tree value and the aggregate LSP
   extension/host-callback DTO surface. The Stax benchmark family now includes
   recursive flamegraph updates, Linux fd-broker control DTOs, and macOS
-  `KdBufBatch` record-stream fixtures. The Dibs
-  benchmark family now includes SQL row/list payloads, generated Squel
-  schema/list/get/create/update/delete/result DTO roots, and migration
-  status/migrate/log DTO roots; a debug
+  `KdBufBatch` record-stream fixtures. The Dibs benchmark family includes SQL
+  row/list payloads, generated Squel schema/list/get/create/update/delete/result
+  DTO roots, and migration status/migrate/log DTO roots. The current
   `cargo run -p phon --features jit --example ecosystem_surface_bench` run
-  produced native-clean selected-runtime results for `dibs(squel service
-  roots)` at 1,128 wire bytes with 5.39x JIT encode and 3.21x JIT decode. The
-  release
-  `cargo run -p phon --release --features jit --example ecosystem_surface_bench`
-  run produced native-clean selected-runtime results for
-  `dodeca(load data dynamic result)` at 64 wire bytes with 1.97x JIT encode
-  and 0.97x JIT decode, and
-  `dodeca(parse result boxed source map)` at 4,512 wire bytes with 2.55x JIT
-  encode and 1.40x JIT decode. A later debug
-  `cargo run -p phon --features jit --example ecosystem_surface_bench` run
-  produced native-clean selected-runtime results for the broad
-  `helix(trace service aggregate)` at 6,400 wire bytes with 4.39x JIT encode
-  and 3.48x JIT decode. The Rust benchmark family also includes Dodeca image
-  processor roots with PNG bytes, decoded/resized image byte buffers, thumbhash
-  strings, and error results; a debug run produced native-clean results for
-  `dodeca(image processor roots)` at 96,411 wire bytes with 1.80x JIT encode
-  and 1.74x JIT decode, and `dodeca(search indexer roots)` at 18,128 wire
-  bytes with 6.95x JIT encode and 2.78x JIT decode. The
-  Rust channel-item benchmark family now covers Dodeca byte and string items,
-  Dibs migration logs, Helix pulse notifications, and Tracey data updates; the
-  same run produced native-clean selected-runtime results for those roots at
-  4,100, 3,055, 94, 8, and 976 wire bytes respectively.
+  completes the full family and reports `native-clean` fallback status for every
+  row. Representative selected-runtime speedups from that run include
+  `dodeca(parse result boxed source map)` at 4,512 wire bytes with 9.72x encode
+  and 3.62x decode, `dodeca(search indexer roots)` at 18,128 wire bytes with
+  6.90x encode and 2.80x decode, `dibs(squel service roots)` at 1,128 wire
+  bytes with 5.40x encode and 3.19x decode, `styx(lsp surface)` at 8,044 wire
+  bytes with 4.98x encode and 3.13x decode, `stax(mac kdbuf batches)` at 8,387
+  wire bytes with 5.11x encode and 3.67x decode,
+  `helix(trace service aggregate)` at 6,400 wire bytes with 4.26x encode and
+  3.31x decode, `hotmeal(live reload)` at 2,101 wire bytes with 4.86x encode
+  and 2.75x decode, and `tracey(migration dto)` at 2,064 wire bytes with 5.35x
+  encode and 2.78x decode. The Rust channel-item benchmark family now covers
+  Dodeca byte and string items, Dibs migration logs, Helix pulse notifications,
+  and Tracey data updates; the same current run reports those roots as
+  native-clean at 4,100, 3,055, 94, 8, and 976 wire bytes respectively.
 - Swift `PhonJITBench` now covers the Bee hot roots plus Dodeca `Set<String>`
   routes, Dodeca dynamic template calls, Dodeca HTML processor maps/sets/tuple
   vectors, Dodeca data-loader dynamic results, Dodeca markdown parse/render
@@ -196,32 +193,18 @@ Already in place on the Phon side:
   It also benchmarks focused compat decode roots for writer-only scalar field
   skip and reader-only optional default, plus channel item roots for Dodeca byte
   tunnels, Dodeca LSP strings, Dibs migration logs, Helix pulse notifications,
-  and Tracey data updates. A debug `swift build --product PhonJITBench` plus
-  direct `.build/debug/PhonJITBench` run from the package root produced
-  native-clean compat field-skip decode at 8 wire bytes with 1.09x JIT decode,
-  native-clean compat reader-default decode at 4 wire bytes with 1.67x JIT
-  decode, native-clean Dodeca routes at 1,890 wire bytes with 0.30x JIT encode
-  and 4.25x JIT decode, native-clean Dodeca dynamic template calls at 360 wire
-  bytes with 0.42x JIT encode and 1.15x JIT decode, native-clean Dodeca HTML
-  processor roots at 7,800 wire bytes with 0.51x JIT encode and 5.73x JIT
-  decode, native-clean Dodeca data-loader results at 61 wire bytes with 0.73x
-  JIT encode and 1.10x JIT decode, native-clean Dodeca parse results at 4,512
-  wire bytes with 1.67x JIT encode and 10.36x JIT decode, native-clean
-  Dodeca image processor roots at 96,433 wire bytes with 0.06x JIT encode and
-  5.55x JIT decode,
-  native-clean Dodeca search indexer roots at 12,017 wire bytes with 0.97x JIT
-  encode and 7.71x JIT decode, native-clean Dibs rows at 3,856 wire bytes with
-  1.71x JIT encode and 13.82x JIT decode, native-clean generated Dibs Squel
-  roots at 1,128 wire bytes with 2.14x JIT encode and 8.87x JIT decode,
-  native-clean Dibs migration service roots at 638 wire bytes with 1.80x JIT
-  encode and 7.25x JIT decode, native-clean Styx recursive values at 432 wire
-  bytes with 1.95x JIT encode and 8.83x JIT decode, native-clean Styx LSP
-  aggregates at 6,688 wire bytes with 2.09x JIT encode and 9.24x JIT decode,
-  native-clean Stax recursive flamegraphs at 924 wire bytes with 3.05x JIT
-  encode and 10.91x JIT decode, native-clean Stax Linux broker-control DTOs at
-  176 wire bytes with 1.70x JIT encode and 10.31x JIT decode, native-clean
-  Helix trace-service aggregate roots at 6,400 wire bytes with 5.43x JIT
-  encode and 8.68x JIT decode, and native-clean channel item roots at 4,100,
+  and Tracey data updates. The current `swift build --product PhonJITBench`
+  plus direct `.build/debug/PhonJITBench` run from the package root completes
+  and reports native-clean status for every row. Representative current results
+  include native-clean Bee `feed(response)` at 1,789 wire bytes with 3.37x
+  encode and 12.26x decode, compat field-skip/default decode at 1.10x and
+  1.71x, Dodeca parse at 4,512 wire bytes with 1.72x encode and 10.63x decode,
+  Dodeca search at 12,017 wire bytes with 0.97x encode and 7.57x decode, Dibs
+  generated Squel roots at 1,128 wire bytes with 2.14x encode and 10.43x
+  decode, Styx LSP aggregates at 6,688 wire bytes with 1.93x encode and 9.03x
+  decode, Stax recursive flamegraphs at 924 wire bytes with 3.24x encode and
+  10.90x decode, Helix trace-service aggregate roots at 6,400 wire bytes with
+  5.32x encode and 8.47x decode, and native-clean channel item roots at 4,100,
   3,055, 104, 8, and 976 wire bytes.
 - TypeScript engine-level ecosystem fixture coverage for Dodeca HTML
   maps/sets/tuple vectors, Dodeca dynamic template calls, Dodeca data-loader
@@ -241,9 +224,9 @@ Already in place on the Phon side:
 - TypeScript JIT now generates JavaScript functions for recursive `callBlock`
   decode plans and recursive encoder blocks instead of routing recursive roots
   through the interpreter fallback. The focused TypeScript benchmark includes a
-  recursive rose-list call-block case; the current run measured 396,131 hz for
-  JIT decode vs. 121,056 hz for the interpreter, a 3.27x decode speedup, and
-  57,707 hz for JIT encode vs. 41,123 hz for the interpreter, a 1.40x encode
+  recursive rose-list call-block case; the current run measured 400,903 hz for
+  JIT decode vs. 124,208 hz for the interpreter, a 3.23x decode speedup, and
+  56,652 hz for JIT encode vs. 38,196 hz for the interpreter, a 1.48x encode
   speedup.
 - TypeScript now has a direct public-shape typed JIT path for generated-client
   DTOs. `decodeTyped` with JIT enabled lowers the compatibility plan into
@@ -256,13 +239,13 @@ Already in place on the Phon side:
   (`pnpm --filter @bearcove/phon-engine exec vitest run`) passes 103/103,
   Tracey validation is clean, and the
   current Helix `TraceService` aggregate benchmark measures direct-shape typed
-  JIT at 48,015.60 hz for decode and 10,204.63 hz for encode, versus 7,776.92
-  hz and 4,775.97 hz for the JIT-disabled typed fallback through `Value`. The
+  JIT at 47,028.70 hz for decode and 10,426.74 hz for encode, versus 7,997.22
+  hz and 4,845.53 hz for the JIT-disabled typed fallback through `Value`. The
   focused Dodeca TypeScript benchmark now also measures the image processor and
   search indexer roots on larger benchmark payloads: image decode is
-  269,233.43 hz direct-shape JIT vs. 131,385.27 hz fallback, image encode is
-  104,877.95 hz vs. 72,574.30 hz, search decode is 109,250.56 hz vs.
-  51,055.34 hz, and search encode is 35,167.40 hz vs. 24,948.50 hz.
+  300,588.56 hz direct-shape JIT vs. 133,576.12 hz fallback, image encode is
+  103,405.99 hz vs. 70,289.24 hz, search decode is 106,268.31 hz vs.
+  49,417.90 hz, and search encode is 37,859.36 hz vs. 24,907.05 hz.
 - Current local fixture verification passes: Rust Bee surface with JIT
   (`cargo nextest run -p phon --features jit -E 'binary(bee_surface)'`, 2/2),
   Rust ecosystem surface with JIT
