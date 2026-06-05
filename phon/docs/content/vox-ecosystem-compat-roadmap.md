@@ -367,13 +367,14 @@ Already in place on the Phon side:
 Verified in the Vox checkout during the bridge audit:
 
 - TypeScript packages, generated TypeScript, and the sibling Phon TypeScript
-  packages pass `pnpm check` from `~/vox/typescript`.
-- TypeScript `vox-core` passes its focused runtime suite with 54 tests, and
-  `vox-tcp` passes its focused transport suite with 2 tests.
+  packages pass `pnpm check` from `~/vox`.
+- TypeScript `vox-core` passes its full Vitest suite with 63 tests; the focused
+  session/schema/channel runtime slice passes 44 tests, and `vox-tcp` passes
+  its focused transport suite with 2 tests.
 - Vox Tracey validation is clean across Rust, Swift, and TypeScript. Current
   coverage is Rust 175/175 implemented and 128/175 verified, Swift 160/175
   implemented and 113/175 verified, and TypeScript 175/175 implemented and
-  114/175 verified. That is not a global Vox Tracey completion claim: the
+  134/175 verified. That is not a global Vox Tracey completion claim: the
   remaining unverified rules include broad transport/session/RPC surfaces
   outside this Phon ecosystem bridge roadmap.
 - The roadmap-relevant Vox rules for subject teardown, channel shape, channel
@@ -408,6 +409,14 @@ Verified in the Vox checkout during the bridge audit:
   messages, allocates request IDs, and observes one response per request.
   Tracey now reports no remaining untested Swift `session.handshake.*`,
   `session.message.*`, `rpc.request.*`, or `rpc.response.*` rules.
+- TypeScript core session/RPC envelope behavior now has matching Tracey-backed
+  runtime coverage in `src/session.test.ts`: the phon self-describing handshake
+  exchanges the Message schema closure, rejects invalid peer Message schemas
+  with `Sorry` before post-handshake traffic, preserves peer settings and
+  metadata, keeps protocol schemas session-scoped, preserves connection IDs on
+  messages, allocates request IDs from parity, and observes responses on the
+  same request IDs. Tracey now reports no remaining untested TypeScript
+  `session.*`, `rpc.request.*`, or `rpc.response.*` rules.
 - Swift inbound virtual connection acceptance now has focused runtime coverage
   in `swift test --package-path swift/vox-runtime --filter
   ConnectionFailureTests`: `inboundOpenConnectionAcceptsAndDispatchesOnVirtualConnection`
@@ -435,7 +444,7 @@ Verified in the Vox checkout during the bridge audit:
   `ConnectionClose`, verifies receiving `ConnectionClose` marks the virtual
   handle closed, and verifies a later peer request on the closed ID sends a
   `ProtocolError`. The focused Swift suite passes 24/24, the focused TypeScript
-  session suite now passes 22/22, and Vox `pnpm check` remains green.
+  session suite now passes 25/25, and Vox `pnpm check` remains green.
 - TypeScript caller liveness is now fully Tracey-verified: the focused
   `vox-core` session suite proves virtual connections stay live while any
   caller handle for that connection remains undisposed, then send
