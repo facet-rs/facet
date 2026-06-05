@@ -379,14 +379,18 @@ Verified in the Vox checkout during the bridge audit:
   `vox-tcp` passes its focused transport suite with 5 tests, and `vox-ws`
   passes its focused transport suite with 1 test.
 - Vox Tracey validation is clean across Rust, Swift, and TypeScript. Current
-  coverage is Rust 175/175 implemented and 146/175 verified, Swift 162/175
+  coverage is Rust 175/175 implemented and 161/175 verified, Swift 162/175
   implemented and 157/175 verified, and TypeScript 175/175 implemented and
   173/175 verified. That is not a global Vox Tracey completion claim: the
   remaining TypeScript unverified rules are the broad `rpc` and
   `rpc.one-service-per-connection` umbrella surfaces, while the remaining
   Swift holes are concentrated in uncovered non-Swift transports/debug
   observability/inbound request-limit rules and five untested implemented
-  umbrella or lifecycle rules.
+  umbrella or lifecycle rules. The remaining Rust unverified rules are now
+  concentrated in transport packages, observability emission, broad `rpc` /
+  one-service umbrella surfaces, the response-finalization rule whose desired
+  late-response semantics still need a spec decision, and two broad session
+  message/peer rules.
 - The roadmap-relevant Vox rules for subject teardown, channel shape, channel
   allocation/direction/lifecycle, channel payload indexes, connection-close
   channel errors, root and virtual connection behavior, virtual connection
@@ -480,6 +484,16 @@ Verified in the Vox checkout during the bridge audit:
   handler that delays method 1 but replies immediately to method 2, and proves
   method 2 completes before method 1. Tracey now reports no remaining untested
   Rust `rpc.pipelining` rule.
+- Rust request-ID and protocol-error handling now has Tracey-backed runtime
+  coverage in `vox-core`. The driver rejects wrong-parity request IDs and
+  duplicate live request IDs, sends a connection-0 `ProtocolError` before
+  teardown, and peers treat received `ProtocolError` as protocol closure. The
+  focused Rust tests also prove root connection setup, virtual connection
+  opening, virtual connection request parity, session role/symmetry, and
+  max-concurrent request flow-control behavior. Tracey now reports no remaining
+  untested Rust `rpc.request.id-allocation`, `rpc.flow-control`,
+  `session.protocol-error`, `connection.*`, `session.connection-settings*`,
+  `session.parity`, `session.role`, or `session.symmetry` rules.
 - TypeScript core session/RPC envelope behavior now has matching Tracey-backed
   runtime coverage in `src/session.test.ts`: the phon self-describing handshake
   exchanges the Message schema closure, rejects invalid peer Message schemas
