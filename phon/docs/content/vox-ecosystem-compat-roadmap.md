@@ -379,7 +379,7 @@ Verified in the Vox checkout during the bridge audit:
   `vox-tcp` passes its focused transport suite with 5 tests, and `vox-ws`
   passes its focused transport suite with 1 test.
 - Vox Tracey validation is clean across Rust, Swift, and TypeScript. Current
-  coverage is Rust 175/175 implemented and 161/175 verified, Swift 162/175
+  coverage is Rust 175/175 implemented and 162/175 verified, Swift 162/175
   implemented and 157/175 verified, and TypeScript 175/175 implemented and
   173/175 verified. That is not a global Vox Tracey completion claim: the
   remaining TypeScript unverified rules are the broad `rpc` and
@@ -494,6 +494,13 @@ Verified in the Vox checkout during the bridge audit:
   untested Rust `rpc.request.id-allocation`, `rpc.flow-control`,
   `session.protocol-error`, `connection.*`, `session.connection-settings*`,
   `session.parity`, `session.role`, or `session.symmetry` rules.
+- Rust call-scoped error behavior now has Tracey-backed runtime coverage in
+  `vox-core`. `call_error_does_not_close_connection_or_cancel_other_requests`
+  runs a real initiator/acceptor session over `MemoryLink`, returns a
+  call-level `InvalidPayload` error for one request while another request
+  remains in flight, proves the in-flight request still completes, and then
+  proves the connection remains usable for a follow-up call. Tracey now reports
+  no remaining untested Rust `rpc.error.scope` rule.
 - TypeScript core session/RPC envelope behavior now has matching Tracey-backed
   runtime coverage in `src/session.test.ts`: the phon self-describing handshake
   exchanges the Message schema closure, rejects invalid peer Message schemas
