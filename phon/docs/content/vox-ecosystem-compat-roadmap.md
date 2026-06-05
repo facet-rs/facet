@@ -325,11 +325,12 @@ Already in place on the Phon side:
   root through generated Rust, Swift, and TypeScript clients/dispatchers,
   schema exchange, non-nested channel binding, typed channel item
   encode/decode, and terminal user-error result schema handling. The cold
-  Swift subject release build exceeded the matrix's 120s timeout but completed
-  with `swift build --package-path swift/subject -c release`; with the subject
-  build warm, the all-eight focused matrix passed. A post-run process sweep
-  found no lingering `subject-*`, Swift build, Swift frontend, or nextest
-  processes.
+  Swift subject release build completed with
+  `swift build --package-path swift/subject -c release`; Vox's nextest config
+  now gives Swift transport and Swift subject lifecycle tests a longer
+  Swift-specific timeout so stale or absent release subject builds do not fail
+  the matrix before the subject can compile. A post-run process sweep found no
+  lingering `subject-*`, Swift build, Swift frontend, or nextest processes.
 - Focused generated Swift bridge verification also passes:
   `cargo nextest run -p spec-tests -E 'test(lang_swift_transport_tcp::direction_harness_to_subject::rpc_echo_ecosystem_bridge) | test(lang_swift_transport_tcp::direction_subject_to_harness::subject_calls_echo_ecosystem_bridge)' --no-fail-fast -j 1`
   ran 2/2 in `~/vox`. This exercises both generated Swift dispatcher decode
