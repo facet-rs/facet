@@ -37,6 +37,8 @@ import { checkFixedCount, decodeRef, encode, product } from "./compact.ts";
 import type { Node, Payload, Plan, StructPlan } from "./plan.ts";
 import { buildPlan, decodeWithPlan, WriterOnlyVariantError } from "./plan.ts";
 
+const RUNTIME_MAX_DEPTH = 128;
+
 /// The fixed helper surface the generated code closes over. `new Function` has no
 /// access to module scope, so everything it needs is passed in as an argument.
 interface Helpers {
@@ -95,13 +97,13 @@ export function jitAvailable(): boolean {
 /// Compile a built plan to a specialized decoder via `new Function`. Throws if
 /// codegen is unavailable (strict CSP) — use `compile` for transparent fallback.
 // r[impl exec.jit-optional]
+// r[impl crates.jit-opt-in]
 export function compilePlan(plan: Plan, reg: Registry): CompiledDecoder {
   const cg = new Codegen();
-  const body = cg.genStmt(plan.root, "__root", 0);
+  const body = cg.genProgram(plan);
   const src =
     `"use strict";\n` +
     `const r = new H.Reader(bytes);\n` +
-    `let __root;\n` +
     `${body}` +
     `if (r.remaining() !== 0) throw new H.DecodeError(r.remaining() + " trailing bytes");\n` +
     `return __root;\n`;
@@ -136,10 +138,6 @@ export function recordJitFallbacks(plan: Plan): JitFallbackRecord[] {
 function recordNodeFallbacks(node: Node, path: string, out: JitFallbackRecord[]): void {
   switch (node.kind) {
     case "callBlock":
-      out.push({
-        path,
-        reason: "recursive callBlock is interpreted by the TypeScript JIT fallback",
-      });
       return;
     case "struct":
       node.plan.steps.forEach((step, i) => {
@@ -198,6 +196,7 @@ const decoderCache = new WeakMap<Registry, Map<string, CompiledDecoder>>();
 /// interpreter; pass `{ jit: true }` to require the JIT (throwing under CSP) or
 /// `{ jit: false }` to force the interpreter.
 // r[impl exec.jit-optional]
+// r[impl crates.jit-opt-in]
 export function compile(
   writerRoot: bigint,
   readerRoot: bigint,
@@ -222,7 +221,7 @@ export function compile(
 
 /// The generated source of a plan's decoder, for inspection/debugging.
 export function compiledSource(plan: Plan): string {
-  return new Codegen().genStmt(plan.root, "__root", 0);
+  return new Codegen().genProgram(plan);
 }
 
 // ============================================================================
@@ -250,8 +249,10 @@ const ENC_HELPERS: EncHelpers = { ByteSink, writeValueInto, formatDatetime, form
 const encoderCache = new WeakMap<Registry, Map<string, CompiledEncoder>>();
 
 /// Compile (and cache per registry) a Value->bytes encoder for `root`. Uses the
-/// JIT when `new Function` is available and the schema is non-recursive; falls
-/// back to the recursive `encode` otherwise.
+/// JIT when `new Function` is available; falls back to the recursive `encode`
+/// when source generation is unavailable or the schema contains an unsupported
+/// compact kind.
+// r[impl crates.jit-opt-in]
 export function compileEncoder(root: bigint, reg: Registry, opts?: { jit?: boolean }): CompiledEncoder {
   const useJit = opts?.jit ?? jitAvailable();
   const key = `${root.toString(16)}:${useJit ? "j" : "i"}`;
@@ -267,14 +268,13 @@ export function compileEncoder(root: bigint, reg: Registry, opts?: { jit?: boole
   let encoder: CompiledEncoder = interp;
   if (useJit) {
     try {
-      const eg = new EncCodegen(reg);
-      const body = eg.genEnc(reg.resolve({ kind: "concrete", id: root, args: [] }), "value", 0);
+      const eg = new EncCodegen(reg, recursiveBlockIds(root, reg));
+      const body = eg.genProgram(root);
       const src = `"use strict";\nconst out = new H.ByteSink();\n${body}return out.finish();\n`;
       // eslint-disable-next-line @typescript-eslint/no-implied-eval
       const fn = new Function("value", "H", src) as (value: Value, H: EncHelpers) => Uint8Array;
       encoder = (value: Value) => fn(value, ENC_HELPERS);
     } catch {
-      // Recursive schema (codegen depth guard) or no `new Function`: interpret.
       encoder = interp;
     }
   }
@@ -284,10 +284,14 @@ export function compileEncoder(root: bigint, reg: Registry, opts?: { jit?: boole
 
 /// The generated source of a schema's encoder, for inspection/debugging.
 export function compiledEncoderSource(root: bigint, reg: Registry): string {
-  return new EncCodegen(reg).genEnc(reg.resolve({ kind: "concrete", id: root, args: [] }), "value", 0);
+  return new EncCodegen(reg, recursiveBlockIds(root, reg)).genProgram(root);
 }
 
-const ENC_MAX_DEPTH = 128;
+function recursiveBlockIds(root: bigint, reg: Registry): Set<bigint> {
+  return new Set(buildPlan(root, root, reg).blocks.keys());
+}
+
+const ENC_RUNTIME_MAX_DEPTH = 128;
 
 /// The JS write statements for a primitive scalar (a ByteSink `out` is in scope;
 /// `v` is the value expression). Mirrors compact.ts encodePrimitive.
@@ -322,35 +326,69 @@ function scalarWrite(p: Primitive, v: string): string {
 class EncCodegen {
   private counter = 0;
   private readonly reg: Registry;
+  private readonly recursiveIds: Set<bigint>;
   // Explicit field assignment (not a constructor parameter property), so Node's
   // strip-only TypeScript loader can run this module without a compile step.
-  constructor(reg: Registry) {
+  constructor(reg: Registry, recursiveIds: Set<bigint>) {
     this.reg = reg;
+    this.recursiveIds = recursiveIds;
   }
 
   private fresh(prefix: string): string {
     return `_${prefix}${this.counter++}`;
   }
 
+  private childDepth(depth: string): string {
+    return `(${depth} + 1)`;
+  }
+
+  private blockName(schema: bigint): string {
+    return `__enc_block_${schema.toString(16).replace(/[^0-9a-f]/g, "_")}`;
+  }
+
+  genProgram(root: bigint): string {
+    let out = "";
+    for (const schema of this.recursiveIds) {
+      out += this.genBlock(schema);
+    }
+    out += this.genEncRef({ kind: "concrete", id: root, args: [] }, "value", "0");
+    return out;
+  }
+
+  private genBlock(schema: bigint): string {
+    const fn = this.blockName(schema);
+    const kind = this.reg.resolve({ kind: "concrete", id: schema, args: [] });
+    let out = `function ${fn}(__value, __depth) {\n`;
+    out += `if (__depth > ${ENC_RUNTIME_MAX_DEPTH}) throw new H.EncodeError("maximum nesting depth exceeded");\n`;
+    out += this.genEnc(kind, "__value", "__depth");
+    out += `}\n`;
+    return out;
+  }
+
+  private genEncRef(ref: SchemaRef, vexpr: string, depth: string): string {
+    if (ref.kind === "concrete" && this.recursiveIds.has(ref.id)) {
+      return `${this.blockName(ref.id)}(${vexpr}, ${this.childDepth(depth)});\n`;
+    }
+    return this.genEnc(this.reg.resolve(ref), vexpr, depth);
+  }
+
   /// Emit statements writing the value at `vexpr` against `kind`. Refs are
-  /// resolved at compile time and inlined; a recursive schema trips the depth
-  /// guard (caught by compileEncoder, which then interprets).
-  genEnc(kind: SchemaKind, vexpr: string, depth: number): string {
-    if (depth > ENC_MAX_DEPTH) throw new Error("schema too deep to compile (recursive?)");
+  /// resolved at compile time and inlined until a recursive block boundary.
+  genEnc(kind: SchemaKind, vexpr: string, depth: string): string {
     switch (kind.kind) {
       case "primitive":
         return scalarWrite(kind.primitive, vexpr);
       case "struct": {
         let out = "";
         for (const f of kind.fields) {
-          out += this.genEnc(this.reg.resolve(f.schema), `${vexpr}.get(${JSON.stringify(f.name)})`, depth + 1);
+          out += this.genEncRef(f.schema, `${vexpr}.get(${JSON.stringify(f.name)})`, this.childDepth(depth));
         }
         return out;
       }
       case "tuple": {
         let out = "";
         kind.elements.forEach((e, i) => {
-          out += this.genEnc(this.reg.resolve(e), `${vexpr}[${i}]`, depth + 1);
+          out += this.genEncRef(e, `${vexpr}[${i}]`, this.childDepth(depth));
         });
         return out;
       }
@@ -358,26 +396,26 @@ class EncCodegen {
       case "set": {
         const a = this.fresh("a");
         const e = this.fresh("e");
-        const body = this.genEnc(this.reg.resolve(kind.element), e, depth + 1);
+        const body = this.genEncRef(kind.element, e, this.childDepth(depth));
         return `const ${a} = ${vexpr};\nout.u32(${a}.length);\nfor (const ${e} of ${a}) {\n${body}}\n`;
       }
       case "array": {
         const a = this.fresh("a");
         const e = this.fresh("e");
-        const body = this.genEnc(this.reg.resolve(kind.element), e, depth + 1);
+        const body = this.genEncRef(kind.element, e, this.childDepth(depth));
         return `const ${a} = ${vexpr};\nfor (const ${e} of ${a}) {\n${body}}\n`;
       }
       case "map": {
         const m = this.fresh("m");
         const k = this.fresh("k");
         const v = this.fresh("v");
-        const kb = this.genEnc(this.reg.resolve(kind.key), k, depth + 1);
-        const vb = this.genEnc(this.reg.resolve(kind.value), v, depth + 1);
+        const kb = this.genEncRef(kind.key, k, this.childDepth(depth));
+        const vb = this.genEncRef(kind.value, v, this.childDepth(depth));
         return `const ${m} = ${vexpr};\nout.u32(${m}.size);\nfor (const [${k}, ${v}] of ${m}) {\n${kb}${vb}}\n`;
       }
       case "option": {
         const o = this.fresh("o");
-        const body = this.genEnc(this.reg.resolve(kind.element), o, depth + 1);
+        const body = this.genEncRef(kind.element, o, this.childDepth(depth));
         return `const ${o} = ${vexpr};\nif (${o} === null) out.u8(0);\nelse {\nout.u8(1);\n${body}}\n`;
       }
       case "enum": {
@@ -389,7 +427,7 @@ class EncCodegen {
         out += `switch (${name}) {\n`;
         for (const variant of kind.variants) {
           out += `case ${JSON.stringify(variant.name)}: {\nout.u32(${variant.index});\n`;
-          out += this.genPayload(variant.payload, pl, depth + 1);
+          out += this.genPayload(variant.payload, pl, this.childDepth(depth));
           out += `break;\n}\n`;
         }
         out += `default: throw new H.EncodeError("unknown variant " + ${name});\n}\n`;
@@ -404,23 +442,23 @@ class EncCodegen {
     }
   }
 
-  private genPayload(p: VariantPayload, vexpr: string, depth: number): string {
+  private genPayload(p: VariantPayload, vexpr: string, depth: string): string {
     switch (p.kind) {
       case "unit":
         return "";
       case "newtype":
-        return this.genEnc(this.reg.resolve(p.ref), vexpr, depth + 1);
+        return this.genEncRef(p.ref, vexpr, this.childDepth(depth));
       case "tuple": {
         let out = "";
         p.refs.forEach((r, i) => {
-          out += this.genEnc(this.reg.resolve(r), `${vexpr}[${i}]`, depth + 1);
+          out += this.genEncRef(r, `${vexpr}[${i}]`, this.childDepth(depth));
         });
         return out;
       }
       case "struct": {
         let out = "";
         for (const f of p.fields) {
-          out += this.genEnc(this.reg.resolve(f.schema), `${vexpr}.get(${JSON.stringify(f.name)})`, depth + 1);
+          out += this.genEncRef(f.schema, `${vexpr}.get(${JSON.stringify(f.name)})`, this.childDepth(depth));
         }
         return out;
       }
@@ -465,15 +503,45 @@ class Codegen {
   skipRefs: SchemaRef[] = [];
   private counter = 0;
 
+  genProgram(plan: Plan): string {
+    let out = "";
+    for (const [schema, block] of plan.blocks) {
+      out += this.genBlock(schema, block);
+    }
+    out += `let __root;\n`;
+    out += this.genStmt(plan.root, "__root", "0");
+    return out;
+  }
+
+  private genBlock(schema: bigint, block: Node): string {
+    const fn = this.blockName(schema);
+    let out = `function ${fn}(__depth) {\n`;
+    out += `if (__depth > ${RUNTIME_MAX_DEPTH}) throw new H.DecodeError("maximum nesting depth exceeded");\n`;
+    out += `let __ret;\n`;
+    out += this.genStmt(block, "__ret", "__depth");
+    out += `return __ret;\n`;
+    out += `}\n`;
+    return out;
+  }
+
+  private blockName(schema: bigint): string {
+    return `__block_${schema.toString(16).replace(/[^0-9a-f]/g, "_")}`;
+  }
+
   private fresh(prefix: string): string {
     return `_${prefix}${this.counter++}`;
   }
 
+  private childDepth(depth: string): string {
+    return `(${depth} + 1)`;
+  }
+
+  // r[impl ir.inlining]
   /// Emit statements that decode `node` (reading from `r`) and assign the value
   /// to the already-declared variable `target`. `depth` is the compile-time
   /// nesting level — threaded so writer-only-field skips pass the SAME depth the
   /// interpreter would, keeping the hostile-input depth limit identical.
-  genStmt(node: Node, target: string, depth: number): string {
+  genStmt(node: Node, target: string, depth: string): string {
     switch (node.kind) {
       case "scalar": {
         const a = alignment(node.primitive);
@@ -487,7 +555,7 @@ class Codegen {
         let out = `const ${a} = [];\n`;
         for (const n of node.nodes) {
           const e = this.fresh("e");
-          out += `let ${e};\n${this.genStmt(n, e, depth + 1)}${a}.push(${e});\n`;
+          out += `let ${e};\n${this.genStmt(n, e, this.childDepth(depth))}${a}.push(${e});\n`;
         }
         return out + `${target} = ${a};\n`;
       }
@@ -523,7 +591,7 @@ class Codegen {
             `if (${seen}.has(${k})) throw new H.DecodeError("duplicate set element");\n` +
             `${seen}.add(${k});\n`;
         }
-        out += `for (let ${i} = 0; ${i} < ${n}; ${i}++) {\nlet ${e};\n${this.genStmt(node.element, e, depth + 1)}${dup}${a}.push(${e});\n}\n`;
+        out += `for (let ${i} = 0; ${i} < ${n}; ${i}++) {\nlet ${e};\n${this.genStmt(node.element, e, this.childDepth(depth))}${dup}${a}.push(${e});\n}\n`;
         return out + `${target} = ${a};\n`;
       }
       case "map": {
@@ -535,8 +603,8 @@ class Codegen {
         let out = `const ${n} = r.readLen(1);\n`;
         out += `const ${m} = new Map();\n`;
         out += `for (let ${i} = 0; ${i} < ${n}; ${i}++) {\n`;
-        out += `let ${k};\n${this.genStmt(node.key, k, depth + 1)}`;
-        out += `let ${v};\n${this.genStmt(node.value, v, depth + 1)}`;
+        out += `let ${k};\n${this.genStmt(node.key, k, this.childDepth(depth))}`;
+        out += `let ${v};\n${this.genStmt(node.value, v, this.childDepth(depth))}`;
         out += `if (typeof ${k} !== "string") throw new H.DecodeError("map with non-string keys");\n`;
         out += `if (${m}.has(${k})) throw new H.DecodeError("duplicate map key");\n`;
         out += `${m}.set(${k}, ${v});\n}\n`;
@@ -551,7 +619,7 @@ class Codegen {
         let out = `const ${count} = H.product(${dims});\n`;
         out += `H.checkFixedCount(${count}, ${node.minWire}, r.remaining());\n`;
         out += `const ${a} = [];\n`;
-        out += `for (let ${i} = 0n; ${i} < ${count}; ${i}++) {\nlet ${e};\n${this.genStmt(node.element, e, depth + 1)}${a}.push(${e});\n}\n`;
+        out += `for (let ${i} = 0n; ${i} < ${count}; ${i}++) {\nlet ${e};\n${this.genStmt(node.element, e, this.childDepth(depth))}${a}.push(${e});\n}\n`;
         return out + `${target} = ${a};\n`;
       }
       case "option": {
@@ -559,32 +627,29 @@ class Codegen {
         const inner = this.fresh("inner");
         let out = `const ${b} = r.readU8();\n`;
         out += `if (${b} === 0) ${target} = null;\n`;
-        out += `else if (${b} === 1) {\nlet ${inner};\n${this.genStmt(node.element, inner, depth + 1)}${target} = ${inner};\n}\n`;
+        out += `else if (${b} === 1) {\nlet ${inner};\n${this.genStmt(node.element, inner, this.childDepth(depth))}${target} = ${inner};\n}\n`;
         out += `else throw new H.DecodeError("invalid bool byte 0x" + ${b}.toString(16));\n`;
         return out;
       }
       case "dynamic":
         return `${target} = H.readValue(r, ${depth});\n`;
       case "callBlock":
-        // A recursive plan is decoded by the interpreter (`compile` falls back when
-        // `plan.blocks` is non-empty); the JIT for `callBlock` is a follow-up, as in
-        // the Rust copy-and-patch JIT. Reaching here means that guard was bypassed.
-        throw new Error("JIT codegen does not support recursive (callBlock) plans");
+        return `${target} = ${this.blockName(node.schema)}(${this.childDepth(depth)});\n`;
     }
   }
 
-  private genStruct(plan: StructPlan, target: string, depth: number): string {
+  private genStruct(plan: StructPlan, target: string, depth: string): string {
     const m = this.fresh("m");
     let out = `const ${m} = new Map();\n`;
     for (const step of plan.steps) {
       if (step.kind === "take") {
         const f = this.fresh("f");
-        out += `let ${f};\n${this.genStmt(step.node, f, depth + 1)}${m}.set(${JSON.stringify(step.reader)}, ${f});\n`;
+        out += `let ${f};\n${this.genStmt(step.node, f, this.childDepth(depth))}${m}.set(${JSON.stringify(step.reader)}, ${f});\n`;
       } else {
         const k = this.skipRefs.push(step.ref) - 1;
         // Same depth the interpreter passes (`depth + 1`): the writer-only field
         // sits one level below this struct.
-        out += `H.decodeRef(r, skipRefs[${k}], reg, ${depth + 1});\n`;
+        out += `H.decodeRef(r, skipRefs[${k}], reg, ${this.childDepth(depth)});\n`;
       }
     }
     for (const name of plan.defaults) {
@@ -593,18 +658,18 @@ class Codegen {
     return out + `${target} = ${m};\n`;
   }
 
-  private genPayload(p: Payload, target: string, depth: number): string {
+  private genPayload(p: Payload, target: string, depth: string): string {
     switch (p.kind) {
       case "unit":
         return `${target} = null;\n`;
       case "newtype":
-        return this.genStmt(p.node, target, depth + 1);
+        return this.genStmt(p.node, target, this.childDepth(depth));
       case "tuple": {
         const a = this.fresh("a");
         let out = `const ${a} = [];\n`;
         for (const n of p.nodes) {
           const e = this.fresh("e");
-          out += `let ${e};\n${this.genStmt(n, e, depth + 1)}${a}.push(${e});\n`;
+          out += `let ${e};\n${this.genStmt(n, e, this.childDepth(depth))}${a}.push(${e});\n`;
         }
         return out + `${target} = ${a};\n`;
       }

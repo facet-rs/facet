@@ -712,6 +712,60 @@ fn build_cases(b: &mut Batch) -> Vec<PlannedCase> {
         push("dynamic_field", root.clone(), root, value);
     }
 
+    // 22. channel_item_schema_compat — channel roots are transport capabilities,
+    // but stream items are ordinary per-message payloads. This Dodeca-shaped item
+    // proves a writer-only field is skipped by the shared compat corpus.
+    {
+        let writer = b.add(SchemaKind::Struct {
+            name: "DodecaTunnelItem".to_string(),
+            fields: vec![
+                field("seq", prim(Primitive::U64), true),
+                field("chunk_len", prim(Primitive::U32), true),
+                field("transient_id", prim(Primitive::U64), true),
+            ],
+        });
+        let reader = b.add(SchemaKind::Struct {
+            name: "DodecaTunnelItem".to_string(),
+            fields: vec![
+                field("seq", prim(Primitive::U64), true),
+                field("chunk_len", prim(Primitive::U32), true),
+            ],
+        });
+        let value = obj(&[
+            ("seq", Value::from(7u64)),
+            ("chunk_len", Value::from(128u32)),
+            ("transient_id", Value::from(99u64)),
+        ]);
+        push("channel_item_schema_compat", writer, reader, value);
+    }
+
+    // 23. external_metadata_schema_compat — external roots are transport-owned
+    // capabilities, but their metadata payload schema is planned and decoded
+    // normally beside the transport handle.
+    {
+        let writer = b.add(SchemaKind::Struct {
+            name: "StaxFdMetadata".to_string(),
+            fields: vec![
+                field("path", prim(Primitive::String), true),
+                field("flags", prim(Primitive::U32), true),
+                field("probe_id", prim(Primitive::U64), true),
+            ],
+        });
+        let reader = b.add(SchemaKind::Struct {
+            name: "StaxFdMetadata".to_string(),
+            fields: vec![
+                field("path", prim(Primitive::String), true),
+                field("flags", prim(Primitive::U32), true),
+            ],
+        });
+        let value = obj(&[
+            ("path", Value::from(VString::new("/proc/self/fd/7"))),
+            ("flags", Value::from(0x800u32)),
+            ("probe_id", Value::from(44u64)),
+        ]);
+        push("external_metadata_schema_compat", writer, reader, value);
+    }
+
     cases
 }
 

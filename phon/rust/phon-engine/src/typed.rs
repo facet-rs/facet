@@ -27,11 +27,11 @@ use std::collections::{BTreeMap, HashMap};
 
 use phon_ir::ir::{
     BorrowOp, BytesOp, DefaultOp, EnumOp, EnumVariantOp, Lowered, MapOp, MemOp, MemProgram,
-    OpaqueOp, OptionOp, ResultOp, SeqOp, SkipOp, fuse,
+    OpaqueOp, OptionOp, PointerOp, ResultOp, SeqOp, SetOp, SkipOp, fuse,
 };
 use phon_ir::{
     Access, Construct, Descriptor, EnumAccess, MapStorage, Presence, RecordAccess, ResultAccess,
-    SequenceAccess, SequenceStorage, Tag, VariantAccess,
+    SequenceAccess, SequenceStorage, SetAccess, SetStorage, Tag, VariantAccess,
 };
 use phon_schema::bytes::{Reader, write_u8, write_u32};
 use phon_schema::{
@@ -148,11 +148,25 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
             let size = fixed_size(p).ok_or(CompactError::Unsupported(
                 "typed: variable-length scalar field",
             ))?;
-            out.push(MemOp::Scalar {
-                offset: base,
-                size,
-                align: alignment(p),
-            });
+            if d.layout.size == size {
+                out.push(MemOp::Scalar {
+                    offset: base,
+                    size,
+                    align: alignment(p),
+                });
+            } else if matches!(p, Primitive::U64 | Primitive::I64)
+                && matches!(d.layout.size, 1 | 2 | 4 | 8)
+            {
+                out.push(MemOp::NativeInt {
+                    offset: base,
+                    mem_size: d.layout.size,
+                    signed: matches!(p, Primitive::I64),
+                });
+            } else {
+                return Err(CompactError::Unsupported(
+                    "typed: scalar memory width differs from wire width",
+                ));
+            }
             Ok(())
         }
         (Access::Record(ra), Resolved::Composite(kind)) => {
@@ -184,10 +198,7 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
             Ok(())
         }
         // r[impl ir.memory]
-        (
-            Access::Sequence(seq),
-            Resolved::Composite(SchemaKind::List { .. } | SchemaKind::Set { .. }),
-        ) => {
+        (Access::Sequence(seq), Resolved::Composite(SchemaKind::List { .. })) => {
             let SequenceStorage::Vtable(thunks) = &seq.storage else {
                 return Err(CompactError::Unsupported(
                     "typed: only vtable-backed owned sequences so far",
@@ -228,6 +239,9 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
                 })));
             }
             Ok(())
+        }
+        (Access::Set(set), Resolved::Composite(SchemaKind::Set { .. })) => {
+            lower_set(set, reg, base, out)
         }
         // r[impl ir.memory] — String/Bytes: a bulk contiguous byte run.
         (
@@ -348,6 +362,19 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
             out.push(MemOp::Result(Box::new(lower_result(
                 ra, &variants, reg, base,
             )?)));
+            Ok(())
+        }
+        // r[impl descriptors.thunk-binding]
+        (Access::Pointer(pa), _) => {
+            let mut pointee = Vec::new();
+            lower_node(&pa.pointee, reg, 0, &mut pointee)?;
+            out.push(MemOp::Pointer(Box::new(PointerOp {
+                field_offset: base,
+                pointee: fuse(pointee),
+                pointee_size: pa.pointee.layout.size,
+                pointee_align: pa.pointee.layout.align,
+                thunks: pa.thunks,
+            })));
             Ok(())
         }
         // r[impl ir.memory] — opaque field: a length-prefixed blob (wire-identical
@@ -506,9 +533,9 @@ fn lower_decode_node(
             lower_decode_sequence(&we, seq, reg, base, out)
         }
         // Set ⋈ Set: translate the element.
-        (Access::Sequence(seq), Resolved::Composite(SchemaKind::Set { element: we })) => {
+        (Access::Set(set), Resolved::Composite(SchemaKind::Set { element: we })) => {
             require_reader_set(&reader.schema, reg)?;
-            lower_decode_sequence(&we, seq, reg, base, out)
+            lower_decode_set(&we, set, reg, base, out)
         }
         // String/Bytes ⋈ String/Bytes: a bulk byte run (no element translation).
         (
@@ -590,6 +617,19 @@ fn lower_decode_node(
             )?)));
             Ok(())
         }
+        // r[impl descriptors.thunk-binding]
+        (Access::Pointer(pa), _) => {
+            let mut pointee = Vec::new();
+            lower_decode_node(writer, &pa.pointee, reg, 0, &mut pointee)?;
+            out.push(MemOp::Pointer(Box::new(PointerOp {
+                field_offset: base,
+                pointee: fuse(pointee),
+                pointee_size: pa.pointee.layout.size,
+                pointee_align: pa.pointee.layout.align,
+                thunks: pa.thunks,
+            })));
+            Ok(())
+        }
         // Opaque ⋈ Bytes: the writer wire is a `Primitive::Bytes` run; the reader
         // carries an opaque adapter. The inner bytes are never translated here — the
         // adapter owns the inner type — so this is the single-schema op verbatim.
@@ -646,6 +686,46 @@ fn lower_decode_sequence(
             thunks: *thunks,
         })));
     }
+    Ok(())
+}
+
+fn lower_set(set: &SetAccess, reg: &Registry, base: usize, out: &mut MemProgram) -> Result<()> {
+    let SetStorage::Vtable(thunks) = &set.storage;
+    let mut element = Vec::new();
+    lower_node(&set.element, reg, 0, &mut element)?;
+    let element = fuse(element);
+    let min_wire = elem_min_wire(&element);
+    out.push(MemOp::Set(Box::new(SetOp {
+        field_offset: base,
+        element,
+        elem_size: set.element.layout.size,
+        elem_align: set.element.layout.align,
+        min_wire,
+        thunks: *thunks,
+    })));
+    Ok(())
+}
+
+fn lower_decode_set(
+    writer_element: &SchemaRef,
+    set: &SetAccess,
+    reg: &Registry,
+    base: usize,
+    out: &mut MemProgram,
+) -> Result<()> {
+    let SetStorage::Vtable(thunks) = &set.storage;
+    let mut element = Vec::new();
+    lower_decode_node(writer_element, &set.element, reg, 0, &mut element)?;
+    let element = fuse(element);
+    let min_wire = elem_min_wire(&element);
+    out.push(MemOp::Set(Box::new(SetOp {
+        field_offset: base,
+        element,
+        elem_size: set.element.layout.size,
+        elem_align: set.element.layout.align,
+        min_wire,
+        thunks: *thunks,
+    })));
     Ok(())
 }
 
@@ -1168,6 +1248,25 @@ unsafe fn write_uint(ptr: *mut u8, width: usize, val: u64) {
     unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, width) };
 }
 
+fn sign_extend(raw: u64, width: usize) -> i64 {
+    if width >= 8 {
+        raw as i64
+    } else {
+        let shift = 64 - width * 8;
+        ((raw << shift) as i64) >> shift
+    }
+}
+
+fn signed_fits_width(value: i64, width: usize) -> bool {
+    if width >= 8 {
+        return true;
+    }
+    let bits = width * 8;
+    let min = -(1i64 << (bits - 1));
+    let max = (1i64 << (bits - 1)) - 1;
+    (min..=max).contains(&value)
+}
+
 /// A mask of the low `width` bytes (`width >= 8` → all ones).
 fn width_mask(width: usize) -> u64 {
     if width >= 8 {
@@ -1241,6 +1340,20 @@ unsafe fn encode_program(
                 let src = unsafe { core::slice::from_raw_parts(base.add(*offset), *size) };
                 out.extend_from_slice(src);
             }
+            MemOp::NativeInt {
+                offset,
+                mem_size,
+                signed,
+            } => {
+                pad_to(out, 8);
+                // Safety: the native integer field is readable over `mem_size` bytes.
+                let raw = unsafe { read_uint(base.add(*offset), *mem_size) };
+                if *signed {
+                    out.extend_from_slice(&sign_extend(raw, *mem_size).to_le_bytes());
+                } else {
+                    out.extend_from_slice(&raw.to_le_bytes());
+                }
+            }
             MemOp::Sequence(s) => {
                 // Safety: the sequence handle lives at `field_offset`.
                 let list = unsafe { base.add(s.field_offset) };
@@ -1251,6 +1364,24 @@ unsafe fn encode_program(
                     // Safety: element `i` lives at `data + i*stride`.
                     unsafe { encode_program(&s.element, data.add(i * s.stride), out, blocks) };
                 }
+            }
+            MemOp::Set(s) => {
+                // Safety: the set handle lives at `field_offset`.
+                let set = unsafe { base.add(s.field_offset) };
+                let n = unsafe { (s.thunks.len)(s.thunks.ctx, set) };
+                write_u32(out, n as u32);
+                let it = unsafe { (s.thunks.iter_init)(s.thunks.ctx, set) };
+                loop {
+                    let mut value: *const u8 = core::ptr::null();
+                    // Safety: `it` is a live iterator; the out-param is valid.
+                    if !unsafe { (s.thunks.iter_next)(s.thunks.ctx, it, &mut value) } {
+                        break;
+                    }
+                    // Safety: `value` borrows the current set element.
+                    unsafe { encode_program(&s.element, value, out, blocks) };
+                }
+                // Safety: `it` was built by `iter_init` and is freed exactly once.
+                unsafe { (s.thunks.iter_dealloc)(s.thunks.ctx, it) };
             }
             MemOp::Bytes(b) => {
                 // Safety: the handle lives at field_offset; one bulk read of its
@@ -1358,6 +1489,15 @@ unsafe fn encode_program(
                     unsafe { encode_program(&rs.err, err, out, blocks) };
                 }
             }
+            // r[impl descriptors.thunk-binding]
+            MemOp::Pointer(p) => {
+                // Safety: the owning pointer handle lives at field_offset.
+                let pointer = unsafe { base.add(p.field_offset) };
+                // Safety: `borrow` returns a valid pointee pointer for initialized
+                // strong pointers such as Box/Rc/Arc.
+                let pointee = unsafe { (p.thunks.borrow)(p.thunks.ctx, pointer) };
+                unsafe { encode_program(&p.pointee, pointee, out, blocks) };
+            }
             // r[impl ir.memory] — opaque field: reserve a `u32`
             // length (align 1 — wire-identical to a `Primitive::Bytes` run, so no
             // pre-pad), append the inner bytes via the thunk, then backpatch the
@@ -1454,6 +1594,34 @@ unsafe fn decode_program(
                 // the wire bytes equal the in-memory bytes for a fixed scalar.
                 unsafe { core::ptr::copy_nonoverlapping(src.as_ptr(), base.add(*offset), *size) };
             }
+            MemOp::NativeInt {
+                offset,
+                mem_size,
+                signed,
+            } => {
+                skip_pad(r, 8)?;
+                if *signed {
+                    let value = r.read_i64()?;
+                    if !signed_fits_width(value, *mem_size) {
+                        return Err(DecodeError::Malformed(
+                            "native-sized signed integer out of range",
+                        )
+                        .into());
+                    }
+                    // Safety: `base + offset` is writable for the native integer field.
+                    unsafe { write_uint(base.add(*offset), *mem_size, value as u64) };
+                } else {
+                    let value = r.read_u64()?;
+                    if *mem_size < 8 && value > width_mask(*mem_size) {
+                        return Err(DecodeError::Malformed(
+                            "native-sized unsigned integer out of range",
+                        )
+                        .into());
+                    }
+                    // Safety: `base + offset` is writable for the native integer field.
+                    unsafe { write_uint(base.add(*offset), *mem_size, value) };
+                }
+            }
             MemOp::Sequence(s) => {
                 let count = r.read_len(s.min_wire)?;
                 // Engine owns the element buffer: allocate it, fill it directly,
@@ -1502,6 +1670,31 @@ unsafe fn decode_program(
                 // `count` initialized elements allocated with the element layout.
                 let list = unsafe { base.add(s.field_offset) };
                 unsafe { (s.thunks.from_raw_parts)(s.thunks.ctx, list, buffer, count, cap) };
+            }
+            MemOp::Set(s) => {
+                let count = r.read_len(s.min_wire)?;
+                // Safety: the set handle lives at field_offset.
+                let set = unsafe { base.add(s.field_offset) };
+                // Initialize the (uninitialized) set with room for `count` entries.
+                // NOTE: a decode error after this point leaks the partial set — the
+                // same trivially-droppable limitation as sequences/options/maps.
+                unsafe { (s.thunks.init_with_capacity)(s.thunks.ctx, set, count) };
+                for _ in 0..count {
+                    let (scratch, layout) = alloc_scratch(s.elem_size, s.elem_align)?;
+                    // Safety: scratch is elem_size bytes at elem_align.
+                    if let Err(e) = unsafe { decode_program(&s.element, r, scratch, blocks) } {
+                        free_scratch(scratch, layout);
+                        return Err(e);
+                    }
+                    // Safety: scratch holds an initialized element; `insert` moves it
+                    // into the set and tells us whether it was unique.
+                    let inserted = unsafe { (s.thunks.insert)(s.thunks.ctx, set, scratch) };
+                    free_scratch(scratch, layout);
+                    if !inserted {
+                        // r[impl validate.uniqueness]
+                        return Err(CompactError::Decode(DecodeError::DuplicateElement));
+                    }
+                }
             }
             MemOp::Bytes(b) => {
                 let count = r.read_len(b.stride.max(1))?;
@@ -1726,6 +1919,25 @@ unsafe fn decode_program(
                 } else {
                     return Err(CompactError::BadVariantIndex(idx));
                 }
+            }
+            // r[impl descriptors.thunk-binding]
+            MemOp::Pointer(p) => {
+                // Safety: the pointer handle lives at field_offset and is
+                // uninitialized; `init` moves the scratch-decoded pointee into it.
+                unsafe {
+                    decode_into_via_init(
+                        &p.pointee,
+                        p.pointee_size,
+                        p.pointee_align,
+                        r,
+                        InitTarget {
+                            ctx: p.thunks.ctx,
+                            handle: base.add(p.field_offset),
+                            init: p.thunks.init,
+                        },
+                        blocks,
+                    )?
+                };
             }
             // r[impl compat.skip-writer-only] — consume a writer-only value's wire
             // bytes; write nothing to memory. The walker lives in `phon-ir` next to

@@ -28,6 +28,9 @@ let package = Package(
         // Cross-engine equivalence harness (tree-walk vs interpreter vs JIT), shared by
         // phon's own tests and downstream consumers (vox) so the engine list lives once.
         .library(name: "PhonEngineTestSupport", targets: ["PhonEngineTestSupport"]),
+        .library(name: "PhonEcosystemFixtures", targets: ["PhonEcosystemFixtures"]),
+        .library(name: "PhonDibsEcosystemFixtures", targets: ["PhonDibsEcosystemFixtures"]),
+        .executable(name: "PhonJITBench", targets: ["PhonJITBench"]),
     ],
     targets: [
         // Vendored portable C BLAKE3 — content-hash schema identity. Portable
@@ -82,15 +85,30 @@ let package = Package(
             dependencies: ["PhonEngine", "PhonIR", "PhonJIT", "PhonSchema"],
             path: "swift/phon-engine-test-support/Sources/PhonEngineTestSupport"
         ),
+        .target(
+            name: "PhonEcosystemFixtures",
+            dependencies: ["PhonEngine", "PhonIR", "PhonSchema"],
+            path: "swift/phon-ecosystem-fixtures/Sources/PhonEcosystemFixtures"
+        ),
+        .target(
+            name: "PhonDibsEcosystemFixtures",
+            dependencies: ["PhonEngine", "PhonIR", "PhonSchema"],
+            path: "swift/phon-dibs-ecosystem-fixtures/Sources/PhonDibsEcosystemFixtures"
+        ),
         .testTarget(
             name: "PhonEngineTests",
-            dependencies: ["PhonEngine", "PhonEngineTestSupport", "PhonIR", "PhonSchema"],
+            dependencies: ["PhonDibsEcosystemFixtures", "PhonEcosystemFixtures", "PhonEngine", "PhonEngineTestSupport", "PhonIR", "PhonSchema"],
             path: "swift/phon-engine/Tests/PhonEngineTests"
         ),
         .testTarget(
             name: "PhonJITTests",
             dependencies: ["PhonEngine", "PhonIR", "PhonJIT", "PhonSchema"],
             path: "swift/phon-jit/Tests/PhonJITTests"
+        ),
+        .executableTarget(
+            name: "PhonJITBench",
+            dependencies: ["PhonDibsEcosystemFixtures", "PhonEcosystemFixtures", "PhonEngine", "PhonIR", "PhonJIT", "PhonSchema"],
+            path: "swift/phon-jit-bench/Sources/PhonJITBench"
         ),
     ]
 )

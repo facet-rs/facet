@@ -131,6 +131,7 @@ private func optHolderSetup() -> (root: SchemaId, reg: Registry, desc: Descripto
     return (SchemaId(1), reg, holderDesc)
 }
 
+// r[verify descriptors.encode-decode-asymmetry]
 @Test
 func typedOptionMatchesValueOracleAndRoundTrips() throws {
     let (root, reg, desc) = optHolderSetup()

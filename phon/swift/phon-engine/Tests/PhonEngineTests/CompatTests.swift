@@ -22,6 +22,71 @@ private func u32Field(_ name: String) -> Field {
     Field(name: name, schema: .concrete(primitiveId(.u32)), required: true)
 }
 
+private func expectUnsupported(_ reason: String, _ body: () throws -> Void) {
+    do {
+        try body()
+        Issue.record("expected unsupported(\(reason))")
+    } catch CompactError.unsupported(let got) where got == reason {
+    } catch {
+        Issue.record("expected unsupported(\(reason)), got \(error)")
+    }
+}
+
+private func expectDecodeError(_ expected: DecodeError, _ body: () throws -> Void) {
+    do {
+        try body()
+        Issue.record("expected decode(\(expected))")
+    } catch CompactError.decode(let got) where got == expected {
+    } catch {
+        Issue.record("expected decode(\(expected)), got \(error)")
+    }
+}
+
+private struct ReaderPair: Equatable {
+    var first: UInt32
+    var second: UInt32
+}
+
+// r[verify compat.plan-first]
+@Test
+func compatWriterTupleDecodesIntoPositionalRecordDescriptor() throws {
+    let batch = resolveIds([
+        Schema(id: SchemaId(1), kind: .tuple(elements: [
+            .concrete(primitiveId(.u32)),
+            .concrete(primitiveId(.u32)),
+        ])),
+    ])
+    let root = batch[0].id
+    let reg = Registry(batch)
+
+    let writerBytes = try encode(.array([
+        .number(.canonical(unsigned: 11)),
+        .number(.canonical(unsigned: 22)),
+    ]), root, reg)
+
+    let readerDesc = Descriptor(
+        schema: .concrete(root),
+        layout: Layout(size: MemoryLayout<ReaderPair>.size, align: MemoryLayout<ReaderPair>.alignment),
+        access: .record(RecordAccess(
+            fields: [
+                FieldAccess(offset: MemoryLayout<ReaderPair>.offset(of: \ReaderPair.first)!, descriptor: u32Desc()),
+                FieldAccess(offset: MemoryLayout<ReaderPair>.offset(of: \ReaderPair.second)!, descriptor: u32Desc()),
+            ],
+            construct: .inPlace))
+    )
+    let program = try lowerDecode(root, readerDesc, reg)
+
+    var decoded = ReaderPair(first: 0, second: 0)
+    try withUnsafeMutableBytes(of: &decoded) { try decodeInto(program, writerBytes, $0.baseAddress!) }
+    #expect(decoded == ReaderPair(first: 11, second: 22))
+
+    let oracle = try planDecode(writerBytes, root, root, reg)
+    #expect(oracle == .array([
+        .number(.canonical(unsigned: 11)),
+        .number(.canonical(unsigned: 22)),
+    ]))
+}
+
 // MARK: - Writer-only field is skipped (forward compat)
 
 private struct ReaderX: Equatable { var x: UInt32 }
@@ -185,6 +250,120 @@ func compatRejectsListSetKindMismatch() throws {
     }
 }
 
+// r[verify validate.uniqueness]
+@Test
+func planDecodeRejectsDuplicateSetElements() throws {
+    let schema = Schema(
+        id: SchemaId(1),
+        kind: .set(element: .concrete(primitiveId(.u32)))
+    )
+    let reg = Registry([schema])
+    var wire = ByteSink()
+    wire.writeU32(2)
+    wire.writeU32(7)
+    wire.writeU32(7)
+
+    expectDecodeError(.duplicateElement) {
+        _ = try decode(wire.bytes, SchemaId(1), reg)
+    }
+    expectDecodeError(.duplicateElement) {
+        _ = try planDecode(wire.bytes, SchemaId(1), SchemaId(1), reg)
+    }
+}
+
+// r[verify validate.uniqueness]
+@Test
+func planDecodeRejectsDuplicateMapKeys() throws {
+    let schema = Schema(
+        id: SchemaId(1),
+        kind: .map(
+            key: .concrete(primitiveId(.string)),
+            value: .concrete(primitiveId(.u32))
+        )
+    )
+    let reg = Registry([schema])
+    var wire = ByteSink()
+    wire.writeU32(2)
+    wire.writeStr("dup")
+    wire.padTo(4)
+    wire.writeU32(1)
+    wire.writeStr("dup")
+    wire.padTo(4)
+    wire.writeU32(2)
+
+    expectDecodeError(.duplicateKey) {
+        _ = try decode(wire.bytes, SchemaId(1), reg)
+    }
+    expectDecodeError(.duplicateKey) {
+        _ = try planDecode(wire.bytes, SchemaId(1), SchemaId(1), reg)
+    }
+}
+
+// r[verify compat.type-match]
+// r[verify type-system.channel]
+// r[verify type-system.external]
+@Test
+func compatTreatsTransportCapabilityRootsSeparatelyFromItemAndMetadataPayloads() throws {
+    let batch = resolveIds([
+        Schema(id: SchemaId(1), kind: .structure(name: "DodecaTunnelItem", fields: [
+            Field(name: "seq", schema: .concrete(primitiveId(.u64)), required: true),
+            Field(name: "chunk_len", schema: .concrete(primitiveId(.u32)), required: true),
+            Field(name: "transient_id", schema: .concrete(primitiveId(.u64)), required: true),
+        ])),
+        Schema(id: SchemaId(2), kind: .structure(name: "DodecaTunnelItem", fields: [
+            Field(name: "seq", schema: .concrete(primitiveId(.u64)), required: true),
+            Field(name: "chunk_len", schema: .concrete(primitiveId(.u32)), required: true),
+        ])),
+        Schema(id: SchemaId(3), kind: .channel(direction: .tx, element: .concrete(SchemaId(1)))),
+        Schema(id: SchemaId(4), kind: .structure(name: "StaxFdMetadata", fields: [
+            Field(name: "path", schema: .concrete(primitiveId(.string)), required: true),
+            Field(name: "flags", schema: .concrete(primitiveId(.u32)), required: true),
+            Field(name: "probe_id", schema: .concrete(primitiveId(.u64)), required: true),
+        ])),
+        Schema(id: SchemaId(5), kind: .structure(name: "StaxFdMetadata", fields: [
+            Field(name: "path", schema: .concrete(primitiveId(.string)), required: true),
+            Field(name: "flags", schema: .concrete(primitiveId(.u32)), required: true),
+        ])),
+        Schema(id: SchemaId(6), kind: .external(kind: "fd", metadata: .concrete(SchemaId(4)))),
+    ])
+    let writerItem = batch[0].id
+    let readerItem = batch[1].id
+    let channelRoot = batch[2].id
+    let writerMetadata = batch[3].id
+    let readerMetadata = batch[4].id
+    let externalRoot = batch[5].id
+    let reg = Registry(batch)
+
+    expectUnsupported("channel") {
+        _ = try buildPlan(channelRoot, channelRoot, reg)
+    }
+    expectUnsupported("external") {
+        _ = try buildPlan(externalRoot, externalRoot, reg)
+    }
+
+    let itemBytes = try encode(.object([
+        .init(key: "seq", value: .number(.canonical(unsigned: 7))),
+        .init(key: "chunk_len", value: .number(.canonical(unsigned: 128))),
+        .init(key: "transient_id", value: .number(.canonical(unsigned: 99))),
+    ]), writerItem, reg)
+    let item = try planDecode(itemBytes, writerItem, readerItem, reg)
+    #expect(item == .object([
+        .init(key: "seq", value: .number(.canonical(unsigned: 7))),
+        .init(key: "chunk_len", value: .number(.canonical(unsigned: 128))),
+    ]))
+
+    let metadataBytes = try encode(.object([
+        .init(key: "path", value: .string("/proc/self/fd/7")),
+        .init(key: "flags", value: .number(.canonical(unsigned: 0x800))),
+        .init(key: "probe_id", value: .number(.canonical(unsigned: 44))),
+    ]), writerMetadata, reg)
+    let metadata = try planDecode(metadataBytes, writerMetadata, readerMetadata, reg)
+    #expect(metadata == .object([
+        .init(key: "path", value: .string("/proc/self/fd/7")),
+        .init(key: "flags", value: .number(.canonical(unsigned: 0x800))),
+    ]))
+}
+
 // MARK: - fuse: the same-schema fast path emerges from lowering
 
 private struct Triple: Equatable {
@@ -193,6 +372,10 @@ private struct Triple: Equatable {
     var c: UInt32
 }
 
+// r[verify descriptors.fact-driven]
+// r[verify ir.inlining]
+// r[verify ir.memory]
+// r[verify ir.one-vocabulary]
 @Test
 func fuseCollapsesFlatStructToOneCopy() throws {
     // { a: u32, b: u32, c: u32 } — contiguous in wire AND memory, so the three

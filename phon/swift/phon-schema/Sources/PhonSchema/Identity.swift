@@ -15,6 +15,7 @@
 // MARK: - SchemaId & primitive id
 
 /// A content-derived type id: BLAKE3 of the canonical encoding, first 8 bytes LE.
+// r[impl schema-identity.content-hash]
 public struct SchemaId: Hashable, Sendable, CustomStringConvertible {
     public var raw: UInt64
     public init(_ raw: UInt64) { self.raw = raw }
@@ -23,6 +24,8 @@ public struct SchemaId: Hashable, Sendable, CustomStringConvertible {
 
 /// The canonical id of a primitive schema. Constant and universal — useful for
 /// referencing primitives as already-resolved targets when building a batch.
+// r[impl schema-identity.canonical-encoding]
+// r[impl schema-identity.computation]
 public func primitiveId(_ p: Primitive) -> SchemaId {
     var h = Blake3()
     h.writeStr(p.tag)
@@ -359,6 +362,10 @@ private func remapKind(_ kind: SchemaKind, _ map: [UInt64: SchemaId]) -> SchemaK
 /// caller-assigned *provisional key* (any unique `u64`). A reference whose id is
 /// not a provisional key in the batch is treated as already resolved. The
 /// returned schemas have real ids substituted everywhere.
+// r[impl schema-identity.canonical-encoding]
+// r[impl schema-identity.closure]
+// r[impl schema-identity.computation]
+// r[impl schema-identity.content-hash]
 public func resolveIds(_ batch: [Schema]) -> [Schema] {
     let n = batch.count
 

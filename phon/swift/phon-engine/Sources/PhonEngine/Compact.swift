@@ -11,6 +11,7 @@ import PhonSchema
 
 // MARK: - Alignment
 
+// r[impl compact.alignment]
 func alignment(_ p: Primitive) -> Int {
     switch p {
     case .u16, .i16: return 2
@@ -63,6 +64,7 @@ private func isZeroSizedKind(_ reg: Registry, _ kind: SchemaKind, _ depth: Int) 
 
 // MARK: - Dimensions
 
+// r[impl validate.dimensions]
 func product(_ dimensions: [UInt64]) throws -> UInt64 {
     var p: UInt64 = 1
     for d in dimensions {
@@ -76,6 +78,7 @@ func product(_ dimensions: [UInt64]) throws -> UInt64 {
 /// Bound a fixed-array element `count` before the construction loop. With each
 /// element costing at least `minWire` bytes the count may not exceed
 /// `remaining / minWire`; for a zero-sized element a fixed cap applies.
+// r[impl validate.dimensions]
 func checkFixedCount(_ count: UInt64, _ minWire: Int, _ remaining: Int) throws {
     let max = minWire == 0 ? UInt64(zstCountCap) : UInt64(remaining / minWire)
     if count > max {
@@ -86,6 +89,7 @@ func checkFixedCount(_ count: UInt64, _ minWire: Int, _ remaining: Int) throws {
 // MARK: - Public API
 
 /// Encode `value` against the schema named by `root` in `registry`.
+// r[impl compact.schema-driven]
 public func encode(_ value: Value, _ root: SchemaId, _ registry: Registry) throws -> [UInt8] {
     var out = ByteSink()
     try encodeRef(value, .concrete(id: root, args: []), registry, &out)
@@ -93,6 +97,8 @@ public func encode(_ value: Value, _ root: SchemaId, _ registry: Registry) throw
 }
 
 /// Decode a value of schema `root` from `bytes`, rejecting trailing bytes.
+// r[impl compact.schema-driven]
+// r[impl decode.whole-message]
 public func decode(_ bytes: [UInt8], _ root: SchemaId, _ registry: Registry) throws -> Value {
     var r = Reader(bytes)
     let v = try decodeRef(&r, .concrete(id: root, args: []), registry, 0)
@@ -264,6 +270,7 @@ private func encodePayload(_ value: Value, _ payload: VariantPayload, _ reg: Reg
 
 // MARK: - Decoding
 
+// r[impl decode.chained]
 func decodeRef(_ r: inout Reader, _ rf: SchemaRef, _ reg: Registry, _ depth: Int) throws -> Value {
     if depth > compactMaxDepth { throw CompactError.decode(.depthExceeded) }
     switch rf {

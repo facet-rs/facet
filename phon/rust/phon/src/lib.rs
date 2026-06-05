@@ -95,9 +95,66 @@ pub mod api {
         pub encode: Vec<JitFallbackRecord>,
     }
 
+    /// One fallback record scoped to a Vox method root.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct MethodJitFallbackRecord {
+        pub method: String,
+        pub phase: String,
+        pub direction: &'static str,
+        pub path: String,
+        pub reason: &'static str,
+    }
+
+    /// Method-scoped fallback report for service-surface audits.
+    #[derive(Clone, Debug, Default, PartialEq, Eq)]
+    pub struct MethodJitFallbackReport {
+        pub records: Vec<MethodJitFallbackRecord>,
+    }
+
+    impl MethodJitFallbackReport {
+        pub fn is_empty(&self) -> bool {
+            self.records.is_empty()
+        }
+    }
+
     impl JitFallbackReport {
         pub fn is_empty(&self) -> bool {
             self.decode.is_empty() && self.encode.is_empty()
+        }
+
+        pub fn scoped(
+            self,
+            method: impl Into<String>,
+            phase: impl Into<String>,
+        ) -> MethodJitFallbackReport {
+            let method = method.into();
+            let phase = phase.into();
+            let mut records = Vec::with_capacity(self.decode.len() + self.encode.len());
+
+            records.extend(
+                self.decode
+                    .into_iter()
+                    .map(|record| MethodJitFallbackRecord {
+                        method: method.clone(),
+                        phase: phase.clone(),
+                        direction: "decode",
+                        path: record.path,
+                        reason: record.reason,
+                    }),
+            );
+            records.extend(
+                self.encode
+                    .into_iter()
+                    .map(|record| MethodJitFallbackRecord {
+                        method: method.clone(),
+                        phase: phase.clone(),
+                        direction: "encode",
+                        path: record.path,
+                        reason: record.reason,
+                    }),
+            );
+
+            MethodJitFallbackReport { records }
         }
 
         #[cfg(not(all(feature = "jit", target_os = "macos", target_arch = "aarch64")))]
@@ -231,6 +288,7 @@ pub mod api {
         /// # Errors
         /// This currently cannot fail after construction; it returns `Result` so
         /// the one-shot API has one error surface for encode and decode.
+        // r[impl typed.no-dynamic-bounce]
         pub fn encode(&self, value: &T) -> Result<Vec<u8>, Error> {
             let base = core::ptr::from_ref(value).cast::<u8>();
             #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
@@ -249,6 +307,7 @@ pub mod api {
         ///
         /// # Errors
         /// [`Error`] if the wire bytes are malformed or have trailing data.
+        // r[impl typed.no-dynamic-bounce]
         pub fn decode(&self, bytes: &'facet [u8]) -> Result<T, Error> {
             let mut slot = MaybeUninit::<T>::uninit();
             #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
@@ -296,6 +355,16 @@ pub mod api {
 
     #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
     fn record_decode_fallbacks(program: &[MemOp], path: &str, out: &mut Vec<JitFallbackRecord>) {
+        for (idx, op) in program.iter().enumerate() {
+            let op_path = format!("{path}.{idx}");
+            match op {
+                MemOp::NativeInt { .. } => out.push(JitFallbackRecord {
+                    path: op_path,
+                    reason: "native decode JIT does not support native-sized integer casts yet",
+                }),
+                _ => {}
+            }
+        }
         walk_nested_programs(program, path, out, record_decode_fallbacks);
     }
 
@@ -304,6 +373,10 @@ pub mod api {
         for (idx, op) in program.iter().enumerate() {
             let op_path = format!("{path}.{idx}");
             match op {
+                MemOp::NativeInt { .. } => out.push(JitFallbackRecord {
+                    path: op_path,
+                    reason: "native encode JIT does not support native-sized integer casts yet",
+                }),
                 MemOp::SkipWire(_) => out.push(JitFallbackRecord {
                     path: op_path,
                     reason: "native encode JIT cannot emit decode-only skip-wire ops",
@@ -329,6 +402,7 @@ pub mod api {
             let op_path = format!("{path}.{idx}");
             match op {
                 MemOp::Sequence(seq) => visit(&seq.element, &format!("{op_path}.element"), out),
+                MemOp::Set(set) => visit(&set.element, &format!("{op_path}.element"), out),
                 MemOp::Option(option) => visit(&option.some, &format!("{op_path}.some"), out),
                 MemOp::Enum(en) => {
                     for variant in &en.variants {
@@ -346,6 +420,9 @@ pub mod api {
                 MemOp::Result(result) => {
                     visit(&result.ok, &format!("{op_path}.ok"), out);
                     visit(&result.err, &format!("{op_path}.err"), out);
+                }
+                MemOp::Pointer(pointer) => {
+                    visit(&pointer.pointee, &format!("{op_path}.pointee"), out);
                 }
                 _ => {}
             }
@@ -369,7 +446,9 @@ pub mod api {
             | MemOp::Borrow(_)
             | MemOp::Default(_)
             | MemOp::SkipWire(_) => true,
+            MemOp::NativeInt { .. } => false,
             MemOp::Sequence(s) => decode_program_supported(&s.element),
+            MemOp::Set(s) => decode_program_supported(&s.element),
             MemOp::Option(o) => decode_program_supported(&o.some),
             MemOp::Enum(e) => e
                 .variants
@@ -377,6 +456,7 @@ pub mod api {
                 .all(|variant| decode_program_supported(&variant.payload)),
             MemOp::Map(m) => decode_program_supported(&m.key) && decode_program_supported(&m.value),
             MemOp::Result(r) => decode_program_supported(&r.ok) && decode_program_supported(&r.err),
+            MemOp::Pointer(p) => decode_program_supported(&p.pointee),
             MemOp::Opaque(_) | MemOp::Dynamic { .. } | MemOp::CallBlock { .. } => true,
         })
     }
@@ -385,7 +465,9 @@ pub mod api {
     fn encode_program_supported(program: &[MemOp]) -> bool {
         program.iter().all(|op| match op {
             MemOp::Scalar { .. } | MemOp::Bytes(_) | MemOp::Borrow(_) => true,
+            MemOp::NativeInt { .. } => false,
             MemOp::Sequence(s) => encode_program_supported(&s.element),
+            MemOp::Set(s) => encode_program_supported(&s.element),
             MemOp::Option(o) => encode_program_supported(&o.some),
             MemOp::Enum(e) => e
                 .variants
@@ -393,6 +475,7 @@ pub mod api {
                 .all(|variant| encode_program_supported(&variant.payload)),
             MemOp::Map(m) => encode_program_supported(&m.key) && encode_program_supported(&m.value),
             MemOp::Result(r) => encode_program_supported(&r.ok) && encode_program_supported(&r.err),
+            MemOp::Pointer(p) => encode_program_supported(&p.pointee),
             MemOp::SkipWire(_) | MemOp::Default(_) => false,
             MemOp::Opaque(_) | MemOp::Dynamic { .. } | MemOp::CallBlock { .. } => true,
         })

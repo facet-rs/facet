@@ -4,7 +4,8 @@
 
 import PhonSchema
 
-/// Maximum nesting depth on decode (`r[validate.depth]`).
+/// Maximum nesting depth on decode.
+// r[impl validate.depth]
 let compactMaxDepth = 128
 
 // MARK: - Errors
@@ -26,6 +27,8 @@ public enum CompactError: Error {
     /// A structurally malformed schema (unbound type variable, primitive carrying
     /// type arguments, …).
     case malformed(String)
+    /// A received schema bundle carried an id that does not match its content.
+    case bundleSchemaIdMismatch(stated: SchemaId, recomputed: SchemaId)
     /// Two schemas cannot be translated by a compatibility plan.
     case incompatible(String)
     /// A decoded enum variant exists in the writer schema but not the reader.
@@ -47,6 +50,7 @@ public func errorKindName(_ e: CompactError) -> String {
     case .badVariantIndex: return "BadVariantIndex"
     case .genericArity: return "GenericArity"
     case .malformed: return "Malformed"
+    case .bundleSchemaIdMismatch: return "BundleSchemaIdMismatch"
     case .incompatible: return "Incompatible"
     case .writerOnlyVariant: return "WriterOnlyVariant"
     case .decode: return "Decode"
@@ -77,6 +81,17 @@ public struct Registry {
         self.composites = comps
     }
 
+    /// Validate a received schema closure before making it executable.
+    ///
+    /// This recomputes every member's content-derived `SchemaId`, rejects
+    /// references that are neither primitive nor present in the bundle, and
+    /// bounds fixed arrays whose elements have zero wire size.
+    // r[impl validate.bundles]
+    public init(validating schemas: [Schema]) throws {
+        try validateBundle(schemas)
+        self.init(schemas)
+    }
+
     func primitive(_ id: SchemaId) -> Primitive? { primitives[id] }
     func composite(_ id: SchemaId) -> Schema? { composites[id] }
 
@@ -84,6 +99,137 @@ public struct Registry {
     /// peer advertises its (writer) schema closure on top of the local one.
     public func with(_ extra: [Schema]) -> Registry {
         Registry(Array(composites.values) + extra)
+    }
+
+    /// Merge an advertised writer closure after applying the received-bundle
+    /// validation path.
+    // r[impl validate.bundles]
+    public func withValidating(_ extra: [Schema]) throws -> Registry {
+        try Registry(validating: Array(composites.values) + extra)
+    }
+}
+
+private func validateBundle(_ schemas: [Schema]) throws {
+    let recomputed = resolveIds(schemas)
+    for (schema, recomputedSchema) in zip(schemas, recomputed) where schema.id != recomputedSchema.id {
+        throw CompactError.bundleSchemaIdMismatch(stated: schema.id, recomputed: recomputedSchema.id)
+    }
+
+    let provided = Set(schemas.map(\.id))
+    let primitives = Set(Primitive.allCases.map { primitiveId($0) })
+    for schema in schemas {
+        try validateKindRefs(schema.kind, provided: provided, primitives: primitives)
+    }
+
+    let reg = Registry(schemas)
+    for schema in schemas {
+        try validateFixedArrayCaps(schema.kind, reg)
+    }
+}
+
+private func validateKindRefs(_ kind: SchemaKind, provided: Set<SchemaId>, primitives: Set<SchemaId>) throws {
+    switch kind {
+    case .primitive, .dynamic:
+        return
+    case .structure(_, let fields):
+        for field in fields { try validateRef(field.schema, provided: provided, primitives: primitives) }
+    case .enumeration(_, let variants):
+        for variant in variants { try validatePayloadRefs(variant.payload, provided: provided, primitives: primitives) }
+    case .tuple(let elements):
+        for element in elements { try validateRef(element, provided: provided, primitives: primitives) }
+    case .list(let element),
+         .set(let element),
+         .array(let element, _),
+         .tensor(let element, _),
+         .option(let element),
+         .channel(_, let element):
+        try validateRef(element, provided: provided, primitives: primitives)
+    case .map(let key, let value):
+        try validateRef(key, provided: provided, primitives: primitives)
+        try validateRef(value, provided: provided, primitives: primitives)
+    case .external(_, let metadata):
+        if let metadata { try validateRef(metadata, provided: provided, primitives: primitives) }
+    }
+}
+
+private func validatePayloadRefs(
+    _ payload: VariantPayload,
+    provided: Set<SchemaId>,
+    primitives: Set<SchemaId>
+) throws {
+    switch payload {
+    case .unit:
+        return
+    case .newtype(let ref):
+        try validateRef(ref, provided: provided, primitives: primitives)
+    case .tuple(let elements):
+        for element in elements { try validateRef(element, provided: provided, primitives: primitives) }
+    case .structure(let fields):
+        for field in fields { try validateRef(field.schema, provided: provided, primitives: primitives) }
+    }
+}
+
+private func validateRef(_ ref: SchemaRef, provided: Set<SchemaId>, primitives: Set<SchemaId>) throws {
+    switch ref {
+    case .variable:
+        return
+    case .concrete(let id, let args):
+        guard provided.contains(id) || primitives.contains(id) else {
+            throw CompactError.unknownSchema(id)
+        }
+        for arg in args { try validateRef(arg, provided: provided, primitives: primitives) }
+    }
+}
+
+private func validateFixedArrayCaps(_ kind: SchemaKind, _ reg: Registry) throws {
+    switch kind {
+    case .primitive, .dynamic:
+        return
+    case .structure(_, let fields):
+        for field in fields { try validateFixedArrayRef(field.schema, reg) }
+    case .enumeration(_, let variants):
+        for variant in variants { try validateFixedArrayPayload(variant.payload, reg) }
+    case .tuple(let elements):
+        for element in elements { try validateFixedArrayRef(element, reg) }
+    case .list(let element),
+         .set(let element),
+         .tensor(let element, _),
+         .option(let element),
+         .channel(_, let element):
+        try validateFixedArrayRef(element, reg)
+    case .map(let key, let value):
+        try validateFixedArrayRef(key, reg)
+        try validateFixedArrayRef(value, reg)
+    case .array(let element, let dimensions):
+        let count = try product(dimensions)
+        if minWireSizeRef(reg, element) == 0 && count > UInt64(zstCountCap) {
+            throw CompactError.decode(.lengthTooLarge(count: count, remaining: zstCountCap))
+        }
+        try validateFixedArrayRef(element, reg)
+    case .external(_, let metadata):
+        if let metadata { try validateFixedArrayRef(metadata, reg) }
+    }
+}
+
+private func validateFixedArrayPayload(_ payload: VariantPayload, _ reg: Registry) throws {
+    switch payload {
+    case .unit:
+        return
+    case .newtype(let ref):
+        try validateFixedArrayRef(ref, reg)
+    case .tuple(let elements):
+        for element in elements { try validateFixedArrayRef(element, reg) }
+    case .structure(let fields):
+        for field in fields { try validateFixedArrayRef(field.schema, reg) }
+    }
+}
+
+private func validateFixedArrayRef(_ ref: SchemaRef, _ reg: Registry) throws {
+    switch ref {
+    case .variable:
+        return
+    case .concrete(_, let args):
+        for arg in args { try validateFixedArrayRef(arg, reg) }
     }
 }
 
@@ -143,6 +289,8 @@ enum Resolved {
 
 /// Resolve a reference against the registry, applying generic substitution.
 /// Shared by the compact codec's walks and the compatibility planner.
+// r[impl type-system.generic-resolution]
+// r[impl schema-identity.unknown-is-error]
 func resolve(_ reg: Registry, _ r: SchemaRef) throws -> Resolved {
     switch r {
     case .variable:

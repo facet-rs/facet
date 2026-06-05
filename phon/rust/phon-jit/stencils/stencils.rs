@@ -43,7 +43,8 @@ pub struct Ctx {
     /// 2 = content validation failed (e.g. non-UTF-8 `String`), 3 = bad `Option`
     /// presence byte (the byte is in `aux`), 4 = unmatched enum wire index (the
     /// index is in `aux`), 5 = writer-only enum variant (the index is in `aux`),
-    /// 6 = duplicate map key, 7 = opaque adapter rejected input.
+    /// 6 = duplicate map key, 7 = opaque adapter rejected input,
+    /// 9 = duplicate set element.
     pub status: u64,
     /// Auxiliary value carried alongside a rejection `status`: the bad presence
     /// byte (`status == 3`) or the unmatched enum wire index (`status == 4`).
@@ -184,6 +185,25 @@ pub struct ResultInfo {
     pub err_prog: *const u64,
 }
 
+/// An owned-pointer op's immediates, reached through a `*const PointerInfo` slot
+/// in `Ctx.prog`. The wire is exactly the pointee `T`; decode builds `T` in
+/// scratch, then constructs the owning handle through `init`.
+#[repr(C)]
+pub struct PointerInfo {
+    /// Where the owning pointer handle lives, relative to `base`.
+    pub field_offset: usize,
+    /// The pointee `T`'s scratch size and alignment.
+    pub pointee_size: usize,
+    pub pointee_align: usize,
+    /// Opaque per-type context passed to the pointer thunk.
+    pub thunks_ctx: *const (),
+    /// Initialize the uninitialized owner at `pointer` from `*value`.
+    pub init: unsafe extern "C" fn(ctx: *const (), pointer: *mut u8, value: *mut u8),
+    /// Entry/prog for the pointee body.
+    pub pointee_entry: unsafe extern "C" fn(cx: *mut Ctx),
+    pub pointee_prog: *const u64,
+}
+
 /// An opaque op's immediates, reached through a `*const OpaqueInfo` slot in
 /// `Ctx.prog`. Mirrors `OpaqueOp`: the stencil frames a length-prefixed byte span
 /// and the adapter thunk builds the field value from a borrowed slice.
@@ -262,6 +282,33 @@ pub struct MapInfo {
     pub value_entry: unsafe extern "C" fn(cx: *mut Ctx),
     /// The value sub-chain's immediate stream (reset into `Ctx.prog`).
     pub value_prog: *const u64,
+}
+
+/// An owned-set op's immediates, reached through a `*const SetInfo` slot in
+/// `Ctx.prog`. A set is a one-sub-chain collection loop: each element is decoded
+/// into scratch, then inserted into the initialized set. The insert thunk returns
+/// `false` for duplicates, which the stencil reports as `status = 9`.
+#[repr(C)]
+pub struct SetInfo {
+    /// Where the set handle lives, relative to `base`.
+    pub field_offset: usize,
+    /// The element type's size — the decode element-scratch size (0 -> dangling).
+    pub elem_size: usize,
+    /// The element type's alignment — the decode element-scratch alignment.
+    pub elem_align: usize,
+    /// Minimum wire bytes one element occupies (length-vs-remaining check).
+    pub min_wire: usize,
+    /// Opaque per-type context passed to the thunks.
+    pub thunks_ctx: *const (),
+    /// Initialize the uninitialized set at `set` with room for `cap` entries.
+    pub init_with_capacity: unsafe extern "C" fn(ctx: *const (), set: *mut u8, cap: usize),
+    /// Insert `*value` into the initialized set, moving it out of its scratch
+    /// buffer. Returns `false` for a duplicate element.
+    pub insert: unsafe extern "C" fn(ctx: *const (), set: *mut u8, value: *mut u8) -> bool,
+    /// Entry to the element sub-chain (a `*mut Ctx` function ending in `ret`).
+    pub element_entry: unsafe extern "C" fn(cx: *mut Ctx),
+    /// The element sub-chain's immediate stream (reset into `Ctx.prog`).
+    pub element_prog: *const u64,
 }
 
 /// One enum variant's decode immediates, pointed at (as an array) by
@@ -823,6 +870,56 @@ pub unsafe extern "C" fn phon_stencil_result(cx: *mut Ctx) {
     phon_cont(cx);
 }
 
+/// Decode an owning pointer (`Box<T>`, `Rc<T>`, `Arc<T>`) into
+/// `base + field_offset`, then continue.
+///
+/// The wire form is just `T`. Decode allocates scratch for the pointee, runs the
+/// pointee body there, then moves the initialized pointee into the owner through
+/// `PointerInfo.init`. The scratch allocation is freed without dropping because
+/// ownership has moved into the pointer.
+#[no_mangle]
+pub unsafe extern "C" fn phon_stencil_pointer(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let info = &*(*c.prog as *const PointerInfo);
+    let outer_prog = c.prog.add(1);
+    let outer_base = c.base;
+
+    let (scratch, alloc_size) = if info.pointee_size == 0 {
+        (info.pointee_align as *mut u8, 0usize)
+    } else {
+        let buf = (c.alloc)(info.pointee_size, info.pointee_align);
+        if buf.is_null() {
+            c.status = 1;
+            return;
+        }
+        (buf, info.pointee_size)
+    };
+
+    c.prog = info.pointee_prog;
+    c.base = scratch;
+    (info.pointee_entry)(cx);
+    if c.status != 0 {
+        if alloc_size != 0 {
+            (c.dealloc)(scratch, alloc_size, info.pointee_align);
+        }
+        return;
+    }
+
+    c.base = outer_base;
+    let pointer = outer_base.add(info.field_offset);
+    (info.init)(info.thunks_ctx, pointer, scratch);
+    if alloc_size != 0 {
+        (c.dealloc)(scratch, alloc_size, info.pointee_align);
+    }
+
+    c.prog = outer_prog;
+
+    #[cfg(tailcall)]
+    become phon_cont(cx);
+    #[cfg(not(tailcall))]
+    phon_cont(cx);
+}
+
 /// Decode an opaque adapter field from a length-prefixed byte span, then continue.
 ///
 /// The wire is `Primitive::Bytes`: a little-endian `u32` length and exactly that
@@ -1036,6 +1133,88 @@ pub unsafe extern "C" fn phon_stencil_map(cx: *mut Ctx) {
     if (info.len)(info.thunks_ctx, map) != count {
         c.status = 6;
         return;
+    }
+
+    c.base = outer_base;
+    c.prog = outer_prog;
+
+    #[cfg(tailcall)]
+    become phon_cont(cx);
+    #[cfg(not(tailcall))]
+    phon_cont(cx);
+}
+
+/// Decode an owned set into `base + field_offset`, then continue.
+///
+/// Reads a `u32` element count, initializes the set, then loops `count` times:
+/// allocate element scratch, run the element sub-chain at `base = scratch`, insert
+/// the decoded element into the set, and free scratch WITHOUT dropping. Duplicate
+/// elements are rejected immediately (`status = 9`, mapped to `DuplicateElement`).
+#[no_mangle]
+pub unsafe extern "C" fn phon_stencil_set(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let info = &*(*c.prog as *const SetInfo);
+    let outer_prog = c.prog.add(1);
+    let outer_base = c.base;
+
+    if (c.wire as usize).wrapping_add(4) > c.wire_end as usize {
+        c.status = 1;
+        return;
+    }
+    let mut count_bytes = [0u8; 4];
+    core::ptr::copy_nonoverlapping(c.wire, count_bytes.as_mut_ptr(), 4);
+    let count = u32::from_le_bytes(count_bytes) as usize;
+    c.wire = c.wire.add(4);
+
+    let remaining = (c.wire_end as usize) - (c.wire as usize);
+    let max = if info.min_wire == 0 {
+        1usize << 24
+    } else {
+        remaining / info.min_wire
+    };
+    if count > max {
+        c.status = 1;
+        return;
+    }
+
+    let set = outer_base.add(info.field_offset);
+    (info.init_with_capacity)(info.thunks_ctx, set, count);
+
+    let mut entry = 0;
+    while entry < count {
+        let (scratch, alloc_size) = if info.elem_size == 0 {
+            (info.elem_align as *mut u8, 0usize)
+        } else {
+            let buf = (c.alloc)(info.elem_size, info.elem_align);
+            if buf.is_null() {
+                c.status = 1;
+                return;
+            }
+            (buf, info.elem_size)
+        };
+
+        c.prog = info.element_prog;
+        c.base = scratch;
+        (info.element_entry)(cx);
+        if c.status != 0 {
+            if alloc_size != 0 {
+                (c.dealloc)(scratch, alloc_size, info.elem_align);
+            }
+            return;
+        }
+
+        c.base = outer_base;
+        let inserted = (info.insert)(info.thunks_ctx, set, scratch);
+        if alloc_size != 0 {
+            (c.dealloc)(scratch, alloc_size, info.elem_align);
+        }
+        if !inserted {
+            // r[impl validate.uniqueness]
+            c.status = 9;
+            return;
+        }
+
+        entry += 1;
     }
 
     c.base = outer_base;
@@ -1326,6 +1505,22 @@ pub struct EncResultInfo {
     pub err_prog: *const u64,
 }
 
+/// An encode owned-pointer op's immediates, reached through a
+/// `*const EncPointerInfo` slot in `EncCtx.prog`. The owner is local runtime
+/// detail; the wire is exactly the borrowed pointee.
+#[repr(C)]
+pub struct EncPointerInfo {
+    /// Where the owning pointer handle lives, relative to `base`.
+    pub field_offset: usize,
+    /// Opaque per-type context passed to the pointer thunk.
+    pub thunks_ctx: *const (),
+    /// Borrow the initialized owner's pointee.
+    pub borrow: unsafe extern "C" fn(ctx: *const (), pointer: *const u8) -> *const u8,
+    /// Entry/prog for the pointee body.
+    pub pointee_entry: unsafe extern "C" fn(cx: *mut EncCtx),
+    pub pointee_prog: *const u64,
+}
+
 /// An encode opaque op's immediates, reached through a `*const EncOpaqueInfo` slot
 /// in `EncCtx.prog`. The stencil frames the field as a `Primitive::Bytes` run and
 /// delegates appending the inner bytes to the adapter thunk.
@@ -1393,6 +1588,31 @@ pub struct EncMapInfo {
     pub value_entry: unsafe extern "C" fn(cx: *mut EncCtx),
     /// The value sub-chain's immediate stream (reset into `EncCtx.prog`).
     pub value_prog: *const u64,
+}
+
+/// An encode owned-set op's immediates, reached through a `*const EncSetInfo`
+/// slot in `EncCtx.prog`. The stateful iterator yields one borrowed element
+/// pointer at a time; the element sub-chain runs with `base = value`.
+#[repr(C)]
+pub struct EncSetInfo {
+    /// Where the set handle lives, relative to `base`.
+    pub field_offset: usize,
+    /// Opaque per-type context passed to the thunks.
+    pub thunks_ctx: *const (),
+    /// The set's current element count (written as the `u32` count prefix).
+    pub len: unsafe extern "C" fn(ctx: *const (), set: *const u8) -> usize,
+    /// Build a stateful iterator over the initialized set.
+    pub iter_init: unsafe extern "C" fn(ctx: *const (), set: *const u8) -> *mut (),
+    /// Advance the iterator, writing the next borrowed element pointer to
+    /// `value_out` and returning `true`, or `false` at the end.
+    pub iter_next:
+        unsafe extern "C" fn(ctx: *const (), iter: *mut (), value_out: *mut *const u8) -> bool,
+    /// Free the iterator built by `iter_init`.
+    pub iter_dealloc: unsafe extern "C" fn(ctx: *const (), iter: *mut ()),
+    /// Entry to the element sub-chain (a `*mut EncCtx` function ending in `ret`).
+    pub element_entry: unsafe extern "C" fn(cx: *mut EncCtx),
+    /// The element sub-chain's immediate stream (reset into `EncCtx.prog`).
+    pub element_prog: *const u64,
 }
 
 /// One enum variant's encode immediates, pointed at (as an array) by
@@ -1710,6 +1930,34 @@ pub unsafe extern "C" fn phon_stencil_result_enc(cx: *mut EncCtx) {
     phon_econt(cx);
 }
 
+/// Encode an owning pointer (`Box<T>`, `Rc<T>`, `Arc<T>`) from
+/// `base + field_offset`, then continue.
+///
+/// The owner never appears on the wire. The stencil borrows the pointee through
+/// `EncPointerInfo.borrow` and runs the pointee body with `base` set to that
+/// borrowed `T`.
+#[no_mangle]
+pub unsafe extern "C" fn phon_stencil_pointer_enc(cx: *mut EncCtx) {
+    let c = &mut *cx;
+    let info = &*(*c.prog as *const EncPointerInfo);
+    let outer_prog = c.prog.add(1);
+    let outer_base = c.base;
+
+    let pointer = outer_base.add(info.field_offset);
+    let pointee = (info.borrow)(info.thunks_ctx, pointer);
+    c.prog = info.pointee_prog;
+    c.base = pointee;
+    (info.pointee_entry)(cx);
+
+    c.base = outer_base;
+    c.prog = outer_prog;
+
+    #[cfg(tailcall)]
+    become phon_econt(cx);
+    #[cfg(not(tailcall))]
+    phon_econt(cx);
+}
+
 /// Encode an opaque adapter field as a length-prefixed byte span, then continue.
 ///
 /// Synchronizes the raw output cursor into the backing `Vec`, lets the adapter
@@ -1843,6 +2091,50 @@ pub unsafe extern "C" fn phon_stencil_map_enc(cx: *mut EncCtx) {
         c.prog = info.value_prog;
         c.base = v;
         (info.value_entry)(cx);
+    }
+    (info.iter_dealloc)(info.thunks_ctx, iter);
+
+    c.base = outer_base;
+    c.prog = outer_prog;
+
+    #[cfg(tailcall)]
+    become phon_econt(cx);
+    #[cfg(not(tailcall))]
+    phon_econt(cx);
+}
+
+/// Encode an owned set from `base + field_offset`, then continue.
+///
+/// Reads the element count via `len`, writes it as a `u32`, builds a stateful
+/// iterator via `iter_init`, then loops over borrowed element pointers and runs
+/// the element sub-chain at `base = value`.
+#[no_mangle]
+pub unsafe extern "C" fn phon_stencil_set_enc(cx: *mut EncCtx) {
+    let c = &mut *cx;
+    let info = &*(*c.prog as *const EncSetInfo);
+    let outer_prog = c.prog.add(1);
+    let outer_base = c.base;
+
+    let set = outer_base.add(info.field_offset);
+    let count = (info.len)(info.thunks_ctx, set);
+
+    let need = c.out_pos + 4;
+    if need > c.out_cap {
+        (c.grow)(cx, need);
+    }
+    let count_bytes = (count as u32).to_le_bytes();
+    core::ptr::copy_nonoverlapping(count_bytes.as_ptr(), c.out_ptr.add(c.out_pos), 4);
+    c.out_pos += 4;
+
+    let iter = (info.iter_init)(info.thunks_ctx, set);
+    loop {
+        let mut value: *const u8 = core::ptr::null();
+        if !(info.iter_next)(info.thunks_ctx, iter, &mut value) {
+            break;
+        }
+        c.prog = info.element_prog;
+        c.base = value;
+        (info.element_entry)(cx);
     }
     (info.iter_dealloc)(info.thunks_ctx, iter);
 

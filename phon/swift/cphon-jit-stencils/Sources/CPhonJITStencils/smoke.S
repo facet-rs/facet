@@ -168,6 +168,7 @@ _phon_jit_option_decode_start:
 8:
     str x22, [x19, #24]
     str x21, [x19, #32]
+    mov x0, x19
     ldp x23, x24, [sp], #16
     ldp x21, x22, [sp], #16
     ldp x19, x20, [sp], #16
@@ -235,6 +236,7 @@ _phon_jit_option_encode_start:
 8:
     str x22, [x19, #0]
     str x21, [x19, #8]
+    mov x0, x19
     ldp x23, x24, [sp], #16
     ldp x21, x22, [sp], #16
     ldp x19, x20, [sp], #16
@@ -256,6 +258,390 @@ _phon_jit_option_encode_next:
     ret
 .globl _phon_jit_option_encode_end
 _phon_jit_option_encode_end:
+
+.globl _phon_jit_bytes_decode_start
+_phon_jit_bytes_decode_start:
+    stp x29, x30, [sp, #-16]!
+    stp x19, x20, [sp, #-16]!
+
+    mov x19, x0
+    ldr x1, [x19, #32]
+    ldr x20, [x1], #8
+    str x1, [x19, #32]
+
+    mov x0, x19
+    mov x1, x20
+    ldr x12, [x20, #56]
+    blr x12
+
+    ldr x7, [x19, #40]
+    cbnz x7, 1f
+
+    mov x0, x19
+    ldp x19, x20, [sp], #16
+    ldp x29, x30, [sp], #16
+.globl _phon_jit_bytes_decode_next
+_phon_jit_bytes_decode_next:
+    b _phon_jit_bytes_decode_next
+
+1:
+    ldp x19, x20, [sp], #16
+    ldp x29, x30, [sp], #16
+    ret
+.globl _phon_jit_bytes_decode_end
+_phon_jit_bytes_decode_end:
+
+.globl _phon_jit_bytes_encode_start
+_phon_jit_bytes_encode_start:
+    stp x29, x30, [sp, #-16]!
+    stp x19, x20, [sp, #-16]!
+
+    mov x19, x0
+    ldr x1, [x19, #8]
+    ldr x20, [x1], #8
+    str x1, [x19, #8]
+
+    mov x0, x19
+    mov x1, x20
+    ldr x12, [x20, #64]
+    blr x12
+
+    ldr x7, [x19, #40]
+    cbnz x7, 1f
+
+    mov x0, x19
+    ldp x19, x20, [sp], #16
+    ldp x29, x30, [sp], #16
+.globl _phon_jit_bytes_encode_next
+_phon_jit_bytes_encode_next:
+    b _phon_jit_bytes_encode_next
+
+1:
+    ldp x19, x20, [sp], #16
+    ldp x29, x30, [sp], #16
+    ret
+.globl _phon_jit_bytes_encode_end
+_phon_jit_bytes_encode_end:
+
+.globl _phon_jit_dynamic_decode_start
+_phon_jit_dynamic_decode_start:
+    stp x29, x30, [sp, #-16]!
+    stp x19, x20, [sp, #-16]!
+
+    mov x19, x0
+    ldr x1, [x19, #32]
+    ldr x20, [x1], #8
+    str x1, [x19, #32]
+
+    mov x0, x19
+    mov x1, x20
+    ldr x12, [x20, #8]
+    blr x12
+
+    ldr x7, [x19, #40]
+    cbnz x7, 1f
+
+    mov x0, x19
+    ldp x19, x20, [sp], #16
+    ldp x29, x30, [sp], #16
+.globl _phon_jit_dynamic_decode_next
+_phon_jit_dynamic_decode_next:
+    b _phon_jit_dynamic_decode_next
+
+1:
+    ldp x19, x20, [sp], #16
+    ldp x29, x30, [sp], #16
+    ret
+.globl _phon_jit_dynamic_decode_end
+_phon_jit_dynamic_decode_end:
+
+.globl _phon_jit_dynamic_encode_start
+_phon_jit_dynamic_encode_start:
+    stp x29, x30, [sp, #-16]!
+    stp x19, x20, [sp, #-16]!
+
+    mov x19, x0
+    ldr x1, [x19, #8]
+    ldr x20, [x1], #8
+    str x1, [x19, #8]
+
+    mov x0, x19
+    mov x1, x20
+    ldr x12, [x20, #16]
+    blr x12
+
+    ldr x7, [x19, #40]
+    cbnz x7, 1f
+
+    mov x0, x19
+    ldp x19, x20, [sp], #16
+    ldp x29, x30, [sp], #16
+.globl _phon_jit_dynamic_encode_next
+_phon_jit_dynamic_encode_next:
+    b _phon_jit_dynamic_encode_next
+
+1:
+    ldp x19, x20, [sp], #16
+    ldp x29, x30, [sp], #16
+    ret
+.globl _phon_jit_dynamic_encode_end
+_phon_jit_dynamic_encode_end:
+
+.globl _phon_jit_enum_decode_start
+_phon_jit_enum_decode_start:
+    stp x29, x30, [sp, #-16]!
+    stp x19, x20, [sp, #-16]!
+
+    mov x19, x0
+    ldr x1, [x19, #32]
+    ldr x20, [x1], #8
+    str x1, [x19, #32]
+
+    mov x0, x19
+    mov x1, x20
+    ldr x12, [x20, #64]
+    blr x12
+
+    ldr x7, [x19, #40]
+    cbnz x7, 1f
+
+    mov x0, x19
+    ldp x19, x20, [sp], #16
+    ldp x29, x30, [sp], #16
+.globl _phon_jit_enum_decode_next
+_phon_jit_enum_decode_next:
+    b _phon_jit_enum_decode_next
+
+1:
+    ldp x19, x20, [sp], #16
+    ldp x29, x30, [sp], #16
+    ret
+.globl _phon_jit_enum_decode_end
+_phon_jit_enum_decode_end:
+
+.globl _phon_jit_enum_encode_start
+_phon_jit_enum_encode_start:
+    stp x29, x30, [sp, #-16]!
+    stp x19, x20, [sp, #-16]!
+
+    mov x19, x0
+    ldr x1, [x19, #8]
+    ldr x20, [x1], #8
+    str x1, [x19, #8]
+
+    mov x0, x19
+    mov x1, x20
+    ldr x12, [x20, #72]
+    blr x12
+
+    ldr x7, [x19, #40]
+    cbnz x7, 1f
+
+    mov x0, x19
+    ldp x19, x20, [sp], #16
+    ldp x29, x30, [sp], #16
+.globl _phon_jit_enum_encode_next
+_phon_jit_enum_encode_next:
+    b _phon_jit_enum_encode_next
+
+1:
+    ldp x19, x20, [sp], #16
+    ldp x29, x30, [sp], #16
+    ret
+.globl _phon_jit_enum_encode_end
+_phon_jit_enum_encode_end:
+
+.globl _phon_jit_seq_decode_start
+_phon_jit_seq_decode_start:
+    stp x29, x30, [sp, #-16]!
+    stp x19, x20, [sp, #-16]!
+
+    mov x19, x0
+    ldr x1, [x19, #32]
+    ldr x20, [x1], #8
+    str x1, [x19, #32]
+
+    mov x0, x19
+    mov x1, x20
+    ldr x12, [x20, #96]
+    blr x12
+
+    ldr x7, [x19, #40]
+    cbnz x7, 1f
+
+    mov x0, x19
+    ldp x19, x20, [sp], #16
+    ldp x29, x30, [sp], #16
+.globl _phon_jit_seq_decode_next
+_phon_jit_seq_decode_next:
+    b _phon_jit_seq_decode_next
+
+1:
+    ldp x19, x20, [sp], #16
+    ldp x29, x30, [sp], #16
+    ret
+.globl _phon_jit_seq_decode_end
+_phon_jit_seq_decode_end:
+
+.globl _phon_jit_seq_encode_start
+_phon_jit_seq_encode_start:
+    stp x29, x30, [sp, #-16]!
+    stp x19, x20, [sp, #-16]!
+
+    mov x19, x0
+    ldr x1, [x19, #8]
+    ldr x20, [x1], #8
+    str x1, [x19, #8]
+
+    mov x0, x19
+    mov x1, x20
+    ldr x12, [x20, #104]
+    blr x12
+
+    ldr x7, [x19, #40]
+    cbnz x7, 1f
+
+    mov x0, x19
+    ldp x19, x20, [sp], #16
+    ldp x29, x30, [sp], #16
+.globl _phon_jit_seq_encode_next
+_phon_jit_seq_encode_next:
+    b _phon_jit_seq_encode_next
+
+1:
+    ldp x19, x20, [sp], #16
+    ldp x29, x30, [sp], #16
+    ret
+.globl _phon_jit_seq_encode_end
+_phon_jit_seq_encode_end:
+
+.globl _phon_jit_map_decode_start
+_phon_jit_map_decode_start:
+    stp x29, x30, [sp, #-16]!
+    stp x19, x20, [sp, #-16]!
+
+    mov x19, x0
+    ldr x1, [x19, #32]
+    ldr x20, [x1], #8
+    str x1, [x19, #32]
+
+    mov x0, x19
+    mov x1, x20
+    ldr x12, [x20, #120]
+    blr x12
+
+    ldr x7, [x19, #40]
+    cbnz x7, 1f
+
+    mov x0, x19
+    ldp x19, x20, [sp], #16
+    ldp x29, x30, [sp], #16
+.globl _phon_jit_map_decode_next
+_phon_jit_map_decode_next:
+    b _phon_jit_map_decode_next
+
+1:
+    ldp x19, x20, [sp], #16
+    ldp x29, x30, [sp], #16
+    ret
+.globl _phon_jit_map_decode_end
+_phon_jit_map_decode_end:
+
+.globl _phon_jit_map_encode_start
+_phon_jit_map_encode_start:
+    stp x29, x30, [sp, #-16]!
+    stp x19, x20, [sp, #-16]!
+
+    mov x19, x0
+    ldr x1, [x19, #8]
+    ldr x20, [x1], #8
+    str x1, [x19, #8]
+
+    mov x0, x19
+    mov x1, x20
+    ldr x12, [x20, #128]
+    blr x12
+
+    ldr x7, [x19, #40]
+    cbnz x7, 1f
+
+    mov x0, x19
+    ldp x19, x20, [sp], #16
+    ldp x29, x30, [sp], #16
+.globl _phon_jit_map_encode_next
+_phon_jit_map_encode_next:
+    b _phon_jit_map_encode_next
+
+1:
+    ldp x19, x20, [sp], #16
+    ldp x29, x30, [sp], #16
+    ret
+.globl _phon_jit_map_encode_end
+_phon_jit_map_encode_end:
+
+.globl _phon_jit_block_decode_start
+_phon_jit_block_decode_start:
+    stp x29, x30, [sp, #-16]!
+    stp x19, x20, [sp, #-16]!
+
+    mov x19, x0
+    ldr x1, [x19, #32]
+    ldr x20, [x1], #8
+    str x1, [x19, #32]
+
+    mov x0, x19
+    mov x1, x20
+    ldr x12, [x20, #40]
+    blr x12
+
+    ldr x7, [x19, #40]
+    cbnz x7, 1f
+
+    mov x0, x19
+    ldp x19, x20, [sp], #16
+    ldp x29, x30, [sp], #16
+.globl _phon_jit_block_decode_next
+_phon_jit_block_decode_next:
+    b _phon_jit_block_decode_next
+
+1:
+    ldp x19, x20, [sp], #16
+    ldp x29, x30, [sp], #16
+    ret
+.globl _phon_jit_block_decode_end
+_phon_jit_block_decode_end:
+
+.globl _phon_jit_block_encode_start
+_phon_jit_block_encode_start:
+    stp x29, x30, [sp, #-16]!
+    stp x19, x20, [sp, #-16]!
+
+    mov x19, x0
+    ldr x1, [x19, #8]
+    ldr x20, [x1], #8
+    str x1, [x19, #8]
+
+    mov x0, x19
+    mov x1, x20
+    ldr x12, [x20, #48]
+    blr x12
+
+    ldr x7, [x19, #40]
+    cbnz x7, 1f
+
+    mov x0, x19
+    ldp x19, x20, [sp], #16
+    ldp x29, x30, [sp], #16
+.globl _phon_jit_block_encode_next
+_phon_jit_block_encode_next:
+    b _phon_jit_block_encode_next
+
+1:
+    ldp x19, x20, [sp], #16
+    ldp x29, x30, [sp], #16
+    ret
+.globl _phon_jit_block_encode_end
+_phon_jit_block_encode_end:
 
 .globl _phon_jit_done_start
 _phon_jit_done_start:

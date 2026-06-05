@@ -39,6 +39,7 @@ let maxDepth = 128
 /// Reject nesting deeper than `maxDepth` (`r[validate.depth]`) — a schema or value
 /// nesting too deep is a decode error, not a stack overflow. Shared by the schema
 /// and value codecs.
+// r[impl validate.depth]
 func checkDepth(_ depth: Int) throws {
     if depth > maxDepth {
         throw DecodeError.depthExceeded

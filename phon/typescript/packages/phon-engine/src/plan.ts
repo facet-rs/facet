@@ -217,6 +217,9 @@ function planKind(wk: SchemaKind, rk: SchemaKind, ctx: PlanCtx, depth: number): 
   if (wk.kind === "dynamic" && rk.kind === "dynamic") {
     return { kind: "dynamic" };
   }
+  if (wk.kind === rk.kind && (wk.kind === "tensor" || wk.kind === "channel" || wk.kind === "external")) {
+    throw new Error(`compat plan unsupported for ${wk.kind}`);
+  }
   throw new IncompatibleError(`schema kinds differ (${wk.kind} vs ${rk.kind})`);
 }
 

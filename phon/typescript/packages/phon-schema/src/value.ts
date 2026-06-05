@@ -131,6 +131,9 @@ export type Value =
 
 /// Decode a self-describing `Value` from `bytes`, rejecting trailing bytes.
 /// Throws `DecodeError` on any malformed input.
+// r[impl value]
+// r[impl self-describing.tag-led]
+// r[impl decode.whole-message]
 export function decodeValue(bytes: Uint8Array): Value {
   const r = new Reader(bytes);
   const v = decValue(r, 0);
@@ -140,6 +143,7 @@ export function decodeValue(bytes: Uint8Array): Value {
   return v;
 }
 
+// r[impl validate.depth]
 function checkDepth(depth: number): void {
   if (depth > MAX_DEPTH) {
     throw new DecodeError("maximum nesting depth exceeded");
@@ -149,17 +153,22 @@ function checkDepth(depth: number): void {
 /// Read one self-describing Value from an existing `Reader` (no trailing-byte
 /// check) — what the compact engine calls for a `dynamic` field. Mirrors Rust
 /// `read_value`.
+// r[impl value]
 export function readValue(r: Reader, depth = 0): Value {
   return decValue(r, depth);
 }
 
 /// Write one self-describing Value into an existing `ByteSink` — the compact
 /// engine's `dynamic` field encoder. Mirrors Rust `write_value`.
+// r[impl value]
 export function writeValueInto(out: ByteSink, value: Value): void {
   writeValue(out, value);
 }
 
 // Mirror of Rust `dec_value`: read a tag, then fold its body onto a coarse Value.
+// r[impl self-describing.tag-led]
+// r[impl validate.tags]
+// r[impl value.extended-kinds]
 function decValue(r: Reader, depth: number): Value {
   checkDepth(depth);
   const t = r.readU8();
@@ -302,6 +311,7 @@ function decStruct(r: Reader, depth: number): Value {
 
 /// An `enum` folds to a one-entry object mapping the variant name to its single
 /// payload value (`r[self-describing.enum-payload]`).
+// r[impl self-describing.enum-payload]
 function decEnum(r: Reader, depth: number): Value {
   const variant = r.readStr();
   const payload = decValue(r, depth + 1);
@@ -342,6 +352,7 @@ export function canonicalKey(v: Value): string {
 
 /// Encode a `Value` to self-describing bytes, matching Rust's `write_value`
 /// byte for byte. Throws `EncodeError` for an integer no wire tag can hold.
+// r[impl value]
 export function encodeValue(value: Value): Uint8Array {
   const out = new ByteSink();
   writeValue(out, value);
@@ -350,6 +361,8 @@ export function encodeValue(value: Value): Uint8Array {
 
 // Mirror of Rust `write_value`: each coarse Value case has one fixed tag, so the
 // bytes are canonical across implementations (`r[value]`).
+// r[impl value]
+// r[impl value.extended-kinds]
 function writeValue(out: ByteSink, value: Value): void {
   if (value === null) {
     out.u8(Tag.OPTION_NONE);

@@ -18,7 +18,8 @@
 use phon_schema::SchemaRef;
 
 use crate::ir::{
-    BorrowThunks, DefaultThunk, MapThunks, OpaqueThunks, OptionThunks, ResultThunks, SeqThunks,
+    BorrowThunks, DefaultThunk, MapThunks, OpaqueThunks, OptionThunks, PointerThunks, ResultThunks,
+    SeqThunks, SetThunks,
 };
 
 /// A node of the descriptor tree: the schema it realizes, its process-local
@@ -44,9 +45,9 @@ pub struct Layout {
 
 /// How a value's bytes are read and constructed.
 ///
-/// Direct-fact variants are producer-optional (`r[descriptors.facts-are-optional]`):
-/// a producer emits them when it can prove the layout and falls back to a thunk
-/// otherwise; an engine must accept a descriptor that uses only thunks.
+/// Direct facts and thunk/vtable-backed forms are both descriptor mechanisms:
+/// the binding emits the form it can prove for that kind, and the engine
+/// consumes that descriptor rather than inventing missing layout facts.
 // r[impl descriptors.encode-decode-asymmetry]
 #[derive(Clone, Debug)]
 pub enum Access {
@@ -73,6 +74,9 @@ pub enum Access {
     /// A dynamic homogeneous sequence (list, set) or byte sequence
     /// (string, bytes).
     Sequence(SequenceAccess),
+    /// A set stored behind language-provided thunks (`HashSet<T>`,
+    /// `BTreeSet<T>`, …). The wire shape is `SchemaKind::Set`.
+    Set(SetAccess),
     /// Key / value pairs.
     Map(MapAccess),
     /// A `Result<T, E>`: a thunk-driven two-armed sum (`Ok`/`Err`) whose
@@ -80,6 +84,10 @@ pub enum Access {
     /// through the front-door [`ResultThunks`] vtable. On the wire it is a
     /// two-variant enum (`r[compat.enum]`).
     Result(ResultAccess),
+    /// An owning pointer whose wire shape is its pointee. The descriptor records
+    /// the local pointer handle layout plus thunks to borrow/construct the pointee.
+    // r[impl descriptors.thunk-binding]
+    Pointer(PointerAccess),
     /// A `Dynamic` value: no layout to describe. The engine decodes/encodes a
     /// `Value` through the self-describing codec and hands it over as-is.
     Dynamic,
@@ -87,8 +95,8 @@ pub enum Access {
     /// schema the engine reads. The front-door-bound [`OpaqueThunks`] encode the
     /// inner value (appended after a backpatched `u32` length) and decode it from
     /// the borrowed span; on the wire it is a `Primitive::Bytes` run. This is how
-    /// `Channel`/`External` bindings (a local endpoint or external buffer becoming a
-    /// handle) and any kind a producer can't reduce to layout facts are carried.
+    /// `Channel`/`External` bindings (a local endpoint or external capability becoming
+    /// a handle) and any kind a producer can't reduce to layout facts are carried.
     Opaque(OpaqueThunks),
     /// A back-edge to a recursive (cyclic) schema: this position holds a value of the
     /// schema named by this node's [`Descriptor::schema`], whose full descriptor lives
@@ -220,6 +228,25 @@ pub struct SequenceAccess {
     pub storage: SequenceStorage,
 }
 
+/// A set: its element descriptor and storage strategy.
+#[derive(Clone, Debug)]
+pub struct SetAccess {
+    pub element: Box<Descriptor>,
+    pub storage: SetStorage,
+}
+
+/// How a set's elements are read and constructed in memory.
+#[derive(Clone, Debug)]
+pub enum SetStorage {
+    // r[impl descriptors.thunk-binding]
+    /// An owned set reached through the front door's bound set vtable
+    /// (`HashSet<T>`, `BTreeSet<T>`, …), whose in-memory layout the engine does
+    /// not assume. The typed path's owned-set representation, mirroring
+    /// [`SequenceStorage::Vtable`] and [`MapStorage::Vtable`]
+    /// (`r[descriptors.thunk-binding]`).
+    Vtable(SetThunks),
+}
+
 /// How a sequence's elements are stored in memory.
 // r[impl descriptors.borrowed]
 #[derive(Clone, Debug)]
@@ -269,6 +296,15 @@ pub struct ResultAccess {
     pub ok: Box<Descriptor>,
     pub err: Box<Descriptor>,
     pub thunks: ResultThunks,
+}
+
+/// An owning pointer: its pointee descriptor and the vtable used to borrow and
+/// construct the pointer handle.
+// r[impl descriptors.thunk-binding]
+#[derive(Clone, Debug)]
+pub struct PointerAccess {
+    pub pointee: Box<Descriptor>,
+    pub thunks: PointerThunks,
 }
 
 /// Key/value pairs: the key and value descriptors and how the map is stored.

@@ -5,6 +5,8 @@
 // `SchemaId` in every implementation.
 
 /// A complete schema: its content-hash id, type parameters, and structure.
+// r[impl type-system.canonical-form]
+// r[impl type-system.generics]
 public struct Schema: Equatable, Hashable, Sendable {
     public var id: SchemaId
     public var typeParams: [String]
@@ -18,6 +20,7 @@ public struct Schema: Equatable, Hashable, Sendable {
 }
 
 /// What a schema represents.
+// r[impl type-system.canonical-form]
 public indirect enum SchemaKind: Equatable, Hashable, Sendable {
     case primitive(Primitive)
     case structure(name: String, fields: [Field])
@@ -26,11 +29,16 @@ public indirect enum SchemaKind: Equatable, Hashable, Sendable {
     case list(element: SchemaRef)
     case set(element: SchemaRef)
     case map(key: SchemaRef, value: SchemaRef)
+    // r[impl type-system.array]
     case array(element: SchemaRef, dimensions: [UInt64])
+    // r[impl type-system.tensor]
     case tensor(element: SchemaRef, rank: UInt32?)
     case option(element: SchemaRef)
+    // r[impl type-system.channel]
     case channel(direction: ChannelDirection, element: SchemaRef)
+    // r[impl type-system.dynamic]
     case dynamic
+    // r[impl type-system.external]
     case external(kind: String, metadata: SchemaRef?)
 }
 
@@ -43,6 +51,7 @@ public enum ChannelDirection: String, Equatable, Hashable, Sendable {
 /// A reference to another schema: a concrete id (with type arguments, empty for a
 /// non-generic reference) or a type variable from an enclosing schema's
 /// `typeParams`.
+// r[impl type-system.generics]
 public indirect enum SchemaRef: Equatable, Hashable, Sendable {
     case concrete(id: SchemaId, args: [SchemaRef])
     case variable(name: String)
@@ -77,6 +86,7 @@ public struct Variant: Equatable, Hashable, Sendable {
 }
 
 /// The four payload shapes an enum variant can hold.
+// r[impl type-system.variant-payloads]
 public indirect enum VariantPayload: Equatable, Hashable, Sendable {
     case unit
     case newtype(SchemaRef)

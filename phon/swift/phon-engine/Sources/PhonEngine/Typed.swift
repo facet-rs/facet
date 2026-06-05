@@ -88,6 +88,9 @@ private func lowerTypedNode(_ d: Descriptor, _ reg: Registry, _ base: Int, _ out
             throw CompactError.unsupported("typed: variable-length scalar field")
         }
         out.append(.scalar(offset: base, size: size, align: alignment(p)))
+    // r[impl descriptors.fact-driven]
+    // r[impl ir.two-forms]
+    // r[impl ir.inlining]
     case (.record(let ra), .composite(let kind)):
         let arity: Int
         switch kind {
@@ -158,7 +161,7 @@ private func lowerTypedNode(_ d: Descriptor, _ reg: Registry, _ base: Int, _ out
             inject: ea.inject,
             variants: variantOps
         )))
-    case (.sequence(let sa), .composite(.list)), (.sequence(let sa), .composite(.set)):
+    case (.sequence(let sa), .composite(.list)):
         // The element runs at its own slot (base 0).
         var element: MemProgram = []
         try lowerTypedNode(sa.element, reg, 0, &element)
@@ -168,6 +171,20 @@ private func lowerTypedNode(_ d: Descriptor, _ reg: Registry, _ base: Int, _ out
             stride: sa.stride,
             elemAlign: sa.elemAlign,
             minWire: elemMinWire(element),
+            unique: false,
+            witness: sa.witness
+        )))
+    case (.sequence(let sa), .composite(.set)):
+        // The element runs at its own slot (base 0).
+        var element: MemProgram = []
+        try lowerTypedNode(sa.element, reg, 0, &element)
+        out.append(.sequence(SeqOp(
+            offset: base,
+            element: fuse(element),
+            stride: sa.stride,
+            elemAlign: sa.elemAlign,
+            minWire: elemMinWire(element),
+            unique: true,
             witness: sa.witness
         )))
     case (.map(let ma), .composite(.map)):
@@ -260,6 +277,7 @@ private func encodeTypedProgram(
             for i in 0..<n {
                 encodeTypedProgram(s.element, UnsafeRawPointer(buf).advanced(by: i * s.stride), &out, blocks)
             }
+            s.witness.destroyElements?(buf, n)
         case .map(let m):
             let handle = base.advanced(by: m.offset)
             let n = m.witness.count(handle)
@@ -373,6 +391,9 @@ private func decodeTypedProgram(
                 try decodeTypedProgram(s.element, &r, buf.advanced(by: i * s.stride), blocks)
             }
             s.witness.construct(handle, buf, n)
+            if s.unique && s.witness.count(handle) != n {
+                throw CompactError.decode(.duplicateElement)
+            }
         case .map(let m):
             let handle = base.advanced(by: m.offset)
             let n = try r.readLen(minElemSize: 1)

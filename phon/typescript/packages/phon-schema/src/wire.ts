@@ -7,10 +7,12 @@
 // Spec: docs/content/spec.md — "Wire format", "Decoding untrusted input".
 
 // ============================================================================
-// Self-describing tag bytes (`r[self-describing.tag-led]`).
+// Self-describing tag bytes.
 // Must match `mod tag` in rust/phon-schema/src/selfdescribing.rs exactly.
 // ============================================================================
 
+// r[impl self-describing.tag-led]
+// r[impl self-describing.no-extra-kinds]
 export const Tag = {
   UNIT: 0x00,
   BOOL: 0x01,
@@ -239,7 +241,8 @@ export class Reader {
     throw new DecodeError(`invalid bool byte ${hex(b)}`);
   }
 
-  /// A u32 Unicode scalar (`r[validate.char]`): 0..=0x10FFFF excluding surrogates.
+  /// A u32 Unicode scalar: 0..=0x10FFFF excluding surrogates.
+  // r[impl validate.text]
   readCharCode(): number {
     const n = this.readU32raw();
     if (n > 0x10ffff || (n >= 0xd800 && n <= 0xdfff)) {
@@ -252,6 +255,7 @@ export class Reader {
   /// than the buffer allows (`r[validate.lengths]`). A zero `minElemSize` (a
   /// zero-sized element) is bounded by the fixed `ZST_COUNT_CAP` instead, since
   /// the bytes remaining cannot bound it.
+  // r[impl validate.lengths]
   readLen(minElemSize: number): number {
     const count = this.readU32raw();
     const max = minElemSize === 0 ? ZST_COUNT_CAP : Math.floor(this.remaining() / minElemSize);
@@ -268,6 +272,7 @@ export class Reader {
     return slice;
   }
 
+  // r[impl validate.text]
   readStr(): string {
     const len = this.readLen(1);
     const slice = this.readSlice(len);

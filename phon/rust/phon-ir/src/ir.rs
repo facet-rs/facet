@@ -143,12 +143,26 @@ pub enum MemOp {
         size: usize,
         align: usize,
     },
+    /// A Rust native-sized integer (`usize`/`isize`) whose wire primitive is
+    /// fixed-width (`u64`/`i64`) on every platform. On 64-bit little-endian
+    /// targets this can lower to [`Scalar`]; this op exists for narrower hosts,
+    /// where correctness requires widening/narrowing instead of an 8-byte copy.
+    NativeInt {
+        offset: usize,
+        mem_size: usize,
+        signed: bool,
+    },
     /// An owned, contiguous sequence (`Vec<T>`) at `field_offset`: a `u32` count
     /// then `count` elements, each decoded by the element's own program. Decode
     /// initializes the sequence and fills it; encode reads its length and
     /// elements. See [`SeqOp`]. Used when the element has structure; a run of
     /// trivially-copyable elements uses [`Bytes`](MemOp::Bytes) instead.
     Sequence(Box<SeqOp>),
+    /// An owned set (`HashSet<T>`, `BTreeSet<T>`, …) at `field_offset`: a `u32`
+    /// element count then element values. Encode iterates the set; decode
+    /// initializes it and inserts each decoded element, rejecting duplicates. See
+    /// [`SetOp`].
+    Set(Box<SetOp>),
     /// A bulk contiguous run of trivially-copyable elements — `String`, `Vec<u8>`,
     /// or (via bulk-copy lowering) `Vec<u32>`/`Vec<f64>`/… : a `u32` element count
     /// then `count * stride` contiguous bytes moved in **one block**, no per-element
@@ -200,6 +214,12 @@ pub enum MemOp {
     /// (`is_ok` / `get_ok` / `get_err` / `init_ok` / `init_err`), exactly as
     /// [`Option`](MemOp::Option) does for one arm. Data-directed. See [`ResultOp`].
     Result(Box<ResultOp>),
+    /// An owned pointer (`Box<T>`, `Rc<T>`, `Arc<T>`) at `field_offset`: the wire
+    /// shape is exactly the pointee `T`, while the memory side is an owning pointer
+    /// handle. Encode borrows the pointee through a thunk and runs the pointee
+    /// program there; decode fills a scratch `T` then moves it into the owning
+    /// pointer through a construction thunk. See [`PointerOp`].
+    Pointer(Box<PointerOp>),
     /// A writer-only value present on the wire but absent from the reader: consume
     /// its wire bytes and write NOTHING to memory (`r[compat.skip-writer-only]`).
     /// Decode-only — it advances the cursor by a pre-built wire skeleton (see
@@ -404,6 +424,49 @@ pub struct SeqThunks {
     pub len: unsafe extern "C" fn(ctx: *const (), list: *const u8) -> usize,
     /// A pointer to the sequence's contiguous element storage (for reading).
     pub data: unsafe extern "C" fn(ctx: *const (), list: *const u8) -> *const u8,
+}
+
+/// An owned-set op's payload (boxed in [`MemOp::Set`] to keep `MemOp` small).
+#[derive(Clone, Debug)]
+pub struct SetOp {
+    /// Where the set handle lives, relative to the base.
+    pub field_offset: usize,
+    /// How to encode/decode one element (offsets relative to the element value).
+    pub element: MemProgram,
+    /// Element size for decode scratch allocation.
+    pub elem_size: usize,
+    /// Element alignment for decode scratch allocation.
+    pub elem_align: usize,
+    /// Minimum wire bytes one element occupies (for length-vs-remaining checks,
+    /// `r[validate.lengths]`).
+    pub min_wire: usize,
+    /// Type-erased operations on the set handle (front-door bound).
+    pub thunks: SetThunks,
+}
+
+/// Type-erased operations on an owned set handle, supplied by the front door
+/// (`r[descriptors.thunk-binding]`). The engine never assumes the set's
+/// in-memory layout: encode iterates borrowed elements, and decode initializes
+/// the set then inserts each decoded element.
+#[derive(Clone, Copy, Debug)]
+pub struct SetThunks {
+    /// Opaque per-type context, passed to every thunk.
+    pub ctx: *const (),
+    /// The set's current element count.
+    pub len: unsafe extern "C" fn(ctx: *const (), set: *const u8) -> usize,
+    /// Initialize the uninitialized set at `set` with room for `cap` entries.
+    pub init_with_capacity: unsafe extern "C" fn(ctx: *const (), set: *mut u8, cap: usize),
+    /// Insert `*value` into the initialized set, moving it out of the scratch
+    /// buffer. Returns `false` when the element was already present.
+    pub insert: unsafe extern "C" fn(ctx: *const (), set: *mut u8, value: *mut u8) -> bool,
+    /// Build a stateful iterator over the initialized set.
+    pub iter_init: unsafe extern "C" fn(ctx: *const (), set: *const u8) -> *mut (),
+    /// Advance the iterator, writing the next borrowed element pointer to
+    /// `value_out` and returning `true`, or returning `false` at the end.
+    pub iter_next:
+        unsafe extern "C" fn(ctx: *const (), iter: *mut (), value_out: *mut *const u8) -> bool,
+    /// Free the iterator built by `iter_init`.
+    pub iter_dealloc: unsafe extern "C" fn(ctx: *const (), iter: *mut ()),
 }
 
 /// Validates a contiguous byte run before it is adopted into an owned handle:
@@ -675,6 +738,37 @@ pub struct ResultThunks {
     pub init_err: unsafe extern "C" fn(ctx: *const (), result: *mut u8, value: *mut u8),
 }
 
+/// An owned-pointer op's payload (boxed in [`MemOp::Pointer`]). The wire form is
+/// the pointee value itself; the owning pointer is local memory detail.
+// r[impl descriptors.thunk-binding]
+#[derive(Clone, Debug)]
+pub struct PointerOp {
+    /// Where the pointer handle lives, relative to the base.
+    pub field_offset: usize,
+    /// How to encode/decode the pointee `T`, run at the pointee value.
+    pub pointee: MemProgram,
+    /// The pointee's size and alignment for decode scratch allocation.
+    pub pointee_size: usize,
+    pub pointee_align: usize,
+    /// Type-erased borrow/construct operations on the owning pointer.
+    pub thunks: PointerThunks,
+}
+
+/// Type-erased operations on an owned pointer handle, supplied by the front door.
+/// The engine never assumes the pointer layout or allocation strategy: it borrows
+/// the pointee for encode and constructs the owner from a decoded pointee on
+/// decode.
+// r[impl descriptors.thunk-binding]
+#[derive(Clone, Copy, Debug)]
+pub struct PointerThunks {
+    /// Opaque per-type context, passed to every thunk.
+    pub ctx: *const (),
+    /// Borrow the initialized pointer's pointee.
+    pub borrow: unsafe extern "C" fn(ctx: *const (), pointer: *const u8) -> *const u8,
+    /// Initialize `pointer` from `*value`, moving the pointee out of engine scratch.
+    pub init: unsafe extern "C" fn(ctx: *const (), pointer: *mut u8, value: *mut u8),
+}
+
 /// An opaque-field op's payload (boxed in [`MemOp::Opaque`]). The wire form is a
 /// `u32` byte length then that many inner bytes — IDENTICAL to a `Primitive::Bytes`
 /// run, so a peer that does not know the inner type reads it as opaque bytes. The
@@ -759,16 +853,33 @@ pub fn fuse(program: MemProgram) -> MemProgram {
                 }
                 wire_pos = wire_pos.map(|p| p + pad.unwrap_or(0) + size);
             }
+            MemOp::NativeInt {
+                offset,
+                mem_size,
+                signed,
+            } => {
+                let align = 8usize;
+                let size = 8usize;
+                let pad = wire_pos.map(|p| align.wrapping_sub(p & (align - 1)) & (align - 1));
+                out.push(MemOp::NativeInt {
+                    offset,
+                    mem_size,
+                    signed,
+                });
+                wire_pos = wire_pos.map(|p| p + pad.unwrap_or(0) + size);
+            }
             // Variable-length / data-directed ops make the static wire position
             // unknown after them. `SkipWire` consumes opaque writer bytes, so it
             // too poisons the static position.
             seq @ (MemOp::Sequence(_)
+            | MemOp::Set(_)
             | MemOp::Bytes(_)
             | MemOp::Borrow(_)
             | MemOp::Option(_)
             | MemOp::Enum(_)
             | MemOp::Map(_)
             | MemOp::Result(_)
+            | MemOp::Pointer(_)
             | MemOp::Dynamic { .. }
             | MemOp::Opaque(_)
             | MemOp::CallBlock { .. }

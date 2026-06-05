@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { Registry, bytesToHex, hexToBytes, schemaFromBytes } from "@bearcove/phon-schema";
 import type { Field, Primitive, Schema, SchemaRef } from "@bearcove/phon-schema";
-import { buildPlan, compatDirection, compileEncoder, decodeWithPlan, encode, IncompatibleError, WriterOnlyVariantError } from "./index.ts";
+import { buildPlan, compatDirection, compile, compileEncoder, decodeWithPlan, encode, IncompatibleError, WriterOnlyVariantError } from "./index.ts";
 import { compilePlan } from "./jit.ts";
 
 interface Case {
@@ -65,8 +65,11 @@ function localRegistry(corpus: VectorFile, schemas: Schema[]): Registry {
 // r[verify compat.defaults-are-reader-side]
 // r[verify compat.type-match]
 // r[verify compat.enum]
+// r[verify compact.schema-driven]
+// r[verify compact.alignment]
 // r[verify exec.interpreter-baseline]
 // r[verify exec.jit-optional]
+// r[verify crates.jit-opt-in]
 describe("compat conformance corpus", () => {
   const corpus = loadCorpus();
   const reg = buildRegistry(corpus);
@@ -94,21 +97,30 @@ describe("compat conformance corpus", () => {
       // must reproduce Rust's reader-shaped bytes.
       const interpValue = decodeWithPlan(writerBytes, plan, reg);
       const jitValue = jit(writerBytes);
+      const optOutValue = compile(writerRoot, readerRoot, reg, { jit: false })(writerBytes);
+      const optInValue = compile(writerRoot, readerRoot, reg, { jit: true })(writerBytes);
 
       const interpHex = bytesToHex(encode(interpValue, readerRoot, reg));
       const jitHex = bytesToHex(encode(jitValue, readerRoot, reg));
+      const optOutHex = bytesToHex(encode(optOutValue, readerRoot, reg));
+      const optInHex = bytesToHex(encode(optInValue, readerRoot, reg));
       // The encode JIT must also reproduce the reader-shaped bytes.
       const encJit = compileEncoder(readerRoot, reg, { jit: true });
       const encJitHex = bytesToHex(encJit(interpValue));
+      const encInterp = compileEncoder(readerRoot, reg, { jit: false });
+      const encInterpHex = bytesToHex(encInterp(interpValue));
 
       expect(interpHex).toBe(c.reader_hex);
       expect(jitHex).toBe(c.reader_hex);
+      expect(optOutHex).toBe(c.reader_hex);
+      expect(optInHex).toBe(c.reader_hex);
       expect(encJitHex).toBe(c.reader_hex);
+      expect(encInterpHex).toBe(c.reader_hex);
     });
   }
 
   it("covers every corpus case", () => {
-    expect(corpus.cases.length).toBe(26);
+    expect(corpus.cases.length).toBe(28);
   });
 
   it("rejects required reader-only option fields", () => {

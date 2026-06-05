@@ -20,6 +20,8 @@ import PhonSchema
 
 /// A node of the descriptor tree: the schema it realizes, its process-local
 /// memory layout, and how to read and construct it.
+// r[impl descriptors.fact-driven]
+// r[impl descriptors.separate-implementations]
 public struct Descriptor {
     /// The schema this node realizes.
     public var schema: SchemaRef
@@ -52,6 +54,7 @@ public extension MemoryLayout {
 }
 
 /// How a value's bytes are read and constructed.
+// r[impl descriptors.fact-driven]
 public indirect enum Access {
     /// A fixed-width scalar whose in-memory bytes equal its wire bytes (bool, the
     /// integer and float primitives, char): copy `layout.size` bytes either
@@ -123,6 +126,7 @@ public struct MapAccess {
 /// engine has read them. Decode inits the map then inserts each decoded entry,
 /// moving key+value out of scratch; a repeated key collapses two entries into one
 /// and is rejected via the final count.
+// r[impl descriptors.encode-decode-asymmetry]
 public struct MapWitness {
     /// The entry count.
     public var count: (_ handle: UnsafeRawPointer) -> Int
@@ -183,6 +187,9 @@ public struct SeqWitness {
     /// `dst` for reading. A non-trivial element (`String`) is copied without a
     /// retain — the handle still owns it — and the engine only reads `dst`.
     public var copyElements: (_ handle: UnsafeRawPointer, _ dst: UnsafeMutableRawPointer) -> Void
+    /// Deinitialize projected elements when `copyElements` had to retain owned
+    /// scratch copies rather than borrow from the source handle.
+    public var destroyElements: ((_ elements: UnsafeMutableRawPointer, _ count: Int) -> Void)?
     /// Build the handle at `handle` by **moving** the `count` elements out of
     /// `src` (the engine's scratch, which it then frees without deinitializing).
     /// `moveInitialize` is correct for both trivial and managed elements.
@@ -191,10 +198,12 @@ public struct SeqWitness {
     public init(
         count: @escaping (UnsafeRawPointer) -> Int,
         copyElements: @escaping (UnsafeRawPointer, UnsafeMutableRawPointer) -> Void,
+        destroyElements: ((_ elements: UnsafeMutableRawPointer, _ count: Int) -> Void)? = nil,
         construct: @escaping (UnsafeMutableRawPointer, UnsafeMutableRawPointer, Int) -> Void
     ) {
         self.count = count
         self.copyElements = copyElements
+        self.destroyElements = destroyElements
         self.construct = construct
     }
 }
@@ -368,6 +377,7 @@ public struct FieldAccess {
 }
 
 /// How a record is built on decode.
+// r[impl descriptors.encode-decode-asymmetry]
 public enum Construct {
     /// Decode writes each field into its offset in uninitialized storage; the
     /// value is valid once all fields are written. Plain structs and tuples.

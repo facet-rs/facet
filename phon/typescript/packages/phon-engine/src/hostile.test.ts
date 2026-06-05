@@ -9,9 +9,9 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { ByteSink, DecodeError, Registry, hexToBytes, schemaFromBytes } from "@bearcove/phon-schema";
-import type { Primitive } from "@bearcove/phon-schema";
-import { buildPlan, compile, decode, decodeCompact, encode, recordJitFallbacks, WriterOnlyVariantError } from "./index.ts";
+import { ByteSink, DecodeError, Reader, Registry, ZST_COUNT_CAP, hexToBytes, schemaFromBytes } from "@bearcove/phon-schema";
+import type { Primitive, SchemaRef } from "@bearcove/phon-schema";
+import { buildPlan, compile, compileEncoder, decode, decodeCompact, decodeRef, encode, recordJitFallbacks, WriterOnlyVariantError } from "./index.ts";
 import type { Value } from "@bearcove/phon-schema";
 
 interface VectorFile {
@@ -34,6 +34,12 @@ function rootOf(name: string): bigint {
   const c = corpus.cases.find((x) => x.name === name);
   if (!c) throw new Error(`no corpus case ${name}`);
   return BigInt(`0x${c.writer_root}`);
+}
+
+function primitiveRef(tag: Primitive): SchemaRef {
+  const found = corpus.primitives.find((p) => p.tag === tag);
+  if (!found) throw new Error(`missing primitive ${tag}`);
+  return { kind: "concrete", id: BigInt(`0x${found.id}`), args: [] };
 }
 
 function bytes(build: (s: ByteSink) => void): Uint8Array {
@@ -63,7 +69,43 @@ const malformed: { name: string; root: bigint; bytes: Uint8Array; want?: RegExp 
   },
 ];
 
+// r[verify decode.whole-message]
+// r[verify validate.lengths]
+// r[verify validate.text]
+// r[verify validate.uniqueness]
+// r[verify exec.jit-optional]
 describe("hostile input — interpreter and JIT reject identically", () => {
+  // r[verify decode.chained]
+  it("decodes compact values back to back from one reader cursor", () => {
+    const wire = bytes((s) => {
+      s.u8(7);
+      s.u8(1);
+    });
+    const reader = new Reader(wire);
+    expect(decodeRef(reader, primitiveRef("u8"), reg, 0)).toBe(7n);
+    expect(reader.position()).toBe(1);
+    expect(decodeRef(reader, primitiveRef("bool"), reg, 0)).toBe(true);
+    expect(reader.remaining()).toBe(0);
+  });
+
+  // r[verify validate.dimensions]
+  it("rejects fixed arrays whose zero-wire count exceeds the schema-side cap", () => {
+    const arrayId = 0x9000_0000_0000_0001n;
+    const local = new Registry([
+      {
+        id: arrayId,
+        typeParams: [] as string[],
+        kind: {
+          kind: "array" as const,
+          element: primitiveRef("unit"),
+          dimensions: [BigInt(ZST_COUNT_CAP) + 1n],
+        },
+      },
+    ], corpus.primitives.map((p) => ({ id: BigInt(`0x${p.id}`), tag: p.tag as Primitive })));
+
+    expect(() => decodeCompact(new Uint8Array(), arrayId, local)).toThrow(/exceeds/);
+  });
+
   for (const m of malformed) {
     it(m.name, () => {
       // Interpreter.
@@ -104,6 +146,7 @@ describe("hostile input — interpreter and JIT reject identically", () => {
     expect(() => decodeCompact(idx99, root, reg)).toThrow(/bad variant index/);
   });
 
+  // r[verify ir.inlining]
   it("a self-recursive schema plans (callBlock) and round-trips", () => {
     // A list whose element refers back to itself: the cyclic schema lowers to a
     // callable block (`callBlock`) instead of inlining forever, so the plan stays
@@ -121,12 +164,10 @@ describe("hostile input — interpreter and JIT reject identically", () => {
     const value: Value = [[], [[]]];
     const wire = encode(value, selfId, recReg);
     // r[verify exec.strict-recording]
-    expect(recordJitFallbacks(buildPlan(selfId, selfId, recReg))).toContainEqual({
-      path: "$",
-      reason: "recursive callBlock is interpreted by the TypeScript JIT fallback",
-    });
+    expect(recordJitFallbacks(buildPlan(selfId, selfId, recReg))).toEqual([]);
     // Same-schema decode translates selfId -> selfId through the recursion blocks.
-    expect(compile(selfId, selfId, recReg)(wire)).toEqual(value);
+    expect(compile(selfId, selfId, recReg, { jit: true })(wire)).toEqual(value);
     expect(decode(wire, selfId, selfId, recReg)).toEqual(value);
+    expect([...compileEncoder(selfId, recReg, { jit: true })(value)]).toEqual([...wire]);
   });
 });

@@ -1,9 +1,10 @@
 // The typed front door against the Rust oracle: for every well-formed corpus
 // case, decode the writer bytes into an ergonomic typed value shaped by the
 // reader schema, re-encode it through the reader schema, and assert the bytes
-// equal Rust's reader-shaped bytes. This proves the typed remap is
+// equal Rust's reader-shaped bytes. This proves the public typed shape is
 // information-preserving: a vox TS peer can decode to ergonomic objects and
-// re-encode them losslessly.
+// re-encode them losslessly, with the JIT-enabled path constructing and
+// consuming that shape directly.
 //
 // A few cases also assert the concrete ergonomic shape (numbers not bigints,
 // plain objects not Maps, {tag,value} enums, canonical strings).
@@ -12,8 +13,8 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { Registry, bytesToHex, hexToBytes, schemaFromBytes } from "@bearcove/phon-schema";
-import type { Primitive } from "@bearcove/phon-schema";
-import { decodeTyped, encodeTyped } from "./index.ts";
+import type { Primitive, Schema, SchemaRef } from "@bearcove/phon-schema";
+import { buildPlan, compiledTypedDecoderSource, compiledTypedEncoderSource, decodeTyped, encodeTyped } from "./index.ts";
 import type { Typed, TypedEnum } from "./typed.ts";
 
 interface Case {
@@ -45,13 +46,21 @@ function caseByName(name: string): Case {
   return c;
 }
 
+function rootOf(name: string): bigint {
+  return BigInt(`0x${caseByName(name).writer_root}`);
+}
+
 function typedRoundTrip(c: Case): Typed {
   const writerRoot = BigInt(`0x${c.writer_root}`);
   const readerRoot = BigInt(`0x${c.reader_root}`);
-  const typed = decodeTyped(hexToBytes(c.writer_hex), writerRoot, readerRoot, reg);
-  const reHex = bytesToHex(encodeTyped(typed, readerRoot, reg));
+  const writerBytes = hexToBytes(c.writer_hex);
+  const typed = decodeTyped(writerBytes, writerRoot, readerRoot, reg, { jit: false });
+  const typedJit = decodeTyped(writerBytes, writerRoot, readerRoot, reg, { jit: true });
+  expect(typedJit).toEqual(typed);
+  const reHex = bytesToHex(encodeTyped(typedJit, readerRoot, reg, { jit: true }));
   expect(reHex).toBe(c.reader_hex);
-  return typed;
+  expect(bytesToHex(encodeTyped(typedJit, readerRoot, reg, { jit: false }))).toBe(c.reader_hex);
+  return typedJit;
 }
 
 describe("typed front door — round-trips through the Rust oracle", () => {
@@ -95,6 +104,48 @@ describe("typed front door — ergonomic shapes", () => {
     expect(typedRoundTrip(caseByName("enum_struct_variant"))).toEqual({ tag: "Move", x: 3, y: 4 });
   });
 
+  it("uses $tag when an enum struct variant has a real tag field", () => {
+    const primitive = (tag: Primitive): SchemaRef => ({
+      kind: "concrete",
+      id: BigInt(`0x${corpus.primitives.find((p) => p.tag === tag)!.id}`),
+      args: [],
+    });
+    const root = 0xfeed_cafe_0000_0001n;
+    const schemas: Schema[] = [
+      {
+        id: root,
+        typeParams: [],
+        kind: {
+          kind: "enum",
+          name: "Taggy",
+          variants: [
+            {
+              name: "Element",
+              index: 0,
+              payload: {
+                kind: "struct",
+                fields: [
+                  { name: "tag", schema: primitive("string"), required: true },
+                  { name: "x", schema: primitive("u32"), required: true },
+                ],
+              },
+            },
+            { name: "Text", index: 1, payload: { kind: "newtype", ref: primitive("string") } },
+          ],
+        },
+      },
+    ];
+    const localReg = new Registry(
+      schemas,
+      corpus.primitives.map((p) => ({ id: BigInt(`0x${p.id}`), tag: p.tag as Primitive })),
+    );
+    const typed = { $tag: "Element", tag: "main", x: 7 };
+    const bytes = encodeTyped(typed, root, localReg, { jit: true });
+    expect([...bytes]).toEqual([...encodeTyped(typed, root, localReg, { jit: false })]);
+    expect(decodeTyped(bytes, root, root, localReg, { jit: true })).toEqual(typed);
+    expect(decodeTyped(bytes, root, root, localReg, { jit: false })).toEqual(typed);
+  });
+
   it("char decodes to a string", () => {
     expect(typedRoundTrip(caseByName("char_value"))).toBe("λ");
   });
@@ -114,6 +165,31 @@ describe("typed front door — ergonomic shapes", () => {
   it("a defaulted reader-only field is null", () => {
     const t = typedRoundTrip(caseByName("struct_field_default")) as Record<string, Typed>;
     expect(t).toEqual({ x: 7, extra: null });
+  });
+});
+
+// r[verify typed.no-dynamic-bounce]
+describe("typed front door — direct public-shape JIT", () => {
+  it("generates struct decode code that constructs plain objects, not Value Maps", () => {
+    const root = rootOf("struct_mixed_align");
+    const source = compiledTypedDecoderSource(buildPlan(root, root, reg), root, reg);
+    expect(source).toContain("= {}");
+    expect(source).not.toContain("new Map");
+
+    const decoded = decodeTyped(hexToBytes(caseByName("struct_mixed_align").writer_hex), root, root, reg, { jit: true });
+    expect(decoded?.constructor).toBe(Object);
+  });
+
+  it("generates struct encode code that reads public object properties, not Value Map entries", () => {
+    const root = rootOf("struct_mixed_align");
+    const source = compiledTypedEncoderSource(root, reg);
+    expect(source).toContain('["a"]');
+    expect(source).not.toContain(".get(");
+
+    const typed = typedRoundTrip(caseByName("struct_mixed_align"));
+    const jitHex = bytesToHex(encodeTyped(typed, root, reg, { jit: true }));
+    const interpHex = bytesToHex(encodeTyped(typed, root, reg, { jit: false }));
+    expect(jitHex).toBe(interpHex);
   });
 });
 
@@ -153,9 +229,11 @@ describe("typed front door — recursion", () => {
         { value: 3, children: [{ value: 4, children: [] }] },
       ],
     };
-    const wire = encodeTyped(value, treeId, recReg);
+    const wire = encodeTyped(value, treeId, recReg, { jit: true });
+    expect([...wire]).toEqual([...encodeTyped(value, treeId, recReg, { jit: false })]);
     // Same-schema decode translates treeId -> treeId through the recursion blocks.
-    const back = decodeTyped(wire, treeId, treeId, recReg);
+    const back = decodeTyped(wire, treeId, treeId, recReg, { jit: true });
     expect(back).toEqual(value);
+    expect(decodeTyped(wire, treeId, treeId, recReg, { jit: false })).toEqual(value);
   });
 });

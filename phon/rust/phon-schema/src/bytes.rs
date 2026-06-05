@@ -324,6 +324,7 @@ impl<'a> Reader<'a> {
     /// zero-wire fixed arrays (`r[validate.bundles]`). Without this a valid
     /// `list`/`set` of zero-sized elements would fail to decode the moment the
     /// buffer is exhausted by the count alone.
+    // r[impl validate.lengths]
     pub fn read_len(&mut self, min_elem_size: usize) -> Result<usize, DecodeError> {
         let count = self.read_u32()? as usize;
         let remaining = self.remaining();

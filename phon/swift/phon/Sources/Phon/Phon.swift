@@ -7,4 +7,5 @@
 /// Swift consumes phon codegen output, so there is no Swift codegen module.
 ///
 /// Spec: `docs/content/spec.md` — "Swift", "The descriptor model".
+// r[impl crates.concern-separation]
 public enum Phon {}

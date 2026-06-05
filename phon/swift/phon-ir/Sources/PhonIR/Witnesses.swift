@@ -120,6 +120,39 @@ public extension SeqWitness {
             }
         )
     }
+
+    /// A `Set<Element>` carried on the wire as a unique sequence. Encode walks a
+    /// sorted snapshot so the byte stream is deterministic.
+    static func setOf<Element: Hashable & Comparable>(_ type: Element.Type) -> SeqWitness {
+        SeqWitness(
+            count: { $0.assumingMemoryBound(to: Set<Element>.self).pointee.count },
+            copyElements: { handle, dst in
+                let values = handle.assumingMemoryBound(to: Set<Element>.self).pointee.sorted()
+                for (i, value) in values.enumerated() {
+                    dst.advanced(by: i * MemoryLayout<Element>.stride)
+                        .assumingMemoryBound(to: Element.self)
+                        .initialize(to: value)
+                }
+            },
+            destroyElements: { elements, count in
+                for i in 0..<count {
+                    elements.advanced(by: i * MemoryLayout<Element>.stride)
+                        .assumingMemoryBound(to: Element.self)
+                        .deinitialize(count: 1)
+                }
+            },
+            construct: { handle, src, count in
+                var set = Set<Element>(minimumCapacity: count)
+                for i in 0..<count {
+                    let value = src.advanced(by: i * MemoryLayout<Element>.stride)
+                        .assumingMemoryBound(to: Element.self)
+                        .move()
+                    set.insert(value)
+                }
+                handle.assumingMemoryBound(to: Set<Element>.self).initialize(to: set)
+            }
+        )
+    }
 }
 
 // MARK: - Map (string-keyed)
