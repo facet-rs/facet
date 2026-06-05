@@ -378,7 +378,7 @@ Verified in the Vox checkout during the bridge audit:
   tests, and `vox-tcp` passes its focused transport suite with 2 tests.
 - Vox Tracey validation is clean across Rust, Swift, and TypeScript. Current
   coverage is Rust 175/175 implemented and 135/175 verified, Swift 160/175
-  implemented and 113/175 verified, and TypeScript 175/175 implemented and
+  implemented and 117/175 verified, and TypeScript 175/175 implemented and
   150/175 verified. That is not a global Vox Tracey completion claim: the
   remaining unverified rules include broad transport/session/RPC surfaces
   outside this Phon ecosystem bridge roadmap.
@@ -407,6 +407,16 @@ Verified in the Vox checkout during the bridge audit:
   test exercises generated client/dispatcher plumbing from a Rust trait, while
   Swift and TypeScript codegen tests prove generated method tables, schema
   closures, and method IDs are derived from the Rust `ServiceDescriptor`.
+- Swift generated RPC caller, service, handler, and dispatcher surfaces now
+  have Tracey-backed codegen coverage. The `vox-codegen` Swift target test
+  `generated_swift_emits_rpc_caller_handler_and_dispatch_shapes` proves
+  generated caller protocols expose async methods matching the source service,
+  generated clients route through `VoxConnection.call` with method schema and
+  registry data, generated handler protocols preserve method signatures, and
+  generated dispatchers route by method ID, invoke the handler, map user
+  fallible errors onto the wire `VoxError.user` arm, and reply through
+  `TaskMessage`. Tracey now reports no remaining untested Swift `rpc.caller`,
+  `rpc.handler`, or `rpc.service.*` rules.
 - Swift core session/RPC envelope behavior now has Tracey-backed runtime
   coverage in `ConnectionFailureTests`: the handshake advertises the Phon
   Message schema closure, rejects an unsupported peer Message schema with
