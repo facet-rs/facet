@@ -380,7 +380,7 @@ Verified in the Vox checkout during the bridge audit:
   passes its focused transport suite with 1 test.
 - Vox Tracey validation is clean across Rust, Swift, and TypeScript. Current
   coverage is Rust 175/175 implemented and 135/175 verified, Swift 160/175
-  implemented and 134/175 verified, and TypeScript 175/175 implemented and
+  implemented and 148/175 verified, and TypeScript 175/175 implemented and
   173/175 verified. That is not a global Vox Tracey completion claim: the
   remaining TypeScript unverified rules are the broad `rpc` and
   `rpc.one-service-per-connection` umbrella surfaces.
@@ -518,6 +518,23 @@ Verified in the Vox checkout during the bridge audit:
   `vox-ws` proves WebSocket link/source construction, send/recv forwarding, and
   EOF after close. Tracey now reports no remaining untested TypeScript `link.*`
   or `transport.*` rules.
+- Swift stream link behavior now has Tracey-backed coverage in
+  `TransportTests` against the actual `NIOFrameLink` and length-prefixed frame
+  codec. `tcpStreamLinkPreservesBoundariesOrderEmptyPayloadsAndEof` proves TCP
+  stream links preserve message boundaries, empty payloads, delivery order,
+  owned receive buffers, and repeat EOF. `tcpStreamLinkSendsFramesClosesAndRejectsOversizedPayloads`
+  proves outbound frame-size limits reject before publication, committed frames
+  are delivered exactly once, and graceful close reaches the peer after
+  committed frames. `tcpStreamLinkReceiveErrorIsTerminal` proves decode errors
+  are terminal, and `unixStreamLinkConnectsToLocalSocketTransport` proves the
+  local Unix-socket stream constructor. `singleLinkSourceYieldsOneFreshAttachment`
+  covers the Swift `link.split` single-attachment source. The Swift
+  `NIOFrameLink` now applies `setMaxFrameSize` to outbound sends as well as
+  inbound decoding, and receive-side link errors finish the stream. Tracey now
+  reports no remaining untested Swift `link.*`, `transport.stream`, or
+  `transport.stream.*` rules; `link.tx.cancel-safe` remains uncovered because
+  Swift has no explicit cancellation-safe send contract yet, and memory,
+  in-process, and WebSocket transports are not Swift implementations.
 - TypeScript runtime observability now has Tracey-backed coverage for its
   local-only diagnostics surfaces. `vox-core` `src/observer.test.ts` proves
   `setVoxLogger` installs and clears a local runtime observer without a
@@ -579,7 +596,7 @@ Verified in the Vox checkout during the bridge audit:
   `Connection` marks the session internally closed without sending a root close
   frame and waits for retained virtual connections before driver teardown. The
   focused Swift suite passes 26/26, the full Swift `vox-runtime` package test
-  suite passes 46/46, and
+  suite passes 51/51, and
   `swift build --package-path swift/subject` still builds the generated Swift
   subject package.
 - Vox `session.keepalive` now has Tracey-backed protocol keepalive coverage
