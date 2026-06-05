@@ -373,15 +373,17 @@ Verified in the Vox checkout during the bridge audit:
 
 - TypeScript packages, generated TypeScript, and the sibling Phon TypeScript
   packages pass `pnpm check` from `~/vox`.
-- TypeScript `vox-core` passes its full Vitest suite with 69 tests; the focused
+- TypeScript `vox-core` passes its full Vitest suite with 70 tests; the focused
   session/schema/channel runtime slice passes 50 tests, `vox-wire` passes 20
-  tests, and `vox-tcp` passes its focused transport suite with 2 tests.
+  tests, `vox-inprocess` passes its focused transport suite with 1 test,
+  `vox-tcp` passes its focused transport suite with 5 tests, and `vox-ws`
+  passes its focused transport suite with 1 test.
 - Vox Tracey validation is clean across Rust, Swift, and TypeScript. Current
   coverage is Rust 175/175 implemented and 135/175 verified, Swift 160/175
   implemented and 118/175 verified, and TypeScript 175/175 implemented and
-  150/175 verified. That is not a global Vox Tracey completion claim: the
-  remaining unverified rules include broad transport/session/RPC surfaces
-  outside this Phon ecosystem bridge roadmap.
+  169/175 verified. That is not a global Vox Tracey completion claim: the
+  remaining TypeScript unverified rules are runtime observability plus broad
+  `rpc` and `rpc.one-service-per-connection` umbrella surfaces.
 - The roadmap-relevant Vox rules for subject teardown, channel shape, channel
   allocation/direction/lifecycle, channel payload indexes, connection-close
   channel errors, root and virtual connection behavior, virtual connection
@@ -482,6 +484,17 @@ Verified in the Vox checkout during the bridge audit:
   capacity is released, while `src/channeling/registry.test.ts` proves
   per-channel credit exhaustion blocks outgoing data until credit is granted.
   Tracey now reports no remaining untested TypeScript `rpc.flow-control` rule.
+- TypeScript link and transport behavior now has Tracey-backed coverage across
+  the concrete transport packages. `vox-inprocess` proves owned byte buffers,
+  message boundaries, empty payloads, in-order delivery, send-after-close
+  errors, graceful close, and repeated EOF for the in-process/memory link.
+  `vox-core` proves `singleLinkSource` yields one attachment and preserves the
+  optional client hello. `vox-tcp` proves stream/local length-prefixed
+  round-trips, oversized frame rejection before writing, complete-frame send
+  publication, terminal receive errors, and cancel-safe partial-frame receive.
+  `vox-ws` proves WebSocket link/source construction, send/recv forwarding, and
+  EOF after close. Tracey now reports no remaining untested TypeScript `link.*`
+  or `transport.*` rules.
 - TypeScript generated RPC caller, service, handler, and session setup surfaces
   now have Tracey-backed codegen coverage. The `vox-codegen` TypeScript target
   test `generated_typescript_emits_rpc_caller_handler_and_session_shapes`
