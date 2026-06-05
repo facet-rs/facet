@@ -368,13 +368,13 @@ Verified in the Vox checkout during the bridge audit:
 
 - TypeScript packages, generated TypeScript, and the sibling Phon TypeScript
   packages pass `pnpm check` from `~/vox`.
-- TypeScript `vox-core` passes its full Vitest suite with 63 tests; the focused
-  session/schema/channel runtime slice passes 44 tests, and `vox-tcp` passes
-  its focused transport suite with 2 tests.
+- TypeScript `vox-core` passes its full Vitest suite with 64 tests; the focused
+  session/schema/channel runtime slice passes 45 tests, `vox-wire` passes 20
+  tests, and `vox-tcp` passes its focused transport suite with 2 tests.
 - Vox Tracey validation is clean across Rust, Swift, and TypeScript. Current
-  coverage is Rust 175/175 implemented and 128/175 verified, Swift 160/175
+  coverage is Rust 175/175 implemented and 131/175 verified, Swift 160/175
   implemented and 113/175 verified, and TypeScript 175/175 implemented and
-  134/175 verified. That is not a global Vox Tracey completion claim: the
+  139/175 verified. That is not a global Vox Tracey completion claim: the
   remaining unverified rules include broad transport/session/RPC surfaces
   outside this Phon ecosystem bridge roadmap.
 - The roadmap-relevant Vox rules for subject teardown, channel shape, channel
@@ -417,6 +417,16 @@ Verified in the Vox checkout during the bridge audit:
   messages, allocates request IDs from parity, and observes responses on the
   same request IDs. Tracey now reports no remaining untested TypeScript
   `session.*`, `rpc.request.*`, or `rpc.response.*` rules.
+- TypeScript fallible method and `VoxError` behavior now has Tracey-backed
+  coverage in both the runtime and generated-client shape. `vox-wire` tests
+  prove `RpcError` discriminants distinguish user, unknown-method,
+  invalid-payload, cancelled, and indeterminate outcomes; `vox-core`
+  `src/session.test.ts` proves actual `Result<T, VoxError<E>>` response bytes
+  map to `RpcError` without closing the connection; and the `vox-codegen`
+  TypeScript target test proves generated fallible client methods return
+  `{ ok: true, value }` for success, return `{ ok: false, error }` only for
+  user errors, and rethrow non-user errors. Tracey now reports no remaining
+  untested TypeScript `rpc.fallible.*` or `rpc.error.*` rules.
 - Swift inbound virtual connection acceptance now has focused runtime coverage
   in `swift test --package-path swift/vox-runtime --filter
   ConnectionFailureTests`: `inboundOpenConnectionAcceptsAndDispatchesOnVirtualConnection`
@@ -444,7 +454,7 @@ Verified in the Vox checkout during the bridge audit:
   `ConnectionClose`, verifies receiving `ConnectionClose` marks the virtual
   handle closed, and verifies a later peer request on the closed ID sends a
   `ProtocolError`. The focused Swift suite passes 24/24, the focused TypeScript
-  session suite now passes 25/25, and Vox `pnpm check` remains green.
+  session suite now passes 26/26, and Vox `pnpm check` remains green.
 - TypeScript caller liveness is now fully Tracey-verified: the focused
   `vox-core` session suite proves virtual connections stay live while any
   caller handle for that connection remains undisposed, then send
