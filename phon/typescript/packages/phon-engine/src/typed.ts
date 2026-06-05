@@ -733,7 +733,9 @@ function typedCanonicalKey(value: Typed): string {
   if (typeof value === "object") {
     if ("kind" in value) return canonicalKey(value as Value);
     const obj = value as { readonly [field: string]: Typed };
-    return `o:{${Object.keys(obj).toSorted().map((key) => `${key}=${typedCanonicalKey(obj[key]!)}`).join(",")}}`;
+    const keys = Object.keys(obj);
+    keys.sort((a, b) => a.localeCompare(b));
+    return `o:{${keys.map((key) => `${key}=${typedCanonicalKey(obj[key]!)}`).join(",")}}`;
   }
   throw new EncodeError("unsupported typed value");
 }
