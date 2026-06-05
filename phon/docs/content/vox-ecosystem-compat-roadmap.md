@@ -372,7 +372,7 @@ Verified in the Vox checkout during the bridge audit:
   `vox-tcp` passes its focused transport suite with 2 tests.
 - Vox Tracey validation is clean across Rust, Swift, and TypeScript. Current
   coverage is Rust 175/175 implemented and 128/175 verified, Swift 160/175
-  implemented and 100/175 verified, and TypeScript 175/175 implemented and
+  implemented and 113/175 verified, and TypeScript 175/175 implemented and
   114/175 verified. That is not a global Vox Tracey completion claim: the
   remaining unverified rules include broad transport/session/RPC surfaces
   outside this Phon ecosystem bridge roadmap.
@@ -401,6 +401,13 @@ Verified in the Vox checkout during the bridge audit:
   test exercises generated client/dispatcher plumbing from a Rust trait, while
   Swift and TypeScript codegen tests prove generated method tables, schema
   closures, and method IDs are derived from the Rust `ServiceDescriptor`.
+- Swift core session/RPC envelope behavior now has Tracey-backed runtime
+  coverage in `ConnectionFailureTests`: the handshake advertises the Phon
+  Message schema closure, rejects an unsupported peer Message schema with
+  `Sorry`, scopes the schema to the session, preserves connection IDs on
+  messages, allocates request IDs, and observes one response per request.
+  Tracey now reports no remaining untested Swift `session.handshake.*`,
+  `session.message.*`, `rpc.request.*`, or `rpc.response.*` rules.
 - Swift inbound virtual connection acceptance now has focused runtime coverage
   in `swift test --package-path swift/vox-runtime --filter
   ConnectionFailureTests`: `inboundOpenConnectionAcceptsAndDispatchesOnVirtualConnection`
@@ -427,7 +434,7 @@ Verified in the Vox checkout during the bridge audit:
   `src/session.test.ts` verifies the last virtual caller sends
   `ConnectionClose`, verifies receiving `ConnectionClose` marks the virtual
   handle closed, and verifies a later peer request on the closed ID sends a
-  `ProtocolError`. The focused Swift suite passes 21/21, the focused TypeScript
+  `ProtocolError`. The focused Swift suite passes 24/24, the focused TypeScript
   session suite now passes 22/22, and Vox `pnpm check` remains green.
 - TypeScript caller liveness is now fully Tracey-verified: the focused
   `vox-core` session suite proves virtual connections stay live while any
@@ -439,7 +446,8 @@ Verified in the Vox checkout during the bridge audit:
   virtual `Connection` reference sends `ConnectionClose`; dropping the root
   `Connection` marks the session internally closed without sending a root close
   frame and waits for retained virtual connections before driver teardown. The
-  full Swift `vox-runtime` package test suite passes 43/43, and
+  focused Swift suite passes 24/24, the full Swift `vox-runtime` package test
+  suite passes 44/44, and
   `swift build --package-path swift/subject` still builds the generated Swift
   subject package.
 - Vox `session.keepalive` now has Tracey-backed protocol keepalive coverage
