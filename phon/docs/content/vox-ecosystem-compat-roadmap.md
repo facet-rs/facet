@@ -380,7 +380,7 @@ Verified in the Vox checkout during the bridge audit:
   passes its focused transport suite with 1 test.
 - Vox Tracey validation is clean across Rust, Swift, and TypeScript. Current
   coverage is Rust 175/175 implemented and 162/175 verified, Swift 163/175
-  implemented and 159/175 verified, and TypeScript 175/175 implemented and
+  implemented and 160/175 verified, and TypeScript 175/175 implemented and
   173/175 verified. That is not a global Vox Tracey completion claim: the
   remaining TypeScript unverified rules are the broad `rpc` and
   `rpc.one-service-per-connection` umbrella surfaces, while the remaining
@@ -479,6 +479,13 @@ Verified in the Vox checkout during the bridge audit:
   request, then proves a later channel item is still delivered without a
   protocol error. Tracey now reports no remaining untested Swift `rpc.cancel`
   or `rpc.cancel.channels` rules.
+- Swift one-service-per-connection behavior now has Tracey-backed runtime
+  coverage in `ConnectionFailureTests`.
+  `inboundOpenConnectionAcceptsAndDispatchesOnVirtualConnection` keeps the
+  root connection on its original dispatcher, accepts an inbound virtual
+  connection with a separate dispatcher, and proves requests on that virtual
+  connection are handled by the accepted service dispatcher. Tracey now reports
+  no remaining untested Swift `rpc.one-service-per-connection` rule.
 - Swift runtime pipelining now has Tracey-backed coverage in
   `ConnectionFailureTests`. `slowIncomingRequestDoesNotBlockLaterRequest`
   keeps the root connection alive, feeds two inbound requests through
