@@ -297,16 +297,16 @@ Already in place on the Phon side:
   processes.
 - Current Vox ecosystem bridge matrix verification passes:
   `cargo nextest run -p spec-tests -E 'test(ecosystem_bridge) | test(dodeca) | test(dibs) | test(styx) | test(stax) | test(helix) | test(hotmeal) | test(tracey)' --no-fail-fast -j 1`
-  ran 416/416 across Rust TCP, Swift TCP, TypeScript TCP, and TypeScript
+  ran 424/424 across Rust TCP, Swift TCP, TypeScript TCP, and TypeScript
   WebSocket, in both harness-to-subject and subject-to-harness directions,
   including the generated Helix `TraceService` aggregate root plus Dodeca
   image processor and search indexer roots. This was reverified against the
   live `~/vox` checkout after the TypeScript direct-shape typed JIT cleanup and
   after increasing the Rust spec harness and Rust subject runtime stack budget
-  for large recursive schema closure planning; the run started 416 selected
-  tests across 4 binaries and finished with `416 passed, 511 skipped`.
-  A post-run process sweep found no lingering `subject-*` or echo-server
-  processes.
+  for large recursive schema closure planning; the current run started 424
+  selected tests across 4 binaries and finished with `424 passed, 511 skipped`.
+  A post-run process sweep found no lingering `subject-*`, echo-server,
+  `nextest`, Swift build, or Swift frontend processes.
 - Focused generated Dodeca image/search bridge verification also passes:
   `cargo nextest run -p spec-tests -E 'test(echo_dodeca_image_processor_fixture) | test(echo_dodeca_search_indexer_fixture)' --no-fail-fast -j 1`
   ran 16/16 in `~/vox` across Rust TCP, Swift TCP, TypeScript TCP, and
