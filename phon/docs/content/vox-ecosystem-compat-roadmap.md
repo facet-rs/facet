@@ -371,8 +371,8 @@ Verified in the Vox checkout during the bridge audit:
 - TypeScript `vox-core` passes its focused runtime suite with 54 tests, and
   `vox-tcp` passes its focused transport suite with 2 tests.
 - Vox Tracey validation is clean across Rust, Swift, and TypeScript. Current
-  coverage is Rust 175/175 implemented and 128/175 verified, Swift 156/175
-  implemented and 96/175 verified, and TypeScript 175/175 implemented and
+  coverage is Rust 175/175 implemented and 128/175 verified, Swift 160/175
+  implemented and 100/175 verified, and TypeScript 175/175 implemented and
   114/175 verified. That is not a global Vox Tracey completion claim: the
   remaining unverified rules include broad transport/session/RPC surfaces
   outside this Phon ecosystem bridge roadmap.
@@ -380,7 +380,8 @@ Verified in the Vox checkout during the bridge audit:
   allocation/direction/lifecycle, channel payload indexes, connection-close
   channel errors, root and virtual connection behavior, virtual connection
   opening/acceptance, virtual connection close semantics, keepalive teardown,
-  and nested-channel rejection, plus the Rust-trait source-of-truth rule for
+  caller liveness teardown, and nested-channel rejection, plus the
+  Rust-trait source-of-truth rule for
   generated service surfaces, are traced with implementation and verification
   references: `hosted.subject.lifecycle`, `service-macro.is-source-of-truth`,
   `rpc.channel`,
@@ -390,7 +391,10 @@ Verified in the Vox checkout during the bridge audit:
   `connection.close`,
   `connection.close.semantics`,
   `rpc.virtual-connection.open`, `rpc.virtual-connection.accept`,
-  `rpc.channel.connection-closure`, `session.keepalive`,
+  `rpc.channel.connection-closure`, `rpc.caller.liveness.refcounted`,
+  `rpc.caller.liveness.last-drop-closes-connection`,
+  `rpc.caller.liveness.root-internal-close`,
+  `rpc.caller.liveness.root-teardown-condition`, `session.keepalive`,
   `rpc.channel.direct-args`, and `rpc.channel.no-collections`.
 - Vox `service-macro.is-source-of-truth` now has Tracey-backed proof across
   Rust, Swift, and TypeScript: the Rust `#[vox::service]` macro end-to-end
@@ -430,6 +434,14 @@ Verified in the Vox checkout during the bridge audit:
   caller handle for that connection remains undisposed, then send
   `ConnectionClose` only after the last caller handle is disposed. This closes
   TypeScript's `rpc.caller.liveness.*` untested set.
+- Swift caller liveness is now Tracey-backed through `Connection` lifetime,
+  which is the Swift runtime's public caller handle. Dropping the last outbound
+  virtual `Connection` reference sends `ConnectionClose`; dropping the root
+  `Connection` marks the session internally closed without sending a root close
+  frame and waits for retained virtual connections before driver teardown. The
+  full Swift `vox-runtime` package test suite passes 43/43, and
+  `swift build --package-path swift/subject` still builds the generated Swift
+  subject package.
 - Vox `session.keepalive` now has Tracey-backed protocol keepalive coverage
   for Ping/Pong handling and missing-Pong teardown in Rust, Swift, and
   TypeScript. Swift's focused keepalive path passes in
@@ -1668,10 +1680,10 @@ model or routing ordinary generated DTOs through generic `Value`.
 6. Ensure subjects and channel tasks die on disconnect and inactivity. Subject
    process teardown is covered in Vox by `hosted.subject.lifecycle`, and
    channel close-all teardown is covered by `rpc.channel.connection-closure`;
-   session keepalive teardown is covered by `session.keepalive`, and TypeScript
-   caller liveness teardown is covered by `rpc.caller.liveness.*`. Keep the
-   remaining focus on Swift caller liveness and broader end-to-end session task
-   teardown outside keepalive.
+   session keepalive teardown is covered by `session.keepalive`, and Swift and
+   TypeScript caller liveness teardown is covered by
+   `rpc.caller.liveness.*`. Keep the remaining focus on broader end-to-end
+   session task teardown outside keepalive.
 7. Add external transport capability handling and diagnostics.
 
 ### Phase 7: Benchmark and gate Vox 1.0 compatibility
