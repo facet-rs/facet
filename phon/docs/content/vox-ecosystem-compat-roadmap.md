@@ -1417,9 +1417,13 @@ TypeScript is not a Rust/Swift descriptor-memory target and is not the first
 native-performance gate. For Vox 1.0, the required part is correctness plus an
 idiomatic generated-client boundary: browser and websocket consumers must see
 ordinary JavaScript/TypeScript DTO shapes, not a generic Phon `Value` model.
-Source-specialized TypeScript JIT is useful for browser-hot generated DTOs, but
-it is prioritized after Rust and Swift native JIT unless consumer benchmarks
-prove the TypeScript client path is the bottleneck:
+The previous generic-`Value` shaped TypeScript engine remains useful as the
+oracle, dynamic API, and fallback implementation, but it is not the generated
+typed bridge and should not be mistaken for the performance path. A
+source-specialized TypeScript JIT is only worth carrying when it emits direct
+public-object encode/decode code for browser-hot generated DTOs. That work is
+prioritized after Rust and Swift native JIT unless consumer benchmarks prove the
+TypeScript client path is the bottleneck:
 
 1. Keep interpreter/codegen correctness for every supported schema kind.
 2. Keep generated JavaScript source-specialization behavior aligned with the
@@ -1598,10 +1602,11 @@ Phases 4 through 6 are release gates after interpreter correctness, but they
 are not equally urgent performance gates. Rust native JIT and Swift native JIT
 are priority 1 because they cover the server, engine, and Swift-app hot paths.
 Generated TypeScript bridge correctness and public JavaScript-shape APIs remain
-part of the compatibility gate. TypeScript source-specialized JIT is the next
-performance tier for browser-hot generated DTOs, and should be justified by the
-benchmarks already called out in this roadmap rather than by importing the
-Rust/Swift descriptor-memory model.
+part of the compatibility gate. TypeScript source-specialized JIT is a measured
+follow-up tier for browser-hot generated DTOs, not a parallel requirement to
+Rust/Swift native JIT. It should be justified by the benchmarks already called
+out in this roadmap rather than by importing the Rust/Swift descriptor-memory
+model or routing ordinary generated DTOs through generic `Value`.
 
 ### Phase 4: Bring Rust JIT to ecosystem coverage
 
