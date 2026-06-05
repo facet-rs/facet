@@ -372,21 +372,22 @@ Verified in the Vox checkout during the bridge audit:
   `vox-tcp` passes its focused transport suite with 2 tests.
 - Vox Tracey validation is clean across Rust, Swift, and TypeScript. Current
   coverage is Rust 175/175 implemented and 128/175 verified, Swift 156/175
-  implemented and 94/175 verified, and TypeScript 175/175 implemented and
-  110/175 verified. That is not a global Vox Tracey completion claim: the
+  implemented and 96/175 verified, and TypeScript 175/175 implemented and
+  113/175 verified. That is not a global Vox Tracey completion claim: the
   remaining unverified rules include broad transport/session/RPC surfaces
   outside this Phon ecosystem bridge roadmap.
 - The roadmap-relevant Vox rules for subject teardown, channel shape, channel
   allocation/direction/lifecycle, channel payload indexes, connection-close
-  channel errors, virtual connection opening/acceptance, virtual connection
-  close semantics, keepalive teardown, and nested-channel rejection, plus the
-  Rust-trait source-of-truth rule for
+  channel errors, root and virtual connection behavior, virtual connection
+  opening/acceptance, virtual connection close semantics, keepalive teardown,
+  and nested-channel rejection, plus the Rust-trait source-of-truth rule for
   generated service surfaces, are traced with implementation and verification
   references: `hosted.subject.lifecycle`, `service-macro.is-source-of-truth`,
   `rpc.channel`,
   `rpc.channel.allocation`, `rpc.channel.direction`, `rpc.channel.lifecycle`,
-  `rpc.channel.payload-encoding`, `connection.virtual`, `connection.open`,
-  `connection.open.rejection`, `connection.close`,
+  `rpc.channel.payload-encoding`, `connection`, `connection.root`,
+  `connection.virtual`, `connection.open`, `connection.open.rejection`,
+  `connection.close`,
   `connection.close.semantics`,
   `rpc.virtual-connection.open`, `rpc.virtual-connection.accept`,
   `rpc.channel.connection-closure`, `session.keepalive`,
@@ -409,7 +410,11 @@ Verified in the Vox checkout during the bridge audit:
   `ConnectionOpen`, observes `ConnectionAccept`, then routes a call and response
   on the accepted non-root connection handle. The same focused suite also proves
   TypeScript `ConnectionReject` behavior when an inbound virtual connection is
-  opened without a configured acceptor.
+  opened without a configured acceptor, and verifies root connection settings
+  plus the public `closeConnection(0)` rejection path. Swift's focused
+  connection suite now also verifies the exposed root connection ID and a
+  successful root request/response path. Tracey reports no remaining untested
+  `connection.*` rules for Swift or TypeScript.
 - Swift and TypeScript virtual connection close semantics now have Tracey-backed
   coverage. Swift's `ConnectionFailureTests` injects `ConnectionClose`, verifies
   the pending virtual call fails, verifies an existing local handle cannot send
