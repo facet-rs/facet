@@ -373,7 +373,7 @@ Verified in the Vox checkout during the bridge audit:
 - Vox Tracey validation is clean across Rust, Swift, and TypeScript. Current
   coverage is Rust 175/175 implemented and 127/175 verified, Swift 156/175
   implemented and 91/175 verified, and TypeScript 175/175 implemented and
-  103/175 verified. That is not a global Vox Tracey completion claim: the
+  105/175 verified. That is not a global Vox Tracey completion claim: the
   remaining unverified rules include broad transport/session/RPC surfaces
   outside this Phon ecosystem bridge roadmap.
 - The roadmap-relevant Vox rules for subject teardown, channel shape, channel
@@ -392,6 +392,12 @@ Verified in the Vox checkout during the bridge audit:
   injects a peer `ConnectionOpen`, observes `ConnectionAccept`, and verifies a
   request on the accepted non-root connection dispatches through the installed
   service dispatcher.
+- TypeScript virtual connection opening and acceptance now have focused
+  `vox-core` runtime coverage in `pnpm --filter @bearcove/vox-core exec vitest
+  run src/session.test.ts`: the parity test opens virtual connections from both
+  session roles and waits for accepts, and the inbound test injects
+  `ConnectionOpen`, observes `ConnectionAccept`, then routes a call and response
+  on the accepted non-root connection handle.
 - Vox `session.keepalive` now has Tracey-backed protocol keepalive coverage
   for Ping/Pong handling and missing-Pong teardown in Rust, Swift, and
   TypeScript. Swift's focused keepalive path passes in
