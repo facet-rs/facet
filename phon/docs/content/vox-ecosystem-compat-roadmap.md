@@ -373,7 +373,7 @@ Verified in the Vox checkout during the bridge audit:
 - Vox Tracey validation is clean across Rust, Swift, and TypeScript. Current
   coverage is Rust 175/175 implemented and 128/175 verified, Swift 156/175
   implemented and 92/175 verified, and TypeScript 175/175 implemented and
-  106/175 verified. That is not a global Vox Tracey completion claim: the
+  108/175 verified. That is not a global Vox Tracey completion claim: the
   remaining unverified rules include broad transport/session/RPC surfaces
   outside this Phon ecosystem bridge roadmap.
 - The roadmap-relevant Vox rules for subject teardown, channel shape, channel
@@ -384,7 +384,8 @@ Verified in the Vox checkout during the bridge audit:
   references: `hosted.subject.lifecycle`, `service-macro.is-source-of-truth`,
   `rpc.channel`,
   `rpc.channel.allocation`, `rpc.channel.direction`, `rpc.channel.lifecycle`,
-  `rpc.channel.payload-encoding`, `connection.virtual`,
+  `rpc.channel.payload-encoding`, `connection.virtual`, `connection.open`,
+  `connection.open.rejection`,
   `rpc.virtual-connection.open`, `rpc.virtual-connection.accept`,
   `rpc.channel.connection-closure`, `session.keepalive`,
   `rpc.channel.direct-args`, and `rpc.channel.no-collections`.
@@ -404,7 +405,9 @@ Verified in the Vox checkout during the bridge audit:
   run src/session.test.ts`: the parity test opens virtual connections from both
   session roles and waits for accepts, and the inbound test injects
   `ConnectionOpen`, observes `ConnectionAccept`, then routes a call and response
-  on the accepted non-root connection handle.
+  on the accepted non-root connection handle. The same focused suite also proves
+  TypeScript `ConnectionReject` behavior when an inbound virtual connection is
+  opened without a configured acceptor.
 - Vox `session.keepalive` now has Tracey-backed protocol keepalive coverage
   for Ping/Pong handling and missing-Pong teardown in Rust, Swift, and
   TypeScript. Swift's focused keepalive path passes in
