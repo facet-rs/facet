@@ -379,13 +379,13 @@ Verified in the Vox checkout during the bridge audit:
   `vox-tcp` passes its focused transport suite with 5 tests, and `vox-ws`
   passes its focused transport suite with 1 test.
 - Vox Tracey validation is clean across Rust, Swift, and TypeScript. Current
-  coverage is Rust 175/175 implemented and 162/175 verified, Swift 162/175
-  implemented and 157/175 verified, and TypeScript 175/175 implemented and
+  coverage is Rust 175/175 implemented and 162/175 verified, Swift 163/175
+  implemented and 158/175 verified, and TypeScript 175/175 implemented and
   173/175 verified. That is not a global Vox Tracey completion claim: the
   remaining TypeScript unverified rules are the broad `rpc` and
   `rpc.one-service-per-connection` umbrella surfaces, while the remaining
   Swift holes are concentrated in uncovered non-Swift transports/debug
-  observability/inbound request-limit rules and five untested implemented
+  observability rules and five untested implemented
   umbrella or lifecycle rules. The remaining Rust unverified rules are now
   concentrated in transport packages, observability emission, broad `rpc` /
   one-service umbrella surfaces, the response-finalization rule whose desired
@@ -459,6 +459,10 @@ Verified in the Vox checkout during the bridge audit:
   parity-based request IDs; the new
   `outboundMaxConcurrentRequestsWaitsForPeerLimit` test proves a peer limit of
   one blocks the second request until the first response releases capacity;
+  `inboundMaxConcurrentRequestsViolationClosesConnection` proves a peer request
+  above Swift's locally advertised inbound request limit sends
+  `ProtocolError("rpc.flow-control.max-concurrent-requests.inbound")` and
+  closes the driver;
   `queuedOutboundRequestFailsWhenLimitedSessionCloses` proves a queued request
   fails and is not replayed when that limited session closes; the timeout tests
   prove Swift sends `CancelRequest` and ignores late responses while the
@@ -468,8 +472,7 @@ Verified in the Vox checkout during the bridge audit:
   `session.peer`, `session.role`, `session.parity`,
   `session.connection-settings*`, `session.protocol-error`,
   `rpc.flow-control`, `rpc.flow-control.max-concurrent-requests*`, or
-  `rpc.observability.session-errors` rules except for the still-unimplemented
-  Swift inbound max-concurrent enforcement rule. It also closes the Swift
+  `rpc.observability.session-errors` rules. It also closes the Swift
   `rpc.cancel` rule while leaving `rpc.cancel.channels` as real remaining
   channel-lifecycle coverage.
 - Swift runtime pipelining now has Tracey-backed coverage in
