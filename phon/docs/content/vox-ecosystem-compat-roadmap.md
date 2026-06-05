@@ -379,7 +379,7 @@ Verified in the Vox checkout during the bridge audit:
   `vox-tcp` passes its focused transport suite with 5 tests, and `vox-ws`
   passes its focused transport suite with 1 test.
 - Vox Tracey validation is clean across Rust, Swift, and TypeScript. Current
-  coverage is Rust 175/175 implemented and 136/175 verified, Swift 162/175
+  coverage is Rust 175/175 implemented and 145/175 verified, Swift 162/175
   implemented and 157/175 verified, and TypeScript 175/175 implemented and
   173/175 verified. That is not a global Vox Tracey completion claim: the
   remaining TypeScript unverified rules are the broad `rpc` and
@@ -536,6 +536,16 @@ Verified in the Vox checkout during the bridge audit:
   `vox-ws` proves WebSocket link/source construction, send/recv forwarding, and
   EOF after close. Tracey now reports no remaining untested TypeScript `link.*`
   or `transport.*` rules.
+- Rust stream and memory link behavior now has Tracey-backed coverage in
+  `vox-stream` and `vox-core`. The focused run
+  `cargo nextest run -p vox-core -p vox-stream -E 'test(memory_link_preserves_boundaries_order_and_close) | test(round_trip_single) | test(multiple_messages_in_order) | test(eof_on_peer_close) | test(recv_error_is_terminal)'`
+  passes 5/5. It proves `MemoryLink` preserves message boundaries, empty
+  payloads, order, and graceful close; `StreamLink` splits into independent
+  halves over arbitrary Tokio read/write pairs, preserves message boundaries
+  and order, yields owned receive payloads, preserves graceful close ordering,
+  and treats a partial-frame receive error as terminal. Tracey now reports no
+  remaining untested Rust `link.*`, `transport.memory`, or
+  `transport.stream.kinds` rules.
 - Swift stream link behavior now has Tracey-backed coverage in
   `TransportTests` against the actual `NIOFrameLink` and length-prefixed frame
   codec. `tcpStreamLinkPreservesBoundariesOrderEmptyPayloadsAndEof` proves TCP
