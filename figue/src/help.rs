@@ -2442,6 +2442,13 @@ fn write_arg_help(out: &mut String, arg: &ArgSchema, config: &HelpConfig) {
                 arg.value().type_identifier().to_uppercase()
             };
             out.push_str(&format!(" <{}>", placeholder));
+
+            // Append the default value or required text
+            if let Some(default) = arg.default() {
+                out.push_str(&format!(" [Default: `{}`]", config_value_summary(default)));
+            } else {
+                out.push_str(" [Required]")
+            }
         }
     }
 
@@ -2592,6 +2599,34 @@ mod tests {
         assert!(
             help.contains("<PATH>"),
             "help should use custom label placeholder"
+        );
+    }
+
+    #[test]
+    fn test_text_help_shows_required_and_default_meta() {
+        #[derive(Facet)]
+        #[allow(dead_code)]
+        struct Args {
+            /// A required value.
+            #[facet(args::named)]
+            required: String,
+
+            /// A value with a default.
+            #[facet(args::named, default = "standard")]
+            mode: String,
+        }
+
+        let schema = Schema::from_shape(Args::SHAPE).unwrap();
+        let help = generate_help_for_subcommand(&schema, &[], &HelpConfig::default());
+        let help = strip_ansi_escapes::strip_str(&help);
+
+        assert!(
+            help.contains("--required <STRING> [Required]"),
+            "help should show required marker: {help}"
+        );
+        assert!(
+            help.contains("--mode <STRING> [Default: `standard`]"),
+            "help should show default marker: {help}"
         );
     }
 
