@@ -274,7 +274,7 @@ Already in place on the Phon side:
 - Current Vox bridge verification passes: Rust runtime/codegen bridge
   (`cargo nextest run -p vox -p vox-core -p vox-phon -p vox-codegen --no-fail-fast`,
   192/192), Swift runtime
-  (`swift test --package-path swift/vox-runtime`, 39/39), targeted TypeScript
+  (`swift test --package-path swift/vox-runtime`, 52/52), targeted TypeScript
   schema/channel/session tests
   (`pnpm --filter @bearcove/vox-core exec vitest run src/schema_tracker.test.ts src/driver.channel_schema.test.ts src/channeling/binding.test.ts src/channeling/registry.test.ts src/session.test.ts`,
   37/37), TypeScript browser WebSocket gate
@@ -379,11 +379,14 @@ Verified in the Vox checkout during the bridge audit:
   `vox-tcp` passes its focused transport suite with 5 tests, and `vox-ws`
   passes its focused transport suite with 1 test.
 - Vox Tracey validation is clean across Rust, Swift, and TypeScript. Current
-  coverage is Rust 175/175 implemented and 135/175 verified, Swift 160/175
-  implemented and 148/175 verified, and TypeScript 175/175 implemented and
+  coverage is Rust 175/175 implemented and 136/175 verified, Swift 162/175
+  implemented and 157/175 verified, and TypeScript 175/175 implemented and
   173/175 verified. That is not a global Vox Tracey completion claim: the
   remaining TypeScript unverified rules are the broad `rpc` and
-  `rpc.one-service-per-connection` umbrella surfaces.
+  `rpc.one-service-per-connection` umbrella surfaces, while the remaining
+  Swift holes are concentrated in uncovered non-Swift transports/debug
+  observability/inbound request-limit rules and five untested implemented
+  umbrella or lifecycle rules.
 - The roadmap-relevant Vox rules for subject teardown, channel shape, channel
   allocation/direction/lifecycle, channel payload indexes, connection-close
   channel errors, root and virtual connection behavior, virtual connection
@@ -416,9 +419,18 @@ Verified in the Vox checkout during the bridge audit:
   generated clients route through `VoxConnection.call` with method schema and
   registry data, generated handler protocols preserve method signatures, and
   generated dispatchers route by method ID, invoke the handler, map user
-  fallible errors onto the wire `VoxError.user` arm, and reply through
+  fallible errors onto the wire `VoxError.user` arm, return call-level
+  `UnknownMethod` errors for unrecognized method IDs, and reply through
   `TaskMessage`. Tracey now reports no remaining untested Swift `rpc.caller`,
-  `rpc.handler`, or `rpc.service.*` rules.
+  `rpc.handler`, `rpc.service.*`, `rpc.fallible.*`, or
+  `rpc.unknown-method` rules.
+- Swift generated channel discovery now has Tracey-backed codegen coverage.
+  The `vox-codegen` Swift target test `generated_swift_emits_channel_schemas`
+  proves generated callers discover direct `Tx<T>`/`Rx<T>` method arguments
+  left-to-right and pass the resulting channel ID list on the call, while
+  generated dispatchers resolve decoded channel wire indexes through
+  `Request.channels` before creating server-side channel handles. Tracey now
+  reports no remaining untested Swift `rpc.channel.discovery` rule.
 - Swift runtime session setup now has Tracey-backed coverage in
   `ConnectionFailureTests`: `acceptorSessionExposesPeerHandshakeMetadata`
   establishes a fresh link with a user-provided root dispatcher, returns a
@@ -456,6 +468,12 @@ Verified in the Vox checkout during the bridge audit:
   Swift inbound max-concurrent enforcement rule. It also closes the Swift
   `rpc.cancel` rule while leaving `rpc.cancel.channels` as real remaining
   channel-lifecycle coverage.
+- Swift runtime pipelining now has Tracey-backed coverage in
+  `ConnectionFailureTests`. `slowIncomingRequestDoesNotBlockLaterRequest`
+  keeps the root connection alive, feeds two inbound requests through
+  `Driver.run`, lets the first dispatch sleep, and proves the second response
+  is sent before the first delayed response. Tracey now reports no remaining
+  untested Swift `rpc.pipelining` rule.
 - TypeScript core session/RPC envelope behavior now has matching Tracey-backed
   runtime coverage in `src/session.test.ts`: the phon self-describing handshake
   exchanges the Message schema closure, rejects invalid peer Message schemas
