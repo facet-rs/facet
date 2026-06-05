@@ -379,7 +379,7 @@ Verified in the Vox checkout during the bridge audit:
 - Vox Tracey validation is clean across Rust, Swift, and TypeScript. Current
   coverage is Rust 175/175 implemented and 131/175 verified, Swift 160/175
   implemented and 113/175 verified, and TypeScript 175/175 implemented and
-  144/175 verified. That is not a global Vox Tracey completion claim: the
+  145/175 verified. That is not a global Vox Tracey completion claim: the
   remaining unverified rules include broad transport/session/RPC surfaces
   outside this Phon ecosystem bridge roadmap.
 - The roadmap-relevant Vox rules for subject teardown, channel shape, channel
@@ -459,6 +459,12 @@ Verified in the Vox checkout during the bridge audit:
   `Request.channels` to create the correct server-side `Rx` and `Tx` handles.
   Tracey now reports no remaining untested TypeScript `rpc.channel.discovery`
   rule.
+- TypeScript flow-control now has Tracey-backed coverage for both levels of
+  backpressure named by the umbrella rule. `vox-core` `src/session.test.ts`
+  proves peer `max_concurrent_requests` blocks a second outbound call until
+  capacity is released, while `src/channeling/registry.test.ts` proves
+  per-channel credit exhaustion blocks outgoing data until credit is granted.
+  Tracey now reports no remaining untested TypeScript `rpc.flow-control` rule.
 - Swift inbound virtual connection acceptance now has focused runtime coverage
   in `swift test --package-path swift/vox-runtime --filter
   ConnectionFailureTests`: `inboundOpenConnectionAcceptsAndDispatchesOnVirtualConnection`
