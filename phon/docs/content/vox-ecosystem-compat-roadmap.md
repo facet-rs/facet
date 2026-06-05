@@ -373,13 +373,13 @@ Verified in the Vox checkout during the bridge audit:
 
 - TypeScript packages, generated TypeScript, and the sibling Phon TypeScript
   packages pass `pnpm check` from `~/vox`.
-- TypeScript `vox-core` passes its full Vitest suite with 66 tests; the focused
-  session/schema/channel runtime slice passes 47 tests, `vox-wire` passes 20
+- TypeScript `vox-core` passes its full Vitest suite with 67 tests; the focused
+  session/schema/channel runtime slice passes 48 tests, `vox-wire` passes 20
   tests, and `vox-tcp` passes its focused transport suite with 2 tests.
 - Vox Tracey validation is clean across Rust, Swift, and TypeScript. Current
   coverage is Rust 175/175 implemented and 131/175 verified, Swift 160/175
   implemented and 113/175 verified, and TypeScript 175/175 implemented and
-  141/175 verified. That is not a global Vox Tracey completion claim: the
+  143/175 verified. That is not a global Vox Tracey completion claim: the
   remaining unverified rules include broad transport/session/RPC surfaces
   outside this Phon ecosystem bridge roadmap.
 - The roadmap-relevant Vox rules for subject teardown, channel shape, channel
@@ -444,6 +444,13 @@ Verified in the Vox checkout during the bridge audit:
   `Driver.run`, suspends the first dispatch, lets the second dispatch reply,
   and proves the second response is sent before the first is released. Tracey
   now reports no remaining untested TypeScript `rpc.pipelining` rule.
+- TypeScript cancellation now has session-level coverage for both the request
+  cancel frame and independent channel lifecycle. `vox-core`
+  `src/session.test.ts` sends a call with a channel ID, observes the inbound
+  call, sends `Cancel`, observes the queued cancel and cleared live-request
+  count, then sends channel data and receives it through the still-open channel
+  before allowing a late response frame. Tracey now reports no remaining
+  untested TypeScript `rpc.cancel.*` rules.
 - Swift inbound virtual connection acceptance now has focused runtime coverage
   in `swift test --package-path swift/vox-runtime --filter
   ConnectionFailureTests`: `inboundOpenConnectionAcceptsAndDispatchesOnVirtualConnection`
