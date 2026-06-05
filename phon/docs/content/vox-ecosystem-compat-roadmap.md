@@ -12,8 +12,10 @@ that already depend on Vox or are expected to migrate onto the same surface.
 
 The goal is not broad theoretical completeness. The goal is that the next Vox
 can carry the payloads real Vox users already send, with the interpreter as the
-correctness oracle and the JIT covering the hot paths that would otherwise make
-the migration too slow.
+correctness oracle, Rust and Swift JIT covering the hot paths that would
+otherwise make the migration too slow, and TypeScript generated clients staying
+idiomatic and correct before their source-specialized fast path is treated as a
+performance gate.
 
 ## Architectural constraints
 
@@ -25,6 +27,10 @@ the migration too slow.
   bytes and values, differing only in speed.
 - Generated Vox method arguments and responses must route through the
   runtime-selected Phon typed engine rather than bypassing Phon.
+- TypeScript generated APIs expose ordinary JavaScript/TypeScript public
+  shapes. The generic Phon `Value` representation is only for real dynamic
+  fields, schema-less APIs, and oracle/fallback execution; it is not the public
+  shape for ordinary generated DTOs.
 - Retry semantics belong to the removed old Vox surface. Do not reintroduce
   retry-shaped generated code while doing this work.
 - Nested channels are rejected. Non-nested `Tx<T>` and `Rx<T>` are supported as
@@ -34,6 +40,35 @@ the migration too slow.
 - Consumer repositories are source inputs for fixtures and audits. Build those
   consumers only when Amos explicitly asks; prefer extracted Phon/Vox fixtures
   and oracle tests in this repository and the Vox repository.
+
+## Priority tiers
+
+The roadmap has three different kinds of gate. They should not be collapsed
+into one vague "everything must JIT" requirement:
+
+1. Correctness gates: the interpreter, compatibility planner, schema closure,
+   generated Vox bridge, non-nested channel handling, external diagnostics, and
+   subject teardown must be correct for the checked-in consumer fixture corpus.
+   These are Vox 1.0 blockers.
+2. Priority-1 performance gates: Rust native JIT and Swift native JIT must stay
+   native-clean for the hot roots called out in this roadmap, especially Bee,
+   the Swift-app surfaces, and the large/recursive ecosystem payload families
+   that would otherwise make the migration too slow.
+3. TypeScript performance tier: generated TypeScript clients must expose and
+   consume ordinary JavaScript/TypeScript public DTO shapes. Direct public-shape
+   source-specialized JIT is the useful TypeScript optimization path, but it is
+   promoted only by browser/client benchmark evidence. A generic Phon `Value`
+   pipeline is valid as the oracle, fallback implementation, and true dynamic
+   API path; it is not a successful generated-client public shape for ordinary
+   DTOs.
+
+This means TypeScript JIT parity is not priority 1. The priority-1 JIT work is
+Rust and Swift native execution for server, engine, and Swift-app hot paths.
+TypeScript is release-critical for generated bridge correctness, public DTO
+shape fidelity, websocket/browser coverage, and honest benchmarks. Its JIT work
+should only chase direct public-shape source specialization for measured
+client/browser bottlenecks; it should not recreate the Rust/Swift
+descriptor-memory model in JavaScript.
 
 ## Current implementation snapshot
 
@@ -48,16 +83,30 @@ Already in place on the Phon side:
 - Swift JIT smoke/fixture coverage for the Bee-relevant IME and feed shapes.
 - Method/path-scoped fallback reporting in the typed front door.
 - Initial Rust ecosystem fixture coverage for Dodeca-shaped maps, sets, tuple
-  vectors, dynamic template values, Dibs SQL value enums, generated Dibs Squel
-  schema/list/get/create/update/delete/result DTOs, Styx recursive values plus
+  vectors, dynamic template values, data-loader dynamic results, and markdown
+  parse/render results with a boxed source map, Dodeca image processor
+  byte/scalar/result roots, Dodeca search indexer page/file/result roots, Dibs
+  SQL value enums, generated Dibs Squel
+  schema/list/get/create/update/delete/result DTOs, Dibs migration
+  status/migrate/log DTOs, Styx recursive values plus
   LSP extension/host callback DTOs, Stax recursive flamegraph updates, Stax
   Linux fd-broker config/status/error DTOs with explicit external-fd
-  diagnostics, Helix trace-server metadata and metric payloads, Hotmeal
-  live-reload payloads, and Tracey migration DTOs.
+  diagnostics, Helix trace-server metadata, metric, attention, evidence,
+  attendance, clip, provenance, transcript, piece-eval, and bundle payloads,
+  Hotmeal live-reload payloads, and Tracey migration DTOs.
 - Rust `HashSet<T>` descriptor/interpreter support through Facet set thunks.
 - Rust `HashSet<T>` root lowering and duplicate-element rejection coverage.
 - Rust native JIT support for set encode/decode when the element program is
   native-supported.
+- Rust owned-pointer descriptor, interpreter, and native JIT support for
+  `Box<T>`, `Rc<T>`, and `Arc<T>` when the pointee program is
+  native-supported. The wire schema is the pointee `T`; the pointer handle is a
+  local descriptor detail driven by borrow/construct thunks. The focused
+  `cargo nextest run -p phon --all-features -E 'test(derived_box)'` run passes
+  3/3, including native JIT encode/decode for both boxed fields and boxed
+  roots. The public `phon-jit` threaded executor also carries owned pointers
+  through the same thunk contract; the focused threaded-pointer run passes 2/2
+  for boxed fields and boxed roots.
 - Rust compact `read_from` support for chaining multiple schema-driven values
   through one message cursor, which is the shape Vox envelopes + payloads need.
 - Rust schema-bundle validation through `Registry::try_new`: recomputed
@@ -79,7 +128,7 @@ Already in place on the Phon side:
   do not clobber outer scratch state.
 - Swift native JIT support for focused compat decode ops now covers enum
   remapping, writer-only enum errors, writer-only field skips, and reader-only
-  field defaults. `swift test --package-path swift --filter PhonJITTests`
+  field defaults. `swift test --filter PhonJITTests` from the package root
   covers the evolved-writer enum case, native-clean scalar field skip/default
   cases, and a nested list element drift fixture with writer-only dynamic
   metadata plus map value drift; the remaining proof work is broadening native
@@ -88,60 +137,102 @@ Already in place on the Phon side:
   `Set<String>` root, Dodeca dynamic template calls with `Value` args and
   tuple-vector kwargs, Dodeca HTML processor inputs with optional maps, string
   sets, nested code metadata maps, responsive-image tuple vectors, Vite CSS
-  maps, injections, and mount localization, a Dibs SQL row/list response with
+  maps, injections, and mount localization, Dodeca data-loader dynamic results,
+  and Dodeca markdown parse/render results with dynamic frontmatter extras and
+  source-map entries, Dodeca image processor byte/scalar/result roots, Dodeca
+  search indexer page/file/result roots, a Dibs SQL row/list response with
   enum payloads and bytes, generated Dibs Squel
-  schema/list/get/create/update/delete/result DTO roots, a Stax-shaped
+  schema/list/get/create/update/delete/result DTO roots, Dibs migration
+  status/migrate/log DTO roots, a Stax-shaped
   recursive flamegraph update with `UInt64`, `UInt32?`, managed `[String]`, and
   recursive `[FlameNode]` payloads, Stax Linux broker-control
-  config/status/error DTOs, and Styx recursive value plus aggregate LSP
+  config/status/error DTOs, Stax macOS `KdBufBatch` stream items, and Styx recursive value plus aggregate LSP
   extension/host-callback DTO roots. These fixtures run through the shared
   interpreter/JIT equivalence harness and assert the Dodeca, Dibs/generated,
-  recursive, and Stax broker-control roots are native-clean in the Swift JIT.
+  Dibs migration, recursive, Stax broker-control, and Stax macOS batch roots
+  are native-clean in the Swift JIT.
 - Rust ecosystem benchmark entry point for Dodeca, Dibs, Styx, Stax, Helix,
   Hotmeal, and Tracey migration payload families. The Styx benchmark family now
   includes both the recursive tree value and the aggregate LSP
   extension/host-callback DTO surface. The Stax benchmark family now includes
-  both recursive flamegraph updates and Linux fd-broker control DTOs. The Dibs
-  benchmark family now includes both SQL row/list payloads and generated Squel
-  schema/list/get/create/update/delete/result DTO roots; a debug
+  recursive flamegraph updates, Linux fd-broker control DTOs, and macOS
+  `KdBufBatch` record-stream fixtures. The Dibs
+  benchmark family now includes SQL row/list payloads, generated Squel
+  schema/list/get/create/update/delete/result DTO roots, and migration
+  status/migrate/log DTO roots; a debug
   `cargo run -p phon --features jit --example ecosystem_surface_bench` run
   produced native-clean selected-runtime results for `dibs(squel service
   roots)` at 1,128 wire bytes with 5.39x JIT encode and 3.21x JIT decode. The
+  release
+  `cargo run -p phon --release --features jit --example ecosystem_surface_bench`
+  run produced native-clean selected-runtime results for
+  `dodeca(load data dynamic result)` at 64 wire bytes with 1.97x JIT encode
+  and 0.97x JIT decode, and
+  `dodeca(parse result boxed source map)` at 4,512 wire bytes with 2.55x JIT
+  encode and 1.40x JIT decode. A later debug
+  `cargo run -p phon --features jit --example ecosystem_surface_bench` run
+  produced native-clean selected-runtime results for the broad
+  `helix(trace service aggregate)` at 6,400 wire bytes with 4.39x JIT encode
+  and 3.48x JIT decode. The Rust benchmark family also includes Dodeca image
+  processor roots with PNG bytes, decoded/resized image byte buffers, thumbhash
+  strings, and error results; a debug run produced native-clean results for
+  `dodeca(image processor roots)` at 96,411 wire bytes with 1.80x JIT encode
+  and 1.74x JIT decode, and `dodeca(search indexer roots)` at 18,128 wire
+  bytes with 6.95x JIT encode and 2.78x JIT decode. The
   Rust channel-item benchmark family now covers Dodeca byte and string items,
   Dibs migration logs, Helix pulse notifications, and Tracey data updates; the
   same run produced native-clean selected-runtime results for those roots at
-  4,100, 3,055, 104, 8, and 976 wire bytes respectively.
+  4,100, 3,055, 94, 8, and 976 wire bytes respectively.
 - Swift `PhonJITBench` now covers the Bee hot roots plus Dodeca `Set<String>`
   routes, Dodeca dynamic template calls, Dodeca HTML processor maps/sets/tuple
-  vectors, a Dibs SQL row/list response fixture with enum payloads, nested row
-  lists, strings, bytes, and an optional total, generated Dibs Squel service
-  roots, Styx recursive value and aggregate LSP extension/host-callback DTO
-  roots, and Stax recursive flamegraph plus Linux broker-control DTO fixtures.
+  vectors, Dodeca data-loader dynamic results, Dodeca markdown parse/render
+  results with source maps, Dodeca image processor byte/scalar/result roots,
+  and Dodeca search indexer page/file/result roots, a Dibs SQL row/list
+  response fixture with enum payloads, nested row lists, strings, bytes, and an
+  optional total, generated Dibs Squel service roots, Dibs migration
+  status/migrate/log DTO roots, Styx recursive value and aggregate LSP
+  extension/host-callback DTO roots, and Stax recursive flamegraph plus Linux
+  broker-control DTO fixtures, and the broad Helix `TraceService` aggregate.
   It also benchmarks focused compat decode roots for writer-only scalar field
   skip and reader-only optional default, plus channel item roots for Dodeca byte
   tunnels, Dodeca LSP strings, Dibs migration logs, Helix pulse notifications,
-  and Tracey data updates. A debug `swift run PhonJITBench` run produced
-  native-clean compat field-skip decode at 8 wire bytes with 1.06x JIT decode,
-  native-clean compat reader-default decode at 4 wire bytes with 1.66x JIT
-  decode, native-clean Dodeca
-  routes at 1,890 wire bytes with 0.31x JIT encode and 4.25x JIT decode,
-  native-clean Dodeca dynamic template calls at 360 wire bytes with 0.42x JIT
-  encode and 1.16x JIT decode, native-clean Dodeca HTML processor roots at
-  7,800 wire bytes with 0.53x JIT encode and 5.82x JIT decode, native-clean
-  Dibs rows at 3,856 wire bytes with 1.74x JIT encode and 14.05x JIT decode,
-  native-clean generated Dibs Squel roots at 1,128 wire bytes with 2.19x JIT
-  encode and 10.01x JIT decode, native-clean Styx recursive values at 432 wire
-  bytes with 2.00x JIT encode and 8.90x JIT decode, native-clean Styx LSP
-  aggregates at 6,688 wire bytes with 2.04x JIT encode and 9.16x JIT decode,
-  native-clean Stax recursive flamegraphs at 924 wire bytes with 3.25x JIT
-  encode and 11.06x JIT decode, native-clean Stax Linux broker-control DTOs at
-  176 wire bytes with 1.73x JIT encode and 9.86x JIT decode, and native-clean
-  channel item roots at 4,100, 3,055, 104, 8, and 976 wire bytes.
+  and Tracey data updates. A debug `swift build --product PhonJITBench` plus
+  direct `.build/debug/PhonJITBench` run from the package root produced
+  native-clean compat field-skip decode at 8 wire bytes with 1.09x JIT decode,
+  native-clean compat reader-default decode at 4 wire bytes with 1.67x JIT
+  decode, native-clean Dodeca routes at 1,890 wire bytes with 0.30x JIT encode
+  and 4.25x JIT decode, native-clean Dodeca dynamic template calls at 360 wire
+  bytes with 0.42x JIT encode and 1.15x JIT decode, native-clean Dodeca HTML
+  processor roots at 7,800 wire bytes with 0.51x JIT encode and 5.73x JIT
+  decode, native-clean Dodeca data-loader results at 61 wire bytes with 0.73x
+  JIT encode and 1.10x JIT decode, native-clean Dodeca parse results at 4,512
+  wire bytes with 1.67x JIT encode and 10.36x JIT decode, native-clean
+  Dodeca image processor roots at 96,433 wire bytes with 0.06x JIT encode and
+  5.55x JIT decode,
+  native-clean Dodeca search indexer roots at 12,017 wire bytes with 0.97x JIT
+  encode and 7.71x JIT decode, native-clean Dibs rows at 3,856 wire bytes with
+  1.71x JIT encode and 13.82x JIT decode, native-clean generated Dibs Squel
+  roots at 1,128 wire bytes with 2.14x JIT encode and 8.87x JIT decode,
+  native-clean Dibs migration service roots at 638 wire bytes with 1.80x JIT
+  encode and 7.25x JIT decode, native-clean Styx recursive values at 432 wire
+  bytes with 1.95x JIT encode and 8.83x JIT decode, native-clean Styx LSP
+  aggregates at 6,688 wire bytes with 2.09x JIT encode and 9.24x JIT decode,
+  native-clean Stax recursive flamegraphs at 924 wire bytes with 3.05x JIT
+  encode and 10.91x JIT decode, native-clean Stax Linux broker-control DTOs at
+  176 wire bytes with 1.70x JIT encode and 10.31x JIT decode, native-clean
+  Helix trace-service aggregate roots at 6,400 wire bytes with 5.43x JIT
+  encode and 8.68x JIT decode, and native-clean channel item roots at 4,100,
+  3,055, 104, 8, and 976 wire bytes.
 - TypeScript engine-level ecosystem fixture coverage for Dodeca HTML
-  maps/sets/tuple vectors, Dodeca dynamic template calls, Dibs SQL value rows,
+  maps/sets/tuple vectors, Dodeca dynamic template calls, Dodeca data-loader
+  dynamic results, Dodeca markdown parse/render results, Dodeca image
+  processor byte/scalar/result roots, Dodeca search indexer page/file/result
+  roots, Dibs SQL value rows,
   generated Dibs Squel schema/list/get/create/update/delete/result DTO roots,
+  Dibs migration status/migrate/log DTO roots,
   Styx recursive values plus LSP extension/host callback DTOs, Stax recursive
-  flamegraph updates, Stax Linux fd-broker control DTOs with explicit
+  flamegraph updates, Stax Linux fd-broker control DTOs, Stax macOS
+  `KdBufBatch` record-stream fixtures, with explicit
   external-fd diagnostics, Helix trace snapshots, Hotmeal live reload, Tracey
   migration DTOs, and fixed-width target schemas for native-sized Rust integers.
   These fixtures run through typed encode/decode, interpreter mode,
@@ -154,17 +245,44 @@ Already in place on the Phon side:
   JIT decode vs. 121,056 hz for the interpreter, a 3.27x decode speedup, and
   57,707 hz for JIT encode vs. 41,123 hz for the interpreter, a 1.40x encode
   speedup.
+- TypeScript now has a direct public-shape typed JIT path for generated-client
+  DTOs. `decodeTyped` with JIT enabled lowers the compatibility plan into
+  generated JavaScript that constructs plain struct objects, codegen enum
+  discriminated unions, arrays, sets, and schema maps directly; `encodeTyped`
+  with JIT enabled consumes those same public shapes directly. The generic
+  coarse `Value` engine remains the interpreter/oracle and the implementation
+  for actual `Dynamic` fields and schema-less/dynamic APIs. The current
+  TypeScript engine suite
+  (`pnpm --filter @bearcove/phon-engine exec vitest run`) passes 102/102,
+  Tracey validation is clean, and the
+  current Helix `TraceService` aggregate benchmark measures direct-shape typed
+  JIT at 48,015.60 hz for decode and 10,204.63 hz for encode, versus 7,776.92
+  hz and 4,775.97 hz for the JIT-disabled typed fallback through `Value`. The
+  focused Dodeca TypeScript benchmark now also measures the image processor and
+  search indexer roots on larger benchmark payloads: image decode is
+  269,233.43 hz direct-shape JIT vs. 131,385.27 hz fallback, image encode is
+  104,877.95 hz vs. 72,574.30 hz, search decode is 109,250.56 hz vs.
+  51,055.34 hz, and search encode is 35,167.40 hz vs. 24,948.50 hz.
 - Current local fixture verification passes: Rust Bee surface with JIT
   (`cargo nextest run -p phon --features jit -E 'binary(bee_surface)'`, 2/2),
   Rust ecosystem surface with JIT
-  (`cargo nextest run -p phon --features jit -E 'binary(ecosystem_surface)'`,
-  15/15), Swift Bee feed JIT smoke
-  (`swift test --package-path swift --filter swiftBeeFeedMethodRootsAreNativeClean`,
-  1/1), Swift ecosystem surface
-  (`swift test --package-path swift --filter EcosystemSurfaceTests`, 12/12),
+  (`cargo nextest run -p phon --all-features -E 'binary(ecosystem_surface)'`,
+  22/22), Swift Bee feed JIT smoke
+  (`swift test --filter swiftBeeFeedMethodRootsAreNativeClean`, 1/1), Swift
+  ecosystem surface
+  (`swift test --filter FixtureRoundTripsAcrossEngines`, 19/19),
   and TypeScript ecosystem surface
   (`pnpm --filter @bearcove/phon-engine exec vitest run src/ecosystem_surface.test.ts`,
-  14/14).
+  21/21). `pnpm check` from `~/phon` also passes, and Tracey
+  validation reports zero errors across Rust, Swift, and TypeScript.
+- The cross-language compat conformance corpus now includes 28 generated
+  vectors, including explicit `channel_item_schema_compat` and
+  `external_metadata_schema_compat` cases. The same committed
+  `conformance/compat/vectors.json` replays through Rust, Swift, and TypeScript:
+  `cargo nextest run -p phon-conformance -E 'test(corpus_is_golden_and_self_consistent)'`,
+  `swift test --filter compatConformanceCorpus`, and
+  `pnpm --filter @bearcove/phon-engine exec vitest run src/conformance.test.ts`
+  all pass.
 - Current Vox bridge verification passes: Rust runtime/codegen bridge
   (`cargo nextest run -p vox -p vox-core -p vox-phon -p vox-codegen --no-fail-fast`,
   192/192), Swift runtime
@@ -174,22 +292,56 @@ Already in place on the Phon side:
   37/37), TypeScript browser WebSocket gate
   (`pnpm --dir typescript/tests/playwright test`, 2/2, covering generated
   browser clients against both TypeScript and Rust WebSocket servers), and the
-  TypeScript workspace check (`cd typescript && pnpm check`). A post-run
+  TypeScript workspace check (`pnpm check` from `~/vox`). A post-run
   process sweep found no lingering `subject-*`, echo-server, or browser Vite
   processes.
 - Current Vox ecosystem bridge matrix verification passes:
   `cargo nextest run -p spec-tests -E 'test(ecosystem_bridge) | test(dodeca) | test(dibs) | test(styx) | test(stax) | test(helix) | test(hotmeal) | test(tracey)' --no-fail-fast -j 1`
-  ran 376/376 across Rust TCP, Swift TCP, TypeScript TCP, and TypeScript
-  WebSocket, in both harness-to-subject and subject-to-harness directions.
+  ran 416/416 across Rust TCP, Swift TCP, TypeScript TCP, and TypeScript
+  WebSocket, in both harness-to-subject and subject-to-harness directions,
+  including the generated Helix `TraceService` aggregate root plus Dodeca
+  image processor and search indexer roots. This was reverified against the
+  live `~/vox` checkout after the TypeScript direct-shape typed JIT cleanup and
+  after increasing the Rust spec harness and Rust subject runtime stack budget
+  for large recursive schema closure planning; the run started 416 selected
+  tests across 4 binaries and finished with `416 passed, 511 skipped`.
   A post-run process sweep found no lingering `subject-*` or echo-server
   processes.
+- Focused generated Dodeca image/search bridge verification also passes:
+  `cargo nextest run -p spec-tests -E 'test(echo_dodeca_image_processor_fixture) | test(echo_dodeca_search_indexer_fixture)' --no-fail-fast -j 1`
+  ran 16/16 in `~/vox` across Rust TCP, Swift TCP, TypeScript TCP, and
+  TypeScript WebSocket, in both harness-to-subject and subject-to-harness
+  directions. The run uses generated clients/dispatchers and proves the
+  Dodeca image processor byte/scalar/result root plus the search indexer
+  page/file/result root through the Vox bridge. A post-run process sweep found
+  no lingering `subject-*`, echo-server, Swift build, or Swift frontend
+  processes.
+- Focused generated Stax macOS record bridge verification also passes:
+  `cargo nextest run -p spec-tests -E 'test(stax_macos_record)' --no-fail-fast -j 1 --status-level fail --final-status-level fail`
+  ran 8/8 in `~/vox` across Rust TCP, Swift TCP, TypeScript TCP, and
+  TypeScript WebSocket, in both harness-to-subject and subject-to-harness
+  directions. This exercises the exact
+  `stax_macos_record(config, Tx<StaxMacKdBufBatch>) -> Result<StaxMacRecordSummary, StaxMacRecordError>`
+  root through generated Rust, Swift, and TypeScript clients/dispatchers,
+  schema exchange, non-nested channel binding, typed channel item
+  encode/decode, and terminal user-error result schema handling. The cold
+  Swift subject release build exceeded the matrix's 120s timeout but completed
+  with `swift build --package-path swift/subject -c release`; with the subject
+  build warm, the all-eight focused matrix passed. A post-run process sweep
+  found no lingering `subject-*`, Swift build, Swift frontend, or nextest
+  processes.
+- Focused generated Swift bridge verification also passes:
+  `cargo nextest run -p spec-tests -E 'test(lang_swift_transport_tcp::direction_harness_to_subject::rpc_echo_ecosystem_bridge) | test(lang_swift_transport_tcp::direction_subject_to_harness::subject_calls_echo_ecosystem_bridge)' --no-fail-fast -j 1`
+  ran 2/2 in `~/vox`. This exercises both generated Swift dispatcher decode
+  and generated Swift client encode for the ecosystem bridge payload through
+  `readerDescriptor`/`readerBlocks`, `decodeVoxTyped`, and `encodeVoxTyped`.
 - Current hosted-subject lifecycle verification passes:
   `cargo nextest run -p spec-tests -E 'binary(subject_lifecycle)' --no-fail-fast -j 1`
   ran 4/4 across Rust TCP, Swift TCP, TypeScript TCP, and TypeScript
   WebSocket. A post-run process sweep found no lingering `subject-*` or
   echo-server processes.
-- Tracey Rust coverage is now complete for the current Phon spec: 59/59
-  implemented and 59/59 verified. The spec no longer treats framing,
+- Tracey Rust coverage is now complete for the current Phon spec: 60/60
+  implemented and 60/60 verified. The spec no longer treats framing,
   transport-owned external attachment semantics, absolute-buffer zero-copy
   alignment, or thunk-only descriptor support as phon-core rules.
 - Vox-side stale-surface cleanup has started: live Vox source/spec no longer
@@ -213,19 +365,20 @@ Already in place on the Phon side:
   frames, and generated Swift/TypeScript bindings reject `vox::Fd` service
   surfaces at codegen time instead of lowering them to `Data` or `unknown`.
 - Tracey Swift coverage is now audited for the current Swift implementation:
-  53/59 implemented and 56/59 verified, with zero implemented-but-untested
+  54/60 implemented and 57/60 verified, with zero implemented-but-untested
   rules. The remaining Swift holes are not annotation debt: Swift codegen is
   not in this package, `type-system.rust-subset` is Rust-only, borrowed
   descriptor decode is not implemented, named thunk binding is not Swift's
   closure-carrying descriptor model, and the typed IR is not total yet.
-- Tracey TypeScript coverage has an audited schema/engine/codegen pass: 48/59
-  implemented and 48/59 verified, with zero implemented-but-untested rules. The
+- Tracey TypeScript coverage has an audited schema/engine/codegen pass: 49/60
+  implemented and 49/60 verified, with zero implemented-but-untested rules. The
   TypeScript schema and engine packages cover the schema model, schema parsing,
   schema-id recomputation/content hashes, closure validation, generic
   substitution, compact decode chaining, hostile-input guards, package
   boundaries, JIT opt-in selection, self-describing enum payloads, TypeScript
-  type emission from schema, recursive call-block JIT source
-  generation, and the implemented compact interpreter paths.
+  type emission from schema, recursive call-block JIT source generation,
+  direct public-shape typed JIT encode/decode, and the implemented compact
+  interpreter paths.
 
 Verified in the Vox checkout during the bridge audit:
 
@@ -233,9 +386,17 @@ Verified in the Vox checkout during the bridge audit:
   packages pass `pnpm check` from `~/vox/typescript`.
 - TypeScript `vox-core` passes its focused runtime suite with 54 tests, and
   `vox-tcp` passes its focused transport suite with 2 tests.
-- TypeScript `vox/typescript` Tracey implementation coverage is now complete:
-  175/175 rules have implementation references and 103/175 have verification
-  references after the hosted-subject lifecycle rule landed.
+- Vox Tracey validation is clean across Rust, Swift, and TypeScript. Current
+  coverage is Rust 175/175 implemented and 122/175 verified, Swift 156/175
+  implemented and 89/175 verified, and TypeScript 175/175 implemented and
+  103/175 verified. That is not a global Vox Tracey completion claim: the
+  remaining unverified rules include broad transport/session/RPC surfaces
+  outside this Phon ecosystem bridge roadmap.
+- The roadmap-relevant Vox rules for subject teardown, connection-close channel
+  errors, keepalive teardown, and nested-channel rejection are traced with
+  implementation and verification references: `hosted.subject.lifecycle`,
+  `rpc.channel.connection-closure`, `session.keepalive`,
+  `rpc.channel.direct-args`, and `rpc.channel.no-collections`.
 - Vox `session.keepalive` now has Tracey-backed protocol keepalive coverage
   for Ping/Pong handling and missing-Pong teardown in Rust, Swift, and
   TypeScript. Swift's focused keepalive path passes in
@@ -295,14 +456,17 @@ Verified in the Vox checkout during the bridge audit:
   byte-channel item encode/decode and channel binding through generated Rust,
   Swift, TypeScript TCP, and TypeScript WebSocket subjects.
 - The generated Dodeca-shaped `dodeca_html_process`,
-  `dodeca_execute_code_samples`, and `dodeca_devtools_lsp` method roots now
-  broaden the focused Dodeca Vox spec matrix to 40 passing cases. This adds the
+  `dodeca_execute_code_samples`, `dodeca_load_data`,
+  `dodeca_parse_and_render`, and `dodeca_devtools_lsp` method roots now
+  broaden the focused Dodeca Vox spec matrix to 56 passing cases. This adds the
   `cell-html-proto::HtmlProcessor::process`-style DTO with optional maps,
   string sets, maps to nested code metadata, image variant maps, Vite CSS maps,
   injections, mount localization, and result enums; the
   `cell-code-execution-proto::CodeExecutor::execute_code_samples`-style DTO
   with code samples, dependency config, native-sized source lines, build
-  metadata, and `Vec<(CodeSample, ExecutionResult)>`; and the
+  metadata, and `Vec<(CodeSample, ExecutionResult)>`; the Dodeca data-loader
+  root carrying parsed dynamic values; the markdown parse/render root with
+  frontmatter, headings, req definitions, injections, and source maps; and the
   `dodeca_protocol::DevtoolsService::lsp`-style non-nested `Rx<String>` /
   `Tx<String>` channel path across generated Rust, Swift, TypeScript TCP, and
   TypeScript WebSocket subjects in both caller/callee directions.
@@ -366,6 +530,13 @@ Verified in the Vox checkout during the bridge audit:
   verify evidence, and scheduler evidence snapshots across generated Rust,
   Swift, TypeScript TCP, and TypeScript WebSocket subjects in both
   caller/callee directions.
+- The generated Helix-shaped `helix_trace_service_surface` method root now
+  passes the same bridge matrix in both directions across Rust TCP, Swift TCP,
+  TypeScript TCP, and TypeScript WebSocket. This carries the broad trace-server
+  aggregate: attention summary batches, attendance rows, audio self-attention,
+  transcript tokens, decoder-evidence reports, piece-eval reference/snapshot
+  DTOs, clips, provenance, Chrome trace events, scheduler evidence, and the
+  bundle mask/response through generated clients and dispatchers.
 - The generated Tracey-migration-shaped `tracey_status`, `tracey_rule`,
   `tracey_validate`, `tracey_uncovered`, `tracey_untested`, `tracey_stale`,
   `tracey_unmapped`, `tracey_config`, `tracey_vfs_open`,
@@ -404,6 +575,12 @@ Verified in the Vox checkout during the bridge audit:
 - Rust `vox-codegen` and `vox-phon` pass targeted `cargo nextest` coverage for
   generated Swift/TypeScript channel rejection, Phon schema closure emission,
   schema compatibility snapshots, and Vox wire payload round-trips.
+- Rust `vox-phon` now treats owned-pointer Phon programs as native-supported
+  when their pointee program is native-supported. The focused
+  `cargo nextest run -p vox-phon -E 'test(native_jit) | test(vox_wire_shapes_report_native)'`
+  run passes 3/3, including typed and compatibility-decode native-status
+  coverage for the real `spec-proto::DodecaParseResult` shape whose success arm
+  contains `Box<DodecaSourceMap>`.
 - Swift codegen now emits recursive descriptor schema refs from Phon's
   root-context derived descriptor instead of recomputing child shape ids in
   isolation. This is covered by a `vox-codegen` regression test for the Styx
@@ -419,40 +596,61 @@ Verified in the Vox checkout during the bridge audit:
   `Set<T>` can use the native path when its element program is
   native-supported.
 
-Known holes still remaining after the current Vox TypeScript closure:
+Known holes still remaining after the current Vox TypeScript direct-shape
+closure:
 
-- Swift does not yet have fixture parity with the full Rust ecosystem fixture
-  corpus; it currently has the Bee fixture set plus Dodeca set/template/HTML
-  processor roots, Dibs SQL row/list response, generated Dibs Squel service
-  roots, Styx recursive value/LSP aggregate, Stax recursive flamegraph and
-  Linux broker-control DTO slices, and the Hotmeal live-reload payload family,
-  plus representative Helix trace snapshots and Tracey migration DTOs.
+- Swift now has Phon-side fixture parity for the current Swift-applicable
+  ecosystem payload families: Bee feed roots, Dodeca set/template/HTML
+  processor/data-loader/markdown parse/image processor/search indexer roots,
+  Dibs SQL row/list response, generated Dibs Squel service roots, Styx
+  recursive value/LSP aggregate, Stax recursive flamegraph and Linux
+  broker-control DTO slices, the Hotmeal live-reload payload family, the broad
+  Helix `TraceService` aggregate, and Tracey migration DTOs. Focused Swift compat tests now cover duplicate set/map
+  rejection through both canonical decode and `planDecode`, and capability roots
+  stay out of compatibility planning. Rust remains the owner for actual
+  fd-capable transport diagnostics because Swift has generated-binding
+  rejection for fd service surfaces rather than a platform fd transport surface.
 - TypeScript now has engine-level fixture parity for the browser/websocket-facing
-  and DTO-shaped payload families. Generated Vox TypeScript bridge parity is
-  proven for Dodeca ecosystem/template/HTML/code-execution/byte-channel/LSP
-  channel roots, the Dibs schema/list/get/create/update/delete/migration-status
-  and migration-log roots, the Styx recursive value/LSP extension/host callback
-  roots, and the Stax flamegraph plus Linux broker-control DTO roots, plus the
-  Hotmeal live-reload/browser-fuzzer roots, Helix
-  metric/verify/pulse/bundle roots, and Tracey migration
-  status/rule/validation/core-control/full-LSP/update roots, but not yet for
-  the full consumer fixture corpus.
+  and DTO-shaped payload families, including the broad Helix `TraceService`
+  aggregate. Generated Vox TypeScript bridge parity is proven for Dodeca
+  ecosystem/template/HTML/code-execution/data-loader/markdown
+  parse/image processor/search indexer/byte-channel/LSP channel roots, while
+  Phon TypeScript engine fixtures also cover the Dodeca markdown parse/render
+  result wire DTO and image processor byte/scalar/result root plus the search
+  indexer page/file/result root, the Dibs
+  schema/list/get/create/update/delete/migration-status and migration-log
+  roots, the Styx recursive value/LSP
+  extension/host callback roots, and the Stax flamegraph plus Linux
+  broker-control DTO roots, plus the Hotmeal live-reload/browser-fuzzer roots, Helix
+  metric/verify/pulse/bundle/trace-service roots, and Tracey migration
+  status/rule/validation/core-control/full-LSP/update roots. Remaining
+  TypeScript breadth is generated Vox bridge parity, not the Phon engine
+  fixture corpus.
 - Generated Vox bridge coverage is proven for the testbed bridge path, the
-  Dodeca ecosystem/template/HTML/code-execution/byte-channel/LSP channel roots,
+  Dodeca ecosystem/template/HTML/code-execution/data-loader/markdown
+  parse/image processor/search indexer/byte-channel/LSP channel roots,
   the Dibs schema/list/get/create/update/delete/migration-status and
   migration-log roots, the Styx recursive value/LSP extension/host callback
   roots, the Stax flamegraph request/update/subscription and Linux
   broker-control DTO roots, and the Hotmeal live-reload/browser-fuzzer roots,
   plus the Helix metrics/verify
-  evidence/pulse subscription/PulseBundle roots and Tracey migration
+  evidence/pulse subscription/PulseBundle/TraceService aggregate roots and
+  Tracey migration
   status/rule/validation/core-control/full-LSP/update/dashboard/query/config
-  mutation roots. Remaining generated-bridge breadth is now dominated by
-  Dodeca's large markdown/data/devtools surface and any newly identified
-  channel item paths or externals, not by the current Tracey daemon protocol.
+  mutation roots. Remaining generated-bridge breadth is now dominated by any
+  Dodeca roots still outside the current data-loader/markdown/devtools/image
+  processor/search indexer slices, and any newly identified channel item paths
+  or externals, not by the current Tracey daemon protocol.
 - Helix generated bridge coverage is still representative, not a complete
   mirror of every trace-viewer endpoint. The `PulseBundle` request mask and
-  bundle slots now have generated bridge coverage through a local mirror of the
-  Helix wire shape. Tracey migration generated bridge coverage now mirrors the
+  bundle slots plus the broad `TraceService` aggregate now have generated
+  bridge coverage through a local mirror of the Helix wire shape. Rust, Swift,
+  and TypeScript Phon fixtures cover the broader live `TraceService` return
+  surface, and Rust, Swift, and TypeScript benchmarks now carry that aggregate:
+  Rust and Swift as native-clean typed/JIT benchmarks, and TypeScript as
+  direct public-shape typed JIT benchmarks. Standalone Helix endpoint roots
+  outside the aggregate mirror are still open.
+  Tracey migration generated bridge coverage now mirrors the
   current LSP, core/control, dashboard/query-model, and config mutation surface
   from the current roam protocol.
   Hotmeal payload roots are covered; the exact callback-style `subscribe` /
@@ -463,24 +661,41 @@ Known holes still remaining after the current Vox TypeScript closure:
   ordinary Linux broker DTOs and keep the fd bundle visible as unsupported
   `External("fd")` payload/capability planning; Vox-side tests prove
   descriptor-bearing frames are refused on non-fd transports and Swift/TypeScript
-  codegen refuses fd-bearing service surfaces. Subject teardown is still worth
-  broad full-matrix stress coverage, but the TypeScript evolved subject no
-  longer bypasses inactivity shutdown.
+  codegen refuses fd-bearing service surfaces. Subject teardown has focused
+  disconnect coverage across Rust TCP, Swift TCP, TypeScript TCP, and
+  TypeScript WebSocket, plus clean post-run process sweeps after the current
+  416-case ecosystem bridge matrix; longer repeated-run stress can still be
+  added, but there is no current subject accumulation after the roadmap bridge
+  gate.
 - Benchmarks exist for Bee, the Rust ecosystem payload families including Dibs
-  SQL rows and generated Squel service roots, and Swift ecosystem Dodeca
-  set/template/HTML roots, Dibs SQL row/list, generated Dibs Squel service
-  roots, Styx recursive/LSP, and Stax recursive plus Linux broker-control
-  fixtures, including representative channel payload families. The TypeScript
-  engine benchmark now includes recursive call-block source generation for
-  decode and encode.
-- TypeScript still lacks full generated ecosystem fixture-corpus parity and the
-  descriptor/IR model surface that belongs to typed/JIT codegen rather than the
-  current compact interpreter package. Recursive TS fixture roots now run
-  through generated call-block functions in both decoder and encoder JIT paths
-  with empty decoder fallback reports.
-- Swift still lacks generated-code coverage, borrowed descriptor decode, named
-  thunk binding, and total typed-IR lowering. Some of these are likely spec
-  split decisions rather than Vox 1.0 blockers.
+  SQL rows, generated Squel service roots, Dodeca data-loader results, and
+  Dodeca parse results with boxed source maps, image processor roots, and search
+  indexer roots, and Swift ecosystem Dodeca set/template/HTML/data-loader/parse
+  roots plus image processor and search indexer roots, Dibs SQL row/list,
+  generated Dibs Squel service roots, Dibs migration service roots, Styx
+  recursive/LSP, and Stax recursive plus Linux broker-control fixtures plus the
+  broad Helix `TraceService` aggregate, including representative channel
+  payload families.
+  The TypeScript engine benchmark now includes recursive call-block source
+  generation for decode/encode, direct public-shape typed JIT rows for the
+  broad Helix `TraceService` aggregate, and direct public-shape typed JIT rows
+  for the Dodeca image processor and search indexer roots.
+- TypeScript no longer needs a Rust/Swift-style descriptor-memory IR to be
+  useful for generated clients. Its typed fast path is direct public JavaScript
+  shapes, with the generic `Value` engine kept as the oracle and for real
+  dynamic/schema-less payloads. The remaining TypeScript work is generated Vox
+  bridge breadth and codegen parity for any consumer roots not yet in the
+  matrix, while recursive fixture roots already run through generated call-block
+  functions in both decoder and encoder JIT paths with empty decoder fallback
+  reports.
+- Phon Swift still has no in-package codegen module by design, so the Phon-side
+  `codegen.*` Tracey holes remain out-of-package rather than missing Swift
+  implementation work. Vox generated Swift bridge coverage exists for the
+  current matrix through generated descriptors, `readerDescriptor`/`readerBlocks`,
+  `decodeVoxTyped`, and `encodeVoxTyped`, including the focused Swift TCP
+  ecosystem bridge run. The remaining Swift holes are borrowed descriptor
+  decode, named thunk binding, total typed-IR lowering, and any future generated
+  Swift consumer root not yet added to the Vox bridge matrix.
 
 ## Killed or out-of-scope surface
 
@@ -553,19 +768,46 @@ Dodeca fixture work should be split into:
   and `Vec<u8>`.
 - Template and host calls: `facet_value::Value`, dynamic objects/lists/scalars,
   and tuple-vector kwargs.
+- Data-loader results: `facet_value::Value` dynamic objects/scalars in enum
+  response payloads.
+- Markdown parse/render results: dynamic frontmatter extras, headings,
+  requirement definitions, source-map entries, and Rust `Box<DodecaSourceMap>`
+  owned-pointer descriptors.
+- Image processor roots: PNG/JPEG/GIF byte inputs, decoded/resized image byte
+  buffers with `u32` dimensions and `u8` channels, thumbhash data URLs, and
+  image-processing result enums.
+- Search indexer roots: rendered page lists in, generated static search file
+  byte payloads out, and search-index result enums.
 - Devtools/live-reload/tunnel protocols: non-nested byte and string channels.
 - Generated-service roots: the actual request/response roots Vox codegen would
   see, not only isolated field-level types.
 
 The generated Vox bridge now has checked-in Dodeca roots for the ecosystem
 payload, dynamic template call, byte tunnel, HTML processing, code execution,
-and devtools LSP string-channel shapes. The focused Dodeca matrix covers Rust
-TCP, Swift TCP, TypeScript TCP, and TypeScript WebSocket in both directions.
+data loading, markdown parse/render, image processing, search indexing, and
+devtools LSP string-channel shapes. The focused Dodeca matrix covers Rust TCP,
+Swift TCP, TypeScript TCP, and TypeScript WebSocket in both directions and
+passes 72/72 with
+`cargo nextest run -p spec-tests -E 'test(dodeca)' --no-fail-fast -j 1`,
+including the generated image/search roots. The narrower generated
+image/search bridge slice also passes 16/16 with
+`cargo nextest run -p spec-tests -E 'test(echo_dodeca_image_processor_fixture) | test(echo_dodeca_search_indexer_fixture)' --no-fail-fast -j 1`.
 Rust, Swift, and TypeScript Phon-side fixtures now cover the HTML processor
-map/set/tuple-vector root and the dynamic template-call root; the Swift roots
-stay native-clean in the Swift JIT and are covered by `PhonJITBench`. Remaining
-Dodeca work is broadening to any additional markdown/data/devtools service
-roots that become part of the migration gate.
+map/set/tuple-vector root, the dynamic template-call root, the data-loader
+dynamic-result root, the markdown parse/render result shape, and the image
+processor byte/scalar/result root from `cell-image-proto`, plus the search
+indexer page/file/result root from `cell-search-proto`. Rust keeps the real
+boxed source-map owner in the parse-result fixture; Swift and TypeScript cover
+the generated wire DTO shape where the source map is the pointee object. The
+Swift roots stay native-clean in the Swift JIT, and the Rust benchmark corpus
+now includes the data-loader result, boxed parse result, image processor roots,
+and search indexer roots as native-clean selected-runtime benchmarks. The Swift
+benchmark corpus now includes the data-loader result, parse result, image
+processor roots, and search indexer roots as native-clean typed/JIT benchmarks.
+The TypeScript benchmark corpus now includes direct public-shape typed JIT rows
+for the image processor and search indexer roots.
+Remaining Dodeca work is broadening to any additional service roots that become
+part of the migration gate.
 
 ### Dibs
 
@@ -608,11 +850,14 @@ overrides so a stale or absent release subject build does not masquerade as a
 protocol failure or leave a killed Swift compiler process behind.
 Rust, Swift, and TypeScript Phon-side fixtures now cover the SQL value row/list
 response shape, including byte payloads, and the generated Squel
-schema/list/get/create/update/delete/result DTO roots. Rust and Swift benchmarks
-keep those broader Squel roots native-clean; TypeScript engine fixtures run them
-through interpreter mode, requested-JIT mode, and encoder JIT/fallback
-selection. Remaining Dibs work is any migration-status Phon-side root or
-additional Dibs generated root that becomes a migration gate.
+schema/list/get/create/update/delete/result DTO roots. They also now cover the
+Dibs migration service aggregate from `dibs-proto`: `MigrationStatusRequest`,
+`Vec<MigrationInfo>` status responses, `MigrateRequest`, `MigrateResult`, and
+the `MigrationLog` channel item shape. Rust and Swift benchmarks keep the
+broader Squel and migration service roots native-clean; TypeScript engine
+fixtures run them through interpreter mode, requested-JIT mode, and encoder
+JIT/fallback selection. Remaining Dibs work is only any additional generated
+root that becomes a migration gate.
 
 ### Styx
 
@@ -703,7 +948,14 @@ the same language/transport set in both directions, proving
 config/status/error DTOs through generated bridges while leaving the fd handoff
 transport-owned. Rust, Swift, and TypeScript Phon-side fixture coverage now
 carries the recursive flamegraph shape; Swift also benchmarks that shape and
-the ordinary Linux broker-control DTO shape as native-clean JIT coverage.
+the ordinary Linux broker-control DTO shape as native-clean JIT coverage. The
+Phon-side fixture corpus now also carries the macOS `KdBufBatch` stream item:
+Rust models the complete macOS record/config/result/status fixture and keeps it
+native-clean through the ecosystem typed/JIT test, Swift carries the high-volume
+`KdBufBatch` channel item through the descriptor/interpreter/JIT equivalence
+harness, TypeScript carries the complete public-shape DTO fixture through the
+typed engine, and the Rust ecosystem benchmark includes a larger macOS batch
+family.
 Rust, Swift, and TypeScript Phon-side fixture coverage now also carries the
 ordinary Linux fd-broker config/status/error DTOs through the typed engine/JIT
 oracle path, while Rust and TypeScript manual external schemas prove
@@ -712,8 +964,10 @@ descriptors as scalar payload. Vox Rust now has a Stax-shaped fd-broker
 transport fixture proving the actual
 `Vec<vox::Fd>` handoff over `FdStreamLink` and refusal over TCP. Swift and
 TypeScript generated bindings reject fd-bearing service surfaces at codegen
-time. Remaining Stax work is the macOS `KdBufBatch` streaming shape if it
-becomes part of the gate.
+time. The generated Vox bridge now also carries the exact macOS
+`record(config, Tx<KdBufBatch>) -> Result<RecordSummary, RecordError>` method
+root through the focused Stax macOS record matrix. Remaining Stax work is only
+any broader live-profile subscription roots that become migration-gated.
 
 ### Helix Trace Server
 
@@ -735,19 +989,27 @@ but it should be part of the final ecosystem gate.
 
 The generated Vox bridge now has checked-in Helix payload roots via
 `echo_helix_stream_metrics`, `echo_helix_verify_evidence`,
-`helix_subscribe_pulses`, and `helix_pulse_bundle`. The focused matrix covers
-Rust TCP, Swift TCP, TypeScript TCP, and TypeScript WebSocket in both
-directions. This proves large metric vectors, transparent ID wrappers, nested
-verify evidence rows, optional seed/divergence fields, enum draft statuses, f32
-evidence scores, the non-nested `Tx<PulseAvailable>` subscription item path,
-and a coherent `PulseBundle` response with field masks, optional rollups,
-timeline events, Chrome trace maps, clips, heatmaps, provenance, and scheduler
-evidence through generated clients/dispatchers. Rust, Swift, and TypeScript
-Phon-side fixtures now cover the representative trace snapshot; the Swift
-fixture keeps the flattened transparent IDs, metric vectors, options, and
-nested trace metadata native-clean. Remaining Helix work is the broader
-trace-viewer service surface and any selected high-value large response roots
-beyond this representative slice.
+`helix_subscribe_pulses`, `helix_pulse_bundle`, and
+`helix_trace_service_surface`. The focused matrix covers Rust TCP, Swift TCP,
+TypeScript TCP, and TypeScript WebSocket in both directions. This proves large
+metric vectors, transparent ID wrappers, nested verify evidence rows, optional
+seed/divergence fields, enum draft statuses, f32 evidence scores, the
+non-nested `Tx<PulseAvailable>` subscription item path, and a coherent
+`PulseBundle` response with field masks, optional rollups, timeline events,
+Chrome trace maps, clips, heatmaps, provenance, and scheduler evidence through
+generated clients/dispatchers. The generated `TraceService` aggregate spans the
+live standalone query return families: `AttentionSummaryBatch`, attendance
+rows, audio self-attention rows, transcript tokens, decoder-evidence reports,
+piece-eval reference/snapshot DTOs, clips, provenance, Chrome trace events,
+scheduler evidence, and the bundle mask/response. The focused Rust Helix
+ecosystem run passes 2/2. TypeScript Phon-side fixtures now carry the same broad
+aggregate through the table-driven ecosystem equivalence test with the JIT
+fallback gate intact; the focused TypeScript ecosystem file passes 21/21 and
+`pnpm check` is clean. Swift Phon-side fixtures now carry the same broad
+aggregate through the cross-engine equivalence test with the native JIT fallback
+gate intact; the focused Swift ecosystem fixture run passes 19/19. Generated
+Vox bridge coverage is still representative, not a complete mirror of every
+trace-viewer endpoint.
 
 ### Hotmeal
 
@@ -766,6 +1028,12 @@ Hotmeal fixture work should exercise websocket transport, browser-facing
 TypeScript codegen, and small service calls. It is the sanity check that the
 ecosystem work did not optimize only the big Rust/Swift cases.
 
+The Phon fixture corpus already models the callback payload surface as a
+`HotmealSubscribeRequest` plus a delivered list of `HotmealLiveReloadEvent`
+values. Rust derives the fixture from Facet, Swift carries it through the
+descriptor/interpreter/JIT equivalence harness, and TypeScript carries it as a
+public JavaScript-shape typed fixture.
+
 The generated Vox bridge now has checked-in Hotmeal payload roots via
 `echo_hotmeal_live_reload_event` and `echo_hotmeal_apply_patches_result`. The
 focused matrix covers Rust TCP, Swift TCP, TypeScript TCP, and TypeScript
@@ -773,7 +1041,9 @@ WebSocket in both directions. This proved live-reload event enums, byte blobs,
 recursive browser DOM nodes, patch traces, and the TypeScript `$tag`
 discriminator escape needed when an enum struct variant also has a real field
 named `tag`. Swift Phon-side fixture coverage now includes the live-reload
-event family and keeps the small enum/byte/list payload native-clean.
+event family and keeps the small enum/byte/list payload native-clean. The
+remaining callback-shaped `subscribe` / `on_event` method shape is optional
+generated Vox smoke coverage, not an open Phon typed-program or JIT gap.
 
 ### Tracey
 
@@ -974,7 +1244,7 @@ The first Tracey cleanup pass has landed for Rust:
   zero-wire fixed arrays.
 - Crate separation and binding-free engine/JIT rules are verified mechanically
   against the current Rust manifests.
-- Rust Tracey now reports 59/59 implemented and 59/59 verified.
+- Rust Tracey now reports 60/60 implemented and 60/60 verified.
 
 The first Swift Tracey audit has also landed:
 
@@ -987,7 +1257,7 @@ The first Swift Tracey audit has also landed:
   shape.
 - Swift hostile tests now cover unknown tags, invalid UTF-8, invalid chars,
   length bombs, dimension bounds, nesting depth, and trailing bytes.
-- Swift Tracey now reports 53/59 implemented and 56/59 verified.
+- Swift Tracey now reports 54/60 implemented and 57/60 verified.
 
 The first TypeScript Tracey audit has landed for the schema and engine packages:
 
@@ -999,12 +1269,14 @@ The first TypeScript Tracey audit has landed for the schema and engine packages:
   bundles for stale ids, incomplete closures, and unbounded zero-wire fixed
   arrays.
 - TypeScript self-describing enum payload decode, TypeScript JIT opt-in
-  selection, and Rust-side TypeScript codegen/schema-source behavior are now
-  included in the TypeScript Tracey implementation scope.
-- TypeScript Tracey now reports 48/59 implemented and 48/59 verified.
-- The remaining TypeScript holes are real missing or out-of-package surfaces:
-  Rust-only subset support, descriptor model rules, memory/linear-op rules, and
-  copy-and-patch stencil rules.
+  selection, direct public-shape typed JIT encode/decode, and Rust-side
+  TypeScript codegen/schema-source behavior are now included in the TypeScript
+  Tracey implementation scope.
+- TypeScript Tracey now reports 49/60 implemented and 49/60 verified.
+- The remaining TypeScript holes are not untested implemented code. They are
+  either intentionally non-applicable to the TypeScript value model or
+  out-of-package surfaces: Rust-only subset support, Rust/Swift descriptor
+  memory-model rules, memory/linear-op rules, and copy-and-patch stencil rules.
 
 Tracey annotations must be honest:
 
@@ -1020,9 +1292,11 @@ Tracey annotations must be honest:
 Create Phon/Vox fixture definitions extracted from real consumer protocols:
 
 1. Bee fixture: keep current hot roots native-clean.
-2. Dodeca fixture: devtools, HTTP tunnel, HTML processor, code execution,
-   gingembre/host dynamic values, markdown/data dynamic values.
-3. Dibs fixture: SQL value enum, rows, filters, migration logs.
+2. Dodeca fixture: devtools, HTTP tunnel, HTML processor, image processing,
+   search indexing, code execution, gingembre/host dynamic values,
+   markdown/data dynamic values.
+3. Dibs fixture: SQL value enum, rows, filters, migration status, migrate
+   result, and migration logs.
 4. Styx fixture: recursive `styx_tree::Value` and LSP request/response roots.
 5. Stax fixture: recursive flamegraph update, update subscriptions, fd broker
    metadata.
@@ -1125,21 +1399,43 @@ not enabled.
 
 ### 6. TypeScript engine and codegen
 
-TypeScript is not the first native-performance target, but it is part of the
-consumer compatibility surface:
+TypeScript is not a Rust/Swift descriptor-memory target and is not the first
+native-performance gate. For Vox 1.0, the required part is correctness plus an
+idiomatic generated-client boundary: browser and websocket consumers must see
+ordinary JavaScript/TypeScript DTO shapes, not a generic Phon `Value` model.
+Source-specialized TypeScript JIT is useful for browser-hot generated DTOs, but
+it is prioritized after Rust and Swift native JIT unless consumer benchmarks
+prove the TypeScript client path is the bottleneck:
 
 1. Keep interpreter/codegen correctness for every supported schema kind.
-2. Keep generated JavaScript JIT/source-specialization behavior aligned with the
-   same plan-first semantics.
-3. Cover Dodeca browser/devtools payloads that are TypeScript-facing.
-4. Cover channel element encode/decode for websocket transports.
-5. Preserve generated decoder JIT support for maps, sets, tuple vectors,
+2. Keep generated JavaScript source-specialization behavior aligned with the
+   same plan-first semantics when it is enabled.
+3. Keep the generated-client fast path on direct public JavaScript-shape
+   lowering: decoded structs become plain objects, generated enums become the
+   codegen discriminated-union shape, sequences become arrays or sets as
+   appropriate, schema maps stay `Map`, and `Dynamic` fields alone use the
+   dynamic `Value` representation.
+4. Keep the generic `Value` engine as the oracle, schema-less dynamic API, and
+   implementation for actual `Dynamic` payload fields; do not use it as the
+   substrate for ordinary generated Vox TypeScript DTOs.
+5. Cover Dodeca browser/devtools payloads that are TypeScript-facing.
+6. Cover channel element encode/decode for websocket transports.
+7. Preserve generated decoder JIT support for maps, sets, tuple vectors,
    dynamic values, and recursive call-block shapes, and keep unsupported bridge
    surfaces explicit in generated diagnostics.
 
 TypeScript acceptance means browser-facing generated clients can consume the
 same fixture corpus over websocket transports, with exact unsupported errors
-for surfaces that are bridge-only or platform-specific.
+for surfaces that are bridge-only or platform-specific, while the generated
+typed path constructs and consumes public JavaScript shapes directly. A generic
+`Value` round trip is acceptable as the oracle, fallback implementation,
+benchmark comparison, or true dynamic API path; it is not acceptable as the
+public API shape for ordinary generated DTOs. The TypeScript JIT target that
+matters is direct public-shape source specialization. It is useful and already
+worth benchmarking, but it is not allowed to displace the release-critical order:
+generated TypeScript bridge correctness and public-shape APIs first, Rust and
+Swift native JIT for the hot paths, then TypeScript JIT polish when
+browser-facing benchmark data says it is on the migration path.
 
 ### 7. Vox bridge
 
@@ -1182,7 +1478,8 @@ Required benchmark families:
 3. Dodeca HTML process input/output with maps, sets, tuple vectors, and
    `Vec<u8>` side payloads where applicable.
 4. Dodeca gingembre/host dynamic value calls.
-5. Dibs list/create/update payloads with SQL value enums and rows.
+5. Dibs list/create/update/migration payloads with SQL value enums, rows, and
+   migration log channel items.
 6. Styx recursive `Value` request/response payloads.
 7. Stax flamegraph update with recursive `FlameNode`.
 8. Channel element encode/decode for representative `Tx<T>` and `Rx<T>` items.
@@ -1232,41 +1529,65 @@ updated document.
 1. Keep Bee fixtures and benchmarks native-clean.
 2. Treat Dodeca as the largest remaining consumer sweep. Broaden it beyond the
    current ecosystem, template-call, HTML processing, code-execution,
+   data-loader, markdown parse/render, image-processing, search-indexing,
    byte-channel, and LSP string-channel generated roots into any additional
-   markdown/data/devtools roots that become part of the migration gate.
+   Dodeca roots that become part of the migration gate.
 3. Keep Tracey as the bounded generated-service proof target. The current
    status/rule/validation/core-control/full-LSP/update/dashboard/query/config
    mutation roots are covered; only add more Tracey roots when the live
    checkout exposes a newly relevant protocol method.
-4. Keep the Rust and Swift Dibs SQL/generated Squel service roots native-clean,
-   and keep the TypeScript Dibs generated-service fixture passing through the
-   typed engine/JIT selection path.
-5. Broaden Helix beyond the current metrics/verify/subscription/PulseBundle
-   roots if more trace-viewer endpoints become part of the gate, and add any
-   optional Hotmeal callback-shaped service smoke path if that shape becomes
-   part of the migration gate.
+4. Keep the Rust and Swift Dibs SQL/generated Squel/migration service roots
+   native-clean, and keep the TypeScript Dibs generated-service and migration
+   fixtures passing through the typed engine/JIT selection path.
+5. Keep the expanded Helix `TraceService` fixture in the Rust/TypeScript hot
+   benchmark sets and keep the generated Vox method roots green beyond the
+   current metrics/verify/subscription/PulseBundle/TraceService aggregate
+   roots. Swift benchmark coverage is native-clean; keep the Rust, Swift, and
+   TypeScript aggregate fixture parity green while broadening the remaining
+   proof paths. Add any optional Hotmeal
+   callback-shaped service smoke path if that shape becomes part of the
+   migration gate.
 6. Keep Styx Swift benchmark coverage native-clean for the recursive value/LSP
    aggregate surfaces.
 7. Stax fd/external coverage now has ordinary DTO fixture coverage in Rust,
    Swift, and TypeScript, generated Vox bridge DTO and recursive subscription
    coverage, Phon Rust/TypeScript external diagnostics, a Vox Rust fd-capable
    transport fixture, non-fd transport refusal tests, and Swift/TypeScript
-   generated-binding rejection for fd-bearing service surfaces. Remaining work
-   is any macOS Stax roots that become part of the gate.
-8. Add Swift fixture parity for every shape that Swift Vox must send or
-   receive.
-8. Add TypeScript fixture parity for browser/websocket-facing surface.
+   generated-binding rejection for fd-bearing service surfaces. The macOS
+   `record(config, Tx<KdBufBatch>) -> Result<RecordSummary, RecordError>` root
+   is now covered by the generated Vox bridge matrix. Remaining work is any
+   additional Stax roots that become part of the migration gate.
+8. Keep Swift fixture parity green for every shape that Swift Vox must send or
+   receive, and keep generated Swift coverage in the Vox bridge matrix as new
+   consumer roots become migration-gated rather than adding more hand-written
+   fixture descriptors.
+9. Keep TypeScript Phon-side fixture parity green for browser/websocket-facing
+   and DTO-shaped surfaces, and broaden generated Vox bridge parity when a
+   consumer method becomes part of the migration gate.
 
 ### Phase 3: Make interpreters authoritative
 
 1. Ensure Rust, Swift, and TypeScript interpreters pass the complete fixture
    corpus.
-2. Add malformed-input tests for sets, maps, dynamic values, recursive values,
-   channel handles, and external handles.
-3. Add versioned compatibility vectors for field changes, enum variant changes,
-   nested containers, recursive values, channel element schemas, and external
-   metadata.
+2. Keep malformed-input tests for set/map uniqueness, dynamic values, recursive
+   values, channel roots, and external roots in the interpreter/oracle path; add
+   new hostile vectors only when a new migration-gated fixture family exposes an
+   untested failure mode.
+3. Keep the generated 28-case compatibility corpus green across Rust, Swift,
+   and TypeScript. It now includes field changes, enum variant changes, nested
+   containers, recursive/dynamic values, channel item schemas, and external
+   metadata schemas; add new versioned vectors only when a migration-gated
+   fixture exposes a new compatibility shape.
 4. Keep same-schema fixtures on the compatibility-plan path.
+
+Phases 4 through 6 are release gates after interpreter correctness, but they
+are not equally urgent performance gates. Rust native JIT and Swift native JIT
+are priority 1 because they cover the server, engine, and Swift-app hot paths.
+Generated TypeScript bridge correctness and public JavaScript-shape APIs remain
+part of the compatibility gate. TypeScript source-specialized JIT is the next
+performance tier for browser-hot generated DTOs, and should be justified by the
+benchmarks already called out in this roadmap rather than by importing the
+Rust/Swift descriptor-memory model.
 
 ### Phase 4: Bring Rust JIT to ecosystem coverage
 
@@ -1288,27 +1609,37 @@ updated document.
 4. Keep Swift channel payload benchmarks native-clean for the representative
    Dodeca, Dibs, Helix, and Tracey item roots.
 
-### Phase 6: Finish TypeScript and generated Vox bridge
+### Phase 6: Finish TypeScript bridge/public shapes, then measured JIT
 
-1. Make TypeScript interpreter/codegen pass the browser-facing fixture corpus.
+1. Keep TypeScript interpreter/codegen passing the browser-facing fixture corpus.
 2. Route generated Rust, Swift, and TypeScript Vox args/responses/envelopes
    through Phon typed programs.
-3. Bind non-nested channels as capabilities and route stream items through
+3. Keep generated Vox TypeScript clients and dispatchers on direct
+   JavaScript-shape lowering for their hot typed DTO path, with `Value` reserved
+   for true `Dynamic` fields and dynamic APIs.
+4. Keep the TypeScript direct public-shape typed JIT as an optimization target
+   for browser-facing/generated Vox consumers, but do not let it outrank the
+   Rust and Swift native JIT work unless TypeScript benchmark data shows that
+   client-side encode/decode is blocking an actual migration.
+5. Bind non-nested channels as capabilities and route stream items through
    Phon.
-4. Ensure subjects and channel tasks die on disconnect and inactivity. Subject
+6. Ensure subjects and channel tasks die on disconnect and inactivity. Subject
    process teardown is covered in Vox by `hosted.subject.lifecycle`, and
    channel close-all teardown is covered by `rpc.channel.connection-closure`;
    session keepalive teardown is covered by `session.keepalive`. Keep the
    remaining focus on end-to-end session task teardown outside keepalive.
-5. Add external transport capability handling and diagnostics.
+7. Add external transport capability handling and diagnostics.
 
 ### Phase 7: Benchmark and gate Vox 1.0 compatibility
 
 1. Add ecosystem benchmark families.
 2. Record interpreter baseline, JIT enabled result, and fallback status.
-3. Run Tracey coverage and close all roadmap-relevant uncovered/untested holes.
-4. Run the fixture corpus with JIT enabled and JIT not enabled.
-5. Treat the roadmap as complete only when the Vox bridge, fixtures, Tracey
+3. Include TypeScript public-shape benchmarks for browser-facing generated DTOs:
+   direct-shape JIT result plus the generic `Value` oracle/fallback for
+   comparison.
+4. Run Tracey coverage and close all roadmap-relevant uncovered/untested holes.
+5. Run the fixture corpus with JIT enabled and JIT not enabled.
+6. Treat the roadmap as complete only when the Vox bridge, fixtures, Tracey
    coverage, and benchmarks all agree.
 
 ## Acceptance milestones
@@ -1334,7 +1665,11 @@ dynamic values, recursive values, channels, and externals where applicable.
 
 Generated Vox Rust, Swift, and TypeScript clients/dispatchers route args,
 responses, envelopes, and channel items through Phon typed programs. Both
-runtime modes pass the fixture corpus.
+runtime modes pass the fixture corpus. The TypeScript generated bridge exposes
+and consumes the codegen JavaScript shapes directly; the generic `Value` model
+appears only for actual `Dynamic` fields and dynamic/schema-less APIs. A
+generated TypeScript bridge that is only correct through generic `Value` is an
+oracle/fallback, not this milestone.
 
 ### Milestone 4: Bee remains native-clean
 
@@ -1361,9 +1696,17 @@ references, channel element schemas, and external metadata.
 
 ### Milestone 8: Benchmarks
 
-Rust and Swift benchmarks exist for Bee, Dodeca, Dibs, Styx, Stax, and channel
-payload families. Results separate interpreter baseline, JIT enabled path, and
-fallback-report status.
+Rust benchmark entry points cover Bee plus the Dodeca, Dibs, Styx, Stax,
+Helix, Hotmeal, Tracey migration, and channel payload families, including Dibs
+Squel and migration service roots. Swift benchmarks cover Bee, Dodeca, Dibs,
+Styx, Stax, Helix, and representative channel payloads, including Dodeca
+image/search roots, Dodeca byte/string items, Dibs migration service roots and
+migration logs, Helix pulse availability, and Tracey data updates. Results
+separate interpreter baseline, JIT enabled path, and fallback-report status.
+Browser-facing TypeScript benchmarks exist to decide whether direct-shape source
+specialization needs to move up for a specific generated-client workload; they
+distinguish direct public-shape JIT from the generic `Value` oracle/fallback
+path for the broad Helix aggregate and Dodeca image/search roots.
 
 ### Milestone 9: Tracey coverage
 
@@ -1376,7 +1719,11 @@ roadmap.
 The next Vox can serve the checked-in consumer fixture corpus with JIT enabled
 and JIT not enabled, without retry/stable-conduit/zero-copy remnants, without
 subject leaks, and with precise diagnostics for any intentionally unsupported
-surface.
+surface. TypeScript generated clients use ordinary public JavaScript/TypeScript
+shapes for ordinary DTOs, with `Value` reserved for real dynamic payloads and
+schema-less/dynamic APIs; TypeScript source-specialized JIT is accepted when it
+is direct-shape and benchmark-justified, not because TypeScript is expected to
+mirror the Rust/Swift descriptor-memory engines.
 
 ## Suggested goal wording
 
@@ -1387,7 +1734,9 @@ Use this as the objective for a long-running implementation goal:
 > surfaces from Bee, Dodeca, Dibs, Styx, Stax, Helix, Hotmeal, and Tracey
 > migration into checked-in fixtures; make the interpreter, Rust JIT, Swift JIT,
 > TypeScript engine/codegen, and generated Vox bridges handle those fixtures
-> through plan-based Phon typed programs; keep only the two runtime modes, reject
-> nested channels, preserve subject teardown, add benchmarks for the hot
-> families, and use Tracey annotations/tests to prove the roadmap's spec rules
-> are implemented and verified.
+> through plan-based Phon typed programs; prioritize Rust and Swift JIT for the
+> hot paths, keep TypeScript generated APIs on ordinary public shapes with
+> source-specialized JIT only where benchmarks justify it, keep only the two
+> runtime modes, reject nested channels, preserve subject teardown, add
+> benchmarks for the hot families, and use Tracey annotations/tests to prove the
+> roadmap's spec rules are implemented and verified.
