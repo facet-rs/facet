@@ -113,6 +113,34 @@ UpdateUser @update{
     }
 
     #[test]
+    fn test_update_set_null() {
+        // `@null` in a SET is the SQL keyword NULL, not a nullary function call
+        // `NULL()` (which is a syntax error). Regression for that miscompile.
+        let source = r#"
+ClearDeletedAt @update{
+    params {id @uuid}
+    table products
+    set {deleted_at @null}
+    where {id $id}
+}
+"#;
+        let (update, qsource) = get_first_update(source);
+        let schema = Schema::default();
+        let ctx = SqlGenContext::new(&schema, std::sync::Arc::new(qsource));
+        let result = generate_update_sql(&ctx, &update).unwrap();
+        assert!(
+            result.sql.contains(r#"SET "deleted_at" = NULL"#),
+            "expected `= NULL`, got: {}",
+            result.sql
+        );
+        assert!(
+            !result.sql.contains("NULL()"),
+            "must not emit the invalid `NULL()`: {}",
+            result.sql
+        );
+    }
+
+    #[test]
     fn test_update_multiple_conditions() {
         let source = r#"
 UpdateProductStatus @update{

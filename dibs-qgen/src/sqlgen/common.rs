@@ -255,6 +255,8 @@ pub fn value_expr_to_expr(
         Some(ValueExpr::Other { tag, content }) => match (tag, content) {
             // Bare scalar (param reference like $name or literal)
             (None, Some(Payload::Scalar(s))) => meta_string_to_expr(s),
+            // `@null` is the SQL keyword NULL, not a nullary function `NULL()`.
+            (Some(name), None) if name.eq_ignore_ascii_case("null") => Expr::Null,
             // Nullary function like @now
             (Some(name), None) => Expr::FnCall {
                 name: name.to_uppercase(),
@@ -331,6 +333,8 @@ pub fn update_value_to_expr(
         Some(UpdateValue::Other { tag, content }) => match (tag, content) {
             // Bare scalar (param reference like $name or literal)
             (None, Some(Payload::Scalar(s))) => meta_string_to_expr(s),
+            // `@null` is the SQL keyword NULL, not a nullary function `NULL()`.
+            (Some(name), None) if name.eq_ignore_ascii_case("null") => Expr::Null,
             // Nullary function like @now
             (Some(name), None) => Expr::FnCall {
                 name: name.to_uppercase(),

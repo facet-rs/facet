@@ -178,6 +178,8 @@ fn value_expr_to_unnest_select(
                     }
                 }
             }
+            // `@null` is the SQL keyword NULL, not a nullary function `NULL()`.
+            (Some(name), None) if name.eq_ignore_ascii_case("null") => "NULL".to_string(),
             // Nullary function like @now
             (Some(name), None) => format!("{}()", name.to_uppercase()),
             // Function with args
@@ -238,6 +240,8 @@ fn update_value_to_excluded(
                     }
                 }
             }
+            // `@null` is the SQL keyword NULL, not a nullary function `NULL()`.
+            (Some(name), None) if name.eq_ignore_ascii_case("null") => "NULL".to_string(),
             // Nullary function like @now
             (Some(name), None) => format!("{}()", name.to_uppercase()),
             // Function with args
