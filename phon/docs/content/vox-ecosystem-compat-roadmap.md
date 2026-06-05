@@ -373,7 +373,7 @@ Verified in the Vox checkout during the bridge audit:
 - Vox Tracey validation is clean across Rust, Swift, and TypeScript. Current
   coverage is Rust 175/175 implemented and 128/175 verified, Swift 156/175
   implemented and 96/175 verified, and TypeScript 175/175 implemented and
-  113/175 verified. That is not a global Vox Tracey completion claim: the
+  114/175 verified. That is not a global Vox Tracey completion claim: the
   remaining unverified rules include broad transport/session/RPC surfaces
   outside this Phon ecosystem bridge roadmap.
 - The roadmap-relevant Vox rules for subject teardown, channel shape, channel
@@ -424,7 +424,12 @@ Verified in the Vox checkout during the bridge audit:
   `ConnectionClose`, verifies receiving `ConnectionClose` marks the virtual
   handle closed, and verifies a later peer request on the closed ID sends a
   `ProtocolError`. The focused Swift suite passes 21/21, the focused TypeScript
-  session suite passes 21/21, and Vox `pnpm check` remains green.
+  session suite now passes 22/22, and Vox `pnpm check` remains green.
+- TypeScript caller liveness is now fully Tracey-verified: the focused
+  `vox-core` session suite proves virtual connections stay live while any
+  caller handle for that connection remains undisposed, then send
+  `ConnectionClose` only after the last caller handle is disposed. This closes
+  TypeScript's `rpc.caller.liveness.*` untested set.
 - Vox `session.keepalive` now has Tracey-backed protocol keepalive coverage
   for Ping/Pong handling and missing-Pong teardown in Rust, Swift, and
   TypeScript. Swift's focused keepalive path passes in
@@ -1663,8 +1668,10 @@ model or routing ordinary generated DTOs through generic `Value`.
 6. Ensure subjects and channel tasks die on disconnect and inactivity. Subject
    process teardown is covered in Vox by `hosted.subject.lifecycle`, and
    channel close-all teardown is covered by `rpc.channel.connection-closure`;
-   session keepalive teardown is covered by `session.keepalive`. Keep the
-   remaining focus on end-to-end session task teardown outside keepalive.
+   session keepalive teardown is covered by `session.keepalive`, and TypeScript
+   caller liveness teardown is covered by `rpc.caller.liveness.*`. Keep the
+   remaining focus on Swift caller liveness and broader end-to-end session task
+   teardown outside keepalive.
 7. Add external transport capability handling and diagnostics.
 
 ### Phase 7: Benchmark and gate Vox 1.0 compatibility
