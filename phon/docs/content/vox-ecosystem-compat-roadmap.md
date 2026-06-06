@@ -168,10 +168,11 @@ Already in place on the Phon side:
   proves Swift native decode handles that typed shape, remains decode
   native-clean, and re-encodes to the same reader-shaped bytes as the Value-plan
   oracle. The focused
-  `nativeCompatListElementStructDriftMatchesReaderOracle` test proves the same
-  native-clean skip/default behavior for list element DTO drift. The remaining
-  proof work is continuing to broaden native execution across the full versioned
-  compat corpus.
+  `nativeCompatListElementStructDriftMatchesReaderOracle` and
+  `nativeCompatMapValueStructDriftMatchesReaderOracle` tests prove the same
+  native-clean skip/default behavior for list element and map value DTO drift.
+  The remaining proof work is continuing to broaden native execution across the
+  full versioned compat corpus.
 - Swift engine-level ecosystem fixture coverage now includes a Dodeca-shaped
   `Set<String>` root, Dodeca dynamic template calls with `Value` args and
   tuple-vector kwargs, Dodeca HTML processor inputs with optional maps, string
