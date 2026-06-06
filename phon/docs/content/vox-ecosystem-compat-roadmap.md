@@ -315,7 +315,7 @@ Already in place on the Phon side:
 - Current Vox bridge verification passes: Rust runtime/codegen bridge
   (`cargo nextest run -p vox -p vox-core -p vox-phon -p vox-codegen --no-fail-fast`,
   192/192), Swift runtime
-  (`swift test --package-path swift/vox-runtime`, 52/52), targeted TypeScript
+  (`swift test --package-path swift/vox-runtime`, 56/56), targeted TypeScript
   schema/channel/session tests
   (`pnpm --filter @bearcove/vox-core exec vitest run src/schema_tracker.test.ts src/driver.channel_schema.test.ts src/channeling/binding.test.ts src/channeling/registry.test.ts src/session.test.ts`,
   37/37), TypeScript browser WebSocket gate
@@ -428,18 +428,17 @@ Verified in the Vox checkout during the bridge audit:
   `vox-tcp` passes its focused transport suite with 5 tests, and `vox-ws`
   passes its focused transport suite with 1 test.
 - Vox Tracey validation is clean across Rust, Swift, and TypeScript. Current
-  coverage is Rust 174/174 implemented and 174/174 verified, Swift 162/174
-  implemented and 159/174 verified, and TypeScript 174/174 implemented and
+  coverage is Rust 174/174 implemented and 174/174 verified, Swift 164/174
+  implemented and 161/174 verified, and TypeScript 174/174 implemented and
   174/174 verified. That is not a global Vox Tracey completion claim: the
   remaining Swift uncovered rules are the non-shipped memory/in-process/
-  WebSocket transports, debug/observer surfaces, and stream send/receive
-  cancellation-safety rules (`link.tx.cancel-safe` and
-  `rpc.transport.stream.cancel-safe-recv`). The current Swift implemented-but-
-  untested rules are `rpc.observability.driver`,
+  WebSocket transports and debug/observer surfaces. The current Swift
+  implemented-but-untested rules are `rpc.observability.driver`,
   `rpc.observability.runtime`, and the broad `rpc` umbrella. The non-Swift
-  transport holes are not Vox 1.0 blockers; the stream cancellation-safety
-  items are real Swift transport hardening candidates. Rust and TypeScript now
-  have verification references for every current Vox rule. The legacy
+  transport holes are not Vox 1.0 blockers; Swift stream send/receive
+  cancellation safety is now implemented and verified against the shipped
+  `NIOFrameLink` path. Rust and TypeScript now have verification references for
+  every current Vox rule. The legacy
   `rpc.response.one-per-request` rule has been removed from the live spec.
 - The roadmap-relevant Vox rules for subject teardown, channel shape, channel
   allocation/direction/lifecycle, channel payload indexes, connection-close
@@ -685,18 +684,21 @@ Verified in the Vox checkout during the bridge audit:
   owned receive buffers, and repeat EOF. `tcpStreamLinkSendsFramesClosesAndRejectsOversizedPayloads`
   proves outbound frame-size limits reject before publication, committed frames
   are delivered exactly once, and graceful close reaches the peer after
-  committed frames. `tcpStreamLinkReceiveErrorIsTerminal` proves decode errors
-  are terminal, and `unixStreamLinkConnectsToLocalSocketTransport` proves the
-  local Unix-socket stream constructor. `singleLinkSourceYieldsOneFreshAttachment`
-  covers the Swift `link.split` single-attachment source. The Swift
-  `NIOFrameLink` now applies `setMaxFrameSize` to outbound sends as well as
-  inbound decoding, and receive-side link errors finish the stream. Tracey now
-  reports no remaining untested Swift `link.*`, `transport.stream`, or
-  `transport.stream.*` rules. A focused Swift send/receive cancellation-safety
-  proof remains a reasonable transport hardening item for the stream/local
-  transport that actually ships; memory, in-process, WebSocket, and
-  browser-only transports are not Swift implementations and are not 1.0
-  blockers.
+  committed frames. `tcpStreamLinkSendCancellationDoesNotPublishPartialFrameOrPoisonLaterSend`
+  proves canceling an in-flight send cannot publish a partial frame or poison a
+  later send on the same link. `tcpStreamLinkReceiveCancellationDoesNotCorruptPartialFrame`
+  proves canceling a receive wait while only part of a length-prefixed frame has
+  arrived does not consume or corrupt the eventual complete frame.
+  `tcpStreamLinkReceiveErrorIsTerminal` proves decode errors are terminal, and
+  `unixStreamLinkConnectsToLocalSocketTransport` proves the local Unix-socket
+  stream constructor. `singleLinkSourceYieldsOneFreshAttachment` covers the
+  Swift `link.split` single-attachment source. The Swift `NIOFrameLink` now
+  applies `setMaxFrameSize` to outbound sends as well as inbound decoding, uses
+  a cancel-safe frame queue between NIO's decoder and `recvFrame`, and finishes
+  receive-side link errors through the same queue. Tracey now reports no
+  remaining untested Swift `link.*`, `transport.stream`, or
+  `transport.stream.*` rules; memory, in-process, WebSocket, and browser-only
+  transports are not Swift implementations and are not 1.0 blockers.
 - TypeScript runtime observability now has Tracey-backed coverage for its
   local-only diagnostics surfaces. `vox-core` `src/observer.test.ts` proves
   `setVoxLogger` installs and clears a local runtime observer without a
@@ -1143,8 +1145,8 @@ Explicitly not blockers:
 
 The most useful remaining audits are therefore narrow: treat Rust transport
 verification as the existing memory/stream/WebSocket/in-process regression
-gate, not fresh roadmap scope; keep Swift cancellation and task teardown
-hardening on the real stream/local transport; and use Tracey as the bounded
+gate, not fresh roadmap scope; keep any remaining Swift task teardown hardening
+on the real stream/local transport; and use Tracey as the bounded
 generated-service smoke target when a live app surface is too broad or actively
 moving.
 
