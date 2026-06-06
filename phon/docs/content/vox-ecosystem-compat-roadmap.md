@@ -1050,10 +1050,10 @@ closure:
   evidence/pulse subscription/PulseBundle/TraceService aggregate roots and
   Tracey migration
   status/rule/validation/core-control/full-LSP/update/dashboard/query/config
-  mutation roots. Remaining generated-bridge breadth is now dominated by any
-  Dodeca roots still outside the current data-loader/markdown/devtools/image
-  processor/search indexer/asset-processing slices, and any newly identified
-  channel item paths or externals, not by the current Tracey daemon protocol.
+  mutation roots. The remaining generated-bridge blocker for the frozen Vox 1.0
+  gate is the Dodeca small-cell service DTO aggregate; other newly identified
+  channel item paths, externals, or app methods are follow-up work unless the
+  gate boundary is amended.
 - Helix generated bridge coverage is still representative, not a complete
   mirror of every trace-viewer endpoint. The `PulseBundle` request mask and
   bundle slots plus the broad `TraceService` aggregate now have generated
@@ -1062,7 +1062,8 @@ closure:
   surface, and Rust, Swift, and TypeScript benchmarks now carry that aggregate:
   Rust and Swift as native-clean typed/JIT benchmarks, and TypeScript as
   direct public-shape typed JIT benchmarks. Standalone Helix endpoint roots
-  outside the aggregate mirror are still open.
+  outside the aggregate mirror are follow-up work, not part of the frozen Vox
+  1.0 gate.
   Tracey migration generated bridge coverage now mirrors the
   current LSP, core/control, dashboard/query-model, and config mutation surface
   from the current roam protocol.
@@ -1095,22 +1096,22 @@ closure:
 - TypeScript no longer needs a Rust/Swift-style descriptor-memory IR to be
   useful for generated clients. Its typed fast path is direct public JavaScript
   shapes, with the generic `Value` engine kept as the oracle and for real
-  dynamic/schema-less payloads. The remaining TypeScript work is generated Vox
-  bridge breadth and codegen parity for any consumer roots not yet in the
-  matrix, while recursive fixture roots already run through generated call-block
-  functions in both decoder and encoder JIT paths with empty decoder fallback
-  reports. Direct-shape TypeScript JIT stays measured and useful, but it only
-  moves onto the Vox 1.0 blocking path if a browser or websocket consumer
-  benchmark proves that TypeScript-side encode/decode is the migration
-  bottleneck.
+  dynamic/schema-less payloads. The remaining TypeScript work in this gate is
+  codegen parity for the frozen generated Vox bridge matrix, not every consumer
+  root that can be discovered. Recursive fixture roots already run through
+  generated call-block functions in both decoder and encoder JIT paths with
+  empty decoder fallback reports. Direct-shape TypeScript JIT stays measured and
+  useful, but it only moves onto the Vox 1.0 blocking path if the gate boundary
+  is amended with a browser or websocket benchmark showing that TypeScript-side
+  encode/decode is the migration bottleneck.
 - Phon Swift still has no in-package codegen module by design, so the Phon-side
   `codegen.*` Tracey holes remain out-of-package rather than missing Swift
   implementation work. Vox generated Swift bridge coverage exists for the
   current matrix through generated descriptors, `readerDescriptor`/`readerBlocks`,
   `decodeVoxTyped`, and `encodeVoxTyped`, including the focused Swift TCP
   ecosystem bridge run. The remaining Swift holes are borrowed descriptor
-  decode, named thunk binding, total typed-IR lowering, and any future generated
-  Swift consumer root not yet added to the Vox bridge matrix.
+  decode, named thunk binding, and total typed-IR lowering; future generated
+  Swift consumer roots are follow-up work unless the gate boundary is amended.
 
 ## Killed or out-of-scope surface
 
@@ -1177,6 +1178,62 @@ gate, not fresh roadmap scope; keep any remaining Swift task teardown hardening
 on the real stream/local transport; and use Tracey as the bounded
 generated-service smoke target when a live app surface is too broad or actively
 moving.
+
+## Vox 1.0 gate boundary
+
+The Vox 1.0 compatibility gate is frozen to the fixture and generated-bridge
+surface named in this roadmap. A newly discovered consumer method is not a
+blocker merely because it exists in Bee, Dodeca, Dibs, Styx, Stax, Helix,
+Hotmeal, or Tracey. It becomes part of this gate only when this section is
+amended to name the method family, the expected fixture root, and the verification
+command that proves it.
+
+In scope for closing this roadmap:
+
+- Keep the checked-in Phon fixture corpus for Bee, Dodeca, Dibs, Styx, Stax,
+  Helix, Hotmeal, and Tracey migration green across the Rust, Swift, and
+  TypeScript engine paths that currently ship.
+- Keep generated Vox bridge coverage green for the Dodeca, Dibs, Styx, Stax,
+  Helix, Hotmeal, and Tracey roots explicitly listed in the consumer sections
+  below.
+- Add the one remaining explicitly named generated-bridge root: Dodeca
+  small-cell service DTOs.
+- Preserve the product model of exactly two runtime modes: JIT enabled and JIT
+  not enabled.
+- Keep nested channels rejected, external/fd values modeled as transport
+  capabilities with diagnostics, and subject processes terminating on
+  disconnect or inactivity.
+- Keep Rust and Swift hot roots native-clean where the roadmap already calls
+  them hot, and keep TypeScript generated clients on ordinary public
+  JavaScript/TypeScript shapes with `Value` only for real dynamic payloads.
+- Keep Tracey validation clean, with uncovered rules treated as blockers only
+  when they describe the shipped gate surface above.
+
+Out of scope for this goal unless the gate boundary is explicitly amended:
+
+- Building live Bee or Dodeca applications as part of the normal gate.
+- Mirroring every Dodeca service method beyond the listed generated bridge
+  roots and the Dodeca small-cell DTO root.
+- Mirroring every standalone Helix trace-viewer endpoint outside the checked-in
+  `PulseBundle` and `TraceService` aggregate roots.
+- Adding more Stax, Styx, Dibs, Hotmeal, or Tracey protocol roots because they
+  are discovered during repository sweeps.
+- Browser-only or otherwise non-shipped Swift transports.
+- Recreating Rust/Swift descriptor-memory IR semantics inside TypeScript.
+- Reviving retry/idempotency, stable conduit, zero-copy/shared-memory, or nested
+  channel support.
+
+The closing evidence for this goal is:
+
+- Phon Tracey validation and Vox Tracey validation are clean.
+- The checked-in Phon fixture corpus passes its Rust, Swift, and TypeScript
+  focused gates.
+- The Vox generated-bridge ecosystem matrix passes the currently recorded
+  `ecosystem_bridge`, `dodeca`, `dibs`, `styx`, `stax`, `helix`, `hotmeal`, and
+  `tracey` focused gate, with Dodeca small-cell included once it is added.
+- The subject lifecycle gate proves subjects exit on harness disconnect.
+- The benchmark entry points for the hot families build or run far enough to
+  prove the recorded native/fallback status.
 
 ## Consumer surface inventory
 
@@ -1280,9 +1337,10 @@ selected-runtime benchmarks. The Swift benchmark corpus now includes the
 data-loader result, parse result, image processor roots, and search indexer
 roots as native-clean typed/JIT benchmarks.
 The TypeScript benchmark corpus now includes direct public-shape typed JIT rows
-for the image processor, search indexer, and small-cell service roots.
-Remaining Dodeca work is broadening to any additional service roots that become
-part of the migration gate.
+for the image processor, search indexer, and small-cell service roots. The only
+remaining Dodeca generated-bridge work in the frozen Vox 1.0 gate is the
+small-cell service DTO aggregate; other Dodeca roots are follow-up work unless
+the gate boundary is explicitly amended.
 
 ### Dibs
 
@@ -1331,8 +1389,8 @@ Dibs migration service aggregate from `dibs-proto`: `MigrationStatusRequest`,
 the `MigrationLog` channel item shape. Rust and Swift benchmarks keep the
 broader Squel and migration service roots native-clean; TypeScript engine
 fixtures run them through interpreter mode, requested-JIT mode, and encoder
-JIT/fallback selection. Remaining Dibs work is only any additional generated
-root that becomes a migration gate.
+JIT/fallback selection. Additional Dibs generated roots are follow-up work
+unless the gate boundary is amended.
 
 ### Styx
 
@@ -1441,8 +1499,8 @@ transport fixture proving the actual
 TypeScript generated bindings reject fd-bearing service surfaces at codegen
 time. The generated Vox bridge now also carries the exact macOS
 `record(config, Tx<KdBufBatch>) -> Result<RecordSummary, RecordError>` method
-root through the focused Stax macOS record matrix. Remaining Stax work is only
-any broader live-profile subscription roots that become migration-gated.
+root through the focused Stax macOS record matrix. Broader live-profile
+subscription roots are follow-up work unless the gate boundary is amended.
 
 ### Helix Trace Server
 
@@ -1564,8 +1622,9 @@ errors, nullable query responses, and update subscription payloads through
 generated clients/dispatchers. Rust, Swift, and TypeScript Phon-side fixtures
 now cover the representative migration aggregate; the Swift fixture keeps the
 fixed-width status, uncovered, diagnostics, symbol, and update payloads
-native-clean. Remaining Tracey work is only any newly discovered protocol root
-from the current checkout; it is no longer the biggest compatibility surface.
+native-clean. Additional Tracey protocol roots from the current checkout are
+follow-up work unless the gate boundary is amended; Tracey is no longer the
+biggest compatibility surface.
 
 ## Shape compatibility matrix
 
@@ -1862,13 +1921,14 @@ Swift JIT priorities after the Bee baseline:
    stencil path, and keep compat enum/skip/default decode ops native-clean while
    broader versioned corpus coverage is added. The first enum-payload drift
    corpus bridge is now covered by a native Swift JIT test.
-5. Add or preserve native coverage for any additional tuple/vector roots that
-   appear in the remaining consumer sweep.
+5. Preserve native coverage for tuple/vector roots already present in the
+   frozen gate; additional tuple/vector roots are follow-up work unless the gate
+   boundary is amended.
 6. Keep recursive block support native-clean for Styx `Value` and Stax
    `FlameNode`, with precise fallback reports only for intentionally deferred
    recursive subtrees.
-7. Continue broadening the landed native compat enum/skip/default decode
-   operations from focused tests toward the versioned compatibility corpus.
+7. Keep the landed native compat enum/skip/default decode operations green as
+   they move from focused tests into the frozen versioned compatibility corpus.
 8. Verify generated Vox Swift clients/dispatchers use the runtime-selected
    engine for method args, responses, envelopes, and channel elements.
 
@@ -2013,15 +2073,15 @@ updated document.
 
 1. Keep Bee fixtures and benchmarks native-clean, without making live Bee app
    builds part of normal Vox/Phon verification while Bee is actively moving.
-2. Treat Dodeca as the largest remaining consumer sweep. Broaden it beyond the
-  current ecosystem, template-call, HTML processing, code-execution,
-  data-loader, markdown parse/render, image-processing, search-indexing,
-  asset-processing, small-cell DTO, byte-channel, LSP string-channel, and
-  browser devtools/editor generated roots into any additional Dodeca roots that
-  become part of the migration gate. The small-cell DTO family is now covered
-  by Rust fixture and benchmark gates plus TypeScript and Swift Phon-side
-  engine/JIT fixture gates; generated Vox bridge parity for that family remains
-  the next Dodeca-specific broadening step.
+2. Treat Dodeca as the largest frozen consumer sweep, not as an unbounded
+   source of new blockers. The gate covers the current ecosystem,
+   template-call, HTML processing, code-execution, data-loader, markdown
+   parse/render, image-processing, search-indexing, asset-processing,
+   small-cell DTO, byte-channel, LSP string-channel, and browser
+   devtools/editor generated roots. The small-cell DTO family is already
+   covered by Rust fixture and benchmark gates plus TypeScript and Swift
+   Phon-side engine/JIT fixture gates; generated Vox bridge parity for that
+   family is the final Dodeca-specific blocker in this roadmap.
 3. Keep Tracey as the bounded generated-service proof target. The current
    status/rule/validation/core-control/full-LSP/update/dashboard/query/config
    mutation roots are covered; only add more Tracey roots when the live
@@ -2030,12 +2090,11 @@ updated document.
    native-clean, and keep the TypeScript Dibs generated-service and migration
    fixtures passing through the typed engine/JIT selection path.
 5. Keep the expanded Helix `TraceService` fixture in the Rust/TypeScript hot
-   benchmark sets and keep the generated Vox method roots green beyond the
-   current metrics/verify/subscription/PulseBundle/TraceService aggregate
-   roots. Swift benchmark coverage is native-clean; keep the Rust, Swift, and
-   TypeScript aggregate fixture parity green while broadening the remaining
-   proof paths. Keep the Hotmeal callback-shaped service smoke roots green now
-   that they are part of the checked-in bridge corpus.
+   benchmark sets and keep the generated Vox method roots green for the current
+   metrics/verify/subscription/PulseBundle/TraceService aggregate roots. Swift
+   benchmark coverage is native-clean; keep the Rust, Swift, and TypeScript
+   aggregate fixture parity green. Keep the Hotmeal callback-shaped service
+   smoke roots green now that they are part of the checked-in bridge corpus.
 6. Keep Styx Swift benchmark coverage native-clean for the recursive value/LSP
    aggregate surfaces.
 7. Stax fd/external coverage now has ordinary DTO fixture coverage in Rust,
@@ -2044,15 +2103,14 @@ updated document.
    transport fixture, non-fd transport refusal tests, and Swift/TypeScript
    generated-binding rejection for fd-bearing service surfaces. The macOS
    `record(config, Tx<KdBufBatch>) -> Result<RecordSummary, RecordError>` root
-   is now covered by the generated Vox bridge matrix. Remaining work is any
-   additional Stax roots that become part of the migration gate.
+   is now covered by the generated Vox bridge matrix. Additional Stax roots are
+   follow-up work unless the gate boundary is explicitly amended.
 8. Keep Swift fixture parity green for every shape that Swift Vox must send or
-   receive, and keep generated Swift coverage in the Vox bridge matrix as new
-   consumer roots become migration-gated rather than adding more hand-written
-   fixture descriptors.
+   receive in the frozen gate, and keep generated Swift coverage in the Vox
+   bridge matrix instead of adding more hand-written fixture descriptors.
 9. Keep TypeScript Phon-side fixture parity green for browser/websocket-facing
-   and DTO-shaped surfaces, and broaden generated Vox bridge parity when a
-   consumer method becomes part of the migration gate.
+   and DTO-shaped surfaces. New generated Vox bridge roots enter this roadmap
+   only by amending the frozen gate boundary.
 
 ### Phase 3: Make interpreters authoritative
 
@@ -2060,14 +2118,14 @@ updated document.
    corpus.
 2. Keep malformed-input tests for set/map uniqueness, dynamic values, recursive
    values, channel roots, and external roots in the interpreter/oracle path; add
-   new hostile vectors only when a new migration-gated fixture family exposes an
+   new hostile vectors only when a frozen-gate fixture family exposes an
    untested failure mode.
 3. Keep the generated 34-case compatibility corpus green across Rust, Swift,
    and TypeScript. It now includes field changes, enum variant changes, enum
    struct payload drift, list/set/map/tuple element struct drift, nested
    containers, recursive value drift, dynamic values, channel item schemas, and
-   external metadata schemas; add new versioned vectors only when a
-   migration-gated fixture exposes a new compatibility shape.
+   external metadata schemas; add new versioned vectors only when a frozen-gate
+   fixture exposes a new compatibility shape.
 4. Keep same-schema fixtures on the compatibility-plan path.
 
 Phases 4 through 6 are release gates after interpreter correctness, but they
@@ -2226,16 +2284,19 @@ mirror the Rust/Swift descriptor-memory engines.
 
 ## Suggested goal wording
 
-Use this as the objective for a long-running implementation goal:
+Use this as the objective for a bounded implementation goal:
 
-> Finish the Vox ecosystem compatibility roadmap in
-> `docs/content/vox-ecosystem-compat-roadmap.md`: turn the real Vox consumer
-> surfaces from Bee, Dodeca, Dibs, Styx, Stax, Helix, Hotmeal, and Tracey
-> migration into checked-in fixtures; make the interpreter and generated Vox
-> bridges handle those fixtures through plan-based Phon typed programs; keep
-> Rust JIT and Swift JIT native-clean for the hot paths; keep TypeScript
-> engine/codegen on ordinary public shapes with source-specialized JIT only
-> where benchmarks justify it; keep only the two runtime modes, reject nested
-> channels, preserve subject teardown, add benchmarks for the hot families, and
-> use Tracey annotations/tests to prove the roadmap's spec rules are implemented
-> and verified.
+> Close the frozen Vox 1.0 compatibility gate defined in
+> `docs/content/vox-ecosystem-compat-roadmap.md`: keep the checked-in Bee,
+> Dodeca, Dibs, Styx, Stax, Helix, Hotmeal, and Tracey migration fixture corpus
+> green across the shipped Rust, Swift, and TypeScript Phon engine paths; add
+> the remaining Dodeca small-cell service DTO generated Vox bridge root; make
+> generated Vox Rust, Swift, and TypeScript clients/dispatchers handle the
+> frozen fixture corpus through plan-based Phon typed programs; preserve exactly
+> two runtime modes, JIT enabled and JIT not enabled; keep nested channels
+> rejected, external/fd values transport-owned, and subjects terminating on
+> disconnect/inactivity; keep Rust and Swift hot roots native-clean or precisely
+> fallback-reported, keep TypeScript generated DTOs on ordinary public
+> JavaScript/TypeScript shapes, and prove closure with the roadmap's listed
+> focused tests, benchmark entry points, and Tracey validation. Newly discovered
+> consumer roots are follow-up work unless the gate boundary section is amended.
