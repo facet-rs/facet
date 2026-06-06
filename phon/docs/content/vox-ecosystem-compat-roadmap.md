@@ -72,22 +72,25 @@ descriptor-memory model in JavaScript.
 
 Tracey coverage is a triage tool for this surface, not an independent demand
 for 100% historical spec coverage. Rules tied to removed retry/idempotency,
-stable-conduit, or zero-copy/shared-memory designs should be deleted or
-rewritten before they become implementation work. `rpc.response.one-per-request`
-was deleted from the live Vox spec and stale annotations were removed; any
-future response-finalization rule must be phrased as a current call-outcome
-invariant, not as retry/idempotency residue.
+stable-conduit, or zero-copy/shared-memory designs should be deleted before
+they become implementation work. `rpc.response.one-per-request` belongs to the
+removed retry/idempotency model; it is not a standalone Vox 1.0 rule. Current
+response behavior is covered by request ID, terminal outcome, protocol-error,
+and session teardown invariants.
 
 Transport coverage should follow the transports each implementation actually
-ships. Rust transport verification is a fair release audit for Rust memory,
-stream, WebSocket, and in-process surfaces that remain part of Vox. Swift
-transport verification is about the Swift stream/local transport and its
-real cancellation/lifecycle behavior; browser-only or non-Swift transports such
-as Swift WebSocket, memory, and in-process links are not 1.0 blockers.
+ships. Rust transport verification is already a regression gate for the Rust
+memory, stream, WebSocket, and in-process surfaces that remain part of Vox; it
+is not new roadmap breadth unless those tests regress or a new shipped
+transport appears. Swift transport verification is about the Swift stream/local
+transport and its real cancellation/lifecycle behavior; browser-only or
+non-Swift transports such as Swift WebSocket, memory, and in-process links are
+not 1.0 blockers.
 
 Consumer repositories remain source inputs. Bee stays the protected hot-path
 fixture and benchmark source, but normal Vox/Phon verification should keep
-using checked-in fixtures while Bee is actively moving. Tracey is the bounded
+using checked-in fixtures while Bee is actively moving; live Bee builds are not
+part of the gate while Amos is changing that app surface. Tracey is the bounded
 generated-service smoke target for breadth: it exercises a realistic
 dashboard/LSP-like service surface without making the live Tracey checkout
 itself a prerequisite app build.
@@ -1105,8 +1108,9 @@ implementation slices:
 
 Explicitly not blockers:
 
-- `rpc.response.one-per-request` as a standalone rule. It was removed from the
-  live Vox spec; current response behavior belongs under call-outcome and
+- `rpc.response.one-per-request` as a standalone rule or future TODO. It was
+  removed from the live Vox spec with the retry/idempotency surface; current
+  response behavior belongs under call-outcome, request-ID, and
   protocol/session invariants.
 - Live Bee builds while Bee is actively changing. Bee remains a protected source
   for fixtures and hot roots, not a normal build dependency for this roadmap.
@@ -1116,11 +1120,12 @@ Explicitly not blockers:
 - TypeScript recreating Rust/Swift descriptor-memory IR semantics for ordinary
   generated DTOs.
 
-The most useful remaining audits are therefore narrow: keep Rust transport
-verification tied to the existing memory/stream/WebSocket/in-process tests
-before adding new ones; keep Swift cancellation and task teardown hardening on
-the real stream/local transport; and use Tracey as the bounded generated-service
-smoke target when a live app surface is too broad or actively moving.
+The most useful remaining audits are therefore narrow: treat Rust transport
+verification as the existing memory/stream/WebSocket/in-process regression
+gate, not fresh roadmap scope; keep Swift cancellation and task teardown
+hardening on the real stream/local transport; and use Tracey as the bounded
+generated-service smoke target when a live app surface is too broad or actively
+moving.
 
 ## Consumer surface inventory
 
