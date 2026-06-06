@@ -120,8 +120,9 @@ Already in place on the Phon side:
 - Initial Rust ecosystem fixture coverage for Dodeca-shaped maps, sets, tuple
   vectors, dynamic template values, data-loader dynamic results, and markdown
   parse/render results with a boxed source map, Dodeca image processor
-  byte/scalar/result roots, Dodeca search indexer page/file/result roots, Dibs
-  SQL value enums, generated Dibs Squel
+  byte/scalar/result roots, Dodeca search indexer page/file/result roots,
+  Dodeca CSS/SASS/SVGO asset-processing map/string/result roots, Dibs SQL
+  value enums, generated Dibs Squel
   schema/list/get/create/update/delete/result DTOs, Dibs migration
   status/migrate/log DTOs, Styx recursive values plus
   LSP extension/host callback DTOs, Stax recursive flamegraph updates, Stax
@@ -292,13 +293,13 @@ Already in place on the Phon side:
   (`cargo nextest run -p phon --features jit -E 'binary(bee_surface)'`, 2/2),
   Rust ecosystem surface with JIT
   (`cargo nextest run -p phon --all-features -E 'binary(ecosystem_surface)'`,
-  22/22), Swift Bee feed JIT smoke
+  23/23), Swift Bee feed JIT smoke
   (`swift test --filter swiftBeeFeedMethodRootsAreNativeClean`, 1/1), Swift
   ecosystem surface
-  (`swift test --filter FixtureRoundTripsAcrossEngines`, 19/19),
+  (`swift test --filter FixtureRoundTripsAcrossEngines`, 20/20),
   and TypeScript ecosystem surface
   (`pnpm --filter @bearcove/phon-engine exec vitest run src/ecosystem_surface.test.ts`,
-  21/21). `pnpm check` from `~/phon` also passes, and Tracey
+  22/22). `pnpm check` from `~/phon` also passes, and Tracey
   validation reports zero errors across Rust, Swift, and TypeScript.
 - The cross-language compat conformance corpus now includes 34 generated
   vectors, including list/set/map/tuple element struct drift,
@@ -1194,6 +1195,8 @@ Dodeca fixture work should be split into:
   image-processing result enums.
 - Search indexer roots: rendered page lists in, generated static search file
   byte payloads out, and search-index result enums.
+- CSS/SASS/SVGO asset-processing roots: string source inputs, string-to-string
+  path/file maps, load-path vectors, and success/error enum payloads.
 - Devtools/live-reload/tunnel protocols: non-nested byte and string channels.
 - Generated-service roots: the actual request/response roots Vox codegen would
   see, not only isolated field-level types.
@@ -1212,14 +1215,16 @@ Rust, Swift, and TypeScript Phon-side fixtures now cover the HTML processor
 map/set/tuple-vector root, the dynamic template-call root, the data-loader
 dynamic-result root, the markdown parse/render result shape, and the image
 processor byte/scalar/result root from `cell-image-proto`, plus the search
-indexer page/file/result root from `cell-search-proto`. Rust keeps the real
-boxed source-map owner in the parse-result fixture; Swift and TypeScript cover
-the generated wire DTO shape where the source map is the pointee object. The
-Swift roots stay native-clean in the Swift JIT, and the Rust benchmark corpus
-now includes the data-loader result, boxed parse result, image processor roots,
-and search indexer roots as native-clean selected-runtime benchmarks. The Swift
-benchmark corpus now includes the data-loader result, parse result, image
-processor roots, and search indexer roots as native-clean typed/JIT benchmarks.
+indexer page/file/result root from `cell-search-proto`, and the CSS/SASS/SVGO
+asset-processing map/string/result roots from the Dodeca asset proto crates.
+Rust keeps the real boxed source-map owner in the parse-result fixture; Swift
+and TypeScript cover the generated wire DTO shape where the source map is the
+pointee object. The Swift roots stay native-clean in the Swift JIT, and the
+Rust benchmark corpus now includes the data-loader result, boxed parse result,
+image processor roots, and search indexer roots as native-clean
+selected-runtime benchmarks. The Swift benchmark corpus now includes the
+data-loader result, parse result, image processor roots, and search indexer
+roots as native-clean typed/JIT benchmarks.
 The TypeScript benchmark corpus now includes direct public-shape typed JIT rows
 for the image processor and search indexer roots.
 Remaining Dodeca work is broadening to any additional service roots that become
@@ -1420,10 +1425,10 @@ piece-eval reference/snapshot DTOs, clips, provenance, Chrome trace events,
 scheduler evidence, and the bundle mask/response. The focused Rust Helix
 ecosystem run passes 2/2. TypeScript Phon-side fixtures now carry the same broad
 aggregate through the table-driven ecosystem equivalence test with the JIT
-fallback gate intact; the focused TypeScript ecosystem file passes 21/21 and
+fallback gate intact; the focused TypeScript ecosystem file passes 22/22 and
 `pnpm check` is clean. Swift Phon-side fixtures now carry the same broad
 aggregate through the cross-engine equivalence test with the native JIT fallback
-gate intact; the focused Swift ecosystem fixture run passes 19/19. Generated
+gate intact; the focused Swift ecosystem fixture run passes 20/20. Generated
 Vox bridge coverage is still representative, not a complete mirror of every
 trace-viewer endpoint.
 

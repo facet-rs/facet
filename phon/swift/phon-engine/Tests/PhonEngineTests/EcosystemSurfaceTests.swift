@@ -335,6 +335,45 @@ private struct DodecaSearchIndexerFixture: Equatable {
     var errorResult: DodecaSearchIndexResult
 }
 
+private struct DodecaStylesheetPayload: Equatable {
+    var css: String
+}
+
+private struct DodecaSvgPayload: Equatable {
+    var svg: String
+}
+
+private struct DodecaMessagePayload: Equatable {
+    var message: String
+}
+
+private enum DodecaCssResult: Equatable {
+    case success(DodecaStylesheetPayload)
+    case error(DodecaMessagePayload)
+}
+
+private enum DodecaSassResult: Equatable {
+    case success(DodecaStylesheetPayload)
+    case error(DodecaMessagePayload)
+}
+
+private enum DodecaSvgoResult: Equatable {
+    case success(DodecaSvgPayload)
+    case error(DodecaMessagePayload)
+}
+
+private struct DodecaAssetProcessingFixture: Equatable {
+    var cssSource: String
+    var cssPathMap: [String: String]
+    var cssResult: DodecaCssResult
+    var sassEntrypoint: String
+    var sassFiles: [String: String]
+    var sassLoadPaths: [String]
+    var sassResult: DodecaSassResult
+    var svgSource: String
+    var svgoResult: DodecaSvgoResult
+}
+
 private enum DodecaSchema {
     static let routes = SchemaId(101)
     static let routeSet = SchemaId(102)
@@ -388,6 +427,10 @@ private enum DodecaSchema {
     static let searchFileList = SchemaId(150)
     static let searchIndexResult = SchemaId(151)
     static let searchIndexerFixture = SchemaId(152)
+    static let cssResult = SchemaId(153)
+    static let sassResult = SchemaId(154)
+    static let svgoResult = SchemaId(155)
+    static let assetProcessingFixture = SchemaId(156)
 }
 
 private enum DibsSqlValue: Equatable {
@@ -1303,6 +1346,41 @@ private func dodecaSchemas() -> [Schema] {
             Field(name: "result", schema: .concrete(DodecaSchema.searchIndexResult), required: true),
             Field(name: "error_result", schema: .concrete(DodecaSchema.searchIndexResult), required: true),
         ])),
+        Schema(id: DodecaSchema.cssResult, kind: .enumeration(name: "CssResult", variants: [
+            Variant(name: "Success", index: 0, payload: .structure([
+                Field(name: "css", schema: .concrete(primitiveId(.string)), required: true),
+            ])),
+            Variant(name: "Error", index: 1, payload: .structure([
+                Field(name: "message", schema: .concrete(primitiveId(.string)), required: true),
+            ])),
+        ])),
+        Schema(id: DodecaSchema.sassResult, kind: .enumeration(name: "SassResult", variants: [
+            Variant(name: "Success", index: 0, payload: .structure([
+                Field(name: "css", schema: .concrete(primitiveId(.string)), required: true),
+            ])),
+            Variant(name: "Error", index: 1, payload: .structure([
+                Field(name: "message", schema: .concrete(primitiveId(.string)), required: true),
+            ])),
+        ])),
+        Schema(id: DodecaSchema.svgoResult, kind: .enumeration(name: "SvgoResult", variants: [
+            Variant(name: "Success", index: 0, payload: .structure([
+                Field(name: "svg", schema: .concrete(primitiveId(.string)), required: true),
+            ])),
+            Variant(name: "Error", index: 1, payload: .structure([
+                Field(name: "message", schema: .concrete(primitiveId(.string)), required: true),
+            ])),
+        ])),
+        Schema(id: DodecaSchema.assetProcessingFixture, kind: .structure(name: "DodecaAssetProcessingFixture", fields: [
+            Field(name: "css_source", schema: .concrete(primitiveId(.string)), required: true),
+            Field(name: "css_path_map", schema: .concrete(DodecaSchema.mapStringString), required: true),
+            Field(name: "css_result", schema: .concrete(DodecaSchema.cssResult), required: true),
+            Field(name: "sass_entrypoint", schema: .concrete(primitiveId(.string)), required: true),
+            Field(name: "sass_files", schema: .concrete(DodecaSchema.mapStringString), required: true),
+            Field(name: "sass_load_paths", schema: .concrete(DodecaSchema.stringList), required: true),
+            Field(name: "sass_result", schema: .concrete(DodecaSchema.sassResult), required: true),
+            Field(name: "svg_source", schema: .concrete(primitiveId(.string)), required: true),
+            Field(name: "svgo_result", schema: .concrete(DodecaSchema.svgoResult), required: true),
+        ])),
         Schema(id: DodecaSchema.routes, kind: .structure(name: "DodecaRoutes", fields: [
             Field(name: "routes", schema: .concrete(DodecaSchema.routeSet), required: true),
         ])),
@@ -1974,6 +2052,216 @@ private func dodecaSearchIndexerFixtureDescriptor() -> (root: Descriptor, regist
         fieldAccess(\DodecaSearchIndexerFixture.pages, dodecaSearchPageListDesc()),
         fieldAccess(\DodecaSearchIndexerFixture.result, dodecaSearchIndexResultDesc()),
         fieldAccess(\DodecaSearchIndexerFixture.errorResult, dodecaSearchIndexResultDesc()),
+    ])
+    return (root, Registry(dodecaSchemas()))
+}
+
+private func dodecaCssResultDesc() -> Descriptor {
+    let successCssOffset = MemoryLayout<DodecaStylesheetPayload>.offset(of: \DodecaStylesheetPayload.css)!
+    let errorMessageOffset = MemoryLayout<DodecaMessagePayload>.offset(of: \DodecaMessagePayload.message)!
+
+    let tag: (UnsafeRawPointer) -> Int = { ptr in
+        switch ptr.assumingMemoryBound(to: DodecaCssResult.self).pointee {
+        case .success: return 0
+        case .error: return 1
+        }
+    }
+    let projectPayload: (UnsafeRawPointer, Int, UnsafeMutableRawPointer) -> Void = { value, _, scratch in
+        switch value.assumingMemoryBound(to: DodecaCssResult.self).pointee {
+        case .success(let payload):
+            scratch.assumingMemoryBound(to: DodecaStylesheetPayload.self).initialize(to: payload)
+        case .error(let payload):
+            scratch.assumingMemoryBound(to: DodecaMessagePayload.self).initialize(to: payload)
+        }
+    }
+    let destroyPayload: (UnsafeMutableRawPointer, Int) -> Void = { scratch, localIndex in
+        switch localIndex {
+        case 0:
+            scratch.assumingMemoryBound(to: DodecaStylesheetPayload.self).deinitialize(count: 1)
+        case 1:
+            scratch.assumingMemoryBound(to: DodecaMessagePayload.self).deinitialize(count: 1)
+        default:
+            break
+        }
+    }
+    let inject: (UnsafeMutableRawPointer, Int, UnsafeMutableRawPointer) -> Void = { slot, localIndex, scratch in
+        let result: DodecaCssResult
+        switch localIndex {
+        case 0:
+            result = .success(scratch.assumingMemoryBound(to: DodecaStylesheetPayload.self).move())
+        case 1:
+            result = .error(scratch.assumingMemoryBound(to: DodecaMessagePayload.self).move())
+        default:
+            fatalError("bad DodecaCssResult variant index")
+        }
+        slot.assumingMemoryBound(to: DodecaCssResult.self).initialize(to: result)
+    }
+
+    return Descriptor(
+        schema: .concrete(DodecaSchema.cssResult),
+        layout: MemoryLayout<DodecaCssResult>.phonLayout,
+        access: .enumeration(EnumAccess(
+            tag: tag,
+            projectPayload: projectPayload,
+            destroyPayload: destroyPayload,
+            inject: inject,
+            variants: [
+                VariantAccess(
+                    wireIndex: 0,
+                    payloadFields: [FieldAccess(offset: successCssOffset, descriptor: stringDesc())],
+                    payloadLayout: MemoryLayout<DodecaStylesheetPayload>.phonLayout
+                ),
+                VariantAccess(
+                    wireIndex: 1,
+                    payloadFields: [FieldAccess(offset: errorMessageOffset, descriptor: stringDesc())],
+                    payloadLayout: MemoryLayout<DodecaMessagePayload>.phonLayout
+                ),
+            ]
+        ))
+    )
+}
+
+private func dodecaSassResultDesc() -> Descriptor {
+    let successCssOffset = MemoryLayout<DodecaStylesheetPayload>.offset(of: \DodecaStylesheetPayload.css)!
+    let errorMessageOffset = MemoryLayout<DodecaMessagePayload>.offset(of: \DodecaMessagePayload.message)!
+
+    let tag: (UnsafeRawPointer) -> Int = { ptr in
+        switch ptr.assumingMemoryBound(to: DodecaSassResult.self).pointee {
+        case .success: return 0
+        case .error: return 1
+        }
+    }
+    let projectPayload: (UnsafeRawPointer, Int, UnsafeMutableRawPointer) -> Void = { value, _, scratch in
+        switch value.assumingMemoryBound(to: DodecaSassResult.self).pointee {
+        case .success(let payload):
+            scratch.assumingMemoryBound(to: DodecaStylesheetPayload.self).initialize(to: payload)
+        case .error(let payload):
+            scratch.assumingMemoryBound(to: DodecaMessagePayload.self).initialize(to: payload)
+        }
+    }
+    let destroyPayload: (UnsafeMutableRawPointer, Int) -> Void = { scratch, localIndex in
+        switch localIndex {
+        case 0:
+            scratch.assumingMemoryBound(to: DodecaStylesheetPayload.self).deinitialize(count: 1)
+        case 1:
+            scratch.assumingMemoryBound(to: DodecaMessagePayload.self).deinitialize(count: 1)
+        default:
+            break
+        }
+    }
+    let inject: (UnsafeMutableRawPointer, Int, UnsafeMutableRawPointer) -> Void = { slot, localIndex, scratch in
+        let result: DodecaSassResult
+        switch localIndex {
+        case 0:
+            result = .success(scratch.assumingMemoryBound(to: DodecaStylesheetPayload.self).move())
+        case 1:
+            result = .error(scratch.assumingMemoryBound(to: DodecaMessagePayload.self).move())
+        default:
+            fatalError("bad DodecaSassResult variant index")
+        }
+        slot.assumingMemoryBound(to: DodecaSassResult.self).initialize(to: result)
+    }
+
+    return Descriptor(
+        schema: .concrete(DodecaSchema.sassResult),
+        layout: MemoryLayout<DodecaSassResult>.phonLayout,
+        access: .enumeration(EnumAccess(
+            tag: tag,
+            projectPayload: projectPayload,
+            destroyPayload: destroyPayload,
+            inject: inject,
+            variants: [
+                VariantAccess(
+                    wireIndex: 0,
+                    payloadFields: [FieldAccess(offset: successCssOffset, descriptor: stringDesc())],
+                    payloadLayout: MemoryLayout<DodecaStylesheetPayload>.phonLayout
+                ),
+                VariantAccess(
+                    wireIndex: 1,
+                    payloadFields: [FieldAccess(offset: errorMessageOffset, descriptor: stringDesc())],
+                    payloadLayout: MemoryLayout<DodecaMessagePayload>.phonLayout
+                ),
+            ]
+        ))
+    )
+}
+
+private func dodecaSvgoResultDesc() -> Descriptor {
+    let successSvgOffset = MemoryLayout<DodecaSvgPayload>.offset(of: \DodecaSvgPayload.svg)!
+    let errorMessageOffset = MemoryLayout<DodecaMessagePayload>.offset(of: \DodecaMessagePayload.message)!
+
+    let tag: (UnsafeRawPointer) -> Int = { ptr in
+        switch ptr.assumingMemoryBound(to: DodecaSvgoResult.self).pointee {
+        case .success: return 0
+        case .error: return 1
+        }
+    }
+    let projectPayload: (UnsafeRawPointer, Int, UnsafeMutableRawPointer) -> Void = { value, _, scratch in
+        switch value.assumingMemoryBound(to: DodecaSvgoResult.self).pointee {
+        case .success(let payload):
+            scratch.assumingMemoryBound(to: DodecaSvgPayload.self).initialize(to: payload)
+        case .error(let payload):
+            scratch.assumingMemoryBound(to: DodecaMessagePayload.self).initialize(to: payload)
+        }
+    }
+    let destroyPayload: (UnsafeMutableRawPointer, Int) -> Void = { scratch, localIndex in
+        switch localIndex {
+        case 0:
+            scratch.assumingMemoryBound(to: DodecaSvgPayload.self).deinitialize(count: 1)
+        case 1:
+            scratch.assumingMemoryBound(to: DodecaMessagePayload.self).deinitialize(count: 1)
+        default:
+            break
+        }
+    }
+    let inject: (UnsafeMutableRawPointer, Int, UnsafeMutableRawPointer) -> Void = { slot, localIndex, scratch in
+        let result: DodecaSvgoResult
+        switch localIndex {
+        case 0:
+            result = .success(scratch.assumingMemoryBound(to: DodecaSvgPayload.self).move())
+        case 1:
+            result = .error(scratch.assumingMemoryBound(to: DodecaMessagePayload.self).move())
+        default:
+            fatalError("bad DodecaSvgoResult variant index")
+        }
+        slot.assumingMemoryBound(to: DodecaSvgoResult.self).initialize(to: result)
+    }
+
+    return Descriptor(
+        schema: .concrete(DodecaSchema.svgoResult),
+        layout: MemoryLayout<DodecaSvgoResult>.phonLayout,
+        access: .enumeration(EnumAccess(
+            tag: tag,
+            projectPayload: projectPayload,
+            destroyPayload: destroyPayload,
+            inject: inject,
+            variants: [
+                VariantAccess(
+                    wireIndex: 0,
+                    payloadFields: [FieldAccess(offset: successSvgOffset, descriptor: stringDesc())],
+                    payloadLayout: MemoryLayout<DodecaSvgPayload>.phonLayout
+                ),
+                VariantAccess(
+                    wireIndex: 1,
+                    payloadFields: [FieldAccess(offset: errorMessageOffset, descriptor: stringDesc())],
+                    payloadLayout: MemoryLayout<DodecaMessagePayload>.phonLayout
+                ),
+            ]
+        ))
+    )
+}
+
+private func dodecaAssetProcessingFixtureDescriptor() -> (root: Descriptor, registry: Registry) {
+    let root = recordDesc(DodecaSchema.assetProcessingFixture, DodecaAssetProcessingFixture.self, fields: [
+        fieldAccess(\DodecaAssetProcessingFixture.cssSource, stringDesc()),
+        fieldAccess(\DodecaAssetProcessingFixture.cssPathMap, dodecaMapStringStringDesc()),
+        fieldAccess(\DodecaAssetProcessingFixture.cssResult, dodecaCssResultDesc()),
+        fieldAccess(\DodecaAssetProcessingFixture.sassEntrypoint, stringDesc()),
+        fieldAccess(\DodecaAssetProcessingFixture.sassFiles, dodecaMapStringStringDesc()),
+        fieldAccess(\DodecaAssetProcessingFixture.sassLoadPaths, dodecaStringListDesc()),
+        fieldAccess(\DodecaAssetProcessingFixture.sassResult, dodecaSassResultDesc()),
+        fieldAccess(\DodecaAssetProcessingFixture.svgSource, stringDesc()),
+        fieldAccess(\DodecaAssetProcessingFixture.svgoResult, dodecaSvgoResultDesc()),
     ])
     return (root, Registry(dodecaSchemas()))
 }
@@ -4585,6 +4873,32 @@ private func sampleDodecaSearchIndexerFixture() -> DodecaSearchIndexerFixture {
     )
 }
 
+private func sampleDodecaAssetProcessingFixture() -> DodecaAssetProcessingFixture {
+    DodecaAssetProcessingFixture(
+        cssSource: "body { background: url('/old/bg.png'); color: red; }",
+        cssPathMap: [
+            "/old/bg.png": "/assets/bg.abcd.png",
+            "/old/font.woff2": "/assets/font.woff2",
+        ],
+        cssResult: .success(DodecaStylesheetPayload(
+            css: "body{background:url('/assets/bg.abcd.png');color:red}"
+        )),
+        sassEntrypoint: "styles/app.scss",
+        sassFiles: [
+            "styles/app.scss": "$brand: #c0ffee; @import 'partials/buttons'; body { color: $brand; }",
+            "styles/partials/_buttons.scss": ".button { padding: 4px; }",
+        ],
+        sassLoadPaths: ["styles", "vendor"],
+        sassResult: .success(DodecaStylesheetPayload(
+            css: "body{color:#c0ffee}.button{padding:4px}"
+        )),
+        svgSource: "<svg viewBox=\"0 0 10 10\"><rect width=\"10\" height=\"10\" fill=\"red\"/></svg>",
+        svgoResult: .success(DodecaSvgPayload(
+            svg: "<svg viewBox=\"0 0 10 10\"><path fill=\"red\" d=\"M0 0h10v10H0z\"/></svg>"
+        ))
+    )
+}
+
 private func sampleDodecaHtmlProcessInput() -> DodecaHtmlProcessInput {
     DodecaHtmlProcessInput(
         html: "<main><img src=\"/hero.png\"></main>",
@@ -5017,6 +5331,27 @@ func swiftDodecaSearchIndexerFixtureRoundTripsAcrossEngines() throws {
         registry: setup.registry
     ).scoped(method: "dodeca.search.build_index", phase: "fixture")
     #expect(report.isEmpty, "Dodeca search indexer roots should stay native-clean in the Swift JIT")
+}
+
+// r[verify descriptors.fact-driven]
+// r[verify type-system.variant-payloads]
+// r[verify exec.jit-optional]
+@Test
+func swiftDodecaAssetProcessingFixtureRoundTripsAcrossEngines() throws {
+    let setup = dodecaAssetProcessingFixtureDescriptor()
+
+    try assertTypedEquivalence(
+        sampleDodecaAssetProcessingFixture(),
+        descriptor: setup.root,
+        registry: setup.registry,
+        "dodeca css/sass/svgo asset-processing roots"
+    )
+
+    let report = try nativeFallbackReport(
+        descriptor: setup.root,
+        registry: setup.registry
+    ).scoped(method: "dodeca.asset.process", phase: "fixture")
+    #expect(report.isEmpty, "Dodeca CSS/SASS/SVGO asset-processing roots should stay native-clean in the Swift JIT")
 }
 
 // r[verify compat.type-match]

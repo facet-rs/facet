@@ -216,6 +216,40 @@ struct DodecaSearchIndexerFixture {
 
 #[derive(Debug, Clone, PartialEq, Facet)]
 #[repr(u8)]
+enum DodecaCssResult {
+    Success { css: String },
+    Error { message: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Facet)]
+#[repr(u8)]
+enum DodecaSassResult {
+    Success { css: String },
+    Error { message: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Facet)]
+#[repr(u8)]
+enum DodecaSvgoResult {
+    Success { svg: String },
+    Error { message: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Facet)]
+struct DodecaAssetProcessingFixture {
+    css_source: String,
+    css_path_map: HashMap<String, String>,
+    css_result: DodecaCssResult,
+    sass_entrypoint: String,
+    sass_files: HashMap<String, String>,
+    sass_load_paths: Vec<String>,
+    sass_result: DodecaSassResult,
+    svg_source: String,
+    svgo_result: DodecaSvgoResult,
+}
+
+#[derive(Debug, Clone, PartialEq, Facet)]
+#[repr(u8)]
 enum SqlValue {
     Null = 0,
     Bool(bool) = 1,
@@ -2830,6 +2864,46 @@ fn sample_dodeca_search_indexer_fixture() -> DodecaSearchIndexerFixture {
     }
 }
 
+fn sample_dodeca_asset_processing_fixture() -> DodecaAssetProcessingFixture {
+    let mut css_path_map = HashMap::new();
+    css_path_map.insert("/old/bg.png".to_string(), "/assets/bg.abcd.png".to_string());
+    css_path_map.insert(
+        "/old/font.woff2".to_string(),
+        "/assets/font.woff2".to_string(),
+    );
+
+    let mut sass_files = HashMap::new();
+    sass_files.insert(
+        "styles/app.scss".to_string(),
+        "$brand: #c0ffee; @import 'partials/buttons'; body { color: $brand; }".to_string(),
+    );
+    sass_files.insert(
+        "styles/partials/_buttons.scss".to_string(),
+        ".button { padding: 4px; }".to_string(),
+    );
+
+    DodecaAssetProcessingFixture {
+        css_source: "body { background: url('/old/bg.png'); color: red; }".to_string(),
+        css_path_map,
+        css_result: DodecaCssResult::Success {
+            css: "body{background:url('/assets/bg.abcd.png');color:red}".to_string(),
+        },
+        sass_entrypoint: "styles/app.scss".to_string(),
+        sass_files,
+        sass_load_paths: vec!["styles".to_string(), "vendor".to_string()],
+        sass_result: DodecaSassResult::Success {
+            css: "body{color:#c0ffee}.button{padding:4px}".to_string(),
+        },
+        svg_source:
+            "<svg viewBox=\"0 0 10 10\"><rect width=\"10\" height=\"10\" fill=\"red\"/></svg>"
+                .to_string(),
+        svgo_result: DodecaSvgoResult::Success {
+            svg: "<svg viewBox=\"0 0 10 10\"><path fill=\"red\" d=\"M0 0h10v10H0z\"/></svg>"
+                .to_string(),
+        },
+    }
+}
+
 fn value_object(entries: &[(&str, Value)]) -> Value {
     let mut object = VObject::new();
     for (key, value) in entries {
@@ -3724,6 +3798,20 @@ fn dodeca_search_indexer_payloads_roundtrip() {
     expect_native_clean_when_jit_available(
         report,
         "Dodeca search indexer roots should stay native-clean",
+    );
+}
+
+#[test]
+// r[verify descriptors.fact-driven]
+// r[verify type-system.variant-payloads]
+// r[verify typed.no-dynamic-bounce]
+// r[verify exec.jit-optional]
+fn dodeca_asset_processing_payloads_roundtrip() {
+    let report = roundtrip(sample_dodeca_asset_processing_fixture());
+
+    expect_native_clean_when_jit_available(
+        report,
+        "Dodeca CSS/SASS/SVGO asset-processing roots should stay native-clean",
     );
 }
 

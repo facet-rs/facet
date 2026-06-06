@@ -64,6 +64,10 @@ export const ID = {
   listDodecaSearchFile: id(324),
   dodecaSearchIndexResult: id(325),
   dodecaSearchIndexerFixture: id(326),
+  dodecaCssResult: id(338),
+  dodecaSassResult: id(339),
+  dodecaSvgoResult: id(340),
+  dodecaAssetProcessingFixture: id(341),
   sqlValue: id(29),
   rowField: id(30),
   listRowField: id(31),
@@ -596,6 +600,45 @@ const RAW_SCHEMAS: Schema[] = [
       field("pages", ref(ID.listDodecaSearchPage)),
       field("result", ref(ID.dodecaSearchIndexResult)),
       field("error_result", ref(ID.dodecaSearchIndexResult)),
+    ],
+  }),
+  schema(ID.dodecaCssResult, {
+    kind: "enum",
+    name: "CssResult",
+    variants: [
+      variant("Success", 0, structPayload([field("css", prim("string"))])),
+      variant("Error", 1, structPayload([field("message", prim("string"))])),
+    ],
+  }),
+  schema(ID.dodecaSassResult, {
+    kind: "enum",
+    name: "SassResult",
+    variants: [
+      variant("Success", 0, structPayload([field("css", prim("string"))])),
+      variant("Error", 1, structPayload([field("message", prim("string"))])),
+    ],
+  }),
+  schema(ID.dodecaSvgoResult, {
+    kind: "enum",
+    name: "SvgoResult",
+    variants: [
+      variant("Success", 0, structPayload([field("svg", prim("string"))])),
+      variant("Error", 1, structPayload([field("message", prim("string"))])),
+    ],
+  }),
+  schema(ID.dodecaAssetProcessingFixture, {
+    kind: "struct",
+    name: "DodecaAssetProcessingFixture",
+    fields: [
+      field("css_source", prim("string")),
+      field("css_path_map", ref(ID.mapStringString)),
+      field("css_result", ref(ID.dodecaCssResult)),
+      field("sass_entrypoint", prim("string")),
+      field("sass_files", ref(ID.mapStringString)),
+      field("sass_load_paths", ref(ID.listString)),
+      field("sass_result", ref(ID.dodecaSassResult)),
+      field("svg_source", prim("string")),
+      field("svgo_result", ref(ID.dodecaSvgoResult)),
     ],
   }),
   schema(ID.sqlValue, {
@@ -2567,6 +2610,29 @@ function sampleDodecaSearchIndexerFixture(): Typed {
   };
 }
 
+function sampleDodecaAssetProcessingFixture(): Typed {
+  return {
+    css_source: "body { background: url('/old/bg.png'); color: red; }",
+    css_path_map: new Map([
+      ["/old/bg.png", "/assets/bg.abcd.png"],
+      ["/old/font.woff2", "/assets/font.woff2"],
+    ]),
+    css_result: { tag: "Success", css: "body{background:url('/assets/bg.abcd.png');color:red}" },
+    sass_entrypoint: "styles/app.scss",
+    sass_files: new Map([
+      ["styles/app.scss", "$brand: #c0ffee; @import 'partials/buttons'; body { color: $brand; }"],
+      ["styles/partials/_buttons.scss", ".button { padding: 4px; }"],
+    ]),
+    sass_load_paths: ["styles", "vendor"],
+    sass_result: { tag: "Success", css: "body{color:#c0ffee}.button{padding:4px}" },
+    svg_source: "<svg viewBox=\"0 0 10 10\"><rect width=\"10\" height=\"10\" fill=\"red\"/></svg>",
+    svgo_result: {
+      tag: "Success",
+      svg: "<svg viewBox=\"0 0 10 10\"><path fill=\"red\" d=\"M0 0h10v10H0z\"/></svg>",
+    },
+  };
+}
+
 function styxSpan(start: number, end: number): Typed {
   return { start, end };
 }
@@ -3696,6 +3762,11 @@ export const fixtures: EcosystemFixture[] = [
     name: "Dodeca search indexer roots",
     root: root(ID.dodecaSearchIndexerFixture),
     value: sampleDodecaSearchIndexerFixture(),
+  },
+  {
+    name: "Dodeca CSS/SASS/SVGO asset processors",
+    root: root(ID.dodecaAssetProcessingFixture),
+    value: sampleDodecaAssetProcessingFixture(),
   },
   {
     name: "Dibs SQL value rows",
