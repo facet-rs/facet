@@ -529,9 +529,7 @@ pub mod api {
             assert!(!native_decode_supported(&lowered));
             assert!(!native_encode_supported(&lowered));
 
-            let mut report = JitFallbackReport::default();
-            record_decode_fallbacks(&lowered.program, "$", &mut report.decode);
-            record_encode_fallbacks(&lowered.program, "$", &mut report.encode);
+            let report = jit_fallback_report_for_lowered(&lowered);
 
             assert_eq!(
                 report.decode,

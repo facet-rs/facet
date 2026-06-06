@@ -2061,9 +2061,10 @@ pub unsafe fn decode(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::mem::{MaybeUninit, align_of, size_of};
+    use core::mem::{MaybeUninit, align_of, offset_of, size_of};
     use facet_value::{VArray, Value};
-    use phon_ir::{Layout, SeqThunks, SequenceAccess};
+    use phon_ir::{FieldAccess, Layout, SeqThunks, SequenceAccess};
+    use phon_schema::bytes::{write_i64, write_u64};
     use phon_schema::{Schema, SchemaId, SchemaRef, primitive_id};
 
     // Hand-written list thunks for `Vec<u32>`. The facet bridge will generate
@@ -2110,6 +2111,74 @@ mod tests {
                     access: Access::Scalar,
                 }),
                 storage: SequenceStorage::Vtable(vu32_thunks()),
+            }),
+        }
+    }
+
+    #[repr(C)]
+    #[derive(Debug, PartialEq)]
+    struct NarrowNativeInts {
+        count: u32,
+        delta: i32,
+    }
+
+    fn narrow_native_int_schema(schema: SchemaId) -> Schema {
+        Schema {
+            id: schema,
+            type_params: Vec::new(),
+            kind: SchemaKind::Struct {
+                name: "NarrowNativeInts".to_string(),
+                fields: vec![
+                    Field {
+                        name: "count".to_string(),
+                        schema: SchemaRef::concrete(primitive_id(Primitive::U64)),
+                        required: true,
+                    },
+                    Field {
+                        name: "delta".to_string(),
+                        schema: SchemaRef::concrete(primitive_id(Primitive::I64)),
+                        required: true,
+                    },
+                ],
+            },
+        }
+    }
+
+    fn narrow_native_int_descriptor(schema: SchemaId) -> Descriptor {
+        Descriptor {
+            schema: SchemaRef::concrete(schema),
+            layout: Layout {
+                size: size_of::<NarrowNativeInts>(),
+                align: align_of::<NarrowNativeInts>(),
+            },
+            access: Access::Record(RecordAccess {
+                fields: vec![
+                    FieldAccess {
+                        offset: offset_of!(NarrowNativeInts, count),
+                        descriptor: Descriptor {
+                            schema: SchemaRef::concrete(primitive_id(Primitive::U64)),
+                            layout: Layout {
+                                size: size_of::<u32>(),
+                                align: align_of::<u32>(),
+                            },
+                            access: Access::Scalar,
+                        },
+                        default: None,
+                    },
+                    FieldAccess {
+                        offset: offset_of!(NarrowNativeInts, delta),
+                        descriptor: Descriptor {
+                            schema: SchemaRef::concrete(primitive_id(Primitive::I64)),
+                            layout: Layout {
+                                size: size_of::<i32>(),
+                                align: align_of::<i32>(),
+                            },
+                            access: Access::Scalar,
+                        },
+                        default: None,
+                    },
+                ],
+                construct: Construct::InPlace,
             }),
         }
     }
@@ -2165,6 +2234,88 @@ mod tests {
         .unwrap();
         let back = unsafe { slot.assume_init() };
         assert_eq!(back, values.to_vec());
+    }
+
+    #[test]
+    // r[verify type-system.rust-subset]
+    // r[verify exec.jit-optional]
+    fn native_int_memops_roundtrip_and_reject_out_of_range_values() {
+        let schema = SchemaId(1);
+        let reg = Registry::new([narrow_native_int_schema(schema)]);
+        let desc = narrow_native_int_descriptor(schema);
+        let no_blocks = HashMap::new();
+        let lowered = lower_typed(&desc, &no_blocks, &reg).unwrap();
+
+        assert_eq!(lowered.program.len(), 2);
+        assert!(matches!(
+            lowered.program[0],
+            MemOp::NativeInt {
+                mem_size: 4,
+                signed: false,
+                ..
+            }
+        ));
+        assert!(matches!(
+            lowered.program[1],
+            MemOp::NativeInt {
+                mem_size: 4,
+                signed: true,
+                ..
+            }
+        ));
+
+        let value = NarrowNativeInts {
+            count: 0xCAFE_F00D,
+            delta: -42,
+        };
+        let bytes = unsafe { encode_with(&lowered, core::ptr::from_ref(&value).cast::<u8>()) };
+
+        let mut expected = Vec::new();
+        write_u64(&mut expected, u64::from(value.count));
+        write_i64(&mut expected, i64::from(value.delta));
+        assert_eq!(bytes, expected);
+
+        let mut slot = MaybeUninit::<NarrowNativeInts>::uninit();
+        unsafe { decode_with(&lowered, &bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        assert_eq!(unsafe { slot.assume_init() }, value);
+
+        let mut unsigned_out_of_range = Vec::new();
+        write_u64(&mut unsigned_out_of_range, u64::from(u32::MAX) + 1);
+        write_i64(&mut unsigned_out_of_range, 0);
+        let mut slot = MaybeUninit::<NarrowNativeInts>::uninit();
+        let err = unsafe {
+            decode_with(
+                &lowered,
+                &unsigned_out_of_range,
+                slot.as_mut_ptr().cast::<u8>(),
+            )
+        }
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            CompactError::Decode(DecodeError::Malformed(
+                "native-sized unsigned integer out of range"
+            ))
+        ));
+
+        let mut signed_out_of_range = Vec::new();
+        write_u64(&mut signed_out_of_range, 0);
+        write_i64(&mut signed_out_of_range, i64::from(i32::MIN) - 1);
+        let mut slot = MaybeUninit::<NarrowNativeInts>::uninit();
+        let err = unsafe {
+            decode_with(
+                &lowered,
+                &signed_out_of_range,
+                slot.as_mut_ptr().cast::<u8>(),
+            )
+        }
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            CompactError::Decode(DecodeError::Malformed(
+                "native-sized signed integer out of range"
+            ))
+        ));
     }
 
     #[test]
