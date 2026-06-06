@@ -116,7 +116,10 @@ Already in place on the Phon side:
   4.95x/3.87x for `setMarkedText(args)`, 4.98x/3.88x for
   `advanceTranscript(args)`, and 4.95x/3.17x for `imeKeyEvent(args)`.
 - Swift JIT smoke/fixture coverage for the Bee-relevant IME and feed shapes.
-- Method/path-scoped fallback reporting in the typed front door.
+- Method/path-scoped fallback reporting in the typed front door. The Rust
+  front-door JIT gate now has a focused synthetic `MemOp::NativeInt` regression
+  that reports path-scoped decode/encode fallbacks instead of compiling a
+  native path that would panic on narrower native-sized integer layouts.
 - Initial Rust ecosystem fixture coverage for Dodeca-shaped maps, sets, tuple
   vectors, dynamic template values, data-loader dynamic results, and markdown
   parse/render results with a boxed source map, Dodeca image processor
@@ -978,10 +981,12 @@ Verified in the Vox checkout during the bridge audit:
 - Native-sized Rust integers are fixed-width wire types: `usize` maps to `u64`
   and `isize` maps to `i64` on every platform. The focused Phon fixture
   `native_sized_integers_are_fixed_width_on_the_wire` passes, and the
-  same-schema JIT layout/round-trip test remains green. On current macOS
-  aarch64 those derived fields lower as ordinary 8-byte scalars; the
-  `MemOp::NativeInt` interpreter path remains the correctness path for
-  narrower or otherwise mismatched memory widths with range checks on decode.
+  same-schema front-door JIT layout/round-trip test remains native-clean. On
+  current macOS aarch64 those derived fields lower as ordinary 8-byte scalars;
+  the `MemOp::NativeInt` interpreter path remains the correctness path for
+  narrower or otherwise mismatched memory widths with range checks on decode,
+  and the JIT selector reports those `MemOp::NativeInt` paths before native
+  compilation.
   `Set<T>` can use the native path when its element program is
   native-supported.
 

@@ -480,6 +480,68 @@ pub mod api {
             MemOp::Opaque(_) | MemOp::Dynamic { .. } | MemOp::CallBlock { .. } => true,
         })
     }
+
+    #[cfg(all(test, feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    mod tests {
+        use phon_ir::ir::{Lowered, MemOp};
+
+        use super::*;
+
+        // r[verify exec.strict-recording]
+        // r[verify crates.jit-opt-in]
+        #[test]
+        fn native_int_memops_are_reported_instead_of_compiled() {
+            let lowered = Lowered {
+                program: vec![
+                    MemOp::NativeInt {
+                        offset: 0,
+                        mem_size: 4,
+                        signed: false,
+                    },
+                    MemOp::NativeInt {
+                        offset: 4,
+                        mem_size: 4,
+                        signed: true,
+                    },
+                ],
+                blocks: Default::default(),
+            };
+
+            assert!(!native_decode_supported(&lowered));
+            assert!(!native_encode_supported(&lowered));
+
+            let mut report = JitFallbackReport::default();
+            record_decode_fallbacks(&lowered.program, "$", &mut report.decode);
+            record_encode_fallbacks(&lowered.program, "$", &mut report.encode);
+
+            assert_eq!(
+                report.decode,
+                vec![
+                    JitFallbackRecord {
+                        path: "$.0".to_string(),
+                        reason: "native decode JIT does not support native-sized integer casts yet",
+                    },
+                    JitFallbackRecord {
+                        path: "$.1".to_string(),
+                        reason: "native decode JIT does not support native-sized integer casts yet",
+                    },
+                ]
+            );
+            assert_eq!(
+                report.encode,
+                vec![
+                    JitFallbackRecord {
+                        path: "$.0".to_string(),
+                        reason: "native encode JIT does not support native-sized integer casts yet",
+                    },
+                    JitFallbackRecord {
+                        path: "$.1".to_string(),
+                        reason: "native encode JIT does not support native-sized integer casts yet",
+                    },
+                ]
+            );
+        }
+    }
 }
 
 /// phon's dynamic value, re-exported for convenience at the front door. It *is*
@@ -536,6 +598,12 @@ mod tests {
         value: Result<u32, u32>,
     }
 
+    #[derive(Debug, PartialEq, Facet)]
+    struct ApiNativeSizedMsg {
+        count: usize,
+        delta: isize,
+    }
+
     // r[verify crates.jit-opt-in]
     // r[verify exec.jit-optional]
     #[test]
@@ -558,6 +626,28 @@ mod tests {
         assert_eq!(back, msg);
 
         let msg = ApiResultMsg { value: Err(0x1234) };
+        let bytes = codec.encode(&msg).unwrap();
+        let back = codec.decode(&bytes).unwrap();
+        assert_eq!(back, msg);
+    }
+
+    // r[verify type-system.rust-subset]
+    // r[verify crates.jit-opt-in]
+    // r[verify exec.strict-recording]
+    #[test]
+    fn api_native_sized_ints_roundtrip_and_stay_native_clean_when_layout_matches() {
+        let codec = api::Codec::<ApiNativeSizedMsg>::new().unwrap();
+        #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+        {
+            assert!(codec.decode_uses_native_jit());
+            assert!(codec.encode_uses_native_jit());
+            assert!(codec.jit_fallback_report().is_empty());
+        }
+
+        let msg = ApiNativeSizedMsg {
+            count: 1_234,
+            delta: -37,
+        };
         let bytes = codec.encode(&msg).unwrap();
         let back = codec.decode(&bytes).unwrap();
         assert_eq!(back, msg);
