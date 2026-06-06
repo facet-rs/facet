@@ -325,25 +325,28 @@ Already in place on the Phon side:
   processes.
 - Current Vox ecosystem bridge matrix verification passes:
   `cargo nextest run -p spec-tests -E 'test(ecosystem_bridge) | test(dodeca) | test(dibs) | test(styx) | test(stax) | test(helix) | test(hotmeal) | test(tracey)' --no-fail-fast -j 1`
-  ran 424/424 across Rust TCP, Swift TCP, TypeScript TCP, and TypeScript
+  ran 432/432 across Rust TCP, Swift TCP, TypeScript TCP, and TypeScript
   WebSocket, in both harness-to-subject and subject-to-harness directions,
   including the generated Helix `TraceService` aggregate root plus Dodeca
-  image processor and search indexer roots. This was reverified against the
-  live `~/vox` checkout after the TypeScript direct-shape typed JIT cleanup and
-  after increasing the Rust spec harness and Rust subject runtime stack budget
-  for large recursive schema closure planning; the current run started 424
-  selected tests across 4 binaries and finished with `424 passed, 511 skipped`.
+  image processor, search indexer, and CSS/SASS/SVGO asset-processing roots.
+  This was reverified against the live `~/vox` checkout after adding the
+  asset-processing generated bridge root and after rebuilding the current Rust
+  and Swift hosted subjects; the current run started 432 selected tests across
+  4 binaries and finished with `432 passed, 511 skipped`.
   A post-run process sweep found no lingering `subject-*`, echo-server,
   `nextest`, Swift build, or Swift frontend processes.
-- Focused generated Dodeca image/search bridge verification also passes:
-  `cargo nextest run -p spec-tests -E 'test(echo_dodeca_image_processor_fixture) | test(echo_dodeca_search_indexer_fixture)' --no-fail-fast -j 1`
-  ran 16/16 in `~/vox` across Rust TCP, Swift TCP, TypeScript TCP, and
+- Focused generated Dodeca image/search/asset bridge verification also passes:
+  `cargo nextest run -p spec-tests -E 'test(dodeca)' --no-fail-fast -j 1 --status-level fail --final-status-level fail`
+  ran 80/80 in `~/vox` across Rust TCP, Swift TCP, TypeScript TCP, and
   TypeScript WebSocket, in both harness-to-subject and subject-to-harness
   directions. The run uses generated clients/dispatchers and proves the
   Dodeca image processor byte/scalar/result root plus the search indexer
-  page/file/result root through the Vox bridge. A post-run process sweep found
-  no lingering `subject-*`, echo-server, Swift build, or Swift frontend
-  processes.
+  page/file/result root and CSS/SASS/SVGO asset-processing map/string/result
+  root through the Vox bridge. A narrower
+  `cargo nextest run -p spec-tests -E 'test(dodeca_asset_processing_fixture)' --no-fail-fast -j 1 --status-level fail --final-status-level fail`
+  run also passed 8/8 for the new asset-processing root alone. A post-run
+  process sweep found no lingering `subject-*`, echo-server, Swift build, or
+  Swift frontend processes.
 - Focused generated Stax macOS record bridge verification also passes:
   `cargo nextest run -p spec-tests -E 'test(stax_macos_record)' --no-fail-fast -j 1 --status-level fail --final-status-level fail`
   ran 8/8 in `~/vox` across Rust TCP, Swift TCP, TypeScript TCP, and
@@ -963,8 +966,9 @@ closure:
 
 - Swift now has Phon-side fixture parity for the current Swift-applicable
   ecosystem payload families: Bee feed roots, Dodeca set/template/HTML
-  processor/data-loader/markdown parse/image processor/search indexer roots,
-  Dibs SQL row/list response, generated Dibs Squel service roots, Styx
+  processor/data-loader/markdown parse/image processor/search indexer and
+  CSS/SASS/SVGO asset-processing roots, Dibs SQL row/list response, generated
+  Dibs Squel service roots, Styx
   recursive value/LSP aggregate, Stax recursive flamegraph and Linux
   broker-control DTO slices, the Hotmeal live-reload payload family, the broad
   Helix `TraceService` aggregate, and Tracey migration DTOs. Focused Swift compat tests now cover duplicate set/map
@@ -976,10 +980,11 @@ closure:
   and DTO-shaped payload families, including the broad Helix `TraceService`
   aggregate. Generated Vox TypeScript bridge parity is proven for Dodeca
   ecosystem/template/HTML/code-execution/data-loader/markdown
-  parse/image processor/search indexer/byte-channel/LSP channel roots, while
-  Phon TypeScript engine fixtures also cover the Dodeca markdown parse/render
-  result wire DTO and image processor byte/scalar/result root plus the search
-  indexer page/file/result root, the Dibs
+  parse/image processor/search indexer/CSS-SASS-SVGO asset-processing/
+  byte-channel/LSP channel roots, while Phon TypeScript engine fixtures also
+  cover the Dodeca markdown parse/render result wire DTO and image processor
+  byte/scalar/result root plus the search indexer page/file/result root and
+  CSS/SASS/SVGO asset-processing root, the Dibs
   schema/list/get/create/update/delete/migration-status and migration-log
   roots, the Styx recursive value/LSP
   extension/host callback roots, and the Stax flamegraph plus Linux
@@ -990,7 +995,8 @@ closure:
   fixture corpus.
 - Generated Vox bridge coverage is proven for the testbed bridge path, the
   Dodeca ecosystem/template/HTML/code-execution/data-loader/markdown
-  parse/image processor/search indexer/byte-channel/LSP channel roots,
+  parse/image processor/search indexer/CSS-SASS-SVGO asset-processing/
+  byte-channel/LSP channel roots,
   the Dibs schema/list/get/create/update/delete/migration-status and
   migration-log roots, the Styx recursive value/LSP extension/host callback
   roots, the Stax flamegraph request/update/subscription and Linux
@@ -1001,8 +1007,8 @@ closure:
   status/rule/validation/core-control/full-LSP/update/dashboard/query/config
   mutation roots. Remaining generated-bridge breadth is now dominated by any
   Dodeca roots still outside the current data-loader/markdown/devtools/image
-  processor/search indexer slices, and any newly identified channel item paths
-  or externals, not by the current Tracey daemon protocol.
+  processor/search indexer/asset-processing slices, and any newly identified
+  channel item paths or externals, not by the current Tracey daemon protocol.
 - Helix generated bridge coverage is still representative, not a complete
   mirror of every trace-viewer endpoint. The `PulseBundle` request mask and
   bundle slots plus the broad `TraceService` aggregate now have generated
@@ -1204,13 +1210,13 @@ Dodeca fixture work should be split into:
 The generated Vox bridge now has checked-in Dodeca roots for the ecosystem
 payload, dynamic template call, byte tunnel, HTML processing, code execution,
 data loading, markdown parse/render, image processing, search indexing, and
-devtools LSP string-channel shapes. The focused Dodeca matrix covers Rust TCP,
-Swift TCP, TypeScript TCP, and TypeScript WebSocket in both directions and
-passes 72/72 with
-`cargo nextest run -p spec-tests -E 'test(dodeca)' --no-fail-fast -j 1`,
-including the generated image/search roots. The narrower generated
-image/search bridge slice also passes 16/16 with
-`cargo nextest run -p spec-tests -E 'test(echo_dodeca_image_processor_fixture) | test(echo_dodeca_search_indexer_fixture)' --no-fail-fast -j 1`.
+CSS/SASS/SVGO asset processing, and devtools LSP string-channel shapes. The
+focused Dodeca matrix covers Rust TCP, Swift TCP, TypeScript TCP, and
+TypeScript WebSocket in both directions and passes 80/80 with
+`cargo nextest run -p spec-tests -E 'test(dodeca)' --no-fail-fast -j 1 --status-level fail --final-status-level fail`,
+including the generated image/search/asset-processing roots. The narrower
+generated asset-processing bridge slice also passes 8/8 with
+`cargo nextest run -p spec-tests -E 'test(dodeca_asset_processing_fixture)' --no-fail-fast -j 1 --status-level fail --final-status-level fail`.
 Rust, Swift, and TypeScript Phon-side fixtures now cover the HTML processor
 map/set/tuple-vector root, the dynamic template-call root, the data-loader
 dynamic-result root, the markdown parse/render result shape, and the image
