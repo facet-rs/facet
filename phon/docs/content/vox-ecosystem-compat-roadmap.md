@@ -1067,6 +1067,56 @@ The following concepts must not be reintroduced while completing this roadmap:
   are ordinary derived-Facet payloads unless the consumer source proves
   otherwise.
 
+## Live Vox 1.0 blocker ledger
+
+This ledger is the short-form release gate. The detailed milestones below are
+still the roadmap, but these are the items that should drive the next
+implementation slices:
+
+- The checked-in consumer fixture corpus must pass through the interpreter and
+  generated Vox bridges with JIT enabled and with JIT not enabled. Same-schema
+  roots still go through compatibility plans.
+- Rust and Swift native JIT must remain native-clean for Bee, Swift-app hot
+  paths, and the large or recursive ecosystem payload families already called
+  out in the benchmark tables. This is the priority-1 JIT gate.
+- Generated TypeScript clients must expose and consume ordinary public
+  JavaScript/TypeScript DTO shapes. Direct public-shape source-specialized JIT
+  remains useful and benchmarked, but it is not a Rust/Swift descriptor-memory
+  parity requirement and does not become a blocker unless browser/client
+  benchmark data makes it one.
+- Non-nested channels must stay supported as method parameters and stream
+  items must route through Phon typed programs. Nested channels must stay
+  rejected.
+- Subjects must exit on disconnect, session shutdown, or inactivity. No test
+  matrix may leave `subject-*`, echo-server, frontend, or lingering build/test
+  processes accumulating.
+- External values must stay transport-owned capabilities with explicit
+  diagnostics. Ordinary cross-language DTO fixtures must not pretend fd handles
+  are scalar payload bytes.
+- Tracey is a release triage gate for live rules only. A missing annotation is
+  a blocker only when the rule is part of the current shipped surface; historical
+  retry/idempotency, stable-conduit, zero-copy/shared-memory, and non-shipped
+  transport rules must be removed, reworded, or kept out of the gate.
+
+Explicitly not blockers:
+
+- `rpc.response.one-per-request` as a standalone rule. It was removed from the
+  live Vox spec; current response behavior belongs under call-outcome and
+  protocol/session invariants.
+- Live Bee builds while Bee is actively changing. Bee remains a protected source
+  for fixtures and hot roots, not a normal build dependency for this roadmap.
+- Browser-only or non-Swift transports in the Swift implementation. Swift
+  transport hardening is about the stream/local transport that actually ships.
+- 100% Tracey coverage for every historical Phon or Vox rule.
+- TypeScript recreating Rust/Swift descriptor-memory IR semantics for ordinary
+  generated DTOs.
+
+The most useful remaining audits are therefore narrow: keep Rust transport
+verification tied to the existing memory/stream/WebSocket/in-process tests
+before adding new ones; keep Swift cancellation and task teardown hardening on
+the real stream/local transport; and use Tracey as the bounded generated-service
+smoke target when a live app surface is too broad or actively moving.
+
 ## Consumer surface inventory
 
 ### Bee
