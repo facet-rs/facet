@@ -34,7 +34,7 @@ fn vec_u32_from_raw_parts_adopts_engine_buffer() {
     // Engine-owned allocation: allocate a buffer for the elements and fill it,
     // exactly as the typed engine's decode path does.
     let layout = Layout::array::<u32>(elems.len()).unwrap();
-    let buf = unsafe { std::alloc::alloc(layout) } as *mut u32;
+    let buf = unsafe { std::alloc::alloc(layout).cast::<u32>() };
     assert!(!buf.is_null());
     for (i, &v) in elems.iter().enumerate() {
         unsafe { buf.add(i).write(v) };
@@ -57,7 +57,7 @@ fn vec_u32_from_raw_parts_adopts_engine_buffer() {
     let handle = PtrConst::new(core::ptr::from_ref(&v));
     let len = unsafe { len_fn(handle) };
     assert_eq!(len, elems.len());
-    let data = unsafe { as_ptr(handle) }.as_byte_ptr() as *const u32;
+    let data = unsafe { as_ptr(handle) }.as_byte_ptr().cast::<u32>();
     for (i, &expected) in elems.iter().enumerate() {
         assert_eq!(unsafe { *data.add(i) }, expected);
     }
@@ -71,7 +71,7 @@ fn vec_u32_from_raw_parts_empty() {
 
     // The engine hands a dangling-but-aligned pointer with capacity 0 for an
     // empty sequence; from_raw_parts must not touch it.
-    let dangling = core::mem::align_of::<u32>() as *mut u8;
+    let dangling = core::ptr::without_provenance_mut::<u8>(core::mem::align_of::<u32>());
     let mut slot = std::mem::MaybeUninit::<Vec<u32>>::uninit();
     unsafe {
         from_raw_parts(
