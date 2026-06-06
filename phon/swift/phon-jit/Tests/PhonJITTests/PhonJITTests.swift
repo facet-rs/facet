@@ -117,8 +117,26 @@ private struct CompatListItem: Equatable {
 
 // r[verify compat.type-match]
 // r[verify compat.skip-writer-only]
+// r[verify compat.reader-only-fields]
+// r[verify compat.defaults-are-reader-side]
+private struct CompatListDefaultItem: Equatable {
+    var id: UInt32
+    var score: UInt32
+    var extra: UInt32?
+}
+
+// r[verify compat.type-match]
+// r[verify compat.skip-writer-only]
 private struct CompatListHolder: Equatable {
     var items: [CompatListItem]
+}
+
+// r[verify compat.type-match]
+// r[verify compat.skip-writer-only]
+// r[verify compat.reader-only-fields]
+// r[verify compat.defaults-are-reader-side]
+private struct CompatListDefaultHolder: Equatable {
+    var items: [CompatListDefaultItem]
 }
 
 // r[verify compat.type-match]
@@ -277,6 +295,149 @@ private struct CompatMapHolder: Equatable {
         CompatListItem(x: 7),
         CompatListItem(x: 11),
     ]))
+}
+
+// r[verify compat.skip-writer-only]
+// r[verify compat.reader-only-fields]
+// r[verify compat.defaults-are-reader-side]
+// r[verify compat.type-match]
+// r[verify exec.jit-optional]
+// r[verify ir.stencils]
+@Test func nativeCompatListElementStructDriftMatchesReaderOracle() throws {
+    let writerItem = SchemaId(30)
+    let optionU32 = SchemaId(31)
+    let readerItem = SchemaId(32)
+    let writerList = SchemaId(33)
+    let readerList = SchemaId(34)
+    let writerRoot = SchemaId(35)
+    let readerRoot = SchemaId(36)
+    let batch = resolveIds([
+        Schema(id: writerItem, kind: .structure(name: "CompatListItem", fields: [
+            u32Field("id"),
+            Field(name: "transient", schema: .concrete(primitiveId(.string)), required: true),
+            u32Field("score"),
+        ])),
+        Schema(id: optionU32, kind: .option(element: .concrete(primitiveId(.u32)))),
+        Schema(id: readerItem, kind: .structure(name: "CompatListItem", fields: [
+            u32Field("id"),
+            u32Field("score"),
+            Field(name: "extra", schema: .concrete(optionU32), required: false),
+        ])),
+        Schema(id: writerList, kind: .list(element: .concrete(writerItem))),
+        Schema(id: readerList, kind: .list(element: .concrete(readerItem))),
+        Schema(id: writerRoot, kind: .structure(name: "CompatListDefaultHolder", fields: [
+            Field(name: "items", schema: .concrete(writerList), required: true),
+        ])),
+        Schema(id: readerRoot, kind: .structure(name: "CompatListDefaultHolder", fields: [
+            Field(name: "items", schema: .concrete(readerList), required: true),
+        ])),
+    ])
+    let resolvedOptionU32 = batch[1].id
+    let resolvedReaderItem = batch[2].id
+    let resolvedWriterRoot = batch[5].id
+    let resolvedReaderRoot = batch[6].id
+    let reg = Registry(batch)
+
+    let optionDesc = Descriptor(
+        schema: .concrete(resolvedOptionU32),
+        layout: Layout(size: MemoryLayout<UInt32?>.size, align: MemoryLayout<UInt32?>.alignment),
+        access: .option(OptionAccess(witness: .of(UInt32.self), some: u32Desc()))
+    )
+    let itemDesc = Descriptor(
+        schema: .concrete(resolvedReaderItem),
+        layout: MemoryLayout<CompatListDefaultItem>.phonLayout,
+        access: .record(RecordAccess(fields: [
+            FieldAccess(
+                offset: MemoryLayout<CompatListDefaultItem>.offset(of: \CompatListDefaultItem.id)!,
+                descriptor: u32Desc()
+            ),
+            FieldAccess(
+                offset: MemoryLayout<CompatListDefaultItem>.offset(of: \CompatListDefaultItem.score)!,
+                descriptor: u32Desc()
+            ),
+            FieldAccess(
+                offset: MemoryLayout<CompatListDefaultItem>.offset(of: \CompatListDefaultItem.extra)!,
+                descriptor: optionDesc,
+                defaultInit: { $0.assumingMemoryBound(to: UInt32?.self).initialize(to: nil) }
+            ),
+        ], construct: .inPlace))
+    )
+    let listDesc = Descriptor(
+        schema: .concrete(batch[4].id),
+        layout: MemoryLayout<[CompatListDefaultItem]>.phonLayout,
+        access: .sequence(SequenceAccess(
+            element: itemDesc,
+            stride: MemoryLayout<CompatListDefaultItem>.stride,
+            elemAlign: MemoryLayout<CompatListDefaultItem>.alignment,
+            witness: arraySeqWitness(of: CompatListDefaultItem.self)
+        ))
+    )
+    let readerDesc = Descriptor(
+        schema: .concrete(resolvedReaderRoot),
+        layout: MemoryLayout<CompatListDefaultHolder>.phonLayout,
+        access: .record(RecordAccess(
+            fields: [
+                FieldAccess(
+                    offset: MemoryLayout<CompatListDefaultHolder>.offset(of: \CompatListDefaultHolder.items)!,
+                    descriptor: listDesc
+                ),
+            ],
+            construct: .inPlace
+        ))
+    )
+    let lowered = try lowerDecode(resolvedWriterRoot, readerDesc, reg)
+    let report = PhonJIT.nativeFallbackReport(lowered)
+    #expect(report.decode.isEmpty, "native decode should support list element struct drift: \(report.decode)")
+    #expect(report.encode.filter { $0.reason.contains("decode-only skip-wire") }.count == 1)
+    #expect(report.encode.filter { $0.reason.contains("decode-only default") }.count == 1)
+    #expect(try NativeEncode.compile(lowered) == nil)
+
+    let writerValue = Value.object([
+        .init(key: "items", value: .array([
+            .object([
+                .init(key: "id", value: .number(.canonical(unsigned: 1))),
+                .init(key: "transient", value: .string("drop-a")),
+                .init(key: "score", value: .number(.canonical(unsigned: 10))),
+            ]),
+            .object([
+                .init(key: "id", value: .number(.canonical(unsigned: 2))),
+                .init(key: "transient", value: .string("drop-b")),
+                .init(key: "score", value: .number(.canonical(unsigned: 20))),
+            ]),
+        ])),
+    ])
+    let wire = try encode(writerValue, resolvedWriterRoot, reg)
+
+    let decoder = try NativeDecode.compile(lowered)
+    #expect(decoder != nil)
+    guard let decoder else { return }
+    let raw = UnsafeMutableRawPointer.allocate(
+        byteCount: MemoryLayout<CompatListDefaultHolder>.size,
+        alignment: MemoryLayout<CompatListDefaultHolder>.alignment
+    )
+    defer { raw.deallocate() }
+
+    try decoder.run(wire, raw)
+    let decoded = raw.assumingMemoryBound(to: CompatListDefaultHolder.self).move()
+    let expected = CompatListDefaultHolder(items: [
+        CompatListDefaultItem(id: 1, score: 10, extra: nil),
+        CompatListDefaultItem(id: 2, score: 20, extra: nil),
+    ])
+    #expect(decoded == expected)
+
+    let oracle = try planDecode(wire, resolvedWriterRoot, resolvedReaderRoot, reg)
+    let oracleBytes = try encode(oracle, resolvedReaderRoot, reg)
+    let readerLowered = try lowerTyped(readerDesc, reg)
+    #expect(PhonJIT.nativeFallbackReport(readerLowered).isEmpty)
+    let typedBytes = withUnsafeBytes(of: decoded) { encodeWith(readerLowered, $0.baseAddress!) }
+    #expect(typedBytes == oracleBytes)
+
+    let encoder = try NativeEncode.compile(readerLowered)
+    #expect(encoder != nil)
+    if let encoder {
+        let nativeBytes = withUnsafeBytes(of: decoded) { encoder.run($0.baseAddress!) }
+        #expect(nativeBytes == oracleBytes)
+    }
 }
 
 // r[verify compat.skip-writer-only]

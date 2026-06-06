@@ -162,12 +162,16 @@ Already in place on the Phon side:
   remapping, writer-only enum errors, writer-only field skips, and reader-only
   field defaults. The shared compatibility corpus now has
   `enum_struct_variant_payload_drift`, where an enum variant matches by name and
-  its struct payload applies writer-only skip plus reader-only default rules.
+  its struct payload applies writer-only skip plus reader-only default rules,
+  plus list/set/map/tuple element struct drift for container-held DTOs.
   `swift test --filter nativeCompatEnumStructPayloadDriftMatchesReaderOracle`
   proves Swift native decode handles that typed shape, remains decode
   native-clean, and re-encodes to the same reader-shaped bytes as the Value-plan
-  oracle. The remaining proof work is continuing to broaden native execution
-  across the full versioned compat corpus.
+  oracle. The focused
+  `nativeCompatListElementStructDriftMatchesReaderOracle` test proves the same
+  native-clean skip/default behavior for list element DTO drift. The remaining
+  proof work is continuing to broaden native execution across the full versioned
+  compat corpus.
 - Swift engine-level ecosystem fixture coverage now includes a Dodeca-shaped
   `Set<String>` root, Dodeca dynamic template calls with `Value` args and
   tuple-vector kwargs, Dodeca HTML processor inputs with optional maps, string
