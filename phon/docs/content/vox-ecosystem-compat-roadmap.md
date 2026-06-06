@@ -170,7 +170,9 @@ Already in place on the Phon side:
   oracle. The focused
   `nativeCompatListElementStructDriftMatchesReaderOracle` and
   `nativeCompatMapValueStructDriftMatchesReaderOracle` tests prove the same
-  native-clean skip/default behavior for list element and map value DTO drift.
+  native-clean skip/default behavior for list element and map value DTO drift,
+  while `nativeCompatTupleElementStructDriftMatchesReaderOracle` proves the
+  same behavior for tuple element DTO drift with positional siblings preserved.
   The remaining proof work is continuing to broaden native execution across the
   full versioned compat corpus.
 - Swift engine-level ecosystem fixture coverage now includes a Dodeca-shaped
