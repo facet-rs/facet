@@ -315,7 +315,7 @@ Already in place on the Phon side:
 - Current Vox bridge verification passes: Rust runtime/codegen bridge
   (`cargo nextest run -p vox -p vox-core -p vox-phon -p vox-codegen --no-fail-fast`,
   192/192), Swift runtime
-  (`swift test --package-path swift/vox-runtime`, 56/56), targeted TypeScript
+  (`swift test --package-path swift/vox-runtime`, 57/57), targeted TypeScript
   schema/channel/session tests
   (`pnpm --filter @bearcove/vox-core exec vitest run src/schema_tracker.test.ts src/driver.channel_schema.test.ts src/channeling/binding.test.ts src/channeling/registry.test.ts src/session.test.ts`,
   37/37), TypeScript browser WebSocket gate
@@ -429,16 +429,15 @@ Verified in the Vox checkout during the bridge audit:
   passes its focused transport suite with 1 test.
 - Vox Tracey validation is clean across Rust, Swift, and TypeScript. Current
   coverage is Rust 174/174 implemented and 174/174 verified, Swift 164/174
-  implemented and 161/174 verified, and TypeScript 174/174 implemented and
+  implemented and 164/174 verified, and TypeScript 174/174 implemented and
   174/174 verified. That is not a global Vox Tracey completion claim: the
   remaining Swift uncovered rules are the non-shipped memory/in-process/
-  WebSocket transports and debug/observer surfaces. The current Swift
-  implemented-but-untested rules are `rpc.observability.driver`,
-  `rpc.observability.runtime`, and the broad `rpc` umbrella. The non-Swift
-  transport holes are not Vox 1.0 blockers; Swift stream send/receive
-  cancellation safety is now implemented and verified against the shipped
-  `NIOFrameLink` path. Rust and TypeScript now have verification references for
-  every current Vox rule. The legacy
+  WebSocket transports and debug/channel/low-cardinality observer surfaces.
+  Swift now has zero implemented-but-untested rules. The non-Swift transport
+  holes are not Vox 1.0 blockers; Swift stream send/receive cancellation
+  safety is now implemented and verified against the shipped `NIOFrameLink`
+  path. Rust and TypeScript now have verification references for every current
+  Vox rule. The legacy
   `rpc.response.one-per-request` rule has been removed from the live spec.
 - The roadmap-relevant Vox rules for subject teardown, channel shape, channel
   allocation/direction/lifecycle, channel payload indexes, connection-close
@@ -677,6 +676,14 @@ Verified in the Vox checkout during the bridge audit:
   reports no remaining untested Rust `rpc.observability.*` rules, and the broad
   Rust `rpc` umbrella is verified by the existing request/response and channel
   flow runtime proofs.
+- Swift runtime observability now has Tracey-backed coverage for the live
+  local driver observer surface. `VoxRuntimeObserver`,
+  `setVoxRuntimeObserver`, and typed `VoxDriverObserverEvent` values expose
+  local introspection without a telemetry backend and without adding wire
+  protocol events. `runtimeObserverReceivesDriverLifecycleEventsWithoutTelemetryBackend`
+  runs the real `Driver.run()` loop over a scripted transport and proves the
+  observer receives driver lifecycle, graceful close, and exit events.
+  Tracey now reports no implemented-but-untested Swift rules.
 - Swift stream link behavior now has Tracey-backed coverage in
   `TransportTests` against the actual `NIOFrameLink` and length-prefixed frame
   codec. `tcpStreamLinkPreservesBoundariesOrderEmptyPayloadsAndEof` proves TCP
