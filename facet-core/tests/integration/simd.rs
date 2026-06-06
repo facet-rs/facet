@@ -1,6 +1,5 @@
 // Only run these tests when the simd feature is enabled AND portable_simd is available
 #![cfg(all(feature = "simd", has_portable_simd))]
-#![feature(portable_simd)]
 
 use core::simd::Simd;
 use facet_core::{Def, Facet, Type, UserType};

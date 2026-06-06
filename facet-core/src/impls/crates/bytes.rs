@@ -81,6 +81,19 @@ unsafe extern "C" fn bytes_iter_dealloc(iter_ptr: PtrMut) {
     }
 }
 
+unsafe extern "C" fn bytes_from_raw_parts(
+    list: PtrUninit,
+    ptr: PtrMut,
+    len: usize,
+    capacity: usize,
+) {
+    unsafe {
+        let data = ptr.as_mut_byte_ptr();
+        let vec = Vec::<u8>::from_raw_parts(data, len, capacity);
+        list.put(Bytes::from(vec));
+    }
+}
+
 static BYTES_LIST_VTABLE: ListVTable = ListVTable {
     len: bytes_len,
     get: bytes_get,
@@ -98,6 +111,7 @@ static BYTES_LIST_TYPE_OPS: ListTypeOps = ListTypeOps {
     as_mut_ptr_typed: None,
     reserve: None,
     capacity: None,
+    from_raw_parts: Some(bytes_from_raw_parts),
     iter_vtable: IterVTable {
         init_with_value: Some(bytes_iter_init),
         next: bytes_iter_next,
@@ -215,6 +229,19 @@ unsafe extern "C" fn bytes_mut_push(ptr: PtrMut, item: PtrMut) {
     }
 }
 
+unsafe extern "C" fn bytes_mut_from_raw_parts(
+    list: PtrUninit,
+    ptr: PtrMut,
+    len: usize,
+    capacity: usize,
+) {
+    unsafe {
+        let data = ptr.as_mut_byte_ptr();
+        let vec = Vec::<u8>::from_raw_parts(data, len, capacity);
+        list.put(BytesMut::from(Bytes::from(vec)));
+    }
+}
+
 unsafe extern "C" fn bytes_mut_iter_init(ptr: PtrConst) -> PtrMut {
     unsafe {
         let bytes = ptr.get::<BytesMut>();
@@ -243,6 +270,7 @@ static BYTES_MUT_LIST_TYPE_OPS: ListTypeOps = ListTypeOps {
     as_mut_ptr_typed: None,
     reserve: None,
     capacity: None,
+    from_raw_parts: Some(bytes_mut_from_raw_parts),
     iter_vtable: IterVTable {
         init_with_value: Some(bytes_mut_iter_init),
         next: bytes_iter_next, // Reuse from Bytes - same iterator type

@@ -6,6 +6,7 @@
 //! This mirrors the phon typed-engine bridge: the engine owns the element buffer,
 //! `from_raw_parts` adopts it into the list handle, and `len`/`as_ptr` read it out.
 
+use bytes::{Bytes, BytesMut};
 use core::alloc::Layout;
 use facet_core::{Def, Facet, PtrConst, PtrMut, PtrUninit, Shape};
 
@@ -81,4 +82,92 @@ fn vec_u32_from_raw_parts_empty() {
     }
     let v = unsafe { slot.assume_init() };
     assert!(v.is_empty());
+}
+
+#[test]
+fn bytes_from_raw_parts_adopts_engine_buffer() {
+    let shape = <Bytes as Facet>::SHAPE;
+    let ld = list_def(shape);
+
+    let from_raw_parts = ld
+        .from_raw_parts()
+        .expect("Bytes must expose from_raw_parts");
+    let as_ptr = ld.vtable.as_ptr.expect("Bytes must expose as_ptr");
+    let len_fn = ld.vtable.len;
+
+    let elems: [u8; 4] = [1, 2, 255, 0xBE];
+
+    // Engine-owned allocation
+    let layout = Layout::array::<u8>(elems.len()).unwrap();
+    let buf = unsafe { std::alloc::alloc(layout) };
+    assert!(!buf.is_null());
+    for (i, &v) in elems.iter().enumerate() {
+        unsafe { buf.add(i).write(v) };
+    }
+
+    // Adopt the buffer into a fresh Bytes via from_raw_parts.
+    let mut slot = std::mem::MaybeUninit::<Bytes>::uninit();
+    unsafe {
+        from_raw_parts(
+            PtrUninit::new(slot.as_mut_ptr().cast::<u8>()),
+            PtrMut::new(buf),
+            elems.len(),
+            elems.len(),
+        );
+    }
+    let b = unsafe { slot.assume_init() };
+    assert_eq!(&b[..], &elems[..]);
+
+    // Read it back through vtable ops.
+    let handle = PtrConst::new(core::ptr::from_ref(&b));
+    let len = unsafe { len_fn(handle) };
+    assert_eq!(len, elems.len());
+    let data = unsafe { as_ptr(handle) }.as_byte_ptr();
+    for (i, &expected) in elems.iter().enumerate() {
+        assert_eq!(unsafe { *data.add(i) }, expected);
+    }
+}
+
+#[test]
+fn bytes_mut_from_raw_parts_adopts_engine_buffer() {
+    let shape = <BytesMut as Facet>::SHAPE;
+    let ld = list_def(shape);
+
+    let from_raw_parts = ld
+        .from_raw_parts()
+        .expect("BytesMut must expose from_raw_parts");
+    let as_ptr = ld.vtable.as_ptr.expect("BytesMut must expose as_ptr");
+    let len_fn = ld.vtable.len;
+
+    let elems: [u8; 4] = [1, 2, 255, 0xBE];
+
+    // Engine-owned allocation
+    let layout = Layout::array::<u8>(elems.len()).unwrap();
+    let buf = unsafe { std::alloc::alloc(layout) };
+    assert!(!buf.is_null());
+    for (i, &v) in elems.iter().enumerate() {
+        unsafe { buf.add(i).write(v) };
+    }
+
+    // Adopt the buffer into a fresh BytesMut via from_raw_parts.
+    let mut slot = std::mem::MaybeUninit::<BytesMut>::uninit();
+    unsafe {
+        from_raw_parts(
+            PtrUninit::new(slot.as_mut_ptr().cast::<u8>()),
+            PtrMut::new(buf),
+            elems.len(),
+            elems.len(),
+        );
+    }
+    let b = unsafe { slot.assume_init() };
+    assert_eq!(&b[..], &elems[..]);
+
+    // Read it back through vtable ops.
+    let handle = PtrConst::new(core::ptr::from_ref(&b));
+    let len = unsafe { len_fn(handle) };
+    assert_eq!(len, elems.len());
+    let data = unsafe { as_ptr(handle) }.as_byte_ptr();
+    for (i, &expected) in elems.iter().enumerate() {
+        assert_eq!(unsafe { *data.add(i) }, expected);
+    }
 }
