@@ -26,6 +26,8 @@
 //!
 //! Spec: "The intermediate representation" (`r[ir.*]`).
 
+use std::collections::BTreeMap;
+
 use phon_schema::bytes::{Reader, skip_pad};
 use phon_schema::{DecodeError, Primitive, SchemaId, SchemaRef};
 
@@ -36,6 +38,14 @@ use phon_schema::{DecodeError, Primitive, SchemaId, SchemaRef};
 /// of structs of scalars lowers to a single branch-free `Program`.
 pub type Program = Vec<Op>;
 
+/// A lowered dynamic-value decode program plus callable blocks for recursive
+/// reader schemas. Non-recursive plans have an empty `blocks` map.
+#[derive(Clone, Debug, Default)]
+pub struct ValueProgram {
+    pub program: Program,
+    pub blocks: BTreeMap<SchemaId, Program>,
+}
+
 /// One lowered decode step. Each reads from the wire and adjusts the
 /// interpreter's value stack; the documented net stack effect of a *complete*
 /// lowered subtree is always `+1`.
@@ -45,6 +55,8 @@ pub enum Op {
     Scalar(Primitive),
     /// Decode a self-describing dynamic value and push it. Net `+1`.
     Dynamic,
+    /// Decode using the block program for a recursive reader schema. Net `+1`.
+    CallBlock { schema: SchemaId },
     /// Push a null — a reader-only field's default, or a unit variant payload.
     /// Net `+1`.
     Null,

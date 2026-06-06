@@ -953,6 +953,93 @@ fn build_cases(b: &mut Batch) -> Vec<PlannedCase> {
         push("dynamic_field", root.clone(), root, value);
     }
 
+    // 21b. recursive_struct_drift — a recursive DTO evolves at every node:
+    // writer-only `transient` is skipped, reader-only `extra` defaults to null,
+    // and the recursive children edge translates through a callable compat
+    // block instead of unboundedly inlining the schema cycle.
+    {
+        let writer_node_key = b.next_key;
+        let writer_children_key = b.next_key + 1;
+        b.next_key += 2;
+        let writer_node = SchemaRef::concrete(SchemaId(writer_node_key));
+        let writer_children = SchemaRef::concrete(SchemaId(writer_children_key));
+        b.schemas.push(Schema {
+            id: SchemaId(writer_node_key),
+            type_params: Vec::new(),
+            kind: SchemaKind::Struct {
+                name: "CompatTree".to_string(),
+                fields: vec![
+                    field("value", prim(Primitive::U32), true),
+                    field("transient", prim(Primitive::String), true),
+                    field("children", writer_children.clone(), true),
+                ],
+            },
+        });
+        b.schemas.push(Schema {
+            id: SchemaId(writer_children_key),
+            type_params: Vec::new(),
+            kind: SchemaKind::List {
+                element: writer_node.clone(),
+            },
+        });
+
+        let option_u32 = b.add(SchemaKind::Option {
+            element: prim(Primitive::U32),
+        });
+        let reader_node_key = b.next_key;
+        let reader_children_key = b.next_key + 1;
+        b.next_key += 2;
+        let reader_node = SchemaRef::concrete(SchemaId(reader_node_key));
+        let reader_children = SchemaRef::concrete(SchemaId(reader_children_key));
+        b.schemas.push(Schema {
+            id: SchemaId(reader_node_key),
+            type_params: Vec::new(),
+            kind: SchemaKind::Struct {
+                name: "CompatTree".to_string(),
+                fields: vec![
+                    field("value", prim(Primitive::U32), true),
+                    field("children", reader_children.clone(), true),
+                    field("extra", option_u32, false),
+                ],
+            },
+        });
+        b.schemas.push(Schema {
+            id: SchemaId(reader_children_key),
+            type_params: Vec::new(),
+            kind: SchemaKind::List {
+                element: reader_node.clone(),
+            },
+        });
+
+        let value = obj(&[
+            ("value", Value::from(1u32)),
+            ("transient", Value::from(VString::new("drop-root"))),
+            (
+                "children",
+                arr(vec![
+                    obj(&[
+                        ("value", Value::from(2u32)),
+                        ("transient", Value::from(VString::new("drop-left"))),
+                        ("children", arr(vec![])),
+                    ]),
+                    obj(&[
+                        ("value", Value::from(3u32)),
+                        ("transient", Value::from(VString::new("drop-right"))),
+                        (
+                            "children",
+                            arr(vec![obj(&[
+                                ("value", Value::from(4u32)),
+                                ("transient", Value::from(VString::new("drop-leaf"))),
+                                ("children", arr(vec![])),
+                            ])]),
+                        ),
+                    ]),
+                ]),
+            ),
+        ]);
+        push("recursive_struct_drift", writer_node, reader_node, value);
+    }
+
     // 22. channel_item_schema_compat — channel roots are transport capabilities,
     // but stream items are ordinary per-message payloads. This Dodeca-shaped item
     // proves a writer-only field is skipped by the shared compat corpus.

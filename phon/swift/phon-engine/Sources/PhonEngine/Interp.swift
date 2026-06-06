@@ -17,9 +17,14 @@ import PhonSchema
 /// Run a lowered program against `bytes`, producing the decoded value and
 /// rejecting trailing bytes.
 public func run(_ program: Program, _ bytes: [UInt8], _ reg: Registry) throws -> Value {
+    try run(ValueProgram(program: program), bytes, reg)
+}
+
+/// Run a lowered dynamic-value program with its recursive block registry.
+public func run(_ lowered: ValueProgram, _ bytes: [UInt8], _ reg: Registry) throws -> Value {
     var r = Reader(bytes)
     var stack: [Value] = []
-    try execOps(program, &r, reg, &stack)
+    try execOps(lowered.program, &r, reg, lowered.blocks, &stack)
     if r.remaining != 0 {
         throw CompactError.decode(.trailingBytes(r.remaining))
     }
@@ -29,16 +34,33 @@ public func run(_ program: Program, _ bytes: [UInt8], _ reg: Registry) throws ->
     return v
 }
 
-private func execOps(_ ops: Program, _ r: inout Reader, _ reg: Registry, _ stack: inout [Value]) throws {
-    for op in ops { try execOp(op, &r, reg, &stack) }
+private func execOps(
+    _ ops: Program,
+    _ r: inout Reader,
+    _ reg: Registry,
+    _ blocks: [SchemaId: Program],
+    _ stack: inout [Value]
+) throws {
+    for op in ops { try execOp(op, &r, reg, blocks, &stack) }
 }
 
-private func execOp(_ op: Op, _ r: inout Reader, _ reg: Registry, _ stack: inout [Value]) throws {
+private func execOp(
+    _ op: Op,
+    _ r: inout Reader,
+    _ reg: Registry,
+    _ blocks: [SchemaId: Program],
+    _ stack: inout [Value]
+) throws {
     switch op {
     case .scalar(let p):
         stack.append(try decodePrimitive(&r, p))
     case .dynamic:
         stack.append(try readValue(&r))
+    case .callBlock(let schema):
+        guard let block = blocks[schema] else {
+            throw CompactError.decode(.malformed("missing recursion block"))
+        }
+        try execOps(block, &r, reg, blocks, &stack)
     case .null:
         stack.append(.null)
     case .skip(let writerRef):
@@ -60,7 +82,7 @@ private func execOp(_ op: Op, _ r: inout Reader, _ reg: Registry, _ stack: inout
         var arr: [Value] = []
         var seen: Set<Value> = []
         for _ in 0..<n {
-            try execOps(body, &r, reg, &stack)
+            try execOps(body, &r, reg, blocks, &stack)
             let v = stack.removeLast()
             if set {
                 guard seen.insert(v).inserted else { throw CompactError.decode(.duplicateElement) }
@@ -73,9 +95,9 @@ private func execOp(_ op: Op, _ r: inout Reader, _ reg: Registry, _ stack: inout
         var obj: [Value.Entry] = []
         var seen: Set<String> = []
         for _ in 0..<n {
-            try execOps(key, &r, reg, &stack)
+            try execOps(key, &r, reg, blocks, &stack)
             let k = stack.removeLast()
-            try execOps(value, &r, reg, &stack)
+            try execOps(value, &r, reg, blocks, &stack)
             let v = stack.removeLast()
             guard let ks = k.asString else { throw CompactError.unsupported("map with non-string keys") }
             guard seen.insert(ks).inserted else { throw CompactError.decode(.duplicateKey) }
@@ -87,14 +109,14 @@ private func execOp(_ op: Op, _ r: inout Reader, _ reg: Registry, _ stack: inout
         try checkFixedCount(count, minWire, r.remaining)
         var arr: [Value] = []
         for _ in 0..<count {
-            try execOps(body, &r, reg, &stack)
+            try execOps(body, &r, reg, blocks, &stack)
             arr.append(stack.removeLast())
         }
         stack.append(.array(arr))
     case .option(let some):
         switch try r.readU8() {
         case 0: stack.append(.null)
-        case 1: try execOps(some, &r, reg, &stack)
+        case 1: try execOps(some, &r, reg, blocks, &stack)
         case let b: throw CompactError.decode(.invalidBool(b))
         }
     case .enumeration(let arms):
@@ -102,7 +124,7 @@ private func execOp(_ op: Op, _ r: inout Reader, _ reg: Registry, _ stack: inout
         guard let arm = arms.first(where: { $0.writerIndex == idx }) else {
             throw CompactError.writerOnlyVariant(idx)
         }
-        try execOps(arm.payload, &r, reg, &stack)
+        try execOps(arm.payload, &r, reg, blocks, &stack)
         let payload = stack.removeLast()
         stack.append(.object([Value.Entry(key: arm.readerName, value: payload)]))
     }

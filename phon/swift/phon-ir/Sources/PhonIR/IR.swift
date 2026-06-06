@@ -23,6 +23,18 @@ import PhonSchema
 /// A lowered decode program: a straight run of `Op`s executed start to finish.
 public typealias Program = [Op]
 
+/// A lowered dynamic-value decode program plus callable blocks for recursive
+/// reader schemas. Non-recursive plans have an empty `blocks` map.
+public struct ValueProgram {
+    public var program: Program
+    public var blocks: [SchemaId: Program]
+
+    public init(program: Program, blocks: [SchemaId: Program] = [:]) {
+        self.program = program
+        self.blocks = blocks
+    }
+}
+
 /// One lowered decode step. Each reads from the wire and adjusts the
 /// interpreter's value stack; the net stack effect of a complete lowered subtree
 /// is always `+1`.
@@ -31,6 +43,8 @@ public indirect enum Op {
     case scalar(Primitive)
     /// Decode a self-describing dynamic value and push it. Net `+1`.
     case dynamic
+    /// Decode through the block program for a recursive reader schema. Net `+1`.
+    case callBlock(schema: SchemaId)
     /// Push a null — a reader-only field's default, or a unit variant payload.
     case null
     /// Decode a value by this writer schema reference and discard it: a
