@@ -401,7 +401,7 @@ Verified in the Vox checkout during the bridge audit:
   `vox-tcp` passes its focused transport suite with 5 tests, and `vox-ws`
   passes its focused transport suite with 1 test.
 - Vox Tracey validation is clean across Rust, Swift, and TypeScript. Current
-  coverage is Rust 174/174 implemented and 168/174 verified, Swift 162/174
+  coverage is Rust 174/174 implemented and 169/174 verified, Swift 162/174
   implemented and 159/174 verified, and TypeScript 174/174 implemented and
   172/174 verified. That is not a global Vox Tracey completion claim: the
   remaining TypeScript unverified rules are the broad `rpc` and
@@ -410,8 +410,8 @@ Verified in the Vox checkout during the bridge audit:
   observability rules, and five untested implemented umbrella or lifecycle
   rules; the non-Swift transport holes are not Vox 1.0 blockers. The remaining
   Rust unverified rules are now concentrated in observability emission and the
-  broad `rpc` / one-service umbrella surfaces. The legacy
-  `rpc.response.one-per-request` rule has been removed from the live spec.
+  broad `rpc` umbrella surface. The legacy `rpc.response.one-per-request` rule
+  has been removed from the live spec.
 - The roadmap-relevant Vox rules for subject teardown, channel shape, channel
   allocation/direction/lifecycle, channel payload indexes, connection-close
   channel errors, root and virtual connection behavior, virtual connection
@@ -630,6 +630,13 @@ Verified in the Vox checkout during the bridge audit:
   `HandshakeResult` keeps local `our_*` fields separate from remote
   `peer_*` fields. Tracey now reports no remaining untested Rust
   `session.peer` rule.
+- Rust one-service-per-connection behavior now has Tracey-backed virtual
+  connection coverage. `root_and_virtual_connections_bind_separate_services`
+  binds root `Noop` traffic and virtual `Echo` traffic to different handlers on
+  the same session, proves calls on each connection route to their own handler,
+  and proves the root connection remains bound to its original service after the
+  virtual connection is opened. Tracey now reports no remaining untested Rust
+  `rpc.one-service-per-connection` rule.
 - Swift stream link behavior now has Tracey-backed coverage in
   `TransportTests` against the actual `NIOFrameLink` and length-prefixed frame
   codec. `tcpStreamLinkPreservesBoundariesOrderEmptyPayloadsAndEof` proves TCP
