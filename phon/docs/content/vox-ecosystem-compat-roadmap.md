@@ -401,7 +401,7 @@ Verified in the Vox checkout during the bridge audit:
   `vox-tcp` passes its focused transport suite with 5 tests, and `vox-ws`
   passes its focused transport suite with 1 test.
 - Vox Tracey validation is clean across Rust, Swift, and TypeScript. Current
-  coverage is Rust 174/174 implemented and 162/174 verified, Swift 162/174
+  coverage is Rust 174/174 implemented and 166/174 verified, Swift 162/174
   implemented and 159/174 verified, and TypeScript 174/174 implemented and
   172/174 verified. That is not a global Vox Tracey completion claim: the
   remaining TypeScript unverified rules are the broad `rpc` and
@@ -409,9 +409,9 @@ Verified in the Vox checkout during the bridge audit:
   Swift holes are concentrated in uncovered non-Swift transports, debug
   observability rules, and five untested implemented umbrella or lifecycle
   rules; the non-Swift transport holes are not Vox 1.0 blockers. The remaining
-  Rust unverified rules are now concentrated in shipped-transport audit items,
-  observability emission, broad `rpc` / one-service umbrella surfaces, and two
-  broad session message/peer rules. The legacy
+  Rust unverified rules are now concentrated in observability emission, broad
+  `rpc` / one-service umbrella surfaces, and two broad session message/peer
+  rules. The legacy
   `rpc.response.one-per-request` rule has been removed from the live spec.
 - The roadmap-relevant Vox rules for subject teardown, channel shape, channel
   allocation/direction/lifecycle, channel payload indexes, connection-close
@@ -609,6 +609,15 @@ Verified in the Vox checkout during the bridge audit:
   and treats a partial-frame receive error as terminal. Tracey now reports no
   remaining untested Rust `link.*`, `transport.memory`, or
   `transport.stream.kinds` rules.
+- Rust WebSocket and wasm in-process transport behavior now has Tracey-backed
+  coverage. `vox-websocket`'s native `round_trip_single` nextest slice proves
+  the tokio/tungstenite WebSocket link round-trips binary payloads. The wasm
+  Playwright transport slice builds the Rust wasm fixtures, runs a Rust wasm
+  WebSocket client against the Rust WebSocket peer server, and runs a Rust wasm
+  in-process acceptor wired to a TypeScript initiator in the same browser tab.
+  Tracey now reports no remaining untested Rust `transport.websocket`,
+  `transport.websocket.platforms`, `transport.inprocess`, or
+  `transport.inprocess.platforms` rules.
 - Swift stream link behavior now has Tracey-backed coverage in
   `TransportTests` against the actual `NIOFrameLink` and length-prefixed frame
   codec. `tcpStreamLinkPreservesBoundariesOrderEmptyPayloadsAndEof` proves TCP
