@@ -461,6 +461,46 @@ fn build_cases(b: &mut Batch) -> Vec<PlannedCase> {
         push("tuple_mixed", root.clone(), root, value);
     }
 
+    // 10b. tuple_element_struct_drift — tuple elements reconcile pairwise, so a
+    // struct inside a tuple can skip writer-only fields and default reader-only
+    // fields while its sibling tuple elements remain positional.
+    {
+        let writer_element = b.add(SchemaKind::Struct {
+            name: "TupleItem".to_string(),
+            fields: vec![
+                field("x", prim(Primitive::U32), true),
+                field("transient", prim(Primitive::String), true),
+                field("y", prim(Primitive::U32), true),
+            ],
+        });
+        let option_u32 = b.add(SchemaKind::Option {
+            element: prim(Primitive::U32),
+        });
+        let reader_element = b.add(SchemaKind::Struct {
+            name: "TupleItem".to_string(),
+            fields: vec![
+                field("x", prim(Primitive::U32), true),
+                field("y", prim(Primitive::U32), true),
+                field("extra", option_u32, false),
+            ],
+        });
+        let writer = b.add(SchemaKind::Tuple {
+            elements: vec![writer_element, prim(Primitive::String)],
+        });
+        let reader = b.add(SchemaKind::Tuple {
+            elements: vec![reader_element, prim(Primitive::String)],
+        });
+        let value = arr(vec![
+            obj(&[
+                ("x", Value::from(1u32)),
+                ("transient", Value::from(VString::new("drop-tuple"))),
+                ("y", Value::from(10u32)),
+            ]),
+            Value::from(VString::new("kept sibling")),
+        ]);
+        push("tuple_element_struct_drift", writer, reader, value);
+    }
+
     // 11. nested_struct — struct { inner: struct{x,y}, tag }.
     {
         let inner = b.add(SchemaKind::Struct {
