@@ -733,12 +733,25 @@ private struct CompatReaderXCHot: Equatable {
     var c: UInt32?
 }
 
+private struct CompatMovePayloadHot: Equatable {
+    var y: UInt32
+    var x: UInt32
+    var extra: UInt32?
+}
+
+private enum CompatCommandHot: Equatable {
+    case move(CompatMovePayloadHot)
+    case stop
+}
+
 private enum CompatBenchId {
     static let writerXY = SchemaId(9_001)
     static let readerX = SchemaId(9_002)
     static let writerX = SchemaId(9_003)
     static let readerXC = SchemaId(9_004)
     static let optionU32 = SchemaId(9_005)
+    static let writerCommand = SchemaId(9_006)
+    static let readerCommand = SchemaId(9_007)
 }
 
 private func compatWriterOnlySkipFixture() -> (
@@ -816,6 +829,98 @@ private func compatReaderOnlyDefaultFixture() -> (
         registry: Registry(schemas),
         bytes: [7, 0, 0, 0],
         expected: CompatReaderXCHot(x: 7, c: nil)
+    )
+}
+
+private func compatEnumPayloadDriftFixture() -> (
+    writerRoot: SchemaId,
+    reader: Descriptor,
+    registry: Registry,
+    bytes: [UInt8],
+    expected: CompatCommandHot
+) {
+    let schemas = resolveIds([
+        Schema(id: CompatBenchId.writerCommand, kind: .enumeration(name: "CmdCompat", variants: [
+            Variant(name: "Move", index: 3, payload: .structure([
+                Field(name: "x", schema: .concrete(primitiveId(.u32)), required: true),
+                Field(name: "transient", schema: .concrete(primitiveId(.u64)), required: true),
+                Field(name: "y", schema: .concrete(primitiveId(.u32)), required: true),
+            ])),
+            Variant(name: "Stop", index: 4, payload: .unit),
+        ])),
+        Schema(id: CompatBenchId.optionU32, kind: .option(element: .concrete(primitiveId(.u32)))),
+        Schema(id: CompatBenchId.readerCommand, kind: .enumeration(name: "CmdCompat", variants: [
+            Variant(name: "Move", index: 0, payload: .structure([
+                Field(name: "y", schema: .concrete(primitiveId(.u32)), required: true),
+                Field(name: "x", schema: .concrete(primitiveId(.u32)), required: true),
+                Field(name: "extra", schema: .concrete(CompatBenchId.optionU32), required: false),
+            ])),
+            Variant(name: "Stop", index: 1, payload: .unit),
+        ])),
+    ])
+    let optionDesc = Descriptor(
+        schema: .concrete(schemas[1].id),
+        layout: Layout(size: MemoryLayout<UInt32?>.size, align: MemoryLayout<UInt32?>.alignment),
+        access: .option(OptionAccess(witness: .of(UInt32.self), some: u32Desc()))
+    )
+    let payloadLayout = MemoryLayout<CompatMovePayloadHot>.phonLayout
+    let reader = Descriptor(
+        schema: .concrete(schemas[2].id),
+        layout: MemoryLayout<CompatCommandHot>.phonLayout,
+        access: .enumeration(EnumAccess(
+            tag: { value in
+                switch value.assumingMemoryBound(to: CompatCommandHot.self).pointee {
+                case .move: return 0
+                case .stop: return 1
+                }
+            },
+            projectPayload: { value, localIndex, scratch in
+                guard localIndex == 0 else { return }
+                guard case .move(let payload) = value.assumingMemoryBound(to: CompatCommandHot.self).pointee else {
+                    return
+                }
+                scratch.assumingMemoryBound(to: CompatMovePayloadHot.self).initialize(to: payload)
+            },
+            destroyPayload: { scratch, localIndex in
+                guard localIndex == 0 else { return }
+                scratch.assumingMemoryBound(to: CompatMovePayloadHot.self).deinitialize(count: 1)
+            },
+            inject: { slot, localIndex, scratch in
+                let value: CompatCommandHot
+                switch localIndex {
+                case 0:
+                    value = .move(scratch.assumingMemoryBound(to: CompatMovePayloadHot.self).move())
+                case 1:
+                    value = .stop
+                default:
+                    fatalError("bad compat command variant")
+                }
+                slot.assumingMemoryBound(to: CompatCommandHot.self).initialize(to: value)
+            },
+            variants: [
+                VariantAccess(
+                    wireIndex: 0,
+                    payloadFields: [
+                        FieldAccess(offset: MemoryLayout<CompatMovePayloadHot>.offset(of: \CompatMovePayloadHot.y)!, descriptor: u32Desc()),
+                        FieldAccess(offset: MemoryLayout<CompatMovePayloadHot>.offset(of: \CompatMovePayloadHot.x)!, descriptor: u32Desc()),
+                        FieldAccess(
+                            offset: MemoryLayout<CompatMovePayloadHot>.offset(of: \CompatMovePayloadHot.extra)!,
+                            descriptor: optionDesc,
+                            defaultInit: { $0.assumingMemoryBound(to: UInt32?.self).initialize(to: nil) }
+                        ),
+                    ],
+                    payloadLayout: payloadLayout
+                ),
+                VariantAccess(wireIndex: 1, payloadFields: [], payloadLayout: Layout(size: 0, align: 1)),
+            ]
+        ))
+    )
+    return (
+        writerRoot: schemas[0].id,
+        reader: reader,
+        registry: Registry(schemas),
+        bytes: [3, 0, 0, 0, 3, 0, 0, 0, 231, 3, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0],
+        expected: .move(CompatMovePayloadHot(y: 4, x: 3, extra: nil))
     )
 }
 
@@ -3179,6 +3284,18 @@ private func main() throws {
         registry: compatDefault.registry,
         bytes: compatDefault.bytes,
         expected: compatDefault.expected,
+        iters: 80_000
+    )
+    let compatEnumPayloadDrift = compatEnumPayloadDriftFixture()
+    try benchDecodeCase(
+        "compat(enum payload drift)",
+        method: "compat.enum_payload_drift",
+        phase: "decode",
+        writerRoot: compatEnumPayloadDrift.writerRoot,
+        reader: compatEnumPayloadDrift.reader,
+        registry: compatEnumPayloadDrift.registry,
+        bytes: compatEnumPayloadDrift.bytes,
+        expected: compatEnumPayloadDrift.expected,
         iters: 80_000
     )
     print("Ecosystem Swift typed codec steady-state throughput\n")

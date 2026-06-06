@@ -221,14 +221,15 @@ Already in place on the Phon side:
   extension/host-callback DTO roots, and Stax recursive flamegraph plus Linux
   broker-control DTO fixtures, and the broad Helix `TraceService` aggregate.
   It also benchmarks focused compat decode roots for writer-only scalar field
-  skip and reader-only optional default, plus channel item roots for Dodeca byte
-  tunnels, Dodeca LSP strings, Dibs migration logs, Helix pulse notifications,
-  and Tracey data updates. The current `swift build --product PhonJITBench`
-  plus direct `.build/debug/PhonJITBench` run from the package root completes
-  and reports native-clean status for every row. Representative current results
-  include native-clean Bee `feed(response)` at 1,789 wire bytes with 3.37x
-  encode and 12.26x decode, compat field-skip/default decode at 1.10x and
-  1.71x, Dodeca parse at 4,512 wire bytes with 1.72x encode and 10.63x decode,
+  skip, reader-only optional default, and enum struct payload drift, plus
+  channel item roots for Dodeca byte tunnels, Dodeca LSP strings, Dibs
+  migration logs, Helix pulse notifications, and Tracey data updates. The
+  current `swift build --product PhonJITBench` plus a `swift run PhonJITBench`
+  smoke run from the package root completes and reports native-clean status for
+  every row. Representative current results include native-clean Bee
+  `feed(response)` at 1,789 wire bytes with 3.37x encode and 12.26x decode,
+  compat field-skip/default/enum-payload-drift decode at 1.05x, 1.69x, and
+  3.68x, Dodeca parse at 4,512 wire bytes with 1.72x encode and 10.63x decode,
   Dodeca search at 12,017 wire bytes with 0.97x encode and 7.57x decode, Dibs
   generated Squel roots at 1,128 wire bytes with 2.14x encode and 10.43x
   decode, Styx LSP aggregates at 6,688 wire bytes with 1.93x encode and 9.03x
