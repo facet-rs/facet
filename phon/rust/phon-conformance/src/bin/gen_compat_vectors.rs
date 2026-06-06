@@ -333,6 +333,58 @@ fn build_cases(b: &mut Batch) -> Vec<PlannedCase> {
         push("map_string_u32", root.clone(), root, value);
     }
 
+    // 8b. map_value_struct_drift — map values are structs whose fields evolve.
+    // The writer has a transient string field the reader skips; the reader adds
+    // an optional field that defaults to null.
+    {
+        let writer_value = b.add(SchemaKind::Struct {
+            name: "MapItem".to_string(),
+            fields: vec![
+                field("x", prim(Primitive::U32), true),
+                field("transient", prim(Primitive::String), true),
+                field("y", prim(Primitive::U32), true),
+            ],
+        });
+        let option_u32 = b.add(SchemaKind::Option {
+            element: prim(Primitive::U32),
+        });
+        let reader_value = b.add(SchemaKind::Struct {
+            name: "MapItem".to_string(),
+            fields: vec![
+                field("x", prim(Primitive::U32), true),
+                field("y", prim(Primitive::U32), true),
+                field("extra", option_u32, false),
+            ],
+        });
+        let writer = b.add(SchemaKind::Map {
+            key: prim(Primitive::String),
+            value: writer_value,
+        });
+        let reader = b.add(SchemaKind::Map {
+            key: prim(Primitive::String),
+            value: reader_value,
+        });
+        let value = obj(&[
+            (
+                "alpha",
+                obj(&[
+                    ("x", Value::from(1u32)),
+                    ("transient", Value::from(VString::new("drop-a"))),
+                    ("y", Value::from(10u32)),
+                ]),
+            ),
+            (
+                "beta",
+                obj(&[
+                    ("x", Value::from(2u32)),
+                    ("transient", Value::from(VString::new("drop-b"))),
+                    ("y", Value::from(20u32)),
+                ]),
+            ),
+        ]);
+        push("map_value_struct_drift", writer, reader, value);
+    }
+
     // 9a. option_some — option<u32> = Some(7).
     {
         let root = b.add(SchemaKind::Option {

@@ -1927,11 +1927,12 @@ updated document.
    values, channel roots, and external roots in the interpreter/oracle path; add
    new hostile vectors only when a new migration-gated fixture family exposes an
    untested failure mode.
-3. Keep the generated 29-case compatibility corpus green across Rust, Swift,
+3. Keep the generated 30-case compatibility corpus green across Rust, Swift,
    and TypeScript. It now includes field changes, enum variant changes, enum
-   struct payload drift, nested containers, recursive/dynamic values, channel
-   item schemas, and external metadata schemas; add new versioned vectors only
-   when a migration-gated fixture exposes a new compatibility shape.
+   struct payload drift, map value struct drift, nested containers,
+   recursive/dynamic values, channel item schemas, and external metadata
+   schemas; add new versioned vectors only when a migration-gated fixture
+   exposes a new compatibility shape.
 4. Keep same-schema fixtures on the compatibility-plan path.
 
 Phases 4 through 6 are release gates after interpreter correctness, but they

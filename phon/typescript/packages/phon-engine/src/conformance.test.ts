@@ -120,7 +120,7 @@ describe("compat conformance corpus", () => {
   }
 
   it("covers every corpus case", () => {
-    expect(corpus.cases.length).toBe(29);
+    expect(corpus.cases.length).toBe(30);
   });
 
   it("rejects required reader-only option fields", () => {
