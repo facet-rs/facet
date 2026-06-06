@@ -116,10 +116,14 @@ Already in place on the Phon side:
   4.95x/3.87x for `setMarkedText(args)`, 4.98x/3.88x for
   `advanceTranscript(args)`, and 4.95x/3.17x for `imeKeyEvent(args)`.
 - Swift JIT smoke/fixture coverage for the Bee-relevant IME and feed shapes.
-- Method/path-scoped fallback reporting in the typed front door. The Rust
-  front-door JIT gate now has a focused synthetic `MemOp::NativeInt` regression
-  that reports path-scoped decode/encode fallbacks instead of compiling a
-  native path that would panic on narrower native-sized integer layouts.
+- Method/path-scoped fallback reporting in the typed front door and generated
+  Vox bridge entry point. The Rust front-door JIT gate now has a focused
+  synthetic `MemOp::NativeInt` regression that reports path-scoped
+  decode/encode fallbacks instead of compiling a native path that would panic
+  on narrower native-sized integer layouts. Phon's lowered-program reporter is
+  shared by generic `Codec` values and shape-erased bridge roots, and
+  `vox-phon` exposes shape and method-scoped fallback reports for generated
+  bridge diagnostics.
 - Initial Rust ecosystem fixture coverage for Dodeca-shaped maps, sets, tuple
   vectors, dynamic template values, data-loader dynamic results, and markdown
   parse/render results with a boxed source map, Dodeca image processor

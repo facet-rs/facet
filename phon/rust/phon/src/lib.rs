@@ -253,16 +253,10 @@ pub mod api {
         /// This is strict-recording diagnostics only. It does not change whether
         /// encode/decode run with the native JIT or the interpreter.
         pub fn jit_fallback_report(&self) -> JitFallbackReport {
+            let report = jit_fallback_report_for_lowered(&self.lowered);
             #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
             {
-                let mut report = JitFallbackReport::default();
-                record_decode_fallbacks(&self.lowered.program, "$", &mut report.decode);
-                record_encode_fallbacks(&self.lowered.program, "$", &mut report.encode);
-                for (schema, block) in &self.lowered.blocks {
-                    let path = format!("$block[{schema}]");
-                    record_decode_fallbacks(block, &path, &mut report.decode);
-                    record_encode_fallbacks(block, &path, &mut report.encode);
-                }
+                let mut report = report;
                 if self.native_decode.is_none() && report.decode.is_empty() {
                     report.decode.push(JitFallbackRecord {
                         path: "$".to_string(),
@@ -279,7 +273,7 @@ pub mod api {
             }
             #[cfg(not(all(feature = "jit", target_os = "macos", target_arch = "aarch64")))]
             {
-                JitFallbackReport::unavailable("native JIT is not enabled for this build target")
+                report
             }
         }
 
@@ -479,6 +473,31 @@ pub mod api {
             MemOp::SkipWire(_) | MemOp::Default(_) => false,
             MemOp::Opaque(_) | MemOp::Dynamic { .. } | MemOp::CallBlock { .. } => true,
         })
+    }
+
+    /// Record the native-JIT fallback subtrees for an already-lowered typed program.
+    ///
+    /// This is shared by generic [`Codec`] values and shape-erased/generated RPC
+    /// bridges so unsupported op diagnostics stay in one place.
+    // r[impl exec.strict-recording]
+    pub fn jit_fallback_report_for_lowered(lowered: &Lowered) -> JitFallbackReport {
+        #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+        {
+            let mut report = JitFallbackReport::default();
+            record_decode_fallbacks(&lowered.program, "$", &mut report.decode);
+            record_encode_fallbacks(&lowered.program, "$", &mut report.encode);
+            for (schema, block) in &lowered.blocks {
+                let path = format!("$block[{schema}]");
+                record_decode_fallbacks(block, &path, &mut report.decode);
+                record_encode_fallbacks(block, &path, &mut report.encode);
+            }
+            report
+        }
+        #[cfg(not(all(feature = "jit", target_os = "macos", target_arch = "aarch64")))]
+        {
+            let _ = lowered;
+            JitFallbackReport::unavailable("native JIT is not enabled for this build target")
+        }
     }
 
     #[cfg(all(test, feature = "jit", target_os = "macos", target_arch = "aarch64"))]
