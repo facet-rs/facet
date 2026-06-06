@@ -625,6 +625,67 @@ fn build_cases(b: &mut Batch) -> Vec<PlannedCase> {
         );
     }
 
+    // 17c. enum_struct_variant_payload_drift — an enum variant matches by name,
+    // then its struct payload applies ordinary field compatibility. The writer
+    // carries a transient field the reader skips, while the reader has an
+    // optional payload field that defaults to null.
+    {
+        let writer = b.add(SchemaKind::Enum {
+            name: "CmdCompat".to_string(),
+            variants: vec![
+                Variant {
+                    name: "Move".to_string(),
+                    index: 3,
+                    payload: VariantPayload::Struct(vec![
+                        field("x", prim(Primitive::U32), true),
+                        field("transient", prim(Primitive::U64), true),
+                        field("y", prim(Primitive::U32), true),
+                    ]),
+                },
+                Variant {
+                    name: "Stop".to_string(),
+                    index: 4,
+                    payload: VariantPayload::Unit,
+                },
+            ],
+        });
+        let option_u32 = b.add(SchemaKind::Option {
+            element: prim(Primitive::U32),
+        });
+        let reader = b.add(SchemaKind::Enum {
+            name: "CmdCompat".to_string(),
+            variants: vec![
+                Variant {
+                    name: "Move".to_string(),
+                    index: 0,
+                    payload: VariantPayload::Struct(vec![
+                        field("y", prim(Primitive::U32), true),
+                        field("x", prim(Primitive::U32), true),
+                        field("extra", option_u32, false),
+                    ]),
+                },
+                Variant {
+                    name: "Stop".to_string(),
+                    index: 1,
+                    payload: VariantPayload::Unit,
+                },
+            ],
+        });
+        push(
+            "enum_struct_variant_payload_drift",
+            writer,
+            reader,
+            enum_val(
+                "Move",
+                obj(&[
+                    ("x", Value::from(3u32)),
+                    ("transient", Value::from(999u64)),
+                    ("y", Value::from(4u32)),
+                ]),
+            ),
+        );
+    }
+
     // 18. char_value — primitive char = 'λ'.
     push(
         "char_value",

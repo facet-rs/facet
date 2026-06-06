@@ -160,11 +160,14 @@ Already in place on the Phon side:
   do not clobber outer scratch state.
 - Swift native JIT support for focused compat decode ops now covers enum
   remapping, writer-only enum errors, writer-only field skips, and reader-only
-  field defaults. `swift test --filter PhonJITTests` from the package root
-  covers the evolved-writer enum case, native-clean scalar field skip/default
-  cases, and a nested list element drift fixture with writer-only dynamic
-  metadata plus map value drift; the remaining proof work is broadening native
-  execution across the full versioned compat corpus.
+  field defaults. The shared compatibility corpus now has
+  `enum_struct_variant_payload_drift`, where an enum variant matches by name and
+  its struct payload applies writer-only skip plus reader-only default rules.
+  `swift test --filter nativeCompatEnumStructPayloadDriftMatchesReaderOracle`
+  proves Swift native decode handles that typed shape, remains decode
+  native-clean, and re-encodes to the same reader-shaped bytes as the Value-plan
+  oracle. The remaining proof work is continuing to broaden native execution
+  across the full versioned compat corpus.
 - Swift engine-level ecosystem fixture coverage now includes a Dodeca-shaped
   `Set<String>` root, Dodeca dynamic template calls with `Value` args and
   tuple-vector kwargs, Dodeca HTML processor inputs with optional maps, string
@@ -1723,15 +1726,16 @@ Swift JIT priorities after the Bee baseline:
 3. Preserve native-clean coverage for string-keyed maps, managed set elements,
    Dodeca map shapes, and tuple-vector roots.
 4. Keep dynamic `facet_value::Value` roots native-clean through the dynamic
-   stencil path, and keep focused compat enum/skip/default decode ops
-   native-clean while broader versioned corpus coverage is added.
+   stencil path, and keep compat enum/skip/default decode ops native-clean while
+   broader versioned corpus coverage is added. The first enum-payload drift
+   corpus bridge is now covered by a native Swift JIT test.
 5. Add or preserve native coverage for any additional tuple/vector roots that
    appear in the remaining consumer sweep.
 6. Keep recursive block support native-clean for Styx `Value` and Stax
    `FlameNode`, with precise fallback reports only for intentionally deferred
    recursive subtrees.
-7. Broaden the landed native compat enum/skip/default decode operations from
-   focused tests to the versioned compatibility corpus.
+7. Continue broadening the landed native compat enum/skip/default decode
+   operations from focused tests toward the versioned compatibility corpus.
 8. Verify generated Vox Swift clients/dispatchers use the runtime-selected
    engine for method args, responses, envelopes, and channel elements.
 
@@ -1922,11 +1926,11 @@ updated document.
    values, channel roots, and external roots in the interpreter/oracle path; add
    new hostile vectors only when a new migration-gated fixture family exposes an
    untested failure mode.
-3. Keep the generated 28-case compatibility corpus green across Rust, Swift,
-   and TypeScript. It now includes field changes, enum variant changes, nested
-   containers, recursive/dynamic values, channel item schemas, and external
-   metadata schemas; add new versioned vectors only when a migration-gated
-   fixture exposes a new compatibility shape.
+3. Keep the generated 29-case compatibility corpus green across Rust, Swift,
+   and TypeScript. It now includes field changes, enum variant changes, enum
+   struct payload drift, nested containers, recursive/dynamic values, channel
+   item schemas, and external metadata schemas; add new versioned vectors only
+   when a migration-gated fixture exposes a new compatibility shape.
 4. Keep same-schema fixtures on the compatibility-plan path.
 
 Phases 4 through 6 are release gates after interpreter correctness, but they

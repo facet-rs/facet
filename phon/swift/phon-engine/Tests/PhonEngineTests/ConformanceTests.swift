@@ -76,7 +76,7 @@ func compatConformanceCorpus() throws {
     let corpus = try loadCorpus()
     let reg = Registry(try corpus.schemas.map { try schemaFromBytes(hexToBytes($0)) })
 
-    #expect(corpus.cases.count == 28, "corpus case count changed")
+    #expect(corpus.cases.count == 29, "corpus case count changed")
 
     for c in corpus.cases {
         let writerRoot = schemaId(c.writerRoot)

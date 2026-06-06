@@ -1386,6 +1386,177 @@ private func phaseDescriptor() -> (Descriptor, Registry) {
     }
 }
 
+// r[verify compat.enum]
+// r[verify compat.skip-writer-only]
+// r[verify compat.reader-only-fields]
+// r[verify compat.defaults-are-reader-side]
+// r[verify exec.jit-optional]
+// r[verify ir.stencils]
+private struct MovePayloadCompat: Equatable {
+    var y: UInt32
+    var x: UInt32
+    var extra: UInt32?
+}
+
+// r[verify compat.enum]
+// r[verify compat.skip-writer-only]
+// r[verify compat.reader-only-fields]
+// r[verify compat.defaults-are-reader-side]
+// r[verify exec.jit-optional]
+// r[verify ir.stencils]
+private enum CommandCompat: Equatable {
+    case move(MovePayloadCompat)
+    case stop
+}
+
+// r[verify compat.enum]
+// r[verify compat.skip-writer-only]
+// r[verify compat.reader-only-fields]
+// r[verify compat.defaults-are-reader-side]
+// r[verify exec.jit-optional]
+// r[verify ir.stencils]
+private func commandCompatPayloadDriftDescriptor() -> (
+    writerRoot: SchemaId,
+    readerRoot: SchemaId,
+    descriptor: Descriptor,
+    registry: Registry
+) {
+    let writerId = SchemaId(10)
+    let optionId = SchemaId(11)
+    let readerId = SchemaId(12)
+    let batch = resolveIds([
+        Schema(id: writerId, kind: .enumeration(name: "CmdCompat", variants: [
+            Variant(name: "Move", index: 3, payload: .structure([
+                Field(name: "x", schema: .concrete(primitiveId(.u32)), required: true),
+                Field(name: "transient", schema: .concrete(primitiveId(.u64)), required: true),
+                Field(name: "y", schema: .concrete(primitiveId(.u32)), required: true),
+            ])),
+            Variant(name: "Stop", index: 4, payload: .unit),
+        ])),
+        Schema(id: optionId, kind: .option(element: .concrete(primitiveId(.u32)))),
+        Schema(id: readerId, kind: .enumeration(name: "CmdCompat", variants: [
+            Variant(name: "Move", index: 0, payload: .structure([
+                Field(name: "y", schema: .concrete(primitiveId(.u32)), required: true),
+                Field(name: "x", schema: .concrete(primitiveId(.u32)), required: true),
+                Field(name: "extra", schema: .concrete(optionId), required: false),
+            ])),
+            Variant(name: "Stop", index: 1, payload: .unit),
+        ])),
+    ])
+    let writerRoot = batch[0].id
+    let optionRoot = batch[1].id
+    let readerRoot = batch[2].id
+    let optionDesc = Descriptor(
+        schema: .concrete(optionRoot),
+        layout: Layout(size: MemoryLayout<UInt32?>.size, align: MemoryLayout<UInt32?>.alignment),
+        access: .option(OptionAccess(witness: .of(UInt32.self), some: u32Desc()))
+    )
+    let payloadLayout = MemoryLayout<MovePayloadCompat>.phonLayout
+    let descriptor = Descriptor(
+        schema: .concrete(readerRoot),
+        layout: Layout(size: MemoryLayout<CommandCompat>.size, align: MemoryLayout<CommandCompat>.alignment),
+        access: .enumeration(EnumAccess(
+            tag: { value in
+                switch value.assumingMemoryBound(to: CommandCompat.self).pointee {
+                case .move: return 0
+                case .stop: return 1
+                }
+            },
+            projectPayload: { value, localIndex, scratch in
+                guard localIndex == 0 else { return }
+                guard case .move(let payload) = value.assumingMemoryBound(to: CommandCompat.self).pointee else {
+                    return
+                }
+                scratch.assumingMemoryBound(to: MovePayloadCompat.self).initialize(to: payload)
+            },
+            destroyPayload: { scratch, localIndex in
+                guard localIndex == 0 else { return }
+                scratch.assumingMemoryBound(to: MovePayloadCompat.self).deinitialize(count: 1)
+            },
+            inject: { slot, localIndex, scratch in
+                let value: CommandCompat
+                switch localIndex {
+                case 0:
+                    value = .move(scratch.assumingMemoryBound(to: MovePayloadCompat.self).move())
+                case 1:
+                    value = .stop
+                default:
+                    fatalError("bad command variant")
+                }
+                slot.assumingMemoryBound(to: CommandCompat.self).initialize(to: value)
+            },
+            variants: [
+                VariantAccess(
+                    wireIndex: 0,
+                    payloadFields: [
+                        FieldAccess(offset: MemoryLayout<MovePayloadCompat>.offset(of: \MovePayloadCompat.y)!, descriptor: u32Desc()),
+                        FieldAccess(offset: MemoryLayout<MovePayloadCompat>.offset(of: \MovePayloadCompat.x)!, descriptor: u32Desc()),
+                        FieldAccess(
+                            offset: MemoryLayout<MovePayloadCompat>.offset(of: \MovePayloadCompat.extra)!,
+                            descriptor: optionDesc,
+                            defaultInit: { $0.assumingMemoryBound(to: UInt32?.self).initialize(to: nil) }
+                        ),
+                    ],
+                    payloadLayout: payloadLayout
+                ),
+                VariantAccess(wireIndex: 1, payloadFields: [], payloadLayout: Layout(size: 0, align: 1)),
+            ]
+        ))
+    )
+    return (writerRoot, readerRoot, descriptor, Registry(batch))
+}
+
+// r[verify compat.enum]
+// r[verify compat.skip-writer-only]
+// r[verify compat.reader-only-fields]
+// r[verify compat.defaults-are-reader-side]
+// r[verify exec.jit-optional]
+// r[verify ir.stencils]
+@Test func nativeCompatEnumStructPayloadDriftMatchesReaderOracle() throws {
+    let fixture = commandCompatPayloadDriftDescriptor()
+    let writerBytes = try encode(.object([
+        .init(key: "Move", value: .object([
+            .init(key: "x", value: .number(.canonical(unsigned: 3))),
+            .init(key: "transient", value: .number(.canonical(unsigned: 999))),
+            .init(key: "y", value: .number(.canonical(unsigned: 4))),
+        ])),
+    ]), fixture.writerRoot, fixture.registry)
+
+    let lowered = try lowerDecode(fixture.writerRoot, fixture.descriptor, fixture.registry)
+    let report = PhonJIT.nativeFallbackReport(lowered)
+    #expect(report.decode.isEmpty, "native decode should support enum payload compat: \(report.decode)")
+    #expect(report.encode.filter { $0.reason.contains("decode-only skip-wire") }.count == 1)
+    #expect(report.encode.filter { $0.reason.contains("decode-only default") }.count == 1)
+    #expect(try NativeEncode.compile(lowered) == nil)
+
+    let decoder = try NativeDecode.compile(lowered)
+    #expect(decoder != nil)
+    guard let decoder else { return }
+    let raw = UnsafeMutableRawPointer.allocate(
+        byteCount: MemoryLayout<CommandCompat>.size,
+        alignment: MemoryLayout<CommandCompat>.alignment
+    )
+    defer { raw.deallocate() }
+
+    try decoder.run(writerBytes, raw)
+    let decoded = raw.assumingMemoryBound(to: CommandCompat.self).move()
+    #expect(decoded == .move(MovePayloadCompat(y: 4, x: 3, extra: nil)))
+
+    let oracle = try planDecode(writerBytes, fixture.writerRoot, fixture.readerRoot, fixture.registry)
+    let oracleBytes = try encode(oracle, fixture.readerRoot, fixture.registry)
+    let readerLowered = try lowerTyped(fixture.descriptor, fixture.registry)
+    #expect(PhonJIT.nativeFallbackReport(readerLowered).isEmpty)
+    let typedBytes = withUnsafeBytes(of: decoded) { encodeWith(readerLowered, $0.baseAddress!) }
+    #expect(typedBytes == oracleBytes)
+
+    let encoder = try NativeEncode.compile(readerLowered)
+    #expect(encoder != nil)
+    if let encoder {
+        let nativeBytes = withUnsafeBytes(of: decoded) { encoder.run($0.baseAddress!) }
+        #expect(nativeBytes == oracleBytes)
+    }
+}
+
 // r[verify ir.stencils]
 private enum UserError: Equatable {
     case engineNotLoaded
