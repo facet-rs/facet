@@ -197,8 +197,10 @@ Already in place on the Phon side:
   maps, injections, and mount localization, Dodeca data-loader dynamic results,
   and Dodeca markdown parse/render results with dynamic frontmatter extras and
   source-map entries, Dodeca image processor byte/scalar/result roots, Dodeca
-  search indexer page/file/result roots, a Dibs SQL row/list response with
-  enum payloads and bytes, generated Dibs Squel
+  search indexer page/file/result roots, Dodeca CSS/SASS/SVGO
+  asset-processing roots, and Dodeca small-cell lifecycle/minify/JS
+  rewrite/HTML diff/font/WebP/JXL/dialog/term/Vite/linkcheck/TUI DTO roots, a
+  Dibs SQL row/list response with enum payloads and bytes, generated Dibs Squel
   schema/list/get/create/update/delete/result DTO roots, Dibs migration
   status/migrate/log DTO roots, a Stax-shaped
   recursive flamegraph update with `UInt64`, `UInt32?`, managed `[String]`, and
@@ -265,7 +267,9 @@ Already in place on the Phon side:
   maps/sets/tuple vectors, Dodeca dynamic template calls, Dodeca data-loader
   dynamic results, Dodeca markdown parse/render results, Dodeca image
   processor byte/scalar/result roots, Dodeca search indexer page/file/result
-  roots, Dibs SQL value rows,
+  roots, Dodeca CSS/SASS/SVGO asset-processing roots, Dodeca small-cell
+  lifecycle/minify/JS rewrite/HTML diff/font/WebP/JXL/dialog/term/Vite/
+  linkcheck/TUI DTO roots, Dibs SQL value rows,
   generated Dibs Squel schema/list/get/create/update/delete/result DTO roots,
   Dibs migration status/migrate/log DTO roots,
   Styx recursive values plus LSP extension/host callback DTOs, Stax recursive
@@ -305,13 +309,13 @@ Already in place on the Phon side:
   (`cargo nextest run -p phon --features jit -E 'binary(bee_surface)'`, 2/2),
   Rust ecosystem surface with JIT
   (`cargo nextest run -p phon --all-features -E 'binary(ecosystem_surface)'`,
-  23/23), Swift Bee feed JIT smoke
+  24/24), Swift Bee feed JIT smoke
   (`swift test --filter swiftBeeFeedMethodRootsAreNativeClean`, 1/1), Swift
   ecosystem surface
-  (`swift test --filter FixtureRoundTripsAcrossEngines`, 20/20),
+  (`swift test --filter FixtureRoundTripsAcrossEngines`, 21/21),
   and TypeScript ecosystem surface
   (`pnpm --filter @bearcove/phon-engine exec vitest run src/ecosystem_surface.test.ts`,
-  22/22). `pnpm check` from `~/phon` also passes, and Tracey
+  23/23). `pnpm check` from `~/phon` also passes, and Tracey
   validation reports zero errors across Rust, Swift, and TypeScript.
 - The cross-language compat conformance corpus now includes 34 generated
   vectors, including list/set/map/tuple element struct drift,
@@ -1021,15 +1025,17 @@ closure:
   byte-channel/LSP channel roots, while Phon TypeScript engine fixtures also
   cover the Dodeca markdown parse/render result wire DTO and image processor
   byte/scalar/result root plus the search indexer page/file/result root and
-  CSS/SASS/SVGO asset-processing root, the Dibs
+  CSS/SASS/SVGO asset-processing root plus the small-cell
+  lifecycle/minify/JS rewrite/HTML diff/font/WebP/JXL/dialog/term/Vite/
+  linkcheck/TUI DTO aggregate, the Dibs
   schema/list/get/create/update/delete/migration-status and migration-log
   roots, the Styx recursive value/LSP
   extension/host callback roots, and the Stax flamegraph plus Linux
   broker-control DTO roots, plus the Hotmeal live-reload/browser-fuzzer roots, Helix
   metric/verify/pulse/bundle/trace-service roots, and Tracey migration
   status/rule/validation/core-control/full-LSP/update roots. Remaining
-  TypeScript breadth is generated Vox bridge parity, not the Phon engine
-  fixture corpus.
+  TypeScript breadth is generated Vox bridge parity for uncovered consumer
+  method roots, not the Phon engine fixture corpus.
 - Generated Vox bridge coverage is proven for the testbed bridge path, the
   Dodeca ecosystem/template/HTML/code-execution/data-loader/markdown
   parse/image processor/search indexer/CSS-SASS-SVGO asset-processing/
@@ -1471,10 +1477,10 @@ piece-eval reference/snapshot DTOs, clips, provenance, Chrome trace events,
 scheduler evidence, and the bundle mask/response. The focused Rust Helix
 ecosystem run passes 2/2. TypeScript Phon-side fixtures now carry the same broad
 aggregate through the table-driven ecosystem equivalence test with the JIT
-fallback gate intact; the focused TypeScript ecosystem file passes 22/22 and
+fallback gate intact; the focused TypeScript ecosystem file passes 23/23 and
 `pnpm check` is clean. Swift Phon-side fixtures now carry the same broad
 aggregate through the cross-engine equivalence test with the native JIT fallback
-gate intact; the focused Swift ecosystem fixture run passes 20/20. Generated
+gate intact; the focused Swift ecosystem fixture run passes 21/21. Generated
 Vox bridge coverage is still representative, not a complete mirror of every
 trace-viewer endpoint.
 
@@ -2011,9 +2017,9 @@ updated document.
   asset-processing, small-cell DTO, byte-channel, LSP string-channel, and
   browser devtools/editor generated roots into any additional Dodeca roots that
   become part of the migration gate. The small-cell DTO family is now covered
-  by Rust fixture and benchmark gates; TypeScript, Swift, and generated Vox
-  bridge parity for that family remain the next Dodeca-specific broadening
-  step.
+  by Rust fixture and benchmark gates plus TypeScript and Swift Phon-side
+  engine/JIT fixture gates; generated Vox bridge parity for that family remains
+  the next Dodeca-specific broadening step.
 3. Keep Tracey as the bounded generated-service proof target. The current
    status/rule/validation/core-control/full-LSP/update/dashboard/query/config
    mutation roots are covered; only add more Tracey roots when the live

@@ -374,6 +374,295 @@ private struct DodecaAssetProcessingFixture: Equatable {
     var svgoResult: DodecaSvgoResult
 }
 
+private struct DodecaReadyMsg: Equatable {
+    var peerId: UInt16
+    var cellName: String
+    var pid: UInt32?
+    var version: String?
+    var features: [String]
+}
+
+private struct DodecaReadyAck: Equatable {
+    var ok: Bool
+    var hostTimeUnixMs: UInt64?
+}
+
+private struct DodecaContentPayload: Equatable {
+    var content: String
+}
+
+private enum DodecaMinifyResult: Equatable {
+    case success(DodecaContentPayload)
+    case error(DodecaMessagePayload)
+}
+
+private struct DodecaJsRewriteInput: Equatable {
+    var js: String
+    var pathMap: [String: String]
+}
+
+private enum DodecaStringResult: Equatable {
+    case ok(String)
+    case err(String)
+}
+
+private struct DodecaHtmlDiffInput: Equatable {
+    var oldHtml: String
+    var newHtml: String
+}
+
+private struct DodecaHtmlDiffOutcome: Equatable {
+    var patchesBlob: [UInt8]
+}
+
+private enum DodecaHtmlDiffError: Equatable {
+    case generic(String)
+}
+
+private enum DodecaHtmlDiffResult: Equatable {
+    case ok(DodecaHtmlDiffOutcome)
+    case err(DodecaHtmlDiffError)
+}
+
+private struct DodecaSubsetFontInput: Equatable {
+    var data: [UInt8]
+    var chars: [Unicode.Scalar]
+}
+
+private struct DodecaDataPayload: Equatable {
+    var data: [UInt8]
+}
+
+private enum DodecaFontResult: Equatable {
+    case decompressSuccess(DodecaDataPayload)
+    case subsetSuccess(DodecaDataPayload)
+    case compressSuccess(DodecaDataPayload)
+    case error(DodecaMessagePayload)
+}
+
+private struct DodecaWebpEncodeInput: Equatable {
+    var pixels: [UInt8]
+    var width: UInt32
+    var height: UInt32
+    var quality: UInt8
+}
+
+private enum DodecaWebpResult: Equatable {
+    case decodeSuccess(DodecaDecodedImage)
+    case encodeSuccess(DodecaDataPayload)
+    case error(DodecaMessagePayload)
+}
+
+private struct DodecaJxlEncodeInput: Equatable {
+    var pixels: [UInt8]
+    var width: UInt32
+    var height: UInt32
+    var quality: UInt8
+}
+
+private enum DodecaJxlResult: Equatable {
+    case decodeSuccess(DodecaDecodedImage)
+    case encodeSuccess(DodecaDataPayload)
+    case error(DodecaMessagePayload)
+}
+
+private struct DodecaIndexPayload: Equatable {
+    var index: UInt64
+}
+
+private enum DodecaSelectResult: Equatable {
+    case selected(DodecaIndexPayload)
+    case cancelled
+}
+
+private enum DodecaConfirmResult: Equatable {
+    case yes
+    case no
+    case cancelled
+}
+
+private struct DodecaRecordConfig: Equatable {
+    var shell: String?
+}
+
+private struct DodecaHtmlPayload: Equatable {
+    var html: String
+}
+
+private enum DodecaTermResult: Equatable {
+    case success(DodecaHtmlPayload)
+    case error(DodecaMessagePayload)
+}
+
+private struct DodecaPortPayload: Equatable {
+    var port: UInt16
+}
+
+private enum DodecaStartDevServerResult: Equatable {
+    case success(DodecaPortPayload)
+    case error(DodecaMessagePayload)
+}
+
+private enum DodecaRunBuildResult: Equatable {
+    case success
+    case error(DodecaMessagePayload)
+}
+
+private struct DodecaStringString: Equatable {
+    var key: String
+    var value: String
+}
+
+private struct DodecaLinkDiagnostics: Equatable {
+    var requestHeaders: [DodecaStringString]
+    var responseHeaders: [DodecaStringString]
+    var responseBody: String
+}
+
+private struct DodecaHttpErrorPayload: Equatable {
+    var code: UInt16
+    var diagnostics: DodecaLinkDiagnostics
+}
+
+private enum DodecaLinkStatus: Equatable {
+    case ok
+    case httpError(DodecaHttpErrorPayload)
+    case failed(DodecaMessagePayload)
+    case skipped
+}
+
+private struct DodecaLinkCheckInput: Equatable {
+    var urls: [String]
+    var delayMs: UInt64
+    var timeoutSecs: UInt64
+}
+
+private struct DodecaLinkCheckOutput: Equatable {
+    var results: [String: DodecaLinkStatus]
+}
+
+private struct DodecaLinkCheckSuccessPayload: Equatable {
+    var output: DodecaLinkCheckOutput
+}
+
+private enum DodecaLinkCheckResult: Equatable {
+    case success(DodecaLinkCheckSuccessPayload)
+    case error(DodecaMessagePayload)
+}
+
+private enum DodecaTaskStatus: Equatable {
+    case pending
+    case running
+    case done
+    case error
+}
+
+private struct DodecaTaskProgress: Equatable {
+    var name: String
+    var total: UInt32
+    var completed: UInt32
+    var status: DodecaTaskStatus
+    var message: String?
+}
+
+private struct DodecaBuildProgress: Equatable {
+    var parse: DodecaTaskProgress
+    var render: DodecaTaskProgress
+    var sass: DodecaTaskProgress
+    var links: DodecaTaskProgress
+    var search: DodecaTaskProgress
+}
+
+private enum DodecaLogLevel: Equatable {
+    case trace
+    case debug
+    case info
+    case warn
+    case error
+}
+
+private struct DodecaHttpPayload: Equatable {
+    var status: UInt16
+}
+
+private enum DodecaEventKind: Equatable {
+    case http(DodecaHttpPayload)
+    case fileChange
+    case reload
+    case patch
+    case search
+    case server
+    case build
+    case generic
+}
+
+private struct DodecaLogEvent: Equatable {
+    var level: DodecaLogLevel
+    var kind: DodecaEventKind
+    var message: String
+    var fields: [DodecaStringString]
+}
+
+private enum DodecaBindMode: Equatable {
+    case local
+    case lan
+}
+
+private struct DodecaServerStatus: Equatable {
+    var urls: [String]
+    var isRunning: Bool
+    var bindMode: DodecaBindMode
+    var picanteCacheSize: UInt64
+    var casCacheSize: UInt64
+    var codeExecCacheSize: UInt64
+}
+
+private struct DodecaFilterPayload: Equatable {
+    var filter: String
+}
+
+private enum DodecaServerCommand: Equatable {
+    case goPublic
+    case goLocal
+    case togglePicanteDebug
+    case cycleLogLevel
+    case setLogFilter(DodecaFilterPayload)
+}
+
+private enum DodecaCommandResult: Equatable {
+    case ok
+    case error(DodecaMessagePayload)
+}
+
+private struct DodecaSmallCellServicesFixture: Equatable {
+    var readyMsg: DodecaReadyMsg
+    var readyAck: DodecaReadyAck
+    var minifyResult: DodecaMinifyResult
+    var jsInput: DodecaJsRewriteInput
+    var jsResult: DodecaStringResult
+    var htmlDiffInput: DodecaHtmlDiffInput
+    var htmlDiffResult: DodecaHtmlDiffResult
+    var subsetFontInput: DodecaSubsetFontInput
+    var fontResults: [DodecaFontResult]
+    var webpEncodeInput: DodecaWebpEncodeInput
+    var webpResults: [DodecaWebpResult]
+    var jxlEncodeInput: DodecaJxlEncodeInput
+    var jxlResults: [DodecaJxlResult]
+    var selectResult: DodecaSelectResult
+    var confirmResult: DodecaConfirmResult
+    var recordConfig: DodecaRecordConfig
+    var termResult: DodecaTermResult
+    var startDevServerResult: DodecaStartDevServerResult
+    var runBuildResult: DodecaRunBuildResult
+    var linkCheckInput: DodecaLinkCheckInput
+    var linkCheckResult: DodecaLinkCheckResult
+    var buildProgress: DodecaBuildProgress
+    var logEvent: DodecaLogEvent
+    var serverStatus: DodecaServerStatus
+    var serverCommand: DodecaServerCommand
+    var commandResult: DodecaCommandResult
+}
+
 private enum DodecaSchema {
     static let routes = SchemaId(101)
     static let routeSet = SchemaId(102)
@@ -431,6 +720,52 @@ private enum DodecaSchema {
     static let sassResult = SchemaId(154)
     static let svgoResult = SchemaId(155)
     static let assetProcessingFixture = SchemaId(156)
+    static let optionU32 = SchemaId(157)
+    static let optionU64 = SchemaId(158)
+    static let readyMsg = SchemaId(159)
+    static let readyAck = SchemaId(160)
+    static let minifyResult = SchemaId(161)
+    static let jsRewriteInput = SchemaId(162)
+    static let stringResult = SchemaId(163)
+    static let htmlDiffInput = SchemaId(164)
+    static let htmlDiffOutcome = SchemaId(165)
+    static let htmlDiffError = SchemaId(166)
+    static let htmlDiffResult = SchemaId(167)
+    static let charList = SchemaId(168)
+    static let subsetFontInput = SchemaId(169)
+    static let fontResult = SchemaId(170)
+    static let fontResultList = SchemaId(171)
+    static let webpEncodeInput = SchemaId(172)
+    static let webpResult = SchemaId(173)
+    static let webpResultList = SchemaId(174)
+    static let jxlEncodeInput = SchemaId(175)
+    static let jxlResult = SchemaId(176)
+    static let jxlResultList = SchemaId(177)
+    static let selectResult = SchemaId(178)
+    static let confirmResult = SchemaId(179)
+    static let recordConfig = SchemaId(180)
+    static let termResult = SchemaId(181)
+    static let startDevServerResult = SchemaId(182)
+    static let runBuildResult = SchemaId(183)
+    static let stringStringTuple = SchemaId(184)
+    static let stringStringTupleList = SchemaId(185)
+    static let linkDiagnostics = SchemaId(186)
+    static let linkStatus = SchemaId(187)
+    static let mapStringLinkStatus = SchemaId(188)
+    static let linkCheckInput = SchemaId(189)
+    static let linkCheckOutput = SchemaId(190)
+    static let linkCheckResult = SchemaId(191)
+    static let taskStatus = SchemaId(192)
+    static let taskProgress = SchemaId(193)
+    static let buildProgress = SchemaId(194)
+    static let logLevel = SchemaId(195)
+    static let eventKind = SchemaId(196)
+    static let logEvent = SchemaId(197)
+    static let bindMode = SchemaId(198)
+    static let serverStatus = SchemaId(199)
+    static let serverCommand = SchemaId(200)
+    static let commandResult = SchemaId(201)
+    static let smallCellServicesFixture = SchemaId(202)
 }
 
 private enum DibsSqlValue: Equatable {
@@ -1381,6 +1716,285 @@ private func dodecaSchemas() -> [Schema] {
             Field(name: "svg_source", schema: .concrete(primitiveId(.string)), required: true),
             Field(name: "svgo_result", schema: .concrete(DodecaSchema.svgoResult), required: true),
         ])),
+        Schema(id: DodecaSchema.optionU32, kind: .option(element: .concrete(primitiveId(.u32)))),
+        Schema(id: DodecaSchema.optionU64, kind: .option(element: .concrete(primitiveId(.u64)))),
+        Schema(id: DodecaSchema.readyMsg, kind: .structure(name: "DodecaReadyMsg", fields: [
+            Field(name: "peer_id", schema: .concrete(primitiveId(.u16)), required: true),
+            Field(name: "cell_name", schema: .concrete(primitiveId(.string)), required: true),
+            Field(name: "pid", schema: .concrete(DodecaSchema.optionU32), required: true),
+            Field(name: "version", schema: .concrete(DodecaSchema.optionString), required: true),
+            Field(name: "features", schema: .concrete(DodecaSchema.stringList), required: true),
+        ])),
+        Schema(id: DodecaSchema.readyAck, kind: .structure(name: "DodecaReadyAck", fields: [
+            Field(name: "ok", schema: .concrete(primitiveId(.bool)), required: true),
+            Field(name: "host_time_unix_ms", schema: .concrete(DodecaSchema.optionU64), required: true),
+        ])),
+        Schema(id: DodecaSchema.minifyResult, kind: .enumeration(name: "DodecaMinifyResult", variants: [
+            Variant(name: "Success", index: 0, payload: .structure([
+                Field(name: "content", schema: .concrete(primitiveId(.string)), required: true),
+            ])),
+            Variant(name: "Error", index: 1, payload: .structure([
+                Field(name: "message", schema: .concrete(primitiveId(.string)), required: true),
+            ])),
+        ])),
+        Schema(id: DodecaSchema.jsRewriteInput, kind: .structure(name: "DodecaJsRewriteInput", fields: [
+            Field(name: "js", schema: .concrete(primitiveId(.string)), required: true),
+            Field(name: "path_map", schema: .concrete(DodecaSchema.mapStringString), required: true),
+        ])),
+        Schema(id: DodecaSchema.stringResult, kind: .enumeration(name: "DodecaStringResult", variants: [
+            Variant(name: "Ok", index: 0, payload: .newtype(.concrete(primitiveId(.string)))),
+            Variant(name: "Err", index: 1, payload: .newtype(.concrete(primitiveId(.string)))),
+        ])),
+        Schema(id: DodecaSchema.htmlDiffInput, kind: .structure(name: "DodecaHtmlDiffInput", fields: [
+            Field(name: "old_html", schema: .concrete(primitiveId(.string)), required: true),
+            Field(name: "new_html", schema: .concrete(primitiveId(.string)), required: true),
+        ])),
+        Schema(id: DodecaSchema.htmlDiffOutcome, kind: .structure(name: "DodecaHtmlDiffOutcome", fields: [
+            Field(name: "patches_blob", schema: .concrete(primitiveId(.bytes)), required: true),
+        ])),
+        Schema(id: DodecaSchema.htmlDiffError, kind: .enumeration(name: "DodecaHtmlDiffError", variants: [
+            Variant(name: "Generic", index: 0, payload: .newtype(.concrete(primitiveId(.string)))),
+        ])),
+        Schema(id: DodecaSchema.htmlDiffResult, kind: .enumeration(name: "DodecaHtmlDiffResult", variants: [
+            Variant(name: "Ok", index: 0, payload: .newtype(.concrete(DodecaSchema.htmlDiffOutcome))),
+            Variant(name: "Err", index: 1, payload: .newtype(.concrete(DodecaSchema.htmlDiffError))),
+        ])),
+        Schema(id: DodecaSchema.charList, kind: .list(element: .concrete(primitiveId(.char)))),
+        Schema(id: DodecaSchema.subsetFontInput, kind: .structure(name: "DodecaSubsetFontInput", fields: [
+            Field(name: "data", schema: .concrete(primitiveId(.bytes)), required: true),
+            Field(name: "chars", schema: .concrete(DodecaSchema.charList), required: true),
+        ])),
+        Schema(id: DodecaSchema.fontResult, kind: .enumeration(name: "DodecaFontResult", variants: [
+            Variant(name: "DecompressSuccess", index: 0, payload: .structure([
+                Field(name: "data", schema: .concrete(primitiveId(.bytes)), required: true),
+            ])),
+            Variant(name: "SubsetSuccess", index: 1, payload: .structure([
+                Field(name: "data", schema: .concrete(primitiveId(.bytes)), required: true),
+            ])),
+            Variant(name: "CompressSuccess", index: 2, payload: .structure([
+                Field(name: "data", schema: .concrete(primitiveId(.bytes)), required: true),
+            ])),
+            Variant(name: "Error", index: 3, payload: .structure([
+                Field(name: "message", schema: .concrete(primitiveId(.string)), required: true),
+            ])),
+        ])),
+        Schema(id: DodecaSchema.fontResultList, kind: .list(element: .concrete(DodecaSchema.fontResult))),
+        Schema(id: DodecaSchema.webpEncodeInput, kind: .structure(name: "DodecaWebpEncodeInput", fields: [
+            Field(name: "pixels", schema: .concrete(primitiveId(.bytes)), required: true),
+            Field(name: "width", schema: .concrete(primitiveId(.u32)), required: true),
+            Field(name: "height", schema: .concrete(primitiveId(.u32)), required: true),
+            Field(name: "quality", schema: .concrete(primitiveId(.u8)), required: true),
+        ])),
+        Schema(id: DodecaSchema.webpResult, kind: .enumeration(name: "DodecaWebpResult", variants: [
+            Variant(name: "DecodeSuccess", index: 0, payload: .structure([
+                Field(name: "pixels", schema: .concrete(primitiveId(.bytes)), required: true),
+                Field(name: "width", schema: .concrete(primitiveId(.u32)), required: true),
+                Field(name: "height", schema: .concrete(primitiveId(.u32)), required: true),
+                Field(name: "channels", schema: .concrete(primitiveId(.u8)), required: true),
+            ])),
+            Variant(name: "EncodeSuccess", index: 1, payload: .structure([
+                Field(name: "data", schema: .concrete(primitiveId(.bytes)), required: true),
+            ])),
+            Variant(name: "Error", index: 2, payload: .structure([
+                Field(name: "message", schema: .concrete(primitiveId(.string)), required: true),
+            ])),
+        ])),
+        Schema(id: DodecaSchema.webpResultList, kind: .list(element: .concrete(DodecaSchema.webpResult))),
+        Schema(id: DodecaSchema.jxlEncodeInput, kind: .structure(name: "DodecaJxlEncodeInput", fields: [
+            Field(name: "pixels", schema: .concrete(primitiveId(.bytes)), required: true),
+            Field(name: "width", schema: .concrete(primitiveId(.u32)), required: true),
+            Field(name: "height", schema: .concrete(primitiveId(.u32)), required: true),
+            Field(name: "quality", schema: .concrete(primitiveId(.u8)), required: true),
+        ])),
+        Schema(id: DodecaSchema.jxlResult, kind: .enumeration(name: "DodecaJxlResult", variants: [
+            Variant(name: "DecodeSuccess", index: 0, payload: .structure([
+                Field(name: "pixels", schema: .concrete(primitiveId(.bytes)), required: true),
+                Field(name: "width", schema: .concrete(primitiveId(.u32)), required: true),
+                Field(name: "height", schema: .concrete(primitiveId(.u32)), required: true),
+                Field(name: "channels", schema: .concrete(primitiveId(.u8)), required: true),
+            ])),
+            Variant(name: "EncodeSuccess", index: 1, payload: .structure([
+                Field(name: "data", schema: .concrete(primitiveId(.bytes)), required: true),
+            ])),
+            Variant(name: "Error", index: 2, payload: .structure([
+                Field(name: "message", schema: .concrete(primitiveId(.string)), required: true),
+            ])),
+        ])),
+        Schema(id: DodecaSchema.jxlResultList, kind: .list(element: .concrete(DodecaSchema.jxlResult))),
+        Schema(id: DodecaSchema.selectResult, kind: .enumeration(name: "DodecaSelectResult", variants: [
+            Variant(name: "Selected", index: 0, payload: .structure([
+                Field(name: "index", schema: .concrete(primitiveId(.u64)), required: true),
+            ])),
+            Variant(name: "Cancelled", index: 1, payload: .unit),
+        ])),
+        Schema(id: DodecaSchema.confirmResult, kind: .enumeration(name: "DodecaConfirmResult", variants: [
+            Variant(name: "Yes", index: 0, payload: .unit),
+            Variant(name: "No", index: 1, payload: .unit),
+            Variant(name: "Cancelled", index: 2, payload: .unit),
+        ])),
+        Schema(id: DodecaSchema.recordConfig, kind: .structure(name: "DodecaRecordConfig", fields: [
+            Field(name: "shell", schema: .concrete(DodecaSchema.optionString), required: true),
+        ])),
+        Schema(id: DodecaSchema.termResult, kind: .enumeration(name: "DodecaTermResult", variants: [
+            Variant(name: "Success", index: 0, payload: .structure([
+                Field(name: "html", schema: .concrete(primitiveId(.string)), required: true),
+            ])),
+            Variant(name: "Error", index: 1, payload: .structure([
+                Field(name: "message", schema: .concrete(primitiveId(.string)), required: true),
+            ])),
+        ])),
+        Schema(id: DodecaSchema.startDevServerResult, kind: .enumeration(name: "DodecaStartDevServerResult", variants: [
+            Variant(name: "Success", index: 0, payload: .structure([
+                Field(name: "port", schema: .concrete(primitiveId(.u16)), required: true),
+            ])),
+            Variant(name: "Error", index: 1, payload: .structure([
+                Field(name: "message", schema: .concrete(primitiveId(.string)), required: true),
+            ])),
+        ])),
+        Schema(id: DodecaSchema.runBuildResult, kind: .enumeration(name: "DodecaRunBuildResult", variants: [
+            Variant(name: "Success", index: 0, payload: .unit),
+            Variant(name: "Error", index: 1, payload: .structure([
+                Field(name: "message", schema: .concrete(primitiveId(.string)), required: true),
+            ])),
+        ])),
+        Schema(id: DodecaSchema.stringStringTuple, kind: .tuple(elements: [
+            .concrete(primitiveId(.string)),
+            .concrete(primitiveId(.string)),
+        ])),
+        Schema(id: DodecaSchema.stringStringTupleList, kind: .list(element: .concrete(DodecaSchema.stringStringTuple))),
+        Schema(id: DodecaSchema.linkDiagnostics, kind: .structure(name: "DodecaLinkDiagnostics", fields: [
+            Field(name: "request_headers", schema: .concrete(DodecaSchema.stringStringTupleList), required: true),
+            Field(name: "response_headers", schema: .concrete(DodecaSchema.stringStringTupleList), required: true),
+            Field(name: "response_body", schema: .concrete(primitiveId(.string)), required: true),
+        ])),
+        Schema(id: DodecaSchema.linkStatus, kind: .enumeration(name: "DodecaLinkStatus", variants: [
+            Variant(name: "Ok", index: 0, payload: .unit),
+            Variant(name: "HttpError", index: 1, payload: .structure([
+                Field(name: "code", schema: .concrete(primitiveId(.u16)), required: true),
+                Field(name: "diagnostics", schema: .concrete(DodecaSchema.linkDiagnostics), required: true),
+            ])),
+            Variant(name: "Failed", index: 2, payload: .structure([
+                Field(name: "message", schema: .concrete(primitiveId(.string)), required: true),
+            ])),
+            Variant(name: "Skipped", index: 3, payload: .unit),
+        ])),
+        Schema(id: DodecaSchema.mapStringLinkStatus, kind: .map(key: .concrete(primitiveId(.string)), value: .concrete(DodecaSchema.linkStatus))),
+        Schema(id: DodecaSchema.linkCheckInput, kind: .structure(name: "DodecaLinkCheckInput", fields: [
+            Field(name: "urls", schema: .concrete(DodecaSchema.stringList), required: true),
+            Field(name: "delay_ms", schema: .concrete(primitiveId(.u64)), required: true),
+            Field(name: "timeout_secs", schema: .concrete(primitiveId(.u64)), required: true),
+        ])),
+        Schema(id: DodecaSchema.linkCheckOutput, kind: .structure(name: "DodecaLinkCheckOutput", fields: [
+            Field(name: "results", schema: .concrete(DodecaSchema.mapStringLinkStatus), required: true),
+        ])),
+        Schema(id: DodecaSchema.linkCheckResult, kind: .enumeration(name: "DodecaLinkCheckResult", variants: [
+            Variant(name: "Success", index: 0, payload: .structure([
+                Field(name: "output", schema: .concrete(DodecaSchema.linkCheckOutput), required: true),
+            ])),
+            Variant(name: "Error", index: 1, payload: .structure([
+                Field(name: "message", schema: .concrete(primitiveId(.string)), required: true),
+            ])),
+        ])),
+        Schema(id: DodecaSchema.taskStatus, kind: .enumeration(name: "DodecaTaskStatus", variants: [
+            Variant(name: "Pending", index: 0, payload: .unit),
+            Variant(name: "Running", index: 1, payload: .unit),
+            Variant(name: "Done", index: 2, payload: .unit),
+            Variant(name: "Error", index: 3, payload: .unit),
+        ])),
+        Schema(id: DodecaSchema.taskProgress, kind: .structure(name: "DodecaTaskProgress", fields: [
+            Field(name: "name", schema: .concrete(primitiveId(.string)), required: true),
+            Field(name: "total", schema: .concrete(primitiveId(.u32)), required: true),
+            Field(name: "completed", schema: .concrete(primitiveId(.u32)), required: true),
+            Field(name: "status", schema: .concrete(DodecaSchema.taskStatus), required: true),
+            Field(name: "message", schema: .concrete(DodecaSchema.optionString), required: true),
+        ])),
+        Schema(id: DodecaSchema.buildProgress, kind: .structure(name: "DodecaBuildProgress", fields: [
+            Field(name: "parse", schema: .concrete(DodecaSchema.taskProgress), required: true),
+            Field(name: "render", schema: .concrete(DodecaSchema.taskProgress), required: true),
+            Field(name: "sass", schema: .concrete(DodecaSchema.taskProgress), required: true),
+            Field(name: "links", schema: .concrete(DodecaSchema.taskProgress), required: true),
+            Field(name: "search", schema: .concrete(DodecaSchema.taskProgress), required: true),
+        ])),
+        Schema(id: DodecaSchema.logLevel, kind: .enumeration(name: "DodecaLogLevel", variants: [
+            Variant(name: "Trace", index: 0, payload: .unit),
+            Variant(name: "Debug", index: 1, payload: .unit),
+            Variant(name: "Info", index: 2, payload: .unit),
+            Variant(name: "Warn", index: 3, payload: .unit),
+            Variant(name: "Error", index: 4, payload: .unit),
+        ])),
+        Schema(id: DodecaSchema.eventKind, kind: .enumeration(name: "DodecaEventKind", variants: [
+            Variant(name: "Http", index: 0, payload: .structure([
+                Field(name: "status", schema: .concrete(primitiveId(.u16)), required: true),
+            ])),
+            Variant(name: "FileChange", index: 1, payload: .unit),
+            Variant(name: "Reload", index: 2, payload: .unit),
+            Variant(name: "Patch", index: 3, payload: .unit),
+            Variant(name: "Search", index: 4, payload: .unit),
+            Variant(name: "Server", index: 5, payload: .unit),
+            Variant(name: "Build", index: 6, payload: .unit),
+            Variant(name: "Generic", index: 7, payload: .unit),
+        ])),
+        Schema(id: DodecaSchema.logEvent, kind: .structure(name: "DodecaLogEvent", fields: [
+            Field(name: "level", schema: .concrete(DodecaSchema.logLevel), required: true),
+            Field(name: "kind", schema: .concrete(DodecaSchema.eventKind), required: true),
+            Field(name: "message", schema: .concrete(primitiveId(.string)), required: true),
+            Field(name: "fields", schema: .concrete(DodecaSchema.stringStringTupleList), required: true),
+        ])),
+        Schema(id: DodecaSchema.bindMode, kind: .enumeration(name: "DodecaBindMode", variants: [
+            Variant(name: "Local", index: 0, payload: .unit),
+            Variant(name: "Lan", index: 1, payload: .unit),
+        ])),
+        Schema(id: DodecaSchema.serverStatus, kind: .structure(name: "DodecaServerStatus", fields: [
+            Field(name: "urls", schema: .concrete(DodecaSchema.stringList), required: true),
+            Field(name: "is_running", schema: .concrete(primitiveId(.bool)), required: true),
+            Field(name: "bind_mode", schema: .concrete(DodecaSchema.bindMode), required: true),
+            Field(name: "picante_cache_size", schema: .concrete(primitiveId(.u64)), required: true),
+            Field(name: "cas_cache_size", schema: .concrete(primitiveId(.u64)), required: true),
+            Field(name: "code_exec_cache_size", schema: .concrete(primitiveId(.u64)), required: true),
+        ])),
+        Schema(id: DodecaSchema.serverCommand, kind: .enumeration(name: "DodecaServerCommand", variants: [
+            Variant(name: "GoPublic", index: 0, payload: .unit),
+            Variant(name: "GoLocal", index: 1, payload: .unit),
+            Variant(name: "TogglePicanteDebug", index: 2, payload: .unit),
+            Variant(name: "CycleLogLevel", index: 3, payload: .unit),
+            Variant(name: "SetLogFilter", index: 4, payload: .structure([
+                Field(name: "filter", schema: .concrete(primitiveId(.string)), required: true),
+            ])),
+        ])),
+        Schema(id: DodecaSchema.commandResult, kind: .enumeration(name: "DodecaCommandResult", variants: [
+            Variant(name: "Ok", index: 0, payload: .unit),
+            Variant(name: "Error", index: 1, payload: .structure([
+                Field(name: "message", schema: .concrete(primitiveId(.string)), required: true),
+            ])),
+        ])),
+        Schema(id: DodecaSchema.smallCellServicesFixture, kind: .structure(name: "DodecaSmallCellServicesFixture", fields: [
+            Field(name: "ready_msg", schema: .concrete(DodecaSchema.readyMsg), required: true),
+            Field(name: "ready_ack", schema: .concrete(DodecaSchema.readyAck), required: true),
+            Field(name: "minify_result", schema: .concrete(DodecaSchema.minifyResult), required: true),
+            Field(name: "js_input", schema: .concrete(DodecaSchema.jsRewriteInput), required: true),
+            Field(name: "js_result", schema: .concrete(DodecaSchema.stringResult), required: true),
+            Field(name: "html_diff_input", schema: .concrete(DodecaSchema.htmlDiffInput), required: true),
+            Field(name: "html_diff_result", schema: .concrete(DodecaSchema.htmlDiffResult), required: true),
+            Field(name: "subset_font_input", schema: .concrete(DodecaSchema.subsetFontInput), required: true),
+            Field(name: "font_results", schema: .concrete(DodecaSchema.fontResultList), required: true),
+            Field(name: "webp_encode_input", schema: .concrete(DodecaSchema.webpEncodeInput), required: true),
+            Field(name: "webp_results", schema: .concrete(DodecaSchema.webpResultList), required: true),
+            Field(name: "jxl_encode_input", schema: .concrete(DodecaSchema.jxlEncodeInput), required: true),
+            Field(name: "jxl_results", schema: .concrete(DodecaSchema.jxlResultList), required: true),
+            Field(name: "select_result", schema: .concrete(DodecaSchema.selectResult), required: true),
+            Field(name: "confirm_result", schema: .concrete(DodecaSchema.confirmResult), required: true),
+            Field(name: "record_config", schema: .concrete(DodecaSchema.recordConfig), required: true),
+            Field(name: "term_result", schema: .concrete(DodecaSchema.termResult), required: true),
+            Field(name: "start_dev_server_result", schema: .concrete(DodecaSchema.startDevServerResult), required: true),
+            Field(name: "run_build_result", schema: .concrete(DodecaSchema.runBuildResult), required: true),
+            Field(name: "link_check_input", schema: .concrete(DodecaSchema.linkCheckInput), required: true),
+            Field(name: "link_check_result", schema: .concrete(DodecaSchema.linkCheckResult), required: true),
+            Field(name: "build_progress", schema: .concrete(DodecaSchema.buildProgress), required: true),
+            Field(name: "log_event", schema: .concrete(DodecaSchema.logEvent), required: true),
+            Field(name: "server_status", schema: .concrete(DodecaSchema.serverStatus), required: true),
+            Field(name: "server_command", schema: .concrete(DodecaSchema.serverCommand), required: true),
+            Field(name: "command_result", schema: .concrete(DodecaSchema.commandResult), required: true),
+        ])),
         Schema(id: DodecaSchema.routes, kind: .structure(name: "DodecaRoutes", fields: [
             Field(name: "routes", schema: .concrete(DodecaSchema.routeSet), required: true),
         ])),
@@ -2262,6 +2876,1049 @@ private func dodecaAssetProcessingFixtureDescriptor() -> (root: Descriptor, regi
         fieldAccess(\DodecaAssetProcessingFixture.sassResult, dodecaSassResultDesc()),
         fieldAccess(\DodecaAssetProcessingFixture.svgSource, stringDesc()),
         fieldAccess(\DodecaAssetProcessingFixture.svgoResult, dodecaSvgoResultDesc()),
+    ])
+    return (root, Registry(dodecaSchemas()))
+}
+
+private func dodecaOptionU32Desc() -> Descriptor {
+    optionDesc(DodecaSchema.optionU32, UInt32.self, some: scalarDesc(.u32))
+}
+
+private func dodecaOptionU64Desc() -> Descriptor {
+    optionDesc(DodecaSchema.optionU64, UInt64.self, some: scalarDesc(.u64))
+}
+
+private func dodecaReadyMsgDesc() -> Descriptor {
+    recordDesc(DodecaSchema.readyMsg, DodecaReadyMsg.self, fields: [
+        fieldAccess(\DodecaReadyMsg.peerId, scalarDesc(.u16)),
+        fieldAccess(\DodecaReadyMsg.cellName, stringDesc()),
+        fieldAccess(\DodecaReadyMsg.pid, dodecaOptionU32Desc()),
+        fieldAccess(\DodecaReadyMsg.version, dodecaOptionStringDesc()),
+        fieldAccess(\DodecaReadyMsg.features, dodecaStringListDesc()),
+    ])
+}
+
+private func dodecaReadyAckDesc() -> Descriptor {
+    recordDesc(DodecaSchema.readyAck, DodecaReadyAck.self, fields: [
+        fieldAccess(\DodecaReadyAck.ok, scalarDesc(.bool)),
+        fieldAccess(\DodecaReadyAck.hostTimeUnixMs, dodecaOptionU64Desc()),
+    ])
+}
+
+private func dodecaMinifyResultDesc() -> Descriptor {
+    let contentOffset = MemoryLayout<DodecaContentPayload>.offset(of: \DodecaContentPayload.content)!
+    let messageOffset = MemoryLayout<DodecaMessagePayload>.offset(of: \DodecaMessagePayload.message)!
+    let tag: (UnsafeRawPointer) -> Int = { ptr in
+        switch ptr.assumingMemoryBound(to: DodecaMinifyResult.self).pointee {
+        case .success: return 0
+        case .error: return 1
+        }
+    }
+    let projectPayload: (UnsafeRawPointer, Int, UnsafeMutableRawPointer) -> Void = { value, _, scratch in
+        switch value.assumingMemoryBound(to: DodecaMinifyResult.self).pointee {
+        case .success(let payload):
+            scratch.assumingMemoryBound(to: DodecaContentPayload.self).initialize(to: payload)
+        case .error(let payload):
+            scratch.assumingMemoryBound(to: DodecaMessagePayload.self).initialize(to: payload)
+        }
+    }
+    let destroyPayload: (UnsafeMutableRawPointer, Int) -> Void = { scratch, localIndex in
+        switch localIndex {
+        case 0: scratch.assumingMemoryBound(to: DodecaContentPayload.self).deinitialize(count: 1)
+        case 1: scratch.assumingMemoryBound(to: DodecaMessagePayload.self).deinitialize(count: 1)
+        default: break
+        }
+    }
+    let inject: (UnsafeMutableRawPointer, Int, UnsafeMutableRawPointer) -> Void = { slot, localIndex, scratch in
+        let result: DodecaMinifyResult
+        switch localIndex {
+        case 0:
+            result = .success(scratch.assumingMemoryBound(to: DodecaContentPayload.self).move())
+        case 1:
+            result = .error(scratch.assumingMemoryBound(to: DodecaMessagePayload.self).move())
+        default:
+            fatalError("bad DodecaMinifyResult variant index")
+        }
+        slot.assumingMemoryBound(to: DodecaMinifyResult.self).initialize(to: result)
+    }
+    return Descriptor(
+        schema: .concrete(DodecaSchema.minifyResult),
+        layout: MemoryLayout<DodecaMinifyResult>.phonLayout,
+        access: .enumeration(EnumAccess(
+            tag: tag,
+            projectPayload: projectPayload,
+            destroyPayload: destroyPayload,
+            inject: inject,
+            variants: [
+                VariantAccess(wireIndex: 0, payloadFields: [FieldAccess(offset: contentOffset, descriptor: stringDesc())], payloadLayout: MemoryLayout<DodecaContentPayload>.phonLayout),
+                VariantAccess(wireIndex: 1, payloadFields: [FieldAccess(offset: messageOffset, descriptor: stringDesc())], payloadLayout: MemoryLayout<DodecaMessagePayload>.phonLayout),
+            ]
+        ))
+    )
+}
+
+private func dodecaJsRewriteInputDesc() -> Descriptor {
+    recordDesc(DodecaSchema.jsRewriteInput, DodecaJsRewriteInput.self, fields: [
+        fieldAccess(\DodecaJsRewriteInput.js, stringDesc()),
+        fieldAccess(\DodecaJsRewriteInput.pathMap, dodecaMapStringStringDesc()),
+    ])
+}
+
+private func dodecaStringResultDesc() -> Descriptor {
+    let tag: (UnsafeRawPointer) -> Int = { ptr in
+        switch ptr.assumingMemoryBound(to: DodecaStringResult.self).pointee {
+        case .ok: return 0
+        case .err: return 1
+        }
+    }
+    let projectPayload: (UnsafeRawPointer, Int, UnsafeMutableRawPointer) -> Void = { value, _, scratch in
+        switch value.assumingMemoryBound(to: DodecaStringResult.self).pointee {
+        case .ok(let payload), .err(let payload):
+            scratch.assumingMemoryBound(to: String.self).initialize(to: payload)
+        }
+    }
+    let destroyPayload: (UnsafeMutableRawPointer, Int) -> Void = { scratch, localIndex in
+        if localIndex == 0 || localIndex == 1 {
+            scratch.assumingMemoryBound(to: String.self).deinitialize(count: 1)
+        }
+    }
+    let inject: (UnsafeMutableRawPointer, Int, UnsafeMutableRawPointer) -> Void = { slot, localIndex, scratch in
+        let payload = scratch.assumingMemoryBound(to: String.self).move()
+        let result: DodecaStringResult
+        switch localIndex {
+        case 0: result = .ok(payload)
+        case 1: result = .err(payload)
+        default: fatalError("bad DodecaStringResult variant index")
+        }
+        slot.assumingMemoryBound(to: DodecaStringResult.self).initialize(to: result)
+    }
+    return Descriptor(
+        schema: .concrete(DodecaSchema.stringResult),
+        layout: MemoryLayout<DodecaStringResult>.phonLayout,
+        access: .enumeration(EnumAccess(
+            tag: tag,
+            projectPayload: projectPayload,
+            destroyPayload: destroyPayload,
+            inject: inject,
+            variants: [
+                VariantAccess(wireIndex: 0, payloadFields: [FieldAccess(offset: 0, descriptor: stringDesc())], payloadLayout: MemoryLayout<String>.phonLayout),
+                VariantAccess(wireIndex: 1, payloadFields: [FieldAccess(offset: 0, descriptor: stringDesc())], payloadLayout: MemoryLayout<String>.phonLayout),
+            ]
+        ))
+    )
+}
+
+private func dodecaHtmlDiffInputDesc() -> Descriptor {
+    recordDesc(DodecaSchema.htmlDiffInput, DodecaHtmlDiffInput.self, fields: [
+        fieldAccess(\DodecaHtmlDiffInput.oldHtml, stringDesc()),
+        fieldAccess(\DodecaHtmlDiffInput.newHtml, stringDesc()),
+    ])
+}
+
+private func dodecaHtmlDiffOutcomeDesc() -> Descriptor {
+    recordDesc(DodecaSchema.htmlDiffOutcome, DodecaHtmlDiffOutcome.self, fields: [
+        fieldAccess(\DodecaHtmlDiffOutcome.patchesBlob, bytesDesc()),
+    ])
+}
+
+private func dodecaHtmlDiffErrorDesc() -> Descriptor {
+    let tag: (UnsafeRawPointer) -> Int = { _ in 0 }
+    let projectPayload: (UnsafeRawPointer, Int, UnsafeMutableRawPointer) -> Void = { value, _, scratch in
+        if case .generic(let payload) = value.assumingMemoryBound(to: DodecaHtmlDiffError.self).pointee {
+            scratch.assumingMemoryBound(to: String.self).initialize(to: payload)
+        }
+    }
+    let inject: (UnsafeMutableRawPointer, Int, UnsafeMutableRawPointer) -> Void = { slot, _, scratch in
+        slot.assumingMemoryBound(to: DodecaHtmlDiffError.self).initialize(to: .generic(scratch.assumingMemoryBound(to: String.self).move()))
+    }
+    return Descriptor(
+        schema: .concrete(DodecaSchema.htmlDiffError),
+        layout: MemoryLayout<DodecaHtmlDiffError>.phonLayout,
+        access: .enumeration(EnumAccess(
+            tag: tag,
+            projectPayload: projectPayload,
+            destroyPayload: { scratch, _ in scratch.assumingMemoryBound(to: String.self).deinitialize(count: 1) },
+            inject: inject,
+            variants: [
+                VariantAccess(wireIndex: 0, payloadFields: [FieldAccess(offset: 0, descriptor: stringDesc())], payloadLayout: MemoryLayout<String>.phonLayout),
+            ]
+        ))
+    )
+}
+
+private func dodecaHtmlDiffResultDesc() -> Descriptor {
+    let tag: (UnsafeRawPointer) -> Int = { ptr in
+        switch ptr.assumingMemoryBound(to: DodecaHtmlDiffResult.self).pointee {
+        case .ok: return 0
+        case .err: return 1
+        }
+    }
+    let projectPayload: (UnsafeRawPointer, Int, UnsafeMutableRawPointer) -> Void = { value, _, scratch in
+        switch value.assumingMemoryBound(to: DodecaHtmlDiffResult.self).pointee {
+        case .ok(let payload):
+            scratch.assumingMemoryBound(to: DodecaHtmlDiffOutcome.self).initialize(to: payload)
+        case .err(let payload):
+            scratch.assumingMemoryBound(to: DodecaHtmlDiffError.self).initialize(to: payload)
+        }
+    }
+    let destroyPayload: (UnsafeMutableRawPointer, Int) -> Void = { scratch, localIndex in
+        switch localIndex {
+        case 0: scratch.assumingMemoryBound(to: DodecaHtmlDiffOutcome.self).deinitialize(count: 1)
+        case 1: scratch.assumingMemoryBound(to: DodecaHtmlDiffError.self).deinitialize(count: 1)
+        default: break
+        }
+    }
+    let inject: (UnsafeMutableRawPointer, Int, UnsafeMutableRawPointer) -> Void = { slot, localIndex, scratch in
+        let result: DodecaHtmlDiffResult
+        switch localIndex {
+        case 0:
+            result = .ok(scratch.assumingMemoryBound(to: DodecaHtmlDiffOutcome.self).move())
+        case 1:
+            result = .err(scratch.assumingMemoryBound(to: DodecaHtmlDiffError.self).move())
+        default:
+            fatalError("bad DodecaHtmlDiffResult variant index")
+        }
+        slot.assumingMemoryBound(to: DodecaHtmlDiffResult.self).initialize(to: result)
+    }
+    return Descriptor(
+        schema: .concrete(DodecaSchema.htmlDiffResult),
+        layout: MemoryLayout<DodecaHtmlDiffResult>.phonLayout,
+        access: .enumeration(EnumAccess(
+            tag: tag,
+            projectPayload: projectPayload,
+            destroyPayload: destroyPayload,
+            inject: inject,
+            variants: [
+                VariantAccess(wireIndex: 0, payloadFields: [FieldAccess(offset: 0, descriptor: dodecaHtmlDiffOutcomeDesc())], payloadLayout: MemoryLayout<DodecaHtmlDiffOutcome>.phonLayout),
+                VariantAccess(wireIndex: 1, payloadFields: [FieldAccess(offset: 0, descriptor: dodecaHtmlDiffErrorDesc())], payloadLayout: MemoryLayout<DodecaHtmlDiffError>.phonLayout),
+            ]
+        ))
+    )
+}
+
+private func dodecaCharListDesc() -> Descriptor {
+    listDesc(DodecaSchema.charList, Unicode.Scalar.self, element: scalarDesc(.char))
+}
+
+private func dodecaSubsetFontInputDesc() -> Descriptor {
+    recordDesc(DodecaSchema.subsetFontInput, DodecaSubsetFontInput.self, fields: [
+        fieldAccess(\DodecaSubsetFontInput.data, bytesDesc()),
+        fieldAccess(\DodecaSubsetFontInput.chars, dodecaCharListDesc()),
+    ])
+}
+
+private func dodecaDataPayloadFields() -> [FieldAccess] {
+    [FieldAccess(offset: MemoryLayout<DodecaDataPayload>.offset(of: \DodecaDataPayload.data)!, descriptor: bytesDesc())]
+}
+
+private func dodecaFontResultDesc() -> Descriptor {
+    let dataFields = dodecaDataPayloadFields()
+    let messageOffset = MemoryLayout<DodecaMessagePayload>.offset(of: \DodecaMessagePayload.message)!
+    let tag: (UnsafeRawPointer) -> Int = { ptr in
+        switch ptr.assumingMemoryBound(to: DodecaFontResult.self).pointee {
+        case .decompressSuccess: return 0
+        case .subsetSuccess: return 1
+        case .compressSuccess: return 2
+        case .error: return 3
+        }
+    }
+    let projectPayload: (UnsafeRawPointer, Int, UnsafeMutableRawPointer) -> Void = { value, _, scratch in
+        switch value.assumingMemoryBound(to: DodecaFontResult.self).pointee {
+        case .decompressSuccess(let payload), .subsetSuccess(let payload), .compressSuccess(let payload):
+            scratch.assumingMemoryBound(to: DodecaDataPayload.self).initialize(to: payload)
+        case .error(let payload):
+            scratch.assumingMemoryBound(to: DodecaMessagePayload.self).initialize(to: payload)
+        }
+    }
+    let destroyPayload: (UnsafeMutableRawPointer, Int) -> Void = { scratch, localIndex in
+        switch localIndex {
+        case 0, 1, 2: scratch.assumingMemoryBound(to: DodecaDataPayload.self).deinitialize(count: 1)
+        case 3: scratch.assumingMemoryBound(to: DodecaMessagePayload.self).deinitialize(count: 1)
+        default: break
+        }
+    }
+    let inject: (UnsafeMutableRawPointer, Int, UnsafeMutableRawPointer) -> Void = { slot, localIndex, scratch in
+        let result: DodecaFontResult
+        switch localIndex {
+        case 0:
+            result = .decompressSuccess(scratch.assumingMemoryBound(to: DodecaDataPayload.self).move())
+        case 1:
+            result = .subsetSuccess(scratch.assumingMemoryBound(to: DodecaDataPayload.self).move())
+        case 2:
+            result = .compressSuccess(scratch.assumingMemoryBound(to: DodecaDataPayload.self).move())
+        case 3:
+            result = .error(scratch.assumingMemoryBound(to: DodecaMessagePayload.self).move())
+        default:
+            fatalError("bad DodecaFontResult variant index")
+        }
+        slot.assumingMemoryBound(to: DodecaFontResult.self).initialize(to: result)
+    }
+    return Descriptor(
+        schema: .concrete(DodecaSchema.fontResult),
+        layout: MemoryLayout<DodecaFontResult>.phonLayout,
+        access: .enumeration(EnumAccess(
+            tag: tag,
+            projectPayload: projectPayload,
+            destroyPayload: destroyPayload,
+            inject: inject,
+            variants: [
+                VariantAccess(wireIndex: 0, payloadFields: dataFields, payloadLayout: MemoryLayout<DodecaDataPayload>.phonLayout),
+                VariantAccess(wireIndex: 1, payloadFields: dataFields, payloadLayout: MemoryLayout<DodecaDataPayload>.phonLayout),
+                VariantAccess(wireIndex: 2, payloadFields: dataFields, payloadLayout: MemoryLayout<DodecaDataPayload>.phonLayout),
+                VariantAccess(wireIndex: 3, payloadFields: [FieldAccess(offset: messageOffset, descriptor: stringDesc())], payloadLayout: MemoryLayout<DodecaMessagePayload>.phonLayout),
+            ]
+        ))
+    )
+}
+
+private func dodecaFontResultListDesc() -> Descriptor {
+    listDesc(DodecaSchema.fontResultList, DodecaFontResult.self, element: dodecaFontResultDesc())
+}
+
+private func dodecaWebpEncodeInputDesc() -> Descriptor {
+    recordDesc(DodecaSchema.webpEncodeInput, DodecaWebpEncodeInput.self, fields: [
+        fieldAccess(\DodecaWebpEncodeInput.pixels, bytesDesc()),
+        fieldAccess(\DodecaWebpEncodeInput.width, scalarDesc(.u32)),
+        fieldAccess(\DodecaWebpEncodeInput.height, scalarDesc(.u32)),
+        fieldAccess(\DodecaWebpEncodeInput.quality, scalarDesc(.u8)),
+    ])
+}
+
+private func dodecaDecodedImagePayloadFields() -> [FieldAccess] {
+    [
+        FieldAccess(offset: MemoryLayout<DodecaDecodedImage>.offset(of: \DodecaDecodedImage.pixels)!, descriptor: bytesDesc()),
+        FieldAccess(offset: MemoryLayout<DodecaDecodedImage>.offset(of: \DodecaDecodedImage.width)!, descriptor: scalarDesc(.u32)),
+        FieldAccess(offset: MemoryLayout<DodecaDecodedImage>.offset(of: \DodecaDecodedImage.height)!, descriptor: scalarDesc(.u32)),
+        FieldAccess(offset: MemoryLayout<DodecaDecodedImage>.offset(of: \DodecaDecodedImage.channels)!, descriptor: scalarDesc(.u8)),
+    ]
+}
+
+private func dodecaWebpResultDesc() -> Descriptor {
+    let decodedFields = dodecaDecodedImagePayloadFields()
+    let dataFields = dodecaDataPayloadFields()
+    let messageOffset = MemoryLayout<DodecaMessagePayload>.offset(of: \DodecaMessagePayload.message)!
+    let tag: (UnsafeRawPointer) -> Int = { ptr in
+        switch ptr.assumingMemoryBound(to: DodecaWebpResult.self).pointee {
+        case .decodeSuccess: return 0
+        case .encodeSuccess: return 1
+        case .error: return 2
+        }
+    }
+    let projectPayload: (UnsafeRawPointer, Int, UnsafeMutableRawPointer) -> Void = { value, _, scratch in
+        switch value.assumingMemoryBound(to: DodecaWebpResult.self).pointee {
+        case .decodeSuccess(let payload):
+            scratch.assumingMemoryBound(to: DodecaDecodedImage.self).initialize(to: payload)
+        case .encodeSuccess(let payload):
+            scratch.assumingMemoryBound(to: DodecaDataPayload.self).initialize(to: payload)
+        case .error(let payload):
+            scratch.assumingMemoryBound(to: DodecaMessagePayload.self).initialize(to: payload)
+        }
+    }
+    let destroyPayload: (UnsafeMutableRawPointer, Int) -> Void = { scratch, localIndex in
+        switch localIndex {
+        case 0: scratch.assumingMemoryBound(to: DodecaDecodedImage.self).deinitialize(count: 1)
+        case 1: scratch.assumingMemoryBound(to: DodecaDataPayload.self).deinitialize(count: 1)
+        case 2: scratch.assumingMemoryBound(to: DodecaMessagePayload.self).deinitialize(count: 1)
+        default: break
+        }
+    }
+    let inject: (UnsafeMutableRawPointer, Int, UnsafeMutableRawPointer) -> Void = { slot, localIndex, scratch in
+        let result: DodecaWebpResult
+        switch localIndex {
+        case 0:
+            result = .decodeSuccess(scratch.assumingMemoryBound(to: DodecaDecodedImage.self).move())
+        case 1:
+            result = .encodeSuccess(scratch.assumingMemoryBound(to: DodecaDataPayload.self).move())
+        case 2:
+            result = .error(scratch.assumingMemoryBound(to: DodecaMessagePayload.self).move())
+        default:
+            fatalError("bad DodecaWebpResult variant index")
+        }
+        slot.assumingMemoryBound(to: DodecaWebpResult.self).initialize(to: result)
+    }
+    return Descriptor(
+        schema: .concrete(DodecaSchema.webpResult),
+        layout: MemoryLayout<DodecaWebpResult>.phonLayout,
+        access: .enumeration(EnumAccess(
+            tag: tag,
+            projectPayload: projectPayload,
+            destroyPayload: destroyPayload,
+            inject: inject,
+            variants: [
+                VariantAccess(wireIndex: 0, payloadFields: decodedFields, payloadLayout: MemoryLayout<DodecaDecodedImage>.phonLayout),
+                VariantAccess(wireIndex: 1, payloadFields: dataFields, payloadLayout: MemoryLayout<DodecaDataPayload>.phonLayout),
+                VariantAccess(wireIndex: 2, payloadFields: [FieldAccess(offset: messageOffset, descriptor: stringDesc())], payloadLayout: MemoryLayout<DodecaMessagePayload>.phonLayout),
+            ]
+        ))
+    )
+}
+
+private func dodecaWebpResultListDesc() -> Descriptor {
+    listDesc(DodecaSchema.webpResultList, DodecaWebpResult.self, element: dodecaWebpResultDesc())
+}
+
+private func dodecaJxlEncodeInputDesc() -> Descriptor {
+    recordDesc(DodecaSchema.jxlEncodeInput, DodecaJxlEncodeInput.self, fields: [
+        fieldAccess(\DodecaJxlEncodeInput.pixels, bytesDesc()),
+        fieldAccess(\DodecaJxlEncodeInput.width, scalarDesc(.u32)),
+        fieldAccess(\DodecaJxlEncodeInput.height, scalarDesc(.u32)),
+        fieldAccess(\DodecaJxlEncodeInput.quality, scalarDesc(.u8)),
+    ])
+}
+
+private func dodecaJxlResultDesc() -> Descriptor {
+    return Descriptor(
+        schema: .concrete(DodecaSchema.jxlResult),
+        layout: MemoryLayout<DodecaJxlResult>.phonLayout,
+        access: .enumeration(EnumAccess(
+            tag: { ptr in
+                switch ptr.assumingMemoryBound(to: DodecaJxlResult.self).pointee {
+                case .decodeSuccess: return 0
+                case .encodeSuccess: return 1
+                case .error: return 2
+                }
+            },
+            projectPayload: { value, _, scratch in
+                switch value.assumingMemoryBound(to: DodecaJxlResult.self).pointee {
+                case .decodeSuccess(let payload):
+                    scratch.assumingMemoryBound(to: DodecaDecodedImage.self).initialize(to: payload)
+                case .encodeSuccess(let payload):
+                    scratch.assumingMemoryBound(to: DodecaDataPayload.self).initialize(to: payload)
+                case .error(let payload):
+                    scratch.assumingMemoryBound(to: DodecaMessagePayload.self).initialize(to: payload)
+                }
+            },
+            destroyPayload: { scratch, localIndex in
+                switch localIndex {
+                case 0: scratch.assumingMemoryBound(to: DodecaDecodedImage.self).deinitialize(count: 1)
+                case 1: scratch.assumingMemoryBound(to: DodecaDataPayload.self).deinitialize(count: 1)
+                case 2: scratch.assumingMemoryBound(to: DodecaMessagePayload.self).deinitialize(count: 1)
+                default: break
+                }
+            },
+            inject: { slot, localIndex, scratch in
+                let value: DodecaJxlResult
+                switch localIndex {
+                case 0:
+                    value = .decodeSuccess(scratch.assumingMemoryBound(to: DodecaDecodedImage.self).move())
+                case 1:
+                    value = .encodeSuccess(scratch.assumingMemoryBound(to: DodecaDataPayload.self).move())
+                case 2:
+                    value = .error(scratch.assumingMemoryBound(to: DodecaMessagePayload.self).move())
+                default:
+                    fatalError("bad DodecaJxlResult variant index")
+                }
+                slot.assumingMemoryBound(to: DodecaJxlResult.self).initialize(to: value)
+            },
+            variants: [
+                VariantAccess(wireIndex: 0, payloadFields: dodecaDecodedImagePayloadFields(), payloadLayout: MemoryLayout<DodecaDecodedImage>.phonLayout),
+                VariantAccess(wireIndex: 1, payloadFields: dodecaDataPayloadFields(), payloadLayout: MemoryLayout<DodecaDataPayload>.phonLayout),
+                VariantAccess(wireIndex: 2, payloadFields: [FieldAccess(offset: MemoryLayout<DodecaMessagePayload>.offset(of: \DodecaMessagePayload.message)!, descriptor: stringDesc())], payloadLayout: MemoryLayout<DodecaMessagePayload>.phonLayout),
+            ]
+        ))
+    )
+}
+
+private func dodecaJxlResultListDesc() -> Descriptor {
+    listDesc(DodecaSchema.jxlResultList, DodecaJxlResult.self, element: dodecaJxlResultDesc())
+}
+
+private func dodecaSelectResultDesc() -> Descriptor {
+    let indexOffset = MemoryLayout<DodecaIndexPayload>.offset(of: \DodecaIndexPayload.index)!
+    return Descriptor(
+        schema: .concrete(DodecaSchema.selectResult),
+        layout: MemoryLayout<DodecaSelectResult>.phonLayout,
+        access: .enumeration(EnumAccess(
+            tag: { ptr in
+                switch ptr.assumingMemoryBound(to: DodecaSelectResult.self).pointee {
+                case .selected: return 0
+                case .cancelled: return 1
+                }
+            },
+            projectPayload: { value, _, scratch in
+                if case .selected(let payload) = value.assumingMemoryBound(to: DodecaSelectResult.self).pointee {
+                    scratch.assumingMemoryBound(to: DodecaIndexPayload.self).initialize(to: payload)
+                }
+            },
+            destroyPayload: { scratch, localIndex in
+                if localIndex == 0 { scratch.assumingMemoryBound(to: DodecaIndexPayload.self).deinitialize(count: 1) }
+            },
+            inject: { slot, localIndex, scratch in
+                let result: DodecaSelectResult = localIndex == 0
+                    ? .selected(scratch.assumingMemoryBound(to: DodecaIndexPayload.self).move())
+                    : .cancelled
+                slot.assumingMemoryBound(to: DodecaSelectResult.self).initialize(to: result)
+            },
+            variants: [
+                VariantAccess(wireIndex: 0, payloadFields: [FieldAccess(offset: indexOffset, descriptor: scalarDesc(.u64))], payloadLayout: MemoryLayout<DodecaIndexPayload>.phonLayout),
+                VariantAccess(wireIndex: 1, payloadFields: [], payloadLayout: Layout(size: 0, align: 1)),
+            ]
+        ))
+    )
+}
+
+private func dodecaConfirmResultDesc() -> Descriptor {
+    unitEnumDesc(
+        DodecaSchema.confirmResult,
+        DodecaConfirmResult.self,
+        variantCount: 3,
+        tag: { ptr in
+            switch ptr.assumingMemoryBound(to: DodecaConfirmResult.self).pointee {
+            case .yes: return 0
+            case .no: return 1
+            case .cancelled: return 2
+            }
+        },
+        make: { index in index == 0 ? .yes : (index == 1 ? .no : .cancelled) }
+    )
+}
+
+private func dodecaRecordConfigDesc() -> Descriptor {
+    recordDesc(DodecaSchema.recordConfig, DodecaRecordConfig.self, fields: [
+        fieldAccess(\DodecaRecordConfig.shell, dodecaOptionStringDesc()),
+    ])
+}
+
+private func dodecaTermResultDesc() -> Descriptor {
+    dodecaSinglePayloadResultDesc(
+        schema: DodecaSchema.termResult,
+        type: DodecaTermResult.self,
+        successOffset: MemoryLayout<DodecaHtmlPayload>.offset(of: \DodecaHtmlPayload.html)!,
+        successDescriptor: stringDesc(),
+        successLayout: MemoryLayout<DodecaHtmlPayload>.phonLayout,
+        errorOffset: MemoryLayout<DodecaMessagePayload>.offset(of: \DodecaMessagePayload.message)!,
+        tag: { ptr in
+            switch ptr.assumingMemoryBound(to: DodecaTermResult.self).pointee {
+            case .success: return 0
+            case .error: return 1
+            }
+        },
+        projectPayload: { value, _, scratch in
+            switch value.assumingMemoryBound(to: DodecaTermResult.self).pointee {
+            case .success(let payload): scratch.assumingMemoryBound(to: DodecaHtmlPayload.self).initialize(to: payload)
+            case .error(let payload): scratch.assumingMemoryBound(to: DodecaMessagePayload.self).initialize(to: payload)
+            }
+        },
+        destroyPayload: { scratch, localIndex in
+            if localIndex == 0 {
+                scratch.assumingMemoryBound(to: DodecaHtmlPayload.self).deinitialize(count: 1)
+            } else if localIndex == 1 {
+                scratch.assumingMemoryBound(to: DodecaMessagePayload.self).deinitialize(count: 1)
+            }
+        },
+        inject: { slot, localIndex, scratch in
+            let result: DodecaTermResult = localIndex == 0
+                ? .success(scratch.assumingMemoryBound(to: DodecaHtmlPayload.self).move())
+                : .error(scratch.assumingMemoryBound(to: DodecaMessagePayload.self).move())
+            slot.assumingMemoryBound(to: DodecaTermResult.self).initialize(to: result)
+        }
+    )
+}
+
+private func dodecaStartDevServerResultDesc() -> Descriptor {
+    let portOffset = MemoryLayout<DodecaPortPayload>.offset(of: \DodecaPortPayload.port)!
+    let messageOffset = MemoryLayout<DodecaMessagePayload>.offset(of: \DodecaMessagePayload.message)!
+    return Descriptor(
+        schema: .concrete(DodecaSchema.startDevServerResult),
+        layout: MemoryLayout<DodecaStartDevServerResult>.phonLayout,
+        access: .enumeration(EnumAccess(
+            tag: { ptr in
+                switch ptr.assumingMemoryBound(to: DodecaStartDevServerResult.self).pointee {
+                case .success: return 0
+                case .error: return 1
+                }
+            },
+            projectPayload: { value, _, scratch in
+                switch value.assumingMemoryBound(to: DodecaStartDevServerResult.self).pointee {
+                case .success(let payload): scratch.assumingMemoryBound(to: DodecaPortPayload.self).initialize(to: payload)
+                case .error(let payload): scratch.assumingMemoryBound(to: DodecaMessagePayload.self).initialize(to: payload)
+                }
+            },
+            destroyPayload: { scratch, localIndex in
+                if localIndex == 0 {
+                    scratch.assumingMemoryBound(to: DodecaPortPayload.self).deinitialize(count: 1)
+                } else if localIndex == 1 {
+                    scratch.assumingMemoryBound(to: DodecaMessagePayload.self).deinitialize(count: 1)
+                }
+            },
+            inject: { slot, localIndex, scratch in
+                let result: DodecaStartDevServerResult = localIndex == 0
+                    ? .success(scratch.assumingMemoryBound(to: DodecaPortPayload.self).move())
+                    : .error(scratch.assumingMemoryBound(to: DodecaMessagePayload.self).move())
+                slot.assumingMemoryBound(to: DodecaStartDevServerResult.self).initialize(to: result)
+            },
+            variants: [
+                VariantAccess(wireIndex: 0, payloadFields: [FieldAccess(offset: portOffset, descriptor: scalarDesc(.u16))], payloadLayout: MemoryLayout<DodecaPortPayload>.phonLayout),
+                VariantAccess(wireIndex: 1, payloadFields: [FieldAccess(offset: messageOffset, descriptor: stringDesc())], payloadLayout: MemoryLayout<DodecaMessagePayload>.phonLayout),
+            ]
+        ))
+    )
+}
+
+private func dodecaRunBuildResultDesc() -> Descriptor {
+    let messageOffset = MemoryLayout<DodecaMessagePayload>.offset(of: \DodecaMessagePayload.message)!
+    return Descriptor(
+        schema: .concrete(DodecaSchema.runBuildResult),
+        layout: MemoryLayout<DodecaRunBuildResult>.phonLayout,
+        access: .enumeration(EnumAccess(
+            tag: { ptr in
+                switch ptr.assumingMemoryBound(to: DodecaRunBuildResult.self).pointee {
+                case .success: return 0
+                case .error: return 1
+                }
+            },
+            projectPayload: { value, _, scratch in
+                if case .error(let payload) = value.assumingMemoryBound(to: DodecaRunBuildResult.self).pointee {
+                    scratch.assumingMemoryBound(to: DodecaMessagePayload.self).initialize(to: payload)
+                }
+            },
+            destroyPayload: { scratch, localIndex in
+                if localIndex == 1 { scratch.assumingMemoryBound(to: DodecaMessagePayload.self).deinitialize(count: 1) }
+            },
+            inject: { slot, localIndex, scratch in
+                let result: DodecaRunBuildResult = localIndex == 1
+                    ? .error(scratch.assumingMemoryBound(to: DodecaMessagePayload.self).move())
+                    : .success
+                slot.assumingMemoryBound(to: DodecaRunBuildResult.self).initialize(to: result)
+            },
+            variants: [
+                VariantAccess(wireIndex: 0, payloadFields: [], payloadLayout: Layout(size: 0, align: 1)),
+                VariantAccess(wireIndex: 1, payloadFields: [FieldAccess(offset: messageOffset, descriptor: stringDesc())], payloadLayout: MemoryLayout<DodecaMessagePayload>.phonLayout),
+            ]
+        ))
+    )
+}
+
+private func dodecaStringStringTupleDesc() -> Descriptor {
+    recordDesc(DodecaSchema.stringStringTuple, DodecaStringString.self, fields: [
+        fieldAccess(\DodecaStringString.key, stringDesc()),
+        fieldAccess(\DodecaStringString.value, stringDesc()),
+    ])
+}
+
+private func dodecaStringStringTupleListDesc() -> Descriptor {
+    listDesc(DodecaSchema.stringStringTupleList, DodecaStringString.self, element: dodecaStringStringTupleDesc())
+}
+
+private func dodecaLinkDiagnosticsDesc() -> Descriptor {
+    recordDesc(DodecaSchema.linkDiagnostics, DodecaLinkDiagnostics.self, fields: [
+        fieldAccess(\DodecaLinkDiagnostics.requestHeaders, dodecaStringStringTupleListDesc()),
+        fieldAccess(\DodecaLinkDiagnostics.responseHeaders, dodecaStringStringTupleListDesc()),
+        fieldAccess(\DodecaLinkDiagnostics.responseBody, stringDesc()),
+    ])
+}
+
+private func dodecaLinkStatusDesc() -> Descriptor {
+    let codeOffset = MemoryLayout<DodecaHttpErrorPayload>.offset(of: \DodecaHttpErrorPayload.code)!
+    let diagnosticsOffset = MemoryLayout<DodecaHttpErrorPayload>.offset(of: \DodecaHttpErrorPayload.diagnostics)!
+    let messageOffset = MemoryLayout<DodecaMessagePayload>.offset(of: \DodecaMessagePayload.message)!
+    return Descriptor(
+        schema: .concrete(DodecaSchema.linkStatus),
+        layout: MemoryLayout<DodecaLinkStatus>.phonLayout,
+        access: .enumeration(EnumAccess(
+            tag: { ptr in
+                switch ptr.assumingMemoryBound(to: DodecaLinkStatus.self).pointee {
+                case .ok: return 0
+                case .httpError: return 1
+                case .failed: return 2
+                case .skipped: return 3
+                }
+            },
+            projectPayload: { value, _, scratch in
+                switch value.assumingMemoryBound(to: DodecaLinkStatus.self).pointee {
+                case .ok, .skipped:
+                    break
+                case .httpError(let payload):
+                    scratch.assumingMemoryBound(to: DodecaHttpErrorPayload.self).initialize(to: payload)
+                case .failed(let payload):
+                    scratch.assumingMemoryBound(to: DodecaMessagePayload.self).initialize(to: payload)
+                }
+            },
+            destroyPayload: { scratch, localIndex in
+                switch localIndex {
+                case 1: scratch.assumingMemoryBound(to: DodecaHttpErrorPayload.self).deinitialize(count: 1)
+                case 2: scratch.assumingMemoryBound(to: DodecaMessagePayload.self).deinitialize(count: 1)
+                default: break
+                }
+            },
+            inject: { slot, localIndex, scratch in
+                let result: DodecaLinkStatus
+                switch localIndex {
+                case 0: result = .ok
+                case 1: result = .httpError(scratch.assumingMemoryBound(to: DodecaHttpErrorPayload.self).move())
+                case 2: result = .failed(scratch.assumingMemoryBound(to: DodecaMessagePayload.self).move())
+                case 3: result = .skipped
+                default: fatalError("bad DodecaLinkStatus variant index")
+                }
+                slot.assumingMemoryBound(to: DodecaLinkStatus.self).initialize(to: result)
+            },
+            variants: [
+                VariantAccess(wireIndex: 0, payloadFields: [], payloadLayout: Layout(size: 0, align: 1)),
+                VariantAccess(wireIndex: 1, payloadFields: [
+                    FieldAccess(offset: codeOffset, descriptor: scalarDesc(.u16)),
+                    FieldAccess(offset: diagnosticsOffset, descriptor: dodecaLinkDiagnosticsDesc()),
+                ], payloadLayout: MemoryLayout<DodecaHttpErrorPayload>.phonLayout),
+                VariantAccess(wireIndex: 2, payloadFields: [FieldAccess(offset: messageOffset, descriptor: stringDesc())], payloadLayout: MemoryLayout<DodecaMessagePayload>.phonLayout),
+                VariantAccess(wireIndex: 3, payloadFields: [], payloadLayout: Layout(size: 0, align: 1)),
+            ]
+        ))
+    )
+}
+
+private func dodecaMapStringLinkStatusDesc() -> Descriptor {
+    dodecaStringMapDesc(DodecaSchema.mapStringLinkStatus, DodecaLinkStatus.self, value: dodecaLinkStatusDesc())
+}
+
+private func dodecaLinkCheckInputDesc() -> Descriptor {
+    recordDesc(DodecaSchema.linkCheckInput, DodecaLinkCheckInput.self, fields: [
+        fieldAccess(\DodecaLinkCheckInput.urls, dodecaStringListDesc()),
+        fieldAccess(\DodecaLinkCheckInput.delayMs, scalarDesc(.u64)),
+        fieldAccess(\DodecaLinkCheckInput.timeoutSecs, scalarDesc(.u64)),
+    ])
+}
+
+private func dodecaLinkCheckOutputDesc() -> Descriptor {
+    recordDesc(DodecaSchema.linkCheckOutput, DodecaLinkCheckOutput.self, fields: [
+        fieldAccess(\DodecaLinkCheckOutput.results, dodecaMapStringLinkStatusDesc()),
+    ])
+}
+
+private func dodecaLinkCheckResultDesc() -> Descriptor {
+    let outputOffset = MemoryLayout<DodecaLinkCheckSuccessPayload>.offset(of: \DodecaLinkCheckSuccessPayload.output)!
+    let messageOffset = MemoryLayout<DodecaMessagePayload>.offset(of: \DodecaMessagePayload.message)!
+    return Descriptor(
+        schema: .concrete(DodecaSchema.linkCheckResult),
+        layout: MemoryLayout<DodecaLinkCheckResult>.phonLayout,
+        access: .enumeration(EnumAccess(
+            tag: { ptr in
+                switch ptr.assumingMemoryBound(to: DodecaLinkCheckResult.self).pointee {
+                case .success: return 0
+                case .error: return 1
+                }
+            },
+            projectPayload: { value, _, scratch in
+                switch value.assumingMemoryBound(to: DodecaLinkCheckResult.self).pointee {
+                case .success(let payload): scratch.assumingMemoryBound(to: DodecaLinkCheckSuccessPayload.self).initialize(to: payload)
+                case .error(let payload): scratch.assumingMemoryBound(to: DodecaMessagePayload.self).initialize(to: payload)
+                }
+            },
+            destroyPayload: { scratch, localIndex in
+                if localIndex == 0 {
+                    scratch.assumingMemoryBound(to: DodecaLinkCheckSuccessPayload.self).deinitialize(count: 1)
+                } else if localIndex == 1 {
+                    scratch.assumingMemoryBound(to: DodecaMessagePayload.self).deinitialize(count: 1)
+                }
+            },
+            inject: { slot, localIndex, scratch in
+                let result: DodecaLinkCheckResult = localIndex == 0
+                    ? .success(scratch.assumingMemoryBound(to: DodecaLinkCheckSuccessPayload.self).move())
+                    : .error(scratch.assumingMemoryBound(to: DodecaMessagePayload.self).move())
+                slot.assumingMemoryBound(to: DodecaLinkCheckResult.self).initialize(to: result)
+            },
+            variants: [
+                VariantAccess(wireIndex: 0, payloadFields: [FieldAccess(offset: outputOffset, descriptor: dodecaLinkCheckOutputDesc())], payloadLayout: MemoryLayout<DodecaLinkCheckSuccessPayload>.phonLayout),
+                VariantAccess(wireIndex: 1, payloadFields: [FieldAccess(offset: messageOffset, descriptor: stringDesc())], payloadLayout: MemoryLayout<DodecaMessagePayload>.phonLayout),
+            ]
+        ))
+    )
+}
+
+private func dodecaTaskStatusDesc() -> Descriptor {
+    unitEnumDesc(
+        DodecaSchema.taskStatus,
+        DodecaTaskStatus.self,
+        variantCount: 4,
+        tag: { ptr in
+            switch ptr.assumingMemoryBound(to: DodecaTaskStatus.self).pointee {
+            case .pending: return 0
+            case .running: return 1
+            case .done: return 2
+            case .error: return 3
+            }
+        },
+        make: { index in
+            switch index {
+            case 0: return .pending
+            case 1: return .running
+            case 2: return .done
+            default: return .error
+            }
+        }
+    )
+}
+
+private func dodecaTaskProgressDesc() -> Descriptor {
+    recordDesc(DodecaSchema.taskProgress, DodecaTaskProgress.self, fields: [
+        fieldAccess(\DodecaTaskProgress.name, stringDesc()),
+        fieldAccess(\DodecaTaskProgress.total, scalarDesc(.u32)),
+        fieldAccess(\DodecaTaskProgress.completed, scalarDesc(.u32)),
+        fieldAccess(\DodecaTaskProgress.status, dodecaTaskStatusDesc()),
+        fieldAccess(\DodecaTaskProgress.message, dodecaOptionStringDesc()),
+    ])
+}
+
+private func dodecaBuildProgressDesc() -> Descriptor {
+    recordDesc(DodecaSchema.buildProgress, DodecaBuildProgress.self, fields: [
+        fieldAccess(\DodecaBuildProgress.parse, dodecaTaskProgressDesc()),
+        fieldAccess(\DodecaBuildProgress.render, dodecaTaskProgressDesc()),
+        fieldAccess(\DodecaBuildProgress.sass, dodecaTaskProgressDesc()),
+        fieldAccess(\DodecaBuildProgress.links, dodecaTaskProgressDesc()),
+        fieldAccess(\DodecaBuildProgress.search, dodecaTaskProgressDesc()),
+    ])
+}
+
+private func dodecaLogLevelDesc() -> Descriptor {
+    unitEnumDesc(
+        DodecaSchema.logLevel,
+        DodecaLogLevel.self,
+        variantCount: 5,
+        tag: { ptr in
+            switch ptr.assumingMemoryBound(to: DodecaLogLevel.self).pointee {
+            case .trace: return 0
+            case .debug: return 1
+            case .info: return 2
+            case .warn: return 3
+            case .error: return 4
+            }
+        },
+        make: { index in
+            switch index {
+            case 0: return .trace
+            case 1: return .debug
+            case 2: return .info
+            case 3: return .warn
+            default: return .error
+            }
+        }
+    )
+}
+
+private func dodecaEventKindDesc() -> Descriptor {
+    let statusOffset = MemoryLayout<DodecaHttpPayload>.offset(of: \DodecaHttpPayload.status)!
+    return Descriptor(
+        schema: .concrete(DodecaSchema.eventKind),
+        layout: MemoryLayout<DodecaEventKind>.phonLayout,
+        access: .enumeration(EnumAccess(
+            tag: { ptr in
+                switch ptr.assumingMemoryBound(to: DodecaEventKind.self).pointee {
+                case .http: return 0
+                case .fileChange: return 1
+                case .reload: return 2
+                case .patch: return 3
+                case .search: return 4
+                case .server: return 5
+                case .build: return 6
+                case .generic: return 7
+                }
+            },
+            projectPayload: { value, _, scratch in
+                if case .http(let payload) = value.assumingMemoryBound(to: DodecaEventKind.self).pointee {
+                    scratch.assumingMemoryBound(to: DodecaHttpPayload.self).initialize(to: payload)
+                }
+            },
+            destroyPayload: { scratch, localIndex in
+                if localIndex == 0 { scratch.assumingMemoryBound(to: DodecaHttpPayload.self).deinitialize(count: 1) }
+            },
+            inject: { slot, localIndex, scratch in
+                let result: DodecaEventKind
+                switch localIndex {
+                case 0: result = .http(scratch.assumingMemoryBound(to: DodecaHttpPayload.self).move())
+                case 1: result = .fileChange
+                case 2: result = .reload
+                case 3: result = .patch
+                case 4: result = .search
+                case 5: result = .server
+                case 6: result = .build
+                case 7: result = .generic
+                default: fatalError("bad DodecaEventKind variant index")
+                }
+                slot.assumingMemoryBound(to: DodecaEventKind.self).initialize(to: result)
+            },
+            variants: [
+                VariantAccess(wireIndex: 0, payloadFields: [FieldAccess(offset: statusOffset, descriptor: scalarDesc(.u16))], payloadLayout: MemoryLayout<DodecaHttpPayload>.phonLayout),
+                VariantAccess(wireIndex: 1, payloadFields: [], payloadLayout: Layout(size: 0, align: 1)),
+                VariantAccess(wireIndex: 2, payloadFields: [], payloadLayout: Layout(size: 0, align: 1)),
+                VariantAccess(wireIndex: 3, payloadFields: [], payloadLayout: Layout(size: 0, align: 1)),
+                VariantAccess(wireIndex: 4, payloadFields: [], payloadLayout: Layout(size: 0, align: 1)),
+                VariantAccess(wireIndex: 5, payloadFields: [], payloadLayout: Layout(size: 0, align: 1)),
+                VariantAccess(wireIndex: 6, payloadFields: [], payloadLayout: Layout(size: 0, align: 1)),
+                VariantAccess(wireIndex: 7, payloadFields: [], payloadLayout: Layout(size: 0, align: 1)),
+            ]
+        ))
+    )
+}
+
+private func dodecaLogEventDesc() -> Descriptor {
+    recordDesc(DodecaSchema.logEvent, DodecaLogEvent.self, fields: [
+        fieldAccess(\DodecaLogEvent.level, dodecaLogLevelDesc()),
+        fieldAccess(\DodecaLogEvent.kind, dodecaEventKindDesc()),
+        fieldAccess(\DodecaLogEvent.message, stringDesc()),
+        fieldAccess(\DodecaLogEvent.fields, dodecaStringStringTupleListDesc()),
+    ])
+}
+
+private func dodecaBindModeDesc() -> Descriptor {
+    unitEnumDesc(
+        DodecaSchema.bindMode,
+        DodecaBindMode.self,
+        variantCount: 2,
+        tag: { ptr in
+            switch ptr.assumingMemoryBound(to: DodecaBindMode.self).pointee {
+            case .local: return 0
+            case .lan: return 1
+            }
+        },
+        make: { $0 == 0 ? .local : .lan }
+    )
+}
+
+private func dodecaServerStatusDesc() -> Descriptor {
+    recordDesc(DodecaSchema.serverStatus, DodecaServerStatus.self, fields: [
+        fieldAccess(\DodecaServerStatus.urls, dodecaStringListDesc()),
+        fieldAccess(\DodecaServerStatus.isRunning, scalarDesc(.bool)),
+        fieldAccess(\DodecaServerStatus.bindMode, dodecaBindModeDesc()),
+        fieldAccess(\DodecaServerStatus.picanteCacheSize, scalarDesc(.u64)),
+        fieldAccess(\DodecaServerStatus.casCacheSize, scalarDesc(.u64)),
+        fieldAccess(\DodecaServerStatus.codeExecCacheSize, scalarDesc(.u64)),
+    ])
+}
+
+private func dodecaServerCommandDesc() -> Descriptor {
+    let filterOffset = MemoryLayout<DodecaFilterPayload>.offset(of: \DodecaFilterPayload.filter)!
+    return Descriptor(
+        schema: .concrete(DodecaSchema.serverCommand),
+        layout: MemoryLayout<DodecaServerCommand>.phonLayout,
+        access: .enumeration(EnumAccess(
+            tag: { ptr in
+                switch ptr.assumingMemoryBound(to: DodecaServerCommand.self).pointee {
+                case .goPublic: return 0
+                case .goLocal: return 1
+                case .togglePicanteDebug: return 2
+                case .cycleLogLevel: return 3
+                case .setLogFilter: return 4
+                }
+            },
+            projectPayload: { value, _, scratch in
+                if case .setLogFilter(let payload) = value.assumingMemoryBound(to: DodecaServerCommand.self).pointee {
+                    scratch.assumingMemoryBound(to: DodecaFilterPayload.self).initialize(to: payload)
+                }
+            },
+            destroyPayload: { scratch, localIndex in
+                if localIndex == 4 { scratch.assumingMemoryBound(to: DodecaFilterPayload.self).deinitialize(count: 1) }
+            },
+            inject: { slot, localIndex, scratch in
+                let command: DodecaServerCommand
+                switch localIndex {
+                case 0: command = .goPublic
+                case 1: command = .goLocal
+                case 2: command = .togglePicanteDebug
+                case 3: command = .cycleLogLevel
+                case 4: command = .setLogFilter(scratch.assumingMemoryBound(to: DodecaFilterPayload.self).move())
+                default: fatalError("bad DodecaServerCommand variant index")
+                }
+                slot.assumingMemoryBound(to: DodecaServerCommand.self).initialize(to: command)
+            },
+            variants: [
+                VariantAccess(wireIndex: 0, payloadFields: [], payloadLayout: Layout(size: 0, align: 1)),
+                VariantAccess(wireIndex: 1, payloadFields: [], payloadLayout: Layout(size: 0, align: 1)),
+                VariantAccess(wireIndex: 2, payloadFields: [], payloadLayout: Layout(size: 0, align: 1)),
+                VariantAccess(wireIndex: 3, payloadFields: [], payloadLayout: Layout(size: 0, align: 1)),
+                VariantAccess(wireIndex: 4, payloadFields: [FieldAccess(offset: filterOffset, descriptor: stringDesc())], payloadLayout: MemoryLayout<DodecaFilterPayload>.phonLayout),
+            ]
+        ))
+    )
+}
+
+private func dodecaCommandResultDesc() -> Descriptor {
+    let messageOffset = MemoryLayout<DodecaMessagePayload>.offset(of: \DodecaMessagePayload.message)!
+    return Descriptor(
+        schema: .concrete(DodecaSchema.commandResult),
+        layout: MemoryLayout<DodecaCommandResult>.phonLayout,
+        access: .enumeration(EnumAccess(
+            tag: { ptr in
+                switch ptr.assumingMemoryBound(to: DodecaCommandResult.self).pointee {
+                case .ok: return 0
+                case .error: return 1
+                }
+            },
+            projectPayload: { value, _, scratch in
+                if case .error(let payload) = value.assumingMemoryBound(to: DodecaCommandResult.self).pointee {
+                    scratch.assumingMemoryBound(to: DodecaMessagePayload.self).initialize(to: payload)
+                }
+            },
+            destroyPayload: { scratch, localIndex in
+                if localIndex == 1 { scratch.assumingMemoryBound(to: DodecaMessagePayload.self).deinitialize(count: 1) }
+            },
+            inject: { slot, localIndex, scratch in
+                let result: DodecaCommandResult = localIndex == 1
+                    ? .error(scratch.assumingMemoryBound(to: DodecaMessagePayload.self).move())
+                    : .ok
+                slot.assumingMemoryBound(to: DodecaCommandResult.self).initialize(to: result)
+            },
+            variants: [
+                VariantAccess(wireIndex: 0, payloadFields: [], payloadLayout: Layout(size: 0, align: 1)),
+                VariantAccess(wireIndex: 1, payloadFields: [FieldAccess(offset: messageOffset, descriptor: stringDesc())], payloadLayout: MemoryLayout<DodecaMessagePayload>.phonLayout),
+            ]
+        ))
+    )
+}
+
+private func dodecaSinglePayloadResultDesc<T>(
+    schema: SchemaId,
+    type: T.Type,
+    successOffset: Int,
+    successDescriptor: Descriptor,
+    successLayout: Layout,
+    errorOffset: Int,
+    tag: @escaping (UnsafeRawPointer) -> Int,
+    projectPayload: @escaping (UnsafeRawPointer, Int, UnsafeMutableRawPointer) -> Void,
+    destroyPayload: @escaping (UnsafeMutableRawPointer, Int) -> Void,
+    inject: @escaping (UnsafeMutableRawPointer, Int, UnsafeMutableRawPointer) -> Void
+) -> Descriptor {
+    Descriptor(
+        schema: .concrete(schema),
+        layout: MemoryLayout<T>.phonLayout,
+        access: .enumeration(EnumAccess(
+            tag: tag,
+            projectPayload: projectPayload,
+            destroyPayload: destroyPayload,
+            inject: inject,
+            variants: [
+                VariantAccess(wireIndex: 0, payloadFields: [FieldAccess(offset: successOffset, descriptor: successDescriptor)], payloadLayout: successLayout),
+                VariantAccess(wireIndex: 1, payloadFields: [FieldAccess(offset: errorOffset, descriptor: stringDesc())], payloadLayout: MemoryLayout<DodecaMessagePayload>.phonLayout),
+            ]
+        ))
+    )
+}
+
+private func dodecaSmallCellServicesFixtureDescriptor() -> (root: Descriptor, registry: Registry) {
+    let root = recordDesc(DodecaSchema.smallCellServicesFixture, DodecaSmallCellServicesFixture.self, fields: [
+        fieldAccess(\DodecaSmallCellServicesFixture.readyMsg, dodecaReadyMsgDesc()),
+        fieldAccess(\DodecaSmallCellServicesFixture.readyAck, dodecaReadyAckDesc()),
+        fieldAccess(\DodecaSmallCellServicesFixture.minifyResult, dodecaMinifyResultDesc()),
+        fieldAccess(\DodecaSmallCellServicesFixture.jsInput, dodecaJsRewriteInputDesc()),
+        fieldAccess(\DodecaSmallCellServicesFixture.jsResult, dodecaStringResultDesc()),
+        fieldAccess(\DodecaSmallCellServicesFixture.htmlDiffInput, dodecaHtmlDiffInputDesc()),
+        fieldAccess(\DodecaSmallCellServicesFixture.htmlDiffResult, dodecaHtmlDiffResultDesc()),
+        fieldAccess(\DodecaSmallCellServicesFixture.subsetFontInput, dodecaSubsetFontInputDesc()),
+        fieldAccess(\DodecaSmallCellServicesFixture.fontResults, dodecaFontResultListDesc()),
+        fieldAccess(\DodecaSmallCellServicesFixture.webpEncodeInput, dodecaWebpEncodeInputDesc()),
+        fieldAccess(\DodecaSmallCellServicesFixture.webpResults, dodecaWebpResultListDesc()),
+        fieldAccess(\DodecaSmallCellServicesFixture.jxlEncodeInput, dodecaJxlEncodeInputDesc()),
+        fieldAccess(\DodecaSmallCellServicesFixture.jxlResults, dodecaJxlResultListDesc()),
+        fieldAccess(\DodecaSmallCellServicesFixture.selectResult, dodecaSelectResultDesc()),
+        fieldAccess(\DodecaSmallCellServicesFixture.confirmResult, dodecaConfirmResultDesc()),
+        fieldAccess(\DodecaSmallCellServicesFixture.recordConfig, dodecaRecordConfigDesc()),
+        fieldAccess(\DodecaSmallCellServicesFixture.termResult, dodecaTermResultDesc()),
+        fieldAccess(\DodecaSmallCellServicesFixture.startDevServerResult, dodecaStartDevServerResultDesc()),
+        fieldAccess(\DodecaSmallCellServicesFixture.runBuildResult, dodecaRunBuildResultDesc()),
+        fieldAccess(\DodecaSmallCellServicesFixture.linkCheckInput, dodecaLinkCheckInputDesc()),
+        fieldAccess(\DodecaSmallCellServicesFixture.linkCheckResult, dodecaLinkCheckResultDesc()),
+        fieldAccess(\DodecaSmallCellServicesFixture.buildProgress, dodecaBuildProgressDesc()),
+        fieldAccess(\DodecaSmallCellServicesFixture.logEvent, dodecaLogEventDesc()),
+        fieldAccess(\DodecaSmallCellServicesFixture.serverStatus, dodecaServerStatusDesc()),
+        fieldAccess(\DodecaSmallCellServicesFixture.serverCommand, dodecaServerCommandDesc()),
+        fieldAccess(\DodecaSmallCellServicesFixture.commandResult, dodecaCommandResultDesc()),
     ])
     return (root, Registry(dodecaSchemas()))
 }
@@ -4899,6 +6556,129 @@ private func sampleDodecaAssetProcessingFixture() -> DodecaAssetProcessingFixtur
     )
 }
 
+private func sampleDodecaTaskProgress(
+    _ name: String,
+    total: UInt32,
+    completed: UInt32,
+    status: DodecaTaskStatus
+) -> DodecaTaskProgress {
+    DodecaTaskProgress(
+        name: name,
+        total: total,
+        completed: completed,
+        status: status,
+        message: status == .error ? "\(name) failed" : nil
+    )
+}
+
+private func sampleDodecaSmallCellServicesFixture() -> DodecaSmallCellServicesFixture {
+    let jsPathMap = [
+        "/assets/app.js": "/assets/app.1234.js",
+        "/assets/theme.css": "/assets/theme.abcd.css",
+    ]
+    let linkResults: [String: DodecaLinkStatus] = [
+        "https://example.com/ok": .ok,
+        "https://example.com/missing": .httpError(DodecaHttpErrorPayload(
+            code: 404,
+            diagnostics: DodecaLinkDiagnostics(
+                requestHeaders: [DodecaStringString(key: "accept", value: "text/html")],
+                responseHeaders: [DodecaStringString(key: "content-type", value: "text/html")],
+                responseBody: "<h1>not found</h1>"
+            )
+        )),
+        "https://slow.example.com": .skipped,
+    ]
+
+    return DodecaSmallCellServicesFixture(
+        readyMsg: DodecaReadyMsg(
+            peerId: 42,
+            cellName: "ddc-cell-fonts",
+            pid: 12_345,
+            version: "1.0.0-dev",
+            features: ["woff2", "subset"]
+        ),
+        readyAck: DodecaReadyAck(ok: true, hostTimeUnixMs: 1_778_000_000_000),
+        minifyResult: .success(DodecaContentPayload(content: "<main><h1>Hi</h1></main>")),
+        jsInput: DodecaJsRewriteInput(
+            js: "import '/assets/theme.css'; console.log('/assets/app.js')",
+            pathMap: jsPathMap
+        ),
+        jsResult: .ok("import '/assets/theme.abcd.css'; console.log('/assets/app.1234.js')"),
+        htmlDiffInput: DodecaHtmlDiffInput(
+            oldHtml: "<main><h1>Old</h1></main>",
+            newHtml: "<main><h1>New</h1><p>body</p></main>"
+        ),
+        htmlDiffResult: .ok(DodecaHtmlDiffOutcome(patchesBlob: [0x91, 0xa4, 0x70, 0x61, 0x74, 0x68])),
+        subsetFontInput: DodecaSubsetFontInput(
+            data: [0x77, 0x4f, 0x46, 0x32],
+            chars: ["A", "\u{00e9}", "\u{1f41d}"]
+        ),
+        fontResults: [
+            .decompressSuccess(DodecaDataPayload(data: [0x00, 0x01, 0x00, 0x00])),
+            .subsetSuccess(DodecaDataPayload(data: [0xde, 0xad, 0xbe, 0xef])),
+            .compressSuccess(DodecaDataPayload(data: [0x77, 0x4f, 0x46, 0x32, 0x01])),
+        ],
+        webpEncodeInput: DodecaWebpEncodeInput(
+            pixels: [0, 32, 64, 255, 255, 128, 0, 255],
+            width: 2,
+            height: 1,
+            quality: 82
+        ),
+        webpResults: [
+            .decodeSuccess(DodecaDecodedImage(pixels: [0, 32, 64, 255], width: 1, height: 1, channels: 4)),
+            .encodeSuccess(DodecaDataPayload(data: [0x52, 0x49, 0x46, 0x46])),
+        ],
+        jxlEncodeInput: DodecaJxlEncodeInput(
+            pixels: [0, 0, 0, 255, 255, 255, 255, 255],
+            width: 2,
+            height: 1,
+            quality: 90
+        ),
+        jxlResults: [
+            .decodeSuccess(DodecaDecodedImage(pixels: [255, 0, 255, 255], width: 1, height: 1, channels: 4)),
+            .error(DodecaMessagePayload(message: "unsupported color profile")),
+        ],
+        selectResult: .selected(DodecaIndexPayload(index: 2)),
+        confirmResult: .yes,
+        recordConfig: DodecaRecordConfig(shell: "/bin/zsh"),
+        termResult: .success(DodecaHtmlPayload(html: "<t-b>cargo nextest</t-b>")),
+        startDevServerResult: .success(DodecaPortPayload(port: 5173)),
+        runBuildResult: .error(DodecaMessagePayload(message: "vite config missing")),
+        linkCheckInput: DodecaLinkCheckInput(
+            urls: ["https://example.com/ok", "https://example.com/missing"],
+            delayMs: 250,
+            timeoutSecs: 15
+        ),
+        linkCheckResult: .success(DodecaLinkCheckSuccessPayload(output: DodecaLinkCheckOutput(results: linkResults))),
+        buildProgress: DodecaBuildProgress(
+            parse: sampleDodecaTaskProgress("parse", total: 12, completed: 12, status: .done),
+            render: sampleDodecaTaskProgress("render", total: 48, completed: 40, status: .running),
+            sass: sampleDodecaTaskProgress("sass", total: 3, completed: 3, status: .done),
+            links: sampleDodecaTaskProgress("links", total: 10, completed: 7, status: .running),
+            search: sampleDodecaTaskProgress("search", total: 1, completed: 0, status: .pending)
+        ),
+        logEvent: DodecaLogEvent(
+            level: .warn,
+            kind: .http(DodecaHttpPayload(status: 404)),
+            message: "dead link",
+            fields: [
+                DodecaStringString(key: "route", value: "/guide/"),
+                DodecaStringString(key: "href", value: "/missing/"),
+            ]
+        ),
+        serverStatus: DodecaServerStatus(
+            urls: ["http://127.0.0.1:5173", "http://192.168.1.42:5173"],
+            isRunning: true,
+            bindMode: .lan,
+            picanteCacheSize: 4_096,
+            casCacheSize: 8_192,
+            codeExecCacheSize: 1_024
+        ),
+        serverCommand: .setLogFilter(DodecaFilterPayload(filter: "dodeca=debug,cell=trace")),
+        commandResult: .ok
+    )
+}
+
 private func sampleDodecaHtmlProcessInput() -> DodecaHtmlProcessInput {
     DodecaHtmlProcessInput(
         html: "<main><img src=\"/hero.png\"></main>",
@@ -5352,6 +7132,28 @@ func swiftDodecaAssetProcessingFixtureRoundTripsAcrossEngines() throws {
         registry: setup.registry
     ).scoped(method: "dodeca.asset.process", phase: "fixture")
     #expect(report.isEmpty, "Dodeca CSS/SASS/SVGO asset-processing roots should stay native-clean in the Swift JIT")
+}
+
+// r[verify descriptors.fact-driven]
+// r[verify type-system.variant-payloads]
+// r[verify typed.no-dynamic-bounce]
+// r[verify exec.jit-optional]
+@Test
+func swiftDodecaSmallCellServicesFixtureRoundTripsAcrossEngines() throws {
+    let setup = dodecaSmallCellServicesFixtureDescriptor()
+
+    try assertTypedEquivalence(
+        sampleDodecaSmallCellServicesFixture(),
+        descriptor: setup.root,
+        registry: setup.registry,
+        "dodeca small-cell service roots"
+    )
+
+    let report = try nativeFallbackReport(
+        descriptor: setup.root,
+        registry: setup.registry
+    ).scoped(method: "dodeca.small_cells", phase: "fixture")
+    #expect(report.isEmpty, "Dodeca small-cell service roots should stay native-clean in the Swift JIT")
 }
 
 // r[verify compat.type-match]

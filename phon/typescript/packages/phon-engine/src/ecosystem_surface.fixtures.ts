@@ -68,6 +68,50 @@ export const ID = {
   dodecaSassResult: id(339),
   dodecaSvgoResult: id(340),
   dodecaAssetProcessingFixture: id(341),
+  dodecaReadyMsg: id(342),
+  dodecaReadyAck: id(343),
+  dodecaMinifyResult: id(344),
+  dodecaJsRewriteInput: id(345),
+  dodecaStringResult: id(346),
+  dodecaHtmlDiffInput: id(347),
+  dodecaHtmlDiffOutcome: id(348),
+  dodecaHtmlDiffError: id(349),
+  dodecaHtmlDiffResult: id(350),
+  listChar: id(351),
+  dodecaSubsetFontInput: id(352),
+  dodecaFontResult: id(353),
+  listDodecaFontResult: id(354),
+  dodecaWebpEncodeInput: id(355),
+  dodecaWebpResult: id(356),
+  listDodecaWebpResult: id(357),
+  dodecaJxlEncodeInput: id(358),
+  dodecaJxlResult: id(359),
+  listDodecaJxlResult: id(360),
+  dodecaSelectResult: id(361),
+  dodecaConfirmResult: id(362),
+  dodecaRecordConfig: id(363),
+  dodecaTermResult: id(364),
+  dodecaStartDevServerResult: id(365),
+  dodecaRunBuildResult: id(366),
+  tupleStringString: id(367),
+  listTupleStringString: id(368),
+  dodecaLinkDiagnostics: id(369),
+  dodecaLinkStatus: id(370),
+  mapStringDodecaLinkStatus: id(371),
+  dodecaLinkCheckInput: id(372),
+  dodecaLinkCheckOutput: id(373),
+  dodecaLinkCheckResult: id(374),
+  dodecaTaskStatus: id(375),
+  dodecaTaskProgress: id(376),
+  dodecaBuildProgress: id(377),
+  dodecaLogLevel: id(378),
+  dodecaEventKind: id(379),
+  dodecaLogEvent: id(380),
+  dodecaBindMode: id(381),
+  dodecaServerStatus: id(382),
+  dodecaServerCommand: id(383),
+  dodecaCommandResult: id(384),
+  dodecaSmallCellServicesFixture: id(385),
   sqlValue: id(29),
   rowField: id(30),
   listRowField: id(31),
@@ -639,6 +683,330 @@ const RAW_SCHEMAS: Schema[] = [
       field("sass_result", ref(ID.dodecaSassResult)),
       field("svg_source", prim("string")),
       field("svgo_result", ref(ID.dodecaSvgoResult)),
+    ],
+  }),
+  schema(ID.dodecaReadyMsg, {
+    kind: "struct",
+    name: "DodecaReadyMsg",
+    fields: [
+      field("peer_id", prim("u16")),
+      field("cell_name", prim("string")),
+      field("pid", ref(ID.optionU32)),
+      field("version", ref(ID.optionString)),
+      field("features", ref(ID.listString)),
+    ],
+  }),
+  schema(ID.dodecaReadyAck, {
+    kind: "struct",
+    name: "DodecaReadyAck",
+    fields: [field("ok", prim("bool")), field("host_time_unix_ms", ref(ID.optionU64))],
+  }),
+  schema(ID.dodecaMinifyResult, {
+    kind: "enum",
+    name: "DodecaMinifyResult",
+    variants: [
+      variant("Success", 0, structPayload([field("content", prim("string"))])),
+      variant("Error", 1, structPayload([field("message", prim("string"))])),
+    ],
+  }),
+  schema(ID.dodecaJsRewriteInput, {
+    kind: "struct",
+    name: "DodecaJsRewriteInput",
+    fields: [field("js", prim("string")), field("path_map", ref(ID.mapStringString))],
+  }),
+  schema(ID.dodecaStringResult, {
+    kind: "enum",
+    name: "DodecaStringResult",
+    variants: [variant("Ok", 0, newtype(prim("string"))), variant("Err", 1, newtype(prim("string")))],
+  }),
+  schema(ID.dodecaHtmlDiffInput, {
+    kind: "struct",
+    name: "DodecaHtmlDiffInput",
+    fields: [field("old_html", prim("string")), field("new_html", prim("string"))],
+  }),
+  schema(ID.dodecaHtmlDiffOutcome, {
+    kind: "struct",
+    name: "DodecaHtmlDiffOutcome",
+    fields: [field("patches_blob", prim("bytes"))],
+  }),
+  schema(ID.dodecaHtmlDiffError, {
+    kind: "enum",
+    name: "DodecaHtmlDiffError",
+    variants: [variant("Generic", 0, newtype(prim("string")))],
+  }),
+  schema(ID.dodecaHtmlDiffResult, {
+    kind: "enum",
+    name: "DodecaHtmlDiffResult",
+    variants: [
+      variant("Ok", 0, newtype(ref(ID.dodecaHtmlDiffOutcome))),
+      variant("Err", 1, newtype(ref(ID.dodecaHtmlDiffError))),
+    ],
+  }),
+  schema(ID.listChar, { kind: "list", element: prim("char") }),
+  schema(ID.dodecaSubsetFontInput, {
+    kind: "struct",
+    name: "DodecaSubsetFontInput",
+    fields: [field("data", prim("bytes")), field("chars", ref(ID.listChar))],
+  }),
+  schema(ID.dodecaFontResult, {
+    kind: "enum",
+    name: "DodecaFontResult",
+    variants: [
+      variant("DecompressSuccess", 0, structPayload([field("data", prim("bytes"))])),
+      variant("SubsetSuccess", 1, structPayload([field("data", prim("bytes"))])),
+      variant("CompressSuccess", 2, structPayload([field("data", prim("bytes"))])),
+      variant("Error", 3, structPayload([field("message", prim("string"))])),
+    ],
+  }),
+  schema(ID.listDodecaFontResult, { kind: "list", element: ref(ID.dodecaFontResult) }),
+  schema(ID.dodecaWebpEncodeInput, {
+    kind: "struct",
+    name: "DodecaWebpEncodeInput",
+    fields: [
+      field("pixels", prim("bytes")),
+      field("width", prim("u32")),
+      field("height", prim("u32")),
+      field("quality", prim("u8")),
+    ],
+  }),
+  schema(ID.dodecaWebpResult, {
+    kind: "enum",
+    name: "DodecaWebpResult",
+    variants: [
+      variant("DecodeSuccess", 0, structPayload([
+        field("pixels", prim("bytes")),
+        field("width", prim("u32")),
+        field("height", prim("u32")),
+        field("channels", prim("u8")),
+      ])),
+      variant("EncodeSuccess", 1, structPayload([field("data", prim("bytes"))])),
+      variant("Error", 2, structPayload([field("message", prim("string"))])),
+    ],
+  }),
+  schema(ID.listDodecaWebpResult, { kind: "list", element: ref(ID.dodecaWebpResult) }),
+  schema(ID.dodecaJxlEncodeInput, {
+    kind: "struct",
+    name: "DodecaJxlEncodeInput",
+    fields: [
+      field("pixels", prim("bytes")),
+      field("width", prim("u32")),
+      field("height", prim("u32")),
+      field("quality", prim("u8")),
+    ],
+  }),
+  schema(ID.dodecaJxlResult, {
+    kind: "enum",
+    name: "DodecaJxlResult",
+    variants: [
+      variant("DecodeSuccess", 0, structPayload([
+        field("pixels", prim("bytes")),
+        field("width", prim("u32")),
+        field("height", prim("u32")),
+        field("channels", prim("u8")),
+      ])),
+      variant("EncodeSuccess", 1, structPayload([field("data", prim("bytes"))])),
+      variant("Error", 2, structPayload([field("message", prim("string"))])),
+    ],
+  }),
+  schema(ID.listDodecaJxlResult, { kind: "list", element: ref(ID.dodecaJxlResult) }),
+  schema(ID.dodecaSelectResult, {
+    kind: "enum",
+    name: "DodecaSelectResult",
+    variants: [
+      variant("Selected", 0, structPayload([field("index", prim("u64"))])),
+      variant("Cancelled", 1, unit()),
+    ],
+  }),
+  schema(ID.dodecaConfirmResult, {
+    kind: "enum",
+    name: "DodecaConfirmResult",
+    variants: [variant("Yes", 0, unit()), variant("No", 1, unit()), variant("Cancelled", 2, unit())],
+  }),
+  schema(ID.dodecaRecordConfig, {
+    kind: "struct",
+    name: "DodecaRecordConfig",
+    fields: [field("shell", ref(ID.optionString))],
+  }),
+  schema(ID.dodecaTermResult, {
+    kind: "enum",
+    name: "DodecaTermResult",
+    variants: [
+      variant("Success", 0, structPayload([field("html", prim("string"))])),
+      variant("Error", 1, structPayload([field("message", prim("string"))])),
+    ],
+  }),
+  schema(ID.dodecaStartDevServerResult, {
+    kind: "enum",
+    name: "DodecaStartDevServerResult",
+    variants: [
+      variant("Success", 0, structPayload([field("port", prim("u16"))])),
+      variant("Error", 1, structPayload([field("message", prim("string"))])),
+    ],
+  }),
+  schema(ID.dodecaRunBuildResult, {
+    kind: "enum",
+    name: "DodecaRunBuildResult",
+    variants: [variant("Success", 0, unit()), variant("Error", 1, structPayload([field("message", prim("string"))]))],
+  }),
+  schema(ID.tupleStringString, { kind: "tuple", elements: [prim("string"), prim("string")] }),
+  schema(ID.listTupleStringString, { kind: "list", element: ref(ID.tupleStringString) }),
+  schema(ID.dodecaLinkDiagnostics, {
+    kind: "struct",
+    name: "DodecaLinkDiagnostics",
+    fields: [
+      field("request_headers", ref(ID.listTupleStringString)),
+      field("response_headers", ref(ID.listTupleStringString)),
+      field("response_body", prim("string")),
+    ],
+  }),
+  schema(ID.dodecaLinkStatus, {
+    kind: "enum",
+    name: "DodecaLinkStatus",
+    variants: [
+      variant("Ok", 0, unit()),
+      variant("HttpError", 1, structPayload([field("code", prim("u16")), field("diagnostics", ref(ID.dodecaLinkDiagnostics))])),
+      variant("Failed", 2, structPayload([field("message", prim("string"))])),
+      variant("Skipped", 3, unit()),
+    ],
+  }),
+  schema(ID.mapStringDodecaLinkStatus, { kind: "map", key: prim("string"), value: ref(ID.dodecaLinkStatus) }),
+  schema(ID.dodecaLinkCheckInput, {
+    kind: "struct",
+    name: "DodecaLinkCheckInput",
+    fields: [field("urls", ref(ID.listString)), field("delay_ms", prim("u64")), field("timeout_secs", prim("u64"))],
+  }),
+  schema(ID.dodecaLinkCheckOutput, {
+    kind: "struct",
+    name: "DodecaLinkCheckOutput",
+    fields: [field("results", ref(ID.mapStringDodecaLinkStatus))],
+  }),
+  schema(ID.dodecaLinkCheckResult, {
+    kind: "enum",
+    name: "DodecaLinkCheckResult",
+    variants: [
+      variant("Success", 0, structPayload([field("output", ref(ID.dodecaLinkCheckOutput))])),
+      variant("Error", 1, structPayload([field("message", prim("string"))])),
+    ],
+  }),
+  schema(ID.dodecaTaskStatus, {
+    kind: "enum",
+    name: "DodecaTaskStatus",
+    variants: [variant("Pending", 0, unit()), variant("Running", 1, unit()), variant("Done", 2, unit()), variant("Error", 3, unit())],
+  }),
+  schema(ID.dodecaTaskProgress, {
+    kind: "struct",
+    name: "DodecaTaskProgress",
+    fields: [
+      field("name", prim("string")),
+      field("total", prim("u32")),
+      field("completed", prim("u32")),
+      field("status", ref(ID.dodecaTaskStatus)),
+      field("message", ref(ID.optionString)),
+    ],
+  }),
+  schema(ID.dodecaBuildProgress, {
+    kind: "struct",
+    name: "DodecaBuildProgress",
+    fields: [
+      field("parse", ref(ID.dodecaTaskProgress)),
+      field("render", ref(ID.dodecaTaskProgress)),
+      field("sass", ref(ID.dodecaTaskProgress)),
+      field("links", ref(ID.dodecaTaskProgress)),
+      field("search", ref(ID.dodecaTaskProgress)),
+    ],
+  }),
+  schema(ID.dodecaLogLevel, {
+    kind: "enum",
+    name: "DodecaLogLevel",
+    variants: [variant("Trace", 0, unit()), variant("Debug", 1, unit()), variant("Info", 2, unit()), variant("Warn", 3, unit()), variant("Error", 4, unit())],
+  }),
+  schema(ID.dodecaEventKind, {
+    kind: "enum",
+    name: "DodecaEventKind",
+    variants: [
+      variant("Http", 0, structPayload([field("status", prim("u16"))])),
+      variant("FileChange", 1, unit()),
+      variant("Reload", 2, unit()),
+      variant("Patch", 3, unit()),
+      variant("Search", 4, unit()),
+      variant("Server", 5, unit()),
+      variant("Build", 6, unit()),
+      variant("Generic", 7, unit()),
+    ],
+  }),
+  schema(ID.dodecaLogEvent, {
+    kind: "struct",
+    name: "DodecaLogEvent",
+    fields: [
+      field("level", ref(ID.dodecaLogLevel)),
+      field("kind", ref(ID.dodecaEventKind)),
+      field("message", prim("string")),
+      field("fields", ref(ID.listTupleStringString)),
+    ],
+  }),
+  schema(ID.dodecaBindMode, {
+    kind: "enum",
+    name: "DodecaBindMode",
+    variants: [variant("Local", 0, unit()), variant("Lan", 1, unit())],
+  }),
+  schema(ID.dodecaServerStatus, {
+    kind: "struct",
+    name: "DodecaServerStatus",
+    fields: [
+      field("urls", ref(ID.listString)),
+      field("is_running", prim("bool")),
+      field("bind_mode", ref(ID.dodecaBindMode)),
+      field("picante_cache_size", prim("u64")),
+      field("cas_cache_size", prim("u64")),
+      field("code_exec_cache_size", prim("u64")),
+    ],
+  }),
+  schema(ID.dodecaServerCommand, {
+    kind: "enum",
+    name: "DodecaServerCommand",
+    variants: [
+      variant("GoPublic", 0, unit()),
+      variant("GoLocal", 1, unit()),
+      variant("TogglePicanteDebug", 2, unit()),
+      variant("CycleLogLevel", 3, unit()),
+      variant("SetLogFilter", 4, structPayload([field("filter", prim("string"))])),
+    ],
+  }),
+  schema(ID.dodecaCommandResult, {
+    kind: "enum",
+    name: "DodecaCommandResult",
+    variants: [variant("Ok", 0, unit()), variant("Error", 1, structPayload([field("message", prim("string"))]))],
+  }),
+  schema(ID.dodecaSmallCellServicesFixture, {
+    kind: "struct",
+    name: "DodecaSmallCellServicesFixture",
+    fields: [
+      field("ready_msg", ref(ID.dodecaReadyMsg)),
+      field("ready_ack", ref(ID.dodecaReadyAck)),
+      field("minify_result", ref(ID.dodecaMinifyResult)),
+      field("js_input", ref(ID.dodecaJsRewriteInput)),
+      field("js_result", ref(ID.dodecaStringResult)),
+      field("html_diff_input", ref(ID.dodecaHtmlDiffInput)),
+      field("html_diff_result", ref(ID.dodecaHtmlDiffResult)),
+      field("subset_font_input", ref(ID.dodecaSubsetFontInput)),
+      field("font_results", ref(ID.listDodecaFontResult)),
+      field("webp_encode_input", ref(ID.dodecaWebpEncodeInput)),
+      field("webp_results", ref(ID.listDodecaWebpResult)),
+      field("jxl_encode_input", ref(ID.dodecaJxlEncodeInput)),
+      field("jxl_results", ref(ID.listDodecaJxlResult)),
+      field("select_result", ref(ID.dodecaSelectResult)),
+      field("confirm_result", ref(ID.dodecaConfirmResult)),
+      field("record_config", ref(ID.dodecaRecordConfig)),
+      field("term_result", ref(ID.dodecaTermResult)),
+      field("start_dev_server_result", ref(ID.dodecaStartDevServerResult)),
+      field("run_build_result", ref(ID.dodecaRunBuildResult)),
+      field("link_check_input", ref(ID.dodecaLinkCheckInput)),
+      field("link_check_result", ref(ID.dodecaLinkCheckResult)),
+      field("build_progress", ref(ID.dodecaBuildProgress)),
+      field("log_event", ref(ID.dodecaLogEvent)),
+      field("server_status", ref(ID.dodecaServerStatus)),
+      field("server_command", ref(ID.dodecaServerCommand)),
+      field("command_result", ref(ID.dodecaCommandResult)),
     ],
   }),
   schema(ID.sqlValue, {
@@ -2633,6 +3001,125 @@ function sampleDodecaAssetProcessingFixture(): Typed {
   };
 }
 
+function dodecaTaskProgress(name: string, total: number, completed: number, status: string): Typed {
+  return {
+    name,
+    total,
+    completed,
+    status: { tag: status },
+    message: status === "Error" ? `${name} failed` : null,
+  };
+}
+
+function sampleDodecaSmallCellServicesFixture(): Typed {
+  const jsPathMap = new Map<string, string>([
+    ["/assets/app.js", "/assets/app.1234.js"],
+    ["/assets/theme.css", "/assets/theme.abcd.css"],
+  ]);
+  const linkResults = new Map<string, Typed>([
+    ["https://example.com/ok", { tag: "Ok" }],
+    ["https://example.com/missing", {
+      tag: "HttpError",
+      code: 404,
+      diagnostics: {
+        request_headers: [["accept", "text/html"]],
+        response_headers: [["content-type", "text/html"]],
+        response_body: "<h1>not found</h1>",
+      },
+    }],
+    ["https://slow.example.com", { tag: "Skipped" }],
+  ]);
+
+  return {
+    ready_msg: {
+      peer_id: 42,
+      cell_name: "ddc-cell-fonts",
+      pid: 12_345,
+      version: "1.0.0-dev",
+      features: ["woff2", "subset"],
+    },
+    ready_ack: { ok: true, host_time_unix_ms: 1_778_000_000_000n },
+    minify_result: { tag: "Success", content: "<main><h1>Hi</h1></main>" },
+    js_input: {
+      js: "import '/assets/theme.css'; console.log('/assets/app.js')",
+      path_map: jsPathMap,
+    },
+    js_result: { tag: "Ok", value: "import '/assets/theme.abcd.css'; console.log('/assets/app.1234.js')" },
+    html_diff_input: {
+      old_html: "<main><h1>Old</h1></main>",
+      new_html: "<main><h1>New</h1><p>body</p></main>",
+    },
+    html_diff_result: {
+      tag: "Ok",
+      value: { patches_blob: new Uint8Array([0x91, 0xa4, 0x70, 0x61, 0x74, 0x68]) },
+    },
+    subset_font_input: {
+      data: new Uint8Array([0x77, 0x4f, 0x46, 0x32]),
+      chars: ["A", "\u00e9", "\u{1f41d}"],
+    },
+    font_results: [
+      { tag: "DecompressSuccess", data: new Uint8Array([0x00, 0x01, 0x00, 0x00]) },
+      { tag: "SubsetSuccess", data: new Uint8Array([0xde, 0xad, 0xbe, 0xef]) },
+      { tag: "CompressSuccess", data: new Uint8Array([0x77, 0x4f, 0x46, 0x32, 0x01]) },
+    ],
+    webp_encode_input: {
+      pixels: new Uint8Array([0, 32, 64, 255, 255, 128, 0, 255]),
+      width: 2,
+      height: 1,
+      quality: 82,
+    },
+    webp_results: [
+      { tag: "DecodeSuccess", pixels: new Uint8Array([0, 32, 64, 255]), width: 1, height: 1, channels: 4 },
+      { tag: "EncodeSuccess", data: new Uint8Array([0x52, 0x49, 0x46, 0x46]) },
+    ],
+    jxl_encode_input: {
+      pixels: new Uint8Array([0, 0, 0, 255, 255, 255, 255, 255]),
+      width: 2,
+      height: 1,
+      quality: 90,
+    },
+    jxl_results: [
+      { tag: "DecodeSuccess", pixels: new Uint8Array([255, 0, 255, 255]), width: 1, height: 1, channels: 4 },
+      { tag: "Error", message: "unsupported color profile" },
+    ],
+    select_result: { tag: "Selected", index: 2n },
+    confirm_result: { tag: "Yes" },
+    record_config: { shell: "/bin/zsh" },
+    term_result: { tag: "Success", html: "<t-b>cargo nextest</t-b>" },
+    start_dev_server_result: { tag: "Success", port: 5173 },
+    run_build_result: { tag: "Error", message: "vite config missing" },
+    link_check_input: {
+      urls: ["https://example.com/ok", "https://example.com/missing"],
+      delay_ms: 250n,
+      timeout_secs: 15n,
+    },
+    link_check_result: { tag: "Success", output: { results: linkResults } },
+    build_progress: {
+      parse: dodecaTaskProgress("parse", 12, 12, "Done"),
+      render: dodecaTaskProgress("render", 48, 40, "Running"),
+      sass: dodecaTaskProgress("sass", 3, 3, "Done"),
+      links: dodecaTaskProgress("links", 10, 7, "Running"),
+      search: dodecaTaskProgress("search", 1, 0, "Pending"),
+    },
+    log_event: {
+      level: { tag: "Warn" },
+      kind: { tag: "Http", status: 404 },
+      message: "dead link",
+      fields: [["route", "/guide/"], ["href", "/missing/"]],
+    },
+    server_status: {
+      urls: ["http://127.0.0.1:5173", "http://192.168.1.42:5173"],
+      is_running: true,
+      bind_mode: { tag: "Lan" },
+      picante_cache_size: 4_096n,
+      cas_cache_size: 8_192n,
+      code_exec_cache_size: 1_024n,
+    },
+    server_command: { tag: "SetLogFilter", filter: "dodeca=debug,cell=trace" },
+    command_result: { tag: "Ok" },
+  };
+}
+
 function styxSpan(start: number, end: number): Typed {
   return { start, end };
 }
@@ -3767,6 +4254,11 @@ export const fixtures: EcosystemFixture[] = [
     name: "Dodeca CSS/SASS/SVGO asset processors",
     root: root(ID.dodecaAssetProcessingFixture),
     value: sampleDodecaAssetProcessingFixture(),
+  },
+  {
+    name: "Dodeca small-cell service roots",
+    root: root(ID.dodecaSmallCellServicesFixture),
+    value: sampleDodecaSmallCellServicesFixture(),
   },
   {
     name: "Dibs SQL value rows",
