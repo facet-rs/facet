@@ -403,13 +403,12 @@ Verified in the Vox checkout during the bridge audit:
 - Vox Tracey validation is clean across Rust, Swift, and TypeScript. Current
   coverage is Rust 174/174 implemented and 174/174 verified, Swift 162/174
   implemented and 159/174 verified, and TypeScript 174/174 implemented and
-  172/174 verified. That is not a global Vox Tracey completion claim: the
-  remaining TypeScript unverified rules are the broad `rpc` and
-  `rpc.one-service-per-connection` umbrella surfaces, while the remaining
-  Swift holes are concentrated in uncovered non-Swift transports, debug
-  observability rules, and five untested implemented umbrella or lifecycle
-  rules; the non-Swift transport holes are not Vox 1.0 blockers. Rust now has
-  verification references for every current Vox rule. The legacy
+  174/174 verified. That is not a global Vox Tracey completion claim: the
+  remaining Swift holes are concentrated in uncovered non-Swift transports,
+  debug observability rules, and five untested implemented umbrella or
+  lifecycle rules; the non-Swift transport holes are not Vox 1.0 blockers. Rust
+  and TypeScript now have verification references for every current Vox rule.
+  The legacy
   `rpc.response.one-per-request` rule has been removed from the live spec.
 - The roadmap-relevant Vox rules for subject teardown, channel shape, channel
   allocation/direction/lifecycle, channel payload indexes, connection-close
@@ -688,7 +687,14 @@ Verified in the Vox checkout during the bridge audit:
   and generated dispatchers expose one service descriptor, route by method ID,
   invoke the handler, and reply through `VoxCall`. Tracey now reports no
   remaining untested TypeScript `rpc.caller`, `rpc.handler`,
-  `rpc.service.*`, or `rpc.session-setup` rules.
+  `rpc.service.*`, `rpc.session-setup`, or
+  `rpc.one-service-per-connection` rules.
+- TypeScript broad RPC/channel-flow coverage is now Tracey-backed in `vox-core`
+  `src/driver.channel_schema.test.ts`:
+  `resolves callee channel handles from decoded wire indexes` decodes a
+  request, resolves callee channel handles from the request channel indexes,
+  routes channel data, sends a channel item, and replies. Tracey now reports no
+  remaining untested TypeScript `rpc` rule.
 - Swift inbound virtual connection acceptance now has focused runtime coverage
   in `swift test --package-path swift/vox-runtime --filter
   ConnectionFailureTests`: `inboundOpenConnectionAcceptsAndDispatchesOnVirtualConnection`
