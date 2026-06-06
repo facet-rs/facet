@@ -310,6 +310,50 @@ fn build_cases(b: &mut Batch) -> Vec<PlannedCase> {
         push("list_unit", root.clone(), root, value);
     }
 
+    // 6c. list_element_struct_drift — list elements are DTO structs whose
+    // fields evolve. Each element applies the same writer-only skip and
+    // reader-only default rules as a root struct.
+    {
+        let writer_element = b.add(SchemaKind::Struct {
+            name: "ListItem".to_string(),
+            fields: vec![
+                field("id", prim(Primitive::U32), true),
+                field("transient", prim(Primitive::String), true),
+                field("score", prim(Primitive::U32), true),
+            ],
+        });
+        let option_u32 = b.add(SchemaKind::Option {
+            element: prim(Primitive::U32),
+        });
+        let reader_element = b.add(SchemaKind::Struct {
+            name: "ListItem".to_string(),
+            fields: vec![
+                field("id", prim(Primitive::U32), true),
+                field("score", prim(Primitive::U32), true),
+                field("extra", option_u32, false),
+            ],
+        });
+        let writer = b.add(SchemaKind::List {
+            element: writer_element,
+        });
+        let reader = b.add(SchemaKind::List {
+            element: reader_element,
+        });
+        let value = arr(vec![
+            obj(&[
+                ("id", Value::from(1u32)),
+                ("transient", Value::from(VString::new("drop-a"))),
+                ("score", Value::from(10u32)),
+            ]),
+            obj(&[
+                ("id", Value::from(2u32)),
+                ("transient", Value::from(VString::new("drop-b"))),
+                ("score", Value::from(20u32)),
+            ]),
+        ]);
+        push("list_element_struct_drift", writer, reader, value);
+    }
+
     // 7. set_u32 — a few unique elements.
     {
         let root = b.add(SchemaKind::Set {

@@ -289,10 +289,11 @@ Already in place on the Phon side:
   (`pnpm --filter @bearcove/phon-engine exec vitest run src/ecosystem_surface.test.ts`,
   21/21). `pnpm check` from `~/phon` also passes, and Tracey
   validation reports zero errors across Rust, Swift, and TypeScript.
-- The cross-language compat conformance corpus now includes 28 generated
-  vectors, including explicit `channel_item_schema_compat` and
-  `external_metadata_schema_compat` cases. The same committed
-  `conformance/compat/vectors.json` replays through Rust, Swift, and TypeScript:
+- The cross-language compat conformance corpus now includes 33 generated
+  vectors, including list/set/map/tuple element struct drift plus explicit
+  `channel_item_schema_compat` and `external_metadata_schema_compat` cases.
+  The same committed `conformance/compat/vectors.json` replays through Rust,
+  Swift, and TypeScript:
   `cargo nextest run -p phon-conformance -E 'test(corpus_is_golden_and_self_consistent)'`,
   `swift test --filter compatConformanceCorpus`, and
   `pnpm --filter @bearcove/phon-engine exec vitest run src/conformance.test.ts`
@@ -1927,13 +1928,12 @@ updated document.
    values, channel roots, and external roots in the interpreter/oracle path; add
    new hostile vectors only when a new migration-gated fixture family exposes an
    untested failure mode.
-3. Keep the generated 32-case compatibility corpus green across Rust, Swift,
+3. Keep the generated 33-case compatibility corpus green across Rust, Swift,
    and TypeScript. It now includes field changes, enum variant changes, enum
-   struct payload drift, set element struct drift, map value struct drift,
-   tuple element struct drift, nested containers, recursive/dynamic values,
-   channel item schemas, and external metadata schemas; add new versioned
-   vectors only when a migration-gated fixture exposes a new compatibility
-   shape.
+   struct payload drift, list/set/map/tuple element struct drift, nested
+   containers, recursive/dynamic values, channel item schemas, and external
+   metadata schemas; add new versioned vectors only when a migration-gated
+   fixture exposes a new compatibility shape.
 4. Keep same-schema fixtures on the compatibility-plan path.
 
 Phases 4 through 6 are release gates after interpreter correctness, but they
