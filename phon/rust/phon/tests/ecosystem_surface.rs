@@ -249,6 +249,319 @@ struct DodecaAssetProcessingFixture {
 }
 
 #[derive(Debug, Clone, PartialEq, Facet)]
+struct DodecaReadyMsg {
+    peer_id: u16,
+    cell_name: String,
+    pid: Option<u32>,
+    version: Option<String>,
+    features: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Facet)]
+struct DodecaReadyAck {
+    ok: bool,
+    host_time_unix_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Facet)]
+#[repr(u8)]
+enum DodecaMinifyResult {
+    Success { content: String },
+    Error { message: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Facet)]
+struct DodecaJsRewriteInput {
+    js: String,
+    path_map: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Facet)]
+struct DodecaHtmlDiffInput {
+    old_html: String,
+    new_html: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Facet)]
+struct DodecaHtmlDiffOutcome {
+    patches_blob: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Facet)]
+#[repr(u8)]
+enum DodecaHtmlDiffError {
+    Generic(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Facet)]
+struct DodecaSubsetFontInput {
+    data: Vec<u8>,
+    chars: Vec<char>,
+}
+
+#[derive(Debug, Clone, PartialEq, Facet)]
+#[repr(u8)]
+enum DodecaFontResult {
+    DecompressSuccess { data: Vec<u8> },
+    SubsetSuccess { data: Vec<u8> },
+    CompressSuccess { data: Vec<u8> },
+    Error { message: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Facet)]
+struct DodecaWebpEncodeInput {
+    pixels: Vec<u8>,
+    width: u32,
+    height: u32,
+    quality: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Facet)]
+#[repr(u8)]
+enum DodecaWebpResult {
+    DecodeSuccess {
+        pixels: Vec<u8>,
+        width: u32,
+        height: u32,
+        channels: u8,
+    },
+    EncodeSuccess {
+        data: Vec<u8>,
+    },
+    Error {
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Facet)]
+struct DodecaJxlEncodeInput {
+    pixels: Vec<u8>,
+    width: u32,
+    height: u32,
+    quality: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Facet)]
+#[repr(u8)]
+enum DodecaJxlResult {
+    DecodeSuccess {
+        pixels: Vec<u8>,
+        width: u32,
+        height: u32,
+        channels: u8,
+    },
+    EncodeSuccess {
+        data: Vec<u8>,
+    },
+    Error {
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Facet)]
+#[repr(u8)]
+enum DodecaSelectResult {
+    Selected { index: usize },
+    Cancelled,
+}
+
+#[derive(Debug, Clone, PartialEq, Facet)]
+#[repr(u8)]
+enum DodecaConfirmResult {
+    Yes,
+    No,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, PartialEq, Facet)]
+struct DodecaRecordConfig {
+    shell: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Facet)]
+#[repr(u8)]
+enum DodecaTermResult {
+    Success { html: String },
+    Error { message: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Facet)]
+#[repr(u8)]
+enum DodecaStartDevServerResult {
+    Success { port: u16 },
+    Error { message: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Facet)]
+#[repr(u8)]
+enum DodecaRunBuildResult {
+    Success,
+    Error { message: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Facet)]
+struct DodecaLinkDiagnostics {
+    request_headers: Vec<(String, String)>,
+    response_headers: Vec<(String, String)>,
+    response_body: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Facet)]
+#[repr(u8)]
+enum DodecaLinkStatus {
+    Ok,
+    HttpError {
+        code: u16,
+        diagnostics: DodecaLinkDiagnostics,
+    },
+    Failed {
+        message: String,
+    },
+    Skipped,
+}
+
+#[derive(Debug, Clone, PartialEq, Facet)]
+struct DodecaLinkCheckInput {
+    urls: Vec<String>,
+    delay_ms: u64,
+    timeout_secs: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Facet)]
+struct DodecaLinkCheckOutput {
+    results: HashMap<String, DodecaLinkStatus>,
+}
+
+#[derive(Debug, Clone, PartialEq, Facet)]
+#[repr(u8)]
+enum DodecaLinkCheckResult {
+    Success { output: DodecaLinkCheckOutput },
+    Error { message: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Facet)]
+#[repr(u8)]
+enum DodecaTaskStatus {
+    Pending,
+    Running,
+    Done,
+    Error,
+}
+
+#[derive(Debug, Clone, PartialEq, Facet)]
+struct DodecaTaskProgress {
+    name: String,
+    total: u32,
+    completed: u32,
+    status: DodecaTaskStatus,
+    message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Facet)]
+struct DodecaBuildProgress {
+    parse: DodecaTaskProgress,
+    render: DodecaTaskProgress,
+    sass: DodecaTaskProgress,
+    links: DodecaTaskProgress,
+    search: DodecaTaskProgress,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Facet)]
+#[repr(u8)]
+enum DodecaLogLevel {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Facet)]
+#[repr(u8)]
+enum DodecaEventKind {
+    Http { status: u16 },
+    FileChange,
+    Reload,
+    Patch,
+    Search,
+    Server,
+    Build,
+    Generic,
+}
+
+#[derive(Debug, Clone, PartialEq, Facet)]
+struct DodecaLogEvent {
+    level: DodecaLogLevel,
+    kind: DodecaEventKind,
+    message: String,
+    fields: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Facet)]
+#[repr(u8)]
+enum DodecaBindMode {
+    Local,
+    Lan,
+}
+
+#[derive(Debug, Clone, PartialEq, Facet)]
+struct DodecaServerStatus {
+    urls: Vec<String>,
+    is_running: bool,
+    bind_mode: DodecaBindMode,
+    picante_cache_size: u64,
+    cas_cache_size: u64,
+    code_exec_cache_size: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Facet)]
+#[repr(u8)]
+enum DodecaServerCommand {
+    GoPublic,
+    GoLocal,
+    TogglePicanteDebug,
+    CycleLogLevel,
+    SetLogFilter { filter: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Facet)]
+#[repr(u8)]
+enum DodecaCommandResult {
+    Ok,
+    Error { message: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Facet)]
+struct DodecaSmallCellServicesFixture {
+    ready_msg: DodecaReadyMsg,
+    ready_ack: DodecaReadyAck,
+    minify_result: DodecaMinifyResult,
+    js_input: DodecaJsRewriteInput,
+    js_result: Result<String, String>,
+    html_diff_input: DodecaHtmlDiffInput,
+    html_diff_result: Result<DodecaHtmlDiffOutcome, DodecaHtmlDiffError>,
+    subset_font_input: DodecaSubsetFontInput,
+    font_results: Vec<DodecaFontResult>,
+    webp_encode_input: DodecaWebpEncodeInput,
+    webp_results: Vec<DodecaWebpResult>,
+    jxl_encode_input: DodecaJxlEncodeInput,
+    jxl_results: Vec<DodecaJxlResult>,
+    select_result: DodecaSelectResult,
+    confirm_result: DodecaConfirmResult,
+    record_config: DodecaRecordConfig,
+    term_result: DodecaTermResult,
+    start_dev_server_result: DodecaStartDevServerResult,
+    run_build_result: DodecaRunBuildResult,
+    link_check_input: DodecaLinkCheckInput,
+    link_check_result: DodecaLinkCheckResult,
+    build_progress: DodecaBuildProgress,
+    log_event: DodecaLogEvent,
+    server_status: DodecaServerStatus,
+    server_command: DodecaServerCommand,
+    command_result: DodecaCommandResult,
+}
+
+#[derive(Debug, Clone, PartialEq, Facet)]
 #[repr(u8)]
 enum SqlValue {
     Null = 0,
@@ -2904,6 +3217,187 @@ fn sample_dodeca_asset_processing_fixture() -> DodecaAssetProcessingFixture {
     }
 }
 
+fn sample_dodeca_task_progress(
+    name: &str,
+    total: u32,
+    completed: u32,
+    status: DodecaTaskStatus,
+) -> DodecaTaskProgress {
+    DodecaTaskProgress {
+        name: name.to_string(),
+        total,
+        completed,
+        status,
+        message: (status == DodecaTaskStatus::Error).then(|| format!("{name} failed")),
+    }
+}
+
+fn sample_dodeca_small_cell_services_fixture() -> DodecaSmallCellServicesFixture {
+    let mut js_path_map = HashMap::new();
+    js_path_map.insert(
+        "/assets/app.js".to_string(),
+        "/assets/app.1234.js".to_string(),
+    );
+    js_path_map.insert(
+        "/assets/theme.css".to_string(),
+        "/assets/theme.abcd.css".to_string(),
+    );
+
+    let mut link_results = HashMap::new();
+    link_results.insert("https://example.com/ok".to_string(), DodecaLinkStatus::Ok);
+    link_results.insert(
+        "https://example.com/missing".to_string(),
+        DodecaLinkStatus::HttpError {
+            code: 404,
+            diagnostics: DodecaLinkDiagnostics {
+                request_headers: vec![("accept".to_string(), "text/html".to_string())],
+                response_headers: vec![("content-type".to_string(), "text/html".to_string())],
+                response_body: "<h1>not found</h1>".to_string(),
+            },
+        },
+    );
+    link_results.insert(
+        "https://slow.example.com".to_string(),
+        DodecaLinkStatus::Skipped,
+    );
+
+    DodecaSmallCellServicesFixture {
+        ready_msg: DodecaReadyMsg {
+            peer_id: 42,
+            cell_name: "ddc-cell-fonts".to_string(),
+            pid: Some(12_345),
+            version: Some("1.0.0-dev".to_string()),
+            features: vec!["woff2".to_string(), "subset".to_string()],
+        },
+        ready_ack: DodecaReadyAck {
+            ok: true,
+            host_time_unix_ms: Some(1_778_000_000_000),
+        },
+        minify_result: DodecaMinifyResult::Success {
+            content: "<main><h1>Hi</h1></main>".to_string(),
+        },
+        js_input: DodecaJsRewriteInput {
+            js: "import '/assets/theme.css'; console.log('/assets/app.js')".to_string(),
+            path_map: js_path_map,
+        },
+        js_result: Ok(
+            "import '/assets/theme.abcd.css'; console.log('/assets/app.1234.js')".to_string(),
+        ),
+        html_diff_input: DodecaHtmlDiffInput {
+            old_html: "<main><h1>Old</h1></main>".to_string(),
+            new_html: "<main><h1>New</h1><p>body</p></main>".to_string(),
+        },
+        html_diff_result: Ok(DodecaHtmlDiffOutcome {
+            patches_blob: vec![0x91, 0xa4, b'p', b'a', b't', b'h'],
+        }),
+        subset_font_input: DodecaSubsetFontInput {
+            data: vec![0x77, 0x4f, 0x46, 0x32],
+            chars: vec!['A', '\u{00e9}', '\u{1f41d}'],
+        },
+        font_results: vec![
+            DodecaFontResult::DecompressSuccess {
+                data: vec![0x00, 0x01, 0x00, 0x00],
+            },
+            DodecaFontResult::SubsetSuccess {
+                data: vec![0xde, 0xad, 0xbe, 0xef],
+            },
+            DodecaFontResult::CompressSuccess {
+                data: vec![0x77, 0x4f, 0x46, 0x32, 0x01],
+            },
+        ],
+        webp_encode_input: DodecaWebpEncodeInput {
+            pixels: vec![0, 32, 64, 255, 255, 128, 0, 255],
+            width: 2,
+            height: 1,
+            quality: 82,
+        },
+        webp_results: vec![
+            DodecaWebpResult::DecodeSuccess {
+                pixels: vec![0, 32, 64, 255],
+                width: 1,
+                height: 1,
+                channels: 4,
+            },
+            DodecaWebpResult::EncodeSuccess {
+                data: vec![b'R', b'I', b'F', b'F'],
+            },
+        ],
+        jxl_encode_input: DodecaJxlEncodeInput {
+            pixels: vec![0, 0, 0, 255, 255, 255, 255, 255],
+            width: 2,
+            height: 1,
+            quality: 90,
+        },
+        jxl_results: vec![
+            DodecaJxlResult::DecodeSuccess {
+                pixels: vec![255, 0, 255, 255],
+                width: 1,
+                height: 1,
+                channels: 4,
+            },
+            DodecaJxlResult::Error {
+                message: "unsupported color profile".to_string(),
+            },
+        ],
+        select_result: DodecaSelectResult::Selected { index: 2 },
+        confirm_result: DodecaConfirmResult::Yes,
+        record_config: DodecaRecordConfig {
+            shell: Some("/bin/zsh".to_string()),
+        },
+        term_result: DodecaTermResult::Success {
+            html: "<t-b>cargo nextest</t-b>".to_string(),
+        },
+        start_dev_server_result: DodecaStartDevServerResult::Success { port: 5173 },
+        run_build_result: DodecaRunBuildResult::Error {
+            message: "vite config missing".to_string(),
+        },
+        link_check_input: DodecaLinkCheckInput {
+            urls: vec![
+                "https://example.com/ok".to_string(),
+                "https://example.com/missing".to_string(),
+            ],
+            delay_ms: 250,
+            timeout_secs: 15,
+        },
+        link_check_result: DodecaLinkCheckResult::Success {
+            output: DodecaLinkCheckOutput {
+                results: link_results,
+            },
+        },
+        build_progress: DodecaBuildProgress {
+            parse: sample_dodeca_task_progress("parse", 12, 12, DodecaTaskStatus::Done),
+            render: sample_dodeca_task_progress("render", 48, 40, DodecaTaskStatus::Running),
+            sass: sample_dodeca_task_progress("sass", 3, 3, DodecaTaskStatus::Done),
+            links: sample_dodeca_task_progress("links", 10, 7, DodecaTaskStatus::Running),
+            search: sample_dodeca_task_progress("search", 1, 0, DodecaTaskStatus::Pending),
+        },
+        log_event: DodecaLogEvent {
+            level: DodecaLogLevel::Warn,
+            kind: DodecaEventKind::Http { status: 404 },
+            message: "dead link".to_string(),
+            fields: vec![
+                ("route".to_string(), "/guide/".to_string()),
+                ("href".to_string(), "/missing/".to_string()),
+            ],
+        },
+        server_status: DodecaServerStatus {
+            urls: vec![
+                "http://127.0.0.1:5173".to_string(),
+                "http://192.168.1.42:5173".to_string(),
+            ],
+            is_running: true,
+            bind_mode: DodecaBindMode::Lan,
+            picante_cache_size: 4_096,
+            cas_cache_size: 8_192,
+            code_exec_cache_size: 1_024,
+        },
+        server_command: DodecaServerCommand::SetLogFilter {
+            filter: "dodeca=debug,cell=trace".to_string(),
+        },
+        command_result: DodecaCommandResult::Ok,
+    }
+}
+
 fn value_object(entries: &[(&str, Value)]) -> Value {
     let mut object = VObject::new();
     for (key, value) in entries {
@@ -3812,6 +4306,20 @@ fn dodeca_asset_processing_payloads_roundtrip() {
     expect_native_clean_when_jit_available(
         report,
         "Dodeca CSS/SASS/SVGO asset-processing roots should stay native-clean",
+    );
+}
+
+#[test]
+// r[verify descriptors.fact-driven]
+// r[verify type-system.variant-payloads]
+// r[verify typed.no-dynamic-bounce]
+// r[verify exec.jit-optional]
+fn dodeca_small_cell_service_payloads_roundtrip() {
+    let report = roundtrip(sample_dodeca_small_cell_services_fixture());
+
+    expect_native_clean_when_jit_available(
+        report,
+        "Dodeca small-cell lifecycle/minify/js/html-diff/font/image/dialog/tui roots should stay native-clean",
     );
 }
 

@@ -128,7 +128,9 @@ Already in place on the Phon side:
   vectors, dynamic template values, data-loader dynamic results, and markdown
   parse/render results with a boxed source map, Dodeca image processor
   byte/scalar/result roots, Dodeca search indexer page/file/result roots,
-  Dodeca CSS/SASS/SVGO asset-processing map/string/result roots, Dibs SQL
+  Dodeca CSS/SASS/SVGO asset-processing map/string/result roots, Dodeca
+  small-cell lifecycle/minify/JS rewrite/HTML diff/font/WebP/JXL/dialog/term/
+  Vite/linkcheck/TUI DTO roots, Dibs SQL
   value enums, generated Dibs Squel
   schema/list/get/create/update/delete/result DTOs, Dibs migration
   status/migrate/log DTOs, Styx recursive values plus
@@ -207,7 +209,9 @@ Already in place on the Phon side:
   Dibs migration, recursive, Stax broker-control, and Stax macOS batch roots
   are native-clean in the Swift JIT.
 - Rust ecosystem benchmark entry point for Dodeca, Dibs, Styx, Stax, Helix,
-  Hotmeal, and Tracey migration payload families. The Styx benchmark family now
+  Hotmeal, and Tracey migration payload families. The Dodeca benchmark family
+  now includes the small-cell lifecycle/minify/JS rewrite/HTML diff/font/
+  WebP/JXL/dialog/term/Vite/linkcheck/TUI aggregate fixture. The Styx benchmark family now
   includes both the recursive tree value and the aggregate LSP
   extension/host-callback DTO surface. The Stax benchmark family now includes
   recursive flamegraph updates, Linux fd-broker control DTOs, and macOS
@@ -2002,11 +2006,14 @@ updated document.
 1. Keep Bee fixtures and benchmarks native-clean, without making live Bee app
    builds part of normal Vox/Phon verification while Bee is actively moving.
 2. Treat Dodeca as the largest remaining consumer sweep. Broaden it beyond the
-   current ecosystem, template-call, HTML processing, code-execution,
-   data-loader, markdown parse/render, image-processing, search-indexing,
-   asset-processing, byte-channel, LSP string-channel, and browser
-   devtools/editor generated roots into any additional Dodeca roots that become
-   part of the migration gate.
+  current ecosystem, template-call, HTML processing, code-execution,
+  data-loader, markdown parse/render, image-processing, search-indexing,
+  asset-processing, small-cell DTO, byte-channel, LSP string-channel, and
+  browser devtools/editor generated roots into any additional Dodeca roots that
+  become part of the migration gate. The small-cell DTO family is now covered
+  by Rust fixture and benchmark gates; TypeScript, Swift, and generated Vox
+  bridge parity for that family remain the next Dodeca-specific broadening
+  step.
 3. Keep Tracey as the bounded generated-service proof target. The current
    status/rule/validation/core-control/full-LSP/update/dashboard/query/config
    mutation roots are covered; only add more Tracey roots when the live
