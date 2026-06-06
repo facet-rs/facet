@@ -6,6 +6,7 @@
 //! This mirrors the phon typed-engine bridge: the engine owns the element buffer,
 //! `from_raw_parts` adopts it into the list handle, and `len`/`as_ptr` read it out.
 
+#[cfg(feature = "bytes")]
 use bytes::{Bytes, BytesMut};
 use core::alloc::Layout;
 use facet_core::{Def, Facet, PtrConst, PtrMut, PtrUninit, Shape};
@@ -85,6 +86,7 @@ fn vec_u32_from_raw_parts_empty() {
 }
 
 #[test]
+#[cfg(feature = "bytes")]
 fn bytes_from_raw_parts_adopts_engine_buffer() {
     let shape = <Bytes as Facet>::SHAPE;
     let ld = list_def(shape);
@@ -129,6 +131,7 @@ fn bytes_from_raw_parts_adopts_engine_buffer() {
 }
 
 #[test]
+#[cfg(feature = "bytes")]
 fn bytes_mut_from_raw_parts_adopts_engine_buffer() {
     let shape = <BytesMut as Facet>::SHAPE;
     let ld = list_def(shape);

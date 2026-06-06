@@ -96,7 +96,7 @@ jobs:
           # Only replay proptest regressions in CI
           PROPTEST_CASES: 0
         run: |
-          cargo nextest run --package facet-core
+          cargo nextest run --package facet-core --features facet-core/simd,facet-core/bytes
 
   msrv:
     runs-on: bearcove-ubuntu-24.04

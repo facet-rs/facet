@@ -6,7 +6,7 @@
 #
 # The non`-ci` variants can be run locally without having bash installed.
 
-set dotenv-load := true
+set dotenv-load
 
 default: list
 
@@ -112,7 +112,7 @@ doc-tests-ci *args:
 miri *args:
     #!/usr/bin/env -S bash -euo pipefail
     source miri-env.sh
-    cargo miri nextest run --target-dir target/miri -p facet-reflect -p facet-core {{ args }}
+    cargo miri nextest run --target-dir target/miri -p facet-reflect -p facet-core --features facet-core/bytes {{ args }}
 
 miri-json *args:
     #!/usr/bin/env -S bash -euo pipefail
@@ -128,7 +128,7 @@ miri-ci *args:
     echo -e "\033[1;31m🧪 Running tests under Miri with strict provenance...\033[0m"
 
     export CARGO_TARGET_DIR=target/miri
-    cmd_group "cargo miri nextest run -p facet-reflect -p facet-core {{ args }}"
+    cmd_group "cargo miri nextest run -p facet-reflect -p facet-core --features facet-core/bytes {{ args }}"
 
 absolve:
     ./facet-dev/absolve.sh
