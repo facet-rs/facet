@@ -179,7 +179,7 @@ jobs:
           verbose: true
 
   test-aarch64-apple-darwin:
-    runs-on: bearcove-ubuntu-24.04
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v6
 
@@ -217,7 +217,7 @@ jobs:
           cargo nextest run --features ci
 
   test-x86_64-pc-windows-msvc:
-    runs-on: bearcove-ubuntu-24.04
+    runs-on: windows-2025
     steps:
       - uses: actions/checkout@v6
 
