@@ -129,7 +129,8 @@ Already in place on the Phon side:
   Linux fd-broker config/status/error DTOs with explicit external-fd
   diagnostics, Helix trace-server metadata, metric, attention, evidence,
   attendance, clip, provenance, transcript, piece-eval, and bundle payloads,
-  Hotmeal live-reload payloads, and Tracey migration DTOs.
+  Hotmeal live-reload payloads plus callback-shaped subscribe/on-event methods,
+  and Tracey migration DTOs.
 - Rust `HashSet<T>` descriptor/interpreter support through Facet set thunks.
 - Rust `HashSet<T>` root lowering and duplicate-element rejection coverage.
 - Rust native JIT support for set encode/decode when the element program is
@@ -324,16 +325,17 @@ Already in place on the Phon side:
   process sweep found no lingering `subject-*`, echo-server, or browser Vite
   processes.
 - Current Vox ecosystem bridge matrix verification passes:
-  `cargo nextest run -p spec-tests -E 'test(ecosystem_bridge) | test(dodeca) | test(dibs) | test(styx) | test(stax) | test(helix) | test(hotmeal) | test(tracey)' --no-fail-fast -j 1`
-  ran 512/512 across Rust TCP, Swift TCP, TypeScript TCP, and TypeScript
+  `cargo nextest run -p spec-tests -E 'test(ecosystem_bridge) | test(dodeca) | test(dibs) | test(styx) | test(stax) | test(helix) | test(hotmeal) | test(tracey)' --no-fail-fast -j 1 --status-level fail --final-status-level fail`
+  ran 528/528 across Rust TCP, Swift TCP, TypeScript TCP, and TypeScript
   WebSocket, in both harness-to-subject and subject-to-harness directions,
   including the generated Helix `TraceService` aggregate root plus Dodeca
   image processor, search indexer, CSS/SASS/SVGO asset-processing roots, and
-  browser devtools/editor protocol roots.
+  browser devtools/editor protocol roots, and the exact Hotmeal
+  `subscribe(route) -> ()` / `on_event(event) -> ()` callback-shaped roots.
   This was reverified against the live `~/vox` checkout after adding the
-  devtools/editor generated bridge roots and after rebuilding the current Rust
-  and Swift hosted subjects; the current run started 512 selected tests across
-  4 binaries and finished with `512 passed, 511 skipped`.
+  Hotmeal callback-shaped generated bridge roots and after rebuilding the
+  current Rust and Swift hosted subjects; the current run started 528 selected
+  tests across 4 binaries and finished with `528 passed, 511 skipped`.
   A post-run process sweep found no lingering `subject-*`, echo-server,
   `nextest`, Swift build, or Swift frontend processes.
 - Focused generated Dodeca bridge verification also passes:
@@ -1034,9 +1036,8 @@ closure:
   Tracey migration generated bridge coverage now mirrors the
   current LSP, core/control, dashboard/query-model, and config mutation surface
   from the current roam protocol.
-  Hotmeal payload roots are covered; the exact callback-style `subscribe` /
-  `on_event` service shape can still be added if we want that separate smoke
-  path.
+  Hotmeal payload roots and the exact callback-style `subscribe` / `on_event`
+  service shape are covered as generated bridge smoke roots.
 - External values such as `vox::Fd` now have explicit Rust transport and
   non-Rust generated-binding diagnostics. Phon-side Stax fixtures prove the
   ordinary Linux broker DTOs and keep the fd bundle visible as unsupported
@@ -1479,15 +1480,19 @@ descriptor/interpreter/JIT equivalence harness, and TypeScript carries it as a
 public JavaScript-shape typed fixture.
 
 The generated Vox bridge now has checked-in Hotmeal payload roots via
-`echo_hotmeal_live_reload_event` and `echo_hotmeal_apply_patches_result`. The
-focused matrix covers Rust TCP, Swift TCP, TypeScript TCP, and TypeScript
-WebSocket in both directions. This proved live-reload event enums, byte blobs,
-recursive browser DOM nodes, patch traces, and the TypeScript `$tag`
-discriminator escape needed when an enum struct variant also has a real field
-named `tag`. Swift Phon-side fixture coverage now includes the live-reload
-event family and keeps the small enum/byte/list payload native-clean. The
-remaining callback-shaped `subscribe` / `on_event` method shape is optional
-generated Vox smoke coverage, not an open Phon typed-program or JIT gap.
+`echo_hotmeal_live_reload_event` and `echo_hotmeal_apply_patches_result`, plus
+the exact callback-shaped `hotmeal_live_reload_subscribe(route) -> ()` and
+`hotmeal_live_reload_on_event(event) -> ()` roots. The focused
+`cargo nextest run -p spec-tests -E 'test(hotmeal)' --no-fail-fast -j 1 --status-level fail --final-status-level fail`
+matrix covers Rust TCP, Swift TCP, TypeScript TCP, and TypeScript WebSocket in
+both directions and currently passes 32/32. This proved live-reload event
+enums, byte blobs, recursive browser DOM nodes, patch traces, unit responses,
+and the TypeScript `$tag` discriminator escape needed when an enum struct
+variant also has a real field named `tag`. Swift Phon-side fixture coverage now
+includes the live-reload event family and keeps the small enum/byte/list
+payload native-clean. The callback-shaped service methods are now covered as
+generated Vox smoke coverage; they are not an open Phon typed-program or JIT
+gap.
 
 ### Tracey
 
@@ -1996,9 +2001,8 @@ updated document.
    current metrics/verify/subscription/PulseBundle/TraceService aggregate
    roots. Swift benchmark coverage is native-clean; keep the Rust, Swift, and
    TypeScript aggregate fixture parity green while broadening the remaining
-   proof paths. Add any optional Hotmeal
-   callback-shaped service smoke path if that shape becomes part of the
-   migration gate.
+   proof paths. Keep the Hotmeal callback-shaped service smoke roots green now
+   that they are part of the checked-in bridge corpus.
 6. Keep Styx Swift benchmark coverage native-clean for the recursive value/LSP
    aggregate surfaces.
 7. Stax fd/external coverage now has ordinary DTO fixture coverage in Rust,
