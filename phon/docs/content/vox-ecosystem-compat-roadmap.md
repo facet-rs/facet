@@ -417,11 +417,15 @@ Verified in the Vox checkout during the bridge audit:
   coverage is Rust 174/174 implemented and 174/174 verified, Swift 162/174
   implemented and 159/174 verified, and TypeScript 174/174 implemented and
   174/174 verified. That is not a global Vox Tracey completion claim: the
-  remaining Swift holes are concentrated in uncovered non-Swift transports,
-  debug observability rules, and five untested implemented umbrella or
-  lifecycle rules; the non-Swift transport holes are not Vox 1.0 blockers. Rust
-  and TypeScript now have verification references for every current Vox rule.
-  The legacy
+  remaining Swift uncovered rules are the non-shipped memory/in-process/
+  WebSocket transports, debug/observer surfaces, and stream send/receive
+  cancellation-safety rules (`link.tx.cancel-safe` and
+  `rpc.transport.stream.cancel-safe-recv`). The current Swift implemented-but-
+  untested rules are `rpc.observability.driver`,
+  `rpc.observability.runtime`, and the broad `rpc` umbrella. The non-Swift
+  transport holes are not Vox 1.0 blockers; the stream cancellation-safety
+  items are real Swift transport hardening candidates. Rust and TypeScript now
+  have verification references for every current Vox rule. The legacy
   `rpc.response.one-per-request` rule has been removed from the live spec.
 - The roadmap-relevant Vox rules for subject teardown, channel shape, channel
   allocation/direction/lifecycle, channel payload indexes, connection-close
