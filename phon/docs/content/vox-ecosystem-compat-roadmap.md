@@ -267,7 +267,7 @@ Already in place on the Phon side:
   coarse `Value` engine remains the interpreter/oracle and the implementation
   for actual `Dynamic` fields and schema-less/dynamic APIs. The current
   TypeScript engine suite
-  (`pnpm --filter @bearcove/phon-engine exec vitest run`) passes 103/103,
+  (`pnpm --filter @bearcove/phon-engine exec vitest run`) passes 113/113,
   Tracey validation is clean, and the
   current Helix `TraceService` aggregate benchmark measures direct-shape typed
   JIT at 47,028.70 hz for decode and 10,426.74 hz for encode, versus 7,997.22
