@@ -70,6 +70,28 @@ should only chase direct public-shape source specialization for measured
 client/browser bottlenecks; it should not recreate the Rust/Swift
 descriptor-memory model in JavaScript.
 
+Tracey coverage is a triage tool for this surface, not an independent demand
+for 100% historical spec coverage. Rules tied to removed retry/idempotency,
+stable-conduit, or zero-copy/shared-memory designs should be deleted or
+rewritten before they become implementation work. In particular,
+`rpc.response.one-per-request` is not a Vox 1.0 blocker as currently shaped; it
+belongs with the old retry/idempotency response-finalization model unless it is
+rephrased into a live call-outcome invariant.
+
+Transport coverage should follow the transports each implementation actually
+ships. Rust transport verification is a fair release audit for Rust memory,
+stream, WebSocket, and in-process surfaces that remain part of Vox. Swift
+transport verification is about the Swift stream/local transport and its
+real cancellation/lifecycle behavior; browser-only or non-Swift transports such
+as Swift WebSocket, memory, and in-process links are not 1.0 blockers.
+
+Consumer repositories remain source inputs. Bee stays the protected hot-path
+fixture and benchmark source, but normal Vox/Phon verification should keep
+using checked-in fixtures while Bee is actively moving. Tracey is the bounded
+generated-service smoke target for breadth: it exercises a realistic
+dashboard/LSP-like service surface without making the live Tracey checkout
+itself a prerequisite app build.
+
 Roadmap accounting rule: a TypeScript proof that succeeds only by routing an
 ordinary generated DTO through generic Phon `Value` counts as interpreter,
 oracle, fallback, or dynamic-API coverage. It does not count as generated
@@ -384,13 +406,14 @@ Verified in the Vox checkout during the bridge audit:
   173/175 verified. That is not a global Vox Tracey completion claim: the
   remaining TypeScript unverified rules are the broad `rpc` and
   `rpc.one-service-per-connection` umbrella surfaces, while the remaining
-  Swift holes are concentrated in uncovered non-Swift transports/debug
-  observability rules and five untested implemented
-  umbrella or lifecycle rules. The remaining Rust unverified rules are now
-  concentrated in transport packages, observability emission, broad `rpc` /
-  one-service umbrella surfaces, the response-finalization rule whose desired
-  late-response semantics still need a spec decision, and two broad session
-  message/peer rules.
+  Swift holes are concentrated in uncovered non-Swift transports, debug
+  observability rules, and five untested implemented umbrella or lifecycle
+  rules; the non-Swift transport holes are not Vox 1.0 blockers. The remaining
+  Rust unverified rules are now concentrated in shipped-transport audit items,
+  observability emission, broad `rpc` / one-service umbrella surfaces, the
+  legacy `rpc.response.one-per-request` rule that should be deleted or
+  reworded rather than implemented as retry/idempotency residue, and two broad
+  session message/peer rules.
 - The roadmap-relevant Vox rules for subject teardown, channel shape, channel
   allocation/direction/lifecycle, channel payload indexes, connection-close
   channel errors, root and virtual connection behavior, virtual connection
@@ -601,9 +624,11 @@ Verified in the Vox checkout during the bridge audit:
   `NIOFrameLink` now applies `setMaxFrameSize` to outbound sends as well as
   inbound decoding, and receive-side link errors finish the stream. Tracey now
   reports no remaining untested Swift `link.*`, `transport.stream`, or
-  `transport.stream.*` rules; `link.tx.cancel-safe` remains uncovered because
-  Swift has no explicit cancellation-safe send contract yet, and memory,
-  in-process, and WebSocket transports are not Swift implementations.
+  `transport.stream.*` rules. A focused Swift send/receive cancellation-safety
+  proof remains a reasonable transport hardening item for the stream/local
+  transport that actually ships; memory, in-process, WebSocket, and
+  browser-only transports are not Swift implementations and are not 1.0
+  blockers.
 - TypeScript runtime observability now has Tracey-backed coverage for its
   local-only diagnostics surfaces. `vox-core` `src/observer.test.ts` proves
   `setVoxLogger` installs and clears a local runtime observer without a
@@ -1805,7 +1830,8 @@ updated document.
 
 ### Phase 2: Complete the fixture corpus
 
-1. Keep Bee fixtures and benchmarks native-clean.
+1. Keep Bee fixtures and benchmarks native-clean, without making live Bee app
+   builds part of normal Vox/Phon verification while Bee is actively moving.
 2. Treat Dodeca as the largest remaining consumer sweep. Broaden it beyond the
    current ecosystem, template-call, HTML processing, code-execution,
    data-loader, markdown parse/render, image-processing, search-indexing,
@@ -1919,10 +1945,12 @@ model or routing ordinary generated DTOs through generic `Value`.
 3. Include TypeScript public-shape benchmarks for browser-facing generated DTOs:
    direct-shape JIT result plus the generic `Value` oracle/fallback for
    comparison.
-4. Run Tracey coverage and close all roadmap-relevant uncovered/untested holes.
+4. Run Tracey coverage as a triage check: implement or annotate live
+   roadmap-relevant holes, delete or reword dead legacy rules, and keep
+   non-shipped language/transport surfaces out of the 1.0 blocker set.
 5. Run the fixture corpus with JIT enabled and JIT not enabled.
-6. Treat the roadmap as complete only when the Vox bridge, fixtures, Tracey
-   coverage, and benchmarks all agree.
+6. Treat the roadmap as complete only when the Vox bridge, fixtures, live
+   Tracey requirements, and benchmarks all agree.
 
 ## Acceptance milestones
 
@@ -1992,17 +2020,21 @@ path for the broad Helix aggregate and Dodeca image/search roots.
 
 ### Milestone 9: Tracey coverage
 
-Tracey reports no important uncovered or untested rules for the compatibility,
-execution, JIT, channel, external, and generated-bridge rules that define this
-roadmap.
+Tracey validates, and no Vox 1.0 blocker rule remains uncovered or untested for
+the live compatibility, execution, JIT, channel, external, generated-bridge, and
+shipped-transport surface. Legacy retry/idempotency, stable-conduit,
+zero-copy/shared-memory, and non-shipped language/transport rules are either
+deleted, reworded into current semantics, or explicitly kept out of the 1.0
+gate.
 
 ### Milestone 10: Vox 1.0 compatibility gate
 
 The next Vox can serve the checked-in consumer fixture corpus with JIT enabled
-and JIT not enabled, without retry/stable-conduit/zero-copy remnants, without
-subject leaks, and with precise diagnostics for any intentionally unsupported
-surface. TypeScript generated clients use ordinary public JavaScript/TypeScript
-shapes for ordinary DTOs, with `Value` reserved for real dynamic payloads and
+and JIT not enabled, without retry/idempotency/stable-conduit/zero-copy
+remnants, without subject leaks, and with precise diagnostics for any
+intentionally unsupported surface. TypeScript generated clients use ordinary
+public JavaScript/TypeScript shapes for ordinary DTOs, with `Value` reserved for
+real dynamic payloads and
 schema-less/dynamic APIs; TypeScript source-specialized JIT is accepted when it
 is direct-shape and benchmark-justified, not because TypeScript is expected to
 mirror the Rust/Swift descriptor-memory engines.
