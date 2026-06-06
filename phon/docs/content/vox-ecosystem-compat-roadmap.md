@@ -73,10 +73,10 @@ descriptor-memory model in JavaScript.
 Tracey coverage is a triage tool for this surface, not an independent demand
 for 100% historical spec coverage. Rules tied to removed retry/idempotency,
 stable-conduit, or zero-copy/shared-memory designs should be deleted or
-rewritten before they become implementation work. In particular,
-`rpc.response.one-per-request` is not a Vox 1.0 blocker as currently shaped; it
-belongs with the old retry/idempotency response-finalization model unless it is
-rephrased into a live call-outcome invariant.
+rewritten before they become implementation work. `rpc.response.one-per-request`
+was deleted from the live Vox spec and stale annotations were removed; any
+future response-finalization rule must be phrased as a current call-outcome
+invariant, not as retry/idempotency residue.
 
 Transport coverage should follow the transports each implementation actually
 ships. Rust transport verification is a fair release audit for Rust memory,
@@ -401,19 +401,18 @@ Verified in the Vox checkout during the bridge audit:
   `vox-tcp` passes its focused transport suite with 5 tests, and `vox-ws`
   passes its focused transport suite with 1 test.
 - Vox Tracey validation is clean across Rust, Swift, and TypeScript. Current
-  coverage is Rust 175/175 implemented and 162/175 verified, Swift 163/175
-  implemented and 160/175 verified, and TypeScript 175/175 implemented and
-  173/175 verified. That is not a global Vox Tracey completion claim: the
+  coverage is Rust 174/174 implemented and 162/174 verified, Swift 162/174
+  implemented and 159/174 verified, and TypeScript 174/174 implemented and
+  172/174 verified. That is not a global Vox Tracey completion claim: the
   remaining TypeScript unverified rules are the broad `rpc` and
   `rpc.one-service-per-connection` umbrella surfaces, while the remaining
   Swift holes are concentrated in uncovered non-Swift transports, debug
   observability rules, and five untested implemented umbrella or lifecycle
   rules; the non-Swift transport holes are not Vox 1.0 blockers. The remaining
   Rust unverified rules are now concentrated in shipped-transport audit items,
-  observability emission, broad `rpc` / one-service umbrella surfaces, the
-  legacy `rpc.response.one-per-request` rule that should be deleted or
-  reworded rather than implemented as retry/idempotency residue, and two broad
-  session message/peer rules.
+  observability emission, broad `rpc` / one-service umbrella surfaces, and two
+  broad session message/peer rules. The legacy
+  `rpc.response.one-per-request` rule has been removed from the live spec.
 - The roadmap-relevant Vox rules for subject teardown, channel shape, channel
   allocation/direction/lifecycle, channel payload indexes, connection-close
   channel errors, root and virtual connection behavior, virtual connection
