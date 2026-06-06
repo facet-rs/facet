@@ -147,6 +147,7 @@ function typedBenchFixture(name: string, value: Typed) {
 
 const dodecaImage = typedBenchFixture("Dodeca image processor roots", dodecaImageProcessorBenchmarkValue());
 const dodecaSearch = typedBenchFixture("Dodeca search indexer roots", dodecaSearchIndexerBenchmarkValue());
+const dodecaSmallCells = typedBenchFixture("Dodeca small-cell service roots", ecosystemFixture("Dodeca small-cell service roots").value);
 
 // The broad Helix TraceService aggregate from the checked-in ecosystem corpus.
 const helixTraceService = ecosystemFixture("Helix trace service surface");
@@ -208,6 +209,16 @@ describe("decode Dodeca search indexer roots", () => {
 describe("encode Dodeca search indexer roots", () => {
   bench("typed fallback (remap + Value interpreter)", () => void encodeTyped(dodecaSearch.value, dodecaSearch.root, ecosystemReg, { jit: false }));
   bench("direct-shape typed JIT", () => void dodecaSearch.typedEncJit(dodecaSearch.value));
+});
+
+describe("decode Dodeca small-cell service roots", () => {
+  bench("typed fallback (Value interpreter + remap)", () => void decodeTyped(dodecaSmallCells.bytes, dodecaSmallCells.root, dodecaSmallCells.root, ecosystemReg, { jit: false }));
+  bench("direct-shape typed JIT", () => void dodecaSmallCells.typedDecJit(dodecaSmallCells.bytes));
+});
+
+describe("encode Dodeca small-cell service roots", () => {
+  bench("typed fallback (remap + Value interpreter)", () => void encodeTyped(dodecaSmallCells.value, dodecaSmallCells.root, ecosystemReg, { jit: false }));
+  bench("direct-shape typed JIT", () => void dodecaSmallCells.typedEncJit(dodecaSmallCells.value));
 });
 
 describe("decode struct (8 mixed fields)", () => {

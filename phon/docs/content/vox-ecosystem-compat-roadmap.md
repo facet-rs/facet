@@ -283,10 +283,10 @@ Already in place on the Phon side:
 - TypeScript JIT now generates JavaScript functions for recursive `callBlock`
   decode plans and recursive encoder blocks instead of routing recursive roots
   through the interpreter fallback. The focused TypeScript benchmark includes a
-  recursive rose-list call-block case; the current run measured 400,903 hz for
-  JIT decode vs. 124,208 hz for the interpreter, a 3.23x decode speedup, and
-  56,652 hz for JIT encode vs. 38,196 hz for the interpreter, a 1.48x encode
-  speedup.
+  recursive rose-list call-block case; the current run measured 392,525.79 hz
+  for JIT decode vs. 128,606.29 hz for the interpreter, a 3.05x decode speedup,
+  and 61,544.37 hz for JIT encode vs. 43,963.36 hz for the interpreter, a
+  1.40x encode speedup.
 - TypeScript now has a direct public-shape typed JIT path for generated-client
   DTOs. `decodeTyped` with JIT enabled lowers the compatibility plan into
   generated JavaScript that constructs plain struct objects, codegen enum
@@ -298,13 +298,15 @@ Already in place on the Phon side:
   (`pnpm --filter @bearcove/phon-engine exec vitest run`) passes 113/113,
   Tracey validation is clean, and the
   current Helix `TraceService` aggregate benchmark measures direct-shape typed
-  JIT at 47,028.70 hz for decode and 10,426.74 hz for encode, versus 7,997.22
-  hz and 4,845.53 hz for the JIT-disabled typed fallback through `Value`. The
-  focused Dodeca TypeScript benchmark now also measures the image processor and
-  search indexer roots on larger benchmark payloads: image decode is
-  300,588.56 hz direct-shape JIT vs. 133,576.12 hz fallback, image encode is
-  103,405.99 hz vs. 70,289.24 hz, search decode is 106,268.31 hz vs.
-  49,417.90 hz, and search encode is 37,859.36 hz vs. 24,907.05 hz.
+  JIT at 52,371.43 hz for decode and 11,956.81 hz for encode, versus 8,678.57
+  hz and 5,222.64 hz for the JIT-disabled typed fallback through `Value`. The
+  focused Dodeca TypeScript benchmark now also measures the image processor,
+  search indexer, and small-cell service roots. The current Dodeca run
+  on larger benchmark payloads measured image decode at 371,421.20 hz
+  direct-shape JIT vs. 145,046.91 hz fallback, image encode at 123,890.56 hz
+  vs. 83,412.59 hz, search decode at 115,257.50 hz vs. 54,019.38 hz, search
+  encode at 40,490.29 hz vs. 26,820.67 hz, small-cell decode at 231,519.16 hz
+  vs. 50,916.01 hz, and small-cell encode at 76,321.96 hz vs. 30,306.18 hz.
 - Current local fixture verification passes: Rust Bee surface with JIT
   (`cargo nextest run -p phon --features jit -E 'binary(bee_surface)'`, 2/2),
   Rust ecosystem surface with JIT
@@ -1089,7 +1091,7 @@ closure:
   The TypeScript engine benchmark now includes recursive call-block source
   generation for decode/encode, direct public-shape typed JIT rows for the
   broad Helix `TraceService` aggregate, and direct public-shape typed JIT rows
-  for the Dodeca image processor and search indexer roots.
+  for the Dodeca image processor, search indexer, and small-cell service roots.
 - TypeScript no longer needs a Rust/Swift-style descriptor-memory IR to be
   useful for generated clients. Its typed fast path is direct public JavaScript
   shapes, with the generic `Value` engine kept as the oracle and for real
@@ -1278,7 +1280,7 @@ selected-runtime benchmarks. The Swift benchmark corpus now includes the
 data-loader result, parse result, image processor roots, and search indexer
 roots as native-clean typed/JIT benchmarks.
 The TypeScript benchmark corpus now includes direct public-shape typed JIT rows
-for the image processor and search indexer roots.
+for the image processor, search indexer, and small-cell service roots.
 Remaining Dodeca work is broadening to any additional service roots that become
 part of the migration gate.
 
@@ -2199,7 +2201,7 @@ separate interpreter baseline, JIT enabled path, and fallback-report status.
 Browser-facing TypeScript benchmarks exist to decide whether direct-shape source
 specialization needs to move up for a specific generated-client workload; they
 distinguish direct public-shape JIT from the generic `Value` oracle/fallback
-path for the broad Helix aggregate and Dodeca image/search roots.
+path for the broad Helix aggregate and Dodeca image/search/small-cell roots.
 
 ### Milestone 9: Tracey coverage
 
