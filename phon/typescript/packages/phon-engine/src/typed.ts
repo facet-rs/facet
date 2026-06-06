@@ -11,6 +11,7 @@
 // Representation (mirrors what codegen should emit):
 //   struct            -> plain object { field: typed }
 //   enum              -> { tag: "Variant", value: typed }   (value null for unit)
+//   Result<T, E>      -> { ok: true, value: T } | { ok: false, error: E }
 //   tuple/list/array -> typed[]
 //   set               -> Set<typed>
 //   map               -> Map<string, typed>   (ordered; objects would reorder
@@ -314,7 +315,7 @@ function typedScalarWrite(p: Primitive, v: string): string {
     case "char": return `${pad}out.u32(H.charCode(${v}));\n`;
     case "string": return `out.str(${v});\n`;
     case "bytes": return `out.bytes(${v});\n`;
-    case "unit": return `if (${v} !== null) throw new H.EncodeError("expected unit (null)");\n`;
+    case "unit": return `if (${v} !== null && ${v} !== undefined) throw new H.EncodeError("expected unit (null/undefined)");\n`;
     case "never": return `throw new H.EncodeError("never is uninhabited");\n`;
     case "datetime": return `out.str(H.formatDatetime(H.parseDatetime(${v})));\n`;
     case "uuid": return `out.str(H.parseUuid(${v}).text);\n`;
@@ -442,6 +443,7 @@ class TypedDecodeCodegen {
   }
 
   private genEnum(node: Extract<Node, { kind: "enum" }>, kind: Extract<SchemaKind, { kind: "enum" }>, target: string, depth: string): string {
+    if (isResultKind(kind)) return this.genResult(node, kind, target, depth);
     const idx = this.fresh("idx");
     let out = `const ${idx} = r.readU32raw();\n`;
     out += `switch (${idx}) {\n`;
@@ -456,6 +458,64 @@ class TypedDecodeCodegen {
     out += `default: throw new H.WriterOnlyVariantError(${idx});\n`;
     out += `}\n`;
     return out;
+  }
+
+  private genResult(
+    node: Extract<Node, { kind: "enum" }>,
+    kind: Extract<SchemaKind, { kind: "enum" }>,
+    target: string,
+    depth: string,
+  ): string {
+    const idx = this.fresh("idx");
+    let out = `const ${idx} = r.readU32raw();\n`;
+    out += `switch (${idx}) {\n`;
+    for (const [index, vp] of node.byIndex) {
+      const variant = kind.variants.find((candidate) => candidate.name === vp.reader);
+      if (!variant) throw new Error(`typed decode missing reader variant '${vp.reader}'`);
+      out += `case ${index}: {\n`;
+      out += this.genResultPayload(vp.payload, variant.payload, target, depth, vp.reader);
+      out += `break;\n}\n`;
+    }
+    out += `default: throw new H.WriterOnlyVariantError(${idx});\n`;
+    out += `}\n`;
+    return out;
+  }
+
+  private genResultPayload(
+    payload: Payload,
+    readerPayload: VariantPayload,
+    target: string,
+    depth: string,
+    tag: string,
+  ): string {
+    const ok = tag === "Ok" ? "true" : "false";
+    const field = tag === "Ok" ? "value" : "error";
+    switch (payload.kind) {
+      case "unit":
+        return `${target} = { ok: ${ok}, ${field}: undefined };\n`;
+      case "newtype": {
+        if (readerPayload.kind !== "newtype") throw new Error("typed decode newtype payload mismatch");
+        const v = this.fresh("result");
+        return `let ${v};\n${this.genStmt(payload.node, this.resolve(readerPayload.ref), v, this.childDepth(depth))}` +
+          `${target} = { ok: ${ok}, ${field}: ${v} };\n`;
+      }
+      case "tuple": {
+        if (readerPayload.kind !== "tuple") throw new Error("typed decode tuple payload mismatch");
+        const a = this.fresh("result");
+        let out = `const ${a} = [];\n`;
+        payload.nodes.forEach((child, i) => {
+          const e = this.fresh("e");
+          out += `let ${e};\n${this.genStmt(child, this.resolve(readerPayload.refs[i]!), e, this.childDepth(depth))}${a}.push(${e});\n`;
+        });
+        return out + `${target} = { ok: ${ok}, ${field}: ${a} };\n`;
+      }
+      case "struct": {
+        if (readerPayload.kind !== "struct") throw new Error("typed decode struct payload mismatch");
+        const o = this.fresh("result");
+        return `let ${o};\n` + this.genStruct(payload.plan, readerPayload.fields, o, depth, null) +
+          `${target} = { ok: ${ok}, ${field}: ${o} };\n`;
+      }
+    }
   }
 
   private genPayload(
@@ -653,7 +713,7 @@ class TypedEncodeCodegen {
         const body = this.genEncRef(kind.element, o, this.childDepth(depth));
         return `const ${o} = ${vexpr};\nif (${o} === null) out.u8(0);\nelse {\nout.u8(1);\n${body}}\n`;
       }
-      case "enum":
+    case "enum":
         return this.genEnum(kind, vexpr, depth);
       case "dynamic":
         return `H.writeValueInto(out, ${vexpr});\n`;
@@ -665,6 +725,7 @@ class TypedEncodeCodegen {
   }
 
   private genEnum(kind: Extract<SchemaKind, { kind: "enum" }>, vexpr: string, depth: string): string {
+    if (isResultKind(kind)) return this.genResult(kind, vexpr, depth);
     const discriminator = enumDiscriminatorField(kind.variants);
     const obj = this.fresh("enum");
     const tag = this.fresh("tag");
@@ -677,6 +738,51 @@ class TypedEncodeCodegen {
     }
     out += `default: throw new H.EncodeError("unknown variant " + ${tag});\n}\n`;
     return out;
+  }
+
+  private genResult(kind: Extract<SchemaKind, { kind: "enum" }>, vexpr: string, depth: string): string {
+    const ok = resultVariant(kind, "Ok");
+    const err = resultVariant(kind, "Err");
+    const discriminator = enumDiscriminatorField(kind.variants);
+    const obj = this.fresh("result");
+    const tag = this.fresh("tag");
+    let out = `const ${obj} = ${vexpr};\n`;
+    out += `if (${obj}.ok === true) {\nout.u32(${ok.index});\n`;
+    out += this.genResultPayload(ok.payload, `${obj}.value`, this.childDepth(depth));
+    out += `} else if (${obj}.ok === false) {\nout.u32(${err.index});\n`;
+    out += this.genResultPayload(err.payload, `${obj}.error`, this.childDepth(depth));
+    out += `} else {\nconst ${tag} = ${obj}[${JSON.stringify(discriminator)}];\n`;
+    out += `switch (${tag}) {\n`;
+    for (const variant of kind.variants) {
+      out += `case ${JSON.stringify(variant.name)}: {\nout.u32(${variant.index});\n`;
+      out += this.genPayload(variant.payload, obj, this.childDepth(depth));
+      out += `break;\n}\n`;
+    }
+    out += `default: throw new H.EncodeError("unknown variant " + ${tag});\n}\n}\n`;
+    return out;
+  }
+
+  private genResultPayload(payload: VariantPayload, vexpr: string, depth: string): string {
+    switch (payload.kind) {
+      case "unit":
+        return "";
+      case "newtype":
+        return this.genEncRef(payload.ref, vexpr, this.childDepth(depth));
+      case "tuple": {
+        let out = "";
+        payload.refs.forEach((ref, i) => {
+          out += this.genEncRef(ref, `${vexpr}[${i}]`, this.childDepth(depth));
+        });
+        return out;
+      }
+      case "struct": {
+        let out = "";
+        for (const field of payload.fields) {
+          out += this.genEncRef(field.schema, `${vexpr}[${JSON.stringify(field.name)}]`, this.childDepth(depth));
+        }
+        return out;
+      }
+    }
   }
 
   private genPayload(payload: VariantPayload, vexpr: string, depth: string): string {
@@ -763,6 +869,7 @@ function valueToTyped(v: Value, kind: SchemaKind, reg: Registry): Typed {
       const [tag, payload] = m.entries().next().value as [string, Value];
       const variant = kind.variants.find((vt) => vt.name === tag);
       if (!variant) throw new Error(`enum value tag '${tag}' not in schema`);
+      if (isResultKind(kind)) return resultValueToTyped(tag, payload, variant.payload, reg);
       return enumValueToTyped(enumDiscriminatorField(kind.variants), tag, payload, variant.payload, reg);
     }
     case "tuple":
@@ -805,6 +912,18 @@ function enumDiscriminatorField(variants: readonly Variant[]): "tag" | "$tag" {
     : "tag";
 }
 
+function isResultKind(kind: Extract<SchemaKind, { kind: "enum" }>): boolean {
+  return kind.name === "Result" && kind.variants.length === 2 &&
+    kind.variants.some((variant) => variant.name === "Ok") &&
+    kind.variants.some((variant) => variant.name === "Err");
+}
+
+function resultVariant(kind: Extract<SchemaKind, { kind: "enum" }>, name: "Ok" | "Err"): Variant {
+  const variant = kind.variants.find((candidate) => candidate.name === name);
+  if (!variant) throw new Error(`Result schema missing ${name} variant`);
+  return variant;
+}
+
 /// Build the inlined enum shape: `{ tag }`/`{ $tag }` for unit,
 /// `{ tag, value }` for a newtype, `{ tag, value: [...] }` for a tuple variant,
 /// or `{ tag, ...fields }` for a struct variant.
@@ -825,6 +944,30 @@ function enumValueToTyped(
     case "struct": {
       const m = v as Map<string, Value>;
       const o: { [field: string]: Typed } = { [discriminator]: tag };
+      for (const f of payload.fields) o[f.name] = valueToTypedRef(m.get(f.name) as Value, f.schema, reg);
+      return o;
+    }
+  }
+}
+
+function resultValueToTyped(tag: string, v: Value, payload: VariantPayload, reg: Registry): Typed {
+  const value = resultPayloadValueToTyped(v, payload, reg);
+  if (tag === "Ok") return { ok: true, value } as unknown as Typed;
+  if (tag === "Err") return { ok: false, error: value } as unknown as Typed;
+  throw new Error(`Result value tag '${tag}' not in schema`);
+}
+
+function resultPayloadValueToTyped(v: Value, payload: VariantPayload, reg: Registry): Typed {
+  switch (payload.kind) {
+    case "unit":
+      return undefined as unknown as Typed;
+    case "newtype":
+      return valueToTypedRef(v, payload.ref, reg);
+    case "tuple":
+      return (v as Value[]).map((e, i) => valueToTypedRef(e, payload.refs[i]!, reg));
+    case "struct": {
+      const m = v as Map<string, Value>;
+      const o: { [field: string]: Typed } = {};
       for (const f of payload.fields) o[f.name] = valueToTypedRef(m.get(f.name) as Value, f.schema, reg);
       return o;
     }
@@ -872,6 +1015,7 @@ function typedToValue(t: Typed, kind: SchemaKind, reg: Registry): Value {
       return m;
     }
     case "enum": {
+      if (isResultKind(kind)) return resultTypedToValue(t, kind, reg);
       const discriminator = enumDiscriminatorField(kind.variants);
       const e = t as { [field: string]: Typed };
       const tag = e[discriminator] as string;
@@ -909,6 +1053,43 @@ function typedToValue(t: Typed, kind: SchemaKind, reg: Registry): Value {
   }
 }
 
+function resultTypedToValue(t: Typed, kind: Extract<SchemaKind, { kind: "enum" }>, reg: Registry): Value {
+  const r = t as { readonly ok?: boolean; readonly tag?: string; readonly $tag?: string; readonly value?: Typed; readonly error?: Typed };
+  if (r.ok === true) {
+    const ok = resultVariant(kind, "Ok");
+    return new Map<string, Value>([["Ok", resultPayloadTypedToValue(r.value as Typed, ok.payload, reg)]]);
+  }
+  if (r.ok === false) {
+    const err = resultVariant(kind, "Err");
+    return new Map<string, Value>([["Err", resultPayloadTypedToValue(r.error as Typed, err.payload, reg)]]);
+  }
+  const discriminator = enumDiscriminatorField(kind.variants);
+  const tag = r[discriminator];
+  if (typeof tag === "string") {
+    const variant = kind.variants.find((candidate) => candidate.name === tag);
+    if (!variant) throw new Error(`enum tag '${tag}' not in schema`);
+    return new Map<string, Value>([[tag, enumTypedToValue(r as { [field: string]: Typed }, variant.payload, reg)]]);
+  }
+  throw new Error("expected Result public or raw enum shape");
+}
+
+function resultPayloadTypedToValue(t: Typed, payload: VariantPayload, reg: Registry): Value {
+  switch (payload.kind) {
+    case "unit":
+      return null;
+    case "newtype":
+      return typedToValueRef(t, payload.ref, reg);
+    case "tuple":
+      return (t as Typed[]).map((x, i) => typedToValueRef(x, payload.refs[i]!, reg));
+    case "struct": {
+      const o = t as { [field: string]: Typed };
+      const m = new Map<string, Value>();
+      for (const f of payload.fields) m.set(f.name, typedToValueRef(o[f.name] as Typed, f.schema, reg));
+      return m;
+    }
+  }
+}
+
 /// Reconstruct the payload Value from the inlined enum shape (the inverse of
 /// `enumValueToTyped`): `value` for newtype/tuple, the named fields for a struct
 /// variant, nothing for unit.
@@ -938,6 +1119,8 @@ function primitiveToValue(t: Typed, p: Primitive): Value {
       return t as bigint;
     case "char":
       return { kind: "char", value: t as string };
+    case "unit":
+      return null;
     case "datetime":
       return parseDatetime(t as string);
     case "uuid":

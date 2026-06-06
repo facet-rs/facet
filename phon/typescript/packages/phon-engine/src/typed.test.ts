@@ -50,6 +50,12 @@ function rootOf(name: string): bigint {
   return BigInt(`0x${caseByName(name).writer_root}`);
 }
 
+function primitiveId(tag: Primitive): bigint {
+  const primitive = corpus.primitives.find((p) => p.tag === tag);
+  if (!primitive) throw new Error(`no primitive ${tag}`);
+  return BigInt(`0x${primitive.id}`);
+}
+
 function typedRoundTrip(c: Case): Typed {
   const writerRoot = BigInt(`0x${c.writer_root}`);
   const readerRoot = BigInt(`0x${c.reader_root}`);
@@ -190,6 +196,43 @@ describe("typed front door — direct public-shape JIT", () => {
     const jitHex = bytesToHex(encodeTyped(typed, root, reg, { jit: true }));
     const interpHex = bytesToHex(encodeTyped(typed, root, reg, { jit: false }));
     expect(jitHex).toBe(interpHex);
+  });
+
+  it("encodes nested Rust Result schemas from the public ok/error shape", () => {
+    const stringId = primitiveId("string");
+    const resultId = 0x3333_3333n;
+    const stringRef: SchemaRef = { kind: "concrete", id: stringId, args: [] };
+    const resultSchema: Schema = {
+      id: resultId,
+      typeParams: [],
+      kind: {
+        kind: "enum",
+        name: "Result",
+        variants: [
+          { name: "Ok", index: 0, payload: { kind: "newtype", ref: stringRef } },
+          { name: "Err", index: 1, payload: { kind: "newtype", ref: stringRef } },
+        ],
+      },
+    };
+    const resultReg = new Registry(
+      [resultSchema],
+      corpus.primitives.map((p) => ({ id: BigInt(`0x${p.id}`), tag: p.tag as Primitive })),
+    );
+    const source = compiledTypedEncoderSource(resultId, resultReg);
+    expect(source).toContain(".ok === true");
+    expect(source).toContain('["tag"]');
+
+    for (const [value, raw] of [
+      [{ ok: true, value: "done" }, { tag: "Ok", value: "done" }],
+      [{ ok: false, error: "failed" }, { tag: "Err", value: "failed" }],
+    ] as unknown as Array<[Typed, Typed]>) {
+      const jitWire = encodeTyped(value, resultId, resultReg, { jit: true });
+      expect([...jitWire]).toEqual([...encodeTyped(value, resultId, resultReg, { jit: false })]);
+      expect([...jitWire]).toEqual([...encodeTyped(raw, resultId, resultReg, { jit: true })]);
+      expect([...jitWire]).toEqual([...encodeTyped(raw, resultId, resultReg, { jit: false })]);
+      expect(decodeTyped(jitWire, resultId, resultId, resultReg, { jit: true })).toEqual(value);
+      expect(decodeTyped(jitWire, resultId, resultId, resultReg, { jit: false })).toEqual(value);
+    }
   });
 });
 
