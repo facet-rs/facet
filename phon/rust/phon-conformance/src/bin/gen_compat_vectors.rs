@@ -323,6 +323,50 @@ fn build_cases(b: &mut Batch) -> Vec<PlannedCase> {
         push("set_u32", root.clone(), root, value);
     }
 
+    // 7b. set_element_struct_drift — set elements are structs whose fields
+    // evolve. The reconciled reader elements must remain unique after
+    // writer-only fields are skipped and reader-only fields default to null.
+    {
+        let writer_element = b.add(SchemaKind::Struct {
+            name: "SetItem".to_string(),
+            fields: vec![
+                field("x", prim(Primitive::U32), true),
+                field("transient", prim(Primitive::String), true),
+                field("y", prim(Primitive::U32), true),
+            ],
+        });
+        let option_u32 = b.add(SchemaKind::Option {
+            element: prim(Primitive::U32),
+        });
+        let reader_element = b.add(SchemaKind::Struct {
+            name: "SetItem".to_string(),
+            fields: vec![
+                field("x", prim(Primitive::U32), true),
+                field("y", prim(Primitive::U32), true),
+                field("extra", option_u32, false),
+            ],
+        });
+        let writer = b.add(SchemaKind::Set {
+            element: writer_element,
+        });
+        let reader = b.add(SchemaKind::Set {
+            element: reader_element,
+        });
+        let value = arr(vec![
+            obj(&[
+                ("x", Value::from(1u32)),
+                ("transient", Value::from(VString::new("drop-a"))),
+                ("y", Value::from(10u32)),
+            ]),
+            obj(&[
+                ("x", Value::from(2u32)),
+                ("transient", Value::from(VString::new("drop-b"))),
+                ("y", Value::from(20u32)),
+            ]),
+        ]);
+        push("set_element_struct_drift", writer, reader, value);
+    }
+
     // 8. map_string_u32 — 2 entries.
     {
         let root = b.add(SchemaKind::Map {
