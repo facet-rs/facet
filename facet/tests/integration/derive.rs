@@ -1720,7 +1720,7 @@ fn try_from<'a, T: Facet<'a>, U: Facet<'a>>(v: T) -> Result<U, String> {
     let outcome = unsafe {
         U::SHAPE
             .call_try_from(T::SHAPE, PtrConst::new(&v), result)
-            .ok_or_else(|| "try_from not supported")?
+            .ok_or("try_from not supported")?
     };
     match outcome {
         TryFromOutcome::Converted => unsafe {
