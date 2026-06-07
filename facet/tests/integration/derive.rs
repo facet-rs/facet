@@ -1734,7 +1734,8 @@ fn try_from<'a, T: Facet<'a>, U: Facet<'a>>(v: T) -> Result<U, String> {
         TryFromOutcome::Failed(e) => {
             std::mem::forget(v);
             Err(format!("conversion failed: {e:?}"))
-        }
+        },
+        _ => panic!("Unknown TryFromOutcome variant: {outcome:?}"),
     }
 }
 
