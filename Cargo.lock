@@ -66,9 +66,9 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "arborium"
-version = "2.17.0"
+version = "2.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66464d43ce8ad5a81f59a9dac02d33dfe384e8fe9cd334fc607a0b81699d2594"
+checksum = "0d278263fcf7110e49a2d9ee2596ea989f36cae23d293628b8dbd48479190e29"
 dependencies = [
  "arborium-highlight",
  "arborium-json",
@@ -82,9 +82,9 @@ dependencies = [
 
 [[package]]
 name = "arborium-highlight"
-version = "2.17.0"
+version = "2.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3e19dccfe05568006e5919b0e157695fb4c90a6a4c07582b51454e0c85c4365"
+checksum = "ef4c7ad06bea6a906f62d30787eeb22956a2c72dd093a8bbd3b7a08fae73c4a9"
 dependencies = [
  "arborium-theme",
  "arborium-tree-sitter",
@@ -93,9 +93,9 @@ dependencies = [
 
 [[package]]
 name = "arborium-json"
-version = "2.17.0"
+version = "2.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52223d6397f8074ad420cdb617242b780320070bdad7e93e40a1a39112f74d46"
+checksum = "43e029f6e6f86b5fd7945cc62d9a51844b05f1ec64bb9a82c783cd5811a45cda"
 dependencies = [
  "arborium-sysroot",
  "cc",
@@ -104,9 +104,9 @@ dependencies = [
 
 [[package]]
 name = "arborium-rust"
-version = "2.17.0"
+version = "2.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "36d8bebfd306acbb6ef64848c00601641eaef798a44c12a1ef73025a2f9f00f9"
+checksum = "27e8f091b327ea55f1fb3ede1ce61068c0576a6cad85e0c44f0a54e2d88abc2b"
 dependencies = [
  "arborium-sysroot",
  "cc",
@@ -115,9 +115,9 @@ dependencies = [
 
 [[package]]
 name = "arborium-sysroot"
-version = "2.17.0"
+version = "2.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "260e0358abe4ede3af8b4df7a311bc9b6e4a60e4bd50af16deddfcd13759a908"
+checksum = "9b9ce9dee108d720f7433b99b0d17b15ea6870b89032ce53bd44e78c8687d514"
 dependencies = [
  "cc",
  "dlmalloc",
@@ -125,15 +125,15 @@ dependencies = [
 
 [[package]]
 name = "arborium-theme"
-version = "2.17.0"
+version = "2.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "747d16e6679f93cd84e7a9e8e47bec0055eb900fd3caaa3f3c2bbb31286e6c8d"
+checksum = "b513088effb64db7d471ddc13d9d4b487b4e74e9d0963c8afb567b3a11445525"
 
 [[package]]
 name = "arborium-tree-sitter"
-version = "2.17.0"
+version = "2.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4879b6a79798d45d29d54bf000fd4d1b88a8e654e0b0cb762ac402944129233b"
+checksum = "b9ad69424e8485446412c60b72f6ea33b682d46d85acd8a925e1902d15a4310a"
 dependencies = [
  "arborium-sysroot",
  "cc",
@@ -145,9 +145,9 @@ dependencies = [
 
 [[package]]
 name = "arborium-xml"
-version = "2.17.0"
+version = "2.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49b90097575401f3ac63e14992e9c3b0c547bd779021af468515b91631db172b"
+checksum = "732d9392897d9defcc68deaf148c0bb14469456af1cf41ea18c9ae768fee1a13"
 dependencies = [
  "arborium-sysroot",
  "cc",
@@ -156,9 +156,9 @@ dependencies = [
 
 [[package]]
 name = "arborium-yaml"
-version = "2.17.0"
+version = "2.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b74abeada3bb3c551e7dfcac837d9fceef30fb63b977c4130db2f022fea3a34a"
+checksum = "73080d216627bbd16feb55a7d64eba4de90bcc08f3bbe8d07835824273ce126f"
 dependencies = [
  "arborium-sysroot",
  "cc",
@@ -355,9 +355,9 @@ checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
 name = "chrono"
-version = "0.4.44"
+version = "0.4.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c673075a2e0e5f4a1dde27ce9dee1ea4558c7ffe648f576438a20ca1d2acc4b0"
+checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
 dependencies = [
  "iana-time-zone",
  "num-traits",
@@ -403,9 +403,9 @@ dependencies = [
 
 [[package]]
 name = "compact_str"
-version = "0.9.0"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3fdb1325a1cece981e8a296ab8f0f9b63ae357bd0784a9faaf548cc7b480707a"
+checksum = "9dfdd1c2274d9aa354115b09dc9a901d6c5576818cdf70d14cae2bdb47df00ab"
 dependencies = [
  "castaway",
  "cfg-if",
@@ -1229,9 +1229,9 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "jiff"
-version = "0.2.26"
+version = "0.2.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30457d51cb0e68ee18184b30cd9eb8e1602a20837c321f6ea9706b94f1c681c3"
+checksum = "4603d3033e49e2b0e31229fcab20a5d40089c607d975cd9c80551dc69eed9102"
 dependencies = [
  "jiff-static",
  "jiff-tzdb-platform",
@@ -1244,9 +1244,9 @@ dependencies = [
 
 [[package]]
 name = "jiff-static"
-version = "0.2.26"
+version = "0.2.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05f86e4f0326c61ae6c00b04d9009aaeda644d0b5bdfbf6c67247f492f42b3f3"
+checksum = "782d32378dddf207193ac91cefb848ad41abb58195c95168e1291227a0832b47"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1339,9 +1339,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.30"
+version = "0.4.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "616ec5685824bcc94416c6d4a7a446eea774a31efd7062c8480ba6fd06d7a6e5"
+checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
 
 [[package]]
 name = "memchr"
@@ -2417,9 +2417,9 @@ checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
 
 [[package]]
 name = "uuid"
-version = "1.23.1"
+version = "1.23.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ddd74a9687298c6858e9b88ec8935ec45d22e8fd5e6394fa1bd4e99a87789c76"
+checksum = "d258b83ceec21034727ecee8c382cfa6c3e133699b0742c64571814fb420c9f7"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
@@ -2788,9 +2788,9 @@ dependencies = [
 
 [[package]]
 name = "yoke"
-version = "0.8.2"
+version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "abe8c5fda708d9ca3df187cae8bfb9ceda00dd96231bed36e445a1a48e66f9ca"
+checksum = "709fe23a0424b6a435d82152b1bd3fdfb0833487d5fa90d05d42762a9891fef5"
 dependencies = [
  "stable_deref_trait",
  "yoke-derive",
