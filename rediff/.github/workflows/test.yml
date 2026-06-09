@@ -9,7 +9,7 @@ on:
 
 jobs:
   test-x86_64-unknown-linux-gnu:
-    runs-on: ubuntu-latest
+    runs-on: bearcove-ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
 
@@ -25,7 +25,7 @@ jobs:
         run: cargo nextest run
 
   clippy:
-    runs-on: ubuntu-latest
+    runs-on: bearcove-ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
 
@@ -37,7 +37,7 @@ jobs:
         run: cargo clippy --all-features --all-targets -- -D warnings
 
   docs:
-    runs-on: ubuntu-latest
+    runs-on: bearcove-ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
 
@@ -51,7 +51,7 @@ jobs:
         run: cargo doc --no-deps
 
   lockfile:
-    runs-on: ubuntu-latest
+    runs-on: bearcove-ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
 
