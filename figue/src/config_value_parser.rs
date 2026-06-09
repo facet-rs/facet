@@ -1036,6 +1036,11 @@ pub(crate) fn serialize_default_to_config_value(
                         "Indirect type ops not yet supported for default serialization".to_string(),
                     )?;
                 }
+                // `TypeOps` is #[non_exhaustive]; any newer kind isn't supported here.
+                _ => Err(format!(
+                    "unsupported TypeOps variant for Shape {}",
+                    shape.type_identifier
+                ))?,
             }
         }
         DefaultSource::Custom(fn_ptr) => {
@@ -1044,6 +1049,13 @@ pub(crate) fn serialize_default_to_config_value(
                 let ptr_uninit = facet_core::PtrUninit::new_sized(ptr);
                 (*fn_ptr)(ptr_uninit);
             }
+        }
+        // `DefaultSource` is #[non_exhaustive]; reject any newer kind explicitly.
+        _ => {
+            return Err(format!(
+                "unsupported DefaultSource variant for Shape {}",
+                shape.type_identifier
+            ));
         }
     }
 
@@ -1601,6 +1613,8 @@ impl facet_format::FormatSerializer for ConfigValueSerializer {
             ScalarValue::Bytes(_) => {
                 return Err("Bytes not supported in ConfigValue")?;
             }
+            // `ScalarValue` is #[non_exhaustive]; reject any newer scalar kind.
+            _ => return Err("unsupported scalar kind in ConfigValue")?,
         };
 
         self.attach_value(config_value)
