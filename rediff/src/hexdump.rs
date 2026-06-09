@@ -64,7 +64,7 @@ pub enum HexLine {
         kind: RowKind,
         /// Absolute byte offset of the first cell.
         offset: usize,
-        /// Up to [`ROW`] byte cells, each individually classified.
+        /// Up to 16 byte cells, each individually classified.
         cells: Vec<HexCell>,
     },
     /// A collapsed run of `usize` unchanged 16-byte rows.

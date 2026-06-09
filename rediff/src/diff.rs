@@ -603,6 +603,7 @@ fn diff_dynamic_values<'mem, 'facet>(
             // Since they have the same kind, we can only compare by Replace semantics
             Diff::Replace { from, to }
         }
+        _ => Diff::Replace { from, to },
     }
 }
 
