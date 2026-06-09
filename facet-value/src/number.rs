@@ -697,7 +697,7 @@ mod tests {
         assert!(a < c);
         assert!(c < b);
         assert!(b < inf);
-        assert!(!(c > nan || c < nan));
+        assert!(c.partial_cmp(&nan).is_none());
     }
 
     #[test]

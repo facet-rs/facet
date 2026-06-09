@@ -1,6 +1,6 @@
 [package]
 name = "facet-zod"
-version = "0.46.5"
+version = "0.50.0-rc.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

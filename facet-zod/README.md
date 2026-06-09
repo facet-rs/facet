@@ -9,7 +9,7 @@
 
     This region was generated from Rust documentation comments by `cargo-reedme` using this command:
 
-        cargo +nightly reedme --package facet-zod
+        cargo +nightly reedme --workspace
 
     for more info: https://github.com/nik-rev/cargo-reedme
 
@@ -42,9 +42,7 @@ let schema = generate::<User>();
 assert!(schema.contains("export const UserSchema = z.object({"));
 ```
 
-<!-- cargo-reedme: end -->
-
-## Sponsors
+### Sponsors
 
 Thanks to all individual sponsors:
 
@@ -60,7 +58,7 @@ Thanks to all individual sponsors:
     </picture>
 </a> </p>
 
-...along with corporate sponsors:
+…along with corporate sponsors:
 
 <p> <a href="https://aws.amazon.com">
 <picture>
@@ -79,13 +77,13 @@ Thanks to all individual sponsors:
 </picture>
 </a> </p>
 
-...without whom this work could not exist.
+…without whom this work could not exist.
 
-## Special thanks
+### Special thanks
 
 The facet logo was drawn by [Misiasart](https://misiasart.com/).
 
-## License
+### License
 
 Licensed under either of:
 
@@ -93,3 +91,5 @@ Licensed under either of:
 - MIT license ([LICENSE-MIT](https://github.com/facet-rs/facet/blob/main/LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
 
 at your option.
+
+<!-- cargo-reedme: end -->
