@@ -63,6 +63,12 @@ fn field_default_value(field: &Field) -> Option<String> {
                 return None;
             }
         }
+        // facet's DefaultSource is #[non_exhaustive]; an unknown source means we don't
+        // know how to produce the default, so release the allocation and report no default.
+        _ => {
+            unsafe { std::alloc::dealloc(ptr.as_ptr(), layout) };
+            return None;
+        }
     }
 
     // Create a Peek to serialize
@@ -437,9 +443,15 @@ impl SchemaGenerator {
                         let inner = self.shape_to_schema(slice.t);
                         Schema::Seq(SeqSchema((Documented::new(Box::new(inner)),)))
                     }
+                    // facet's SequenceType is #[non_exhaustive]; permit any value for a
+                    // sequence shape we can't describe precisely.
+                    _ => Schema::Any,
                 }
             }
+            // facet's Type is #[non_exhaustive]; undescribable types degrade to Any
+            // (same as Pointer/Undefined above).
             Type::Pointer(_) | Type::Undefined => Schema::Any,
+            _ => Schema::Any,
         }
     }
 
@@ -469,9 +481,13 @@ impl SchemaGenerator {
             PrimitiveType::Numeric(num) => match num {
                 NumericType::Integer { .. } => Schema::Int(None),
                 NumericType::Float => Schema::Float(None),
+                // facet's NumericType is #[non_exhaustive].
+                _ => Schema::Any,
             },
             PrimitiveType::Textual(_) => Schema::String(None),
             PrimitiveType::Never => Schema::Unit,
+            // facet's PrimitiveType is #[non_exhaustive].
+            _ => Schema::Any,
         }
     }
 
@@ -509,6 +525,11 @@ impl SchemaGenerator {
                 _ => Schema::Type {
                     name: Some(type_id.to_string()),
                 },
+            },
+            // facet's UserType is #[non_exhaustive]; emit a named type reference for any
+            // user type we don't specifically model.
+            _ => Schema::Type {
+                name: Some(type_id.to_string()),
             },
         }
     }

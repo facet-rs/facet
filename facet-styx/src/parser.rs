@@ -246,6 +246,10 @@ impl<'de> StyxParser<'de> {
                 }
             }
             Some(ScalarTypeHint::Bytes) => ScalarValue::Str(value),
+            // facet's ScalarTypeHint is #[non_exhaustive]; an unrecognized hint falls back
+            // to the string form (styx scalars are syntactically strings — the deserializer
+            // reinterprets them per the target type).
+            Some(_) => ScalarValue::Str(value),
         }
     }
 
@@ -599,6 +603,8 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                 Some(ParseEventKind::FieldKey(_)) | Some(ParseEventKind::OrderedField) => {
                     // Continue
                 }
+                // facet's ParseEventKind is #[non_exhaustive]; skip unknown event kinds.
+                Some(_) => {}
                 None => break,
             }
         }

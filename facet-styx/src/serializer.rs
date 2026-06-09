@@ -356,6 +356,13 @@ impl FormatSerializer for StyxSerializer {
             ScalarValue::F64(v) => self.writer.write_f64(v),
             ScalarValue::Str(s) => self.writer.write_string(&s),
             ScalarValue::Bytes(bytes) => self.writer.write_bytes(&bytes),
+            // facet's ScalarValue is #[non_exhaustive]; a kind we don't recognize can't be
+            // written to styx, so fail loudly rather than silently drop or mis-encode it.
+            _ => {
+                return Err(StyxSerializeError::new(
+                    "facet-styx: unsupported scalar value variant",
+                ));
+            }
         }
         Ok(())
     }
@@ -697,6 +704,13 @@ impl FormatSerializer for CompactStyxSerializer {
             ScalarValue::F64(v) => self.writer.write_f64(v),
             ScalarValue::Str(s) => self.writer.write_string(&s),
             ScalarValue::Bytes(bytes) => self.writer.write_bytes(&bytes),
+            // facet's ScalarValue is #[non_exhaustive]; a kind we don't recognize can't be
+            // written to styx, so fail loudly rather than silently drop or mis-encode it.
+            _ => {
+                return Err(StyxSerializeError::new(
+                    "facet-styx: unsupported scalar value variant",
+                ));
+            }
         }
         Ok(())
     }
