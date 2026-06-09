@@ -133,6 +133,7 @@ fn determine_value_type(peek: Peek<'_, '_>) -> ValueType {
             PrimitiveType::Textual(TextualType::Char)
             | PrimitiveType::Textual(TextualType::Str) => ValueType::String,
             PrimitiveType::Never => ValueType::Null,
+            _ => ValueType::Other,
         },
         _ => ValueType::Other,
     }
