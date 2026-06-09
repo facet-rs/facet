@@ -1161,8 +1161,12 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
             .map(|(idx, info)| (idx, info.field.name, info.is_set))
             .collect();
 
-        for (idx, field_name, is_set) in uninitialized_lists {
-            trace!(idx, field_name, "initializing empty element list");
+        for (idx, _field_name, is_set) in uninitialized_lists {
+            trace!(
+                idx,
+                field_name = _field_name,
+                "initializing empty element list"
+            );
             if is_set {
                 wip = wip.begin_nth_field(idx)?.init_set()?.end()?;
             } else {
