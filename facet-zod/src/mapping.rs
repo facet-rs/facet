@@ -240,6 +240,7 @@ fn numeric_to_zod(num: &NumericType, shape: &'static Shape, config: &Config) -> 
                 ZodType::Number { int: true }
             }
         }
+        _ => ZodType::Unknown,
     }
 }
 

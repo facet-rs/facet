@@ -1,6 +1,6 @@
 [package]
 name = "facet-postcard"
-version = "0.46.1"
+version = "0.50.0-rc.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -17,7 +17,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 facet-core = { workspace = true }
-facet-format = { path = "../facet-format", version = "0.47.1" }
+facet-format = { path = "../facet-format", version = "0.50.0-rc.0" }
 facet-path = { workspace = true, features = ["alloc"] }
 facet-reflect = { workspace = true }
 facet-value = { workspace = true }
@@ -45,7 +45,7 @@ chrono = { workspace = true, features = ["clock"] }
 divan = { workspace = true }
 facet = { workspace = true, features = ["std", "all-impls", "doc"] }
 facet-format = { path = "../facet-format", features = [] }
-facet-json = { path = "../facet-json", version = "0.46.1" }
+facet-json = { path = "../facet-json", version = "0.50.0-rc.0" }
 facet-json-classics = { path = "../facet-json-classics" }
 facet-testhelpers = { workspace = true }
 facet-value = { path = "../facet-value" }

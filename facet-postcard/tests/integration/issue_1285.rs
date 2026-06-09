@@ -72,12 +72,13 @@ fn configurable_limit_applies_to_partial_deserialization() {
 
 #[cfg(feature = "ci")]
 #[test]
-fn configurable_limit_is_enforced_in_tier2_path() {
+fn configurable_limit_is_enforced_in_format_deserializer_path() {
     let payload = [0x02, 0x01, 0x00];
     let mut parser = facet_postcard::PostcardParser::with_limits(&payload, 1);
-    let result = facet_format::jit::try_deserialize_format::<Vec<bool>, _>(&mut parser)
-        .expect("expected Tier-2 format JIT to be available");
-    let err = result.expect_err("custom collection limit should reject vec length 2");
+    let mut deserializer = facet_format::FormatDeserializer::new_owned(&mut parser);
+    let err = deserializer
+        .deserialize::<Vec<bool>>()
+        .expect_err("custom collection limit should reject vec length 2");
     assert!(
         err.to_string().contains("collection length"),
         "expected collection length error, got: {err}"
