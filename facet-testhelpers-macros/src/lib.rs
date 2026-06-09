@@ -1,7 +1,5 @@
-#![expect(
-    clippy::result_large_err,
-    reason = "unsynn's Parser API intentionally returns its large Error by value; unsynn documents and allows this tradeoff in its own crate root"
-)]
+// unsynn's Parser API intentionally returns its large Error by value.
+#![allow(clippy::result_large_err)]
 
 use unsynn::*;
 
