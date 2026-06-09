@@ -1619,11 +1619,11 @@ fn compute_closeness_score(
     let would_be_missing = currently_missing.saturating_sub(fields_that_would_match);
 
     // Coverage score: percentage of required fields that would be present
-    let coverage_score = if required_count > 0 {
-        ((required_count - would_be_missing) * 100) / required_count
-    } else {
-        100 // No required fields = perfect coverage
-    };
+    let coverage_score = required_count
+        .saturating_sub(would_be_missing)
+        .saturating_mul(100)
+        .checked_div(required_count)
+        .unwrap_or(100);
 
     // Penalty for truly unknown fields (no typo suggestion)
     let truly_unknown = unknown_fields.len().saturating_sub(fields_that_would_match);

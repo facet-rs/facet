@@ -43,7 +43,7 @@ jobs:
           cargo +nightly llvm-cov report --doctests --lcov --output-path coverage/lcov.info
 
       - name: ✨ Upload coverage to Codecov
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           files: coverage/lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -162,7 +162,7 @@ jobs:
 
   semver-checks:
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
-    runs-on: ubuntu-latest
+    runs-on: bearcove-ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -179,7 +179,7 @@ jobs:
           verbose: true
 
   test-aarch64-apple-darwin:
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v6
 
@@ -200,7 +200,7 @@ jobs:
           cargo nextest run --features ci
 
   test-aarch64-unknown-linux-gnu:
-    runs-on: ubuntu-24.04-arm
+    runs-on: bearcove-ubuntu-24.04
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-arm64
     steps:
