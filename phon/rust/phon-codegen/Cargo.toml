@@ -7,6 +7,6 @@ repository.workspace = true
 description = "The phon codegen tool: reads Rust types (facet) or schema bundles, emits target-language source plus schema-bytes constants."
 
 [dependencies]
-phon = { path = "../phon" }
+phon.workspace = true
 phon-schema.workspace = true
 facet.workspace = true

@@ -351,12 +351,11 @@ pub mod api {
     fn record_decode_fallbacks(program: &[MemOp], path: &str, out: &mut Vec<JitFallbackRecord>) {
         for (idx, op) in program.iter().enumerate() {
             let op_path = format!("{path}.{idx}");
-            match op {
-                MemOp::NativeInt { .. } => out.push(JitFallbackRecord {
+            if let MemOp::NativeInt { .. } = op {
+                out.push(JitFallbackRecord {
                     path: op_path,
                     reason: "native decode JIT does not support native-sized integer casts yet",
-                }),
-                _ => {}
+                });
             }
         }
         walk_nested_programs(program, path, out, record_decode_fallbacks);

@@ -2960,7 +2960,7 @@ where
 fn make_dynamic_object(i: u32) -> Value {
     let mut object = VObject::new();
     object.insert(VString::new("title"), Value::from(format!("page-{i}")));
-    object.insert(VString::new("visible"), Value::from(i % 2 == 0));
+    object.insert(VString::new("visible"), Value::from(i.is_multiple_of(2)));
     object.insert(VString::new("count"), Value::from(i as i64));
     object.into()
 }

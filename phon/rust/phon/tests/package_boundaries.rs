@@ -96,10 +96,8 @@ fn workspace_members(manifest: &'static str) -> BTreeSet<&'static str> {
         if in_members && trimmed.starts_with(']') {
             break;
         }
-        if in_members {
-            if let Some(member) = quoted_value(trimmed) {
-                members.insert(member);
-            }
+        if in_members && let Some(member) = quoted_value(trimmed) {
+            members.insert(member);
         }
     }
     members

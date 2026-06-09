@@ -269,21 +269,19 @@ fn validate_fixed_array_caps(kind: &SchemaKind, reg: &Registry) -> Result<()> {
         SchemaKind::Primitive(_) | SchemaKind::Dynamic => Ok(()),
         SchemaKind::Struct { fields, .. } => fields
             .iter()
-            .try_for_each(|field| validate_fixed_array_ref(&field.schema, reg)),
+            .try_for_each(|field| validate_fixed_array_ref(&field.schema)),
         SchemaKind::Enum { variants, .. } => variants
             .iter()
-            .try_for_each(|variant| validate_fixed_array_payload(&variant.payload, reg)),
-        SchemaKind::Tuple { elements } => elements
-            .iter()
-            .try_for_each(|element| validate_fixed_array_ref(element, reg)),
+            .try_for_each(|variant| validate_fixed_array_payload(&variant.payload)),
+        SchemaKind::Tuple { elements } => elements.iter().try_for_each(validate_fixed_array_ref),
         SchemaKind::List { element }
         | SchemaKind::Set { element }
         | SchemaKind::Tensor { element, .. }
         | SchemaKind::Option { element }
-        | SchemaKind::Channel { element, .. } => validate_fixed_array_ref(element, reg),
+        | SchemaKind::Channel { element, .. } => validate_fixed_array_ref(element),
         SchemaKind::Map { key, value } => {
-            validate_fixed_array_ref(key, reg)?;
-            validate_fixed_array_ref(value, reg)
+            validate_fixed_array_ref(key)?;
+            validate_fixed_array_ref(value)
         }
         SchemaKind::Array {
             element,
@@ -298,36 +296,32 @@ fn validate_fixed_array_caps(kind: &SchemaKind, reg: &Registry) -> Result<()> {
                     remaining: phon_schema::bytes::ZST_COUNT_CAP,
                 }));
             }
-            validate_fixed_array_ref(element, reg)
+            validate_fixed_array_ref(element)
         }
         SchemaKind::External { metadata, .. } => {
             if let Some(metadata) = metadata {
-                validate_fixed_array_ref(metadata, reg)?;
+                validate_fixed_array_ref(metadata)?;
             }
             Ok(())
         }
     }
 }
 
-fn validate_fixed_array_payload(payload: &VariantPayload, reg: &Registry) -> Result<()> {
+fn validate_fixed_array_payload(payload: &VariantPayload) -> Result<()> {
     match payload {
         VariantPayload::Unit => Ok(()),
-        VariantPayload::Newtype(r) => validate_fixed_array_ref(r, reg),
-        VariantPayload::Tuple(elements) => elements
-            .iter()
-            .try_for_each(|element| validate_fixed_array_ref(element, reg)),
+        VariantPayload::Newtype(r) => validate_fixed_array_ref(r),
+        VariantPayload::Tuple(elements) => elements.iter().try_for_each(validate_fixed_array_ref),
         VariantPayload::Struct(fields) => fields
             .iter()
-            .try_for_each(|field| validate_fixed_array_ref(&field.schema, reg)),
+            .try_for_each(|field| validate_fixed_array_ref(&field.schema)),
     }
 }
 
-fn validate_fixed_array_ref(r: &SchemaRef, reg: &Registry) -> Result<()> {
+fn validate_fixed_array_ref(r: &SchemaRef) -> Result<()> {
     match r {
         SchemaRef::Var { .. } => Ok(()),
-        SchemaRef::Concrete { args, .. } => args
-            .iter()
-            .try_for_each(|arg| validate_fixed_array_ref(arg, reg)),
+        SchemaRef::Concrete { args, .. } => args.iter().try_for_each(validate_fixed_array_ref),
     }
 }
 

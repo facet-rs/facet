@@ -3401,7 +3401,7 @@ fn sample_dodeca_small_cell_services_fixture() -> DodecaSmallCellServicesFixture
 fn value_object(entries: &[(&str, Value)]) -> Value {
     let mut object = VObject::new();
     for (key, value) in entries {
-        object.insert(VString::new(*key), value.clone());
+        object.insert(VString::new(key), value.clone());
     }
     object.into()
 }
