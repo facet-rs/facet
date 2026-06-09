@@ -102,7 +102,7 @@ This “poisoning is revision-scoped” behavior matters when you have transient
 
 ## Cross-snapshot adoption
 
-The derived access loop also has two cross-snapshot mechanisms (documented in more detail in [In-flight Deduplication](../inflight/)):
+The derived access loop also has two cross-snapshot mechanisms (documented in more detail in [In-flight Deduplication](/internals/inflight/)):
 
 - a shared completed-result cache (“adopt a ready record if valid”)
 - a global in-flight registry (“followers await the leader across snapshots”)

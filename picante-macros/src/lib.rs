@@ -1,4 +1,8 @@
 #![warn(missing_docs)]
+#![allow(
+    clippy::result_large_err,
+    reason = "unsynn parser macros return unsynn::Error by value; unsynn tracks this as a deliberate allocation-free parser API tradeoff"
+)]
 
 //! Proc macros for Picante (`#[picante::input]`, `#[picante::tracked]`, etc.).
 

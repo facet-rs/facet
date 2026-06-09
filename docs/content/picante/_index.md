@@ -8,7 +8,7 @@ Add picante to your `Cargo.toml`:
 
 ```toml,noexec
 [dependencies]
-picante = "0.1"
+picante = "3.0.0-rc.0"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -94,4 +94,3 @@ pub struct AppDatabase {}
 
 fn use_db<DB: Db>(db: &DB) { /* ... */ }
 ```
-
