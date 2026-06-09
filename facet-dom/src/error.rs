@@ -82,6 +82,7 @@ impl<E> From<facet_dessert::DessertError> for DomDeserializeError<E> {
             facet_dessert::DessertError::CannotBorrow { message } => {
                 Self::Unsupported(message.into_owned())
             }
+            other => Self::Unsupported(other.to_string()),
         }
     }
 }

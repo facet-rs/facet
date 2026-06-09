@@ -35,8 +35,8 @@ Add the crates you need to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-facet = "0.43"
-facet-xml = "0.43"
+facet = "0.50.0-rc.0"
+facet-xml = "0.50.0-rc.0"
 ```
 
 Then derive `Facet` on your types and use `facet_xml::from_str` / `facet_xml::to_string`:

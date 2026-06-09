@@ -865,6 +865,9 @@ where
             PointerAction::SizedPointee => {
                 Ok(self.deserialize_into_named(wip, expected_name)?.end()?)
             }
+            _ => Err(DomDeserializeError::Unsupported(
+                "unsupported pointer action".into(),
+            )),
         }
     }
 
