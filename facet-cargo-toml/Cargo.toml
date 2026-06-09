@@ -1,6 +1,6 @@
 [package]
 name = "facet-cargo-toml"
-version = "0.46.1"
+version = "0.50.0-rc.0"
 edition = "2024"
 authors = ["Amos Wenger <amos@bearcove.eu>"]
 license = "MIT OR Apache-2.0"
@@ -10,11 +10,11 @@ keywords = ["cargo", "toml", "parser", "manifest", "lockfile"]
 categories = ["development-tools", "parser-implementations"]
 
 [dependencies]
-facet = { version = "0.46", features = ["camino"] }
-facet-error = "0.46"
-facet-toml = "0.46"
-facet-reflect = "0.46"
-facet-value = "0.46"
+facet = { version = "0.50.0-rc.0", features = ["camino"] }
+facet-error = "0.50.0-rc.0"
+facet-toml = "0.50.0-rc.0"
+facet-reflect = "0.50.0-rc.0"
+facet-value = "0.50.0-rc.0"
 camino = "1.2"
 
 [dev-dependencies]
