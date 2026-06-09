@@ -8,7 +8,7 @@ on:
 jobs:
   release-plz-release:
     name: Release-plz release
-    runs-on: ubuntu-latest
+    runs-on: bearcove-ubuntu-24.04
     environment: release
     permissions:
       contents: write
@@ -22,7 +22,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       - name: Get crates.io token via OIDC
-        uses: rust-lang/crates-io-auth-action@v1
+        uses: rust-lang/crates-io-auth-action@v1.0.4
         id: crates-io-auth
       - name: Run release-plz
         uses: release-plz/action@v0.5
@@ -34,7 +34,7 @@ jobs:
 
   release-plz-pr:
     name: Release-plz PR
-    runs-on: ubuntu-latest
+    runs-on: bearcove-ubuntu-24.04
     permissions:
       contents: write
       pull-requests: write

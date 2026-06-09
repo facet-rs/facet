@@ -9,6 +9,10 @@
 //! - RenameRule for field/variant name transformations
 //! - Helper types like LifetimeName for code generation
 
+#![expect(
+    clippy::result_large_err,
+    reason = "unsynn's Parser API intentionally returns its large Error by value; unsynn documents and allows this tradeoff in its own crate root"
+)]
 #![warn(missing_docs)]
 #![allow(uncommon_codepoints)]
 
