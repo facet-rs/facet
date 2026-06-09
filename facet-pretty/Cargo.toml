@@ -1,6 +1,6 @@
 [package]
 name = "facet-pretty"
-version = "0.46.5"
+version = "0.50.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -31,8 +31,8 @@ camino = ["alloc", "facet-core/camino"]
 detect-terminal-theme = ["dep:terminal-light"]
 
 [dependencies]
-facet-core = { path = "../facet-core", version = "0.46.5" }
-facet-reflect = { path = "../facet-reflect", version = "0.46.5" }
+facet-core = { path = "../facet-core", version = "0.50.0" }
+facet-reflect = { path = "../facet-reflect", version = "0.50.0" }
 owo-colors = { version = "4", features = ["supports-colors"] }
 
 # `terminal-light` -> `crossterm` does not compile on wasm32. The
