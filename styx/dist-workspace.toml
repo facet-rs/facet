@@ -17,3 +17,8 @@ publish-jobs = ["homebrew"]
 tap = "bearcove/homebrew-tap"
 # Whether to install an updater program
 install-updater = false
+# Use bearcove self-hosted runners for all Linux release jobs.
+[dist.github-custom-runners]
+global = "bearcove-ubuntu-24.04"
+aarch64-unknown-linux-gnu = "bearcove-ubuntu-24.04"
+x86_64-unknown-linux-gnu = "bearcove-ubuntu-24.04"
