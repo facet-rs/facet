@@ -32,4 +32,8 @@ tasks {
         sinceBuild.set("243")
         // No untilBuild - compatible with all future versions
     }
+
+    named("buildSearchableOptions") {
+        enabled = false
+    }
 }
