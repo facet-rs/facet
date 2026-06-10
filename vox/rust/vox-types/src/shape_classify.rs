@@ -1,5 +1,19 @@
 use facet_core::{Def, ScalarType, Shape, StructKind, Type, UserType};
 
+/// Check if a shape represents a Unix `Fd` capability.
+#[cfg(unix)]
+pub fn is_fd(shape: &Shape) -> bool {
+    use facet::Facet;
+
+    shape.decl_id == crate::Fd::SHAPE.decl_id
+}
+
+/// Check if a shape represents a Unix `Fd` capability.
+#[cfg(not(unix))]
+pub fn is_fd(_shape: &Shape) -> bool {
+    false
+}
+
 /// Classification of a `Shape` for code generation.
 #[derive(Debug, Clone, Copy)]
 pub enum ShapeKind<'a> {
@@ -104,6 +118,10 @@ pub fn classify_shape(shape: &'static Shape) -> ShapeKind<'static> {
         && let Some(inner) = shape.type_params.first()
     {
         return ShapeKind::Rx { inner: inner.shape };
+    }
+
+    if matches!(shape.def, Def::DynamicValue(_)) {
+        return ShapeKind::Opaque;
     }
 
     if shape.is_transparent()

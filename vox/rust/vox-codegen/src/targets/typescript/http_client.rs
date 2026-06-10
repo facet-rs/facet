@@ -4,7 +4,7 @@
 //! Methods are called via POST /{service}/{method}.
 //! Arguments are sent as a JSON array.
 //! Methods with channels throw at runtime (channels require WebSocket).
-//! Clients retrying requests should use the same nonce.
+//! Clients that explicitly issue replacement requests should use the same nonce.
 
 use heck::{ToLowerCamelCase, ToUpperCamelCase};
 use vox_types::{ServiceDescriptor, is_rx, is_tx};

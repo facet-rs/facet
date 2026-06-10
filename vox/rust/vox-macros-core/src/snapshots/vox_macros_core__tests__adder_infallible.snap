@@ -1,6 +1,5 @@
 ---
 source: rust/vox-macros-core/src/lib.rs
-assertion_line: 1121
 expression: "generate(quote!\n{ pub trait Adder { async fn add(&self, a: i32, b: i32) -> i32; } })"
 ---
 #[allow(non_snake_case, clippy::all)]
@@ -8,18 +7,22 @@ pub fn adder_service_descriptor() -> &'static ::vox::session::ServiceDescriptor 
     static DESCRIPTOR: std::sync::OnceLock<&'static ::vox::session::ServiceDescriptor> =
         std::sync::OnceLock::new();
     DESCRIPTOR.get_or_init(|| {
-        let methods: Vec<&'static ::vox::session::MethodDescriptor> = vec![
-            ::vox::hash::method_descriptor_with_retry::<(i32, i32), i32>(
-                "Adder",
-                "add",
-                &["a", "b"],
-                None,
-                ::vox::RetryPolicy {
-                    persist: false,
-                    idem: false,
-                },
-            ),
-        ];
+        let methods: Vec<&'static ::vox::session::MethodDescriptor> =
+            vec![
+                ::vox::hash::method_descriptor::<(i32, i32), i32>(
+                    "Adder",
+                    "add",
+                    &["a", "b"],
+                    &[None, None],
+                    ::vox::hash::MethodDescriptorOptions {
+                        response_wire_shape: <Result<
+                            i32,
+                            ::vox::VoxError<::core::convert::Infallible>,
+                        > as ::vox::facet::Facet<'static>>::SHAPE,
+                        doc: None,
+                    },
+                ),
+            ];
         Box::leak(Box::new(::vox::session::ServiceDescriptor {
             service_name: "Adder",
             methods: Box::leak(methods.into_boxed_slice()),
@@ -73,15 +76,6 @@ where
     H: Adder,
     R: ::vox::ReplySink,
 {
-    fn retry_policy(&self, method_id: ::vox::MethodId) -> ::vox::RetryPolicy {
-        if method_id == adder_service_descriptor().methods[0usize].id {
-            return ::vox::RetryPolicy {
-                persist: false,
-                idem: false,
-            };
-        }
-        ::vox::RetryPolicy::VOLATILE
-    }
     fn args_have_channels(&self, method_id: ::vox::MethodId) -> bool {
         if method_id == adder_service_descriptor().methods[0usize].id {
             return adder_service_descriptor().methods[0usize].args_have_channels;
@@ -106,12 +100,12 @@ where
         let request_call = call.get();
         let method_id = request_call.method_id;
         let args_bytes = match &request_call.args {
-            ::vox::Payload::PostcardBytes(bytes) => bytes,
+            ::vox::Payload::Encoded(bytes) => bytes,
             _ => {
                 reply
                     .send_error(
                         ::vox::VoxError::<::core::convert::Infallible>::InvalidPayload(
-                            "args not PostcardBytes".into(),
+                            "args not Encoded".into(),
                         ),
                     )
                     .await;
@@ -121,8 +115,15 @@ where
         if method_id == adder_service_descriptor().methods[0usize].id {
             let _binder_guard = reply.channel_binder().map(::vox::set_channel_binder);
             let deser_result: ::core::result::Result<(i32, i32), _> =
-                ::vox::schema_deser::schema_deserialize_args_borrowed(
-                    args_bytes, method_id, &schemas,
+                ::vox::provide_channels_for_method(
+                    request_call.channels.clone(),
+                    adder_service_descriptor().methods[0usize],
+                    &schemas,
+                    || {
+                        ::vox::schema_deser::schema_deserialize_args_borrowed(
+                            args_bytes, method_id, &schemas,
+                        )
+                    },
                 );
             drop(_binder_guard);
             let args: (i32, i32) = match deser_result {
@@ -191,7 +192,7 @@ impl AdderClient {
     #[doc = r" Create a new client wrapping the given caller."]
     pub fn new(caller: ::vox::Caller) -> Self {
         Self {
-            caller,
+            caller: caller.with_service(adder_service_descriptor()),
             session: None,
         }
     }
@@ -208,9 +209,9 @@ impl AdderClient {
         let method_id = adder_service_descriptor().methods[0usize].id;
         let args = (a, b);
         let mut metadata = Default::default();
-        ::vox::ensure_channel_retry_mode(&mut metadata, ::vox::ChannelRetryMode::None);
         let req = ::vox::RequestCall {
             method_id,
+            channels: Default::default(),
             args: ::vox::Payload::outgoing(&args),
             metadata,
             schemas: Default::default(),
@@ -240,7 +241,7 @@ impl AdderClient {
                     ::vox::VoxError::Indeterminate => {
                         ::vox::VoxError::<::core::convert::Infallible>::Indeterminate
                     }
-                    ::vox::VoxError::User(never) => match never {},
+                    ::vox::VoxError::User(never) => match *never {},
                 });
             }
         };
@@ -252,11 +253,11 @@ impl AdderClient {
         ::vox::provide_fds(__vox_frame_fds, move || {
             let response = response.get();
             let ret_bytes = match &response.ret {
-                ::vox::Payload::PostcardBytes(bytes) => bytes,
+                ::vox::Payload::Encoded(bytes) => bytes,
                 _ => {
                     return Err(
                         ::vox::VoxError::<::core::convert::Infallible>::InvalidPayload(
-                            "response not PostcardBytes".into(),
+                            "response not Encoded".into(),
                         ),
                     );
                 }
@@ -278,6 +279,9 @@ impl AdderClient {
 impl ::vox::FromVoxSession for AdderClient {
     const SERVICE_NAME: &'static str = "Adder";
     fn from_vox_session(caller: ::vox::Caller, session: Option<::vox::SessionHandle>) -> Self {
-        Self { caller, session }
+        Self {
+            caller: caller.with_service(adder_service_descriptor()),
+            session,
+        }
     }
 }

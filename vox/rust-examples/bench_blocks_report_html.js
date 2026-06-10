@@ -54,8 +54,8 @@ function groupBy(rows, keyFn) {
   return out;
 }
 
-function pctDelta(shm, local) {
-  return ((shm / local) - 1) * 100;
+function pctDelta(ffi, local) {
+  return ((ffi / local) - 1) * 100;
 }
 
 function main() {
@@ -71,15 +71,15 @@ function main() {
   })) {
     const [payloadSize, inFlight] = key.split('|').map(Number);
     const local = group.filter((r) => r.transport === 'local');
-    const shm = group.filter((r) => r.transport === 'shm');
+    const ffi = group.filter((r) => r.transport === 'ffi');
     const localByBlock = new Map(local.map((r) => [r.block, r]));
-    const shmByBlock = new Map(shm.map((r) => [r.block, r]));
-    const blocks = [...new Set([...localByBlock.keys(), ...shmByBlock.keys()])].sort((a, b) => a - b);
+    const ffiByBlock = new Map(ffi.map((r) => [r.block, r]));
+    const blocks = [...new Set([...localByBlock.keys(), ...ffiByBlock.keys()])].sort((a, b) => a - b);
 
     const deltas = [];
     for (const block of blocks) {
       const l = localByBlock.get(block);
-      const s = shmByBlock.get(block);
+      const s = ffiByBlock.get(block);
       if (!l || !s) continue;
       deltas.push({
         block,
@@ -95,15 +95,15 @@ function main() {
       in_flight: inFlight,
       blocks: deltas.length,
       local_mean_us: mean(local.map((r) => r.per_call_micros)),
-      shm_mean_us: mean(shm.map((r) => r.per_call_micros)),
+      ffi_mean_us: mean(ffi.map((r) => r.per_call_micros)),
       local_p50_us: median(local.map((r) => r.p50_us)),
-      shm_p50_us: median(shm.map((r) => r.p50_us)),
+      ffi_p50_us: median(ffi.map((r) => r.p50_us)),
       local_p99_us: median(local.map((r) => r.p99_us)),
-      shm_p99_us: median(shm.map((r) => r.p99_us)),
+      ffi_p99_us: median(ffi.map((r) => r.p99_us)),
       local_rps: mean(local.map((r) => r.calls_per_sec)),
-      shm_rps: mean(shm.map((r) => r.calls_per_sec)),
+      ffi_rps: mean(ffi.map((r) => r.calls_per_sec)),
       local_rss_kib: mean(local.map((r) => r.peak_rss_kib).filter((v) => Number.isFinite(v))),
-      shm_rss_kib: mean(shm.map((r) => r.peak_rss_kib).filter((v) => Number.isFinite(v))),
+      ffi_rss_kib: mean(ffi.map((r) => r.peak_rss_kib).filter((v) => Number.isFinite(v))),
       delta_p50_pct: mean(deltas.map((d) => d.p50)),
       delta_p99_pct: mean(deltas.map((d) => d.p99)),
       delta_throughput_pct: mean(deltas.map((d) => d.throughput)),
@@ -126,7 +126,7 @@ function main() {
       --text: #eef6fb;
       --muted: #99aebd;
       --local: #f7b955;
-      --shm: #51d0c8;
+      --ffi: #51d0c8;
       --good: #66e28b;
       --bad: #ff7d66;
       --grid: rgba(255,255,255,0.08);
@@ -205,7 +205,7 @@ function main() {
     <section class="layout single">
       <div class="panel">
         <h2>Transport deltas</h2>
-        <p>Negative latency delta means SHM is faster. Positive throughput delta means SHM is faster. Positive RSS delta means SHM uses more memory.</p>
+        <p>Negative latency delta means FFI is faster. Positive throughput delta means FFI is faster. Positive RSS delta means FFI uses more memory.</p>
         <div class="plot" id="deltaHeatmap"></div>
       </div>
     </section>
@@ -221,13 +221,13 @@ function main() {
                 <th>in_flight</th>
                 <th>blocks</th>
                 <th>local p50 µs</th>
-                <th>shm p50 µs</th>
+                <th>ffi p50 µs</th>
                 <th>local p99 µs</th>
-                <th>shm p99 µs</th>
+                <th>ffi p99 µs</th>
                 <th>local rps</th>
-                <th>shm rps</th>
+                <th>ffi rps</th>
                 <th>local rss MiB</th>
-                <th>shm rss MiB</th>
+                <th>ffi rss MiB</th>
                 <th>p50 delta %</th>
                 <th>p99 delta %</th>
                 <th>throughput delta %</th>
@@ -267,7 +267,7 @@ function main() {
       stats.appendChild(el);
     }
 
-    function linePlot(target, yKeyLocal, yKeyShm, titleSuffix, yAxisTitle) {
+    function linePlot(target, yKeyLocal, yKeyFfi, titleSuffix, yAxisTitle) {
       const traces = [];
       for (const inFlight of inFlights) {
         const points = summaries.filter((s) => s.in_flight === inFlight);
@@ -281,9 +281,9 @@ function main() {
         });
         traces.push({
           x: points.map((s) => s.payload_size),
-          y: points.map((s) => s[yKeyShm]),
+          y: points.map((s) => s[yKeyFfi]),
           mode: 'lines+markers',
-          name: 'shm i=' + inFlight,
+          name: 'ffi i=' + inFlight,
           line: { color: '#51d0c8', dash: 'dot' },
           marker: { symbol: 'diamond', size: 8 },
         });
@@ -308,9 +308,9 @@ function main() {
       }, { displayModeBar: false, responsive: true });
     }
 
-    linePlot('p50Plot', 'local_p50_us', 'shm_p50_us', 'p50', 'µs');
-    linePlot('p99Plot', 'local_p99_us', 'shm_p99_us', 'p99', 'µs');
-    linePlot('throughputPlot', 'local_rps', 'shm_rps', 'throughput', 'calls / sec');
+    linePlot('p50Plot', 'local_p50_us', 'ffi_p50_us', 'p50', 'µs');
+    linePlot('p99Plot', 'local_p99_us', 'ffi_p99_us', 'p99', 'µs');
+    linePlot('throughputPlot', 'local_rps', 'ffi_rps', 'throughput', 'calls / sec');
 
     const rssTraces = [];
     for (const inFlight of inFlights) {
@@ -324,9 +324,9 @@ function main() {
       });
       rssTraces.push({
         x: points.map((s) => s.payload_size),
-        y: points.map((s) => s.shm_rss_kib / 1024),
+        y: points.map((s) => s.ffi_rss_kib / 1024),
         mode: 'lines+markers',
-        name: 'shm i=' + inFlight,
+        name: 'ffi i=' + inFlight,
         line: { color: '#51d0c8', dash: 'dot' },
       });
     }
@@ -381,13 +381,13 @@ function main() {
         s.in_flight,
         s.blocks,
         s.local_p50_us.toFixed(1),
-        s.shm_p50_us.toFixed(1),
+        s.ffi_p50_us.toFixed(1),
         s.local_p99_us.toFixed(1),
-        s.shm_p99_us.toFixed(1),
+        s.ffi_p99_us.toFixed(1),
         s.local_rps.toFixed(0),
-        s.shm_rps.toFixed(0),
+        s.ffi_rps.toFixed(0),
         (s.local_rss_kib / 1024).toFixed(1),
-        (s.shm_rss_kib / 1024).toFixed(1),
+        (s.ffi_rss_kib / 1024).toFixed(1),
         s.delta_p50_pct.toFixed(1) + '%',
         s.delta_p99_pct.toFixed(1) + '%',
         s.delta_throughput_pct.toFixed(1) + '%',

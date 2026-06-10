@@ -7,21 +7,81 @@ specs (
         impls (
             {
                 name rust
-                include (rust/**/*.rs)
+                include (
+                    spec/spec-tests/src/harness.rs
+                    spec/spec-tests/tests/subject_lifecycle.rs
+                    rust/**/*.rs
+                    scripts/**/*.sh
+                )
                 exclude (rust-legacy/**/*.rs)
             }
             {
                 name swift
-                include (swift/vox-runtime/**/*.swift)
+                include (
+                    scripts/check-schema-compat.sh
+                    spec/spec-tests/src/harness.rs
+                    spec/spec-tests/tests/subject_lifecycle.rs
+                    rust/vox-codegen/src/schema_compat.rs
+                    swift/vox-runtime/**/*.swift
+                    swift/subject/Sources/subject-swift/Subject.swift
+                    rust/vox-codegen/src/targets/swift/**/*.rs
+                )
             }
             {
                 name typescript
                 include (
+                    scripts/check-schema-compat.sh
+                    spec/spec-tests/src/harness.rs
+                    spec/spec-tests/tests/subject_lifecycle.rs
+                    rust/vox-codegen/src/schema_compat.rs
+                    rust/vox-codegen/src/targets/typescript/**/*.rs
+                    typescript/subject/harness.ts
+                    typescript/subject/subject.ts
+                    typescript/subject/timeout.ts
+                    typescript/packages/vox-core/src/call_builder.ts
+                    typescript/packages/vox-core/src/caller.ts
                     typescript/packages/vox-core/src/session.ts
-                    typescript/packages/vox-core/src/stable_conduit.ts
+                    typescript/packages/vox-core/src/session.test.ts
+                    typescript/packages/vox-core/src/conduit.ts
+                    typescript/packages/vox-core/src/link.ts
+                    typescript/packages/vox-core/src/link.test.ts
+                    typescript/packages/vox-core/src/transport.ts
+                    typescript/packages/vox-core/src/transport_prologue.ts
+                    typescript/packages/vox-core/src/transport_prologue.test.ts
                     typescript/packages/vox-core/src/driver.ts
+                    typescript/packages/vox-core/src/driver.channel_schema.test.ts
+                    typescript/packages/vox-core/src/internal/async_semaphore.ts
+                    typescript/packages/vox-core/src/logger.ts
+                    typescript/packages/vox-core/src/logging.ts
+                    typescript/packages/vox-core/src/logging.test.ts
+                    typescript/packages/vox-core/src/metadata.ts
+                    typescript/packages/vox-core/src/metadata.test.ts
+                    typescript/packages/vox-core/src/observer.ts
+                    typescript/packages/vox-core/src/observer.test.ts
+                    typescript/packages/vox-core/src/server_logging.ts
+                    typescript/packages/vox-core/src/schema_tracker.ts
+                    typescript/packages/vox-core/src/schema_tracker.test.ts
+                    typescript/packages/vox-core/src/channeling/allocator.ts
+                    typescript/packages/vox-core/src/channeling/binding.ts
+                    typescript/packages/vox-core/src/channeling/binding.test.ts
+                    typescript/packages/vox-core/src/channeling/pair.ts
                     typescript/packages/vox-core/src/channeling/registry.ts
                     typescript/packages/vox-core/src/channeling/registry.test.ts
+                    typescript/packages/vox-core/src/channeling/rx.ts
+                    typescript/packages/vox-core/src/channeling/tx.ts
+                    typescript/packages/vox-core/src/channeling/types.ts
+                    typescript/packages/vox-wire/src/types.ts
+                    typescript/packages/vox-wire/src/codec.ts
+                    typescript/packages/vox-wire/src/codec.test.ts
+                    typescript/packages/vox-wire/src/rpc_error.ts
+                    typescript/packages/vox-inprocess/src/transport.ts
+                    typescript/packages/vox-inprocess/src/transport.test.ts
+                    typescript/packages/vox-tcp/src/framing.ts
+                    typescript/packages/vox-tcp/src/framing.test.ts
+                    typescript/packages/vox-tcp/src/transport.ts
+                    typescript/packages/vox-tcp/src/transport.test.ts
+                    typescript/packages/vox-ws/src/transport.ts
+                    typescript/packages/vox-ws/src/transport.test.ts
                 )
             }
         )

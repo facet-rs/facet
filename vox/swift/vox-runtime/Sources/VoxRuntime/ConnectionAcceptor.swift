@@ -6,7 +6,7 @@ import Foundation
 /// Mirrors Rust's `ConnectionRequest`.
 public struct ConnectionRequest: Sendable {
     /// All metadata entries from the connection open message.
-    public let metadata: [MetadataEntry]
+    public let metadata: Metadata
     /// The service name, extracted from the "vox-service" metadata key.
     public let service: String
 }

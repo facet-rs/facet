@@ -8,7 +8,7 @@ on:
 jobs:
   release-pr:
     name: Release PR
-    runs-on: depot-ubuntu-24.04-16
+    runs-on: bearcove-ubuntu-24.04
     permissions:
       contents: write
       pull-requests: write
@@ -32,7 +32,7 @@ jobs:
 
   release:
     name: Publish
-    runs-on: depot-ubuntu-24.04-16
+    runs-on: bearcove-ubuntu-24.04
     permissions:
       contents: write
       id-token: write

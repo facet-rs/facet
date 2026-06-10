@@ -3,16 +3,16 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use vox_core::{
-    ConnectionAcceptor, ConnectionRequest, FromVoxSession, NoopClient, PendingConnection,
-    SessionError,
-};
 #[cfg(any(
     feature = "transport-tcp",
     feature = "transport-local",
     feature = "transport-websocket"
 ))]
-use vox_core::{TransportMode, initiator};
+use vox_core::initiator;
+use vox_core::{
+    ConnectionAcceptor, ConnectionRequest, FromVoxSession, NoopClient, PendingConnection,
+    SessionError,
+};
 use vox_types::{
     DEFAULT_INITIAL_CHANNEL_CREDIT, Link, MaybeSend, MaybeSync, Metadata, VoxObserver,
     VoxObserverHandle, metadata_into_owned,
@@ -81,9 +81,7 @@ type BoxHighLevelFuture<T> = Pin<Box<dyn Future<Output = T>>>;
 /// # }
 /// ```
 // r[impl rpc.session-setup]
-pub fn connect<Client: FromVoxSession>(
-    addr: impl std::fmt::Display,
-) -> ConnectBuilder<'static, Client> {
+pub fn connect<Client: FromVoxSession>(addr: impl std::fmt::Display) -> ConnectBuilder<Client> {
     ConnectBuilder::new(addr.to_string())
 }
 
@@ -121,28 +119,26 @@ fn parse_connect_address(addr: String) -> Result<ConnectAddress, SessionError> {
     }
 }
 
-pub struct ConnectBuilder<'a, Client> {
+pub struct ConnectBuilder<Client> {
     addr: String,
-    metadata: Metadata<'a>,
+    metadata: Metadata,
     on_connection: Option<Arc<dyn ConnectionAcceptor>>,
     connect_timeout: Option<Duration>,
     channel_capacity: u32,
     observer: Option<VoxObserverHandle>,
-    resumable: bool,
     wait_for_service: Option<Duration>,
     _client: std::marker::PhantomData<Client>,
 }
 
-impl<'a, Client> ConnectBuilder<'a, Client> {
+impl<Client> ConnectBuilder<Client> {
     fn new(addr: String) -> Self {
         Self {
             addr,
-            metadata: vec![],
+            metadata: vox_types::Metadata::default(),
             on_connection: None,
             connect_timeout: Some(Duration::from_secs(5)),
             channel_capacity: DEFAULT_INITIAL_CHANNEL_CREDIT,
             observer: None,
-            resumable: false,
             wait_for_service: None,
             _client: std::marker::PhantomData,
         }
@@ -154,7 +150,7 @@ impl<'a, Client> ConnectBuilder<'a, Client> {
         self
     }
 
-    pub fn metadata(mut self, metadata: Metadata<'a>) -> Self {
+    pub fn metadata(mut self, metadata: Metadata) -> Self {
         self.metadata = metadata;
         self
     }
@@ -182,17 +178,11 @@ impl<'a, Client> ConnectBuilder<'a, Client> {
         self
     }
 
-    pub fn resumable(mut self) -> Self {
-        self.resumable = true;
-        self
-    }
-
-    // r[impl session.initial-connect-waiting]
-    /// Wait for the service to become reachable, retrying for up to `timeout`.
+    /// Wait for the service to become reachable until `timeout`.
     ///
-    /// Only transient failures (I/O errors, connect timeouts) are retried.
+    /// Only transient failures (I/O errors, connect timeouts) are attempted again.
     /// Protocol errors, schema incompatibilities, and explicit rejections fail
-    /// immediately without retrying.
+    /// immediately.
     pub fn wait_for_service(mut self, timeout: Duration) -> Self {
         self.wait_for_service = Some(timeout);
         self
@@ -211,7 +201,7 @@ fn validate_channel_capacity(channel_capacity: u32) -> Result<(), SessionError> 
     Ok(())
 }
 
-impl<'a, Client> ConnectBuilder<'a, Client>
+impl<Client> ConnectBuilder<Client>
 where
     Client: FromVoxSession,
 {
@@ -223,7 +213,6 @@ where
             connect_timeout,
             channel_capacity,
             observer,
-            resumable,
             wait_for_service,
             _client: _,
         } = self;
@@ -233,7 +222,6 @@ where
             service = Client::SERVICE_NAME,
             %addr,
             channel_capacity,
-            resumable,
             wait_for_service = wait_for_service.is_some(),
             "vox high-level connect starting"
         );
@@ -241,14 +229,11 @@ where
         let metadata = metadata_into_owned(metadata);
 
         match wait_for_service {
-            // r[impl session.initial-connect-waiting]
-            // r[impl session.initial-connect-waiting.no-session]
             Some(service_timeout) => {
                 let deadline = Instant::now() + service_timeout;
                 let mut backoff = INITIAL_CONNECT_BACKOFF_MIN;
 
                 loop {
-                    // r[impl session.initial-connect-waiting.timeout]
                     // Cap each attempt by the remaining waiting budget so a single
                     // slow attempt cannot exceed the caller-supplied timeout.
                     let now = Instant::now();
@@ -264,7 +249,6 @@ where
                         connect_timeout,
                         channel_capacity,
                         observer.clone(),
-                        resumable,
                     );
                     let result = match moire::time::timeout(remaining, attempt).await {
                         Ok(r) => r,
@@ -279,14 +263,11 @@ where
                             );
                             return Ok(client);
                         }
-                        // r[impl session.initial-connect-waiting.non-retryable]
                         Err(e)
                             if !matches!(e, SessionError::Io(_) | SessionError::ConnectTimeout) =>
                         {
                             return Err(e);
                         }
-                        // r[impl session.initial-connect-waiting.retryable]
-                        // r[impl session.initial-connect-waiting.backoff]
                         Err(e) => {
                             let now = Instant::now();
                             if now >= deadline {
@@ -314,7 +295,6 @@ where
                     connect_timeout,
                     channel_capacity,
                     observer,
-                    resumable,
                 )
                 .await;
                 match &result {
@@ -335,12 +315,11 @@ where
 
     async fn establish_once(
         parsed: &ConnectAddress,
-        metadata: vox_types::Metadata<'static>,
+        metadata: vox_types::Metadata,
         on_connection: Option<Arc<dyn ConnectionAcceptor>>,
         connect_timeout: Option<Duration>,
         channel_capacity: u32,
         observer: Option<VoxObserverHandle>,
-        resumable: bool,
     ) -> Result<Client, SessionError> {
         #[cfg(not(any(
             feature = "transport-tcp",
@@ -353,7 +332,6 @@ where
             &connect_timeout,
             channel_capacity,
             &observer,
-            resumable,
         );
 
         match parsed {
@@ -365,10 +343,7 @@ where
                     %host,
                     "vox high-level connect attempt"
                 );
-                let mut builder = initiator(
-                    vox_stream::tcp_link_source(host.clone()),
-                    TransportMode::Bare,
-                );
+                let mut builder = initiator(vox_stream::tcp_link_source(host.clone()));
                 if let Some(acceptor) = on_connection.clone() {
                     builder = builder.on_connection(AcceptorRef(acceptor));
                 }
@@ -378,9 +353,6 @@ where
                 builder = builder.channel_capacity(channel_capacity);
                 if let Some(observer) = observer.clone() {
                     builder = builder.observer_handle(observer);
-                }
-                if resumable {
-                    builder = builder.resumable();
                 }
                 builder.metadata(metadata).establish::<Client>().await
             }
@@ -392,10 +364,7 @@ where
                     %host,
                     "vox high-level connect attempt"
                 );
-                let mut builder = initiator(
-                    vox_stream::local_link_source(host.clone()),
-                    TransportMode::Bare,
-                );
+                let mut builder = initiator(vox_stream::local_link_source(host.clone()));
                 if let Some(acceptor) = on_connection.clone() {
                     builder = builder.on_connection(AcceptorRef(acceptor));
                 }
@@ -405,9 +374,6 @@ where
                 builder = builder.channel_capacity(channel_capacity);
                 if let Some(observer) = observer.clone() {
                     builder = builder.observer_handle(observer);
-                }
-                if resumable {
-                    builder = builder.resumable();
                 }
                 builder.metadata(metadata).establish::<Client>().await
             }
@@ -422,10 +388,7 @@ where
                     %url,
                     "vox high-level connect attempt"
                 );
-                let mut builder = initiator(
-                    vox_websocket::ws_link_source(url.clone()),
-                    TransportMode::Bare,
-                );
+                let mut builder = initiator(vox_websocket::ws_link_source(url.clone()));
                 if let Some(acceptor) = on_connection {
                     builder = builder.on_connection(AcceptorRef(acceptor));
                 }
@@ -435,9 +398,6 @@ where
                 builder = builder.channel_capacity(channel_capacity);
                 if let Some(observer) = observer {
                     builder = builder.observer_handle(observer);
-                }
-                if resumable {
-                    builder = builder.resumable();
                 }
                 builder.metadata(metadata).establish::<Client>().await
             }
@@ -449,12 +409,12 @@ where
     }
 }
 
-impl<'a, Client> IntoFuture for ConnectBuilder<'a, Client>
+impl<Client> IntoFuture for ConnectBuilder<Client>
 where
-    Client: FromVoxSession + 'a,
+    Client: FromVoxSession + 'static,
 {
     type Output = Result<Client, SessionError>;
-    type IntoFuture = Pin<Box<dyn Future<Output = Self::Output> + 'a>>;
+    type IntoFuture = Pin<Box<dyn Future<Output = Self::Output> + 'static>>;
 
     fn into_future(self) -> Self::IntoFuture {
         Box::pin(self.establish())
@@ -732,7 +692,7 @@ impl ConnectionAcceptor for AcceptorRef {
         &self,
         request: &ConnectionRequest,
         connection: PendingConnection,
-    ) -> Result<(), Metadata<'static>> {
+    ) -> Result<(), Metadata> {
         self.0.accept(request, connection)
     }
 }

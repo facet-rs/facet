@@ -4,19 +4,26 @@ import Foundation
 // MARK: - Unbound Channel Types
 
 /// Unbound Tx - created by `channel()`, bound at call time.
+/// r[impl rpc.channel]
+/// r[impl rpc.channel.direction]
 public final class UnboundTx<T: Sendable>: @unchecked Sendable {
     public private(set) var channelId: ChannelId = 0
     private var taskTx: (@Sendable (TaskMessage) -> Void)?
     private var credit: ChannelCreditController?
-    private let serialize: @Sendable (T, inout ByteBuffer) -> Void
+    // The per-item codec is injected at bind time from the method's phon element program
+    // (mirrors TS: the channel is codec-less until bound). No hand-rolled element bytes.
+    private var serialize: (@Sendable (T, inout ByteBuffer) -> Void)?
     private var bound = false
     private var closed = false
     private let lock = NSLock()
     private var bindingWaiters: [CheckedContinuation<Void, Never>] = []
     weak var pairedRx: AnyObject?
 
-    public init(serialize: @escaping @Sendable (T, inout ByteBuffer) -> Void) {
-        self.serialize = serialize
+    public init() {}
+
+    /// Inject the phon typed element codec (called by the generated bind helpers).
+    func setSerialize(_ serialize: @escaping @Sendable (T, inout ByteBuffer) -> Void) {
+        lock.withLock { self.serialize = serialize }
     }
 
     public var isBound: Bool { bound }
@@ -65,10 +72,14 @@ public final class UnboundTx<T: Sendable>: @unchecked Sendable {
     }
 
     /// Send a value.
+    /// r[impl rpc.channel.pair.tx-read]
     public func send(_ value: T) async throws {
         let (taskTx, credit) = try await waitForSendBinding()
         if lock.withLock({ closed }) {
             throw ChannelError.closed
+        }
+        guard let serialize = lock.withLock({ self.serialize }) else {
+            throw ChannelError.notBound
         }
         try await credit.consume()
         var buf = ByteBufferAllocator().buffer(capacity: 64)
@@ -97,9 +108,9 @@ public final class UnboundTx<T: Sendable>: @unchecked Sendable {
         taskTx?(.close(channelId: channelId))
     }
 
-    func finishRetryBinding() {
+    func finishCallBinding() {
         close()
-        (pairedRx as? AnyRetryFinalizableChannel)?.finishRetryBinding()
+        (pairedRx as? AnyCallBindingFinalizableChannel)?.finishCallBinding()
     }
 
     private func waitForSendBinding() async throws
@@ -143,20 +154,26 @@ public final class UnboundTx<T: Sendable>: @unchecked Sendable {
 }
 
 /// Unbound Rx - created by `channel()`, bound at call time.
+/// r[impl rpc.channel]
+/// r[impl rpc.channel.direction]
 public final class UnboundRx<T: Sendable>: @unchecked Sendable {
     public private(set) var channelId: ChannelId = 0
-    private let deserialize: @Sendable (inout ByteBuffer) throws -> T
+    // Injected at bind time from the method's phon element program (codec-less until then).
+    private var deserialize: (@Sendable (inout ByteBuffer) throws -> T)?
     private var bound = false
     private let lock = NSLock()
     private var bindingWaiters: [CheckedContinuation<Void, Never>] = []
     private var receivers: [ChannelReceiver] = []
-    private var retryFinalized = false
+    private var callBindingFinalized = false
 
     // Weak reference to paired Tx
     weak var pairedTx: AnyObject?
 
-    public init(deserialize: @escaping @Sendable (inout ByteBuffer) throws -> T) {
-        self.deserialize = deserialize
+    public init() {}
+
+    /// Inject the phon typed element codec (called by the generated bind helpers).
+    func setDeserialize(_ deserialize: @escaping @Sendable (inout ByteBuffer) throws -> T) {
+        lock.withLock { self.deserialize = deserialize }
     }
 
     public var isBound: Bool { bound }
@@ -191,11 +208,15 @@ public final class UnboundRx<T: Sendable>: @unchecked Sendable {
     }
 
     /// Receive the next value, or nil if closed.
+    /// r[impl rpc.channel.pair.rx-take]
     public func recv() async throws -> T? {
         while true {
             let receiver = lock.withLock { receivers.first }
             if let receiver {
                 if let bytes = await receiver.recv() {
+                    guard let deserialize = lock.withLock({ self.deserialize }) else {
+                        throw ChannelError.notBound
+                    }
                     var buf = ByteBufferAllocator().buffer(capacity: bytes.count)
                     buf.writeBytes(bytes)
                     return try deserialize(&buf)
@@ -205,7 +226,7 @@ public final class UnboundRx<T: Sendable>: @unchecked Sendable {
                     if let head = receivers.first, head === receiver {
                         receivers.removeFirst()
                     }
-                    return retryFinalized && receivers.isEmpty
+                    return callBindingFinalized && receivers.isEmpty
                 }
                 if shouldEnd {
                     return nil
@@ -213,13 +234,13 @@ public final class UnboundRx<T: Sendable>: @unchecked Sendable {
                 continue
             }
 
-            let shouldEnd = lock.withLock { retryFinalized && receivers.isEmpty }
+            let shouldEnd = lock.withLock { callBindingFinalized && receivers.isEmpty }
             if shouldEnd {
                 return nil
             }
             await withCheckedContinuation { continuation in
                 let shouldResumeImmediately = lock.withLock { () -> Bool in
-                    if !receivers.isEmpty || (retryFinalized && receivers.isEmpty) {
+                    if !receivers.isEmpty || (callBindingFinalized && receivers.isEmpty) {
                         return true
                     }
                     bindingWaiters.append(continuation)
@@ -232,9 +253,9 @@ public final class UnboundRx<T: Sendable>: @unchecked Sendable {
         }
     }
 
-    func finishRetryBinding() {
+    func finishCallBinding() {
         let waiters = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
-            retryFinalized = true
+            callBindingFinalized = true
             let waiters = bindingWaiters
             bindingWaiters.removeAll()
             return waiters
@@ -265,13 +286,16 @@ extension UnboundRx: AsyncSequence {
 
 // MARK: - Channel Factory
 
-/// Create paired unbound channels.
-public func channel<T: Sendable>(
-    serialize: @escaping @Sendable (T, inout ByteBuffer) -> Void,
-    deserialize: @escaping @Sendable (inout ByteBuffer) throws -> T
-) -> (UnboundTx<T>, UnboundRx<T>) {
-    let tx = UnboundTx<T>(serialize: serialize)
-    let rx = UnboundRx<T>(deserialize: deserialize)
+/// Create a paired, codec-less unbound channel. The per-item phon element codec is
+/// injected at bind time by the generated client (keyed on the method's `elementRoot`),
+/// so callers never hand-roll element bytes — mirrors the TS `channel()` design.
+/// r[impl rpc.channel]
+/// r[impl rpc.channel.direction]
+/// r[impl rpc.channel.pair]
+/// r[impl rpc.channel.pair.binding-propagation]
+public func channel<T: Sendable>() -> (UnboundTx<T>, UnboundRx<T>) {
+    let tx = UnboundTx<T>()
+    let rx = UnboundRx<T>()
     tx.pairedRx = rx
     rx.pairedTx = tx
     return (tx, rx)
@@ -287,314 +311,9 @@ public typealias TaskSender = @Sendable (TaskMessage) -> Void
 /// Type alias for incoming channel registry.
 public typealias IncomingChannelRegistry = ChannelRegistry
 
-// MARK: - Resolve helpers
-
-/// Substitution map from generic type parameter name to a bound TypeRef.
-typealias TypeSubst = [TypeParamName: TypeRef]
-
-/// Apply `subst` to a TypeRef, replacing any `.var(name)` whose name is bound.
-private func substitute(_ typeRef: TypeRef, _ subst: TypeSubst) -> TypeRef {
-    switch typeRef {
-    case .var(let name):
-        return subst[name] ?? typeRef
-    case .concrete(let typeId, let args):
-        if args.isEmpty {
-            return typeRef
-        }
-        return .concrete(typeId: typeId, args: args.map { substitute($0, subst) })
-    }
-}
-
-/// Resolve a TypeRef to a SchemaKind via the registry, applying the current
-/// substitution and returning a fresh substitution to use when recursing into
-/// the schema's children (which reference its `typeParams`).
-private func resolveKind(
-    _ typeRef: TypeRef, _ subst: TypeSubst, _ registry: [UInt64: Schema]
-) -> (kind: SchemaKind, subst: TypeSubst)? {
-    let resolved = substitute(typeRef, subst)
-    guard case .concrete(let typeId, let args) = resolved,
-        let schema = registry[typeId]
-    else {
-        return nil
-    }
-    var innerSubst: TypeSubst = [:]
-    for (param, arg) in zip(schema.typeParams, args) {
-        innerSubst[param] = arg
-    }
-    return (schema.kind, innerSubst)
-}
-
-// MARK: - Bind Channels
-
-/// Bind channels from method arguments using schema.
-///
-/// - Parameters:
-///   - argsRoot: TypeRef for the args tuple schema (must resolve to `.tuple`).
-///   - schemaRegistry: Global schema registry for this service.
-///   - args: Array of argument values, one per tuple element.
-public func bindChannels(
-    argsRoot: TypeRef,
-    schemaRegistry: [UInt64: Schema],
-    args: [Any],
-    allocator: ChannelIdAllocator,
-    incomingRegistry: ChannelRegistry,
-    taskSender: @escaping TaskSender
-) async {
-    guard let (kind, subst) = resolveKind(argsRoot, [:], schemaRegistry),
-        case .tuple(let elements) = kind
-    else {
-        fatalError("argsRoot must resolve to a tuple schema")
-    }
-    for (typeRef, arg) in zip(elements, args) {
-        await bindValue(
-            typeRef: typeRef,
-            subst: subst,
-            schemaRegistry: schemaRegistry,
-            value: arg,
-            allocator: allocator,
-            incomingRegistry: incomingRegistry,
-            taskSender: taskSender
-        )
-    }
-}
-
-/// Finalize bound channels after a call completes.
-public func finalizeBoundChannels(
-    argsRoot: TypeRef,
-    schemaRegistry: [UInt64: Schema],
-    args: [Any]
-) {
-    guard let (kind, subst) = resolveKind(argsRoot, [:], schemaRegistry),
-        case .tuple(let elements) = kind
-    else {
-        return
-    }
-    for (typeRef, arg) in zip(elements, args) {
-        finalizeValue(typeRef: typeRef, subst: subst, schemaRegistry: schemaRegistry, value: arg)
-    }
-}
-
-/// Collect bound channel IDs in argument declaration order.
-public func collectChannelIds(
-    argsRoot: TypeRef,
-    schemaRegistry: [UInt64: Schema],
-    args: [Any]
-) -> [UInt64] {
-    var channelIds: [UInt64] = []
-    guard let (kind, subst) = resolveKind(argsRoot, [:], schemaRegistry),
-        case .tuple(let elements) = kind
-    else {
-        return channelIds
-    }
-    for (typeRef, arg) in zip(elements, args) {
-        collectChannelIdsFromValue(
-            typeRef: typeRef, subst: subst, schemaRegistry: schemaRegistry, value: arg,
-            out: &channelIds)
-    }
-    return channelIds
-}
-
-private func collectChannelIdsFromValue(
-    typeRef: TypeRef,
-    subst: TypeSubst,
-    schemaRegistry: [UInt64: Schema],
-    value: Any,
-    out: inout [UInt64]
-) {
-    guard let (kind, innerSubst) = resolveKind(typeRef, subst, schemaRegistry) else { return }
-    switch kind {
-    case .channel:
-        if let rx = value as? AnyUnboundRx {
-            out.append(rx.channelIdForSchema())
-        }
-        if let tx = value as? AnyUnboundTx {
-            out.append(tx.channelIdForSchema())
-        }
-    case .list(let element):
-        if let arr = value as? [Any] {
-            for item in arr {
-                collectChannelIdsFromValue(
-                    typeRef: element, subst: innerSubst, schemaRegistry: schemaRegistry,
-                    value: item, out: &out)
-            }
-        }
-    case .option(let element):
-        let mirror = Mirror(reflecting: value)
-        if mirror.displayStyle == .optional, let (_, unwrapped) = mirror.children.first {
-            collectChannelIdsFromValue(
-                typeRef: element, subst: innerSubst, schemaRegistry: schemaRegistry,
-                value: unwrapped, out: &out)
-        }
-    case .struct(_, let fields):
-        let mirror = Mirror(reflecting: value)
-        for field in fields {
-            if let child = mirror.children.first(where: { $0.label == field.name }) {
-                collectChannelIdsFromValue(
-                    typeRef: field.typeRef, subst: innerSubst, schemaRegistry: schemaRegistry,
-                    value: child.value, out: &out)
-            }
-        }
-    case .tuple(let elements):
-        if let arr = value as? [Any] {
-            for (element, item) in zip(elements, arr) {
-                collectChannelIdsFromValue(
-                    typeRef: element, subst: innerSubst, schemaRegistry: schemaRegistry,
-                    value: item, out: &out)
-            }
-        }
-    default:
-        break
-    }
-}
-
-private func bindValue(
-    typeRef: TypeRef,
-    subst: TypeSubst,
-    schemaRegistry: [UInt64: Schema],
-    value: Any,
-    allocator: ChannelIdAllocator,
-    incomingRegistry: ChannelRegistry,
-    taskSender: @escaping TaskSender
-) async {
-    guard let (kind, innerSubst) = resolveKind(typeRef, subst, schemaRegistry) else { return }
-    switch kind {
-    case .channel(let direction, _):
-        if direction == .rx {
-            // Schema Rx = client passes Rx to method, sends via paired Tx
-            if let rx = value as? AnyUnboundRx {
-                let channelId = allocator.allocate()
-                let credit = await incomingRegistry.registerOutgoing(
-                    channelId, initialCredit: 16)
-                rx.bindForSchema(channelId: channelId, taskSender: taskSender, credit: credit)
-            }
-        } else {
-            // Schema Tx = client passes Tx to method, receives via paired Rx
-            if let tx = value as? AnyUnboundTx {
-                let channelId = allocator.allocate()
-                traceLog(.driver, "bindChannels: registering incoming channelId=\(channelId)")
-                let receiver = await incomingRegistry.register(
-                    channelId,
-                    initialCredit: 16,
-                    onConsumed: { additional in
-                        taskSender(.grantCredit(channelId: channelId, bytes: additional))
-                    }
-                )
-                tx.bindForSchema(channelId: channelId, receiver: receiver)
-            }
-        }
-
-    case .list(let element):
-        if let arr = value as? [Any] {
-            for item in arr {
-                await bindValue(
-                    typeRef: element,
-                    subst: innerSubst,
-                    schemaRegistry: schemaRegistry,
-                    value: item,
-                    allocator: allocator,
-                    incomingRegistry: incomingRegistry,
-                    taskSender: taskSender
-                )
-            }
-        }
-
-    case .option(let element):
-        let mirror = Mirror(reflecting: value)
-        if mirror.displayStyle == .optional, let (_, unwrapped) = mirror.children.first {
-            await bindValue(
-                typeRef: element,
-                subst: innerSubst,
-                schemaRegistry: schemaRegistry,
-                value: unwrapped,
-                allocator: allocator,
-                incomingRegistry: incomingRegistry,
-                taskSender: taskSender
-            )
-        }
-
-    case .struct(_, let fields):
-        let mirror = Mirror(reflecting: value)
-        for field in fields {
-            if let child = mirror.children.first(where: { $0.label == field.name }) {
-                await bindValue(
-                    typeRef: field.typeRef,
-                    subst: innerSubst,
-                    schemaRegistry: schemaRegistry,
-                    value: child.value,
-                    allocator: allocator,
-                    incomingRegistry: incomingRegistry,
-                    taskSender: taskSender
-                )
-            }
-        }
-
-    case .tuple(let elements):
-        if let arr = value as? [Any] {
-            for (element, item) in zip(elements, arr) {
-                await bindValue(
-                    typeRef: element,
-                    subst: innerSubst,
-                    schemaRegistry: schemaRegistry,
-                    value: item,
-                    allocator: allocator,
-                    incomingRegistry: incomingRegistry,
-                    taskSender: taskSender
-                )
-            }
-        }
-
-    default:
-        // Primitives and other types - no channels to bind
-        break
-    }
-}
-
-private func finalizeValue(
-    typeRef: TypeRef,
-    subst: TypeSubst,
-    schemaRegistry: [UInt64: Schema],
-    value: Any
-) {
-    guard let (kind, innerSubst) = resolveKind(typeRef, subst, schemaRegistry) else { return }
-    switch kind {
-    case .channel:
-        (value as? AnyRetryFinalizableChannel)?.finishRetryBinding()
-    case .list(let element):
-        if let arr = value as? [Any] {
-            for item in arr {
-                finalizeValue(
-                    typeRef: element, subst: innerSubst, schemaRegistry: schemaRegistry,
-                    value: item)
-            }
-        }
-    case .option(let element):
-        let mirror = Mirror(reflecting: value)
-        if mirror.displayStyle == .optional, let (_, unwrapped) = mirror.children.first {
-            finalizeValue(
-                typeRef: element, subst: innerSubst, schemaRegistry: schemaRegistry,
-                value: unwrapped)
-        }
-    case .struct(_, let fields):
-        let mirror = Mirror(reflecting: value)
-        for field in fields {
-            if let child = mirror.children.first(where: { $0.label == field.name }) {
-                finalizeValue(
-                    typeRef: field.typeRef, subst: innerSubst, schemaRegistry: schemaRegistry,
-                    value: child.value)
-            }
-        }
-    case .tuple(let elements):
-        if let arr = value as? [Any] {
-            for (element, item) in zip(elements, arr) {
-                finalizeValue(
-                    typeRef: element, subst: innerSubst, schemaRegistry: schemaRegistry,
-                    value: item)
-            }
-        }
-    default:
-        break
-    }
-}
+// Channel binding by schema-walking (TypeRef/Schema/SchemaKind) was removed:
+// channels are now bound OUT-OF-BAND via the generated code's PhonChannelMeta
+// (arg index + direction + element root), not by resolving the args schema here.
 
 // MARK: - Type Erasure for Binding
 
@@ -615,6 +334,7 @@ protocol AnyUnboundTx: AnyObject {
 }
 
 extension UnboundRx: AnyUnboundRx {
+    // r[impl rpc.channel.pair.binding-propagation]
     func bindForSchema(
         channelId: ChannelId,
         taskSender: @escaping TaskSender,
@@ -633,6 +353,7 @@ extension UnboundRx: AnyUnboundRx {
 }
 
 extension UnboundTx: AnyUnboundTx {
+    // r[impl rpc.channel.pair.binding-propagation]
     func bindForSchema(channelId: ChannelId, receiver: ChannelReceiver) {
         // Schema Tx = client receives via Rx, so this Tx just gets ID
         self.setChannelIdOnly(channelId: channelId)
@@ -655,8 +376,8 @@ protocol AnyUnboundTxSender: AnyObject {
     )
 }
 
-protocol AnyRetryFinalizableChannel: AnyObject {
-    func finishRetryBinding()
+protocol AnyCallBindingFinalizableChannel: AnyObject {
+    func finishCallBinding()
 }
 
 extension UnboundTx: AnyUnboundTxSender {
@@ -669,7 +390,7 @@ extension UnboundTx: AnyUnboundTxSender {
     }
 }
 
-extension UnboundTx: AnyRetryFinalizableChannel {}
+extension UnboundTx: AnyCallBindingFinalizableChannel {}
 
 protocol AnyUnboundRxReceiver: AnyObject {
     func bindForReceiving(channelId: ChannelId, receiver: ChannelReceiver)
@@ -681,4 +402,4 @@ extension UnboundRx: AnyUnboundRxReceiver {
     }
 }
 
-extension UnboundRx: AnyRetryFinalizableChannel {}
+extension UnboundRx: AnyCallBindingFinalizableChannel {}

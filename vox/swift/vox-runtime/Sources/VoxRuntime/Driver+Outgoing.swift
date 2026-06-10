@@ -1,22 +1,18 @@
 import Foundation
 
 extension Driver {
+    // r[impl rpc.flow-control]
     private func sendOrEnqueue(_ message: Message) async throws {
         if !pendingTaskMessages.isEmpty {
-            pendingTaskMessages.append(DriverQueuedTaskMessage(message: message))
+            pendingTaskMessages.append(DriverQueuedWireMessage(message: message))
             return
         }
 
         do {
             try await conduit.send(message)
         } catch TransportError.wouldBlock {
-            pendingTaskMessages.append(DriverQueuedTaskMessage(message: message))
+            pendingTaskMessages.append(DriverQueuedWireMessage(message: message))
         } catch {
-            if resumable {
-                pendingTaskMessages.append(DriverQueuedTaskMessage(message: message))
-                _ = eventContinuation.yield(.conduitFailed(String(describing: error)))
-                return
-            }
             throw error
         }
     }
@@ -26,72 +22,136 @@ extension Driver {
         payload: [UInt8],
         schemas: [UInt8] = []
     ) async -> Message? {
+        // r[impl rpc.response]
         let responseContext = await state.removeInFlight(requestId)
         guard responseContext.removed else {
             return nil
         }
-        return .response(
-            connId: responseContext.connectionId,
+        return messageResponse(
             requestId: requestId,
+            payload: payload,
             metadata: responseContext.responseMetadata,
-            schemas: schemas,
-            payload: payload
+            connectionId: responseContext.connectionId,
+            schemas: schemas
         )
     }
 
-    /// Get the task sender for handlers to send responses.
-    func taskSender() -> @Sendable (TaskMessage) -> Void {
+    private func commandSender() -> @Sendable (HandleCommand) -> Bool {
+        let cont = eventContinuation
+        let queue = commandQueue
+        return { command in
+            guard queue.push(command) else {
+                return false
+            }
+            let result = cont.yield(.wake)
+            guard case .terminated = result else {
+                return true
+            }
+            return false
+        }
+    }
+
+    private func taskQueueSender(connectionId: UInt64) -> @Sendable (TaskMessage) -> Bool {
         let cont = eventContinuation
         let queue = taskQueue
         return { msg in
-            guard queue.push(msg) else {
-                return
+            guard queue.push(DriverQueuedTaskMessage(connectionId: connectionId, taskMessage: msg))
+            else {
+                return false
             }
-            _ = cont.yield(.wake)
+            let result = cont.yield(.wake)
+            guard case .terminated = result else {
+                return true
+            }
+            return false
+        }
+    }
+
+    func makeConnection(
+        connectionId: UInt64,
+        localSettings: ConnectionSettings,
+        peerSettings: ConnectionSettings
+    ) -> Connection {
+        let handle = ConnectionHandle(
+            connectionId: connectionId,
+            commandTx: commandSender(),
+            taskTx: taskQueueSender(connectionId: connectionId),
+            role: roleForParity(localSettings.parity),
+            maxConcurrentRequests: peerSettings.maxConcurrentRequests
+        )
+        return Connection(handle: handle, schemaReceiveTracker: schemaReceiveTracker)
+    }
+
+    /// Get the task sender for handlers to send responses.
+    func taskSender(connectionId: UInt64) -> @Sendable (TaskMessage) -> Void {
+        let sink = taskQueueSender(connectionId: connectionId)
+        return { msg in
+            _ = sink(msg)
         }
     }
 
     /// Handle a task message from a handler.
-    func handleTaskMessage(_ msg: TaskMessage) async throws {
+    /// r[impl rpc.response]
+    /// r[impl rpc.channel.connection-closure]
+    func handleTaskMessage(_ queued: DriverQueuedTaskMessage) async throws {
+        let msg = queued.taskMessage
+        let connectionId = queued.connectionId
         let wireMsg: Message
         switch msg {
         case .data(let channelId, let payload):
-            wireMsg = .data(connId: 0, channelId: channelId, payload: payload)
+            wireMsg = messageData(channelId: channelId, item: payload, connectionId: connectionId)
         case .close(let channelId):
-            wireMsg = .close(connId: 0, channelId: channelId)
+            wireMsg = messageChannelClose(channelId: channelId, connectionId: connectionId)
         case .grantCredit(let channelId, let bytes):
-            wireMsg = .credit(connId: 0, channelId: channelId, bytes: bytes)
-        case .response(let requestId, let payload, let methodId, let schemaPayload):
+            wireMsg = messageCredit(
+                channelId: channelId,
+                additional: bytes,
+                connectionId: connectionId
+            )
+        case .schema(let methodId, let direction, let schemas):
+            wireMsg = messageSchema(
+                methodId: methodId,
+                direction: direction,
+                schemas: schemas,
+                connectionId: connectionId
+            )
+        case .response(let requestId, let payload, let methodId, let responseSchemaClosure):
+            // Advertise the response schema at THIS sequential send point (not in the
+            // concurrent dispatch task): under pipelining many responses for a method
+            // are written here in order, and the first one MUST carry the schema. A
+            // dispatch-time decision races — a schema-less response could be written
+            // first. prepareSchemas is idempotent, so only the first send advertises.
+            // r[impl schema.exchange.required]
+            // r[impl schema.exchange.callee]
+            let schemas: [UInt8]
+            if let methodId, !responseSchemaClosure.isEmpty {
+                schemas = schemaSendTracker.prepareSchemas(
+                    methodId, .response, responseSchemaClosure)
+            } else {
+                schemas = []
+            }
+            debugLog(
+                "send Response req=\(requestId) payloadLen=\(payload.count) "
+                    + "schemasLen=\(schemas.count)")
             let checkedPayload: [UInt8]
             if payload.count > Int(negotiated.maxPayloadSize) {
                 debugLog(
                     "outgoing response for request \(requestId) exceeds max_payload_size "
                         + "(\(payload.count) > \(negotiated.maxPayloadSize)), sending Cancelled")
-                checkedPayload = encodeCancelledError()
+                // Replace the over-sized payload with a typed `Cancelled` VoxError (its
+                // Err arm is T-independent on the wire, so any method's response program
+                // encodes it).
+                checkedPayload = dispatcher.encodeVoxError(.cancelled)
             } else {
                 checkedPayload = payload
             }
-            let schemas: [UInt8]
-            if let schemaPayload {
-                let filteredPayload = schemaSendTracker.filterForSending(
-                    schemaPayload,
-                    methodId: methodId
+            guard
+                let response = await responseMessage(
+                    requestId: requestId,
+                    payload: checkedPayload,
+                    schemas: schemas
                 )
-                schemas = filteredPayload.encodeCbor()
-            } else {
-                schemas = []
-            }
-            let waiters = await operations.seal(ownerRequestId: requestId, payload: checkedPayload)
-            if !waiters.isEmpty {
-                for waiter in waiters {
-                    guard let replay = await responseMessage(requestId: waiter, payload: checkedPayload, schemas: schemas) else {
-                        continue
-                    }
-                    try await sendOrEnqueue(replay)
-                }
-                return
-            }
-            guard let response = await responseMessage(requestId: requestId, payload: checkedPayload, schemas: schemas) else {
+            else {
                 return
             }
             wireMsg = response
@@ -100,25 +160,35 @@ extension Driver {
     }
 
     /// Handle a command from ConnectionHandle.
+    /// r[impl rpc.caller]
+    /// r[impl rpc.request]
+    /// r[impl rpc.pipelining]
     func handleCommand(_ cmd: HandleCommand) async {
         switch cmd {
         case .call(
-            let requestId, let methodId, let metadata, let payload, let retry,
-            let timeout, let prepareRetry, let responseTx, let schemaInfo):
+            let connectionId, let requestId, let methodId, let metadata, let payload, let channels,
+            let timeout, let responseTx, let schemaInfo):
             let isClosed = await state.isConnectionClosed()
             guard !isClosed else {
                 responseTx(.failure(.connectionClosed))
                 return
             }
+            if connectionId != 0 {
+                let isVirtualOpen = await virtualConnState.contains(connectionId)
+                guard isVirtualOpen else {
+                    responseTx(.failure(.connectionClosed))
+                    return
+                }
+            }
 
             let queuedCall = DriverQueuedCall(
+                connectionId: connectionId,
                 requestId: requestId,
                 methodId: methodId,
                 metadata: metadata,
                 payload: payload,
-                retry: retry,
+                channels: channels,
                 timeout: timeout,
-                prepareRetry: prepareRetry,
                 schemaInfo: schemaInfo
             )
 
@@ -133,29 +203,24 @@ extension Driver {
                 return
             }
 
-            // Build schema bytes for the request
+            // Advertise the args schema closure (at most once per method, deduped).
+            // r[impl schema.exchange.caller]
             let schemas: [UInt8]
             if let schemaInfo {
-                let fullPayload = schemaInfo.methodInfo.buildPayload(
-                    direction: .args,
-                    registry: schemaInfo.schemaRegistry
-                )
-                let filteredPayload = schemaSendTracker.filterForSending(
-                    fullPayload,
-                    methodId: methodId
-                )
-                schemas = filteredPayload.encodeCbor()
+                schemas = schemaSendTracker.prepareSchemas(
+                    methodId, .args, schemaInfo.methodSchemas.argsSchemaClosure)
             } else {
                 schemas = []
             }
 
-            let msg = Message.request(
-                connId: 0,
+            let msg = messageRequest(
                 requestId: requestId,
                 methodId: methodId,
+                payload: payload,
                 metadata: metadata,
-                schemas: schemas,
-                payload: payload
+                channels: channels,
+                connectionId: connectionId,
+                schemas: schemas
             )
             do {
                 try await conduit.send(msg)
@@ -163,11 +228,6 @@ extension Driver {
                 pendingCalls.append(queuedCall)
                 return
             } catch {
-                if resumable {
-                    pendingCalls.append(queuedCall)
-                    _ = eventContinuation.yield(.conduitFailed(String(describing: error)))
-                    return
-                }
                 let pending = await state.claimPendingResponse(
                     requestId,
                     reason: "conduit-send-failed"
@@ -187,6 +247,7 @@ extension Driver {
             let timeoutNs = Self.timeoutToNanoseconds(timeout)
             let capturedState = state
             let capturedConduit = conduit
+            let capturedConnectionId = connectionId
             let timeoutTask = Task {
                 do {
                     try await Task.sleep(nanoseconds: timeoutNs)
@@ -202,13 +263,76 @@ extension Driver {
                 pending.timeoutTask?.cancel()
                 warnLog("request timed out request_id=\(requestId) timeout_s=\(timeout)")
                 pending.responseTx(.failure(.timeout))
-                try? await capturedConduit.send(.cancel(connId: 0, requestId: requestId))
+                try? await capturedConduit.send(
+                    messageCancel(requestId: requestId, connectionId: capturedConnectionId)
+                )
             }
             let installed = await state.setPendingTimeoutTask(requestId, timeoutTask: timeoutTask)
             if !installed {
                 timeoutTask.cancel()
             }
+        case .openConnection(let settings, let metadata, let dispatcher, let responseTx):
+            let isClosed = await state.isConnectionClosed()
+            guard !isClosed else {
+                responseTx(.failure(.connectionClosed))
+                return
+            }
+            guard !(await state.isRootInternallyClosed()) else {
+                responseTx(.failure(.connectionClosed))
+                return
+            }
+            guard settings.initialChannelCredit > 0 else {
+                responseTx(
+                    .failure(.protocolViolation(rule: "rpc.flow-control.credit.initial.zero"))
+                )
+                return
+            }
+
+            let connId = await virtualConnState.allocateConnId()
+            await virtualConnState.addPendingOutbound(
+                connId,
+                pending: PendingVirtualConnection(
+                    localSettings: settings,
+                    dispatcher: dispatcher,
+                    responseTx: responseTx
+                )
+            )
+
+            do {
+                try await sendOrEnqueue(
+                    messageConnect(connectionId: connId, settings: settings, metadata: metadata)
+                )
+            } catch {
+                let pending = await virtualConnState.takePendingOutbound(connId)
+                pending?.responseTx(.failure(.transportError(String(describing: error))))
+            }
+        case .releaseConnection(let connectionId):
+            await handleConnectionLivenessRelease(connectionId: connectionId)
         }
+    }
+
+    func handleConnectionLivenessRelease(connectionId: UInt64) async {
+        if connectionId == 0 {
+            // r[impl rpc.caller.liveness.root-internal-close]
+            // r[impl rpc.caller.liveness.root-teardown-condition]
+            await state.markRootInternallyClosed()
+            await finishIfRootClosedAndNoVirtualConnections()
+            return
+        }
+
+        // r[impl rpc.caller.liveness.last-drop-closes-connection]
+        guard await virtualConnState.removeConnection(connectionId) else {
+            return
+        }
+        await failPendingResponses(connectionId: connectionId)
+        do {
+            try await sendOrEnqueue(messageConnectionClose(connectionId: connectionId))
+        } catch {
+            await failAllPending()
+            eventContinuation.finish()
+            return
+        }
+        await finishIfRootClosedAndNoVirtualConnections()
     }
 
     func flushPendingCalls() async throws {
@@ -216,73 +340,34 @@ extension Driver {
             return
         }
 
-        traceLog(.resume, "flushPendingCalls: count=\(pendingCalls.count)")
         while let call = pendingCalls.first {
-            let replayCall: DriverQueuedCall
-            if let prepareRetry = call.prepareRetry {
-                traceLog(.resume, "flushPendingCalls: rebuilding requestId=\(call.requestId) methodId=\(call.methodId)")
-                let rebuilt = await prepareRetry()
-                let replayMetadata =
-                    if call.retry.idem {
-                        await handle.freshOperationMetadata(from: call.metadata)
-                    } else {
-                        call.metadata
-                    }
-                replayCall = DriverQueuedCall(
-                    requestId: call.requestId,
-                    methodId: call.methodId,
-                    metadata: replayMetadata,
-                    payload: rebuilt.payload,
-                    retry: call.retry,
-                    timeout: call.timeout,
-                    prepareRetry: call.prepareRetry,
-                    schemaInfo: call.schemaInfo
-                )
-            } else {
-                replayCall = call
-            }
-
-            // Build schema bytes for the request (on replay, schemas may have been sent already)
+            // Advertise the args schema closure (at most once per method, deduped).
+            // r[impl schema.exchange.caller]
             let schemas: [UInt8]
-            if let schemaInfo = replayCall.schemaInfo {
-                let fullPayload = schemaInfo.methodInfo.buildPayload(
-                    direction: .args,
-                    registry: schemaInfo.schemaRegistry
-                )
-                let filteredPayload = schemaSendTracker.filterForSending(
-                    fullPayload,
-                    methodId: replayCall.methodId
-                )
-                schemas = filteredPayload.encodeCbor()
+            if let schemaInfo = call.schemaInfo {
+                schemas = schemaSendTracker.prepareSchemas(
+                    call.methodId, .args, schemaInfo.methodSchemas.argsSchemaClosure)
             } else {
                 schemas = []
             }
 
-            let msg = Message.request(
-                connId: 0,
-                requestId: replayCall.requestId,
-                methodId: replayCall.methodId,
-                metadata: replayCall.metadata,
-                schemas: schemas,
-                payload: replayCall.payload
+            let msg = messageRequest(
+                requestId: call.requestId,
+                methodId: call.methodId,
+                payload: call.payload,
+                metadata: call.metadata,
+                channels: call.channels,
+                connectionId: call.connectionId,
+                schemas: schemas
             )
 
-            traceLog(.resume, "flushPendingCalls: sending replay requestId=\(replayCall.requestId) methodId=\(replayCall.methodId)")
             do {
                 try await conduit.send(msg)
             } catch TransportError.wouldBlock {
-                traceLog(.resume, "flushPendingCalls: conduit would block requestId=\(replayCall.requestId)")
-                pendingCalls[0] = replayCall
                 return
             } catch {
-                if resumable {
-                    traceLog(.resume, "flushPendingCalls: send failed requestId=\(replayCall.requestId) error=\(String(describing: error))")
-                    pendingCalls[0] = replayCall
-                    _ = eventContinuation.yield(.conduitFailed(String(describing: error)))
-                    return
-                }
                 let pending = await state.claimPendingResponse(
-                    replayCall.requestId,
+                    call.requestId,
                     reason: "conduit-send-failed"
                 )
                 pending?.timeoutTask?.cancel()
@@ -295,14 +380,15 @@ extension Driver {
 
             pendingCalls.removeFirst()
 
-            guard let timeout = replayCall.timeout else {
+            guard let timeout = call.timeout else {
                 continue
             }
 
             let timeoutNs = Self.timeoutToNanoseconds(timeout)
             let capturedState = state
             let capturedConduit = conduit
-            let requestId = replayCall.requestId
+            let capturedConnectionId = call.connectionId
+            let requestId = call.requestId
             let timeoutTask = Task {
                 do {
                     try await Task.sleep(nanoseconds: timeoutNs)
@@ -318,34 +404,14 @@ extension Driver {
                 pending.timeoutTask?.cancel()
                 warnLog("request timed out request_id=\(requestId) timeout_s=\(timeout)")
                 pending.responseTx(.failure(.timeout))
-                try? await capturedConduit.send(.cancel(connId: 0, requestId: requestId))
+                try? await capturedConduit.send(
+                    messageCancel(requestId: requestId, connectionId: capturedConnectionId)
+                )
             }
             let installed = await state.setPendingTimeoutTask(requestId, timeoutTask: timeoutTask)
             if !installed {
                 timeoutTask.cancel()
             }
-        }
-    }
-
-    func replayPendingCallsAfterResume() async {
-        let inFlight = await state.pendingCallsSnapshot()
-        pendingCalls.removeAll()
-        traceLog(.resume, "replayPendingCallsAfterResume: inFlight=\(inFlight.count)")
-        for call in inFlight {
-            if call.prepareRetry != nil && !call.retry.idem {
-                traceLog(.resume, "replayPendingCallsAfterResume: indeterminate requestId=\(call.requestId)")
-                guard let pending = await state.claimPendingResponse(
-                    call.requestId,
-                    reason: "resume-channel-indeterminate"
-                ) else {
-                    continue
-                }
-                pending.timeoutTask?.cancel()
-                pending.responseTx(.success(encodeIndeterminateError()))
-                continue
-            }
-            traceLog(.resume, "replayPendingCallsAfterResume: queueing requestId=\(call.requestId) methodId=\(call.methodId)")
-            pendingCalls.append(call)
         }
     }
 
@@ -360,10 +426,6 @@ extension Driver {
             } catch TransportError.wouldBlock {
                 return
             } catch {
-                if resumable {
-                    _ = eventContinuation.yield(.conduitFailed(String(describing: error)))
-                    return
-                }
                 await failAllPending()
                 eventContinuation.finish()
                 return

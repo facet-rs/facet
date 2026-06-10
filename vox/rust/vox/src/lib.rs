@@ -114,15 +114,11 @@ pub use facet;
 pub use facet_reflect;
 pub use facet_reflect::Peek;
 
-// Re-export vox-postcard for generated code and downstream helpers.
-pub use vox_postcard;
-
 // Re-export method identity functions (generated code uses `vox::hash::method_descriptor`)
 // TODO: generated code should be updated to use vox::method_descriptor directly
 pub mod hash {
     pub use vox_types::{
-        method_descriptor, method_descriptor_with_retry, method_id_name_only,
-        shape_contains_channel,
+        MethodDescriptorOptions, method_descriptor, method_id_name_only, shape_contains_channel,
     };
 }
 
@@ -141,7 +137,6 @@ pub use vox_types::{
     ChannelId,
     ChannelReceiverState,
     ChannelResetReason,
-    ChannelRetryMode,
     ChannelSendOutcome,
     ChannelTrySendOutcome,
     ClientCallOutcome,
@@ -172,18 +167,16 @@ pub use vox_types::{
     MaybeSync,
     MessageFamily,
     Metadata,
-    MetadataEntry,
-    MetadataFlags,
-    MetadataValue,
+    MetadataBuilder,
+    MetadataExt,
     MethodDescriptor,
     MethodId,
     MsgFamily,
-    OPERATION_ID_METADATA_KEY,
+    ObserverMetricKind,
+    ObserverMetricLabels,
     Parity,
     Payload,
     ProtocolErrorKind,
-    RETRY_SUPPORT_METADATA_KEY,
-    RETRY_SUPPORT_VERSION,
     ReplySink,
     RequestCall,
     RequestContext,
@@ -191,7 +184,6 @@ pub use vox_types::{
     RequestDebugState,
     RequestResponse,
     ResponseParts,
-    RetryPolicy,
     RpcEvent,
     RpcOutcome,
     RpcSide,
@@ -210,7 +202,6 @@ pub use vox_types::{
     SinkCall,
     SourceLocation,
     TransportEvent,
-    TransportMode,
     TrySendError,
     // Channels
     Tx,
@@ -222,10 +213,11 @@ pub use vox_types::{
     WithTracker,
     // Channels
     channel,
-    ensure_channel_retry_mode,
     // Metadata helpers
     metadata_get_str,
     metadata_get_u64,
+    metadata_key_is_no_propagate,
+    metadata_key_is_redacted,
     observe_reply,
 };
 
@@ -235,6 +227,7 @@ pub use vox_types::{
 #[cfg(unix)]
 pub use vox_types::{Fd, FdAdapter, SCM_MAX_FD};
 pub use vox_types::{FrameFds, collect_fds, frame_fds_len, provide_fds};
+pub use vox_types::{meta_set, metadata};
 
 // ── vox-core: curated public API ──────────────────────────────────────
 
@@ -253,8 +246,7 @@ pub use vox_core::{acceptor_on_link, initiator_on_link};
 #[cfg(feature = "runtime")]
 pub use vox_core::{
     ConnectionHandle, ConnectionRequest, ConnectionState, PendingConnection, Session,
-    SessionAcceptOutcome, SessionConfig, SessionError, SessionHandle, SessionKeepaliveConfig,
-    SessionRegistry,
+    SessionConfig, SessionError, SessionHandle, SessionKeepaliveConfig,
 };
 
 // Connection acceptor
@@ -298,10 +290,6 @@ pub use vox_core::{HandshakeError, handshake_as_acceptor, handshake_as_initiator
 #[cfg(feature = "runtime")]
 pub use vox_core::{accept_transport, initiate_transport};
 
-// Operation store (exactly-once delivery)
-#[cfg(feature = "runtime")]
-pub use vox_core::{InMemoryOperationStore, OperationState, OperationStore, SealedResponse};
-
 // Dynamic conduit traits (object-safe)
 #[cfg(feature = "runtime")]
 pub use vox_core::{DynConduitRx, DynConduitTx};
@@ -344,10 +332,14 @@ pub mod transport {
     }
 }
 
-// Channel binding via thread-local binder during deserialization
-pub use vox_types::channel::{set_channel_binder, with_channel_binder};
+// Channel binding via thread-local binder during deserialization, and the
+// out-of-band channel-id table (RequestCall.channels) installed around args decode.
+pub use vox_types::channel::{
+    collect_channels, collect_channels_for_method, provide_channels, provide_channels_for_method,
+    set_channel_binder, with_channel_binder,
+};
 
 // Re-export the session module (generated code uses `vox::session::ServiceDescriptor`)
 pub mod session {
-    pub use vox_types::{MethodDescriptor, RetryPolicy, ServiceDescriptor};
+    pub use vox_types::{MethodDescriptor, ServiceDescriptor};
 }

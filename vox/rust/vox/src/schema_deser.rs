@@ -1,11 +1,17 @@
-use std::panic::AssertUnwindSafe;
+//! Payload decode: build a compatibility decode program from the **writer's** schema
+//! (received via the `schemas` binding) to the **reader's** type and decode through
+//! phon's `lower_decode` compatibility path (`r[schema.exchange.required]`).
+//!
+//! There is no same-version shortcut: every args/response decode goes through a
+//! compat [`DecodeProgram`], built once per (method,
+//! direction, reader type) from the peer's schema closure and cached on the tracker.
+
 use std::sync::Arc;
 
 use facet::Facet;
-use vox_postcard::error::DeserializeError;
-use vox_postcard::plan::{PlanInput, SchemaSet, TranslationPlan, build_plan};
+use vox_phon::{DecodeProgram, Error};
 use vox_types::schema::{PlanCacheKey, SchemaRecvTracker};
-use vox_types::{BindingDirection, MethodId, Schema, TypeRef, extract_schemas};
+use vox_types::{BindingDirection, MethodId};
 
 /// Deserialize args from a request (caller → callee direction).
 // r[impl schema.exchange.required]
@@ -13,48 +19,12 @@ pub fn schema_deserialize_args_borrowed<'input, 'facet, T: Facet<'facet>>(
     bytes: &'input [u8],
     method_id: MethodId,
     tracker: &SchemaRecvTracker,
-) -> Result<T, DeserializeError>
+) -> Result<T, Error>
 where
     'input: 'facet,
 {
-    let resolved = resolve_plan::<T>(method_id, BindingDirection::Args, tracker)?;
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        match std::panic::catch_unwind(AssertUnwindSafe(|| {
-            vox_jit::global_runtime().try_decode_borrowed::<T>(
-                bytes,
-                resolved.remote.root.id.0,
-                &resolved.plan,
-                &resolved.remote.registry,
-            )
-        })) {
-            Ok(Some(result)) => result,
-            Ok(None) => vox_postcard::from_slice_borrowed_with_plan::<T>(
-                bytes,
-                &resolved.plan,
-                &resolved.remote.registry,
-            ),
-            Err(payload) => {
-                tracing::warn!(
-                    panic = %panic_payload_message(&payload),
-                    "vox JIT args decode panicked; falling back to interpreter"
-                );
-                vox_postcard::from_slice_borrowed_with_plan::<T>(
-                    bytes,
-                    &resolved.plan,
-                    &resolved.remote.registry,
-                )
-            }
-        }
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        vox_postcard::from_slice_borrowed_with_plan::<T>(
-            bytes,
-            &resolved.plan,
-            &resolved.remote.registry,
-        )
-    }
+    let program = resolve_program::<T>(method_id, BindingDirection::Args, tracker)?;
+    vox_phon::decode_with_program::<T>(&program, bytes)
 }
 
 /// Deserialize a response (callee → caller direction), borrowed variant.
@@ -63,48 +33,12 @@ pub fn schema_deserialize_response_borrowed<'input, 'facet, T: Facet<'facet>>(
     bytes: &'input [u8],
     method_id: MethodId,
     tracker: &SchemaRecvTracker,
-) -> Result<T, DeserializeError>
+) -> Result<T, Error>
 where
     'input: 'facet,
 {
-    let resolved = resolve_plan::<T>(method_id, BindingDirection::Response, tracker)?;
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        match std::panic::catch_unwind(AssertUnwindSafe(|| {
-            vox_jit::global_runtime().try_decode_borrowed::<T>(
-                bytes,
-                resolved.remote.root.id.0,
-                &resolved.plan,
-                &resolved.remote.registry,
-            )
-        })) {
-            Ok(Some(result)) => result,
-            Ok(None) => vox_postcard::from_slice_borrowed_with_plan::<T>(
-                bytes,
-                &resolved.plan,
-                &resolved.remote.registry,
-            ),
-            Err(payload) => {
-                tracing::warn!(
-                    panic = %panic_payload_message(&payload),
-                    "vox JIT response decode panicked; falling back to interpreter"
-                );
-                vox_postcard::from_slice_borrowed_with_plan::<T>(
-                    bytes,
-                    &resolved.plan,
-                    &resolved.remote.registry,
-                )
-            }
-        }
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        vox_postcard::from_slice_borrowed_with_plan::<T>(
-            bytes,
-            &resolved.plan,
-            &resolved.remote.registry,
-        )
-    }
+    let program = resolve_program::<T>(method_id, BindingDirection::Response, tracker)?;
+    vox_phon::decode_with_program::<T>(&program, bytes)
 }
 
 /// Deserialize a response (callee → caller direction), owned variant.
@@ -113,166 +47,80 @@ pub fn schema_deserialize_response<T: Facet<'static>>(
     bytes: &[u8],
     method_id: MethodId,
     tracker: &SchemaRecvTracker,
-) -> Result<T, DeserializeError> {
-    let resolved = resolve_plan::<T>(method_id, BindingDirection::Response, tracker)?;
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        match std::panic::catch_unwind(AssertUnwindSafe(|| {
-            vox_jit::global_runtime().try_decode_owned::<T>(
-                bytes,
-                resolved.remote.root.id.0,
-                &resolved.plan,
-                &resolved.remote.registry,
-            )
-        })) {
-            Ok(Some(result)) => result,
-            Ok(None) => vox_postcard::from_slice_with_plan::<T>(
-                bytes,
-                &resolved.plan,
-                &resolved.remote.registry,
-            ),
-            Err(payload) => {
-                tracing::warn!(
-                    panic = %panic_payload_message(&payload),
-                    "vox JIT response decode panicked; falling back to interpreter"
-                );
-                vox_postcard::from_slice_with_plan::<T>(
-                    bytes,
-                    &resolved.plan,
-                    &resolved.remote.registry,
-                )
-            }
-        }
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        vox_postcard::from_slice_with_plan::<T>(bytes, &resolved.plan, &resolved.remote.registry)
-    }
+) -> Result<T, Error> {
+    let program = resolve_program::<T>(method_id, BindingDirection::Response, tracker)?;
+    vox_phon::decode_owned_with_program::<T>(&program, bytes)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
-    if let Some(message) = payload.downcast_ref::<&'static str>() {
-        (*message).to_owned()
-    } else if let Some(message) = payload.downcast_ref::<String>() {
-        message.clone()
-    } else {
-        "non-string panic payload".to_owned()
-    }
-}
-
-struct ResolvedPlan {
-    plan: TranslationPlan,
-    remote: SchemaSet,
-}
-
-fn resolve_plan<'facet, T: Facet<'facet>>(
+/// Resolve (and cache) the compat decode program for `T` against the peer's schema
+/// closure for `(method_id, direction)`. Built once and reused for every message.
+fn resolve_program<'facet, T: Facet<'facet>>(
     method_id: MethodId,
     direction: BindingDirection,
     tracker: &SchemaRecvTracker,
-) -> Result<Arc<ResolvedPlan>, DeserializeError> {
+) -> Result<Arc<DecodeProgram>, Error> {
     let cache_key = PlanCacheKey {
         method_id,
         direction,
         local_shape: T::SHAPE,
     };
 
-    if let Some(cached) = tracker.get_cached_plan::<ResolvedPlan>(&cache_key) {
+    if let Some(cached) = tracker.get_cached_plan::<DecodeProgram>(&cache_key) {
         return Ok(cached);
     }
 
-    let resolved = Arc::new(build_resolved_plan::<T>(method_id, direction, tracker)?);
-    tracker.insert_cached_plan(cache_key, Arc::clone(&resolved));
-    Ok(resolved)
-}
-
-fn build_resolved_plan<'facet, T: Facet<'facet>>(
-    method_id: MethodId,
-    direction: BindingDirection,
-    tracker: &SchemaRecvTracker,
-) -> Result<ResolvedPlan, DeserializeError> {
     let dir_name = match direction {
         BindingDirection::Args => "args",
         BindingDirection::Response => "response",
     };
-
-    let remote_root_ref = match direction {
-        BindingDirection::Args => tracker.get_remote_args_root(method_id),
-        BindingDirection::Response => tracker.get_remote_response_root(method_id),
-    }
-    .ok_or_else(|| {
-        DeserializeError::protocol(&format!(
-            "no remote {dir_name} schema received for method {method_id:?} — sender must send schemas before data"
-        ))
-    })?;
-
-    let registry = tracker.received_registry();
-    let root_kind = remote_root_ref.resolve_kind(&registry).ok_or_else(|| {
-        DeserializeError::protocol(&format!(
-            "remote root type ref {remote_root_ref:?} not found in received schemas"
-        ))
-    })?;
-    let root_id = match &remote_root_ref {
-        TypeRef::Concrete { type_id, .. } => *type_id,
-        TypeRef::Var { .. } => {
-            return Err(DeserializeError::protocol(
-                "remote root type ref is a Var — protocol error",
-            ));
-        }
-    };
-    let remote = SchemaSet {
-        root: Schema {
-            id: root_id,
-            type_params: vec![],
-            kind: root_kind,
-        },
-        registry,
-    };
-
-    let local_extracted = extract_schemas(T::SHAPE)
-        .map_err(|e| DeserializeError::protocol(&format!("schema extraction failed: {e}")))?;
-    let local = SchemaSet::from_root_and_schemas(
-        local_extracted.root.clone(),
-        local_extracted.schemas.clone(),
-    );
-
-    let plan = build_plan(&PlanInput {
-        remote: &remote,
-        local: &local,
-    })
-    .map_err(|e| DeserializeError::protocol(&format!("translation plan failed: {e}")))?;
-
-    Ok(ResolvedPlan { plan, remote })
+    let writer_bytes = tracker
+        .writer_schema_bytes(method_id, direction)
+        .ok_or_else(|| {
+            Error(format!(
+                "no remote {dir_name} schema received for method {method_id:?} — \
+                 sender must send schemas before data"
+            ))
+        })?;
+    let writer = vox_phon::parse_schema_bytes(&writer_bytes)?;
+    let program = Arc::new(vox_phon::build_decode_program::<T>(&writer)?);
+    tracker.insert_cached_plan(cache_key, Arc::clone(&program));
+    Ok(program)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vox_types::SchemaPayload;
 
     #[test]
-    fn schema_deserialize_args_handles_nested_unary_tuple() {
+    fn schema_deserialize_args_uses_writer_and_reader_schema() {
+        // The writer sends `((i32, String),)`; the reader decodes the same shape.
         let method_id = MethodId(1);
-        let extracted =
-            extract_schemas(<((i32, String),) as Facet>::SHAPE).expect("schema extraction");
+        let writer_bytes =
+            vox_phon::schema_bytes::<((i32, String),)>().expect("writer schema bytes");
         let tracker = SchemaRecvTracker::new();
-        tracker
-            .record_received(
-                method_id,
-                BindingDirection::Args,
-                SchemaPayload {
-                    schemas: extracted.schemas.clone(),
-                    root: extracted.root.clone(),
-                },
-            )
-            .expect("record received schemas");
+        tracker.record_received(method_id, BindingDirection::Args, writer_bytes);
 
-        let bytes =
-            vox_postcard::to_vec(&((42i32, "hello".to_string()),)).expect("serialize tuple args");
+        let bytes = vox_phon::to_vec(&((42i32, "hello".to_string()),)).expect("encode args");
         let decoded: ((i32, String),) =
             schema_deserialize_args_borrowed(&bytes, method_id, &tracker)
                 .expect("schema deserialize args");
-
         assert_eq!(decoded, ((42, "hello".to_string()),));
+    }
+
+    // r[verify schema.exchange.required]
+    #[test]
+    fn schema_deserialize_args_requires_received_binding() {
+        let err = schema_deserialize_args_borrowed::<(u32,)>(
+            &vox_phon::to_vec(&(7_u32,)).expect("encode args"),
+            MethodId(99),
+            &SchemaRecvTracker::new(),
+        )
+        .expect_err("decode without a received schema binding should fail");
+
+        assert!(
+            err.to_string()
+                .contains("sender must send schemas before data"),
+            "unexpected missing-schema error: {err:?}"
+        );
     }
 }

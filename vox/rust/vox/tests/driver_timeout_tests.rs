@@ -16,7 +16,7 @@ async fn connect_timeout_fires_when_server_never_responds() {
     // Server side is dropped — the client handshake will hang forever.
 
     let start = Instant::now();
-    let result = vox::initiator_on(client_link, vox::TransportMode::Bare)
+    let result = vox::initiator_on(client_link)
         .connect_timeout(Duration::from_millis(200))
         .establish::<EchoClient>()
         .await;

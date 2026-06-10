@@ -7,6 +7,106 @@ use facet::{Facet, OpaqueSerialize, PtrConst};
 use facet_core::Shape;
 use std::collections::HashMap;
 
+/// Trait for types that can be reborrowed with a shorter lifetime.
+///
+/// This is the key to `SelfRef` soundness in `vox-types`: types stored inside
+/// `SelfRef` use a fake `'static` lifetime. `Reborrow` lets accessors return a
+/// reference with the lifetime shortened to match the borrow, preventing the
+/// fake `'static` from leaking out.
+///
+/// Analogous to `yoke::Yokeable`.
+///
+/// # Safety
+///
+/// The implementing type must be **covariant** in its lifetime parameter,
+/// and `Self` and `Ref<'a>` must have identical memory layout for all `'a`.
+pub unsafe trait Reborrow: 'static {
+    /// The same type with a (possibly shorter) lifetime.
+    type Ref<'a>;
+}
+
+/// Implement [`Reborrow`] for owned `'static` types whose shortened view is
+/// exactly the same type.
+///
+/// # Safety
+///
+/// The listed types must not contain borrowed data whose lifetime needs
+/// shortening. This is for owned DTOs such as generated request/response/channel
+/// payload structs.
+#[macro_export]
+macro_rules! impl_reborrow_owned {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            unsafe impl $crate::Reborrow for $ty {
+                type Ref<'a> = $ty;
+            }
+        )*
+    };
+}
+
+// SAFETY: these owned types have no lifetime parameter; Ref<'a> = Self is
+// trivially sound.
+unsafe impl Reborrow for u32 {
+    type Ref<'a> = u32;
+}
+unsafe impl Reborrow for usize {
+    type Ref<'a> = usize;
+}
+unsafe impl Reborrow for i8 {
+    type Ref<'a> = i8;
+}
+unsafe impl Reborrow for i16 {
+    type Ref<'a> = i16;
+}
+unsafe impl Reborrow for i32 {
+    type Ref<'a> = i32;
+}
+unsafe impl Reborrow for i64 {
+    type Ref<'a> = i64;
+}
+unsafe impl Reborrow for i128 {
+    type Ref<'a> = i128;
+}
+unsafe impl Reborrow for u8 {
+    type Ref<'a> = u8;
+}
+unsafe impl Reborrow for u16 {
+    type Ref<'a> = u16;
+}
+unsafe impl Reborrow for u64 {
+    type Ref<'a> = u64;
+}
+unsafe impl Reborrow for u128 {
+    type Ref<'a> = u128;
+}
+unsafe impl Reborrow for f32 {
+    type Ref<'a> = f32;
+}
+unsafe impl Reborrow for f64 {
+    type Ref<'a> = f64;
+}
+unsafe impl Reborrow for bool {
+    type Ref<'a> = bool;
+}
+unsafe impl Reborrow for char {
+    type Ref<'a> = char;
+}
+unsafe impl Reborrow for String {
+    type Ref<'a> = String;
+}
+unsafe impl Reborrow for Vec<u8> {
+    type Ref<'a> = Vec<u8>;
+}
+unsafe impl Reborrow for &'static str {
+    type Ref<'a> = &'a str;
+}
+unsafe impl Reborrow for &'static [u8] {
+    type Ref<'a> = &'a [u8];
+}
+unsafe impl Reborrow for (u32, u8, u8) {
+    type Ref<'a> = (u32, u8, u8);
+}
+
 // ============================================================================
 // Schema data types
 // ============================================================================
@@ -497,7 +597,7 @@ pub enum PrimitiveType {
 }
 
 // ============================================================================
-// Content hashing — r[schema.type-id.hash]
+// Content hashing (legacy vox-schema model; the live wire is phon).
 // ============================================================================
 
 impl PrimitiveType {
@@ -569,11 +669,6 @@ impl<'a, Id: Copy> SchemaHasher<'a, Id> {
         }
     }
 
-    // r[impl schema.type-id.hash.primitives]
-    // r[impl schema.type-id.hash.struct]
-    // r[impl schema.type-id.hash.enum]
-    // r[impl schema.type-id.hash.container]
-    // r[impl schema.type-id.hash.tuple]
     fn feed_schema(&mut self, kind: &SchemaKind<Id>, type_params: &[TypeParamName]) {
         match kind {
             SchemaKind::Primitive { primitive_type } => {
@@ -687,23 +782,24 @@ pub fn schema_child_ids(kind: &SchemaKind) -> Vec<SchemaHash> {
     refs
 }
 
-/// CBOR-encoded schema payload (schemas + method bindings).
+/// A phon schema-closure carrier: the self-describing schema bytes a peer sends
+/// for a method binding (the `schemas:` field on calls/responses/schema messages).
 ///
-/// Newtype over `Vec<u8>` so the type system distinguishes raw bytes from
-/// CBOR-encoded schema data. Empty when no new schemas need to be sent.
+/// Newtype over `Vec<u8>` so the type system distinguishes encoded schema bytes
+/// from arbitrary bytes. Empty when no new schema needs to be sent.
 #[derive(Facet, Clone, Debug, Default)]
 #[repr(transparent)]
 #[facet(transparent)]
-pub struct CborPayload(pub Vec<u8>);
+pub struct SchemaBytes(pub Vec<u8>);
 
-impl CborPayload {
+impl SchemaBytes {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 }
 
 /// Lookup table mapping TypeSchemaId → Schema, used for resolving type
-/// references during deserialization with translation plans.
+/// references during deserialization with compatibility decode plans.
 pub type SchemaRegistry = HashMap<SchemaHash, Schema>;
 
 /// Build a SchemaRegistry from a list of schemas.
@@ -713,9 +809,9 @@ pub fn build_registry(schemas: &[Schema]) -> SchemaRegistry {
 
 /// Anything that can look up schemas by their content hash.
 ///
-/// Implemented by SchemaRegistry (HashMap), the operation store, etc.
-/// Used by the send tracker to source schemas without caring where they
-/// come from.
+/// Implemented by SchemaRegistry (HashMap) and any other schema cache.
+/// Used by the send tracker to source schemas without caring where they come
+/// from.
 pub trait SchemaSource {
     fn get_schema(&self, id: SchemaHash) -> Option<Schema>;
 }
@@ -755,8 +851,8 @@ pub struct SchemaPayload {
 
 impl SchemaPayload {
     /// CBOR-encode this prepared message for embedding in RequestCall/RequestResponse.
-    pub fn to_cbor(&self) -> CborPayload {
-        CborPayload(facet_cbor::to_vec(self).expect("schema CBOR serialization should not fail"))
+    pub fn to_cbor(&self) -> SchemaBytes {
+        SchemaBytes(facet_cbor::to_vec(self).expect("schema CBOR serialization should not fail"))
     }
 
     /// Parse a CBOR-encoded schema message from bytes.
@@ -769,6 +865,48 @@ impl SchemaPayload {
 /// Used as a sentinel type for passthrough detection in serializers.
 #[repr(transparent)]
 pub struct RawPostcardBorrowed<'a>(pub &'a [u8]);
+
+// SAFETY: the schema model types below are owned data structures in the schema
+// crate. The concrete ID parameters used here are owned value IDs, so the
+// shortened view is layout-identical to the stored value.
+macro_rules! impl_reborrow_schema_identity {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            unsafe impl Reborrow for $ty {
+                type Ref<'a> = $ty;
+            }
+        )*
+    };
+}
+
+impl_reborrow_schema_identity!(
+    SchemaHash,
+    CycleSchemaIndex,
+    TypeParamName,
+    TypeRef,
+    TypeRef<MixedId>,
+    MixedId,
+    Schema,
+    Schema<MixedId>,
+    SchemaKind,
+    SchemaKind<MixedId>,
+    ChannelDirection,
+    FieldSchema,
+    FieldSchema<MixedId>,
+    VariantSchema,
+    VariantSchema<MixedId>,
+    VariantPayload,
+    VariantPayload<MixedId>,
+    PrimitiveType,
+    SchemaBytes,
+    BindingDirection,
+    SchemaPayload,
+);
+
+// SAFETY: this wrapper is covariant in `'a` and transparent over a byte slice.
+unsafe impl Reborrow for RawPostcardBorrowed<'static> {
+    type Ref<'a> = RawPostcardBorrowed<'a>;
+}
 
 /// Sentinel shape for borrowed passthrough bytes. Serializers check against
 /// this to distinguish pre-encoded bytes from regular `&[u8]`/`Vec<u8>` values.

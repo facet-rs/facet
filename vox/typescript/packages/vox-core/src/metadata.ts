@@ -1,179 +1,77 @@
-// Metadata conversion utilities.
+// Client-side metadata: a self-describing `Value` map (`r[rpc.metadata]`).
 //
-// Provides ClientMetadata class for building metadata with flags,
-// and conversion functions to/from wire format.
+// On the wire metadata is a phon `Value` map. Key sigils (`#`, `-`, `-#`) are
+// conventions on the key string, not separate flag-list entries.
+// r[impl rpc.metadata]
+// r[impl rpc.metadata.value]
+// r[impl rpc.metadata.keys]
+// r[impl rpc.metadata.duplicates]
+// r[impl rpc.metadata.unknown]
+// r[impl schema.interaction.metadata]
 
-import type { MetadataEntry, MetadataValue } from "@bearcove/vox-wire";
-import { metadataString, metadataBytes, metadataU64, MetadataFlagValues } from "@bearcove/vox-wire";
+import type { Value } from "@bearcove/phon-schema";
+import { type Metadata } from "@bearcove/vox-wire";
 
-/**
- * Metadata value type for client middleware.
- * Values can be strings, u64 bigints, or raw bytes.
- */
+/** A metadata value: string, u64 (bigint), or raw bytes. */
 export type ClientMetadataValue = string | bigint | Uint8Array;
 
 /**
- * Internal storage for a metadata entry with its flags.
- */
-interface MetadataEntryInternal {
-  value: ClientMetadataValue;
-  flags: bigint;
-}
-
-
-
-/**
- * Client-side metadata storage with flag support.
+ * Client-side metadata builder.
  *
- * Use `set()` for normal metadata and `setSensitive()` for metadata that
- * should be redacted in logs and traces.
- *
- * @example
- * ```typescript
- * const meta = new ClientMetadata();
- * meta.set("trace-id", "abc123");
- * meta.setSensitive("authorization", "Bearer secret-token");
- * ```
+ * Use `set()` with the key string that should appear on the wire. A leading `#`
+ * marks values sensitive for logging, and `-#` marks sensitive/no-propagate.
  */
 export class ClientMetadata {
-  private entries = new Map<string, MetadataEntryInternal>();
+  private readonly map: Metadata = new Map();
 
-  /**
-   * Set a metadata entry with default flags (none).
-   */
   set(key: string, value: ClientMetadataValue): this {
-    this.entries.set(key, { value, flags: MetadataFlagValues.NONE });
+    this.map.set(key, value as Value);
     return this;
   }
 
-  /**
-   * Set a sensitive metadata entry (will be redacted in logs).
-   * r[impl call.metadata.flags] - SENSITIVE flag marks values for redaction
-   */
-  setSensitive(key: string, value: ClientMetadataValue): this {
-    this.entries.set(key, { value, flags: MetadataFlagValues.SENSITIVE });
-    return this;
+  get(key: string): Value | undefined {
+    return this.map.get(key);
   }
 
-  /**
-   * Set a metadata entry with custom flags.
-   */
-  setWithFlags(key: string, value: ClientMetadataValue, flags: bigint): this {
-    this.entries.set(key, { value, flags });
-    return this;
-  }
-
-  /**
-   * Get a metadata value by key.
-   */
-  get(key: string): ClientMetadataValue | undefined {
-    return this.entries.get(key)?.value;
-  }
-
-  /**
-   * Get the flags for a key.
-   */
-  getFlags(key: string): bigint {
-    return this.entries.get(key)?.flags ?? MetadataFlagValues.NONE;
-  }
-
-  /**
-   * Check if a key is marked as sensitive.
-   */
-  isSensitive(key: string): boolean {
-    const flags = this.getFlags(key);
-    return (flags & MetadataFlagValues.SENSITIVE) !== 0n;
-  }
-
-  /**
-   * Check if a key exists.
-   */
   has(key: string): boolean {
-    return this.entries.has(key);
+    return this.map.has(key);
   }
 
-  /**
-   * Delete a metadata entry.
-   */
   delete(key: string): boolean {
-    return this.entries.delete(key);
+    return this.map.delete(key);
   }
 
-  /**
-   * Get the number of entries.
-   */
   get size(): number {
-    return this.entries.size;
+    return this.map.size;
   }
 
-  /**
-  * Iterate over entries as [key, value, flags] tuples.
-   */
-  *[Symbol.iterator](): Iterator<[string, ClientMetadataValue, bigint]> {
-    for (const [key, entry] of this.entries) {
-      yield [key, entry.value, entry.flags];
-    }
-  }
-
-  /**
-   * Iterate over keys.
-   */
   keys(): IterableIterator<string> {
-    return this.entries.keys();
+    return this.map.keys();
   }
 
-  /**
-   * Convert to wire format entries.
-   */
-  toWireEntries(): MetadataEntry[] {
-    const result: MetadataEntry[] = [];
-    for (const [key, entry] of this.entries) {
-      let wireValue: MetadataValue;
-      if (typeof entry.value === "string") {
-        wireValue = metadataString(entry.value);
-      } else if (typeof entry.value === "bigint") {
-        wireValue = metadataU64(entry.value);
-      } else {
-        wireValue = metadataBytes(entry.value);
-      }
-      result.push({ key, value: wireValue, flags: entry.flags });
-    }
-    return result;
+  entries(): IterableIterator<[string, Value]> {
+    return this.map.entries();
   }
 
-  /**
-   * Create from wire format entries.
-   */
-  static fromWireEntries(entries: MetadataEntry[]): ClientMetadata {
-    const meta = new ClientMetadata();
-    for (const entry of entries) {
-      meta.setWithFlags(entry.key, entry.value.value, entry.flags);
-    }
-    return meta;
+  /** The wire `Value` map. */
+  toWire(): Metadata {
+    return this.map;
   }
 
-  /**
-   * Create a copy of this metadata.
-   */
   clone(): ClientMetadata {
     const copy = new ClientMetadata();
-    for (const [key, entry] of this.entries) {
-      copy.entries.set(key, { ...entry });
-    }
+    for (const [k, v] of this.map) copy.map.set(k, v);
     return copy;
+  }
+
+  static fromWire(metadata: Metadata): ClientMetadata {
+    const m = new ClientMetadata();
+    for (const [k, v] of metadata) m.map.set(k, v);
+    return m;
   }
 }
 
-/**
- * Convert a ClientMetadata to wire format entries.
- */
-export function clientMetadataToEntries(metadata: ClientMetadata): MetadataEntry[] {
-  return metadata.toWireEntries();
-}
-
-/**
- * Convert wire format metadata entries to ClientMetadata.
- */
-export function metadataEntriesToClientMetadata(entries: MetadataEntry[]): ClientMetadata {
-  return ClientMetadata.fromWireEntries(entries);
+/** Convert a `ClientMetadata` to the wire `Value` map. */
+export function clientMetadataToWire(metadata: ClientMetadata): Metadata {
+  return metadata.toWire();
 }

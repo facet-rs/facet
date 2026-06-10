@@ -1,3 +1,10 @@
+// r[impl link]
+// r[impl link.message]
+// r[impl link.rx.recv]
+// r[impl link.rx.eof]
+// r[impl link.rx.error]
+// r[impl link.tx.send]
+// r[impl link.tx.close]
 export interface Link {
   send(payload: Uint8Array): Promise<void>;
   recv(): Promise<Uint8Array | null>;
@@ -6,15 +13,19 @@ export interface Link {
   readonly lastReceived?: Uint8Array;
 }
 
+// r[impl link]
+// r[impl link.split]
 export interface LinkAttachment<L extends Link = Link> {
   link: L;
   clientHello?: Uint8Array;
 }
 
+// r[impl link.split]
 export interface LinkSource<L extends Link = Link> {
   nextLink(): Promise<LinkAttachment<L>>;
 }
 
+// r[impl link.split]
 export function singleLinkSource<L extends Link = Link>(
   link: L,
   clientHello?: Uint8Array,

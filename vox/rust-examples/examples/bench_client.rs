@@ -945,7 +945,7 @@ async fn run_ffi_bench(cfg: Config) -> Result<()> {
     // Client side: establish initiator and get a TestbedClient caller.
     let link = ffi_bench_client::connect(ffi_bench_server::vtable()).context("connect ffi link")?;
     let client = Arc::new(
-        vox::initiator_on(link, vox::TransportMode::Bare)
+        vox::initiator_on(link)
             .establish::<TestbedClient>()
             .await
             .context("ffi client establish")?,

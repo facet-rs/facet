@@ -10,35 +10,43 @@ import {
   type Dispatcher,
   type Metadata,
 } from "@bearcove/vox-core";
+import { withSubjectTimeout } from "./timeout.ts";
 
-export async function runSubjectServer(createDispatcher: () => Dispatcher, metadata: Metadata = []): Promise<void> {
-  const addr = process.env.PEER_ADDR;
-  if (!addr) {
-    throw new Error("PEER_ADDR env var not set");
-  }
-
-  const acceptConnections = process.env.ACCEPT_CONNECTIONS === "1";
-
-  console.error(`server mode: connecting to ${addr}, acceptConnections=${acceptConnections}`);
-  const established = await session.initiator(tcpConnector(addr), {
-    metadata,
-    onConnection: acceptConnections
-      ? (connection) => {
-          const driver = new Driver(connection, createDispatcher());
-          void driver.run();
-        }
-      : undefined,
-  });
-  const root = established.rootConnection();
-  const driver = new Driver(root, createDispatcher());
-
-  try {
-    await driver.run();
-  } catch (e) {
-    if (e instanceof SessionError) {
-      console.error(`[harness] session error: ${e.message}`);
-      return;
+export async function runSubjectServer(createDispatcher: () => Dispatcher, metadata: Metadata = new Map()): Promise<void> {
+  await withSubjectTimeout("server", async () => {
+    const addr = process.env.PEER_ADDR;
+    if (!addr) {
+      throw new Error("PEER_ADDR env var not set");
     }
-    throw e;
-  }
+
+    const acceptConnections = process.env.ACCEPT_CONNECTIONS === "1";
+
+    console.error(`server mode: connecting to ${addr}, acceptConnections=${acceptConnections}`);
+    const established = await session.initiator(tcpConnector(addr), {
+      metadata,
+      onConnection: acceptConnections
+        ? (connection) => {
+            const driver = new Driver(connection, createDispatcher());
+            void driver.run();
+          }
+        : undefined,
+    });
+    const root = established.rootConnection();
+    const driver = new Driver(root, createDispatcher());
+    const handle = established.handle();
+
+    try {
+      await driver.run();
+    } catch (e) {
+      if (e instanceof SessionError) {
+        console.error(`[harness] session error: ${e.message}`);
+        return;
+      }
+      throw e;
+    } finally {
+      // r[impl hosted.subject.lifecycle]
+      handle.shutdown();
+      await established.closed().catch(() => {});
+    }
+  });
 }

@@ -8,7 +8,8 @@
   },
   "scripts": {
     "build": "tsdown",
-    "check": "tsgo --noEmit"
+    "check": "tsgo --noEmit",
+    "test": "vitest run"
   },
   "publishConfig": {
     "exports": {

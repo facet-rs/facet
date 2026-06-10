@@ -9,10 +9,6 @@ weight = 12
 > The RPC layer sits on top of connections. It defines how requests are made,
 > how responses are returned, and how data flows over channels.
 
-Transparent retry is specified separately in [Retry](./retry/). The RPC layer
-defines the request/response/channel model for a single attempt; the retry
-layer defines when multiple attempts address the same logical operation.
-
 > r[rpc.service]
 >
 > A service is a set of methods. In Rust, a service is defined as a trait
@@ -48,9 +44,9 @@ layer defines when multiple attempts address the same logical operation.
 
 > r[rpc.method-id.algorithm]
 >
-> The exact algorithm for computing method IDs is defined in the
-> [signature specification](./sig/). Other language implementations
-> receive pre-computed method IDs from code generation.
+> The exact algorithm for computing method IDs is defined by
+> `r[schema.method-id]`. Other language implementations receive
+> pre-computed method IDs from code generation.
 
 > r[rpc.schema-evolution]
 >
@@ -61,9 +57,9 @@ layer defines when multiple attempts address the same logical operation.
 >
 > Changing argument types, return types, or the structure of types used in
 > method signatures may or may not be breaking, depending on whether the
-> schema translation layer can bridge the difference (see the
-> [schema exchange specification](../schemas/) for details on translation
-> plans and compatibility rules).
+> phon compatibility decode plan can bridge the difference (see the
+> [schema exchange specification](../schemas/) for details on decode plans
+> and compatibility rules).
 
 > r[rpc.one-service-per-connection]
 >
@@ -177,9 +173,6 @@ registered on the session builder; otherwise they are rejected.
 >     allocated by the caller
 >   * Metadata (key-value pairs for tracing, auth, deadlines, etc.)
 
-When retry support is active, request metadata also carries the operation
-identity described in [Retry](./retry/).
-
 > r[rpc.response]
 >
 > A `Response` message carries:
@@ -193,11 +186,6 @@ identity described in [Retry](./retry/).
 > Request IDs are allocated by the caller using the connection's parity.
 > Sending a `Request` with an ID that does not match the caller's parity,
 > or reusing an ID that is still in flight, is a protocol error.
-
-> r[rpc.response.one-per-request]
->
-> Every request MUST receive exactly one response. Sending a second response
-> for the same request ID is a protocol error.
 
 > r[rpc.unknown-method]
 >
@@ -241,24 +229,26 @@ identity described in [Retry](./retry/).
 >   * `UnknownMethod` — no handler recognized the method ID
 >   * `InvalidPayload` — the arguments could not be deserialized
 >   * `Cancelled` — the call was cancelled before completion
->   * `Indeterminate` — recovery completed, but the runtime could not safely
->     continue, replay, or re-execute the logical operation
+>   * `Indeterminate` — the runtime could not safely determine whether the
+>     request attempt reached a terminal outcome
 
-> r[rpc.fallible.vox-error.retryable]
+> r[rpc.fallible.vox-error.outcome]
 >
-> `VoxError` variants differ in retryability:
+> `VoxError` variants distinguish terminal call outcomes from session
+> interruptions:
 >
->   * **Retryable** — the failure is transient; retrying the same operation on a
->     fresh connection may succeed: `ConnectionClosed`, `SessionShutdown`,
->     `SendFailed`
->   * **Non-retryable** — the failure is permanent; retrying the same operation
->     against the same peer will reproduce the same outcome: `User`,
->     `UnknownMethod`, `InvalidPayload`, `Cancelled`, `Indeterminate`
+>   * **Terminal call outcome** — the handler or protocol reached a definite
+>     outcome for this call: `User`, `UnknownMethod`, `InvalidPayload`,
+>     `Cancelled`
+>   * **Session interruption** — the session ended before this call received a
+>     terminal response: `ConnectionClosed`, `SessionShutdown`, `SendFailed`
+>   * **Indeterminate** — the runtime cannot safely determine whether the
+>     request attempt reached a terminal outcome
 >
-> Callers that loop on error MUST NOT retry non-retryable failures. In
-> particular, retrying a call that failed with `InvalidPayload` due to a schema
-> translation error will always produce the same failure, because the remote
-> peer's schema does not change without a reconnect.
+> Vox runtimes MUST NOT automatically replay or resume RPC calls after any
+> `VoxError`. Applications that recover after a session interruption or
+> indeterminate outcome must establish the recovery policy themselves and issue
+> any replacement call explicitly.
 
 > r[rpc.error.scope]
 >
@@ -285,15 +275,20 @@ identity described in [Retry](./retry/).
 
 > r[rpc.channel.placement]
 >
-> `Tx<T>` and `Rx<T>` may appear in argument types of service methods.
-> They MUST NOT appear in method return types or in the error variant of a
-> `Result` return type.
+> `Tx<T>` and `Rx<T>` may appear only as direct arguments of service
+> methods. They MUST NOT appear in method return types or in the error
+> variant of a `Result` return type.
+
+> r[rpc.channel.direct-args]
+>
+> `Tx<T>` and `Rx<T>` MUST NOT be nested inside structs, enums, tuples,
+> `Option`, `Result`, pointers, or other container/wrapper types used as
+> method arguments.
 
 > r[rpc.channel.no-collections]
 >
 > `Tx<T>` and `Rx<T>` MUST NOT appear inside collections (lists,
-> arrays, maps, sets). They may be nested arbitrarily deep inside structs
-> and enums.
+> arrays, maps, sets).
 
 > r[rpc.channel.allocation]
 >
@@ -381,17 +376,18 @@ identity described in [Retry](./retry/).
 
 > r[rpc.flow-control.max-concurrent-requests.counting]
 >
-> `max_concurrent_requests` counts live request attempts, not logical
-> operations. A retransmission for the same operation still consumes one
-> unit of request concurrency while that retransmitted request attempt is
-> live.
+> `max_concurrent_requests` counts live request attempts. A later call issued
+> after an earlier request attempt failed consumes its own unit of request
+> concurrency while the later request attempt is live.
 
-> r[rpc.flow-control.max-concurrent-requests.attachment-loss]
+> r[rpc.flow-control.max-concurrent-requests.session-failure]
 >
-> Request-attempt accounting is attachment-local. When a conduit attachment
-> fails, in-flight request attempts on that failed attachment are no longer
-> live. If an unresolved operation is retransmitted after session
-> resumption, that later retransmission counts as a new request attempt.
+> Request-attempt accounting is session-local. When the conduit or session
+> fails, in-flight request attempts on that session are no longer live. The
+> conduit layer MUST NOT reconnect, preserve, replay, or retransmit those
+> attempts. A later call requires a new session or a still-live existing session
+> and consumes its own fresh request concurrency while that request attempt is
+> live.
 
 > r[rpc.flow-control.max-concurrent-requests.default]
 >
@@ -558,52 +554,38 @@ identity described in [Retry](./retry/).
 
 > r[rpc.metadata]
 >
-> Requests and Responses carry metadata: a list of `(key, value, flags)`
-> triples for out-of-band information such as tracing context, authentication
-> tokens, or deadlines.
+> Requests and Responses carry **metadata**: a self-describing phon `Value` map
+> from UTF-8 string keys to arbitrary `Value`s, for out-of-band information such
+> as tracing context, authentication tokens, or deadlines. Because metadata is a
+> self-describing `Value`, it is not nominally typed and does not participate in
+> schema exchange (see `r[schema.interaction.metadata]`).
 
 > r[rpc.metadata.value]
 >
-> A metadata value is one of three types:
->
->   * `String` — a UTF-8 string
->   * `Bytes` — an opaque byte buffer
->   * `U64` — a 64-bit unsigned integer
-
-> r[rpc.metadata.flags]
->
-> Each metadata entry carries a `u64` flags bitfield that controls handling
-> behavior. Unknown flag bits MUST be preserved when forwarding metadata,
-> but MUST be ignored for handling decisions.
->
-> | Bit | Name | Meaning |
-> |-----|------|---------|
-> | 0 | `SENSITIVE` | See `r[rpc.metadata.flags.sensitive]` |
-> | 1 | `NO_PROPAGATE` | See `r[rpc.metadata.flags.no-propagate]` |
-> | 2–63 | Reserved | MUST be zero when creating; MUST be preserved when forwarding |
-
-> r[rpc.metadata.flags.sensitive]
->
-> When the `SENSITIVE` flag (bit 0) is set, the value MUST NOT be logged,
-> traced, or included in error messages. Implementations MUST take care
-> not to expose sensitive values in debug output, telemetry, or crash reports.
-
-> r[rpc.metadata.flags.no-propagate]
->
-> When the `NO_PROPAGATE` flag (bit 1) is set, the value MUST NOT be
-> forwarded to downstream calls. A proxy or middleware that forwards
-> metadata MUST strip entries with this flag set.
+> A metadata value is any phon self-describing `Value` (`phon r[value]`) —
+> commonly a `String`, a `Bytes` buffer, or a `U64`, but lists and nested maps
+> are also valid. A peer carrying no metadata MAY encode it as the unit/null
+> `Value` rather than an empty map.
 
 > r[rpc.metadata.keys]
 >
-> Metadata keys are case-sensitive UTF-8 strings. By convention, keys
-> use lowercase kebab-case (e.g. `authorization`, `trace-parent`,
+> Metadata keys are case-sensitive UTF-8 strings. By convention, application
+> keys use lowercase kebab-case (e.g. `authorization`, `trace-parent`,
 > `request-deadline`).
+
+> r[rpc.metadata.sigils]
+>
+> A metadata key MAY carry handling conventions directly in the key string:
+> `#key` marks the value sensitive for log/trace rendering, `-key` marks the
+> entry as no-propagate for code that intentionally forwards metadata, and
+> `-#key` applies both conventions. Implementations MUST preserve the full key
+> string on the wire; there is no separate flag map or metadata-specific wire
+> type.
 
 > r[rpc.metadata.duplicates]
 >
-> Duplicate keys are allowed. When multiple entries share the same key,
-> all values MUST be preserved in order.
+> Metadata is a map: each key appears at most once. To associate multiple values
+> with a single key, use a list `Value`.
 
 > r[rpc.metadata.unknown]
 >
@@ -612,78 +594,71 @@ identity described in [Retry](./retry/).
 
 ### Examples
 
-Authentication tokens should be marked sensitive to prevent logging:
+Build a metadata map and mark an authentication token sensitive (and
+non-propagating) with the `-#` key sigils:
 
 ```rust
-metadata.push((
-    "authorization".into(),
-    MetadataValue::String("Bearer sk-...".into()),
-    MetadataFlags::SENSITIVE,
-));
+let metadata = vox_types::metadata()
+    .str("trace-id", "abc123")
+    .u64("attempt", 2)
+    .str("-#authorization", "Bearer sk-...")
+    .build();
 ```
 
-Session tokens that shouldn't leak to downstream services:
-
-```rust
-metadata.push((
-    "session-id".into(),
-    MetadataValue::String(session_id),
-    MetadataFlags::SENSITIVE | MetadataFlags::NO_PROPAGATE,
-));
-```
+On the wire this is a `Value` map `{ "trace-id": "abc123", "attempt": 2,
+"-#authorization": "Bearer sk-..." }`.
 
 # Channel binding
 
 > r[rpc.channel.discovery]
 >
 > Channel IDs in `Request.channels` MUST be listed in the order produced by a
-> schema-driven traversal of the argument types. The traversal visits struct
-> fields and active enum variant fields in declaration order. It does not
-> descend into collections, since channels MUST NOT appear there (see
-> `r[rpc.channel.no-collections]`). Channels inside an `Option` that is
-> `None` at runtime are simply absent from the list.
+> left-to-right scan of the direct method arguments. Since channels are
+> rejected anywhere below a direct argument position (see
+> `r[rpc.channel.direct-args]`), implementations do not perform recursive
+> channel discovery over user structs, enum variants, options, or collections.
 
 > r[rpc.channel.payload-encoding]
 >
-> `Tx<T>` and `Rx<T>` values in the serialized payload MUST be encoded as
-> unit placeholders. The actual channel IDs are carried out-of-band in the
-> `channels` field of the `Request` message.
+> `Tx<T>` and `Rx<T>` values in the serialized payload MUST be encoded as a
+> `u32` *index* into the `channels` list of the `Request` message (in encode
+> walk-order). The actual channel IDs are carried out-of-band in that
+> `channels` field. Carrying an explicit index — rather than relying on
+> position — keeps re-association correct under the same field reordering and
+> skipping the compatibility path already allows for the rest of the payload.
 
 > r[rpc.channel.binding]
 >
-> On the callee side, implementations MUST use the channel IDs from
-> `Request.channels` as authoritative, patching them into deserialized
-> argument values before binding streams.
+> On the callee side, implementations MUST resolve each decoded `Tx<T>`/`Rx<T>`
+> handle's channel ID by looking up its encoded index in `Request.channels`,
+> and use that ID as authoritative when binding the stream. The channel IDs in
+> `Request.channels` are authoritative over any value implied by payload position.
 
 ## Channel pairs and shared state
 
 > r[rpc.channel.pair]
 >
-> `channel<T>()` returns a `(Tx<T>, Rx<T>)` pair that share a single
-> channel core. Runtime channel capacity defaults to 16 items unless the
-> session is configured otherwise. Both handles hold an `Arc` reference to
-> the core. The
-> core contains a `Mutex<Option<ChannelBinding>>` where `ChannelBinding`
-> is either a `Sink` or a `Receiver` — never both. The `Mutex` is
-> needed because `Rx::recv` takes the receiver out of the core on
-> first call.
+> `channel<T>()` returns a linked `(Tx<T>, Rx<T>)` pair for one logical
+> unidirectional channel. Before binding, neither endpoint has a channel ID,
+> element codec, or transport binding. Runtime channel capacity defaults to
+> 16 items unless the session is configured otherwise.
 
 > r[rpc.channel.pair.binding-propagation]
 >
 > When the framework binds a channel handle that is part of a pair
-> (created via `channel()`), the binding is stored in the shared core.
-> The paired handle — which the caller or callee kept — reads or takes
-> the binding from the same core. This allows the framework to bind
-> both ends by touching only the handle that appears in the args.
+> (created via `channel()`), it MUST propagate the channel ID, element codec,
+> and send/receive binding needed by the paired handle that the caller or
+> callee kept. This allows the framework to bind both ends by touching only
+> the handle that appears in the args.
 
 ## Caller-side binding (args)
 
 > r[rpc.channel.binding.caller-args]
 >
 > When the caller sends a request containing channel handles in the
-> arguments, the framework iterates the channel locations from the
-> `RpcPlan`, allocates a channel ID for each, and binds the handle
-> in the args tuple. Channel IDs are collected into `Request.channels`.
+> arguments, the framework iterates direct channel arguments in method
+> declaration order, allocates a channel ID for each, and binds the handle in
+> the args tuple. Channel IDs are collected into `Request.channels`.
 
 > r[rpc.channel.binding.caller-args.rx]
 >
@@ -704,8 +679,8 @@ metadata.push((
 > r[rpc.channel.binding.callee-args]
 >
 > When the callee receives a request, channel handles in the deserialized
-> arguments are standalone (not part of a pair). The framework iterates
-> the channel locations from the `RpcPlan` and binds each handle directly
+> arguments are standalone (not part of a pair). The framework iterates direct
+> channel arguments in method declaration order and binds each handle directly
 > using the channel IDs from `Request.channels`.
 
 > r[rpc.channel.binding.callee-args.rx]
@@ -725,15 +700,16 @@ metadata.push((
 
 > r[rpc.channel.pair.tx-read]
 >
-> `Tx::send` reads the sink from the shared core. If the `Tx` was
-> created standalone (deserialized), it reads from its local sink slot.
-> If it was created via `channel()`, it reads from the shared core's
-> `ChannelBinding::Sink`.
+> Sending through a `Tx<T>` MUST use the send binding currently associated
+> with that handle. If the `Tx` was created standalone (deserialized or
+> server-side), the binding is local to that handle. If it was created via
+> `channel()`, the binding is installed by pair binding propagation when the
+> paired `Rx<T>` is bound.
 
 > r[rpc.channel.pair.rx-take]
 >
-> `Rx::recv` takes the receiver on first call. If the `Rx` was created
-> standalone (deserialized), the receiver is already in its local slot.
-> If it was created via `channel()`, the first `recv` call takes the
-> receiver from the shared core's `ChannelBinding::Receiver` into the
-> local slot. Subsequent calls use the local slot directly.
+> Receiving through an `Rx<T>` MUST use the receive binding currently
+> associated with that handle. If the `Rx` was created standalone
+> (deserialized or server-side), the binding is local to that handle. If it
+> was created via `channel()`, the binding is installed by pair binding
+> propagation when the paired `Tx<T>` is bound.

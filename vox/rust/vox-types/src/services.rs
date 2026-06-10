@@ -41,17 +41,19 @@ pub struct MethodDescriptor {
     /// Arguments in declaration order.
     pub args: &'static [ArgDescriptor],
 
-    /// Return type shape.
+    /// Return type shape (the handler's declared return, e.g. `Result<u64, E>`
+    /// or a bare `T` for an infallible method).
     pub return_shape: &'static Shape,
 
-    /// Whether `args_shape` reaches a channel (Tx/Rx) anywhere in its tree.
-    /// Computed once via `shape_contains_channel` when the descriptor is
-    /// built, so the driver's cancel/failure paths can short-circuit
-    /// instead of re-walking the shape per request.
-    pub args_have_channels: bool,
+    /// The response *wire* shape: `Result<T, VoxError<E>>`, what `RequestResponse.ret`
+    /// actually carries. Captured by the service macro (which sees the syntactic
+    /// ok/err types) so codegen can emit the response root + schema closure — the
+    /// wrapping is invisible to reflection on `return_shape` alone.
+    pub response_wire_shape: &'static Shape,
 
-    /// Static retry policy for this method.
-    pub retry: RetryPolicy,
+    /// Whether any direct method argument is a channel (Tx/Rx).
+    /// Nested channels are rejected while the descriptor is built.
+    pub args_have_channels: bool,
 
     /// Documentation string, if any.
     pub doc: Option<&'static str>,
@@ -63,41 +65,8 @@ impl std::fmt::Debug for MethodDescriptor {
             .field("id", &self.id)
             .field("service_name", &self.service_name)
             .field("method_name", &self.method_name)
-            .field("retry", &self.retry)
             .finish_non_exhaustive()
     }
-}
-
-/// Static retry policy for a method.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct RetryPolicy {
-    /// Whether an admitted operation must persist once started.
-    pub persist: bool,
-
-    /// Whether re-executing the same logical operation is semantically safe.
-    pub idem: bool,
-}
-
-impl RetryPolicy {
-    pub const VOLATILE: Self = Self {
-        persist: false,
-        idem: false,
-    };
-
-    pub const IDEM: Self = Self {
-        persist: false,
-        idem: true,
-    };
-
-    pub const PERSIST: Self = Self {
-        persist: true,
-        idem: false,
-    };
-
-    pub const PERSIST_IDEM: Self = Self {
-        persist: true,
-        idem: true,
-    };
 }
 
 declare_id!(
@@ -116,6 +85,14 @@ pub struct ArgDescriptor {
 
     /// Argument type shape.
     pub shape: &'static Shape,
+
+    /// For a direct `Tx<T>`/`Rx<T>` argument, the element type's shape (`T::SHAPE`).
+    ///
+    /// `Tx`/`Rx` are `#[facet(opaque)]`, so their `Shape` carries no
+    /// `type_params` — the element type is invisible to reflection. The service
+    /// macro, which sees the channel type syntactically, captures it here so
+    /// codegen can emit the per-channel element schema.
+    pub channel_element: Option<&'static Shape>,
 }
 
 impl ServiceDescriptor {

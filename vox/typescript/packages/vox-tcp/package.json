@@ -8,7 +8,8 @@
   },
   "scripts": {
     "build": "tsdown",
-    "check": "tsgo --noEmit"
+    "check": "tsgo --noEmit",
+    "test": "vitest run"
   },
   "publishConfig": {
     "exports": {
@@ -28,7 +29,8 @@
     "@bearcove/vox-core": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "^25.0.0"
+    "@types/node": "^25.0.0",
+    "vitest": "^4.0.0"
   },
   "license": "MIT OR Apache-2.0",
   "description": "TCP transport implementation for the Vox protocol",
@@ -38,8 +40,7 @@
     "vox",
     "ipc",
     "rpc",
-    "typescript",
-    "shared-memory"
+    "typescript"
   ],
   "readme": "README.md"
 }

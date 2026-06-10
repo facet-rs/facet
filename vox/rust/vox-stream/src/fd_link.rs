@@ -68,12 +68,13 @@ impl Link for FdStreamLink {
         // when frames and sendmsg/recvmsg boundaries don't align).
         let writer_sock = Arc::clone(&sock);
         let writer_task = tokio::spawn(async move {
+            // Link prologue (no fds) before any framed message: announces magic + version +
+            // fd-capability so a peer on a mismatched framing fails loudly at connect.
+            send_msg_with_fds(&writer_sock, &super::link_prologue(true), &[]).await?;
             while let Some(Outgoing::Frame(body, fds)) = rx_chan.recv().await {
-                if body.len() > u32::MAX as usize {
-                    return Err(io::Error::other("frame exceeds 4GiB"));
-                }
+                let body_len = super::frame_len_prefix(body.len())?;
                 let mut framed = Vec::with_capacity(8 + body.len());
-                framed.extend_from_slice(&(body.len() as u32).to_le_bytes());
+                framed.extend_from_slice(&body_len);
                 framed.extend_from_slice(&(fds.len() as u32).to_le_bytes());
                 framed.extend_from_slice(&body);
                 let raw: Vec<RawFd> = fds.iter().map(|f| f.as_raw_fd()).collect();
@@ -94,6 +95,8 @@ impl Link for FdStreamLink {
             // set — independent of recvmsg chunking.
             let mut recv_fds: std::collections::VecDeque<OwnedFd> =
                 std::collections::VecDeque::new();
+            // The peer's link prologue precedes all frames; validate it once.
+            let mut prologue_done = false;
             loop {
                 let (n, raw_fds) = match recv_msg(&reader_sock, &mut buf).await {
                     Ok(v) => v,
@@ -111,6 +114,20 @@ impl Link for FdStreamLink {
                     recv_fds.push_back(unsafe { OwnedFd::from_raw_fd(fd) });
                 }
                 acc.extend_from_slice(&buf[..n]);
+
+                if !prologue_done {
+                    if acc.len() < super::LINK_PROLOGUE_LEN {
+                        continue;
+                    }
+                    let mut prologue = [0u8; super::LINK_PROLOGUE_LEN];
+                    prologue.copy_from_slice(&acc[..super::LINK_PROLOGUE_LEN]);
+                    if let Err(error) = super::validate_link_prologue(&prologue, true) {
+                        let _ = read_tx.send(Err(error)).await;
+                        return;
+                    }
+                    acc.drain(..super::LINK_PROLOGUE_LEN);
+                    prologue_done = true;
+                }
 
                 loop {
                     if acc.len() < 8 {
@@ -163,6 +180,10 @@ pub struct FdStreamLinkTx {
 
 impl LinkTx for FdStreamLinkTx {
     async fn send(&self, bytes: Vec<u8>) -> io::Result<()> {
+        let _ = super::frame_len_prefix(bytes.len())?;
+        // r[impl link.tx.send]
+        // r[impl link.tx.cancel-safe]
+        // r[impl link.message.empty]
         self.tx
             .send(Outgoing::Frame(bytes, Vec::new()))
             .await
@@ -179,6 +200,7 @@ impl LinkTx for FdStreamLinkTx {
     }
 
     async fn send_with_fds(&self, bytes: Vec<u8>, fds: Vec<OwnedFd>) -> io::Result<()> {
+        let _ = super::frame_len_prefix(bytes.len())?;
         if fds.len() > SCM_MAX_FD {
             return Err(io::Error::other(format!(
                 "too many fds in one message: {} > SCM_MAX_FD ({SCM_MAX_FD})",
@@ -277,7 +299,7 @@ mod tests {
         let (_txb, mut rx) = b.split();
 
         let fd_msg = Fd::new(OwnedFd::from(temp_file_with(b"through-the-link")));
-        let (body, fds) = collect_fds(|| vox_postcard::to_vec(&fd_msg).unwrap());
+        let (body, fds) = collect_fds(|| vox_phon::to_vec(&fd_msg).unwrap());
         assert_eq!(fds.len(), 1);
         tx.send_with_fds(body, fds).await.unwrap();
 
@@ -289,7 +311,7 @@ mod tests {
             Backing::Boxed(b) => b.to_vec(),
             Backing::Shared(s) => s.as_bytes().to_vec(),
         };
-        let decoded: Fd = provide_fds(frame_fds, || vox_postcard::from_slice(&bytes).unwrap());
+        let decoded: Fd = provide_fds(frame_fds, || vox_phon::from_slice(&bytes).unwrap());
         let mut f = std::fs::File::from(decoded.into_owned_fd().unwrap());
         let mut got = String::new();
         f.read_to_string(&mut got).unwrap();

@@ -46,9 +46,14 @@ function buildTarget(target) {
   const wasmPack = wasmPackCommand();
   const result = spawnSync(
     wasmPack,
-    ["build", "--target", "web", target.crateArg, "--out-dir", target.outDirArg],
+    ["build", "--dev", "--no-opt", "--target", "web", target.crateArg, "--out-dir", target.outDirArg],
     {
       cwd: projectRoot,
+      env: {
+        ...process.env,
+        CARGO_PROFILE_DEV_DEBUG: process.env.CARGO_PROFILE_DEV_DEBUG ?? "false",
+        CARGO_PROFILE_DEV_OPT_LEVEL: process.env.CARGO_PROFILE_DEV_OPT_LEVEL ?? "1",
+      },
       stdio: "inherit",
     },
   );
@@ -63,6 +68,16 @@ function buildTarget(target) {
 }
 
 export default async function globalSetup() {
+  if (process.env.VOX_SKIP_WASM_PACK_BUILD === "1") {
+    for (const target of wasmTargets) {
+      if (!existsSync(target.outputFile)) {
+        throw new Error(`missing prebuilt wasm fixture for ${target.name}: ${target.outputFile}`);
+      }
+      console.log(`[playwright] using prebuilt ${target.name} wasm fixture`);
+    }
+    return;
+  }
+
   for (const target of wasmTargets) {
     buildTarget(target);
   }

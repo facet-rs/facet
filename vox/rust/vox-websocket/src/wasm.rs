@@ -67,7 +67,6 @@ impl Drop for ScratchBuffer {
 /// A [`Link`] over a browser WebSocket.
 // r[impl transport.websocket]
 // r[impl transport.websocket.platforms]
-// r[impl zerocopy.framing.link.websocket]
 pub struct WsLink(WsLinkTx, WsLinkRx);
 
 impl WsLink {
@@ -237,7 +236,6 @@ impl std::fmt::Display for WsLinkRxError {
 
 impl std::error::Error for WsLinkRxError {}
 
-// r[impl zerocopy.recv.websocket]
 impl LinkRx for WsLinkRx {
     type Error = WsLinkRxError;
 

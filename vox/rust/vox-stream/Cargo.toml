@@ -33,5 +33,5 @@ vox-fdpass.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-vox-postcard = { path = "../vox-postcard" }
+vox-phon = { path = "../vox-phon" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

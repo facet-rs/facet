@@ -1,26 +1,29 @@
 import Foundation
 
-public struct PreparedRetryRequest: Sendable {
-    public let payload: [UInt8]
-
-    public init(payload: [UInt8]) {
-        self.payload = payload
-    }
+struct DriverQueuedTaskMessage: Sendable {
+    let connectionId: UInt64
+    let taskMessage: TaskMessage
 }
 
-struct DriverQueuedTaskMessage: Sendable {
+struct DriverQueuedWireMessage: Sendable {
     let message: Message
 }
 
 struct DriverQueuedCall: Sendable {
+    let connectionId: UInt64
     let requestId: UInt64
     let methodId: UInt64
-    let metadata: [MetadataEntry]
+    let metadata: Metadata
     let payload: [UInt8]
-    let retry: RetryPolicy
+    let channels: [UInt64]
     let timeout: TimeInterval?
-    let prepareRetry: (@Sendable () async -> PreparedRetryRequest)?
     let schemaInfo: ClientSchemaInfo?
+}
+
+struct PendingVirtualConnection: Sendable {
+    let localSettings: ConnectionSettings
+    let dispatcher: (any ServiceDispatcher)?
+    let responseTx: @Sendable (Result<Connection, ConnectionError>) -> Void
 }
 
 struct DriverKeepaliveRuntime {

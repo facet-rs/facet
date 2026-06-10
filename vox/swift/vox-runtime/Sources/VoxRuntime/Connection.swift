@@ -1,14 +1,32 @@
 import Foundation
+import PhonSchema
 
+// r[impl rpc.caller]
 public final class Connection: @unchecked Sendable {
     let handle: ConnectionHandle
+    /// Writer schema closures the peer advertised — the generated client uses them for
+    /// response decode against the server's advertised response schema through this.
+    public let schemaReceiveTracker: SchemaTracker
 
-    init(handle: ConnectionHandle) {
+    init(handle: ConnectionHandle, schemaReceiveTracker: SchemaTracker) {
         self.handle = handle
+        self.schemaReceiveTracker = schemaReceiveTracker
+    }
+
+    deinit {
+        // r[impl rpc.caller.liveness.refcounted]
+        // r[impl rpc.caller.liveness.last-drop-closes-connection]
+        // r[impl rpc.caller.liveness.root-internal-close]
+        // r[impl rpc.caller.liveness.root-teardown-condition]
+        handle.releaseConnectionLiveness()
     }
 
     public var channelAllocator: ChannelIdAllocator {
         handle.channelAllocator
+    }
+
+    public var connectionId: UInt64 {
+        handle.connectionId
     }
 
     public var incomingChannelRegistry: ChannelRegistry {
@@ -23,21 +41,20 @@ public final class Connection: @unchecked Sendable {
 
     public func call(
         methodId: UInt64,
-        metadata: [MetadataEntry],
+        metadata: Metadata,
         payload: [UInt8],
-        retry: RetryPolicy = .volatile,
+        channels: [UInt64] = [],
         timeout: TimeInterval?,
-        prepareRetry: (@Sendable () async -> PreparedRetryRequest)? = nil,
         finalizeChannels: (@Sendable () -> Void)? = nil,
         schemaInfo: ClientSchemaInfo? = nil
     ) async throws -> [UInt8] {
+        // r[impl rpc.caller]
         try await callRaw(
             methodId: methodId,
             metadata: metadata,
             payload: payload,
-            retry: retry,
+            channels: channels,
             timeout: timeout,
-            prepareRetry: prepareRetry,
             finalizeChannels: finalizeChannels,
             schemaInfo: schemaInfo
         )
@@ -45,21 +62,20 @@ public final class Connection: @unchecked Sendable {
 
     public func callRaw(
         methodId: UInt64,
-        metadata: [MetadataEntry] = [],
+        metadata: Metadata = .null,
         payload: [UInt8],
-        retry: RetryPolicy = .volatile,
+        channels: [UInt64] = [],
         timeout: TimeInterval? = nil,
-        prepareRetry: (@Sendable () async -> PreparedRetryRequest)? = nil,
         finalizeChannels: (@Sendable () -> Void)? = nil,
         schemaInfo: ClientSchemaInfo? = nil
     ) async throws -> [UInt8] {
+        // r[impl rpc.request]
         try await handle.callRaw(
             methodId: methodId,
             metadata: metadata,
             payload: payload,
-            retry: retry,
+            channels: channels,
             timeout: timeout,
-            prepareRetry: prepareRetry,
             finalizeChannels: finalizeChannels,
             schemaInfo: schemaInfo
         )

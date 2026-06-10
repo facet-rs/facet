@@ -342,7 +342,7 @@ Everything else stays crate-private.
 3. Remove public conn-id routing surfaces from upper layers.
 4. Rebuild `Driver` on new `SessionConnection` API.
 5. Rewire generated caller/dispatcher glue to `CallerLink` and `HandlerLink`.
-6. Re-verify zero-copy and backpressure behavior with focused tests.
+6. Re-verify borrowed-payload and backpressure behavior with focused tests.
 
 ---
 

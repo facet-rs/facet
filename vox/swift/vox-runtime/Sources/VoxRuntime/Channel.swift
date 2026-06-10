@@ -13,11 +13,41 @@ public enum Role: Sendable {
     case acceptor  // Uses even IDs (2, 4, 6, ...)
 }
 
+func roleForParity(_ parity: Parity) -> Role {
+    switch parity {
+    case .odd:
+        return .initiator
+    case .even:
+        return .acceptor
+    }
+}
+
+func oppositeRole(_ role: Role) -> Role {
+    switch role {
+    case .initiator:
+        return .acceptor
+    case .acceptor:
+        return .initiator
+    }
+}
+
+func firstId(for role: Role) -> UInt64 {
+    switch role {
+    case .initiator:
+        return 1
+    case .acceptor:
+        return 2
+    }
+}
+
+func idMatchesRole(_ id: UInt64, _ role: Role) -> Bool {
+    id != 0 && id % 2 == firstId(for: role) % 2
+}
+
 // MARK: - Channel ID Allocator
 
 /// Allocates unique channel IDs with correct parity.
 ///
-/// r[impl rpc.request.id-allocation] - IDs are unique within a connection.
 /// r[impl session.parity] - Initiator uses odd, Acceptor uses even.
 /// r[impl rpc.channel.allocation] - Caller allocates ALL channel IDs.
 public final class ChannelIdAllocator: @unchecked Sendable {
@@ -25,10 +55,7 @@ public final class ChannelIdAllocator: @unchecked Sendable {
     private let lock = NSLock()
 
     public init(role: Role) {
-        switch role {
-        case .initiator: next = 1
-        case .acceptor: next = 2
-        }
+        next = firstId(for: role)
     }
 
     public func allocate() -> ChannelId {
@@ -47,11 +74,17 @@ public enum TaskMessage: Sendable {
     case data(channelId: ChannelId, payload: [UInt8])
     case close(channelId: ChannelId)
     case grantCredit(channelId: ChannelId, bytes: UInt32)
+    case schema(methodId: UInt64, direction: SchemaBindingDirection, schemas: [UInt8])
     case response(
         requestId: UInt64,
         payload: [UInt8],
         methodId: UInt64? = nil,
-        schemaPayload: SchemaPayload? = nil
+        // The method's FULL response schema closure (not a pre-resolved advertisement).
+        // The driver advertises it idempotently at the sequential send point, so the
+        // first response actually written for a method carries the schema — concurrent
+        // dispatch tasks must not decide who carries it (the responses can be written
+        // in a different order). r[impl schema.exchange.required]
+        responseSchemaClosure: [UInt8] = []
     )
 }
 
@@ -61,9 +94,12 @@ actor ChannelCreditController {
     private var waiters: [CheckedContinuation<Void, Error>] = []
 
     init(initialCredit: UInt32) {
+        // r[impl rpc.flow-control.credit.initial]
         self.available = initialCredit
     }
 
+    // r[impl rpc.flow-control.credit]
+    // r[impl rpc.flow-control.credit.exhaustion]
     func consume() async throws {
         if available > 0 {
             available -= 1
@@ -77,6 +113,18 @@ actor ChannelCreditController {
         }
     }
 
+    func tryConsume() -> CreditConsumeResult {
+        if closed {
+            return .closed
+        }
+        if available == 0 {
+            return .full
+        }
+        available -= 1
+        return .consumed
+    }
+
+    // r[impl rpc.flow-control.credit.grant.additive]
     func grant(_ additional: UInt32) {
         guard additional > 0 else {
             return
@@ -102,6 +150,12 @@ actor ChannelCreditController {
     }
 }
 
+enum CreditConsumeResult: Sendable {
+    case consumed
+    case full
+    case closed
+}
+
 // MARK: - Channel Receiver
 
 /// Receives data on a channel.
@@ -123,6 +177,7 @@ public final class ChannelReceiver: @unchecked Sendable {
     }
 
     public func deliver(_ data: [UInt8]) {
+        // r[impl rpc.channel.delivery.reliable]
         var toResume: CheckedContinuation<[UInt8]?, Never>?
         lock.lock()
         if let w = waiter {
@@ -239,9 +294,9 @@ extension NSLock {
 
 /// Handle for sending data on a channel.
 ///
-/// r[impl rpc.channel.binding] - From caller's perspective, Tx means "I send".
-/// r[impl rpc.channel] - Serializes as u64 channel ID on wire.
-/// r[impl rpc.channel.lifecycle] - The holder sends on this channel.
+/// r[impl rpc.channel]
+/// r[impl rpc.channel.direction]
+/// r[impl rpc.channel.lifecycle]
 public final class Tx<T: Sendable>: @unchecked Sendable {
     public var channelId: ChannelId = 0
     private var taskTx: (@Sendable (TaskMessage) -> Void)?
@@ -268,6 +323,7 @@ public final class Tx<T: Sendable>: @unchecked Sendable {
     /// Send a value.
     ///
     /// r[impl rpc.channel.item] - Data messages carry serialized values.
+    /// r[impl rpc.flow-control.credit]
     public func send(_ value: T) async throws {
         guard let taskTx = taskTx, let credit else {
             throw ChannelError.notBound
@@ -280,6 +336,28 @@ public final class Tx<T: Sendable>: @unchecked Sendable {
         serialize(value, &buf)
         let bytes = buf.readBytes(length: buf.readableBytes) ?? []
         taskTx(.data(channelId: channelId, payload: bytes))
+    }
+
+    // r[impl rpc.flow-control.credit.try-send]
+    public func trySend(_ value: T) async throws -> TrySendResult<T> {
+        guard let taskTx = taskTx, let credit else {
+            return .full(value)
+        }
+        if lock.withLock({ closed }) {
+            return .closed(value)
+        }
+        switch await credit.tryConsume() {
+        case .consumed:
+            var buf = ByteBufferAllocator().buffer(capacity: 64)
+            serialize(value, &buf)
+            let bytes = buf.readBytes(length: buf.readableBytes) ?? []
+            taskTx(.data(channelId: channelId, payload: bytes))
+            return .sent
+        case .full:
+            return .full(value)
+        case .closed:
+            return .closed(value)
+        }
     }
 
     /// Close this channel.
@@ -310,13 +388,19 @@ public final class Tx<T: Sendable>: @unchecked Sendable {
     }
 }
 
+public enum TrySendResult<T: Sendable>: Sendable {
+    case sent
+    case full(T)
+    case closed(T)
+}
+
 // MARK: - Rx (Receive Handle)
 
 /// Handle for receiving data on a channel.
 ///
-/// r[impl rpc.channel.binding] - From caller's perspective, Rx means "I receive".
-/// r[impl rpc.channel] - Serializes as u64 channel ID on wire.
-/// r[impl rpc.channel.lifecycle] - The holder receives from this channel.
+/// r[impl rpc.channel]
+/// r[impl rpc.channel.direction]
+/// r[impl rpc.channel.lifecycle]
 public final class Rx<T: Sendable>: @unchecked Sendable {
     public var channelId: ChannelId = 0
     private var receiver: ChannelReceiver?
@@ -368,8 +452,8 @@ extension Rx: AsyncSequence {
 
 /// Registry for incoming channels.
 ///
-/// r[impl rpc.metadata.unknown] - Unknown channel IDs cause Goodbye.
-/// r[impl rpc.channel.item] - Data messages routed by channel_id.
+/// r[impl rpc.channel.item] - Data messages routed by channel_id; items for a
+/// not-yet-bound channel are buffered and drained when the channel binds.
 /// r[impl rpc.channel.lifecycle] - Channels may outlive the response.
 /// r[impl rpc.channel.lifecycle] - Call completion independent of channel lifecycle.
 public actor ChannelRegistry {
@@ -389,6 +473,9 @@ public actor ChannelRegistry {
     /// Register a channel and return its receiver.
     /// This is async to ensure pending data/close are delivered synchronously
     /// before returning, avoiding race conditions with the handler.
+    /// r[impl rpc.channel.binding.callee-args]
+    /// r[impl rpc.channel.binding.callee-args.rx]
+    /// r[impl rpc.flow-control.credit.initial]
     public func register(
         _ channelId: ChannelId,
         initialCredit: UInt32,
@@ -418,6 +505,9 @@ public actor ChannelRegistry {
 
     func registerOutgoing(_ channelId: ChannelId, initialCredit: UInt32) -> ChannelCreditController
     {
+        // r[impl rpc.channel.binding.callee-args]
+        // r[impl rpc.channel.binding.callee-args.tx]
+        // r[impl rpc.flow-control.credit.initial]
         let controller = ChannelCreditController(initialCredit: initialCredit)
         outgoingCredits[channelId] = controller
         knownChannels.insert(channelId)
@@ -427,7 +517,6 @@ public actor ChannelRegistry {
     /// Deliver data to a channel. Returns true if known.
     ///
     /// r[impl rpc.channel.close] - Data after close is rejected.
-    /// r[impl rpc.flow-control.credit.exhaustion] - Data size bounded by max_payload_size.
     public func deliverData(channelId: ChannelId, payload: [UInt8]) async -> Bool {
         if pendingClose.contains(channelId) {
             return false
@@ -471,6 +560,7 @@ public actor ChannelRegistry {
         knownChannels.contains(channelId) || receivers[channelId] != nil
     }
 
+
     /// Deliver reset to a channel.
     ///
     /// r[impl rpc.channel.reset] - Reset abruptly terminates channel.
@@ -497,10 +587,9 @@ public actor ChannelRegistry {
         }
     }
 
-    /// Close all channels. Called on session resume.
-    ///
-    /// r[impl retry.channel.disconnect.closes] - Channel handles become invalid on disconnect.
+    /// Close all channels when the connection closes.
     public func closeAllChannels() async {
+        // r[impl rpc.channel.connection-closure]
         for (_, receiver) in receivers {
             receiver.deliverReset()
         }

@@ -85,7 +85,7 @@ export interface CallRequest {
   /**
    * Request metadata (headers).
    * Middleware can add/modify entries for auth, tracing, etc.
-   * Use `set()` for normal metadata, `setSensitive()` for sensitive values.
+   * Use a leading `#` in the key for values that logging should redact.
    */
   metadata: ClientMetadata;
 }
@@ -144,8 +144,7 @@ export class RejectionError extends Error {
  * ```typescript
  * const authMiddleware: ClientMiddleware = {
  *   pre(ctx, request) {
- *     // Use setSensitive for auth tokens so they're redacted in logs
- *     request.metadata.setSensitive("authorization", `Bearer ${getToken()}`);
+ *     request.metadata.set("#authorization", `Bearer ${getToken()}`);
  *   }
  * };
  *

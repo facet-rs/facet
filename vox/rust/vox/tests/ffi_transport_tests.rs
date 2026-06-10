@@ -76,7 +76,7 @@ async fn ffi_transport_supports_bidirectional_calls_with_two_services_when_a_ini
     });
 
     let link = ffi_pair_ab_a::connect(ffi_pair_ab_b::vtable()).expect("connect ffi link");
-    let root = vox::initiator_on(link, vox::TransportMode::Bare)
+    let root = vox::initiator_on(link)
         .on_connection(PingDispatcher::new(PingService))
         .establish::<vox::NoopClient>()
         .await
@@ -111,7 +111,7 @@ async fn ffi_transport_supports_bidirectional_calls_with_two_services_when_b_ini
     });
 
     let link = ffi_pair_ba_b::connect(ffi_pair_ba_a::vtable()).expect("connect ffi link");
-    let root = vox::initiator_on(link, vox::TransportMode::Bare)
+    let root = vox::initiator_on(link)
         .on_connection(PongDispatcher::new(PongService))
         .establish::<vox::NoopClient>()
         .await

@@ -1,82 +1,57 @@
 use std::marker::PhantomData;
 
-#[cfg(not(target_arch = "wasm32"))]
-use facet_core::PtrConst;
-#[cfg(not(target_arch = "wasm32"))]
-use vox_jit::cache::{CompiledDecoder, CompiledEncoder};
-#[cfg(not(target_arch = "wasm32"))]
-use vox_jit::cal::BorrowMode;
-
 use vox_types::{Conduit, ConduitRx, ConduitTx, Link, LinkTx, MaybeSend, MsgFamily, SelfRef};
 
 use crate::MessagePlan;
 
-/// Wraps a [`Link`] with postcard serialization. No reconnect, no reliability.
+/// Wraps a [`Link`] with phon serialization. No reconnect, no reliability.
 ///
-/// If the link dies, the conduit is dead. For localhost, SHM, or any
-/// transport where reconnect isn't needed.
+/// If the link dies, the conduit is dead. For localhost or any transport
+/// where reconnect isn't needed.
 ///
 /// `F` is a [`MsgFamily`] — it maps lifetimes to concrete message types.
-/// The send path accepts `F::Msg<'a>` (borrowed data serialized in place
-/// via `Peek`). The recv path yields `SelfRef<F::Msg<'static>>` (owned).
+/// The send path accepts `F::Msg<'a>` (borrowed data serialized in place).
+/// The recv path yields `SelfRef<F::Msg<'static>>`: the decoded value borrows
+/// the received backing.
+///
+/// The `Message` envelope is an evolvable wire type like any other: the Rx half
+/// builds a compatibility decode program from the peer's envelope schema (received
+/// in the handshake, carried in [`MessagePlan`]) to its own `Message` descriptor
+/// and reuses it for every frame. There is no same-version envelope shortcut.
 // r[impl conduit.bare]
 // r[impl conduit.typeplan]
-// r[impl zerocopy.framing.conduit.bare]
+// r[impl session.handshake.protocol-schema.session-scoped]
 pub struct BareConduit<F: MsgFamily, L: Link> {
     link: L,
-    #[cfg(not(target_arch = "wasm32"))]
-    encoder: &'static CompiledEncoder,
-    #[cfg(not(target_arch = "wasm32"))]
-    decoder: Option<&'static CompiledDecoder>,
-    message_plan: MessagePlan,
+    /// The peer's `Message` envelope schema (phon bytes) from the handshake, or
+    /// `None` when built without a plan (tests / degenerate path) — in which case
+    /// the Rx half derives our own schema as the writer (the schema-identical degenerate
+    /// of the one compat path, not a shortcut).
+    writer_schema: Option<Vec<u8>>,
     _phantom: PhantomData<fn(F) -> F>,
 }
 
 impl<F: MsgFamily, L: Link> BareConduit<F, L> {
-    /// Create a new BareConduit (identity plan — no schema translation).
+    /// Create a new BareConduit without a pre-exchanged envelope schema. The Rx
+    /// half will build a program from our own `Message` schema to itself — the
+    /// schema-identical degenerate of the compat path. Used by tests and the rare
+    /// no-handshake case.
     pub fn new(link: L) -> Self {
-        let identity_plan = vox_postcard::build_identity_plan(F::shape());
-        Self::resolve(
-            link,
-            MessagePlan {
-                remote_schema_id: 0,
-                plan: identity_plan,
-                registry: vox_types::SchemaRegistry::new(),
-            },
-        )
-    }
-
-    /// Create a new BareConduit with a pre-built message translation plan.
-    pub fn with_message_plan(link: L, message_plan: MessagePlan) -> Self {
-        Self::resolve(link, message_plan)
-    }
-
-    fn resolve(link: L, message_plan: MessagePlan) -> Self {
-        #[cfg(not(target_arch = "wasm32"))]
-        let runtime = vox_jit::global_runtime();
-        #[cfg(not(target_arch = "wasm32"))]
-        let encoder = runtime
-            .prepare_encoder(F::shape())
-            .expect("JIT encode unavailable for message shape");
-        #[cfg(not(target_arch = "wasm32"))]
-        let decoder = runtime.prepare_decoder(
-            message_plan.remote_schema_id,
-            F::shape(),
-            &message_plan.plan,
-            &message_plan.registry,
-            BorrowMode::Owned,
-        );
-        #[cfg(not(target_arch = "wasm32"))]
-        if decoder.is_none() {
-            tracing::warn!("vox bare conduit message decoder unavailable; falling back");
-        }
         Self {
             link,
-            #[cfg(not(target_arch = "wasm32"))]
-            encoder,
-            #[cfg(not(target_arch = "wasm32"))]
-            decoder,
-            message_plan,
+            writer_schema: None,
+            _phantom: PhantomData,
+        }
+    }
+
+    /// Create a BareConduit carrying the peer's envelope schema from the
+    /// handshake. The Rx half builds the compat decode program against its own
+    /// `Message` descriptor.
+    // r[impl session.handshake.protocol-schema.session-scoped]
+    pub fn with_message_plan(link: L, message_plan: MessagePlan) -> Self {
+        Self {
+            link,
+            writer_schema: Some(message_plan.writer_schema),
             _phantom: PhantomData,
         }
     }
@@ -96,16 +71,13 @@ where
         (
             BareConduitTx {
                 link_tx: tx,
-                #[cfg(not(target_arch = "wasm32"))]
-                encoder: self.encoder,
                 _phantom: PhantomData,
             },
             BareConduitRx {
                 link_rx: rx,
                 pending_fds: vox_types::FrameFds::default(),
-                #[cfg(not(target_arch = "wasm32"))]
-                decoder: self.decoder,
-                message_plan: self.message_plan,
+                writer_schema: self.writer_schema,
+                program: None,
                 _phantom: PhantomData,
             },
         )
@@ -118,8 +90,6 @@ where
 
 pub struct BareConduitTx<F: MsgFamily, LTx: LinkTx> {
     link_tx: LTx,
-    #[cfg(not(target_arch = "wasm32"))]
-    encoder: &'static CompiledEncoder,
     _phantom: PhantomData<fn(F)>,
 }
 
@@ -136,30 +106,12 @@ impl<F: MsgFamily, LTx: LinkTx + MaybeSend + 'static> ConduitTx for BareConduitT
     type Prepared = PreparedFrame;
     type Error = BareConduitError;
 
-    // r[impl zerocopy.framing.single-pass]
-    // r[impl zerocopy.framing.no-double-serialize]
-    // r[impl zerocopy.scatter]
-    // r[impl zerocopy.scatter.plan]
-    // r[impl zerocopy.scatter.plan.size]
-    // r[impl zerocopy.scatter.write]
-    // r[impl zerocopy.scatter.lifetime]
     fn prepare_send(&self, item: F::Msg<'_>) -> Result<Self::Prepared, Self::Error> {
-        let encode = || -> Result<Vec<u8>, BareConduitError> {
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                let ptr = PtrConst::new((&raw const item).cast::<u8>());
-                vox_jit::encode_with(self.encoder, ptr).map_err(BareConduitError::Encode)
-            }
-            #[cfg(target_arch = "wasm32")]
-            {
-                vox_postcard::to_vec(&item).map_err(BareConduitError::Encode)
-            }
-        };
         // Collect any `Fd`s the encoder funnels into the thread-local
         // collector — same install-around-encode shape as the channel
-        // binder (`with_channel_binder`). Off-Unix this is a pass-through
-        // and `fds` is `()`.
-        let (encoded, fds) = vox_types::collect_fds(encode);
+        // binder. Off-Unix this is a pass-through and `fds` is `()`.
+        let (encoded, fds) =
+            vox_types::collect_fds(|| vox_phon::to_vec(&item).map_err(BareConduitError::Encode));
         Ok(PreparedFrame {
             bytes: encoded?,
             fds,
@@ -168,6 +120,7 @@ impl<F: MsgFamily, LTx: LinkTx + MaybeSend + 'static> ConduitTx for BareConduitT
 
     async fn send_prepared(&self, prepared: Self::Prepared) -> Result<(), Self::Error> {
         let PreparedFrame { bytes, fds } = prepared;
+        // r[impl transport.fd.capability]
         if vox_types::frame_fds_len(&fds) > 0 && !self.link_tx.supports_fd_passing() {
             return Err(BareConduitError::Io(std::io::Error::other(
                 "message carries file descriptors but the transport \
@@ -194,10 +147,39 @@ pub struct BareConduitRx<F: MsgFamily, LRx> {
     /// Descriptors that arrived with the most recently `recv`'d frame,
     /// awaiting [`take_frame_fds`](vox_types::ConduitRx::take_frame_fds).
     pending_fds: vox_types::FrameFds,
-    #[cfg(not(target_arch = "wasm32"))]
-    decoder: Option<&'static CompiledDecoder>,
-    message_plan: MessagePlan,
+    /// The peer's `Message` envelope schema (phon bytes) from the handshake, or
+    /// `None` to build a program from our own schema to itself (degenerate path).
+    writer_schema: Option<Vec<u8>>,
+    /// The compat decode program, built lazily on the first `recv` (writer schema
+    /// against `F::Msg`) and reused.
+    program: Option<vox_phon::DecodeProgram>,
     _phantom: PhantomData<fn() -> F>,
+}
+
+impl<F: MsgFamily, LRx> BareConduitRx<F, LRx> {
+    /// Build (once) and return the envelope compat decode program. Uses the
+    /// peer's `Message` schema — or our own, when none was exchanged (the
+    /// schema-identical degenerate of the one compat path) — against `F::Msg`'s
+    /// descriptor via phon's `lower_decode`.
+    // r[impl conduit.typeplan]
+    // r[impl session.handshake.protocol-schema.session-scoped]
+    fn ensure_program(&mut self) -> Result<&vox_phon::DecodeProgram, BareConduitError> {
+        if self.program.is_none() {
+            let writer_bytes = match &self.writer_schema {
+                Some(b) => std::borrow::Cow::Borrowed(b.as_slice()),
+                None => std::borrow::Cow::Owned(
+                    vox_phon::schema_bytes::<F::Msg<'static>>()
+                        .map_err(BareConduitError::Decode)?,
+                ),
+            };
+            let writer =
+                vox_phon::parse_schema_bytes(&writer_bytes).map_err(BareConduitError::Decode)?;
+            let program = vox_phon::build_decode_program::<F::Msg<'static>>(&writer)
+                .map_err(BareConduitError::Decode)?;
+            self.program = Some(program);
+        }
+        Ok(self.program.as_ref().expect("program built above"))
+    }
 }
 
 impl<F: MsgFamily, LRx> ConduitRx for BareConduitRx<F, LRx>
@@ -207,7 +189,6 @@ where
     type Msg = F;
     type Error = BareConduitError;
 
-    // r[impl zerocopy.recv]
     #[moire::instrument]
     async fn recv(&mut self) -> Result<Option<SelfRef<F::Msg<'static>>>, Self::Error> {
         let backing = match self.link_rx.recv().await.map_err(|error| {
@@ -220,31 +201,21 @@ where
         // Capture this frame's descriptors. `Payload` only *borrows* its
         // bytes during Message decode — the typed `Fd` is decoded later by
         // the generated stub — so the fds are threaded out via
-        // `take_frame_fds` (the same rail as the schema tracker) and
-        // installed at that decode site, not here.
+        // `take_frame_fds` and installed at that decode site, not here.
         self.pending_fds = self.link_rx.take_frame_fds();
 
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            crate::deserialize_postcard_with_decoder::<F::Msg<'static>>(
-                backing,
-                self.decoder,
-                &self.message_plan.plan,
-                &self.message_plan.registry,
-            )
-            .map_err(BareConduitError::Decode)
-            .map(Some)
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            crate::deserialize_postcard_with_plan::<F::Msg<'static>>(
-                backing,
-                &self.message_plan.plan,
-                &self.message_plan.registry,
-            )
-            .map_err(BareConduitError::Decode)
-            .map(Some)
-        }
+        // Lazily build the envelope compat program from the peer's
+        // `Message` schema (or our own, in the degenerate no-exchange case)
+        // against our `Message` descriptor. Built once, reused for every frame.
+        let program = self.ensure_program()?;
+
+        // Decode the envelope through the compat program: the decoded
+        // `Message` borrows the backing (payload span, metadata strings).
+        SelfRef::try_new(backing, |bytes| {
+            vox_phon::decode_with_program::<F::Msg<'static>>(program, bytes)
+                .map_err(BareConduitError::Decode)
+        })
+        .map(Some)
     }
 
     fn take_frame_fds(&mut self) -> vox_types::FrameFds {
@@ -258,8 +229,8 @@ where
 
 #[derive(Debug)]
 pub enum BareConduitError {
-    Encode(vox_postcard::SerializeError),
-    Decode(vox_postcard::DeserializeError),
+    Encode(vox_phon::Error),
+    Decode(vox_phon::Error),
     Io(std::io::Error),
     LinkDead,
 }
@@ -303,10 +274,9 @@ mod tests {
         let msg = Message {
             connection_id: ConnectionId(1),
             payload: MessagePayload::ConnectionReject(ConnectionReject {
-                metadata: vec![MetadataEntry::str(
-                    "error",
-                    "missing required vox-service metadata",
-                )],
+                metadata: metadata()
+                    .str("error", "missing required vox-service metadata")
+                    .build(),
             }),
         };
         let prepared = a_tx.prepare_send(msg).unwrap();
@@ -316,19 +286,11 @@ mod tests {
         let received = b_rx.recv().await.unwrap().unwrap();
         let msg = received.get();
         if let MessagePayload::ConnectionReject(reject) = &msg.payload {
-            assert_eq!(reject.metadata.len(), 1, "expected 1 metadata entry");
+            assert_eq!(reject.metadata.meta_len(), 1, "expected 1 metadata entry");
             assert_eq!(
-                reject.metadata[0].key.as_ref(),
-                "error",
-                "key mismatch: got {:?}",
-                reject.metadata[0].key
+                reject.metadata.meta_str("error"),
+                Some("missing required vox-service metadata"),
             );
-            match &reject.metadata[0].value {
-                MetadataValue::String(s) => {
-                    assert_eq!(s.as_ref(), "missing required vox-service metadata");
-                }
-                other => panic!("expected String, got {:?}", other),
-            }
         } else {
             panic!("expected ConnectionReject, got {:?}", msg.payload);
         }

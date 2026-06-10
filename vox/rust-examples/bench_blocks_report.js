@@ -65,8 +65,8 @@ function fmt(v, digits = 2) {
   return Number.isFinite(v) ? v.toFixed(digits) : '-';
 }
 
-function pctDelta(shm, local) {
-  return ((shm / local) - 1) * 100;
+function pctDelta(ffi, local) {
+  return ((ffi / local) - 1) * 100;
 }
 
 function main() {
@@ -97,12 +97,12 @@ function main() {
     const throughputDeltas = [];
     const rssDeltas = [];
     for (const pair of perBlock.values()) {
-      if (!pair.local || !pair.shm) continue;
-      p50Deltas.push(pctDelta(pair.shm.p50_us, pair.local.p50_us));
-      p99Deltas.push(pctDelta(pair.shm.p99_us, pair.local.p99_us));
-      throughputDeltas.push(pctDelta(pair.shm.calls_per_sec, pair.local.calls_per_sec));
-      if (pair.local.peak_rss_kib && pair.shm.peak_rss_kib) {
-        rssDeltas.push(pctDelta(pair.shm.peak_rss_kib, pair.local.peak_rss_kib));
+      if (!pair.local || !pair.ffi) continue;
+      p50Deltas.push(pctDelta(pair.ffi.p50_us, pair.local.p50_us));
+      p99Deltas.push(pctDelta(pair.ffi.p99_us, pair.local.p99_us));
+      throughputDeltas.push(pctDelta(pair.ffi.calls_per_sec, pair.local.calls_per_sec));
+      if (pair.local.peak_rss_kib && pair.ffi.peak_rss_kib) {
+        rssDeltas.push(pctDelta(pair.ffi.peak_rss_kib, pair.local.peak_rss_kib));
       }
     }
 

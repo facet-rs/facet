@@ -60,6 +60,8 @@ describe("WsLinkSource", () => {
     vi.restoreAllMocks();
   });
 
+  // r[verify transport.websocket]
+  // r[verify transport.websocket.platforms]
   it("opens a link and forwards send/recv", async () => {
     globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
 
@@ -76,5 +78,8 @@ describe("WsLinkSource", () => {
     const incoming = new Uint8Array([4, 5, 6]);
     socket?.emitMessage(incoming);
     await expect(attachment.link.recv()).resolves.toEqual(incoming);
+
+    attachment.link.close();
+    await expect(attachment.link.recv()).resolves.toBeNull();
   });
 });

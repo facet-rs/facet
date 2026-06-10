@@ -1,5 +1,16 @@
 import type { Link, LinkSource } from "@bearcove/vox-core";
 
+// r[impl transport.websocket]
+// r[impl transport.websocket.platforms]
+// r[impl link]
+// r[impl link.message]
+// r[impl link.message.empty]
+// r[impl link.order]
+// r[impl link.rx.recv]
+// r[impl link.rx.eof]
+// r[impl link.rx.error]
+// r[impl link.tx.send]
+// r[impl link.tx.close]
 export class WsLink implements Link {
   lastReceived: Uint8Array | undefined;
   private pendingMessages: Uint8Array[] = [];
@@ -73,6 +84,8 @@ export class WsLink implements Link {
   }
 }
 
+// r[impl transport.websocket]
+// r[impl transport.websocket.platforms]
 export class WsLinkSource implements LinkSource<WsLink> {
   private readonly url: string;
 

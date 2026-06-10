@@ -14,13 +14,15 @@ env:
 jobs:
   rust-lint:
     name: Rust / Lint
-    runs-on: depot-ubuntu-24.04-16
+    runs-on: bearcove-ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -33,13 +35,17 @@ jobs:
 
   rust-tests:
     name: Rust / Tests
-    runs-on: depot-ubuntu-24.04-16
-    timeout-minutes: 20
+    runs-on: bearcove-ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CARGO_BUILD_JOBS: "4"
     steps:
       - uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
@@ -51,11 +57,16 @@ jobs:
         run: cargo build --package subject-rust
 
       - name: Test workspace (Rust-only)
-        run: cargo nextest run --workspace -E 'not test(/lang_.*(typescript|swift)/)'
+        run: >
+          cargo nextest run --workspace --jobs 2
+          -E 'not test(/lang_.*(typescript|swift)/) and not test(/(^|::)(typescript|swift)_/)'
+
+      - name: Check schema compatibility policy
+        run: bash scripts/check-schema-compat.sh
 
   rust-doc:
     name: Rust / Documentation
-    runs-on: depot-ubuntu-24.04-16
+    runs-on: bearcove-ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
@@ -74,7 +85,7 @@ jobs:
 
   rust-examples:
     name: Rust / Examples
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: bearcove-ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
@@ -101,7 +112,7 @@ jobs:
 
   rust-miri:
     name: Rust / Miri
-    runs-on: depot-ubuntu-24.04-16
+    runs-on: bearcove-ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
@@ -119,7 +130,7 @@ jobs:
 
   rust-conformance:
     name: Conformance / Rust
-    runs-on: depot-ubuntu-24.04-16
+    runs-on: bearcove-ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
@@ -136,7 +147,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Install wasm-pack
-        run: cargo install wasm-pack
+        uses: taiki-e/install-action@wasm-pack
 
       - name: Build subject
         run: cargo build -p subject-rust --release
@@ -154,10 +165,24 @@ jobs:
 
   generated-bindings:
     name: Generated / Bindings Sync
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: bearcove-ubuntu-24.04
+    container:
+      image: swift:6.1
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
+
+      - name: Trust checkout for Git inside container
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Show Swift version
+        run: swift --version
+
+      - name: Check Swift formatter
+        run: swift format --help
+
+      - name: Install Rust prerequisites
+        run: apt-get update && apt-get install -y build-essential curl ca-certificates
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -180,7 +205,7 @@ jobs:
 
   typescript-conformance:
     name: Conformance / TypeScript
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: bearcove-ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
@@ -226,44 +251,28 @@ jobs:
         run: >
           cargo nextest run -p spec-tests --test spec_matrix --run-ignored all -E 'test(lang_typescript_transport_tcp::)'
 
-  swift-conformance:
-    name: Conformance / Swift
-    runs-on: depot-macos-15
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@nextest
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      - name: Build subject
-        run: swift build -c release --package-path swift/subject
-
-      - name: Run VoxRuntime Swift tests
-        run: swift test --no-parallel -Xlinker -L$(pwd)/target/release
-
-      - name: Run Swift TCP subject matrix tests
+      - name: Run TypeScript subject lifecycle tests
         run: >
-          cargo nextest run -p spec-tests --test spec_matrix --run-ignored all
-          -E 'test(lang_swift_transport_tcp::)'
+          cargo nextest run -p spec-tests --test subject_lifecycle
+          -E 'test(/(^|::)typescript_/)'
 
   swift-linux:
     name: Conformance / Swift (Linux)
-    runs-on: depot-ubuntu-24.04-16
+    runs-on: bearcove-ubuntu-24.04
+    container:
+      image: swift:6.1
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
 
-      - name: Setup Swift
-        uses: swift-actions/setup-swift@v2
-        with:
-          swift-version: "6.1"
+      - name: Trust checkout for Git inside container
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Show Swift version
+        run: swift --version
+
+      - name: Install Rust prerequisites
+        run: apt-get update && apt-get install -y build-essential curl ca-certificates
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -278,16 +287,21 @@ jobs:
         run: swift build -c release --package-path swift/subject
 
       - name: Run VoxRuntime Swift tests
-        run: swift test --no-parallel -Xlinker -L$(pwd)/target/release
+        run: swift test --no-parallel -Xlinker "-L${PWD}/target/release"
 
       - name: Run Swift TCP subject matrix tests
         run: >
           cargo nextest run -p spec-tests --test spec_matrix --run-ignored all
           -E 'test(lang_swift_transport_tcp::)'
 
+      - name: Run Swift subject lifecycle tests
+        run: >
+          cargo nextest run -p spec-tests --test subject_lifecycle
+          -E 'test(/(^|::)swift_/)'
+
   rust-wasm:
     name: Rust / WebAssembly
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: bearcove-ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
@@ -308,7 +322,7 @@ jobs:
 
   wasm-browser-tests:
     name: Browser / Rust-Wasm
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: bearcove-ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
@@ -332,12 +346,15 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Install wasm-pack
-        run: cargo install wasm-pack
+        uses: taiki-e/install-action@wasm-pack
 
       - name: Build wasm targets
+        env:
+          CARGO_PROFILE_DEV_DEBUG: "false"
+          CARGO_PROFILE_DEV_OPT_LEVEL: "1"
         run: |
-          wasm-pack build --target web rust/wasm-browser-tests --out-dir ../../wasm/tests/browser-wasm/pkg
-          wasm-pack build --target web rust/wasm-inprocess-tests --out-dir ../../wasm/tests/browser-inprocess/pkg
+          wasm-pack build --dev --no-opt --target web rust/wasm-browser-tests --out-dir ../../wasm/tests/browser-wasm/pkg
+          wasm-pack build --dev --no-opt --target web rust/wasm-inprocess-tests --out-dir ../../wasm/tests/browser-inprocess/pkg
 
       - name: Install dependencies
         run: pnpm install
@@ -346,11 +363,13 @@ jobs:
         run: pnpm --filter "@bearcove/vox-wasm-playwright-tests" exec playwright install --with-deps chromium
 
       - name: Run Wasm browser tests
+        env:
+          VOX_SKIP_WASM_PACK_BUILD: "1"
         run: pnpm --filter "@bearcove/vox-wasm-playwright-tests" run test
 
   rust-windows:
     name: Rust / Windows
-    runs-on: depot-windows-2025-32
+    runs-on: windows-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
@@ -370,4 +389,6 @@ jobs:
         run: cargo build -p subject-rust
 
       - name: Test workspace (Rust-only, no cross-language)
-        run: cargo nextest run --workspace -E 'not test(/lang_.*(typescript|swift)/)'
+        run: >
+          cargo nextest run --workspace
+          -E 'not test(/lang_.*(typescript|swift)/) and not test(/(^|::)(typescript|swift)_/)'

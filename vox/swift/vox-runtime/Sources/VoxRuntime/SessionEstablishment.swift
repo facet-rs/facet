@@ -2,22 +2,16 @@ import Foundation
 
 struct SessionHandshakeResult {
     let negotiated: Negotiated
-    let peerSupportsRetry: Bool
-    let sessionResumeKey: [UInt8]?
     let localRootSettings: ConnectionSettings
     let peerRootSettings: ConnectionSettings
-    let peerMetadata: [MetadataEntry]
+    let peerMetadata: Metadata
+    /// The peer's advertised Message schema closure, used to build the conduit's
+    /// compatibility decoder.
+    let peerMessageSchema: [UInt8]
 }
 
-/// Generate a fresh 16-byte session resume key from the system CSPRNG.
-/// Matches the Rust acceptor's `fresh_resume_key` (`[u8; 16]` via getrandom)
-/// and the TypeScript acceptor's `randomSessionResumeKey` (16-byte
-/// `crypto.getRandomValues`).
-func freshResumeKey() -> [UInt8] {
-    var rng = SystemRandomNumberGenerator()
-    return (0..<16).map { _ in UInt8.random(in: UInt8.min...UInt8.max, using: &rng) }
-}
-
+// r[impl session.role]
+// r[impl session.parity]
 func oppositeParity(_ parity: Parity) -> Parity {
     switch parity {
     case .odd:
@@ -27,45 +21,83 @@ func oppositeParity(_ parity: Parity) -> Parity {
     }
 }
 
+// r[impl session.handshake.sorry]
 func sendHandshakeSorry(_ link: any Link, reason: String) async {
-    try? await sendHandshake(link, .sorry(HandshakeSorry(reason: reason)))
+    try? await sendHandshake(link, .sorry(Sorry(reason: reason)))
 }
 
+// r[impl session.handshake.protocol-schema]
+// r[impl session.handshake.protocol-schema.session-scoped]
 func requireIdentityMessageSchema(
-    _ peerMessageSchemaCbor: [UInt8],
+    _ peerMessageSchema: [UInt8],
     on link: any Link
 ) async throws {
-    guard handshakeMessageSchemasMatch(peerMessageSchemaCbor) else {
-        let reason = "unsupported message schema translation"
+    guard handshakeMessageSchemasMatch(peerMessageSchema) else {
+        let reason = "unsupported message compatibility plan"
         await sendHandshakeSorry(link, reason: reason)
         throw ConnectionError.handshakeFailed(reason)
     }
 }
 
+/// The local Message schema closure, advertised in the handshake.
+/// r[impl session.handshake.protocol-schema]
+private var localMessagePayloadSchema: [UInt8] { MessageSchemaClosure }
+
+func validateInitialChannelCredit(_ initialChannelCredit: UInt32) throws {
+    // r[impl rpc.flow-control.credit.initial.zero]
+    guard initialChannelCredit > 0 else {
+        throw ConnectionError.protocolViolation(rule: "rpc.flow-control.credit.initial.zero")
+    }
+}
+
+func makeConnectionSettings(
+    parity: Parity,
+    maxConcurrentRequests: UInt32,
+    initialChannelCredit: UInt32
+) throws -> ConnectionSettings {
+    // r[impl session.connection-settings]
+    // r[impl rpc.flow-control.max-concurrent-requests.default]
+    // r[impl rpc.flow-control.credit.initial.high-level]
+    try validateInitialChannelCredit(initialChannelCredit)
+    return ConnectionSettings(
+        parity: parity,
+        maxConcurrentRequests: maxConcurrentRequests,
+        initialChannelCredit: initialChannelCredit
+    )
+}
+
+// r[impl session]
+// r[impl session.handshake]
+// r[impl session.handshake.phon]
+// r[impl session.handshake.protocol-schema]
+// r[impl session.handshake.protocol-schema.session-scoped]
+// r[impl session.handshake.unversioned]
+// r[impl session.connection-settings]
+// r[impl session.peer]
+// r[impl session.role]
+// r[impl session.symmetry]
 func performInitiatorHandshake(
     link: any Link,
     maxPayloadSize: UInt32,
     maxConcurrentRequests: UInt32,
     initialChannelCredit: UInt32 = 16,
-    resumable: Bool,
-    resumeKey: [UInt8]? = nil,
-    metadata: [MetadataEntry] = []
+    metadata: Metadata = .null
 ) async throws -> SessionHandshakeResult {
-    traceLog(.handshake, "initiator sending Hello resumable=\(resumable)")
-    let ourSettings = ConnectionSettings(
-        parity: .odd, maxConcurrentRequests: maxConcurrentRequests,
-        initialChannelCredit: initialChannelCredit)
-    let hello = HandshakeHello(
+    traceLog(.handshake, "initiator sending Hello")
+    let ourSettings = try makeConnectionSettings(
+        parity: .odd,
+        maxConcurrentRequests: maxConcurrentRequests,
+        initialChannelCredit: initialChannelCredit
+    )
+    let hello = Hello(
         parity: ourSettings.parity,
         connectionSettings: ourSettings,
-        messagePayloadSchemaCbor: wireMessageSchemasCbor,
-        supportsRetry: true,
-        resumeKey: resumeKey.map(ResumeKeyBytes.init(bytes:)),
+        messagePayloadSchema: Data(localMessagePayloadSchema),
         metadata: metadata
     )
     try await sendHandshake(link, .hello(hello))
 
-    let peerHello: HandshakeHelloYourself
+    let peerHello: HelloYourself
     switch try await recvHandshake(link) {
     case .helloYourself(let helloYourself):
         traceLog(.handshake, "initiator received HelloYourself")
@@ -77,14 +109,12 @@ func performInitiatorHandshake(
         throw ConnectionError.handshakeFailed("expected HelloYourself")
     }
 
-    try await requireIdentityMessageSchema(peerHello.messagePayloadSchemaCbor, on: link)
+    try validateInitialChannelCredit(peerHello.connectionSettings.initialChannelCredit)
 
-    let sessionResumeKey = peerHello.resumeKey?.bytes
-    // If we requested resumable but the peer doesn't echo a resume key, that's
-    // fine: we'll recover by establishing a fresh session and replaying in-flight
-    // requests, rather than doing a true protocol-level resume.
+    let peerSchema = [UInt8](peerHello.messagePayloadSchema)
+    try await requireIdentityMessageSchema(peerSchema, on: link)
 
-    try await sendHandshake(link, .letsGo(HandshakeLetsGo()))
+    try await sendHandshake(link, .letsGo(LetsGo()))
     traceLog(.handshake, "initiator sent LetsGo")
 
     let negotiated = Negotiated(
@@ -103,59 +133,55 @@ func performInitiatorHandshake(
 
     return SessionHandshakeResult(
         negotiated: negotiated,
-        peerSupportsRetry: peerHello.supportsRetry,
-        sessionResumeKey: sessionResumeKey,
         localRootSettings: ourSettings,
         peerRootSettings: peerHello.connectionSettings,
-        peerMetadata: peerHello.metadata
+        peerMetadata: peerHello.metadata,
+        peerMessageSchema: peerSchema
     )
 }
 
+// r[impl session]
+// r[impl session.handshake]
+// r[impl session.handshake.phon]
+// r[impl session.handshake.protocol-schema]
+// r[impl session.handshake.protocol-schema.session-scoped]
+// r[impl session.handshake.unversioned]
+// r[impl session.connection-settings]
+// r[impl session.peer]
+// r[impl session.role]
+// r[impl session.symmetry]
 func performAcceptorHandshake(
     link: any Link,
     maxPayloadSize: UInt32,
     maxConcurrentRequests: UInt32,
     initialChannelCredit: UInt32 = 16,
-    resumable: Bool,
-    expectedResumeKey: [UInt8]? = nil,
-    metadata: [MetadataEntry] = []
+    metadata: Metadata = .null
 ) async throws -> SessionHandshakeResult {
-    let peerHello: HandshakeHello
+    let peerHello: Hello
     switch try await recvHandshake(link) {
     case .hello(let hello):
-        traceLog(.handshake, "acceptor received Hello resumable=\(hello.resumeKey != nil)")
+        traceLog(.handshake, "acceptor received Hello")
         peerHello = hello
     default:
         throw ConnectionError.handshakeFailed("expected Hello")
     }
 
-    try await requireIdentityMessageSchema(peerHello.messagePayloadSchemaCbor, on: link)
+    let peerSchema = [UInt8](peerHello.messagePayloadSchema)
+    try validateInitialChannelCredit(peerHello.connectionSettings.initialChannelCredit)
+    try await requireIdentityMessageSchema(peerSchema, on: link)
 
-    // True protocol-level session resume / stable conduit was removed from
-    // the Swift runtime, so the peer's resume key is not used to look up an
-    // existing session.
-    let _ = expectedResumeKey
-
-    let ourSettings = ConnectionSettings(
+    let ourSettings = try makeConnectionSettings(
         parity: oppositeParity(peerHello.parity),
         maxConcurrentRequests: maxConcurrentRequests,
         initialChannelCredit: initialChannelCredit
     )
-    // Still advertise a fresh resume key when resumable, mirroring the Rust
-    // and TypeScript acceptors. Reference initiators that request resumption
-    // (the TS client rejects the handshake outright otherwise) require the
-    // acceptor to echo a key; recovery is handled by replaying in-flight
-    // requests on a fresh session rather than a true protocol-level resume.
-    let sessionResumeKey: [UInt8]? = resumable ? freshResumeKey() : nil
-    let helloYourself = HandshakeHelloYourself(
+    let helloYourself = HelloYourself(
         connectionSettings: ourSettings,
-        messagePayloadSchemaCbor: wireMessageSchemasCbor,
-        supportsRetry: true,
-        resumeKey: sessionResumeKey.map(ResumeKeyBytes.init(bytes:)),
+        messagePayloadSchema: Data(localMessagePayloadSchema),
         metadata: metadata
     )
     try await sendHandshake(link, .helloYourself(helloYourself))
-    traceLog(.handshake, "acceptor sent HelloYourself resumable=\(sessionResumeKey != nil)")
+    traceLog(.handshake, "acceptor sent HelloYourself")
 
     switch try await recvHandshake(link) {
     case .letsGo:
@@ -183,62 +209,50 @@ func performAcceptorHandshake(
 
     return SessionHandshakeResult(
         negotiated: negotiated,
-        peerSupportsRetry: peerHello.supportsRetry,
-        sessionResumeKey: sessionResumeKey,
         localRootSettings: ourSettings,
         peerRootSettings: peerHello.connectionSettings,
-        peerMetadata: peerHello.metadata
+        peerMetadata: peerHello.metadata,
+        peerMessageSchema: peerSchema
     )
 }
 
+// r[impl transport.prologue.post-accept]
+// r[impl session.message.payloads]
 func buildEstablishedConduit(
     role: Role,
-    transport: ConduitKind,
     attachment: LinkAttachment,
-    recoverAttachment: (@Sendable () async throws -> LinkAttachment)? = nil
+    peerMessageSchema: [UInt8]
 ) async throws -> any Conduit {
     let _ = role
-    let _ = recoverAttachment
-    switch transport {
-    case .bare:
-        return BareConduit(link: attachment.link)
-    case .stable:
-        // StableConduit was removed (had no real users). Anyone still
-        // negotiating .stable transport gets routed onto a bare conduit.
-        return BareConduit(link: attachment.link)
-    }
+    return BareConduit(link: attachment.link, peerMessageSchema: peerMessageSchema)
 }
 
-
+// r[impl rpc.session-setup]
 func establishInitiator(
     attachment: LinkAttachment,
-    transport: ConduitKind = .bare,
     dispatcher: any ServiceDispatcher,
     connectionAcceptor: (any ConnectionAcceptor)? = nil,
     maxPayloadSize: UInt32? = nil,
+    maxConcurrentRequests: UInt32 = 64,
     initialChannelCredit: UInt32 = 16,
     keepalive: SessionKeepaliveConfig? = nil,
-    resumable: Bool = false,
-    recoverAttachment: (@Sendable () async throws -> LinkAttachment)? = nil,
-    metadata: [MetadataEntry] = []
-) async throws -> (Connection, Driver, SessionHandle, [UInt8]?, [MetadataEntry]) {
+    metadata: Metadata = .null
+) async throws -> (Connection, Driver, SessionHandle, Metadata) {
     warnLog("[vox-establish] initiator: starting handshake")
     let ourMaxPayload = maxPayloadSize ?? (1024 * 1024)
     let handshake = try await performInitiatorHandshake(
         link: attachment.link,
         maxPayloadSize: ourMaxPayload,
-        maxConcurrentRequests: 64,
+        maxConcurrentRequests: maxConcurrentRequests,
         initialChannelCredit: initialChannelCredit,
-        resumable: resumable,
         metadata: metadata
     )
     warnLog("[vox-establish] initiator: handshake done")
 
     let conduit = try await buildEstablishedConduit(
         role: .initiator,
-        transport: transport,
         attachment: attachment,
-        recoverAttachment: recoverAttachment
+        peerMessageSchema: handshake.peerMessageSchema
     )
     try await conduit.setMaxFrameSize(Int(handshake.negotiated.maxPayloadSize) + 64)
 
@@ -247,95 +261,79 @@ func establishInitiator(
         dispatcher: dispatcher,
         role: .initiator,
         negotiated: handshake.negotiated,
-        peerSupportsRetry: handshake.peerSupportsRetry,
         connectionAcceptor: connectionAcceptor,
         keepalive: keepalive,
-        resumable: resumable,
-        sessionResumeKey: handshake.sessionResumeKey,
         localRootSettings: handshake.localRootSettings,
         peerRootSettings: handshake.peerRootSettings,
-        transport: transport,
-        recoverAttachment: recoverAttachment
+        peerMessageSchema: handshake.peerMessageSchema
     )
-    return (connection, driver, handle, handshake.sessionResumeKey, handshake.peerMetadata)
+    return (connection, driver, handle, handshake.peerMetadata)
 }
 
+// r[impl rpc.session-setup]
 func establishInitiator(
     link: any Link,
-    transport: ConduitKind = .bare,
     dispatcher: any ServiceDispatcher,
     connectionAcceptor: (any ConnectionAcceptor)? = nil,
     maxPayloadSize: UInt32? = nil,
+    maxConcurrentRequests: UInt32 = 64,
     initialChannelCredit: UInt32 = 16,
     keepalive: SessionKeepaliveConfig? = nil,
-    resumable: Bool = false,
-    recoverAttachment: (@Sendable () async throws -> LinkAttachment)? = nil,
-    metadata: [MetadataEntry] = []
-) async throws -> (Connection, Driver, SessionHandle, [UInt8]?, [MetadataEntry]) {
+    metadata: Metadata = .null
+) async throws -> (Connection, Driver, SessionHandle, Metadata) {
     try await establishInitiator(
         attachment: .initiator(link),
-        transport: transport,
         dispatcher: dispatcher,
         connectionAcceptor: connectionAcceptor,
         maxPayloadSize: maxPayloadSize,
+        maxConcurrentRequests: maxConcurrentRequests,
         initialChannelCredit: initialChannelCredit,
         keepalive: keepalive,
-        resumable: resumable,
-        recoverAttachment: recoverAttachment,
         metadata: metadata
     )
 }
 
+// r[impl rpc.session-setup]
 func establishInitiator(
     conduit: any Link,
-    transport: ConduitKind = .bare,
     dispatcher: any ServiceDispatcher,
     connectionAcceptor: (any ConnectionAcceptor)? = nil,
     maxPayloadSize: UInt32? = nil,
+    maxConcurrentRequests: UInt32 = 64,
     initialChannelCredit: UInt32 = 16,
     keepalive: SessionKeepaliveConfig? = nil,
-    resumable: Bool = false,
-    recoverAttachment: (@Sendable () async throws -> LinkAttachment)? = nil,
-    metadata: [MetadataEntry] = []
-) async throws -> (Connection, Driver, SessionHandle, [UInt8]?, [MetadataEntry]) {
+    metadata: Metadata = .null
+) async throws -> (Connection, Driver, SessionHandle, Metadata) {
     try await establishInitiator(
         link: conduit,
-        transport: transport,
         dispatcher: dispatcher,
         connectionAcceptor: connectionAcceptor,
         maxPayloadSize: maxPayloadSize,
+        maxConcurrentRequests: maxConcurrentRequests,
         initialChannelCredit: initialChannelCredit,
         keepalive: keepalive,
-        resumable: resumable,
-        recoverAttachment: recoverAttachment,
         metadata: metadata
     )
 }
 
+// r[impl transport.prologue.first-payload]
+// r[impl transport.prologue.post-accept]
+// r[impl rpc.session-setup]
 func establishAcceptor(
     attachment: LinkAttachment,
-    transport: ConduitKind = .bare,
     dispatcher: any ServiceDispatcher,
     connectionAcceptor: (any ConnectionAcceptor)? = nil,
     maxPayloadSize: UInt32? = nil,
+    maxConcurrentRequests: UInt32 = 64,
     initialChannelCredit: UInt32 = 16,
     keepalive: SessionKeepaliveConfig? = nil,
-    resumable: Bool = false,
-    metadata: [MetadataEntry] = []
-) async throws -> (Connection, Driver, SessionHandle, [UInt8]?, [MetadataEntry]) {
-    warnLog("[vox-establish] acceptor: negotiatedConduit=\(String(describing: attachment.negotiatedConduit)) transport=\(transport)")
-    if attachment.negotiatedConduit == nil {
+    metadata: Metadata = .null
+) async throws -> (Connection, Driver, SessionHandle, Metadata) {
+    warnLog("[vox-establish] acceptor: prologueComplete=\(attachment.hasCompletedPrologue)")
+    if !attachment.hasCompletedPrologue {
         warnLog("[vox-establish] acceptor: running link prologue")
-        let negotiatedTransport = try await performAcceptorLinkPrologue(
-            link: attachment.link,
-            supportedConduit: transport
-        )
-        warnLog("[vox-establish] acceptor: prologue done, negotiated=\(negotiatedTransport)")
-        guard negotiatedTransport == transport else {
-            throw TransportError.protocolViolation(
-                "transport negotiated \(negotiatedTransport) for requested \(transport)"
-            )
-        }
+        try await performAcceptorLinkPrologue(link: attachment.link)
+        warnLog("[vox-establish] acceptor: prologue done")
     }
 
     let ourMaxPayload = maxPayloadSize ?? (1024 * 1024)
@@ -343,16 +341,15 @@ func establishAcceptor(
     let handshake = try await performAcceptorHandshake(
         link: attachment.link,
         maxPayloadSize: ourMaxPayload,
-        maxConcurrentRequests: 64,
+        maxConcurrentRequests: maxConcurrentRequests,
         initialChannelCredit: initialChannelCredit,
-        resumable: resumable,
         metadata: metadata
     )
 
     let conduit = try await buildEstablishedConduit(
         role: .acceptor,
-        transport: transport,
-        attachment: attachment
+        attachment: attachment,
+        peerMessageSchema: handshake.peerMessageSchema
     )
     try await conduit.setMaxFrameSize(Int(handshake.negotiated.maxPayloadSize) + 64)
 
@@ -361,63 +358,57 @@ func establishAcceptor(
         dispatcher: dispatcher,
         role: .acceptor,
         negotiated: handshake.negotiated,
-        peerSupportsRetry: handshake.peerSupportsRetry,
         connectionAcceptor: connectionAcceptor,
         keepalive: keepalive,
-        resumable: resumable,
-        sessionResumeKey: handshake.sessionResumeKey,
         localRootSettings: handshake.localRootSettings,
         peerRootSettings: handshake.peerRootSettings,
-        transport: transport,
-        recoverAttachment: nil
+        peerMessageSchema: handshake.peerMessageSchema
     )
-    return (connection, driver, handle, handshake.sessionResumeKey, handshake.peerMetadata)
+    return (connection, driver, handle, handshake.peerMetadata)
 }
 
+// r[impl rpc.session-setup]
 func establishAcceptor(
     link: any Link,
-    transport: ConduitKind = .bare,
     dispatcher: any ServiceDispatcher,
     connectionAcceptor: (any ConnectionAcceptor)? = nil,
     maxPayloadSize: UInt32? = nil,
+    maxConcurrentRequests: UInt32 = 64,
     initialChannelCredit: UInt32 = 16,
     keepalive: SessionKeepaliveConfig? = nil,
-    resumable: Bool = false,
-    metadata: [MetadataEntry] = []
-) async throws -> (Connection, Driver, SessionHandle, [UInt8]?, [MetadataEntry]) {
+    metadata: Metadata = .null
+) async throws -> (Connection, Driver, SessionHandle, Metadata) {
     try await establishAcceptor(
         attachment: .init(link: link),
-        transport: transport,
         dispatcher: dispatcher,
         connectionAcceptor: connectionAcceptor,
         maxPayloadSize: maxPayloadSize,
+        maxConcurrentRequests: maxConcurrentRequests,
         initialChannelCredit: initialChannelCredit,
         keepalive: keepalive,
-        resumable: resumable,
         metadata: metadata
     )
 }
 
+// r[impl rpc.session-setup]
 func establishAcceptor(
     conduit: any Link,
-    transport: ConduitKind = .bare,
     dispatcher: any ServiceDispatcher,
     connectionAcceptor: (any ConnectionAcceptor)? = nil,
     maxPayloadSize: UInt32? = nil,
+    maxConcurrentRequests: UInt32 = 64,
     initialChannelCredit: UInt32 = 16,
     keepalive: SessionKeepaliveConfig? = nil,
-    resumable: Bool = false,
-    metadata: [MetadataEntry] = []
-) async throws -> (Connection, Driver, SessionHandle, [UInt8]?, [MetadataEntry]) {
+    metadata: Metadata = .null
+) async throws -> (Connection, Driver, SessionHandle, Metadata) {
     try await establishAcceptor(
         link: conduit,
-        transport: transport,
         dispatcher: dispatcher,
         connectionAcceptor: connectionAcceptor,
         maxPayloadSize: maxPayloadSize,
+        maxConcurrentRequests: maxConcurrentRequests,
         initialChannelCredit: initialChannelCredit,
         keepalive: keepalive,
-        resumable: resumable,
         metadata: metadata
     )
 }

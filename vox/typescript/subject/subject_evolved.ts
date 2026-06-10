@@ -2,7 +2,7 @@
 //
 // Implements the Testbed service using evolved types (added fields,
 // reordered fields, added enum variants, etc.) to test that schema
-// exchange and translation plans bridge the differences.
+// exchange and compatibility decode plans bridge the differences.
 
 import type {
   TestbedHandler,

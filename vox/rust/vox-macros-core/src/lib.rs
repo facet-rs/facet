@@ -121,6 +121,28 @@ fn type_is_tx(ty: &Type) -> bool {
     }
 }
 
+/// For a `Tx<X>`/`Rx<X>` argument type, the element type `X`. `None` otherwise.
+///
+/// `Tx`/`Rx` are `#[facet(opaque)]`, so their `Shape` carries no `type_params`
+/// and the element is invisible to reflection. The macro sees the channel type
+/// syntactically, so it captures `X` here for codegen (`ArgDescriptor::channel_element`).
+fn channel_element_type(ty: &Type) -> Option<&Type> {
+    match ty {
+        Type::Reference(TypeRef { inner, .. }) => channel_element_type(inner),
+        Type::PathWithGenerics(PathWithGenerics { path, args, .. }) => {
+            let seg = path.last_segment();
+            if seg != "Tx" && seg != "Rx" {
+                return None;
+            }
+            args.iter().find_map(|entry| match &entry.value {
+                GenericArgument::Type(inner) => Some(inner),
+                GenericArgument::Lifetime(_) => None,
+            })
+        }
+        _ => None,
+    }
+}
+
 // r[service-macro.is-source-of-truth]
 // r[impl rpc]
 // r[impl rpc.service]
@@ -255,16 +277,6 @@ pub fn generate_service(parsed: &ServiceTrait, vox: &TokenStream2) -> Result<Tok
             ));
         }
 
-        if method.is_persist() && method.args().any(|arg| arg.ty.contains_channel()) {
-            return Err(Error::new(
-                proc_macro2::Span::call_site(),
-                format!(
-                    "method `{}` declares `#[vox(persist)]` but has Channel (Tx/Rx) arguments - persist methods cannot carry channels",
-                    method.name()
-                ),
-            ));
-        }
-
         let (ok_ty, err_ty) = method_ok_and_err_types(&return_type);
         if ok_ty.has_elided_reference_lifetime() {
             return Err(Error::new(
@@ -329,10 +341,33 @@ fn generate_service_descriptor_fn(parsed: &ServiceTrait, vox: &TokenStream2) -> 
             let args_tuple_ty = quote! { (#(#arg_types,)*) };
             let arg_name_strs: Vec<String> = m.args().map(|arg| arg.name().to_string()).collect();
 
+            // Per-arg channel element shape: `Some(<X>::SHAPE)` for a `Tx<X>`/`Rx<X>`
+            // argument (whose opaque `Shape` hides `X`), `None` otherwise.
+            let channel_elements: Vec<TokenStream2> = m
+                .args()
+                .map(|arg| match channel_element_type(&arg.ty) {
+                    Some(elem) => {
+                        let elem = to_static_type_tokens(elem);
+                        quote! { Some(<#elem as #vox::facet::Facet<'static>>::SHAPE) }
+                    }
+                    None => quote! { None },
+                })
+                .collect();
+
             let return_type = m.return_type();
             let return_ty_tokens = to_static_type_tokens(&return_type);
-            let retry_persist = m.is_persist();
-            let retry_idem = m.is_idem();
+
+            // The response *wire* shape `Result<T, VoxError<E>>` — what
+            // `RequestResponse.ret` carries. Reflection on `return_ty` alone can't
+            // see the wrapping, so capture it here for codegen.
+            let (resp_ok_ref, resp_err_ref) = method_ok_and_err_types(&return_type);
+            let resp_ok_ty = to_static_type_tokens(resp_ok_ref);
+            let resp_err_ty = resp_err_ref
+                .map(to_static_type_tokens)
+                .unwrap_or_else(|| quote! { ::core::convert::Infallible });
+            let response_wire_shape = quote! {
+                <Result<#resp_ok_ty, #vox::VoxError<#resp_err_ty>> as #vox::facet::Facet<'static>>::SHAPE
+            };
 
             let method_doc_expr = match m.doc() {
                 Some(d) => quote! { Some(#d) },
@@ -340,14 +375,14 @@ fn generate_service_descriptor_fn(parsed: &ServiceTrait, vox: &TokenStream2) -> 
             };
 
             quote! {
-                #vox::hash::method_descriptor_with_retry::<#args_tuple_ty, #return_ty_tokens>(
+                #vox::hash::method_descriptor::<#args_tuple_ty, #return_ty_tokens>(
                     #service_name,
                     #method_name_str,
                     &[#(#arg_name_strs),*],
-                    #method_doc_expr,
-                    #vox::RetryPolicy {
-                        persist: #retry_persist,
-                        idem: #retry_idem,
+                    &[#(#channel_elements),*],
+                    #vox::hash::MethodDescriptorOptions {
+                        response_wire_shape: #response_wire_shape,
+                        doc: #method_doc_expr,
                     },
                 )
             }
@@ -358,15 +393,30 @@ fn generate_service_descriptor_fn(parsed: &ServiceTrait, vox: &TokenStream2) -> 
         Some(d) => quote! { Some(#d) },
         None => quote! { None },
     };
+    let method_count = method_descriptors.len();
+    let methods_init = if method_count <= 8 {
+        quote! {
+            let methods: Vec<&'static #vox::session::MethodDescriptor> = vec![#(#method_descriptors),*];
+        }
+    } else {
+        let method_descriptor_pushes = method_descriptors.iter().map(|descriptor| {
+            quote! {
+                methods.push(#descriptor);
+            }
+        });
+
+        quote! {
+            let mut methods: Vec<&'static #vox::session::MethodDescriptor> = Vec::with_capacity(#method_count);
+            #(#method_descriptor_pushes)*
+        }
+    };
 
     quote! {
         #[allow(non_snake_case, clippy::all)]
         pub fn #descriptor_fn_name() -> &'static #vox::session::ServiceDescriptor {
             static DESCRIPTOR: std::sync::OnceLock<&'static #vox::session::ServiceDescriptor> = std::sync::OnceLock::new();
             DESCRIPTOR.get_or_init(|| {
-                let methods: Vec<&'static #vox::session::MethodDescriptor> = vec![
-                    #(#method_descriptors),*
-                ];
+                #methods_init
                 Box::leak(Box::new(#vox::session::ServiceDescriptor {
                     service_name: #service_name,
                     methods: Box::leak(methods.into_boxed_slice()),
@@ -470,22 +520,6 @@ fn generate_dispatcher(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream
         .enumerate()
         .map(|(i, m)| generate_dispatch_arm(m, i, vox, &descriptor_fn_name))
         .collect();
-    let retry_policy_arms: Vec<TokenStream2> = parsed
-        .methods()
-        .enumerate()
-        .map(|(i, m)| {
-            let persist = m.is_persist();
-            let idem = m.is_idem();
-            quote! {
-                if method_id == #descriptor_fn_name().methods[#i].id {
-                    return #vox::RetryPolicy {
-                        persist: #persist,
-                        idem: #idem,
-                    };
-                }
-            }
-        })
-        .collect();
     let args_have_channels_arms: Vec<TokenStream2> = parsed
         .methods()
         .enumerate()
@@ -529,9 +563,9 @@ fn generate_dispatcher(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream
             let request_call = call.get();
             let method_id = request_call.method_id;
             let args_bytes = match &request_call.args {
-                #vox::Payload::PostcardBytes(bytes) => bytes,
+                #vox::Payload::Encoded(bytes) => bytes,
                 _ => {
-                    reply.send_error(#vox::VoxError::<::core::convert::Infallible>::InvalidPayload("args not PostcardBytes".into())).await;
+                    reply.send_error(#vox::VoxError::<::core::convert::Infallible>::InvalidPayload("args not Encoded".into())).await;
                     return;
                 }
             };
@@ -585,11 +619,6 @@ fn generate_dispatcher(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream
             H: #trait_name,
             R: #vox::ReplySink,
         {
-            fn retry_policy(&self, method_id: #vox::MethodId) -> #vox::RetryPolicy {
-                #(#retry_policy_arms)*
-                #vox::RetryPolicy::VOLATILE
-            }
-
             fn args_have_channels(&self, method_id: #vox::MethodId) -> bool {
                 #(#args_have_channels_arms)*
                 false
@@ -760,14 +789,23 @@ fn generate_dispatch_arm(
         }
     };
 
+    // r[impl schema.errors.call-level]
+    // r[impl schema.errors.call-level.callee]
     quote! {
         if method_id == #descriptor_fn_name().methods[#idx].id {
             // Channel binding: set guard so Tx<T>/Rx<T> deser binds through the binder.
+            // r[impl rpc.channel.binding] each handle's inline index selects its
+            // ChannelId from the out-of-band `request_call.channels` list.
             let _binder_guard = reply.channel_binder().map(#vox::set_channel_binder);
-            let deser_result: ::core::result::Result<#args_tuple_type, _> = #vox::schema_deser::schema_deserialize_args_borrowed(
-                args_bytes,
-                method_id,
+            let deser_result: ::core::result::Result<#args_tuple_type, _> = #vox::provide_channels_for_method(
+                request_call.channels.clone(),
+                #descriptor_fn_name().methods[#idx],
                 &schemas,
+                || #vox::schema_deser::schema_deserialize_args_borrowed(
+                    args_bytes,
+                    method_id,
+                    &schemas,
+                ),
             );
             drop(_binder_guard);
             #args_let = match deser_result {
@@ -826,7 +864,7 @@ fn generate_client(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream2 {
             /// Create a new client wrapping the given caller.
             pub fn new(caller: #vox::Caller) -> Self {
                 Self {
-                    caller,
+                    caller: caller.with_service(#descriptor_fn_name()),
                     session: None,
                 }
             }
@@ -852,7 +890,7 @@ fn generate_client(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream2 {
                 session: Option<#vox::SessionHandle>,
             ) -> Self {
                 Self {
-                    caller,
+                    caller: caller.with_service(#descriptor_fn_name()),
                     session,
                 }
             }
@@ -860,9 +898,7 @@ fn generate_client(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream2 {
     }
 }
 
-// r[impl zerocopy.send.borrowed]
-// r[impl zerocopy.send.borrowed-in-struct]
-// r[impl zerocopy.send.lifetime]
+// r[impl rpc.fallible.caller-signature]
 fn generate_client_method(
     method: &ServiceMethod,
     method_index: usize,
@@ -891,16 +927,6 @@ fn generate_client_method(
         .filter(|(_index, arg)| type_is_tx(&arg.ty))
         .map(|(index, _arg)| proc_macro2::Literal::usize_unsuffixed(index))
         .collect();
-    let channel_retry_mode = if method.args().any(|arg| arg.ty.contains_channel()) {
-        if method.is_idem() {
-            quote! { #vox::ChannelRetryMode::Idem }
-        } else {
-            quote! { #vox::ChannelRetryMode::NonIdem }
-        }
-    } else {
-        quote! { #vox::ChannelRetryMode::None }
-    };
-
     // Args tuple value (for serialization)
     let args_tuple = match arg_names.len() {
         0 => quote! { () },
@@ -952,12 +978,14 @@ fn generate_client_method(
     };
 
     let args_binding = quote! { let args = #args_tuple; };
-    let finish_retry_bindings = if tx_arg_indices.is_empty() {
+    let finish_call_bindings = if tx_arg_indices.is_empty() {
         quote! {}
     } else {
-        quote! { #( args.#tx_arg_indices.finish_retry_binding(); )* }
+        quote! { #( args.#tx_arg_indices.finish_call_binding(); )* }
     };
 
+    // r[impl schema.errors.call-level]
+    // r[impl schema.errors.call-level.caller]
     if ok_uses_vox_lifetime {
         quote! {
             #method_doc
@@ -965,9 +993,11 @@ fn generate_client_method(
                 let method_id = #descriptor_fn_name().methods[#idx].id;
                 #args_binding
                 let mut metadata = Default::default();
-                #vox::ensure_channel_retry_mode(&mut metadata, #channel_retry_mode);
                 let req = #vox::RequestCall {
                     method_id,
+                    // Filled out-of-band by the driver when args carry channels
+                    // (r[rpc.request], r[rpc.channel.allocation]).
+                    channels: Default::default(),
                     args: #vox::Payload::outgoing(&args),
                     metadata,
                     schemas: Default::default(),
@@ -975,7 +1005,7 @@ fn generate_client_method(
                 let with_tracker = match self.caller.call(req).await {
                     Ok(with_tracker) => with_tracker,
                     Err(e) => {
-                        #finish_retry_bindings
+                        #finish_call_bindings
                         return Err(match e {
                             #vox::VoxError::UnknownMethod => #vox::VoxError::<#err_ty>::UnknownMethod,
                             #vox::VoxError::InvalidPayload(msg) => #vox::VoxError::<#err_ty>::InvalidPayload(msg),
@@ -984,7 +1014,7 @@ fn generate_client_method(
                             #vox::VoxError::SessionShutdown => #vox::VoxError::<#err_ty>::SessionShutdown,
                             #vox::VoxError::SendFailed => #vox::VoxError::<#err_ty>::SendFailed,
                             #vox::VoxError::Indeterminate => #vox::VoxError::<#err_ty>::Indeterminate,
-                            #vox::VoxError::User(never) => match never {},
+                            #vox::VoxError::User(never) => match *never {},
                         });
                     }
                 };
@@ -994,19 +1024,19 @@ fn generate_client_method(
                 // claims one). Pass-through off-Unix.
                 #vox::provide_fds(__vox_frame_fds, move || response.try_repack(|resp, _bytes| {
                     let ret_bytes = match &resp.ret {
-                        #vox::Payload::PostcardBytes(bytes) => bytes,
-                        _ => return Err(#vox::VoxError::<#err_ty>::InvalidPayload("response not PostcardBytes".into())),
+                        #vox::Payload::Encoded(bytes) => bytes,
+                        _ => return Err(#vox::VoxError::<#err_ty>::InvalidPayload("response not Encoded".into())),
                     };
                     let result: Result<#ok_ty_decode, #vox::VoxError<#err_ty>> =
                         #vox::schema_deser::schema_deserialize_response_borrowed::<Result<#ok_ty_decode, #vox::VoxError<#err_ty>>>(ret_bytes, method_id, &schema_tracker)
                             .map_err(|e| {
-                                #finish_retry_bindings
+                                #finish_call_bindings
                                 #vox::VoxError::<#err_ty>::InvalidPayload(e.to_string())
                             })?;
                     match result {
                         Ok(ret) => Ok(ret),
                         Err(err) => {
-                            #finish_retry_bindings
+                            #finish_call_bindings
                             Err(err)
                         }
                     }
@@ -1020,9 +1050,11 @@ fn generate_client_method(
                 let method_id = #descriptor_fn_name().methods[#idx].id;
                 #args_binding
                 let mut metadata = Default::default();
-                #vox::ensure_channel_retry_mode(&mut metadata, #channel_retry_mode);
                 let req = #vox::RequestCall {
                     method_id,
+                    // Filled out-of-band by the driver when args carry channels
+                    // (r[rpc.request], r[rpc.channel.allocation]).
+                    channels: Default::default(),
                     args: #vox::Payload::outgoing(&args),
                     metadata,
                     schemas: Default::default(),
@@ -1030,7 +1062,7 @@ fn generate_client_method(
                 let with_tracker = match self.caller.call(req).await {
                     Ok(with_tracker) => with_tracker,
                     Err(e) => {
-                        #finish_retry_bindings
+                        #finish_call_bindings
                         return Err(match e {
                             #vox::VoxError::UnknownMethod => #vox::VoxError::<#err_ty>::UnknownMethod,
                             #vox::VoxError::InvalidPayload(msg) => #vox::VoxError::<#err_ty>::InvalidPayload(msg),
@@ -1039,7 +1071,7 @@ fn generate_client_method(
                             #vox::VoxError::SessionShutdown => #vox::VoxError::<#err_ty>::SessionShutdown,
                             #vox::VoxError::SendFailed => #vox::VoxError::<#err_ty>::SendFailed,
                             #vox::VoxError::Indeterminate => #vox::VoxError::<#err_ty>::Indeterminate,
-                            #vox::VoxError::User(never) => match never {},
+                            #vox::VoxError::User(never) => match *never {},
                         });
                     }
                 };
@@ -1050,8 +1082,8 @@ fn generate_client_method(
                 #vox::provide_fds(__vox_frame_fds, move || {
                     let response = response.get();
                     let ret_bytes = match &response.ret {
-                        #vox::Payload::PostcardBytes(bytes) => bytes,
-                        _ => return Err(#vox::VoxError::<#err_ty>::InvalidPayload("response not PostcardBytes".into())),
+                        #vox::Payload::Encoded(bytes) => bytes,
+                        _ => return Err(#vox::VoxError::<#err_ty>::InvalidPayload("response not Encoded".into())),
                     };
                     let result: Result<#ok_ty_decode, #vox::VoxError<#err_ty>> =
                         #vox::schema_deser::schema_deserialize_response::<Result<#ok_ty_decode, #vox::VoxError<#err_ty>>>(
@@ -1060,13 +1092,13 @@ fn generate_client_method(
                             &schema_tracker,
                         )
                         .map_err(|e| {
-                            #finish_retry_bindings
+                            #finish_call_bindings
                             #vox::VoxError::<#err_ty>::InvalidPayload(e.to_string())
                         })?;
                     match result {
                         Ok(ret) => Ok(ret),
                         Err(err) => {
-                            #finish_retry_bindings
+                            #finish_call_bindings
                             Err(err)
                         }
                     }
@@ -1145,19 +1177,6 @@ mod tests {
                 async fn record(&self, payload: String) -> &'vox str;
 
                 async fn ping(&self) -> u64;
-            }
-        }));
-    }
-
-    #[test]
-    fn method_retry_helper_attributes() {
-        assert_snapshot!(generate(quote! {
-            trait Billing {
-                #[vox(idem)]
-                async fn get_balance(&self, account: String) -> u64;
-
-                #[vox(persist)]
-                async fn send_money(&self, from: String, to: String) -> Result<u64, TransferError>;
             }
         }));
     }
@@ -1257,23 +1276,6 @@ mod tests {
         assert_eq!(
             err.message,
             "method `ping` receiver must be `&self`; typed receivers like `self: Type` are not supported in #[vox::service] traits"
-        );
-    }
-
-    #[test]
-    fn rejects_persist_methods_with_channel_arguments() {
-        let parsed = vox_macros_parse::parse_trait(&quote! {
-            trait Streamer {
-                #[vox(persist)]
-                async fn stream(&self, output: Tx<i32>) -> u64;
-            }
-        })
-        .unwrap();
-        let vox = quote! { ::vox };
-        let err = crate::generate_service(&parsed, &vox).unwrap_err();
-        assert_eq!(
-            err.message,
-            "method `stream` declares `#[vox(persist)]` but has Channel (Tx/Rx) arguments - persist methods cannot carry channels"
         );
     }
 

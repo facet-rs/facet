@@ -14,7 +14,7 @@ use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
-use crate::{MethodId, RequestCall, RequestResponse, is_rx, is_tx};
+use crate::{MethodDescriptor, MethodId, RequestCall, RequestResponse, is_rx, is_tx};
 
 // ============================================================================
 // Schema extraction
@@ -34,6 +34,9 @@ pub enum SchemaExtractError {
 
     /// A DeclId was expected in the assigned map but wasn't found.
     MissingAssignment { context: String },
+
+    /// phon could not derive a schema for the wire type.
+    Phon(String),
 }
 
 impl std::fmt::Display for SchemaExtractError {
@@ -57,6 +60,7 @@ impl std::fmt::Display for SchemaExtractError {
             Self::MissingAssignment { context } => {
                 write!(f, "schema extraction: missing DeclId assignment: {context}")
             }
+            Self::Phon(why) => write!(f, "phon schema derive: {why}"),
         }
     }
 }
@@ -64,7 +68,7 @@ impl std::fmt::Display for SchemaExtractError {
 /// A value for which a schema can be attached
 pub trait Schematic {
     fn direction(&self) -> BindingDirection;
-    fn attach_schemas(&mut self, schemas: CborPayload);
+    fn attach_schemas(&mut self, schemas: SchemaBytes);
 }
 
 impl<'payload> Schematic for RequestCall<'payload> {
@@ -72,7 +76,7 @@ impl<'payload> Schematic for RequestCall<'payload> {
         BindingDirection::Args
     }
 
-    fn attach_schemas(&mut self, schemas: CborPayload) {
+    fn attach_schemas(&mut self, schemas: SchemaBytes) {
         self.schemas = schemas;
     }
 }
@@ -82,7 +86,7 @@ impl<'payload> Schematic for RequestResponse<'payload> {
         BindingDirection::Response
     }
 
-    fn attach_schemas(&mut self, schemas: CborPayload) {
+    fn attach_schemas(&mut self, schemas: SchemaBytes) {
         self.schemas = schemas;
     }
 }
@@ -93,50 +97,55 @@ impl std::error::Error for SchemaExtractError {}
 // SchemaSendTracker — outbound dedup, owned by SessionCore (no Arc, no Mutex)
 // ============================================================================
 
-/// Tracks which schemas have been sent on the current connection.
+/// Tracks which schema bindings have been sent on the current connection.
 ///
 /// Plain struct — owned by `SessionCore` behind the same Mutex as the
 /// conduit tx. Reset on reconnection.
 // r[impl schema.tracking.sent]
+// r[impl schema.tracking.bindings]
 // r[impl schema.type-id.per-connection]
 pub struct SchemaSendTracker {
-    /// Per-method, per-direction: the CborPayload that was sent. Keyed by
-    /// (method_id, direction). If present, schemas were already sent.
+    /// Per-method, per-direction bindings already sent on this connection. The first
+    /// time a binding is used, the full phon schema closure is sent; afterwards the
+    /// `schemas` field is empty. Duplicates are tolerated on the recv side
+    /// (`r[schema.exchange]`), so this is best-effort dedup, not a hard guarantee.
     sent_bindings: HashSet<(MethodId, BindingDirection)>,
-
-    /// SchemaHashes already sent on this connection.
-    sent_schemas: HashSet<SchemaHash>,
 }
 
-/// Structured schema plan computed before send ordering is known.
-#[derive(Debug, Clone)]
+/// The phon self-describing schema-closure bytes prepared for a binding, computed
+/// before send ordering is known. Empty when the binding was already sent.
+#[derive(Debug, Clone, Default)]
 pub struct PreparedSchemaPlan {
-    pub schemas: Vec<Schema>,
-    pub root: TypeRef,
+    /// `vox_phon::schema_bytes` for the wire type (root id + reachable schemas).
+    pub bytes: Vec<u8>,
 }
 
 impl PreparedSchemaPlan {
-    pub fn to_cbor(&self) -> CborPayload {
-        SchemaPayload {
-            schemas: self.schemas.clone(),
-            root: self.root.clone(),
-        }
-        .to_cbor()
+    /// Wrap the bytes in the wire schema-payload carrier (now phon, not CBOR).
+    pub fn to_payload(&self) -> SchemaBytes {
+        SchemaBytes(self.bytes.clone())
     }
+}
+
+/// A channel item writer schema that must be sent before items on a bound channel.
+#[derive(Debug, Clone)]
+pub struct ChannelWriterSchemaPlan {
+    pub method_id: MethodId,
+    pub direction: BindingDirection,
+    pub role: String,
+    pub prepared: PreparedSchemaPlan,
 }
 
 impl SchemaSendTracker {
     pub fn new() -> Self {
         SchemaSendTracker {
             sent_bindings: HashSet::new(),
-            sent_schemas: HashSet::new(),
         }
     }
 
     /// Reset connection-scoped state — call on reconnection.
     pub fn reset(&mut self) {
         self.sent_bindings.clear();
-        self.sent_schemas.clear();
     }
 
     /// Whether this method+direction binding has already been sent on the wire.
@@ -144,182 +153,143 @@ impl SchemaSendTracker {
         self.sent_bindings.contains(&(method_id, direction))
     }
 
-    /// Compute the full schema payload for a shaped value without mutating
-    /// any per-connection send tracking.
+    /// The phon self-describing schema closure for a wire `shape` (root + reachable
+    /// schemas), independent of per-connection send tracking.
+    // r[impl schema.principles.self-describing]
     pub fn plan_for_shape(shape: &'static Shape) -> Result<PreparedSchemaPlan, SchemaExtractError> {
-        let extracted = extract_schemas(shape)?;
-        Ok(PreparedSchemaPlan {
-            schemas: extracted.schemas.to_vec(),
-            root: extracted.root.clone(),
-        })
+        let bytes = vox_phon::schema_bytes_for_shape(shape)
+            .map_err(|e| SchemaExtractError::Phon(e.to_string()))?;
+        Ok(PreparedSchemaPlan { bytes })
     }
 
-    /// Compute the full schema payload for a canonical root type and schema
-    /// source without mutating any per-connection send tracking.
-    pub fn plan_from_source(root_type: &TypeRef, source: &dyn SchemaSource) -> PreparedSchemaPlan {
-        let mut all_schemas = Vec::new();
-        let mut visited = HashSet::new();
-        let mut queue = Vec::new();
-        root_type.collect_ids(&mut queue);
-
-        while let Some(id) = queue.pop() {
-            if !visited.insert(id) {
-                continue;
-            }
-            if let Some(schema) = source.get_schema(id) {
-                for child_id in schema_child_ids(&schema.kind) {
-                    queue.push(child_id);
-                }
-                all_schemas.push(schema);
-            }
-        }
-
-        PreparedSchemaPlan {
-            schemas: all_schemas,
-            root: root_type.clone(),
-        }
-    }
-
-    fn unsent_schemas_for_prepared_plan(&self, prepared: &PreparedSchemaPlan) -> Vec<Schema> {
-        prepared
-            .schemas
+    /// The phon schema binding for a method's argument tuple, including channel
+    /// element auxiliary roots for `Tx<T>`/`Rx<T>` args whose `T` is opaque to
+    /// reflection.
+    // r[impl schema.principles.self-describing]
+    // r[impl schema.interaction.channels]
+    pub fn plan_for_method_args(
+        method: &MethodDescriptor,
+    ) -> Result<PreparedSchemaPlan, SchemaExtractError> {
+        let roles_and_shapes: Vec<(String, &'static Shape)> = method
+            .args
             .iter()
-            .filter(|schema| !self.sent_schemas.contains(&schema.id))
-            .cloned()
-            .collect()
+            .enumerate()
+            .filter_map(|(index, arg)| {
+                let direction = if is_tx(arg.shape) {
+                    "tx"
+                } else if is_rx(arg.shape) {
+                    "rx"
+                } else {
+                    return None;
+                };
+                let element = arg.channel_element?;
+                Some((format!("channel.arg.{index}.{direction}.element"), element))
+            })
+            .collect();
+
+        if roles_and_shapes.is_empty() {
+            return Self::plan_for_shape(method.args_shape);
+        }
+
+        let auxiliary_roots: Vec<(&str, &'static Shape)> = roles_and_shapes
+            .iter()
+            .map(|(role, shape)| (role.as_str(), *shape))
+            .collect();
+        let bytes = vox_phon::schema_bytes_for_shape_with_auxiliary_roots(
+            method.args_shape,
+            &auxiliary_roots,
+        )
+        .map_err(|e| SchemaExtractError::Phon(e.to_string()))?;
+        Ok(PreparedSchemaPlan { bytes })
     }
 
-    /// Compute the schema payload that would be sent for a binding without
-    /// mutating connection-scoped send tracking.
+    /// The schema payload that would be sent for a binding, without mutating send
+    /// tracking. Empty if the binding was already sent (idempotent best-effort).
     pub fn preview_prepared_plan(
         &mut self,
         method_id: MethodId,
         direction: BindingDirection,
         prepared: &PreparedSchemaPlan,
-    ) -> CborPayload {
-        let key = (method_id, direction);
-        if self.sent_bindings.contains(&key) {
-            return CborPayload::default();
+    ) -> SchemaBytes {
+        if self.sent_bindings.contains(&(method_id, direction)) {
+            SchemaBytes::default()
+        } else {
+            prepared.to_payload()
         }
-        let schema_payload = SchemaPayload {
-            schemas: self.unsent_schemas_for_prepared_plan(prepared),
-            root: prepared.root.clone(),
-        };
-        schema_payload.to_cbor()
     }
 
-    /// Mark a previously previewed schema payload as successfully sent.
+    /// Mark a binding's schema payload as sent.
     pub fn mark_prepared_plan_sent(
         &mut self,
         method_id: MethodId,
         direction: BindingDirection,
-        prepared: &PreparedSchemaPlan,
+        _prepared: &PreparedSchemaPlan,
     ) {
-        let key = (method_id, direction);
-        if self.sent_bindings.contains(&key) {
-            return;
-        }
-        for schema in &prepared.schemas {
-            self.sent_schemas.insert(schema.id);
-        }
-        self.sent_bindings.insert(key);
+        self.sent_bindings.insert((method_id, direction));
     }
 
-    /// Commit a previously prepared schema payload against the live
-    /// per-connection tracking state, returning only the schemas that still
-    /// need to be sent on the wire for this binding.
+    /// Commit a prepared schema payload: return the full closure bytes the first
+    /// time a binding is sent, empty afterwards (`r[schema.exchange]` — relaxed,
+    /// best-effort, no per-schema dedup).
     pub fn commit_prepared_plan(
         &mut self,
         method_id: MethodId,
         direction: BindingDirection,
         prepared: PreparedSchemaPlan,
-    ) -> CborPayload {
-        let schema_payload = SchemaPayload {
-            schemas: self.unsent_schemas_for_prepared_plan(&prepared),
-            root: prepared.root.clone(),
-        };
+    ) -> SchemaBytes {
+        if self.sent_bindings.contains(&(method_id, direction)) {
+            return SchemaBytes::default();
+        }
         dlog!(
-            "[schema] commit binding: method={:?} direction={:?} root={:?} schema_count={}",
+            "[schema] commit binding: method={:?} direction={:?} ({} bytes)",
             method_id,
             direction,
-            schema_payload.root,
-            schema_payload.schemas.len()
+            prepared.bytes.len()
         );
-        let cbor = schema_payload.to_cbor();
-        self.mark_prepared_plan_sent(method_id, direction, &prepared);
-        cbor
+        self.sent_bindings.insert((method_id, direction));
+        prepared.to_payload()
     }
 
-    /// Prepare schemas for a method call/response, returning a CBOR payload
-    /// to inline in the request/response. Returns empty payload if schemas
-    /// were already sent for this shape.
+    /// Prepare schemas for a method call/response: attach the wire type's phon schema
+    /// closure to the message the first time the binding is used, empty afterwards.
     ///
     // r[impl schema.tracking.transitive]
     // r[impl schema.exchange.idempotent]
-    // r[impl schema.principles.once-per-type]
     // r[impl schema.principles.sender-driven]
     // r[impl schema.principles.no-roundtrips]
+    // r[impl schema.format.delivery]
     pub fn attach_schemas_for_shape_if_needed(
         &mut self,
         method_id: MethodId,
         shape: &'static Shape,
         schematic: &mut impl Schematic,
-    ) -> Result<CborPayload, SchemaExtractError> {
-        let key = (method_id, schematic.direction());
-
-        // Fast path: already sent for this method+direction.
-        if self.sent_bindings.contains(&key) {
-            let empty = CborPayload::default();
+    ) -> Result<SchemaBytes, SchemaExtractError> {
+        let direction = schematic.direction();
+        if self.sent_bindings.contains(&(method_id, direction)) {
+            let empty = SchemaBytes::default();
             schematic.attach_schemas(empty.clone());
             return Ok(empty);
         }
-
         let prepared = Self::plan_for_shape(shape)?;
-        let cbor = self.commit_prepared_plan(method_id, schematic.direction(), prepared);
-        schematic.attach_schemas(cbor.clone());
-        Ok(cbor)
+        let payload = self.commit_prepared_plan(method_id, direction, prepared);
+        schematic.attach_schemas(payload.clone());
+        Ok(payload)
     }
 
-    /// Prepare schemas for sending, sourcing them from a `SchemaSource`.
-    ///
-    /// Used for replay paths where we don't have a live value shape but do
-    /// have the bound root `TypeRef` and a schema source.
-    pub fn prepare_send(
-        &mut self,
-        method_id: MethodId,
-        direction: BindingDirection,
-        root_type: &TypeRef,
-        source: &dyn SchemaSource,
-    ) -> CborPayload {
-        let prepared = Self::plan_from_source(root_type, source);
-        self.commit_prepared_plan(method_id, direction, prepared)
-    }
-
+    /// Commit a previously prepared schema payload (raw phon bytes) for a binding,
+    /// forwarding it the first time, empty afterwards. Used for the proxy/relay path
+    /// where the bytes were received from upstream rather than freshly derived.
     pub fn commit_prepared_send(
         &mut self,
         method_id: MethodId,
         direction: BindingDirection,
-        prepared: &CborPayload,
-    ) -> CborPayload {
-        let prepared_payload = SchemaPayload::from_cbor(&prepared.0)
-            .expect("prepared schema payloads must be valid CBOR");
-        self.commit_prepared_plan(
-            method_id,
-            direction,
-            PreparedSchemaPlan {
-                schemas: prepared_payload.schemas,
-                root: prepared_payload.root,
-            },
-        )
-    }
-
-    /// Compatibility shim: schema extraction is now independent from
-    /// connection-scoped send tracking.
-    pub fn extract_schemas(
-        &mut self,
-        shape: &'static Shape,
-    ) -> Result<Arc<ExtractedSchemas>, SchemaExtractError> {
-        self::extract_schemas(shape)
+        prepared: &SchemaBytes,
+    ) -> SchemaBytes {
+        if self.sent_bindings.contains(&(method_id, direction)) {
+            return SchemaBytes::default();
+        }
+        self.sent_bindings.insert((method_id, direction));
+        prepared.clone()
     }
 }
 
@@ -345,20 +315,21 @@ impl std::fmt::Debug for SchemaSendTracker {
 /// session recv loop and in-flight handler tasks. Created fresh on each
 /// connection — NOT reused across reconnections.
 // r[impl schema.tracking.received]
+// r[impl schema.tracking.bindings]
 // r[impl schema.type-id.per-connection]
 pub struct SchemaRecvTracker {
-    /// Type schemas received from the remote peer.
-    received: Mutex<HashMap<SchemaHash, Schema>>,
-    /// Args bindings received: method_id → root TypeRef for args.
-    received_args_bindings: Mutex<HashMap<MethodId, TypeRef>>,
-    /// Response bindings received: method_id → root TypeRef for response.
-    received_response_bindings: Mutex<HashMap<MethodId, TypeRef>>,
+    /// Per (method, direction): the raw phon self-describing schema-closure bytes the
+    /// peer sent for that binding (`vox_phon::schema_bytes`). Receiving a binding more
+    /// than once is best-effort and idempotent — a later send overwrites, never errors
+    /// (`r[schema.exchange]`).
+    received_bindings: Mutex<HashMap<(MethodId, BindingDirection), Vec<u8>>>,
     /// Type-erased plan cache. Keyed by (method, direction, local Shape ptr).
-    /// Populated by higher-level crates (e.g. vox) that know the concrete plan type.
+    /// Populated by higher-level crates (e.g. vox) that hold the concrete plan type
+    /// (a `vox_phon::DecodeProgram`).
     plan_cache: Mutex<HashMap<PlanCacheKey, Box<dyn std::any::Any + Send + Sync>>>,
 }
 
-/// Cache key for resolved translation plans.
+/// Cache key for resolved compatibility decode plans.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlanCacheKey {
     pub method_id: MethodId,
@@ -366,102 +337,58 @@ pub struct PlanCacheKey {
     pub local_shape: &'static Shape,
 }
 
-/// Error returned when recording received schemas detects a protocol violation.
-#[derive(Debug)]
-pub struct DuplicateSchemaError {
-    pub type_id: SchemaHash,
-}
-
-impl std::fmt::Display for DuplicateSchemaError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "duplicate TypeSchemaId {:?} received on same connection — protocol error",
-            self.type_id
-        )
-    }
-}
-
-impl std::error::Error for DuplicateSchemaError {}
-
 impl SchemaRecvTracker {
     pub fn new() -> Self {
         SchemaRecvTracker {
-            received: Mutex::new(HashMap::new()),
-            received_args_bindings: Mutex::new(HashMap::new()),
-            received_response_bindings: Mutex::new(HashMap::new()),
+            received_bindings: Mutex::new(HashMap::new()),
             plan_cache: Mutex::new(HashMap::new()),
         }
     }
 
-    /// Record a parsed schema message from the remote peer.
-    ///
-    /// Returns `Err` if a TypeSchemaId was already received — this is a
-    /// protocol error (the send tracker didn't reset on reconnection).
+    /// Record the raw phon schema-closure bytes a peer sent for a binding. Best-effort
+    /// and idempotent: a duplicate send for the same (method, direction) simply
+    /// overwrites — it is NOT a protocol error (`r[schema.exchange]`).
     pub fn record_received(
         &self,
         method_id: MethodId,
         direction: BindingDirection,
-        payload: SchemaPayload,
-    ) -> Result<(), DuplicateSchemaError> {
-        {
-            let mut received = self.received.lock().unwrap();
-            for schema in &payload.schemas {
-                dlog!("[schema] record_received: id={:?}", schema.id);
-            }
-            for schema in payload.schemas {
-                if let Some(existing) = received.get(&schema.id) {
-                    dlog!(
-                        "[schema] DUPLICATE: id={:?} existing={:?} new={:?}",
-                        schema.id,
-                        existing,
-                        schema
-                    );
-                    return Err(DuplicateSchemaError { type_id: schema.id });
-                }
-                received.insert(schema.id, schema);
-            }
-        }
-        let map = match direction {
-            BindingDirection::Args => &self.received_args_bindings,
-            BindingDirection::Response => &self.received_response_bindings,
-        };
+        schema_bytes: Vec<u8>,
+    ) {
         dlog!(
-            "[schema] record binding: method={:?} direction={:?} root={:?}",
+            "[schema] record binding: method={:?} direction={:?} ({} bytes)",
             method_id,
             direction,
-            payload.root
+            schema_bytes.len()
         );
-        map.lock().unwrap().insert(method_id, payload.root);
-        Ok(())
-    }
-
-    /// Look up the remote's root TypeRef for a method's args.
-    pub fn get_remote_args_root(&self, method_id: MethodId) -> Option<TypeRef> {
-        self.received_args_bindings
+        self.received_bindings
             .lock()
             .unwrap()
-            .get(&method_id)
+            .insert((method_id, direction), schema_bytes);
+    }
+
+    /// The raw phon schema-closure bytes the peer sent for a binding, if received.
+    pub fn writer_schema_bytes(
+        &self,
+        method_id: MethodId,
+        direction: BindingDirection,
+    ) -> Option<Vec<u8>> {
+        self.received_bindings
+            .lock()
+            .unwrap()
+            .get(&(method_id, direction))
             .cloned()
     }
 
-    /// Look up the remote's root TypeRef for a method's response.
-    pub fn get_remote_response_root(&self, method_id: MethodId) -> Option<TypeRef> {
-        self.received_response_bindings
-            .lock()
-            .unwrap()
-            .get(&method_id)
-            .cloned()
-    }
-
-    /// Look up a received schema by type ID.
-    pub fn get_received(&self, type_id: &SchemaHash) -> Option<Schema> {
-        self.received.lock().unwrap().get(type_id).cloned()
-    }
-
-    /// Get a snapshot of the received schema registry for building translation plans.
-    pub fn received_registry(&self) -> SchemaRegistry {
-        self.received.lock().unwrap().clone()
+    pub fn writer_auxiliary_schema_bundle(
+        &self,
+        method_id: MethodId,
+        direction: BindingDirection,
+        role: &str,
+    ) -> Result<Option<vox_phon::SchemaBundle>, String> {
+        let Some(bytes) = self.writer_schema_bytes(method_id, direction) else {
+            return Ok(None);
+        };
+        writer_auxiliary_schema_bundle_from_bytes(&bytes, role)
     }
 
     /// Look up a cached plan by key, downcasting to `T`.
@@ -483,15 +410,26 @@ impl SchemaRecvTracker {
     }
 }
 
+pub fn writer_auxiliary_schema_bundle_from_bytes(
+    bytes: &[u8],
+    role: &str,
+) -> Result<Option<vox_phon::SchemaBundle>, String> {
+    let mut bundle = vox_phon::parse_schema_bytes(bytes).map_err(|e| e.to_string())?;
+    let Some(root) = bundle
+        .auxiliary_roots
+        .iter()
+        .find(|root| root.role == role)
+        .map(|root| root.root)
+    else {
+        return Ok(None);
+    };
+    bundle.root = root;
+    Ok(Some(bundle))
+}
+
 impl Default for SchemaRecvTracker {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-impl SchemaSource for SchemaRecvTracker {
-    fn get_schema(&self, id: SchemaHash) -> Option<Schema> {
-        self.get_received(&id)
     }
 }
 
@@ -557,9 +495,7 @@ fn extract_schemas_uncached(shape: &'static Shape) -> Result<ExtractedSchemas, S
 ///
 /// Schemas must be in dependency order (dependencies before dependents).
 /// For non-recursive types, this is a simple bottom-up pass. For recursive
-/// types, the 4-step algorithm from r[schema.hash.recursive] is used.
-// r[impl schema.type-id.hash]
-// r[impl schema.hash.recursive]
+/// types, a multi-step recursive hashing algorithm is used (legacy vox-schema model).
 /// Resolve a MixedId to a TypeSchemaId for hashing purposes.
 fn resolve_mixed(id: MixedId, temp_to_final: &HashMap<CycleSchemaIndex, SchemaHash>) -> SchemaHash {
     match id {
@@ -579,11 +515,9 @@ enum ExtractKey {
 ///
 /// Schemas must be in dependency order (dependencies before dependents).
 /// For non-recursive types, this is a simple bottom-up pass. For recursive
-/// types, the 4-step algorithm from r[schema.hash.recursive] is used.
+/// types, a multi-step recursive hashing algorithm is used (legacy vox-schema model).
 ///
 /// Returns the finalized schemas and a mapping from temp IDs to final IDs.
-// r[impl schema.type-id.hash]
-// r[impl schema.hash.recursive]
 fn finalize_content_hashes(
     schemas: Vec<MixedSchema>,
 ) -> Result<(Vec<Schema>, HashMap<CycleSchemaIndex, SchemaHash>), SchemaExtractError> {
@@ -783,9 +717,10 @@ impl ExtractCtx {
         shape: &'static Shape,
         param_map: &[(&'static Shape, TypeParamName)],
     ) -> Result<TypeRef<MixedId>, SchemaExtractError> {
+        let param_shape = peel_param_shape(shape);
         if let Some((_, name)) = param_map
             .iter()
-            .find(|(param_shape, _)| shape.is_shape(param_shape))
+            .find(|(mapped_shape, _)| param_shape.is_shape(mapped_shape))
         {
             // This shape is a type parameter — emit Var reference.
             // But we still need to extract the concrete type's schema.
@@ -834,6 +769,23 @@ impl ExtractCtx {
             }
         }
 
+        if matches!(shape.def, Def::DynamicValue(_)) {
+            let key = self.key_for_shape(shape);
+            let id = self.id_for_key(key);
+            self.emit_schema(
+                key,
+                MixedSchema {
+                    id,
+                    type_params: vec![],
+                    kind: SchemaKind::Primitive {
+                        primitive_type: PrimitiveType::Payload,
+                    },
+                },
+            );
+            self.seen.insert(shape);
+            return Ok(TypeRef::concrete(id));
+        }
+
         // Transparent wrappers: follow inner.
         if shape.is_transparent()
             && let Some(inner) = shape.inner
@@ -852,7 +804,6 @@ impl ExtractCtx {
         let key = self.key_for_shape(shape);
         let id = self.id_for_key(key);
 
-        // r[impl schema.format.recursive]
         // Cycle detection: if we've already started walking this shape,
         // return the assigned id without re-entering.
         if !self.seen.insert(shape) {
@@ -883,7 +834,12 @@ impl ExtractCtx {
         let param_map: Vec<(&'static Shape, TypeParamName)> = shape
             .type_params
             .iter()
-            .map(|tp| (tp.shape, TypeParamName(tp.name.to_string())))
+            .map(|tp| {
+                (
+                    peel_param_shape(tp.shape),
+                    TypeParamName(tp.name.to_string()),
+                )
+            })
             .collect();
         let type_param_names: Vec<TypeParamName> = shape
             .type_params
@@ -891,7 +847,6 @@ impl ExtractCtx {
             .map(|tp| TypeParamName(tp.name.to_string()))
             .collect();
 
-        // r[impl schema.format.primitive]
         // Scalars
         if let Some(scalar) = shape.scalar_type() {
             self.emit_schema(
@@ -907,7 +862,6 @@ impl ExtractCtx {
             return Ok(TypeRef::concrete(id));
         }
 
-        // r[impl schema.format.container]
         // Containers
         match shape.def {
             Def::List(list_def) => {
@@ -1082,8 +1036,6 @@ impl ExtractCtx {
 
         // User-defined types.
         let kind = match shape.ty {
-            // r[impl schema.format.struct]
-            // r[impl schema.format.tuple]
             Type::User(UserType::Struct(struct_type)) => match struct_type.kind {
                 StructKind::Unit => {
                     let primitive_type = if is_infallible_shape(shape) {
@@ -1133,7 +1085,6 @@ impl ExtractCtx {
                     }
                 }
             },
-            // r[impl schema.format.enum]
             Type::User(UserType::Enum(enum_type)) => {
                 let mut variants = Vec::with_capacity(enum_type.variants.len());
                 for (i, v) in enum_type.variants.iter().enumerate() {
@@ -1253,6 +1204,24 @@ fn anonymous_tuple_arity(shape: &'static Shape) -> Option<usize> {
     }
 }
 
+fn peel_param_shape(mut shape: &'static Shape) -> &'static Shape {
+    loop {
+        if shape.is_transparent()
+            && let Some(inner) = shape.inner
+        {
+            shape = inner;
+            continue;
+        }
+        if let Def::Pointer(ptr_def) = shape.def
+            && let Some(pointee) = ptr_def.pointee
+        {
+            shape = pointee;
+            continue;
+        }
+        return shape;
+    }
+}
+
 fn tuple_type_params(arity: usize) -> Vec<TypeParamName> {
     (0..arity)
         .map(|index| TypeParamName(format!("T{index}")))
@@ -1296,7 +1265,7 @@ mod tests {
     struct TestSchematic {
         direction: BindingDirection,
         shape: &'static Shape,
-        attached: CborPayload,
+        attached: SchemaBytes,
     }
 
     impl TestSchematic {
@@ -1304,7 +1273,7 @@ mod tests {
             Self {
                 direction,
                 shape,
-                attached: CborPayload::default(),
+                attached: SchemaBytes::default(),
             }
         }
     }
@@ -1314,7 +1283,7 @@ mod tests {
             self.direction
         }
 
-        fn attach_schemas(&mut self, schemas: CborPayload) {
+        fn attach_schemas(&mut self, schemas: SchemaBytes) {
             self.attached = schemas;
         }
     }
@@ -1328,7 +1297,6 @@ mod tests {
         assert_ne!(id, SchemaHash(43));
     }
 
-    // r[verify schema.principles.cbor]
     // r[verify schema.format.self-contained]
     #[test]
     fn cbor_round_trip() {
@@ -1350,7 +1318,6 @@ mod tests {
         assert_eq!(payload.root, TypeRef::concrete(schema.id));
     }
 
-    // r[verify schema.format.primitive]
     #[test]
     fn primitive_u32() {
         let schemas = extract_schemas(<u32 as Facet>::SHAPE)
@@ -1396,7 +1363,18 @@ mod tests {
         ));
     }
 
-    // r[verify schema.format.struct]
+    #[test]
+    fn dynamic_value_is_terminal_payload_schema() {
+        let extracted = extract_schemas(<facet_value::Value as Facet>::SHAPE).unwrap();
+        assert_eq!(extracted.schemas.len(), 1);
+        assert!(matches!(
+            extracted.schemas[0].kind,
+            SchemaKind::Primitive {
+                primitive_type: PrimitiveType::Payload
+            }
+        ));
+    }
+
     #[test]
     fn simple_struct() {
         #[derive(Facet)]
@@ -1425,7 +1403,6 @@ mod tests {
         }
     }
 
-    // r[verify schema.format.enum]
     #[test]
     fn simple_enum() {
         #[derive(Facet)]
@@ -1450,7 +1427,6 @@ mod tests {
         }
     }
 
-    // r[verify schema.format.enum]
     #[test]
     fn enum_with_payloads() {
         #[derive(Facet)]
@@ -1485,7 +1461,6 @@ mod tests {
         }
     }
 
-    // r[verify schema.format.container]
     #[test]
     fn container_vec() {
         let schemas = extract_schemas(<Vec<u32> as Facet>::SHAPE)
@@ -1502,7 +1477,6 @@ mod tests {
         assert!(matches!(schemas[1].kind, SchemaKind::List { .. }));
     }
 
-    // r[verify schema.format.container]
     #[test]
     fn container_option() {
         let schemas = extract_schemas(<Option<String> as Facet>::SHAPE)
@@ -1519,7 +1493,6 @@ mod tests {
         assert!(matches!(schemas[1].kind, SchemaKind::Option { .. }));
     }
 
-    // r[verify schema.format.recursive]
     #[test]
     fn recursive_type_terminates() {
         #[derive(Facet)]
@@ -1535,7 +1508,6 @@ mod tests {
         assert!(matches!(node_schema.kind, SchemaKind::Struct { .. }));
     }
 
-    // r[verify schema.format.primitive]
     #[test]
     fn vec_u8_is_bytes() {
         let schemas = extract_schemas(<Vec<u8> as Facet>::SHAPE)
@@ -1568,7 +1540,7 @@ mod tests {
 
     #[test]
     fn cbor_payload_is_bytes() {
-        let schemas = extract_schemas(CborPayload::SHAPE).unwrap().schemas.clone();
+        let schemas = extract_schemas(SchemaBytes::SHAPE).unwrap().schemas.clone();
         assert_eq!(schemas.len(), 1);
         assert!(matches!(
             schemas[0].kind,
@@ -1578,7 +1550,6 @@ mod tests {
         ));
     }
 
-    // r[verify zerocopy.framing.value.opaque]
     #[test]
     fn opaque_payload_is_payload_primitive() {
         let schemas = extract_schemas(crate::Payload::<'static>::SHAPE)
@@ -1634,7 +1605,6 @@ mod tests {
         assert_eq!(schemas.len(), 2);
     }
 
-    // r[verify schema.format.container]
     #[test]
     fn container_map() {
         let schemas = extract_schemas(<std::collections::HashMap<String, u32> as Facet>::SHAPE)
@@ -1645,7 +1615,6 @@ mod tests {
         assert!(matches!(map_schema.kind, SchemaKind::Map { .. }));
     }
 
-    // r[verify schema.format.container]
     #[test]
     fn container_array() {
         let schemas = extract_schemas(<[u32; 4] as Facet>::SHAPE)
@@ -1659,7 +1628,6 @@ mod tests {
         }
     }
 
-    // r[verify schema.format.tuple]
     #[test]
     fn tuple_type() {
         let schemas = extract_schemas(<(u32, String) as Facet>::SHAPE)
@@ -1676,7 +1644,6 @@ mod tests {
         }
     }
 
-    // r[verify schema.format]
     #[test]
     fn extract_schemas_returns_all_kinds() {
         #[derive(Facet)]
@@ -1692,6 +1659,7 @@ mod tests {
 
     // r[verify schema.principles.once-per-type]
     // r[verify schema.exchange.idempotent]
+    // r[verify schema.format.delivery]
     #[test]
     fn tracker_prepare_send_returns_payload_then_empty() {
         let mut tracker = SchemaSendTracker::new();
@@ -1715,13 +1683,61 @@ mod tests {
         assert!(schematic.attached.is_empty());
     }
 
+    #[test]
+    fn method_args_plan_includes_channel_element_auxiliary_roots() {
+        #[derive(Facet)]
+        struct Element {
+            value: String,
+        }
+
+        #[derive(Facet)]
+        struct Args {
+            stream: crate::Tx<Element>,
+        }
+
+        let method = crate::method_descriptor::<Args, ()>(
+            "StreamService",
+            "send",
+            &["stream"],
+            &[Some(Element::SHAPE)],
+            crate::MethodDescriptorOptions {
+                response_wire_shape: <() as Facet>::SHAPE,
+                doc: None,
+            },
+        );
+
+        let prepared = SchemaSendTracker::plan_for_method_args(method).expect("schema plan");
+        let parsed = vox_phon::parse_schema_bytes(&prepared.bytes).expect("parse schema binding");
+        let element = vox_phon::schema_id_for_shape(Element::SHAPE).expect("element schema id");
+
+        assert_eq!(
+            parsed.auxiliary_roots,
+            vec![vox_phon::AuxiliaryRoot {
+                role: "channel.arg.0.tx.element".to_string(),
+                root: element,
+            }]
+        );
+    }
+
     // r[verify schema.tracking.transitive]
     // r[verify schema.tracking.sent]
+    // r[verify schema.tracking.bindings]
+    // r[verify schema.principles.sender-driven]
+    // r[verify schema.principles.no-roundtrips]
+    // r[verify schema.format.self-contained]
     #[test]
     fn tracker_prepare_send_includes_transitive_deps() {
+        // A nested *composite* (`Inner`) is a real transitive dependency: the phon
+        // schema closure carries it alongside the root. (Scalars like `u32`/`String`
+        // are inline primitives, not separate schemas.)
+        #[derive(Facet)]
+        struct Inner {
+            x: u32,
+            y: u32,
+        }
         #[derive(Facet)]
         struct Outer {
-            inner: u32,
+            inner: Inner,
             name: String,
         }
 
@@ -1732,66 +1748,48 @@ mod tests {
             .attach_schemas_for_shape_if_needed(method, schematic.shape, &mut schematic)
             .unwrap();
         assert!(!first.is_empty(), "should return schemas");
-        let parsed = SchemaPayload::from_cbor(&first.0).expect("should parse CBOR");
+        let parsed =
+            vox_phon::parse_schema_bytes(&first.0).expect("should parse phon schema bytes");
         assert!(
-            parsed.schemas.len() >= 3,
-            "should include transitive deps, got {}",
+            parsed.schemas.len() >= 2,
+            "closure should include the transitive composite (Outer + Inner), got {}",
             parsed.schemas.len()
         );
 
-        // Same method again — nothing to send
+        // Same method again — nothing to send (binding deduped by method+direction).
         schematic.shape = <u32 as Facet>::SHAPE;
         let again = tracker
             .attach_schemas_for_shape_if_needed(method, schematic.shape, &mut schematic)
             .unwrap();
-        assert!(
-            again.is_empty(),
-            "u32 was already sent as transitive dep, method already bound"
-        );
+        assert!(again.is_empty(), "method binding already sent");
     }
 
     // r[verify schema.tracking.received]
     #[test]
     fn tracker_record_and_get_received() {
         let tracker = SchemaRecvTracker::new();
-        let schemas = extract_schemas(<u32 as Facet>::SHAPE)
-            .unwrap()
-            .schemas
-            .clone();
-        let id = schemas[0].id;
-        assert!(tracker.get_received(&id).is_none());
-        tracker
-            .record_received(
-                MethodId(7),
-                BindingDirection::Args,
-                SchemaPayload {
-                    schemas,
-                    root: TypeRef::concrete(id),
-                },
-            )
-            .expect("first record should succeed");
-        assert!(tracker.get_received(&id).is_some());
+        let bytes = vox_phon::schema_bytes::<u32>().expect("schema bytes");
+        assert!(
+            tracker
+                .writer_schema_bytes(MethodId(7), BindingDirection::Args)
+                .is_none()
+        );
+        tracker.record_received(MethodId(7), BindingDirection::Args, bytes.clone());
         assert_eq!(
-            tracker.get_remote_args_root(MethodId(7)),
-            Some(TypeRef::concrete(id))
+            tracker.writer_schema_bytes(MethodId(7), BindingDirection::Args),
+            Some(bytes)
         );
     }
 
     // r[verify schema.type-id]
-    // r[verify schema.type-id.hash]
     #[test]
     fn type_ids_are_content_hashes() {
-        let mut tracker = SchemaSendTracker::new();
-        let extracted = tracker
-            .extract_schemas(<(u32, String) as Facet>::SHAPE)
-            .unwrap();
+        let extracted = extract_schemas(<(u32, String) as Facet>::SHAPE).unwrap();
         let schemas = extracted.schemas.clone();
         assert!(schemas.len() >= 3);
 
         // Same type extracted again must produce the same content hash.
-        let mut tracker2 = SchemaSendTracker::new();
-        let schemas2 = tracker2
-            .extract_schemas(<(u32, String) as Facet>::SHAPE)
+        let schemas2 = extract_schemas(<(u32, String) as Facet>::SHAPE)
             .unwrap()
             .schemas
             .clone();
@@ -1801,17 +1799,13 @@ mod tests {
         }
 
         // Different types must produce different hashes.
-        let mut tracker3 = SchemaSendTracker::new();
-        let extracted3 = tracker3
-            .extract_schemas(<(u64, String) as Facet>::SHAPE)
-            .unwrap();
+        let extracted3 = extract_schemas(<(u64, String) as Facet>::SHAPE).unwrap();
         assert_ne!(
             extracted.root, extracted3.root,
             "different types should produce different root refs"
         );
     }
 
-    // r[verify schema.type-id.hash.primitives]
     #[test]
     fn primitive_content_hashes_are_stable() {
         // These are the canonical hash values for primitive types.
@@ -1860,7 +1854,6 @@ mod tests {
         }
     }
 
-    // r[verify schema.type-id.hash.struct]
     #[test]
     fn struct_hash_is_deterministic() {
         #[derive(Facet)]
@@ -1878,7 +1871,6 @@ mod tests {
         );
     }
 
-    // r[verify schema.hash.recursive]
     #[test]
     fn recursive_type_hash_is_deterministic() {
         #[derive(Facet)]
@@ -1915,7 +1907,7 @@ mod tests {
             .attach_schemas_for_shape_if_needed(method, args_schematic.shape, &mut args_schematic)
             .unwrap();
         assert!(!args.is_empty(), "should send args");
-        let args_parsed = SchemaPayload::from_cbor(&args.0).expect("parse args CBOR");
+        let args_parsed = vox_phon::parse_schema_bytes(&args.0).expect("parse args phon bytes");
 
         // Send response binding for the same method — should NOT be deduplicated
         let mut response_schematic =
@@ -1928,73 +1920,44 @@ mod tests {
             )
             .unwrap();
         assert!(!response.is_empty(), "should send response");
-        let response_parsed = SchemaPayload::from_cbor(&response.0).expect("parse response CBOR");
+        let response_parsed =
+            vox_phon::parse_schema_bytes(&response.0).expect("parse response phon bytes");
         assert_ne!(args_parsed.root, response_parsed.root);
 
-        // Record received bindings and verify they go to separate maps
+        // Record received bindings (raw phon schema bytes) and verify args and
+        // response are tracked independently per (method, direction).
         let recv_tracker = SchemaRecvTracker::new();
-        recv_tracker
-            .record_received(
-                MethodId(42),
-                BindingDirection::Args,
-                SchemaPayload {
-                    schemas: extract_schemas(<u64 as Facet>::SHAPE)
-                        .unwrap()
-                        .schemas
-                        .clone(),
-                    root: TypeRef::concrete(SchemaHash(100)),
-                },
-            )
-            .expect("record should succeed");
-        recv_tracker
-            .record_received(
-                MethodId(42),
-                BindingDirection::Response,
-                SchemaPayload {
-                    schemas: vec![],
-                    root: TypeRef::concrete(SchemaHash(200)),
-                },
-            )
-            .expect("record should succeed");
+        let args_bytes = vox_phon::schema_bytes::<u64>().unwrap();
+        let response_bytes = vox_phon::schema_bytes::<String>().unwrap();
+        recv_tracker.record_received(MethodId(42), BindingDirection::Args, args_bytes.clone());
+        recv_tracker.record_received(
+            MethodId(42),
+            BindingDirection::Response,
+            response_bytes.clone(),
+        );
 
         assert_eq!(
-            recv_tracker.get_remote_args_root(MethodId(42)),
-            Some(TypeRef::concrete(SchemaHash(100)))
+            recv_tracker.writer_schema_bytes(MethodId(42), BindingDirection::Args),
+            Some(args_bytes)
         );
         assert_eq!(
-            recv_tracker.get_remote_response_root(MethodId(42)),
-            Some(TypeRef::concrete(SchemaHash(200)))
+            recv_tracker.writer_schema_bytes(MethodId(42), BindingDirection::Response),
+            Some(response_bytes)
         );
     }
 
+    // r[verify schema.tracking.received] receiving a schema more than once is best-effort
+    // and idempotent — it overwrites, it is NOT a protocol error.
     #[test]
-    fn duplicate_schema_is_protocol_error() {
+    fn duplicate_schema_is_best_effort() {
         let tracker = SchemaRecvTracker::new();
-        let schemas = extract_schemas(<u32 as Facet>::SHAPE)
-            .unwrap()
-            .schemas
-            .clone();
-        tracker
-            .record_received(
-                MethodId(9),
-                BindingDirection::Args,
-                SchemaPayload {
-                    schemas: schemas.clone(),
-                    root: TypeRef::concrete(schemas[0].id),
-                },
-            )
-            .expect("first record should succeed");
-        let err = tracker
-            .record_received(
-                MethodId(9),
-                BindingDirection::Args,
-                SchemaPayload {
-                    schemas: schemas.clone(),
-                    root: TypeRef::concrete(schemas[0].id),
-                },
-            )
-            .expect_err("duplicate should fail");
-        assert_eq!(err.type_id, schemas[0].id);
+        let bytes = vox_phon::schema_bytes::<u32>().unwrap();
+        tracker.record_received(MethodId(9), BindingDirection::Args, bytes.clone());
+        tracker.record_received(MethodId(9), BindingDirection::Args, bytes.clone());
+        assert_eq!(
+            tracker.writer_schema_bytes(MethodId(9), BindingDirection::Args),
+            Some(bytes)
+        );
     }
 
     #[test]

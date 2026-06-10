@@ -21,4 +21,5 @@ vox-core.workspace = true
 vox-types.workspace = true
 vox-websocket.workspace = true
 spec-proto.workspace = true
+subject-rust.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "macros"] }

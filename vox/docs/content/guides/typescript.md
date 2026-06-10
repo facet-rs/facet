@@ -19,15 +19,13 @@ For a Node server/client setup, start with:
     "@bearcove/vox-core": "7.0.0",
     "@bearcove/vox-tcp": "7.0.0",
     "@bearcove/vox-ws": "7.0.0",
-    "@bearcove/vox-wire": "7.0.0",
-    "@bearcove/vox-postcard": "7.0.0"
+    "@bearcove/vox-wire": "7.0.0"
   }
 }
 ```
 
 Generated files import from `@bearcove/vox-core` and transport packages. The
-wire/postcard packages handle low-level encoding and are typically not used
-directly.
+wire package handles low-level phon encoding and is typically not used directly.
 
 ## 2) Generate TypeScript bindings from Rust
 
@@ -47,7 +45,7 @@ The output contains:
 - `GreeterClient` — typed caller
 - `GreeterHandler` interface — implement this on the server
 - `GreeterDispatcher` — wires a `GreeterHandler` into the vox session
-- `greeter_descriptor` — schema + retry metadata used by the runtime
+- `greeter_descriptor` — schema and method metadata used by the runtime
 
 ## 3) Use the generated client
 
@@ -88,74 +86,14 @@ const driver = new Driver(
 await driver.run();
 ```
 
-## 5) Session resumption and reconnection
+## 5) Connection loss and keepalive
 
-For WebSocket clients in browsers or mobile apps, connections drop. Vox's
-session resumption lets a client reconnect transparently — in-flight calls are
-automatically retried on idempotent methods, and the session resumes exactly
-where it left off.
+Vox sessions are bound to one conduit attachment. If that attachment breaks,
+the session ends and in-flight request attempts fail. Vox does not resume the
+session, replay requests, or automatically issue replacement calls.
 
-### Enabling resumption
-
-Pass `resumable: true` when creating the session. The server must also support
-resumption (i.e., be using `establish_or_resume` with a `SessionRegistry`).
-
-```ts
-const established = await session.initiator(wsConnector("ws://api.example.com"), {
-  resumable: true,
-});
-```
-
-When enabled, vox exchanges a session resume key during the handshake. If the
-connection drops, the session automatically reconnects using that key.
-
-### Reconnect policy
-
-By default the session retries forever with exponential backoff (500 ms base,
-30 s cap). You can customize this:
-
-```ts
-const established = await session.initiator(wsConnector("ws://api.example.com"), {
-  resumable: true,
-  reconnect: {
-    maxAttempts: Infinity,   // retry forever (default)
-    baseDelay:   500,        // first retry after 500 ms
-    maxDelay:    30_000,     // cap at 30 s between retries
-  },
-});
-```
-
-Set `maxAttempts` to a finite number if you want to give up after a fixed number
-of failures. The delay between attempt `n` is `min(baseDelay × 2^(n-1), maxDelay)`.
-
-### Observing connection state
-
-Register callbacks to drive UI (spinners, banners, toasts):
-
-```ts
-const established = await session.initiator(wsConnector("ws://api.example.com"), {
-  resumable: true,
-  onConnectivityChange: (state) => {
-    // 'connected' | 'disconnected' | 'reconnecting' | 'failed'
-    setConnectionStatus(state);
-  },
-  onReconnecting: (failedAttempt, nextAttemptAt, retryNow) => {
-    const secs = Math.ceil((nextAttemptAt.getTime() - Date.now()) / 1000);
-    console.log(`Attempt ${failedAttempt} failed. Retrying in ${secs}s…`);
-    // retryNow() skips the wait — wire it to a "Retry Now" button.
-  },
-  onReconnected: () => {
-    toast.success("Reconnected");
-  },
-  onReconnectFailed: (error) => {
-    toast.error(`Could not reconnect: ${error.message}`);
-  },
-});
-```
-
-The `onConnectivityChange` callback is the simplest hook for showing a
-"Reconnecting…" banner in your UI. The more specific callbacks let you react to
-individual attempts or final failure.
+Applications that want to recover after attachment loss should establish a new
+session and issue new calls explicitly.
 
 ### Keepalive for silent drops
 
@@ -169,7 +107,6 @@ Enable keepalive to catch these silent drops:
 
 ```ts
 const established = await session.initiator(wsConnector("ws://api.example.com"), {
-  resumable: true,
   keepaliveIntervalMs: 15_000,   // send a Ping every 15 s
   keepaliveTimeoutMs:   5_000,   // give up if no Pong within 5 s
 });
@@ -177,7 +114,7 @@ const established = await session.initiator(wsConnector("ws://api.example.com"),
 
 Vox sends a protocol-level `Ping` message every `keepaliveIntervalMs`. If the
 peer does not reply with a `Pong` within `keepaliveTimeoutMs` (default: half
-the interval), the connection is forcibly closed and session recovery begins.
+the interval), the connection is forcibly closed and the session ends.
 
 Choose values appropriate for your environment:
 
@@ -201,34 +138,9 @@ async function connect(): Promise<ApiClient> {
   const established = await session.initiator(
     wsConnector("wss://api.example.com"),
     {
-      resumable: true,
-
-      // Retry forever with exponential backoff, capped at 30 s.
-      reconnect: {
-        baseDelay: 500,
-        maxDelay:  30_000,
-      },
-
       // Detect silent drops (important on mobile).
       keepaliveIntervalMs: 15_000,
       keepaliveTimeoutMs:   5_000,
-
-      // Drive a "connection" indicator in your UI.
-      onConnectivityChange: (state) => {
-        document.getElementById("status")!.textContent = {
-          connected:    "●",
-          disconnected: "○",
-          reconnecting: "↻",
-          failed:       "✕",
-        }[state];
-      },
-      onReconnecting: (failedAttempt, nextAttemptAt, retryNow) => {
-        const secs = Math.ceil((nextAttemptAt.getTime() - Date.now()) / 1000);
-        // Replace with your own UI — e.g. a banner with a "Retry Now" button.
-        // Call retryNow() from that button's onClick to skip the wait.
-        console.log(`Attempt ${failedAttempt} failed. Retrying in ${secs}s.`);
-        document.getElementById("retry-btn")?.addEventListener("click", retryNow, { once: true });
-      },
     },
   );
 
@@ -323,11 +235,10 @@ try {
 }
 ```
 
-`INDETERMINATE` is particularly important for resumable sessions: it means the
-connection dropped while the call was in flight and the session could not
-confirm whether the server executed it. For **idempotent** methods the session
-automatically retries on reconnect; for non-idempotent methods the caller must
-decide how to handle the ambiguity.
+`INDETERMINATE` means the connection dropped while the call was in flight and
+the session could not confirm whether the server executed it. The runtime does
+not replay the call automatically; callers must decide whether to issue a new
+call.
 
 ## 8) Workspace/publishing layout
 

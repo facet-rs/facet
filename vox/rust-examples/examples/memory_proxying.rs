@@ -1,5 +1,5 @@
 use eyre::{Result, eyre};
-use vox::{ConnectionSettings, Metadata, MetadataEntry, Parity, SessionHandle};
+use vox::{ConnectionSettings, Metadata, Parity, SessionHandle};
 
 #[vox::service]
 trait MathText {
@@ -23,7 +23,7 @@ impl MathText for UpstreamMathText {
 fn upstream_acceptor(
     request: &vox::ConnectionRequest,
     connection: vox::PendingConnection,
-) -> Result<(), Metadata<'static>> {
+) -> Result<(), Metadata> {
     match request.service() {
         "Noop" => {
             connection.handle_with(());
@@ -33,7 +33,7 @@ fn upstream_acceptor(
             connection.handle_with(MathTextDispatcher::new(UpstreamMathText));
             Ok(())
         }
-        _ => Err(vec![MetadataEntry::str("error", "unknown service")]),
+        _ => Err(vox::metadata().str("error", "unknown service").build()),
     }
 }
 
@@ -47,7 +47,7 @@ impl vox::ConnectionAcceptor for ProxyAcceptor {
         &self,
         request: &vox::ConnectionRequest,
         connection: vox::PendingConnection,
-    ) -> Result<(), Metadata<'static>> {
+    ) -> Result<(), Metadata> {
         match request.service() {
             "Noop" => {
                 connection.handle_with(());
@@ -55,7 +55,7 @@ impl vox::ConnectionAcceptor for ProxyAcceptor {
             }
             "MathText" => {}
             _ => {
-                return Err(vec![MetadataEntry::str("error", "unknown service")]);
+                return Err(vox::metadata().str("error", "unknown service").build());
             }
         }
 
@@ -70,10 +70,9 @@ impl vox::ConnectionAcceptor for ProxyAcceptor {
                         max_concurrent_requests: 64,
                         initial_channel_credit: 16,
                     },
-                    vec![MetadataEntry::str(
-                        vox::VOX_SERVICE_METADATA_KEY,
-                        "MathText",
-                    )],
+                    vox::metadata()
+                        .str(vox::VOX_SERVICE_METADATA_KEY, "MathText")
+                        .build(),
                 )
                 .await
             {

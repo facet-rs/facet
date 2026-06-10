@@ -1,11 +1,8 @@
 //! `LinkSource` and `Attachment`: how the session machinery is given the
 //! transport link it should use.
 //!
-//! Originally these lived in `stable_conduit` because reconnect was the
-//! only consumer. With reconnect removed, they're just "give me a link
-//! once" — kept as a trait so the existing session API still composes,
-//! and so callers that want to swap implementations (e.g. tests vs
-//! production sockets) keep working without changes.
+//! This is a small abstraction over "give me a link once", kept as a trait
+//! so the existing session API composes with tests and production sockets.
 
 use std::future::Future;
 
@@ -27,10 +24,7 @@ impl<L> Attachment<L> {
     }
 }
 
-/// Source of transport links. With reconnect machinery removed there's
-/// only ever one call to `next_link` per session, but the trait remains
-/// so existing code paths don't have to special-case the single-link
-/// case.
+/// Source of transport links.
 pub trait LinkSource: MaybeSend + 'static {
     type Link: Link + MaybeSend;
 

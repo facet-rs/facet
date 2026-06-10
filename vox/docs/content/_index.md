@@ -8,3 +8,5 @@ vox is a Rust-native RPC protocol designed for bidirectional, multiplexed commun
 Define services in Rust traits and generate clients/servers for other languages.
 
 Read the [specification](./spec/) for the protocol model, transport behavior, and compatibility guarantees.
+
+The [ecosystem compatibility roadmap](./vox-ecosystem-compat-roadmap/) defines the frozen Vox 1.0 Phon-backed migration gate.

@@ -73,7 +73,7 @@ async fn local_keepalive_rx_argument_survives_large_item_burst() {
     let client_link = vox::transport::local::LocalLink::connect(&addr)
         .await
         .expect("connect");
-    let client = vox::initiator_on(client_link, vox::TransportMode::Bare)
+    let client = vox::initiator_on(client_link)
         .channel_capacity(64)
         .keepalive(vox::SessionKeepaliveConfig {
             ping_interval: Duration::from_secs(5),

@@ -3,14 +3,15 @@
 // These are the TypeScript equivalents of the Rust ServiceDescriptor,
 // carrying method metadata plus the canonical schema table used at runtime.
 
-import type { ServiceSendSchemas } from "../schema_tracker.ts";
+import type { PhonMethodSchemas } from "../schema_tracker.ts";
 
-export interface RetryPolicy {
-  /** Whether an admitted operation must persist once started. */
-  persist: boolean;
-  /** Whether re-executing the same logical operation is semantically safe. */
-  idem: boolean;
-}
+// TODO(phon-channels): the per-method channel runtime is being rewritten on the
+// phon engine. The canonical per-service schema table is now a phon-shaped map
+// of `PhonMethodSchemas` keyed by wire method id; each entry carries the args
+// root, the args schema-closure hex, the ok root, and the channel bindings
+// (`PhonMethodSchemas.channels`). This is a minimal correct typing for the
+// descriptor until that runtime lands.
+export type ServiceSendSchemas = Record<string, PhonMethodSchemas>;
 
 /**
  * Describes a single RPC method at runtime.
@@ -23,8 +24,6 @@ export interface MethodDescriptor {
   name: string;
   /** Method ID hash for wire protocol routing. */
   id: bigint;
-  /** Static retry policy declared for this method. */
-  retry: RetryPolicy;
 }
 
 /** Describes a service at runtime (collection of method descriptors). */
@@ -32,6 +31,8 @@ export interface ServiceDescriptor {
   service_name: string;
   /** Canonical per-service schema table generated from Rust shapes. */
   send_schemas: ServiceSendSchemas;
+  /** The service's phon `Registry`, resolving every args/response/channel type. */
+  registry: import("@bearcove/phon-schema").Registry;
   /** Method metadata keyed by wire method ID. */
   methods: Map<bigint, MethodDescriptor>;
 }

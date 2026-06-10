@@ -119,7 +119,6 @@ bug, but:
 - `ConnectionMessage<'static>`
 - `ConnectionOpen<'static>`, `ConnectionAccept<'static>`, `ConnectionReject<'static>`
 - `ConnectionClose<'static>`
-- `Frame<'static>` (stable conduit)
 - `ChannelItem<'static>`, `ChannelClose<'static>`, `ChannelReset<'static>`
 - `ChannelMessage<'static>`
 

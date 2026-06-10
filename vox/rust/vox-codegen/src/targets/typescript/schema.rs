@@ -163,10 +163,6 @@ pub fn generate_descriptor(service: &ServiceDescriptor) -> String {
         ));
         out.push_str(&format!("  name: '{method_name}',\n"));
         out.push_str(&format!("  id: {}n,\n", hex_u64(id)));
-        out.push_str(&format!(
-            "  retry: {{ persist: {}, idem: {} }},\n",
-            method.retry.persist, method.retry.idem
-        ));
         out.push_str("};\n\n");
     }
 
@@ -175,9 +171,8 @@ pub fn generate_descriptor(service: &ServiceDescriptor) -> String {
         "export const {service_name_lower}_descriptor: ServiceDescriptor = {{\n"
     ));
     out.push_str(&format!("  service_name: '{}',\n", service.service_name));
-    out.push_str(&format!(
-        "  send_schemas: {service_name_lower}_send_schemas,\n"
-    ));
+    out.push_str(&format!("  send_schemas: {service_name_lower}Methods,\n"));
+    out.push_str(&format!("  registry: {service_name_lower}Registry,\n"));
     out.push_str("  methods: new Map<bigint, MethodDescriptor>([\n");
 
     for method in service.methods {

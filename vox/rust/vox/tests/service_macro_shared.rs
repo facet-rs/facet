@@ -2,7 +2,7 @@ use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
 
 use vox_core::{BareConduit, acceptor_conduit, initiator_conduit};
-use vox_types::{ConnectionSettings, HandshakeResult, Link, MetadataEntry, Parity, SessionRole};
+use vox_types::{ConnectionSettings, HandshakeResult, Link, Parity, SessionRole};
 
 fn test_acceptor_handshake(service: &'static str) -> HandshakeResult {
     HandshakeResult {
@@ -17,12 +17,9 @@ fn test_acceptor_handshake(service: &'static str) -> HandshakeResult {
             max_concurrent_requests: 64,
             initial_channel_credit: 16,
         },
-        peer_supports_retry: true,
-        session_resume_key: None,
-        peer_resume_key: None,
         our_schema: vec![],
         peer_schema: vec![],
-        peer_metadata: vec![MetadataEntry::str("vox-service", service)],
+        peer_metadata: vox::metadata().str("vox-service", service).build(),
     }
 }
 
@@ -39,12 +36,9 @@ fn test_initiator_handshake(service: &'static str) -> HandshakeResult {
             max_concurrent_requests: 64,
             initial_channel_credit: 16,
         },
-        peer_supports_retry: true,
-        session_resume_key: None,
-        peer_resume_key: None,
         our_schema: vec![],
         peer_schema: vec![],
-        peer_metadata: vec![MetadataEntry::str("vox-service", service)],
+        peer_metadata: vox::metadata().str("vox-service", service).build(),
     }
 }
 
@@ -77,7 +71,8 @@ struct ContextProbeService;
 
 impl ContextProbe for ContextProbeService {
     async fn describe(&self, cx: &vox::RequestContext<'_>) -> String {
-        format!("{}:{}", cx.method().method_name, cx.metadata().len(),)
+        use vox::MetadataExt;
+        format!("{}:{}", cx.method().method_name, cx.metadata().meta_len(),)
     }
 
     async fn plain(&self) -> String {
@@ -96,13 +91,8 @@ struct ClientMiddlewareProbeService;
 
 impl ClientMiddlewareProbe for ClientMiddlewareProbeService {
     async fn inspect(&self, cx: &vox::RequestContext<'_>) -> String {
-        cx.metadata()
-            .iter()
-            .find(|entry| entry.key == "x-client-value")
-            .and_then(|entry| match &entry.value {
-                vox::MetadataValue::String(value) => Some(value.to_string()),
-                _ => None,
-            })
+        vox::MetadataExt::meta_str(cx.metadata(), "x-client-value")
+            .map(str::to_string)
             .expect("client middleware should inject request metadata")
     }
 }
@@ -121,12 +111,12 @@ struct MiddlewareProbeService;
 pub enum BorrowedPayloadKind {
     Inline = 1,
     SlotRef = 2,
-    MmapRef = 3,
+    Large = 3,
 }
 
 const INLINE_PAYLOAD_LEN: usize = 64;
 const SLOT_REF_PAYLOAD_LEN: usize = 1024;
-const MMAP_REF_PAYLOAD_LEN: usize = 8192;
+const LARGE_PAYLOAD_LEN: usize = 8192;
 
 #[vox::service]
 trait BorrowedPayloadProbe {
@@ -137,7 +127,7 @@ trait BorrowedPayloadProbe {
 struct BorrowedPayloadProbeService {
     inline: &'static str,
     slot_ref: &'static str,
-    mmap_ref: &'static str,
+    large: &'static str,
 }
 
 impl BorrowedPayloadProbeService {
@@ -145,7 +135,7 @@ impl BorrowedPayloadProbeService {
         Self {
             inline: Box::leak(patterned_payload(INLINE_PAYLOAD_LEN, b'i').into_boxed_str()),
             slot_ref: Box::leak(patterned_payload(SLOT_REF_PAYLOAD_LEN, b's').into_boxed_str()),
-            mmap_ref: Box::leak(patterned_payload(MMAP_REF_PAYLOAD_LEN, b'm').into_boxed_str()),
+            large: Box::leak(patterned_payload(LARGE_PAYLOAD_LEN, b'l').into_boxed_str()),
         }
     }
 
@@ -153,7 +143,7 @@ impl BorrowedPayloadProbeService {
         match kind {
             BorrowedPayloadKind::Inline => patterned_payload(INLINE_PAYLOAD_LEN, b'i'),
             BorrowedPayloadKind::SlotRef => patterned_payload(SLOT_REF_PAYLOAD_LEN, b's'),
-            BorrowedPayloadKind::MmapRef => patterned_payload(MMAP_REF_PAYLOAD_LEN, b'm'),
+            BorrowedPayloadKind::Large => patterned_payload(LARGE_PAYLOAD_LEN, b'l'),
         }
     }
 }
@@ -167,7 +157,7 @@ impl BorrowedPayloadProbe for BorrowedPayloadProbeService {
         let text = match kind {
             BorrowedPayloadKind::Inline => self.inline,
             BorrowedPayloadKind::SlotRef => self.slot_ref,
-            BorrowedPayloadKind::MmapRef => self.mmap_ref,
+            BorrowedPayloadKind::Large => self.large,
         };
         call.ok(text).await;
     }
@@ -339,11 +329,7 @@ impl vox::ClientMiddleware for RecordingClientMiddleware {
             }
 
             if self.inject_metadata {
-                request.push_string_metadata(
-                    "x-client-value",
-                    format!("{}-value", self.name),
-                    vox::MetadataFlags::NONE,
-                );
+                request.push_string_metadata("x-client-value", format!("{}-value", self.name));
             }
         })
     }
@@ -435,7 +421,8 @@ pub async fn run_request_context_end_to_end<L>(
         .describe()
         .await
         .expect("describe call should succeed");
-    assert_eq!(described, "describe:1");
+    // No call policy metadata is auto-injected.
+    assert_eq!(described, "describe:0");
 
     let plain = client.plain().await.expect("plain call should succeed");
     assert_eq!(plain, "plain");

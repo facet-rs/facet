@@ -10,10 +10,13 @@
 
 pub mod client;
 pub mod http_client;
+pub mod phon;
 pub mod schema;
 pub mod server;
 pub mod types;
 pub mod wire;
+
+pub use phon::generate_phon_service;
 
 use crate::code_writer::CodeWriter;
 use vox_types::{MethodDescriptor, ServiceDescriptor};
@@ -25,7 +28,58 @@ pub use schema::generate_send_schema_table;
 pub use server::generate_server;
 pub use types::{collect_named_types, generate_named_types};
 
+/// Generate the phon `HandshakeMessage` module for vox-core: the handshake message
+/// types + registry + `schemaId`, plus `handshakeSchemaClosure` (the self-describing
+/// schema-closure bytes to prepend when sending a handshake message). The handshake
+/// is phon self-describing — each message carries its own schema closure.
+pub fn generate_phon_handshake() -> String {
+    let module =
+        phon_codegen::Module::from_shapes(&[<vox_types::HandshakeMessage as facet_core::Facet<
+            'static,
+        >>::SHAPE])
+        .expect("derive phon schema for HandshakeMessage");
+    let mut out = phon_codegen::typescript::render(&module);
+    let closure =
+        vox_phon::schema_bytes::<vox_types::HandshakeMessage>().expect("handshake schema bytes");
+    let mut hex = String::with_capacity(closure.len() * 2);
+    for b in closure {
+        hex.push_str(&format!("{b:02x}"));
+    }
+    out.push_str(&format!(
+        "\n/// The local HandshakeMessage schema closure (hex), prepended when sending\n/// a self-describing handshake message.\nexport const handshakeSchemaClosure = \"{hex}\";\n"
+    ));
+    out
+}
+
+/// Generate the phon `Message` wire module for `@bearcove/vox-wire`: the envelope
+/// type declarations, the self-describing schema-bytes, a ready `registry`, and the
+/// `schemaId` constants — produced by delegating to `phon-codegen`. vox-wire's codec
+/// decodes/encodes the envelope against this registry via `@bearcove/phon-engine`.
+pub fn generate_phon_wire() -> String {
+    let module =
+        phon_codegen::Module::from_shapes(&[<vox_types::Message<'static> as facet_core::Facet<
+            'static,
+        >>::SHAPE])
+        .expect("derive phon schema for the Message envelope");
+    let mut out = phon_codegen::typescript::render(&module);
+    // The Message schema closure (hex) — peers exchange this in the handshake's
+    // `message_payload_schema` so each can build an envelope compat decoder.
+    let closure =
+        vox_phon::schema_bytes::<vox_types::Message<'static>>().expect("Message schema bytes");
+    let mut hex = String::with_capacity(closure.len() * 2);
+    for b in closure {
+        hex.push_str(&format!("{b:02x}"));
+    }
+    out.push_str(&format!(
+        "\n/// The local Message envelope schema closure (hex), advertised in the\n/// handshake's `message_payload_schema`.\nexport const messageSchemaClosure = \"{hex}\";\n"
+    ));
+    out
+}
+
 /// Generate method IDs as a TypeScript constant record.
+// r[impl schema.method-id]
+// r[impl rpc.method-id.algorithm]
+// r[impl rpc.method-id.no-collisions]
 pub fn generate_method_ids(methods: &[&MethodDescriptor]) -> String {
     use crate::render::{fq_name, hex_u64};
 
@@ -53,6 +107,10 @@ pub fn generate_service(service: &ServiceDescriptor) -> String {
     use crate::code_writer::CodeWriter;
     use crate::cw_writeln;
 
+    validate_channel_rules(service);
+    // r[impl transport.fd.capability]
+    super::validate_no_fd_shapes(service, "TypeScript");
+
     let mut output = String::new();
     let mut w = CodeWriter::with_indent_spaces(&mut output, 2);
 
@@ -75,19 +133,45 @@ pub fn generate_service(service: &ServiceDescriptor) -> String {
     // Request/Response type aliases
     output.push_str(&generate_request_response_types(service, &named_types));
 
+    // phon registry + per-method schema table (registry + roots + channel metadata)
+    output.push_str(&generate_phon_service(service));
+
     // Client
     output.push_str(&generate_client(service));
 
     // Server (handler interface + dispatcher)
     output.push_str(&generate_server(service));
 
-    // Pre-computed CBOR send schema table (must come before descriptor)
-    output.push_str(&generate_send_schema_table(service));
-
-    // Service descriptor
+    // Service descriptor (references {service}Methods above)
     output.push_str(&generate_descriptor(service));
 
     output
+}
+
+fn validate_channel_rules(service: &ServiceDescriptor) {
+    for method in service.methods {
+        // r[impl rpc.channel.placement]
+        assert!(
+            !vox_types::shape_contains_channel(method.return_shape),
+            "channels are not allowed in return types: {}.{}",
+            method.service_name,
+            method.method_name
+        );
+        // r[impl rpc.channel.no-collections]
+        assert!(
+            !vox_types::shape_contains_channel_in_collection(method.args_shape),
+            "channels are not allowed inside collections: {}.{}",
+            method.service_name,
+            method.method_name
+        );
+        // r[impl rpc.channel.direct-args]
+        assert!(
+            !vox_types::shape_contains_indirect_channel_arg(method.args_shape),
+            "channels are only allowed as direct method arguments: {}.{}",
+            method.service_name,
+            method.method_name
+        );
+    }
 }
 
 /// Generate imports for the service module.
@@ -106,6 +190,13 @@ fn generate_imports(service: &ServiceDescriptor, w: &mut CodeWriter<&mut String>
         .methods
         .iter()
         .any(|m| matches!(classify_shape(m.return_shape), ShapeKind::Result { .. }));
+
+    let has_dynamic = service.methods.iter().any(|m| {
+        m.args
+            .iter()
+            .any(|arg| shape_contains_dynamic_value(arg.shape))
+            || shape_contains_dynamic_value(m.return_shape)
+    });
 
     // Core runtime: descriptor types + Caller + session/conduit helpers
     cw_writeln!(
@@ -127,13 +218,74 @@ fn generate_imports(service: &ServiceDescriptor, w: &mut CodeWriter<&mut String>
         cw_writeln!(w, "import {{ RpcError }} from \"@bearcove/vox-core\";").unwrap();
     }
 
-    // Tx/Rx and bindChannels for streaming handler args and type aliases
+    // Tx/Rx types for streaming handler args/returns.
     if has_streaming {
-        cw_writeln!(
-            w,
-            "import {{ Tx, Rx, argElementRefsForMethod, bindChannelsForTypeRefs, finalizeBoundChannelsForTypeRefs }} from \"@bearcove/vox-core\";"
-        )
-        .unwrap();
+        cw_writeln!(w, "import {{ Tx, Rx }} from \"@bearcove/vox-core\";").unwrap();
+    }
+
+    if has_dynamic {
+        cw_writeln!(w, "import type {{ Value }} from \"@bearcove/phon-schema\";").unwrap();
+    }
+}
+
+fn shape_contains_dynamic_value(shape: &'static facet_core::Shape) -> bool {
+    let mut seen = std::collections::HashSet::new();
+    shape_contains_dynamic_value_inner(shape, &mut seen)
+}
+
+fn shape_contains_dynamic_value_inner(
+    shape: &'static facet_core::Shape,
+    seen: &mut std::collections::HashSet<&'static facet_core::Shape>,
+) -> bool {
+    if types::is_dynamic_value(shape) {
+        return true;
+    }
+
+    if !seen.insert(shape) {
+        return false;
+    }
+
+    match vox_types::classify_shape(shape) {
+        vox_types::ShapeKind::List { element }
+        | vox_types::ShapeKind::Slice { element }
+        | vox_types::ShapeKind::Option { inner: element }
+        | vox_types::ShapeKind::Array { element, .. }
+        | vox_types::ShapeKind::Set { element }
+        | vox_types::ShapeKind::Tx { inner: element }
+        | vox_types::ShapeKind::Rx { inner: element }
+        | vox_types::ShapeKind::Pointer { pointee: element } => {
+            shape_contains_dynamic_value_inner(element, seen)
+        }
+        vox_types::ShapeKind::Map { key, value } => {
+            shape_contains_dynamic_value_inner(key, seen)
+                || shape_contains_dynamic_value_inner(value, seen)
+        }
+        vox_types::ShapeKind::Tuple { elements } => elements
+            .iter()
+            .any(|param| shape_contains_dynamic_value_inner(param.shape, seen)),
+        vox_types::ShapeKind::TupleStruct { fields }
+        | vox_types::ShapeKind::Struct(vox_types::StructInfo { fields, .. }) => fields
+            .iter()
+            .any(|field| shape_contains_dynamic_value_inner(field.shape(), seen)),
+        vox_types::ShapeKind::Enum(vox_types::EnumInfo { variants, .. }) => {
+            variants
+                .iter()
+                .any(|variant| match vox_types::classify_variant(variant) {
+                    vox_types::VariantKind::Unit => false,
+                    vox_types::VariantKind::Newtype { inner } => {
+                        shape_contains_dynamic_value_inner(inner, seen)
+                    }
+                    vox_types::VariantKind::Tuple { fields }
+                    | vox_types::VariantKind::Struct { fields } => fields
+                        .iter()
+                        .any(|field| shape_contains_dynamic_value_inner(field.shape(), seen)),
+                })
+        }
+        vox_types::ShapeKind::Result { ok, err } => {
+            shape_contains_dynamic_value_inner(ok, seen)
+                || shape_contains_dynamic_value_inner(err, seen)
+        }
+        vox_types::ShapeKind::Scalar(_) | vox_types::ShapeKind::Opaque => false,
     }
 }
 
@@ -190,15 +342,82 @@ fn generate_request_response_types(
 mod tests {
     #![allow(dead_code)]
 
+    use std::collections::BTreeSet;
+
     use super::generate_service;
-    use facet::Facet;
+    use crate::render::hex_u64;
+    use facet::{Facet, Shape};
     use vox_types::{
-        RetryPolicy, Rx, ServiceDescriptor, Tx, method_descriptor, method_descriptor_with_retry,
+        MethodDescriptor, MethodDescriptorOptions, MethodId, Rx, ServiceDescriptor, Tx,
+        method_descriptor,
     };
 
+    fn hex_bytes(bytes: &[u8]) -> String {
+        let mut out = String::with_capacity(bytes.len() * 2);
+        for byte in bytes {
+            out.push_str(&format!("{byte:02x}"));
+        }
+        out
+    }
+
+    fn parse_self_describing_unique_bundle(
+        bytes: &[u8],
+        expected_root: u64,
+    ) -> vox_phon::SchemaBundle {
+        let bundle = vox_phon::parse_schema_bytes(bytes).expect("schema closure parses");
+        assert_eq!(bundle.root.0, expected_root);
+        let mut seen = BTreeSet::new();
+        for schema in &bundle.schemas {
+            assert!(
+                seen.insert(schema.id.0),
+                "schema closure must not repeat type ID {:#x}",
+                schema.id.0
+            );
+        }
+        bundle
+    }
+
+    // A non-recursive composite (struct + scalar + string + list). NOTE: phon's
+    // `from_shapes` has no cycle detection, so a self-referential type (via `Box` or
+    // `Vec<Self>`) is unsupported — `Box<T>` errors and `Vec<Self>` stack-overflows.
+    // This test only needs a non-trivial type to verify canonical-schema emission.
     #[derive(Facet)]
-    struct RecursiveNode {
-        next: Option<Box<RecursiveNode>>,
+    struct CompositeNode {
+        value: u64,
+        label: String,
+        tags: Vec<String>,
+    }
+
+    #[derive(Facet)]
+    struct DynamicTemplateCall {
+        args: Vec<facet_value::Value>,
+        kwargs: Vec<(String, facet_value::Value)>,
+    }
+
+    #[derive(Facet)]
+    struct NestedInner {
+        value: u32,
+    }
+
+    #[derive(Facet)]
+    struct NestedOuter {
+        inner: NestedInner,
+    }
+
+    #[derive(Facet)]
+    struct NestedChannels {
+        stream: Tx<u32>,
+    }
+
+    #[derive(Facet)]
+    struct OuterChannels {
+        inner: NestedChannels,
+    }
+
+    #[cfg(unix)]
+    #[derive(Facet)]
+    struct FdBundle {
+        descriptors: Vec<vox_types::Fd>,
     }
 
     #[derive(Facet)]
@@ -255,6 +474,13 @@ mod tests {
 
     #[derive(Facet)]
     #[repr(u8)]
+    enum DomNode {
+        Element { tag: String, children: Vec<String> },
+        Text(String),
+    }
+
+    #[derive(Facet)]
+    #[repr(u8)]
     enum BlockPatch {
         TextAppend {
             text: String,
@@ -294,14 +520,78 @@ mod tests {
         ReplayComplete,
     }
 
+    fn service_with_shapes(
+        args_shape: &'static Shape,
+        return_shape: &'static Shape,
+    ) -> ServiceDescriptor {
+        let method = Box::leak(Box::new(MethodDescriptor {
+            id: MethodId(1),
+            service_name: "BadSvc",
+            method_name: "bad",
+            args_shape,
+            args: &[],
+            return_shape,
+            response_wire_shape: <Result<(), vox_types::VoxError> as Facet>::SHAPE,
+            args_have_channels: vox_types::shape_contains_channel(args_shape),
+            doc: None,
+        }));
+        let methods = Box::leak(vec![method as &'static MethodDescriptor].into_boxed_slice());
+        ServiceDescriptor {
+            service_name: "BadSvc",
+            methods,
+            doc: None,
+        }
+    }
+
+    fn dynamic_value_service() -> ServiceDescriptor {
+        let method = method_descriptor::<(DynamicTemplateCall,), DynamicTemplateCall>(
+            "DynamicSvc",
+            "echoDynamic",
+            &["call"],
+            &[None],
+            MethodDescriptorOptions {
+                response_wire_shape:
+                    <Result<DynamicTemplateCall, vox_types::VoxError> as Facet>::SHAPE,
+                doc: None,
+            },
+        );
+        let methods = Box::leak(vec![method].into_boxed_slice());
+        ServiceDescriptor {
+            service_name: "DynamicSvc",
+            methods,
+            doc: None,
+        }
+    }
+
+    fn panic_message(panic: Box<dyn std::any::Any + Send>) -> String {
+        panic
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| panic.downcast_ref::<&'static str>().map(|s| s.to_string()))
+            .expect("panic payload should be a string")
+    }
+
     #[test]
     fn generated_typescript_contains_no_postcard_primitive_usage() {
-        let echo = method_descriptor::<(String,), String>("TestSvc", "echo", &["message"], None);
+        let echo = method_descriptor::<(String,), String>(
+            "TestSvc",
+            "echo",
+            &["message"],
+            &[None],
+            MethodDescriptorOptions {
+                response_wire_shape: <Result<String, vox_types::VoxError> as Facet>::SHAPE,
+                doc: None,
+            },
+        );
         let divide = method_descriptor::<(u64, u64), Result<u64, String>>(
             "TestSvc",
             "divide",
             &["lhs", "rhs"],
-            None,
+            &[None, None],
+            MethodDescriptorOptions {
+                response_wire_shape: <Result<u64, vox_types::VoxError<String>> as Facet>::SHAPE,
+                doc: None,
+            },
         );
         let methods = Box::leak(vec![echo, divide].into_boxed_slice());
         let service = ServiceDescriptor {
@@ -322,12 +612,88 @@ mod tests {
     }
 
     #[test]
+    fn generated_typescript_phon_service_handles_dynamic_value_payloads() {
+        let service = dynamic_value_service();
+        let generated = super::phon::generate_phon_service(&service);
+        assert!(
+            generated.contains("argsSchemaClosure"),
+            "dynamic service must still emit args schema closure:\n{generated}"
+        );
+        assert!(
+            generated.contains("responseSchemaClosure"),
+            "dynamic service must still emit response schema closure:\n{generated}"
+        );
+    }
+
+    #[test]
+    fn generated_typescript_uses_value_type_for_dynamic_payloads() {
+        let service = dynamic_value_service();
+        let generated = generate_service(&service);
+        assert!(
+            generated.contains("import type { Value } from \"@bearcove/phon-schema\";"),
+            "dynamic payloads must import phon Value:\n{generated}"
+        );
+        assert!(
+            generated.contains("args: Value[];"),
+            "dynamic Vec<Value> fields must render as Value[]:\n{generated}"
+        );
+        assert!(
+            generated.contains("kwargs: [string, Value][];"),
+            "dynamic tuple-vector kwargs must render as [string, Value][]:\n{generated}"
+        );
+    }
+
+    #[test]
+    fn generated_typescript_testbed_service_handles_dodeca_dynamic_root() {
+        let service = spec_proto::all_services()
+            .into_iter()
+            .find(|service| service.service_name == "Testbed")
+            .expect("testbed service exists");
+        let generated = generate_service(service);
+        assert!(
+            generated.contains("export interface DodecaTemplateCall"),
+            "testbed generated service must include the dynamic Dodeca root:\n{generated}"
+        );
+        assert!(
+            generated.contains("import type { Value } from \"@bearcove/phon-schema\";"),
+            "testbed generated service must import phon Value:\n{generated}"
+        );
+    }
+
+    #[test]
+    fn generated_typescript_wire_and_handshake_modules_render() {
+        let wire = super::generate_phon_wire();
+        assert!(
+            wire.contains("messageSchemaClosure"),
+            "wire module must render message schema closure:\n{wire}"
+        );
+        let handshake = super::generate_phon_handshake();
+        assert!(
+            handshake.contains("handshakeSchemaClosure"),
+            "handshake module must render handshake schema closure:\n{handshake}"
+        );
+    }
+
+    #[test]
+    // r[verify schema.type-id]
+    // r[verify schema.principles.self-describing]
+    // r[verify schema.principles.once-per-type]
+    // r[verify schema.format.self-contained]
+    // r[verify schema.tracking.transitive]
+    // r[verify schema.method-id]
+    // r[verify rpc.method-id]
+    // r[verify rpc.method-id.algorithm]
+    // r[verify service-macro.is-source-of-truth]
     fn generated_typescript_uses_canonical_service_schemas() {
-        let recurse = method_descriptor::<(RecursiveNode,), RecursiveNode>(
+        let recurse = method_descriptor::<(NestedOuter,), NestedOuter>(
             "RecursiveSvc",
             "recurse",
             &["node"],
-            None,
+            &[None],
+            MethodDescriptorOptions {
+                response_wire_shape: <Result<NestedOuter, vox_types::VoxError> as Facet>::SHAPE,
+                doc: None,
+            },
         );
         let methods = Box::leak(vec![recurse].into_boxed_slice());
         let service = ServiceDescriptor {
@@ -337,13 +703,201 @@ mod tests {
         };
 
         let generated = generate_service(&service);
+        let args_root = vox_phon::schema_id_for_shape(recurse.args_shape).expect("args schema id");
+        let response_root =
+            vox_phon::schema_id_for_shape(recurse.response_wire_shape).expect("response schema id");
+        let args_closure =
+            vox_phon::schema_bytes_for_shape(recurse.args_shape).expect("args schema closure");
+        let response_closure = vox_phon::schema_bytes_for_shape(recurse.response_wire_shape)
+            .expect("response schema closure");
+        let args_bundle = parse_self_describing_unique_bundle(&args_closure, args_root.0);
+        let _response_bundle =
+            parse_self_describing_unique_bundle(&response_closure, response_root.0);
+        let nested_inner_id =
+            vox_phon::schema_id_for_shape(<NestedInner as Facet>::SHAPE).expect("inner schema id");
+
+        assert_eq!(args_bundle.root, args_root);
         assert!(
-            generated.contains("send_schemas"),
-            "generated TypeScript must include canonical service schemas:\n{generated}"
+            args_bundle
+                .schemas
+                .iter()
+                .any(|schema| schema.id == nested_inner_id),
+            "args closure must carry transitively referenced NestedInner schema"
+        );
+        // The phon service schemas: a per-method `{service}Methods` table of
+        // `PhonMethodSchemas` over a phon `Registry` built from self-describing closure
+        // bytes — not the legacy postcard `schema_registry`.
+        assert!(
+            generated.contains("recursiveSvcMethods")
+                && generated.contains("PhonMethodSchemas")
+                && generated.contains("recursiveSvcRegistry = new Registry("),
+            "generated TypeScript must include the phon service schemas:\n{generated}"
         );
         assert!(
             !generated.contains("schema_registry"),
             "generated TypeScript must not include the legacy schema registry:\n{generated}"
+        );
+        assert!(
+            generated.contains(&format!("  \"{}\": {{", hex_u64(crate::method_id(recurse)))),
+            "generated TypeScript method table must use the canonical Vox method ID:\n{generated}"
+        );
+        assert!(
+            generated.contains(&format!("argsRoot: {}n", hex_u64(args_root.0))),
+            "generated TypeScript must use the phon args schema ID:\n{generated}"
+        );
+        assert!(
+            generated.contains(&format!("responseRoot: {}n", hex_u64(response_root.0))),
+            "generated TypeScript must use the phon response schema ID:\n{generated}"
+        );
+        assert!(
+            generated.contains(&format!(
+                "argsSchemaClosure: \"{}\"",
+                hex_bytes(&args_closure)
+            )),
+            "generated TypeScript must embed the self-contained phon args closure:\n{generated}"
+        );
+        assert!(
+            generated.contains(&format!(
+                "responseSchemaClosure: \"{}\"",
+                hex_bytes(&response_closure)
+            )),
+            "generated TypeScript must embed the self-contained phon response closure:\n{generated}"
+        );
+    }
+
+    #[test]
+    // r[verify rpc.caller]
+    // r[verify rpc.service]
+    // r[verify rpc.service.methods]
+    // r[verify rpc.handler]
+    // r[verify rpc.one-service-per-connection]
+    // r[verify rpc.session-setup]
+    fn generated_typescript_emits_rpc_caller_handler_and_session_shapes() {
+        let echo = method_descriptor::<(String,), String>(
+            "TestSvc",
+            "echo",
+            &["message"],
+            &[None],
+            MethodDescriptorOptions {
+                response_wire_shape: <Result<String, vox_types::VoxError> as Facet>::SHAPE,
+                doc: None,
+            },
+        );
+        let divide = method_descriptor::<(u64, u64), Result<u64, String>>(
+            "TestSvc",
+            "divide",
+            &["lhs", "rhs"],
+            &[None, None],
+            MethodDescriptorOptions {
+                response_wire_shape: <Result<u64, vox_types::VoxError<String>> as Facet>::SHAPE,
+                doc: None,
+            },
+        );
+        let methods = Box::leak(vec![echo, divide].into_boxed_slice());
+        let service = ServiceDescriptor {
+            service_name: "TestSvc",
+            methods,
+            doc: None,
+        };
+
+        let generated = generate_service(&service);
+
+        assert!(
+            generated.contains("export interface TestSvcCaller {")
+                && generated.contains("  async echo(message: string): Promise<string> {")
+                && generated.contains("  async divide(lhs: bigint, rhs: bigint):"),
+            "generated TypeScript must expose async caller methods matching the source service:\n{generated}"
+        );
+        assert!(
+            generated.contains("export class TestSvcClient implements TestSvcCaller")
+                && generated.contains("private caller: Caller;")
+                && generated.contains("const __voxResult = await this.caller.call({")
+                && generated.contains("method: \"TestSvc.echo\",")
+                && generated.contains("descriptor: testSvc_echo_method,")
+                && generated.contains("methodSchemas: testSvcMethods["),
+            "generated TypeScript client must delegate request serialization/response handling to Caller:\n{generated}"
+        );
+        assert!(
+            generated.contains("const established = await session.initiator(wsConnector(url),")
+                && generated.contains("metadata: voxServiceMetadata(\"TestSvc\")")
+                && generated
+                    .contains("return new TestSvcClient(established.rootConnection().caller());"),
+            "generated TypeScript connect helper must build a client from the root connection caller:\n{generated}"
+        );
+        assert!(
+            generated.contains("export interface TestSvcHandler {")
+                && generated.contains("  echo(message: string): Promise<string> | string;")
+                && generated.contains("  divide(lhs: bigint, rhs: bigint):"),
+            "generated TypeScript handler must expose service methods with server-side argument types:\n{generated}"
+        );
+        assert!(
+            generated.contains("export class TestSvcDispatcher implements Dispatcher")
+                && generated.contains("private readonly handler: TestSvcHandler;")
+                && generated.contains("getDescriptor(): ServiceDescriptor")
+                && generated.contains("return testSvc_descriptor;")
+                && generated.contains("const result = await this.handler.echo(args[0] as string);")
+                && generated.contains(
+                    "if (result.ok) call.reply(result.value); else call.replyErr(result.error);"
+                ),
+            "generated TypeScript dispatcher must route decoded args to the handler and reply through VoxCall:\n{generated}"
+        );
+    }
+
+    #[test]
+    // r[verify rpc.method-id.no-collisions]
+    fn generated_typescript_method_ids_include_service_name() {
+        let alpha = method_descriptor::<(), ()>(
+            "AlphaSvc",
+            "echo",
+            &[],
+            &[],
+            MethodDescriptorOptions {
+                response_wire_shape: <Result<(), vox_types::VoxError> as Facet>::SHAPE,
+                doc: None,
+            },
+        );
+        let beta = method_descriptor::<(), ()>(
+            "BetaSvc",
+            "echo",
+            &[],
+            &[],
+            MethodDescriptorOptions {
+                response_wire_shape: <Result<(), vox_types::VoxError> as Facet>::SHAPE,
+                doc: None,
+            },
+        );
+
+        assert_ne!(crate::method_id(alpha), crate::method_id(beta));
+
+        let alpha_methods = Box::leak(vec![alpha].into_boxed_slice());
+        let beta_methods = Box::leak(vec![beta].into_boxed_slice());
+        let alpha_service = ServiceDescriptor {
+            service_name: "AlphaSvc",
+            methods: alpha_methods,
+            doc: None,
+        };
+        let beta_service = ServiceDescriptor {
+            service_name: "BetaSvc",
+            methods: beta_methods,
+            doc: None,
+        };
+
+        let alpha_generated = generate_service(&alpha_service);
+        let beta_generated = generate_service(&beta_service);
+        let alpha_entry = format!("  \"{}\": {{", hex_u64(crate::method_id(alpha)));
+        let beta_entry = format!("  \"{}\": {{", hex_u64(crate::method_id(beta)));
+
+        assert!(
+            alpha_generated.contains(&alpha_entry),
+            "Alpha service must emit its service-qualified method ID:\n{alpha_generated}"
+        );
+        assert!(
+            !alpha_generated.contains(&beta_entry),
+            "Alpha service must not reuse Beta service's same-method-name ID:\n{alpha_generated}"
+        );
+        assert!(
+            beta_generated.contains(&beta_entry),
+            "Beta service must emit its service-qualified method ID:\n{beta_generated}"
         );
     }
 
@@ -353,7 +907,11 @@ mod tests {
             "SessionSvc",
             "summarize",
             &["id"],
-            None,
+            &[None],
+            MethodDescriptorOptions {
+                response_wire_shape: <Result<SessionSummary, vox_types::VoxError> as Facet>::SHAPE,
+                doc: None,
+            },
         );
         let methods = Box::leak(vec![summarize].into_boxed_slice());
         let service = ServiceDescriptor {
@@ -374,12 +932,20 @@ mod tests {
     }
 
     #[test]
+    // r[verify schema.exchange.channels]
     fn generated_typescript_emits_channel_schemas() {
-        let subscribe = method_descriptor::<(Tx<u32>, Rx<u32>), ()>(
+        let subscribe = method_descriptor::<(Tx<NestedInner>, Rx<NestedInner>), ()>(
             "StreamSvc",
             "subscribe",
             &["output", "input"],
-            None,
+            &[
+                Some(<NestedInner as facet::Facet>::SHAPE),
+                Some(<NestedInner as facet::Facet>::SHAPE),
+            ],
+            MethodDescriptorOptions {
+                response_wire_shape: <Result<(), vox_types::VoxError> as Facet>::SHAPE,
+                doc: None,
+            },
         );
         let methods = Box::leak(vec![subscribe].into_boxed_slice());
         let service = ServiceDescriptor {
@@ -389,54 +955,114 @@ mod tests {
         };
 
         let generated = generate_service(&service);
+        // Channels ride out-of-band now: a `Tx`/`Rx` arg is not a `channel` node inside the
+        // canonical schema — it is per-method channel metadata (arg index + direction +
+        // element root) in the `{service}Methods` table, with the arg encoded as a u32 wire
+        // index. The element schema itself is a normal type in the registry.
         assert!(
-            generated.contains("kind: { tag: 'channel', direction: 'tx'"),
-            "Tx<T> must be emitted into canonical service schemas:\n{generated}"
+            generated.contains("channels: [{ index: 0, direction: \"tx\""),
+            "Tx<T> arg must be emitted as out-of-band channel metadata:\n{generated}"
         );
         assert!(
-            generated.contains("kind: { tag: 'channel', direction: 'rx'"),
-            "Rx<T> must be emitted into canonical service schemas:\n{generated}"
+            generated.contains("direction: \"rx\", elementRoot:"),
+            "Rx<T> arg must be emitted as out-of-band channel metadata:\n{generated}"
+        );
+        assert!(
+            generated.contains("6368616e6e656c2e6172672e302e74782e656c656d656e74"),
+            "Tx<T> element root must be carried as an auxiliary schema root:\n{generated}"
+        );
+        assert!(
+            generated.contains("6368616e6e656c2e6172672e312e72782e656c656d656e74"),
+            "Rx<T> element root must be carried as an auxiliary schema root:\n{generated}"
+        );
+        assert!(
+            generated.contains("export interface NestedInner"),
+            "named channel element types must be emitted as normal generated types:\n{generated}"
         );
     }
 
     #[test]
-    fn generated_typescript_emits_retry_policy_on_method_descriptors() {
-        let fetch = method_descriptor_with_retry::<(), u64>(
-            "RetrySvc",
-            "fetch",
-            &[],
-            None,
-            RetryPolicy::IDEM,
-        );
-        let effect = method_descriptor_with_retry::<(), Result<u64, String>>(
-            "RetrySvc",
-            "effect",
-            &[],
-            None,
-            RetryPolicy::PERSIST,
-        );
-        let methods = Box::leak(vec![fetch, effect].into_boxed_slice());
-        let service = ServiceDescriptor {
-            service_name: "RetrySvc",
-            methods,
-            doc: None,
-        };
+    // r[verify rpc.channel.placement]
+    fn generated_typescript_rejects_channels_in_return_shapes() {
+        let service = service_with_shapes(<() as Facet>::SHAPE, <Tx<u32> as Facet>::SHAPE);
 
-        let generated = generate_service(&service);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            generate_service(&service);
+        }));
+        let message = panic_message(result.expect_err("generator should reject channel returns"));
+
         assert!(
-            generated.contains("retry: { persist: false, idem: true }"),
-            "generated TypeScript must include retry policy for idem methods:\n{generated}"
+            message.contains("channels are not allowed in return types: BadSvc.bad"),
+            "unexpected panic message: {message}"
         );
+    }
+
+    // r[verify rpc.channel.direct-args]
+    #[test]
+    fn generated_typescript_rejects_nested_channel_args() {
+        let service = service_with_shapes(<(OuterChannels,) as Facet>::SHAPE, <() as Facet>::SHAPE);
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            generate_service(&service);
+        }));
+        let message = panic_message(result.expect_err("generator should reject nested channels"));
+
         assert!(
-            generated.contains("retry: { persist: true, idem: false }"),
-            "generated TypeScript must include retry policy for persist methods:\n{generated}"
+            message.contains("channels are only allowed as direct method arguments: BadSvc.bad"),
+            "unexpected panic message: {message}"
+        );
+    }
+
+    #[test]
+    // r[verify rpc.channel.no-collections]
+    fn generated_typescript_rejects_channels_inside_collections() {
+        let service = service_with_shapes(<(Vec<Tx<u32>>,) as Facet>::SHAPE, <() as Facet>::SHAPE);
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            generate_service(&service);
+        }));
+        let message =
+            panic_message(result.expect_err("generator should reject collection channels"));
+
+        assert!(
+            message.contains("channels are not allowed inside collections: BadSvc.bad"),
+            "unexpected panic message: {message}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    // r[verify transport.fd.capability]
+    fn generated_typescript_rejects_fd_capability_surfaces() {
+        let service = service_with_shapes(<() as Facet>::SHAPE, <FdBundle as Facet>::SHAPE);
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            generate_service(&service);
+        }));
+        let message =
+            panic_message(result.expect_err("generator should reject fd capability surfaces"));
+
+        assert!(
+            message.contains(
+                "TypeScript codegen does not support vox::Fd capabilities: BadSvc.bad return type"
+            ),
+            "unexpected panic message: {message}"
         );
     }
 
     #[test]
     fn generated_typescript_keeps_struct_variants_with_kind_fields_named() {
-        let subscribe =
-            method_descriptor::<(), SubscribeMessage>("ShipSvc", "subscribe", &[], None);
+        let subscribe = method_descriptor::<(), SubscribeMessage>(
+            "ShipSvc",
+            "subscribe",
+            &[],
+            &[],
+            MethodDescriptorOptions {
+                response_wire_shape:
+                    <Result<SubscribeMessage, vox_types::VoxError> as Facet>::SHAPE,
+                doc: None,
+            },
+        );
         let methods = Box::leak(vec![subscribe].into_boxed_slice());
         let service = ServiceDescriptor {
             service_name: "ShipSvc",
@@ -445,37 +1071,75 @@ mod tests {
         };
 
         let generated = generate_service(&service);
+        // Canonical schemas are now opaque phon closure bytes, so struct-variant shape is
+        // verified at the generated-type level: a struct enum variant that has a field
+        // literally named `kind` must stay a struct variant (named fields, including
+        // `kind`) — not collapse to a unit/newtype variant.
         assert!(
             generated.contains(
-                "name: 'ToolCall', index: 1, payload: { tag: 'struct', fields: [{ name: 'id'"
+                "| { tag: 'ToolCall'; id: string; title: string; kind: ToolCallKind | null; status: ToolCallStatus }"
             ),
-            "struct variants with a field named `kind` must stay struct variants in canonical schemas:\n{generated}"
+            "struct variants with a field named `kind` must stay struct variants in the generated type:\n{generated}"
         );
         assert!(
             generated.contains(
-                "name: 'Permission', index: 2, payload: { tag: 'struct', fields: [{ name: 'id'"
+                "| { tag: 'Permission'; id: string; title: string; kind: ToolCallKind | null; resolution: PermissionResolution | null }"
             ),
-            "similar struct variants must keep their named `kind` field in canonical schemas:\n{generated}"
+            "similar struct variants must keep their named `kind` field in the generated type:\n{generated}"
         );
         assert!(
             generated.contains(
-                "name: 'ToolCallUpdate', index: 1, payload: { tag: 'struct', fields: [{ name: 'id'"
+                "| { tag: 'ToolCallUpdate'; id: string; kind: ToolCallKind | null; status: ToolCallStatus }"
             ),
-            "patch variants with a field named `kind` must also stay struct variants in canonical schemas:\n{generated}"
-        );
-        assert!(
-            generated.contains("{ name: 'kind', type_ref:"),
-            "canonical struct variants must preserve the literal field name `kind`:\n{generated}"
+            "patch variants with a field named `kind` must also stay struct variants in the generated type:\n{generated}"
         );
     }
 
+    #[test]
+    fn generated_typescript_uses_alternate_discriminator_for_tag_payload_fields() {
+        let parse = method_descriptor::<(), DomNode>(
+            "DomSvc",
+            "parse",
+            &[],
+            &[],
+            MethodDescriptorOptions {
+                response_wire_shape: <Result<DomNode, vox_types::VoxError> as Facet>::SHAPE,
+                doc: None,
+            },
+        );
+        let methods = Box::leak(vec![parse].into_boxed_slice());
+        let service = ServiceDescriptor {
+            service_name: "DomSvc",
+            methods,
+            doc: None,
+        };
+
+        let generated = generate_service(&service);
+        assert!(
+            generated.contains("{ $tag: 'Element'; tag: string; children: string[] }"),
+            "struct variants with a field named `tag` must use `$tag` as the discriminant:\n{generated}"
+        );
+        assert!(
+            generated.contains("| { $tag: 'Text'; value: string }"),
+            "all variants in that enum must share the `$tag` discriminant:\n{generated}"
+        );
+    }
+
+    // r[verify rpc.fallible]
+    // r[verify rpc.fallible.caller-signature]
+    // r[verify rpc.fallible.vox-error]
+    // r[verify rpc.fallible.vox-error.outcome]
     #[test]
     fn generated_typescript_avoids_parameter_properties_and_types_catch_error() {
         let divide = method_descriptor::<(u64, u64), Result<u64, String>>(
             "StrictSvc",
             "divide",
             &["lhs", "rhs"],
-            None,
+            &[None, None],
+            MethodDescriptorOptions {
+                response_wire_shape: <Result<u64, vox_types::VoxError<String>> as Facet>::SHAPE,
+                doc: None,
+            },
         );
         let methods = Box::leak(vec![divide].into_boxed_slice());
         let service = ServiceDescriptor {
@@ -500,6 +1164,22 @@ mod tests {
         assert!(
             generated.contains("catch (e: any)"),
             "fallible client methods must type catch binding for strict TypeScript:\n{generated}"
+        );
+        assert!(
+            generated.contains("return { ok: true, value: __voxResult }"),
+            "fallible client methods must wrap successful responses:\n{generated}"
+        );
+        assert!(
+            generated.contains("if (e instanceof RpcError && e.isUserError())"),
+            "fallible client methods must distinguish user errors from protocol/runtime errors:\n{generated}"
+        );
+        assert!(
+            generated.contains("return { ok: false, error: e.userError }"),
+            "fallible client methods must return user errors in the public Result shape:\n{generated}"
+        );
+        assert!(
+            generated.contains("throw e;"),
+            "fallible client methods must rethrow non-user errors:\n{generated}"
         );
     }
 }

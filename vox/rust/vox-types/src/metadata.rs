@@ -1,213 +1,221 @@
-use std::borrow::Cow;
+//! Metadata: a self-describing key→value map carried on the wire as a dynamic
+//! [`Value`] (`r[rpc.metadata]`). Values are strings, byte runs, or `u64`s.
+//!
+//! There are no duplicate keys (a later write for a key replaces the earlier one).
+//! Per-key handling conventions are encoded directly in the key string: a leading
+//! `#` marks the value sensitive, `-` marks it no-propagate, and `-#` does both.
+//!
+//! Build metadata with the fluent [`metadata`] builder; read it through the
+//! [`MetadataExt`] accessors. Construction leans on `Default` — an absent metadata
+//! field is just `Value::default()` (null), which reads as empty.
 
-use facet::Facet;
+use facet_value::{VBytes, VObject, VString, Value};
 
+/// Metadata is a self-describing [`Value`] — an object of string keys to values
+/// (string / bytes / `u64`), or null when empty.
 // r[impl rpc.metadata]
-// r[impl rpc.metadata.value]
-/// Metadata value.
-///
-/// Uses `Cow` so values can be borrowed (from wire data) or owned (runtime-constructed).
-#[repr(u8)]
-#[derive(Debug, Clone, PartialEq, Eq, Facet)]
-pub enum MetadataValue<'a> {
-    String(Cow<'a, str>) = 0,
-    Bytes(Cow<'a, [u8]>) = 1,
-    U64(u64) = 2,
-}
-
-/// Metadata entry flags.
-///
-/// Flags control metadata handling behavior.
-// r[impl rpc.metadata.flags]
-// r[impl rpc.metadata.flags.sensitive]
-// r[impl rpc.metadata.flags.no-propagate]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Facet)]
-#[repr(transparent)]
-#[facet(transparent)]
-pub struct MetadataFlags(u64);
-
-impl MetadataFlags {
-    /// No special handling.
-    pub const NONE: Self = Self(0);
-
-    /// Value MUST NOT be logged, traced, or included in error messages.
-    pub const SENSITIVE: Self = Self(1 << 0);
-
-    /// Value MUST NOT be forwarded to downstream calls.
-    pub const NO_PROPAGATE: Self = Self(1 << 1);
-
-    /// Returns `true` if all flags in `other` are set in `self`.
-    pub fn contains(self, other: Self) -> bool {
-        (self.0 & other.0) == other.0
-    }
-}
-
-impl std::ops::BitOr for MetadataFlags {
-    type Output = Self;
-    fn bitor(self, rhs: Self) -> Self {
-        Self(self.0 | rhs.0)
-    }
-}
-
-impl std::ops::BitOrAssign for MetadataFlags {
-    fn bitor_assign(&mut self, rhs: Self) {
-        self.0 |= rhs.0;
-    }
-}
-
-impl std::ops::BitAnd for MetadataFlags {
-    type Output = Self;
-    fn bitand(self, rhs: Self) -> Self {
-        Self(self.0 & rhs.0)
-    }
-}
-
-impl std::ops::BitAndAssign for MetadataFlags {
-    fn bitand_assign(&mut self, rhs: Self) {
-        self.0 &= rhs.0;
-    }
-}
-
 // r[impl rpc.metadata.keys]
-// r[impl rpc.metadata.duplicates]
-/// A single metadata entry with a key, value, and flags.
-///
-/// Uses `Cow` for the key so entries can be borrowed (from wire data) or owned.
-#[derive(Debug, Clone, PartialEq, Eq, Facet)]
-pub struct MetadataEntry<'a> {
-    pub key: Cow<'a, str>,
-    pub value: MetadataValue<'a>,
-    pub flags: MetadataFlags,
-}
-
-impl<'a> MetadataValue<'a> {
-    /// Convert to a `'static` lifetime by cloning any borrowed data.
-    pub fn into_owned(self) -> MetadataValue<'static> {
-        match self {
-            MetadataValue::String(s) => MetadataValue::String(Cow::Owned(s.into_owned())),
-            MetadataValue::Bytes(b) => MetadataValue::Bytes(Cow::Owned(b.into_owned())),
-            MetadataValue::U64(n) => MetadataValue::U64(n),
-        }
-    }
-}
-
-impl<'a> MetadataEntry<'a> {
-    /// Create a string metadata entry with no flags.
-    pub fn str(key: impl Into<Cow<'a, str>>, value: impl Into<Cow<'a, str>>) -> Self {
-        MetadataEntry {
-            key: key.into(),
-            value: MetadataValue::String(value.into()),
-            flags: MetadataFlags::NONE,
-        }
-    }
-
-    /// Create a u64 metadata entry with no flags.
-    pub fn u64(key: impl Into<Cow<'a, str>>, value: u64) -> Self {
-        MetadataEntry {
-            key: key.into(),
-            value: MetadataValue::U64(value),
-            flags: MetadataFlags::NONE,
-        }
-    }
-
-    /// Create a bytes metadata entry with no flags.
-    pub fn bytes(key: impl Into<Cow<'a, str>>, value: impl Into<Cow<'a, [u8]>>) -> Self {
-        MetadataEntry {
-            key: key.into(),
-            value: MetadataValue::Bytes(value.into()),
-            flags: MetadataFlags::NONE,
-        }
-    }
-
-    /// Set flags on this entry.
-    pub fn with_flags(mut self, flags: MetadataFlags) -> Self {
-        self.flags = flags;
-        self
-    }
-
-    /// Convert to a `'static` lifetime by cloning any borrowed data.
-    pub fn into_owned(self) -> MetadataEntry<'static> {
-        MetadataEntry {
-            key: Cow::Owned(self.key.into_owned()),
-            value: self.value.into_owned(),
-            flags: self.flags,
-        }
-    }
-}
-
-/// Builder for constructing a `Metadata` list.
-pub struct MetadataBuilder<'a> {
-    entries: Metadata<'a>,
-}
-
-impl<'a> MetadataBuilder<'a> {
-    /// Add a string entry.
-    pub fn str(mut self, key: impl Into<Cow<'a, str>>, value: impl Into<Cow<'a, str>>) -> Self {
-        self.entries.push(MetadataEntry::str(key, value));
-        self
-    }
-
-    /// Add a u64 entry.
-    pub fn u64(mut self, key: impl Into<Cow<'a, str>>, value: u64) -> Self {
-        self.entries.push(MetadataEntry::u64(key, value));
-        self
-    }
-
-    /// Add a bytes entry.
-    pub fn bytes(mut self, key: impl Into<Cow<'a, str>>, value: impl Into<Cow<'a, [u8]>>) -> Self {
-        self.entries.push(MetadataEntry::bytes(key, value));
-        self
-    }
-
-    /// Finish building and return the metadata list.
-    pub fn done(self) -> Metadata<'a> {
-        self.entries
-    }
-}
-
-/// Start building a metadata list.
-pub fn metadata_build<'a>() -> MetadataBuilder<'a> {
-    MetadataBuilder {
-        entries: Vec::new(),
-    }
-}
-
 // r[impl rpc.metadata.unknown]
-/// A list of metadata entries.
-pub type Metadata<'a> = Vec<MetadataEntry<'a>>;
+// r[impl schema.interaction.metadata]
+pub type Metadata = Value;
 
-/// Convert a `Metadata<'a>` to `Metadata<'static>` by cloning any borrowed data.
-pub fn metadata_into_owned(metadata: Metadata<'_>) -> Metadata<'static> {
-    metadata
-        .into_iter()
-        .map(MetadataEntry::into_owned)
-        .collect()
+/// Insert (or replace) `key`→`value` into a metadata [`Value`], creating the object
+/// if needed. The construction primitive the builder and the middleware
+/// push-helpers share.
+// r[impl rpc.metadata.value]
+// r[impl rpc.metadata.duplicates]
+pub fn meta_set(metadata: &mut Metadata, key: &str, value: impl Into<Value>) {
+    if metadata.as_object().is_none() {
+        *metadata = Value::from(VObject::new());
+    }
+    let obj = metadata
+        .as_object_mut()
+        .expect("metadata was just made an object");
+    obj.insert(VString::new(key), value.into());
 }
+
+/// Whether `key` uses the metadata sensitive sigil (`#key` or `-#key`).
+// r[impl rpc.metadata.sigils]
+#[must_use]
+pub fn metadata_key_is_redacted(key: &str) -> bool {
+    key.strip_prefix('-').unwrap_or(key).starts_with('#')
+}
+
+/// Whether `key` uses the metadata no-propagate sigil (`-key` or `-#key`).
+// r[impl rpc.metadata.sigils]
+#[must_use]
+pub fn metadata_key_is_no_propagate(key: &str) -> bool {
+    key.starts_with('-')
+}
+
+/// Start building metadata fluently: `metadata().str("trace", "abc").u64("n", 5).build()`.
+#[must_use]
+pub fn metadata() -> MetadataBuilder {
+    MetadataBuilder {
+        obj: VObject::new(),
+    }
+}
+
+/// Fluent builder producing a metadata [`Value`] object.
+pub struct MetadataBuilder {
+    obj: VObject,
+}
+
+impl MetadataBuilder {
+    /// Add (or replace) a string entry.
+    #[must_use]
+    pub fn str(mut self, key: impl Into<VString>, value: impl Into<VString>) -> Self {
+        self.obj.insert(key, Value::from(value.into()));
+        self
+    }
+
+    /// Add (or replace) a `u64` entry.
+    #[must_use]
+    pub fn u64(mut self, key: impl Into<VString>, value: u64) -> Self {
+        self.obj.insert(key, Value::from(value));
+        self
+    }
+
+    /// Add (or replace) a byte-run entry.
+    #[must_use]
+    pub fn bytes(mut self, key: impl Into<VString>, value: impl Into<VBytes>) -> Self {
+        self.obj.insert(key, Value::from(value.into()));
+        self
+    }
+
+    /// Finish building, returning the metadata [`Value`].
+    #[must_use]
+    pub fn build(self) -> Metadata {
+        Value::from(self.obj)
+    }
+}
+
+/// Read accessors for a metadata [`Value`]. Implemented for [`Value`]; a null
+/// value reads as empty.
+pub trait MetadataExt {
+    /// The string value at `key`, if present and a string.
+    fn meta_str(&self, key: &str) -> Option<&str>;
+    /// The `u64` value at `key`, if present and a number.
+    fn meta_u64(&self, key: &str) -> Option<u64>;
+    /// The byte-run value at `key`, if present and bytes.
+    fn meta_bytes(&self, key: &str) -> Option<&[u8]>;
+    /// Whether there are no metadata entries.
+    fn meta_is_empty(&self) -> bool;
+    /// The number of entries (0 when null).
+    fn meta_len(&self) -> usize;
+    /// Iterate the `(key, value)` entries.
+    fn meta_entries(&self) -> Vec<(&str, &Value)>;
+}
+
+impl MetadataExt for Value {
+    fn meta_str(&self, key: &str) -> Option<&str> {
+        self.as_object()?.get(key)?.as_string().map(VString::as_str)
+    }
+
+    fn meta_u64(&self, key: &str) -> Option<u64> {
+        self.as_object()?.get(key)?.as_number()?.to_u64()
+    }
+
+    fn meta_bytes(&self, key: &str) -> Option<&[u8]> {
+        self.as_object()?.get(key)?.as_bytes().map(VBytes::as_slice)
+    }
+
+    fn meta_is_empty(&self) -> bool {
+        self.meta_len() == 0
+    }
+
+    fn meta_len(&self) -> usize {
+        self.as_object().map_or(0, VObject::len)
+    }
+
+    fn meta_entries(&self) -> Vec<(&str, &Value)> {
+        match self.as_object() {
+            Some(obj) => obj.iter().map(|(k, v)| (k.as_str(), v)).collect(),
+            None => Vec::new(),
+        }
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Compatibility shims (delegate to the builder / accessors)
+// ----------------------------------------------------------------------------
 
 /// Look up a string metadata value by key.
-pub fn metadata_get_str<'a>(metadata: &'a [MetadataEntry<'a>], key: &str) -> Option<&'a str> {
-    metadata.iter().find_map(|e| {
-        if e.key == key {
-            match &e.value {
-                MetadataValue::String(s) => Some(s.as_ref()),
-                _ => None,
-            }
-        } else {
-            None
-        }
-    })
+pub fn metadata_get_str<'a>(metadata: &'a Metadata, key: &str) -> Option<&'a str> {
+    metadata.meta_str(key)
 }
 
-/// Look up a u64 metadata value by key.
-pub fn metadata_get_u64(metadata: &[MetadataEntry], key: &str) -> Option<u64> {
-    metadata.iter().find_map(|e| {
-        if e.key == key {
-            match &e.value {
-                MetadataValue::U64(n) => Some(*n),
-                _ => None,
-            }
-        } else {
-            None
-        }
-    })
+/// Look up a `u64` metadata value by key.
+pub fn metadata_get_u64(metadata: &Metadata, key: &str) -> Option<u64> {
+    metadata.meta_u64(key)
+}
+
+/// Metadata is already an owned [`Value`]; conversion is the identity.
+#[must_use]
+pub fn metadata_into_owned(metadata: Metadata) -> Metadata {
+    metadata
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // r[verify rpc.metadata]
+    // r[verify rpc.metadata.value]
+    // r[verify rpc.metadata.keys]
+    // r[verify rpc.metadata.duplicates]
+    // r[verify rpc.metadata.unknown]
+    // r[verify schema.interaction.metadata]
+    #[test]
+    fn builder_and_accessors_round_trip() {
+        let m = metadata()
+            .str("trace", "abc")
+            .u64("n", 99)
+            .bytes("blob", &[1u8, 2, 3][..])
+            .str("Trace", "case-sensitive")
+            .str("unknown-key", "ignored unless read explicitly")
+            .str("trace", "replacement")
+            .build();
+
+        assert_eq!(m.meta_str("trace"), Some("replacement"));
+        assert_eq!(m.meta_str("Trace"), Some("case-sensitive"));
+        assert_eq!(m.meta_str("TRACE"), None);
+        assert_eq!(m.meta_u64("n"), Some(99));
+        assert_eq!(m.meta_bytes("blob"), Some(&[1u8, 2, 3][..]));
+        let entries: Vec<&str> = m.meta_entries().into_iter().map(|(k, _)| k).collect();
+        assert_eq!(entries.len(), 5);
+        assert!(entries.contains(&"trace"));
+        assert!(entries.contains(&"Trace"));
+        assert!(entries.contains(&"unknown-key"));
+        assert!(entries.contains(&"n"));
+        assert!(entries.contains(&"blob"));
+    }
+
+    // r[verify rpc.metadata.sigils]
+    #[test]
+    fn key_sigils_are_conventions_on_the_key_string() {
+        assert!(!metadata_key_is_redacted("regular.metadata"));
+        assert!(!metadata_key_is_no_propagate("regular.metadata"));
+
+        assert!(metadata_key_is_redacted("#sensitive.metadata"));
+        assert!(!metadata_key_is_no_propagate("#sensitive.metadata"));
+
+        assert!(!metadata_key_is_redacted("-no-propagate-metadata"));
+        assert!(metadata_key_is_no_propagate("-no-propagate-metadata"));
+
+        assert!(metadata_key_is_redacted(
+            "-#sensitive-and-no-propagate-metadata"
+        ));
+        assert!(metadata_key_is_no_propagate(
+            "-#sensitive-and-no-propagate-metadata"
+        ));
+    }
+
+    #[test]
+    fn default_is_empty() {
+        let m = Metadata::default();
+        assert!(m.meta_is_empty());
+        assert_eq!(m.meta_len(), 0);
+        assert_eq!(m.meta_str("x"), None);
+    }
 }

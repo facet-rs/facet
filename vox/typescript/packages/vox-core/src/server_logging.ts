@@ -1,4 +1,4 @@
-import { MetadataFlagValues } from "@bearcove/vox-wire";
+import { metadataKeyIsRedacted } from "@bearcove/vox-wire";
 import type { RequestContext } from "./request_context.ts";
 import type { ServerCallOutcome, ServerMiddleware } from "./server_middleware.ts";
 
@@ -9,15 +9,21 @@ export interface ServerLoggingOptions {
   logger?: Pick<Console, "debug">;
 }
 
+/** Render a raw metadata value for log display. */
+function renderMetadataValue(value: unknown): unknown {
+  if (typeof value === "bigint") return value.toString();
+  if (value instanceof Uint8Array) return `<${value.length} bytes>`;
+  return value;
+}
+
+// r[impl rpc.metadata.sigils]
 function metadataForLog(context: RequestContext): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  for (const [key, value, flags] of context.metadata) {
-    if ((flags & MetadataFlagValues.SENSITIVE) !== 0n) {
+  for (const [key, value] of context.metadata.entries()) {
+    if (metadataKeyIsRedacted(key)) {
       out[key] = "[REDACTED]";
-    } else if (value instanceof Uint8Array) {
-      out[key] = `<${value.length} bytes>`;
     } else {
-      out[key] = value;
+      out[key] = renderMetadataValue(value);
     }
   }
   return out;
@@ -26,6 +32,9 @@ function metadataForLog(context: RequestContext): Record<string, unknown> {
 export function serverLoggingMiddleware(
   options: ServerLoggingOptions = {},
 ): ServerMiddleware {
+  // r[impl rpc.observability.runtime]
+  // r[impl rpc.observability.driver]
+  // r[impl rpc.observability.session-errors]
   const logger = options.logger ?? console;
   const logMetadata = options.logMetadata ?? false;
 

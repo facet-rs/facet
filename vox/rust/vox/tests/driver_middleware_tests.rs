@@ -71,7 +71,7 @@ async fn middleware_hooks_fire_in_order() {
             .expect("server establish")
     });
 
-    let client = vox::initiator_on(client_link, vox::TransportMode::Bare)
+    let client = vox::initiator_on(client_link)
         .establish::<EchoClient>()
         .await
         .expect("client establish");
@@ -115,11 +115,7 @@ impl vox::ClientMiddleware for MetadataInjectingMiddleware {
         request: &'a mut vox::ClientRequest<'call, 'a>,
     ) -> vox::BoxMiddlewareFuture<'a> {
         Box::pin(async move {
-            request.push_string_metadata(
-                "x-test",
-                "injected".to_string(),
-                vox::MetadataFlags::NONE,
-            );
+            request.push_string_metadata("x-test", "injected".to_string());
         })
     }
 }
@@ -135,10 +131,7 @@ struct MetadataProbeService;
 
 impl MetadataProbe for MetadataProbeService {
     async fn check_metadata(&self, cx: &vox::RequestContext<'_>) -> bool {
-        cx.metadata().iter().any(|e| {
-            e.key == "x-test"
-                && matches!(&e.value, vox::MetadataValue::String(s) if s == "injected")
-        })
+        vox::MetadataExt::meta_str(cx.metadata(), "x-test") == Some("injected")
     }
 }
 
@@ -154,7 +147,7 @@ async fn middleware_can_inject_metadata() {
             .expect("server establish")
     });
 
-    let client = vox::initiator_on(client_link, vox::TransportMode::Bare)
+    let client = vox::initiator_on(client_link)
         .establish::<MetadataProbeClient>()
         .await
         .expect("client establish");

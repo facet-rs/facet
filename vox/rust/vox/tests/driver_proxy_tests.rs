@@ -1,8 +1,6 @@
 //! Tests for proxy_connections — transparent call forwarding between sessions.
 
-use vox::{
-    ConnectionSettings, Driver, Metadata, MetadataEntry, Parity, SessionHandle, memory_link_pair,
-};
+use vox::{ConnectionSettings, Driver, Metadata, Parity, SessionHandle, memory_link_pair};
 
 #[vox::service]
 trait Echo {
@@ -27,7 +25,7 @@ impl vox::ConnectionAcceptor for ProxyAcceptor {
         &self,
         request: &vox::ConnectionRequest,
         connection: vox::PendingConnection,
-    ) -> Result<(), Metadata<'static>> {
+    ) -> Result<(), Metadata> {
         if request.service() == "Noop" {
             connection.handle_with(());
             return Ok(());
@@ -42,7 +40,7 @@ impl vox::ConnectionAcceptor for ProxyAcceptor {
                         max_concurrent_requests: 64,
                         initial_channel_credit: 16,
                     },
-                    vec![MetadataEntry::str("vox-service", "Echo")],
+                    vox_types::metadata().str("vox-service", "Echo").build(),
                 )
                 .await
                 .expect("open upstream connection");
@@ -71,7 +69,7 @@ async fn proxy_connections_forwards_calls() {
     });
 
     // host <-> guest-b root session
-    let _host_to_b = vox::initiator_on(host_b_link, vox::TransportMode::Bare)
+    let _host_to_b = vox::initiator_on(host_b_link)
         .establish::<vox::NoopClient>()
         .await
         .expect("host<->guest-b establish");
@@ -91,7 +89,7 @@ async fn proxy_connections_forwards_calls() {
     });
 
     // guest-a <-> host root session
-    let _guest_a_root = vox::initiator_on(guest_a_link, vox::TransportMode::Bare)
+    let _guest_a_root = vox::initiator_on(guest_a_link)
         .establish::<vox::NoopClient>()
         .await
         .expect("guest-a establish");
@@ -105,7 +103,7 @@ async fn proxy_connections_forwards_calls() {
                 max_concurrent_requests: 64,
                 initial_channel_credit: 16,
             },
-            vec![MetadataEntry::str("vox-service", "Echo")],
+            vox_types::metadata().str("vox-service", "Echo").build(),
         )
         .await
         .expect("open proxy connection");
@@ -120,7 +118,7 @@ async fn proxy_connections_forwards_calls() {
     assert_eq!(result, 777);
 
     guest_a_session
-        .close_connection(proxy_conn_id, vec![])
+        .close_connection(proxy_conn_id, Default::default())
         .await
         .expect("close proxy connection");
 

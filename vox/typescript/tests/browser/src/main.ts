@@ -7,18 +7,15 @@ import {
   channel,
   session,
   voxServiceMetadata,
-  type LinkAttachment,
-  type LinkSource,
 } from "@bearcove/vox-core";
 import { connectTestbed, TestbedClient } from "@bearcove/vox-generated/testbed.generated.ts";
-import { WsLink, WsLinkSource } from "@bearcove/vox-ws";
+import { WsLinkSource } from "@bearcove/vox-ws";
 
 // Make test results available to Playwright
 declare global {
   interface Window {
     testResults: TestResult[];
     runTests: (wsUrl: string) => Promise<void>;
-    runReconnectTest: (wsUrl: string) => Promise<void>;
     testsComplete: boolean;
   }
 }
@@ -49,25 +46,6 @@ function addResult(name: string, passed: boolean, error?: string) {
     div.className = passed ? "pass" : "fail";
     div.textContent = `${passed ? "PASS" : "FAIL"}: ${name}${error ? ` - ${error}` : ""}`;
     resultsDiv.appendChild(div);
-  }
-}
-
-class TrackingWsLinkSource implements LinkSource<WsLink> {
-  private readonly inner: WsLinkSource;
-  currentLink: WsLink | null = null;
-
-  constructor(url: string) {
-    this.inner = new WsLinkSource(url);
-  }
-
-  async nextLink(): Promise<LinkAttachment<WsLink>> {
-    const attachment = await this.inner.nextLink();
-    this.currentLink = attachment.link;
-    return attachment;
-  }
-
-  closeCurrentLink(): void {
-    this.currentLink?.close();
   }
 }
 
@@ -204,7 +182,7 @@ async function testComplex(client: TestbedClient): Promise<void> {
   // Test: processMessage - enum with different payload types
   log("Testing processMessage (Text)...");
   const textMsg = await client.processMessage({ tag: "Text", value: "hello" });
-  if (textMsg.tag !== "Text" || textMsg.value !== "Processed: hello") {
+  if (textMsg.tag !== "Text" || textMsg.value !== "processed: hello") {
     throw new Error(`processMessage (Text) mismatch: got ${JSON.stringify(textMsg)}`);
   }
   addResult("processMessage (Text)", true);
@@ -513,49 +491,9 @@ async function runTests(wsUrl: string): Promise<void> {
 
 window.runTests = runTests;
 
-async function runReconnectTest(wsUrl: string): Promise<void> {
-  log(`Connecting to ${wsUrl} with reconnect test...`);
-
-  try {
-    const source = new TrackingWsLinkSource(wsUrl);
-    const established = await session.initiator(source, {
-      resumable: true,
-      metadata: voxServiceMetadata("Testbed"),
-    });
-    const client = new TestbedClient(established.rootConnection().caller());
-
-    log("Starting delayed echo call...");
-    const delayedEcho = client.echo("__vox_reconnect__");
-
-    await new Promise((resolve) => globalThis.setTimeout(resolve, 50));
-    log("Dropping active WebSocket during in-flight call...");
-    source.closeCurrentLink();
-
-    const result = await delayedEcho;
-    if (result !== "__vox_reconnect__") {
-      throw new Error(`Reconnect echo mismatch: expected __vox_reconnect__, got ${result}`);
-    }
-    addResult("reconnects and resumes in-flight echo", true);
-    log("Reconnect test passed!");
-  } catch (e) {
-    const error = e instanceof Error ? e.message : String(e);
-    log(`Error: ${error}`);
-    addResult("reconnect", false, error);
-  }
-
-  window.testsComplete = true;
-}
-
-window.runReconnectTest = runReconnectTest;
-
 // Auto-run if WS_URL is in the URL hash
 const urlParams = new URLSearchParams(window.location.search);
 const wsUrl = urlParams.get("ws");
-const scenario = urlParams.get("scenario");
 if (wsUrl) {
-  if (scenario === "reconnect") {
-    runReconnectTest(wsUrl);
-  } else {
-    runTests(wsUrl);
-  }
+  runTests(wsUrl);
 }

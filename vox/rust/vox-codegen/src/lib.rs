@@ -74,6 +74,7 @@
 
 pub mod code_writer;
 mod render;
+pub mod schema_compat;
 pub mod targets;
 
 use vox_types::MethodDescriptor;

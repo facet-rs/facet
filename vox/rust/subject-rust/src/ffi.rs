@@ -14,6 +14,7 @@ use crate::TestbedService;
 
 static BOOTSTRAPPED: AtomicBool = AtomicBool::new(false);
 static TRACING_INITIALIZED: AtomicBool = AtomicBool::new(false);
+const SUBJECT_RUNTIME_STACK_BYTES: usize = 32 * 1024 * 1024;
 fn ffi_log(message: &str) {
     eprintln!("{message}");
     if let Ok(mut file) = OpenOptions::new()
@@ -95,7 +96,10 @@ fn bootstrap_service_once(peer: *const vox_link_vtable) {
     let peer = peer as usize;
     thread::spawn(move || {
         ffi_log("[subject-rust ffi] runtime thread: starting");
-        let runtime = Builder::new_multi_thread().enable_all().build();
+        let runtime = Builder::new_multi_thread()
+            .thread_stack_size(SUBJECT_RUNTIME_STACK_BYTES)
+            .enable_all()
+            .build();
         let Ok(runtime) = runtime else {
             ffi_log("[subject-rust ffi] runtime thread: failed to create tokio runtime");
             return;

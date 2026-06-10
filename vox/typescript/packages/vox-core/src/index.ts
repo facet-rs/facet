@@ -8,17 +8,21 @@ export {
   Tx,
   Rx,
   channel,
-  bindChannelsForTypeRefs,
-  finalizeBoundChannelsForTypeRefs,
+  bindPhonChannels,
+  type TrySendResult,
+  type BoundChannels,
+  type ChannelCredit,
   type MethodDescriptor,
   type ServiceDescriptor,
   type VoxCall,
 } from "./channeling/index.ts";
 
 export {
-  argElementRefsForMethod,
-  type MethodSendSchemas,
-  type ServiceSendSchemas,
+  SchemaTracker,
+  SchemaSendTracker,
+  type BindingDirection,
+  type PhonMethodSchemas,
+  type PhonChannelMeta,
 } from "./schema_tracker.ts";
 
 export {
@@ -38,19 +42,16 @@ export {
   SessionHandle,
   ConnectionHandle,
   SessionError,
-  SessionRegistry,
   session,
-  type SessionAcceptOutcome,
   type IncomingCall,
+  type ConnectionDebugSnapshot,
   type SessionBuilderOptions,
   type SessionTransportOptions,
 } from "./session.ts";
 
 export {
   Driver,
-  InMemoryOperationStore,
   type Dispatcher,
-  type OperationStore,
 } from "./driver.ts";
 
 export { RequestContext } from "./request_context.ts";
@@ -64,6 +65,14 @@ export {
   serverLoggingMiddleware,
   type ServerLoggingOptions,
 } from "./server_logging.ts";
+
+export {
+  observerMetricLabels,
+  splitQualifiedMethodName,
+  type ObserverMetricLabelInput,
+  type ObserverMetricLabelKey,
+  type ObserverMetricLabels,
+} from "./observer.ts";
 
 export {
   Extensions,
@@ -91,15 +100,8 @@ export {
 export {
   ClientMetadata,
   type ClientMetadataValue,
-  clientMetadataToEntries,
-  metadataEntriesToClientMetadata,
+  clientMetadataToWire,
 } from "./metadata.ts";
-
-export {
-  OPERATION_ID_METADATA_KEY,
-  RETRY_SUPPORT_METADATA_KEY,
-  RETRY_SUPPORT_VERSION,
-} from "./retry.ts";
 
 export {
   setVoxLogger,
@@ -109,7 +111,6 @@ export {
 
 export {
   type HandshakeResult,
-  type MetadataEntry,
   type Metadata,
   voxServiceMetadata,
 } from "./handshake.ts";

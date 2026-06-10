@@ -1,14 +1,14 @@
 //! Spec-level wire types.
 //!
-//! Canonical definitions live in `docs/content/spec/_index.md` and `docs/content/shm-spec/_index.md`.
+//! Canonical definitions live in `docs/content/spec/_index.md`.
 
 use std::marker::PhantomData;
 
 use crate::{
-    BindingDirection, CborPayload, ChannelId, ConnectionId, Metadata, MethodId, RequestId,
+    BindingDirection, ChannelId, ConnectionId, Metadata, MethodId, RequestId, SchemaBytes,
 };
 use facet::{Facet, FacetOpaqueAdapter, OpaqueDeserialize, OpaqueSerialize, PtrConst, Shape};
-use vox_schema::opaque_encoded_borrowed;
+use vox_phon::raw_opaque_bytes;
 
 /// Default per-channel initial credit and inbound queue capacity.
 // r[impl rpc.flow-control.credit.initial]
@@ -32,9 +32,6 @@ pub struct ConnectionSettings {
     #[facet(default = DEFAULT_INITIAL_CHANNEL_CREDIT)]
     pub initial_channel_credit: u32,
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct SessionResumeKey(pub [u8; 16]);
 
 impl<'payload> Message<'payload> {
     // Message has no methods on purpose. it's all just plain data.
@@ -102,35 +99,35 @@ structstruck::strike! {
                 // r[impl connection.open]
                 // r[impl connection.virtual]
                 // r[impl session.connection-settings.open]
-                ConnectionOpen(pub struct ConnectionOpen<'payload> {
+                ConnectionOpen(pub struct ConnectionOpen {
                     /// Connection limits advertised by the opener.
                     /// Parity is included in ConnectionSettings.
                     pub connection_settings: ConnectionSettings,
 
                     /// Metadata associated with the connection.
-                    pub metadata: Metadata<'payload>,
+                    pub metadata: Metadata,
                 }),
 
                 /// Accept a virtual connection request — sent on the connection ID requested.
                 // r[impl session.connection-settings.open]
-                ConnectionAccept(pub struct ConnectionAccept<'payload> {
+                ConnectionAccept(pub struct ConnectionAccept {
                     /// Connection limits advertised by the accepter.
                     pub connection_settings: ConnectionSettings,
 
                     /// Metadata associated with the connection.
-                    pub metadata: Metadata<'payload>,
+                    pub metadata: Metadata,
                 }),
 
                 /// Reject a virtual connection request — sent on the connection ID requested.
-                ConnectionReject(pub struct ConnectionReject<'payload> {
+                ConnectionReject(pub struct ConnectionReject {
                     /// Metadata associated with the rejection.
-                    pub metadata: Metadata<'payload>,
+                    pub metadata: Metadata,
                 }),
 
                 /// Close a virtual connection. Trying to close conn 0 is a protocol error.
-                ConnectionClose(pub struct ConnectionClose<'payload> {
+                ConnectionClose(pub struct ConnectionClose {
                     /// Metadata associated with the close.
-                    pub metadata: Metadata<'payload>,
+                    pub metadata: Metadata,
                 }),
 
 
@@ -149,37 +146,46 @@ structstruck::strike! {
                             pub enum RequestBody<'payload> {
                                 /// Perform a request (or a "call")
                                 Call(pub struct RequestCall<'payload> {
-                                    /// Unique method identifier, hash of fully qualified name + args etc.
+                                    /// Unique method identifier, hash of service and method names.
+                                    // r[impl rpc.method-id]
                                     pub method_id: MethodId,
 
+                                    /// Channel IDs for the `Tx`/`Rx` handles that appear in `args`,
+                                    /// allocated by the caller, in encode walk-order. Travels
+                                    /// out-of-band from the args payload: each handle encodes only a
+                                    /// small index into this list, and the runtime re-associates them
+                                    /// at decode (mirrors the `Fd` → fd-table indirection).
+                                    // r[impl rpc.request] r[impl rpc.channel.allocation]
+                                    pub channels: Vec<ChannelId>,
+
                                     /// Metadata associated with this call
-                                    pub metadata: Metadata<'payload>,
+                                    pub metadata: Metadata,
 
                                     /// Argument tuple
                                     pub args: Payload<'payload>,
 
-                                    /// CBOR-encoded schemas for this call's args tuple
+                                    /// phon schema-closure bytes for this call's args tuple.
                                     /// Non-empty on the first call for each method on a connection.
-                                    pub schemas: CborPayload,
+                                    pub schemas: SchemaBytes,
                                 }),
 
                                 /// Respond to a request
                                 Response(struct RequestResponse<'payload> {
                                     /// Arbitrary response metadata
-                                    pub metadata: Metadata<'payload>,
+                                    pub metadata: Metadata,
 
                                     /// Return value (`Result<T, VoxError<E>>`, where E could be Infallible depending on signature)
                                     pub ret: Payload<'payload>,
 
-                                    /// CBOR-encoded schemas for this response's return type.
+                                    /// phon schema-closure bytes for this response's return type.
                                     /// Non-empty on the first response for each method on a connection.
-                                    pub schemas: CborPayload,
+                                    pub schemas: SchemaBytes,
                                 }),
 
                                 /// Cancel processing of a request.
-                                Cancel(struct RequestCancel<'payload> {
+                                Cancel(struct RequestCancel {
                                     /// Arbitrary cancel metadata
-                                    pub metadata: Metadata<'payload>,
+                                    pub metadata: Metadata,
                                 }),
                             },
                     }
@@ -196,8 +202,8 @@ structstruck::strike! {
                     /// Whether the binding applies to request args or responses.
                     pub direction: BindingDirection,
 
-                    /// CBOR-encoded schema payload for this binding.
-                    pub schemas: CborPayload,
+                    /// phon schema-closure bytes for this binding.
+                    pub schemas: SchemaBytes,
                 }),
 
                 // ========================================================================
@@ -222,16 +228,16 @@ structstruck::strike! {
 
                                 /// Close a channel — sent by the sender of the channel when they're gracefully done
                                 /// with a channel.
-                                Close(pub struct ChannelClose<'payload> {
+                                Close(pub struct ChannelClose {
                                     /// Metadata associated with closing the channel.
-                                    pub metadata: Metadata<'payload>,
+                                    pub metadata: Metadata,
                                 }),
 
                                 /// Reset a channel — sent by the receiver of a channel when they would like the sender
                                 /// to please, stop sending items through.
-                                Reset(pub struct ChannelReset<'payload> {
+                                Reset(pub struct ChannelReset {
                                     /// Metadata associated with resetting the channel.
-                                    pub metadata: Metadata<'payload>,
+                                    pub metadata: Metadata,
                                 }),
 
                                 /// Grant additional send credit to a channel sender.
@@ -249,12 +255,14 @@ structstruck::strike! {
                 // ========================================================================
 
                 /// Liveness probe for dead-peer detection.
+                // r[impl session.keepalive]
                 Ping(pub struct Ping {
                     /// Opaque nonce echoed by the Pong response.
                     pub nonce: u64,
                 }),
 
                 /// Reply to a keepalive Ping.
+                // r[impl session.keepalive]
                 Pong(pub struct Pong {
                     /// Echo of the received ping nonce.
                     pub nonce: u64,
@@ -267,26 +275,25 @@ structstruck::strike! {
 
 /// A payload — arguments for a request, or return type for a response.
 ///
-/// Uses `#[facet(opaque = PayloadAdapter)]` so that format crates handle
+/// Uses `#[facet(opaque = PayloadAdapter)]` so the codec handles
 /// serialization/deserialization through the adapter contract:
-/// - **Send path:** `serialize_map` extracts `(ptr, shape)` from `Borrowed` or `Owned`.
-/// - **Recv path:** `deserialize_build` produces `RawBorrowed` or `RawOwned`.
-// r[impl zerocopy.payload]
+/// - **Send path:** `serialize_map` either encodes a [`Value`](Payload::Value)'s
+///   `(ptr, shape)` or passes an [`Encoded`](Payload::Encoded) span through verbatim.
+/// - **Recv path:** `deserialize_build` produces an [`Encoded`](Payload::Encoded)
+///   span borrowed from the wire.
 #[derive(Debug, Facet)]
 #[repr(u8)]
 #[facet(opaque = PayloadAdapter, traits(Debug))]
 pub enum Payload<'payload> {
-    // r[impl zerocopy.payload.borrowed]
-    /// Type-erased pointer to caller-owned memory + its Shape.
+    /// Type-erased pointer to caller-owned memory + its Shape, encoded in place.
     Value {
         ptr: PtrConst,
         shape: &'static Shape,
         _lt: PhantomData<&'payload ()>,
     },
 
-    // r[impl zerocopy.payload.bytes]
-    /// Raw bytes borrowed from the backing (zero-copy).
-    PostcardBytes(&'payload [u8]),
+    /// Already-encoded payload bytes, borrowed from the backing.
+    Encoded(&'payload [u8]),
 }
 
 impl<'payload> Payload<'payload> {
@@ -321,7 +328,7 @@ impl<'payload> Payload<'payload> {
                 shape,
                 _lt: PhantomData,
             },
-            Payload::PostcardBytes(bytes) => Payload::PostcardBytes(bytes),
+            Payload::Encoded(bytes) => Payload::Encoded(bytes),
         }
     }
 }
@@ -331,7 +338,6 @@ impl<'payload> Payload<'payload> {
 unsafe impl<'payload> Send for Payload<'payload> {}
 
 /// Adapter that bridges [`Payload`] through the opaque field contract.
-// r[impl zerocopy.framing.value.opaque]
 pub struct PayloadAdapter;
 
 impl FacetOpaqueAdapter for PayloadAdapter {
@@ -342,7 +348,7 @@ impl FacetOpaqueAdapter for PayloadAdapter {
     fn serialize_map(value: &Self::SendValue<'_>) -> OpaqueSerialize {
         match value {
             Payload::Value { ptr, shape, .. } => OpaqueSerialize { ptr: *ptr, shape },
-            Payload::PostcardBytes(bytes) => opaque_encoded_borrowed(bytes),
+            Payload::Encoded(bytes) => raw_opaque_bytes(bytes),
         }
     }
 
@@ -350,7 +356,7 @@ impl FacetOpaqueAdapter for PayloadAdapter {
         input: OpaqueDeserialize<'de>,
     ) -> Result<Self::RecvValue<'de>, Self::Error> {
         match input {
-            OpaqueDeserialize::Borrowed(bytes) => Ok(Payload::PostcardBytes(bytes)),
+            OpaqueDeserialize::Borrowed(bytes) => Ok(Payload::Encoded(bytes)),
             OpaqueDeserialize::Owned(_) => {
                 Err("payload bytes must be borrowed from backing, not owned".into())
             }
@@ -366,18 +372,91 @@ impl crate::MsgFamily for MessageFamily {
 }
 
 // SAFETY: all types below are covariant in their lifetime parameter
-// (they contain only Cow<'a, str>, Vec<MetadataEntry<'a>>, etc.).
+// (they contain only `&'a str`, `Payload<'a>`, etc.).
 crate::impl_reborrow!(
     Message,
     RequestMessage,
     RequestCall,
     RequestResponse,
+    ChannelMessage,
+    ChannelItem,
+);
+
+// These payloads carry only owned data now (metadata is a self-describing `Value`,
+// settings are `Copy`), so they have no lifetime parameter — their `Reborrow` is the
+// identity. They are still projected out of a `SelfRef` (the session pattern-matches
+// them), which requires the impl.
+// SAFETY: owned types with no lifetime parameter; `Ref<'a> = Self` is trivially sound.
+macro_rules! impl_reborrow_owned {
+    ($($ty:ident),* $(,)?) => {
+        $(
+            unsafe impl crate::Reborrow for $ty {
+                type Ref<'a> = $ty;
+            }
+        )*
+    };
+}
+impl_reborrow_owned!(
     ConnectionOpen,
     ConnectionAccept,
     ConnectionReject,
     ConnectionClose,
-    ChannelMessage,
-    ChannelItem,
     ChannelClose,
     ChannelReset,
+    SchemaMessage,
 );
+
+#[cfg(test)]
+mod tests {
+    use super::{ChannelBody, MessagePayload, RequestBody};
+    use facet::Facet;
+    use facet_core::{Type, UserType};
+
+    fn enum_variant_names<T: Facet<'static>>() -> Vec<&'static str> {
+        match T::SHAPE.ty {
+            Type::User(UserType::Enum(enum_type)) => enum_type
+                .variants
+                .iter()
+                .map(|variant| variant.name)
+                .collect(),
+            other => panic!("expected enum shape, got {other:?}"),
+        }
+    }
+
+    // r[verify session.message.payloads]
+    #[test]
+    fn message_payload_shape_lists_compact_session_payloads() {
+        let payloads = enum_variant_names::<MessagePayload<'static>>();
+        assert_eq!(
+            payloads,
+            [
+                "ProtocolError",
+                "ConnectionOpen",
+                "ConnectionAccept",
+                "ConnectionReject",
+                "ConnectionClose",
+                "RequestMessage",
+                "SchemaMessage",
+                "ChannelMessage",
+                "Ping",
+                "Pong",
+            ]
+        );
+
+        for handshake_variant in ["Hello", "HelloYourself", "LetsGo", "Sorry"] {
+            assert!(
+                !payloads.contains(&handshake_variant),
+                "{handshake_variant} is a phon handshake message, not a compact MessagePayload"
+            );
+        }
+
+        assert_eq!(
+            enum_variant_names::<RequestBody<'static>>(),
+            ["Call", "Response", "Cancel"]
+        );
+        assert_eq!(
+            enum_variant_names::<ChannelBody<'static>>(),
+            ["Item", "Close", "Reset", "GrantCredit"]
+        );
+    }
+}

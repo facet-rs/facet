@@ -1,24 +1,85 @@
-use facet::Facet;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use moire::task::FutureExt;
 use vox_types::{
     Backing, ChannelBody, ChannelClose, ChannelDirection, ChannelGrantCredit, ChannelId,
     ChannelItem, ChannelMessage, ChannelSink, ConnectionSettings, HandshakeResult,
-    IncomingChannelMessage, Message, MessagePayload, Metadata, MetadataEntry, MethodId, Parity,
-    Payload, RequestBody, RequestCall, RequestCancel, RequestMessage, RequestResponse, RetryPolicy,
-    Rx, SelfRef, SessionRole, Tx, VoxError, channel, ensure_operation_id,
+    IncomingChannelMessage, Message, MessagePayload, Metadata, MethodId, Parity, Payload,
+    ReplySink, RequestBody, RequestCall, RequestCancel, RequestId, RequestMessage, RequestResponse,
+    Rx, SelfRef, SessionRole, Tx, VoxError, channel,
 };
 
 use super::utils::*;
 use crate::session::{
-    ConnectionAcceptor, ConnectionMessage, ConnectionRequest, PendingConnection,
-    SessionAcceptOutcome, SessionError, SessionHandle, SessionKeepaliveConfig, SessionRegistry,
-    acceptor_conduit, acceptor_on, initiator_conduit, initiator_on, proxy_connections,
+    ConnectionAcceptor, ConnectionMessage, ConnectionRequest, PendingConnection, SessionError,
+    SessionHandle, SessionKeepaliveConfig, acceptor_conduit, acceptor_on, initiator_conduit,
+    initiator_on, proxy_connections,
 };
-use crate::{Attachment, BareConduit, Driver, NoopClient, TransportMode, memory_link_pair};
+use crate::{BareConduit, Driver, NoopClient, memory_link_pair};
+
+fn acceptor_handshake_with_request_limits(our_max: u32, peer_max: u32) -> HandshakeResult {
+    let mut handshake = test_acceptor_handshake();
+    handshake.our_settings.max_concurrent_requests = our_max;
+    handshake.peer_settings.max_concurrent_requests = peer_max;
+    handshake
+}
+
+fn initiator_handshake_with_request_limits(our_max: u32, peer_max: u32) -> HandshakeResult {
+    let mut handshake = test_initiator_handshake();
+    handshake.our_settings.max_concurrent_requests = our_max;
+    handshake.peer_settings.max_concurrent_requests = peer_max;
+    handshake
+}
+
+async fn wait_for_outstanding_requests(caller: &crate::Caller, expected: usize) {
+    for _ in 0..50 {
+        let outstanding = caller
+            .debug_snapshot()
+            .connections
+            .iter()
+            .map(|connection| connection.outstanding_requests)
+            .sum::<usize>();
+        if outstanding == expected {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("timed out waiting for {expected} outstanding requests");
+}
+
+async fn send_raw_root_call(
+    sender: &crate::session::ConnectionSender,
+    request_id: RequestId,
+    value: u32,
+) {
+    sender
+        .send(ConnectionMessage::Request(RequestMessage {
+            id: request_id,
+            body: RequestBody::Call(RequestCall {
+                channels: Vec::new(),
+                method_id: MethodId(1),
+                args: Payload::outgoing(&value),
+                schemas: Default::default(),
+                metadata: Default::default(),
+            }),
+        }))
+        .await
+        .expect("send raw call");
+}
+
+async fn expect_protocol_close(caller: &crate::Caller, label: &str) {
+    tokio::time::timeout(Duration::from_millis(500), caller.closed())
+        .await
+        .unwrap_or_else(|_| panic!("{label} connection should close after protocol violation"));
+    let snapshot = caller.debug_snapshot();
+    assert_eq!(
+        snapshot.connections[0].close_reason,
+        Some(vox_types::ConnectionCloseReason::Protocol),
+        "{label} close reason"
+    );
+}
 
 // r[verify rpc.caller.liveness.refcounted]
 #[tokio::test]
@@ -64,6 +125,7 @@ async fn dropping_one_root_caller_clone_keeps_session_alive_until_last_drop() {
     let response = caller
         .caller
         .call(RequestCall {
+            channels: Vec::new(),
             method_id: MethodId(1),
             args: Payload::outgoing(&42_u32),
             schemas: Default::default(),
@@ -73,10 +135,10 @@ async fn dropping_one_root_caller_clone_keeps_session_alive_until_last_drop() {
         .expect("call should still succeed while one root caller remains");
     let response = response.get();
     let ret_bytes = match &response.ret {
-        Payload::PostcardBytes(bytes) => *bytes,
+        Payload::Encoded(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
     };
-    let echoed: u32 = vox_postcard::from_slice(ret_bytes).expect("deserialize response");
+    let echoed: u32 = vox_phon::from_slice(ret_bytes).expect("deserialize response");
     assert_eq!(echoed, 42);
 
     drop(caller);
@@ -92,6 +154,11 @@ async fn dropping_one_root_caller_clone_keeps_session_alive_until_last_drop() {
         .expect("server session task failed");
 }
 
+// r[verify rpc]
+// r[verify rpc.channel]
+// r[verify rpc.channel.allocation]
+// r[verify rpc.channel.direction]
+// r[verify rpc.channel.lifecycle]
 // r[verify rpc.channel.binding.caller-args.tx]
 #[tokio::test]
 async fn dropping_root_caller_keeps_session_alive_while_bound_stream_rx_exists() {
@@ -128,7 +195,7 @@ async fn dropping_root_caller_keeps_session_alive_while_bound_stream_rx_exists()
     };
     // Serializing the args binds the Tx's paired Rx via the thread-local binder.
     let _bytes = vox_types::channel::with_channel_binder(root_caller.caller.driver(), || {
-        vox_postcard::to_vec(&args).expect("serialize args")
+        vox_phon::to_vec(&args).expect("serialize args")
     });
     // The first allocated channel ID is 1 (odd parity).
     let channel_id = ChannelId(1);
@@ -207,10 +274,7 @@ async fn cancel_aborts_in_flight_handler() {
     let server_task = moire::task::spawn(
         async move {
             acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .on_connection(BlockingHandler {
-                    was_cancelled,
-                    retry: RetryPolicy::VOLATILE,
-                })
+                .on_connection(BlockingHandler { was_cancelled })
                 .establish::<NoopClient>()
                 .await
                 .expect("server handshake failed")
@@ -235,6 +299,7 @@ async fn cancel_aborts_in_flight_handler() {
             caller
                 .caller
                 .call(RequestCall {
+                    channels: Vec::new(),
                     method_id: MethodId(1),
                     args: Payload::outgoing(&args_value),
                     schemas: Default::default(),
@@ -266,11 +331,11 @@ async fn cancel_aborts_in_flight_handler() {
     let response = result.expect("call should receive a response");
     let response = response.get();
     let ret_bytes = match &response.ret {
-        Payload::PostcardBytes(bytes) => *bytes,
+        Payload::Encoded(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
     };
     let error: Result<(), VoxError> =
-        vox_postcard::from_slice(ret_bytes).expect("deserialize response");
+        vox_phon::from_slice(ret_bytes).expect("deserialize response");
     assert!(
         matches!(error, Err(VoxError::Cancelled)),
         "expected Err(VoxError::Cancelled) in response payload"
@@ -291,414 +356,14 @@ async fn cancel_aborts_in_flight_handler() {
     );
 }
 
-#[tokio::test]
-async fn cancel_does_not_abort_persist_handler() {
-    let (client_conduit, server_conduit) = message_conduit_pair();
-
-    let was_cancelled = Arc::new(AtomicBool::new(false));
-    let was_cancelled_check = Arc::clone(&was_cancelled);
-    let release = Arc::new(tokio::sync::Notify::new());
-    let release_server = Arc::clone(&release);
-
-    let server_task = moire::task::spawn(
-        async move {
-            acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .on_connection(PersistentReplyingHandler {
-                    was_cancelled,
-                    release: release_server,
-                })
-                .establish::<NoopClient>()
-                .await
-                .expect("server handshake failed")
-        }
-        .named("server_setup"),
-    );
-
-    let caller = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<NoopClient>()
-        .await
-        .expect("client handshake failed");
-    let client_sender = caller.caller.driver().connection_sender().clone();
-
-    let _server_caller_guard = server_task.await.expect("server setup failed");
-
-    let call_task = moire::task::spawn(
-        async move {
-            caller
-                .caller
-                .call(RequestCall {
-                    method_id: MethodId(1),
-                    args: Payload::outgoing(&99_u32),
-                    schemas: Default::default(),
-                    metadata: Default::default(),
-                })
-                .await
-        }
-        .named("client_call_persist"),
-    );
-
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-    client_sender
-        .send(ConnectionMessage::Request(RequestMessage {
-            id: vox_types::RequestId(1),
-            body: RequestBody::Cancel(RequestCancel {
-                metadata: Metadata::default(),
-            }),
-        }))
-        .await
-        .expect("send cancel");
-
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    assert!(
-        !was_cancelled_check.load(Ordering::SeqCst),
-        "persist handler should not be cancelled by explicit cancel"
-    );
-
-    release.notify_waiters();
-
-    let response = tokio::time::timeout(std::time::Duration::from_millis(500), call_task)
-        .await
-        .expect("timed out waiting for persist handler to finish")
-        .expect("call task join")
-        .expect("persist call should still receive a response");
-    let response = response.get();
-    let ret_bytes = match &response.ret {
-        Payload::PostcardBytes(bytes) => *bytes,
-        _ => panic!("expected incoming payload in response"),
-    };
-    let value: u32 = vox_postcard::from_slice(ret_bytes).expect("deserialize response");
-    assert_eq!(value, 123);
-}
-
-#[tokio::test]
-async fn caller_injects_operation_id_when_peer_supports_retry() {
-    let (client_conduit, server_conduit) = message_conduit_pair();
-
-    let server_task = moire::task::spawn(
-        async move {
-            acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .on_connection(OperationIdHandler)
-                .establish::<NoopClient>()
-                .await
-                .expect("server handshake failed")
-        }
-        .named("server_setup"),
-    );
-
-    let caller = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<NoopClient>()
-        .await
-        .expect("client handshake failed");
-
-    let _server_caller_guard = server_task.await.expect("server setup failed");
-
-    let response = caller
-        .caller
-        .call(RequestCall {
-            method_id: MethodId(1),
-            args: Payload::outgoing(&7_u32),
-            schemas: Default::default(),
-            metadata: Default::default(),
-        })
-        .await
-        .expect("call should succeed");
-
-    let response = response.get();
-    let ret_bytes = match &response.ret {
-        Payload::PostcardBytes(bytes) => *bytes,
-        _ => panic!("expected incoming payload in response"),
-    };
-    let operation_id: u64 = vox_postcard::from_slice(ret_bytes).expect("deserialize response");
-    assert_ne!(operation_id, 0);
-}
-
-#[tokio::test]
-async fn builder_uses_custom_operation_store() {
-    let (client_conduit, server_conduit) = message_conduit_pair();
-    let store = Arc::new(CountingOperationStore::new());
-    let store_check = Arc::clone(&store);
-
-    let server_task = moire::task::spawn(
-        async move {
-            acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .operation_store(store)
-                .on_connection(OperationIdHandler)
-                .establish::<NoopClient>()
-                .await
-                .expect("server handshake failed")
-        }
-        .named("server_setup"),
-    );
-
-    let caller = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<NoopClient>()
-        .await
-        .expect("client handshake failed");
-
-    let _server_caller_guard = server_task.await.expect("server setup failed");
-
-    let _response = caller
-        .caller
-        .call(RequestCall {
-            method_id: MethodId(1),
-            args: Payload::outgoing(&7_u32),
-            schemas: Default::default(),
-            metadata: Default::default(),
-        })
-        .await
-        .expect("call should succeed");
-
-    assert_ne!(store_check.admits.load(Ordering::SeqCst), 0);
-}
-
-/// After disconnect + resume, replaying a sealed operation with the same
-/// operation ID must succeed — the schema recv tracker is reset on the new
-/// connection so re-sent schemas are accepted.
-#[tokio::test]
-async fn operation_replay_after_resume_delivers_sealed_outcome() {
-    let (client_link1, client_break1, server_link1, server_break1) = breakable_link_pair(64);
-    let (client_link2, client_break2, server_link2, server_break2) = breakable_link_pair(64);
-
-    let registry = SessionRegistry::default();
-    let runs = Arc::new(AtomicUsize::new(0));
-    let runs_check = Arc::clone(&runs);
-    let release = Arc::new(tokio::sync::Notify::new());
-
-    let source = TestLinkSource::new([
-        Attachment::initiator(client_link1),
-        Attachment::initiator(client_link2),
-    ]);
-
-    let (server_established, client_established) = tokio::try_join!(
-        tokio::time::timeout(
-            Duration::from_secs(2),
-            acceptor_on(server_link1)
-                .session_registry(registry.clone())
-                .on_connection(ReplayHandler {
-                    runs,
-                    release: Arc::clone(&release),
-                })
-                .metadata(vec![MetadataEntry::str("vox-service", "Noop")])
-                .establish_or_resume::<NoopClient>(),
-        ),
-        tokio::time::timeout(
-            Duration::from_secs(2),
-            crate::initiator(source, TransportMode::Bare).establish::<NoopClient>(),
-        ),
-    )
-    .expect("initial session establishment timed out");
-    let server_caller = match server_established.expect("server handshake failed") {
-        SessionAcceptOutcome::Established(client) => client,
-        SessionAcceptOutcome::Resumed => panic!("first accept should establish a new session"),
-    };
-    let caller = client_established.expect("client handshake failed");
-    let client_sh = caller.session.clone().unwrap();
-
-    // First call — handler runs, response is sealed in the operation store.
-    let mut metadata = Metadata::default();
-    ensure_operation_id(&mut metadata, vox_types::OperationId(99));
-
-    let call_task = moire::task::spawn(
-        {
-            let caller = caller.clone();
-            let metadata = metadata.clone();
-            async move {
-                caller
-                    .caller
-                    .call(RequestCall {
-                        method_id: MethodId(1),
-                        args: Payload::outgoing(&11_u32),
-                        schemas: Default::default(),
-                        metadata,
-                    })
-                    .await
-            }
-        }
-        .named("first_call"),
-    );
-
-    // Give the handler time to start, then release it.
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    release.notify_waiters();
-
-    let response = call_task
-        .await
-        .expect("join")
-        .expect("first call should succeed");
-    let response = response.get();
-    let ret_bytes = match &response.ret {
-        Payload::PostcardBytes(bytes) => *bytes,
-        _ => panic!("expected incoming payload"),
-    };
-    let value: u32 = vox_postcard::from_slice(ret_bytes).expect("deserialize");
-    assert_eq!(value, 11);
-    assert_eq!(runs_check.load(Ordering::SeqCst), 1);
-
-    // Disconnect — the source-based initiator auto-reconnects,
-    // the registry-based acceptor resumes the existing session.
-    client_break1.close().await;
-    server_break1.close().await;
-
-    let server_accept_result = tokio::time::timeout(
-        Duration::from_secs(2),
-        acceptor_on(server_link2)
-            .session_registry(registry.clone())
-            .on_connection(ReplayHandler {
-                runs: Arc::new(AtomicUsize::new(0)),
-                release: Arc::clone(&release),
-            })
-            .metadata(vec![MetadataEntry::str("vox-service", "Noop")])
-            .establish_or_resume::<NoopClient>(),
-    )
-    .await
-    .expect("timed out waiting for resume");
-    match server_accept_result.expect("server accept should succeed") {
-        SessionAcceptOutcome::Resumed => {}
-        SessionAcceptOutcome::Established(_) => {
-            panic!("registry accept should have resumed the existing session")
-        }
-    }
-
-    // Replay the same operation ID — should get the sealed response without
-    // running the handler again, and without duplicate schema errors.
-    let replayed = caller
-        .caller
-        .call(RequestCall {
-            method_id: MethodId(1),
-            args: Payload::outgoing(&11_u32),
-            schemas: Default::default(),
-            metadata,
-        })
-        .await
-        .expect("replay after resume should succeed");
-    let replayed = replayed.get();
-    let ret_bytes = match &replayed.ret {
-        Payload::PostcardBytes(bytes) => *bytes,
-        _ => panic!("expected incoming payload"),
-    };
-    let value: u32 = vox_postcard::from_slice(ret_bytes).expect("deserialize");
-    assert_eq!(value, 11);
-    assert_eq!(
-        runs_check.load(Ordering::SeqCst),
-        1,
-        "handler should only run once"
-    );
-
-    drop(server_caller);
-    let _ = client_sh.shutdown();
-    client_break2.close().await;
-    server_break2.close().await;
-}
-
-/// Sending the same operation ID twice on the same connection (without
-/// disconnect) is a protocol error — the second call should be rejected.
-#[tokio::test]
-async fn duplicate_operation_id_on_same_connection_is_rejected() {
-    let (client_conduit, server_conduit) = message_conduit_pair();
-
-    let release = Arc::new(tokio::sync::Notify::new());
-    let release_server = Arc::clone(&release);
-
-    let server_task = moire::task::spawn(
-        async move {
-            acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .on_connection(ReplayHandler {
-                    runs: Arc::new(AtomicUsize::new(0)),
-                    release: release_server,
-                })
-                .establish::<NoopClient>()
-                .await
-                .expect("server handshake failed")
-        }
-        .named("server_setup"),
-    );
-
-    let caller = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<NoopClient>()
-        .await
-        .expect("client handshake failed");
-
-    let _server_caller_guard = server_task.await.expect("server setup failed");
-
-    let mut metadata = Metadata::default();
-    ensure_operation_id(&mut metadata, vox_types::OperationId(99));
-
-    // First call — blocks in the handler until release.
-    let first = moire::task::spawn(
-        {
-            let caller = caller.clone();
-            let metadata = metadata.clone();
-            async move {
-                caller
-                    .caller
-                    .call(RequestCall {
-                        method_id: MethodId(1),
-                        args: Payload::outgoing(&11_u32),
-                        schemas: Default::default(),
-                        metadata,
-                    })
-                    .await
-            }
-        }
-        .named("first_call"),
-    );
-
-    // Give it time to reach the server.
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    // Second call with the same operation ID on the same connection — should
-    // attach to the live operation and both get the same response.
-    let second = moire::task::spawn(
-        {
-            let caller = caller.clone();
-            let metadata = metadata.clone();
-            async move {
-                caller
-                    .caller
-                    .call(RequestCall {
-                        method_id: MethodId(1),
-                        args: Payload::outgoing(&11_u32),
-                        schemas: Default::default(),
-                        metadata,
-                    })
-                    .await
-            }
-        }
-        .named("second_call"),
-    );
-
-    // Release the handler.
-    release.notify_waiters();
-
-    // Both should succeed with the same value.
-    let r1 = first
-        .await
-        .expect("first join")
-        .expect("first call should succeed");
-    let r2 = second
-        .await
-        .expect("second join")
-        .expect("second call should succeed");
-
-    for response in [r1, r2] {
-        let response = response.get();
-        let ret_bytes = match &response.ret {
-            Payload::PostcardBytes(bytes) => *bytes,
-            _ => panic!("expected incoming payload"),
-        };
-        let value: u32 = vox_postcard::from_slice(ret_bytes).expect("deserialize");
-        assert_eq!(value, 11);
-    }
-}
-
-/// Verify that MessagePlan built from identical schemas can round-trip a message.
+/// Verify that a `MessagePlan` built from identical schemas (the schema-identical
+/// degenerate of the envelope compat path) can round-trip a message.
+// r[verify session.handshake.protocol-schema.session-scoped]
 #[test]
 fn message_plan_from_identical_schemas_round_trips() {
-    let schemas = vox_types::extract_schemas(<Message<'static> as Facet<'static>>::SHAPE)
-        .expect("schema extraction")
-        .schemas
-        .clone();
+    // The handshake carries the peer's Message schema as phon bytes; here it is
+    // our own (identical), so the compat program takes the schema-identical path.
+    let our_schema = vox_phon::schema_bytes::<Message<'static>>().expect("schema bytes");
     let handshake_result = HandshakeResult {
         role: SessionRole::Initiator,
         our_settings: ConnectionSettings {
@@ -711,28 +376,29 @@ fn message_plan_from_identical_schemas_round_trips() {
             max_concurrent_requests: 64,
             initial_channel_credit: 16,
         },
-        peer_supports_retry: false,
-        session_resume_key: None,
-        peer_resume_key: None,
-        our_schema: schemas.clone(),
-        peer_schema: schemas,
-        peer_metadata: vec![MetadataEntry::str("vox-service", "Noop")],
+        our_schema: our_schema.clone(),
+        peer_schema: our_schema,
+        peer_metadata: vox_types::metadata().str("vox-service", "Noop").build(),
     };
     let plan = crate::MessagePlan::from_handshake(&handshake_result)
         .expect("should build message plan from identical schemas");
 
-    // Serialize a simple Ping message
+    // Build the compat decode program from the plan's writer schema.
+    let writer = vox_phon::parse_schema_bytes(&plan.writer_schema).expect("parse writer schema");
+    let program =
+        vox_phon::build_decode_program::<Message<'static>>(&writer).expect("build decode program");
+
+    // Encode a Ping and decode it back through the program, borrowing via SelfRef.
     let msg = Message {
         connection_id: vox_types::ConnectionId::ROOT,
         payload: MessagePayload::Ping(vox_types::Ping { nonce: 42 }),
     };
-    let bytes = vox_postcard::to_vec(&msg).expect("serialize message");
+    let bytes = vox_phon::to_vec(&msg).expect("serialize message");
     let backing = Backing::Boxed(bytes.into());
-
-    // Deserialize with the plan
-    let decoded: SelfRef<Message<'static>> =
-        crate::deserialize_postcard_with_plan(backing, &plan.plan, &plan.registry)
-            .expect("should deserialize with identical-schema plan");
+    let decoded: SelfRef<Message<'static>> = SelfRef::try_new(backing, |b| {
+        vox_phon::decode_with_program::<Message<'static>>(&program, b)
+    })
+    .expect("should decode with identical-schema program");
     let decoded = decoded.get();
     assert_eq!(decoded.connection_id, vox_types::ConnectionId::ROOT);
     match &decoded.payload {
@@ -741,9 +407,17 @@ fn message_plan_from_identical_schemas_round_trips() {
     }
 }
 
-/// Minimal test: establish via real CBOR handshake, send one call, verify handler runs.
+/// Minimal test: establish via real phon handshake, send one call, verify handler runs.
+// r[verify rpc]
+// r[verify session]
+// r[verify session.role]
+// r[verify session.connection-settings]
+// r[verify session.message]
+// r[verify session.message.connection-id]
+// r[verify connection]
+// r[verify connection.root]
 #[tokio::test]
-async fn call_through_cbor_handshake_reaches_handler() {
+async fn call_through_phon_handshake_reaches_handler() {
     let (client_link, server_link) = memory_link_pair(64);
 
     let (server_result, client_result) = tokio::try_join!(
@@ -755,17 +429,22 @@ async fn call_through_cbor_handshake_reaches_handler() {
         ),
         tokio::time::timeout(
             Duration::from_secs(1),
-            initiator_on(client_link, TransportMode::Bare).establish::<NoopClient>(),
+            initiator_on(client_link).establish::<NoopClient>(),
         ),
     )
     .expect("session establishment timed out");
 
     let _server_caller = server_result.expect("server establish failed");
     let caller = client_result.expect("client establish failed");
+    assert_eq!(
+        caller.caller.debug_snapshot().connections[0].connection_id,
+        vox_types::ConnectionId::ROOT
+    );
 
     let response = tokio::time::timeout(
         Duration::from_secs(1),
         caller.caller.call(RequestCall {
+            channels: Vec::new(),
             method_id: MethodId(1),
             args: Payload::outgoing(&42_u32),
             schemas: Default::default(),
@@ -778,10 +457,10 @@ async fn call_through_cbor_handshake_reaches_handler() {
 
     let response = response.get();
     let ret_bytes = match &response.ret {
-        Payload::PostcardBytes(bytes) => *bytes,
+        Payload::Encoded(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
     };
-    let value: u32 = vox_postcard::from_slice(ret_bytes).expect("deserialize response");
+    let value: u32 = vox_phon::from_slice(ret_bytes).expect("deserialize response");
     assert_eq!(value, 42);
 }
 
@@ -797,6 +476,256 @@ impl vox_types::Handler<crate::DriverReplySink> for PanicHandler {
     ) {
         panic!("intentional handler panic");
     }
+}
+
+#[derive(Clone, Copy)]
+struct PipeliningHandler;
+
+impl vox_types::Handler<crate::DriverReplySink> for PipeliningHandler {
+    async fn handle(
+        &self,
+        call: SelfRef<RequestCall<'static>>,
+        reply: crate::DriverReplySink,
+        _schemas: std::sync::Arc<vox_types::SchemaRecvTracker>,
+    ) {
+        let method_id = call.get().method_id;
+        if method_id == MethodId(1) {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        let result = if method_id == MethodId(1) {
+            1_u32
+        } else {
+            2_u32
+        };
+        reply
+            .send_reply(RequestResponse {
+                ret: Payload::outgoing(&result),
+                schemas: Default::default(),
+                metadata: Default::default(),
+            })
+            .await;
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ScopedErrorHandler;
+
+impl vox_types::Handler<crate::DriverReplySink> for ScopedErrorHandler {
+    async fn handle(
+        &self,
+        call: SelfRef<RequestCall<'static>>,
+        reply: crate::DriverReplySink,
+        _schemas: std::sync::Arc<vox_types::SchemaRecvTracker>,
+    ) {
+        let method_id = call.get().method_id;
+        if method_id == MethodId(1) {
+            reply
+                .send_error::<std::convert::Infallible>(VoxError::InvalidPayload(
+                    "scoped failure".into(),
+                ))
+                .await;
+            return;
+        }
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let result = 2_u32;
+        reply
+            .send_reply(RequestResponse {
+                ret: Payload::outgoing(&result),
+                schemas: Default::default(),
+                metadata: Default::default(),
+            })
+            .await;
+    }
+}
+
+// r[verify rpc.pipelining]
+#[tokio::test]
+async fn slow_incoming_request_does_not_block_later_request() {
+    let (client_conduit, server_conduit) = message_conduit_pair();
+
+    let server_task = moire::task::spawn(
+        async move {
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
+                .on_connection(PipeliningHandler)
+                .establish::<NoopClient>()
+                .await
+                .expect("server handshake failed")
+        }
+        .named("server_setup"),
+    );
+
+    let caller = initiator_conduit(client_conduit, test_initiator_handshake())
+        .establish::<NoopClient>()
+        .await
+        .expect("client handshake failed");
+
+    let _server_caller_guard = server_task.await.expect("server setup failed");
+
+    let first_caller = caller.caller.clone();
+    let first_call = tokio::spawn(async move {
+        first_caller
+            .call(RequestCall {
+                channels: Vec::new(),
+                method_id: MethodId(1),
+                args: Payload::outgoing(&1_u32),
+                schemas: Default::default(),
+                metadata: Default::default(),
+            })
+            .await
+    });
+
+    let second_caller = caller.caller.clone();
+    let second_call = tokio::spawn(async move {
+        second_caller
+            .call(RequestCall {
+                channels: Vec::new(),
+                method_id: MethodId(2),
+                args: Payload::outgoing(&2_u32),
+                schemas: Default::default(),
+                metadata: Default::default(),
+            })
+            .await
+    });
+
+    let second_response = tokio::time::timeout(Duration::from_millis(100), second_call)
+        .await
+        .expect("second request should complete before delayed first request")
+        .expect("second call task join")
+        .expect("second call should succeed");
+    let second_response = second_response.get();
+    let second_ret_bytes = match &second_response.ret {
+        Payload::Encoded(bytes) => *bytes,
+        _ => panic!("expected incoming payload in response"),
+    };
+    let second_value: u32 = vox_phon::from_slice(second_ret_bytes).expect("deserialize response");
+    assert_eq!(second_value, 2);
+
+    assert!(
+        !first_call.is_finished(),
+        "first delayed request should still be pending after second response"
+    );
+
+    let first_response = tokio::time::timeout(Duration::from_millis(500), first_call)
+        .await
+        .expect("first delayed request should eventually complete")
+        .expect("first call task join")
+        .expect("first call should succeed");
+    let first_response = first_response.get();
+    let first_ret_bytes = match &first_response.ret {
+        Payload::Encoded(bytes) => *bytes,
+        _ => panic!("expected incoming payload in response"),
+    };
+    let first_value: u32 = vox_phon::from_slice(first_ret_bytes).expect("deserialize response");
+    assert_eq!(first_value, 1);
+}
+
+// r[verify rpc.error.scope]
+#[tokio::test]
+async fn call_error_does_not_close_connection_or_cancel_other_requests() {
+    let (client_conduit, server_conduit) = message_conduit_pair();
+
+    let server_task = moire::task::spawn(
+        async move {
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
+                .on_connection(ScopedErrorHandler)
+                .establish::<NoopClient>()
+                .await
+                .expect("server handshake failed")
+        }
+        .named("server_setup"),
+    );
+
+    let caller = initiator_conduit(client_conduit, test_initiator_handshake())
+        .establish::<NoopClient>()
+        .await
+        .expect("client handshake failed");
+
+    let _server_caller_guard = server_task.await.expect("server setup failed");
+
+    let error_caller = caller.caller.clone();
+    let error_call = tokio::spawn(async move {
+        error_caller
+            .call(RequestCall {
+                channels: Vec::new(),
+                method_id: MethodId(1),
+                args: Payload::outgoing(&1_u32),
+                schemas: Default::default(),
+                metadata: Default::default(),
+            })
+            .await
+    });
+
+    let ok_caller = caller.caller.clone();
+    let ok_call = tokio::spawn(async move {
+        ok_caller
+            .call(RequestCall {
+                channels: Vec::new(),
+                method_id: MethodId(2),
+                args: Payload::outgoing(&2_u32),
+                schemas: Default::default(),
+                metadata: Default::default(),
+            })
+            .await
+    });
+
+    let error_response = tokio::time::timeout(Duration::from_millis(250), error_call)
+        .await
+        .expect("error response should arrive")
+        .expect("error call task join")
+        .expect("error call should receive a response");
+    let error_response = error_response.get();
+    let error_ret_bytes = match &error_response.ret {
+        Payload::Encoded(bytes) => *bytes,
+        _ => panic!("expected incoming payload in error response"),
+    };
+    let error: Result<u32, VoxError<std::convert::Infallible>> =
+        vox_phon::from_slice(error_ret_bytes).expect("deserialize error response");
+    assert!(
+        matches!(error, Err(VoxError::InvalidPayload(ref message)) if message == "scoped failure"),
+        "expected scoped InvalidPayload response, got {error:?}"
+    );
+    assert!(
+        !ok_call.is_finished(),
+        "the concurrent successful call should remain in flight after the error response"
+    );
+    assert!(
+        caller.caller.is_connected(),
+        "call-scoped errors must not close the connection"
+    );
+
+    let ok_response = tokio::time::timeout(Duration::from_millis(500), ok_call)
+        .await
+        .expect("concurrent ok call should finish")
+        .expect("ok call task join")
+        .expect("ok call should succeed");
+    let ok_response = ok_response.get();
+    let ok_ret_bytes = match &ok_response.ret {
+        Payload::Encoded(bytes) => *bytes,
+        _ => panic!("expected incoming payload in ok response"),
+    };
+    let ok_value: u32 = vox_phon::from_slice(ok_ret_bytes).expect("deserialize ok response");
+    assert_eq!(ok_value, 2);
+
+    let followup = caller
+        .caller
+        .call(RequestCall {
+            channels: Vec::new(),
+            method_id: MethodId(2),
+            args: Payload::outgoing(&3_u32),
+            schemas: Default::default(),
+            metadata: Default::default(),
+        })
+        .await
+        .expect("connection should remain usable after scoped call error");
+    let followup = followup.get();
+    let followup_ret_bytes = match &followup.ret {
+        Payload::Encoded(bytes) => *bytes,
+        _ => panic!("expected incoming payload in followup response"),
+    };
+    let followup_value: u32 =
+        vox_phon::from_slice(followup_ret_bytes).expect("deserialize followup response");
+    assert_eq!(followup_value, 2);
 }
 
 #[tokio::test]
@@ -824,6 +753,7 @@ async fn handler_panic_returns_error_response_instead_of_hanging() {
     let response = tokio::time::timeout(
         Duration::from_millis(500),
         caller.caller.call(RequestCall {
+            channels: Vec::new(),
             method_id: MethodId(1),
             args: Payload::outgoing(&123_u32),
             schemas: Default::default(),
@@ -836,11 +766,11 @@ async fn handler_panic_returns_error_response_instead_of_hanging() {
 
     let response = response.get();
     let ret_bytes = match &response.ret {
-        Payload::PostcardBytes(bytes) => *bytes,
+        Payload::Encoded(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
     };
     let error: Result<(), VoxError<std::convert::Infallible>> =
-        vox_postcard::from_slice(ret_bytes).expect("deserialize error response");
+        vox_phon::from_slice(ret_bytes).expect("deserialize error response");
     assert!(
         matches!(error, Err(VoxError::Cancelled)),
         "expected Cancelled error response, got {error:?}"
@@ -862,10 +792,7 @@ async fn in_flight_call_returns_cancelled_when_peer_closes() {
                     let handle = moire::task::spawn(fut);
                     let _ = session_tx.send(handle);
                 })
-                .on_connection(BlockingHandler {
-                    was_cancelled,
-                    retry: RetryPolicy::VOLATILE,
-                })
+                .on_connection(BlockingHandler { was_cancelled })
                 .establish::<NoopClient>()
                 .await
                 .expect("server handshake failed")
@@ -886,6 +813,7 @@ async fn in_flight_call_returns_cancelled_when_peer_closes() {
             caller
                 .caller
                 .call(RequestCall {
+                    channels: Vec::new(),
                     method_id: MethodId(1),
                     args: Payload::outgoing(&123_u32),
                     schemas: Default::default(),
@@ -924,6 +852,262 @@ async fn in_flight_call_returns_cancelled_when_peer_closes() {
     );
 }
 
+// r[verify rpc.flow-control.max-concurrent-requests]
+// r[verify rpc.flow-control.max-concurrent-requests.outbound]
+// r[verify rpc.flow-control.max-concurrent-requests.counting]
+// r[verify rpc.flow-control.max-concurrent-requests.session-failure]
+// r[verify rpc.flow-control]
+#[tokio::test]
+async fn outbound_max_concurrent_requests_waits_for_peer_limit() {
+    let (client_conduit, server_conduit) = message_conduit_pair();
+
+    let was_cancelled = Arc::new(AtomicBool::new(false));
+    let (session_tx, session_rx) = tokio::sync::oneshot::channel::<moire::task::JoinHandle<()>>();
+    let server_task = moire::task::spawn(
+        {
+            let was_cancelled = Arc::clone(&was_cancelled);
+            async move {
+                acceptor_conduit(
+                    server_conduit,
+                    acceptor_handshake_with_request_limits(1, 64),
+                )
+                .spawn_fn(move |fut| {
+                    let handle = moire::task::spawn(fut);
+                    let _ = session_tx.send(handle);
+                })
+                .on_connection(BlockingHandler { was_cancelled })
+                .establish::<NoopClient>()
+                .await
+                .expect("server handshake failed")
+            }
+        }
+        .named("server_setup"),
+    );
+
+    let client_guard = initiator_conduit(
+        client_conduit,
+        initiator_handshake_with_request_limits(64, 1),
+    )
+    .establish::<NoopClient>()
+    .await
+    .expect("client handshake failed");
+    let server_guard = server_task.await.expect("server setup failed");
+    let server_session_task = session_rx.await.expect("session handle sent");
+
+    let first_caller = client_guard.caller.clone();
+    let first_call = tokio::spawn(async move {
+        first_caller
+            .call(RequestCall {
+                channels: Vec::new(),
+                method_id: MethodId(1),
+                args: Payload::outgoing(&1_u32),
+                schemas: Default::default(),
+                metadata: Default::default(),
+            })
+            .await
+    });
+
+    wait_for_outstanding_requests(&server_guard.caller, 1).await;
+
+    let second_caller = client_guard.caller.clone();
+    let second_call = tokio::spawn(async move {
+        second_caller
+            .call(RequestCall {
+                channels: Vec::new(),
+                method_id: MethodId(1),
+                args: Payload::outgoing(&2_u32),
+                schemas: Default::default(),
+                metadata: Default::default(),
+            })
+            .await
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    wait_for_outstanding_requests(&server_guard.caller, 1).await;
+    assert!(
+        !second_call.is_finished(),
+        "second call should wait for request capacity instead of being sent"
+    );
+
+    drop(server_guard);
+    server_session_task.abort();
+
+    let first_result = tokio::time::timeout(Duration::from_millis(500), first_call)
+        .await
+        .expect("first call should resolve after server closes")
+        .expect("first call task join");
+    assert!(
+        matches!(
+            first_result,
+            Err(VoxError::ConnectionClosed) | Err(VoxError::SessionShutdown)
+        ),
+        "expected first call to fail with connection/session closure, got {first_result:?}"
+    );
+
+    let second_result = tokio::time::timeout(Duration::from_millis(500), second_call)
+        .await
+        .expect("second call should resolve after request limiter closes")
+        .expect("second call task join");
+    assert!(
+        matches!(
+            second_result,
+            Err(VoxError::ConnectionClosed) | Err(VoxError::SessionShutdown)
+        ),
+        "expected queued second call to fail with connection/session closure, got {second_result:?}"
+    );
+}
+
+// r[verify rpc.flow-control.max-concurrent-requests]
+// r[verify rpc.flow-control.max-concurrent-requests.inbound]
+// r[verify rpc.flow-control]
+#[tokio::test]
+async fn inbound_max_concurrent_requests_violation_closes_connection() {
+    let (client_conduit, server_conduit) = message_conduit_pair();
+
+    let was_cancelled = Arc::new(AtomicBool::new(false));
+    let server_task = moire::task::spawn(
+        {
+            let was_cancelled = Arc::clone(&was_cancelled);
+            async move {
+                acceptor_conduit(
+                    server_conduit,
+                    acceptor_handshake_with_request_limits(1, 64),
+                )
+                .on_connection(BlockingHandler { was_cancelled })
+                .establish::<NoopClient>()
+                .await
+                .expect("server handshake failed")
+            }
+        }
+        .named("server_setup"),
+    );
+
+    let client_guard = initiator_conduit(
+        client_conduit,
+        initiator_handshake_with_request_limits(64, 1),
+    )
+    .establish::<NoopClient>()
+    .await
+    .expect("client handshake failed");
+    let server_guard = server_task.await.expect("server setup failed");
+    let client_sender = client_guard.caller.driver().connection_sender().clone();
+
+    let first_arg = 1_u32;
+    client_sender
+        .send(ConnectionMessage::Request(RequestMessage {
+            id: RequestId(1),
+            body: RequestBody::Call(RequestCall {
+                channels: Vec::new(),
+                method_id: MethodId(1),
+                args: Payload::outgoing(&first_arg),
+                schemas: Default::default(),
+                metadata: Default::default(),
+            }),
+        }))
+        .await
+        .expect("send first raw call");
+    wait_for_outstanding_requests(&server_guard.caller, 1).await;
+
+    let second_arg = 2_u32;
+    client_sender
+        .send(ConnectionMessage::Request(RequestMessage {
+            id: RequestId(3),
+            body: RequestBody::Call(RequestCall {
+                channels: Vec::new(),
+                method_id: MethodId(1),
+                args: Payload::outgoing(&second_arg),
+                schemas: Default::default(),
+                metadata: Default::default(),
+            }),
+        }))
+        .await
+        .expect("send second raw call");
+
+    tokio::time::timeout(Duration::from_millis(500), server_guard.caller.closed())
+        .await
+        .expect("server connection should close after inbound limit violation");
+    let server_snapshot = server_guard.caller.debug_snapshot();
+    assert_eq!(
+        server_snapshot.connections[0].close_reason,
+        Some(vox_types::ConnectionCloseReason::Protocol)
+    );
+
+    drop(server_guard);
+}
+
+// r[verify rpc.request.id-allocation]
+// r[verify session.protocol-error]
+#[tokio::test]
+async fn wrong_parity_request_id_closes_with_protocol_error() {
+    let (client_conduit, server_conduit) = message_conduit_pair();
+
+    let server_task = moire::task::spawn(
+        async move {
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
+                .on_connection(EchoHandler)
+                .establish::<NoopClient>()
+                .await
+                .expect("server handshake failed")
+        }
+        .named("server_setup"),
+    );
+
+    let client_guard = initiator_conduit(client_conduit, test_initiator_handshake())
+        .establish::<NoopClient>()
+        .await
+        .expect("client handshake failed");
+    let server_guard = server_task.await.expect("server setup failed");
+    let client_sender = client_guard.caller.driver().connection_sender().clone();
+
+    send_raw_root_call(&client_sender, RequestId(2), 1).await;
+
+    expect_protocol_close(&server_guard.caller, "server").await;
+    expect_protocol_close(&client_guard.caller, "client").await;
+
+    drop(server_guard);
+    drop(client_guard);
+}
+
+// r[verify rpc.request.id-allocation]
+// r[verify session.protocol-error]
+#[tokio::test]
+async fn duplicate_inflight_request_id_closes_with_protocol_error() {
+    let (client_conduit, server_conduit) = message_conduit_pair();
+
+    let was_cancelled = Arc::new(AtomicBool::new(false));
+    let server_task = moire::task::spawn(
+        {
+            let was_cancelled = Arc::clone(&was_cancelled);
+            async move {
+                acceptor_conduit(server_conduit, test_acceptor_handshake())
+                    .on_connection(BlockingHandler { was_cancelled })
+                    .establish::<NoopClient>()
+                    .await
+                    .expect("server handshake failed")
+            }
+        }
+        .named("server_setup"),
+    );
+
+    let client_guard = initiator_conduit(client_conduit, test_initiator_handshake())
+        .establish::<NoopClient>()
+        .await
+        .expect("client handshake failed");
+    let server_guard = server_task.await.expect("server setup failed");
+    let client_sender = client_guard.caller.driver().connection_sender().clone();
+
+    send_raw_root_call(&client_sender, RequestId(1), 1).await;
+    wait_for_outstanding_requests(&server_guard.caller, 1).await;
+    send_raw_root_call(&client_sender, RequestId(1), 2).await;
+
+    expect_protocol_close(&server_guard.caller, "server").await;
+    expect_protocol_close(&client_guard.caller, "client").await;
+
+    drop(server_guard);
+    drop(client_guard);
+}
+
+// r[verify session.keepalive]
 #[tokio::test]
 async fn keepalive_timeout_returns_cancelled_when_pongs_are_missing() {
     let (client_link, server_link) = memory_link_pair(64);
@@ -935,7 +1119,6 @@ async fn keepalive_timeout_returns_cancelled_when_pongs_are_missing() {
             acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .on_connection(BlockingHandler {
                     was_cancelled: Arc::new(AtomicBool::new(false)),
-                    retry: RetryPolicy::VOLATILE,
                 })
                 .establish::<NoopClient>()
                 .await
@@ -960,6 +1143,7 @@ async fn keepalive_timeout_returns_cancelled_when_pongs_are_missing() {
             caller
                 .caller
                 .call(RequestCall {
+                    channels: Vec::new(),
                     method_id: MethodId(1),
                     args: Payload::outgoing(&123_u32),
                     schemas: Default::default(),
@@ -1040,6 +1224,7 @@ async fn dropping_root_caller_shuts_down_session() {
 /// Regression test: schema recv tracker must be per-connection.
 /// If it were per-session, the second call (on the virtual connection) would
 /// fail because the response schemas overlap with the root connection's.
+// r[verify schema.type-id.per-connection]
 #[tokio::test]
 async fn schema_tracker_is_per_connection_not_per_session() {
     let (client_conduit, server_conduit) = message_conduit_pair();
@@ -1069,6 +1254,7 @@ async fn schema_tracker_is_per_connection_not_per_session() {
     let response = root_caller
         .caller
         .call(RequestCall {
+            channels: Vec::new(),
             method_id: MethodId(1),
             args: Payload::outgoing(&args_value),
             schemas: Default::default(),
@@ -1078,10 +1264,10 @@ async fn schema_tracker_is_per_connection_not_per_session() {
         .expect("root call should succeed");
     let response = response.get();
     let ret_bytes = match &response.ret {
-        Payload::PostcardBytes(bytes) => *bytes,
+        Payload::Encoded(bytes) => *bytes,
         _ => panic!("expected incoming payload"),
     };
-    let result: u32 = vox_postcard::from_slice(ret_bytes).expect("deserialize root response");
+    let result: u32 = vox_phon::from_slice(ret_bytes).expect("deserialize root response");
     assert_eq!(result, 100);
 
     // Open a virtual connection and call on it.
@@ -1095,7 +1281,7 @@ async fn schema_tracker_is_per_connection_not_per_session() {
                 max_concurrent_requests: 64,
                 initial_channel_credit: 16,
             },
-            vec![MetadataEntry::str("vox-service", "Echo")],
+            vox_types::metadata().str("vox-service", "Echo").build(),
         )
         .await
         .expect("open virtual connection");
@@ -1107,6 +1293,7 @@ async fn schema_tracker_is_per_connection_not_per_session() {
     let args_value: u32 = 200;
     let response = vconn_caller
         .call(RequestCall {
+            channels: Vec::new(),
             method_id: MethodId(1),
             args: Payload::outgoing(&args_value),
             schemas: Default::default(),
@@ -1116,10 +1303,10 @@ async fn schema_tracker_is_per_connection_not_per_session() {
         .expect("virtual connection call should succeed");
     let response = response.get();
     let ret_bytes = match &response.ret {
-        Payload::PostcardBytes(bytes) => *bytes,
+        Payload::Encoded(bytes) => *bytes,
         _ => panic!("expected incoming payload"),
     };
-    let result: u32 = vox_postcard::from_slice(ret_bytes).expect("deserialize vconn response");
+    let result: u32 = vox_phon::from_slice(ret_bytes).expect("deserialize vconn response");
     assert_eq!(result, 200);
 }
 
@@ -1143,12 +1330,9 @@ async fn initiator_builder_customization_controls_allocated_connection_parity() 
                         max_concurrent_requests: 64,
                         initial_channel_credit: 16,
                     },
-                    peer_supports_retry: false,
-                    session_resume_key: None,
-                    peer_resume_key: None,
                     our_schema: vec![],
                     peer_schema: vec![],
-                    peer_metadata: vec![MetadataEntry::str("vox-service", "Noop")],
+                    peer_metadata: vox_types::metadata().str("vox-service", "Noop").build(),
                 },
             )
             .on_connection(EchoAcceptor)
@@ -1173,12 +1357,9 @@ async fn initiator_builder_customization_controls_allocated_connection_parity() 
                 max_concurrent_requests: 32,
                 initial_channel_credit: 16,
             },
-            peer_supports_retry: false,
-            session_resume_key: None,
-            peer_resume_key: None,
             our_schema: vec![],
             peer_schema: vec![],
-            peer_metadata: vec![MetadataEntry::str("vox-service", "Noop")],
+            peer_metadata: vox_types::metadata().str("vox-service", "Noop").build(),
         },
     )
     .establish::<NoopClient>()
@@ -1195,7 +1376,7 @@ async fn initiator_builder_customization_controls_allocated_connection_parity() 
                 max_concurrent_requests: 64,
                 initial_channel_credit: 16,
             },
-            vec![MetadataEntry::str("vox-service", "Echo")],
+            vox_types::metadata().str("vox-service", "Echo").build(),
         )
         .await
         .expect("open virtual connection");
@@ -1207,6 +1388,7 @@ async fn initiator_builder_customization_controls_allocated_connection_parity() 
     );
 }
 
+// r[verify session.symmetry]
 #[tokio::test]
 async fn acceptor_builder_customization_supports_opening_connections() {
     let (client_conduit, server_conduit) = message_conduit_pair();
@@ -1227,12 +1409,9 @@ async fn acceptor_builder_customization_supports_opening_connections() {
                         max_concurrent_requests: 32,
                         initial_channel_credit: 16,
                     },
-                    peer_supports_retry: false,
-                    session_resume_key: None,
-                    peer_resume_key: None,
                     our_schema: vec![],
                     peer_schema: vec![],
-                    peer_metadata: vec![MetadataEntry::str("vox-service", "Noop")],
+                    peer_metadata: vox_types::metadata().str("vox-service", "Noop").build(),
                 },
             )
             .on_connection(EchoAcceptor)
@@ -1257,12 +1436,9 @@ async fn acceptor_builder_customization_supports_opening_connections() {
                 max_concurrent_requests: 64,
                 initial_channel_credit: 16,
             },
-            peer_supports_retry: false,
-            session_resume_key: None,
-            peer_resume_key: None,
             our_schema: vec![],
             peer_schema: vec![],
-            peer_metadata: vec![MetadataEntry::str("vox-service", "Noop")],
+            peer_metadata: vox_types::metadata().str("vox-service", "Noop").build(),
         },
     )
     .establish::<NoopClient>()
@@ -1279,7 +1455,7 @@ async fn acceptor_builder_customization_supports_opening_connections() {
                 max_concurrent_requests: 64,
                 initial_channel_credit: 16,
             },
-            vec![MetadataEntry::str("vox-service", "Echo")],
+            vox_types::metadata().str("vox-service", "Echo").build(),
         )
         .await
         .expect("acceptor opens virtual connection");
@@ -1291,7 +1467,101 @@ async fn acceptor_builder_customization_supports_opening_connections() {
     );
 }
 
+// r[verify connection.parity]
+// r[verify session.parity]
+// r[verify session.connection-settings.open]
+#[tokio::test]
+async fn virtual_connection_request_ids_use_connection_parity() {
+    let (client_conduit, server_conduit) = message_conduit_pair();
+
+    let was_cancelled = Arc::new(AtomicBool::new(false));
+    let server_task = moire::task::spawn(
+        {
+            let was_cancelled = Arc::clone(&was_cancelled);
+            async move {
+                acceptor_conduit(server_conduit, test_acceptor_handshake())
+                    .on_connection(crate::session::acceptor_fn(
+                        move |_request: &ConnectionRequest, connection: PendingConnection| {
+                            connection.handle_with(BlockingHandler {
+                                was_cancelled: Arc::clone(&was_cancelled),
+                            });
+                            Ok(())
+                        },
+                    ))
+                    .establish::<NoopClient>()
+                    .await
+                    .expect("server handshake failed")
+            }
+        }
+        .named("server_setup"),
+    );
+
+    let root_caller = initiator_conduit(client_conduit, test_initiator_handshake())
+        .establish::<NoopClient>()
+        .await
+        .expect("client handshake failed");
+    let session_handle = root_caller.session.clone().unwrap();
+
+    let _server_caller_guard = server_task.await.expect("server setup failed");
+
+    let vconn_handle = session_handle
+        .open_connection(
+            ConnectionSettings {
+                parity: Parity::Even,
+                max_concurrent_requests: 64,
+                initial_channel_credit: 16,
+            },
+            vox_types::metadata().str("vox-service", "Echo").build(),
+        )
+        .await
+        .expect("open virtual connection");
+    let vconn_id = vconn_handle.connection_id();
+    assert!(
+        vconn_id.has_parity(Parity::Odd),
+        "session parity should allocate the virtual connection id"
+    );
+
+    let mut vconn_driver = Driver::new(vconn_handle, ());
+    let vconn_caller = crate::Caller::new(vconn_driver.caller());
+    moire::task::spawn(async move { vconn_driver.run().await }.named("vconn_client_driver"));
+
+    let call_caller = vconn_caller.clone();
+    let call_task = tokio::spawn(async move {
+        call_caller
+            .call(RequestCall {
+                channels: Vec::new(),
+                method_id: MethodId(1),
+                args: Payload::outgoing(&7_u32),
+                schemas: Default::default(),
+                metadata: Default::default(),
+            })
+            .await
+    });
+
+    wait_for_outstanding_requests(&vconn_caller, 1).await;
+    let snapshot = vconn_caller.debug_snapshot();
+    assert_eq!(snapshot.connections[0].connection_id, vconn_id);
+    assert_eq!(snapshot.connections[0].requests[0].request_id, RequestId(2));
+
+    session_handle
+        .close_connection(vconn_id, Default::default())
+        .await
+        .expect("close virtual connection");
+    let result = tokio::time::timeout(Duration::from_millis(500), call_task)
+        .await
+        .expect("call should finish after virtual connection closes")
+        .expect("call task should join");
+    assert!(
+        matches!(
+            result,
+            Err(VoxError::ConnectionClosed) | Err(VoxError::SessionShutdown)
+        ),
+        "expected virtual call to fail after close, got {result:?}"
+    );
+}
+
 // r[verify connection.close]
+// r[verify connection.root]
 #[tokio::test]
 async fn close_root_connection_is_rejected() {
     let (client_conduit, server_conduit) = message_conduit_pair();
@@ -1316,7 +1586,7 @@ async fn close_root_connection_is_rejected() {
     let _server_caller_guard = server_task.await.expect("server setup failed");
 
     let result = session_handle
-        .close_connection(vox_types::ConnectionId::ROOT, vec![])
+        .close_connection(vox_types::ConnectionId::ROOT, Default::default())
         .await;
     assert!(
         matches!(result, Err(SessionError::Protocol(ref msg)) if msg == "cannot close root connection"),
@@ -1354,6 +1624,7 @@ async fn echo_call_across_memory_link() {
     let response = caller
         .caller
         .call(RequestCall {
+            channels: Vec::new(),
             method_id: MethodId(1),
             args: Payload::outgoing(&args_value),
             schemas: Default::default(),
@@ -1365,10 +1636,10 @@ async fn echo_call_across_memory_link() {
     // The echo handler sends back the same bytes. Deserialize the response.
     let response = response.get();
     let ret_bytes = match &response.ret {
-        Payload::PostcardBytes(bytes) => *bytes,
+        Payload::Encoded(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
     };
-    let result: u32 = vox_postcard::from_slice(ret_bytes).expect("deserialize response");
+    let result: u32 = vox_phon::from_slice(ret_bytes).expect("deserialize response");
     assert_eq!(result, 42);
 }
 
@@ -1423,10 +1694,10 @@ async fn buffers_inbound_channel_items_until_rx_is_registered() {
     };
     let item = item.get();
     let bytes = match item.item {
-        Payload::PostcardBytes(bytes) => bytes,
+        Payload::Encoded(bytes) => bytes,
         _ => panic!("expected incoming payload"),
     };
-    let decoded: u32 = vox_postcard::from_slice(bytes).expect("deserialize buffered item");
+    let decoded: u32 = vox_phon::from_slice(bytes).expect("deserialize buffered item");
     assert_eq!(decoded, 123);
 }
 
@@ -1786,6 +2057,7 @@ async fn unsolicited_response_id_is_ignored_and_does_not_break_calls() {
     let response = caller
         .caller
         .call(RequestCall {
+            channels: Vec::new(),
             method_id: MethodId(1),
             args: Payload::outgoing(&args_value),
             schemas: Default::default(),
@@ -1796,10 +2068,10 @@ async fn unsolicited_response_id_is_ignored_and_does_not_break_calls() {
 
     let response = response.get();
     let ret_bytes = match &response.ret {
-        Payload::PostcardBytes(bytes) => *bytes,
+        Payload::Encoded(bytes) => *bytes,
         _ => panic!("expected incoming payload"),
     };
-    let result: u32 = vox_postcard::from_slice(ret_bytes).expect("deserialize response");
+    let result: u32 = vox_phon::from_slice(ret_bytes).expect("deserialize response");
     assert_eq!(result, 42);
 }
 
@@ -1816,7 +2088,7 @@ async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() 
             &self,
             request: &ConnectionRequest,
             connection: PendingConnection,
-        ) -> Result<(), Metadata<'static>> {
+        ) -> Result<(), Metadata> {
             if request.service() == "Noop" {
                 connection.handle_with(());
                 return Ok(());
@@ -1833,7 +2105,7 @@ async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() 
                                 max_concurrent_requests: 64,
                                 initial_channel_credit: 16,
                             },
-                            vec![MetadataEntry::str("vox-service", "Echo")],
+                            vox_types::metadata().str("vox-service", "Echo").build(),
                         )
                         .await
                         .expect("host->guest-b open_connection");
@@ -1892,7 +2164,7 @@ async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() 
                 max_concurrent_requests: 64,
                 initial_channel_credit: 16,
             },
-            vec![MetadataEntry::str("vox-service", "Echo")],
+            vox_types::metadata().str("vox-service", "Echo").build(),
         )
         .await
         .expect("guest-a open proxy connection");
@@ -1906,6 +2178,7 @@ async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() 
     let args_value: u32 = 777;
     let response = proxy_caller
         .call(RequestCall {
+            channels: Vec::new(),
             method_id: MethodId(1),
             args: Payload::outgoing(&args_value),
             schemas: Default::default(),
@@ -1915,14 +2188,14 @@ async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() 
         .expect("proxied call should succeed");
     let response = response.get();
     let ret_bytes = match &response.ret {
-        Payload::PostcardBytes(bytes) => *bytes,
+        Payload::Encoded(bytes) => *bytes,
         _ => panic!("expected incoming payload"),
     };
-    let result: u32 = vox_postcard::from_slice(ret_bytes).expect("deserialize proxied response");
+    let result: u32 = vox_phon::from_slice(ret_bytes).expect("deserialize proxied response");
     assert_eq!(result, args_value);
 
     guest_a_session
-        .close_connection(proxy_conn_id, vec![])
+        .close_connection(proxy_conn_id, Default::default())
         .await
         .expect("close proxy connection");
 

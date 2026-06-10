@@ -8,19 +8,21 @@ pub fn streamer_service_descriptor() -> &'static ::vox::session::ServiceDescript
         std::sync::OnceLock::new();
     DESCRIPTOR.get_or_init(|| {
         let methods: Vec<&'static ::vox::session::MethodDescriptor> =
-            vec![::vox::hash::method_descriptor_with_retry::<
-                (i32, Tx<i32>),
-                i32,
-            >(
-                "Streamer",
-                "count_up",
-                &["start", "output"],
-                None,
-                ::vox::RetryPolicy {
-                    persist: false,
-                    idem: false,
-                },
-            )];
+            vec![
+                ::vox::hash::method_descriptor::<(i32, Tx<i32>), i32>(
+                    "Streamer",
+                    "count_up",
+                    &["start", "output"],
+                    &[None, Some(<i32 as ::vox::facet::Facet<'static>>::SHAPE)],
+                    ::vox::hash::MethodDescriptorOptions {
+                        response_wire_shape: <Result<
+                            i32,
+                            ::vox::VoxError<::core::convert::Infallible>,
+                        > as ::vox::facet::Facet<'static>>::SHAPE,
+                        doc: None,
+                    },
+                ),
+            ];
         Box::leak(Box::new(::vox::session::ServiceDescriptor {
             service_name: "Streamer",
             methods: Box::leak(methods.into_boxed_slice()),
@@ -78,15 +80,6 @@ where
     H: Streamer,
     R: ::vox::ReplySink,
 {
-    fn retry_policy(&self, method_id: ::vox::MethodId) -> ::vox::RetryPolicy {
-        if method_id == streamer_service_descriptor().methods[0usize].id {
-            return ::vox::RetryPolicy {
-                persist: false,
-                idem: false,
-            };
-        }
-        ::vox::RetryPolicy::VOLATILE
-    }
     fn args_have_channels(&self, method_id: ::vox::MethodId) -> bool {
         if method_id == streamer_service_descriptor().methods[0usize].id {
             return streamer_service_descriptor().methods[0usize].args_have_channels;
@@ -111,12 +104,12 @@ where
         let request_call = call.get();
         let method_id = request_call.method_id;
         let args_bytes = match &request_call.args {
-            ::vox::Payload::PostcardBytes(bytes) => bytes,
+            ::vox::Payload::Encoded(bytes) => bytes,
             _ => {
                 reply
                     .send_error(
                         ::vox::VoxError::<::core::convert::Infallible>::InvalidPayload(
-                            "args not PostcardBytes".into(),
+                            "args not Encoded".into(),
                         ),
                     )
                     .await;
@@ -126,8 +119,15 @@ where
         if method_id == streamer_service_descriptor().methods[0usize].id {
             let _binder_guard = reply.channel_binder().map(::vox::set_channel_binder);
             let deser_result: ::core::result::Result<(i32, Tx<i32>), _> =
-                ::vox::schema_deser::schema_deserialize_args_borrowed(
-                    args_bytes, method_id, &schemas,
+                ::vox::provide_channels_for_method(
+                    request_call.channels.clone(),
+                    streamer_service_descriptor().methods[0usize],
+                    &schemas,
+                    || {
+                        ::vox::schema_deser::schema_deserialize_args_borrowed(
+                            args_bytes, method_id, &schemas,
+                        )
+                    },
                 );
             drop(_binder_guard);
             let args: (i32, Tx<i32>) = match deser_result {
@@ -196,7 +196,7 @@ impl StreamerClient {
     #[doc = r" Create a new client wrapping the given caller."]
     pub fn new(caller: ::vox::Caller) -> Self {
         Self {
-            caller,
+            caller: caller.with_service(streamer_service_descriptor()),
             session: None,
         }
     }
@@ -213,9 +213,9 @@ impl StreamerClient {
         let method_id = streamer_service_descriptor().methods[0usize].id;
         let args = (start, output);
         let mut metadata = Default::default();
-        ::vox::ensure_channel_retry_mode(&mut metadata, ::vox::ChannelRetryMode::NonIdem);
         let req = ::vox::RequestCall {
             method_id,
+            channels: Default::default(),
             args: ::vox::Payload::outgoing(&args),
             metadata,
             schemas: Default::default(),
@@ -223,7 +223,7 @@ impl StreamerClient {
         let with_tracker = match self.caller.call(req).await {
             Ok(with_tracker) => with_tracker,
             Err(e) => {
-                args.1.finish_retry_binding();
+                args.1.finish_call_binding();
                 return Err(match e {
                     ::vox::VoxError::UnknownMethod => {
                         ::vox::VoxError::<::core::convert::Infallible>::UnknownMethod
@@ -246,7 +246,7 @@ impl StreamerClient {
                     ::vox::VoxError::Indeterminate => {
                         ::vox::VoxError::<::core::convert::Infallible>::Indeterminate
                     }
-                    ::vox::VoxError::User(never) => match never {},
+                    ::vox::VoxError::User(never) => match *never {},
                 });
             }
         };
@@ -258,11 +258,11 @@ impl StreamerClient {
         ::vox::provide_fds(__vox_frame_fds, move || {
             let response = response.get();
             let ret_bytes = match &response.ret {
-                ::vox::Payload::PostcardBytes(bytes) => bytes,
+                ::vox::Payload::Encoded(bytes) => bytes,
                 _ => {
                     return Err(
                         ::vox::VoxError::<::core::convert::Infallible>::InvalidPayload(
-                            "response not PostcardBytes".into(),
+                            "response not Encoded".into(),
                         ),
                     );
                 }
@@ -272,13 +272,13 @@ impl StreamerClient {
                     Result<i32, ::vox::VoxError<::core::convert::Infallible>>,
                 >(ret_bytes, method_id, &schema_tracker)
                 .map_err(|e| {
-                    args.1.finish_retry_binding();
+                    args.1.finish_call_binding();
                     ::vox::VoxError::<::core::convert::Infallible>::InvalidPayload(e.to_string())
                 })?;
             match result {
                 Ok(ret) => Ok(ret),
                 Err(err) => {
-                    args.1.finish_retry_binding();
+                    args.1.finish_call_binding();
                     Err(err)
                 }
             }
@@ -288,6 +288,9 @@ impl StreamerClient {
 impl ::vox::FromVoxSession for StreamerClient {
     const SERVICE_NAME: &'static str = "Streamer";
     fn from_vox_session(caller: ::vox::Caller, session: Option<::vox::SessionHandle>) -> Self {
-        Self { caller, session }
+        Self {
+            caller: caller.with_service(streamer_service_descriptor()),
+            session,
+        }
     }
 }

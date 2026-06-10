@@ -5,9 +5,9 @@ use std::{fs, path::PathBuf};
 use vox_types::{
     ChannelBody, ChannelClose, ChannelGrantCredit, ChannelId, ChannelItem, ChannelMessage,
     ChannelReset, ConnectionAccept, ConnectionClose, ConnectionId, ConnectionOpen,
-    ConnectionReject, ConnectionSettings, Message, MessagePayload, Metadata, MetadataEntry,
-    MetadataFlags, MetadataValue, MethodId, Parity, Payload, ProtocolError, RequestBody,
-    RequestCall, RequestCancel, RequestId, RequestMessage, RequestResponse, VoxError,
+    ConnectionReject, ConnectionSettings, Message, MessagePayload, Metadata, MethodId, Parity,
+    Payload, ProtocolError, RequestBody, RequestCall, RequestCancel, RequestId, RequestMessage,
+    RequestResponse, VoxError,
 };
 
 fn fixture_root() -> PathBuf {
@@ -28,33 +28,22 @@ fn write_fixture(path: &str, bytes: &[u8]) {
 }
 
 fn encode_message(message: &Message<'_>) -> Vec<u8> {
-    vox_postcard::to_vec(message).expect("serialize message fixture")
+    vox_phon::to_vec(message).expect("serialize message fixture")
 }
 
-fn sample_metadata() -> Metadata<'static> {
-    vec![
-        MetadataEntry {
-            key: "trace-id".into(),
-            value: MetadataValue::String("abc123".into()),
-            flags: MetadataFlags::NONE,
-        },
-        MetadataEntry {
-            key: "auth".into(),
-            value: MetadataValue::Bytes((&[0xDE, 0xAD, 0xBE, 0xEF][..]).into()),
-            flags: MetadataFlags::SENSITIVE | MetadataFlags::NO_PROPAGATE,
-        },
-        MetadataEntry {
-            key: "attempt".into(),
-            value: MetadataValue::U64(2),
-            flags: MetadataFlags::NONE,
-        },
-    ]
+fn sample_metadata() -> Metadata {
+    let mut m = vox_types::metadata()
+        .str("trace-id", "abc123")
+        .u64("attempt", 2)
+        .build();
+    vox_types::meta_set(&mut m, "-#auth", &[0xDE, 0xAD, 0xBE, 0xEF][..]);
+    m
 }
 
 fn main() {
     macro_rules! write_value {
         ($path:literal, $value:expr) => {{
-            let bytes = vox_postcard::to_vec(&$value).expect("serialize fixture");
+            let bytes = vox_phon::to_vec(&$value).expect("serialize fixture");
             write_fixture($path, &bytes);
         }};
     }
@@ -288,7 +277,7 @@ fn main() {
     );
     write_value!(
         "result/err_user_string.bin",
-        Err::<(), VoxError<String>>(VoxError::User("oops".to_string()))
+        Err::<(), VoxError<String>>(VoxError::User(Box::new("oops".to_string())))
     );
 
     // -------------------------------------------------------------------------
@@ -302,7 +291,7 @@ fn main() {
     let meta = sample_metadata();
 
     // Hello and HelloYourself are no longer MessagePayload variants.
-    // They are CBOR-encoded handshake messages exchanged before postcard traffic.
+    // They are phon self-describing handshake messages exchanged before compact traffic.
 
     write_fixture(
         "wire/message_protocol_error.bin",
@@ -369,6 +358,7 @@ fn main() {
                 id: RequestId(11),
                 body: RequestBody::Call(RequestCall {
                     method_id: MethodId(0xE5A1_D6B2_C390_F001),
+                    channels: Vec::new(),
                     args: Payload::outgoing(&args_call),
                     metadata: meta.clone(),
                     schemas: Default::default(),

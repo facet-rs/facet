@@ -145,10 +145,9 @@ Postcard varint-encodes integers and lengths. Varints are right for
 embedded; vox does not target embedded. For vox they are *actively*
 wrong on three axes:
 
-- **Zero-copy.** A varint length cannot be read without decoding it;
-  you cannot point into the buffer first. Fixed-width LE means a
-  length is a single load. vox has `r[impl zerocopy.framing.*]`
-  rules everywhere.
+- **Straight-line framing.** A varint length cannot be read without
+  decoding it. Fixed-width LE means a length is a single load, which
+  is the shape the JIT wants.
 - **JIT quality.** A varint is a branchy loop; a fixed-width integer
   is one load. Straight-line codegen instead of emitted loops.
 - **Compression.** Varints pack bits → high entropy per byte →
@@ -313,7 +312,7 @@ mode, delete `facet-cbor`), not a from-scratch codec.
   handshake must be evolvable; negotiate via schema reconciliation.
 - **Keeping varint "to save bytes."** Remote traffic is compressed
   (varint compresses *worse*); local traffic does not care. Varint
-  only costs us — zero-copy, JIT quality, compression ratio.
+  only costs us in JIT quality and compression ratio.
 - **A separate self-describing codec.** Self-describing is a *mode*
   of `vox-wire`, sharing its leaf encoding — not another crate.
 

@@ -39,6 +39,15 @@ weight = 11
 > Vox provides a `LocalLink` abstraction that uses named pipes on Windows and
 > Unix sockets on Linux & macOS. Endpoints/addresses are a `String` internally.
 
+> r[transport.fd.capability]
+>
+> `vox::Fd` values are transport capabilities, not ordinary payload bytes. They
+> may travel only over transports that explicitly support descriptor passing
+> (`FdStreamLink` / Unix-domain local transports on Unix). Transports that cannot
+> carry descriptors MUST reject descriptor-bearing frames with a diagnostic
+> error. Generated non-Rust bindings MUST reject service surfaces containing
+> `vox::Fd` instead of lowering them to generic bytes or unknown values.
+
 > r[transport.websocket]
 >
 > Vox provides a WebSocket link, which sends payloads via WebSocket binary
@@ -58,6 +67,17 @@ weight = 11
 > r[transport.inprocess.platforms]
 >
 > The in-process link is available only on `wasm32-unknown-unknown`.
+
+# Hosted compliance subjects
+
+> r[hosted.subject.lifecycle]
+>
+> A hosted Vox compliance subject is a child process owned by the spec harness.
+> The subject MUST exit promptly when its peer disconnects or the session is
+> shut down. It MUST also enforce an inactivity timeout so a stalled harness
+> cannot leave subject processes behind indefinitely. The harness MUST spawn
+> subjects with process ownership that prevents child accumulation if a test
+> exits before normal protocol shutdown completes.
 
 > r[link.split]
 >
@@ -124,8 +144,8 @@ weight = 11
 
 > r[transport.prologue]
 >
-> Every fresh link attachment begins with a **transport prologue** before any
-> conduit-specific traffic is sent.
+> Every fresh link begins with a **transport prologue** before any
+> conduit traffic is sent.
 
 > r[transport.prologue.first-payload]
 >
@@ -139,89 +159,45 @@ weight = 11
 >
 >   * a transport-prologue magic number
 >   * a transport-prologue version
->   * the requested conduit mode
-
-> r[transport.prologue.requested-mode]
->
-> The requested conduit mode is an exact request, not a preference list. This
-> spec defines two conduit modes:
->
->   * `bare`
->   * `stable`
 
 > r[transport.prologue.accept]
 >
 > The acceptor MUST reply with either:
 >
->   * `TransportAccept`, acknowledging the requested conduit mode, or
+>   * `TransportAccept`, acknowledging a supported transport prologue, or
 >   * `TransportReject`, refusing the request
-
-> r[transport.prologue.no-fallback]
->
-> If the acceptor does not support the requested conduit mode, it MUST reject
-> the transport prologue. It MUST NOT silently fall back to a different conduit
-> mode.
 
 > r[transport.prologue.post-accept]
 >
-> After `TransportAccept`, all subsequent payloads on that link attachment are
-> interpreted according to the selected conduit mode.
+> After `TransportAccept`, the link is eligible for vox session
+> establishment. The next payloads are the phon self-describing session
+> handshake. After that handshake succeeds, subsequent session traffic is
+> interpreted as `BareConduit` payloads.
 
 > r[transport.prologue.reject-close]
 >
-> After `TransportReject`, the link attachment is unusable for vox traffic and
+> After `TransportReject`, the link is unusable for vox traffic and
 > MUST be closed or abandoned by the peers.
 
 # Conduits
 
 > r[conduit]
 >
-> Conduits provide Postcard serialization/deserialization on top of links.
-> Sending is split into synchronous preparation and asynchronous enqueue.
+> Conduits provide [phon](https://github.com/bearcove/phon)
+> serialization/deserialization on top of links.
 
 > r[conduit.typeplan]
 >
 > Conduits are built to serialize and deserialize _one_ type (typically an enum).
-> For deserialization, conduits MUST use a `TypePlan` to avoid re-planning on every
-> item.
+> For deserialization, conduits MUST reuse a single phon decode plan
+> (`phon r[compat.plan-first]`) across items rather than re-planning on every
+> message.
 
 > r[conduit.bare]
 >
 > `BareConduit` does not provide any feature on top of
-> serialization/deserialization. It begins immediately after the transport
-> prologue has accepted `bare`.
-
-> r[conduit.stable]
->
-> `StableConduit` provides automatic reconnection (over fresh links) and replay of
-> missed messages. It comes with its own Packet framing.
-
-`StableConduit` begins only after the transport prologue has accepted `stable`.
-Its own stable-conduit handshake is separate from, and ordered after, the
-transport prologue.
-
-`StableConduit` continuity does not, by itself, answer what happens to an RPC
-whose outcome is now ambiguous. Operation-level retry and session resumption
-semantics are defined in [Retry](./retry/).
-
-> r[conduit.split]
->
-> Conduits can be passed around whole, but before use, they MUST be split into
-> a Sender and a Receiver.
-
-> r[conduit.tx.prepare]
->
-> A conduit's Sender MUST expose a synchronous preparation step which takes
-> one value and produces an owned prepared representation. Preparation may
-> borrow from the caller's value while it runs, but the returned prepared
-> representation MUST be safe to hold across await points.
-
-> r[conduit.tx.send]
->
-> A conduit's Sender MUST expose an async send/enqueue step which consumes a
-> previously prepared item and waits until the underlying link can accept it.
-> This is the conduit-level backpressure point and it MAY error if the conduit
-> has died.
+> serialization/deserialization. It carries post-handshake session traffic on an
+> accepted link.
 
 # Sessions
 
@@ -231,19 +207,9 @@ semantics are defined in [Retry](./retry/).
 > any number of connections, on which calls (requests) can be made, and data can be
 > exchanged over channels.
 
-The transport prologue selects the conduit mode first. Session establishment
-starts only after that conduit has been selected and initialized.
-
-> r[session.outlives-conduit]
->
-> A session is not owned by any one conduit attachment. A session MAY survive
-> conduit failure and continue on a replacement conduit.
-
-> r[session.resumption.runtime-managed]
->
-> Session resumption is managed by the runtime. It MUST NOT require
-> application-level handlers, callers, or peer-specific user code to
-> collaborate in the resume protocol.
+The transport prologue completes first. Session establishment exchanges phon
+self-describing handshake messages on the accepted link. After the handshake
+succeeds, the `BareConduit` carries session `Message` traffic.
 
 > r[session.peer]
 >
@@ -292,65 +258,67 @@ starts only after that conduit has been selected and initialized.
 >   * ResetChannel
 >   * GrantCredit
 >
-> Schemas are not a standalone message type. They are delivered inline
-> with `Request` and `Response` payloads (see `r[schema.format.delivery]`).
+> Schemas may be delivered inline with `Request` and `Response` payloads or
+> via a standalone `SchemaMessage` binding (see `r[schema.format.delivery]`).
 >
 > `Hello`, `HelloYourself`, `LetsGo`, and `Sorry` are NOT message payloads.
-> They are CBOR-encoded handshake structs exchanged before the postcard
-> `MessagePayload` enum is used (see `r[session.handshake]`).
+> They are phon self-describing handshake messages exchanged before the
+> phon-encoded `MessagePayload` enum is used (see `r[session.handshake]`).
 
 > r[session.handshake]
 >
-> To establish a session on top of an existing conduit, a three-step CBOR
-> handshake MUST be performed. The handshake messages are CBOR-encoded
-> structs, NOT postcard-encoded `MessagePayload` variants. This is the
-> bootstrap: it establishes the schemas needed to interpret the postcard
-> `MessagePayload` enum that follows.
+> To establish a session on an accepted link, a three-step phon
+> self-describing handshake MUST be performed. The handshake messages are phon
+> self-describing values, NOT phon-compact `MessagePayload` variants. This is
+> the bootstrap: phon's self-describing mode needs no prior schema to read
+> (`phon r[self-describing.bootstraps-schemas]`), and it establishes the schema
+> needed to interpret the phon-compact `MessagePayload` enum that follows.
 >
 > 1. The initiator sends a **`Hello`** containing:
 >    - `parity`: the identifier partition desired by the initiator
 >    - `connection_settings`: limits for the root connection
->    - `message_payload_schemas`: a self-contained set of schemas describing
->      the initiator's `MessagePayload` enum and all types it references
->      (the postcard enum used for all subsequent communication)
+>    - `message_payload_schema`: the phon schema-closure bytes describing the
+>      initiator's `Message` envelope and all types it references (the enum used
+>      for all subsequent communication)
 >
-> 2. The acceptor adopts the opposite parity, compares the `MessagePayload`
->    schemas, and replies with one of:
+> 2. The acceptor adopts the opposite parity, builds a phon decode plan for the
+>    initiator's `Message` schema, and replies with one of:
 >    - **`HelloYourself`** containing:
 >      - `connection_settings`: limits for the root connection
->      - `message_payload_schemas`: a self-contained set of schemas describing
->        the acceptor's `MessagePayload` enum and all types it references
+>      - `message_payload_schema`: the phon schema-closure bytes describing the
+>        acceptor's `Message` envelope and all types it references
 >    - **`Sorry`** if the schemas are incompatible (see `r[session.handshake.sorry]`)
 >
-> 3. The initiator compares schemas and replies with one of:
+> 3. The initiator builds a phon decode plan for the acceptor's `Message` schema
+>    and replies with one of:
 >    - **`LetsGo`**: confirms compatibility; the session is established
 >    - **`Sorry`**: rejects the session
 
-> r[session.handshake.cbor]
+> r[session.handshake.phon]
 >
 > All handshake messages (`Hello`, `HelloYourself`, `LetsGo`, `Sorry`) MUST
-> be CBOR-encoded. CBOR is self-describing and does not require a schema to
-> parse, avoiding the chicken-and-egg problem of needing a schema to read a
-> schema. After `LetsGo`, all subsequent communication is postcard-encoded
-> `MessagePayload` values, deserialized using translation plans built from
-> the schemas exchanged in the handshake.
+> be phon self-describing values. phon's self-describing mode is tag-led and
+> needs no prior schema to parse (`phon r[self-describing.tag-led]`), avoiding
+> the chicken-and-egg problem of needing a schema to read a schema. After
+> `LetsGo`, all subsequent communication is phon-compact `MessagePayload`
+> values, decoded using phon decode plans built from the `message_payload_schema`
+> closures exchanged in the handshake.
 
 > r[session.handshake.sorry]
 >
-> `Sorry` MUST contain a structured CBOR description of the incompatibility:
+> `Sorry` MUST contain a structured description of the incompatibility:
 > which variants or fields the rejecting peer requires that the other peer's
 > schema does not provide. After sending or receiving `Sorry`, the session
 > MUST NOT proceed and the conduit SHOULD be closed.
 
 > r[session.handshake.protocol-schema]
 >
-> The `message_payload_schemas` exchanged during the handshake are a
-> self-contained set of schemas describing the `MessagePayload` enum and
-> all types it references — the top-level type for all post-handshake
-> communication. Each peer builds a translation plan for the other's
-> `MessagePayload` schema. This allows the protocol to evolve: peers with
-> different versions of `MessagePayload` can communicate as long as a
-> translation plan can be built.
+> The `message_payload_schema` exchanged during the handshake is the phon
+> schema closure for the `Message` envelope and all types it references — the
+> top-level type for all post-handshake communication. Each peer builds a phon
+> decode plan for the other's `Message` schema. This allows the protocol to
+> evolve: peers with different versions of `Message` can communicate as long as
+> phon can build a decode plan.
 >
 > The sender MUST NOT send a `MessagePayload` variant that the receiver's
 > schema does not include. If a peer's schema is missing a variant the other
@@ -359,28 +327,14 @@ starts only after that conduit has been selected and initialized.
 > r[session.handshake.protocol-schema.session-scoped]
 >
 > Protocol schemas are exchanged once per session during the handshake. They
-> are immutable for the session lifetime. Transparent reconnection (via
-> `StableConduit`) does not re-exchange protocol schemas. Session resumption
-> (new handshake) does.
+> are immutable for the session lifetime.
 
 > r[session.handshake.unversioned]
 >
 > There is no version field in `Hello`. Protocol evolution is handled entirely
-> through schema exchange: each peer describes its `MessagePayload` enum and
-> peers build translation plans from the schemas. If a peer's schema is
+> through schema exchange: each peer describes its `Message` envelope and peers
+> build phon decode plans from the schema closures. If a peer's schema is
 > missing a variant the other peer requires, the handshake fails with `Sorry`.
-
-> r[session.handshake.resume]
->
-> After initial establishment, the runtime MAY bind a replacement conduit onto
-> the same session. Resumption preserves session-scoped state, including the
-> session's connection namespace and any operation records attached to that
-> session. Protocol schemas are re-exchanged on resumption (new handshake).
->
-> Session resumption preserves session-scoped state, but does not preserve
-> in-flight request attempts or in-flight response deliveries on the failed
-> attachment. If an unresolved operation continues after session resumption, it
-> does so by creating a new request attempt for the same operation.
 
 > r[session.parity]
 >
@@ -444,49 +398,6 @@ starts only after that conduit has been selected and initialized.
 > Implementations MAY periodically send `Ping` and treat missing `Pong` as a
 > connection failure, in which case they MUST tear down the session and fail all
 > pending requests with a connection-closed style error.
-
-# Initial connect waiting
-
-> r[session.initial-connect-waiting]
->
-> A caller that has just spawned a local daemon or is waiting for a remote
-> service to become reachable MAY request initial-connect waiting from the
-> runtime. In this mode, the runtime retries failed initial connection
-> attempts until a session is established or the waiting timeout expires.
->
-> Initial connect waiting is distinct from session recovery. Session
-> recovery applies after a session exists and its conduit fails. Initial
-> connect waiting applies before any session has been established.
-
-> r[session.initial-connect-waiting.retryable]
->
-> During initial connect waiting, only transient failures MUST be retried:
-> I/O errors and connect timeouts. These indicate that the service is not
-> yet reachable.
-
-> r[session.initial-connect-waiting.non-retryable]
->
-> During initial connect waiting, permanent failures MUST NOT be retried and
-> MUST surface immediately. Protocol errors, payload/schema incompatibilities,
-> and explicit rejections indicate a fundamental mismatch that retrying will
-> not resolve.
-
-> r[session.initial-connect-waiting.backoff]
->
-> The runtime MUST apply exponential backoff between retry attempts, starting
-> from a small initial interval and capping at a maximum interval. This
-> prevents a busy loop when the service is slow to start.
-
-> r[session.initial-connect-waiting.timeout]
->
-> Initial connect waiting is bounded by a caller-supplied timeout. If the
-> timeout expires before a session is established, the runtime MUST surface
-> the last retryable failure.
-
-> r[session.initial-connect-waiting.no-session]
->
-> A failed initial connect waiting attempt that never establishes a session
-> MUST NOT be treated as session recovery.
 
 # Connections
 
@@ -570,7 +481,7 @@ The HTTP server cell finds itself in the middle of the host and the browser, and
 has to forward calls somehow:
 
 ```aasvg
-.----------------.   vox/SHM   .----------------.   vox/WebSocket   .----------------.
+.----------------.   vox/Local .----------------.   vox/WebSocket   .----------------.
 | Host           |<------------>| HTTP Server    |<------------------>| Browser        |
 | (main binary)  |              | Cell           |                    | (DevTools)     |
 '----------------'              '----------------'                    '----------------'

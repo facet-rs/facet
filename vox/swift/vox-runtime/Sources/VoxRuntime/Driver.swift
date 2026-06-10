@@ -17,7 +17,6 @@ public final class Driver: @unchecked Sendable {
     let role: Role
     let negotiated: Negotiated
     let handle: ConnectionHandle
-    let operations: OperationRegistry
     let connectionAcceptor: (any ConnectionAcceptor)?
     let keepalive: SessionKeepaliveConfig?
 
@@ -25,21 +24,20 @@ public final class Driver: @unchecked Sendable {
     let state: DriverState
     let virtualConnState: VirtualConnectionState
     let schemaSendTracker: SchemaSendTracker
+    /// Writer schema closures the peer advertised (per method+direction), used by
+    /// the dispatcher to build args compat decoders.
+    let schemaReceiveTracker = SchemaTracker()
 
     let eventContinuation: AsyncStream<DriverEvent>.Continuation
     let eventStream: AsyncStream<DriverEvent>
     let commandQueue: LockedQueue<HandleCommand>
-    let taskQueue: LockedQueue<TaskMessage>
-    var pendingTaskMessages: [DriverQueuedTaskMessage] = []
+    let taskQueue: LockedQueue<DriverQueuedTaskMessage>
+    var pendingTaskMessages: [DriverQueuedWireMessage] = []
     var pendingCalls: [DriverQueuedCall] = []
 
-    // Session resumption support
-    let resumable: Bool
     let localRootSettings: ConnectionSettings?
     let peerRootSettings: ConnectionSettings?
-    let transport: ConduitKind?
-    let recoverAttachment: (@Sendable () async throws -> LinkAttachment)?
-    let sessionResumeKey: [UInt8]?
+    let peerMessageSchema: [UInt8]
 
     init(
         conduit: any Conduit,
@@ -47,7 +45,6 @@ public final class Driver: @unchecked Sendable {
         role: Role,
         negotiated: Negotiated,
         handle: ConnectionHandle,
-        operations: OperationRegistry,
         connectionAcceptor: (any ConnectionAcceptor)? = nil,
         keepalive: SessionKeepaliveConfig? = nil
     ) {
@@ -56,21 +53,17 @@ public final class Driver: @unchecked Sendable {
         self.role = role
         self.negotiated = negotiated
         self.handle = handle
-        self.operations = operations
         self.connectionAcceptor = connectionAcceptor
         self.keepalive = keepalive
         self.serverRegistry = ChannelRegistry()
         self.state = DriverState()
-        self.virtualConnState = VirtualConnectionState()
+        self.virtualConnState = VirtualConnectionState(role: role)
         self.schemaSendTracker = SchemaSendTracker()
         self.commandQueue = LockedQueue<HandleCommand>()
-        self.taskQueue = LockedQueue<TaskMessage>()
-        self.resumable = false
+        self.taskQueue = LockedQueue<DriverQueuedTaskMessage>()
         self.localRootSettings = nil
         self.peerRootSettings = nil
-        self.transport = nil
-        self.recoverAttachment = nil
-        self.sessionResumeKey = nil
+        self.peerMessageSchema = []
 
         // Create event stream
         var continuation: AsyncStream<DriverEvent>.Continuation!
@@ -87,42 +80,34 @@ public final class Driver: @unchecked Sendable {
         role: Role,
         negotiated: Negotiated,
         handle: ConnectionHandle,
-        operations: OperationRegistry,
         connectionAcceptor: (any ConnectionAcceptor)?,
         keepalive: SessionKeepaliveConfig?,
         eventStream: AsyncStream<DriverEvent>,
         eventContinuation: AsyncStream<DriverEvent>.Continuation,
         commandQueue: LockedQueue<HandleCommand>,
-        taskQueue: LockedQueue<TaskMessage>,
+        taskQueue: LockedQueue<DriverQueuedTaskMessage>,
         schemaSendTracker: SchemaSendTracker = SchemaSendTracker(),
-        resumable: Bool = false,
         localRootSettings: ConnectionSettings? = nil,
         peerRootSettings: ConnectionSettings? = nil,
-        transport: ConduitKind? = nil,
-        recoverAttachment: (@Sendable () async throws -> LinkAttachment)? = nil,
-        sessionResumeKey: [UInt8]? = nil
+        peerMessageSchema: [UInt8] = []
     ) {
         self.conduit = conduit
         self.dispatcher = dispatcher
         self.role = role
         self.negotiated = negotiated
         self.handle = handle
-        self.operations = operations
         self.connectionAcceptor = connectionAcceptor
         self.keepalive = keepalive
         self.serverRegistry = ChannelRegistry()
         self.state = DriverState()
-        self.virtualConnState = VirtualConnectionState()
+        self.virtualConnState = VirtualConnectionState(role: role)
         self.schemaSendTracker = schemaSendTracker
         self.eventStream = eventStream
         self.eventContinuation = eventContinuation
         self.commandQueue = commandQueue
         self.taskQueue = taskQueue
-        self.resumable = resumable
         self.localRootSettings = localRootSettings
         self.peerRootSettings = peerRootSettings
-        self.transport = transport
-        self.recoverAttachment = recoverAttachment
-        self.sessionResumeKey = sessionResumeKey
+        self.peerMessageSchema = peerMessageSchema
     }
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  acceptTransportMode,
-  requestTransportMode,
+  performAcceptorTransportPrologue,
+  performInitiatorTransportPrologue,
 } from "./transport_prologue.ts";
 
 class MemoryLink {
@@ -63,11 +63,35 @@ function memoryLinkPair(): [MemoryLink, MemoryLink] {
   return [left, right];
 }
 
+const rejectUnsupportedPrologue = new Uint8Array([
+  0x56,
+  0x4F,
+  0x54,
+  0x52,
+  9,
+  1,
+  0,
+  0,
+]);
+
 describe("transport prologue", () => {
-  it("accepts bare mode", async () => {
+  // r[verify transport.prologue]
+  // r[verify transport.prologue.request]
+  // r[verify transport.prologue.accept]
+  it("accepts the transport prologue", async () => {
     const [initiator, acceptor] = memoryLinkPair();
-    const accepted = acceptTransportMode(acceptor);
-    await requestTransportMode(initiator);
+    const accepted = performAcceptorTransportPrologue(acceptor);
+    await performInitiatorTransportPrologue(initiator);
     await expect(accepted).resolves.toBeUndefined();
+  });
+
+  // r[verify transport.prologue.reject-close]
+  it("rejects unsupported transport prologues", async () => {
+    const [initiator, acceptor] = memoryLinkPair();
+    const rejected = performInitiatorTransportPrologue(initiator);
+    const hello = await acceptor.recv();
+    expect(hello).not.toBeNull();
+    await acceptor.send(rejectUnsupportedPrologue);
+    await expect(rejected).rejects.toThrow("transport rejected unsupported prologue");
   });
 });

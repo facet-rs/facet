@@ -86,6 +86,7 @@ pub fn generate_dispatcher_class(service: &ServiceDescriptor) -> String {
     let mut first = true;
     for method in service.methods {
         let method_name = method.method_name.to_lower_camel_case();
+        // r[impl rpc.method-id]
         let id = crate::method_id(method);
         let is_fallible = matches!(
             classify_shape(method.return_shape),

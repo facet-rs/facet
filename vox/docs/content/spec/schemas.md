@@ -4,21 +4,25 @@ description = "Backwards-compatible type evolution without changing the wire for
 weight = 14
 +++
 
-Postcard is vox's data wire format. It is compact and fast, but positional —
-fields are identified by their order, not by name. This means that adding,
-removing, or reordering fields changes the byte layout, and a peer reading
-with a different type definition silently misinterprets the data.
+vox's wire format and type model are [phon](https://github.com/bearcove/phon).
+phon is a schema-driven binary codec: values are encoded in a compact,
+positional layout (fields by order, not name), and a **schema** describes a
+type's structure so that two peers with different versions of the same type can
+still communicate. Everything about the type model — schema kinds, content-hash
+type identity, the self-describing and compact encodings, and the
+**plan-first** compatibility decoder that bridges a writer's layout onto a
+reader's type — is defined by phon's spec and is **not** restated here.
 
-Schema exchange solves this without replacing postcard. The data bytes stay
-the same. What changes is that peers describe their types to each other
-using self-describing schemas, and the receiving side builds a **translation
-plan** that maps remote field positions to local field positions before
-deserializing.
+This section specifies the layer vox builds on top: the **schema exchange
+protocol** — how and when peers send each other the phon schemas they need
+before sending data that depends on them. The data bytes are phon; what schema
+exchange adds is the discipline of describing types ahead of the data, scoped to
+each connection, so service types can evolve independently.
 
-The result: postcard remains the fast path for serialization and
-deserialization, but peers with different versions of the same types can
-communicate safely. Incompatibilities are detected early — when the
-translation plan is built — not mid-stream when a field has the wrong value.
+The result: phon stays the fast path for serialization and deserialization, but
+peers with different versions of the same types communicate safely.
+Incompatibilities surface early — when phon builds its decode plan
+(`phon r[compat.plan-first]`) — not mid-stream when a field has the wrong value.
 
 # Design principles
 
@@ -30,179 +34,51 @@ translation plan is built — not mid-stream when a field has the wrong value.
 
 > r[schema.principles.sender-driven]
 >
-> Each peer tracks which schemas it has sent to the other side. When a peer
-> is about to send data of a type the other side has not seen, it sends the
-> schema first. The receiver never requests schemas — the sender pushes them.
+> Each peer tracks which schema bindings it has established with the other
+> side. When a peer is about to send data for a method/direction binding the
+> other side has not seen, it sends the binding first. The receiver never
+> requests schemas — the sender pushes them.
 
-> r[schema.principles.cbor]
+> r[schema.principles.self-describing]
 >
-> Schemas MUST be encoded using CBOR (RFC 8949). CBOR is self-describing
-> and does not require a schema to parse — avoiding the chicken-and-egg
-> problem of needing a schema to read a schema. Postcard is used for data;
-> CBOR is used for metadata about data.
+> Schemas themselves are exchanged as phon **schema-closure bytes**: the
+> self-describing serialization of a root type plus every composite type it
+> transitively references, framed so the receiver can rebuild a phon registry
+> without already having a schema (`phon r[self-describing.bootstraps-schemas]`,
+> `phon r[schema-identity.closure]`). phon's self-describing mode is the
+> bootstrap that avoids the chicken-and-egg problem of needing a schema to read
+> a schema; the data payloads it describes use phon's compact mode.
 
 > r[schema.principles.once-per-type]
 >
-> A schema for a given type ID MUST be sent at most once per connection.
-> Once a peer has sent a schema, it records the type ID as "sent" and does
-> not send it again for the lifetime of the connection.
+> Within one schema-closure carrier, a schema for a given type ID MUST appear
+> at most once. Across the connection, deduplication is binding-scoped: the
+> first carrier for each `(method_id, direction)` binding may repeat type
+> definitions that appeared in earlier bindings, because the receiver needs a
+> root type ID for this specific method/direction.
 
 # Type identity
 
+vox identifies types by their phon **schema ID**: a `u64` content hash of a
+type declaration's phon-level structure (`phon r[schema-identity.content-hash]`,
+`phon r[schema-identity.computation]`). The hash is structural and
+language-independent — the same declaration produces the same ID regardless of
+connection, session, process, or source language, and language-level wrappers
+(Rust newtypes, TypeScript aliases) over the same underlying type collapse to
+the same ID. vox does not define its own hashing; it uses phon's.
+
 > r[schema.type-id]
 >
-> A type ID is a `u64` content hash — a deterministic structural hash
-> of a type *declaration's* postcard-level definition. For generic types,
-> the hash is of the declaration (with type variable slots), not of any
-> specific instantiation. The same declaration always produces the same
-> hash, regardless of which connection, session, process, or language
-> produced it. On the wire (CBOR), a type ID is encoded as a CBOR
-> unsigned integer.
+> A vox type ID is a phon schema ID — a `u64` content hash, computed by phon
+> (`phon r[schema-identity.content-hash]`). Implementations MUST use phon's
+> identity so that IDs match across languages and persist across connections
+> and sessions.
 
-> r[schema.type-id.hash]
->
-> The content hash of a type declaration is computed by feeding a
-> canonical byte sequence into blake3, then taking the first 8 bytes
-> of the output as a little-endian `u64`. The canonical byte sequence
-> is constructed by updating the hasher with the components described
-> below.
->
->   * **Strings** (field names, variant names, tag strings, type parameter
->     names) are fed as their byte length as a `u32` in little-endian
->     order, followed by the raw UTF-8 bytes. The length prefix ensures
->     the encoding is injective — no two different type structures
->     produce the same byte sequence.
->   * **`u64` values** (array lengths) are fed as 8 bytes in
->     little-endian order.
->   * **`u32` values** (variant indices) are fed as 4 bytes in
->     little-endian order.
->   * **TypeRef values** are fed according to `r[schema.type-id.hash.typeref]`.
->
-> Implementations MUST produce identical hashes for structurally
-> identical type declarations regardless of the source language.
->
-> For recursive types, see `r[schema.hash.recursive]`.
-
-> r[schema.type-id.hash.typeref]
->
-> A `TypeRef` is fed into the hasher as follows:
->
->   * **`Concrete` without args:** the tag `"concrete"` then the
->     type's content hash (8 bytes, little-endian)
->   * **`Concrete` with args:** the tag `"concrete"` then the type's
->     content hash (8 bytes, little-endian), then the tag `"args"`,
->     then each argument's `TypeRef` encoding in order (recursive)
->   * **`Var`:** the tag `"var"` then the parameter name
->     (length-prefixed UTF-8 string)
-
-## Primitive type hashes
-
-The hash input for a primitive type is a single tag string. Because the
-hash operates at the postcard encoding level — not at the source-language
-type level — Rust newtypes, TypeScript type aliases, and other
-language-level wrappers over the same underlying type all produce the
-same hash. For example, `struct UserId(u64)` and `struct PostId(u64)`
-both hash as `u64`.
-
-> r[schema.type-id.hash.primitives]
->
-> The hash of a primitive type is `blake3(len(tag) || tag)[0..8]` where
-> `len(tag)` is the tag's byte length as a `u32` LE, and `tag` is one
-> of the following UTF-8 strings:
->
-> | Postcard type | Tag string |
-> |---------------|------------|
-> | bool          | `"bool"`   |
-> | u8            | `"u8"`     |
-> | u16           | `"u16"`    |
-> | u32           | `"u32"`    |
-> | u64           | `"u64"`    |
-> | u128          | `"u128"`   |
-> | i8            | `"i8"`     |
-> | i16           | `"i16"`    |
-> | i32           | `"i32"`    |
-> | i64           | `"i64"`    |
-> | i128          | `"i128"`   |
-> | f32           | `"f32"`    |
-> | f64           | `"f64"`    |
-> | char          | `"char"`   |
-> | string        | `"string"` |
-> | unit          | `"unit"`   |
-> | bytes         | `"bytes"`   |
-> | payload       | `"payload"` |
->
-> These 18 hashes are constants. Implementations MAY precompute them.
-
-## Struct hashes
-
-> r[schema.type-id.hash.struct]
->
-> To hash a struct, update the hasher with:
->
->   1. The tag `"struct"`
->   2. The type name (length-prefixed UTF-8 string)
->   3. The number of type parameters as a `u32` (4 bytes, LE)
->   4. Each type parameter name (length-prefixed UTF-8 string), in order
->   5. For each field, in declaration order:
->      a. The field name (length-prefixed UTF-8 string)
->      b. The field's `TypeRef` (see `r[schema.type-id.hash.typeref]`)
-
-## Enum hashes
-
-> r[schema.type-id.hash.enum]
->
-> To hash an enum, update the hasher with:
->
->   1. The tag `"enum"`
->   2. The type name (length-prefixed UTF-8 string)
->   3. The number of type parameters as a `u32` (4 bytes, LE)
->   4. Each type parameter name (length-prefixed UTF-8 string), in order
->   5. For each variant, in declaration order:
->      a. The variant name (length-prefixed UTF-8 string)
->      b. The variant index as a `u32` (4 bytes, little-endian)
->      c. The payload tag: `"unit"`, `"newtype"`, `"tuple"`, or `"struct"`
->      d. For newtype payloads: the inner `TypeRef`
->      e. For tuple payloads: each element's `TypeRef`, in order
->      f. For struct payloads: each field as in `r[schema.type-id.hash.struct]`
->         step 5 (name then TypeRef, in order)
-
-## Container hashes
-
-> r[schema.type-id.hash.container]
->
-> To hash a container type, update the hasher with:
->
->   * **List:** `"list"` then the element `TypeRef`
->   * **Option:** `"option"` then the element `TypeRef`
->   * **Array:** `"array"` then the element `TypeRef`, then the length
->     as a `u64` (8 bytes, little-endian)
->   * **Map:** `"map"` then the key `TypeRef`, then the value `TypeRef`
-
-## Tuple hashes
-
-> r[schema.type-id.hash.tuple]
->
-> To hash a tuple, update the hasher with:
->
->   1. The tag `"tuple"`
->   2. Each element's `TypeRef`, in order
-
-## Channel hashes
-
-> r[schema.type-id.hash.channel]
->
-> To hash a channel type, update the hasher with:
->
->   1. The tag `"channel"`
->   2. The direction: `"send"` or `"recv"`
->   3. The element `TypeRef`
-
-Content hashes give type IDs a universal meaning. A peer that receives
-a schema tagged with a content hash it has already seen — from this
-connection, a previous connection, or even a persistent store — knows
-it already has that schema. This is critical for operation stores
-(see `r[schema.interaction.retry]`) and for efficient schema tracking
-across connection resumes.
+Content hashes give type IDs a universal meaning. A peer that receives a schema
+tagged with a content hash it has already seen — from this connection, a
+previous connection, or a persistent store — knows it already has that schema.
+This supports efficient schema tracking for later connections and local schema
+caches.
 
 > r[schema.type-id.per-connection]
 >
@@ -211,10 +87,9 @@ across connection resumes.
 > even within the same session. Each connection half has its own
 > sent/received tracking. However, because type IDs are content hashes,
 > a peer MAY use a previously received schema (from another connection
-> or a persistent cache) to build a translation plan without waiting for
-> the schema to be resent — as long as it does not send data until the
-> remote peer has confirmed (by sending its own schemas) that it can
-> read it.
+> or a persistent cache) to build a decode plan without waiting for the
+> schema to be resent — as long as it does not send data until the remote
+> peer has confirmed (by sending its own schemas) that it can read it.
 
 Per-connection tracking is required because connections within a session
 may terminate at different peers. Consider this topology:
@@ -237,488 +112,124 @@ connection 0's schemas; it only sees connection 1. Each connection is
 an independent communication channel that may reach a different peer,
 so schema state must be tracked independently per connection.
 
-# Hashing recursive types
+# Schema delivery
 
-Non-recursive types have straightforward content hashes — hash the
-structure, reference child types by their hashes. Recursive types
-create a cycle: the hash of `TreeNode` depends on the hash of
-`Vec<TreeNode>`, which depends on the hash of `TreeNode`.
+Schemas reach a peer through one of two carriers, both of which hold phon
+schema-closure bytes:
 
-The solution is a three-step algorithm that computes preliminary
-hashes to establish a canonical ordering, then derives final hashes
-from that ordering.
-
-> r[schema.hash.recursive]
->
-> To compute content hashes for a mutually recursive group of types:
->
->   1. **Preliminary hashes.** Hash each type in the group using the
->      normal rules (see `r[schema.type-id.hash]`), except that any
->      reference to another type in the same recursive group is replaced
->      with 8 zero bytes (the **sentinel**). References to types outside
->      the group use their real content hashes as normal. The result is
->      one preliminary hash per type.
->
->   2. **Deduplication.** If two types in the group have identical
->      canonical byte sequences (the full input to blake3 from step 1),
->      they are structurally identical at the postcard level and MUST be
->      deduplicated — collapsed to a single entry before proceeding.
->      (Type identity is structural; two nominal types with the same
->      postcard-level structure are the same type.)
->
->   3. **Canonical ordering.** Sort the (now-unique) types by their
->      preliminary hash (ascending, unsigned integer comparison). In the
->      unlikely event that two types have the same preliminary hash but
->      different canonical byte sequences (a 64-bit collision), break the
->      tie by lexicographic comparison of their canonical byte sequences.
->
->   4. **Final hashes.** Compute the **group hash** as
->      `blake3(preliminary_hash_0 || preliminary_hash_1 || ...)[0..8]`
->      where the preliminary hashes are concatenated in canonical order.
->      Then each type's final content hash is
->      `blake3(group_hash || index)[0..8]` where `index` is the type's
->      position in the canonical order, encoded as a `u64` in
->      little-endian order.
->
-> These final hashes are the types' `TypeSchemaId`s — plain `u64` values,
-> indistinguishable from non-recursive type hashes. No special
-> representation is needed on the wire or in data structures.
-
-> r[schema.hash.recursive.non-recursive]
->
-> A non-recursive type does not participate in this algorithm. Its
-> content hash is computed directly from its structure as described
-> in `r[schema.type-id.hash]`.
-
-Example: a recursive tree type.
-
-```
-// All strings are length-prefixed: len(s) as u32 LE, then UTF-8 bytes.
-// L("foo") = 03 00 00 00 "foo"
-//
-// Step 1: preliminary hash
-//   TreeNode: blake3(L("struct") || L("label") || hash(string)
-//                    || L("children") || hash_of(list, SENTINEL))
-//   → preliminary_hash = 0xABCD...
-//
-// Step 2: deduplication (only one type, nothing to dedup)
-//
-// Step 3: canonical order (only one type, so trivial)
-//   [TreeNode]
-//
-// Step 4: final hash
-//   group_hash = blake3(preliminary_hash)[0..8]
-//   TreeNode.type_id = blake3(group_hash || 0u64)[0..8]
-```
-
-Example: mutually recursive types.
-
-```
-// Expr { body: ExprBody }
-// ExprBody { Literal(u64), Add(Expr, Expr) }
-//
-// Step 1: preliminary hashes (recursive refs → sentinel)
-//   Expr:     blake3(L("struct") || L("body") || SENTINEL)         → 0x1111...
-//   ExprBody: blake3(L("enum") || L("Literal") || 0u32 || L("newtype") || hash(u64)
-//                    || L("Add") || 1u32 || L("struct") || L("left") || SENTINEL
-//                    || L("right") || SENTINEL)                    → 0x2222...
-//
-// Step 2: deduplication (both types are structurally distinct, nothing to dedup)
-//
-// Step 3: canonical order (sort by preliminary hash)
-//   [Expr (0x1111), ExprBody (0x2222)]
-//
-// Step 4: final hashes
-//   group_hash = blake3(0x1111... || 0x2222...)[0..8]
-//   Expr.type_id     = blake3(group_hash || 0u64)[0..8]
-//   ExprBody.type_id = blake3(group_hash || 1u64)[0..8]
-```
-
-# Schema format
-
-A schema describes a single type. Schemas are CBOR-encoded and
-self-contained — every type referenced by a schema is either a primitive
-or is referenced by its `TypeSchemaId` (a `u64` content hash).
-
-The following Rust declarations define the schema data model. Other
-language implementations must produce equivalent CBOR encodings.
-
-```rust
-/// A content hash that uniquely identifies a type's postcard-level
-/// structure. Computed via blake3, truncated to 64 bits.
-///
-/// The same type always produces the same TypeSchemaId regardless of
-/// connection, session, process, or language. On the wire (CBOR),
-/// a TypeSchemaId is encoded as a CBOR unsigned integer.
-///
-/// For generic types, the TypeSchemaId identifies the *declaration*
-/// (e.g. `Result`), not a specific instantiation (e.g. `Result<u32, E>`).
-/// Concrete type arguments are provided separately at each use site.
-struct TypeSchemaId(u64);
-
-/// A reference to a type in a schema. Either a concrete type
-/// (identified by its TypeSchemaId with optional type arguments for
-/// generic types) or a type variable bound by the enclosing generic.
-enum TypeRef {
-    /// A concrete type, possibly generic.
-    Concrete {
-        type_id: TypeSchemaId,
-        /// Type arguments for generic types. Empty for non-generic types.
-        /// For example, `Vec<String>` is `Concrete { type_id: <Vec>, args: [<String>] }`.
-        args: Vec<TypeRef>,
-    },
-    /// A reference to a type parameter of the enclosing generic type,
-    /// by name. For example, in `Result<T, E>`, the `Ok` variant's
-    /// payload references `Var("T")`.
-    Var(String),
-}
-
-/// The primitive types of the postcard encoding.
-///
-/// These are leaves in the type graph — they have no child types.
-/// Language-level wrappers (Rust newtypes, TypeScript type aliases)
-/// are transparent: `struct UserId(u64)` has the same schema as `u64`.
-enum PrimitiveType {
-    Bool,
-    U8, U16, U32, U64, U128,
-    I8, I16, I32, I64, I128,
-    F32, F64,
-    Char,
-    String,
-    /// The unit type — zero bytes on the wire. This is the canonical
-    /// representation of "nothing." A zero-element tuple is not valid;
-    /// use Unit instead.
-    Unit,
-    /// A raw byte sequence (`Vec<u8>`, `&[u8]`).
-    Bytes,
-    /// An opaque payload — a length-prefixed byte sequence whose
-    /// length prefix is a little-endian u32 (not a varint like other
-    /// postcard sequences). Used for protocol extensions where the
-    /// sender must reserve space before writing the payload.
-    Payload,
-}
-
-/// The structural description of a type.
-///
-/// Type references within a schema use `TypeRef`, which can be either
-/// a concrete type (with optional type arguments) or a type variable
-/// bound by the schema's `type_params`.
-enum SchemaKind {
-    /// A leaf type with no child types.
-    Primitive { primitive_type: PrimitiveType },
-
-    /// An ordered collection of named fields.
-    /// `name` is the type name (e.g. "Point"). MUST NOT be empty.
-    /// Used for matching across schema versions and for diagnostics.
-    Struct { name: String, fields: Vec<FieldSchema> },
-
-    /// A tagged union of named variants.
-    /// `name` is the type name (e.g. "Color"). MUST NOT be empty.
-    /// Used for matching across schema versions and for diagnostics.
-    Enum { name: String, variants: Vec<VariantSchema> },
-
-    /// An ordered, fixed-arity product type. Must have 1 or more
-    /// elements — use `PrimitiveType::Unit` for the zero case.
-    Tuple { elements: Vec<TypeRef> },
-
-    /// A variable-length homogeneous sequence (`Vec<T>`, `HashSet<T>`,
-    /// etc.). Sets and lists have the same postcard encoding and are
-    /// not distinguished at the schema level.
-    List { element: TypeRef },
-
-    /// A variable-length collection of key-value pairs.
-    Map { key: TypeRef, value: TypeRef },
-
-    /// A fixed-length homogeneous sequence (`[T; N]`).
-    Array { element: TypeRef, length: u64 },
-
-    /// A value that may be absent (`Option<T>`).
-    Option { element: TypeRef },
-
-    /// A channel endpoint. Channels are serialized as `()` on the wire;
-    /// the actual channel ID is passed out-of-band. The schema records
-    /// the direction and element type so that translation plans can correctly
-    /// map channel positions across schema versions.
-    Channel { direction: ChannelDirection, element: TypeRef },
-}
-
-/// The direction of a channel endpoint.
-enum ChannelDirection {
-    /// A sending endpoint (`Tx<T>`).
-    Send,
-    /// A receiving endpoint (`Rx<T>`).
-    Recv,
-}
-
-/// A field in a struct or struct-variant.
-struct FieldSchema {
-    /// The field name. Used for matching across schema versions —
-    /// renaming a field is a breaking change.
-    name: String,
-    /// The type of this field.
-    type_ref: TypeRef,
-    /// Whether this field is required (has no default value).
-    /// Included in the schema so that compatibility tooling can detect
-    /// breaking changes — e.g. adding a required field without a default
-    /// is a one-way compatible change, while adding an optional field is
-    /// fully compatible. The receiver uses this for early detection of
-    /// missing fields at translation-plan time rather than mid-stream.
-    required: bool,
-}
-
-/// A variant in an enum.
-struct VariantSchema {
-    /// The variant name. Used for matching across schema versions.
-    name: String,
-    /// The postcard variant index (varint ordinal on the wire).
-    index: u32,
-    /// The variant's payload shape.
-    payload: VariantPayload,
-}
-
-/// The payload of an enum variant.
-enum VariantPayload {
-    /// No payload (e.g. `None`, `Disconnected`).
-    Unit,
-    /// A single unnamed value (e.g. `Some(T)`, `Ok(T)`).
-    Newtype { type_ref: TypeRef },
-    /// A tuple of unnamed values (e.g. `Pair(u32, String)`).
-    Tuple { types: Vec<TypeRef> },
-    /// Named fields, like a struct (e.g. `Move { x: i32, y: i32 }`).
-    Struct { fields: Vec<FieldSchema> },
-}
-
-/// A complete schema: the type ID, optional type parameters, and the
-/// structural description.
-struct Schema {
-    /// The content hash that identifies this type declaration.
-    /// For generic types, this identifies the generic declaration
-    /// (e.g. `Result`), not a specific instantiation.
-    id: TypeSchemaId,
-    /// Type parameter names for generic types. Empty for non-generic
-    /// types. For `Result<T, E>`, this would be `["T", "E"]`.
-    /// The schema body uses `TypeRef::Var(name)` to reference these.
-    type_params: Vec<String>,
-    /// The structural description of this type.
-    kind: SchemaKind,
-}
-```
-
-Generic types are sent once per declaration, not once per instantiation.
-For example, `Result<u32, MyError>` and `Result<String, OtherError>` both
-reference the same `Result` schema — only the type arguments at the use
-site differ. This is more efficient on the wire and enables cross-language
-matching where different languages may format generic type names differently.
-
-Container types (`List`, `Map`, `Array`, `Option`) are built-in generics.
-Their element/key/value references use `TypeRef` like any other type
-reference, but they do not need explicit `type_params` because their
-generic structure is implicit in the `SchemaKind` variant.
-
-The normative rules below define the CBOR encoding of these types.
-
-> r[schema.format]
->
-> A schema MUST be a CBOR map containing:
->
->   * `id` — a CBOR unsigned integer (the type declaration's content hash)
->   * `type_params` — a CBOR array of type parameter names (UTF-8 strings).
->     Empty array for non-generic types. MAY be omitted if empty.
->   * `kind` — one of: `"struct"`, `"enum"`, `"tuple"`, `"list"`, `"map"`,
->     `"array"`, `"option"`, `"channel"`, `"primitive"`
->   * Kind-specific fields as defined below
-
-> r[schema.format.type-id]
->
-> A `TypeSchemaId` MUST be encoded as a CBOR unsigned integer.
-
-> r[schema.format.type-ref]
->
-> A `TypeRef` MUST be encoded as one of:
->
->   * A CBOR map `{"concrete": type_id}` — a non-generic concrete type
->   * A CBOR map `{"concrete": type_id, "args": [type_ref, ...]}` — a
->     generic type with type arguments (each argument is itself a `TypeRef`)
->   * A CBOR map `{"var": name}` — a reference to a type parameter of
->     the enclosing schema's `type_params` list, by name (UTF-8 string)
-
-> r[schema.format.primitive]
->
-> A primitive schema MUST contain:
->
->   * `kind`: `"primitive"`
->   * `primitive_type`: one of `"bool"`, `"u8"`, `"u16"`, `"u32"`,
->     `"u64"`, `"u128"`, `"i8"`, `"i16"`, `"i32"`, `"i64"`, `"i128"`,
->     `"f32"`, `"f64"`, `"char"`, `"string"`, `"unit"`, `"bytes"`,
->     `"payload"`
-
-> r[schema.format.struct]
->
-> A struct schema MUST contain:
->
->   * `kind`: `"struct"`
->   * `name`: the type name (UTF-8 string, MUST NOT be empty)
->   * `fields`: a CBOR array of field descriptors, each a map with:
->     - `name`: field name (UTF-8 string)
->     - `type_ref`: a `TypeRef` (see `r[schema.format.type-ref]`)
->     - `required`: a CBOR boolean — `true` if the field has no default
->       value, `false` if it does
->
-> Fields MUST be listed in declaration order (which is also postcard
-> serialization order).
-
-> r[schema.format.enum]
->
-> An enum schema MUST contain:
->
->   * `kind`: `"enum"`
->   * `name`: the type name (UTF-8 string, MUST NOT be empty)
->   * `variants`: a CBOR array of variant descriptors, each a map with:
->     - `name`: variant name (UTF-8 string)
->     - `index`: the postcard variant index (`u32`)
->     - `payload`: one of:
->       - `"unit"` — no payload
->       - `{"newtype": type_ref}` — single value
->       - `{"tuple": [type_ref, ...]}` — tuple of unnamed values
->       - `{"struct": [field_descriptors...]}` — struct variant
->         (field descriptors follow `r[schema.format.struct]`)
-
-> r[schema.format.container]
->
-> Container schemas MUST contain:
->
->   * `kind`: `"list"`, `"map"`, `"array"`, or `"option"`
->   * `element`: a `TypeRef` (for list, array, option)
->   * `key` and `value`: `TypeRef`s (for map)
->   * `length`: a `u64` (for array only)
->
-> Sets (`HashSet<T>`, `BTreeSet<T>`, etc.) have the same postcard encoding
-> as lists and MUST use `kind: "list"`. The schema does not distinguish
-> between ordered and unordered sequences.
-
-> r[schema.format.tuple]
->
-> A tuple schema MUST contain:
->
->   * `kind`: `"tuple"`
->   * `elements`: a CBOR array of `TypeRef`s, one per element, in order
->
-> The `elements` array MUST contain at least one element. A zero-element
-> tuple is not valid — use `PrimitiveType::Unit` instead.
-
-> r[schema.format.channel]
->
-> A channel schema MUST contain:
->
->   * `kind`: `"channel"`
->   * `direction`: `"send"` or `"recv"`
->   * `element`: a `TypeRef` for the channel's element type
->
-> Channels are serialized as `()` (unit) on the wire. The actual channel
-> ID is passed out-of-band in the message's `channels` field. The schema
-> records the direction and element type so that translation plans can
-> correctly map channel positions across schema versions. Runtime channel
-> capacity is flow-control configuration, not part of the schema identity.
-
-## Recursive types on the wire
-
-Recursive types reference each other by their final `TypeSchemaId` — the
-same plain `u64` content hash as any other type. There is no special
-wire representation for recursive references. The schemas for all
-types in a recursive group simply reference each other by hash.
-
-> r[schema.format.recursive]
->
-> When sending schemas for a recursive group, the sender MUST include
-> all schemas in the group that have not already been sent on this
-> connection. The receiver MUST be able to resolve every `TypeSchemaId`
-> referenced in the schemas using either the schemas included in the
-> current `SchemaPayload` or schemas previously received on this
-> connection.
-
-## Schema delivery
-
-Application-level schemas are sent as standalone `SchemaMessage`
-frames. Each frame introduces exactly one `(method_id, direction)`
-binding and carries the root type for that binding plus any newly
-introduced schemas the receiver needs before it can deserialize the
-subsequent `Request` or `Response`.
+  * **Inline with the data.** A `RequestCall` and a `RequestResponse` each carry
+    a `schemas` field (phon schema-closure bytes for that message's argument or
+    response root). It is non-empty the first time a `(method_id, direction)`
+    binding is used on a connection and empty thereafter.
+  * **Standalone `SchemaMessage`.** A binding may also be advertised ahead of
+    its first payload-bearing message, so a batch can establish all required
+    bindings before their first use. A `SchemaMessage` carries the same
+    schema-closure bytes plus the `(method_id, direction)` it binds.
 
 ```rust
 enum BindingDirection {
     Args,
     Response,
 }
-
-/// The CBOR-encoded payload carried by a SchemaMessage.
-struct SchemaPayload {
-    /// All schemas needed by the receiver that have not been
-    /// previously sent on this connection.
-    schemas: Vec<Schema>,
-    /// The root type for one method's args or response. This is a
-    /// TypeRef because the root type may be a generic instantiation
-    /// (e.g. `Result<Profile, VoxError<Infallible>>`).
-    root: TypeRef,
-}
 ```
+
+A schema binding is self-describing and self-contained: it identifies the root
+type IDs that matter for the binding and includes every composite schema the
+receiver needs, so the receiver can rebuild a phon registry and decode plans
+from the binding alone (plus any composites already received on this
+connection).
 
 > r[schema.format.self-contained]
 >
-> When a `SchemaMessage` includes schemas, the set of schemas MUST be
-> self-contained. Every `TypeSchemaId` referenced by any schema in the set
-> MUST either be defined in the same set or have been previously sent on
-> this connection. The receiver MUST be able to build translation plans for
-> all included types before deserializing the payload.
+> When a carrier includes schemas, the set of schemas MUST be self-contained:
+> every type ID referenced by any schema in the closure MUST either be defined
+> in the same closure or have been previously received on this connection. The
+> receiver MUST be able to build phon decode plans for all included types before
+> deserializing the payload.
 
 > r[schema.format.delivery]
 >
-> Application-level schemas are delivered as a standalone `SchemaMessage`
-> containing a CBOR-encoded `SchemaPayload`. The payload MUST include:
+> A binding carrier (the `schemas` field of a `RequestCall`/`RequestResponse`,
+> or a standalone `SchemaMessage`) MUST carry phon schema-binding bytes that
+> include:
 >
->   * All schemas needed for the method's types that have not been
->     previously sent on this connection
->   * The root `TypeSchemaId` for one `(method_id, direction)` binding
+>   * All schemas for the method's types that have not been previously sent on
+>     this connection, and
+>   * The primary root type ID for one `(method_id, direction)` binding.
 >
-> The root type for a response is always the full
-> `Result<T, VoxError<E>>` wire type, regardless of whether the
-> handler succeeded or failed.
+> The root type for a response is always the full `Result<T, VoxError<E>>` wire
+> type, regardless of whether the handler succeeded or failed.
 >
-> A `SchemaMessage` binds exactly one `(method_id, direction)` pair. If all
-> schemas for that method's types have already been sent on this connection,
-> the `schemas` array MAY be empty — but the binding message MUST still be sent
-> the first time this `(method_id, direction)` pair is introduced on the
-> connection. The receiver needs the binding to know which previously-sent
-> `TypeSchemaId` is the root for this method. Sending a schema whose
-> `TypeSchemaId` has already been sent on this connection is a protocol error.
+> A carrier binds exactly one `(method_id, direction)` pair. If all schemas for
+> that method's types have already been sent on this connection, the closure MAY
+> contain only the root (no new composite schemas) — but the binding MUST still
+> be established the first time this `(method_id, direction)` pair is introduced
+> on the connection, so the receiver knows which type ID is the root for this
+> method.
+
+> r[schema.format.binding-roots]
+>
+> A schema binding MUST identify exactly one **primary** root for the
+> `(method_id, direction)` pair and MAY identify auxiliary roots used by
+> payload-adjacent values that are not reachable from the primary wire shape.
+> Auxiliary roots are part of the same binding, not independent method
+> bindings. Each auxiliary root MUST be keyed by a stable semantic role so the
+> receiver can choose the correct writer root when building a decode plan.
+>
+> For request arguments, the primary root is the argument tuple's wire shape.
+> For responses, the primary root is the full response wire shape
+> `Result<T, VoxError<E>>`. Channel element roots (see
+> `r[schema.exchange.channels]`) are auxiliary roots because `Tx<T>` and
+> `Rx<T>` encode as opaque channel indices on the wire.
+>
+> The schema-binding byte framing is:
+>
+> ```text
+> u64 primary_root
+> u32 schema_count
+> repeated schema_count:
+>   u32 schema_len
+>   bytes schema
+> optional:
+>   u32 auxiliary_root_count
+>   repeated auxiliary_root_count:
+>     u32 role_len
+>     utf8 role
+>     u64 root
+> ```
+>
+> The auxiliary-root section is absent when the count would be zero, preserving
+> the compact single-root closure used by bindings without auxiliary roots.
 
 # Schema tracking
 
-Each peer maintains two sets per connection:
+Each peer maintains, per connection:
 
 > r[schema.tracking.sent]
 >
-> Each peer MUST track the set of type IDs for which it has sent schemas to
-> the other peer. This set starts empty and grows monotonically over the
-> connection lifetime.
+> Each peer MUST track the set of `(method_id, direction)` bindings for which
+> it has sent schema-binding bytes to the other peer. This set starts empty
+> and grows monotonically over the connection lifetime.
 
 > r[schema.tracking.received]
 >
-> Each peer MUST track the set of type IDs for which it has received schemas
-> from the other peer. This set starts empty and grows monotonically over
-> the connection lifetime.
+> Each peer MUST track the schema-binding bytes it has received for each
+> `(method_id, direction)` binding from the other peer. Receiving the same
+> binding more than once is not an error — the receiver overwrites
+> idempotently.
 
 > r[schema.tracking.transitive]
 >
-> When a schema is sent, all type IDs transitively referenced by that schema
-> are also marked as sent. A schema payload is self-contained
-> (see `r[schema.format.self-contained]`), so sending a struct schema
-> implicitly sends the schemas of all its field types, their field types,
-> and so on.
+> When a schema binding is sent, its schema closure MUST include every type
+> transitively referenced by the root and auxiliary roots in that binding.
+> A schema closure is self-contained (see `r[schema.format.self-contained]`),
+> so sending a struct schema implicitly includes the schemas of all its field
+> types, their field types, and so on.
 
 > r[schema.tracking.bindings]
 >
 > Each peer MUST track the set of (method_id, direction) pairs for which
-> it has sent method bindings on this connection. A binding MUST be sent
+> it has established bindings on this connection. A binding MUST be sent
 > the first time a method's schemas are delivered for a given direction,
 > even if all the schemas themselves were already sent by a previous call
 > to a different method.
@@ -727,14 +238,12 @@ Each peer maintains two sets per connection:
 
 Schema exchange operates at two levels:
 
-1. **Protocol level (per-session):** The `MessagePayload` schema is
-   exchanged during the CBOR handshake (see `r[session.handshake]`).
-   This allows the protocol framing itself to evolve without breaking
-   changes.
+1. **Protocol level (per-session):** The `Message` envelope schema is exchanged
+   during the handshake (see `r[session.handshake]`). This lets the protocol
+   framing itself evolve without breaking changes.
 
-2. **Application level (per-connection):** Method argument and response
-   schemas are exchanged lazily via `SchemaMessage`, scoped to each
-   connection. This allows service types to
+2. **Application level (per-connection):** Method argument and response schemas
+   are exchanged lazily, scoped to each connection. This lets service types
    evolve independently.
 
 The rest of this section describes application-level schema exchange.
@@ -750,8 +259,8 @@ for the entire service interface up front.
 >
 > Before sending a `Request`, the caller MUST check whether the schemas for
 > the method's argument types have been sent to this peer on this connection.
-> If any have not, the caller MUST send a `SchemaMessage` carrying all unsent
-> schemas and the method binding before sending the `Request`
+> If any have not, the caller MUST include the unsent schema closure (and the
+> method binding) with — or ahead of — the `Request`
 > (see `r[schema.format.delivery]`).
 
 > r[schema.exchange.callee]
@@ -759,8 +268,8 @@ for the entire service interface up front.
 > Before sending any `Response` for a method, the callee MUST check whether
 > the schemas for the method's **statically-known response type** have been
 > sent to this peer on this connection. If any have not, the callee MUST
-> send a `SchemaMessage` carrying all unsent schemas and the method binding
-> before sending the `Response`.
+> include the unsent schema closure and the method binding with — or ahead of —
+> the `Response`.
 >
 > The response schema is determined by the method signature — it is the
 > full `Result<T, VoxError<E>>` wire type. It MUST NOT vary based on
@@ -771,9 +280,39 @@ for the entire service interface up front.
 > r[schema.exchange.channels]
 >
 > Channel element types are included in schema exchange. If a method's
-> arguments contain `Tx<T>` or `Rx<T>`, the schema for `T` MUST be included
-> in the caller's schemas. Channels MUST NOT appear in return types
-> (see `r[rpc.channel.placement]`).
+> arguments contain top-level `Tx<T>` or `Rx<T>` handles, the schema for each
+> element type `T` MUST be reachable from the caller's advertised argument
+> schemas. On the wire a channel handle is opaque
+> (`r[rpc.channel.payload-encoding]`); its element schema therefore travels as
+> an auxiliary root of the method's argument schema binding (see
+> `r[schema.format.binding-roots]`), keyed by the generated per-method channel
+> metadata:
+>
+>   * Argument index.
+>   * Channel direction (`Tx` or `Rx` from the holder's point of view).
+>   * Element root ID for that argument's `T`.
+>
+> The item receiver MUST store the applicable channel-element writer root
+> alongside the bound channel handle so that each incoming item is decoded
+> through phon's compatibility plan against the local element type. Channels
+> MUST NOT appear in return types (see `r[rpc.channel.placement]`).
+
+> r[schema.exchange.channels.rx-args]
+>
+> For an argument `Rx<T>`, the caller is the channel item writer and the callee
+> is the channel item receiver. The callee MUST bind its `Rx<T>` with the
+> caller's `channel.arg.N.rx.element` auxiliary root from the method's argument
+> schema binding, and MUST decode every incoming item through a phon
+> compatibility plan from that writer root to the callee's local `T`.
+
+> r[schema.exchange.channels.tx-args]
+>
+> For an argument `Tx<T>`, the callee is the channel item writer and the caller
+> is the channel item receiver. Before the callee sends the first item on that
+> channel, the caller MUST have received the callee's
+> `channel.arg.N.tx.element` writer root for the same method/argument role, so
+> the caller's paired `Rx<T>` can decode incoming items through a phon
+> compatibility plan from the callee's writer root to the caller's local `T`.
 
 > r[schema.exchange.required]
 >
@@ -790,10 +329,9 @@ for the entire service interface up front.
 > If the caller has already sent schemas for a method's argument types
 > (from a previous call to the same or different method using the same
 > types), no schemas need to be included. The `r[schema.principles.once-per-type]`
-> rule applies — each type ID is sent at most once. However, the
-> binding for a new `(method_id, direction)` pair MUST still
-> be sent in its own `SchemaMessage` even when all schemas are already known
-> (see `r[schema.tracking.bindings]`).
+> rule applies — each type ID is sent at most once. The binding for a new
+> `(method_id, direction)` pair MUST still be established the first time it is
+> introduced on the connection (see `r[schema.tracking.bindings]`).
 
 # Method identity without signatures
 
@@ -810,207 +348,62 @@ which is exactly what schema exchange is designed to avoid.
 > ```
 > method_id = blake3(kebab(ServiceName) + "." + kebab(methodName))[0..8]
 > ```
-> The signature hash (`sig_bytes` from `r[signature.hash.algorithm]`) is
-> excluded. Only the service name and method name contribute to the method
-> ID.
+> Only the service name and method name contribute to the method ID. Argument
+> and return types do not contribute.
 
 Renaming a method is still a breaking change (the method ID changes),
 but changing argument or return types is no longer automatically
-breaking — it depends on whether the translation plan can bridge the
+breaking — it depends on whether phon's compatibility plan can bridge the
 difference.
 
-# Translation plans
+# Decode plans and error reporting
 
-When a peer receives a schema for a remote type that it will deserialize
-into a local type, it builds a **translation plan**. The translation plan
-is a recipe for reading postcard bytes written by the remote type and
-populating the fields of the local type.
-
-Translation plans are built once per (remote type ID, local type) pair
-and cached for the connection lifetime.
-
-> r[schema.translation.field-matching]
->
-> Fields MUST be matched by name, not by position. For each field in the
-> local type, the translation plan looks up the corresponding field in the
-> remote schema by name. If found, the plan records the remote field's
-> position so the deserializer knows which postcard field to read.
-
-> r[schema.translation.skip-unknown]
->
-> If the remote schema contains fields that do not exist in the local type,
-> those fields MUST be skipped during deserialization. The translation plan
-> records how many bytes to skip for each unknown remote field, based on
-> the remote field's type schema.
-
-> r[schema.translation.fill-defaults]
->
-> If the local type contains fields that do not exist in the remote schema,
-> those fields MUST be filled with their default values. Whether a field
-> has a default is determined by the **local** type definition (e.g. a
-> `#[facet(default)]` annotation in Rust, or equivalent in other
-> languages) — this information is not part of the remote schema.
-> Local fields without default values that are missing from the remote
-> schema cause a translation plan error
-> (see `r[schema.errors.missing-required]`).
-
-> r[schema.translation.reorder]
->
-> If fields exist in both the local and remote types but in different order,
-> the translation plan MUST handle the reordering. The deserializer reads
-> postcard bytes in remote field order but writes values into local field
-> positions.
-
-> r[schema.translation.type-compat]
->
-> For each matched field, the remote field type and local field type MUST be
-> compatible. Two types are compatible if:
->
->   * They are the same primitive type
->   * They are both containers of the same kind with compatible element types
->   * They are both structs and a nested translation plan can be built
->   * They are both enums and variant matching succeeds
->     (see `r[schema.translation.enum]`)
->   * They are both tuples and tuple matching succeeds
->     (see `r[schema.translation.tuple]`)
-
-> r[schema.translation.serialization-unchanged]
->
-> Schema exchange does NOT affect serialization. A peer always serializes
-> using its own local type definition and postcard. The translation plan
-> applies only on the deserialization side — the receiver adapts to the
-> sender's layout.
-
-# Enum evolution
-
-Enums follow the same principle as structs — match by name, not by position.
-This allows adding variants to an enum without breaking existing peers.
-
-> r[schema.translation.enum]
->
-> Enum variants MUST be matched by name, not by variant index. The
-> translation plan maps remote variant names to local variant indices and
-> records how to deserialize each variant's payload.
-
-> r[schema.translation.enum.unknown-variant]
->
-> If a remote enum has variants that the local type does not, those variants
-> are skippable in the schema but cause an error at runtime if actually
-> received. The translation plan records that these variants exist in the
-> remote schema; if a message arrives with an unknown variant, the
-> deserializer MUST return an error.
-
-> r[schema.translation.enum.missing-variant]
->
-> If the local enum has variants that the remote schema does not, this is
-> fine — those variants will never appear in data from that remote peer.
-> No error is needed. The local peer can still use those variants when
-> sending data.
-
-> r[schema.translation.enum.payload-compat]
->
-> For each variant that exists in both the remote and local types, the
-> variant payloads MUST be compatible: unit matches unit, newtype matches
-> newtype with a compatible inner type, tuple matches tuple with
-> compatible elements (see `r[schema.translation.tuple]`), struct matches
-> struct with compatible fields (same rules as top-level struct matching).
-
-# Tuple evolution
-
-Tuples are positional — elements are matched by index, not by name.
-This means tuple evolution is more restricted than struct evolution.
-
-> r[schema.translation.tuple]
->
-> Tuple types MUST have the same arity (number of elements) in both
-> the remote and local types. For each position, the remote element
-> type and local element type MUST be compatible (per
-> `r[schema.translation.type-compat]`). Adding, removing, or
-> reordering tuple elements is a breaking change.
-
-# Error reporting
-
-Schema exchange detects incompatibilities early — when building the
-translation plan — rather than failing mid-stream on corrupt data.
-
-> r[schema.errors.early-detection]
->
-> Type incompatibilities MUST be detected at translation-plan construction
-> time, not during deserialization of individual messages. When a peer
-> receives a schema and attempts to build a translation plan against a
-> local type, all structural incompatibilities MUST be reported before
-> any data of that type is processed.
+When a peer must deserialize a remote type into a local type, it asks phon to
+build a **compatibility decode plan** from the remote (writer) schema
+against the local (reader) type — matching fields by name, reordering, skipping
+writer-only fields, and defaulting reader-only fields. The mechanics of that
+plan — field matching, enum-by-name, defaulting, the early-detection of
+structural incompatibilities — are defined by phon
+(`phon r[compat.plan-first]`, `phon r[compat.field-matching]`,
+`phon r[compat.enum-by-name]`, `phon r[compat.unmatched-reader-field]`). vox
+defines only how a plan failure is surfaced as an RPC outcome.
 
 > r[schema.errors.call-level]
 >
-> A translation plan failure is a **call-level error**, not a connection-level
+> A decode-plan failure is a **call-level error**, not a connection-level
 > fault. The connection remains open and other method calls are unaffected.
 > This is distinct from missing schemas entirely (a protocol error per
 > `r[schema.exchange.required]`), which tears down the connection.
 
 > r[schema.errors.call-level.callee]
 >
-> If the callee cannot build a translation plan for incoming request
-> arguments, it MUST respond with an error describing the incompatibility
-> (including a diff of the remote schema versus the local type).
+> If the callee cannot build a decode plan for incoming request arguments,
+> it MUST respond with an error describing the incompatibility (surfacing
+> phon's plan error, which identifies the offending type and field).
 
 > r[schema.errors.call-level.caller]
 >
-> If the caller cannot build a translation plan for an incoming response,
-> the failure is local — the call's result resolves to an error. There is
-> no further message to send; the response has already been received.
+> If the caller cannot build a decode plan for an incoming response, the
+> failure is local — the call's result resolves to an error. There is no
+> further message to send; the response has already been received.
 
-> r[schema.errors.non-retryable]
+> r[schema.errors.same-peer-terminal]
 >
-> A translation plan failure is non-retryable for the life of the connection to
-> that remote peer. The remote peer's schema for a given type does not change
-> while the connection is open, so retrying the same call will always reproduce
-> the same translation plan failure. Callers MUST treat a translation plan
-> failure as non-retryable (see `r[rpc.fallible.vox-error.retryable]`).
-
-> r[schema.errors.missing-required]
->
-> If a local struct has a field without a default value that is not
-> present in the remote schema, the translation plan MUST fail with an
-> error identifying the missing field by name and type. Whether a field
-> has a default is a property of the local type definition, not of the
-> remote schema (see `r[schema.translation.fill-defaults]`).
-
-> r[schema.errors.type-mismatch]
->
-> If a field exists in both the remote and local types but the types are
-> incompatible (e.g., remote has `u32`, local has `String`), the
-> translation plan MUST fail with an error identifying the field, the
-> remote type, and the local type.
-
-> r[schema.errors.unknown-variant-runtime]
->
-> If a message arrives containing an enum variant that exists in the
-> remote schema but not in the local type, the deserializer MUST return
-> an error for that specific message. This is a runtime error because
-> the translation plan cannot predict which variant a given message
-> will contain.
-
-> r[schema.errors.content]
->
-> All schema-related errors MUST include:
->
->   * The remote type ID
->   * The local type name (for diagnostics)
->   * The specific incompatibility (missing field, type mismatch, etc.)
->   * For field-level errors: the field name and both the remote and local
->     field types
+> A decode-plan failure is terminal for that call against the current remote
+> peer schema. The remote peer's schema for a given type does not change while
+> the connection is open, so issuing the same call again against the same peer
+> schema will reproduce the same failure.
 
 # Compatibility checking
 
-Schema exchange handles runtime differences gracefully, but it is still
-valuable to know about compatibility issues before deployment. Tooling
-can snapshot schemas and check changes as part of the development workflow.
+phon's plan handles runtime differences gracefully, but it is still valuable to
+know about compatibility issues before deployment. Tooling can snapshot schemas
+and check changes as part of the development workflow.
 
 > r[schema.compat.snapshot]
 >
 > Implementations SHOULD provide tooling to snapshot the schemas of a
-> service's types. A snapshot captures the full schemas for every type
+> service's types. A snapshot captures the full phon schemas for every type
 > used in the service's method signatures.
 
 > r[schema.compat.check]
@@ -1018,13 +411,12 @@ can snapshot schemas and check changes as part of the development workflow.
 > Implementations SHOULD provide tooling to compare two snapshots and
 > report:
 >
->   * **Compatible changes** — changes where a translation plan can be
->     built in both directions (e.g., adding an optional field)
+>   * **Compatible changes** — changes where a decode plan can be built in
+>     both directions (e.g., adding an optional field)
 >   * **One-way compatible changes** — changes where old can read new but
 >     not vice versa (e.g., adding a required field with a default)
->   * **Breaking changes** — changes where no translation plan can be
->     built (e.g., removing a required field, changing a field's type
->     incompatibly)
+>   * **Breaking changes** — changes where no decode plan can be built
+>     (e.g., removing a required field, changing a field's type incompatibly)
 
 > r[schema.compat.ci]
 >
@@ -1033,7 +425,7 @@ can snapshot schemas and check changes as part of the development workflow.
 
 > r[schema.compat.policy]
 >
-> A breaking change is one where a translation plan cannot be built between
+> A breaking change is one where a decode plan cannot be built between
 > the old and new versions. Whether a breaking change is acceptable depends
 > on the project's deployment model (rolling updates vs. coordinated
 > releases). The tooling reports facts; policy is up to the project.
@@ -1046,28 +438,15 @@ Schema exchange is designed to be transparent to the rest of the protocol.
 >
 > Channels are unaffected by schema exchange beyond their element types.
 > Channel semantics (creation, flow control, close, reset) are unchanged.
-> The element type's schema is exchanged as part of the method's argument
-> or response schemas (see `r[schema.exchange.channels]`), and translation
-> plans apply to channel items the same way they apply to request/response
-> payloads.
-
-> r[schema.interaction.retry]
->
-> Operation stores MUST store schemas alongside serialized payloads.
-> A sealed operation contains postcard-encoded bytes that are only
-> meaningful together with the schemas that describe them. When replaying
-> a sealed response, the replaying peer MUST send schemas for the
-> response types on the current connection if they have not already been
-> sent, just as it would for a live response.
->
-> Because type IDs are content hashes, the operation store does not need
-> a per-connection schema ID namespace. The stored schemas use the same
-> content hashes regardless of which connection originally produced them
-> or which connection replays them. A disk-backed operation store that
-> survives process restarts can use content hashes as stable keys for
-> its schema cache.
+> Channel element writer roots are exchanged according to
+> `r[schema.exchange.channels.rx-args]` and
+> `r[schema.exchange.channels.tx-args]`, and decode plans apply to channel items
+> the same way they apply to request/response payloads. The writer root for a
+> channel item is the channel element auxiliary root recorded when the channel
+> handle was bound, not the receiver's local element root.
 
 > r[schema.interaction.metadata]
 >
-> Metadata is unaffected by schema exchange. Metadata key-value pairs are
-> not typed in the postcard sense and do not participate in schema exchange.
+> Metadata is unaffected by schema exchange. Metadata is a self-describing
+> phon `Value` map (see `r[rpc.metadata]`); its entries are not nominally
+> typed and do not participate in schema exchange.

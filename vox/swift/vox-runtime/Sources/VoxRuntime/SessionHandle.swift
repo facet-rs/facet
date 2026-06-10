@@ -1,144 +1,46 @@
 import Foundation
 
-/// Handle for session resumption operations.
-///
-/// When a session is resumable, this handle can be used to:
-/// - Client-side: typically handled automatically via recovery callback
-/// - Server-side: resume an existing session when a client reconnects with a known key
 public final class SessionHandle: @unchecked Sendable {
+    private let commandTx: @Sendable (HandleCommand) -> Bool
     private let eventContinuation: AsyncStream<DriverEvent>.Continuation
-    private let role: Role
-    private let localRootSettings: ConnectionSettings
-    private let peerRootSettings: ConnectionSettings
-    private let transport: ConduitKind
-    let sessionResumeKey: [UInt8]?
 
     init(
-        eventContinuation: AsyncStream<DriverEvent>.Continuation,
-        role: Role,
-        localRootSettings: ConnectionSettings,
-        peerRootSettings: ConnectionSettings,
-        transport: ConduitKind,
-        sessionResumeKey: [UInt8]?
+        commandTx: @escaping @Sendable (HandleCommand) -> Bool,
+        eventContinuation: AsyncStream<DriverEvent>.Continuation
     ) {
+        self.commandTx = commandTx
         self.eventContinuation = eventContinuation
-        self.role = role
-        self.localRootSettings = localRootSettings
-        self.peerRootSettings = peerRootSettings
-        self.transport = transport
-        self.sessionResumeKey = sessionResumeKey
     }
 
-    /// Resume the session with a new link (client-side).
-    public func resume(_ link: any Link) async throws {
-        try await resume(.initiator(link))
-    }
-
-    /// Resume the session with a new attachment (client-side).
-    public func resume(_ attachment: LinkAttachment) async throws {
-        traceLog(.resume, "SessionHandle.resume: role=\(role) transport=\(transport)")
-        let conduit = try await buildResumedConduit(from: attachment)
-        eventContinuation.yield(.resumeConduit(conduit))
-    }
-
-    /// Accept a resumed link from a reconnecting client (server-side).
-    public func acceptResumedLink(_ link: any Link) async throws {
-        try await acceptResumedAttachment(.init(link: link))
-    }
-
-    /// Accept a resumed attachment from a reconnecting client (server-side).
-    public func acceptResumedAttachment(_ attachment: LinkAttachment) async throws {
-        traceLog(.resume, "SessionHandle.acceptResumedAttachment: role=\(role) transport=\(transport)")
-        let conduit = try await buildResumedConduit(from: attachment)
-        eventContinuation.yield(.resumeConduit(conduit))
+    /// Open a virtual connection on the existing session.
+    ///
+    /// r[impl rpc.virtual-connection.open]
+    /// r[impl connection.open]
+    public func openConnection(
+        settings: ConnectionSettings,
+        metadata: Metadata = emptyMetadata(),
+        dispatcher: (any ServiceDispatcher)? = nil
+    ) async throws -> Connection {
+        try await withCheckedThrowingContinuation { continuation in
+            let responseTx = SingleResume<Connection> { result in
+                continuation.resume(with: result)
+            }
+            let accepted = commandTx(
+                .openConnection(
+                    settings: settings,
+                    metadata: metadata,
+                    dispatcher: dispatcher,
+                    responseTx: { result in responseTx(result) }
+                ))
+            guard accepted else {
+                responseTx(.failure(.connectionClosed))
+                return
+            }
+        }
     }
 
     /// Shutdown the session.
     public func shutdown() {
         eventContinuation.finish()
-    }
-
-    private func buildResumedConduit(from attachment: LinkAttachment) async throws -> any Conduit {
-        guard let sessionResumeKey else {
-            throw ConnectionError.protocolViolation(rule: "session is not resumable")
-        }
-
-        let readyAttachment: LinkAttachment
-        if attachment.negotiatedConduit == nil {
-            switch role {
-            case .initiator:
-                try await performInitiatorLinkPrologue(
-                    link: attachment.link,
-                    conduit: transport
-                )
-                readyAttachment = .negotiated(attachment.link, conduit: transport)
-            case .acceptor:
-                let negotiatedTransport = try await performAcceptorLinkPrologue(
-                    link: attachment.link,
-                    supportedConduit: transport
-                )
-                guard negotiatedTransport == transport else {
-                    throw TransportError.protocolViolation(
-                        "transport negotiated \(negotiatedTransport) for requested \(transport)"
-                    )
-                }
-                readyAttachment = .negotiated(attachment.link, conduit: negotiatedTransport)
-            }
-        } else {
-            readyAttachment = attachment
-        }
-
-        switch role {
-        case .initiator:
-            let handshake = try await performInitiatorHandshake(
-                link: readyAttachment.link,
-                maxPayloadSize: 1024 * 1024,
-                maxConcurrentRequests: localRootSettings.maxConcurrentRequests,
-                initialChannelCredit: localRootSettings.initialChannelCredit,
-                resumable: true,
-                resumeKey: sessionResumeKey
-            )
-            guard handshake.localRootSettings == localRootSettings else {
-                throw ConnectionError.protocolViolation(
-                    rule: "local root settings changed across session resume"
-                )
-            }
-            guard handshake.peerRootSettings == peerRootSettings else {
-                throw ConnectionError.protocolViolation(
-                    rule: "peer root settings changed across session resume"
-                )
-            }
-            // Session resume removed (StableConduit deletion). Any
-            // resume key the peer echoes back is ignored.
-            let _ = handshake.sessionResumeKey
-            let _ = sessionResumeKey
-
-        case .acceptor:
-            let handshake = try await performAcceptorHandshake(
-                link: readyAttachment.link,
-                maxPayloadSize: 1024 * 1024,
-                maxConcurrentRequests: localRootSettings.maxConcurrentRequests,
-                initialChannelCredit: localRootSettings.initialChannelCredit,
-                resumable: false,
-                expectedResumeKey: sessionResumeKey
-            )
-            guard handshake.localRootSettings == localRootSettings else {
-                throw ConnectionError.protocolViolation(
-                    rule: "local root settings changed across session resume"
-                )
-            }
-            guard handshake.peerRootSettings == peerRootSettings else {
-                throw ConnectionError.protocolViolation(
-                    rule: "peer root settings changed across session resume"
-                )
-            }
-        }
-
-        return try await buildEstablishedConduit(
-            role: role,
-            transport: transport,
-            attachment: readyAttachment,
-            recoverAttachment: nil
-        )
     }
 }

@@ -1,5 +1,7 @@
 //! `Fd` — a file descriptor that travels across a vox connection.
 //!
+//! r[impl transport.fd.capability]
+//!
 //! On the wire an [`Fd`] is encoded as a small varint *index* into a
 //! per-message fd table; the descriptors themselves travel out-of-band in
 //! `SCM_RIGHTS` ancillary data on a Unix-domain socket. This mirrors the
@@ -87,10 +89,9 @@ mod unix {
     /// or borrow it with [`Fd::as_raw_fd`].
     ///
     /// Serializing an `Fd` *duplicates* its descriptor into the transport's
-    /// `SCM_RIGHTS` batch (the source `Fd` keeps ownership), so a response
-    /// may be encoded more than once — the operation store's replay-seal
-    /// pass and the wire pass — and the encoder's size/write double-call is
-    /// deduped by the `Fd` value's address.
+    /// `SCM_RIGHTS` batch (the source `Fd` keeps ownership). If the encoder
+    /// performs a size/write double-call, collection is deduped by the `Fd`
+    /// value's address.
     #[derive(Facet)]
     #[facet(opaque = FdAdapter, traits(Debug))]
     pub struct Fd {
@@ -99,7 +100,8 @@ mod unix {
         inner: Cell<Option<OwnedFd>>,
         /// Scratch the adapter points `OpaqueSerialize` at. Holds
         /// `NOT_COLLECTED` until the first `serialize_map`, then the index
-        /// assigned by the send collector. Serialized as a postcard varint.
+        /// assigned by the send collector. Serialized as the adapter's compact
+        /// u32 payload.
         wire_index: Cell<u32>,
     }
 
@@ -170,8 +172,8 @@ mod unix {
     /// `f` produced together with the descriptors it gathered.
     ///
     /// Descriptors are *duplicated* into the collector, so the source `Fd`
-    /// keeps ownership and the same response can be encoded more than once
-    /// (the operation store's replay-seal pass and the wire pass).
+    /// keeps ownership and a value can survive the encoder's size/write
+    /// double-call without duplicating the descriptor twice.
     pub fn collect_fds<R>(f: impl FnOnce() -> R) -> (R, FrameFds) {
         struct Restore(Option<FdCollector>);
         impl Drop for Restore {
@@ -215,10 +217,9 @@ mod unix {
     /// `key` is the source `Fd`'s value address: repeated calls for the same
     /// value within one collector (size pass then write pass) return the
     /// same index and duplicate the descriptor only once. Returns
-    /// `NOT_COLLECTED` — never panics — when no collector is installed (e.g.
-    /// the operation store's seal pre-encode: an fd response is inherently
-    /// non-replayable) or if `dup` fails; a panic here would abort the
-    /// process across the `extern "C"` encoder trampolines.
+    /// `NOT_COLLECTED` — never panics — when no collector is installed or if
+    /// `dup` fails; a panic here would abort the process across the `extern "C"`
+    /// encoder trampolines.
     fn collect_fd(key: usize, fd: BorrowedFd<'_>) -> u32 {
         FD_COLLECTOR.with(|c| {
             let mut slot = c.borrow_mut();
@@ -292,10 +293,10 @@ mod unix {
                 OpaqueDeserialize::Borrowed(b) => *b,
                 OpaqueDeserialize::Owned(b) => b.as_slice(),
             };
-            let mut cursor = vox_postcard::decode::Cursor::new(bytes);
-            let index = cursor
-                .read_varint()
-                .map_err(|e| format!("Fd index varint: {e}"))? as u32;
+            // The opaque span is the phon-compact encoding of the `u32` wire index
+            // (the engine has already stripped the `u32` length frame): fixed 4-byte
+            // little-endian, decoded back through phon to stay codec-consistent.
+            let index = vox_phon::from_slice::<u32>(bytes).map_err(|e| format!("Fd index: {e}"))?;
             let owned = take_fd(index)?;
             Ok(Fd {
                 inner: Cell::new(Some(owned)),
@@ -330,18 +331,15 @@ mod unix {
         }
 
         #[test]
-        fn fd_round_trips_through_postcard() {
+        fn fd_round_trips_through_phon() {
             let file = temp_file_with(b"vox-fd-payload");
             let msg = Fd::new(OwnedFd::from(file));
 
-            let (bytes, collected) = collect_fds(|| vox_postcard::to_vec(&msg).expect("encode"));
+            let (bytes, collected) = collect_fds(|| vox_phon::to_vec(&msg).expect("encode"));
             assert_eq!(collected.len(), 1, "one fd collected");
-            assert_eq!(&bytes[..4], &1u32.to_le_bytes());
-            assert_eq!(bytes[4], 0);
 
-            let decoded: Fd = provide_fds(collected, || {
-                vox_postcard::from_slice(&bytes).expect("decode")
-            });
+            let decoded: Fd =
+                provide_fds(collected, || vox_phon::from_slice(&bytes).expect("decode"));
 
             let mut f = std::fs::File::from(decoded.into_owned_fd().expect("owned fd"));
             let mut got = String::new();
@@ -352,8 +350,8 @@ mod unix {
         #[test]
         fn missing_source_is_a_clean_error() {
             let msg = Fd::new(OwnedFd::from(temp_file_with(b"x")));
-            let (bytes, _fds) = collect_fds(|| vox_postcard::to_vec(&msg).unwrap());
-            let r = std::panic::catch_unwind(|| vox_postcard::from_slice::<Fd>(&bytes));
+            let (bytes, _fds) = collect_fds(|| vox_phon::to_vec(&msg).unwrap());
+            let r = std::panic::catch_unwind(|| vox_phon::from_slice::<Fd>(&bytes));
             assert!(
                 r.is_err() || r.unwrap().is_err(),
                 "decoding an Fd with no source must fail"

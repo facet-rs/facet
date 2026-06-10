@@ -4,6 +4,12 @@ import Foundation
 actor DriverState {
     private let retainFinalizedRequests = true
 
+    enum AddInFlightResult: Sendable, Equatable {
+        case inserted
+        case duplicate
+        case limitExceeded(limit: UInt32, inFlight: Int)
+    }
+
     private struct FinalizedRequest: Sendable {
         let reason: String
         let atUptimeNs: UInt64
@@ -20,6 +26,7 @@ actor DriverState {
     var inFlightResponseContext: [UInt64: InFlightResponseContext] = [:]
     private var finalizedRequests: [UInt64: FinalizedRequest] = [:]
     var isClosed = false
+    private var rootInternallyClosed = false
 
     func addPendingResponse(
         _ requestId: UInt64,
@@ -44,6 +51,21 @@ actor DriverState {
         }
         markFinalizedRequest(requestId, reason: reason)
         return pending
+    }
+
+    func claimPendingResponses(connectionId: UInt64, reason: String) -> [UInt64: PendingCall] {
+        let requestIds = pendingResponses.compactMap { requestId, pending in
+            pending.request.connectionId == connectionId ? requestId : nil
+        }
+        var claimed: [UInt64: PendingCall] = [:]
+        for requestId in requestIds {
+            guard let pending = pendingResponses.removeValue(forKey: requestId) else {
+                continue
+            }
+            claimed[requestId] = pending
+            markFinalizedRequest(requestId, reason: reason)
+        }
+        return claimed
     }
 
     func markFinalizedRequest(_ requestId: UInt64, reason: String) {
@@ -97,29 +119,42 @@ actor DriverState {
     func addInFlight(
         _ requestId: UInt64,
         connectionId: UInt64,
-        responseMetadata: [MetadataEntry]
-    ) -> Bool {
-        let inserted = inFlightRequests.insert(requestId).inserted
-        if inserted {
-            inFlightResponseContext[requestId] = InFlightResponseContext(
-                connectionId: connectionId,
-                responseMetadata: responseMetadata
+        responseMetadata: Metadata,
+        localMaxConcurrentRequests: UInt32
+    ) -> AddInFlightResult {
+        guard !inFlightRequests.contains(requestId) else {
+            return .duplicate
+        }
+
+        let inFlightOnConnection = inFlightResponseContext.values.lazy.filter {
+            $0.connectionId == connectionId
+        }.count
+        if UInt64(inFlightOnConnection) >= UInt64(localMaxConcurrentRequests) {
+            return .limitExceeded(
+                limit: localMaxConcurrentRequests,
+                inFlight: inFlightOnConnection
             )
         }
-        return inserted
+
+        inFlightRequests.insert(requestId)
+        inFlightResponseContext[requestId] = InFlightResponseContext(
+            connectionId: connectionId,
+            responseMetadata: responseMetadata
+        )
+        return .inserted
     }
 
     func removeInFlight(_ requestId: UInt64) -> (
         removed: Bool,
         connectionId: UInt64,
-        responseMetadata: [MetadataEntry]
+        responseMetadata: Metadata
     ) {
         let removed = inFlightRequests.remove(requestId) != nil
         let context = inFlightResponseContext.removeValue(forKey: requestId)
         return (
             removed,
             context?.connectionId ?? 0,
-            context?.responseMetadata ?? []
+            context?.responseMetadata ?? .null
         )
     }
 
@@ -135,42 +170,75 @@ actor DriverState {
         return responses
     }
 
-    func pendingCallsSnapshot() -> [DriverQueuedCall] {
-        pendingResponses.values.map(\.request)
-    }
-
-    func clearIncomingInFlightForResume() -> [UInt64] {
-        let requestIds = Array(inFlightRequests)
-        inFlightRequests.removeAll()
-        inFlightResponseContext.removeAll()
-        return requestIds
-    }
-
     func isConnectionClosed() -> Bool {
         isClosed
+    }
+
+    func markRootInternallyClosed() {
+        rootInternallyClosed = true
+    }
+
+    func isRootInternallyClosed() -> Bool {
+        rootInternallyClosed
     }
 }
 
 /// Actor for virtual connection state.
 actor VirtualConnectionState {
-    private var nextConnId: UInt64 = 1
-    private var virtualConnections: [UInt64: any ServiceDispatcher] = [:]
+    struct VirtualConnectionRecord: Sendable {
+        let dispatcher: any ServiceDispatcher
+        let localSettings: ConnectionSettings
+    }
 
+    private var nextConnId: UInt64
+    private var virtualConnections: [UInt64: VirtualConnectionRecord] = [:]
+    private var pendingOutbound: [UInt64: PendingVirtualConnection] = [:]
+
+    init(role: Role) {
+        nextConnId = firstId(for: role)
+    }
+
+    // r[impl connection.open]
+    // r[impl connection.parity]
     func allocateConnId() -> UInt64 {
         let id = nextConnId
-        nextConnId += 1
+        nextConnId += 2
         return id
     }
 
-    func addConnection(_ connId: UInt64, dispatcher: any ServiceDispatcher) {
-        virtualConnections[connId] = dispatcher
+    func contains(_ connId: UInt64) -> Bool {
+        virtualConnections[connId] != nil || pendingOutbound[connId] != nil
     }
 
-    func removeConnection(_ connId: UInt64) {
-        virtualConnections.removeValue(forKey: connId)
+    func addConnection(
+        _ connId: UInt64,
+        dispatcher: any ServiceDispatcher,
+        localSettings: ConnectionSettings
+    ) {
+        virtualConnections[connId] = VirtualConnectionRecord(
+            dispatcher: dispatcher,
+            localSettings: localSettings
+        )
     }
 
-    func dispatcher(for connId: UInt64) -> (any ServiceDispatcher)? {
+    @discardableResult
+    func removeConnection(_ connId: UInt64) -> Bool {
+        virtualConnections.removeValue(forKey: connId) != nil
+    }
+
+    func connection(for connId: UInt64) -> VirtualConnectionRecord? {
         virtualConnections[connId]
+    }
+
+    func isEmpty() -> Bool {
+        virtualConnections.isEmpty && pendingOutbound.isEmpty
+    }
+
+    func addPendingOutbound(_ connId: UInt64, pending: PendingVirtualConnection) {
+        pendingOutbound[connId] = pending
+    }
+
+    func takePendingOutbound(_ connId: UInt64) -> PendingVirtualConnection? {
+        pendingOutbound.removeValue(forKey: connId)
     }
 }

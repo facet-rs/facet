@@ -32,17 +32,16 @@ The best way to learn the Rust API is to run the examples in order, from simples
 > }
 > ```
 
-## 3) `stable_conduit_reconnect` (reconnect + preserved state/channels)
+## 3) `reconnect` (attachment failure behavior)
 
-- Source: [rust-examples/examples/stable_conduit_reconnect.rs](https://github.com/bearcove/vox/blob/main/rust-examples/examples/stable_conduit_reconnect.rs)
-- Run: `cargo run -p rust-examples --example stable_conduit_reconnect`
-- Learn: forced link cuts with `StableConduit`, automatic re-establish, service state continuity, and channel continuity across reconnect.
+- Source: [rust-examples/examples/reconnect.rs](https://github.com/bearcove/vox/blob/main/rust-examples/examples/reconnect.rs)
+- Run: `cargo run -p rust-examples --example reconnect`
+- Learn: behavior after a bare transport attachment is lost and a server is restarted.
 
 > ```rust
-> println!("[demo] intentionally cutting physical link #1 mid-channel");
+> println!("[client] server killed");
 > ...
-> assert_eq!(transformed_count, 3);
-> assert_eq!(second, 2);
+> println!("[client] server restarted");
 > ```
 
 ## 4) `memory_proxying` (connection-level proxying)
@@ -55,7 +54,7 @@ The best way to learn the Rust API is to run the examples in order, from simples
 > vox::proxy_connections(incoming_handle, upstream_conn).await;
 > ```
 
-- Learn: one host process launching two guest processes, SHM bootstrap, and serving different services from each guest.
+- Learn: one host process launching two guest processes over local IPC, and serving different services from each guest.
 
 > ```rust
 > println!("[host] launching guest: Adder");

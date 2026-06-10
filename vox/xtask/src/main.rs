@@ -56,6 +56,10 @@ enum Commands {
         #[facet(args::named, default)]
         swift_wire: bool,
     },
+    /// Emit built-in schema compatibility snapshots as JSON.
+    SchemaCompatSnapshot,
+    /// Compare built-in schema snapshots and enforce acknowledged breaks.
+    SchemaCompatCheck,
 }
 
 fn main() -> ExitCode {
@@ -123,6 +127,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
             println!(">>> cargo xtask test");
             cmd!(sh, "cargo xtask test").run()?;
+
+            println!("\n>>> cargo xtask schema-compat-check");
+            cmd!(sh, "cargo xtask schema-compat-check").run()?;
 
             println!("\n>>> cargo xtask clippy");
             cmd!(sh, "cargo xtask clippy").run()?;
@@ -221,8 +228,129 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 codegen_swift_wire(&workspace_root)?;
             }
         }
+        Commands::SchemaCompatSnapshot => {
+            emit_schema_compat_snapshot()?;
+        }
+        Commands::SchemaCompatCheck => {
+            check_schema_compat_policy()?;
+        }
     }
 
+    Ok(())
+}
+
+#[derive(Facet)]
+struct NamedSchemaCompatSnapshots {
+    snapshots: Vec<NamedSchemaCompatSnapshot>,
+}
+
+#[derive(Facet)]
+struct NamedSchemaCompatSnapshot {
+    name: String,
+    snapshot: vox_codegen::schema_compat::SchemaCompatSnapshot,
+}
+
+fn built_in_schema_compat_snapshots() -> Result<
+    (
+        vox_codegen::schema_compat::SchemaCompatSnapshot,
+        vox_codegen::schema_compat::SchemaCompatSnapshot,
+    ),
+    Box<dyn std::error::Error>,
+> {
+    let canonical_services = spec_proto::all_services();
+    let canonical = vox_codegen::schema_compat::snapshot_services(&canonical_services)?;
+    let evolved_services = [spec_proto::evolved::testbed_service_descriptor()];
+    let evolved = vox_codegen::schema_compat::snapshot_services(&evolved_services)?;
+    let canonical = vox_codegen::schema_compat::method_intersection_snapshot(&canonical, &evolved);
+    Ok((canonical, evolved))
+}
+
+fn emit_schema_compat_snapshot() -> Result<(), Box<dyn std::error::Error>> {
+    let (canonical, evolved) = built_in_schema_compat_snapshots()?;
+    let snapshots = NamedSchemaCompatSnapshots {
+        snapshots: vec![
+            NamedSchemaCompatSnapshot {
+                name: "spec-proto".to_string(),
+                snapshot: canonical,
+            },
+            NamedSchemaCompatSnapshot {
+                name: "spec-proto-evolved".to_string(),
+                snapshot: evolved,
+            },
+        ],
+    };
+    println!("{}", facet_json::to_string_pretty(&snapshots)?);
+    Ok(())
+}
+
+fn built_in_schema_compat_policy() -> vox_codegen::schema_compat::SchemaCompatPolicy {
+    use vox_codegen::schema_compat::{
+        SchemaCompatAcknowledgement, SchemaCompatComparisonDirection, SchemaCompatPolicy,
+    };
+
+    SchemaCompatPolicy {
+        acknowledged_breaking: vec![
+            SchemaCompatAcknowledgement {
+                service_name: "Testbed".to_string(),
+                method_name: "echo_measurement".to_string(),
+                direction: SchemaCompatComparisonDirection::Args,
+            },
+            SchemaCompatAcknowledgement {
+                service_name: "Testbed".to_string(),
+                method_name: "echo_measurement".to_string(),
+                direction: SchemaCompatComparisonDirection::Response,
+            },
+        ],
+    }
+}
+
+fn check_schema_compat_policy() -> Result<(), Box<dyn std::error::Error>> {
+    use vox_codegen::schema_compat::{SchemaCompatStatus, compare_snapshots, enforce_policy};
+
+    let (canonical, evolved) = built_in_schema_compat_snapshots()?;
+    let report = compare_snapshots(&canonical, &evolved)?;
+    for comparison in &report.comparisons {
+        println!(
+            "{}.{} {:?}: {:?}",
+            comparison.service_name,
+            comparison.method_name,
+            comparison.direction,
+            comparison.status
+        );
+    }
+
+    let outcome = enforce_policy(&report, &built_in_schema_compat_policy());
+    if !outcome.is_ok() {
+        if !outcome.unacknowledged_breaking.is_empty() {
+            eprintln!("unacknowledged schema compatibility breaks:");
+            for comparison in &outcome.unacknowledged_breaking {
+                eprintln!(
+                    "  {}.{} {:?}: {:?}",
+                    comparison.service_name,
+                    comparison.method_name,
+                    comparison.direction,
+                    comparison.status
+                );
+            }
+        }
+        if !outcome.stale_acknowledgements.is_empty() {
+            eprintln!("stale schema compatibility acknowledgements:");
+            for ack in &outcome.stale_acknowledgements {
+                eprintln!(
+                    "  {}.{} {:?}",
+                    ack.service_name, ack.method_name, ack.direction
+                );
+            }
+        }
+        return Err("schema compatibility policy failed".into());
+    }
+
+    let breaking_count = report
+        .comparisons
+        .iter()
+        .filter(|comparison| comparison.status == SchemaCompatStatus::Incompatible)
+        .count();
+    println!("schema compatibility policy ok ({breaking_count} acknowledged breaking changes)");
     Ok(())
 }
 
@@ -230,17 +358,35 @@ fn fmt_typescript(path: &std::path::Path, text: String) -> String {
     use dprint_plugin_typescript::configuration::ConfigurationBuilder;
     use dprint_plugin_typescript::{FormatTextOptions, format_text};
     let config = ConfigurationBuilder::new().build();
-    match format_text(FormatTextOptions {
-        path,
-        extension: None,
-        text: text.clone(),
-        config: &config,
-        external_formatter: None,
-    }) {
-        Ok(Some(formatted)) => formatted,
-        Ok(None) => text,
-        Err(e) => {
+    let panic_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let formatted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        format_text(FormatTextOptions {
+            path,
+            extension: None,
+            text: text.clone(),
+            config: &config,
+            external_formatter: None,
+        })
+    }));
+    std::panic::set_hook(panic_hook);
+    match formatted {
+        Ok(Ok(Some(formatted))) => formatted,
+        Ok(Ok(None)) => text,
+        Ok(Err(e)) => {
             eprintln!("warning: dprint failed to format {}: {e}", path.display());
+            text
+        }
+        Err(payload) => {
+            let message = payload
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                .unwrap_or("non-string panic payload");
+            eprintln!(
+                "warning: dprint panicked while formatting {}: {message}",
+                path.display(),
+            );
             text
         }
     }
@@ -348,24 +494,26 @@ fn codegen_typescript(workspace_root: &std::path::Path) -> Result<(), Box<dyn st
 fn codegen_typescript_wire(
     workspace_root: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use vox_codegen::targets::typescript::wire::*;
-    use vox_types as rt;
-
-    let out_path = workspace_root
+    // The phon Message envelope module for vox-wire.
+    let wire_path = workspace_root
         .join("typescript")
         .join("packages")
         .join("vox-wire")
         .join("src")
-        .join("wire.generated.ts");
+        .join("wire.phon.generated.ts");
+    let wire = vox_codegen::targets::typescript::generate_phon_wire();
+    write_if_changed(&wire_path, fmt_typescript(&wire_path, wire))?;
 
-    let config = WireTypeGenConfig {
-        types: vec![WireType {
-            shape: <rt::Message<'static> as facet::Facet<'static>>::SHAPE,
-        }],
-    };
+    // The phon HandshakeMessage module for vox-core.
+    let hs_path = workspace_root
+        .join("typescript")
+        .join("packages")
+        .join("vox-core")
+        .join("src")
+        .join("handshake.phon.generated.ts");
+    let hs = vox_codegen::targets::typescript::generate_phon_handshake();
+    write_if_changed(&hs_path, fmt_typescript(&hs_path, hs))?;
 
-    let code = generate_wire(&config)?;
-    write_if_changed(&out_path, fmt_typescript(&out_path, code))?;
     Ok(())
 }
 
@@ -384,36 +532,20 @@ fn codegen_swift(
     std::fs::create_dir_all(&out_dir)?;
 
     let testbed = spec_proto::testbed_service_descriptor();
-    if swift && !swift_client && !swift_server {
-        let code = vox_codegen::targets::swift::generate_service(testbed);
-        let out_path = out_dir.join("Testbed.swift");
-        write_if_changed(&out_path, fmt_swift(&out_path, code))?;
-        return Ok(());
-    }
 
-    if swift_client || (swift && !swift_server) {
-        let code = vox_codegen::targets::swift::generate_service_with_bindings(
-            testbed,
-            vox_codegen::targets::swift::SwiftBindings::Client,
-        );
-        let out_path = out_dir.join("TestbedClient.swift");
-        write_if_changed(&out_path, fmt_swift(&out_path, code))?;
-    }
-
-    if swift_server || (swift && !swift_client) {
-        let code = vox_codegen::targets::swift::generate_service_with_bindings(
-            testbed,
-            vox_codegen::targets::swift::SwiftBindings::Server,
-        );
-        let out_path = out_dir.join("TestbedServer.swift");
-        write_if_changed(&out_path, fmt_swift(&out_path, code))?;
-    }
-
+    // The full phon Testbed module (types + schemas/descriptors/programs + client +
+    // server). `--swift`/`--swift-client`/`--swift-server` all emit the same full module
+    // (the subject compiles one file); the bindings split is gone with postcard.
+    let _ = (swift, swift_client, swift_server);
+    let code = vox_codegen::targets::swift::generate_service(testbed);
+    let out_path = out_dir.join("Testbed.swift");
+    write_if_changed(&out_path, fmt_swift(&out_path, code))?;
     Ok(())
 }
 
 fn codegen_swift_wire(workspace_root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
-    use vox_codegen::targets::swift::wire::{WireType, generate_wire_types};
+    use vox_codegen::targets::swift::WireType;
+    use vox_codegen::targets::swift::phon_descriptor::generate_phon_wire;
     use vox_types as rt;
 
     let out_path = workspace_root
@@ -434,25 +566,24 @@ fn codegen_swift_wire(workspace_root: &std::path::Path) -> Result<(), Box<dyn st
 
     let types = vec![
         wire_type!("Parity", rt::Parity),
+        wire_type!("BindingDirection", rt::BindingDirection),
         wire_type!("ConnectionSettings", rt::ConnectionSettings),
-        wire_type!("MetadataValue", rt::MetadataValue<'static>),
-        wire_type!("MetadataEntry", rt::MetadataEntry<'static>),
         wire_type!("ProtocolError", rt::ProtocolError<'static>),
         wire_type!("Ping", rt::Ping),
         wire_type!("Pong", rt::Pong),
-        wire_type!("ConnectionOpen", rt::ConnectionOpen<'static>),
-        wire_type!("ConnectionAccept", rt::ConnectionAccept<'static>),
-        wire_type!("ConnectionReject", rt::ConnectionReject<'static>),
-        wire_type!("ConnectionClose", rt::ConnectionClose<'static>),
+        wire_type!("ConnectionOpen", rt::ConnectionOpen),
+        wire_type!("ConnectionAccept", rt::ConnectionAccept),
+        wire_type!("ConnectionReject", rt::ConnectionReject),
+        wire_type!("ConnectionClose", rt::ConnectionClose),
         wire_type!("RequestCall", rt::RequestCall<'static>),
         wire_type!("RequestResponse", rt::RequestResponse<'static>),
-        wire_type!("RequestCancel", rt::RequestCancel<'static>),
+        wire_type!("RequestCancel", rt::RequestCancel),
         wire_type!("RequestBody", rt::RequestBody<'static>),
         wire_type!("RequestMessage", rt::RequestMessage<'static>),
         wire_type!("SchemaMessage", rt::SchemaMessage),
         wire_type!("ChannelItem", rt::ChannelItem<'static>),
-        wire_type!("ChannelClose", rt::ChannelClose<'static>),
-        wire_type!("ChannelReset", rt::ChannelReset<'static>),
+        wire_type!("ChannelClose", rt::ChannelClose),
+        wire_type!("ChannelReset", rt::ChannelReset),
         wire_type!("ChannelGrantCredit", rt::ChannelGrantCredit),
         wire_type!("ChannelBody", rt::ChannelBody<'static>),
         wire_type!("ChannelMessage", rt::ChannelMessage<'static>),
@@ -460,16 +591,44 @@ fn codegen_swift_wire(workspace_root: &std::path::Path) -> Result<(), Box<dyn st
         wire_type!("Message", rt::Message<'static>),
     ];
 
-    let (code, cbor_bytes) = generate_wire_types(&types);
+    let type_pairs: Vec<_> = types
+        .iter()
+        .map(|w| (w.swift_name.clone(), w.shape))
+        .collect();
+    let roots = vec![(
+        "Message".to_string(),
+        <rt::Message<'static> as facet::Facet>::SHAPE,
+    )];
+    let code = generate_phon_wire(&type_pairs, &roots);
     write_if_changed(&out_path, fmt_swift(&out_path, code))?;
 
-    let bin_path = workspace_root
+    // The phon HandshakeMessage module — a second self-describing root, framed
+    // exactly like the Message envelope but used during the connection handshake.
+    // `Parity` and `ConnectionSettings` are already declared in Wire.swift (same
+    // module), so emit only the handshake-unique types here.
+    let hs_out_path = workspace_root
         .join("swift")
         .join("vox-runtime")
         .join("Sources")
         .join("VoxRuntime")
-        .join("wireMessageSchemas.bin");
-    write_if_changed(&bin_path, cbor_bytes)?;
+        .join("HandshakeWire.swift");
+    let hs_types = [
+        wire_type!("Hello", rt::Hello),
+        wire_type!("HelloYourself", rt::HelloYourself),
+        wire_type!("LetsGo", rt::LetsGo),
+        wire_type!("Sorry", rt::Sorry),
+        wire_type!("HandshakeMessage", rt::HandshakeMessage),
+    ];
+    let hs_type_pairs: Vec<_> = hs_types
+        .iter()
+        .map(|w| (w.swift_name.clone(), w.shape))
+        .collect();
+    let hs_roots = vec![(
+        "HandshakeMessage".to_string(),
+        <rt::HandshakeMessage as facet::Facet>::SHAPE,
+    )];
+    let hs_code = generate_phon_wire(&hs_type_pairs, &hs_roots);
+    write_if_changed(&hs_out_path, fmt_swift(&hs_out_path, hs_code))?;
 
     Ok(())
 }
@@ -510,7 +669,7 @@ fn generate_spec_matrix(
         Combo {
             mod_name: "lang_swift_transport_tcp",
             spec_const: "SUBJECT_SWIFT_TCP",
-            ignore: true,
+            ignore: false,
         },
     ];
 
@@ -612,6 +771,238 @@ fn generate_spec_matrix(
             call: "testbed::run_rpc_echo_shape",
         },
         TestCase {
+            name: "rpc_echo_tree",
+            call: "testbed::run_rpc_echo_tree",
+        },
+        TestCase {
+            name: "rpc_echo_ecosystem_bridge",
+            call: "testbed::run_rpc_echo_ecosystem_bridge",
+        },
+        TestCase {
+            name: "rpc_echo_dodeca_template_call",
+            call: "testbed::run_rpc_echo_dodeca_template_call",
+        },
+        TestCase {
+            name: "rpc_dodeca_html_process",
+            call: "testbed::run_rpc_dodeca_html_process",
+        },
+        TestCase {
+            name: "rpc_dodeca_execute_code_samples",
+            call: "testbed::run_rpc_dodeca_execute_code_samples",
+        },
+        TestCase {
+            name: "rpc_dodeca_load_data",
+            call: "testbed::run_rpc_dodeca_load_data",
+        },
+        TestCase {
+            name: "rpc_dodeca_parse_and_render",
+            call: "testbed::run_rpc_dodeca_parse_and_render",
+        },
+        TestCase {
+            name: "rpc_echo_dodeca_image_processor_fixture",
+            call: "testbed::run_rpc_echo_dodeca_image_processor_fixture",
+        },
+        TestCase {
+            name: "rpc_echo_dodeca_search_indexer_fixture",
+            call: "testbed::run_rpc_echo_dodeca_search_indexer_fixture",
+        },
+        TestCase {
+            name: "rpc_echo_dodeca_asset_processing_fixture",
+            call: "testbed::run_rpc_echo_dodeca_asset_processing_fixture",
+        },
+        TestCase {
+            name: "rpc_echo_dodeca_small_cell_services_fixture",
+            call: "testbed::run_rpc_echo_dodeca_small_cell_services_fixture",
+        },
+        TestCase {
+            name: "rpc_echo_dodeca_devtools_event",
+            call: "testbed::run_rpc_echo_dodeca_devtools_event",
+        },
+        TestCase {
+            name: "rpc_dodeca_devtools_get_scope",
+            call: "testbed::run_rpc_dodeca_devtools_get_scope",
+        },
+        TestCase {
+            name: "rpc_dodeca_devtools_eval",
+            call: "testbed::run_rpc_dodeca_devtools_eval",
+        },
+        TestCase {
+            name: "rpc_dodeca_devtools_open_dead_link",
+            call: "testbed::run_rpc_dodeca_devtools_open_dead_link",
+        },
+        TestCase {
+            name: "rpc_dodeca_devtools_edit_load",
+            call: "testbed::run_rpc_dodeca_devtools_edit_load",
+        },
+        TestCase {
+            name: "rpc_dodeca_devtools_edit_preview",
+            call: "testbed::run_rpc_dodeca_devtools_edit_preview",
+        },
+        TestCase {
+            name: "rpc_dodeca_devtools_edit_save",
+            call: "testbed::run_rpc_dodeca_devtools_edit_save",
+        },
+        TestCase {
+            name: "rpc_dodeca_devtools_edit_upload",
+            call: "testbed::run_rpc_dodeca_devtools_edit_upload",
+        },
+        TestCase {
+            name: "rpc_dodeca_devtools_edit_read",
+            call: "testbed::run_rpc_dodeca_devtools_edit_read",
+        },
+        TestCase {
+            name: "rpc_dodeca_devtools_edit_list",
+            call: "testbed::run_rpc_dodeca_devtools_edit_list",
+        },
+        TestCase {
+            name: "rpc_echo_styx_value",
+            call: "testbed::run_rpc_echo_styx_value",
+        },
+        TestCase {
+            name: "rpc_styx_lsp_initialize",
+            call: "testbed::run_rpc_styx_lsp_initialize",
+        },
+        TestCase {
+            name: "rpc_styx_lsp_completions",
+            call: "testbed::run_rpc_styx_lsp_completions",
+        },
+        TestCase {
+            name: "rpc_styx_lsp_hover",
+            call: "testbed::run_rpc_styx_lsp_hover",
+        },
+        TestCase {
+            name: "rpc_styx_lsp_inlay_hints",
+            call: "testbed::run_rpc_styx_lsp_inlay_hints",
+        },
+        TestCase {
+            name: "rpc_styx_lsp_diagnostics",
+            call: "testbed::run_rpc_styx_lsp_diagnostics",
+        },
+        TestCase {
+            name: "rpc_styx_lsp_code_actions",
+            call: "testbed::run_rpc_styx_lsp_code_actions",
+        },
+        TestCase {
+            name: "rpc_styx_lsp_definition",
+            call: "testbed::run_rpc_styx_lsp_definition",
+        },
+        TestCase {
+            name: "rpc_styx_lsp_shutdown",
+            call: "testbed::run_rpc_styx_lsp_shutdown",
+        },
+        TestCase {
+            name: "rpc_styx_host_get_subtree",
+            call: "testbed::run_rpc_styx_host_get_subtree",
+        },
+        TestCase {
+            name: "rpc_styx_host_get_document",
+            call: "testbed::run_rpc_styx_host_get_document",
+        },
+        TestCase {
+            name: "rpc_styx_host_get_source",
+            call: "testbed::run_rpc_styx_host_get_source",
+        },
+        TestCase {
+            name: "rpc_styx_host_get_schema",
+            call: "testbed::run_rpc_styx_host_get_schema",
+        },
+        TestCase {
+            name: "rpc_styx_host_offset_to_position",
+            call: "testbed::run_rpc_styx_host_offset_to_position",
+        },
+        TestCase {
+            name: "rpc_styx_host_position_to_offset",
+            call: "testbed::run_rpc_styx_host_position_to_offset",
+        },
+        TestCase {
+            name: "rpc_stax_flamegraph",
+            call: "testbed::run_rpc_stax_flamegraph",
+        },
+        TestCase {
+            name: "rpc_echo_stax_flamegraph_update",
+            call: "testbed::run_rpc_echo_stax_flamegraph_update",
+        },
+        TestCase {
+            name: "rpc_stax_subscribe_flamegraph_updates",
+            call: "testbed::run_rpc_stax_subscribe_flamegraph_updates",
+        },
+        TestCase {
+            name: "rpc_echo_stax_linux_broker_control",
+            call: "testbed::run_rpc_echo_stax_linux_broker_control",
+        },
+        TestCase {
+            name: "rpc_stax_macos_record",
+            call: "testbed::run_rpc_stax_macos_record",
+        },
+        TestCase {
+            name: "rpc_echo_hotmeal_live_reload_event",
+            call: "testbed::run_rpc_echo_hotmeal_live_reload_event",
+        },
+        TestCase {
+            name: "rpc_echo_hotmeal_apply_patches_result",
+            call: "testbed::run_rpc_echo_hotmeal_apply_patches_result",
+        },
+        TestCase {
+            name: "rpc_hotmeal_live_reload_subscribe",
+            call: "testbed::run_rpc_hotmeal_live_reload_subscribe",
+        },
+        TestCase {
+            name: "rpc_hotmeal_live_reload_on_event",
+            call: "testbed::run_rpc_hotmeal_live_reload_on_event",
+        },
+        TestCase {
+            name: "rpc_echo_helix_stream_metrics",
+            call: "testbed::run_rpc_echo_helix_stream_metrics",
+        },
+        TestCase {
+            name: "rpc_echo_helix_verify_evidence",
+            call: "testbed::run_rpc_echo_helix_verify_evidence",
+        },
+        TestCase {
+            name: "rpc_helix_subscribe_pulses",
+            call: "testbed::run_rpc_helix_subscribe_pulses",
+        },
+        TestCase {
+            name: "rpc_helix_pulse_bundle",
+            call: "testbed::run_rpc_helix_pulse_bundle",
+        },
+        TestCase {
+            name: "rpc_helix_trace_service_surface",
+            call: "testbed::run_rpc_helix_trace_service_surface",
+        },
+        TestCase {
+            name: "rpc_tracey_status",
+            call: "testbed::run_rpc_tracey_status",
+        },
+        TestCase {
+            name: "rpc_tracey_core_control",
+            call: "testbed::run_rpc_tracey_core_control",
+        },
+        TestCase {
+            name: "rpc_tracey_rule",
+            call: "testbed::run_rpc_tracey_rule",
+        },
+        TestCase {
+            name: "rpc_tracey_dashboard",
+            call: "testbed::run_rpc_tracey_dashboard",
+        },
+        TestCase {
+            name: "rpc_tracey_validate",
+            call: "testbed::run_rpc_tracey_validate",
+        },
+        TestCase {
+            name: "rpc_tracey_lsp_surface",
+            call: "testbed::run_rpc_tracey_lsp_surface",
+        },
+        TestCase {
+            name: "rpc_tracey_lsp_workspace_diagnostics",
+            call: "testbed::run_rpc_tracey_lsp_workspace_diagnostics",
+        },
+        TestCase {
+            name: "rpc_tracey_subscribe_updates",
+            call: "testbed::run_rpc_tracey_subscribe_updates",
+        },
+        TestCase {
             name: "rpc_echo_status",
             call: "testbed::run_rpc_echo_status",
         },
@@ -630,6 +1021,46 @@ fn generate_spec_matrix(
         TestCase {
             name: "rpc_channeling_sum_large",
             call: "testbed::run_rpc_channeling_sum_large",
+        },
+        TestCase {
+            name: "rpc_dodeca_byte_tunnel",
+            call: "testbed::run_rpc_dodeca_byte_tunnel",
+        },
+        TestCase {
+            name: "rpc_dodeca_devtools_lsp",
+            call: "testbed::run_rpc_dodeca_devtools_lsp",
+        },
+        TestCase {
+            name: "rpc_dibs_list",
+            call: "testbed::run_rpc_dibs_list",
+        },
+        TestCase {
+            name: "rpc_dibs_schema",
+            call: "testbed::run_rpc_dibs_schema",
+        },
+        TestCase {
+            name: "rpc_dibs_get",
+            call: "testbed::run_rpc_dibs_get",
+        },
+        TestCase {
+            name: "rpc_dibs_create",
+            call: "testbed::run_rpc_dibs_create",
+        },
+        TestCase {
+            name: "rpc_dibs_update",
+            call: "testbed::run_rpc_dibs_update",
+        },
+        TestCase {
+            name: "rpc_dibs_delete",
+            call: "testbed::run_rpc_dibs_delete",
+        },
+        TestCase {
+            name: "rpc_dibs_migration_status",
+            call: "testbed::run_rpc_dibs_migration_status",
+        },
+        TestCase {
+            name: "rpc_dibs_migrate",
+            call: "testbed::run_rpc_dibs_migrate",
         },
         TestCase {
             name: "channeling_generate_server_to_client",
@@ -754,6 +1185,270 @@ fn generate_spec_matrix(
             call: "testbed::run_subject_calls_echo_shape",
         },
         TestCase {
+            name: "subject_calls_echo_tree",
+            call: "testbed::run_subject_calls_echo_tree",
+        },
+        TestCase {
+            name: "subject_calls_echo_ecosystem_bridge",
+            call: "testbed::run_subject_calls_echo_ecosystem_bridge",
+        },
+        TestCase {
+            name: "subject_calls_echo_dodeca_template_call",
+            call: "testbed::run_subject_calls_echo_dodeca_template_call",
+        },
+        TestCase {
+            name: "subject_calls_dodeca_html_process",
+            call: "testbed::run_subject_calls_dodeca_html_process",
+        },
+        TestCase {
+            name: "subject_calls_dodeca_execute_code_samples",
+            call: "testbed::run_subject_calls_dodeca_execute_code_samples",
+        },
+        TestCase {
+            name: "subject_calls_dodeca_load_data",
+            call: "testbed::run_subject_calls_dodeca_load_data",
+        },
+        TestCase {
+            name: "subject_calls_dodeca_parse_and_render",
+            call: "testbed::run_subject_calls_dodeca_parse_and_render",
+        },
+        TestCase {
+            name: "subject_calls_echo_dodeca_image_processor_fixture",
+            call: "testbed::run_subject_calls_echo_dodeca_image_processor_fixture",
+        },
+        TestCase {
+            name: "subject_calls_echo_dodeca_search_indexer_fixture",
+            call: "testbed::run_subject_calls_echo_dodeca_search_indexer_fixture",
+        },
+        TestCase {
+            name: "subject_calls_echo_dodeca_asset_processing_fixture",
+            call: "testbed::run_subject_calls_echo_dodeca_asset_processing_fixture",
+        },
+        TestCase {
+            name: "subject_calls_echo_dodeca_small_cell_services_fixture",
+            call: "testbed::run_subject_calls_echo_dodeca_small_cell_services_fixture",
+        },
+        TestCase {
+            name: "subject_calls_echo_dodeca_devtools_event",
+            call: "testbed::run_subject_calls_echo_dodeca_devtools_event",
+        },
+        TestCase {
+            name: "subject_calls_dodeca_devtools_get_scope",
+            call: "testbed::run_subject_calls_dodeca_devtools_get_scope",
+        },
+        TestCase {
+            name: "subject_calls_dodeca_devtools_eval",
+            call: "testbed::run_subject_calls_dodeca_devtools_eval",
+        },
+        TestCase {
+            name: "subject_calls_dodeca_devtools_open_dead_link",
+            call: "testbed::run_subject_calls_dodeca_devtools_open_dead_link",
+        },
+        TestCase {
+            name: "subject_calls_dodeca_devtools_edit_load",
+            call: "testbed::run_subject_calls_dodeca_devtools_edit_load",
+        },
+        TestCase {
+            name: "subject_calls_dodeca_devtools_edit_preview",
+            call: "testbed::run_subject_calls_dodeca_devtools_edit_preview",
+        },
+        TestCase {
+            name: "subject_calls_dodeca_devtools_edit_save",
+            call: "testbed::run_subject_calls_dodeca_devtools_edit_save",
+        },
+        TestCase {
+            name: "subject_calls_dodeca_devtools_edit_upload",
+            call: "testbed::run_subject_calls_dodeca_devtools_edit_upload",
+        },
+        TestCase {
+            name: "subject_calls_dodeca_devtools_edit_read",
+            call: "testbed::run_subject_calls_dodeca_devtools_edit_read",
+        },
+        TestCase {
+            name: "subject_calls_dodeca_devtools_edit_list",
+            call: "testbed::run_subject_calls_dodeca_devtools_edit_list",
+        },
+        TestCase {
+            name: "subject_calls_echo_styx_value",
+            call: "testbed::run_subject_calls_echo_styx_value",
+        },
+        TestCase {
+            name: "subject_calls_styx_lsp_initialize",
+            call: "testbed::run_subject_calls_styx_lsp_initialize",
+        },
+        TestCase {
+            name: "subject_calls_styx_lsp_completions",
+            call: "testbed::run_subject_calls_styx_lsp_completions",
+        },
+        TestCase {
+            name: "subject_calls_styx_lsp_hover",
+            call: "testbed::run_subject_calls_styx_lsp_hover",
+        },
+        TestCase {
+            name: "subject_calls_styx_lsp_inlay_hints",
+            call: "testbed::run_subject_calls_styx_lsp_inlay_hints",
+        },
+        TestCase {
+            name: "subject_calls_styx_lsp_diagnostics",
+            call: "testbed::run_subject_calls_styx_lsp_diagnostics",
+        },
+        TestCase {
+            name: "subject_calls_styx_lsp_code_actions",
+            call: "testbed::run_subject_calls_styx_lsp_code_actions",
+        },
+        TestCase {
+            name: "subject_calls_styx_lsp_definition",
+            call: "testbed::run_subject_calls_styx_lsp_definition",
+        },
+        TestCase {
+            name: "subject_calls_styx_lsp_shutdown",
+            call: "testbed::run_subject_calls_styx_lsp_shutdown",
+        },
+        TestCase {
+            name: "subject_calls_styx_host_get_subtree",
+            call: "testbed::run_subject_calls_styx_host_get_subtree",
+        },
+        TestCase {
+            name: "subject_calls_styx_host_get_document",
+            call: "testbed::run_subject_calls_styx_host_get_document",
+        },
+        TestCase {
+            name: "subject_calls_styx_host_get_source",
+            call: "testbed::run_subject_calls_styx_host_get_source",
+        },
+        TestCase {
+            name: "subject_calls_styx_host_get_schema",
+            call: "testbed::run_subject_calls_styx_host_get_schema",
+        },
+        TestCase {
+            name: "subject_calls_styx_host_offset_to_position",
+            call: "testbed::run_subject_calls_styx_host_offset_to_position",
+        },
+        TestCase {
+            name: "subject_calls_styx_host_position_to_offset",
+            call: "testbed::run_subject_calls_styx_host_position_to_offset",
+        },
+        TestCase {
+            name: "subject_calls_stax_flamegraph",
+            call: "testbed::run_subject_calls_stax_flamegraph",
+        },
+        TestCase {
+            name: "subject_calls_echo_stax_flamegraph_update",
+            call: "testbed::run_subject_calls_echo_stax_flamegraph_update",
+        },
+        TestCase {
+            name: "subject_calls_stax_subscribe_flamegraph_updates",
+            call: "testbed::run_subject_calls_stax_subscribe_flamegraph_updates",
+        },
+        TestCase {
+            name: "subject_calls_echo_stax_linux_broker_control",
+            call: "testbed::run_subject_calls_echo_stax_linux_broker_control",
+        },
+        TestCase {
+            name: "subject_calls_stax_macos_record",
+            call: "testbed::run_subject_calls_stax_macos_record",
+        },
+        TestCase {
+            name: "subject_calls_echo_hotmeal_live_reload_event",
+            call: "testbed::run_subject_calls_echo_hotmeal_live_reload_event",
+        },
+        TestCase {
+            name: "subject_calls_echo_hotmeal_apply_patches_result",
+            call: "testbed::run_subject_calls_echo_hotmeal_apply_patches_result",
+        },
+        TestCase {
+            name: "subject_calls_hotmeal_live_reload_subscribe",
+            call: "testbed::run_subject_calls_hotmeal_live_reload_subscribe",
+        },
+        TestCase {
+            name: "subject_calls_hotmeal_live_reload_on_event",
+            call: "testbed::run_subject_calls_hotmeal_live_reload_on_event",
+        },
+        TestCase {
+            name: "subject_calls_echo_helix_stream_metrics",
+            call: "testbed::run_subject_calls_echo_helix_stream_metrics",
+        },
+        TestCase {
+            name: "subject_calls_echo_helix_verify_evidence",
+            call: "testbed::run_subject_calls_echo_helix_verify_evidence",
+        },
+        TestCase {
+            name: "subject_calls_helix_subscribe_pulses",
+            call: "testbed::run_subject_calls_helix_subscribe_pulses",
+        },
+        TestCase {
+            name: "subject_calls_helix_pulse_bundle",
+            call: "testbed::run_subject_calls_helix_pulse_bundle",
+        },
+        TestCase {
+            name: "subject_calls_helix_trace_service_surface",
+            call: "testbed::run_subject_calls_helix_trace_service_surface",
+        },
+        TestCase {
+            name: "subject_calls_tracey_status",
+            call: "testbed::run_subject_calls_tracey_status",
+        },
+        TestCase {
+            name: "subject_calls_tracey_core_control",
+            call: "testbed::run_subject_calls_tracey_core_control",
+        },
+        TestCase {
+            name: "subject_calls_tracey_rule",
+            call: "testbed::run_subject_calls_tracey_rule",
+        },
+        TestCase {
+            name: "subject_calls_tracey_dashboard",
+            call: "testbed::run_subject_calls_tracey_dashboard",
+        },
+        TestCase {
+            name: "subject_calls_tracey_validate",
+            call: "testbed::run_subject_calls_tracey_validate",
+        },
+        TestCase {
+            name: "subject_calls_tracey_lsp_surface",
+            call: "testbed::run_subject_calls_tracey_lsp_surface",
+        },
+        TestCase {
+            name: "subject_calls_tracey_lsp_workspace_diagnostics",
+            call: "testbed::run_subject_calls_tracey_lsp_workspace_diagnostics",
+        },
+        TestCase {
+            name: "subject_calls_tracey_subscribe_updates",
+            call: "testbed::run_subject_calls_tracey_subscribe_updates",
+        },
+        TestCase {
+            name: "subject_calls_dibs_list",
+            call: "testbed::run_subject_calls_dibs_list",
+        },
+        TestCase {
+            name: "subject_calls_dibs_schema",
+            call: "testbed::run_subject_calls_dibs_schema",
+        },
+        TestCase {
+            name: "subject_calls_dibs_get",
+            call: "testbed::run_subject_calls_dibs_get",
+        },
+        TestCase {
+            name: "subject_calls_dibs_create",
+            call: "testbed::run_subject_calls_dibs_create",
+        },
+        TestCase {
+            name: "subject_calls_dibs_update",
+            call: "testbed::run_subject_calls_dibs_update",
+        },
+        TestCase {
+            name: "subject_calls_dibs_delete",
+            call: "testbed::run_subject_calls_dibs_delete",
+        },
+        TestCase {
+            name: "subject_calls_dibs_migration_status",
+            call: "testbed::run_subject_calls_dibs_migration_status",
+        },
+        TestCase {
+            name: "subject_calls_dibs_migrate",
+            call: "testbed::run_subject_calls_dibs_migrate",
+        },
+        TestCase {
             name: "subject_calls_pipelining",
             call: "testbed::run_subject_calls_pipelining",
         },
@@ -772,6 +1467,14 @@ fn generate_spec_matrix(
         TestCase {
             name: "subject_calls_transform_bidi",
             call: "testbed::run_subject_calls_transform_bidi",
+        },
+        TestCase {
+            name: "subject_calls_dodeca_byte_tunnel",
+            call: "testbed::run_subject_calls_dodeca_byte_tunnel",
+        },
+        TestCase {
+            name: "subject_calls_dodeca_devtools_lsp",
+            call: "testbed::run_subject_calls_dodeca_devtools_lsp",
         },
         TestCase {
             name: "subject_calls_post_reply_generate",
@@ -822,14 +1525,14 @@ fn generate_spec_matrix(
             mod_name: "lang_rust_server_swift_client_tcp",
             server_const: "SUBJECT_RUST_TCP",
             client_const: "SUBJECT_SWIFT_TCP",
-            ignore: true,
+            ignore: false,
         },
         // Swift server ↔ Rust client
         CrossLangCombo {
             mod_name: "lang_swift_server_rust_client_tcp",
             server_const: "SUBJECT_SWIFT_TCP",
             client_const: "SUBJECT_RUST_TCP",
-            ignore: true,
+            ignore: false,
         },
         // TypeScript server ↔ Swift client
         CrossLangCombo {
@@ -883,6 +1586,8 @@ fn generate_spec_matrix(
         ("all_colors", "r[verify encoding.enum.unit-variants]"),
         ("echo_shape", "r[verify encoding.enum.struct-variants]"),
         ("shape_area", "r[verify encoding.enum.struct-variants]"),
+        // Recursive type — typed-VM recursion (Access::Recurse / CallBlock)
+        ("echo_tree", "r[verify encoding.struct.recursive]"),
         // Complex nested + Vec<enum>
         ("create_canvas", "r[verify encoding.struct.nested]"),
         // Enum with newtype variants

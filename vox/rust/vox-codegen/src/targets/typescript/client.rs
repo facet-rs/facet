@@ -1,8 +1,7 @@
 //! TypeScript client generation.
 //!
 //! Generates client interface and implementation for making caller-visible RPC
-//! calls. Each generated method issues one logical call, which may map to one
-//! or more request attempts at runtime if retry/session recovery is involved.
+//! calls. Each generated method issues one request attempt.
 //! The client uses the canonical service schema table for request/response
 //! encode/decode. No method-specific serialization code is generated here.
 
@@ -74,11 +73,11 @@ pub fn generate_caller_interface(service: &ServiceDescriptor) -> String {
 
 /// Generate client implementation.
 ///
-/// Each generated client method represents one logical RPC call:
+/// Each generated client method represents one RPC call:
 /// 1. Binds to its generated `MethodDescriptor` constant
 /// 2. Binds any channel args (via canonical arg refs if streaming)
 /// 3. Calls `caller.call({ method, args, descriptor, ... })` to start a
-///    request attempt for that logical call
+///    request attempt
 /// 4. The runtime encodes/decodes using the canonical service schema table
 pub fn generate_client_impl(service: &ServiceDescriptor) -> String {
     let mut out = String::new();
@@ -99,11 +98,6 @@ pub fn generate_client_impl(service: &ServiceDescriptor) -> String {
         let method_descriptor_name = format!("{service_name_lower}_{method_name}_method");
 
         let has_streaming_args = method.args.iter().any(|a| is_tx(a.shape) || is_rx(a.shape));
-        let arg_names: Vec<_> = method
-            .args
-            .iter()
-            .map(|a| a.name.to_lower_camel_case())
-            .collect();
 
         let args = method
             .args
@@ -138,30 +132,14 @@ pub fn generate_client_impl(service: &ServiceDescriptor) -> String {
             "  async {method_name}({args}): Promise<{ret_ty}> {{\n"
         ));
 
-        out.push_str(&format!(
-            "    const descriptor = {method_descriptor_name};\n"
-        ));
-        out.push_str(&format!(
-            "    const sendSchemas = {service_name_lower}_descriptor.send_schemas;\n"
-        ));
-
-        // Bind channel args if streaming
-        if has_streaming_args {
-            out.push_str(
-                "    const argTypeRefs = argElementRefsForMethod(descriptor.id, sendSchemas);\n",
-            );
-            out.push_str("    const prepareRetry = () => {\n");
-            out.push_str("      const channels = bindChannelsForTypeRefs(\n");
-            out.push_str("        argTypeRefs,\n");
-            out.push_str(&format!("        [{}],\n", arg_names.join(", ")));
-            out.push_str("        this.caller.getChannelAllocator(),\n");
-            out.push_str("        this.caller.getChannelRegistry(),\n");
-            out.push_str("        sendSchemas.schemas,\n");
-            out.push_str("      );\n");
-            out.push_str("      const payload = new Uint8Array(0);\n");
-            out.push_str("      return { payload, channels };\n");
-            out.push_str("    };\n");
-        }
+        let _ = has_streaming_args;
+        // r[impl rpc.method-id]
+        let method_id_hex = crate::render::hex_u64(crate::method_id(method));
+        // The per-call phon schema data: the method's args/ok roots + args schema
+        // closure (from `{service}Methods`) and the service phon `Registry`.
+        let call_fields = format!(
+            "      method: \"{service_name}.{method_name}\",\n      args: {args_record},\n      descriptor: {method_descriptor_name},\n      methodSchemas: {service_name_lower}Methods[\"{method_id_hex}\"],\n      registry: {service_name_lower}Registry,\n",
+        );
 
         let is_fallible = matches!(
             classify_shape(method.return_shape),
@@ -169,52 +147,26 @@ pub fn generate_client_impl(service: &ServiceDescriptor) -> String {
         );
 
         if is_fallible {
-            out.push_str("      try {\n");
-            out.push_str("        const value = await this.caller.call({\n");
-            out.push_str(&format!(
-                "          method: \"{}.{}\",\n",
-                service_name, method_name
-            ));
-            out.push_str(&format!("          args: {},\n", args_record));
-            out.push_str("          descriptor,\n");
-            out.push_str("          sendSchemas,\n");
-            if has_streaming_args {
-                out.push_str("          prepareRetry,\n");
-                out.push_str(&format!(
-                    "          finalizeChannels: () => finalizeBoundChannelsForTypeRefs(argTypeRefs, [{}], sendSchemas.schemas),\n",
-                    arg_names.join(", ")
-                ));
-            }
-            out.push_str("        });\n");
-            out.push_str(&format!(
-                "        return {{ ok: true, value }} as {ret_ty};\n"
-            ));
-            out.push_str("      } catch (e: any) {\n");
-            out.push_str("        if (e instanceof RpcError && e.isUserError()) {\n");
-            out.push_str(&format!(
-                "          return {{ ok: false, error: e.userError }} as {ret_ty};\n"
-            ));
-            out.push_str("        }\n");
-            out.push_str("        throw e;\n");
-            out.push_str("      }\n");
-        } else {
-            out.push_str("      const value = await this.caller.call({\n");
-            out.push_str(&format!(
-                "        method: \"{}.{}\",\n",
-                service_name, method_name
-            ));
-            out.push_str(&format!("        args: {},\n", args_record));
-            out.push_str("        descriptor,\n");
-            out.push_str("        sendSchemas,\n");
-            if has_streaming_args {
-                out.push_str("        prepareRetry,\n");
-                out.push_str(&format!(
-                    "        finalizeChannels: () => finalizeBoundChannelsForTypeRefs(argTypeRefs, [{}], sendSchemas.schemas),\n",
-                    arg_names.join(", ")
-                ));
-            }
+            out.push_str("    try {\n");
+            out.push_str("      const __voxResult = await this.caller.call({\n");
+            out.push_str(&call_fields);
             out.push_str("      });\n");
-            out.push_str(&format!("      return value as {ret_ty};\n"));
+            out.push_str(&format!(
+                "      return {{ ok: true, value: __voxResult }} as {ret_ty};\n"
+            ));
+            out.push_str("    } catch (e: any) {\n");
+            out.push_str("      if (e instanceof RpcError && e.isUserError()) {\n");
+            out.push_str(&format!(
+                "        return {{ ok: false, error: e.userError }} as {ret_ty};\n"
+            ));
+            out.push_str("      }\n");
+            out.push_str("      throw e;\n");
+            out.push_str("    }\n");
+        } else {
+            out.push_str("    const __voxResult = await this.caller.call({\n");
+            out.push_str(&call_fields);
+            out.push_str("    });\n");
+            out.push_str(&format!("    return __voxResult as {ret_ty};\n"));
         }
 
         out.push_str("  }\n\n");

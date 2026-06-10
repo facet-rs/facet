@@ -3,8 +3,14 @@ use std::time::Duration;
 
 use afl::fuzz;
 use spec_proto::{
-    Canvas, Color, Config, LookupError, MathError, Measurement, Message, Person, Point, Profile,
-    Record, Rectangle, Shape, Status, Tag, Testbed, TestbedClient, TestbedDispatcher,
+    Canvas, Color, Config, DodecaAssetProcessingFixture, EcosystemBridgePayload, LookupError,
+    MathError, Measurement, Message, Person, Point, Profile, Record, Rectangle, Shape, Status, Tag,
+    Testbed, TestbedClient, TestbedDispatcher,
+};
+use spec_proto::{
+    DodecaDeadLinkTarget, DodecaDevtoolsEvent, DodecaEditList, DodecaEditLoad, DodecaEditPreview,
+    DodecaEditRead, DodecaEditSave, DodecaEditSaveReq, DodecaEditUpload, DodecaEditUploadReq,
+    DodecaEvalResult, DodecaOpenSourceResult, DodecaScopeEntry,
 };
 use vox::Call;
 use vox_core::{BareConduit, DriverReplySink, acceptor, initiator, memory_link_pair};
@@ -221,6 +227,81 @@ impl Testbed for FuzzService {
 
     async fn echo_config(&self, c: Config) -> Config {
         c
+    }
+
+    async fn echo_ecosystem_bridge(
+        &self,
+        payload: EcosystemBridgePayload,
+    ) -> EcosystemBridgePayload {
+        payload
+    }
+
+    async fn echo_dodeca_asset_processing_fixture(
+        &self,
+        fixture: DodecaAssetProcessingFixture,
+    ) -> DodecaAssetProcessingFixture {
+        fixture
+    }
+
+    async fn echo_dodeca_devtools_event(&self, event: DodecaDevtoolsEvent) -> DodecaDevtoolsEvent {
+        event
+    }
+
+    async fn dodeca_devtools_get_scope(&self, _path: Option<Vec<String>>) -> Vec<DodecaScopeEntry> {
+        vec![]
+    }
+
+    async fn dodeca_devtools_eval(
+        &self,
+        _snapshot_id: String,
+        _expression: String,
+    ) -> DodecaEvalResult {
+        DodecaEvalResult::Err("fuzz target fixture".to_string())
+    }
+
+    async fn dodeca_devtools_open_dead_link(
+        &self,
+        _route: String,
+        _target: DodecaDeadLinkTarget,
+    ) -> DodecaOpenSourceResult {
+        DodecaOpenSourceResult::Err("fuzz target fixture".to_string())
+    }
+
+    async fn dodeca_devtools_edit_load(&self, _token: String, _route: String) -> DodecaEditLoad {
+        DodecaEditLoad::Denied
+    }
+
+    async fn dodeca_devtools_edit_preview(
+        &self,
+        _token: String,
+        _source_key: String,
+        _buffer: String,
+    ) -> DodecaEditPreview {
+        DodecaEditPreview::Denied
+    }
+
+    async fn dodeca_devtools_edit_save(
+        &self,
+        _token: String,
+        _req: DodecaEditSaveReq,
+    ) -> DodecaEditSave {
+        DodecaEditSave::Denied
+    }
+
+    async fn dodeca_devtools_edit_upload(
+        &self,
+        _token: String,
+        _req: DodecaEditUploadReq,
+    ) -> DodecaEditUpload {
+        DodecaEditUpload::Denied
+    }
+
+    async fn dodeca_devtools_edit_read(&self, _token: String, _uri: String) -> DodecaEditRead {
+        DodecaEditRead::Denied
+    }
+
+    async fn dodeca_devtools_edit_list(&self, _token: String) -> DodecaEditList {
+        DodecaEditList::Denied
     }
 }
 

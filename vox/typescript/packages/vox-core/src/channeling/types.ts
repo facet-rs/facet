@@ -4,6 +4,7 @@
 export type ChannelId = bigint;
 
 /** Default per-channel initial credit when the const generic `N` is omitted. */
+// r[impl rpc.flow-control.credit.initial]
 export const DEFAULT_INITIAL_CREDIT = 16;
 
 /** Connection role - determines channel ID parity. */

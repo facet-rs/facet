@@ -15,10 +15,6 @@ public struct Server {
         }
         FileHandle.standardError.write(Data("[subject-server] PEER_ADDR=\(peerAddr)\n".utf8))
 
-        let transport: ConduitKind =
-            ProcessInfo.processInfo.environment["SPEC_CONDUIT"] == "stable" ? .stable : .bare
-        FileHandle.standardError.write(Data("[subject-server] transport=\(transport)\n".utf8))
-
         // r[impl transport.unix]
         // r[impl hosted.peer-addr]
         let session: Session
@@ -30,7 +26,7 @@ public struct Server {
             }
             FileHandle.standardError.write(
                 Data("[subject-server] connector=unix path=\(path)\n".utf8))
-            let connector = UnixConnector(path: path, transport: transport)
+            let connector = UnixConnector(path: path)
             // r[impl core.conn.accept-required] - Check if we should accept incoming virtual connections.
             let acceptConnections = ProcessInfo.processInfo.environment["ACCEPT_CONNECTIONS"] != "0"
             FileHandle.standardError.write(
@@ -41,8 +37,7 @@ public struct Server {
                 connector,
                 dispatcher: dispatcher,
                 onConnection: acceptConnections
-                    ? DefaultConnectionAcceptor(dispatcher: dispatcher) : nil,
-                resumable: false
+                    ? DefaultConnectionAcceptor(dispatcher: dispatcher) : nil
             )
         } else {
             guard let colonIdx = peerAddr.lastIndex(of: ":") else {
@@ -57,7 +52,7 @@ public struct Server {
 
             FileHandle.standardError.write(
                 Data("[subject-server] connector=tcp host=\(host) port=\(port)\n".utf8))
-            let connector = TcpConnector(host: host, port: port, transport: transport)
+            let connector = TcpConnector(host: host, port: port)
             // r[impl core.conn.accept-required] - Check if we should accept incoming virtual connections.
             let acceptConnections = ProcessInfo.processInfo.environment["ACCEPT_CONNECTIONS"] != "0"
             FileHandle.standardError.write(
@@ -68,8 +63,7 @@ public struct Server {
                 connector,
                 dispatcher: dispatcher,
                 onConnection: acceptConnections
-                    ? DefaultConnectionAcceptor(dispatcher: dispatcher) : nil,
-                resumable: false
+                    ? DefaultConnectionAcceptor(dispatcher: dispatcher) : nil
             )
         }
 

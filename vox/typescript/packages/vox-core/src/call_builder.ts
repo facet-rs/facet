@@ -23,10 +23,6 @@ export type CallExecutor<T> = (metadata: ClientMetadata) => Promise<T>;
  * must be active before data can be sent. The builder pattern still works
  * because metadata is captured at construction time.
  *
- * `CallBuilder` is about one caller-visible call. If retry or session recovery
- * later creates another request attempt for the same logical operation, that is
- * handled below this API surface.
- *
  * @example
  * ```typescript
  * // Simple call (awaits immediately)
@@ -44,6 +40,7 @@ export type CallExecutor<T> = (metadata: ClientMetadata) => Promise<T>;
  * await call;                           // Wait for completion
  * ```
  */
+// r[impl rpc.caller]
 export class CallBuilder<T> implements PromiseLike<T> {
   private resultPromise: Promise<T>;
 
@@ -88,7 +85,7 @@ export class CallBuilder<T> implements PromiseLike<T> {
  * attempt is started:
  * ```typescript
  * const meta = new ClientMetadata();
- * meta.setSensitive("authorization", "Bearer token");
+ * meta.set("#authorization", "Bearer token");
  * await withMeta(meta, (m) => client.echo("hello", m));
  * ```
  *

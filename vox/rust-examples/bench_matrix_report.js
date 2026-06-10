@@ -5,7 +5,7 @@ import fs from "node:fs";
 function parseArgs(argv) {
   const out = {
     local: null,
-    shm: null,
+    ffi: null,
   };
 
   for (let i = 2; i < argv.length; i++) {
@@ -14,8 +14,8 @@ function parseArgs(argv) {
       out.local = argv[++i];
       continue;
     }
-    if (arg === "--shm") {
-      out.shm = argv[++i];
+    if (arg === "--ffi") {
+      out.ffi = argv[++i];
       continue;
     }
     if (arg === "--help" || arg === "-h") {
@@ -25,7 +25,7 @@ function parseArgs(argv) {
     printUsage(1);
   }
 
-  if (!out.local || !out.shm) {
+  if (!out.local || !out.ffi) {
     printUsage(1);
   }
   return out;
@@ -33,7 +33,7 @@ function parseArgs(argv) {
 
 function printUsage(code) {
   const msg =
-    "usage: node rust-examples/bench_matrix_report.js --local /tmp/bench-local.json --shm /tmp/bench-shm.json";
+    "usage: node rust-examples/bench_matrix_report.js --local /tmp/bench-local.json --ffi /tmp/bench-ffi.json";
   if (code === 0) {
     console.log(msg);
   } else {
@@ -74,24 +74,24 @@ function geomean(xs) {
 function main() {
   const args = parseArgs(process.argv);
   const localRows = loadJson(args.local);
-  const shmRows = loadJson(args.shm);
+  const ffiRows = loadJson(args.ffi);
 
   const localMap = new Map(localRows.map((r) => [keyOf(r), r]));
-  const shmMap = new Map(shmRows.map((r) => [keyOf(r), r]));
+  const ffiMap = new Map(ffiRows.map((r) => [keyOf(r), r]));
 
-  const keys = [...new Set([...localMap.keys(), ...shmMap.keys()])].sort((a, b) => {
+  const keys = [...new Set([...localMap.keys(), ...ffiMap.keys()])].sort((a, b) => {
     const [pa, ia] = a.split("|").map(Number);
     const [pb, ib] = b.split("|").map(Number);
     return pa - pb || ia - ib;
   });
 
-  console.log(`local rows=${localRows.length} shm rows=${shmRows.length}`);
-  console.log("payload\tin_flight\tlocal_us\tshm_us\tshm_vs_local");
+  console.log(`local rows=${localRows.length} ffi rows=${ffiRows.length}`);
+  console.log("payload\tin_flight\tlocal_us\tffi_us\tffi_vs_local");
 
   const overlapRatios = [];
   for (const k of keys) {
     const l = localMap.get(k);
-    const s = shmMap.get(k);
+    const s = ffiMap.get(k);
     const [payload, inFlight] = k.split("|");
     const lUs = num(l?.per_call_micros);
     const sUs = num(s?.per_call_micros);

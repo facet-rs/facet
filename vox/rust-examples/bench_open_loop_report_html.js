@@ -78,7 +78,7 @@ function buildSeries(rows, minCompletedForP99) {
   const series = [];
   const tableRows = [];
   const runtimeRank = { swift: 0, rust: 1 };
-  const transportRank = { local: 0, shm: 1 };
+  const transportRank = { local: 0, ffi: 1 };
 
   for (const [key, group] of [...grouped.entries()].sort(([a], [b]) => {
     const [aRuntime, aTransport] = a.split('|');
@@ -138,9 +138,9 @@ function buildSeries(rows, minCompletedForP99) {
 
 function seriesColor(s) {
   if (s.server_impl === 'rust') {
-    return s.transport === 'shm' ? '#ff9f1c' : '#f72585';
+    return s.transport === 'ffi' ? '#ff9f1c' : '#f72585';
   } else {
-    return s.transport === 'shm' ? '#7209b7' : '#4cc9f0';
+    return s.transport === 'ffi' ? '#7209b7' : '#4cc9f0';
   }
 }
 
@@ -160,8 +160,8 @@ function makePlotlyTraces(series, valueFn, { minFn, maxFn } = {}) {
   for (const s of series) {
     const color = seriesColor(s);
     const name = makeSeriesLabel(s);
-    const dash = s.transport === 'shm' ? 'dash' : 'solid';
-    const symbol = s.transport === 'shm' ? 'diamond' : 'circle';
+    const dash = s.transport === 'ffi' ? 'dash' : 'solid';
+    const symbol = s.transport === 'ffi' ? 'diamond' : 'circle';
 
     const x = [], y = [], yMin = [], yMax = [];
     for (const p of s.points) {

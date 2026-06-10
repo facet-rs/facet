@@ -1,10 +1,22 @@
 import Foundation
 
 extension Driver {
-    func addVirtualConnection(_ connId: UInt64, dispatcher: any ServiceDispatcher) async {
-        await virtualConnState.addConnection(connId, dispatcher: dispatcher)
+    // r[impl rpc.virtual-connection.accept]
+    // r[impl connection.virtual]
+    func addVirtualConnection(
+        _ connId: UInt64,
+        dispatcher: any ServiceDispatcher,
+        localSettings: ConnectionSettings
+    ) async {
+        await virtualConnState.addConnection(
+            connId,
+            dispatcher: dispatcher,
+            localSettings: localSettings
+        )
     }
 
+    // r[impl connection.close]
+    // r[impl connection.virtual]
     func removeVirtualConnection(_ connId: UInt64) async {
         await virtualConnState.removeConnection(connId)
     }
@@ -14,19 +26,41 @@ extension Driver {
     /// r[impl connection.close.semantics] - Stop sending, close connection, fail in-flight.
     /// r[impl rpc.request] - Request before Response in message sequence.
     /// r[impl session.protocol-error] - Unknown message variant triggers Goodbye.
+    /// r[impl session.message]
+    /// r[impl session.message.connection-id]
+    /// r[impl session.message.payloads]
+    /// r[impl rpc.cancel.channels]
+    /// r[impl rpc.channel.connection-closure]
     func handleMessage(
         _ msg: Message,
         keepaliveRuntime: inout DriverKeepaliveRuntime?
     ) async throws {
         switch msg.payload {
-        case .schemaMessage:
-            break
+        case .schemaMessage(let schema):
+            // The peer advertises a binding's (writer) schema closure out-of-band, as a
+            // standalone message sent before the payload it describes (mirrors the Rust
+            // session: rust/vox-core/src/session/mod.rs SchemaMessage send/recv). Record it
+            // into the same receive tracker the dispatcher uses for compatibility decode. Messages are
+            // delivered in order, so the schema is recorded before the Call/Response that
+            // needs it is handled.
+            // r[impl schema.tracking.received]
+            let dir: SchemaBindingDirection
+            switch schema.direction {
+            case .args: dir = .args
+            case .response: dir = .response
+            }
+            debugLog(
+                "recv SchemaMessage method=\(schema.methodId) dir=\(dir) "
+                    + "schemasLen=\(schema.schemas.count)")
+            if !schema.schemas.isEmpty {
+                schemaReceiveTracker.recordReceived(schema.methodId, dir, [UInt8](schema.schemas))
+            }
         case .ping(let ping):
             do {
-                try await conduit.send(.pong(.init(nonce: ping.nonce)))
+                try await conduit.send(messagePong(nonce: ping.nonce))
             } catch TransportError.wouldBlock {
                 pendingTaskMessages.append(
-                    DriverQueuedTaskMessage(message: .pong(.init(nonce: ping.nonce))))
+                    DriverQueuedWireMessage(message: messagePong(nonce: ping.nonce)))
             }
         case .pong(let pong):
             handlePong(nonce: pong.nonce, keepaliveRuntime: &keepaliveRuntime)
@@ -34,29 +68,53 @@ extension Driver {
             await failAllPending()
             throw ConnectionError.protocolViolation(rule: error.description)
         case .connectionOpen(let open):
+            // r[impl rpc.virtual-connection.accept]
+            // r[impl connection.open.rejection]
+            // r[impl connection.open]
+            // r[impl connection.parity]
+            let peerRole = oppositeRole(role)
+            guard idMatchesRole(msg.connectionId, peerRole) else {
+                try await sendProtocolError("connection.open")
+                throw ConnectionError.protocolViolation(rule: "connection.open")
+            }
+            guard !(await virtualConnState.contains(msg.connectionId)) else {
+                try await sendProtocolError("connection.open")
+                throw ConnectionError.protocolViolation(rule: "connection.open")
+            }
             if let acceptor = connectionAcceptor {
                 let metadata = open.metadata
-                guard let serviceEntry = metadata.first(where: { $0.key == "vox-service" }),
-                    case .string(let service) = serviceEntry.value
-                else {
+                guard let service = metadata.metaStr("vox-service") else {
                     // Missing or non-string vox-service metadata — reject
                     try await conduit.send(
-                        .connectionReject(connId: msg.connectionId, metadata: []))
+                        messageReject(connectionId: msg.connectionId, metadata: .null))
                     return
                 }
+                guard open.connectionSettings.initialChannelCredit > 0 else {
+                    try await conduit.send(
+                        messageReject(connectionId: msg.connectionId, metadata: .null))
+                    return
+                }
+                let localSettings = try makeConnectionSettings(
+                    parity: oppositeParity(open.connectionSettings.parity),
+                    maxConcurrentRequests: open.connectionSettings.maxConcurrentRequests,
+                    initialChannelCredit: open.connectionSettings.initialChannelCredit
+                )
                 let request = ConnectionRequest(metadata: metadata, service: service)
                 let connId = msg.connectionId
-                let connectionSettings = open.connectionSettings
                 let pending = PendingConnection(
                     accept: { [weak self] dispatcher in
                         guard let self else { return }
                         Task {
-                            await self.addVirtualConnection(connId, dispatcher: dispatcher)
+                            await self.addVirtualConnection(
+                                connId,
+                                dispatcher: dispatcher,
+                                localSettings: localSettings
+                            )
                             try? await self.conduit.send(
-                                .connectionAccept(
-                                    connId: connId,
-                                    settings: connectionSettings,
-                                    metadata: []
+                                messageAccept(
+                                    connectionId: connId,
+                                    settings: localSettings,
+                                    metadata: .null
                                 ))
                         }
                     },
@@ -64,17 +122,46 @@ extension Driver {
                         guard let self else { return }
                         Task {
                             try? await self.conduit.send(
-                                .connectionReject(connId: connId, metadata: []))
+                                messageReject(connectionId: connId, metadata: .null))
                         }
                     }
                 )
                 acceptor.accept(request: request, connection: pending)
             } else {
-                try await conduit.send(.connectionReject(connId: msg.connectionId, metadata: []))
+                try await conduit.send(messageReject(connectionId: msg.connectionId, metadata: .null))
             }
-        case .connectionAccept, .connectionReject:
-            break
+        case .connectionAccept(let accept):
+            // r[impl connection.open]
+            // r[impl rpc.virtual-connection.open]
+            guard let pending = await virtualConnState.takePendingOutbound(msg.connectionId) else {
+                break
+            }
+            do {
+                try validateInitialChannelCredit(accept.connectionSettings.initialChannelCredit)
+            } catch {
+                pending.responseTx(.failure(.protocolViolation(rule: "connection.open")))
+                try await sendProtocolError("connection.open")
+                throw ConnectionError.protocolViolation(rule: "connection.open")
+            }
+            let connection = makeConnection(
+                connectionId: msg.connectionId,
+                localSettings: pending.localSettings,
+                peerSettings: accept.connectionSettings
+            )
+            await virtualConnState.addConnection(
+                msg.connectionId,
+                dispatcher: pending.dispatcher ?? dispatcher,
+                localSettings: pending.localSettings
+            )
+            pending.responseTx(.success(connection))
+        case .connectionReject(let reject):
+            // r[impl connection.open.rejection]
+            guard let pending = await virtualConnState.takePendingOutbound(msg.connectionId) else {
+                break
+            }
+            pending.responseTx(.failure(.rejected(metadata: reject.metadata)))
         case .connectionClose:
+            // r[impl connection.close]
             warnLog("received ConnectionClose conn_id=\(msg.connectionId)")
             if msg.connectionId == 0 {
                 warnLog("received ConnectionClose for root connection; shutting down driver")
@@ -82,21 +169,30 @@ extension Driver {
                 throw ConnectionError.connectionClosed
             }
             await removeVirtualConnection(msg.connectionId)
+            await failPendingResponses(connectionId: msg.connectionId)
+            await finishIfRootClosedAndNoVirtualConnections()
         case .requestMessage(let request):
             switch request.body {
             case .call(let call):
-                var argsBuf = call.args.bytes
-                let argsBytes = argsBuf.readBytes(length: argsBuf.readableBytes) ?? []
+                debugLog(
+                    "recv Call req=\(request.id) method=\(call.methodId) "
+                        + "argsLen=\(call.args.count) schemasLen=\(call.schemas.count)")
+                // The peer advertised its args (writer) schema closure on this binding.
+                if !call.schemas.isEmpty {
+                    schemaReceiveTracker.recordReceived(call.methodId, .args, [UInt8](call.schemas))
+                }
+                let argsBytes = [UInt8](call.args)
                 try await handleRequest(
                     connId: msg.connectionId,
                     requestId: request.id,
                     methodId: call.methodId,
                     metadata: call.metadata,
-                    payload: argsBytes
+                    payload: argsBytes,
+                    channels: call.channels
                 )
             case .response(let response):
-                var retBuf = response.ret.bytes
-                let payload = retBuf.readBytes(length: retBuf.readableBytes) ?? []
+                // r[impl rpc.response]
+                let payload = [UInt8](response.ret)
                 guard let pending = await state.claimPendingResponse(request.id, reason: "response")
                 else {
                     if let finalized = await state.takeFinalizedRequest(request.id) {
@@ -118,26 +214,22 @@ extension Driver {
                     throw ConnectionError.protocolViolation(
                         rule: "call.lifecycle.unknown-request-id")
                 }
+                // The server advertised its (writer) response schema on this binding;
+                // record it so the generated client builds the response compatibility decode.
+                if !response.schemas.isEmpty {
+                    schemaReceiveTracker.recordReceived(
+                        pending.request.methodId, .response, [UInt8](response.schemas))
+                }
                 pending.timeoutTask?.cancel()
                 pending.responseTx(.success(payload))
             case .cancel:
-                switch await operations.cancel(requestId: request.id) {
-                case .none, .detach:
-                    let _ = await state.removeInFlight(request.id)
-                case .keepLive:
-                    break
-                case .release(_, let waiters):
-                    let taskTx = taskSender()
-                    for waiter in waiters {
-                        taskTx(.response(requestId: waiter, payload: encodeCancelledError()))
-                    }
-                }
+                // r[impl rpc.cancel]
+                let _ = await state.removeInFlight(request.id)
             }
         case .channelMessage(let channel):
             switch channel.body {
             case .item(let item):
-                var itemBuf = item.item.bytes
-                let itemBytes = itemBuf.readBytes(length: itemBuf.readableBytes) ?? []
+                let itemBytes = [UInt8](item.item)
                 try await handleData(channelId: channel.id, payload: itemBytes)
             case .close:
                 try await handleClose(channelId: channel.id)
@@ -152,38 +244,56 @@ extension Driver {
         }
     }
 
-    /// r[impl rpc.flow-control.credit.exhaustion] - Payloads bounded by max_payload_size.
     /// r[impl session.connection-settings.hello] - Exceeding limit requires Goodbye.
     /// r[impl rpc.request.id-allocation] - Each request uses a unique ID.
+    /// r[impl rpc]
+    /// r[impl rpc.service]
+    /// r[impl rpc.handler]
+    /// r[impl rpc.service.methods]
+    /// r[impl rpc.one-service-per-connection]
+    /// r[impl rpc.pipelining]
     func handleRequest(
         connId: UInt64,
         requestId: UInt64,
         methodId: UInt64,
-        metadata: [MetadataEntry],
-        payload: [UInt8]
+        metadata: Metadata,
+        payload: [UInt8],
+        channels: [UInt64] = []
     ) async throws {
         // Resolve which dispatcher handles this connection.
         let effectiveDispatcher: any ServiceDispatcher
+        let localMaxConcurrentRequests: UInt32
         if connId == 0 {
             effectiveDispatcher = dispatcher
-        } else if let vconnDispatcher = await virtualConnState.dispatcher(for: connId) {
-            effectiveDispatcher = vconnDispatcher
+            localMaxConcurrentRequests =
+                localRootSettings?.maxConcurrentRequests ?? negotiated.maxConcurrentRequests
+        } else if let vconn = await virtualConnState.connection(for: connId) {
+            effectiveDispatcher = vconn.dispatcher
+            localMaxConcurrentRequests = vconn.localSettings.maxConcurrentRequests
         } else {
             try await sendProtocolError("call.lifecycle.unknown-connection-id")
             throw ConnectionError.protocolViolation(
                 rule: "call.lifecycle.unknown-connection-id")
         }
 
-        let retry = effectiveDispatcher.retryPolicy(methodId: methodId)
-        let inserted = await state.addInFlight(
+        let addInFlight = await state.addInFlight(
             requestId,
             connectionId: connId,
-            responseMetadata: responseMetadataFromRequest(metadata)
+            responseMetadata: responseMetadataFromRequest(metadata),
+            localMaxConcurrentRequests: localMaxConcurrentRequests
         )
 
-        guard inserted else {
+        switch addInFlight {
+        case .inserted:
+            break
+        case .duplicate:
             try await sendProtocolError("call.request-id.duplicate-detection")
             throw ConnectionError.protocolViolation(rule: "call.request-id.duplicate-detection")
+        case .limitExceeded:
+            // r[impl rpc.flow-control.max-concurrent-requests.inbound]
+            try await sendProtocolError("rpc.flow-control.max-concurrent-requests.inbound")
+            throw ConnectionError.protocolViolation(
+                rule: "rpc.flow-control.max-concurrent-requests.inbound")
         }
 
         if payload.count > Int(negotiated.maxPayloadSize) {
@@ -191,58 +301,34 @@ extension Driver {
             throw ConnectionError.protocolViolation(rule: "rpc.flow-control.credit.exhaustion")
         }
 
-        let taskTx = taskSender()
-        if let operationId = metadataOperationId(metadata) {
-            switch await operations.admit(
-                operationId: operationId,
-                methodId: methodId,
-                args: payload,
-                retry: retry,
-                requestId: requestId
-            ) {
-            case .start:
-                break
-            case .attached:
-                return
-            case .replay(let replayPayload):
-                taskTx(.response(requestId: requestId, payload: replayPayload))
-                return
-            case .conflict:
-                taskTx(
-                    .response(
-                        requestId: requestId,
-                        payload: encodeInvalidPayloadError(
-                            reason: "already received operation with ID \(operationId)")
-                    )
-                )
-                return
-            case .indeterminate:
-                taskTx(.response(requestId: requestId, payload: encodeIndeterminateError()))
-                return
-            }
-        }
-
+        let taskTx = taskSender(connectionId: connId)
+        traceLog(.driver, "handleRequest method=\(methodId) req=\(requestId) channels=\(channels)")
         await effectiveDispatcher.preregister(
             methodId: methodId,
             payload: payload,
+            channels: channels,
             registry: serverRegistry
         )
+        traceLog(.driver, "preregistered req=\(requestId) channels=\(channels)")
 
         Task {
             await effectiveDispatcher.dispatch(
                 methodId: methodId,
                 payload: payload,
                 requestId: requestId,
+                channels: channels,
                 registry: serverRegistry,
                 schemaSendTracker: schemaSendTracker,
+                schemaReceiveTracker: schemaReceiveTracker,
                 taskTx: taskTx
             )
         }
     }
 
     /// r[impl rpc.channel.allocation] - Channel ID 0 is reserved.
-    /// r[impl rpc.metadata.unknown] - Unknown channel IDs cause Goodbye.
-    /// r[impl rpc.channel.item] - Data messages routed by channel_id.
+    /// r[impl rpc.channel.item] - Data messages routed by channel_id; an item for a
+    /// not-yet-bound channel is buffered (its declaring Call may not be processed yet).
+    /// r[impl rpc.flow-control]
     func handleData(channelId: UInt64, payload: [UInt8]) async throws {
         if channelId == 0 {
             try await sendProtocolError("rpc.channel.allocation")
@@ -257,15 +343,19 @@ extension Driver {
         }
 
         if !delivered {
-            traceLog(.driver, "handleData: unknown channelId=\(channelId)")
-            try await sendProtocolError("rpc.metadata.unknown")
-            throw ConnectionError.protocolViolation(rule: "rpc.metadata.unknown")
+            // A channel item for a channel not opened by a preceding Call is a sender
+            // ordering violation — frames on a connection are ordered, so the Call that
+            // declares a channel MUST precede any item on it. Reject hard (do not
+            // buffer): ordering is the sender's responsibility, not the receiver's.
+            traceLog(.driver, "handleData: item for unopened channelId=\(channelId)")
+            try await sendProtocolError("rpc.channel.item")
+            throw ConnectionError.protocolViolation(rule: "rpc.channel.item")
         }
     }
 
     /// r[impl rpc.channel.allocation] - Channel ID 0 is reserved.
-    /// r[impl rpc.metadata.unknown] - Unknown channel IDs cause Goodbye.
     /// r[impl rpc.channel.close] - Close terminates the channel.
+    /// r[impl rpc.channel.connection-closure]
     func handleClose(channelId: UInt64) async throws {
         if channelId == 0 {
             try await sendProtocolError("rpc.channel.allocation")
@@ -278,18 +368,20 @@ extension Driver {
         }
 
         if !delivered {
-            try await sendProtocolError("rpc.metadata.unknown")
-            throw ConnectionError.protocolViolation(rule: "rpc.metadata.unknown")
+            try await sendProtocolError("rpc.channel.item")
+            throw ConnectionError.protocolViolation(rule: "rpc.channel.item")
         }
     }
 
     /// r[impl connection.close.semantics] - Send Goodbye with rule ID before closing.
     /// r[impl session.protocol-error] - Reason contains violated rule ID.
     func sendProtocolError(_ reason: String) async throws {
-        try await conduit.send(.protocolError(description: reason))
+        try await conduit.send(messageProtocolError(description: reason))
     }
 
     func failAllPending() async {
+        // r[impl rpc.flow-control.max-concurrent-requests.session-failure]
+        // r[impl rpc.channel.connection-closure]
         await handle.closeRequestSemaphore()
 
         let responses = await state.claimAllPendingResponses(reason: "connection-closed")
@@ -298,5 +390,27 @@ extension Driver {
             pending.timeoutTask?.cancel()
             pending.responseTx(.failure(.connectionClosed))
         }
+    }
+
+    func failPendingResponses(connectionId: UInt64) async {
+        let responses = await state.claimPendingResponses(
+            connectionId: connectionId,
+            reason: "connection-closed"
+        )
+
+        for (_, pending) in responses {
+            pending.timeoutTask?.cancel()
+            pending.responseTx(.failure(.connectionClosed))
+        }
+    }
+
+    func finishIfRootClosedAndNoVirtualConnections() async {
+        guard await state.isRootInternallyClosed() else {
+            return
+        }
+        guard await virtualConnState.isEmpty() else {
+            return
+        }
+        eventContinuation.finish()
     }
 }

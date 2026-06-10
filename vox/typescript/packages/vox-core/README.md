@@ -15,7 +15,7 @@ Core TypeScript runtime abstractions for Vox connections, calls, and channeling.
 ## Fits with
 
 - `@bearcove/vox-wire` for wire message types/codecs
-- `@bearcove/vox-postcard` for serialization
+- `@bearcove/phon-engine` / `@bearcove/phon-schema` for serialization
 - `@bearcove/vox-tcp` and `@bearcove/vox-ws` for concrete transports
 
 Part of the Vox workspace: <https://github.com/bearcove/vox>

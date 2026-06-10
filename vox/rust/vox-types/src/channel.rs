@@ -1,18 +1,12 @@
-#[cfg(all(feature = "jit", not(target_arch = "wasm32")))]
-use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::panic::Location;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Mutex;
-#[cfg(all(feature = "jit", not(target_arch = "wasm32")))]
-use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use facet::Facet;
-#[cfg(all(feature = "jit", not(target_arch = "wasm32")))]
-use facet_core::ConstTypeId;
+use facet::{Facet, FacetOpaqueAdapter, OpaqueDeserialize, OpaqueSerialize};
 use facet_core::PtrConst;
 #[cfg(target_arch = "wasm32")]
 use moire::sync::TryAcquireError;
@@ -20,19 +14,16 @@ use moire::sync::{Notify, Semaphore};
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::sync::TryAcquireError;
 
-use crate::{Backing, ChannelClose, ChannelItem, ChannelReset, Metadata, Payload, SelfRef};
+use crate::{
+    Backing, BindingDirection, ChannelClose, ChannelItem, ChannelReset, Metadata, MethodDescriptor,
+    Payload, SchemaRecvTracker, SelfRef,
+};
 use crate::{
     ChannelCloseReason, ChannelDebugContext, ChannelEvent, ChannelEventContext, ChannelResetReason,
     ChannelSendOutcome, ChannelTrySendOutcome, ConnectionCloseReason, SourceLocation,
     VoxObserverHandle,
 };
 use crate::{ChannelId, ConnectionId};
-
-#[cfg(all(feature = "jit", not(target_arch = "wasm32")))]
-struct ChannelDecodePlan {
-    plan: vox_postcard::TranslationPlan,
-    registry: vox_schema::SchemaRegistry,
-}
 
 // ---------------------------------------------------------------------------
 // Thread-local channel binder — set during deserialization so TryFrom impls
@@ -85,7 +76,295 @@ impl Drop for ChannelBinderGuard<'_> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Out-of-band channel-id table.
+//
+// `Tx<T>`/`Rx<T>` appear in request arguments, but on the wire they are NOT
+// serialized inline — each encodes only a small `u32` index, and the allocated
+// `ChannelId`s travel out-of-band in `RequestCall.channels`. This mirrors the
+// `Fd` → fd-table indirection (`crate::fd`): the binder above still does the
+// allocation/binding; these thread-locals carry the id list alongside the args
+// payload so the index can be re-associated at the peer.
+//
+// r[impl rpc.request] r[impl rpc.channel.allocation]
+// ---------------------------------------------------------------------------
+
+/// `wire_index` sentinel: this handle was never pushed into a collector (no
+/// collector installed at encode). Decoding such an index is a clean error,
+/// never a panic across the `extern "C"` encoder trampolines.
+const CHANNEL_NOT_COLLECTED: u32 = u32::MAX;
+
+/// The channel ids gathered while encoding one request's arguments.
+struct ChannelCollector {
+    /// Allocated channel ids, in encode walk-order — becomes `RequestCall.channels`.
+    ids: Vec<ChannelId>,
+    /// Handle value address → assigned index, scoped to this collector, so the
+    /// same handle encoded more than once claims one slot.
+    seen: std::collections::HashMap<usize, u32>,
+    roles: Vec<ChannelArgSchemaRole>,
+}
+
+#[derive(Clone)]
+struct ChannelArgSchemaRole {
+    method_id: crate::MethodId,
+    direction: BindingDirection,
+    role: String,
+}
+
+struct CollectedChannel {
+    index: u32,
+    role: Option<ChannelArgSchemaRole>,
+}
+
+struct ChannelSource {
+    ids: Vec<ChannelId>,
+    bindings: Vec<Result<ProvidedChannelSchemas, String>>,
+}
+
+#[derive(Clone, Default)]
+struct ProvidedChannelSchemas {
+    writer_schema: Option<Arc<vox_phon::SchemaBundle>>,
+    writer_schema_send: Option<crate::ChannelWriterSchemaPlan>,
+}
+
+struct ProvidedChannel {
+    id: ChannelId,
+    writer_schema: Option<Arc<vox_phon::SchemaBundle>>,
+    writer_schema_send: Option<crate::ChannelWriterSchemaPlan>,
+}
+
+std::thread_local! {
+    static CHANNEL_COLLECTOR: std::cell::RefCell<Option<ChannelCollector>> =
+        const { std::cell::RefCell::new(None) };
+    static CHANNEL_SOURCE: std::cell::RefCell<Option<ChannelSource>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Install an empty channel collector for the duration of `f`, returning what
+/// `f` produced together with the channel ids it gathered (the out-of-band list
+/// for `RequestCall.channels`). Wrap the args encode with this — together with a
+/// [`ChannelBinder`] (the collector records ids the binder allocates).
+// r[impl rpc.channel.discovery]
+pub fn collect_channels<R>(f: impl FnOnce() -> R) -> (R, Vec<ChannelId>) {
+    struct Restore(Option<ChannelCollector>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            CHANNEL_COLLECTOR.with(|c| *c.borrow_mut() = self.0.take());
+        }
+    }
+    let fresh = ChannelCollector {
+        ids: Vec::new(),
+        seen: std::collections::HashMap::new(),
+        roles: Vec::new(),
+    };
+    let _restore = Restore(CHANNEL_COLLECTOR.with(|c| c.borrow_mut().replace(fresh)));
+    let out = f();
+    let ids = CHANNEL_COLLECTOR
+        .with(|c| {
+            c.borrow_mut()
+                .as_mut()
+                .map(|col| std::mem::take(&mut col.ids))
+        })
+        .unwrap_or_default();
+    (out, ids)
+}
+
+pub fn collect_channels_for_method<R>(
+    method: &MethodDescriptor,
+    f: impl FnOnce() -> R,
+) -> (R, Vec<ChannelId>) {
+    // r[impl schema.exchange.channels]
+    // r[impl rpc.channel.discovery]
+    struct Restore(Option<ChannelCollector>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            CHANNEL_COLLECTOR.with(|c| *c.borrow_mut() = self.0.take());
+        }
+    }
+
+    let roles = method
+        .args
+        .iter()
+        .enumerate()
+        .filter_map(|(index, arg)| {
+            let direction = if is_tx(arg.shape) {
+                "tx"
+            } else if is_rx(arg.shape) {
+                "rx"
+            } else {
+                return None;
+            };
+            Some(ChannelArgSchemaRole {
+                method_id: method.id,
+                direction: BindingDirection::Args,
+                role: format!("channel.arg.{index}.{direction}.element"),
+            })
+        })
+        .collect();
+
+    let fresh = ChannelCollector {
+        ids: Vec::new(),
+        seen: std::collections::HashMap::new(),
+        roles,
+    };
+    let _restore = Restore(CHANNEL_COLLECTOR.with(|c| c.borrow_mut().replace(fresh)));
+    let out = f();
+    let ids = CHANNEL_COLLECTOR
+        .with(|c| {
+            c.borrow_mut()
+                .as_mut()
+                .map(|col| std::mem::take(&mut col.ids))
+        })
+        .unwrap_or_default();
+    (out, ids)
+}
+
+/// Provide the channel ids received with a request (`RequestCall.channels`) for
+/// the duration of `f` (typed args decoding). Each `Tx`/`Rx` decoded inside
+/// claims one by index. Wrap the args decode with this — together with a
+/// [`ChannelBinder`] (the index is looked up here, the binder binds it).
+pub fn provide_channels<R>(channels: Vec<ChannelId>, f: impl FnOnce() -> R) -> R {
+    struct Restore(Option<ChannelSource>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            CHANNEL_SOURCE.with(|c| *c.borrow_mut() = self.0.take());
+        }
+    }
+    let source = ChannelSource {
+        ids: channels,
+        bindings: Vec::new(),
+    };
+    let _restore = Restore(CHANNEL_SOURCE.with(|c| c.borrow_mut().replace(source)));
+    f()
+}
+
+pub fn provide_channels_for_method<R>(
+    channels: Vec<ChannelId>,
+    method: &MethodDescriptor,
+    schemas: &SchemaRecvTracker,
+    f: impl FnOnce() -> R,
+) -> R {
+    // r[impl schema.exchange.channels]
+    struct Restore(Option<ChannelSource>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            CHANNEL_SOURCE.with(|c| *c.borrow_mut() = self.0.take());
+        }
+    }
+
+    let tx_plan = if method.args.iter().any(|arg| is_tx(arg.shape)) {
+        Some(crate::SchemaSendTracker::plan_for_method_args(method))
+    } else {
+        None
+    };
+
+    let bindings = method
+        .args
+        .iter()
+        .enumerate()
+        .filter_map(|(index, arg)| {
+            if is_tx(arg.shape) {
+                // r[impl schema.exchange.channels.tx-args]
+                let role = format!("channel.arg.{index}.tx.element");
+                return Some(match tx_plan.as_ref().expect("tx plan should be present") {
+                    Ok(prepared) => Ok(ProvidedChannelSchemas {
+                        writer_schema: None,
+                        writer_schema_send: Some(crate::ChannelWriterSchemaPlan {
+                            method_id: method.id,
+                            direction: BindingDirection::Args,
+                            role,
+                            prepared: prepared.clone(),
+                        }),
+                    }),
+                    Err(error) => Err(error.to_string()),
+                });
+            }
+            if !is_rx(arg.shape) {
+                return None;
+            }
+            // r[impl schema.exchange.channels.rx-args]
+            let role = format!("channel.arg.{index}.rx.element");
+            Some(
+                schemas
+                    .writer_auxiliary_schema_bundle(method.id, BindingDirection::Args, &role)
+                    .map(|bundle| ProvidedChannelSchemas {
+                        writer_schema: bundle.map(Arc::new),
+                        writer_schema_send: None,
+                    }),
+            )
+        })
+        .collect();
+
+    let source = ChannelSource {
+        ids: channels,
+        bindings,
+    };
+    let _restore = Restore(CHANNEL_SOURCE.with(|c| c.borrow_mut().replace(source)));
+    f()
+}
+
+/// Record `channel_id` in the active collector, returning its stable index.
+/// Idempotent per handle value address. Returns [`CHANNEL_NOT_COLLECTED`] when
+/// no collector is installed (the error surfaces cleanly at decode).
+// r[impl rpc.channel.discovery]
+fn collect_channel(key: usize, channel_id: ChannelId) -> CollectedChannel {
+    CHANNEL_COLLECTOR.with(|c| {
+        let mut slot = c.borrow_mut();
+        let Some(col) = slot.as_mut() else {
+            return CollectedChannel {
+                index: CHANNEL_NOT_COLLECTED,
+                role: None,
+            };
+        };
+        if let Some(&idx) = col.seen.get(&key) {
+            return CollectedChannel {
+                index: idx,
+                role: col.roles.get(idx as usize).cloned(),
+            };
+        }
+        let idx = col.ids.len() as u32;
+        col.ids.push(channel_id);
+        col.seen.insert(key, idx);
+        CollectedChannel {
+            index: idx,
+            role: col.roles.get(idx as usize).cloned(),
+        }
+    })
+}
+
+/// Look up channel `index` from the active source (the request's channel list).
+fn take_channel(index: u32) -> Result<ProvidedChannel, String> {
+    if index == CHANNEL_NOT_COLLECTED {
+        return Err(
+            "channel handle was encoded without a channel id (no collector installed)".to_string(),
+        );
+    }
+    CHANNEL_SOURCE.with(|c| {
+        let slot = c.borrow();
+        let vec = slot
+            .as_ref()
+            .ok_or_else(|| "channel decoded with no channel source installed".to_string())?;
+        let id = vec.ids.get(index as usize).copied().ok_or_else(|| {
+            format!(
+                "channel wire index {index} out of range ({})",
+                vec.ids.len()
+            )
+        })?;
+        let schemas = match vec.bindings.get(index as usize) {
+            Some(Ok(binding)) => binding.clone(),
+            Some(Err(error)) => return Err(error.clone()),
+            None => ProvidedChannelSchemas::default(),
+        };
+        Ok(ProvidedChannel {
+            id,
+            writer_schema: schemas.writer_schema,
+            writer_schema_send: schemas.writer_schema_send,
+        })
+    })
+}
+
 // r[impl rpc.channel.pair]
+// r[impl rpc.channel.pair.binding-propagation]
 /// The binding stored in a channel core — either a sink or a receiver, never both.
 pub enum ChannelBinding {
     Sink(BoundChannelSink),
@@ -338,17 +617,27 @@ pub struct BoundChannelReceiver {
     pub receiver: ChannelMailboxReceiver<IncomingChannelMessage>,
     pub liveness: Option<ChannelLivenessHandle>,
     pub replenisher: Option<ChannelCreditReplenisherHandle>,
+    pub writer_schema: Option<Arc<vox_phon::SchemaBundle>>,
 }
 
 struct LogicalReceiverState {
     generation: u64,
     liveness: Option<ChannelLivenessHandle>,
     replenisher: Option<ChannelCreditReplenisherHandle>,
+    writer_schema: Option<Arc<vox_phon::SchemaBundle>>,
     sender: Option<ChannelMailboxSender<LogicalIncomingChannelMessage>>,
     receiver: Option<ChannelMailboxReceiver<LogicalIncomingChannelMessage>>,
 }
 
+type TakenLogicalReceiver = (
+    ChannelMailboxReceiver<LogicalIncomingChannelMessage>,
+    Option<ChannelLivenessHandle>,
+    Option<ChannelCreditReplenisherHandle>,
+    Option<Arc<vox_phon::SchemaBundle>>,
+);
+
 // r[impl rpc.channel.pair]
+// r[impl rpc.channel.pair.binding-propagation]
 /// Shared state between a `Tx`/`Rx` pair created by `channel()`.
 ///
 /// Contains a `Mutex<Option<ChannelBinding>>` that is written once during
@@ -402,7 +691,7 @@ impl ChannelCore {
         }
     }
 
-    pub fn bind_retryable_receiver(self: &Arc<Self>, bound: BoundChannelReceiver) {
+    pub fn bind_logical_receiver(self: &Arc<Self>, bound: BoundChannelReceiver) {
         #[cfg(not(target_arch = "wasm32"))]
         if tokio::runtime::Handle::try_current().is_err() {
             self.set_binding(ChannelBinding::Receiver(bound));
@@ -419,6 +708,7 @@ impl ChannelCore {
                 generation: 0,
                 liveness: None,
                 replenisher: None,
+                writer_schema: None,
                 sender: Some(tx),
                 receiver: Some(rx),
             }
@@ -426,6 +716,7 @@ impl ChannelCore {
         state.generation = state.generation.wrapping_add(1);
         state.liveness = bound.liveness.clone();
         state.replenisher = bound.replenisher.clone();
+        state.writer_schema = bound.writer_schema.clone();
         let generation = state.generation;
 
         let Some(sender) = state.sender.clone() else {
@@ -465,26 +756,24 @@ impl ChannelCore {
         });
     }
 
-    pub fn take_logical_receiver(
-        &self,
-    ) -> Option<(
-        ChannelMailboxReceiver<LogicalIncomingChannelMessage>,
-        Option<ChannelLivenessHandle>,
-        Option<ChannelCreditReplenisherHandle>,
-    )> {
+    pub fn take_logical_receiver(&self) -> Option<TakenLogicalReceiver> {
         self.logical_receiver
             .lock()
             .expect("channel core logical receiver mutex poisoned")
             .as_mut()
             .and_then(|state| {
-                state
-                    .receiver
-                    .take()
-                    .map(|receiver| (receiver, state.liveness.clone(), state.replenisher.clone()))
+                state.receiver.take().map(|receiver| {
+                    (
+                        receiver,
+                        state.liveness.clone(),
+                        state.replenisher.clone(),
+                        state.writer_schema.clone(),
+                    )
+                })
             })
     }
 
-    pub fn finish_retry_binding(&self) {
+    pub fn finish_logical_receiver_binding(&self) {
         let mut guard = self
             .logical_receiver
             .lock()
@@ -529,12 +818,21 @@ impl CoreSlot {
 }
 
 // r[impl rpc.channel.pair]
+// r[impl rpc.channel.pair.binding-propagation]
 // r[impl rpc.observability.channel.context]
-/// Create a channel pair with shared state.
+/// Create a channel pair with shared state — a `Tx<T>` (sender) and `Rx<T>`
+/// (receiver) over one `ChannelCore`.
 ///
-/// Both ends hold an `Arc` reference to the same `ChannelCore`. The framework
-/// binds the handle that appears in args or return values, and the paired
-/// handle reads or takes the binding from the shared core.
+/// Channels **stream values within a call**: pass one end in a method's
+/// **arguments**. That is the *only* place a channel may appear — the `#[service]`
+/// macro rejects a `Tx`/`Rx` in return position ("channels are only allowed in
+/// method arguments"). The framework binds the handle that appears in the args, and
+/// the paired handle reads or takes the binding from the shared `ChannelCore`.
+///
+/// A channel is one-directional streaming, not a reply path: to hand a value *back*
+/// from the handler, take a `Tx<T>` (the handler holds it and sends → caller). For
+/// request/response over the same link, open a **virtual connection** on the session
+/// — do not simulate it by pairing two channels.
 #[track_caller]
 pub fn channel<T>() -> (Tx<T>, Rx<T>) {
     let caller = Location::caller();
@@ -631,67 +929,48 @@ fn observe_optional_replenisher_channel(
     }
 }
 
-#[cfg(all(feature = "jit", not(target_arch = "wasm32")))]
-fn channel_decode_plan<T: Facet<'static>>() -> Arc<ChannelDecodePlan> {
-    static PLANS: OnceLock<Mutex<HashMap<ConstTypeId, Arc<ChannelDecodePlan>>>> = OnceLock::new();
-
-    let plans = PLANS.get_or_init(|| Mutex::new(HashMap::new()));
-    let key = T::SHAPE.id;
-    let mut plans = plans.lock().expect("channel decode plan mutex poisoned");
-    plans
-        .entry(key)
-        .or_insert_with(|| {
-            Arc::new(ChannelDecodePlan {
-                plan: vox_postcard::build_identity_plan(T::SHAPE),
-                registry: vox_schema::SchemaRegistry::new(),
-            })
-        })
-        .clone()
-}
-
-#[cfg(all(feature = "jit", not(target_arch = "wasm32")))]
-fn decode_channel_payload<T: Facet<'static>>(bytes: &'static [u8]) -> Result<T, RxError> {
-    if vox_jit::require_pure_jit() && vox_jit::force_fallback() {
-        panic!(
-            "VOX_JIT_REQUIRE_PURE=1 but channel payload decode for '{}' was forced off by VOX_CODEC",
-            T::SHAPE
+/// Decode one channel item through phon.
+// r[impl schema.interaction.channels]
+// r[impl schema.exchange.channels]
+// r[impl schema.exchange.channels.rx-args]
+fn decode_channel_payload<T: Facet<'static>>(
+    bytes: &'static [u8],
+    decoder: &mut ChannelElementDecoderSlot,
+) -> Result<T, RxError> {
+    let Some(writer) = decoder.writer.as_ref() else {
+        return vox_phon::from_slice_borrowed::<T>(bytes)
+            .map_err(|e| RxError::Deserialize(e.to_string()));
+    };
+    if decoder.program.is_none() {
+        decoder.program = Some(
+            vox_phon::build_decode_program::<T>(writer)
+                .map_err(|e| RxError::Deserialize(e.to_string()))?,
         );
     }
-
-    let resolved = channel_decode_plan::<T>();
-    match vox_jit::global_runtime().try_decode_borrowed::<T>(
+    vox_phon::decode_with_program::<T>(
+        decoder
+            .program
+            .as_ref()
+            .expect("channel decode program just built"),
         bytes,
-        0,
-        &resolved.plan,
-        &resolved.registry,
-    ) {
-        Some(result) => result.map_err(RxError::Deserialize),
-        None if vox_jit::require_pure_jit() => {
-            panic!(
-                "VOX_JIT_REQUIRE_PURE=1 but channel payload decode for '{}' did not use the JIT",
-                T::SHAPE
-            )
-        }
-        None => vox_postcard::from_slice_borrowed(bytes).map_err(RxError::Deserialize),
-    }
+    )
+    .map_err(|e| RxError::Deserialize(e.to_string()))
 }
 
-#[cfg(not(all(feature = "jit", not(target_arch = "wasm32"))))]
-fn decode_channel_payload<T: Facet<'static>>(bytes: &'static [u8]) -> Result<T, RxError> {
-    vox_postcard::from_slice_borrowed(bytes).map_err(RxError::Deserialize)
-}
-
-fn decode_channel_item<T>(msg: SelfRef<ChannelItem<'static>>) -> Result<Option<SelfRef<T>>, RxError>
+fn decode_channel_item<T>(
+    msg: SelfRef<ChannelItem<'static>>,
+    decoder: &mut ChannelElementDecoderSlot,
+) -> Result<Option<SelfRef<T>>, RxError>
 where
     T: Facet<'static>,
 {
     msg.try_repack(|item, _backing_bytes| {
-        let Payload::PostcardBytes(bytes) = item.item else {
+        let Payload::Encoded(bytes) = item.item else {
             return Err(RxError::Protocol(
                 "incoming channel item payload was not Incoming".into(),
             ));
         };
-        decode_channel_payload(bytes)
+        decode_channel_payload(bytes, decoder)
     })
     .map(Some)
 }
@@ -701,11 +980,19 @@ fn handle_incoming_channel_message<T>(
     replenisher: Option<&ChannelCreditReplenisherHandle>,
     debug_context: ChannelDebugContext,
     closed: &AtomicBool,
+    decoder: &mut ChannelElementDecoderSlot,
 ) -> Result<Option<SelfRef<T>>, RxError>
 where
     T: Facet<'static>,
 {
     match msg {
+        Some(IncomingChannelMessage::WriterSchema(writer_schema)) => {
+            decoder.writer = Some(writer_schema);
+            decoder.program = None;
+            Err(RxError::Protocol(
+                "channel writer schema reached payload handler".into(),
+            ))
+        }
         Some(IncomingChannelMessage::Close(_)) => {
             observe_optional_replenisher_channel(replenisher, debug_context, |channel| {
                 ChannelEvent::Closed {
@@ -747,7 +1034,7 @@ where
             Err(RxError::Reset)
         }
         Some(IncomingChannelMessage::Item(msg)) => {
-            let value = decode_channel_item(msg);
+            let value = decode_channel_item(msg, decoder);
             if value.is_ok() {
                 observe_optional_replenisher_channel(replenisher, debug_context, |channel| {
                     ChannelEvent::ItemConsumed { channel }
@@ -957,9 +1244,10 @@ impl<S: ChannelSink> ChannelSink for CreditSink<S> {
 
 /// Message delivered to an `Rx` by the driver.
 pub enum IncomingChannelMessage {
+    WriterSchema(Arc<vox_phon::SchemaBundle>),
     Item(SelfRef<ChannelItem<'static>>),
-    Close(SelfRef<ChannelClose<'static>>),
-    Reset(SelfRef<ChannelReset<'static>>),
+    Close(SelfRef<ChannelClose>),
+    Reset(SelfRef<ChannelReset>),
     // r[impl rpc.channel.connection-closure]
     ConnectionClosed(ConnectionCloseReason),
 }
@@ -1033,27 +1321,43 @@ impl ReplenisherSlot {
     }
 }
 
+#[derive(Facet)]
+#[facet(opaque)]
+pub(crate) struct ChannelElementDecoderSlot {
+    pub(crate) writer: Option<Arc<vox_phon::SchemaBundle>>,
+    pub(crate) program: Option<vox_phon::DecodeProgram>,
+}
+
+impl ChannelElementDecoderSlot {
+    pub(crate) fn empty() -> Self {
+        Self {
+            writer: None,
+            program: None,
+        }
+    }
+}
+
 /// Sender handle: "I send". The holder of a `Tx<T>` sends items of type `T`.
 ///
 /// In method args, the handler holds it (handler sends → caller).
 ///
-/// Wire encoding is always unit (`()`), with channel IDs carried exclusively
-/// in `Message::Request.channels`.
+/// On the wire a `Tx` is a `u32` index into `Message::Request.channels`; the
+/// `ChannelId` itself travels out-of-band in that list (see [`TxChannelAdapter`]).
 // r[impl rpc.channel]
 // r[impl rpc.channel.direction]
 // r[impl rpc.channel.payload-encoding]
 #[derive(Facet)]
-#[facet(proxy = crate::ChannelId)]
+#[facet(opaque = TxChannelAdapter<T>)]
 pub struct Tx<T> {
     pub(crate) channel_id: ChannelId,
     pub(crate) sink: SinkSlot,
     pub(crate) core: CoreSlot,
     pub(crate) liveness: LivenessSlot,
-    #[facet(opaque)]
     debug_context: ChannelDebugContext,
-    #[facet(opaque)]
     closed: AtomicBool,
-    #[facet(opaque)]
+    /// Scratch the adapter points `OpaqueSerialize` at: the index assigned by the
+    /// channel collector at encode (`CHANNEL_NOT_COLLECTED` until then).
+    wire_index: AtomicU32,
     _marker: PhantomData<T>,
 }
 
@@ -1081,6 +1385,7 @@ impl<T> Tx<T> {
             liveness: LivenessSlot::empty(),
             debug_context,
             closed: AtomicBool::new(false),
+            wire_index: AtomicU32::new(CHANNEL_NOT_COLLECTED),
             _marker: PhantomData,
         }
     }
@@ -1095,6 +1400,7 @@ impl<T> Tx<T> {
             liveness: LivenessSlot::empty(),
             debug_context,
             closed: AtomicBool::new(false),
+            wire_index: AtomicU32::new(CHANNEL_NOT_COLLECTED),
             _marker: PhantomData,
         }
     }
@@ -1119,6 +1425,7 @@ impl<T> Tx<T> {
     }
 
     // r[impl rpc.channel.pair.tx-read]
+    // r[impl rpc.channel.pair.binding-propagation]
     fn resolve_sink_now(&self) -> Option<Arc<dyn ChannelSink>> {
         // Fast path: local slot (standalone/callee-side handle)
         if let Some(sink) = &self.sink.inner {
@@ -1249,7 +1556,7 @@ impl<T> Tx<T> {
     }
 
     // r[impl rpc.channel.lifecycle]
-    pub async fn close<'value>(&self, metadata: Metadata<'value>) -> Result<(), TxError> {
+    pub async fn close(&self, metadata: Metadata) -> Result<(), TxError> {
         self.closed.store(true, Ordering::Release);
         let sink = if let Some(sink) = self.resolve_sink_now() {
             sink
@@ -1283,9 +1590,9 @@ impl<T> Tx<T> {
     }
 
     #[doc(hidden)]
-    pub fn finish_retry_binding(&self) {
+    pub fn finish_call_binding(&self) {
         if let Some(core) = &self.core.inner {
-            core.finish_retry_binding();
+            core.finish_logical_receiver_binding();
         }
     }
 }
@@ -1317,6 +1624,9 @@ impl<T> Drop for Tx<T> {
 impl<T> TryFrom<&Tx<T>> for ChannelId {
     type Error = String;
 
+    // r[impl rpc.channel.binding.caller-args]
+    // r[impl rpc.channel.binding.caller-args.tx]
+    // r[impl rpc.channel.pair.binding-propagation]
     fn try_from(value: &Tx<T>) -> Result<Self, Self::Error> {
         // Case 1: Caller passes Tx in args (callee sends, caller receives).
         // Allocate a channel ID and store the receiver binding in the shared
@@ -1328,7 +1638,7 @@ impl<T> TryFrom<&Tx<T>> for ChannelId {
             };
             let (channel_id, bound) = binder.create_rx_with_context(Some(value.debug_context));
             if let Some(core) = &value.core.inner {
-                core.bind_retryable_receiver(bound);
+                core.bind_logical_receiver(bound);
             }
             Ok(channel_id)
         })
@@ -1338,7 +1648,18 @@ impl<T> TryFrom<&Tx<T>> for ChannelId {
 impl<T> TryFrom<ChannelId> for Tx<T> {
     type Error = String;
 
+    // r[impl rpc.channel.binding.callee-args]
+    // r[impl rpc.channel.binding.callee-args.tx]
     fn try_from(channel_id: ChannelId) -> Result<Self, Self::Error> {
+        Self::from_channel_id_with_writer_schema(channel_id, None)
+    }
+}
+
+impl<T> Tx<T> {
+    fn from_channel_id_with_writer_schema(
+        channel_id: ChannelId,
+        writer_schema_send: Option<crate::ChannelWriterSchemaPlan>,
+    ) -> Result<Self, String> {
         let debug_context = ChannelDebugContext {
             type_name: Some(std::any::type_name::<T>()),
             ..ChannelDebugContext::default()
@@ -1350,13 +1671,75 @@ impl<T> TryFrom<ChannelId> for Tx<T> {
             let Some(binder) = *cell.borrow() else {
                 return Err("deserializing Tx requires an active ChannelBinder".to_string());
             };
-            let sink = binder.bind_tx_with_context(channel_id, Some(debug_context));
+            let sink = binder.bind_tx_with_context_and_writer_schema(
+                channel_id,
+                Some(debug_context),
+                writer_schema_send,
+            );
             let liveness = binder.channel_liveness();
             tx.bind_with_liveness(sink, liveness);
             Ok(())
         })?;
 
         Ok(tx)
+    }
+}
+
+/// Opaque adapter bridging `Tx<T>` through the out-of-band channel table.
+///
+/// On the wire a `Tx` is a `u32` index into `RequestCall.channels`. Encode:
+/// allocate + register the channel via the active [`ChannelBinder`] (the same
+/// `TryFrom<&Tx>` logic the old proxy used), record the id in the active
+/// collector, and point the wire at the assigned index. Decode: read the index,
+/// resolve the id from the active source (`provide_channels`), and bind. Mirrors
+/// [`FdAdapter`](crate::fd). `serialize_map` is infallible (a missing binder
+/// yields the `CHANNEL_NOT_COLLECTED` sentinel; the error surfaces at decode).
+// r[impl rpc.channel.payload-encoding] r[impl rpc.channel.binding]
+pub struct TxChannelAdapter<T>(PhantomData<T>);
+
+impl<T> FacetOpaqueAdapter for TxChannelAdapter<T> {
+    type Error = String;
+    type SendValue<'a> = Tx<T>;
+    type RecvValue<'de> = Tx<T>;
+
+    fn serialize_map(value: &Self::SendValue<'_>) -> OpaqueSerialize {
+        let idx = match ChannelId::try_from(value) {
+            Ok(channel_id) => {
+                let collected = collect_channel(value as *const Tx<T> as usize, channel_id);
+                if let Some(role) = collected.role {
+                    CHANNEL_BINDER.with(|cell| {
+                        if let Some(binder) = *cell.borrow() {
+                            binder.note_channel_schema_role(
+                                channel_id,
+                                role.method_id,
+                                role.direction,
+                                &role.role,
+                            );
+                        }
+                    });
+                }
+                collected.index
+            }
+            Err(_) => CHANNEL_NOT_COLLECTED,
+        };
+        value.wire_index.store(idx, Ordering::Relaxed);
+        OpaqueSerialize {
+            ptr: PtrConst::new(value.wire_index.as_ptr().cast::<u8>()),
+            shape: <u32 as Facet>::SHAPE,
+        }
+    }
+
+    fn deserialize_build<'de>(
+        input: OpaqueDeserialize<'de>,
+    ) -> Result<Self::RecvValue<'de>, Self::Error> {
+        let bytes = match &input {
+            OpaqueDeserialize::Borrowed(b) => *b,
+            OpaqueDeserialize::Owned(b) => b.as_slice(),
+        };
+        let index =
+            vox_phon::from_slice::<u32>(bytes).map_err(|e| format!("Tx channel index: {e}"))?;
+        let channel = take_channel(index)?;
+        Tx::from_channel_id_with_writer_schema(channel.id, channel.writer_schema_send)
     }
 }
 
@@ -1410,9 +1793,10 @@ impl<T: std::fmt::Debug> std::error::Error for TrySendError<T> {}
 ///
 /// In method args, the handler holds it (handler receives ← caller).
 ///
-/// Channel IDs are serialized inline in the postcard payload.
+/// On the wire an `Rx` is a `u32` index into `Message::Request.channels`; the
+/// `ChannelId` itself travels out-of-band in that list (see [`RxChannelAdapter`]).
 #[derive(Facet)]
-#[facet(proxy = crate::ChannelId)]
+#[facet(opaque = RxChannelAdapter<T>)]
 pub struct Rx<T> {
     pub(crate) channel_id: ChannelId,
     pub(crate) receiver: ReceiverSlot,
@@ -1420,11 +1804,12 @@ pub struct Rx<T> {
     pub(crate) core: CoreSlot,
     pub(crate) liveness: LivenessSlot,
     pub(crate) replenisher: ReplenisherSlot,
-    #[facet(opaque)]
+    pub(crate) decoder: ChannelElementDecoderSlot,
     debug_context: ChannelDebugContext,
-    #[facet(opaque)]
     closed: AtomicBool,
-    #[facet(opaque)]
+    /// Scratch the adapter points `OpaqueSerialize` at: the index assigned by the
+    /// channel collector at encode (`CHANNEL_NOT_COLLECTED` until then).
+    wire_index: AtomicU32,
     _marker: PhantomData<T>,
 }
 
@@ -1452,8 +1837,10 @@ impl<T> Rx<T> {
             core: CoreSlot::empty(),
             liveness: LivenessSlot::empty(),
             replenisher: ReplenisherSlot::empty(),
+            decoder: ChannelElementDecoderSlot::empty(),
             debug_context,
             closed: AtomicBool::new(false),
+            wire_index: AtomicU32::new(CHANNEL_NOT_COLLECTED),
             _marker: PhantomData,
         }
     }
@@ -1468,8 +1855,10 @@ impl<T> Rx<T> {
             core: CoreSlot { inner: Some(core) },
             liveness: LivenessSlot::empty(),
             replenisher: ReplenisherSlot::empty(),
+            decoder: ChannelElementDecoderSlot::empty(),
             debug_context,
             closed: AtomicBool::new(false),
+            wire_index: AtomicU32::new(CHANNEL_NOT_COLLECTED),
             _marker: PhantomData,
         }
     }
@@ -1495,15 +1884,27 @@ impl<T> Rx<T> {
         loop {
             if self.logical_receiver.inner.is_none()
                 && let Some(core) = &self.core.inner
-                && let Some((receiver, liveness, replenisher)) = core.take_logical_receiver()
+                && let Some((receiver, liveness, replenisher, writer_schema)) =
+                    core.take_logical_receiver()
             {
                 self.logical_receiver.inner = Some(receiver);
                 self.liveness.inner = liveness;
                 self.replenisher.inner = replenisher;
+                self.decoder.writer = writer_schema;
+                self.decoder.program = None;
             }
 
             if let Some(receiver) = self.logical_receiver.inner.as_mut() {
                 let received = receiver.recv().await;
+                if let Some(LogicalIncomingChannelMessage {
+                    msg: IncomingChannelMessage::WriterSchema(writer_schema),
+                    ..
+                }) = received
+                {
+                    self.decoder.writer = Some(writer_schema);
+                    self.decoder.program = None;
+                    continue;
+                }
                 return match received {
                     Some(LogicalIncomingChannelMessage { msg, replenisher }) => {
                         handle_incoming_channel_message(
@@ -1511,6 +1912,7 @@ impl<T> Rx<T> {
                             replenisher.as_ref(),
                             self.debug_context,
                             &self.closed,
+                            &mut self.decoder,
                         )
                     }
                     None => handle_incoming_channel_message(
@@ -1518,6 +1920,7 @@ impl<T> Rx<T> {
                         None,
                         self.debug_context,
                         &self.closed,
+                        &mut self.decoder,
                     ),
                 };
             }
@@ -1529,14 +1932,23 @@ impl<T> Rx<T> {
                 self.receiver.inner = Some(bound.receiver);
                 self.liveness.inner = bound.liveness;
                 self.replenisher.inner = bound.replenisher;
+                self.decoder.writer = bound.writer_schema;
+                self.decoder.program = None;
             }
 
             if let Some(receiver) = self.receiver.inner.as_mut() {
+                let received = receiver.recv().await;
+                if let Some(IncomingChannelMessage::WriterSchema(writer_schema)) = received {
+                    self.decoder.writer = Some(writer_schema);
+                    self.decoder.program = None;
+                    continue;
+                }
                 return handle_incoming_channel_message(
-                    receiver.recv().await,
+                    received,
                     self.replenisher.inner.as_ref(),
                     self.debug_context,
                     &self.closed,
+                    &mut self.decoder,
                 );
             }
 
@@ -1575,7 +1987,9 @@ impl<T> Drop for Rx<T> {
         if self.replenisher.inner.is_none()
             && let Some(core) = &self.core.inner
         {
-            if let Some((_receiver, _liveness, replenisher)) = core.take_logical_receiver() {
+            if let Some((_receiver, _liveness, replenisher, _writer_schema)) =
+                core.take_logical_receiver()
+            {
                 self.replenisher.inner = replenisher;
             } else if let Some(bound) = core.take_receiver() {
                 self.replenisher.inner = bound.replenisher;
@@ -1597,6 +2011,9 @@ impl<T> Drop for Rx<T> {
 impl<T> TryFrom<&Rx<T>> for ChannelId {
     type Error = String;
 
+    // r[impl rpc.channel.binding.caller-args]
+    // r[impl rpc.channel.binding.caller-args.rx]
+    // r[impl rpc.channel.pair.binding-propagation]
     fn try_from(value: &Rx<T>) -> Result<Self, Self::Error> {
         // Case 2: Caller passes Rx in args (callee receives, caller sends).
         // Allocate a channel ID and store the sink binding in the shared
@@ -1619,7 +2036,18 @@ impl<T> TryFrom<&Rx<T>> for ChannelId {
 impl<T> TryFrom<ChannelId> for Rx<T> {
     type Error = String;
 
+    // r[impl rpc.channel.binding.callee-args]
+    // r[impl rpc.channel.binding.callee-args.rx]
     fn try_from(channel_id: ChannelId) -> Result<Self, Self::Error> {
+        Self::from_channel_id_with_writer(channel_id, None)
+    }
+}
+
+impl<T> Rx<T> {
+    fn from_channel_id_with_writer(
+        channel_id: ChannelId,
+        writer_schema: Option<Arc<vox_phon::SchemaBundle>>,
+    ) -> Result<Self, String> {
         let debug_context = ChannelDebugContext {
             type_name: Some(std::any::type_name::<T>()),
             ..ChannelDebugContext::default()
@@ -1635,10 +2063,64 @@ impl<T> TryFrom<ChannelId> for Rx<T> {
             rx.receiver.inner = Some(bound.receiver);
             rx.liveness.inner = bound.liveness;
             rx.replenisher.inner = bound.replenisher;
+            rx.decoder.writer = writer_schema.or(bound.writer_schema);
+            rx.decoder.program = None;
             Ok(())
         })?;
 
         Ok(rx)
+    }
+}
+
+/// Opaque adapter bridging `Rx<T>` through the out-of-band channel table — the
+/// receiver-side mirror of [`TxChannelAdapter`]. On the wire a `Rx` is a `u32`
+/// index into `RequestCall.channels`.
+// r[impl rpc.channel.payload-encoding] r[impl rpc.channel.binding]
+pub struct RxChannelAdapter<T>(PhantomData<T>);
+
+impl<T> FacetOpaqueAdapter for RxChannelAdapter<T> {
+    type Error = String;
+    type SendValue<'a> = Rx<T>;
+    type RecvValue<'de> = Rx<T>;
+
+    fn serialize_map(value: &Self::SendValue<'_>) -> OpaqueSerialize {
+        let idx = match ChannelId::try_from(value) {
+            Ok(channel_id) => {
+                let collected = collect_channel(value as *const Rx<T> as usize, channel_id);
+                if let Some(role) = collected.role {
+                    CHANNEL_BINDER.with(|cell| {
+                        if let Some(binder) = *cell.borrow() {
+                            binder.note_channel_schema_role(
+                                channel_id,
+                                role.method_id,
+                                role.direction,
+                                &role.role,
+                            );
+                        }
+                    });
+                }
+                collected.index
+            }
+            Err(_) => CHANNEL_NOT_COLLECTED,
+        };
+        value.wire_index.store(idx, Ordering::Relaxed);
+        OpaqueSerialize {
+            ptr: PtrConst::new(value.wire_index.as_ptr().cast::<u8>()),
+            shape: <u32 as Facet>::SHAPE,
+        }
+    }
+
+    fn deserialize_build<'de>(
+        input: OpaqueDeserialize<'de>,
+    ) -> Result<Self::RecvValue<'de>, Self::Error> {
+        let bytes = match &input {
+            OpaqueDeserialize::Borrowed(b) => *b,
+            OpaqueDeserialize::Owned(b) => b.as_slice(),
+        };
+        let index =
+            vox_phon::from_slice::<u32>(bytes).map_err(|e| format!("Rx channel index: {e}"))?;
+        let channel = take_channel(index)?;
+        Rx::from_channel_id_with_writer(channel.id, channel.writer_schema)
     }
 }
 
@@ -1648,7 +2130,7 @@ pub enum RxError {
     Unbound,
     Reset,
     ConnectionClosed(ConnectionCloseReason),
-    Deserialize(vox_postcard::error::DeserializeError),
+    Deserialize(String),
     Protocol(String),
 }
 
@@ -1721,6 +2203,16 @@ pub trait ChannelBinder: crate::MaybeSend + crate::MaybeSync {
         self.bind_tx(channel_id)
     }
 
+    fn bind_tx_with_context_and_writer_schema(
+        &self,
+        channel_id: ChannelId,
+        debug_context: Option<ChannelDebugContext>,
+        writer_schema: Option<crate::ChannelWriterSchemaPlan>,
+    ) -> Arc<dyn ChannelSink> {
+        let _ = writer_schema;
+        self.bind_tx_with_context(channel_id, debug_context)
+    }
+
     /// Register an inbound channel by ID and return the receiver (callee side).
     ///
     /// The channel ID comes from `Request.channels`.
@@ -1739,6 +2231,16 @@ pub trait ChannelBinder: crate::MaybeSend + crate::MaybeSync {
     /// for the lifetime of any bound channel handle.
     fn channel_liveness(&self) -> Option<ChannelLivenessHandle> {
         None
+    }
+
+    fn note_channel_schema_role(
+        &self,
+        channel_id: ChannelId,
+        method_id: crate::MethodId,
+        direction: BindingDirection,
+        role: &str,
+    ) {
+        let _ = (channel_id, method_id, direction, role);
     }
 }
 
@@ -1854,11 +2356,18 @@ mod tests {
         assert_eq!(sink_impl.close_on_drop_calls.load(Ordering::Acquire), 1);
     }
 
+    // r[verify rpc.channel.pair]
     // r[verify rpc.observability.channel.context]
     #[test]
     fn channel_pair_captures_source_location_and_type_context() {
         let expected_line = line!() + 1;
         let (tx, rx) = channel::<u32>();
+
+        let tx_core = tx.core.inner.as_ref().expect("paired Tx should have core");
+        let rx_core = rx.core.inner.as_ref().expect("paired Rx should have core");
+        assert!(Arc::ptr_eq(tx_core, rx_core));
+        assert!(!tx.is_bound());
+        assert!(!rx.is_bound());
 
         for context in [tx.debug_context(), rx.debug_context()] {
             assert_eq!(context.type_name, Some(std::any::type_name::<u32>()));
@@ -1978,11 +2487,11 @@ mod tests {
         rx.bind(rx_inner);
         rx.replenisher.inner = Some(replenisher.clone());
 
-        let encoded = vox_postcard::to_vec(&123_u32).expect("serialize test item");
+        let encoded = vox_phon::to_vec(&123_u32).expect("serialize test item");
         let item = SelfRef::owning(
             Backing::Boxed(Box::<[u8]>::default()),
             ChannelItem {
-                item: Payload::PostcardBytes(Box::leak(encoded.into_boxed_slice())),
+                item: Payload::Encoded(Box::leak(encoded.into_boxed_slice())),
             },
         );
         tx.send(IncomingChannelMessage::Item(item))
@@ -2040,10 +2549,11 @@ mod tests {
         let (_tx, rx_inner) = channel_mailbox("vox_types.channel.test.logical_rx_drop", 1);
         let replenisher = Arc::new(CountingReplenisher::new());
         let core = Arc::new(ChannelCore::new(ChannelDebugContext::default()));
-        core.bind_retryable_receiver(BoundChannelReceiver {
+        core.bind_logical_receiver(BoundChannelReceiver {
             receiver: rx_inner,
             liveness: None,
             replenisher: Some(replenisher.clone()),
+            writer_schema: None,
         });
 
         let rx = Rx::<u32>::paired(core);
@@ -2057,19 +2567,20 @@ mod tests {
         let (tx, rx_inner) = channel_mailbox("vox_types.channel.test.rx5", 1);
         let replenisher = Arc::new(CountingReplenisher::new());
         let core = Arc::new(ChannelCore::new(ChannelDebugContext::default()));
-        core.bind_retryable_receiver(BoundChannelReceiver {
+        core.bind_logical_receiver(BoundChannelReceiver {
             receiver: rx_inner,
             liveness: None,
             replenisher: Some(replenisher.clone()),
+            writer_schema: None,
         });
 
         let mut rx = Rx::<u32>::paired(core);
 
-        let encoded = vox_postcard::to_vec(&321_u32).expect("serialize test item");
+        let encoded = vox_phon::to_vec(&321_u32).expect("serialize test item");
         let item = SelfRef::owning(
             Backing::Boxed(Box::<[u8]>::default()),
             ChannelItem {
-                item: Payload::PostcardBytes(Box::leak(encoded.into_boxed_slice())),
+                item: Payload::Encoded(Box::leak(encoded.into_boxed_slice())),
             },
         );
         tx.send(IncomingChannelMessage::Item(item))
@@ -2115,7 +2626,7 @@ mod tests {
         }
 
         fn create_rx(&self) -> (ChannelId, BoundChannelReceiver) {
-            let (tx, rx) = channel_mailbox("vox_types.channel.test.bind_retryable1", 8);
+            let (tx, rx) = channel_mailbox("vox_types.channel.test.bind_logical1", 8);
             // Keep the sender alive by leaking it — test only.
             std::mem::forget(tx);
             (
@@ -2124,6 +2635,7 @@ mod tests {
                     receiver: rx,
                     liveness: None,
                     replenisher: None,
+                    writer_schema: None,
                 },
             )
         }
@@ -2133,19 +2645,24 @@ mod tests {
         }
 
         fn register_rx(&self, _channel_id: ChannelId) -> BoundChannelReceiver {
-            let (tx, rx) = channel_mailbox("vox_types.channel.test.bind_retryable2", 8);
+            let (tx, rx) = channel_mailbox("vox_types.channel.test.bind_logical2", 8);
             std::mem::forget(tx);
             BoundChannelReceiver {
                 receiver: rx,
                 liveness: None,
                 replenisher: None,
+                writer_schema: None,
             }
         }
     }
 
     // Case 1: Caller passes Tx in args, keeps paired Rx.
-    // Serializing the Tx allocates a channel ID via create_rx() and stores
-    // the receiver in the shared logical core so the kept Rx can survive retries.
+    // Encoding the Tx allocates a channel ID via create_rx(), records it in the
+    // out-of-band collector (RequestCall.channels), and stores the receiver in
+    // the shared logical core so the kept Rx can receive without appearing in
+    // the serialized args payload.
+    // r[verify rpc.channel.binding.caller-args]
+    // r[verify rpc.channel.binding.caller-args.tx]
     #[tokio::test]
     async fn case1_serialize_tx_allocates_and_binds_paired_rx() {
         use facet::Facet;
@@ -2160,11 +2677,14 @@ mod tests {
         let args = Args { data: 42, tx };
 
         let binder = TestBinder::new();
-        let bytes =
-            with_channel_binder(&binder, || vox_postcard::to_vec(&args).expect("serialize"));
+        let (bytes, channels) = collect_channels(|| {
+            with_channel_binder(&binder, || vox_phon::to_vec(&args).expect("serialize"))
+        });
 
-        // The channel ID should be in the serialized bytes (after the u32 data field).
+        // The args still encode (the Tx is a small index); the channel id rode
+        // out-of-band into the collected list.
         assert!(!bytes.is_empty());
+        assert_eq!(channels.len(), 1, "one channel id collected out-of-band");
 
         // The kept Rx should now have a receiver binding in the shared core.
         assert!(
@@ -2179,8 +2699,10 @@ mod tests {
     }
 
     // Case 2: Caller passes Rx in args, keeps paired Tx.
-    // Serializing the Rx allocates a channel ID via create_tx() and stores
-    // the sink in the shared core so the kept Tx can use it.
+    // Encoding the Rx allocates a channel ID via create_tx(), records it
+    // out-of-band, and stores the sink in the shared core so the kept Tx can use it.
+    // r[verify rpc.channel.binding.caller-args]
+    // r[verify rpc.channel.binding.caller-args.rx]
     #[test]
     fn case2_serialize_rx_allocates_and_binds_paired_tx() {
         use facet::Facet;
@@ -2195,10 +2717,12 @@ mod tests {
         let args = Args { data: 42, rx };
 
         let binder = TestBinder::new();
-        let bytes =
-            with_channel_binder(&binder, || vox_postcard::to_vec(&args).expect("serialize"));
+        let (bytes, channels) = collect_channels(|| {
+            with_channel_binder(&binder, || vox_phon::to_vec(&args).expect("serialize"))
+        });
 
         assert!(!bytes.is_empty());
+        assert_eq!(channels.len(), 1, "one channel id collected out-of-band");
 
         // The kept Tx should now have a sink binding in the shared core.
         assert!(tx.core.inner.is_some());
@@ -2209,8 +2733,10 @@ mod tests {
         );
     }
 
-    // Case 3: Callee deserializes Tx from args.
-    // The Tx is bound directly via bind_tx() during deserialization.
+    // Case 3: Callee deserializes Tx from args. The handle's inline index selects
+    // its channel id from the provided out-of-band list, then binds via bind_tx().
+    // r[verify rpc.channel.binding.callee-args]
+    // r[verify rpc.channel.binding.callee-args.tx]
     #[test]
     fn case3_deserialize_tx_binds_via_binder() {
         use facet::Facet;
@@ -2221,25 +2747,36 @@ mod tests {
             tx: Tx<u32>,
         }
 
-        // Simulate wire bytes: a u32 (42) followed by a channel ID (varint 7).
-        let mut bytes = vox_postcard::to_vec(&42_u32).unwrap();
-        bytes.extend_from_slice(&vox_postcard::to_vec(&ChannelId(7)).unwrap());
+        // Produce real wire bytes + out-of-band channel list by encoding on the
+        // caller side, then decode on the callee side.
+        let (tx, _rx) = channel::<u32>();
+        let caller_binder = TestBinder::new();
+        let (bytes, channels) = collect_channels(|| {
+            with_channel_binder(&caller_binder, || {
+                vox_phon::to_vec(&Args { data: 42, tx }).expect("serialize")
+            })
+        });
+        assert_eq!(channels.len(), 1);
+        let expected_id = channels[0];
 
-        let binder = TestBinder::new();
-        let args: Args = with_channel_binder(&binder, || {
-            vox_postcard::from_slice(&bytes).expect("deserialize")
+        let callee_binder = TestBinder::new();
+        let args: Args = provide_channels(channels, || {
+            with_channel_binder(&callee_binder, || {
+                vox_phon::from_slice(&bytes).expect("deserialize")
+            })
         });
 
         assert_eq!(args.data, 42);
-        assert_eq!(args.tx.channel_id, ChannelId(7));
+        assert_eq!(args.tx.channel_id, expected_id);
         assert!(
             args.tx.is_bound(),
             "deserialized Tx should be bound via bind_tx()"
         );
     }
 
-    // Case 4: Callee deserializes Rx from args.
-    // The Rx is bound directly via register_rx() during deserialization.
+    // Case 4: Callee deserializes Rx from args, binding via register_rx().
+    // r[verify rpc.channel.binding.callee-args]
+    // r[verify rpc.channel.binding.callee-args.rx]
     #[test]
     fn case4_deserialize_rx_binds_via_binder() {
         use facet::Facet;
@@ -2250,26 +2787,200 @@ mod tests {
             rx: Rx<u32>,
         }
 
-        // Simulate wire bytes: a u32 (42) followed by a channel ID (varint 7).
-        let mut bytes = vox_postcard::to_vec(&42_u32).unwrap();
-        bytes.extend_from_slice(&vox_postcard::to_vec(&ChannelId(7)).unwrap());
+        let (_tx, rx) = channel::<u32>();
+        let caller_binder = TestBinder::new();
+        let (bytes, channels) = collect_channels(|| {
+            with_channel_binder(&caller_binder, || {
+                vox_phon::to_vec(&Args { data: 42, rx }).expect("serialize")
+            })
+        });
+        assert_eq!(channels.len(), 1);
+        let expected_id = channels[0];
 
-        let binder = TestBinder::new();
-        let args: Args = with_channel_binder(&binder, || {
-            vox_postcard::from_slice(&bytes).expect("deserialize")
+        let callee_binder = TestBinder::new();
+        let args: Args = provide_channels(channels, || {
+            with_channel_binder(&callee_binder, || {
+                vox_phon::from_slice(&bytes).expect("deserialize")
+            })
         });
 
         assert_eq!(args.data, 42);
-        assert_eq!(args.rx.channel_id, ChannelId(7));
+        assert_eq!(args.rx.channel_id, expected_id);
         assert!(
             args.rx.is_bound(),
             "deserialized Rx should be bound via register_rx()"
         );
     }
 
-    // Round-trip: serialize with caller binder, deserialize with callee binder.
-    // Verifies the channel ID allocated during serialization appears in the
-    // deserialized handle.
+    // r[verify schema.exchange.channels.rx-args]
+    #[tokio::test]
+    async fn rx_recv_uses_method_channel_auxiliary_writer_schema() {
+        use facet::Facet;
+
+        #[derive(Facet)]
+        struct Writer {
+            a: u32,
+            gone: String,
+            b: u32,
+        }
+
+        #[derive(Debug, Facet, PartialEq)]
+        struct Reader {
+            a: u32,
+            b: u32,
+            #[facet(default)]
+            added: u32,
+        }
+        unsafe impl crate::Reborrow for Reader {
+            type Ref<'a> = Reader;
+        }
+
+        #[derive(Facet)]
+        struct WriterArgs {
+            rx: Rx<Writer>,
+        }
+
+        #[derive(Facet)]
+        struct ReaderArgs {
+            rx: Rx<Reader>,
+        }
+
+        let writer_method = crate::method_descriptor::<WriterArgs, ()>(
+            "StreamService",
+            "push",
+            &["rx"],
+            &[Some(Writer::SHAPE)],
+            crate::MethodDescriptorOptions {
+                response_wire_shape: <() as Facet>::SHAPE,
+                doc: None,
+            },
+        );
+        let reader_method = crate::method_descriptor::<ReaderArgs, ()>(
+            "StreamService",
+            "push",
+            &["rx"],
+            &[Some(Reader::SHAPE)],
+            crate::MethodDescriptorOptions {
+                response_wire_shape: <() as Facet>::SHAPE,
+                doc: None,
+            },
+        );
+        assert_eq!(writer_method.id, reader_method.id);
+
+        let prepared =
+            crate::SchemaSendTracker::plan_for_method_args(writer_method).expect("schema plan");
+        let tracker = crate::SchemaRecvTracker::new();
+        tracker.record_received(
+            writer_method.id,
+            BindingDirection::Args,
+            prepared.bytes.clone(),
+        );
+
+        let (_kept_tx, rx) = channel::<Writer>();
+        let caller_binder = TestBinder::new();
+        let (bytes, channels) = collect_channels(|| {
+            with_channel_binder(&caller_binder, || {
+                vox_phon::to_vec(&WriterArgs { rx }).expect("serialize writer args")
+            })
+        });
+
+        struct RegisterRxBinder {
+            sender: std::sync::Mutex<Option<ChannelMailboxSender<IncomingChannelMessage>>>,
+        }
+
+        impl ChannelBinder for RegisterRxBinder {
+            fn create_tx(&self) -> (ChannelId, Arc<dyn ChannelSink>) {
+                (ChannelId(900), Arc::new(CountingSink::new()))
+            }
+
+            fn create_rx(&self) -> (ChannelId, BoundChannelReceiver) {
+                let (sender, receiver) =
+                    channel_mailbox("vox_types.channel.test.schema_rx_create", 8);
+                *self.sender.lock().expect("sender mutex poisoned") = Some(sender);
+                (
+                    ChannelId(902),
+                    BoundChannelReceiver {
+                        receiver,
+                        liveness: None,
+                        replenisher: None,
+                        writer_schema: None,
+                    },
+                )
+            }
+
+            fn bind_tx(&self, _channel_id: ChannelId) -> Arc<dyn ChannelSink> {
+                Arc::new(CountingSink::new())
+            }
+
+            fn register_rx(&self, _channel_id: ChannelId) -> BoundChannelReceiver {
+                let (sender, receiver) =
+                    channel_mailbox("vox_types.channel.test.schema_rx_register", 8);
+                *self.sender.lock().expect("sender mutex poisoned") = Some(sender);
+                BoundChannelReceiver {
+                    receiver,
+                    liveness: None,
+                    replenisher: None,
+                    writer_schema: None,
+                }
+            }
+        }
+
+        let callee_binder = RegisterRxBinder {
+            sender: std::sync::Mutex::new(None),
+        };
+        let mut args: ReaderArgs =
+            provide_channels_for_method(channels, reader_method, &tracker, || {
+                with_channel_binder(&callee_binder, || {
+                    vox_phon::from_slice(&bytes).expect("deserialize reader args")
+                })
+            });
+        assert!(args.rx.decoder.writer.is_some());
+
+        let item_bytes = vox_phon::to_vec(&Writer {
+            a: 11,
+            gone: "discard".to_string(),
+            b: 22,
+        })
+        .expect("serialize writer item");
+        let item = SelfRef::owning(
+            Backing::Boxed(Box::<[u8]>::default()),
+            ChannelItem {
+                item: Payload::Encoded(Box::leak(item_bytes.into_boxed_slice())),
+            },
+        );
+        let sender = callee_binder
+            .sender
+            .lock()
+            .expect("sender mutex poisoned")
+            .clone()
+            .expect("register_rx should store sender");
+        sender
+            .send(IncomingChannelMessage::Item(item))
+            .await
+            .expect("send channel item");
+
+        let decoded = args
+            .rx
+            .recv()
+            .await
+            .expect("recv should compat decode")
+            .expect("expected channel item");
+        assert_eq!(
+            *decoded.get(),
+            Reader {
+                a: 11,
+                b: 22,
+                added: 0
+            }
+        );
+        assert!(args.rx.decoder.program.is_some());
+    }
+
+    // Round-trip: encode with caller binder + collector, decode with callee binder
+    // + provided list. Verifies the channel ID allocated at encode is the one the
+    // decoded handle re-associates by index.
+    // r[verify rpc.channel.binding]
+    // r[verify rpc.channel.payload-encoding]
     #[test]
     fn channel_id_round_trips_through_ser_deser() {
         use facet::Facet;
@@ -2283,17 +2994,50 @@ mod tests {
         let args = Args { tx };
 
         let caller_binder = TestBinder::new();
-        let bytes = with_channel_binder(&caller_binder, || {
-            vox_postcard::to_vec(&args).expect("serialize")
+        let (bytes, channels) = collect_channels(|| {
+            with_channel_binder(&caller_binder, || {
+                vox_phon::to_vec(&args).expect("serialize")
+            })
         });
+
+        // The caller binder starts at ID 100, so the only channel id is 100.
+        assert_eq!(channels, vec![ChannelId(100)]);
 
         let callee_binder = TestBinder::new();
-        let deserialized: Args = with_channel_binder(&callee_binder, || {
-            vox_postcard::from_slice(&bytes).expect("deserialize")
+        let deserialized: Args = provide_channels(channels, || {
+            with_channel_binder(&callee_binder, || {
+                vox_phon::from_slice(&bytes).expect("deserialize")
+            })
         });
 
-        // The caller binder starts at ID 100, so the deserialized Tx should have that ID.
         assert_eq!(deserialized.tx.channel_id, ChannelId(100));
         assert!(deserialized.tx.is_bound());
+    }
+
+    // r[verify rpc.channel.discovery]
+    // r[verify rpc.channel.payload-encoding]
+    #[test]
+    fn direct_tuple_arg_channels_are_collected_in_argument_order() {
+        let (first, _r) = channel::<u32>();
+        let (_t, second) = channel::<u32>();
+        let args = (first, second);
+
+        let caller_binder = TestBinder::new();
+        let (bytes, channels) = collect_channels(|| {
+            with_channel_binder(&caller_binder, || {
+                vox_phon::to_vec(&args).expect("serialize")
+            })
+        });
+        assert_eq!(channels.len(), 2, "two distinct channels collected");
+        assert_ne!(channels[0], channels[1]);
+
+        let callee_binder = TestBinder::new();
+        let decoded: (Tx<u32>, Rx<u32>) = provide_channels(channels.clone(), || {
+            with_channel_binder(&callee_binder, || {
+                vox_phon::from_slice(&bytes).expect("deserialize")
+            })
+        });
+        assert_eq!(decoded.0.channel_id, channels[0]);
+        assert_eq!(decoded.1.channel_id, channels[1]);
     }
 }

@@ -25,8 +25,10 @@ import { Rx } from "./rx.ts";
  * const result = await resultPromise;
  * ```
  *
- * r[impl channeling.allocation.caller] - Caller allocates channel IDs (at bind time).
- * r[impl channeling.holder-semantics] - Tx holder sends, Rx holder receives.
+ * r[impl rpc.channel]
+ * r[impl rpc.channel.direction]
+ * r[impl rpc.channel.pair]
+ * r[impl rpc.channel.pair.binding-propagation]
  */
 export function channel<T>(): [Tx<T>, Rx<T>] {
   const tx = new Tx<T>();

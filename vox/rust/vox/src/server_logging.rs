@@ -4,9 +4,9 @@ use facet_pretty::{ColorMode, PrettyPrinter};
 use tracing::{debug, trace};
 
 use crate::{
-    BoxMiddlewareFuture, MetadataEntry, MetadataFlags, MetadataValue, RequestContext,
-    ServerCallOutcome, ServerMiddleware, ServerRequest, ServerResponse, ServerResponseContext,
-    ServerResponsePayload,
+    BoxMiddlewareFuture, Metadata, MetadataExt, RequestContext, ServerCallOutcome,
+    ServerMiddleware, ServerRequest, ServerResponse, ServerResponseContext, ServerResponsePayload,
+    metadata_key_is_redacted,
 };
 
 const DEFAULT_PAYLOAD_MAX_DEPTH: usize = 4;
@@ -128,7 +128,7 @@ impl ServerMiddleware for ServerLogging {
                     "rpc response payload"
                 );
             }
-            ServerResponsePayload::PostcardBytes(bytes) => {
+            ServerResponsePayload::Encoded(bytes) => {
                 trace!(
                     target: "vox::server",
                     service = method.service_name,
@@ -166,44 +166,37 @@ impl ServerMiddleware for ServerLogging {
 #[derive(Debug)]
 struct RequestStart(Instant);
 
+/// Debug view of metadata that redacts the values of keys marked sensitive by
+/// the metadata sigil convention.
 #[derive(Clone, Copy)]
-struct RedactedMetadata<'a>(&'a [MetadataEntry<'a>]);
+struct RedactedMetadata<'a>(&'a Metadata);
 
 impl std::fmt::Debug for RedactedMetadata<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut entries = f.debug_list();
-        for entry in self.0 {
-            entries.entry(&MetadataEntryDebug(entry));
+        let mut map = f.debug_map();
+        for (key, value) in self.0.meta_entries() {
+            if metadata_key_is_redacted(key) {
+                map.entry(&key, &"[REDACTED]");
+            } else {
+                map.entry(&key, &MetadataValueDebug(value));
+            }
         }
-        entries.finish()
+        map.finish()
     }
 }
 
-struct MetadataEntryDebug<'a>(&'a MetadataEntry<'a>);
-
-impl std::fmt::Debug for MetadataEntryDebug<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let entry = self.0;
-        let mut debug = f.debug_struct("MetadataEntry");
-        debug.field("key", &entry.key);
-        if entry.flags.contains(MetadataFlags::SENSITIVE) {
-            debug.field("value", &"[REDACTED]");
-        } else {
-            debug.field("value", &MetadataValueDebug(&entry.value));
-        }
-        debug.field("flags", &entry.flags);
-        debug.finish()
-    }
-}
-
-struct MetadataValueDebug<'a>(&'a MetadataValue<'a>);
+struct MetadataValueDebug<'a>(&'a Metadata);
 
 impl std::fmt::Debug for MetadataValueDebug<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.0 {
-            MetadataValue::String(value) => value.fmt(f),
-            MetadataValue::Bytes(bytes) => write!(f, "<{} bytes>", bytes.len()),
-            MetadataValue::U64(value) => value.fmt(f),
+        if let Some(s) = self.0.as_string() {
+            s.as_str().fmt(f)
+        } else if let Some(b) = self.0.as_bytes() {
+            write!(f, "<{} bytes>", b.as_slice().len())
+        } else if let Some(n) = self.0.as_number().and_then(|n| n.to_u64()) {
+            n.fmt(f)
+        } else {
+            write!(f, "{:?}", self.0)
         }
     }
 }
@@ -222,53 +215,29 @@ mod tests {
         layer::SubscriberExt,
     };
 
-    use super::{
-        MetadataEntryDebug, MetadataValueDebug, RedactedMetadata, ServerLogging,
-        ServerLoggingOptions,
-    };
+    use super::{RedactedMetadata, ServerLogging, ServerLoggingOptions};
     use crate::{
-        Extensions, MetadataEntry, MetadataFlags, MetadataValue, RequestContext, ServerCallOutcome,
-        ServerMiddleware, ServerRequest,
+        Extensions, RequestContext, ServerCallOutcome, ServerMiddleware, ServerRequest, meta_set,
+        metadata,
     };
 
+    // r[verify rpc.metadata.sigils]
     #[test]
     fn metadata_debug_redacts_sensitive_values() {
-        let metadata = vec![
-            MetadataEntry {
-                key: "authorization".into(),
-                value: MetadataValue::String("Bearer secret".into()),
-                flags: MetadataFlags::SENSITIVE,
-            },
-            MetadataEntry {
-                key: "blob".into(),
-                value: MetadataValue::Bytes((&[1, 2, 3][..]).into()),
-                flags: MetadataFlags::NONE,
-            },
-            MetadataEntry {
-                key: "attempt".into(),
-                value: MetadataValue::U64(2),
-                flags: MetadataFlags::NONE,
-            },
-        ];
+        let mut m = metadata()
+            .bytes("blob", &[1u8, 2, 3][..])
+            .u64("attempt", 2)
+            .build();
+        meta_set(&mut m, "-#authorization", "Bearer secret");
 
-        assert_eq!(
-            format!("{:?}", RedactedMetadata(&metadata)),
-            "[MetadataEntry { key: \"authorization\", value: \"[REDACTED]\", flags: MetadataFlags(1) }, MetadataEntry { key: \"blob\", value: <3 bytes>, flags: MetadataFlags(0) }, MetadataEntry { key: \"attempt\", value: 2, flags: MetadataFlags(0) }]"
+        let rendered = format!("{:?}", RedactedMetadata(&m));
+        assert!(
+            rendered.contains("\"-#authorization\": \"[REDACTED]\""),
+            "{rendered}"
         );
-
-        let bytes = MetadataValue::Bytes((&[0; 4][..]).into());
-        assert_eq!(format!("{:?}", MetadataValueDebug(&bytes)), "<4 bytes>");
-        assert_eq!(
-            format!(
-                "{:?}",
-                MetadataEntryDebug(&MetadataEntry {
-                    key: "plain".into(),
-                    value: MetadataValue::String("value".into()),
-                    flags: MetadataFlags::NONE,
-                })
-            ),
-            "MetadataEntry { key: \"plain\", value: \"value\", flags: MetadataFlags(0) }"
-        );
+        assert!(rendered.contains("\"blob\": <3 bytes>"), "{rendered}");
+        assert!(rendered.contains("\"attempt\": 2"), "{rendered}");
+        assert!(!rendered.contains("Bearer secret"), "{rendered}");
     }
 
     #[tokio::test]
@@ -283,40 +252,30 @@ mod tests {
         );
         let _guard = tracing::subscriber::set_default(subscriber);
 
-        static METHOD: crate::MethodDescriptor = crate::MethodDescriptor {
-            id: crate::MethodId(7),
-            service_name: "Audit",
-            method_name: "record",
-            args_shape: <() as facet::Facet<'static>>::SHAPE,
-            args: &[],
-            return_shape: <() as facet::Facet<'static>>::SHAPE,
-            args_have_channels: false,
-            retry: crate::RetryPolicy::VOLATILE,
-            doc: None,
-        };
+        static METHOD: crate::MethodDescriptor =
+            crate::MethodDescriptor {
+                id: crate::MethodId(7),
+                service_name: "Audit",
+                method_name: "record",
+                args_shape: <() as facet::Facet<'static>>::SHAPE,
+                args: &[],
+                return_shape: <() as facet::Facet<'static>>::SHAPE,
+                response_wire_shape:
+                    <Result<i32, crate::VoxError<std::convert::Infallible>> as facet::Facet<
+                        'static,
+                    >>::SHAPE,
+                args_have_channels: false,
+                doc: None,
+            };
 
-        let metadata = vec![
-            MetadataEntry {
-                key: "authorization".into(),
-                value: MetadataValue::String("Bearer secret".into()),
-                flags: MetadataFlags::SENSITIVE,
-            },
-            MetadataEntry {
-                key: "attempt".into(),
-                value: MetadataValue::U64(2),
-                flags: MetadataFlags::NONE,
-            },
-        ];
+        let mut request_metadata = metadata().u64("attempt", 2).build();
+        meta_set(&mut request_metadata, "-#authorization", "Bearer secret");
         let extensions = Extensions::new();
-        let context = RequestContext::with_extensions(&METHOD, &metadata, &extensions);
+        let context = RequestContext::with_extensions(&METHOD, &request_metadata, &extensions);
         let request = ServerRequest::new(context, crate::Peek::new(&()));
         let response_wire: Result<i32, crate::VoxError<std::convert::Infallible>> = Ok(42);
         let response = crate::RequestResponse {
-            metadata: vec![MetadataEntry {
-                key: "etag".into(),
-                value: MetadataValue::String("v1".into()),
-                flags: MetadataFlags::NONE,
-            }],
+            metadata: metadata().str("etag", "v1").build(),
             ret: crate::Payload::outgoing(&response_wire),
             schemas: Default::default(),
         };
@@ -346,7 +305,7 @@ mod tests {
         assert!(output.contains("rpc request payload"));
         assert!(output.contains("rpc response"));
         assert!(output.contains("rpc response payload"));
-        assert!(output.contains("authorization"));
+        assert!(output.contains("-#authorization"));
         assert!(output.contains("[REDACTED]"));
         assert!(!output.contains("Bearer secret"));
         assert!(output.contains("attempt"));
@@ -374,8 +333,11 @@ mod tests {
             args_shape: <(Vec<u32>, String) as facet::Facet<'static>>::SHAPE,
             args: &[],
             return_shape: <Vec<u32> as facet::Facet<'static>>::SHAPE,
+            response_wire_shape:
+                <Result<Vec<u32>, crate::VoxError<std::convert::Infallible>> as facet::Facet<
+                    'static,
+                >>::SHAPE,
             args_have_channels: false,
-            retry: crate::RetryPolicy::VOLATILE,
             doc: None,
         };
 
@@ -384,12 +346,13 @@ mod tests {
             "abcdefghijklmnopqrstuvwxyz".to_string(),
         );
         let extensions = Extensions::new();
-        let context = RequestContext::with_extensions(&METHOD, &[], &extensions);
+        let empty = crate::Metadata::default();
+        let context = RequestContext::with_extensions(&METHOD, &empty, &extensions);
         let request = ServerRequest::new(context, crate::Peek::new(&args));
         let response_wire: Result<Vec<u32>, crate::VoxError<std::convert::Infallible>> =
             Ok(vec![10, 20, 30, 40, 50]);
         let response = crate::RequestResponse {
-            metadata: vec![],
+            metadata: vox_types::Metadata::default(),
             ret: crate::Payload::outgoing(&response_wire),
             schemas: Default::default(),
         };

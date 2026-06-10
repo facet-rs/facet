@@ -3,15 +3,16 @@
 use std::mem::ManuallyDrop;
 use std::sync::Arc;
 
+pub use vox_schema::Reborrow;
+
 /// A decoded value `T` that may borrow from its own backing storage.
 ///
-/// Transports decode into storage they own (heap buffer, VarSlot, mmap).
+/// Transports decode into storage they own.
 /// `SelfRef` keeps that storage alive so `T` can safely borrow from it.
 ///
 /// Uses `ManuallyDrop` + custom `Drop` to guarantee drop order: value is
 /// dropped before backing, so borrowed references in `T` remain valid
 /// through `T`'s drop.
-// r[impl zerocopy.recv.selfref]
 pub struct SelfRef<T: 'static> {
     /// The decoded value, potentially borrowing from `backing`.
     value: ManuallyDrop<T>,
@@ -26,12 +27,10 @@ pub trait SharedBacking: Send + Sync + 'static {
     fn as_bytes(&self) -> &[u8];
 }
 
-// r[impl zerocopy.backing]
 pub enum Backing {
-    // r[impl zerocopy.backing.boxed]
-    /// Heap-allocated buffer (TCP read, BipBuffer copy-out for small messages).
+    /// Heap-allocated buffer.
     Boxed(Box<[u8]>),
-    /// Shared backing that can be provided by transports (for example SHM slots).
+    /// Shared backing that can be provided by transports.
     Shared(Arc<dyn SharedBacking>),
 }
 
@@ -109,7 +108,7 @@ impl<T: 'static> SelfRef<T> {
     /// Transform the contained value, keeping the same backing storage.
     ///
     /// Useful for projecting through wrapper types:
-    /// `SelfRef<Frame<T>>` → `SelfRef<T>` by extracting the inner item.
+    /// `SelfRef<Envelope<T>>` → `SelfRef<T>` by extracting the inner item.
     ///
     /// The closure receives the old value by move and returns the new value.
     /// Any references the new value holds into the backing storage (inherited
@@ -169,24 +168,6 @@ impl<T: 'static> SelfRef<T> {
     }
 }
 
-/// Trait for types that can be reborrowed with a shorter lifetime.
-///
-/// This is the key to `SelfRef` soundness: types stored inside `SelfRef`
-/// use a fake `'static` lifetime. `Reborrow` lets `get()` return a
-/// reference with the lifetime shortened to match the borrow, preventing
-/// the fake `'static` from leaking out.
-///
-/// Analogous to `yoke::Yokeable`.
-///
-/// # Safety
-///
-/// The implementing type must be **covariant** in its lifetime parameter,
-/// and `Self` and `Ref<'a>` must have identical memory layout for all `'a`.
-pub unsafe trait Reborrow: 'static {
-    /// The same type with a (possibly shorter) lifetime.
-    type Ref<'a>;
-}
-
 impl<T: Reborrow> SelfRef<T> {
     /// Access the inner value with the lifetime properly shortened.
     ///
@@ -203,74 +184,6 @@ impl<T: Reborrow> SelfRef<T> {
 // No `into_inner()` — T may borrow from backing.
 // No `Deref` — would leak the fake `'static` lifetime. See `Reborrow` docs.
 // No `DerefMut` — mutating T could invalidate borrowed references.
-
-// SAFETY: these owned types have no lifetime parameter; Ref<'a> = Self is trivially sound.
-unsafe impl Reborrow for u32 {
-    type Ref<'a> = u32;
-}
-unsafe impl Reborrow for usize {
-    type Ref<'a> = usize;
-}
-
-unsafe impl Reborrow for i8 {
-    type Ref<'a> = i8;
-}
-
-unsafe impl Reborrow for i16 {
-    type Ref<'a> = i16;
-}
-
-unsafe impl Reborrow for i32 {
-    type Ref<'a> = i32;
-}
-
-unsafe impl Reborrow for i64 {
-    type Ref<'a> = i64;
-}
-
-unsafe impl Reborrow for i128 {
-    type Ref<'a> = i128;
-}
-
-unsafe impl Reborrow for u8 {
-    type Ref<'a> = u8;
-}
-
-unsafe impl Reborrow for u16 {
-    type Ref<'a> = u16;
-}
-
-unsafe impl Reborrow for u64 {
-    type Ref<'a> = u64;
-}
-
-unsafe impl Reborrow for u128 {
-    type Ref<'a> = u128;
-}
-
-unsafe impl Reborrow for f32 {
-    type Ref<'a> = f32;
-}
-
-unsafe impl Reborrow for f64 {
-    type Ref<'a> = f64;
-}
-
-unsafe impl Reborrow for bool {
-    type Ref<'a> = bool;
-}
-
-unsafe impl Reborrow for char {
-    type Ref<'a> = char;
-}
-
-unsafe impl Reborrow for String {
-    type Ref<'a> = String;
-}
-
-unsafe impl Reborrow for &'static str {
-    type Ref<'a> = &'a str;
-}
 
 /// Implement [`Reborrow`] for a list of types that are covariant in a single
 /// lifetime parameter.
@@ -337,14 +250,6 @@ macro_rules! selfref_match {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
-
-    // SAFETY: test-only types with no lifetime parameter.
-    unsafe impl Reborrow for &'static [u8] {
-        type Ref<'a> = &'a [u8];
-    }
-    unsafe impl Reborrow for (u32, u8, u8) {
-        type Ref<'a> = (u32, u8, u8);
-    }
 
     struct TestSharedBacking {
         bytes: Vec<u8>,

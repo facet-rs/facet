@@ -8,8 +8,12 @@ export {
   OutgoingSender,
   type OutgoingMessage,
   type OutgoingPoll,
+  type OutgoingTrySendDetail,
+  type ChannelDebugContext,
+  type ChannelDebugSnapshot,
+  type ChannelRegistryDebugSnapshot,
 } from "./registry.ts";
-export { Tx, createServerTx } from "./tx.ts";
+export { Tx, createServerTx, type TrySendResult, type TrySendDetailedResult } from "./tx.ts";
 export { Rx, createServerRx } from "./rx.ts";
 export { channel } from "./pair.ts";
 export { type TaskMessage, type TaskSender, type ChannelContext } from "./task.ts";
@@ -22,6 +26,7 @@ export {
 } from "./descriptor.ts";
 
 export {
-  bindChannelsForTypeRefs,
-  finalizeBoundChannelsForTypeRefs,
+  bindPhonChannels,
+  type BoundChannels,
+  type ChannelCredit,
 } from "./binding.ts";

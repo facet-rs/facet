@@ -1,6 +1,6 @@
-# Cranelift Translation JIT
+# Cranelift Compatibility Decode JIT
 
-Design notes for replacing the reflection-heavy postcard execution path with
+Design notes for replacing the reflection-heavy phon execution path with
 Cranelift-generated decode and encode stubs.
 
 This is a runtime design note, not a spec change.
@@ -10,7 +10,7 @@ This is a runtime design note, not a spec change.
 The current runtime is semantically in the right place:
 
 - schema exchange is sender-driven and mandatory
-- translation plans are built before data is processed
+- compatibility decode plans are built before data is processed
 - serialization always uses the sender's local type definition
 - deserialization adapts to the sender's layout
 
@@ -31,11 +31,11 @@ This design preserves the following requirements:
   Runtime specialization only runs after the normal schema/binding tracking has
   established that the remote type metadata exists for the current connection.
 
-- `schema.errors.early-detection`
-  Structural incompatibilities are still detected when building the translation
+- `schema.errors.call-level`
+  Structural incompatibilities are still detected when building the compatibility decode
   plan. The JIT only executes an already-validated plan.
 
-- `schema.translation.serialization-unchanged`
+- `schema.principles.sender-driven`
   Encoding still uses the sender's local type definition. JIT encode is an
   implementation detail, not a change in semantics.
 
@@ -54,7 +54,7 @@ engine for the existing one.
   facet vtable does not expose what the JIT needs falls back to the reflective
   interpreter; it is not a hard limit on which containers can be JIT-driven.
 - No unwind through JIT-generated code.
-- No change to the wire format, handshake, schema payloads, or translation-plan
+- No change to the wire format, handshake, schema payloads, or compatibility decode-plan
   semantics.
 
 This list is about *how* the JIT may obtain layout knowledge, not a fixed set
@@ -68,14 +68,14 @@ been done yet, not by design.
 The runtime keeps the current three logical layers:
 
 1. Schema extraction and exchange.
-2. Translation-plan construction and compatibility checking.
+2. Compatibility decode-plan construction and checking.
 3. Execution of encode/decode against those plans.
 
 Only step 3 changes.
 
 Today, step 3 is a reflective interpreter. The replacement is:
 
-1. Lower a validated translation plan plus local layout metadata into a compact
+1. Lower a validated compatibility decode plan plus local layout metadata into a compact
    internal IR.
 2. Compile that IR to a small machine-code stub using Cranelift.
 3. Cache that stub for the life of the process.
@@ -92,11 +92,11 @@ The primary target is decode, since that is where the current runtime pays for:
 - generic list/map/set assembly
 - repeated field enter/exit operations
 
-The generated decoder reads postcard bytes from a cursor and writes directly
+The generated decoder reads phon-compact bytes from a cursor and writes directly
 into the destination object according to:
 
 - the local layout metadata for Facet-owned types
-- the translation plan
+- the compatibility decode plan
 - a small set of runtime helper calls for allocations and hard cases
 
 Two decode families are expected:
@@ -112,15 +112,15 @@ are materialized and how lifetimes are represented in runtime helpers.
 Encode is secondary but still valuable. The generated encoder:
 
 - walks the sender's local layout directly
-- writes postcard bytes into a buffer builder
+- writes phon-compact bytes into a buffer builder
 - uses helper calls only for dynamic growth or opaque/proxy cases
 
-Encode does not use translation plans. The sender still serializes using the
+Encode does not use compatibility decode plans. The sender still serializes using the
 local type definition only.
 
 ### Plan Lowering
 
-The translation plan remains the semantic source of truth. The JIT does not try
+The compatibility decode plan remains the semantic source of truth. The JIT does not try
 to rediscover compatibility. It lowers already-validated plan nodes such as:
 
 - identity
@@ -444,7 +444,7 @@ This is not optional during rollout.
 
 ## Rollout Plan
 
-1. Add a non-reflective lowering pass from translation plans into a compact IR.
+1. Add a non-reflective lowering pass from compatibility decode plans into a compact IR.
 2. Add a pure interpreter for that IR.
 3. Differential-test IR interpreter against the current reflective runtime.
 4. Add Cranelift backend for a minimal subset:
@@ -598,7 +598,7 @@ Two points matter when interpreting that table:
 
 Proceed with a staged design:
 
-- keep translation plans as the semantic layer
+- keep compatibility decode plans as the semantic layer
 - introduce a compact execution IR
 - keep the reflective interpreter as fallback
 - use Cranelift for steady-state decode hot paths

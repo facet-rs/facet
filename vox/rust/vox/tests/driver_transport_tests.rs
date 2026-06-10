@@ -1,4 +1,4 @@
-//! Tests for different transport modes (bare, stable, CBOR handshake).
+//! Tests for transport prologue plus bare conduit session setup.
 
 use vox::memory_link_pair;
 
@@ -17,7 +17,9 @@ impl Echo for EchoService {
 }
 
 #[tokio::test]
-async fn call_through_cbor_handshake_reaches_handler() {
+// r[verify transport.prologue.first-payload]
+// r[verify transport.prologue.post-accept]
+async fn call_through_phon_handshake_reaches_handler() {
     let (client_link, server_link) = memory_link_pair(16);
 
     let server = tokio::spawn(async move {
@@ -28,7 +30,7 @@ async fn call_through_cbor_handshake_reaches_handler() {
             .expect("server establish")
     });
 
-    let client = vox::initiator_on(client_link, vox::TransportMode::Bare)
+    let client = vox::initiator_on(client_link)
         .establish::<EchoClient>()
         .await
         .expect("client establish");

@@ -14,7 +14,7 @@ Wire-format types and codecs for the Vox protocol in TypeScript.
 
 ## Fits with
 
-- `@bearcove/vox-postcard` for low-level serialization
+- `@bearcove/phon-engine` / `@bearcove/phon-schema` for low-level serialization
 - `@bearcove/vox-core` for runtime behavior on decoded messages
 - Transport packages that carry encoded wire frames
 

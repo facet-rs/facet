@@ -4,6 +4,8 @@ import { describe, it, expect } from "vitest";
 import { RpcError, RpcErrorCode } from "./rpc_error.ts";
 
 describe("RpcErrorCode", () => {
+  // r[verify rpc.fallible.vox-error]
+  // r[verify rpc.fallible.vox-error.outcome]
   it("has correct discriminant values", () => {
     expect(RpcErrorCode.USER).toBe(0);
     expect(RpcErrorCode.UNKNOWN_METHOD).toBe(1);
@@ -14,6 +16,9 @@ describe("RpcErrorCode", () => {
 });
 
 describe("RpcError", () => {
+  // r[verify rpc.fallible]
+  // r[verify rpc.fallible.vox-error]
+  // r[verify rpc.error.scope]
   it("creates user error", () => {
     const payload = new Uint8Array([1, 2, 3]);
     const error = new RpcError(RpcErrorCode.USER, payload);
@@ -25,6 +30,8 @@ describe("RpcError", () => {
     expect(error.message).toBe("Application error");
   });
 
+  // r[verify rpc.fallible.vox-error]
+  // r[verify rpc.fallible.vox-error.outcome]
   it("creates unknown method error", () => {
     const error = new RpcError(RpcErrorCode.UNKNOWN_METHOD);
 
@@ -35,6 +42,9 @@ describe("RpcError", () => {
     expect(error.message).toBe("Unknown method");
   });
 
+  // r[verify rpc.fallible.vox-error]
+  // r[verify rpc.fallible.vox-error.outcome]
+  // r[verify rpc.error.scope]
   it("creates invalid payload error", () => {
     const error = new RpcError(RpcErrorCode.INVALID_PAYLOAD);
 
@@ -45,6 +55,8 @@ describe("RpcError", () => {
     expect(error.message).toBe("Invalid payload");
   });
 
+  // r[verify rpc.fallible.vox-error]
+  // r[verify rpc.fallible.vox-error.outcome]
   it("creates cancelled error", () => {
     const error = new RpcError(RpcErrorCode.CANCELLED);
 
@@ -55,6 +67,8 @@ describe("RpcError", () => {
     expect(error.message).toBe("Cancelled");
   });
 
+  // r[verify rpc.fallible.vox-error]
+  // r[verify rpc.fallible.vox-error.outcome]
   it("creates indeterminate error", () => {
     const error = new RpcError(RpcErrorCode.INDETERMINATE);
 

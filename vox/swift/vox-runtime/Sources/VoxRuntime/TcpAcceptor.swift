@@ -7,26 +7,18 @@ import Foundation
 ///
 /// The server binds lazily on first use (optionally to an OS-assigned port when `port` is 0),
 /// and keeps accepting connections across multiple `openAttachment()` calls.
+/// r[impl transport.stream]
+/// r[impl transport.stream.kinds]
 public final class TcpAcceptor: SessionConnector, Sendable {
     public let host: String
     public let port: Int  // 0 = OS assigns port
-    public let transport: ConduitKind
 
     private let state: TcpAcceptorState
 
-    public init(host: String, port: Int = 0, transport: ConduitKind = .bare) {
+    public init(host: String, port: Int = 0) {
         self.host = host
         self.port = port
-        self.transport = transport
         self.state = TcpAcceptorState()
-    }
-
-    public func bare() -> TcpAcceptor {
-        TcpAcceptor(host: host, port: port, transport: .bare)
-    }
-
-    public func stable() -> TcpAcceptor {
-        TcpAcceptor(host: host, port: port, transport: .stable)
     }
 
     public func openAttachment() async throws -> LinkAttachment {
@@ -71,14 +63,16 @@ private final class TcpAcceptorState: @unchecked Sendable {
 
                 do {
                     try channel.pipeline.syncOperations.addHandler(
-                        ByteToMessageHandler(LengthPrefixDecoder(frameLimit: frameLimit))
+                        ByteToMessageHandler(LengthPrefixDecoder(frameLimit: frameLimit, fdFramed: false))
                     )
                     try channel.pipeline.syncOperations.addHandler(rawHandler)
+                    writeVoxLinkPrologue(channel, fdCapable: false)
 
                     let link = NIOFrameLink(
                         channel: channel,
                         frameLimit: frameLimit,
-                        inboundStream: rawStream
+                        inboundStream: rawStream,
+                        fdFramed: false
                     )
                     connContinuation.yield(link)
                     return channel.eventLoop.makeSucceededVoidFuture()

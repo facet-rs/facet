@@ -8,7 +8,7 @@
 #![cfg(target_arch = "wasm32")]
 
 use spec_proto::{Color, LookupError, MathError, Message, Point, Rectangle, Shape, TestbedClient};
-use vox_core::{TransportMode, initiator_on};
+use vox_core::initiator_on;
 use vox_websocket::WsLink;
 use wasm_bindgen::prelude::*;
 
@@ -67,6 +67,8 @@ impl TestResults {
 }
 
 /// Run all tests against a WebSocket server at the given URL.
+// r[verify transport.websocket]
+// r[verify transport.websocket.platforms]
 #[wasm_bindgen]
 pub async fn run_tests(ws_url: &str) -> TestResults {
     let mut results = Vec::new();
@@ -88,10 +90,7 @@ pub async fn run_tests(ws_url: &str) -> TestResults {
 
     console_log!("Connected! Performing handshake...");
 
-    let client = match initiator_on(link, TransportMode::Bare)
-        .establish::<TestbedClient>()
-        .await
-    {
+    let client = match initiator_on(link).establish::<TestbedClient>().await {
         Ok(result) => result,
         Err(e) => {
             console_error!("Handshake failed: {e:?}");
@@ -421,7 +420,7 @@ async fn run_complex_tests(client: &TestbedClient, results: &mut Vec<TestResult>
     // Test: process_message (Text)
     console_log!("Testing process_message (Text)...");
     match client.process_message(Message::Text("hello".into())).await {
-        Ok(result) if matches!(&result, Message::Text(s) if s == "Processed: hello") => {
+        Ok(result) if matches!(&result, Message::Text(s) if s == "processed: hello") => {
             results.push(TestResult {
                 name: "process_message_text".into(),
                 passed: true,
@@ -433,7 +432,7 @@ async fn run_complex_tests(client: &TestbedClient, results: &mut Vec<TestResult>
                 name: "process_message_text".into(),
                 passed: false,
                 error: Some(format!(
-                    "expected Text(\"Processed: hello\"), got {:?}",
+                    "expected Text(\"processed: hello\"), got {:?}",
                     result
                 )),
             });
@@ -504,7 +503,7 @@ async fn run_fallible_tests(client: &TestbedClient, results: &mut Vec<TestResult
     // Test: divide (error - division by zero)
     console_log!("Testing divide (error)...");
     match client.divide(10, 0).await {
-        Err(vox_types::VoxError::User(MathError::DivisionByZero)) => {
+        Err(vox_types::VoxError::User(error)) if *error == MathError::DivisionByZero => {
             results.push(TestResult {
                 name: "divide_error".into(),
                 passed: true,
@@ -563,7 +562,7 @@ async fn run_fallible_tests(client: &TestbedClient, results: &mut Vec<TestResult
     // Test: lookup (error - not found)
     console_log!("Testing lookup (error)...");
     match client.lookup(999).await {
-        Err(vox_types::VoxError::User(LookupError::NotFound)) => {
+        Err(vox_types::VoxError::User(error)) if *error == LookupError::NotFound => {
             results.push(TestResult {
                 name: "lookup_error".into(),
                 passed: true,

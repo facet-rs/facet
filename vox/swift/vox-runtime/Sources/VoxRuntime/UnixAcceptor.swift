@@ -7,24 +7,16 @@ import Foundation
 ///
 /// The server binds lazily on first use (removing any stale socket file first),
 /// and keeps accepting connections across multiple `openAttachment()` calls.
+/// r[impl transport.stream.local]
+/// r[impl transport.stream.kinds]
 public final class UnixAcceptor: SessionConnector, Sendable {
     public let path: String
-    public let transport: ConduitKind
 
     private let state: AcceptorState
 
-    public init(path: String, transport: ConduitKind = .bare) {
+    public init(path: String) {
         self.path = path
-        self.transport = transport
         self.state = AcceptorState()
-    }
-
-    public func bare() -> UnixAcceptor {
-        UnixAcceptor(path: path, transport: .bare)
-    }
-
-    public func stable() -> UnixAcceptor {
-        UnixAcceptor(path: path, transport: .stable)
     }
 
     public func openAttachment() async throws -> LinkAttachment {
@@ -71,14 +63,16 @@ private final class AcceptorState: @unchecked Sendable {
 
                 do {
                     try channel.pipeline.syncOperations.addHandler(
-                        ByteToMessageHandler(LengthPrefixDecoder(frameLimit: frameLimit))
+                        ByteToMessageHandler(LengthPrefixDecoder(frameLimit: frameLimit, fdFramed: true))
                     )
                     try channel.pipeline.syncOperations.addHandler(rawHandler)
+                    writeVoxLinkPrologue(channel, fdCapable: true)
 
                     let link = NIOFrameLink(
                         channel: channel,
                         frameLimit: frameLimit,
-                        inboundStream: rawStream
+                        inboundStream: rawStream,
+                        fdFramed: true
                     )
                     connContinuation.yield(link)
                     return channel.eventLoop.makeSucceededVoidFuture()

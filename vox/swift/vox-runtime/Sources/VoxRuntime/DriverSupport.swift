@@ -2,16 +2,15 @@ import Foundation
 
 struct InFlightResponseContext: Sendable {
     let connectionId: UInt64
-    let responseMetadata: [MetadataEntry]
+    let responseMetadata: Metadata
 }
 
 enum DriverEvent: Sendable {
     case incomingMessage(Message)
     case wake
-    case retryTick
+    case keepaliveTick
     case conduitClosed
     case conduitFailed(String)
-    case resumeConduit(any Conduit)
 }
 
 final class LockedQueue<T>: @unchecked Sendable {
@@ -53,12 +52,11 @@ func makeDriverAndConnection(
     dispatcher: any ServiceDispatcher,
     role: Role,
     negotiated: Negotiated,
-    peerSupportsRetry: Bool,
     connectionAcceptor: (any ConnectionAcceptor)? = nil,
     keepalive: SessionKeepaliveConfig? = nil
 ) -> (Connection, Driver) {
     let commandQueue = LockedQueue<HandleCommand>()
-    let taskQueue = LockedQueue<TaskMessage>()
+    let taskQueue = LockedQueue<DriverQueuedTaskMessage>()
     var continuation: AsyncStream<DriverEvent>.Continuation!
     let eventStream = AsyncStream<DriverEvent> { cont in
         continuation = cont
@@ -76,7 +74,7 @@ func makeDriverAndConnection(
         return false
     }
     let taskSender: @Sendable (TaskMessage) -> Bool = { msg in
-        guard taskQueue.push(msg) else {
+        guard taskQueue.push(DriverQueuedTaskMessage(connectionId: 0, taskMessage: msg)) else {
             return false
         }
         let result = capturedContinuation.yield(.wake)
@@ -87,10 +85,10 @@ func makeDriverAndConnection(
     }
 
     let handle = ConnectionHandle(
+        connectionId: 0,
         commandTx: commandSender,
         taskTx: taskSender,
         role: role,
-        peerSupportsRetry: peerSupportsRetry,
         maxConcurrentRequests: negotiated.maxConcurrentRequests
     )
 
@@ -100,7 +98,6 @@ func makeDriverAndConnection(
         role: role,
         negotiated: negotiated,
         handle: handle,
-        operations: OperationRegistry(),
         connectionAcceptor: connectionAcceptor,
         keepalive: keepalive,
         eventStream: eventStream,
@@ -109,7 +106,7 @@ func makeDriverAndConnection(
         taskQueue: taskQueue
     )
 
-    return (Connection(handle: handle), driver)
+    return (Connection(handle: handle, schemaReceiveTracker: driver.schemaReceiveTracker), driver)
 }
 
 func makeSessionDriverAndConnection(
@@ -117,18 +114,14 @@ func makeSessionDriverAndConnection(
     dispatcher: any ServiceDispatcher,
     role: Role,
     negotiated: Negotiated,
-    peerSupportsRetry: Bool,
     connectionAcceptor: (any ConnectionAcceptor)? = nil,
     keepalive: SessionKeepaliveConfig? = nil,
-    resumable: Bool,
-    sessionResumeKey: [UInt8]?,
     localRootSettings: ConnectionSettings,
     peerRootSettings: ConnectionSettings,
-    transport: ConduitKind,
-    recoverAttachment: (@Sendable () async throws -> LinkAttachment)? = nil
+    peerMessageSchema: [UInt8]
 ) -> (Connection, Driver, SessionHandle) {
     let commandQueue = LockedQueue<HandleCommand>()
-    let taskQueue = LockedQueue<TaskMessage>()
+    let taskQueue = LockedQueue<DriverQueuedTaskMessage>()
     var continuation: AsyncStream<DriverEvent>.Continuation!
     let eventStream = AsyncStream<DriverEvent> { cont in
         continuation = cont
@@ -146,7 +139,7 @@ func makeSessionDriverAndConnection(
         return false
     }
     let taskSender: @Sendable (TaskMessage) -> Bool = { msg in
-        guard taskQueue.push(msg) else {
+        guard taskQueue.push(DriverQueuedTaskMessage(connectionId: 0, taskMessage: msg)) else {
             return false
         }
         let result = capturedContinuation.yield(.wake)
@@ -157,10 +150,10 @@ func makeSessionDriverAndConnection(
     }
 
     let handle = ConnectionHandle(
+        connectionId: 0,
         commandTx: commandSender,
         taskTx: taskSender,
         role: role,
-        peerSupportsRetry: peerSupportsRetry,
         maxConcurrentRequests: negotiated.maxConcurrentRequests
     )
 
@@ -170,29 +163,21 @@ func makeSessionDriverAndConnection(
         role: role,
         negotiated: negotiated,
         handle: handle,
-        operations: OperationRegistry(),
         connectionAcceptor: connectionAcceptor,
         keepalive: keepalive,
         eventStream: eventStream,
         eventContinuation: continuation,
         commandQueue: commandQueue,
         taskQueue: taskQueue,
-        resumable: resumable,
         localRootSettings: localRootSettings,
         peerRootSettings: peerRootSettings,
-        transport: transport,
-        recoverAttachment: recoverAttachment,
-        sessionResumeKey: sessionResumeKey
+        peerMessageSchema: peerMessageSchema
     )
 
     let sessionHandle = SessionHandle(
-        eventContinuation: continuation,
-        role: role,
-        localRootSettings: localRootSettings,
-        peerRootSettings: peerRootSettings,
-        transport: transport,
-        sessionResumeKey: sessionResumeKey
+        commandTx: commandSender,
+        eventContinuation: continuation
     )
 
-    return (Connection(handle: handle), driver, sessionHandle)
+    return (Connection(handle: handle, schemaReceiveTracker: driver.schemaReceiveTracker), driver, sessionHandle)
 }

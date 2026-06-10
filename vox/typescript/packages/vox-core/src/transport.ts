@@ -17,10 +17,13 @@
  * - Message-oriented transports (WebSocket) have built-in framing
  *
  * Both cases share the same protocol logic in Connection.
+ *
+ * r[impl transport.stream]
+ * r[impl transport.websocket]
  */
 export interface MessageTransport {
   /**
-   * Send a message (raw postcard-encoded payload for WebSocket,
+   * Send a message (raw phon-encoded payload for WebSocket,
    * or length-prefixed for byte streams).
    */
   send(payload: Uint8Array): Promise<void>;

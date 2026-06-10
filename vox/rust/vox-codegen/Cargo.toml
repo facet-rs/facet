@@ -17,11 +17,20 @@ description = "Language bindings codegen for vox"
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
+facet.workspace = true
 facet-core.workspace = true
 facet-cbor.workspace = true
 heck.workspace = true
+phon.workspace = true
+phon-engine.workspace = true
+phon-ir.workspace = true
+phon-schema.workspace = true
 vox-types.workspace = true
+vox-phon.workspace = true
+phon-codegen.workspace = true
 
 [dev-dependencies]
 facet.workspace = true
+facet-value.workspace = true
+spec-proto = { path = "../../spec/spec-proto" }
 vox = { path = "../vox" }

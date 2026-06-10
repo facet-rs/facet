@@ -1,8 +1,4 @@
-import {
-  decodeWithKind,
-  decodeWithPlan,
-  encodeWithKind,
-} from "@bearcove/vox-postcard";
+import { encodeTyped } from "@bearcove/phon-engine";
 import {
   type ConnectionSettings,
   type RequestMessage,
@@ -10,14 +6,15 @@ import {
   type SchemaMessage,
   type Message,
   type Metadata,
-  type MetadataEntry,
- // parityEven,
- // parityOdd,
+  emptyMetadata,
+  coerceMetadata,
   messageAccept,
   messageConnect,
   messageGoodbye,
+  messageProtocolError,
   messageRequest,
   messageResponse,
+  messageSchema,
   messageCancel,
   messageData,
   messageClose,
@@ -29,24 +26,19 @@ import {
   ChannelError,
   ChannelIdAllocator,
   ChannelRegistry,
+  DEFAULT_INITIAL_CREDIT,
   Role,
+  bindPhonChannels,
+  type ChannelRegistryDebugSnapshot,
 } from "./channeling/index.ts";
 import type { Caller, CallerRequest } from "./caller.ts";
 import { MiddlewareCaller } from "./caller.ts";
 import type { ClientMiddleware } from "./middleware.ts";
-import { ClientMetadata, clientMetadataToEntries } from "./metadata.ts";
+import { ClientMetadata } from "./metadata.ts";
 import type { Conduit } from "./conduit.ts";
+import { AsyncSemaphore } from "./internal/async_semaphore.ts";
 import { AsyncQueue } from "./internal/async_queue.ts";
 import { deferred, type Deferred } from "./internal/deferred.ts";
-import {
- // appendRetrySupportMetadata,
-  ensureOperationId,
- // metadataSupportsRetry,
-} from "./retry.ts";
-// import {
-//   appendSessionResumeKeyMetadata,
-//   metadataSessionResumeKey,
-// } from "./session_resume.ts";
 import {
   firstIdForParity,
   oppositeParity,
@@ -55,22 +47,18 @@ import {
 } from "./internal/parity.ts";
 import { BareConduit, buildMessageDecodePlan } from "./conduit.ts";
 import { voxLogger } from "./logger.ts";
-import {
-  localSchemaSetForMethod,
-  SchemaTracker,
-  SchemaSendTracker,
-} from "./schema_tracker.ts";
+import { SchemaCompatibilityError, SchemaTracker, SchemaSendTracker } from "./schema_tracker.ts";
 import type { Link, LinkSource } from "./link.ts";
-// import { singleLinkSource } from "./link.ts";
 import {
-  acceptTransportMode,
-  requestTransportMode,
+  performAcceptorTransportPrologue,
+  performInitiatorTransportPrologue,
 } from "./transport_prologue.ts";
 import {
   handshakeAsAcceptor,
   handshakeAsInitiator,
   type HandshakeResult,
 } from "./handshake.ts";
+import { splitQualifiedMethodName } from "./observer.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -84,18 +72,10 @@ interface PendingResponse {
   channels: bigint[];
   /**
    * Lazily computes args schemas bytes for each send attempt.
-   * Called on every send so that after a SchemaSendTracker.reset() (session
-   * resume), fresh schemas are included in the retried request.
+   * Called when sending so the current connection's schema tracker can decide
+   * whether fresh schemas are required.
    */
-  computeSchemas?: () => Uint8Array;
-  /** Whether this method uses persist retry policy (affects close behavior). */
-  persist: boolean;
-  /** Whether this method is idempotent. */
-  idem: boolean;
-  prepareRetry?: () => {
-    payload: Uint8Array;
-    channels: bigint[];
-  };
+  computeSchemas?: () => number[];
   finalizeChannels?: () => void;
   requestIds: Set<bigint>;
   settled: boolean;
@@ -106,34 +86,27 @@ export interface IncomingCall {
   methodId: bigint;
   args: Uint8Array;
   channels: bigint[];
-  metadata: MetadataEntry[];
+  metadata: Metadata;
+  connectionEpoch: number;
 }
 
-/** Current connectivity state of a resumable session. */
-export type SessionConnectivity =
-  | "connected"
-  | "disconnected"
-  | "reconnecting"
-  | "failed";
-
-/** Policy controlling how a resumable session retries after a connection drop. */
-export interface ReconnectPolicy {
-  /**
-   * Maximum number of reconnect attempts before the session is permanently
-   * failed. Defaults to Infinity (retry forever). Set to a finite number to
-   * give up after that many attempts.
-   */
-  maxAttempts?: number;
-  /**
-   * Base delay in ms for the first retry. Subsequent retries use exponential
-   * backoff: baseDelay * 2^(attempt-1), capped at maxDelay.
-   * Defaults to 500 ms.
-   */
-  baseDelay?: number;
-  /**
-   * Maximum delay in ms between retries. Defaults to 30_000 (30 s).
-   */
-  maxDelay?: number;
+export interface ConnectionDebugSnapshot {
+  connectionId: bigint;
+  closed: boolean;
+  pendingResponseCount: number;
+  pendingRequestIds: bigint[];
+  inboundLiveRequestCount: number;
+  inboundLiveRequestIds: bigint[];
+  flowControl: {
+    localMaxConcurrentRequests: number;
+    peerMaxConcurrentRequests: number;
+    outboundRequestLimit: {
+      availablePermits: number;
+      waitingCount: number;
+      closed: boolean;
+    };
+  };
+  channels: ChannelRegistryDebugSnapshot;
 }
 
 export interface SessionBuilderOptions {
@@ -141,14 +114,11 @@ export interface SessionBuilderOptions {
   channelCapacity?: number;
   metadata?: Metadata;
   onConnection?: (connection: ConnectionHandle) => void | Promise<void>;
-  resumable?: boolean;
-  /** Reconnect retry policy for resumable sessions. */
-  reconnect?: ReconnectPolicy;
   /**
    * If set, the session sends a Ping every `keepaliveIntervalMs` milliseconds
    * and expects a Pong back within `keepaliveTimeoutMs` (default: half the
-   * interval). If no Pong arrives in time the connection is considered dead
-   * and session recovery begins. Set to 0 or undefined to disable keepalive.
+   * interval). If no Pong arrives in time the session closes. Set to 0 or
+   * undefined to disable keepalive.
    *
    * Recommended for WebSocket connections where silent network drops are
    * common (proxies, mobile networks, etc.) and the underlying transport
@@ -160,61 +130,7 @@ export interface SessionBuilderOptions {
    * Defaults to half of `keepaliveIntervalMs` when not specified.
    */
   keepaliveTimeoutMs?: number;
-  /**
-   * Called after each failed reconnect attempt, while the session is waiting
-   * before the next retry.
-   *
-   * @param failedAttempt - Which attempt just failed (1-based).
-   * @param nextAttemptAt - When the next attempt is scheduled (absolute Date).
-   *   Display `Math.ceil((nextAttemptAt.getTime() - Date.now()) / 1000)` for
-   *   a "retrying in Ns" countdown.
-   * @param retryNow - Call this to cancel the wait and retry immediately.
-   *   Safe to call multiple times; subsequent calls are no-ops.
-   *
-   * @example
-   * onReconnecting: (failed, nextAt, retryNow) => {
-   *   const secs = Math.ceil((nextAt.getTime() - Date.now()) / 1000);
-   *   showBanner(`Reconnecting in ${secs}s`, { onRetry: retryNow });
-   * }
-   */
-  onReconnecting?: (
-    failedAttempt: number,
-    nextAttemptAt: Date,
-    retryNow: () => void,
-  ) => void;
-  /**
-   * Called after a successful reconnect. The session continues normally.
-   */
-  onReconnected?: () => void;
-  /**
-   * Called when the session gives up reconnecting (all attempts exhausted).
-   */
-  onReconnectFailed?: (error: Error) => void;
-  /**
-   * Called whenever the session connectivity changes.
-   */
-  onConnectivityChange?: (state: SessionConnectivity) => void;
 }
-
-export class SessionRegistry {
-  private readonly sessions = new Map<string, SessionHandle>();
-
-  get(key: Uint8Array): SessionHandle | undefined {
-    return this.sessions.get(sessionResumeKeyId(key));
-  }
-
-  insert(key: Uint8Array, handle: SessionHandle): void {
-    this.sessions.set(sessionResumeKeyId(key), handle);
-  }
-
-  remove(key: Uint8Array): void {
-    this.sessions.delete(sessionResumeKeyId(key));
-  }
-}
-
-export type SessionAcceptOutcome =
-  | { tag: "Established"; session: Session }
-  | { tag: "Resumed" };
 
 export interface SessionTransportOptions extends SessionBuilderOptions {
 }
@@ -223,6 +139,8 @@ const DEFAULT_CHANNEL_CAPACITY = 16;
 
 function channelCapacityFromOptions(options: SessionBuilderOptions): number {
   const channelCapacity = options.channelCapacity ?? DEFAULT_CHANNEL_CAPACITY;
+  // r[impl rpc.flow-control.credit.initial.high-level]
+  // r[impl rpc.flow-control.credit.initial.zero]
   if (channelCapacity <= 0) {
     throw SessionError.protocol("initial_channel_credit must be greater than zero");
   }
@@ -235,157 +153,48 @@ function isLinkSource(value: SessionTransport): value is LinkSource {
   return typeof (value as LinkSource).nextLink === "function";
 }
 
-function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
-  if (left.length !== right.length) {
-    return false;
-  }
-  for (let i = 0; i < left.length; i++) {
-    if (left[i] !== right[i]) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function sessionResumeKeyId(key: Uint8Array): string {
-  return Array.from(key, (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-function cloneMetadataValue(value: MetadataEntry["value"]): MetadataEntry["value"] {
-  switch (value.tag) {
-    case "Bytes":
-      return { tag: "Bytes", value: value.value.slice() };
-    case "String":
-      return { tag: "String", value: value.value };
-    case "U64":
-      return { tag: "U64", value: value.value };
-  }
-}
-
 function cloneMetadata(metadata: Metadata): Metadata {
-  return metadata.map((entry) => ({
-    key: entry.key,
-    value: cloneMetadataValue(entry.value),
-    flags: entry.flags,
-  }));
+  return new Map(metadata);
 }
 
 interface EstablishedTransport {
   conduit: Conduit<Message>;
   handshake: HandshakeResult;
-  recoverConduit?: () => Promise<Conduit<Message>>;
 }
 
+// r[impl session]
+// r[impl session.handshake]
+// r[impl session.handshake.phon]
+// r[impl session.handshake.protocol-schema]
+// r[impl session.handshake.protocol-schema.session-scoped]
+// r[impl session.handshake.unversioned]
+// r[impl session.connection-settings]
+// r[impl session.connection-settings.hello]
+// r[impl session.peer]
+// r[impl session.role]
+// r[impl session.symmetry]
+// r[impl transport.prologue.first-payload]
+// r[impl transport.prologue.post-accept]
 async function makeInitiatorEstablishedTransport(
   transport: SessionTransport,
   options: SessionTransportOptions,
 ): Promise<EstablishedTransport> {
   const localSettings: ConnectionSettings = {
     parity: { tag: "Odd" },
+    // r[impl rpc.flow-control.max-concurrent-requests.default]
     max_concurrent_requests: options.maxConcurrentRequests ?? 64,
     initial_channel_credit: channelCapacityFromOptions(options),
   };
 
   if (isLinkSource(transport)) {
     const attachment = await transport.nextLink();
-    await requestTransportMode(attachment.link);
-    const handshake = await handshakeAsInitiator(attachment.link, localSettings, true, null, options.metadata ?? []);
+    await performInitiatorTransportPrologue(attachment.link);
+    const handshake = await handshakeAsInitiator(
+      attachment.link,
+      localSettings,
+      options.metadata ?? emptyMetadata(),
+    );
     const messagePlan = buildMessageDecodePlan(handshake.peerMessageSchema);
-
-    // For resumable bare sessions: build a recoverConduit that reconnects,
-    // re-handshakes with the stored resume key, and returns a fresh conduit.
-    // Retries with exponential backoff according to the reconnect policy.
-    if (options.resumable && handshake.sessionResumeKey) {
-      // Use a mutable cell so recoverConduit always uses the latest key.
-      const keyCell: { value: Uint8Array | null } = {
-        value: handshake.sessionResumeKey,
-      };
-
-      const policy = options.reconnect ?? {};
-      const maxAttempts = policy.maxAttempts ?? Infinity;
-      const baseDelay = policy.baseDelay ?? 500;
-      const maxDelay = policy.maxDelay ?? 30_000;
-
-      const recoverConduit = async (): Promise<Conduit<Message>> => {
-        let lastError: Error = new Error("unknown reconnect failure");
-
-        options.onConnectivityChange?.("disconnected");
-
-        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-          options.onConnectivityChange?.("reconnecting");
-          voxLogger()?.debug(`[vox:session] reconnect attempt ${attempt}`);
-
-          try {
-            const newAttachment = await (transport as LinkSource).nextLink();
-            await requestTransportMode(newAttachment.link);
-            const newHandshake = await handshakeAsInitiator(
-              newAttachment.link,
-              localSettings,
-              true,
-              keyCell.value,
-              options.metadata ?? [],
-            );
-            // Update the key for the next reconnect.
-            keyCell.value = newHandshake.sessionResumeKey;
-            options.onReconnected?.();
-            options.onConnectivityChange?.("connected");
-            voxLogger()?.debug(`[vox:session] reconnect succeeded on attempt ${attempt}`);
-            return new BareConduit(
-              newAttachment.link,
-              buildMessageDecodePlan(newHandshake.peerMessageSchema),
-            );
-          } catch (e) {
-            lastError = e instanceof Error ? e : new Error(String(e));
-            voxLogger()?.debug(
-              `[vox:session] reconnect attempt ${attempt} failed: ${lastError.message}`,
-            );
-
-            if (attempt < maxAttempts) {
-              const delay = Math.min(baseDelay * Math.pow(2, attempt - 1), maxDelay);
-              const nextAttemptAt = new Date(Date.now() + delay);
-
-              // Interruptible sleep — retryNow() cancels the wait.
-              let interruptFired = false;
-              let interruptResolve: (() => void) | null = null;
-              const retryNow = (): void => {
-                if (interruptFired) return;
-                interruptFired = true;
-                interruptResolve?.();
-              };
-
-              const sleepPromise = new Promise<void>((resolve) => {
-                const timer = setTimeout(() => {
-                  interruptResolve = null;
-                  resolve();
-                }, delay);
-                interruptResolve = () => {
-                  clearTimeout(timer);
-                  resolve();
-                };
-              });
-
-              voxLogger()?.debug(
-                `[vox:session] retrying in ${delay}ms (next attempt at ${nextAttemptAt.toISOString()})`,
-              );
-              options.onReconnecting?.(attempt, nextAttemptAt, retryNow);
-
-              await sleepPromise;
-            }
-          }
-        }
-
-        options.onReconnectFailed?.(lastError);
-        options.onConnectivityChange?.("failed");
-        voxLogger()?.error(`[vox:session] all reconnect attempts exhausted`);
-        throw lastError;
-      };
-
-      return {
-        conduit: new BareConduit(attachment.link, messagePlan),
-        handshake,
-        recoverConduit,
-      };
-    }
 
     return {
       conduit: new BareConduit(attachment.link, messagePlan),
@@ -393,8 +202,12 @@ async function makeInitiatorEstablishedTransport(
     };
   }
 
-  await requestTransportMode(transport);
-  const handshake = await handshakeAsInitiator(transport, localSettings, true, null, options.metadata ?? []);
+  await performInitiatorTransportPrologue(transport);
+  const handshake = await handshakeAsInitiator(
+    transport,
+    localSettings,
+    options.metadata ?? emptyMetadata(),
+  );
   const messagePlan = buildMessageDecodePlan(handshake.peerMessageSchema);
 
   return {
@@ -403,6 +216,20 @@ async function makeInitiatorEstablishedTransport(
   };
 }
 
+// r[impl session]
+// r[impl session.handshake]
+// r[impl session.handshake.phon]
+// r[impl session.handshake.protocol-schema]
+// r[impl session.handshake.protocol-schema.session-scoped]
+// r[impl session.handshake.sorry]
+// r[impl session.handshake.unversioned]
+// r[impl session.connection-settings]
+// r[impl session.connection-settings.hello]
+// r[impl session.peer]
+// r[impl session.role]
+// r[impl session.symmetry]
+// r[impl transport.prologue.first-payload]
+// r[impl transport.prologue.post-accept]
 async function makeAcceptorEstablishedTransport(
   transport: SessionTransport,
   options: SessionTransportOptions,
@@ -410,10 +237,11 @@ async function makeAcceptorEstablishedTransport(
   const attachment = isLinkSource(transport)
     ? await transport.nextLink()
     : { link: transport };
-  await acceptTransportMode(attachment.link);
+  await performAcceptorTransportPrologue(attachment.link);
 
   const localSettings: ConnectionSettings = {
     parity: { tag: "Even" },
+    // r[impl rpc.flow-control.max-concurrent-requests.default]
     max_concurrent_requests: options.maxConcurrentRequests ?? 64,
     initial_channel_credit: channelCapacityFromOptions(options),
   };
@@ -421,10 +249,7 @@ async function makeAcceptorEstablishedTransport(
   const handshake = await handshakeAsAcceptor(
     attachment.link,
     localSettings,
-    true,
-    options.resumable ?? false,
-    null,
-    options.metadata ?? [],
+    options.metadata ?? emptyMetadata(),
   );
   const messagePlan = buildMessageDecodePlan(handshake.peerMessageSchema);
 
@@ -434,12 +259,18 @@ async function makeAcceptorEstablishedTransport(
   };
 }
 
-
-
 export class SessionError extends Error {
-  constructor(message: string) {
+  readonly isProtocolError: boolean;
+  readonly receivedFromPeer: boolean;
+
+  constructor(
+    message: string,
+    options: { isProtocolError?: boolean; receivedFromPeer?: boolean } = {},
+  ) {
     super(message);
     this.name = "SessionError";
+    this.isProtocolError = options.isProtocolError ?? false;
+    this.receivedFromPeer = options.receivedFromPeer ?? false;
   }
 
   static closed(): SessionError {
@@ -447,7 +278,11 @@ export class SessionError extends Error {
   }
 
   static protocol(message: string): SessionError {
-    return new SessionError(message);
+    return new SessionError(message, { isProtocolError: true });
+  }
+
+  static peerProtocol(message: string): SessionError {
+    return new SessionError(message, { isProtocolError: true, receivedFromPeer: true });
   }
 }
 
@@ -465,54 +300,35 @@ class SessionCore {
   private sendChain: Promise<void> = Promise.resolve();
   private nextConnectionId: bigint;
   private closed = false;
-  private disconnected = false;
   private closeError: SessionError | null = null;
   private rootConnectionValue: ConnectionHandle | null = null;
   private runPromise: Promise<void> | null = null;
-  private peerSupportsRetry: boolean;
-  private readonly resumable: boolean;
-  private sessionResumeKey: Uint8Array | null;
-  private readonly recoverConduit?: () => Promise<Conduit<Message>>;
-  private readonly onConnectivityChange?: (state: SessionConnectivity) => void;
   private readonly keepaliveIntervalMs: number;
   private readonly keepaliveTimeoutMs: number;
   private keepaliveTimer: ReturnType<typeof setTimeout> | null = null;
   private keepalivePendingNonce: bigint | null = null;
   private keepalivePongTimer: ReturnType<typeof setTimeout> | null = null;
   private nextKeepaliveNonce = 1n;
-  private readonly pendingResumes: Array<{
-    conduit: Conduit<Message>;
-    result: Deferred<void>;
-  }> = [];
-  private resumeWaiter: ((request: { conduit: Conduit<Message>; result: Deferred<void> } | null) => void) | null = null;
   private readonly localRootSettings: ConnectionSettings;
   private readonly peerRootSettings: ConnectionSettings;
   private readonly onConnection?: (connection: ConnectionHandle) => void | Promise<void>;
+  private rootInternallyClosed = false;
 
   constructor(
     conduit: Conduit<Message>,
     localRootSettings: ConnectionSettings,
     peerRootSettings: ConnectionSettings,
-    peerSupportsRetry: boolean,
-    resumable: boolean,
-    sessionResumeKey: Uint8Array | null,
-    recoverConduit: (() => Promise<Conduit<Message>>) | undefined,
     onConnection?: (connection: ConnectionHandle) => void | Promise<void>,
-    onConnectivityChange?: (state: SessionConnectivity) => void,
     keepaliveIntervalMs = 0,
     keepaliveTimeoutMs = 0,
   ) {
     this.conduit = conduit;
     this.localRootSettings = localRootSettings;
     this.peerRootSettings = peerRootSettings;
-    this.peerSupportsRetry = peerSupportsRetry;
-    this.resumable = resumable;
-    this.sessionResumeKey = sessionResumeKey?.slice() ?? null;
-    this.recoverConduit = recoverConduit;
+    // r[impl session.parity]
     this.nextConnectionId = firstIdForParity(localRootSettings.parity);
     this.sessionHandle = new SessionHandle(this);
     this.onConnection = onConnection;
-    this.onConnectivityChange = onConnectivityChange;
     this.keepaliveIntervalMs = keepaliveIntervalMs;
     this.keepaliveTimeoutMs =
       keepaliveTimeoutMs > 0 ? keepaliveTimeoutMs : Math.floor(keepaliveIntervalMs / 2);
@@ -520,10 +336,6 @@ class SessionCore {
 
   sessionHandleValue(): SessionHandle {
     return this.sessionHandle;
-  }
-
-  sessionResumeKeyValue(): Uint8Array | null {
-    return this.sessionResumeKey?.slice() ?? null;
   }
 
   defaultConnectionSettings(): ConnectionSettings {
@@ -535,22 +347,23 @@ class SessionCore {
   }
 
   rootConnection(): ConnectionHandle {
+    // r[impl connection]
+    // r[impl connection.root]
     if (!this.rootConnectionValue) {
       this.rootConnectionValue = new ConnectionHandle(
         this,
         0n,
         this.localRootSettings,
         this.peerRootSettings,
-        this.peerSupportsRetry,
       );
       this.connections.set(0n, this.rootConnectionValue);
     }
     return this.rootConnectionValue;
   }
 
-  notifyConnectionsResumed(): void {
+  failPendingAttempts(error: Error): void {
     for (const connection of this.connections.values()) {
-      connection.onSessionResumed();
+      connection.failPendingAttempts(error);
     }
   }
 
@@ -558,15 +371,27 @@ class SessionCore {
     if (this.runPromise) {
       return;
     }
-    this.runPromise = this.run().catch((error) => {
+    this.runPromise = this.run().catch(async (error) => {
       voxLogger()?.error(`[vox:session] run loop error:`, error);
-      this.fail(error instanceof SessionError ? error : new SessionError(String(error)));
+      const sessionError = error instanceof SessionError
+        ? error
+        : new SessionError(String(error));
+      if (
+        sessionError.isProtocolError &&
+        !sessionError.receivedFromPeer &&
+        !this.closed
+      ) {
+        await this.sendProtocolError(sessionError.message);
+      }
+      this.fail(sessionError);
     });
+    // r[impl session.keepalive]
     if (this.keepaliveIntervalMs > 0) {
       this.scheduleKeepalive();
     }
   }
 
+  // r[impl session.keepalive]
   private scheduleKeepalive(): void {
     if (this.closed || this.keepaliveIntervalMs <= 0) return;
     this.keepaliveTimer = setTimeout(() => {
@@ -574,8 +399,9 @@ class SessionCore {
     }, this.keepaliveIntervalMs);
   }
 
+  // r[impl session.keepalive]
   private sendKeepalivePing(): void {
-    if (this.closed || this.disconnected) {
+    if (this.closed) {
       this.scheduleKeepalive();
       return;
     }
@@ -590,7 +416,6 @@ class SessionCore {
           `[vox:session] keepalive timeout — no Pong received, treating as dead connection`,
         );
         this.keepalivePendingNonce = null;
-        // Force the conduit closed so the run loop detects the drop.
         this.conduit.close();
       }
     }, this.keepaliveTimeoutMs);
@@ -614,10 +439,13 @@ class SessionCore {
 
   async openConnection(
     settings: ConnectionSettings,
-    metadata: Metadata = [],
+    metadata: Metadata = emptyMetadata(),
   ): Promise<ConnectionHandle> {
+    // r[impl connection]
+    // r[impl connection.virtual]
     // r[impl connection.open]
-    this.assertConnected("resume before opening connections");
+    // r[impl rpc.virtual-connection.open]
+    this.assertOpen();
     if (settings.initial_channel_credit <= 0) {
       throw SessionError.protocol("initial_channel_credit must be greater than zero");
     }
@@ -639,25 +467,29 @@ class SessionCore {
     return result.promise;
   }
 
-  async closeConnection(connectionId: bigint, metadata: Metadata = []): Promise<void> {
+  async closeConnection(connectionId: bigint, metadata: Metadata = emptyMetadata()): Promise<void> {
+    // r[impl connection]
+    // r[impl connection.virtual]
     // r[impl connection.close]
-    this.assertConnected("resume before closing connections");
+    // r[impl connection.close.semantics]
+    this.assertOpen();
     if (connectionId === 0n) {
       throw new SessionError("cannot close root connection");
     }
 
     const connection = this.connections.get(connectionId);
     if (!connection) {
-      throw new SessionError(`unknown connection ${connectionId}`);
+      throw SessionError.protocol(`unknown connection ${connectionId}`);
     }
 
     connection.close(SessionError.closed());
     this.connections.delete(connectionId);
     await this.sendMessage(messageGoodbye(connectionId, metadata));
+    this.maybeShutdownAfterRootInternalClose();
   }
 
   async sendMessage(message: Message): Promise<void> {
-    this.assertConnected("resume before sending");
+    this.assertOpen();
 
     voxLogger()?.debug(
       `[vox:session] sendMessage: tag=${message.payload.tag} conn=${message.connection_id}`,
@@ -676,7 +508,6 @@ class SessionCore {
     this.closed = true;
     this.closeError = error;
     this.conduit.close();
-    this.rejectPendingResumes(error);
 
     for (const pending of this.pendingConnections.values()) {
       pending.result.reject(error);
@@ -693,20 +524,43 @@ class SessionCore {
     this.fail(SessionError.closed());
   }
 
+  callerLivenessDropped(connectionId: bigint): void {
+    if (connectionId === 0n) {
+      // r[impl rpc.caller.liveness.root-internal-close]
+      this.rootInternallyClosed = true;
+      // r[impl rpc.caller.liveness.root-teardown-condition]
+      this.maybeShutdownAfterRootInternalClose();
+      return;
+    }
+
+    // r[impl rpc.caller.liveness.last-drop-closes-connection]
+    void this.closeConnection(connectionId).catch((error) => {
+      if (!this.closed) {
+        this.fail(error instanceof SessionError ? error : new SessionError(String(error)));
+      }
+    });
+  }
+
+  private maybeShutdownAfterRootInternalClose(): void {
+    if (!this.rootInternallyClosed || this.closed) {
+      return;
+    }
+    for (const connectionId of this.connections.keys()) {
+      if (connectionId !== 0n) {
+        return;
+      }
+    }
+    this.shutdown();
+  }
+
   private assertOpen(): void {
     if (this.closed) {
       throw this.closeError ?? SessionError.closed();
     }
   }
 
-  private assertConnected(reason: string): void {
-    this.assertOpen();
-    if (this.disconnected) {
-      throw SessionError.protocol(`session is disconnected; ${reason}`);
-    }
-  }
-
   private allocateConnectionId(): bigint {
+    // r[impl session.parity]
     const id = this.nextConnectionId;
     this.nextConnectionId += 2n;
     return id;
@@ -715,143 +569,23 @@ class SessionCore {
   private getConnection(connectionId: bigint): ConnectionHandle {
     const connection = this.connections.get(connectionId);
     if (!connection) {
-      throw new SessionError(`unknown connection ${connectionId}`);
+      throw SessionError.protocol(`unknown connection ${connectionId}`);
     }
     return connection;
   }
 
   private async run(): Promise<void> {
     // r[impl session.message]
+    // r[impl session.message.connection-id]
+    // r[impl session.message.payloads]
     while (!this.closed) {
       const message = await this.conduit.recv();
       if (!message) {
         this.clearKeepaliveTimers();
-        if (await this.handleConduitBreak()) {
-          // Reconnected — restart keepalive on the fresh connection.
-          if (this.keepaliveIntervalMs > 0) {
-            this.scheduleKeepalive();
-          }
-          continue;
-        }
+        this.failPendingAttempts(new SessionError("connection lost"));
         throw SessionError.closed();
       }
       await this.handleMessage(message);
-    }
-  }
-
-  async resume(conduit: Conduit<Message>): Promise<void> {
-    this.assertOpen();
-    if (!this.resumable) {
-      throw SessionError.protocol("session is not resumable");
-    }
-    if (!this.disconnected) {
-      throw SessionError.protocol("resume is only valid while the session is disconnected");
-    }
-    const result = deferred<void>();
-    this.enqueueResume({ conduit, result });
-    await result.promise;
-  }
-
-  async acceptResumedConduit(conduit: Conduit<Message>): Promise<void> {
-    this.assertOpen();
-    if (!this.resumable) {
-      throw SessionError.protocol("session is not resumable");
-    }
-    const result = deferred<void>();
-    this.enqueueResume({ conduit, result });
-    await result.promise;
-  }
-
-  private async handleConduitBreak(): Promise<boolean> {
-    if (this.closed) {
-      return false;
-    }
-    if (!this.resumable) {
-      return false;
-    }
-
-    if (this.recoverConduit) {
-      this.onConnectivityChange?.("disconnected");
-      try {
-        const conduit = await this.recoverConduit();
-        if (this.closed) {
-          conduit.close();
-          return false;
-        }
-        this.disconnected = true;
-        await this.resumeOnConduit(conduit);
-        this.disconnected = false;
-        this.notifyConnectionsResumed();
-        return true;
-      } catch {
-        return false;
-      }
-    }
-
-    this.disconnected = true;
-    while (!this.closed) {
-      const pending = await this.nextResume();
-      if (!pending) {
-        return false;
-      }
-      try {
-        await this.resumeOnConduit(pending.conduit);
-        this.disconnected = false;
-        this.notifyConnectionsResumed();
-        pending.result.resolve();
-        return true;
-      } catch (error) {
-        pending.result.reject(
-          error instanceof SessionError ? error : new SessionError(String(error)),
-        );
-      }
-    }
-
-    return false;
-  }
-
-  private async resumeOnConduit(conduit: Conduit<Message>): Promise<void> {
-    if (!this.sessionResumeKey) {
-      throw SessionError.protocol("session is not resumable");
-    }
-
-    // CBOR handshake (including resume key exchange) is performed by the
-    // caller before the conduit is handed in. Just switch to the new conduit.
-    this.conduit = conduit;
-    for (const connection of this.connections.values()) {
-      connection.resetSchemas();
-    }
-  }
-
-  private enqueueResume(request: { conduit: Conduit<Message>; result: Deferred<void> }): void {
-    const waiter = this.resumeWaiter;
-    if (waiter) {
-      this.resumeWaiter = null;
-      waiter(request);
-      return;
-    }
-    this.pendingResumes.push(request);
-  }
-
-  private async nextResume(): Promise<{ conduit: Conduit<Message>; result: Deferred<void> } | null> {
-    const pending = this.pendingResumes.shift();
-    if (pending) {
-      return pending;
-    }
-    if (this.closed) {
-      return null;
-    }
-    return new Promise((resolve) => {
-      this.resumeWaiter = resolve;
-    });
-  }
-
-  private rejectPendingResumes(error: SessionError): void {
-    const waiter = this.resumeWaiter;
-    this.resumeWaiter = null;
-    waiter?.(null);
-    for (const pending of this.pendingResumes.splice(0)) {
-      pending.result.reject(error);
     }
   }
 
@@ -859,7 +593,7 @@ class SessionCore {
     voxLogger()?.debug(`[vox:session] handleMessage: tag=${message.payload.tag} conn=${message.connection_id}`);
     switch (message.payload.tag) {
       case "Ping":
-        // Respond to peer's keepalive ping.
+        // r[impl session.keepalive]
         void this.sendMessage({
           connection_id: 0n,
           payload: { tag: "Pong", value: { nonce: message.payload.value.nonce } },
@@ -867,18 +601,17 @@ class SessionCore {
         return;
 
       case "Pong":
-        // Acknowledge our own keepalive ping.
+        // r[impl session.keepalive]
         if (this.keepalivePendingNonce === message.payload.value.nonce) {
           clearTimeout(this.keepalivePongTimer!);
           this.keepalivePongTimer = null;
           this.keepalivePendingNonce = null;
-          // Schedule the next ping.
           this.scheduleKeepalive();
         }
         return;
 
       case "ProtocolError":
-        throw SessionError.protocol(message.payload.value.description);
+        throw SessionError.peerProtocol(message.payload.value.description);
 
       case "ConnectionOpen":
         await this.handleConnectionOpen(message.connection_id, message.payload.value);
@@ -918,27 +651,40 @@ class SessionCore {
     const connection = this.getConnection(connectionId);
     const direction = schemaMessage.direction.tag === "Args" ? "args" : "response";
     try {
+      // r[impl schema.tracking.received]
       connection.getSchemaTracker().recordReceived(
         schemaMessage.method_id,
         direction,
-        schemaMessage.schemas,
+        new Uint8Array(schemaMessage.schemas),
       );
     } catch (error) {
       throw SessionError.protocol(error instanceof Error ? error.message : String(error));
     }
   }
 
+  // r[impl session.protocol-error]
+  private async sendProtocolError(description: string): Promise<void> {
+    try {
+      await this.conduit.send(messageProtocolError(description));
+    } catch (error) {
+      voxLogger()?.debug("[vox:session] failed to send protocol error", error);
+    }
+  }
+
   private async handleConnectionOpen(
     connectionId: bigint,
-    value: { connection_settings: ConnectionSettings; metadata: Metadata },
+    value: { connection_settings: ConnectionSettings; metadata: unknown },
   ): Promise<void> {
+    // r[impl connection]
+    // r[impl connection.virtual]
     // r[impl connection.open]
+    // r[impl rpc.virtual-connection.accept]
     // r[impl connection.open.rejection]
     // r[impl session.connection-settings.open]
     if (!this.onConnection) {
       await this.sendMessage({
         connection_id: connectionId,
-        payload: { tag: "ConnectionReject", value: { metadata: [] } },
+        payload: { tag: "ConnectionReject", value: { metadata: emptyMetadata() } },
       });
       return;
     }
@@ -946,12 +692,13 @@ class SessionCore {
     if (value.connection_settings.initial_channel_credit <= 0) {
       await this.sendMessage({
         connection_id: connectionId,
-        payload: { tag: "ConnectionReject", value: { metadata: [] } },
+        payload: { tag: "ConnectionReject", value: { metadata: emptyMetadata() } },
       });
       return;
     }
 
     const localSettings: ConnectionSettings = {
+      // r[impl connection.parity]
       parity: oppositeParity(value.connection_settings.parity),
       max_concurrent_requests: value.connection_settings.max_concurrent_requests,
       initial_channel_credit: value.connection_settings.initial_channel_credit,
@@ -961,10 +708,9 @@ class SessionCore {
       connectionId,
       localSettings,
       value.connection_settings,
-      this.peerSupportsRetry,
     );
     this.connections.set(connectionId, connection);
-    await this.sendMessage(messageAccept(connectionId, localSettings, []));
+    await this.sendMessage(messageAccept(connectionId, localSettings, emptyMetadata()));
     void this.onConnection(connection);
   }
 
@@ -982,7 +728,6 @@ class SessionCore {
       connectionId,
       pending.localSettings,
       peerSettings,
-      this.peerSupportsRetry,
     );
     this.connections.set(connectionId, connection);
     pending.result.resolve(connection);
@@ -1004,36 +749,50 @@ class SessionCore {
     }
     connection.close(SessionError.closed());
     this.connections.delete(connectionId);
+    this.maybeShutdownAfterRootInternalClose();
   }
 
   private async handleRequestMessage(
     connectionId: bigint,
     request: RequestMessage,
   ): Promise<void> {
+    // r[impl rpc]
     // r[impl rpc.request]
+    // r[impl rpc.request.id-allocation]
     // r[impl rpc.response]
     // r[impl rpc.cancel]
+    // r[impl rpc.cancel.channels]
+    // r[impl rpc.pipelining]
     const connection = this.getConnection(connectionId);
     switch (request.body.tag) {
       case "Call": {
         const callSchemas = request.body.value.schemas;
         if (callSchemas && callSchemas.length > 0) {
           try {
+            // r[impl schema.tracking.received]
             connection.getSchemaTracker().recordReceived(
               request.body.value.method_id,
               "args",
-              callSchemas,
+              new Uint8Array(callSchemas),
             );
           } catch (error) {
             throw SessionError.protocol(error instanceof Error ? error.message : String(error));
           }
         }
+        try {
+          // r[impl schema.exchange.required]
+          connection.getSchemaTracker().requireReceived(request.body.value.method_id, "args");
+        } catch (error) {
+          throw SessionError.protocol(error instanceof Error ? error.message : String(error));
+        }
+        connection.beginIncomingRequest(request.id);
         connection.enqueueIncomingCall({
           requestId: request.id,
           methodId: request.body.value.method_id,
           args: request.body.value.args,
-          channels: [],
-          metadata: request.body.value.metadata,
+          channels: request.body.value.channels,
+          metadata: coerceMetadata(request.body.value.metadata),
+          connectionEpoch: connection.currentEpoch(),
         });
         return;
       }
@@ -1043,11 +802,20 @@ class SessionCore {
         const responseSchemas = request.body.value.schemas;
         if (methodId !== undefined && responseSchemas && responseSchemas.length > 0) {
           try {
+            // r[impl schema.tracking.received]
             connection.getSchemaTracker().recordReceived(
               methodId,
               "response",
-              responseSchemas,
+              new Uint8Array(responseSchemas),
             );
+          } catch (error) {
+            throw SessionError.protocol(error instanceof Error ? error.message : String(error));
+          }
+        }
+        if (methodId !== undefined) {
+          try {
+            // r[impl schema.exchange.required]
+            connection.getSchemaTracker().requireReceived(methodId, "response");
           } catch (error) {
             throw SessionError.protocol(error instanceof Error ? error.message : String(error));
           }
@@ -1068,7 +836,9 @@ class SessionCore {
   ): void {
     // r[impl rpc.channel.item]
     // r[impl rpc.channel.close]
+    // r[impl rpc.channel.connection-closure]
     // r[impl rpc.channel.reset]
+    // r[impl rpc.flow-control]
     // r[impl rpc.flow-control.credit.grant]
     const connection = this.getConnection(connectionId);
     switch (channel.body.tag) {
@@ -1098,25 +868,13 @@ export class SessionHandle {
 
   openConnection(
     settings: ConnectionSettings = this.core.defaultConnectionSettings(),
-    metadata: Metadata = [],
+    metadata: Metadata = emptyMetadata(),
   ): Promise<ConnectionHandle> {
     return this.core.openConnection(settings, metadata);
   }
 
-  closeConnection(connectionId: bigint, metadata: Metadata = []): Promise<void> {
+  closeConnection(connectionId: bigint, metadata: Metadata = emptyMetadata()): Promise<void> {
     return this.core.closeConnection(connectionId, metadata);
-  }
-
-  sessionResumeKey(): Uint8Array | null {
-    return this.core.sessionResumeKeyValue();
-  }
-
-  resume(conduit: Conduit<Message>): Promise<void> {
-    return this.core.resume(conduit);
-  }
-
-  acceptResumedConduit(conduit: Conduit<Message>): Promise<void> {
-    return this.core.acceptResumedConduit(conduit);
   }
 
   shutdown(): void {
@@ -1135,37 +893,42 @@ export class ConnectionHandle {
   private readonly incomingCalls = new AsyncQueue<IncomingCall>();
   private readonly incomingCancels = new AsyncQueue<bigint>();
   private readonly pendingResponses = new Map<bigint, PendingResponse>();
+  private readonly inboundLiveRequests = new Set<bigint>();
+  private readonly outboundRequestLimit: AsyncSemaphore;
   private readonly schemaTracker = new SchemaTracker();
   private readonly schemaSendTracker = new SchemaSendTracker();
+  private epoch = 0;
   private nextRequestId: bigint;
-  private nextOperationId = 1n;
   private closed = false;
   private flushPromise: Promise<void> | null = null;
   private flushRequested = false;
+  private callerRefs = 0;
 
   private readonly session: SessionCore;
   readonly id: bigint;
   readonly localSettings: ConnectionSettings;
   readonly peerSettings: ConnectionSettings;
-  readonly peerSupportsRetry: boolean;
 
   constructor(
     session: SessionCore,
     id: bigint,
     localSettings: ConnectionSettings,
     peerSettings: ConnectionSettings,
-    peerSupportsRetry: boolean,
   ) {
     this.session = session;
     this.id = id;
     this.localSettings = localSettings;
     this.peerSettings = peerSettings;
-    this.peerSupportsRetry = peerSupportsRetry;
+    // r[impl rpc.flow-control.max-concurrent-requests]
+    // r[impl rpc.flow-control.max-concurrent-requests.outbound]
+    this.outboundRequestLimit = new AsyncSemaphore(peerSettings.max_concurrent_requests);
+    // r[impl connection.parity]
     this.role = roleFromParity(localSettings.parity);
     this.channelAllocator = new ChannelIdAllocator(this.role);
     this.channelRegistry = new ChannelRegistry(undefined, () => {
       void this.flushOutgoing();
     });
+    // r[impl connection.parity]
     this.nextRequestId = firstIdForParity(localSettings.parity);
   }
 
@@ -1174,7 +937,7 @@ export class ConnectionHandle {
   }
 
   caller(): Caller {
-    return new ConnectionHandleCaller(this);
+    return new ConnectionHandleCaller(this, this.retainCaller());
   }
 
   getChannelAllocator(): ChannelIdAllocator {
@@ -1193,9 +956,27 @@ export class ConnectionHandle {
     return this.schemaSendTracker;
   }
 
-  resetSchemas(): void {
-    this.schemaTracker.reset();
-    this.schemaSendTracker.reset();
+  currentEpoch(): number {
+    return this.epoch;
+  }
+
+  // r[impl rpc.debug.snapshot]
+  // r[impl rpc.observability.channel.context]
+  debugSnapshot(): ConnectionDebugSnapshot {
+    return {
+      connectionId: this.id,
+      closed: this.closed,
+      pendingResponseCount: this.pendingResponses.size,
+      pendingRequestIds: [...this.pendingResponses.keys()],
+      inboundLiveRequestCount: this.inboundLiveRequests.size,
+      inboundLiveRequestIds: [...this.inboundLiveRequests],
+      flowControl: {
+        localMaxConcurrentRequests: this.localSettings.max_concurrent_requests,
+        peerMaxConcurrentRequests: this.peerSettings.max_concurrent_requests,
+        outboundRequestLimit: this.outboundRequestLimit.debugSnapshot(),
+      },
+      channels: this.channelRegistry.debugSnapshot(),
+    };
   }
 
   isClosed(): boolean {
@@ -1207,123 +988,126 @@ export class ConnectionHandle {
       throw SessionError.closed();
     }
 
-    const localArgsSchemaSet = localSchemaSetForMethod(request.descriptor.id, "args", request.sendSchemas);
-    const localResponseSchemaSet = localSchemaSetForMethod(
-      request.descriptor.id,
-      "response",
-      request.sendSchemas,
-    );
-    if (!localArgsSchemaSet || !localResponseSchemaSet) {
-      throw SessionError.protocol(`missing canonical schemas for method ${request.descriptor.id}`);
-    }
-    const encodeCurrentArgs = (): Uint8Array => {
-      const values = Object.values(request.args);
-      return values.length === 0
-        ? new Uint8Array(0)
-        : encodeWithKind(values, localArgsSchemaSet.root.kind, localArgsSchemaSet.registry);
+    const { methodSchemas, registry } = request;
+    const channelMetas = methodSchemas.channels;
+    const hasChannels = channelMetas.length > 0;
+    const channelCredit = {
+      outgoing: this.peerSettings.initial_channel_credit ?? DEFAULT_INITIAL_CREDIT,
+      incoming: this.localSettings.initial_channel_credit ?? DEFAULT_INITIAL_CREDIT,
     };
-    const prepareRetry = request.prepareRetry
-      ? () => {
-          const rebuilt = request.prepareRetry!();
-          return {
-            payload: localArgsSchemaSet ? encodeCurrentArgs() : rebuilt.payload,
-            channels: rebuilt.channels,
-          };
-        }
-      : undefined;
-    const initial = request.channels !== undefined
-      ? {
-          payload: encodeCurrentArgs(),
-          channels: request.channels,
-        }
-      : prepareRetry
-      ? prepareRetry()
-      : {
-          payload: encodeCurrentArgs(),
-          channels: [],
-        };
-    const metadataCarrier = request.metadata ? request.metadata.clone() : new ClientMetadata();
-    if (this.peerSupportsRetry) {
-      ensureOperationId(metadataCarrier, this.nextOperationId++);
+    // Bind any `Tx`/`Rx` arguments (out-of-band index design): allocate channel
+    // ids, bind the local-facing handles with a phon per-item codec, and replace
+    // each channel arg with its wire-index `Bytes` before encoding the tuple.
+    const encodeWithChannels = (): { payload: Uint8Array; channels: bigint[] } => {
+      const rawValues = Object.values(request.args);
+      if (!hasChannels) {
+        const payload = rawValues.length === 0
+          ? new Uint8Array(0)
+          : encodeTyped(rawValues as never, methodSchemas.argsRoot, registry);
+        return { payload, channels: request.channels ?? [] };
+      }
+      const bound = bindPhonChannels(
+        rawValues,
+        channelMetas,
+        this.channelAllocator,
+        this.channelRegistry,
+        registry,
+        channelCredit,
+        {
+          methodId: request.descriptor.id,
+          direction: "args",
+          tracker: this.getSchemaTracker(),
+        },
+      );
+      finalizeChannels = bound.finalize;
+      const payload = encodeTyped(bound.values as never, methodSchemas.argsRoot, registry);
+      return { payload, channels: bound.channels };
+    };
+
+    let finalizeChannels = request.finalizeChannels;
+    const initial = encodeWithChannels();
+    // r[impl rpc.flow-control.max-concurrent-requests.outbound]
+    // r[impl rpc.flow-control.max-concurrent-requests.counting]
+    let requestPermit;
+    try {
+      requestPermit = await this.outboundRequestLimit.acquire();
+    } catch (error) {
+      finalizeChannels?.();
+      throw error;
     }
-    const metadata = clientMetadataToEntries(metadataCarrier);
+
+    const metadataCarrier = request.metadata ? request.metadata.clone() : new ClientMetadata();
+    const metadata = metadataCarrier.toWire();
     const requestId = this.nextRequestId;
     this.nextRequestId += 2n;
-    const responsePayload = await new Promise<Uint8Array>((resolve, reject) => {
-      // Build a lazy schema computer so each send attempt (including retries
-      // after session reconnect) can call into the tracker which may have
-      // been reset. On first call the tracker returns the full schema bytes;
-      // on subsequent calls within the same connection it returns empty bytes.
-      const computeSchemas: (() => Uint8Array) | undefined = request.sendSchemas
-        ? () =>
-            this.getSchemaSendTracker().prepareSchemas(
-              request.descriptor.id,
-              "args",
-              request.sendSchemas,
-            )
-        : undefined;
+    this.rememberCallerChannelContexts(requestId, request, initial.channels);
+    let responsePayload: Uint8Array;
+    try {
+      responsePayload = await new Promise<Uint8Array>((resolve, reject) => {
+        // The args schema closure is advertised once per (method, connection).
+        const computeSchemas: () => number[] = () =>
+          this.getSchemaSendTracker().prepareSchemas(
+            request.descriptor.id,
+            "args",
+            methodSchemas.argsSchemaClosure,
+          );
 
-      const state: PendingResponse = {
-        resolve,
-        reject,
-        timer: setTimeout(() => {
-          this.clearPendingState(state);
-          reject(new SessionError("timeout waiting for response"));
-        }, request.timeoutMs ?? DEFAULT_TIMEOUT_MS),
-        methodId: request.descriptor.id,
-        payload: initial.payload.slice(),
-        metadata: cloneMetadata(metadata),
-        channels: [...initial.channels],
-        computeSchemas,
-        persist: request.descriptor.retry?.persist ?? false,
-        idem: request.descriptor.retry?.idem ?? false,
-        prepareRetry,
-        finalizeChannels: request.finalizeChannels,
-        requestIds: new Set(),
-        settled: false,
-      };
+        const state: PendingResponse = {
+          resolve,
+          reject,
+          timer: setTimeout(() => {
+            this.clearPendingState(state);
+            reject(new SessionError("timeout waiting for response"));
+          }, request.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+          methodId: request.descriptor.id,
+          payload: initial.payload.slice(),
+          metadata: cloneMetadata(metadata),
+          channels: [...initial.channels],
+          computeSchemas,
+          finalizeChannels,
+          requestIds: new Set(),
+          settled: false,
+        };
 
-      this.pendingResponses.set(requestId, state);
-      state.requestIds.add(requestId);
+        this.pendingResponses.set(requestId, state);
+        state.requestIds.add(requestId);
 
-      void this.sendPendingRequest(state, requestId, true);
-    });
-
-    const responseTranslation = this.getSchemaTracker().buildTranslation(
-      request.descriptor.id,
-      "response",
-      localResponseSchemaSet,
-    );
-    const decodedResult = responseTranslation
-      ? decodeWithPlan(
-          responsePayload,
-          0,
-          responseTranslation.plan,
-          localResponseSchemaSet!.root.kind,
-          responseTranslation.remoteSchemaSet.root.kind,
-          new Map([
-            ...localResponseSchemaSet!.registry,
-            ...responseTranslation.remoteSchemaSet.registry,
-          ]),
-        )
-      : decodeWithKind(
-          responsePayload,
-          0,
-          localResponseSchemaSet.root.kind,
-          localResponseSchemaSet.registry,
-        );
-
-    if (decodedResult.next !== responsePayload.length) {
-      throw new RpcError(RpcErrorCode.INVALID_PAYLOAD);
+        void this.sendPendingRequest(state, requestId, true);
+      });
+    } finally {
+      requestPermit.release();
     }
 
-    const decoded = decodedResult.value as { tag: string; value?: unknown };
+    // Decode the response against the server's advertised `Result<T, VoxError<E>>`
+    // schema binding. The session receive path enforces that the binding arrived
+    // before resolving this payload; reaching this point without it is a local invariant
+    // failure, not a same-schema shortcut.
+    // r[impl schema.errors.call-level]
+    // r[impl schema.errors.call-level.caller]
+    // r[impl schema.errors.same-peer-terminal]
+    this.getSchemaTracker().requireReceived(request.descriptor.id, "response");
+    const decoder = this.getSchemaTracker().buildWriterDecoder(
+      request.descriptor.id,
+      "response",
+      registry,
+    );
+    if (!decoder) {
+      throw new SchemaCompatibilityError(
+        `missing response schema binding for method ${request.descriptor.id}`,
+      );
+    }
+    const decoded = decoder(responsePayload) as unknown as {
+      tag?: string;
+      ok?: boolean;
+      value?: unknown;
+      error?: unknown;
+    };
 
-    if (decoded.tag === "Ok") {
+    if (decoded.tag === "Ok" || decoded.ok === true) {
       return decoded.value;
     }
 
-    const err = decoded.value as { tag: string; value?: unknown };
+    const err = (decoded.tag === "Err" ? decoded.value : decoded.error) as { tag: string; value?: unknown };
     switch (err.tag) {
       case "User":
         throw new RpcError(RpcErrorCode.USER, null, err.value);
@@ -1346,14 +1130,18 @@ export class ConnectionHandle {
   async sendResponse(
     requestId: bigint,
     payload: Uint8Array,
-    metadata: Metadata = [],
-    channels: bigint[] = [],
-    schemas: Uint8Array = new Uint8Array(0),
+    metadata: Metadata = emptyMetadata(),
+    _channels: bigint[] = [],
+    schemas: number[] = [],
   ): Promise<void> {
-    await this.session.sendMessage(messageResponse(requestId, payload, metadata, channels, this.id, schemas));
+    try {
+      await this.session.sendMessage(messageResponse(requestId, payload, metadata, this.id, schemas));
+    } finally {
+      this.finishIncomingRequest(requestId);
+    }
   }
 
-  async sendCancel(requestId: bigint, metadata: Metadata = []): Promise<void> {
+  async sendCancel(requestId: bigint, metadata: Metadata = emptyMetadata()): Promise<void> {
     await this.session.sendMessage(messageCancel(requestId, this.id, metadata));
   }
 
@@ -1361,7 +1149,7 @@ export class ConnectionHandle {
     await this.session.sendMessage(messageData(channelId, payload, this.id));
   }
 
-  async sendChannelClose(channelId: bigint, metadata: Metadata = []): Promise<void> {
+  async sendChannelClose(channelId: bigint, metadata: Metadata = emptyMetadata()): Promise<void> {
     await this.session.sendMessage(messageClose(channelId, this.id, metadata));
   }
 
@@ -1369,8 +1157,35 @@ export class ConnectionHandle {
     await this.session.sendMessage(messageCredit(channelId, additional, this.id));
   }
 
+  async sendSchemas(
+    methodId: bigint,
+    direction: "args" | "response",
+    schemas: Uint8Array,
+  ): Promise<void> {
+    await this.session.sendMessage(messageSchema(methodId, direction, Array.from(schemas), this.id));
+  }
+
   enqueueIncomingCall(call: IncomingCall): void {
     this.incomingCalls.push(call);
+  }
+
+  beginIncomingRequest(requestId: bigint): void {
+    // r[impl rpc.flow-control.max-concurrent-requests]
+    // r[impl rpc.flow-control.max-concurrent-requests.inbound]
+    if (this.inboundLiveRequests.has(requestId)) {
+      throw SessionError.protocol(`duplicate live request ${requestId}`);
+    }
+    if (this.inboundLiveRequests.size >= this.localSettings.max_concurrent_requests) {
+      throw SessionError.protocol(
+        `max_concurrent_requests exceeded for connection ${this.id}`,
+      );
+    }
+    this.inboundLiveRequests.add(requestId);
+  }
+
+  finishIncomingRequest(requestId: bigint): void {
+    // r[impl rpc.flow-control.max-concurrent-requests.counting]
+    this.inboundLiveRequests.delete(requestId);
   }
 
   nextIncomingCall(): Promise<IncomingCall | null> {
@@ -1378,6 +1193,7 @@ export class ConnectionHandle {
   }
 
   enqueueIncomingCancel(requestId: bigint): void {
+    this.finishIncomingRequest(requestId);
     this.incomingCancels.push(requestId);
   }
 
@@ -1429,6 +1245,9 @@ export class ConnectionHandle {
     this.incomingCalls.close();
     this.incomingCancels.close();
     this.channelRegistry.closeAll();
+    this.inboundLiveRequests.clear();
+    // r[impl rpc.flow-control.max-concurrent-requests.session-failure]
+    this.outboundRequestLimit.close(error);
     const pendingStates = new Set(this.pendingResponses.values());
     this.pendingResponses.clear();
     for (const pending of pendingStates) {
@@ -1439,41 +1258,41 @@ export class ConnectionHandle {
       clearTimeout(pending.timer);
       pending.requestIds.clear();
       pending.finalizeChannels?.();
-      // Report INDETERMINATE when session closes for:
-      //   - persist=true methods (op may have executed on remote)
-      //   - channel-bearing non-idempotent methods (fails-closed: channel
-      //     state is indeterminate after a broken connection)
-      const failClosedOnDrop = pending.channels.length > 0 && !pending.idem;
-      if ((pending.persist || failClosedOnDrop) && error instanceof SessionError) {
-        pending.reject(new RpcError(RpcErrorCode.INDETERMINATE));
-      } else {
-        pending.reject(error);
-      }
+      pending.reject(error);
     }
   }
 
-  onSessionResumed(): void {
-    if (this.closed || !this.peerSupportsRetry) {
-      return;
-    }
+  failPendingAttempts(error: Error): void {
     this.channelRegistry.closeAll();
-    const states = new Set(this.pendingResponses.values());
-    for (const state of states) {
-      if (state.settled) {
+    this.outboundRequestLimit.close(error);
+    const pendingStates = new Set(this.pendingResponses.values());
+    this.pendingResponses.clear();
+    for (const pending of pendingStates) {
+      if (pending.settled) {
         continue;
       }
-      const failClosedOnResume = state.channels.length > 0 && !state.idem;
-      if (failClosedOnResume) {
-        this.clearPendingState(state);
-        state.reject(new RpcError(RpcErrorCode.INDETERMINATE));
-        continue;
-      }
-      for (const requestId of state.requestIds) {
-        this.pendingResponses.delete(requestId);
-      }
-      state.requestIds.clear();
-      void this.sendPendingRequest(state);
+      pending.settled = true;
+      clearTimeout(pending.timer);
+      pending.requestIds.clear();
+      pending.finalizeChannels?.();
+      pending.reject(error);
     }
+  }
+
+  private retainCaller(): () => void {
+    // r[impl rpc.caller.liveness.refcounted]
+    this.callerRefs += 1;
+    let released = false;
+    return () => {
+      if (released) {
+        return;
+      }
+      released = true;
+      this.callerRefs -= 1;
+      if (this.callerRefs === 0 && !this.closed) {
+        this.session.callerLivenessDropped(this.id);
+      }
+    };
   }
 
   private clearPendingState(
@@ -1506,11 +1325,7 @@ export class ConnectionHandle {
     state.requestIds.add(requestId);
 
     try {
-      if (state.prepareRetry) {
-        const rebuilt = state.prepareRetry();
-        state.payload = rebuilt.payload.slice();
-        state.channels = [...rebuilt.channels];
-      }
+      // r[impl schema.exchange.caller]
       const schemas = state.computeSchemas?.();
       voxLogger()?.debug(
         `[vox:session] sendPendingRequest: req=${requestId} method=${state.methodId} payload=${state.payload.length} channels=${state.channels.length} schemas=${schemas?.length ?? 0}`,
@@ -1539,9 +1354,33 @@ export class ConnectionHandle {
   }
 
   private allocateRequestId(): bigint {
+    // r[impl connection.parity]
     const requestId = this.nextRequestId;
     this.nextRequestId += 2n;
     return requestId;
+  }
+
+  private rememberCallerChannelContexts(
+    requestId: bigint,
+    request: CallerRequest,
+    channels: bigint[],
+  ): void {
+    if (channels.length === 0) {
+      return;
+    }
+    const { service, method } = splitQualifiedMethodName(request.method);
+    const metas = [...request.methodSchemas.channels].sort((a, b) => a.index - b.index);
+    for (let index = 0; index < channels.length; index += 1) {
+      const meta = metas[index];
+      this.channelRegistry.rememberContext(channels[index]!, {
+        connectionId: this.id,
+        requestId,
+        service,
+        method,
+        channelDirection: meta?.direction === "tx" ? "rx" : "tx",
+        side: "client",
+      });
+    }
   }
 
   async flushOutgoing(): Promise<void> {
@@ -1593,9 +1432,12 @@ export class ConnectionHandle {
 
 class ConnectionHandleCaller implements Caller {
   private readonly connection: ConnectionHandle;
+  private readonly releaseCaller: () => void;
+  private disposed = false;
 
-  constructor(connection: ConnectionHandle) {
+  constructor(connection: ConnectionHandle, releaseCaller: () => void) {
     this.connection = connection;
+    this.releaseCaller = releaseCaller;
   }
 
   call(request: CallerRequest): Promise<unknown> {
@@ -1613,6 +1455,14 @@ class ConnectionHandleCaller implements Caller {
   with(middleware: ClientMiddleware): Caller {
     return new MiddlewareCaller(this, [middleware]);
   }
+
+  dispose(): void {
+    if (this.disposed) {
+      return;
+    }
+    this.disposed = true;
+    this.releaseCaller();
+  }
 }
 
 export class Session {
@@ -1622,29 +1472,16 @@ export class Session {
     this.core = core;
   }
 
-  private resumeKey(): Uint8Array | null {
-    return this.core.sessionResumeKeyValue();
-  }
-
   static initiatorConduit(
     conduit: Conduit<Message>,
     handshake: HandshakeResult,
     options: SessionBuilderOptions = {},
-    recoverConduit?: () => Promise<Conduit<Message>>,
   ): Session {
-    if (options.resumable && !handshake.sessionResumeKey) {
-      throw SessionError.protocol("peer did not advertise session resumption");
-    }
     const core = new SessionCore(
       conduit,
       handshake.localSettings,
       handshake.peerSettings,
-      handshake.peerSupportsRetry,
-      options.resumable ?? false,
-      handshake.sessionResumeKey,
-      recoverConduit,
       options.onConnection,
-      options.onConnectivityChange,
       options.keepaliveIntervalMs ?? 0,
       options.keepaliveTimeoutMs ?? 0,
     );
@@ -1668,47 +1505,6 @@ export class Session {
   }
 }
 
-class PrefetchedConduit implements Conduit<Message> {
-  private first: Message | null;
-  private readonly inner: Conduit<Message>;
-
-  constructor(first: Message, inner: Conduit<Message>) {
-    this.first = first;
-    this.inner = inner;
-  }
-
-  send(item: Message): Promise<void> {
-    return this.inner.send(item);
-  }
-
-  async recv(): Promise<Message | null> {
-    if (this.first) {
-      const first = this.first;
-      this.first = null;
-      return first;
-    }
-    return this.inner.recv();
-  }
-
-  close(): void {
-    this.inner.close();
-  }
-
-  isClosed(): boolean {
-    return this.inner.isClosed();
-  }
-}
-
-function randomSessionResumeKey(): Uint8Array {
-  const bytes = new Uint8Array(16);
-  const cryptoApi = globalThis.crypto;
-  if (!cryptoApi) {
-    throw SessionError.protocol("crypto.getRandomValues is unavailable");
-  }
-  cryptoApi.getRandomValues(bytes);
-  return bytes;
-}
-
 export const session = {
   async initiator(
     transport: SessionTransport,
@@ -1718,11 +1514,7 @@ export const session = {
     return Session.initiatorConduit(
       established.conduit,
       established.handshake,
-      {
-        ...options,
-        resumable: options.resumable ?? false,
-      },
-      established.recoverConduit,
+      options,
     );
   },
 
@@ -1751,7 +1543,11 @@ export const session = {
       max_concurrent_requests: options.maxConcurrentRequests ?? 64,
       initial_channel_credit: channelCapacityFromOptions(options),
     };
-    const handshake = await handshakeAsInitiator(link, localSettings, true, null, options.metadata ?? []);
+    const handshake = await handshakeAsInitiator(
+      link,
+      localSettings,
+      options.metadata ?? emptyMetadata(),
+    );
     return Session.initiatorConduit(
       new BareConduit(link, buildMessageDecodePlan(handshake.peerMessageSchema)),
       handshake,
@@ -1768,35 +1564,16 @@ export const session = {
       max_concurrent_requests: options.maxConcurrentRequests ?? 64,
       initial_channel_credit: channelCapacityFromOptions(options),
     };
-    const handshake = await handshakeAsAcceptor(link, localSettings, true, false, null, options.metadata ?? []);
+    const handshake = await handshakeAsAcceptor(
+      link,
+      localSettings,
+      options.metadata ?? emptyMetadata(),
+    );
     return Session.initiatorConduit(
       new BareConduit(link, buildMessageDecodePlan(handshake.peerMessageSchema)),
       handshake,
       options,
     );
-  },
-
-  acceptorOrResume(
-    conduit: Conduit<Message>,
-    handshake: HandshakeResult,
-    registry: SessionRegistry,
-    options: SessionBuilderOptions = {},
-  ): SessionAcceptOutcome {
-    const resumeKey = handshake.peerResumeKey;
-    if (resumeKey) {
-      const handle = registry.get(resumeKey);
-      if (!handle) {
-        throw SessionError.protocol("unknown session resume key");
-      }
-      void handle.acceptResumedConduit(conduit);
-      return { tag: "Resumed" };
-    }
-    const s = session.acceptorConduit(conduit, handshake, options);
-    const establishedKey = handshake.sessionResumeKey;
-    if (establishedKey) {
-      registry.insert(establishedKey, s.handle());
-    }
-    return { tag: "Established", session: s };
   },
 
   async initiatorOn(
@@ -1807,11 +1584,7 @@ export const session = {
     return Session.initiatorConduit(
       established.conduit,
       established.handshake,
-      {
-        ...options,
-        resumable: false,
-      },
-      undefined,
+      options,
     );
   },
 
@@ -1819,31 +1592,12 @@ export const session = {
     transport: SessionTransport,
     options: SessionTransportOptions = {},
   ): Promise<Session> {
-    const established = await makeAcceptorEstablishedTransport(transport, {
-      ...options,
-      resumable: options.resumable ?? false,
-    });
+    const established = await makeAcceptorEstablishedTransport(transport, options);
     return Session.initiatorConduit(
       established.conduit,
       established.handshake,
-      {
-        ...options,
-        resumable: options.resumable ?? false,
-      },
-      undefined,
+      options,
     );
-  },
-
-  async acceptorOnOrResume(
-    transport: SessionTransport,
-    registry: SessionRegistry,
-    options: SessionTransportOptions = {},
-  ): Promise<SessionAcceptOutcome> {
-    const established = await makeAcceptorEstablishedTransport(transport, {
-      ...options,
-      resumable: options.resumable ?? false,
-    });
-    return session.acceptorOrResume(established.conduit, established.handshake, registry, options);
   },
 
   async initiatorTransport(
@@ -1857,31 +1611,12 @@ export const session = {
     transport: SessionTransport,
     options: SessionTransportOptions = {},
   ): Promise<Session> {
-    const established = await makeAcceptorEstablishedTransport(transport, {
-      ...options,
-      resumable: options.resumable ?? false,
-    });
+    const established = await makeAcceptorEstablishedTransport(transport, options);
     return Session.initiatorConduit(
       established.conduit,
       established.handshake,
-      {
-        ...options,
-        resumable: options.resumable ?? false,
-      },
-      undefined,
+      options,
     );
-  },
-
-  async acceptorTransportOrResume(
-    transport: SessionTransport,
-    registry: SessionRegistry,
-    options: SessionTransportOptions = {},
-  ): Promise<SessionAcceptOutcome> {
-    const established = await makeAcceptorEstablishedTransport(transport, {
-      ...options,
-      resumable: options.resumable ?? false,
-    });
-    return session.acceptorOrResume(established.conduit, established.handshake, registry, options);
   },
 
   rootSettings(
@@ -1889,12 +1624,16 @@ export const session = {
     maxConcurrentRequests = 64,
     channelCapacity = DEFAULT_CHANNEL_CAPACITY,
   ): ConnectionSettings {
+    // r[impl rpc.flow-control.credit.initial.high-level]
+    // r[impl rpc.flow-control.credit.initial.zero]
     if (channelCapacity <= 0) {
       throw SessionError.protocol("initial_channel_credit must be greater than zero");
     }
 
     return {
+      // r[impl session.parity]
       parity: parityFromRole(role),
+      // r[impl rpc.flow-control.max-concurrent-requests.default]
       max_concurrent_requests: maxConcurrentRequests,
       initial_channel_credit: channelCapacity,
     };

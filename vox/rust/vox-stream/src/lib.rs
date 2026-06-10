@@ -20,13 +20,82 @@ mod fd_link;
 #[cfg(unix)]
 pub use fd_link::{FdStreamLink, FdStreamLinkRx, FdStreamLinkTx};
 
+// ---------------------------------------------------------------------------
+// Link prologue
+// ---------------------------------------------------------------------------
+//
+// The first bytes on every vox byte-stream connection, sent once before any framed
+// message. vox's *application* handshake is versioned and evolvable, but the framing layer
+// underneath it historically had no magic or version — so a framing change (e.g. growing
+// the header for fd-passing) failed silently as "link closed during transport prologue"
+// instead of a clear error. This prologue gives the framing layer its own magic + version
+// + capability flags, so a mismatch fails loudly and immediately, and the fd-capable header
+// difference becomes negotiated rather than hard-coded per transport.
+
+/// Magic that opens every vox link: ASCII `VOXL`.
+pub(crate) const LINK_MAGIC: [u8; 4] = *b"VOXL";
+/// Framing-layer version (independent of the application handshake version).
+pub(crate) const LINK_VERSION: u8 = 1;
+/// Flag bit: frames on this link carry the `[u32 fd_count]` field and may pass fds.
+pub(crate) const LINK_FLAG_FD_CAPABLE: u8 = 0x01;
+/// magic(4) + version(1) + flags(1).
+pub(crate) const LINK_PROLOGUE_LEN: usize = 6;
+
+/// Build the prologue bytes for a link with the given fd capability.
+pub(crate) fn link_prologue(fd_capable: bool) -> [u8; LINK_PROLOGUE_LEN] {
+    let flags = if fd_capable { LINK_FLAG_FD_CAPABLE } else { 0 };
+    [
+        LINK_MAGIC[0],
+        LINK_MAGIC[1],
+        LINK_MAGIC[2],
+        LINK_MAGIC[3],
+        LINK_VERSION,
+        flags,
+    ]
+}
+
+/// Validate a peer's prologue, checking magic, version, and that its fd capability matches
+/// this link's. A mismatch is a hard, descriptive error rather than a silent mis-frame.
+pub(crate) fn validate_link_prologue(
+    buf: &[u8; LINK_PROLOGUE_LEN],
+    expect_fd_capable: bool,
+) -> io::Result<()> {
+    if buf[..4] != LINK_MAGIC {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "bad vox link magic: expected {LINK_MAGIC:?}, got {:?}",
+                &buf[..4]
+            ),
+        ));
+    }
+    if buf[4] != LINK_VERSION {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "unsupported vox link version {}: this build speaks {LINK_VERSION}",
+                buf[4]
+            ),
+        ));
+    }
+    let peer_fd_capable = buf[5] & LINK_FLAG_FD_CAPABLE != 0;
+    if peer_fd_capable != expect_fd_capable {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "vox link fd-capability mismatch: peer={peer_fd_capable}, local={expect_fd_capable}"
+            ),
+        ));
+    }
+    Ok(())
+}
+
 /// A [`Link`] over a byte stream with length-prefix framing.
 ///
 /// Wraps an `AsyncRead + AsyncWrite` pair. Each message is framed as
 /// `[len: u32 LE][payload bytes]`.
 // r[impl transport.stream]
 // r[impl transport.stream.kinds]
-// r[impl zerocopy.framing.link.stream]
 pub struct StreamLink<R, W> {
     reader: R,
     writer: W,
@@ -165,6 +234,24 @@ where
         let mut writer = BufWriter::new(self.writer);
 
         let reader_task = tokio::spawn(async move {
+            // Validate the peer's link prologue before any framing.
+            let mut prologue = [0u8; LINK_PROLOGUE_LEN];
+            match read_frame_exact(&mut reader, &mut prologue, "link prologue").await {
+                Ok(ReadExactOutcome::Complete) => {
+                    if let Err(error) = validate_link_prologue(&prologue, false) {
+                        let _ = read_tx.send(Err(error)).await;
+                        return;
+                    }
+                }
+                Ok(ReadExactOutcome::CleanEof) => {
+                    let _ = read_tx.send(Ok(None)).await;
+                    return;
+                }
+                Err(error) => {
+                    let _ = read_tx.send(Err(error)).await;
+                    return;
+                }
+            }
             loop {
                 let mut len_buf = [0u8; 4];
                 match read_frame_exact(&mut reader, &mut len_buf, "frame header").await {
@@ -197,17 +284,19 @@ where
         });
 
         let writer_task = tokio::spawn(async move {
+            // Announce the link prologue before any framed message, and flush so the peer
+            // can validate immediately rather than blocking until the first real frame.
+            writer.write_all(&link_prologue(false)).await?;
+            writer.flush().await?;
             while let Some(bytes) = rx_chan.recv().await {
-                writer
-                    .write_all(&(bytes.len() as u32).to_le_bytes())
-                    .await?;
+                let len = frame_len_prefix(bytes.len())?;
+                writer.write_all(&len).await?;
                 writer.write_all(&bytes).await?;
                 // Drain any already-queued messages before flushing,
                 // so bursts coalesce into fewer syscalls.
                 while let Ok(bytes) = rx_chan.try_recv() {
-                    writer
-                        .write_all(&(bytes.len() as u32).to_le_bytes())
-                        .await?;
+                    let len = frame_len_prefix(bytes.len())?;
+                    writer.write_all(&len).await?;
                     writer.write_all(&bytes).await?;
                 }
                 writer.flush().await?;
@@ -242,6 +331,10 @@ pub struct StreamLinkTx {
 
 impl LinkTx for StreamLinkTx {
     async fn send(&self, bytes: Vec<u8>) -> io::Result<()> {
+        let _ = frame_len_prefix(bytes.len())?;
+        // r[impl link.tx.send]
+        // r[impl link.tx.cancel-safe]
+        // r[impl link.message.empty]
         let permit = self.tx.clone().reserve_owned().await.map_err(|_| {
             io::Error::new(io::ErrorKind::ConnectionReset, "stream writer task stopped")
         })?;
@@ -255,6 +348,17 @@ impl LinkTx for StreamLinkTx {
     }
 }
 
+// r[impl link.tx.alloc.limits]
+fn frame_len_prefix(len: usize) -> io::Result<[u8; 4]> {
+    let len = u32::try_from(len).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "link payload exceeds 4GiB length-prefix limit",
+        )
+    })?;
+    Ok(len.to_le_bytes())
+}
+
 // ---------------------------------------------------------------------------
 // Rx
 // ---------------------------------------------------------------------------
@@ -266,7 +370,6 @@ pub struct StreamLinkRx<R> {
     _phantom: std::marker::PhantomData<fn(R)>,
 }
 
-// r[impl zerocopy.recv.stream]
 impl<R: Send + 'static> LinkRx for StreamLinkRx<R> {
     type Error = io::Error;
 
@@ -540,9 +643,8 @@ impl Link for LocalLink {
 /// Reconnecting source for [`LocalLink`] attachments.
 ///
 /// Each call to `next_link` connects to the same local endpoint and yields an
-/// initiator attachment for stable conduit reconnects.
+/// initiator attachment.
 // r[impl transport.stream.local]
-// r[impl stable.link-source]
 pub struct LocalLinkSource {
     addr: String,
 }
@@ -746,6 +848,12 @@ mod tests {
         }
     }
 
+    // r[verify link]
+    // r[verify link.split]
+    // r[verify link.message]
+    // r[verify link.rx.recv]
+    // r[verify link.tx.send]
+    // r[verify transport.stream.kinds]
     #[tokio::test]
     async fn round_trip_single() {
         let (a, b) = duplex_pair();
@@ -758,6 +866,7 @@ mod tests {
         assert_eq!(payload(&msg), b"hello");
     }
 
+    // r[verify link.order]
     #[tokio::test]
     async fn multiple_messages_in_order() {
         let (a, b) = duplex_pair();
@@ -788,6 +897,44 @@ mod tests {
         assert_eq!(payload(&msg), b"");
     }
 
+    // r[verify link.tx.alloc.limits]
+    #[test]
+    fn frame_len_prefix_rejects_payloads_that_exceed_u32_prefix() {
+        let err = frame_len_prefix(u32::MAX as usize + 1).expect_err("payload should be too large");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    // r[verify link.tx.cancel-safe]
+    #[tokio::test]
+    async fn send_cancel_before_capacity_does_not_enqueue() {
+        let (tx, mut rx) = mpsc::channel::<Vec<u8>>(1);
+        let link_tx = StreamLinkTx {
+            tx,
+            writer_task: tokio::spawn(async { Ok(()) }),
+        };
+
+        link_tx.send(b"first".to_vec()).await.unwrap();
+        {
+            let pending = link_tx.send(b"second".to_vec());
+            tokio::pin!(pending);
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(20), &mut pending)
+                    .await
+                    .is_err(),
+                "second send should wait for queue capacity"
+            );
+        }
+
+        assert_eq!(rx.recv().await.unwrap(), b"first".to_vec());
+        assert!(matches!(
+            rx.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+
+        link_tx.close().await.unwrap();
+    }
+
+    // r[verify link.tx.close]
     // r[verify link.rx.eof]
     #[tokio::test]
     async fn eof_on_peer_close() {
@@ -802,6 +949,27 @@ mod tests {
         assert!(rx_b.recv().await.unwrap().is_none());
     }
 
+    // r[verify link.rx.error]
+    #[tokio::test]
+    async fn recv_error_is_terminal() {
+        let (a, mut b) = tokio::io::duplex(4096);
+        let (a_r, a_w) = split(a);
+        let receiver_link = StreamLink::new(a_r, a_w);
+        let (_tx, mut rx) = receiver_link.split();
+
+        b.write_all(&link_prologue(false)).await.unwrap();
+        b.write_all(&4_u32.to_le_bytes()).await.unwrap();
+        b.write_all(&[0xAA]).await.unwrap();
+        drop(b);
+
+        let err = match rx.recv().await {
+            Ok(_) => panic!("partial frame should error"),
+            Err(error) => error,
+        };
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+        assert!(rx.recv().await.unwrap().is_none());
+    }
+
     // r[verify rpc.transport.stream.cancel-safe-recv]
     #[tokio::test]
     async fn recv_can_be_cancelled_during_partial_frame() {
@@ -812,6 +980,7 @@ mod tests {
         let (_tx, mut rx) = receiver_link.split();
 
         let expected = b"cancel-safe-frame";
+        b_w.write_all(&link_prologue(false)).await.unwrap();
         b_w.write_all(&(expected.len() as u32).to_le_bytes())
             .await
             .unwrap();
@@ -882,7 +1051,7 @@ mod tests {
         let server = tokio::spawn(async move {
             let link = acceptor.accept().await.unwrap();
             let (tx, _rx) = link.split();
-            let (body, fds) = collect_fds(|| vox_postcard::to_vec(&fd_msg).unwrap());
+            let (body, fds) = collect_fds(|| vox_phon::to_vec(&fd_msg).unwrap());
             assert_eq!(fds.len(), 1);
             tx.send_with_fds(body, fds).await.unwrap();
         });
@@ -896,7 +1065,7 @@ mod tests {
             Backing::Boxed(b) => b.to_vec(),
             Backing::Shared(s) => s.as_bytes().to_vec(),
         };
-        let decoded: Fd = provide_fds(frame_fds, || vox_postcard::from_slice(&bytes).unwrap());
+        let decoded: Fd = provide_fds(frame_fds, || vox_phon::from_slice(&bytes).unwrap());
         let mut f = std::fs::File::from(decoded.into_owned_fd().unwrap());
         let mut got = String::new();
         f.read_to_string(&mut got).unwrap();

@@ -167,8 +167,8 @@ The same factory handles both root and virtual connections.
 
 ### Everything is metadata
 
-The `vox-` prefix is already reserved for internal metadata keys:
-`vox-session-key`, `vox-retry-support`, `vox-operation-id`, etc.
+The `vox-` prefix is reserved for internal metadata keys such as
+`vox-session-key`.
 
 Service routing and transport info use the same mechanism:
 
@@ -238,11 +238,10 @@ Desired direction:
 - server lifetime should be explicit (shutdown/error), not accidental caller drop
 - root and virtual liveness semantics should be documented clearly
 
-## Resumable-By-Default Footgun ✅
+## Retry/Resume Layer ✅
 
-**Fixed.** Both `SessionSourceInitiatorBuilder` and
-`SessionTransportAcceptorBuilder` now default `resumable: false`.
-Users opt in with `.resumable()`.
+**Removed.** Conduit-level retry/resume was deleted from the runtime surface;
+retry policy belongs above Vox RPC.
 
 ## Facade Crate Re-export Hygiene
 
@@ -268,9 +267,9 @@ feature entirely.
 
 ## Migration Approach
 
-1. ✅ `vox::connect(addr)` — TCP, local, WebSocket, SHM
+1. ✅ `vox::connect(addr)` — TCP, local, WebSocket
 2. ✅ `SessionHandle` stored in client
-3. ✅ `resumable` defaults to `false`
+3. ✅ Conduit-level retry/resume removed from the runtime surface
 5. ✅ Concrete `Caller` type, public fields on clients
    - Killed: `Caller` trait, `ErasedCaller`, `ErasedCallerDyn`,
      `MiddlewareCaller`, `VoxClient`, `HasSessionHandle`, old `NoopCaller`
@@ -317,24 +316,10 @@ feature entirely.
     - Replaced `pub use vox_core::*` with curated, grouped explicit re-exports
     - Rewrote crate-level doc comment with `connect()` / `serve()` examples
     - Organized vox-core re-exports by category: session builders, connection management,
-      driver/caller, conduits, stable conduit, memory links, handshake, transport, operations
+      driver/caller, conduits, memory links, handshake, transport, operations
 14. Multi-listener support
-    - Serve on multiple transports simultaneously (e.g. TCP + Unix socket + SHM)
+    - Serve on multiple transports simultaneously (e.g. TCP + Unix socket)
     - Compose multiple `VoxListener`s into one
-
-## SHM Transport in `connect()` ✅
-
-now sends 4 FDs (doorbell, segment, mmap_rx, mmap_tx) over SCM_RIGHTS,
-eliminating the need for FD inheritance. The SID field was removed from
-the wire format (it was vixen-specific). Magic renamed from RSH0/RSP0
-to VSH1/VSP1.
-
-guest-side bootstrap on each `next_link()` call:
-
-1. Connect to Unix control socket
-2. Send 4-byte magic (`VSH1`)
-3. Receive response + 4 FDs
-
 
 ## Connect Timeout ✅
 

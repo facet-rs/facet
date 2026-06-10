@@ -22,6 +22,22 @@ fn transparent_named_alias(shape: &'static Shape) -> Option<(&'static str, &'sta
     Some((name, inner))
 }
 
+fn enum_discriminator_field(variants: &[facet_core::Variant]) -> &'static str {
+    if variants
+        .iter()
+        .any(|variant| match classify_variant(variant) {
+            VariantKind::Tuple { fields } | VariantKind::Struct { fields } => {
+                fields.iter().any(|field| field.name == "tag")
+            }
+            VariantKind::Unit | VariantKind::Newtype { .. } => false,
+        })
+    {
+        "$tag"
+    } else {
+        "tag"
+    }
+}
+
 fn extract_type_name(type_identifier: &'static str) -> Option<&'static str> {
     if type_identifier.is_empty()
         || type_identifier.starts_with('(')
@@ -57,6 +73,10 @@ pub fn collect_named_types(service: &ServiceDescriptor) -> Vec<(String, &'static
         seen: &mut HashSet<String>,
         types: &mut Vec<(String, &'static Shape)>,
     ) {
+        if is_dynamic_value(shape) {
+            return;
+        }
+
         if let Some((name, inner)) = transparent_named_alias(shape) {
             if !seen.contains(name) {
                 seen.insert(name.to_string());
@@ -109,6 +129,11 @@ pub fn collect_named_types(service: &ServiceDescriptor) -> Vec<(String, &'static
                     visit(param.shape, seen, types);
                 }
             }
+            ShapeKind::TupleStruct { fields } => {
+                for field in fields {
+                    visit(field.shape(), seen, types);
+                }
+            }
             ShapeKind::Tx { inner } | ShapeKind::Rx { inner } => visit(inner, seen, types),
             ShapeKind::Pointer { pointee } => visit(pointee, seen, types),
             ShapeKind::Result { ok, err } => {
@@ -123,6 +148,9 @@ pub fn collect_named_types(service: &ServiceDescriptor) -> Vec<(String, &'static
     for method in service.methods {
         for arg in method.args {
             visit(arg.shape, &mut seen, &mut types);
+            if let Some(element) = arg.channel_element {
+                visit(element, &mut seen, &mut types);
+            }
         }
         visit(method.return_shape, &mut seen, &mut types);
     }
@@ -162,28 +190,48 @@ pub fn generate_named_types(named_types: &[(String, &'static Shape)]) -> String 
                 out.push_str("}\n\n");
             }
             ShapeKind::Enum(EnumInfo { variants, .. }) => {
+                let discriminator = enum_discriminator_field(variants);
                 out.push_str(&format!("export type {} =\n", name));
                 for (i, variant) in variants.iter().enumerate() {
                     let variant_type = match classify_variant(variant) {
-                        VariantKind::Unit => format!("{{ tag: '{}' }}", variant.name),
+                        VariantKind::Unit => {
+                            format!("{{ {discriminator}: '{}' }}", variant.name)
+                        }
                         VariantKind::Newtype { inner } => {
                             format!(
-                                "{{ tag: '{}'; value: {} }}",
+                                "{{ {discriminator}: '{}'; value: {} }}",
                                 variant.name,
                                 ts_type_base_named(inner)
                             )
                         }
                         VariantKind::Tuple { fields } | VariantKind::Struct { fields } => {
-                            let field_strs = fields
-                                .iter()
-                                .map(|f| format!("{}: {}", f.name, ts_type_base_named(f.shape())))
-                                .collect::<Vec<_>>()
-                                .join("; ");
-                            format!("{{ tag: '{}'; {} }}", variant.name, field_strs)
+                            if fields.len() > 4 {
+                                let mut variant_type =
+                                    format!("{{\n    {discriminator}: '{}';\n", variant.name);
+                                for field in fields {
+                                    variant_type.push_str(&format!(
+                                        "    {}: {};\n",
+                                        field.name,
+                                        ts_type_base_named(field.shape())
+                                    ));
+                                }
+                                variant_type.push_str("  }");
+                                variant_type
+                            } else {
+                                let field_strs = fields
+                                    .iter()
+                                    .map(|f| {
+                                        format!("{}: {}", f.name, ts_type_base_named(f.shape()))
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("; ");
+                                format!("{{ {discriminator}: '{}'; {} }}", variant.name, field_strs)
+                            }
                         }
                     };
+                    let prefix = if i == 0 { "  " } else { "  | " };
                     let sep = if i < variants.len() - 1 { "" } else { ";" };
-                    out.push_str(&format!("  | {}{}\n", variant_type, sep));
+                    out.push_str(&format!("{prefix}{variant_type}{sep}\n"));
                 }
                 out.push('\n');
             }
@@ -197,6 +245,10 @@ pub fn generate_named_types(named_types: &[(String, &'static Shape)]) -> String 
 /// Convert Shape to TypeScript type string, using named types when available.
 /// This handles container types recursively, using named types at every level.
 pub fn ts_type_base_named(shape: &'static Shape) -> String {
+    if is_dynamic_value(shape) {
+        return "Value".into();
+    }
+
     if let Some((name, _)) = transparent_named_alias(shape) {
         return name.to_string();
     }
@@ -263,28 +315,31 @@ pub fn ts_type_base_named(shape: &'static Shape) -> String {
         ShapeKind::Enum(EnumInfo {
             name: None,
             variants,
-        }) => variants
-            .iter()
-            .map(|v| match classify_variant(v) {
-                VariantKind::Unit => format!("{{ tag: '{}' }}", v.name),
-                VariantKind::Newtype { inner } => {
-                    format!(
-                        "{{ tag: '{}'; value: {} }}",
-                        v.name,
-                        ts_type_base_named(inner)
-                    )
-                }
-                VariantKind::Tuple { fields } | VariantKind::Struct { fields } => {
-                    let field_strs = fields
-                        .iter()
-                        .map(|f| format!("{}: {}", f.name, ts_type_base_named(f.shape())))
-                        .collect::<Vec<_>>()
-                        .join("; ");
-                    format!("{{ tag: '{}'; {} }}", v.name, field_strs)
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(" | "),
+        }) => {
+            let discriminator = enum_discriminator_field(variants);
+            variants
+                .iter()
+                .map(|v| match classify_variant(v) {
+                    VariantKind::Unit => format!("{{ {discriminator}: '{}' }}", v.name),
+                    VariantKind::Newtype { inner } => {
+                        format!(
+                            "{{ {discriminator}: '{}'; value: {} }}",
+                            v.name,
+                            ts_type_base_named(inner)
+                        )
+                    }
+                    VariantKind::Tuple { fields } | VariantKind::Struct { fields } => {
+                        let field_strs = fields
+                            .iter()
+                            .map(|f| format!("{}: {}", f.name, ts_type_base_named(f.shape())))
+                            .collect::<Vec<_>>()
+                            .join("; ");
+                        format!("{{ {discriminator}: '{}'; {} }}", v.name, field_strs)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" | ")
+        }
 
         // Scalars and other types
         ShapeKind::Scalar(scalar) => ts_scalar_type(scalar),
@@ -307,6 +362,10 @@ pub fn ts_type_base_named(shape: &'static Shape) -> String {
         }
         ShapeKind::Opaque => "unknown".into(),
     }
+}
+
+pub fn is_dynamic_value(shape: &'static Shape) -> bool {
+    matches!(shape.def, facet_core::Def::DynamicValue(_))
 }
 
 /// Convert ScalarType to TypeScript type string.
@@ -379,6 +438,10 @@ pub fn ts_type(shape: &'static Shape) -> String {
 /// Check if a type can be fully encoded/decoded.
 /// Channel types (Tx/Rx) are supported - they encode as channel IDs.
 pub fn is_fully_supported(shape: &'static Shape) -> bool {
+    if is_dynamic_value(shape) {
+        return true;
+    }
+
     match classify_shape(shape) {
         // Channel types are supported - they encode/decode as channel IDs
         ShapeKind::Tx { inner } | ShapeKind::Rx { inner } => is_fully_supported(inner),

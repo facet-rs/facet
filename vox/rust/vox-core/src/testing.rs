@@ -102,7 +102,7 @@ impl LinkRx for BreakableLinkRx {
 /// A [`LinkSource`] backed by a fixed list of pre-made links.
 ///
 /// Each call to `next_link()` pops the next attachment. When exhausted,
-/// returns an error (which causes the recoverer to give up).
+/// returns an error.
 pub struct TestLinkSource {
     attachments: VecDeque<Attachment<BreakableLink>>,
 }

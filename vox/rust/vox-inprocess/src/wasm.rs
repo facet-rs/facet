@@ -113,7 +113,6 @@ impl JsInProcessLink {
 /// An in-process [`Link`] for WASM ↔ JS communication.
 // r[impl transport.inprocess]
 // r[impl transport.inprocess.platforms]
-// r[impl zerocopy.framing.link.inprocess]
 pub struct InProcessLink(InProcessLinkTx, InProcessLinkRx);
 
 impl Link for InProcessLink {
@@ -178,7 +177,6 @@ impl std::fmt::Display for InProcessLinkRxError {
 
 impl std::error::Error for InProcessLinkRxError {}
 
-// r[impl zerocopy.recv.inprocess]
 impl LinkRx for InProcessLinkRx {
     type Error = InProcessLinkRxError;
 

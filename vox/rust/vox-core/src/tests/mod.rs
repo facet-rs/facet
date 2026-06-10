@@ -5,11 +5,13 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::sync::Notify;
 use vox_types::{
     Backing, ChannelClose, ChannelItem, ChannelReset, ChannelSink, Conduit, ConduitRx, ConduitTx,
-    IncomingChannelMessage, Metadata, MsgFamily, Payload, Rx, RxError, SelfRef, Tx, TxError,
+    IncomingChannelMessage, Link, LinkRx, Metadata, MsgFamily, Payload, Rx, RxError, SelfRef, Tx,
+    TxError,
 };
 
 use crate::{
-    BareConduit, MemoryLink, TransportMode, accept_transport, initiate_transport, memory_link_pair,
+    BareConduit, MemoryLink, TransportPrologueError, TransportRejectReason, accept_transport,
+    initiate_transport, memory_link_pair, reject_transport,
 };
 
 mod credit_tests;
@@ -36,16 +38,42 @@ fn conduit_pair() -> (StringConduit, StringConduit) {
 }
 
 #[tokio::test]
+// r[verify transport.prologue]
+// r[verify transport.prologue.request]
+// r[verify transport.prologue.accept]
 async fn transport_prologue_accepts_bare_mode() {
     let (client, server) = memory_link_pair(16);
-    let acceptor = tokio::spawn(async move { accept_transport(server).await.unwrap().0 });
-    let _initiator = initiate_transport(client, TransportMode::Bare)
-        .await
-        .unwrap();
-    assert_eq!(acceptor.await.unwrap(), TransportMode::Bare);
+    let acceptor = tokio::spawn(async move { accept_transport(server).await.unwrap() });
+    let _initiator = initiate_transport(client).await.unwrap();
+    let _accepted = acceptor.await.unwrap();
 }
 
 #[tokio::test]
+// r[verify transport.prologue.reject-close]
+async fn transport_prologue_reject_abandons_link() {
+    let (client, server) = memory_link_pair(16);
+    let rejector = tokio::spawn(async move {
+        let (server_tx, mut server_rx) = server.split();
+        let _hello = server_rx.recv().await.unwrap().unwrap();
+        reject_transport(&server_tx, TransportRejectReason::UnsupportedPrologue)
+            .await
+            .unwrap();
+    });
+
+    let err = match initiate_transport(client).await {
+        Ok(_) => panic!("transport prologue unexpectedly accepted"),
+        Err(err) => err,
+    };
+    assert!(matches!(
+        err,
+        TransportPrologueError::Rejected(TransportRejectReason::UnsupportedPrologue)
+    ));
+    rejector.await.unwrap();
+}
+
+#[tokio::test]
+// r[verify conduit]
+// r[verify conduit.bare]
 async fn send_recv_single() {
     let (client, server) = conduit_pair();
     let (client_tx, _client_rx) = client.split();
@@ -60,6 +88,7 @@ async fn send_recv_single() {
 }
 
 #[tokio::test]
+// r[verify conduit.typeplan]
 async fn send_recv_multiple_in_order() {
     let (client, server) = conduit_pair();
     let (client_tx, _client_rx) = client.split();
@@ -322,11 +351,11 @@ async fn rx_recv_decodes_channel_items() {
     let (tx_items, rx_items) = vox_types::channel_mailbox("vox_core.tests.rx_recv_items", 4);
     rx.bind(rx_items);
 
-    let payload_bytes = vox_postcard::to_vec(&42_u32).expect("serialize channel item");
+    let payload_bytes = vox_phon::to_vec(&42_u32).expect("serialize channel item");
     let backing = Backing::Boxed(payload_bytes.into_boxed_slice());
     let item_ref = SelfRef::try_new(backing, |bytes| {
         Ok::<_, std::convert::Infallible>(ChannelItem {
-            item: Payload::PostcardBytes(bytes),
+            item: Payload::Encoded(bytes),
         })
     })
     .unwrap();
@@ -375,22 +404,23 @@ async fn rx_recv_signals_reset() {
 }
 
 #[test]
-fn test_deser_postcard_borrowed() {
+fn test_deser_phon_borrowed() {
     // A reply
     #[derive(Facet)]
     struct Reply<'a> {
         s: &'a str,
     }
 
-    let payload = vox_postcard::to_vec(&Reply {
+    let payload = vox_phon::to_vec(&Reply {
         s: "IAMA borrowed string AMA",
     })
     .unwrap();
 
     let backing = Backing::Boxed(payload.into_boxed_slice());
 
-    // now deser with Backing
-    let reply = crate::deserialize_postcard::<Reply>(backing).unwrap();
+    // Decode with borrowing: the `&str` borrows the backing, kept alive by the SelfRef.
+    let reply: SelfRef<Reply<'static>> =
+        SelfRef::try_new(backing, vox_phon::from_slice_borrowed::<Reply>).unwrap();
     let reply = reply.map(|reply| reply.s.to_string());
     assert_eq!(reply.get(), "IAMA borrowed string AMA");
 }

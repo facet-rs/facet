@@ -74,7 +74,7 @@ async fn main() -> Result<()> {
     let socket = tokio::net::TcpStream::connect(addr)
         .await
         .wrap_err("connecting client socket")?;
-    let client = vox::initiator_on(StreamLink::tcp(socket), vox::TransportMode::Bare)
+    let client = vox::initiator_on(StreamLink::tcp(socket))
         .establish::<WordLabClient>()
         .await
         .map_err(|e| eyre!("failed to establish initiator session: {e:?}"))?;

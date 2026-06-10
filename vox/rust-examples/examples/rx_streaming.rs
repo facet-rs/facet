@@ -64,7 +64,7 @@ async fn main() -> Result<()> {
     let socket = tokio::net::TcpStream::connect(addr)
         .await
         .wrap_err("connecting")?;
-    let client = vox::initiator_on(StreamLink::tcp(socket), vox::TransportMode::Bare)
+    let client = vox::initiator_on(StreamLink::tcp(socket))
         .establish::<NumberLabClient>()
         .await
         .map_err(|e| eyre!("establish failed: {e:?}"))?;

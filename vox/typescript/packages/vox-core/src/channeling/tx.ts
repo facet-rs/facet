@@ -1,7 +1,12 @@
 // Tx channel handle - caller sends data to callee.
 
 import { type ChannelId, ChannelError } from "./types.ts";
-import { OutgoingSender, ChannelRegistry, type OutgoingCreditController } from "./registry.ts";
+import {
+  OutgoingSender,
+  ChannelRegistry,
+  type OutgoingCreditController,
+  type OutgoingTrySendDetail,
+} from "./registry.ts";
 import { type TaskSender } from "./task.ts";
 
 // Forward declaration for pair reference
@@ -18,12 +23,21 @@ type TxSender =
   | { mode: "client"; sender: OutgoingSender }
   | { mode: "server"; channelId: ChannelId; taskSender: TaskSender; credit: OutgoingCreditController };
 
+export type TrySendResult<T> =
+  | { kind: "sent" }
+  | { kind: "full"; value: T }
+  | { kind: "closed"; value: T };
+
+export type TrySendDetailedResult<T> =
+  | { kind: "sent"; detail: "sent" }
+  | { kind: "full"; detail: "unbound" | "credit_exhausted" | "runtime_queue_full"; value: T }
+  | { kind: "closed"; detail: "closed"; value: T };
+
 /**
  * Tx channel handle - caller sends data to callee.
  *
- * r[impl channeling.caller-pov] - From caller's perspective, Tx means "I send".
- * r[impl channeling.type] - Serializes as u64 channel ID on wire.
- * r[impl channeling.holder-semantics] - The holder sends on this channel.
+ * r[impl rpc.channel]
+ * r[impl rpc.channel.direction]
  *
  * # Two modes of operation
  *
@@ -147,7 +161,9 @@ export class Tx<T> {
   /**
    * Send a value on this channel.
    *
-   * r[impl channeling.data] - Data messages carry serialized values.
+   * r[impl rpc.channel.item]
+   * r[impl rpc.flow-control.credit]
+   * r[impl rpc.channel.pair.tx-read]
    *
    * @throws If the Tx is not bound yet
    */
@@ -180,10 +196,62 @@ export class Tx<T> {
     }
   }
 
+  // r[impl rpc.flow-control.credit.try-send]
+  trySend(value: T): TrySendResult<T> {
+    const outcome = this.trySendDetailed(value);
+    if (outcome.kind === "sent") {
+      return { kind: "sent" };
+    }
+    return outcome.kind === "closed"
+      ? { kind: "closed", value: outcome.value }
+      : { kind: "full", value: outcome.value };
+  }
+
+  // r[impl rpc.observability.channel.try-send-detail]
+  trySendDetailed(value: T): TrySendDetailedResult<T> {
+    if (!this.isBound || this.sender === undefined || this.serialize === undefined) {
+      return { kind: "full", detail: "unbound", value };
+    }
+
+    if (this.closed) {
+      return { kind: "closed", detail: "closed", value };
+    }
+
+    let bytes: Uint8Array;
+    try {
+      bytes = this.serialize(value);
+    } catch (e) {
+      throw ChannelError.serialize(e);
+    }
+
+    if (this.sender.mode === "client") {
+      const outcome = this.sender.sender.trySendDataDetailed(bytes);
+      if (outcome === "sent") {
+        return { kind: "sent", detail: "sent" };
+      }
+      return detailToTrySendResult(outcome, value);
+    }
+
+    const credit = this.sender.credit.tryConsume();
+    if (credit === "consumed") {
+      this.sender.taskSender({
+        kind: "data",
+        channelId: this.sender.channelId,
+        payload: bytes,
+      });
+      return { kind: "sent", detail: "sent" };
+    }
+    return detailToTrySendResult(
+      credit === "closed" ? "closed" : "credit_exhausted",
+      value,
+    );
+  }
+
   /**
    * Close this channel.
    *
-   * r[impl channeling.lifecycle.caller-closes-pushes] - Caller sends Close when done.
+   * r[impl rpc.channel.lifecycle]
+   * r[impl rpc.channel.close]
    */
   close(): void {
     if (this.closed) return;
@@ -206,7 +274,7 @@ export class Tx<T> {
     }
   }
 
-  finishRetryBinding(): void {
+  finishCallBinding(): void {
     this.close();
   }
 
@@ -235,6 +303,16 @@ export class Tx<T> {
     this._channelId = channelId;
     this._consumed = true;
   }
+}
+
+function detailToTrySendResult<T>(
+  detail: Exclude<OutgoingTrySendDetail, "sent">,
+  value: T,
+): TrySendDetailedResult<T> {
+  if (detail === "closed") {
+    return { kind: "closed", detail, value };
+  }
+  return { kind: "full", detail, value };
 }
 
 // Note: Symbol.dispose support for using-declarations would be nice but requires esnext target.

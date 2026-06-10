@@ -23,11 +23,11 @@ Transport-level errors must use specific categories:
 - `connectionClosed`: peer closed/dead.
 - `frameEncoding` / `frameDecoding`: local encode/decode problems.
 - `protocolViolation`: negotiated/protocol invariants violated.
-- `transportIO`: underlying SHM/socket/doorbell I/O errors.
+- `transportIO`: underlying socket or transport I/O errors.
 
 Rules:
 - Do not use misleading names (for example, labeling I/O failures as decode errors).
-- Include operation context in logs (`send`, `recv`, `doorbell wait`, request id).
+- Include operation context in logs (`send`, `recv`, request id).
 
 ## 3. Observability Is Part of Correctness
 

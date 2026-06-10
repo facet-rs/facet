@@ -5,6 +5,9 @@ import { loggingMiddleware } from "./logging.ts";
 import { Extensions } from "./middleware.ts";
 import type { ClientContext, CallRequest, CallOutcome } from "./middleware.ts";
 import { ClientMetadata } from "./metadata.ts";
+import { RequestContext } from "./request_context.ts";
+import { serverLoggingMiddleware } from "./server_logging.ts";
+import type { MethodDescriptor } from "./channeling/descriptor.ts";
 
 // Mock localStorage
 const mockLocalStorage: Record<string, string> = {};
@@ -155,7 +158,7 @@ describe("loggingMiddleware", () => {
     const middleware = loggingMiddleware({ logMetadata: true });
     const ctx: ClientContext = { extensions: new Extensions() };
     const metadata = new ClientMetadata();
-    metadata.setSensitive("authorization", "Bearer super-secret-token");
+    metadata.set("#authorization", "Bearer super-secret-token");
     metadata.set("trace-id", "123");
     const request: CallRequest = {
       method: "Service.method",
@@ -166,7 +169,7 @@ describe("loggingMiddleware", () => {
     middleware.pre?.(ctx, request);
     expect(consoleLogs[0].data).toMatchObject({
       metadata: {
-        authorization: "[REDACTED]",
+        "#authorization": "[REDACTED]",
         "trace-id": "123",
       },
     });
@@ -300,5 +303,46 @@ describe("loggingMiddleware", () => {
 
     middleware.pre?.(ctx, request);
     expect(consoleLogs).toHaveLength(0);
+  });
+});
+
+describe("serverLoggingMiddleware", () => {
+  // r[verify rpc.observability.driver]
+  it("emits local server request and response diagnostics", () => {
+    const logs: Array<{ message: string; data: unknown }> = [];
+    const middleware = serverLoggingMiddleware({
+      logger: {
+        debug(message, data) {
+          logs.push({ message, data });
+        },
+      },
+    });
+    const method: MethodDescriptor = { name: "stream", id: 7n };
+    const context = new RequestContext("Echo", method);
+
+    middleware.pre?.(context);
+    middleware.post?.(context, { kind: "failed", error: new Error("boom") });
+
+    expect(logs).toHaveLength(2);
+    expect(logs[0]).toEqual({
+      message: "vox:server:request",
+      data: {
+        service: "Echo",
+        method: "stream",
+      },
+    });
+    expect(logs[1]).toMatchObject({
+      message: "vox:server:response",
+      data: {
+        service: "Echo",
+        method: "stream",
+        outcome: "failed",
+        duration_ms: expect.any(Number),
+        error: {
+          name: "Error",
+          message: "boom",
+        },
+      },
+    });
   });
 });

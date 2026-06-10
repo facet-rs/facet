@@ -4,6 +4,7 @@ public enum ConnectionError: Error {
     case connectionClosed
     case timeout
     case transportError(String)
+    case rejected(metadata: Metadata)
     case goodbye(reason: String)
     case protocolViolation(rule: String)
     case handshakeFailed(String)

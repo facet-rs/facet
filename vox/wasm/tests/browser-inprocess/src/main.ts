@@ -200,7 +200,7 @@ async function testComplex(client: TestbedClient): Promise<void> {
     tag: "Text",
     value: "hello",
   });
-  if (textMsg.tag !== "Text" || textMsg.value !== "Processed: hello") {
+  if (textMsg.tag !== "Text" || textMsg.value !== "processed: hello") {
     throw new Error(
       `processMessage (Text) mismatch: got ${JSON.stringify(textMsg)}`,
     );

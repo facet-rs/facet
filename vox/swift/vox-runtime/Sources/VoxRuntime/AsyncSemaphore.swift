@@ -1,3 +1,5 @@
+// r[impl rpc.flow-control.max-concurrent-requests]
+// r[impl rpc.flow-control.max-concurrent-requests.counting]
 actor AsyncSemaphore {
     private var permits: Int
     private var waiters: [CheckedContinuation<Void, Error>] = []

@@ -75,9 +75,8 @@ pub type CallResult = Result<crate::WithTracker<SelfRef<RequestResponse<'static>
 /// response for that attempt back to the caller. The response can be sent
 /// via [`Call::reply`], [`Call::ok`], or [`Call::err`].
 ///
-/// In the retry model, one logical operation may span multiple request
-/// attempts over time, but each `Call` value corresponds to exactly one
-/// request attempt currently being handled.
+/// Each `Call` value corresponds to exactly one request attempt currently
+/// being handled.
 ///
 /// # Cancellation
 ///
@@ -152,8 +151,9 @@ pub trait ReplySink: MaybeSend + MaybeSync + 'static {
     {
         use crate::{Payload, RequestResponse};
         // Wire format is always Result<T, VoxError<E>>. We don't know T here,
-        // but postcard encodes () as zero bytes, so Result<(), VoxError<E>>
-        // produces the same Err variant encoding as any Result<T, VoxError<E>>.
+        // but an Err variant does not include any Ok payload bytes, so
+        // Result<(), VoxError<E>> produces the same Err variant encoding as
+        // any Result<T, VoxError<E>>.
         async move {
             let wire: Result<(), VoxError<E>> = Err(error);
             self.send_reply(RequestResponse {
@@ -224,11 +224,6 @@ pub trait ReplySink: MaybeSend + MaybeSync + 'static {
 /// Generated clients hold a `Caller` (from `vox-core`) as a public field
 /// and use it to start API-level calls.
 pub trait Handler<R: ReplySink>: MaybeSend + MaybeSync + 'static {
-    /// Return the static retry policy for a method ID served by this handler.
-    fn retry_policy(&self, _method_id: MethodId) -> crate::RetryPolicy {
-        crate::RetryPolicy::VOLATILE
-    }
-
     /// Return whether the method's argument shape contains any channels.
     fn args_have_channels(&self, _method_id: MethodId) -> bool {
         false
@@ -266,14 +261,14 @@ impl<R: ReplySink> Handler<R> for () {
 /// This helper is available for lower-level callers that need both the
 /// decoded value and metadata together. Generated Rust client methods do
 /// not expose response metadata in their return types.
-pub struct ResponseParts<'a, T> {
+pub struct ResponseParts<T> {
     /// The decoded return value.
     pub ret: T,
     /// Metadata attached to the response by the server.
-    pub metadata: Metadata<'a>,
+    pub metadata: Metadata,
 }
 
-impl<'a, T> std::ops::Deref for ResponseParts<'a, T> {
+impl<T> std::ops::Deref for ResponseParts<T> {
     type Target = T;
     fn deref(&self) -> &T {
         &self.ret
@@ -303,7 +298,7 @@ where
 {
     async fn reply(self, result: Result<T, E>) {
         use crate::{Payload, RequestResponse};
-        let wire: Result<T, VoxError<E>> = result.map_err(VoxError::User);
+        let wire: Result<T, VoxError<E>> = result.map_err(|error| VoxError::User(Box::new(error)));
         let ptr = facet::PtrConst::new((&wire as *const Result<T, VoxError<E>>).cast::<u8>());
         let shape = <Result<T, VoxError<E>> as facet::Facet<'wire>>::SHAPE;
         // SAFETY: `wire` lives until `send_reply(...).await` completes in this function,
@@ -476,8 +471,9 @@ mod tests {
             crate::Backing::Boxed(Box::<[u8]>::default()),
             RequestCall {
                 method_id: crate::MethodId(1),
+                channels: Vec::new(),
                 metadata: Metadata::default(),
-                args: Payload::PostcardBytes(&[]),
+                args: Payload::Encoded(&[]),
                 schemas: Default::default(),
             },
         );

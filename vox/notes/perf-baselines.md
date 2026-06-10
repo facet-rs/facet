@@ -7,7 +7,7 @@ DIVAN_MIN_TIME, no piping into tail). Median is what we track.
 ## 2e70ea22 — pre-resolved conduit Tx/Rx + leaked descriptors
 
 Branch: cranelift. Just landed: pre-resolved encoders/decoders in
-BareConduit/StableConduit, plus the latent CalibrationRegistry UAF fix
+BareConduit, plus the latent CalibrationRegistry UAF fix
 (descriptors leaked at register-time so JIT-embedded `*const` stays valid).
 
 ```

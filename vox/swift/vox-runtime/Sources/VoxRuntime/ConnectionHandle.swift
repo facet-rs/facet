@@ -1,31 +1,35 @@
 import Foundation
 
 /// Handle for making outgoing RPC calls.
+/// r[impl rpc.caller]
 final class ConnectionHandle: @unchecked Sendable {
+    let connectionId: UInt64
     private let commandTx: @Sendable (HandleCommand) -> Bool
     private let taskTx: @Sendable (TaskMessage) -> Bool
     private let requestSemaphore: AsyncSemaphore?
-    private let peerSupportsRetry: Bool
+    private let role: Role
 
-    private var requestIdAllocator = RequestIdAllocator()
-    private var operationIdAllocator = RequestIdAllocator()
+    private var requestIdAllocator: RequestIdAllocator
 
     let channelAllocator: ChannelIdAllocator
     let channelRegistry: ChannelRegistry
 
     init(
+        connectionId: UInt64 = 0,
         commandTx: @escaping @Sendable (HandleCommand) -> Bool,
         taskTx: @escaping @Sendable (TaskMessage) -> Bool,
         role: Role,
-        peerSupportsRetry: Bool,
         maxConcurrentRequests: UInt32 = UInt32.max
     ) {
+        self.connectionId = connectionId
         self.commandTx = commandTx
         self.taskTx = taskTx
-        self.peerSupportsRetry = peerSupportsRetry
+        self.role = role
+        self.requestIdAllocator = RequestIdAllocator(role: role)
         self.channelAllocator = ChannelIdAllocator(role: role)
         self.channelRegistry = ChannelRegistry()
         if maxConcurrentRequests < UInt32.max {
+            // r[impl rpc.flow-control.max-concurrent-requests.outbound]
             self.requestSemaphore = AsyncSemaphore(permits: Int(maxConcurrentRequests))
         } else {
             self.requestSemaphore = nil
@@ -35,13 +39,15 @@ final class ConnectionHandle: @unchecked Sendable {
     /// Make a raw RPC call.
     ///
     /// r[impl rpc.flow-control.max-concurrent-requests] - Blocks if maxConcurrentRequests are in-flight.
+    /// r[impl rpc.flow-control.max-concurrent-requests.counting]
+    /// r[impl rpc.flow-control.max-concurrent-requests.outbound]
+    /// r[impl rpc.caller]
     func callRaw(
         methodId: UInt64,
-        metadata: [MetadataEntry] = [],
+        metadata: Metadata = .null,
         payload: [UInt8],
-        retry: RetryPolicy = .volatile,
+        channels: [UInt64] = [],
         timeout: TimeInterval? = nil,
-        prepareRetry: (@Sendable () async -> PreparedRetryRequest)? = nil,
         finalizeChannels: (@Sendable () -> Void)? = nil,
         schemaInfo: ClientSchemaInfo? = nil
     ) async throws -> [UInt8] {
@@ -50,13 +56,6 @@ final class ConnectionHandle: @unchecked Sendable {
         }
 
         let requestId = await requestIdAllocator.allocate()
-        let outboundMetadata: [MetadataEntry]
-        if peerSupportsRetry {
-            let operationId = await operationIdAllocator.allocate()
-            outboundMetadata = ensureOperationId(metadata, operationId: operationId)
-        } else {
-            outboundMetadata = metadata
-        }
 
         return try await withCheckedThrowingContinuation { continuation in
             let semaphore = requestSemaphore
@@ -69,13 +68,13 @@ final class ConnectionHandle: @unchecked Sendable {
             }
             let accepted = commandTx(
                 .call(
+                    connectionId: connectionId,
                     requestId: requestId,
                     methodId: methodId,
-                    metadata: outboundMetadata,
+                    metadata: metadata,
                     payload: payload,
-                    retry: retry,
+                    channels: channels,
                     timeout: timeout,
-                    prepareRetry: prepareRetry,
                     responseTx: { result in responseTx(result) },
                     schemaInfo: schemaInfo
                 ))
@@ -90,22 +89,17 @@ final class ConnectionHandle: @unchecked Sendable {
         await requestSemaphore?.close()
     }
 
-    func freshOperationMetadata(from metadata: [MetadataEntry]) async -> [MetadataEntry] {
-        guard peerSupportsRetry else {
-            return metadata
-        }
-        let operationId = await operationIdAllocator.allocate()
-        return replacingOperationId(metadata, operationId: operationId)
-    }
-
-    // The session has been started fresh on a new conduit. We must reset all of
-    // the operation and request identifier allocators.
+    // The session has been started fresh on a new conduit. Reset request IDs so
+    // future calls use the new connection's identifier space.
     func onConduitReset() {
-        self.operationIdAllocator = RequestIdAllocator()
-        self.requestIdAllocator = RequestIdAllocator()
+        self.requestIdAllocator = RequestIdAllocator(role: role)
     }
 
     func sendTaskMessage(_ msg: TaskMessage) {
         _ = taskTx(msg)
+    }
+
+    func releaseConnectionLiveness() {
+        _ = commandTx(.releaseConnection(connectionId: connectionId))
     }
 }

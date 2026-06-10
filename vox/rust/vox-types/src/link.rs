@@ -4,18 +4,6 @@ use std::future::Future;
 
 use crate::Backing;
 
-/// Requested conduit mode for the transport prologue.
-///
-/// Historically this enum had a `Stable` variant for the reconnect /
-/// replay-buffer-backed `StableConduit`; that conduit shape was removed,
-/// leaving only `Bare`. The enum is preserved for now so the wire-level
-/// transport prologue remains backwards-compatible with peers that still
-/// negotiate it; new transports always select `Bare`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TransportMode {
-    Bare,
-}
-
 /// Marker trait that requires [`Send`] on native targets, nothing on wasm32.
 #[cfg(not(target_arch = "wasm32"))]
 pub trait MaybeSend: Send {}
@@ -53,9 +41,8 @@ impl<T: Future> MaybeSendFuture for T {}
 
 /// Bidirectional raw-bytes transport.
 ///
-/// TCP, WebSocket, SHM all implement this. No knowledge of what's being
-/// sent — just bytes in, bytes out. The transport provides write buffers
-/// so callers can encode directly into the destination (zero-copy for SHM).
+/// TCP, WebSocket, local IPC, and in-memory transports implement this. No
+/// knowledge of what's being sent — just bytes in, bytes out.
 // r[impl link]
 // r[impl link.message]
 // r[impl link.order]
@@ -65,19 +52,6 @@ pub trait Link {
 
     // r[impl link.split]
     fn split(self) -> (Self::Tx, Self::Rx);
-
-    /// Whether this link supports the requested transport mode.
-    ///
-    /// Most links support both `bare` and `stable`. Special transports may
-    /// override this to reject unsupported modes during the transport
-    /// prologue.
-    fn supports_transport_mode(mode: TransportMode) -> bool
-    where
-        Self: Sized,
-    {
-        let _ = mode;
-        true
-    }
 }
 
 /// Sending half of a [`Link`].
@@ -136,8 +110,7 @@ pub trait LinkTx: MaybeSend + MaybeSync + 'static {
 /// The transport handles framing (length-prefix, WebSocket frames, etc.)
 /// and returns exactly one message's bytes per `recv` call.
 ///
-/// For SHM: the Backing might be a VarSlot reference.
-/// For TCP: the Backing is a heap-allocated buffer.
+/// For current transports, the backing is usually a heap-allocated buffer.
 pub trait LinkRx: MaybeSend + 'static {
     type Error: std::error::Error + MaybeSend + MaybeSync + 'static;
 

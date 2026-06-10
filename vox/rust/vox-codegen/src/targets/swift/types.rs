@@ -25,6 +25,10 @@ pub fn collect_named_types(service: &ServiceDescriptor) -> Vec<(String, &'static
         seen: &mut HashSet<String>,
         types: &mut Vec<(String, &'static Shape)>,
     ) {
+        if is_dynamic_value(shape) {
+            return;
+        }
+
         match classify_shape(shape) {
             ShapeKind::Struct(StructInfo {
                 name: Some(name),
@@ -69,6 +73,11 @@ pub fn collect_named_types(service: &ServiceDescriptor) -> Vec<(String, &'static
                     visit(param.shape, seen, types);
                 }
             }
+            ShapeKind::TupleStruct { fields } => {
+                for field in fields {
+                    visit(field.shape(), seen, types);
+                }
+            }
             ShapeKind::Tx { inner } | ShapeKind::Rx { inner } => visit(inner, seen, types),
             ShapeKind::Pointer { pointee } => visit(pointee, seen, types),
             ShapeKind::Result { ok, err } => {
@@ -82,6 +91,9 @@ pub fn collect_named_types(service: &ServiceDescriptor) -> Vec<(String, &'static
     for method in service.methods {
         for arg in method.args {
             visit(arg.shape, &mut seen, &mut types);
+            if let Some(element) = arg.channel_element {
+                visit(element, &mut seen, &mut types);
+            }
         }
         visit(method.return_shape, &mut seen, &mut types);
     }
@@ -271,16 +283,26 @@ pub fn swift_scalar_type(scalar: ScalarType) -> String {
         ScalarType::ISize => "Int".into(),
         ScalarType::F32 => "Float".into(),
         ScalarType::F64 => "Double".into(),
-        ScalarType::Char | ScalarType::Str | ScalarType::String | ScalarType::CowStr => {
-            "String".into()
-        }
+        ScalarType::Char => "Unicode.Scalar".into(),
+        ScalarType::Str | ScalarType::String | ScalarType::CowStr => "String".into(),
         ScalarType::Unit => "Void".into(),
         _ => "Data".into(),
     }
 }
 
+/// Whether a shape is the self-describing dynamic `Value` (facet `Def::DynamicValue`
+/// — e.g. vox `Metadata`). Carried on the wire as a phon `Dynamic`; in Swift memory
+/// it is a `PhonSchema.Value`, not opaque `Data`.
+pub fn is_dynamic_value(shape: &'static Shape) -> bool {
+    matches!(shape.def, facet_core::Def::DynamicValue(_))
+}
+
 /// Convert Shape to Swift type string.
 pub fn swift_type_base(shape: &'static Shape) -> String {
+    // A dynamic `Value` field is a `PhonSchema.Value` in memory (not `Data`).
+    if is_dynamic_value(shape) {
+        return "Value".into();
+    }
     // Check for bytes first
     if is_bytes(shape) {
         return "Data".into();
@@ -309,6 +331,22 @@ pub fn swift_type_base(shape: &'static Shape) -> String {
         ShapeKind::Struct(StructInfo {
             name: Some(name), ..
         }) => name.to_string(),
+        // The wire error `VoxError<E>` is the one generic the typed path materializes;
+        // its single param is the `User(E)` variant's payload. Without the arg, every
+        // method would collapse to a bare `VoxError`, so emit `VoxError<E>` explicitly.
+        ShapeKind::Enum(EnumInfo {
+            name: Some("VoxError"),
+            variants,
+        }) => {
+            let e = variants
+                .first()
+                .and_then(|v| v.data.fields.first())
+                .map(|f| f.shape());
+            match e {
+                Some(s) => format!("VoxError<{}>", swift_type_base(s)),
+                None => "VoxError<Infallible>".into(),
+            }
+        }
         ShapeKind::Enum(EnumInfo {
             name: Some(name), ..
         }) => name.to_string(),
@@ -400,4 +438,19 @@ pub fn assert_no_channels_in_return_shape(shape: &'static Shape) {
         !has_channel(shape),
         "channels are not allowed in return types"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use facet::Facet;
+
+    #[test]
+    fn swift_char_uses_unicode_scalar_layout() {
+        assert_eq!(swift_type_base(<char as Facet>::SHAPE), "Unicode.Scalar");
+        assert_eq!(
+            swift_type_base(<Vec<char> as Facet>::SHAPE),
+            "[Unicode.Scalar]"
+        );
+    }
 }

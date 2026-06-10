@@ -10,6 +10,7 @@ fn message_conduit_pair() -> (MessageConduit, MessageConduit) {
 }
 
 #[tokio::test]
+// r[verify service-macro.is-source-of-truth]
 async fn adder_service_macro_end_to_end() {
     service_macro_shared::run_adder_end_to_end(message_conduit_pair).await;
 }
@@ -58,10 +59,10 @@ async fn borrowed_return_survives_teardown_slot_ref() {
 }
 
 #[tokio::test]
-async fn borrowed_return_survives_teardown_mmap_ref() {
+async fn borrowed_return_survives_teardown_large() {
     service_macro_shared::run_borrowed_return_survives_teardown_over_generated_client(
         message_conduit_pair,
-        service_macro_shared::BorrowedPayloadKind::MmapRef,
+        service_macro_shared::BorrowedPayloadKind::Large,
     )
     .await;
 }

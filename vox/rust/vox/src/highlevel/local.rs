@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use vox_core::ConnectionAcceptor;
 #[cfg(unix)]
-use vox_core::{NoopClient, TransportMode, initiator};
+use vox_core::{NoopClient, initiator};
 use vox_types::VoxObserverHandle;
 
 use super::{ServeError, VoxListener, serve_listener};
@@ -31,9 +31,7 @@ pub(super) async fn serve_local(
         vox_stream::LocalLockOutcome::Held => {
             let health = tokio::time::timeout(Duration::from_secs(5), async {
                 let source = vox_stream::local_link_source(host);
-                initiator(source, TransportMode::Bare)
-                    .establish::<NoopClient>()
-                    .await
+                initiator(source).establish::<NoopClient>().await
             })
             .await;
             return match health {

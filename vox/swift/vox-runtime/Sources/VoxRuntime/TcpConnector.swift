@@ -1,25 +1,16 @@
 public protocol SessionConnector: Sendable {
-    var transport: ConduitKind { get }
     func openAttachment() async throws -> LinkAttachment
 }
 
+// r[impl transport.stream]
+// r[impl transport.stream.kinds]
 public struct TcpConnector: SessionConnector, LinkSource, Sendable {
     public let host: String
     public let port: Int
-    public let transport: ConduitKind
 
-    public init(host: String, port: Int, transport: ConduitKind = .bare) {
+    public init(host: String, port: Int) {
         self.host = host
         self.port = port
-        self.transport = transport
-    }
-
-    public func bare() -> Self {
-        Self(host: host, port: port, transport: .bare)
-    }
-
-    public func stable() -> Self {
-        Self(host: host, port: port, transport: .stable)
     }
 
     public func nextLink() async throws -> LinkAttachment {
@@ -27,25 +18,15 @@ public struct TcpConnector: SessionConnector, LinkSource, Sendable {
     }
 
     public func openAttachment() async throws -> LinkAttachment {
-        try await TransportedLinkSource(source: self, conduit: transport).nextLink()
+        try await TransportedLinkSource(source: self).nextLink()
     }
 }
 
 public struct UnixConnector: SessionConnector, LinkSource, Sendable {
     public let path: String
-    public let transport: ConduitKind
 
-    public init(path: String, transport: ConduitKind = .bare) {
+    public init(path: String) {
         self.path = path
-        self.transport = transport
-    }
-
-    public func bare() -> Self {
-        Self(path: path, transport: .bare)
-    }
-
-    public func stable() -> Self {
-        Self(path: path, transport: .stable)
     }
 
     public func nextLink() async throws -> LinkAttachment {
@@ -53,101 +34,72 @@ public struct UnixConnector: SessionConnector, LinkSource, Sendable {
     }
 
     public func openAttachment() async throws -> LinkAttachment {
-        try await TransportedLinkSource(source: self, conduit: transport).nextLink()
+        try await TransportedLinkSource(source: self).nextLink()
     }
 }
 
-public func connect(unixPath: String, conduit: ConduitKind = .bare) async throws -> any Conduit {
+public func connect(unixPath: String) async throws -> any Conduit {
     try await connect(
         unixPath: unixPath,
-        conduit: conduit,
         prologueTimeoutNs: defaultTransportPrologueTimeoutNs
     )
 }
 
+// r[impl transport.stream.local]
 func connect(
     unixPath: String,
-    conduit: ConduitKind = .bare,
     prologueTimeoutNs: UInt64
 ) async throws -> any Conduit {
-    let connector = UnixConnector(path: unixPath, transport: conduit)
-    if conduit == .bare {
-        let attachment = try await TimedTransportedLinkSource(
-            source: connector,
-            conduit: conduit,
-            timeoutNs: prologueTimeoutNs
-        ).nextLink()
-        return BareConduit(link: attachment.link)
-    }
-
-    // .stable used to construct a StableConduit; that conduit shape was
-    // removed, so any non-bare request gets the same bare path.
+    let connector = UnixConnector(path: unixPath)
     let attachment = try await TimedTransportedLinkSource(
         source: connector,
-        conduit: conduit,
         timeoutNs: prologueTimeoutNs
     ).nextLink()
-    return BareConduit(link: attachment.link)
+    return BareConduit(link: attachment.link, peerMessageSchema: [])  // raw connect(): no handshake yet, decoder inert until establishment
 }
 
-public func connect(host: String, port: Int, conduit: ConduitKind = .bare) async throws
+public func connect(host: String, port: Int) async throws
     -> any Conduit
 {
     try await connect(
         host: host,
         port: port,
-        conduit: conduit,
         prologueTimeoutNs: defaultTransportPrologueTimeoutNs
     )
 }
 
+// r[impl transport.stream]
 func connect(
     host: String,
     port: Int,
-    conduit: ConduitKind = .bare,
     prologueTimeoutNs: UInt64
 ) async throws -> any Conduit {
-    let connector = TcpConnector(host: host, port: port, transport: conduit)
-    if conduit == .bare {
-        let attachment = try await TimedTransportedLinkSource(
-            source: connector,
-            conduit: conduit,
-            timeoutNs: prologueTimeoutNs
-        ).nextLink()
-        return BareConduit(link: attachment.link)
-    }
-
-    // .stable used to construct a StableConduit; that conduit shape was
-    // removed, so any non-bare request gets the same bare path.
+    let connector = TcpConnector(host: host, port: port)
     let attachment = try await TimedTransportedLinkSource(
         source: connector,
-        conduit: conduit,
         timeoutNs: prologueTimeoutNs
     ).nextLink()
-    return BareConduit(link: attachment.link)
+    return BareConduit(link: attachment.link, peerMessageSchema: [])  // raw connect(): no handshake yet, decoder inert until establishment
 }
 
 private struct TimedTransportedLinkSource<Base: LinkSource>: LinkSource {
     let source: Base
-    let conduit: ConduitKind
     let timeoutNs: UInt64
 
+    // r[impl transport.prologue.first-payload]
     func nextLink() async throws -> LinkAttachment {
         let attachment = try await source.nextLink()
-        guard attachment.negotiatedConduit == nil else {
+        guard !attachment.hasCompletedPrologue else {
             try? await attachment.link.close()
             throw TransportError.protocolViolation(
-                "initiator transport source cannot yield acceptor-prepared attachments"
+                "initiator transport source cannot yield prologue-complete attachments"
             )
         }
 
         do {
             try await withThrowingTaskGroup(of: Void.self) { group in
                 group.addTask {
-                    try await performInitiatorLinkPrologue(
-                        link: attachment.link,
-                        conduit: conduit
-                    )
+                    try await performInitiatorLinkPrologue(link: attachment.link)
                 }
                 group.addTask {
                     try await Task.sleep(nanoseconds: timeoutNs)

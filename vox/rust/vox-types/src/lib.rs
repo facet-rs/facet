@@ -117,9 +117,6 @@ pub use conduit::*;
 mod metadata;
 pub use metadata::*;
 
-mod retry_support;
-pub use retry_support::*;
-
 mod request_context;
 pub use request_context::*;
 

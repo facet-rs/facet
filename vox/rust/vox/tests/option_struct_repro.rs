@@ -101,7 +101,7 @@ async fn pair() -> (OptionReproClient, vox::NoopClient) {
             .expect("server establish")
     });
 
-    let client = vox::initiator_on(client_link, vox::TransportMode::Bare)
+    let client = vox::initiator_on(client_link)
         .establish::<OptionReproClient>()
         .await
         .expect("client establish");
@@ -164,7 +164,7 @@ async fn bare_pair() -> (BareClient, vox::NoopClient) {
             .await
             .expect("server establish")
     });
-    let client = vox::initiator_on(client_link, vox::TransportMode::Bare)
+    let client = vox::initiator_on(client_link)
         .establish::<BareClient>()
         .await
         .expect("client establish");
@@ -221,7 +221,7 @@ async fn option_of_enum_with_data_variant_roundtrips_some() {
             .await
             .expect("server establish")
     });
-    let client = vox::initiator_on(client_link, vox::TransportMode::Bare)
+    let client = vox::initiator_on(client_link)
         .establish::<OptionEnumClient>()
         .await
         .expect("client establish");

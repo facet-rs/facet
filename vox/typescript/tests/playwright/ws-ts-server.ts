@@ -2,7 +2,6 @@ import { WebSocketServer, type RawData, type WebSocket } from "ws";
 import {
   Driver,
   SessionError,
-  SessionRegistry,
   session,
   type Link,
   type Rx,
@@ -13,7 +12,9 @@ import type {
   Canvas,
   Color,
   Config,
+  EcosystemBridgePayload,
   GnarlyPayload,
+  Tree,
   LookupError,
   MathError,
   Measurement,
@@ -120,7 +121,7 @@ function rawDataToUint8Array(data: RawData): Uint8Array {
 }
 
 class TestbedService implements TestbedHandler {
-  private async streamRetryProbeValues(count: number, output: Tx<number>): Promise<void> {
+  private async streamValues(count: number, output: Tx<number>): Promise<void> {
     for (let i = 0; i < count; i++) {
       await output.send(i);
     }
@@ -128,9 +129,6 @@ class TestbedService implements TestbedHandler {
   }
 
   async echo(message: string): Promise<string> {
-    if (message === "__vox_reconnect__") {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-    }
     return message;
   }
 
@@ -170,15 +168,7 @@ class TestbedService implements TestbedHandler {
   }
 
   async generate(count: number, output: Tx<number>): Promise<void> {
-    await this.streamRetryProbeValues(count, output);
-  }
-
-  async generateRetryNonIdem(count: number, output: Tx<number>): Promise<void> {
-    await this.streamRetryProbeValues(count, output);
-  }
-
-  async generateRetryIdem(count: number, output: Tx<number>): Promise<void> {
-    await this.streamRetryProbeValues(count, output);
+    await this.streamValues(count, output);
   }
 
   async transform(input: Rx<string>, output: Tx<string>): Promise<void> {
@@ -233,7 +223,7 @@ class TestbedService implements TestbedHandler {
   processMessage(msg: Message): Message {
     switch (msg.tag) {
       case "Text":
-        return { tag: "Text", value: `Processed: ${msg.value}` };
+        return { tag: "Text", value: `processed: ${msg.value}` };
       case "Number":
         return { tag: "Number", value: msg.value * 2n };
       case "Data":
@@ -278,6 +268,14 @@ class TestbedService implements TestbedHandler {
   }
 
   echoGnarly(payload: GnarlyPayload): GnarlyPayload {
+    return payload;
+  }
+
+  echoTree(tree: Tree): Tree {
+    return tree;
+  }
+
+  echoEcosystemBridge(payload: EcosystemBridgePayload): EcosystemBridgePayload {
     return payload;
   }
 
@@ -339,7 +337,6 @@ export interface TsWsServerHandle {
 
 export async function startTsWsServer(port: number): Promise<TsWsServerHandle> {
   const wss = new WebSocketServer({ host: "127.0.0.1", port });
-  const registry = new SessionRegistry();
   const activeSessions = new Set<SessionHandle>();
   const activeDrivers = new Set<Promise<void>>();
 
@@ -347,13 +344,9 @@ export async function startTsWsServer(port: number): Promise<TsWsServerHandle> {
 
   wss.on("connection", (socket) => {
     const link = new NodeWsLink(socket);
-    void session.acceptorTransportOrResume(link, registry, { resumable: true }).then((accepted) => {
-      if (accepted.tag === "Resumed") {
-        return;
-      }
-
-      const established = accepted.session;
-      activeSessions.add(established.handle());
+    void session.acceptorTransport(link).then((established) => {
+      const handle = established.handle();
+      activeSessions.add(handle);
       const driver = new Driver(established.rootConnection(), dispatcher);
       const run = driver.run().catch((error) => {
         if (!(error instanceof SessionError)) {
@@ -361,7 +354,7 @@ export async function startTsWsServer(port: number): Promise<TsWsServerHandle> {
         }
       }).finally(() => {
         activeDrivers.delete(run);
-        activeSessions.delete(established.handle());
+        activeSessions.delete(handle);
       });
       activeDrivers.add(run);
     }).catch((error) => {

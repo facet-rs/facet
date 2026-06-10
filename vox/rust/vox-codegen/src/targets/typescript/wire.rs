@@ -17,6 +17,22 @@ use vox_types::{
 
 use crate::targets::typescript::schema::{render_schema, render_type_ref};
 
+fn enum_discriminator_field(variants: &[facet_core::Variant]) -> &'static str {
+    if variants
+        .iter()
+        .any(|variant| match classify_variant(variant) {
+            VariantKind::Tuple { fields } | VariantKind::Struct { fields } => {
+                fields.iter().any(|field| field.name == "tag")
+            }
+            VariantKind::Unit | VariantKind::Newtype { .. } => false,
+        })
+    {
+        "$tag"
+    } else {
+        "tag"
+    }
+}
+
 /// A wire type to generate TypeScript definitions for.
 pub struct WireType {
     /// The facet Shape to generate from.
@@ -59,13 +75,16 @@ pub fn generate_wire(config: &WireTypeGenConfig) -> Result<String, Box<dyn std::
                 out.push_str("}\n\n");
             }
             ShapeKind::Enum(EnumInfo { variants, .. }) => {
+                let discriminator = enum_discriminator_field(variants);
                 out.push_str(&format!("export type {name} =\n"));
                 for (i, variant) in variants.iter().enumerate() {
                     let variant_type = match classify_variant(variant) {
-                        VariantKind::Unit => format!("{{ tag: \"{}\" }}", variant.name),
+                        VariantKind::Unit => {
+                            format!("{{ {discriminator}: \"{}\" }}", variant.name)
+                        }
                         VariantKind::Newtype { inner } => {
                             format!(
-                                "{{ tag: \"{}\"; value: {} }}",
+                                "{{ {discriminator}: \"{}\"; value: {} }}",
                                 variant.name,
                                 wire_ts_type(inner)
                             )
@@ -76,7 +95,10 @@ pub fn generate_wire(config: &WireTypeGenConfig) -> Result<String, Box<dyn std::
                                 .map(|f| format!("{}: {}", f.name, wire_ts_type(f.shape())))
                                 .collect::<Vec<_>>()
                                 .join("; ");
-                            format!("{{ tag: \"{}\"; {} }}", variant.name, field_strs)
+                            format!(
+                                "{{ {discriminator}: \"{}\"; {} }}",
+                                variant.name, field_strs
+                            )
                         }
                     };
                     let sep = if i < variants.len() - 1 { "" } else { ";" };
@@ -286,24 +308,31 @@ fn wire_ts_type(shape: &'static Shape) -> String {
         ShapeKind::Enum(EnumInfo {
             name: None,
             variants,
-        }) => variants
-            .iter()
-            .map(|v| match classify_variant(v) {
-                VariantKind::Unit => format!("{{ tag: \"{}\" }}", v.name),
-                VariantKind::Newtype { inner } => {
-                    format!("{{ tag: \"{}\"; value: {} }}", v.name, wire_ts_type(inner))
-                }
-                VariantKind::Tuple { fields } | VariantKind::Struct { fields } => {
-                    let field_strs = fields
-                        .iter()
-                        .map(|f| format!("{}: {}", f.name, wire_ts_type(f.shape())))
-                        .collect::<Vec<_>>()
-                        .join("; ");
-                    format!("{{ tag: \"{}\"; {} }}", v.name, field_strs)
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(" | "),
+        }) => {
+            let discriminator = enum_discriminator_field(variants);
+            variants
+                .iter()
+                .map(|v| match classify_variant(v) {
+                    VariantKind::Unit => format!("{{ {discriminator}: \"{}\" }}", v.name),
+                    VariantKind::Newtype { inner } => {
+                        format!(
+                            "{{ {discriminator}: \"{}\"; value: {} }}",
+                            v.name,
+                            wire_ts_type(inner)
+                        )
+                    }
+                    VariantKind::Tuple { fields } | VariantKind::Struct { fields } => {
+                        let field_strs = fields
+                            .iter()
+                            .map(|f| format!("{}: {}", f.name, wire_ts_type(f.shape())))
+                            .collect::<Vec<_>>()
+                            .join("; ");
+                        format!("{{ {discriminator}: \"{}\"; {} }}", v.name, field_strs)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" | ")
+        }
 
         ShapeKind::Tuple { elements } => {
             let inner = elements

@@ -4,12 +4,11 @@
 //! and method names but different field types. Because method IDs are
 //! name-only (not type-dependent), the two versions route to the same
 //! handler. Schema exchange sends type metadata before payloads, and
-//! translation plans handle the schema differences.
+//! compatibility decode plans handle the schema differences.
 
 use vox_core::{BareConduit, MemoryLink, acceptor_conduit, initiator_conduit, memory_link_pair};
 use vox_types::{
-    ConnectionSettings, HandshakeResult, MessageFamily, MetadataEntry, Parity, SessionRole,
-    VoxError,
+    ConnectionSettings, HandshakeResult, MessageFamily, Parity, SessionRole, VoxError,
 };
 
 type MessageConduit = BareConduit<MessageFamily, MemoryLink>;
@@ -32,12 +31,9 @@ fn test_acceptor_handshake(service: &'static str) -> HandshakeResult {
             max_concurrent_requests: 64,
             initial_channel_credit: 16,
         },
-        peer_supports_retry: true,
-        session_resume_key: None,
-        peer_resume_key: None,
         our_schema: vec![],
         peer_schema: vec![],
-        peer_metadata: vec![MetadataEntry::str("vox-service", service)],
+        peer_metadata: vox::metadata().str("vox-service", service).build(),
     }
 }
 
@@ -54,12 +50,9 @@ fn test_initiator_handshake(service: &'static str) -> HandshakeResult {
             max_concurrent_requests: 64,
             initial_channel_credit: 16,
         },
-        peer_supports_retry: true,
-        session_resume_key: None,
-        peer_resume_key: None,
         our_schema: vec![],
         peer_schema: vec![],
-        peer_metadata: vec![MetadataEntry::str("vox-service", service)],
+        peer_metadata: vox::metadata().str("vox-service", service).build(),
     }
 }
 
@@ -124,8 +117,6 @@ impl point_v2::Geometry for V2GeometryService {
     }
 }
 
-// r[verify schema.translation.fill-defaults]
-// r[verify schema.interaction.channels]
 #[tokio::test]
 async fn v1_client_v2_server_fills_default() {
     let (client_conduit, server_conduit) = conduit_pair();
@@ -158,7 +149,6 @@ async fn v1_client_v2_server_fills_default() {
     server_task.abort();
 }
 
-// r[verify schema.translation.skip-unknown]
 #[tokio::test]
 async fn v2_client_v1_server_skips_unknown_field() {
     let (client_conduit, server_conduit) = conduit_pair();
@@ -192,6 +182,178 @@ async fn v2_client_v1_server_skips_unknown_field() {
     assert_eq!(result.x, 6.0);
     assert_eq!(result.y, 8.0);
     assert_eq!(result.z, 0.0);
+
+    server_task.abort();
+}
+
+// ============================================================================
+// Compatible: channel item schemas
+// ============================================================================
+
+mod channel_rx_v1 {
+    #[derive(Debug, Clone, PartialEq, facet::Facet)]
+    pub struct Event {
+        pub id: u32,
+    }
+
+    #[vox::service]
+    pub trait EventSink {
+        async fn consume(&self, events: vox::Rx<Event>) -> u32;
+    }
+}
+
+mod channel_rx_v2 {
+    #[derive(Debug, Clone, PartialEq, facet::Facet)]
+    pub struct Event {
+        pub id: u32,
+        #[facet(default)]
+        pub priority: u32,
+    }
+
+    unsafe impl vox_types::Reborrow for Event {
+        type Ref<'a> = Event;
+    }
+
+    #[vox::service]
+    pub trait EventSink {
+        async fn consume(&self, events: vox::Rx<Event>) -> u32;
+    }
+}
+
+#[derive(Clone)]
+struct ChannelRxV2Service;
+
+impl channel_rx_v2::EventSink for ChannelRxV2Service {
+    async fn consume(&self, mut events: vox::Rx<channel_rx_v2::Event>) -> u32 {
+        let event = events
+            .recv()
+            .await
+            .expect("channel receive should succeed")
+            .expect("expected one event");
+        event.get().id + event.get().priority
+    }
+}
+
+// r[verify schema.interaction.channels]
+// r[verify schema.exchange.channels]
+// r[verify schema.exchange.channels.rx-args]
+// r[verify rpc.channel.pair.binding-propagation]
+// r[verify rpc.channel.pair.tx-read]
+#[tokio::test]
+async fn rx_channel_items_use_caller_writer_schema() {
+    let (client_conduit, server_conduit) = conduit_pair();
+
+    let server_task = tokio::task::spawn(async move {
+        let _server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake("EventSink"))
+            .on_connection(channel_rx_v2::EventSinkDispatcher::new(ChannelRxV2Service))
+            .establish::<channel_rx_v2::EventSinkClient>()
+            .await
+            .expect("server handshake failed");
+        std::future::pending::<()>().await;
+    });
+
+    let client = initiator_conduit(client_conduit, test_initiator_handshake("EventSink"))
+        .establish::<channel_rx_v1::EventSinkClient>()
+        .await
+        .expect("client handshake failed");
+
+    let (tx, rx) = vox::channel::<channel_rx_v1::Event>();
+    let call_task = tokio::task::spawn(async move { client.consume(rx).await });
+
+    tx.send(channel_rx_v1::Event { id: 7 })
+        .await
+        .expect("channel send should succeed");
+
+    let total = call_task
+        .await
+        .expect("call task should finish")
+        .expect("call should succeed");
+    assert_eq!(total, 7);
+
+    server_task.abort();
+}
+
+mod channel_tx_v1 {
+    #[derive(Debug, Clone, PartialEq, facet::Facet)]
+    pub struct Event {
+        pub id: u32,
+    }
+
+    unsafe impl vox_types::Reborrow for Event {
+        type Ref<'a> = Event;
+    }
+
+    #[vox::service]
+    pub trait EventSource {
+        async fn produce(&self, events: vox::Tx<Event>) -> u32;
+    }
+}
+
+mod channel_tx_v2 {
+    #[derive(Debug, Clone, PartialEq, facet::Facet)]
+    pub struct Event {
+        pub priority: u32,
+        pub id: u32,
+    }
+
+    #[vox::service]
+    pub trait EventSource {
+        async fn produce(&self, events: vox::Tx<Event>) -> u32;
+    }
+}
+
+#[derive(Clone)]
+struct ChannelTxV2Service;
+
+impl channel_tx_v2::EventSource for ChannelTxV2Service {
+    async fn produce(&self, events: vox::Tx<channel_tx_v2::Event>) -> u32 {
+        events
+            .send(channel_tx_v2::Event {
+                priority: 99,
+                id: 7,
+            })
+            .await
+            .expect("channel send should succeed");
+        1
+    }
+}
+
+// r[verify schema.interaction.channels]
+// r[verify schema.exchange.channels]
+// r[verify schema.exchange.channels.tx-args]
+// r[verify rpc.channel.pair.binding-propagation]
+// r[verify rpc.channel.pair.rx-take]
+#[tokio::test]
+async fn tx_channel_items_use_callee_writer_schema() {
+    let (client_conduit, server_conduit) = conduit_pair();
+
+    let server_task = tokio::task::spawn(async move {
+        let _server_caller =
+            acceptor_conduit(server_conduit, test_acceptor_handshake("EventSource"))
+                .on_connection(channel_tx_v2::EventSourceDispatcher::new(
+                    ChannelTxV2Service,
+                ))
+                .establish::<channel_tx_v2::EventSourceClient>()
+                .await
+                .expect("server handshake failed");
+        std::future::pending::<()>().await;
+    });
+
+    let client = initiator_conduit(client_conduit, test_initiator_handshake("EventSource"))
+        .establish::<channel_tx_v1::EventSourceClient>()
+        .await
+        .expect("client handshake failed");
+
+    let (tx, mut rx) = vox::channel::<channel_tx_v1::Event>();
+    let ack = client.produce(tx).await.expect("call should succeed");
+    assert_eq!(ack, 1);
+
+    let event = rx
+        .recv()
+        .await
+        .expect("channel receive should succeed")
+        .expect("expected one event");
+    assert_eq!(event.get().id, 7);
 
     server_task.abort();
 }
@@ -235,7 +397,6 @@ impl reordered_v1::PairService for PairEchoV1 {
     }
 }
 
-// r[verify schema.translation.reorder]
 #[tokio::test]
 async fn reordered_fields_are_matched_by_name() {
     let (client_conduit, server_conduit) = conduit_pair();
@@ -317,9 +478,6 @@ impl evolved_v1::ConfigService for ConfigServiceV1 {
     }
 }
 
-// r[verify schema.translation.fill-defaults]
-// r[verify schema.translation.skip-unknown]
-// r[verify schema.translation.reorder]
 #[tokio::test]
 async fn evolved_schema_combined_changes() {
     let (client_conduit, server_conduit) = conduit_pair();
@@ -365,6 +523,7 @@ mod status_old {
     #[vox::service]
     pub trait Daemon {
         async fn status(&self) -> DaemonStatus;
+        async fn ping(&self) -> u32;
     }
 }
 
@@ -381,6 +540,7 @@ mod status_new {
     #[vox::service]
     pub trait Daemon {
         async fn status(&self) -> DaemonStatus;
+        async fn ping(&self) -> u32;
     }
 }
 
@@ -394,13 +554,97 @@ impl status_old::Daemon for OldDaemonService {
             listen: "local:///tmp/daemon.vox".into(),
         }
     }
+
+    async fn ping(&self) -> u32 {
+        42
+    }
 }
 
-// r[verify schema.errors.missing-required]
-// r[verify schema.errors.non-retryable]
-// r[verify rpc.fallible.vox-error.retryable]
+// Incompatible request args: missing required field without default
+mod command_old {
+    #[derive(Debug, Clone, PartialEq, facet::Facet)]
+    pub struct Config {
+        pub limit: u32,
+    }
+
+    #[vox::service]
+    pub trait Control {
+        async fn configure(&self, config: Config) -> u32;
+        async fn ping(&self) -> u32;
+    }
+}
+
+mod command_new {
+    #[derive(Debug, Clone, PartialEq, facet::Facet)]
+    pub struct Config {
+        pub limit: u32,
+        pub mode: String,
+    }
+
+    #[vox::service]
+    pub trait Control {
+        async fn configure(&self, config: Config) -> u32;
+        async fn ping(&self) -> u32;
+    }
+}
+
+#[derive(Clone)]
+struct NewControlService;
+
+impl command_new::Control for NewControlService {
+    async fn configure(&self, config: command_new::Config) -> u32 {
+        config.limit + config.mode.len() as u32
+    }
+
+    async fn ping(&self) -> u32 {
+        7
+    }
+}
+
+// r[verify schema.errors.call-level]
+// r[verify schema.errors.call-level.callee]
 #[tokio::test]
-async fn missing_required_field_is_non_retryable() {
+async fn callee_args_schema_error_is_call_level() {
+    let (client_conduit, server_conduit) = conduit_pair();
+
+    let server_task = tokio::task::spawn(async move {
+        let _server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake("Control"))
+            .on_connection(command_new::ControlDispatcher::new(NewControlService))
+            .establish::<command_new::ControlClient>()
+            .await
+            .expect("server handshake failed");
+        std::future::pending::<()>().await;
+    });
+
+    let client = initiator_conduit(client_conduit, test_initiator_handshake("Control"))
+        .establish::<command_old::ControlClient>()
+        .await
+        .expect("client handshake failed");
+
+    let err = client
+        .configure(command_old::Config { limit: 5 })
+        .await
+        .expect_err("callee should reject incompatible request args");
+    assert!(
+        matches!(&err, VoxError::InvalidPayload(msg) if msg.contains("Incompatible")),
+        "expected InvalidPayload with a schema-incompatibility failure, got: {err:?}"
+    );
+
+    let pong = client
+        .ping()
+        .await
+        .expect("connection should remain open after callee decode failure");
+    assert_eq!(pong, 7);
+
+    server_task.abort();
+}
+
+// r[verify schema.errors.same-peer-terminal]
+// r[verify schema.errors.call-level]
+// r[verify schema.errors.call-level.caller]
+// r[verify rpc.fallible.vox-error.outcome]
+#[tokio::test]
+async fn missing_required_field_is_same_peer_terminal() {
     let (client_conduit, server_conduit) = conduit_pair();
 
     let server_task = tokio::task::spawn(async move {
@@ -419,20 +663,27 @@ async fn missing_required_field_is_non_retryable() {
 
     // New client calls old daemon. The response has DaemonStatus with only
     // {uptime_ms, listen}, but the client expects {uptime_ms, listen, pid,
-    // executable_path}. Translation plan fails on the missing required fields.
+    // executable_path}. The phon compat decode rejects the missing required
+    // (non-default) reader fields up front.
     let err = client.status().await.expect_err("call should fail");
 
-    // The error must be InvalidPayload (translation plan failure).
+    // The error must be InvalidPayload (schema compatibility failure).
     assert!(
-        matches!(&err, VoxError::InvalidPayload(msg) if msg.contains("translation plan failed")),
-        "expected InvalidPayload with translation plan failure, got: {err:?}"
+        matches!(&err, VoxError::InvalidPayload(msg) if msg.contains("Incompatible")),
+        "expected InvalidPayload with a schema-incompatibility failure, got: {err:?}"
     );
 
-    // And it must be non-retryable.
+    // And it must not be classified as a session interruption.
     assert!(
-        !err.is_retryable(),
-        "schema incompatibility must be non-retryable"
+        !err.is_session_interruption(),
+        "schema incompatibility must be terminal for the current peer schema"
     );
+
+    let pong = client
+        .ping()
+        .await
+        .expect("connection should remain open after caller decode failure");
+    assert_eq!(pong, 42);
 
     server_task.abort();
 }

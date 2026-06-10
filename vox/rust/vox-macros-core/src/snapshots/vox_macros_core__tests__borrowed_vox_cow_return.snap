@@ -1,6 +1,5 @@
 ---
 source: rust/vox-macros-core/src/lib.rs
-assertion_line: 1338
 expression: "generate(quote!\n{\n    trait TextSvc\n    {\n        async fn normalize(&self, input: String) -> ::std::borrow::Cow<'vox,\n        str>;\n    }\n})"
 ---
 #[allow(non_snake_case, clippy::all)]
@@ -9,17 +8,20 @@ pub fn text_svc_service_descriptor() -> &'static ::vox::session::ServiceDescript
         std::sync::OnceLock::new();
     DESCRIPTOR.get_or_init(|| {
         let methods: Vec<&'static ::vox::session::MethodDescriptor> =
-            vec![::vox::hash::method_descriptor_with_retry::<
+            vec![::vox::hash::method_descriptor::<
                 (String,),
                 ::std::borrow::Cow<'static, str>,
             >(
                 "TextSvc",
                 "normalize",
                 &["input"],
-                None,
-                ::vox::RetryPolicy {
-                    persist: false,
-                    idem: false,
+                &[None],
+                ::vox::hash::MethodDescriptorOptions {
+                    response_wire_shape: <Result<
+                        ::std::borrow::Cow<'static, str>,
+                        ::vox::VoxError<::core::convert::Infallible>,
+                    > as ::vox::facet::Facet<'static>>::SHAPE,
+                    doc: None,
                 },
             )];
         Box::leak(Box::new(::vox::session::ServiceDescriptor {
@@ -79,15 +81,6 @@ where
     H: TextSvc,
     R: ::vox::ReplySink,
 {
-    fn retry_policy(&self, method_id: ::vox::MethodId) -> ::vox::RetryPolicy {
-        if method_id == text_svc_service_descriptor().methods[0usize].id {
-            return ::vox::RetryPolicy {
-                persist: false,
-                idem: false,
-            };
-        }
-        ::vox::RetryPolicy::VOLATILE
-    }
     fn args_have_channels(&self, method_id: ::vox::MethodId) -> bool {
         if method_id == text_svc_service_descriptor().methods[0usize].id {
             return text_svc_service_descriptor().methods[0usize].args_have_channels;
@@ -117,12 +110,12 @@ where
         let request_call = call.get();
         let method_id = request_call.method_id;
         let args_bytes = match &request_call.args {
-            ::vox::Payload::PostcardBytes(bytes) => bytes,
+            ::vox::Payload::Encoded(bytes) => bytes,
             _ => {
                 reply
                     .send_error(
                         ::vox::VoxError::<::core::convert::Infallible>::InvalidPayload(
-                            "args not PostcardBytes".into(),
+                            "args not Encoded".into(),
                         ),
                     )
                     .await;
@@ -132,8 +125,15 @@ where
         if method_id == text_svc_service_descriptor().methods[0usize].id {
             let _binder_guard = reply.channel_binder().map(::vox::set_channel_binder);
             let deser_result: ::core::result::Result<(String,), _> =
-                ::vox::schema_deser::schema_deserialize_args_borrowed(
-                    args_bytes, method_id, &schemas,
+                ::vox::provide_channels_for_method(
+                    request_call.channels.clone(),
+                    text_svc_service_descriptor().methods[0usize],
+                    &schemas,
+                    || {
+                        ::vox::schema_deser::schema_deserialize_args_borrowed(
+                            args_bytes, method_id, &schemas,
+                        )
+                    },
                 );
             drop(_binder_guard);
             let args: (String,) = match deser_result {
@@ -195,7 +195,7 @@ impl TextSvcClient {
     #[doc = r" Create a new client wrapping the given caller."]
     pub fn new(caller: ::vox::Caller) -> Self {
         Self {
-            caller,
+            caller: caller.with_service(text_svc_service_descriptor()),
             session: None,
         }
     }
@@ -215,9 +215,9 @@ impl TextSvcClient {
         let method_id = text_svc_service_descriptor().methods[0usize].id;
         let args = (input,);
         let mut metadata = Default::default();
-        ::vox::ensure_channel_retry_mode(&mut metadata, ::vox::ChannelRetryMode::None);
         let req = ::vox::RequestCall {
             method_id,
+            channels: Default::default(),
             args: ::vox::Payload::outgoing(&args),
             metadata,
             schemas: Default::default(),
@@ -247,7 +247,7 @@ impl TextSvcClient {
                     ::vox::VoxError::Indeterminate => {
                         ::vox::VoxError::<::core::convert::Infallible>::Indeterminate
                     }
-                    ::vox::VoxError::User(never) => match never {},
+                    ::vox::VoxError::User(never) => match *never {},
                 });
             }
         };
@@ -259,11 +259,11 @@ impl TextSvcClient {
         ::vox::provide_fds(__vox_frame_fds, move || {
             response.try_repack(|resp, _bytes| {
                 let ret_bytes = match &resp.ret {
-                    ::vox::Payload::PostcardBytes(bytes) => bytes,
+                    ::vox::Payload::Encoded(bytes) => bytes,
                     _ => {
                         return Err(
                             ::vox::VoxError::<::core::convert::Infallible>::InvalidPayload(
-                                "response not PostcardBytes".into(),
+                                "response not Encoded".into(),
                             ),
                         );
                     }
@@ -291,6 +291,9 @@ impl TextSvcClient {
 impl ::vox::FromVoxSession for TextSvcClient {
     const SERVICE_NAME: &'static str = "TextSvc";
     fn from_vox_session(caller: ::vox::Caller, session: Option<::vox::SessionHandle>) -> Self {
-        Self { caller, session }
+        Self {
+            caller: caller.with_service(text_svc_service_descriptor()),
+            session,
+        }
     }
 }

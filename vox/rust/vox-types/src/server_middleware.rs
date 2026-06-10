@@ -9,7 +9,7 @@ use std::{
 use facet_reflect::Peek;
 
 use crate::{
-    ConnectionId, MetadataEntry, MethodDescriptor, Payload, ReplySink, RequestContext, RequestId,
+    ConnectionId, Metadata, MethodDescriptor, Payload, ReplySink, RequestContext, RequestId,
     RequestResponse,
 };
 
@@ -143,7 +143,7 @@ impl<'a> ServerRequest<'a> {
     }
 
     /// Request metadata borrowed from the inbound call.
-    pub fn metadata(&self) -> &'a [crate::MetadataEntry<'a>] {
+    pub fn metadata(&self) -> &'a crate::Metadata {
         self.context.metadata()
     }
 
@@ -218,13 +218,13 @@ impl ServerResponseContext {
 #[derive(Clone, Copy, Debug)]
 pub enum ServerResponsePayload<'a> {
     Value(Peek<'a, 'static>),
-    PostcardBytes(&'a [u8]),
+    Encoded(&'a [u8]),
 }
 
 /// Middleware-facing view of one outbound server response.
 #[derive(Clone, Copy, Debug)]
 pub struct ServerResponse<'a> {
-    metadata: &'a [MetadataEntry<'a>],
+    metadata: &'a Metadata,
     payload: ServerResponsePayload<'a>,
 }
 
@@ -235,7 +235,7 @@ impl<'a> ServerResponse<'a> {
                 let peek = unsafe { Peek::unchecked_new(*ptr, shape) };
                 ServerResponsePayload::Value(peek)
             }
-            Payload::PostcardBytes(bytes) => ServerResponsePayload::PostcardBytes(bytes),
+            Payload::Encoded(bytes) => ServerResponsePayload::Encoded(bytes),
         };
         Self {
             metadata: &response.metadata,
@@ -243,7 +243,7 @@ impl<'a> ServerResponse<'a> {
         }
     }
 
-    pub const fn metadata(&self) -> &'a [MetadataEntry<'a>] {
+    pub const fn metadata(&self) -> &'a Metadata {
         self.metadata
     }
 
@@ -254,7 +254,7 @@ impl<'a> ServerResponse<'a> {
     pub const fn payload_peek(&self) -> Option<Peek<'a, 'static>> {
         match self.payload {
             ServerResponsePayload::Value(peek) => Some(peek),
-            ServerResponsePayload::PostcardBytes(_) => None,
+            ServerResponsePayload::Encoded(_) => None,
         }
     }
 }
@@ -363,7 +363,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::{Extensions, ServerCallOutcome, ServerRequest};
-    use crate::{RequestContext, method_descriptor};
+    use crate::{MetadataExt, RequestContext, method_descriptor};
 
     #[test]
     fn extensions_store_values_by_type() {
@@ -388,16 +388,24 @@ mod tests {
 
     #[test]
     fn server_request_exposes_context_and_decoded_args() {
-        let method =
-            method_descriptor::<(u32, u32), ()>("demo-service", "sum", &["left", "right"], None);
-        let metadata = [];
+        let method = method_descriptor::<(u32, u32), ()>(
+            "demo-service",
+            "sum",
+            &["left", "right"],
+            &[None, None],
+            crate::MethodDescriptorOptions {
+                response_wire_shape: <Result<(), crate::VoxError> as facet::Facet>::SHAPE,
+                doc: None,
+            },
+        );
+        let metadata = crate::Metadata::default();
         let extensions = Extensions::new();
         let context = RequestContext::with_extensions(method, &metadata, &extensions);
         let args = (7_u32, 35_u32);
         let request = ServerRequest::new(context, facet_reflect::Peek::new(&args));
 
         assert_eq!(request.method().method_name, "sum");
-        assert_eq!(request.metadata().len(), 0);
+        assert_eq!(request.metadata().meta_len(), 0);
         let tuple = request
             .args()
             .into_tuple()

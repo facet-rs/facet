@@ -41,10 +41,16 @@ export interface CallerRequest {
   descriptor: MethodDescriptor;
 
   /**
-   * Canonical service schema table (from vox-codegen). Used for local
-   * encode/decode and for sending args schemas to the remote peer.
+   * Per-method phon schema data (from the generated `{service}Methods` table):
+   * args/ok root ids, the args schema-closure to advertise, and channel metadata.
    */
-  sendSchemas: import("./schema_tracker.ts").ServiceSendSchemas;
+  methodSchemas: import("./schema_tracker.ts").PhonMethodSchemas;
+
+  /**
+   * The service's phon `Registry` (from the generated `{service}Registry`),
+   * resolving every args/ok type for local encode and reader-side decode.
+   */
+  registry: import("@bearcove/phon-schema").Registry;
 
   /**
    * Channel IDs for streaming arguments.
@@ -62,15 +68,6 @@ export interface CallerRequest {
   metadata?: ClientMetadata;
 
   /**
-   * Optional rebuild hook for retryable requests that need to rebind channels
-   * and regenerate payload/channels on resend.
-   */
-  prepareRetry?: () => {
-    payload: Uint8Array;
-    channels: bigint[];
-  };
-
-  /**
    * Optional cleanup hook for channel-bearing requests. Called when the
    * request is finally settled or closed.
    */
@@ -84,6 +81,8 @@ export interface CallerRequest {
  * Implementations handle the actual wire protocol, while middleware
  * can be composed using the with() method.
  */
+// r[impl rpc.caller]
+// r[impl rpc.caller.liveness.refcounted]
 export interface Caller {
   /**
    * Make an RPC call.
@@ -114,6 +113,11 @@ export interface Caller {
    * @returns New caller with middleware applied
    */
   with(middleware: ClientMiddleware): Caller;
+
+  /**
+   * Release this caller handle's liveness reference.
+   */
+  dispose(): void;
 }
 
 /**
@@ -130,6 +134,7 @@ export interface Caller {
 export class MiddlewareCaller implements Caller {
   private inner: Caller;
   private middlewares: ClientMiddleware[];
+  private disposed = false;
 
   constructor(inner: Caller, middlewares: ClientMiddleware[]) {
     this.inner = inner;
@@ -216,5 +221,13 @@ export class MiddlewareCaller implements Caller {
 
   with(middleware: ClientMiddleware): Caller {
     return new MiddlewareCaller(this.inner, [...this.middlewares, middleware]);
+  }
+
+  dispose(): void {
+    if (this.disposed) {
+      return;
+    }
+    this.disposed = true;
+    this.inner.dispose();
   }
 }

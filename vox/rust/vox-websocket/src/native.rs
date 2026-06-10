@@ -18,7 +18,6 @@ use vox_types::{Backing, Link, LinkRx, LinkTx};
 /// boundaries natively, so no length-prefix framing is needed.
 // r[impl transport.websocket]
 // r[impl transport.websocket.platforms]
-// r[impl zerocopy.framing.link.websocket]
 pub struct WsLink<S> {
     stream: WebSocketStream<S>,
 }
@@ -55,8 +54,7 @@ impl WsLink<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>> {
 
 /// A [`LinkSource`](vox_core::LinkSource) that connects to a WebSocket URL.
 ///
-/// Each call to `next_link` opens a fresh WebSocket connection, supporting
-/// reconnection via stable conduits.
+/// Each call to `next_link` opens a fresh WebSocket connection.
 pub struct WsLinkSource {
     url: String,
 }
@@ -233,7 +231,6 @@ impl std::error::Error for WsLinkRxError {
     }
 }
 
-// r[impl zerocopy.recv.websocket]
 impl LinkRx for WsLinkRx {
     type Error = WsLinkRxError;
 
@@ -292,6 +289,8 @@ mod tests {
         }
     }
 
+    // r[verify transport.websocket]
+    // r[verify transport.websocket.platforms]
     #[tokio::test]
     async fn round_trip_single() {
         let (a, b) = ws_pair().await;
