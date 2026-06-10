@@ -38,7 +38,13 @@ let package = Package(
         .target(
             name: "CBlake3",
             path: "swift/cblake3/Sources/CBlake3",
-            cSettings: [.define("BLAKE3_USE_NEON", to: "0")]
+            cSettings: [
+                .define("BLAKE3_USE_NEON", to: "0"),
+                .define("BLAKE3_NO_SSE2"),
+                .define("BLAKE3_NO_SSE41"),
+                .define("BLAKE3_NO_AVX2"),
+                .define("BLAKE3_NO_AVX512"),
+            ]
         ),
         .target(
             name: "PhonSchema",
