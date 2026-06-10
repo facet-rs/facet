@@ -29,9 +29,11 @@ const SYMBOLS: &[&str] = &[
     "phon_stencil_borrow",
     "phon_stencil_option",
     "phon_stencil_result",
+    "phon_stencil_pointer",
     "phon_stencil_opaque",
     "phon_stencil_dynamic",
     "phon_stencil_callblock",
+    "phon_stencil_set",
     "phon_stencil_map",
     "phon_stencil_enum",
     "phon_stencil_default",
@@ -42,9 +44,11 @@ const SYMBOLS: &[&str] = &[
     "phon_stencil_bytes_enc",
     "phon_stencil_option_enc",
     "phon_stencil_result_enc",
+    "phon_stencil_pointer_enc",
     "phon_stencil_opaque_enc",
     "phon_stencil_dynamic_enc",
     "phon_stencil_callblock_enc",
+    "phon_stencil_set_enc",
     "phon_stencil_map_enc",
     "phon_stencil_enum_enc",
     "phon_stencil_done_enc",
@@ -110,9 +114,11 @@ fn emit_arm64_macos(out: &Path, generated: &Path) {
     let borrow = get("phon_stencil_borrow", "phon_cont");
     let option = get("phon_stencil_option", "phon_cont");
     let result = get("phon_stencil_result", "phon_cont");
+    let pointer = get("phon_stencil_pointer", "phon_cont");
     let opaque = get("phon_stencil_opaque", "phon_cont");
     let dynamic = get("phon_stencil_dynamic", "phon_cont");
     let callblock = get("phon_stencil_callblock", "phon_cont");
+    let set_dec = get("phon_stencil_set", "phon_cont");
     let map_dec = get("phon_stencil_map", "phon_cont");
     let enum_dec = get("phon_stencil_enum", "phon_cont");
     let default = get("phon_stencil_default", "phon_cont");
@@ -123,9 +129,11 @@ fn emit_arm64_macos(out: &Path, generated: &Path) {
     let bytes_enc = get("phon_stencil_bytes_enc", "phon_econt");
     let option_enc = get("phon_stencil_option_enc", "phon_econt");
     let result_enc = get("phon_stencil_result_enc", "phon_econt");
+    let pointer_enc = get("phon_stencil_pointer_enc", "phon_econt");
     let opaque_enc = get("phon_stencil_opaque_enc", "phon_econt");
     let dynamic_enc = get("phon_stencil_dynamic_enc", "phon_econt");
     let callblock_enc = get("phon_stencil_callblock_enc", "phon_econt");
+    let set_enc = get("phon_stencil_set_enc", "phon_econt");
     let map_enc = get("phon_stencil_map_enc", "phon_econt");
     let enum_enc = get("phon_stencil_enum_enc", "phon_econt");
     let done_enc = get("phon_stencil_done_enc", "phon_econt");
@@ -189,6 +197,13 @@ fn emit_arm64_macos(out: &Path, generated: &Path) {
     emit_cont(&mut s, "RESULT_CONT", "RESULT", &result);
     emit(
         &mut s,
+        "POINTER",
+        "`phon_stencil_pointer`: decode one owned pointer; pointee body via `PointerInfo.pointee_entry`.",
+        &pointer,
+    );
+    emit_cont(&mut s, "POINTER_CONT", "POINTER", &pointer);
+    emit(
+        &mut s,
         "OPAQUE",
         "`phon_stencil_opaque`: decode one opaque adapter field (length-prefixed bytes); thunk builds value.",
         &opaque,
@@ -208,6 +223,13 @@ fn emit_arm64_macos(out: &Path, generated: &Path) {
         &callblock,
     );
     emit_cont(&mut s, "CALLBLOCK_CONT", "CALLBLOCK", &callblock);
+    emit(
+        &mut s,
+        "SET",
+        "`phon_stencil_set`: decode one owned set (count loop, element sub-chain); element body via `SetInfo.element_entry`.",
+        &set_dec,
+    );
+    emit_cont(&mut s, "SET_CONT", "SET", &set_dec);
     emit(
         &mut s,
         "MAP",
@@ -274,6 +296,13 @@ fn emit_arm64_macos(out: &Path, generated: &Path) {
     emit_cont(&mut s, "RESULT_ENC_CONT", "RESULT_ENC", &result_enc);
     emit(
         &mut s,
+        "POINTER_ENC",
+        "`phon_stencil_pointer_enc`: encode one owned pointer; pointee body via `EncPointerInfo.pointee_entry`.",
+        &pointer_enc,
+    );
+    emit_cont(&mut s, "POINTER_ENC_CONT", "POINTER_ENC", &pointer_enc);
+    emit(
+        &mut s,
         "OPAQUE_ENC",
         "`phon_stencil_opaque_enc`: encode one opaque adapter field (length-prefixed bytes); thunk appends inner bytes.",
         &opaque_enc,
@@ -298,6 +327,13 @@ fn emit_arm64_macos(out: &Path, generated: &Path) {
         "CALLBLOCK_ENC",
         &callblock_enc,
     );
+    emit(
+        &mut s,
+        "SET_ENC",
+        "`phon_stencil_set_enc`: encode one owned set (count + iterator loop, element sub-chain); element body via `EncSetInfo.element_entry`.",
+        &set_enc,
+    );
+    emit_cont(&mut s, "SET_ENC_CONT", "SET_ENC", &set_enc);
     emit(
         &mut s,
         "MAP_ENC",

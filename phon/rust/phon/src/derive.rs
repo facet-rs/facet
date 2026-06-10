@@ -8,7 +8,7 @@
 //!
 //! Two products fall out of one walk of the `Shape`:
 //! - a **schema batch** with real content-derived ids (via
-//!   [`resolve_ids`](phon_schema::resolve_ids)), for a registry — the *wire* view;
+//!   [`resolve_ids`]), for a registry — the *wire* view;
 //! - a **descriptor** carrying those same ids plus the memory offsets — the
 //!   *memory* view.
 //!
@@ -25,15 +25,15 @@ use std::sync::{LazyLock, RwLock};
 
 use facet::{
     Def, DefaultSource, EnumRepr, EnumType, Facet, KnownPointer, ListDef, MapDef, OpaqueAdapterDef,
-    OpaqueDeserialize, OpaqueSerialize, OptionDef, PtrConst, PtrMut, PtrUninit, ResultDef,
-    ScalarType, Shape, StructKind, Type, UserType,
+    OpaqueDeserialize, OpaqueSerialize, OptionDef, PointerDef, PtrConst, PtrMut, PtrUninit,
+    ResultDef, ScalarType, SetDef, Shape, StructKind, Type, UserType,
 };
 use phon_engine::{Registry, typed};
 use phon_ir::{
     Access, BorrowThunks, Construct, Descriptor, EnumAccess, FieldAccess, FieldDefault, Layout,
-    Lowered, MapAccess, MapStorage, MapThunks, OpaqueThunks, OptionAccess, OptionThunks, Presence,
-    RecordAccess, ResultAccess, ResultThunks, SeqThunks, SequenceAccess, SequenceStorage, Tag,
-    VariantAccess,
+    Lowered, MapAccess, MapStorage, MapThunks, OpaqueThunks, OptionAccess, OptionThunks,
+    PointerAccess, PointerThunks, Presence, RecordAccess, ResultAccess, ResultThunks, SeqThunks,
+    SequenceAccess, SequenceStorage, SetAccess, SetStorage, SetThunks, Tag, VariantAccess,
 };
 use phon_schema::{
     Field, Primitive, Schema, SchemaId, SchemaKind, SchemaRef, Variant, VariantPayload,
@@ -41,7 +41,7 @@ use phon_schema::{
 };
 
 /// phon's view of a Rust type, derived from its facet `Shape`: the resolved
-/// schema batch (for a [`Registry`](phon_engine::Registry)), the root schema id,
+/// schema batch (for a [`Registry`]), the root schema id,
 /// and the descriptor.
 // r[impl schema-identity.closure]
 #[derive(Clone, Debug)]
@@ -57,7 +57,7 @@ pub struct Derived {
     pub descriptor: Descriptor,
     /// Block descriptors for the recursive (cyclic) schemas reachable from the root:
     /// the full body of each, keyed by its schema id. Empty for a non-recursive type.
-    /// The engine lowers each into a callable block ([`MemOp::CallBlock`]).
+    /// The engine lowers each into a callable block ([`MemOp::CallBlock`](phon_ir::MemOp::CallBlock)).
     pub descriptor_blocks: std::collections::HashMap<SchemaId, Descriptor>,
 }
 
@@ -145,6 +145,23 @@ pub fn of_shape(shape: &'static Shape) -> Result<Derived, DeriveError> {
             descriptor: borrowed_descriptor(shape, kind)?,
         });
     }
+    if let Some((ptr, pointee)) = owned_pointer_def(shape) {
+        let inner = of_shape(pointee)?;
+        let (size, align) = layout_of(shape)?;
+        return Ok(Derived {
+            root: inner.root,
+            schemas: inner.schemas,
+            descriptor_blocks: inner.descriptor_blocks,
+            descriptor: Descriptor {
+                schema: inner.descriptor.schema.clone(),
+                layout: Layout { size, align },
+                access: Access::Pointer(PointerAccess {
+                    pointee: Box::new(inner.descriptor),
+                    thunks: pointer_thunks(ptr),
+                }),
+            },
+        });
+    }
     // A bare scalar root: no composite batch, the id is the primitive's.
     if let Some(p) = scalar_primitive(shape)? {
         let (size, align) = layout_of(shape)?;
@@ -179,13 +196,15 @@ pub fn of_shape(shape: &'static Shape) -> Result<Derived, DeriveError> {
         b.intern_list(ld)?
     } else if let Some(opt) = option_def(shape) {
         b.intern_option(opt)?
+    } else if let Some(sd) = set_def(shape) {
+        b.intern_set(sd)?
     } else if let Some(md) = map_def(shape) {
         b.intern_map(md)?
     } else if let Some(et) = enum_type(shape) {
         b.intern_enum(shape, et)?
     } else {
         return Err(DeriveError::Unsupported(
-            "derive root must be a struct, enum, Result, list, option, map, or fixed scalar so far",
+            "derive root must be a struct, enum, Result, list, set, option, map, or fixed scalar so far",
         ));
     };
     let by_shape = b.by_shape;
@@ -244,9 +263,19 @@ impl Builder {
     }
 
     fn struct_kind(&mut self, shape: &'static Shape) -> Result<SchemaKind, DeriveError> {
-        let fields = struct_fields(shape)?;
-        let mut out = Vec::with_capacity(fields.len());
-        for f in fields {
+        let Type::User(UserType::Struct(st)) = &shape.ty else {
+            return Err(DeriveError::Unsupported("derive: expected a struct"));
+        };
+        if matches!(st.kind, StructKind::Tuple | StructKind::TupleStruct) {
+            let mut elements = Vec::with_capacity(st.fields.len());
+            for f in st.fields {
+                elements.push(self.ref_of(f.shape())?);
+            }
+            return Ok(SchemaKind::Tuple { elements });
+        }
+
+        let mut out = Vec::with_capacity(st.fields.len());
+        for f in st.fields {
             out.push(Field {
                 name: f.name.to_string(),
                 schema: self.ref_of(f.shape())?,
@@ -288,6 +317,9 @@ impl Builder {
         if let Some(kind) = borrowed_kind(shape)? {
             return Ok(SchemaRef::concrete(primitive_id(borrow_primitive(kind))));
         }
+        if let Some((_, pointee)) = owned_pointer_def(shape) {
+            return self.ref_of(pointee);
+        }
         if let Some(p) = scalar_primitive(shape)? {
             Ok(SchemaRef::concrete(primitive_id(p)))
         } else if is_struct(shape) {
@@ -295,6 +327,9 @@ impl Builder {
             Ok(SchemaRef::concrete(SchemaId(key as u64)))
         } else if let Some(list_def) = list_def(shape) {
             let key = self.intern_list(list_def)?;
+            Ok(SchemaRef::concrete(SchemaId(key as u64)))
+        } else if let Some(set_def) = set_def(shape) {
+            let key = self.intern_set(set_def)?;
             Ok(SchemaRef::concrete(SchemaId(key as u64)))
         } else if let Some(opt) = option_def(shape) {
             let key = self.intern_option(opt)?;
@@ -331,6 +366,24 @@ impl Builder {
             id: SchemaId(key as u64),
             type_params: Vec::new(),
             kind: SchemaKind::List { element },
+        });
+        Ok(key)
+    }
+
+    /// Intern a `Set` schema (e.g. `HashSet<T>`), returning its provisional key.
+    /// Interned by the `SetDef` pointer so two sets of the same `T` dedup.
+    fn intern_set(&mut self, set_def: &'static SetDef) -> Result<usize, DeriveError> {
+        let ptr = core::ptr::from_ref(set_def) as usize;
+        if let Some(&k) = self.by_shape.get(&ptr) {
+            return Ok(k);
+        }
+        let element = self.ref_of(set_def.t())?;
+        let key = self.protos.len();
+        self.by_shape.insert(ptr, key);
+        self.protos.push(Schema {
+            id: SchemaId(key as u64),
+            type_params: Vec::new(),
+            kind: SchemaKind::Set { element },
         });
         Ok(key)
     }
@@ -597,6 +650,17 @@ fn build_descriptor(
     if let Some(kind) = borrowed_kind(shape)? {
         return borrowed_descriptor(shape, kind);
     }
+    if let Some((ptr, pointee_shape)) = owned_pointer_def(shape) {
+        let pointee = build_descriptor(pointee_shape, by_shape, real_ids, rec)?;
+        return Ok(Descriptor {
+            schema: pointee.schema.clone(),
+            layout: Layout { size, align },
+            access: Access::Pointer(PointerAccess {
+                pointee: Box::new(pointee),
+                thunks: pointer_thunks(ptr),
+            }),
+        });
+    }
     if let Some(p) = scalar_primitive(shape)? {
         return Ok(Descriptor {
             schema: SchemaRef::concrete(primitive_id(p)),
@@ -617,6 +681,23 @@ fn build_descriptor(
             access: Access::Sequence(SequenceAccess {
                 element: Box::new(element),
                 storage: SequenceStorage::Vtable(list_thunks(list_def)),
+            }),
+        };
+        return Ok(rec.exit(real, desc));
+    }
+    if let Some(set_def) = set_def(shape) {
+        let real = real_ids[by_shape[&(core::ptr::from_ref(set_def) as usize)]];
+        let layout = Layout { size, align };
+        if let Some(d) = rec.enter(real, layout) {
+            return Ok(d);
+        }
+        let element = build_descriptor(set_def.t(), by_shape, real_ids, rec)?;
+        let desc = Descriptor {
+            schema: SchemaRef::concrete(real),
+            layout,
+            access: Access::Set(SetAccess {
+                element: Box::new(element),
+                storage: SetStorage::Vtable(set_thunks(set_def)),
             }),
         };
         return Ok(rec.exit(real, desc));
@@ -774,6 +855,15 @@ fn list_def(shape: &'static Shape) -> Option<&'static ListDef> {
     }
 }
 
+/// The `&'static SetDef` behind a set-typed shape (`HashSet<T>`,
+/// `BTreeSet<T>`, …), or `None`.
+fn set_def(shape: &'static Shape) -> Option<&'static SetDef> {
+    match &shape.def {
+        Def::Set(set_def) => Some(set_def),
+        _ => None,
+    }
+}
+
 /// The `&'static OptionDef` behind an `Option<T>`-typed shape, or `None`.
 fn option_def(shape: &'static Shape) -> Option<&'static OptionDef> {
     match &shape.def {
@@ -798,6 +888,26 @@ fn result_def(shape: &'static Shape) -> Option<&'static ResultDef> {
         Def::Result(result_def) => Some(result_def),
         _ => None,
     }
+}
+
+/// A strong owning pointer whose wire identity is the pointee's schema. The
+/// descriptor keeps the pointer handle's layout and uses the pointer vtable to
+/// borrow/construct the pointee (`r[descriptors.thunk-binding]`).
+// r[impl descriptors.thunk-binding]
+fn owned_pointer_def(shape: &'static Shape) -> Option<(&'static PointerDef, &'static Shape)> {
+    let Def::Pointer(ptr) = &shape.def else {
+        return None;
+    };
+    if !matches!(
+        ptr.known,
+        Some(KnownPointer::Box | KnownPointer::Rc | KnownPointer::Arc)
+    ) {
+        return None;
+    }
+    let pointee = ptr.pointee()?;
+    ptr.vtable.borrow_fn?;
+    ptr.vtable.new_into_fn?;
+    Some((ptr, pointee))
 }
 
 /// Whether `shape` is a self-describing dynamic `Value` (`facet_value::Value`,
@@ -916,6 +1026,125 @@ unsafe extern "C" fn seq_data(ctx: *const (), list: *const u8) -> *const u8 {
     // Safety: `list` is an initialized handle; the data buffer is a thin pointer.
     let data = unsafe { as_ptr(PtrConst::new(list)) };
     data.as_byte_ptr()
+}
+
+// ============================================================================
+// Set thunks
+// ============================================================================
+//
+// Sets are non-contiguous collections: encode uses a stateful iterator and
+// decode inserts one scratch-decoded element at a time. The engine passes the
+// field's `&'static SetDef` back as `ctx`, mirroring the map/list thunk style.
+//
+// Spec: `r[descriptors.thunk-binding]`.
+
+/// Build the [`SetThunks`] for a set field, with the field's `SetDef` as `ctx`.
+fn set_thunks(set_def: &'static SetDef) -> SetThunks {
+    SetThunks {
+        ctx: core::ptr::from_ref(set_def).cast::<()>(),
+        len: set_len,
+        init_with_capacity: set_init_with_capacity,
+        insert: set_insert,
+        iter_init: set_iter_init,
+        iter_next: set_iter_next,
+        iter_dealloc: set_iter_dealloc,
+    }
+}
+
+/// The set's current element count, via the `SetVTable`'s `len`.
+///
+/// # Safety
+/// `ctx` must be a `&'static SetDef` (as set by [`set_thunks`]); `set` must point
+/// to an initialized set handle of the matching type.
+unsafe extern "C" fn set_len(ctx: *const (), set: *const u8) -> usize {
+    // Safety: `ctx` is the `&'static SetDef`.
+    let set_def = unsafe { &*ctx.cast::<SetDef>() };
+    // Safety: `set` is an initialized handle of the set's type.
+    unsafe { (set_def.vtable.len)(PtrConst::new(set)) }
+}
+
+/// Initialize the uninitialized set at `set` with room for `cap` entries.
+///
+/// # Safety
+/// `ctx` must be a `&'static SetDef`; `set` must be uninitialized storage for the
+/// set handle of the matching type.
+unsafe extern "C" fn set_init_with_capacity(ctx: *const (), set: *mut u8, cap: usize) {
+    // Safety: `ctx` is the `&'static SetDef`.
+    let set_def = unsafe { &*ctx.cast::<SetDef>() };
+    // Safety: `set` is uninitialized storage for the set.
+    unsafe { (set_def.vtable.init_in_place_with_capacity)(PtrUninit::new(set), cap) };
+}
+
+/// Insert `*value` into the initialized set at `set`, moving the value out of
+/// its scratch buffer. Returns `false` when the element was already present.
+///
+/// # Safety
+/// `ctx` must be a `&'static SetDef`; `set` must be initialized; `value` must
+/// point to an initialized element that the engine frees without dropping after
+/// this call.
+unsafe extern "C" fn set_insert(ctx: *const (), set: *mut u8, value: *mut u8) -> bool {
+    // Safety: `ctx` is the `&'static SetDef`.
+    let set_def = unsafe { &*ctx.cast::<SetDef>() };
+    // Safety: `set` is initialized; `value` holds the element to move in.
+    unsafe { (set_def.vtable.insert)(PtrMut::new(set), PtrMut::new(value)) }
+}
+
+/// Build a boxed iterator over the initialized set at `set`.
+///
+/// # Safety
+/// `ctx` must be a `&'static SetDef`; `set` must be initialized.
+unsafe extern "C" fn set_iter_init(ctx: *const (), set: *const u8) -> *mut () {
+    // Safety: `ctx` is the `&'static SetDef`.
+    let set_def = unsafe { &*ctx.cast::<SetDef>() };
+    let init = set_def
+        .vtable
+        .iter_vtable
+        .init_with_value
+        .expect("set iterator has no init_with_value; cannot encode through the typed path");
+    // Safety: `set` is an initialized handle of the set's type.
+    let it: PtrMut = unsafe { init(PtrConst::new(set)) };
+    Box::into_raw(Box::new(it)).cast::<()>()
+}
+
+/// Advance the boxed set iterator.
+///
+/// # Safety
+/// `ctx` must be a `&'static SetDef`; `iter` must be a boxed `PtrMut` from
+/// [`set_iter_init`]; `value_out` must be writable.
+unsafe extern "C" fn set_iter_next(
+    ctx: *const (),
+    iter: *mut (),
+    value_out: *mut *const u8,
+) -> bool {
+    // Safety: `ctx` is the `&'static SetDef`.
+    let set_def = unsafe { &*ctx.cast::<SetDef>() };
+    // Safety: `iter` is the boxed `PtrMut` from `set_iter_init`.
+    let bx = iter.cast::<PtrMut>();
+    match unsafe { (set_def.vtable.iter_vtable.next)(*bx) } {
+        Some(value) => {
+            // Safety: the out-param is writable.
+            unsafe {
+                *value_out = value.as_byte_ptr();
+            }
+            true
+        }
+        None => false,
+    }
+}
+
+/// Free the boxed iterator built by [`set_iter_init`].
+///
+/// # Safety
+/// `ctx` must be a `&'static SetDef`; `iter` must be a boxed `PtrMut` from
+/// [`set_iter_init`], freed exactly once.
+unsafe extern "C" fn set_iter_dealloc(ctx: *const (), iter: *mut ()) {
+    // Safety: `ctx` is the `&'static SetDef`.
+    let set_def = unsafe { &*ctx.cast::<SetDef>() };
+    // Safety: `iter` is the boxed `PtrMut` from `set_iter_init`, taken back exactly
+    // once; the `Box` is dropped at the end of this scope.
+    let bx = unsafe { Box::from_raw(iter.cast::<PtrMut>()) };
+    // Safety: `*bx` is the live iterator built by `init_with_value`.
+    unsafe { (set_def.vtable.iter_vtable.dealloc)(*bx) };
 }
 
 // ============================================================================
@@ -1209,6 +1438,68 @@ unsafe extern "C" fn res_init_err(ctx: *const (), result: *mut u8, value: *mut u
     let rd = unsafe { &*ctx.cast::<ResultDef>() };
     // Safety: `result` is uninitialized; `value` holds the Err payload to move in.
     let _ = unsafe { (rd.vtable.init_err)(PtrUninit::new(result), PtrMut::new(value)) };
+}
+
+// ============================================================================
+// Owned pointer thunks
+// ============================================================================
+//
+// `Box<T>`, `Rc<T>`, and `Arc<T>` are local ownership details: the wire carries
+// `T`, while the descriptor carries the pointer handle layout and the facet
+// pointer vtable. Encode borrows the pointee; decode constructs a fresh owner
+// from the scratch-decoded pointee.
+//
+// Spec: `r[descriptors.thunk-binding]`.
+
+/// Build the [`PointerThunks`] for an owning pointer field/root.
+// r[impl descriptors.thunk-binding]
+fn pointer_thunks(ptr: &'static PointerDef) -> PointerThunks {
+    assert!(
+        ptr.vtable.borrow_fn.is_some(),
+        "owning pointer has no borrow op; cannot encode through the typed path"
+    );
+    assert!(
+        ptr.vtable.new_into_fn.is_some(),
+        "owning pointer has no construction op; cannot decode through the typed path"
+    );
+    PointerThunks {
+        ctx: core::ptr::from_ref(ptr).cast::<()>(),
+        borrow: pointer_borrow,
+        init: pointer_init,
+    }
+}
+
+/// Borrow the pointee behind an initialized owning pointer.
+///
+/// # Safety
+/// `ctx` must be a `&'static PointerDef`; `pointer` must point to an initialized
+/// pointer handle of that exact type.
+unsafe extern "C" fn pointer_borrow(ctx: *const (), pointer: *const u8) -> *const u8 {
+    // Safety: `ctx` is the `&'static PointerDef` set in `pointer_thunks`.
+    let ptr = unsafe { &*ctx.cast::<PointerDef>() };
+    let borrow = ptr
+        .vtable
+        .borrow_fn
+        .expect("borrow presence checked in pointer_thunks");
+    // Safety: `pointer` is an initialized pointer handle for this pointer def.
+    let pointee = unsafe { borrow(PtrConst::new(pointer)) };
+    pointee.as_byte_ptr()
+}
+
+/// Initialize an owning pointer from a scratch-decoded pointee value.
+///
+/// # Safety
+/// `ctx` must be a `&'static PointerDef`; `pointer` must point to uninitialized
+/// pointer handle storage; `value` must point to an initialized pointee value.
+unsafe extern "C" fn pointer_init(ctx: *const (), pointer: *mut u8, value: *mut u8) {
+    // Safety: `ctx` is the `&'static PointerDef` set in `pointer_thunks`.
+    let ptr = unsafe { &*ctx.cast::<PointerDef>() };
+    let init = ptr
+        .vtable
+        .new_into_fn
+        .expect("construction presence checked in pointer_thunks");
+    // Safety: `pointer` is uninitialized owner storage, `value` holds the pointee.
+    let _ = unsafe { init(PtrUninit::new(pointer), PtrMut::new(value)) };
 }
 
 // ============================================================================
@@ -1770,7 +2061,7 @@ unsafe extern "C" fn opaque_encode(ctx: *const (), field: *const u8, out: *mut V
 #[repr(transparent)]
 pub struct RawOpaqueBytes<'a>(pub &'a [u8]);
 
-/// The sentinel shape recognized by [`opaque_encode`] for passthrough bytes.
+/// The sentinel shape recognized by `opaque_encode` for passthrough bytes.
 pub static RAW_OPAQUE_BYTES_SHAPE: Shape =
     Shape::builder_for_sized::<RawOpaqueBytes<'static>>("RawOpaqueBytes").build();
 
@@ -1900,8 +2191,10 @@ unsafe extern "C" fn default_from_custom(ctx: *const (), slot: *mut u8) {
 
 /// Map a fixed-width scalar shape to a phon primitive. `Ok(None)` when the shape
 /// is not a scalar at all (e.g. a struct); an error for scalar kinds the typed
-/// path cannot yet carry (`usize`/`isize`, net types, …). `String` is handled
+/// path cannot yet carry (net types, …). `usize`/`isize` are portable as
+/// `u64`/`i64` schemas on every platform. `String` is handled
 /// separately (see [`is_string`]) — it is a byte sequence, not a fixed scalar.
+// r[impl type-system.rust-subset]
 fn scalar_primitive(shape: &Shape) -> Result<Option<Primitive>, DeriveError> {
     let Some(scalar) = shape.scalar_type() else {
         return Ok(None);
@@ -1914,17 +2207,19 @@ fn scalar_primitive(shape: &Shape) -> Result<Option<Primitive>, DeriveError> {
         ScalarType::U16 => Primitive::U16,
         ScalarType::U32 => Primitive::U32,
         ScalarType::U64 => Primitive::U64,
+        ScalarType::USize => Primitive::U64,
         ScalarType::U128 => Primitive::U128,
         ScalarType::I8 => Primitive::I8,
         ScalarType::I16 => Primitive::I16,
         ScalarType::I32 => Primitive::I32,
         ScalarType::I64 => Primitive::I64,
+        ScalarType::ISize => Primitive::I64,
         ScalarType::I128 => Primitive::I128,
         ScalarType::F32 => Primitive::F32,
         ScalarType::F64 => Primitive::F64,
         _ => {
             return Err(DeriveError::Unsupported(
-                "derive: scalar type not supported yet (string, usize/isize, net, …)",
+                "derive: scalar type not supported yet (string, net, …)",
             ));
         }
     }))
@@ -1956,6 +2251,11 @@ mod tests {
         n: u32,
     }
 
+    #[derive(Facet)]
+    struct SrcsetHolder {
+        pairs: Vec<(String, u32)>,
+    }
+
     fn pt_object(a: u8, b: u64, c: u16, flag: bool) -> Value {
         let mut o = VObject::new();
         o.insert(VString::new("a"), Value::from(a));
@@ -1963,6 +2263,48 @@ mod tests {
         o.insert(VString::new("c"), Value::from(c));
         o.insert(VString::new("flag"), Value::from(flag));
         o.into()
+    }
+
+    #[test]
+    // r[verify type-system.canonical-form]
+    fn anonymous_tuple_derives_as_tuple_schema() {
+        let d = of::<(String, u32)>().unwrap();
+        let root = d
+            .schemas
+            .iter()
+            .find(|schema| schema.id == d.root)
+            .expect("tuple root schema should be emitted");
+        let SchemaKind::Tuple { elements } = &root.kind else {
+            panic!("anonymous Rust tuple must derive as SchemaKind::Tuple, got {root:?}");
+        };
+        assert_eq!(elements.len(), 2);
+        assert_eq!(
+            elements[0],
+            SchemaRef::concrete(primitive_id(Primitive::String))
+        );
+        assert_eq!(
+            elements[1],
+            SchemaRef::concrete(primitive_id(Primitive::U32))
+        );
+    }
+
+    #[test]
+    // r[verify type-system.canonical-form]
+    fn tuple_inside_vec_derives_as_tuple_schema() {
+        let d = of::<SrcsetHolder>().unwrap();
+        assert!(
+            d.schemas
+                .iter()
+                .any(|schema| matches!(&schema.kind, SchemaKind::Tuple { elements } if elements.len() == 2)),
+            "Vec<(String, u32)> should emit a tuple element schema"
+        );
+        assert!(
+            d.schemas.iter().all(|schema| !matches!(
+                &schema.kind,
+                SchemaKind::Struct { name, .. } if name.starts_with('(')
+            )),
+            "anonymous tuples must not be emitted as numeric-field structs"
+        );
     }
 
     #[test]
@@ -2122,6 +2464,181 @@ mod tests {
         let back = unsafe { slot.assume_init() };
         assert_eq!(back.items, h.items);
         assert_eq!(back.tag, h.tag);
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct BoxedInner {
+        name: String,
+        score: u32,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct BoxedHolder {
+        tag: u8,
+        inner: Box<BoxedInner>,
+    }
+
+    fn boxed_inner_object(inner: &BoxedInner) -> Value {
+        let mut o = VObject::new();
+        o.insert(VString::new("name"), Value::from(inner.name.as_str()));
+        o.insert(VString::new("score"), Value::from(inner.score));
+        o.into()
+    }
+
+    #[test]
+    // r[verify descriptors.thunk-binding]
+    // r[verify descriptors.encode-decode-asymmetry]
+    fn derived_box_field_typed_matches_dynamic_and_roundtrips() {
+        let d = of::<BoxedHolder>().unwrap();
+        assert_eq!(
+            d.schemas.len(),
+            2,
+            "Box<T> must not introduce a separate wire schema"
+        );
+        let reg = Registry::new(d.schemas.clone());
+
+        let holder = BoxedHolder {
+            tag: 7,
+            inner: Box::new(BoxedInner {
+                name: "source-map".to_string(),
+                score: 42,
+            }),
+        };
+        let typed_bytes = unsafe {
+            typed::encode(
+                core::ptr::from_ref(&holder).cast::<u8>(),
+                &d.descriptor,
+                &d.descriptor_blocks,
+                &reg,
+            )
+        }
+        .unwrap();
+
+        let mut obj = VObject::new();
+        obj.insert(VString::new("tag"), Value::from(holder.tag));
+        obj.insert(VString::new("inner"), boxed_inner_object(&holder.inner));
+        let dyn_bytes = compact::to_bytes(&obj.into(), d.root, &reg).unwrap();
+        assert_eq!(typed_bytes, dyn_bytes);
+
+        let mut slot = std::mem::MaybeUninit::<BoxedHolder>::uninit();
+        unsafe {
+            typed::decode(
+                &typed_bytes,
+                &d.descriptor,
+                &d.descriptor_blocks,
+                &reg,
+                slot.as_mut_ptr().cast::<u8>(),
+            )
+        }
+        .unwrap();
+        assert_eq!(unsafe { slot.assume_init() }, holder);
+    }
+
+    #[test]
+    // r[verify descriptors.thunk-binding]
+    fn derived_box_root_uses_pointee_schema_and_roundtrips() {
+        let d = of::<Box<BoxedInner>>().unwrap();
+        assert_eq!(
+            d.schemas.len(),
+            1,
+            "Box<T> root must reuse T's schema batch"
+        );
+        let reg = Registry::new(d.schemas.clone());
+
+        let inner = Box::new(BoxedInner {
+            name: "boxed-root".to_string(),
+            score: 99,
+        });
+        let typed_bytes = unsafe {
+            typed::encode(
+                core::ptr::from_ref(&inner).cast::<u8>(),
+                &d.descriptor,
+                &d.descriptor_blocks,
+                &reg,
+            )
+        }
+        .unwrap();
+        let dyn_bytes = compact::to_bytes(&boxed_inner_object(&inner), d.root, &reg).unwrap();
+        assert_eq!(typed_bytes, dyn_bytes);
+
+        let mut slot = std::mem::MaybeUninit::<Box<BoxedInner>>::uninit();
+        unsafe {
+            typed::decode(
+                &typed_bytes,
+                &d.descriptor,
+                &d.descriptor_blocks,
+                &reg,
+                slot.as_mut_ptr().cast::<u8>(),
+            )
+        }
+        .unwrap();
+        assert_eq!(unsafe { slot.assume_init() }, inner);
+    }
+
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    // r[verify descriptors.thunk-binding]
+    // r[verify exec.jit-optional]
+    // r[verify ir.stencils]
+    fn derived_box_jit_matches_interpreter_and_roundtrips() {
+        use phon_jit::native::{NativeDecode, NativeEncode};
+
+        let holder_d = of::<BoxedHolder>().unwrap();
+        let holder_reg = Registry::new(holder_d.schemas.clone());
+        let holder_program = typed::lower(&holder_d.descriptor, &holder_reg).unwrap();
+        let holder_enc = NativeEncode::compile(&holder_program);
+        let holder_dec = NativeDecode::compile(&holder_program);
+        let holder = BoxedHolder {
+            tag: 11,
+            inner: Box::new(BoxedInner {
+                name: "jit-source-map".to_string(),
+                score: 1234,
+            }),
+        };
+
+        let holder_base = core::ptr::from_ref(&holder).cast::<u8>();
+        let jit_bytes = unsafe { holder_enc.run(holder_base) };
+        let interp_bytes = unsafe {
+            typed::encode(
+                holder_base,
+                &holder_d.descriptor,
+                &holder_d.descriptor_blocks,
+                &holder_reg,
+            )
+        }
+        .unwrap();
+        assert_eq!(jit_bytes, interp_bytes);
+
+        let mut holder_slot = std::mem::MaybeUninit::<BoxedHolder>::uninit();
+        unsafe { holder_dec.run(&jit_bytes, holder_slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        assert_eq!(unsafe { holder_slot.assume_init() }, holder);
+
+        let root_d = of::<Box<BoxedInner>>().unwrap();
+        let root_reg = Registry::new(root_d.schemas.clone());
+        let root_program = typed::lower(&root_d.descriptor, &root_reg).unwrap();
+        let root_enc = NativeEncode::compile(&root_program);
+        let root_dec = NativeDecode::compile(&root_program);
+        let inner = Box::new(BoxedInner {
+            name: "jit-box-root".to_string(),
+            score: 5678,
+        });
+
+        let root_base = core::ptr::from_ref(&inner).cast::<u8>();
+        let root_jit_bytes = unsafe { root_enc.run(root_base) };
+        let root_interp_bytes = unsafe {
+            typed::encode(
+                root_base,
+                &root_d.descriptor,
+                &root_d.descriptor_blocks,
+                &root_reg,
+            )
+        }
+        .unwrap();
+        assert_eq!(root_jit_bytes, root_interp_bytes);
+
+        let mut root_slot = std::mem::MaybeUninit::<Box<BoxedInner>>::uninit();
+        unsafe { root_dec.run(&root_jit_bytes, root_slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        assert_eq!(unsafe { root_slot.assume_init() }, inner);
     }
 
     // A self-recursive type: a tree whose children are more trees. Derivation must

@@ -90,6 +90,7 @@ public struct Reader {
 
     /// A length-prefixed UTF-8 string (owned). Strict validation — rejects
     /// malformed UTF-8 rather than substituting replacement characters.
+    // r[impl validate.text]
     public mutating func readStr() throws -> String {
         let len = try readLen(minElemSize: 1)
         let bytes = try take(len)
@@ -108,6 +109,7 @@ public struct Reader {
     /// A `u32` element count, bounded so a corrupt length can't drive a huge
     /// allocation: at most `remaining / minElemSize` (or `zstCountCap` for
     /// zero-sized elements).
+    // r[impl validate.lengths]
     public mutating func readLen(minElemSize: Int) throws -> Int {
         let count = Int(try readU32())
         let max = minElemSize == 0 ? zstCountCap : remaining / minElemSize

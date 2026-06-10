@@ -4,7 +4,7 @@
 //! Rust is the source of truth (see `conformance/README.md`). The generator
 //! ([`main`](../main.rs)) writes each case's resolved schemas as self-describing
 //! bytes under `conformance/cases/<case>/<label>.phon`. The expected
-//! [`SchemaId`](phon_schema::SchemaId) is baked into those bytes, so any
+//! [`SchemaId`] is baked into those bytes, so any
 //! implementation can read a case, recompute the id with its own identity hash,
 //! and check it matches — that is the cross-language oracle.
 //!

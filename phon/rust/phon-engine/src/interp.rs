@@ -17,7 +17,7 @@
 use std::collections::HashSet;
 
 use facet_value::{VArray, VObject, VString, Value};
-use phon_ir::ir::{Op, Program};
+use phon_ir::ir::{Op, Program, ValueProgram};
 use phon_schema::bytes::Reader;
 use phon_schema::{DecodeError, read_value};
 
@@ -33,9 +33,27 @@ type Result<T> = core::result::Result<T, CompactError>;
 // r[impl exec.interpreter-baseline]
 // r[impl ir.total]
 pub fn run(program: &Program, bytes: &[u8], reg: &Registry) -> Result<Value> {
+    run_program(program, bytes, reg, &Default::default())
+}
+
+/// Run a lowered dynamic-value program with its recursive block registry.
+///
+/// # Errors
+/// [`CompactError`] for malformed input, missing recursion blocks, or a
+/// writer-only enum variant.
+pub fn run_lowered(lowered: &ValueProgram, bytes: &[u8], reg: &Registry) -> Result<Value> {
+    run_program(&lowered.program, bytes, reg, &lowered.blocks)
+}
+
+fn run_program(
+    program: &Program,
+    bytes: &[u8],
+    reg: &Registry,
+    blocks: &std::collections::BTreeMap<phon_schema::SchemaId, Program>,
+) -> Result<Value> {
     let mut r = Reader::new(bytes);
     let mut stack: Vec<Value> = Vec::new();
-    exec_ops(program, &mut r, reg, &mut stack)?;
+    exec_ops(program, &mut r, reg, blocks, &mut stack)?;
     if r.remaining() != 0 {
         return Err(CompactError::Decode(DecodeError::TrailingBytes(
             r.remaining(),
@@ -48,17 +66,37 @@ pub fn run(program: &Program, bytes: &[u8], reg: &Registry) -> Result<Value> {
         )))
 }
 
-fn exec_ops(ops: &[Op], r: &mut Reader, reg: &Registry, stack: &mut Vec<Value>) -> Result<()> {
+fn exec_ops(
+    ops: &[Op],
+    r: &mut Reader,
+    reg: &Registry,
+    blocks: &std::collections::BTreeMap<phon_schema::SchemaId, Program>,
+    stack: &mut Vec<Value>,
+) -> Result<()> {
     for op in ops {
-        exec_op(op, r, reg, stack)?;
+        exec_op(op, r, reg, blocks, stack)?;
     }
     Ok(())
 }
 
-fn exec_op(op: &Op, r: &mut Reader, reg: &Registry, stack: &mut Vec<Value>) -> Result<()> {
+fn exec_op(
+    op: &Op,
+    r: &mut Reader,
+    reg: &Registry,
+    blocks: &std::collections::BTreeMap<phon_schema::SchemaId, Program>,
+    stack: &mut Vec<Value>,
+) -> Result<()> {
     match op {
         Op::Scalar(p) => stack.push(compact::decode_primitive(r, *p)?),
         Op::Dynamic => stack.push(read_value(r)?),
+        Op::CallBlock { schema } => {
+            let block = blocks
+                .get(schema)
+                .ok_or(CompactError::Decode(DecodeError::Malformed(
+                    "missing recursion block",
+                )))?;
+            exec_ops(block, r, reg, blocks, stack)?;
+        }
         Op::Null => stack.push(Value::NULL),
         Op::Skip(writer_ref) => {
             // Walk the writer-only field by its own schema and drop it.
@@ -89,7 +127,7 @@ fn exec_op(op: &Op, r: &mut Reader, reg: &Registry, stack: &mut Vec<Value>) -> R
             let mut arr = VArray::new();
             let mut seen = if *set { Some(HashSet::new()) } else { None };
             for _ in 0..n {
-                exec_ops(body, r, reg, stack)?;
+                exec_ops(body, r, reg, blocks, stack)?;
                 let v = stack.pop().expect("seq body nets one value");
                 if let Some(s) = &mut seen
                     && !s.insert(v.clone())
@@ -104,9 +142,9 @@ fn exec_op(op: &Op, r: &mut Reader, reg: &Registry, stack: &mut Vec<Value>) -> R
             let n = r.read_len(1)?;
             let mut obj = VObject::new();
             for _ in 0..n {
-                exec_ops(key, r, reg, stack)?;
+                exec_ops(key, r, reg, blocks, stack)?;
                 let k = stack.pop().expect("map key nets one value");
-                exec_ops(value, r, reg, stack)?;
+                exec_ops(value, r, reg, blocks, stack)?;
                 let v = stack.pop().expect("map value nets one value");
                 let ks = k
                     .as_string()
@@ -126,14 +164,14 @@ fn exec_op(op: &Op, r: &mut Reader, reg: &Registry, stack: &mut Vec<Value>) -> R
             compact::check_fixed_count(count, *min_wire, r.remaining())?;
             let mut arr = VArray::new();
             for _ in 0..count {
-                exec_ops(body, r, reg, stack)?;
+                exec_ops(body, r, reg, blocks, stack)?;
                 arr.push(stack.pop().expect("array body nets one value"));
             }
             stack.push(arr.into());
         }
         Op::Option { some } => match r.read_u8()? {
             0 => stack.push(Value::NULL),
-            1 => exec_ops(some, r, reg, stack)?,
+            1 => exec_ops(some, r, reg, blocks, stack)?,
             b => return Err(CompactError::Decode(DecodeError::InvalidBool(b))),
         },
         Op::Enum { arms } => {
@@ -142,7 +180,7 @@ fn exec_op(op: &Op, r: &mut Reader, reg: &Registry, stack: &mut Vec<Value>) -> R
                 .iter()
                 .find(|a| a.writer_index == idx)
                 .ok_or(CompactError::WriterOnlyVariant(idx))?;
-            exec_ops(&arm.payload, r, reg, stack)?;
+            exec_ops(&arm.payload, r, reg, blocks, stack)?;
             let payload = stack.pop().expect("variant payload nets one value");
             let mut obj = VObject::new();
             obj.insert(VString::new(&arm.reader_name), payload);

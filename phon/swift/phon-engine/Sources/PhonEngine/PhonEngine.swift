@@ -8,4 +8,6 @@
 ///
 /// Spec: `docs/content/spec.md` — "Compact mode", "Compatibility", "Decoding",
 /// "Decoding untrusted input".
+// r[impl crates.concern-separation]
+// r[impl crates.engine-is-binding-free]
 public enum PhonEngine {}

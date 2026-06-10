@@ -10,6 +10,8 @@
 // Spec: docs/content/spec.md — "Compact mode", "Compatibility",
 // "Decoding untrusted input", "TypeScript".
 
+// r[impl crates.concern-separation]
+// r[impl crates.engine-is-binding-free]
 export const PHON_ENGINE_PACKAGE = "@bearcove/phon-engine";
 
 // Compact schema-driven codec.
@@ -40,5 +42,12 @@ export {
 export type { CompiledDecoder, CompiledEncoder, JitFallbackRecord } from "./jit.ts";
 
 // The ergonomic typed front door (plain objects, numbers, {tag,value} enums).
-export { decodeTyped, encodeTyped } from "./typed.ts";
-export type { Typed, TypedEnum } from "./typed.ts";
+export {
+  compileTypedDecoder,
+  compileTypedEncoder,
+  compiledTypedDecoderSource,
+  compiledTypedEncoderSource,
+  decodeTyped,
+  encodeTyped,
+} from "./typed.ts";
+export type { CompiledTypedDecoder, CompiledTypedEncoder, Typed, TypedEnum } from "./typed.ts";

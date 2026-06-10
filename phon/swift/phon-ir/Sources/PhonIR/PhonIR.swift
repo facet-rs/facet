@@ -8,4 +8,6 @@
 ///
 /// Spec: `docs/content/spec.md` — "The descriptor model", "The intermediate
 /// representation".
+// r[impl crates.concern-separation]
+// r[impl crates.engine-is-binding-free]
 public enum PhonIR {}

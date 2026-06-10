@@ -5,12 +5,12 @@
 //! time copy the stencils into executable memory and patch the holes to chain
 //! them. This crate provides exactly that bottom layer:
 //!
-//! - [`ExecBuf`] — allocate executable memory, copy machine code in, satisfy the
+//! - `ExecBuf` — allocate executable memory, copy machine code in, satisfy the
 //!   platform's write-xor-execute and instruction-cache rules, and free it on
 //!   drop. (Apple Silicon / `MAP_JIT` today; other backends slot in here.)
 //! - [`patch_branch26`] — patch an AArch64 `B`/`BL` (`BRANCH26`) immediate so a
 //!   copied stencil's continuation branch targets the next stencil.
-//! - [`extract`] (the `build` feature) — at *build* time, compile a stencil
+//! - the `extract` module (the `build` feature) — at *build* time, compile a stencil
 //!   source file with rustc (`--emit=obj`) and pull each stencil's bytes and its
 //!   continuation relocations out of the object file by symbol. Use this from a
 //!   `build.rs` (depend on copypatch with `features = ["build"]`).

@@ -14,6 +14,7 @@
 // MARK: - Public API
 
 /// Encode a schema to self-describing bytes.
+// r[impl self-describing.bootstraps-schemas]
 public func schemaToBytes(_ schema: Schema) -> [UInt8] {
     var out = ByteSink()
     encSchema(&out, schema)
@@ -21,6 +22,8 @@ public func schemaToBytes(_ schema: Schema) -> [UInt8] {
 }
 
 /// Decode a schema from self-describing bytes, rejecting trailing bytes.
+// r[impl self-describing.bootstraps-schemas]
+// r[impl decode.whole-message]
 public func schemaFromBytes(_ buf: [UInt8]) throws -> Schema {
     var r = Reader(buf)
     let schema = try decSchema(&r, 0)
@@ -84,6 +87,7 @@ private func encSchema<S: Sink>(_ out: inout S, _ s: Schema) {
     encKind(&out, s.kind)
 }
 
+// r[impl self-describing.enum-payload]
 private func encKind<S: Sink>(_ out: inout S, _ k: SchemaKind) {
     out.writeU8(Tag.enumeration)
     switch k {

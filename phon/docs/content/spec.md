@@ -276,19 +276,20 @@ note:
 
 > r[type-system.external]
 >
-> An `External` value's payload bytes don't appear in the message. In their
-> place the wire carries a transport-assigned `u64` handle; the actual payload
-> travels through the transport's external-attachment channel. The `kind` field
-> names which channel. `metadata` is an optional `SchemaRef` naming the *type* of
-> a small descriptor that travels with each send (a content hash, a byte length,
-> a MIME type — whatever the channel needs to make sense of the payload); the
-> metadata *value* rides the message in-band, encoded compact against that
-> schema, while the payload stays out of band. Because `metadata` is a reference
-> and not an inline value, it is deterministic schema-identity input like any
-> other reference. An `External`, like a `Channel`, appears only in compact,
-> schema-known contexts — never in self-describing form, because without the
-> schema there is no `kind` and no metadata type. See [External
-> payloads](#external-payloads) for the handle, validation, and borrow rules.
+> An `External` value denotes a transport-owned capability outside the ordinary
+> message payload. The wire carries a transport-assigned `u64` handle; the
+> resource or attachment behind that handle belongs to the transport's external
+> capability channel. The `kind` field names the capability class. `metadata` is
+> an optional `SchemaRef` naming the *type* of a small descriptor that travels
+> with each send (a content hash, byte length, MIME type, fd rights summary, or
+> whatever the channel needs to make sense of the capability); the metadata
+> *value* rides the message in-band, encoded compact against that schema.
+> Because `metadata` is a reference and not an inline value, it is deterministic
+> schema-identity input like any other reference. An `External`, like a
+> `Channel`, appears only in compact, schema-known contexts — never in
+> self-describing form, because without the schema there is no `kind` and no
+> metadata type. See [External attachments](#external-attachments) for the
+> transport boundary.
 
 
 ## Schema references
@@ -420,6 +421,11 @@ use only:
 > listed containers. The subset is intentionally narrow so that mechanical
 > translation to other implementation languages has no judgment calls left
 > to make.
+>
+> Rust bindings may accept native-sized integer fields. `usize` is represented
+> in the phon schema as `u64`, and `isize` is represented as `i64`, on every
+> platform. A 32-bit implementation widens on encode and rejects out-of-range
+> wire values before narrowing on decode.
 
 # Decoding
 
@@ -849,16 +855,10 @@ wire size beats decode speed for some deployment.)
 
 ## Alignment
 
-This is where compact mode enables zero-copy reads — a receiver borrowing a
-primitive array straight out of the input buffer instead of copying it out.
-
-A receiver decoding a `[u32]` should be able to borrow it as a slice pointing
-straight into the input buffer, no copy. That only works if those bytes sit at
-a 4-byte-aligned address in memory. Whether they do depends on everything that
-came before them on the wire — a single `bool` ahead of a `[u32]` would push it
-to an odd offset, and the borrow becomes illegal.
-
-So compact mode pads.
+Compact mode pads so that every implementation sees the same scalar and
+primitive-run boundaries, independent of field order or preceding variable-size
+values. The alignment rule is part of the wire format, not an optional transport
+optimization.
 
 > r[compact.alignment]
 >
@@ -874,32 +874,8 @@ u32 count, then padding to the element's 8- or 16-byte alignment, then the run �
 the count desyncs the offset, so 4 (or up to 12) padding bytes follow it on
 every such list. The layout is: count, then pad-to-element-alignment, then the
 aligned run. A fixed `Array` of the same element pays no such padding, because
-its shape is in the schema and there is no on-wire count before the run — so a
-schema author who wants a borrowable `[f64; N]` with no per-message padding
-reaches for `Array`, while a dynamic `List<f64>` accepts the count+padding. That
+its shape is in the schema and there is no on-wire count before the run. That
 asymmetry is a real reason to prefer fixed arrays for hot numeric data.
-
-Padding is relative to message start, which means absolute alignment only holds
-if the message itself starts at an aligned address. That is the framing layer's
-responsibility.
-
-> r[compact.aligned-buffer]
->
-> Borrowing requires both that the message start at an address aligned to the
-> largest alignment the message uses (8 bytes covers everything up to
-> u64/f64; 16 if the message contains u128/i128), and that internal padding per
-> `r[compact.alignment]` be applied from there. A framing layer that wants its
-> receivers to borrow must place message starts at aligned offsets. When the
-> buffer is not suitably aligned, the decoder still works — it copies the
-> affected scalars and arrays into aligned storage instead of borrowing. The
-> decoded value is identical; only the zero-copy optimization is forfeited.
-
-Because phon decodes a whole message from one buffer (see
-[Decoding](#decoding)), every value is contiguous by construction — there is no
-fragmentation to defeat a borrow. So a borrow succeeds whenever the buffer is
-aligned; the only fallback is the copy-into-aligned-storage case above, for a
-buffer the framing layer couldn't start at an aligned address. Alignment padding
-is always written, so an aligned buffer is always borrowable.
 
 Padding is wasted bytes, so field order matters. phon writes fields in schema
 declaration order and never reorders, because the wire order is part of what
@@ -926,54 +902,23 @@ next begins, which bytes belong to which concurrent exchange, how a large
 message is split for transmission and put back together. That is framing, and
 framing belongs to the transport.
 
-The contract between phon and the framing layer has four load-bearing parts.
+phon does not define a wire framing format. Delimiting messages, multiplexing
+concurrent exchanges, fragmenting messages for transmission, and reassembling
+them are the transport's responsibility. A transport may length-prefix its
+frames, chunk-delimit them, multiplex them with stream ids, or carry a single
+message per connection.
 
-> r[framing.not-defined]
->
-> phon does not define a wire framing format. Delimiting messages, multiplexing
-> concurrent exchanges, fragmenting messages for transmission, and reassembling
-> them are the transport's responsibility. A transport may length-prefix its
-> frames, chunk-delimit them, multiplex them with stream ids, or carry a single
-> message per connection — phon is indifferent, subject to the requirements
-> below.
+The framing layer delivers a complete message as one buffer. phon decodes the
+whole buffer; it cannot find a message boundary itself, because it runs only
+after the message has fully arrived and been reassembled. Finding boundaries is
+therefore the framing layer's job. phon reports how many bytes each value
+consumed (`r[decode.whole-message]`) so a caller can chain several values within
+one delivered message, not so framing can discover where the message ends.
 
-> r[framing.whole-messages]
->
-> The framing layer delivers a complete message as one buffer. phon decodes the
-> whole buffer; it cannot find a message boundary itself, because it runs only
-> after the message has fully arrived and been reassembled. Finding boundaries
-> is therefore the framing layer's job (its own length prefix, delimiter, or
-> per-stream end-of-message flag). phon reports how many bytes each value
-> consumed (`r[decode.whole-message]`) so a caller can chain several values
-> within one delivered message, not so framing can discover where the message
-> ends.
-
-> r[framing.max-size]
->
-> The transport negotiates a maximum message size — on the order of a couple of
-> megabytes over a network, more over a local socket. A value too large to fit
-> goes out of band as an `External` instead. The bound is what lets a transport
-> reassemble each message in a buffer of bounded size and lets phon assume it
-> always receives a complete message. The exact limit is the transport's to
-> negotiate; phon only relies on one existing.
->
-> The max-message size bounds *one* message, not the aggregate. Per-stream
-> reassembly means total in-flight reassembly memory is roughly
-> `max_message_size × concurrent partial messages`, which is unbounded unless
-> the transport also caps how many partial reassemblies it will hold at once.
-> That cap is part of the transport's flow control (alongside its stream-count
-> and credit limits); phon names the requirement but the limit is the
-> transport's. Without it, a peer opening many streams and dribbling a large
-> message on each is a memory-exhaustion vector.
-
-> r[framing.alignment]
->
-> For a receiver to borrow values out of the buffer (per
-> `r[compact.aligned-buffer]`), the framing layer must deliver each message
-> starting at an address aligned to the largest alignment the message uses. A
-> framing layer that does not is still correct — the receiver copies instead of
-> borrowing — but it forfeits zero-copy for its receivers. A framing layer that
-> wants zero-copy aligns message starts.
+Transports also own message-size policy. A deployment may negotiate a maximum
+message size, cap concurrent partial reassemblies, or route large payloads
+through transport-specific attachments. Those limits are operational transport
+contracts, not phon-core wire-format requirements.
 
 Head-of-line blocking is the framing layer's to avoid, and it does so by
 interleaving frames across streams and reassembling each message in its own
@@ -984,8 +929,8 @@ incremental: the interleaving that prevents blocking happens below it, and by
 the time phon runs, its one message is whole. The reference shape is HTTP/2 —
 independent streams multiplexed over one connection, messages split into frames,
 distinct frame kinds for the cheap dispatch header versus the bulk payload — and
-it is the shape vox's transport targets. It is guidance; phon's actual
-requirements are the four rules above.
+it is the shape vox's transport targets. It is guidance for RPC transports, not
+additional phon-core wire format.
 
 phon models a channel's *type* but not its *operation*. The `Channel` schema
 kind (see `r[type-system.channel]`) records direction and element type, so
@@ -1067,14 +1012,14 @@ The compatibility algorithm is:
 > `dimensions` (shape is part of an array's contract). A tensor is compatible
 > with a tensor of compatible element type and identical `rank` — the dimension
 > sizes are runtime, so they are not a schema-compatibility question (a decoder
-> may still validate them per value). A channel is compatible with a channel of
-> the same `direction`; its element compatibility is enforced when the stream's
-> items are decoded, each as its own message, not at the channel itself. An
-> external is compatible with an external of the same `kind` and compatible
-> `metadata` — both `None`, or both `Some` with compatible metadata schemas. A
-> struct is compatible when its field plan builds. Numeric widening is not
-> implicit: `u32` and `u64` are different types, and a value written as one is
-> not readable as the other unless a future rule adds an explicit conversion.
+> may still validate them per value). Channel and external roots are transport
+> capabilities, not normal self-contained payload values in the core compat
+> executor: the bridge checks their capability shape, while Phon compatibility is
+> applied to channel item schemas and external metadata schemas at the point
+> those values are decoded. A struct is compatible when its field plan builds.
+> Numeric widening is not implicit: `u32` and `u64` are different types, and a
+> value written as one is not readable as the other unless a future rule adds an
+> explicit conversion.
 > These rules nest: `Option<Option<T>>` is compatible with `Option<Option<U>>`
 > exactly when `T` and `U` are. `Dynamic` is compatible only with `Dynamic` —
 > its bytes are self-describing, a form a compact reader of a concrete type
@@ -1104,52 +1049,13 @@ The compatibility algorithm is:
 > Such a report should name the schema path and the reason for each
 > incompatibility.
 
-# External payloads
+# External attachments
 
-Putting a large payload through the wire format means copying it at every
-buffer boundary it crosses. For an RPC between two processes on the same
-machine, a 100 MB blob serialized inline gets copied out of the sender's heap,
-into a kernel buffer, into the receiver's read buffer, into a decode buffer,
-and out into whatever the receiver hands the application — several 100 MB
-memcpys for data that never had to leave physical memory. That is the cost
-`External` exists to avoid.
-
-> r[external.handle-in-band]
->
-> An `External` value's payload bytes are not in the message. In their place the
-> wire carries a *handle*: a `u64` the transport assigns, plus the schema's
-> `kind` naming the side channel. The handle is what lets one message carry many
-> externals of the same kind and keep them apart — a unit placeholder couldn't,
-> since two same-kind externals would be indistinguishable. When the schema's
-> `metadata` is `Some`, the metadata value rides the message in-band right after
-> the handle, encoded compact against its schema (so it is typed and sized, not
-> free); it describes the payload to the transport without inlining the payload
-> itself.
-
-> r[external.transport-channel]
->
-> The side channel is the transport's choice: shared memory between
-> same-machine peers (map a region once, the handle names it, both sides see
-> the bytes), file-descriptor passing over a Unix socket (the handle indexes the
-> message's fd table), a content-addressed blob store, anything that beats
-> copying. phon defines the in-band handle and defers the channel to the
-> transport, the same way it defers framing.
-
-> r[external.handle-is-validated]
->
-> A handle is a capability the transport issued, and the decoder treats it as
-> untrusted: a handle that names no channel the transport actually provided is a
-> decode error, never a dereference. The transport validates the handle before
-> the receiver borrows through it. This closes the confused-deputy path where a
-> peer names a buffer or descriptor it was never given.
-
-> r[external.borrow-on-receive]
->
-> On the receiving side, a validated `External` handle yields a borrow — a
-> pointer and a length — into wherever the side channel placed the bytes,
-> exactly as an inline byte field yields a borrow into the wire buffer. The
-> receiver cannot tell the difference and pays a copy only if it asks for an
-> owned value.
+`External` is a compact-mode schema hook for transport-owned attachments. phon
+core defines the schema shape and the in-band handle/metadata bytes described in
+`r[type-system.external]`; it does not define the attachment channel, lifecycle,
+flow control, or dereference semantics. Those belong to the transport or to the
+RPC layer using phon.
 
 # Decoding untrusted input
 
@@ -1231,14 +1137,12 @@ all of them.
 > is the runtime counterpart, for an id referenced by a value but never
 > delivered.)
 
-Two safety contracts stated elsewhere are part of this discipline:
-`r[external.handle-is-validated]` (a handle is an untrusted capability; an
-unissued one is a decode error, never a dereference) and `r[descriptors.borrowed]`
-(a borrowed value's lifetime is bound to the input buffer). The borrow contract
-is a hard requirement, not advice: an implementation must tie a borrowed value's
-lifetime to the buffer it points into — in a language without lifetimes, by
-copying instead of borrowing — so a freed buffer can never leave a dangling
-view.
+One safety contract stated elsewhere is part of this discipline:
+`r[descriptors.borrowed]` (a borrowed value's lifetime is bound to the input
+buffer). The borrow contract is a hard requirement, not advice: an
+implementation must tie a borrowed value's lifetime to the buffer it points into
+— in a language without lifetimes, by copying instead of borrowing — so a freed
+buffer can never leave a dangling view.
 
 # Codegen
 
@@ -1365,6 +1269,17 @@ accessors, and the engine consumes accessor functions rather than descriptor
 data. Its JIT is generated JavaScript passed to `new Function()`, light enough to
 live inside `@bearcove/phon-engine` rather than a separate package. TypeScript
 consumes codegen output too.
+
+> r[typed.no-dynamic-bounce]
+>
+> A typed interpreter or JIT path runs against the language's typed
+> representation directly rather than bouncing ordinary DTOs through the coarse
+> dynamic `Value` model. Rust and Swift realize this through descriptor memory
+> programs; TypeScript realizes it by constructing and consuming public
+> JavaScript shapes directly: structs are plain objects, generated enums are the
+> codegen discriminated-union shape, sequences are arrays or sets as
+> appropriate, and schema maps are `Map`. Only true `Dynamic` fields and
+> schema-less/dynamic APIs use the coarse `Value` representation.
 
 ## Where vox sits
 
@@ -1522,13 +1437,17 @@ pub enum Access {
     /// Key / value pairs.
     Map(MapAccess),
 
+    /// An owning pointer whose wire shape is its pointee. The descriptor records
+    /// the local pointer handle layout plus thunks to borrow/construct the pointee.
+    Pointer(PointerAccess),
+
     /// A `Dynamic` value: no layout to describe. The engine decodes/encodes a
     /// `Value` through the self-describing codec and hands it over as-is.
     Dynamic,
 
     /// The whole subtree is handled by thunks: no direct facts apply. This is
     /// how `Channel` and `External` are accessed — the binding turns a local
-    /// endpoint or external buffer into a handle on encode and back on decode —
+    /// endpoint or external capability into a handle on encode and back on decode —
     /// and the fallback for any kind a producer can't reduce to layout facts.
     Opaque { encode: Thunk, decode: Thunk },
 }
@@ -1648,15 +1567,14 @@ pub struct Thunk {
 > with no binding is a build-time error — there is no implicit fallback, no
 > default behavior an unbound name silently falls into.
 
-> r[descriptors.facts-are-optional]
->
-> Direct-fact variants — niche tags, direct offsets, `Contiguous` storage — are
-> producer-optional. A producer emits them when it can prove the layout and
-> falls back to a thunk otherwise; an engine must accept a descriptor that uses
-> only thunks for any given subtree. The engine never requires a particular fact
-> to be present. (Niche packing, for instance, is a Rust/Swift compiler concern
-> with no TypeScript analog — a producer that has no niche to expose simply uses
-> a `Tag` or a thunk.)
+Direct facts and thunks are both descriptor mechanisms. A binding emits direct
+facts where the language exposes a stable layout fact, and emits thunk-backed or
+vtable-backed descriptor variants where the operation must stay inside the
+binding. The engine consumes the descriptor it was handed; it does not discover
+missing layout facts on its own. Owning pointers such as Rust `Box<T>`, `Rc<T>`,
+and `Arc<T>` are descriptor-local ownership details: the wire schema is `T`, and
+the descriptor carries same-language thunks to borrow `T` during encode and
+construct the owner from a decoded `T` during decode.
 
 > r[descriptors.borrowed]
 >

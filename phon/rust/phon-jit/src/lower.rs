@@ -13,9 +13,10 @@
 //! machine-code toolchain lands.
 //!
 //! [`Program`]: phon_ir::ir::Program
+//! [`MemProgram`]: phon_ir::ir::MemProgram
 
-use phon_ir::SeqThunks;
 use phon_ir::ir::{MemOp, MemProgram};
+use phon_ir::{PointerThunks, SeqThunks};
 use phon_schema::DecodeError;
 use phon_schema::bytes::{Reader, write_u32};
 
@@ -27,9 +28,18 @@ pub struct CompiledDecode {
     steps: Vec<DecodeStep>,
 }
 
-struct DecodeStep {
-    stencil: unsafe fn(&mut DecodeCtx, &Imm) -> Result<(), DecodeError>,
-    imm: Imm,
+enum DecodeStep {
+    Scalar {
+        stencil: unsafe fn(&mut DecodeCtx, &Imm) -> Result<(), DecodeError>,
+        imm: Imm,
+    },
+    Pointer {
+        field_offset: usize,
+        pointee_size: usize,
+        pointee_align: usize,
+        thunks: PointerThunks,
+        pointee: CompiledDecode,
+    },
 }
 
 /// A compiled encode program.
@@ -56,6 +66,13 @@ enum EncodeStep {
         thunks: SeqThunks,
         element: CompiledEncode,
     },
+    /// An owned pointer: borrow the pointee through the local thunk, then encode
+    /// the pointee wire shape.
+    Pointer {
+        field_offset: usize,
+        thunks: PointerThunks,
+        pointee: CompiledEncode,
+    },
 }
 
 /// Compile a typed program for decoding: select a stencil per op and capture its
@@ -69,11 +86,15 @@ pub fn compile_decode(program: &MemProgram) -> CompiledDecode {
                 offset,
                 size,
                 align,
-            } => DecodeStep {
+            } => DecodeStep::Scalar {
                 stencil: stencil::scalar_decode,
                 imm: [*offset, *size, *align],
             },
+            MemOp::NativeInt { .. } => {
+                panic!("phon-jit: native-sized integer casts are interpreter-only for now")
+            }
             MemOp::Sequence(_) => panic!("phon-jit: sequences are interpreter-only for now"),
+            MemOp::Set(_) => panic!("phon-jit: sets are interpreter-only for now"),
             MemOp::Bytes(_) => {
                 panic!("phon-jit: bulk byte runs (String) are interpreter-only for now")
             }
@@ -84,6 +105,13 @@ pub fn compile_decode(program: &MemProgram) -> CompiledDecode {
             MemOp::Enum(_) => panic!("phon-jit: enums are interpreter-only for now"),
             MemOp::Map(_) => panic!("phon-jit: maps are interpreter-only for now"),
             MemOp::Result(_) => panic!("phon-jit: Result is interpreter-only for now"),
+            MemOp::Pointer(p) => DecodeStep::Pointer {
+                field_offset: p.field_offset,
+                pointee_size: p.pointee_size,
+                pointee_align: p.pointee_align,
+                thunks: p.thunks,
+                pointee: compile_decode(&p.pointee),
+            },
             MemOp::Dynamic { .. } => panic!("phon-jit: dynamic Value is interpreter-only for now"),
             MemOp::Opaque(_) => panic!("phon-jit: opaque fields are interpreter-only for now"),
             MemOp::CallBlock { .. } => panic!("phon-jit: recursion is interpreter-only for now"),
@@ -109,12 +137,16 @@ pub fn compile_encode(program: &MemProgram) -> CompiledEncode {
                 stencil: stencil::scalar_encode,
                 imm: [*offset, *size, *align],
             },
+            MemOp::NativeInt { .. } => {
+                panic!("phon-jit: native-sized integer casts are interpreter-only for now")
+            }
             MemOp::Sequence(s) => EncodeStep::Sequence {
                 field_offset: s.field_offset,
                 stride: s.stride,
                 thunks: s.thunks,
                 element: compile_encode(&s.element),
             },
+            MemOp::Set(_) => panic!("phon-jit: sets are interpreter-only for now"),
             MemOp::Bytes(_) => {
                 panic!("phon-jit: bulk byte runs (String) are interpreter-only for now")
             }
@@ -125,6 +157,11 @@ pub fn compile_encode(program: &MemProgram) -> CompiledEncode {
             MemOp::Enum(_) => panic!("phon-jit: enums are interpreter-only for now"),
             MemOp::Map(_) => panic!("phon-jit: maps are interpreter-only for now"),
             MemOp::Result(_) => panic!("phon-jit: Result is interpreter-only for now"),
+            MemOp::Pointer(p) => EncodeStep::Pointer {
+                field_offset: p.field_offset,
+                thunks: p.thunks,
+                pointee: compile_encode(&p.pointee),
+            },
             MemOp::Dynamic { .. } => panic!("phon-jit: dynamic Value is interpreter-only for now"),
             MemOp::Opaque(_) => panic!("phon-jit: opaque fields are interpreter-only for now"),
             MemOp::CallBlock { .. } => panic!("phon-jit: recursion is interpreter-only for now"),
@@ -152,10 +189,59 @@ impl CompiledDecode {
         };
         for step in &self.steps {
             // Safety: forwarded; each step writes within the value's layout.
-            unsafe { (step.stencil)(&mut ctx, &step.imm)? };
+            unsafe { step.run(&mut ctx)? };
         }
         if ctx.reader.remaining() != 0 {
             return Err(DecodeError::TrailingBytes(ctx.reader.remaining()));
+        }
+        Ok(())
+    }
+}
+
+impl DecodeStep {
+    unsafe fn run(&self, ctx: &mut DecodeCtx<'_>) -> Result<(), DecodeError> {
+        match self {
+            DecodeStep::Scalar { stencil, imm } => {
+                // Safety: forwarded; the scalar op writes within the current base.
+                unsafe { (stencil)(ctx, imm) }
+            }
+            DecodeStep::Pointer {
+                field_offset,
+                pointee_size,
+                pointee_align,
+                thunks,
+                pointee,
+            } => {
+                // Safety: the pointer handle lives at `field_offset` and is
+                // uninitialized; `init` moves the scratch-decoded pointee into it.
+                let pointer = unsafe { ctx.base.add(*field_offset) };
+                let (scratch, layout) = alloc_scratch(*pointee_size, *pointee_align)?;
+                let previous_base = ctx.base;
+                ctx.base = scratch;
+                let decode_result = unsafe { pointee.run_in_ctx(ctx) };
+                ctx.base = previous_base;
+
+                if let Err(err) = decode_result {
+                    free_scratch(scratch, layout);
+                    return Err(err);
+                }
+
+                // Safety: scratch now holds an initialized pointee value; the thunk
+                // constructs the owning pointer by moving that value.
+                unsafe { (thunks.init)(thunks.ctx, pointer, scratch) };
+                free_scratch(scratch, layout);
+                Ok(())
+            }
+        }
+    }
+}
+
+impl CompiledDecode {
+    unsafe fn run_in_ctx(&self, ctx: &mut DecodeCtx<'_>) -> Result<(), DecodeError> {
+        for step in &self.steps {
+            // Safety: forwarded from the caller; nested offsets are relative to
+            // `ctx.base`, which the caller sets to the current value.
+            unsafe { step.run(ctx)? };
         }
         Ok(())
     }
@@ -210,15 +296,53 @@ impl CompiledEncode {
                         unsafe { element.run_into(data.add(i * stride), out) };
                     }
                 }
+                EncodeStep::Pointer {
+                    field_offset,
+                    thunks,
+                    pointee,
+                } => {
+                    // Safety: the owning pointer handle lives at `field_offset`;
+                    // the borrow thunk returns the initialized pointee.
+                    let pointer = unsafe { base.add(*field_offset) };
+                    let pointee_base = unsafe { (thunks.borrow)(thunks.ctx, pointer) };
+                    // Safety: the pointee program's offsets are relative to the
+                    // pointer target returned by the thunk.
+                    unsafe { pointee.run_into(pointee_base, out) };
+                }
             }
         }
+    }
+}
+
+fn alloc_scratch(
+    size: usize,
+    align: usize,
+) -> Result<(*mut u8, Option<std::alloc::Layout>), DecodeError> {
+    if size == 0 {
+        Ok((align as *mut u8, None))
+    } else {
+        let layout = std::alloc::Layout::from_size_align(size, align)
+            .map_err(|_| DecodeError::Malformed("pointer scratch layout overflow"))?;
+        // Safety: size > 0 and the layout was validated.
+        let buf = unsafe { std::alloc::alloc(layout) };
+        if buf.is_null() {
+            std::alloc::handle_alloc_error(layout);
+        }
+        Ok((buf, Some(layout)))
+    }
+}
+
+fn free_scratch(buf: *mut u8, layout: Option<std::alloc::Layout>) {
+    if let Some(layout) = layout {
+        // Safety: `buf` was allocated by `alloc_scratch` with this exact layout.
+        unsafe { std::alloc::dealloc(buf, layout) };
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phon_ir::ir::MemOp;
+    use phon_ir::ir::{MemOp, PointerOp};
 
     // A two-field value in memory: u32 at offset 0, u64 at offset 8. On the wire,
     // compact alignment puts the u32 first, pads to 8, then the u64.
@@ -271,5 +395,105 @@ mod tests {
         // 4 bytes of value + 1 stray byte.
         let err = unsafe { dec.run(&[1, 2, 3, 4, 5], out.as_mut_ptr()) }.unwrap_err();
         assert!(matches!(err, DecodeError::TrailingBytes(1)));
+    }
+
+    unsafe extern "C" fn box_u32_borrow(_ctx: *const (), pointer: *const u8) -> *const u8 {
+        // Safety: test programs bind this thunk only to initialized `Box<u32>`
+        // handles.
+        let owner = unsafe { &*pointer.cast::<Box<u32>>() };
+        core::ptr::from_ref(&**owner).cast()
+    }
+
+    unsafe extern "C" fn box_u32_init(_ctx: *const (), pointer: *mut u8, value: *mut u8) {
+        // Safety: `value` points to an initialized scratch `u32` and `pointer`
+        // points to uninitialized `Box<u32>` storage.
+        let value = unsafe { value.cast::<u32>().read() };
+        unsafe { pointer.cast::<Box<u32>>().write(Box::new(value)) };
+    }
+
+    fn box_u32_thunks() -> PointerThunks {
+        PointerThunks {
+            ctx: core::ptr::null(),
+            borrow: box_u32_borrow,
+            init: box_u32_init,
+        }
+    }
+
+    fn box_u32_pointer(field_offset: usize) -> MemOp {
+        MemOp::Pointer(Box::new(PointerOp {
+            field_offset,
+            pointee: vec![MemOp::Scalar {
+                offset: 0,
+                size: core::mem::size_of::<u32>(),
+                align: core::mem::align_of::<u32>(),
+            }],
+            pointee_size: core::mem::size_of::<u32>(),
+            pointee_align: core::mem::align_of::<u32>(),
+            thunks: box_u32_thunks(),
+        }))
+    }
+
+    #[repr(C)]
+    #[derive(Debug, PartialEq)]
+    struct BoxHolder {
+        tag: u32,
+        inner: Box<u32>,
+        tail: u32,
+    }
+
+    #[test]
+    // r[verify descriptors.thunk-binding]
+    // r[verify exec.jit-optional]
+    // r[verify ir.stencils]
+    fn threaded_pointer_field_uses_pointee_wire_shape() {
+        let program: MemProgram = vec![
+            MemOp::Scalar {
+                offset: core::mem::offset_of!(BoxHolder, tag),
+                size: core::mem::size_of::<u32>(),
+                align: core::mem::align_of::<u32>(),
+            },
+            box_u32_pointer(core::mem::offset_of!(BoxHolder, inner)),
+            MemOp::Scalar {
+                offset: core::mem::offset_of!(BoxHolder, tail),
+                size: core::mem::size_of::<u32>(),
+                align: core::mem::align_of::<u32>(),
+            },
+        ];
+        let enc = compile_encode(&program);
+        let dec = compile_decode(&program);
+
+        let holder = BoxHolder {
+            tag: 0x1122_3344,
+            inner: Box::new(0xAABB_CCDD),
+            tail: 0x5566_7788,
+        };
+        let bytes = unsafe { enc.run(core::ptr::from_ref(&holder).cast::<u8>()) };
+        let mut expected = Vec::new();
+        expected.extend_from_slice(&holder.tag.to_le_bytes());
+        expected.extend_from_slice(&holder.inner.to_le_bytes());
+        expected.extend_from_slice(&holder.tail.to_le_bytes());
+        assert_eq!(bytes, expected);
+
+        let mut out = core::mem::MaybeUninit::<BoxHolder>::uninit();
+        unsafe { dec.run(&bytes, out.as_mut_ptr().cast::<u8>()) }.unwrap();
+        assert_eq!(unsafe { out.assume_init() }, holder);
+    }
+
+    #[test]
+    // r[verify descriptors.thunk-binding]
+    // r[verify exec.jit-optional]
+    // r[verify ir.stencils]
+    fn threaded_pointer_root_roundtrips_as_pointee() {
+        let program: MemProgram = vec![box_u32_pointer(0)];
+        let enc = compile_encode(&program);
+        let dec = compile_decode(&program);
+
+        let value = Box::new(0x1234_5678u32);
+        let bytes = unsafe { enc.run(core::ptr::from_ref(&value).cast::<u8>()) };
+        assert_eq!(bytes, (*value).to_le_bytes());
+
+        let mut out = core::mem::MaybeUninit::<Box<u32>>::uninit();
+        unsafe { dec.run(&bytes, out.as_mut_ptr().cast::<u8>()) }.unwrap();
+        assert_eq!(unsafe { out.assume_init() }, value);
     }
 }

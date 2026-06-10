@@ -4,7 +4,7 @@
 //! schema is an ordinary phon value, so it rides the one mode that needs nothing
 //! agreed in advance — that is how two peers bootstrap schema exchange
 //! (`r[self-describing.bootstraps-schemas]`). The encoding is a hand-written,
-//! full-fidelity walk of the typed `Schema` (the coarse [`Value`](crate::Value)
+//! full-fidelity walk of the typed `Schema` (the coarse [`Value`]
 //! can't round-trip a schema's `u32` counts and enum variants), using the rich
 //! tag table directly.
 //!
@@ -95,6 +95,7 @@ pub fn schema_to_bytes(schema: &Schema) -> Vec<u8> {
 /// bytes.
 // r[impl self-describing.bootstraps-schemas]
 // r[impl self-describing.tag-led]
+// r[impl decode.whole-message]
 pub fn schema_from_bytes(buf: &[u8]) -> Result<Schema, DecodeError> {
     let mut r = Reader::new(buf);
     let schema = dec_schema(&mut r, 0)?;
@@ -742,6 +743,8 @@ pub fn value_to_bytes(value: &Value) -> Result<Vec<u8>, EncodeError> {
 ///
 /// # Errors
 /// [`DecodeError`] for any malformed input.
+// r[impl value]
+// r[impl decode.whole-message]
 pub fn value_from_bytes(buf: &[u8]) -> Result<Value, DecodeError> {
     let mut r = Reader::new(buf);
     let v = read_value(&mut r)?;
@@ -1382,6 +1385,7 @@ mod tests {
     }
 
     #[test]
+    // r[verify decode.whole-message]
     fn rejects_trailing_bytes() {
         let mut bytes = schema_to_bytes(&Schema {
             id: SchemaId(1),
@@ -1424,6 +1428,7 @@ mod tests {
     }
 
     #[test]
+    // r[verify validate.lengths]
     fn rejects_oversized_length() {
         // A struct claiming a huge field count must be rejected before allocating.
         let mut bytes = Vec::new();
@@ -1461,6 +1466,7 @@ mod tests {
     }
 
     #[test]
+    // r[verify value]
     fn value_roundtrip_scalars() {
         rt_value(Value::NULL);
         rt_value(Value::from(true));
@@ -1477,6 +1483,7 @@ mod tests {
     }
 
     #[test]
+    // r[verify value]
     fn value_roundtrip_composite() {
         let mut arr = VArray::new();
         arr.push(Value::from(1i64));
@@ -1587,6 +1594,11 @@ mod tests {
 
     #[test]
     // r[verify self-describing.no-extra-kinds]
+    // r[verify validate.tags]
+    // r[verify validate.lengths]
+    // r[verify validate.depth]
+    // r[verify validate.text]
+    // r[verify validate.dimensions]
     fn value_rejects_malformed_input() {
         // unknown tag
         assert_eq!(
@@ -1597,12 +1609,35 @@ mod tests {
         let mut s = sval("hello");
         s.truncate(s.len() - 2);
         assert!(value_from_bytes(&s).is_err());
+        // invalid UTF-8
+        let mut bad_utf8 = Vec::new();
+        write_u8(&mut bad_utf8, tag::STRING);
+        write_u32(&mut bad_utf8, 1);
+        write_u8(&mut bad_utf8, 0xff);
+        assert_eq!(value_from_bytes(&bad_utf8), Err(DecodeError::InvalidUtf8));
+        // invalid Unicode scalar: surrogate U+D800
+        let mut bad_char = Vec::new();
+        write_u8(&mut bad_char, tag::CHAR);
+        write_u32(&mut bad_char, 0xd800);
+        assert_eq!(
+            value_from_bytes(&bad_char),
+            Err(DecodeError::InvalidChar(0xd800))
+        );
         // oversized list count
         let mut big = Vec::new();
         write_u8(&mut big, tag::LIST);
         write_u32(&mut big, u32::MAX);
         assert!(matches!(
             value_from_bytes(&big),
+            Err(DecodeError::LengthTooLarge { .. })
+        ));
+        // dimension product larger than the remaining payload
+        let mut bad_dims = Vec::new();
+        write_u8(&mut bad_dims, tag::ARRAY);
+        write_u32(&mut bad_dims, 1);
+        write_u64(&mut bad_dims, u64::MAX);
+        assert!(matches!(
+            value_from_bytes(&bad_dims),
             Err(DecodeError::LengthTooLarge { .. })
         ));
         // excessive nesting
@@ -1612,6 +1647,7 @@ mod tests {
     }
 
     #[test]
+    // r[verify value.extended-kinds]
     fn value_roundtrip_extended_kinds() {
         rt_value(VUuid::from_u128(0x0123_4567_89ab_cdef_fedc_ba98_7654_3210).into());
         rt_value(VQName::new(VString::new("http://ex.com/ns"), VString::new("el")).into());
@@ -1626,6 +1662,7 @@ mod tests {
     }
 
     #[test]
+    // r[verify value.extended-kinds]
     fn extended_kind_wire_forms_are_canonical() {
         // Spot-check the canonical strings the codec emits (`r[value.extended-kinds]`).
         let bytes = value_to_bytes(&VUuid::from_u128(0).into()).unwrap();

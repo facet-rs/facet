@@ -31,6 +31,8 @@ import PhonSchema
 /// recursion boundary is the tracked follow-up; here the block's writer ref is
 /// the reader schema id.
 // r[impl compat.plan-first]
+// r[impl descriptors.fact-driven]
+// r[impl ir.two-forms]
 public func lowerDecode(
     _ writerRoot: SchemaId, _ reader: Descriptor, _ reg: Registry,
     _ readerBlocks: [SchemaId: Descriptor] = [:]
@@ -82,8 +84,12 @@ private func lowerDecodeNode(_ writer: SchemaRef, _ reader: Descriptor, _ reg: R
         }
         out.append(.scalar(offset: base, size: size, align: alignment(wp)))
 
+    // r[impl ir.inlining]
     case (.record(let ra), .composite(.structure(_, let wf))):
         try lowerDecodeStruct(wf, ra, reader.schema, reg, base, &out)
+
+    case (.record(let ra), .composite(.tuple(let elements))):
+        try lowerDecodeStruct(tupleFields(elements), ra, reader.schema, reg, base, &out)
 
     case (.enumeration(let ea), .composite(.enumeration(_, let wv))):
         try lowerDecodeEnum(wv, ea, reader.schema, reg, base, &out)
@@ -107,7 +113,7 @@ private func lowerDecodeNode(_ writer: SchemaRef, _ reader: Descriptor, _ reg: R
         try lowerDecodeNode(we, sa.element, reg, 0, &element)
         out.append(.sequence(SeqOp(
             offset: base, element: fuse(element), stride: sa.stride, elemAlign: sa.elemAlign,
-            minWire: elemMinWire(element), witness: sa.witness)))
+            minWire: elemMinWire(element), unique: false, witness: sa.witness)))
 
     case (.sequence(let sa), .composite(.set(let we))):
         try requireReaderSet(reader.schema, reg)
@@ -115,7 +121,7 @@ private func lowerDecodeNode(_ writer: SchemaRef, _ reader: Descriptor, _ reg: R
         try lowerDecodeNode(we, sa.element, reg, 0, &element)
         out.append(.sequence(SeqOp(
             offset: base, element: fuse(element), stride: sa.stride, elemAlign: sa.elemAlign,
-            minWire: elemMinWire(element), witness: sa.witness)))
+            minWire: elemMinWire(element), unique: true, witness: sa.witness)))
 
     case (.map(let ma), .composite(.map(let wk, let wv))):
         try requireReaderMap(reader.schema, reg)
@@ -316,10 +322,14 @@ private func readerStructFields(_ r: SchemaRef, _ reg: Registry) throws -> [Fiel
         return fields
     case .composite(.tuple(let elements)):
         // Positional: synthesize index names matching the descriptor's order.
-        return elements.enumerated().map { Field(name: String($0.offset), schema: $0.element, required: true) }
+        return tupleFields(elements)
     default:
         throw CompactError.typeMismatch(expected: "struct/tuple reader schema for a record descriptor")
     }
+}
+
+private func tupleFields(_ elements: [SchemaRef]) -> [Field] {
+    elements.enumerated().map { Field(name: String($0.offset), schema: $0.element, required: true) }
 }
 
 private func readerEnumVariants(_ r: SchemaRef, _ reg: Registry) throws -> [Variant] {
@@ -366,6 +376,12 @@ func skip(_ r: inout Reader, _ op: SkipOp) throws {
     case .dynamic:
         _ = try readValue(&r)
     }
+}
+
+/// Public host-call entry for native decoders that need to consume a writer-only
+/// value using the same skip skeleton as the interpreter.
+public func skipWire(_ r: inout Reader, _ op: SkipOp) throws {
+    try skip(&r, op)
 }
 
 /// Build the skip skeleton for a writer schema reference.

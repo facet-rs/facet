@@ -17,7 +17,7 @@
 //!
 //! Spec: "Compatibility".
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use facet_value::{VArray, VObject, VString, Value};
 use phon_schema::bytes::Reader;
@@ -26,7 +26,7 @@ use phon_schema::{
     read_value,
 };
 
-use phon_ir::ir::{EnumArm, Op, Program};
+use phon_ir::ir::{EnumArm, Op, Program, ValueProgram};
 
 use crate::compact::{self, CompactError, Registry, Resolved};
 use crate::compat::{self, FieldMatch, VariantMatch, incompatible};
@@ -41,11 +41,17 @@ const MAX_DEPTH: usize = 128;
 
 /// A built translation plan from a writer schema to a reader schema. Build it
 /// once with [`build_plan`], then decode many messages with [`decode_with_plan`].
-pub struct Plan(Node);
+pub struct Plan {
+    root: Node,
+    blocks: BTreeMap<SchemaId, Node>,
+}
 
 enum Node {
     /// A primitive copied through (writer and reader primitive are identical).
     Scalar(Primitive),
+    /// A back-edge into a recursive reader schema, resolved through
+    /// [`Plan::blocks`] at execution/lowering time.
+    CallBlock(SchemaId),
     Struct(StructPlan),
     /// Writer variant index -> how to produce the reader's variant. An index
     /// absent here is a writer-only variant: a decode error if it arrives.
@@ -99,6 +105,12 @@ enum Payload {
     Struct(StructPlan),
 }
 
+struct RecCtx {
+    recursive: HashSet<SchemaId>,
+    blocks: BTreeMap<SchemaId, Node>,
+    building: HashSet<SchemaId>,
+}
+
 // ============================================================================
 // Public API
 // ============================================================================
@@ -122,13 +134,22 @@ pub enum CompatDirection {
 /// be translated.
 // r[impl compat.plan-first]
 pub fn build_plan(writer_root: SchemaId, reader_root: SchemaId, reg: &Registry) -> Result<Plan> {
-    let node = plan_ref(
+    let mut rec = RecCtx {
+        recursive: recursive_schema_ids(reader_root, reg),
+        blocks: BTreeMap::new(),
+        building: HashSet::new(),
+    };
+    let root = plan_ref(
         &SchemaRef::concrete(writer_root),
         &SchemaRef::concrete(reader_root),
         reg,
+        &mut rec,
         0,
     )?;
-    Ok(Plan(node))
+    Ok(Plan {
+        root,
+        blocks: rec.blocks,
+    })
 }
 
 /// Classify compatibility between an older and newer schema by planning both
@@ -156,7 +177,7 @@ pub fn compatibility_direction(
 /// [`CompactError`] for malformed input, or a writer-only enum variant.
 pub fn decode_with_plan(bytes: &[u8], plan: &Plan, reg: &Registry) -> Result<Value> {
     let mut r = Reader::new(bytes);
-    let v = exec(&plan.0, &mut r, reg, 0)?;
+    let v = exec(&plan.root, &mut r, reg, &plan.blocks, 0)?;
     if r.remaining() != 0 {
         return Err(CompactError::Decode(DecodeError::TrailingBytes(
             r.remaining(),
@@ -193,26 +214,56 @@ pub fn decode_via_ir(
 ) -> Result<Value> {
     let plan = build_plan(writer_root, reader_root, reg)?;
     let program = lower(&plan);
-    crate::interp::run(&program, bytes, reg)
+    crate::interp::run_lowered(&program, bytes, reg)
 }
 
 // ============================================================================
 // Building the plan
 // ============================================================================
 
-fn plan_ref(w: &SchemaRef, r: &SchemaRef, reg: &Registry, depth: usize) -> Result<Node> {
+fn plan_ref(
+    w: &SchemaRef,
+    r: &SchemaRef,
+    reg: &Registry,
+    rec: &mut RecCtx,
+    depth: usize,
+) -> Result<Node> {
     if depth > MAX_DEPTH {
         return Err(incompatible("schema nests too deep"));
+    }
+    if let SchemaRef::Concrete { id, .. } = r
+        && rec.recursive.contains(id)
+    {
+        if !rec.blocks.contains_key(id) && !rec.building.contains(id) {
+            rec.building.insert(*id);
+            let body = plan_resolved(
+                compact::resolve(reg, w)?,
+                compact::resolve(reg, r)?,
+                reg,
+                rec,
+                depth,
+            )?;
+            rec.building.remove(id);
+            rec.blocks.insert(*id, body);
+        }
+        return Ok(Node::CallBlock(*id));
     }
     plan_resolved(
         compact::resolve(reg, w)?,
         compact::resolve(reg, r)?,
         reg,
+        rec,
         depth,
     )
 }
 
-fn plan_resolved(w: Resolved, r: Resolved, reg: &Registry, depth: usize) -> Result<Node> {
+fn plan_resolved(
+    w: Resolved,
+    r: Resolved,
+    reg: &Registry,
+    rec: &mut RecCtx,
+    depth: usize,
+) -> Result<Node> {
     match (w, r) {
         (Resolved::Primitive(wp), Resolved::Primitive(rp)) => {
             if wp == rp {
@@ -221,13 +272,19 @@ fn plan_resolved(w: Resolved, r: Resolved, reg: &Registry, depth: usize) -> Resu
                 Err(incompatible(format!("primitive {wp:?} is not {rp:?}")))
             }
         }
-        (Resolved::Composite(wk), Resolved::Composite(rk)) => plan_kind(wk, rk, reg, depth),
+        (Resolved::Composite(wk), Resolved::Composite(rk)) => plan_kind(wk, rk, reg, rec, depth),
         _ => Err(incompatible("primitive does not match composite")),
     }
 }
 
 // r[impl compat.type-match]
-fn plan_kind(wk: SchemaKind, rk: SchemaKind, reg: &Registry, depth: usize) -> Result<Node> {
+fn plan_kind(
+    wk: SchemaKind,
+    rk: SchemaKind,
+    reg: &Registry,
+    rec: &mut RecCtx,
+    depth: usize,
+) -> Result<Node> {
     match (wk, rk) {
         (SchemaKind::Primitive(wp), SchemaKind::Primitive(rp)) => {
             if wp == rp {
@@ -237,10 +294,10 @@ fn plan_kind(wk: SchemaKind, rk: SchemaKind, reg: &Registry, depth: usize) -> Re
             }
         }
         (SchemaKind::Struct { fields: wf, .. }, SchemaKind::Struct { fields: rf, .. }) => {
-            Ok(Node::Struct(plan_struct(&wf, &rf, reg, depth)?))
+            Ok(Node::Struct(plan_struct(&wf, &rf, reg, rec, depth)?))
         }
         (SchemaKind::Enum { variants: wv, .. }, SchemaKind::Enum { variants: rv, .. }) => {
-            plan_enum(&wv, &rv, reg, depth)
+            plan_enum(&wv, &rv, reg, rec, depth)
         }
         (SchemaKind::Tuple { elements: we }, SchemaKind::Tuple { elements: re }) => {
             if we.len() != re.len() {
@@ -248,27 +305,27 @@ fn plan_kind(wk: SchemaKind, rk: SchemaKind, reg: &Registry, depth: usize) -> Re
             }
             let mut nodes = Vec::with_capacity(we.len());
             for (w, r) in we.iter().zip(&re) {
-                nodes.push(plan_ref(w, r, reg, depth + 1)?);
+                nodes.push(plan_ref(w, r, reg, rec, depth + 1)?);
             }
             Ok(Node::Tuple(nodes))
         }
         (SchemaKind::List { element: we }, SchemaKind::List { element: re }) => Ok(Node::Seq {
             set: false,
             min_wire: compact::min_wire_size_ref(reg, &we),
-            element: Box::new(plan_ref(&we, &re, reg, depth + 1)?),
+            element: Box::new(plan_ref(&we, &re, reg, rec, depth + 1)?),
         }),
         (SchemaKind::Set { element: we }, SchemaKind::Set { element: re }) => Ok(Node::Seq {
             set: true,
             min_wire: compact::min_wire_size_ref(reg, &we),
-            element: Box::new(plan_ref(&we, &re, reg, depth + 1)?),
+            element: Box::new(plan_ref(&we, &re, reg, rec, depth + 1)?),
         }),
-        (SchemaKind::Option { element: we }, SchemaKind::Option { element: re }) => {
-            Ok(Node::Option(Box::new(plan_ref(&we, &re, reg, depth + 1)?)))
-        }
+        (SchemaKind::Option { element: we }, SchemaKind::Option { element: re }) => Ok(
+            Node::Option(Box::new(plan_ref(&we, &re, reg, rec, depth + 1)?)),
+        ),
         (SchemaKind::Map { key: wk, value: wv }, SchemaKind::Map { key: rk, value: rv }) => {
             Ok(Node::Map {
-                key: Box::new(plan_ref(&wk, &rk, reg, depth + 1)?),
-                value: Box::new(plan_ref(&wv, &rv, reg, depth + 1)?),
+                key: Box::new(plan_ref(&wk, &rk, reg, rec, depth + 1)?),
+                value: Box::new(plan_ref(&wv, &rv, reg, rec, depth + 1)?),
             })
         }
         (
@@ -286,7 +343,7 @@ fn plan_kind(wk: SchemaKind, rk: SchemaKind, reg: &Registry, depth: usize) -> Re
             }
             Ok(Node::Array {
                 min_wire: compact::min_wire_size_ref(reg, &we),
-                element: Box::new(plan_ref(&we, &re, reg, depth + 1)?),
+                element: Box::new(plan_ref(&we, &re, reg, rec, depth + 1)?),
                 dims: wd,
             })
         }
@@ -312,6 +369,7 @@ fn plan_struct(
     w_fields: &[Field],
     r_fields: &[Field],
     reg: &Registry,
+    rec: &mut RecCtx,
     depth: usize,
 ) -> Result<StructPlan> {
     let mut steps = Vec::with_capacity(w_fields.len());
@@ -333,7 +391,7 @@ fn plan_struct(
                 reader_index,
             } => {
                 let rf = &r_fields[reader_index];
-                let node = plan_ref(&writer.schema, &rf.schema, reg, depth + 1)?;
+                let node = plan_ref(&writer.schema, &rf.schema, reg, rec, depth + 1)?;
                 steps.push(Step::Take {
                     reader: rf.name.clone(),
                     node,
@@ -354,6 +412,7 @@ fn plan_enum(
     w_variants: &[Variant],
     r_variants: &[Variant],
     reg: &Registry,
+    rec: &mut RecCtx,
     depth: usize,
 ) -> Result<Node> {
     let mut by_index = HashMap::new();
@@ -366,7 +425,7 @@ fn plan_enum(
             continue;
         };
         let rv = &r_variants[reader_index];
-        let payload = plan_payload(&writer.payload, &rv.payload, reg, depth)?;
+        let payload = plan_payload(&writer.payload, &rv.payload, reg, rec, depth)?;
         by_index.insert(
             writer.index,
             VariantPlan {
@@ -382,12 +441,13 @@ fn plan_payload(
     w: &VariantPayload,
     r: &VariantPayload,
     reg: &Registry,
+    rec: &mut RecCtx,
     depth: usize,
 ) -> Result<Payload> {
     match (w, r) {
         (VariantPayload::Unit, VariantPayload::Unit) => Ok(Payload::Unit),
         (VariantPayload::Newtype(wr), VariantPayload::Newtype(rr)) => Ok(Payload::Newtype(
-            Box::new(plan_ref(wr, rr, reg, depth + 1)?),
+            Box::new(plan_ref(wr, rr, reg, rec, depth + 1)?),
         )),
         (VariantPayload::Tuple(wrs), VariantPayload::Tuple(rrs)) => {
             if wrs.len() != rrs.len() {
@@ -395,14 +455,121 @@ fn plan_payload(
             }
             let mut nodes = Vec::with_capacity(wrs.len());
             for (w, r) in wrs.iter().zip(rrs) {
-                nodes.push(plan_ref(w, r, reg, depth + 1)?);
+                nodes.push(plan_ref(w, r, reg, rec, depth + 1)?);
             }
             Ok(Payload::Tuple(nodes))
         }
         (VariantPayload::Struct(wfs), VariantPayload::Struct(rfs)) => {
-            Ok(Payload::Struct(plan_struct(wfs, rfs, reg, depth)?))
+            Ok(Payload::Struct(plan_struct(wfs, rfs, reg, rec, depth)?))
         }
         _ => Err(incompatible("variant payload shapes differ")),
+    }
+}
+
+fn recursive_schema_ids(root: SchemaId, reg: &Registry) -> HashSet<SchemaId> {
+    let mut recursive = HashSet::new();
+    let mut visited = HashSet::new();
+    let mut on_stack = HashSet::new();
+    let mut stack = Vec::new();
+    visit_schema(
+        root,
+        reg,
+        &mut recursive,
+        &mut visited,
+        &mut on_stack,
+        &mut stack,
+    );
+    recursive
+}
+
+fn visit_schema(
+    id: SchemaId,
+    reg: &Registry,
+    recursive: &mut HashSet<SchemaId>,
+    visited: &mut HashSet<SchemaId>,
+    on_stack: &mut HashSet<SchemaId>,
+    stack: &mut Vec<SchemaId>,
+) {
+    visited.insert(id);
+    on_stack.insert(id);
+    stack.push(id);
+
+    if let Ok(Resolved::Composite(kind)) = compact::resolve(reg, &SchemaRef::concrete(id)) {
+        for target in ref_targets(&kind) {
+            if on_stack.contains(&target) {
+                for &candidate in stack.iter().rev() {
+                    recursive.insert(candidate);
+                    if candidate == target {
+                        break;
+                    }
+                }
+            } else if !visited.contains(&target) {
+                visit_schema(target, reg, recursive, visited, on_stack, stack);
+            }
+        }
+    }
+
+    stack.pop();
+    on_stack.remove(&id);
+}
+
+fn ref_targets(kind: &SchemaKind) -> Vec<SchemaId> {
+    let mut out = Vec::new();
+    match kind {
+        SchemaKind::Struct { fields, .. } => {
+            for f in fields {
+                add_ref_targets(&f.schema, &mut out);
+            }
+        }
+        SchemaKind::Enum { variants, .. } => {
+            for v in variants {
+                match &v.payload {
+                    VariantPayload::Unit => {}
+                    VariantPayload::Newtype(r) => add_ref_targets(r, &mut out),
+                    VariantPayload::Tuple(refs) => {
+                        for r in refs {
+                            add_ref_targets(r, &mut out);
+                        }
+                    }
+                    VariantPayload::Struct(fields) => {
+                        for f in fields {
+                            add_ref_targets(&f.schema, &mut out);
+                        }
+                    }
+                }
+            }
+        }
+        SchemaKind::Tuple { elements } => {
+            for r in elements {
+                add_ref_targets(r, &mut out);
+            }
+        }
+        SchemaKind::List { element }
+        | SchemaKind::Set { element }
+        | SchemaKind::Array { element, .. }
+        | SchemaKind::Tensor { element, .. }
+        | SchemaKind::Option { element }
+        | SchemaKind::Channel { element, .. } => add_ref_targets(element, &mut out),
+        SchemaKind::Map { key, value } => {
+            add_ref_targets(key, &mut out);
+            add_ref_targets(value, &mut out);
+        }
+        SchemaKind::External { metadata, .. } => {
+            if let Some(r) = metadata {
+                add_ref_targets(r, &mut out);
+            }
+        }
+        SchemaKind::Primitive(_) | SchemaKind::Dynamic => {}
+    }
+    out
+}
+
+fn add_ref_targets(r: &SchemaRef, out: &mut Vec<SchemaId>) {
+    if let SchemaRef::Concrete { id, args } = r {
+        out.push(*id);
+        for arg in args {
+            add_ref_targets(arg, out);
+        }
     }
 }
 
@@ -416,10 +583,18 @@ fn plan_payload(
 /// of scalars lowers to a single branch-free run of ops.
 // r[impl ir.two-forms]
 #[must_use]
-pub fn lower(plan: &Plan) -> Program {
+pub fn lower(plan: &Plan) -> ValueProgram {
     let mut out = Vec::new();
-    lower_node(&plan.0, &mut out);
-    out
+    lower_node(&plan.root, &mut out);
+    let blocks = plan
+        .blocks
+        .iter()
+        .map(|(id, node)| (*id, lower_subtree(node)))
+        .collect();
+    ValueProgram {
+        program: out,
+        blocks,
+    }
 }
 
 fn lower_subtree(node: &Node) -> Program {
@@ -433,6 +608,7 @@ fn lower_node(node: &Node, out: &mut Program) {
     match node {
         Node::Scalar(p) => out.push(Op::Scalar(*p)),
         Node::Dynamic => out.push(Op::Dynamic),
+        Node::CallBlock(schema) => out.push(Op::CallBlock { schema: *schema }),
         Node::Struct(sp) => lower_struct(sp, out),
         Node::Enum(by_index) => {
             let mut arms: Vec<EnumArm> = by_index
@@ -526,19 +702,33 @@ fn lower_payload(payload: &Payload) -> Program {
 // Executing the plan
 // ============================================================================
 
-fn exec(node: &Node, r: &mut Reader, reg: &Registry, depth: usize) -> Result<Value> {
+fn exec(
+    node: &Node,
+    r: &mut Reader,
+    reg: &Registry,
+    blocks: &BTreeMap<SchemaId, Node>,
+    depth: usize,
+) -> Result<Value> {
     if depth > MAX_DEPTH {
         return Err(CompactError::Decode(DecodeError::DepthExceeded));
     }
     match node {
         Node::Scalar(p) => compact::decode_primitive(r, *p),
-        Node::Struct(sp) => exec_struct(sp, r, reg, depth),
+        Node::CallBlock(schema) => {
+            let block = blocks
+                .get(schema)
+                .ok_or(CompactError::Decode(DecodeError::Malformed(
+                    "missing recursion block",
+                )))?;
+            exec(block, r, reg, blocks, depth + 1)
+        }
+        Node::Struct(sp) => exec_struct(sp, r, reg, blocks, depth),
         Node::Enum(by_index) => {
             let idx = r.read_u32()?;
             let v = by_index
                 .get(&idx)
                 .ok_or(CompactError::WriterOnlyVariant(idx))?;
-            let payload = exec_payload(&v.payload, r, reg, depth)?;
+            let payload = exec_payload(&v.payload, r, reg, blocks, depth)?;
             let mut obj = VObject::new();
             obj.insert(VString::new(&v.reader), payload);
             Ok(obj.into())
@@ -546,7 +736,7 @@ fn exec(node: &Node, r: &mut Reader, reg: &Registry, depth: usize) -> Result<Val
         Node::Tuple(nodes) => {
             let mut a = VArray::new();
             for n in nodes {
-                a.push(exec(n, r, reg, depth + 1)?);
+                a.push(exec(n, r, reg, blocks, depth + 1)?);
             }
             Ok(a.into())
         }
@@ -559,7 +749,7 @@ fn exec(node: &Node, r: &mut Reader, reg: &Registry, depth: usize) -> Result<Val
             let mut a = VArray::new();
             let mut seen = if *set { Some(HashSet::new()) } else { None };
             for _ in 0..n {
-                let v = exec(element, r, reg, depth + 1)?;
+                let v = exec(element, r, reg, blocks, depth + 1)?;
                 if let Some(s) = &mut seen
                     && !s.insert(v.clone())
                 {
@@ -573,8 +763,8 @@ fn exec(node: &Node, r: &mut Reader, reg: &Registry, depth: usize) -> Result<Val
             let n = r.read_len(1)?;
             let mut obj = VObject::new();
             for _ in 0..n {
-                let k = exec(key, r, reg, depth + 1)?;
-                let v = exec(value, r, reg, depth + 1)?;
+                let k = exec(key, r, reg, blocks, depth + 1)?;
+                let v = exec(value, r, reg, blocks, depth + 1)?;
                 let ks = k
                     .as_string()
                     .ok_or(CompactError::Unsupported("map with non-string keys"))?;
@@ -593,25 +783,31 @@ fn exec(node: &Node, r: &mut Reader, reg: &Registry, depth: usize) -> Result<Val
             compact::check_fixed_count(count, *min_wire, r.remaining())?;
             let mut a = VArray::new();
             for _ in 0..count {
-                a.push(exec(element, r, reg, depth + 1)?);
+                a.push(exec(element, r, reg, blocks, depth + 1)?);
             }
             Ok(a.into())
         }
         Node::Option(element) => match r.read_u8()? {
             0 => Ok(Value::NULL),
-            1 => exec(element, r, reg, depth + 1),
+            1 => exec(element, r, reg, blocks, depth + 1),
             b => Err(CompactError::Decode(DecodeError::InvalidBool(b))),
         },
         Node::Dynamic => Ok(read_value(r)?),
     }
 }
 
-fn exec_struct(sp: &StructPlan, r: &mut Reader, reg: &Registry, depth: usize) -> Result<Value> {
+fn exec_struct(
+    sp: &StructPlan,
+    r: &mut Reader,
+    reg: &Registry,
+    blocks: &BTreeMap<SchemaId, Node>,
+    depth: usize,
+) -> Result<Value> {
     let mut obj = VObject::new();
     for step in &sp.steps {
         match step {
             Step::Take { reader, node } => {
-                let v = exec(node, r, reg, depth + 1)?;
+                let v = exec(node, r, reg, blocks, depth + 1)?;
                 obj.insert(VString::new(reader), v);
             }
             Step::Skip(writer_ref) => {
@@ -626,18 +822,24 @@ fn exec_struct(sp: &StructPlan, r: &mut Reader, reg: &Registry, depth: usize) ->
     Ok(obj.into())
 }
 
-fn exec_payload(p: &Payload, r: &mut Reader, reg: &Registry, depth: usize) -> Result<Value> {
+fn exec_payload(
+    p: &Payload,
+    r: &mut Reader,
+    reg: &Registry,
+    blocks: &BTreeMap<SchemaId, Node>,
+    depth: usize,
+) -> Result<Value> {
     match p {
         Payload::Unit => Ok(Value::NULL),
-        Payload::Newtype(n) => exec(n, r, reg, depth + 1),
+        Payload::Newtype(n) => exec(n, r, reg, blocks, depth + 1),
         Payload::Tuple(ns) => {
             let mut a = VArray::new();
             for n in ns {
-                a.push(exec(n, r, reg, depth + 1)?);
+                a.push(exec(n, r, reg, blocks, depth + 1)?);
             }
             Ok(a.into())
         }
-        Payload::Struct(sp) => exec_struct(sp, r, reg, depth),
+        Payload::Struct(sp) => exec_struct(sp, r, reg, blocks, depth),
     }
 }
 

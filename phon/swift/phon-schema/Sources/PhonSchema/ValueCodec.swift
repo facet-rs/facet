@@ -11,6 +11,9 @@
 // MARK: - Public API
 
 /// Encode a `Value` to self-describing bytes.
+// r[impl value]
+// r[impl self-describing.tag-led]
+// r[impl self-describing.no-extra-kinds]
 public func valueToBytes(_ v: Value) -> [UInt8] {
     var out = ByteSink()
     writeValue(&out, v)
@@ -18,6 +21,10 @@ public func valueToBytes(_ v: Value) -> [UInt8] {
 }
 
 /// Decode a `Value` from self-describing bytes, rejecting trailing bytes.
+// r[impl value]
+// r[impl self-describing.tag-led]
+// r[impl self-describing.no-extra-kinds]
+// r[impl decode.whole-message]
 public func valueFromBytes(_ buf: [UInt8]) throws -> Value {
     var r = Reader(buf)
     let v = try decValue(&r, 0)
@@ -28,6 +35,8 @@ public func valueFromBytes(_ buf: [UInt8]) throws -> Value {
 }
 
 /// Read a `Value` from a reader (for embedding, e.g. a `Dynamic` field).
+// r[impl value]
+// r[impl self-describing.tag-led]
 public func readValue(_ r: inout Reader) throws -> Value {
     try decValue(&r, 0)
 }
@@ -64,6 +73,7 @@ public func writeValue<S: Sink>(_ out: inout S, _ value: Value) {
             out.writeStr(e.key)
             writeValue(&out, e.value)
         }
+    // r[impl value.extended-kinds]
     case .datetime(let d):
         out.writeU8(Tag.datetime)
         out.writeStr(datetimeString(d))
@@ -168,6 +178,7 @@ private func decValue(_ r: inout Reader, _ depth: Int) throws -> Value {
         return try decEnumValue(&r, depth)
     case Tag.optionSome:
         return try decValue(&r, depth + 1)
+    // r[impl value.extended-kinds]
     case Tag.datetime:
         return .datetime(try parseDatetime(r.readStr()))
     case Tag.uuid:
@@ -175,6 +186,7 @@ private func decValue(_ r: inout Reader, _ depth: Int) throws -> Value {
     case Tag.qname:
         let (ns, local) = try parseQName(r.readStr())
         return .qname(namespace: ns, local: local)
+    // r[impl validate.tags]
     default:
         throw DecodeError.unknownTag(t)
     }
@@ -210,6 +222,7 @@ private func decMap(_ r: inout Reader, _ depth: Int) throws -> Value {
 /// `array` and `tensor` fold to a flat array. The dimensions are validated: rank
 /// and the element product are bounded by the buffer, computed with checked
 /// arithmetic.
+// r[impl validate.dimensions]
 private func decDimensioned(_ r: inout Reader, _ depth: Int) throws -> Value {
     let rank = Int(try r.readU32())
     let (rankBytes, rankOv) = rank.multipliedReportingOverflow(by: 8)
@@ -248,6 +261,7 @@ private func decStructValue(_ r: inout Reader, _ depth: Int) throws -> Value {
 
 /// An `enum` folds to a one-entry object mapping the variant name to its single
 /// payload value.
+// r[impl self-describing.enum-payload]
 private func decEnumValue(_ r: inout Reader, _ depth: Int) throws -> Value {
     let variant = try r.readStr()
     let payload = try decValue(&r, depth + 1)

@@ -15,7 +15,7 @@
 //!
 //! Spec: "Compact mode".
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use facet_value::{VArray, VBytes, VObject, VString, Value};
 use phon_schema::bytes::{
@@ -25,7 +25,7 @@ use phon_schema::bytes::{
 use phon_schema::{
     DecodeError, EncodeError, Field, Primitive, Schema, SchemaId, SchemaKind, SchemaRef, Variant,
     VariantPayload, extended_from_string, extended_to_string, primitive_id, read_value,
-    write_value,
+    resolve_ids, write_value,
 };
 
 /// Maximum nesting depth on decode (`r[validate.depth]`).
@@ -42,6 +42,11 @@ pub enum CompactError {
     /// A referenced schema id is not in the registry (`r[schema-identity.unknown-is-error]`).
     // r[impl schema-identity.unknown-is-error]
     UnknownSchema(SchemaId),
+    /// A received schema bundle member's stated id did not match its content hash.
+    BundleSchemaIdMismatch {
+        stated: SchemaId,
+        recomputed: SchemaId,
+    },
     /// A kind or feature not yet implemented in this codec.
     Unsupported(&'static str),
     /// The value's shape does not match the schema it is being encoded against.
@@ -82,6 +87,12 @@ impl core::fmt::Display for CompactError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             CompactError::UnknownSchema(id) => write!(f, "unknown schema {id}"),
+            CompactError::BundleSchemaIdMismatch { stated, recomputed } => {
+                write!(
+                    f,
+                    "schema bundle id mismatch: stated {stated}, recomputed {recomputed}"
+                )
+            }
             CompactError::Unsupported(what) => {
                 write!(f, "compact codec does not support {what} yet")
             }
@@ -138,12 +149,179 @@ impl Registry {
         }
     }
 
+    /// Validate a received schema closure before making it executable.
+    ///
+    /// This recomputes every member's content-derived [`SchemaId`], rejects
+    /// references that are neither primitive nor present in the bundle, and
+    /// bounds fixed arrays whose elements have zero wire size.
+    // r[impl validate.bundles]
+    pub fn try_new(schemas: impl IntoIterator<Item = Schema>) -> Result<Self> {
+        let schemas: Vec<_> = schemas.into_iter().collect();
+        validate_bundle(&schemas)?;
+        Ok(Self::new(schemas))
+    }
+
     fn primitive(&self, id: SchemaId) -> Option<Primitive> {
         self.primitives.get(&id).copied()
     }
 
     fn composite(&self, id: SchemaId) -> Option<&Schema> {
         self.composites.get(&id)
+    }
+}
+
+fn validate_bundle(schemas: &[Schema]) -> Result<()> {
+    let recomputed = resolve_ids(schemas.to_vec());
+    for (schema, recomputed) in schemas.iter().zip(&recomputed) {
+        if schema.id != recomputed.id {
+            return Err(CompactError::BundleSchemaIdMismatch {
+                stated: schema.id,
+                recomputed: recomputed.id,
+            });
+        }
+    }
+
+    let provided: HashSet<_> = schemas.iter().map(|schema| schema.id).collect();
+    let primitives: HashSet<_> = Primitive::ALL.iter().map(|&p| primitive_id(p)).collect();
+    for schema in schemas {
+        validate_kind_refs(&schema.kind, &provided, &primitives)?;
+    }
+
+    let reg = Registry::new(schemas.to_vec());
+    for schema in schemas {
+        validate_fixed_array_caps(&schema.kind, &reg)?;
+    }
+
+    Ok(())
+}
+
+fn validate_kind_refs(
+    kind: &SchemaKind,
+    provided: &HashSet<SchemaId>,
+    primitives: &HashSet<SchemaId>,
+) -> Result<()> {
+    match kind {
+        SchemaKind::Primitive(_) | SchemaKind::Dynamic => Ok(()),
+        SchemaKind::Struct { fields, .. } => fields
+            .iter()
+            .try_for_each(|field| validate_ref(&field.schema, provided, primitives)),
+        SchemaKind::Enum { variants, .. } => variants
+            .iter()
+            .try_for_each(|variant| validate_payload_refs(&variant.payload, provided, primitives)),
+        SchemaKind::Tuple { elements } => elements
+            .iter()
+            .try_for_each(|element| validate_ref(element, provided, primitives)),
+        SchemaKind::List { element }
+        | SchemaKind::Set { element }
+        | SchemaKind::Array { element, .. }
+        | SchemaKind::Tensor { element, .. }
+        | SchemaKind::Option { element }
+        | SchemaKind::Channel { element, .. } => validate_ref(element, provided, primitives),
+        SchemaKind::Map { key, value } => {
+            validate_ref(key, provided, primitives)?;
+            validate_ref(value, provided, primitives)
+        }
+        SchemaKind::External { metadata, .. } => {
+            if let Some(metadata) = metadata {
+                validate_ref(metadata, provided, primitives)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn validate_payload_refs(
+    payload: &VariantPayload,
+    provided: &HashSet<SchemaId>,
+    primitives: &HashSet<SchemaId>,
+) -> Result<()> {
+    match payload {
+        VariantPayload::Unit => Ok(()),
+        VariantPayload::Newtype(r) => validate_ref(r, provided, primitives),
+        VariantPayload::Tuple(elements) => elements
+            .iter()
+            .try_for_each(|element| validate_ref(element, provided, primitives)),
+        VariantPayload::Struct(fields) => fields
+            .iter()
+            .try_for_each(|field| validate_ref(&field.schema, provided, primitives)),
+    }
+}
+
+fn validate_ref(
+    r: &SchemaRef,
+    provided: &HashSet<SchemaId>,
+    primitives: &HashSet<SchemaId>,
+) -> Result<()> {
+    match r {
+        SchemaRef::Var { .. } => Ok(()),
+        SchemaRef::Concrete { id, args } => {
+            if !provided.contains(id) && !primitives.contains(id) {
+                return Err(CompactError::UnknownSchema(*id));
+            }
+            args.iter()
+                .try_for_each(|arg| validate_ref(arg, provided, primitives))
+        }
+    }
+}
+
+fn validate_fixed_array_caps(kind: &SchemaKind, reg: &Registry) -> Result<()> {
+    match kind {
+        SchemaKind::Primitive(_) | SchemaKind::Dynamic => Ok(()),
+        SchemaKind::Struct { fields, .. } => fields
+            .iter()
+            .try_for_each(|field| validate_fixed_array_ref(&field.schema)),
+        SchemaKind::Enum { variants, .. } => variants
+            .iter()
+            .try_for_each(|variant| validate_fixed_array_payload(&variant.payload)),
+        SchemaKind::Tuple { elements } => elements.iter().try_for_each(validate_fixed_array_ref),
+        SchemaKind::List { element }
+        | SchemaKind::Set { element }
+        | SchemaKind::Tensor { element, .. }
+        | SchemaKind::Option { element }
+        | SchemaKind::Channel { element, .. } => validate_fixed_array_ref(element),
+        SchemaKind::Map { key, value } => {
+            validate_fixed_array_ref(key)?;
+            validate_fixed_array_ref(value)
+        }
+        SchemaKind::Array {
+            element,
+            dimensions,
+        } => {
+            let count = product(dimensions)?;
+            if min_wire_size_ref(reg, element) == 0
+                && count > phon_schema::bytes::ZST_COUNT_CAP as u64
+            {
+                return Err(CompactError::Decode(DecodeError::LengthTooLarge {
+                    count,
+                    remaining: phon_schema::bytes::ZST_COUNT_CAP,
+                }));
+            }
+            validate_fixed_array_ref(element)
+        }
+        SchemaKind::External { metadata, .. } => {
+            if let Some(metadata) = metadata {
+                validate_fixed_array_ref(metadata)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn validate_fixed_array_payload(payload: &VariantPayload) -> Result<()> {
+    match payload {
+        VariantPayload::Unit => Ok(()),
+        VariantPayload::Newtype(r) => validate_fixed_array_ref(r),
+        VariantPayload::Tuple(elements) => elements.iter().try_for_each(validate_fixed_array_ref),
+        VariantPayload::Struct(fields) => fields
+            .iter()
+            .try_for_each(|field| validate_fixed_array_ref(&field.schema)),
+    }
+}
+
+fn validate_fixed_array_ref(r: &SchemaRef) -> Result<()> {
+    match r {
+        SchemaRef::Var { .. } => Ok(()),
+        SchemaRef::Concrete { args, .. } => args.iter().try_for_each(validate_fixed_array_ref),
     }
 }
 
@@ -289,13 +467,22 @@ pub fn to_bytes(value: &Value, root: SchemaId, registry: &Registry) -> Result<Ve
 /// [`CompactError`] for malformed input or an unsupported kind.
 pub fn from_bytes(bytes: &[u8], root: SchemaId, registry: &Registry) -> Result<Value> {
     let mut r = Reader::new(bytes);
-    let v = decode_ref(&mut r, &SchemaRef::concrete(root), registry, 0)?;
+    let v = read_from(&mut r, root, registry)?;
     if r.remaining() != 0 {
         return Err(CompactError::Decode(DecodeError::TrailingBytes(
             r.remaining(),
         )));
     }
     Ok(v)
+}
+
+/// Decode one compact value from an existing message cursor.
+///
+/// The reader is advanced by exactly the bytes consumed by `root`; callers can
+/// inspect [`Reader::position`] and decode the next value from the same message.
+// r[impl decode.chained]
+pub fn read_from(r: &mut Reader<'_>, root: SchemaId, registry: &Registry) -> Result<Value> {
+    decode_ref(r, &SchemaRef::concrete(root), registry, 0)
 }
 
 // ============================================================================
@@ -889,6 +1076,7 @@ mod tests {
         }
     }
 
+    // r[verify compact.schema-driven]
     fn rt(value: Value, root: SchemaId, reg: &Registry) {
         let bytes = to_bytes(&value, root, reg).expect("encode");
         let back = from_bytes(&bytes, root, reg).expect("decode");
@@ -897,6 +1085,106 @@ mod tests {
     }
 
     #[test]
+    // r[verify validate.bundles]
+    fn registry_try_new_validates_received_schema_bundles() {
+        let point = schema(
+            1,
+            SchemaKind::Struct {
+                name: "Point".to_string(),
+                fields: vec![Field {
+                    name: "x".to_string(),
+                    schema: prim(Primitive::U32),
+                    required: true,
+                }],
+            },
+        );
+        let resolved = resolve_ids(vec![point]);
+        Registry::try_new(resolved).expect("resolved bundle should validate");
+    }
+
+    #[test]
+    // r[verify validate.bundles]
+    fn registry_try_new_rejects_stale_schema_ids() {
+        let unit = schema(
+            1,
+            SchemaKind::Struct {
+                name: "UnitLike".to_string(),
+                fields: Vec::new(),
+            },
+        );
+        let mut resolved = resolve_ids(vec![unit]);
+        resolved[0].id = SchemaId(resolved[0].id.0 ^ 1);
+
+        assert!(matches!(
+            Registry::try_new(resolved),
+            Err(CompactError::BundleSchemaIdMismatch { stated, recomputed })
+                if stated != recomputed
+        ));
+    }
+
+    #[test]
+    // r[verify validate.bundles]
+    fn registry_try_new_rejects_incomplete_schema_closures() {
+        let holder = schema(
+            1,
+            SchemaKind::Struct {
+                name: "Holder".to_string(),
+                fields: vec![Field {
+                    name: "missing".to_string(),
+                    schema: SchemaRef::concrete(SchemaId(0xFEED_FACE_CAFE_BEEF)),
+                    required: true,
+                }],
+            },
+        );
+        let resolved = resolve_ids(vec![holder]);
+
+        assert!(matches!(
+            Registry::try_new(resolved),
+            Err(CompactError::UnknownSchema(SchemaId(0xFEED_FACE_CAFE_BEEF)))
+        ));
+    }
+
+    #[test]
+    // r[verify validate.bundles]
+    fn registry_try_new_rejects_unbounded_zero_wire_fixed_arrays() {
+        let array = schema(
+            1,
+            SchemaKind::Array {
+                element: prim(Primitive::Unit),
+                dimensions: vec![phon_schema::bytes::ZST_COUNT_CAP as u64 + 1],
+            },
+        );
+        let resolved = resolve_ids(vec![array]);
+
+        assert!(matches!(
+            Registry::try_new(resolved),
+            Err(CompactError::Decode(DecodeError::LengthTooLarge { count, .. }))
+                if count == phon_schema::bytes::ZST_COUNT_CAP as u64 + 1
+        ));
+    }
+
+    #[test]
+    // r[verify decode.chained]
+    fn compact_values_can_be_decoded_back_to_back() {
+        let reg = Registry::new([]);
+        let first_root = primitive_id(Primitive::U8);
+        let second_root = primitive_id(Primitive::Bool);
+        let mut bytes = to_bytes(&Value::from(7u8), first_root, &reg).unwrap();
+        bytes.extend(to_bytes(&Value::from(true), second_root, &reg).unwrap());
+
+        let mut reader = Reader::new(&bytes);
+        let first = read_from(&mut reader, first_root, &reg).unwrap();
+        assert_eq!(first, Value::from(7u8));
+        assert_eq!(reader.position(), 1);
+
+        let second = read_from(&mut reader, second_root, &reg).unwrap();
+        assert_eq!(second, Value::from(true));
+        assert_eq!(reader.position(), bytes.len());
+        assert_eq!(reader.remaining(), 0);
+    }
+
+    #[test]
+    // r[verify compact.alignment]
     fn struct_with_alignment() {
         // Point { x: u32, y: f64 } — y is 8-aligned, so padding follows x.
         let point = schema(
@@ -931,6 +1219,7 @@ mod tests {
     }
 
     #[test]
+    // r[verify compact.alignment]
     fn list_run_is_aligned() {
         let list = schema(
             1,
@@ -950,6 +1239,7 @@ mod tests {
     }
 
     #[test]
+    // r[verify validate.dimensions]
     fn enum_tuple_option_array() {
         // enum E { A, B(u32), C(u8, u8) }
         let e = schema(

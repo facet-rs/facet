@@ -14,12 +14,14 @@ import PhonSchema
 /// Encode a typed value through a (pre-lowered) program: the value's in-memory bytes
 /// are read by the program's witnesses. The one place the unsafe value→bytes boundary
 /// lives.
+// r[impl typed.no-dynamic-bounce]
 public func encodeTyped<T>(_ value: T, _ lowered: Lowered) -> [UInt8] {
     var v = value
     return withUnsafeBytes(of: &v) { encodeWith(lowered, $0.baseAddress!) }
 }
 
 /// Decode a typed value through a (pre-lowered) program into a fresh `T`.
+// r[impl typed.no-dynamic-bounce]
 public func decodeTyped<T>(_ lowered: Lowered, _ bytes: [UInt8]) throws -> T {
     let raw = UnsafeMutableRawPointer.allocate(
         byteCount: MemoryLayout<T>.size, alignment: MemoryLayout<T>.alignment)
@@ -58,6 +60,60 @@ public struct JitFallbackReport: Equatable, Sendable {
     public var isEmpty: Bool {
         decode.isEmpty && encode.isEmpty
     }
+
+    public func scoped(method: String, phase: String) -> MethodJitFallbackReport {
+        var records: [MethodJitFallbackRecord] = []
+        records.reserveCapacity(decode.count + encode.count)
+
+        records.append(contentsOf: decode.map {
+            MethodJitFallbackRecord(
+                method: method,
+                phase: phase,
+                direction: "decode",
+                path: $0.path,
+                reason: $0.reason
+            )
+        })
+        records.append(contentsOf: encode.map {
+            MethodJitFallbackRecord(
+                method: method,
+                phase: phase,
+                direction: "encode",
+                path: $0.path,
+                reason: $0.reason
+            )
+        })
+
+        return MethodJitFallbackReport(records: records)
+    }
+}
+
+public struct MethodJitFallbackRecord: Equatable, Sendable {
+    public var method: String
+    public var phase: String
+    public var direction: String
+    public var path: String
+    public var reason: String
+
+    public init(method: String, phase: String, direction: String, path: String, reason: String) {
+        self.method = method
+        self.phase = phase
+        self.direction = direction
+        self.path = path
+        self.reason = reason
+    }
+}
+
+public struct MethodJitFallbackReport: Equatable, Sendable {
+    public var records: [MethodJitFallbackRecord]
+
+    public init(records: [MethodJitFallbackRecord] = []) {
+        self.records = records
+    }
+
+    public var isEmpty: Bool {
+        records.isEmpty
+    }
 }
 
 // r[impl exec.jit-optional]
@@ -76,10 +132,22 @@ public func recordJitFallbacks(_ lowered: Lowered) -> JitFallbackReport {
 /// to machine code. Both must produce byte-identical output for any value.
 public protocol TypedEngine: Sendable {
     var name: String { get }
+    /// Prepare an encoder from an already-lowered program.
+    func compileEncode(_ lowered: Lowered) throws -> TypedEncodeFn
+    /// Prepare a decoder from an already-lowered program.
+    func compileDecode(_ lowered: Lowered) throws -> TypedDecodeFn
+}
+
+public extension TypedEngine {
     /// Prepare an own-schema encoder for `descriptor`.
-    func compileEncode(_ descriptor: Descriptor, _ reg: Registry) throws -> TypedEncodeFn
+    func compileEncode(_ descriptor: Descriptor, _ reg: Registry) throws -> TypedEncodeFn {
+        try compileEncode(try lowerTyped(descriptor, reg))
+    }
+
     /// Prepare a compat decoder: `writerRoot` → `reader` (same root ⇒ the fused identity).
-    func compileDecode(_ writerRoot: SchemaId, _ reader: Descriptor, _ reg: Registry) throws -> TypedDecodeFn
+    func compileDecode(_ writerRoot: SchemaId, _ reader: Descriptor, _ reg: Registry) throws -> TypedDecodeFn {
+        try compileDecode(try lowerDecode(writerRoot, reader, reg))
+    }
 }
 
 /// The tree-walk interpreter backend (lowers, then walks the `MemProgram` per op).
@@ -87,14 +155,12 @@ public struct InterpreterEngine: TypedEngine {
     public let name = "interpreter"
     public init() {}
 
-    public func compileEncode(_ descriptor: Descriptor, _ reg: Registry) throws -> TypedEncodeFn {
-        let program = try lowerTyped(descriptor, reg)
-        return { base in encodeWith(program, base) }
+    public func compileEncode(_ lowered: Lowered) throws -> TypedEncodeFn {
+        return { base in encodeWith(lowered, base) }
     }
 
-    public func compileDecode(_ writerRoot: SchemaId, _ reader: Descriptor, _ reg: Registry) throws -> TypedDecodeFn {
-        let program = try lowerDecode(writerRoot, reader, reg)
-        return { bytes, out in try decodeInto(program, bytes, out) }
+    public func compileDecode(_ lowered: Lowered) throws -> TypedDecodeFn {
+        return { bytes, out in try decodeInto(lowered, bytes, out) }
     }
 }
 

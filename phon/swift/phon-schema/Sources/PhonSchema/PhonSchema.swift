@@ -7,4 +7,5 @@
 ///
 /// Spec: `docs/content/spec.md` — "Type system", "Schema identity",
 /// "Self-describing mode".
+// r[impl crates.concern-separation]
 public enum PhonSchema {}

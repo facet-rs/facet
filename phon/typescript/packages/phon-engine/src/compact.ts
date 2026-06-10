@@ -48,6 +48,7 @@ import type {
 // ============================================================================
 
 /// Encode `value` against the schema referenced by `root` in `reg`.
+// r[impl compact.schema-driven]
 export function encode(value: Value, root: bigint, reg: Registry): Uint8Array {
   const out = new ByteSink();
   encodeRef(out, value, { kind: "concrete", id: root, args: [] }, reg);
@@ -57,6 +58,8 @@ export function encode(value: Value, root: bigint, reg: Registry): Uint8Array {
 /// Decode a value of schema `root` from `bytes`, rejecting trailing bytes. This
 /// is the same-schema decoder (no compat translation); compat decode lives in
 /// plan.ts.
+// r[impl compact.schema-driven]
+// r[impl decode.whole-message]
 export function decode(bytes: Uint8Array, root: bigint, reg: Registry): Value {
   const r = new Reader(bytes);
   const v = decodeRef(r, { kind: "concrete", id: root, args: [] }, reg, 0);
@@ -74,6 +77,7 @@ export function encodeRef(out: ByteSink, value: Value, ref: SchemaRef, reg: Regi
   encodeKind(out, value, reg.resolve(ref), reg);
 }
 
+// r[impl compact.schema-driven]
 function encodeKind(out: ByteSink, value: Value, kind: SchemaKind, reg: Registry): void {
   switch (kind.kind) {
     case "primitive":
@@ -169,6 +173,7 @@ function encodePayload(out: ByteSink, value: Value, payload: VariantPayload, reg
   }
 }
 
+// r[impl compact.alignment]
 function encodePrimitive(out: ByteSink, value: Value, p: Primitive): void {
   out.padTo(alignment(p));
   switch (p) {
@@ -241,11 +246,13 @@ function encodePrimitive(out: ByteSink, value: Value, p: Primitive): void {
 // Decode (same-schema; used directly and for writer-only-field skips)
 // ============================================================================
 
+// r[impl decode.chained]
 export function decodeRef(r: Reader, ref: SchemaRef, reg: Registry, depth: number): Value {
   if (depth > MAX_DEPTH) throw new DecodeError("maximum nesting depth exceeded");
   return decodeKind(r, reg.resolve(ref), reg, depth);
 }
 
+// r[impl compact.schema-driven]
 function decodeKind(r: Reader, kind: SchemaKind, reg: Registry, depth: number): Value {
   switch (kind.kind) {
     case "primitive":
@@ -272,6 +279,7 @@ function decodeKind(r: Reader, kind: SchemaKind, reg: Registry, depth: number): 
       const seen = new Set<string>();
       for (let i = 0; i < n; i++) {
         const v = decodeRef(r, kind.element, reg, depth + 1);
+        // r[impl validate.uniqueness]
         if (!addUnique(seen, v)) throw new DecodeError("duplicate set element");
         a.push(v);
       }
@@ -291,6 +299,7 @@ function decodeKind(r: Reader, kind: SchemaKind, reg: Registry, depth: number): 
         const k = decodeRef(r, kind.key, reg, depth + 1);
         const v = decodeRef(r, kind.value, reg, depth + 1);
         if (typeof k !== "string") throw new DecodeError("map with non-string keys");
+        // r[impl validate.uniqueness]
         if (obj.has(k)) throw new DecodeError("duplicate map key");
         obj.set(k, v);
       }
@@ -337,6 +346,7 @@ function decodePayloadKind(r: Reader, payload: VariantPayload, reg: Registry, de
   }
 }
 
+// r[impl compact.alignment]
 export function decodePrimitive(r: Reader, p: Primitive): Value {
   r.skipPad(alignment(p));
   switch (p) {
@@ -390,6 +400,7 @@ export function decodePrimitive(r: Reader, p: Primitive): Value {
 // ============================================================================
 
 /// `product(dimensions)` with overflow as an error (`r[validate.dimensions]`).
+// r[impl validate.dimensions]
 export function product(dimensions: bigint[]): bigint {
   let p = 1n;
   for (const d of dimensions) {
@@ -401,6 +412,7 @@ export function product(dimensions: bigint[]): bigint {
 
 /// Bound a fixed-array element count before the construction loop, mirroring
 /// `compact::check_fixed_count` (ZST cap when `minWire == 0`).
+// r[impl validate.dimensions]
 export function checkFixedCount(count: bigint, minWire: number, remaining: number): void {
   const max = minWire === 0 ? BigInt(1 << 24) : BigInt(Math.floor(remaining / minWire));
   if (count > max) throw new DecodeError(`length ${count} exceeds ${remaining} bytes remaining`);

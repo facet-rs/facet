@@ -12,6 +12,8 @@ specs (
             {
                 name typescript
                 include (
+                    rust/phon-codegen/src/lib.rs
+                    rust/phon-codegen/src/typescript.rs
                     typescript/packages/phon-engine/src/**/*.ts
                     typescript/packages/phon-schema/src/**/*.ts
                 )

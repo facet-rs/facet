@@ -6,6 +6,9 @@ import Testing
 // the Rust source of truth (and matched by TypeScript). If BLAKE3, the canonical
 // encoding (length-prefixed tag string), or the LE truncation changes, one of
 // these fails immediately.
+// r[verify schema-identity.canonical-encoding]
+// r[verify schema-identity.computation]
+// r[verify schema-identity.content-hash]
 @Test
 func primitiveIdsMatchGolden() {
     let golden: [(Primitive, UInt64)] = [

@@ -9,6 +9,7 @@
 // Spec: docs/content/spec.md — "Type system", "Schema identity",
 // "Self-describing mode".
 
+// r[impl crates.concern-separation]
 export const PHON_SCHEMA_PACKAGE = "@bearcove/phon-schema";
 
 // Shared wire primitives.
@@ -41,7 +42,17 @@ export {
 export type { Value, PhonChar, PhonUuid, PhonQName, PhonDateTime } from "./value.ts";
 
 // The schema model + self-describing schema parser + alignment analysis.
-export { schemaFromBytes, Registry, alignment, minWireSizeRef } from "./schema.ts";
+export {
+  schemaFromBytes,
+  Registry,
+  alignment,
+  minWireSizeRef,
+  PRIMITIVES,
+  primitiveId,
+  primitiveTable,
+  resolveIds,
+  validateSchemaBundle,
+} from "./schema.ts";
 export type {
   Schema,
   SchemaKind,

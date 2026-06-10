@@ -36,6 +36,7 @@ public enum Number: Hashable, Sendable {
 
 /// A self-describing value. Aggregates carry their elements in wire order, so a
 /// decoded value re-encodes byte-for-byte.
+// r[impl value]
 public indirect enum Value: Hashable, Sendable {
     case null
     case bool(Bool)

@@ -25,6 +25,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { decodeValue, encodeValue, type Value } from "./value.ts";
+import { DecodeError } from "./wire.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 // .../typescript/packages/phon-schema/src -> repo root is four levels up.
@@ -41,6 +42,8 @@ function readVector(name: string): Uint8Array {
   return new Uint8Array(readFileSync(join(VALUES_DIR, name)));
 }
 
+// r[verify value]
+// r[verify self-describing.tag-led]
 describe("conformance/values round-trip (TS reads Rust-produced bytes)", () => {
   const files = valueFiles();
 
@@ -118,6 +121,52 @@ describe("conformance/values decoded-value assertions", () => {
     expect(o.get("c")).toEqual([{ kind: "char", value: "z" }]);
   });
 
+  // r[verify self-describing.enum-payload]
+  it("enum folds to a one-entry Map whose value is the single payload value", () => {
+    const unit = decodeValue(new Uint8Array([
+      0x17,
+      0x04, 0x00, 0x00, 0x00,
+      0x4e, 0x69, 0x6c, 0x73,
+      0x00,
+    ]));
+    expect(unit).toEqual(new Map([["Nils", null]]));
+
+    const tuple = decodeValue(new Uint8Array([
+      0x17,
+      0x04, 0x00, 0x00, 0x00,
+      0x50, 0x61, 0x69, 0x72,
+      0x15,
+      0x02, 0x00, 0x00, 0x00,
+      0x0a, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x0f, 0x01, 0x00, 0x00, 0x00, 0x78,
+    ]));
+    expect(tuple).toEqual(new Map([["Pair", [1n, "x"]]]));
+
+    const struct = decodeValue(new Uint8Array([
+      0x17,
+      0x06, 0x00, 0x00, 0x00,
+      0x50, 0x6f, 0x69, 0x6e, 0x74, 0x79,
+      0x16,
+      0x05, 0x00, 0x00, 0x00,
+      0x50, 0x6f, 0x69, 0x6e, 0x74,
+      0x02, 0x00, 0x00, 0x00,
+      0x01, 0x00, 0x00, 0x00,
+      0x78,
+      0x0a, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x01, 0x00, 0x00, 0x00,
+      0x79,
+      0x0a, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ]));
+    expect(struct).toEqual(new Map([[
+      "Pointy",
+      new Map<string, Value>([
+        ["x", 2n],
+        ["y", 3n],
+      ]),
+    ]]));
+  });
+
+  // r[verify value.extended-kinds]
   it("uuid decodes to its canonical string", () => {
     expect(decodeValue(readVector("uuid.phon"))).toEqual({
       kind: "uuid",
@@ -125,6 +174,7 @@ describe("conformance/values decoded-value assertions", () => {
     });
   });
 
+  // r[verify value.extended-kinds]
   it("qname namespaced and local", () => {
     expect(decodeValue(readVector("qname_namespaced.phon"))).toEqual({
       kind: "qname",
@@ -138,11 +188,30 @@ describe("conformance/values decoded-value assertions", () => {
     });
   });
 
+  // r[verify value.extended-kinds]
   it("datetime shapes decode with the right discriminant", () => {
     expect(decodeValue(readVector("datetime_date.phon"))).toMatchObject({ shape: "date", year: 2026, month: 5, day: 29 });
     expect(decodeValue(readVector("datetime_time.phon"))).toMatchObject({ shape: "time", hour: 7, minute: 32, second: 0, nanos: 500 });
     expect(decodeValue(readVector("datetime_local.phon"))).toMatchObject({ shape: "localDateTime", year: 2026, hour: 7 });
     expect(decodeValue(readVector("datetime_utc.phon"))).toMatchObject({ shape: "offset", offsetMinutes: 0 });
     expect(decodeValue(readVector("datetime_offset.phon"))).toMatchObject({ shape: "offset", offsetMinutes: 330, nanos: 123456789 });
+  });
+
+  // r[verify validate.tags]
+  // r[verify self-describing.no-extra-kinds]
+  it("rejects an unknown self-describing tag", () => {
+    expect(() => decodeValue(new Uint8Array([0xff]))).toThrow(DecodeError);
+    expect(() => decodeValue(new Uint8Array([0xff]))).toThrow(/unknown tag/);
+  });
+
+  // r[verify validate.depth]
+  it("rejects excessive self-describing nesting depth", () => {
+    const bytes: number[] = [];
+    for (let i = 0; i < 130; i++) {
+      bytes.push(0x11, 1, 0, 0, 0);
+    }
+    bytes.push(0x18);
+    expect(() => decodeValue(new Uint8Array(bytes))).toThrow(DecodeError);
+    expect(() => decodeValue(new Uint8Array(bytes))).toThrow(/maximum nesting depth/);
   });
 });

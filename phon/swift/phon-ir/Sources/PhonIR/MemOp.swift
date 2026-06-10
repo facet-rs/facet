@@ -30,6 +30,8 @@ public struct Lowered {
 
 /// One typed step. The base pointer is supplied at run time; `offset` is relative
 /// to it.
+// r[impl ir.one-vocabulary]
+// r[impl ir.memory]
 public indirect enum MemOp {
     /// Copy a run of `size` bytes between memory at `offset` and the wire, which
     /// is first padded to `align`. A single scalar, or a fused run of adjacent
@@ -149,14 +151,26 @@ public struct SeqOp {
     public var elemAlign: Int
     /// Minimum wire bytes one element occupies (`0` for a zero-sized element).
     public var minWire: Int
+    /// Whether decode must reject duplicate elements after constructing the
+    /// sequence handle. Set schemas use this; list schemas do not.
+    public var unique: Bool
     public var witness: SeqWitness
 
-    public init(offset: Int, element: MemProgram, stride: Int, elemAlign: Int, minWire: Int, witness: SeqWitness) {
+    public init(
+        offset: Int,
+        element: MemProgram,
+        stride: Int,
+        elemAlign: Int,
+        minWire: Int,
+        unique: Bool = false,
+        witness: SeqWitness
+    ) {
         self.offset = offset
         self.element = element
         self.stride = stride
         self.elemAlign = elemAlign
         self.minWire = minWire
+        self.unique = unique
         self.witness = witness
     }
 }

@@ -33,9 +33,10 @@ use crate::stencils::{
     CALLBLOCK_ENC, CALLBLOCK_ENC_CONT, DEFAULT, DEFAULT_CONT, DONE, DONE_ENC, DYNAMIC,
     DYNAMIC_CONT, DYNAMIC_ENC, DYNAMIC_ENC_CONT, ENUM, ENUM_CONT, ENUM_ENC, ENUM_ENC_CONT, MAP,
     MAP_CONT, MAP_ENC, MAP_ENC_CONT, OPAQUE, OPAQUE_CONT, OPAQUE_ENC, OPAQUE_ENC_CONT, OPTION,
-    OPTION_CONT, OPTION_ENC, OPTION_ENC_CONT, RESULT, RESULT_CONT, RESULT_ENC, RESULT_ENC_CONT,
-    SCALAR, SCALAR_CONT, SCALAR_ENC, SCALAR_ENC_CONT, SEQUENCE, SEQUENCE_CONT, SEQUENCE_ENC,
-    SEQUENCE_ENC_CONT, SKIPWIRE, SKIPWIRE_CONT,
+    OPTION_CONT, OPTION_ENC, OPTION_ENC_CONT, POINTER, POINTER_CONT, POINTER_ENC, POINTER_ENC_CONT,
+    RESULT, RESULT_CONT, RESULT_ENC, RESULT_ENC_CONT, SCALAR, SCALAR_CONT, SCALAR_ENC,
+    SCALAR_ENC_CONT, SEQUENCE, SEQUENCE_CONT, SEQUENCE_ENC, SEQUENCE_ENC_CONT, SET, SET_CONT,
+    SET_ENC, SET_ENC_CONT, SKIPWIRE, SKIPWIRE_CONT,
 };
 
 /// Load the smoke stencil into JIT memory and run it: `x * 3 + 1`, computed by
@@ -150,6 +151,20 @@ struct ResultInfo {
     err_prog: *const u64,
 }
 
+/// An owned pointer op's immediates, matching `PointerInfo` in
+/// `stencils/stencils.rs` byte for byte. Reached through a `*const PointerInfo`
+/// slot in the prog stream.
+#[repr(C)]
+struct PointerInfo {
+    field_offset: usize,
+    pointee_size: usize,
+    pointee_align: usize,
+    thunks_ctx: *const (),
+    init: unsafe extern "C" fn(ctx: *const (), pointer: *mut u8, value: *mut u8),
+    pointee_entry: unsafe extern "C" fn(cx: *mut Ctx),
+    pointee_prog: *const u64,
+}
+
 /// An opaque op's immediates, matching `OpaqueInfo` in `stencils/stencils.rs` byte
 /// for byte. Reached through a `*const OpaqueInfo` slot in the prog stream.
 #[repr(C)]
@@ -202,6 +217,21 @@ struct MapInfo {
     key_prog: *const u64,
     value_entry: unsafe extern "C" fn(cx: *mut Ctx),
     value_prog: *const u64,
+}
+
+/// An owned-set op's immediates, matching `SetInfo` in `stencils/stencils.rs` byte
+/// for byte. Reached through a `*const SetInfo` slot in the prog stream.
+#[repr(C)]
+struct SetInfo {
+    field_offset: usize,
+    elem_size: usize,
+    elem_align: usize,
+    min_wire: usize,
+    thunks_ctx: *const (),
+    init_with_capacity: unsafe extern "C" fn(ctx: *const (), set: *mut u8, cap: usize),
+    insert: unsafe extern "C" fn(ctx: *const (), set: *mut u8, value: *mut u8) -> bool,
+    element_entry: unsafe extern "C" fn(cx: *mut Ctx),
+    element_prog: *const u64,
 }
 
 /// One enum variant's decode immediates, matching `EnumVariantInfo` in
@@ -378,6 +408,9 @@ pub struct NativeDecode {
     /// One per result op: the immediates the result stencil reads through its prog
     /// slot. Same stability contract as `seq_infos`.
     result_infos: Vec<ResultInfo>,
+    /// One per owned pointer op: the immediates the pointer stencil reads through
+    /// its prog slot. Same stability contract as `seq_infos`.
+    pointer_infos: Vec<PointerInfo>,
     /// One per opaque op: the immediates the opaque stencil reads through its prog
     /// slot. Same stability contract as `seq_infos`.
     opaque_infos: Vec<OpaqueInfo>,
@@ -389,6 +422,9 @@ pub struct NativeDecode {
     /// One per map op: the immediates the map stencil reads through its prog slot.
     /// Same stability contract as `seq_infos`.
     map_infos: Vec<MapInfo>,
+    /// One per set op: the immediates the set stencil reads through its prog slot.
+    /// Same stability contract as `seq_infos`.
+    set_infos: Vec<SetInfo>,
     /// One per enum op: the immediates the enum stencil reads through its prog
     /// slot. Same stability contract as `seq_infos`.
     enum_infos: Vec<EnumInfo>,
@@ -463,6 +499,14 @@ struct ResultFixup {
     resultinfo: usize,
 }
 
+/// A pointer's prog slot to fill once `pointer_infos` is in its final home: write
+/// `&pointer_infos[pointerinfo]` into `progs[prog_index][slot]`.
+struct PointerFixup {
+    prog_index: usize,
+    slot: usize,
+    pointerinfo: usize,
+}
+
 /// An opaque field's prog slot to fill once `opaque_infos` is in its final home:
 /// write `&opaque_infos[opaqueinfo]` into `progs[prog_index][slot]`.
 struct OpaqueFixup {
@@ -493,6 +537,14 @@ struct MapFixup {
     prog_index: usize,
     slot: usize,
     mapinfo: usize,
+}
+
+/// A set's prog slot to fill once `set_infos` is in its final home: write
+/// `&set_infos[setinfo]` into `progs[prog_index][slot]`.
+struct SetFixup {
+    prog_index: usize,
+    slot: usize,
+    setinfo: usize,
 }
 
 /// An enum's prog slot to fill once `enum_infos` is in its final home: write
@@ -565,6 +617,18 @@ struct ResultInfoBuild {
     err_prog_index: usize,
 }
 
+/// A pointer's `PointerInfo` minus the two fields only known after the `ExecBuf`
+/// is built: the pointee body entry and prog index.
+struct PointerInfoBuild {
+    field_offset: usize,
+    pointee_size: usize,
+    pointee_align: usize,
+    thunks_ctx: *const (),
+    init: unsafe extern "C" fn(ctx: *const (), pointer: *mut u8, value: *mut u8),
+    pointee_entry_offset: usize,
+    pointee_prog_index: usize,
+}
+
 /// A recursive block call's `CallBlockInfo` minus the two fields known after all
 /// chains are compiled and the `ExecBuf` is built.
 struct CallBlockInfoBuild {
@@ -588,6 +652,20 @@ struct MapInfoBuild {
     key_prog_index: usize,
     value_entry_offset: usize,
     value_prog_index: usize,
+}
+
+/// A set's `SetInfo` minus the two fields only known after the `ExecBuf` is
+/// built: the element sub-chain's entry offset and prog index.
+struct SetInfoBuild {
+    field_offset: usize,
+    elem_size: usize,
+    elem_align: usize,
+    min_wire: usize,
+    thunks_ctx: *const (),
+    init_with_capacity: unsafe extern "C" fn(ctx: *const (), set: *mut u8, cap: usize),
+    insert: unsafe extern "C" fn(ctx: *const (), set: *mut u8, value: *mut u8) -> bool,
+    element_entry_offset: usize,
+    element_prog_index: usize,
 }
 
 /// One enum variant minus the two `ExecBuf`-relative fields: the payload chain's
@@ -628,6 +706,8 @@ struct Compiler {
     opt_fixups: Vec<OptFixup>,
     result_infos: Vec<ResultInfoBuild>,
     result_fixups: Vec<ResultFixup>,
+    pointer_infos: Vec<PointerInfoBuild>,
+    pointer_fixups: Vec<PointerFixup>,
     opaque_infos: Vec<OpaqueInfo>,
     opaque_fixups: Vec<OpaqueFixup>,
     dynamic_infos: Vec<DynamicInfo>,
@@ -637,6 +717,8 @@ struct Compiler {
     block_chains: BTreeMap<SchemaId, Chain>,
     map_infos: Vec<MapInfoBuild>,
     map_fixups: Vec<MapFixup>,
+    set_infos: Vec<SetInfoBuild>,
+    set_fixups: Vec<SetFixup>,
     enum_infos: Vec<EnumInfoBuild>,
     enum_fixups: Vec<EnumFixup>,
     /// Built directly (no `ExecBuf`-relative fields): one per reader-only-default op.
@@ -675,6 +757,30 @@ impl Compiler {
                     p.push(*size as u64);
                     p.push(*align as u64);
                 }
+                MemOp::NativeInt { .. } => {
+                    panic!("phon-jit: native-sized integer casts are interpreter-only for now")
+                }
+                MemOp::Pointer(p) => {
+                    self.code.extend_from_slice(POINTER);
+                    let slot = self.progs[prog_index].len();
+                    self.progs[prog_index].push(0);
+                    let pointee = self.compile_chain(&p.pointee);
+                    let pointerinfo = self.pointer_infos.len();
+                    self.pointer_infos.push(PointerInfoBuild {
+                        field_offset: p.field_offset,
+                        pointee_size: p.pointee_size,
+                        pointee_align: p.pointee_align,
+                        thunks_ctx: p.thunks.ctx,
+                        init: p.thunks.init,
+                        pointee_entry_offset: pointee.entry,
+                        pointee_prog_index: pointee.prog_index,
+                    });
+                    self.pointer_fixups.push(PointerFixup {
+                        prog_index,
+                        slot,
+                        pointerinfo,
+                    });
+                }
                 MemOp::Sequence(s) => {
                     self.code.extend_from_slice(SEQUENCE);
                     // The sequence reads one prog slot: a `*const SeqInfo` filled
@@ -698,6 +804,29 @@ impl Compiler {
                         prog_index,
                         slot,
                         seqinfo,
+                    });
+                }
+                MemOp::Set(s) => {
+                    self.code.extend_from_slice(SET);
+                    let slot = self.progs[prog_index].len();
+                    self.progs[prog_index].push(0);
+                    let element = self.compile_chain(&s.element);
+                    let setinfo = self.set_infos.len();
+                    self.set_infos.push(SetInfoBuild {
+                        field_offset: s.field_offset,
+                        elem_size: s.elem_size,
+                        elem_align: s.elem_align,
+                        min_wire: s.min_wire,
+                        thunks_ctx: s.thunks.ctx,
+                        init_with_capacity: s.thunks.init_with_capacity,
+                        insert: s.thunks.insert,
+                        element_entry_offset: element.entry,
+                        element_prog_index: element.prog_index,
+                    });
+                    self.set_fixups.push(SetFixup {
+                        prog_index,
+                        slot,
+                        setinfo,
                     });
                 }
                 MemOp::Bytes(b) => {
@@ -957,11 +1086,16 @@ impl Compiler {
             let next = starts.get(i + 1).copied().unwrap_or(done_start);
             let relocs = match &program[i] {
                 MemOp::Scalar { .. } => SCALAR_CONT,
+                MemOp::NativeInt { .. } => {
+                    panic!("phon-jit: native-sized integer casts are interpreter-only for now")
+                }
                 MemOp::Sequence(_) => SEQUENCE_CONT,
+                MemOp::Set(_) => SET_CONT,
                 MemOp::Bytes(_) => BYTES_CONT,
                 MemOp::Borrow(_) => BORROW_CONT,
                 MemOp::Option(_) => OPTION_CONT,
                 MemOp::Result(_) => RESULT_CONT,
+                MemOp::Pointer(_) => POINTER_CONT,
                 MemOp::Opaque(_) => OPAQUE_CONT,
                 MemOp::Dynamic { .. } => DYNAMIC_CONT,
                 MemOp::CallBlock { .. } => CALLBLOCK_CONT,
@@ -1012,6 +1146,8 @@ impl NativeDecode {
             opt_fixups: Vec::new(),
             result_infos: Vec::new(),
             result_fixups: Vec::new(),
+            pointer_infos: Vec::new(),
+            pointer_fixups: Vec::new(),
             opaque_infos: Vec::new(),
             opaque_fixups: Vec::new(),
             dynamic_infos: Vec::new(),
@@ -1021,6 +1157,8 @@ impl NativeDecode {
             block_chains: BTreeMap::new(),
             map_infos: Vec::new(),
             map_fixups: Vec::new(),
+            set_infos: Vec::new(),
+            set_fixups: Vec::new(),
             enum_infos: Vec::new(),
             enum_fixups: Vec::new(),
             default_infos: Vec::new(),
@@ -1110,6 +1248,24 @@ impl NativeDecode {
             });
         }
 
+        // Materialize the `PointerInfo`s now that the code base is known. The
+        // pointee entry is `ExecBuf`-relative; the prog is bound below once
+        // `progs` is owned by `NativeDecode`.
+        let mut pointer_infos: Vec<PointerInfo> = Vec::with_capacity(c.pointer_infos.len());
+        for b in &c.pointer_infos {
+            let pointee_entry: unsafe extern "C" fn(*mut Ctx) =
+                unsafe { core::mem::transmute(base.add(b.pointee_entry_offset)) };
+            pointer_infos.push(PointerInfo {
+                field_offset: b.field_offset,
+                pointee_size: b.pointee_size,
+                pointee_align: b.pointee_align,
+                thunks_ctx: b.thunks_ctx,
+                init: b.init,
+                pointee_entry,
+                pointee_prog: core::ptr::null(),
+            });
+        }
+
         // Materialize recursive block call infos. The target entries are
         // `ExecBuf`-relative; target progs are bound below once `progs` is owned by
         // `NativeDecode`.
@@ -1152,6 +1308,26 @@ impl NativeDecode {
                 key_prog: core::ptr::null(),
                 value_entry,
                 value_prog: core::ptr::null(),
+            });
+        }
+
+        // Materialize the `SetInfo`s now that the code base is known. The element
+        // sub-chain entry is `ExecBuf`-relative; the prog is bound below once
+        // `progs` is owned by `NativeDecode`.
+        let mut set_infos: Vec<SetInfo> = Vec::with_capacity(c.set_infos.len());
+        for b in &c.set_infos {
+            let element_entry: unsafe extern "C" fn(*mut Ctx) =
+                unsafe { core::mem::transmute(base.add(b.element_entry_offset)) };
+            set_infos.push(SetInfo {
+                field_offset: b.field_offset,
+                elem_size: b.elem_size,
+                elem_align: b.elem_align,
+                min_wire: b.min_wire,
+                thunks_ctx: b.thunks_ctx,
+                init_with_capacity: b.init_with_capacity,
+                insert: b.insert,
+                element_entry,
+                element_prog: core::ptr::null(),
             });
         }
 
@@ -1215,10 +1391,12 @@ impl NativeDecode {
             borrow_infos: c.borrow_infos,
             opt_infos,
             result_infos,
+            pointer_infos,
             opaque_infos: c.opaque_infos,
             dynamic_infos: c.dynamic_infos,
             callblock_infos,
             map_infos,
+            set_infos,
             enum_infos,
             enum_variants,
             enum_writer_only,
@@ -1278,6 +1456,14 @@ impl NativeDecode {
             let ptr: *const ResultInfo = &nd.result_infos[f.resultinfo];
             nd.progs[f.prog_index][f.slot] = ptr as u64;
         }
+        // Bind each pointer's pointee prog and its prog slot to the `PointerInfo`.
+        for (b, info) in c.pointer_infos.iter().zip(nd.pointer_infos.iter_mut()) {
+            info.pointee_prog = nd.progs[b.pointee_prog_index].as_ptr();
+        }
+        for f in &c.pointer_fixups {
+            let ptr: *const PointerInfo = &nd.pointer_infos[f.pointerinfo];
+            nd.progs[f.prog_index][f.slot] = ptr as u64;
+        }
         // Bind each opaque field's prog slot to its `OpaqueInfo`.
         for f in &c.opaque_fixups {
             let ptr: *const OpaqueInfo = &nd.opaque_infos[f.opaqueinfo];
@@ -1309,6 +1495,14 @@ impl NativeDecode {
         }
         for f in &c.map_fixups {
             let ptr: *const MapInfo = &nd.map_infos[f.mapinfo];
+            nd.progs[f.prog_index][f.slot] = ptr as u64;
+        }
+        // Bind each set's element sub-chain prog, then its prog slot to `SetInfo`.
+        for (b, info) in c.set_infos.iter().zip(nd.set_infos.iter_mut()) {
+            info.element_prog = nd.progs[b.element_prog_index].as_ptr();
+        }
+        for f in &c.set_fixups {
+            let ptr: *const SetInfo = &nd.set_infos[f.setinfo];
             nd.progs[f.prog_index][f.slot] = ptr as u64;
         }
         // Bind each enum variant's payload prog, point each `EnumInfo` at its
@@ -1394,6 +1588,8 @@ impl NativeDecode {
                 7 => return Err(DecodeError::Malformed("opaque adapter rejected input")),
                 // A helper wrote the exact error into the direct-error slot.
                 8 => return Err(unsafe { direct_error.assume_init() }),
+                // A repeated set element was rejected by the set insert thunk.
+                9 => return Err(DecodeError::DuplicateElement),
                 // Anything else is a truncation/bounds failure.
                 _ => {}
             }
@@ -1491,6 +1687,17 @@ struct EncResultInfo {
     err_prog: *const u64,
 }
 
+/// An encode owned pointer op's immediates, matching `EncPointerInfo` in
+/// `stencils/stencils.rs` byte for byte.
+#[repr(C)]
+struct EncPointerInfo {
+    field_offset: usize,
+    thunks_ctx: *const (),
+    borrow: unsafe extern "C" fn(ctx: *const (), pointer: *const u8) -> *const u8,
+    pointee_entry: unsafe extern "C" fn(cx: *mut EncCtx),
+    pointee_prog: *const u64,
+}
+
 /// An encode opaque op's immediates, matching `EncOpaqueInfo` in
 /// `stencils/stencils.rs` byte for byte. Reached through a `*const EncOpaqueInfo`
 /// slot in the prog stream.
@@ -1539,6 +1746,21 @@ struct EncMapInfo {
     key_prog: *const u64,
     value_entry: unsafe extern "C" fn(cx: *mut EncCtx),
     value_prog: *const u64,
+}
+
+/// An encode owned-set op's immediates, matching `EncSetInfo` in
+/// `stencils/stencils.rs` byte for byte.
+#[repr(C)]
+struct EncSetInfo {
+    field_offset: usize,
+    thunks_ctx: *const (),
+    len: unsafe extern "C" fn(ctx: *const (), set: *const u8) -> usize,
+    iter_init: unsafe extern "C" fn(ctx: *const (), set: *const u8) -> *mut (),
+    iter_next:
+        unsafe extern "C" fn(ctx: *const (), iter: *mut (), value_out: *mut *const u8) -> bool,
+    iter_dealloc: unsafe extern "C" fn(ctx: *const (), iter: *mut ()),
+    element_entry: unsafe extern "C" fn(cx: *mut EncCtx),
+    element_prog: *const u64,
 }
 
 /// One enum variant's encode immediates, matching `EncEnumVariantInfo` in
@@ -1620,6 +1842,8 @@ pub struct NativeEncode {
     opt_infos: Vec<EncOptInfo>,
     /// One per result op. Same stability contract as `seq_infos`.
     result_infos: Vec<EncResultInfo>,
+    /// One per owned pointer op. Same stability contract as `seq_infos`.
+    pointer_infos: Vec<EncPointerInfo>,
     /// One per opaque op. Same stability contract as `seq_infos`.
     opaque_infos: Vec<EncOpaqueInfo>,
     /// One per dynamic op. Same stability contract as `seq_infos`.
@@ -1628,6 +1852,8 @@ pub struct NativeEncode {
     callblock_infos: Vec<EncCallBlockInfo>,
     /// One per map op. Same stability contract as `seq_infos`.
     map_infos: Vec<EncMapInfo>,
+    /// One per set op. Same stability contract as `seq_infos`.
+    set_infos: Vec<EncSetInfo>,
     /// One per enum op. Same stability contract as `seq_infos`.
     enum_infos: Vec<EncEnumInfo>,
     /// One per enum op: that enum's variant table (stable heap per inner `Vec`).
@@ -1677,6 +1903,15 @@ struct EncResultInfoBuild {
     err_prog_index: usize,
 }
 
+/// An encode pointer's `EncPointerInfo` minus the two `ExecBuf`-relative fields.
+struct EncPointerInfoBuild {
+    field_offset: usize,
+    thunks_ctx: *const (),
+    borrow: unsafe extern "C" fn(ctx: *const (), pointer: *const u8) -> *const u8,
+    pointee_entry_offset: usize,
+    pointee_prog_index: usize,
+}
+
 /// An encode map's `EncMapInfo` minus the four `ExecBuf`-relative fields: the key
 /// and value sub-chains' entry offsets and prog indices.
 struct EncMapInfoBuild {
@@ -1695,6 +1930,20 @@ struct EncMapInfoBuild {
     key_prog_index: usize,
     value_entry_offset: usize,
     value_prog_index: usize,
+}
+
+/// An encode set's `EncSetInfo` minus the element entry/prog fields that are only
+/// known after the `ExecBuf` is built.
+struct EncSetInfoBuild {
+    field_offset: usize,
+    thunks_ctx: *const (),
+    len: unsafe extern "C" fn(ctx: *const (), set: *const u8) -> usize,
+    iter_init: unsafe extern "C" fn(ctx: *const (), set: *const u8) -> *mut (),
+    iter_next:
+        unsafe extern "C" fn(ctx: *const (), iter: *mut (), value_out: *mut *const u8) -> bool,
+    iter_dealloc: unsafe extern "C" fn(ctx: *const (), iter: *mut ()),
+    element_entry_offset: usize,
+    element_prog_index: usize,
 }
 
 /// One encode enum variant minus the two `ExecBuf`-relative fields.
@@ -1727,6 +1976,8 @@ struct EncCompiler {
     opt_fixups: Vec<OptFixup>,
     result_infos: Vec<EncResultInfoBuild>,
     result_fixups: Vec<ResultFixup>,
+    pointer_infos: Vec<EncPointerInfoBuild>,
+    pointer_fixups: Vec<PointerFixup>,
     opaque_infos: Vec<EncOpaqueInfo>,
     opaque_fixups: Vec<OpaqueFixup>,
     dynamic_infos: Vec<EncDynamicInfo>,
@@ -1736,6 +1987,8 @@ struct EncCompiler {
     block_chains: BTreeMap<SchemaId, Chain>,
     map_infos: Vec<EncMapInfoBuild>,
     map_fixups: Vec<MapFixup>,
+    set_infos: Vec<EncSetInfoBuild>,
+    set_fixups: Vec<SetFixup>,
     enum_infos: Vec<EncEnumInfoBuild>,
     enum_fixups: Vec<EnumFixup>,
 }
@@ -1764,6 +2017,28 @@ impl EncCompiler {
                     p.push(*size as u64);
                     p.push(*align as u64);
                 }
+                MemOp::NativeInt { .. } => {
+                    panic!("phon-jit: native-sized integer casts are interpreter-only for now")
+                }
+                MemOp::Pointer(p) => {
+                    self.code.extend_from_slice(POINTER_ENC);
+                    let slot = self.progs[prog_index].len();
+                    self.progs[prog_index].push(0);
+                    let pointee = self.compile_chain(&p.pointee);
+                    let pointerinfo = self.pointer_infos.len();
+                    self.pointer_infos.push(EncPointerInfoBuild {
+                        field_offset: p.field_offset,
+                        thunks_ctx: p.thunks.ctx,
+                        borrow: p.thunks.borrow,
+                        pointee_entry_offset: pointee.entry,
+                        pointee_prog_index: pointee.prog_index,
+                    });
+                    self.pointer_fixups.push(PointerFixup {
+                        prog_index,
+                        slot,
+                        pointerinfo,
+                    });
+                }
                 MemOp::Sequence(s) => {
                     self.code.extend_from_slice(SEQUENCE_ENC);
                     let slot = self.progs[prog_index].len();
@@ -1783,6 +2058,28 @@ impl EncCompiler {
                         prog_index,
                         slot,
                         seqinfo,
+                    });
+                }
+                MemOp::Set(s) => {
+                    self.code.extend_from_slice(SET_ENC);
+                    let slot = self.progs[prog_index].len();
+                    self.progs[prog_index].push(0);
+                    let element = self.compile_chain(&s.element);
+                    let setinfo = self.set_infos.len();
+                    self.set_infos.push(EncSetInfoBuild {
+                        field_offset: s.field_offset,
+                        thunks_ctx: s.thunks.ctx,
+                        len: s.thunks.len,
+                        iter_init: s.thunks.iter_init,
+                        iter_next: s.thunks.iter_next,
+                        iter_dealloc: s.thunks.iter_dealloc,
+                        element_entry_offset: element.entry,
+                        element_prog_index: element.prog_index,
+                    });
+                    self.set_fixups.push(SetFixup {
+                        prog_index,
+                        slot,
+                        setinfo,
                     });
                 }
                 MemOp::Bytes(b) => {
@@ -1985,10 +2282,15 @@ impl EncCompiler {
             let next = starts.get(i + 1).copied().unwrap_or(done_start);
             let relocs = match &program[i] {
                 MemOp::Scalar { .. } => SCALAR_ENC_CONT,
+                MemOp::NativeInt { .. } => {
+                    panic!("phon-jit: native-sized integer casts are interpreter-only for now")
+                }
                 MemOp::Sequence(_) => SEQUENCE_ENC_CONT,
+                MemOp::Set(_) => SET_ENC_CONT,
                 MemOp::Bytes(_) | MemOp::Borrow(_) => BYTES_ENC_CONT,
                 MemOp::Option(_) => OPTION_ENC_CONT,
                 MemOp::Result(_) => RESULT_ENC_CONT,
+                MemOp::Pointer(_) => POINTER_ENC_CONT,
                 MemOp::Opaque(_) => OPAQUE_ENC_CONT,
                 MemOp::Dynamic { .. } => DYNAMIC_ENC_CONT,
                 MemOp::CallBlock { .. } => CALLBLOCK_ENC_CONT,
@@ -2038,6 +2340,8 @@ impl NativeEncode {
             opt_fixups: Vec::new(),
             result_infos: Vec::new(),
             result_fixups: Vec::new(),
+            pointer_infos: Vec::new(),
+            pointer_fixups: Vec::new(),
             opaque_infos: Vec::new(),
             opaque_fixups: Vec::new(),
             dynamic_infos: Vec::new(),
@@ -2047,6 +2351,8 @@ impl NativeEncode {
             block_chains: BTreeMap::new(),
             map_infos: Vec::new(),
             map_fixups: Vec::new(),
+            set_infos: Vec::new(),
+            set_fixups: Vec::new(),
             enum_infos: Vec::new(),
             enum_fixups: Vec::new(),
         };
@@ -2115,6 +2421,21 @@ impl NativeEncode {
             });
         }
 
+        // Materialize the `EncPointerInfo`s (pointee entry is
+        // `ExecBuf`-relative; pointee prog bound below).
+        let mut pointer_infos: Vec<EncPointerInfo> = Vec::with_capacity(c.pointer_infos.len());
+        for b in &c.pointer_infos {
+            let pointee_entry: unsafe extern "C" fn(*mut EncCtx) =
+                unsafe { core::mem::transmute(base.add(b.pointee_entry_offset)) };
+            pointer_infos.push(EncPointerInfo {
+                field_offset: b.field_offset,
+                thunks_ctx: b.thunks_ctx,
+                borrow: b.borrow,
+                pointee_entry,
+                pointee_prog: core::ptr::null(),
+            });
+        }
+
         // Materialize recursive encode block call infos. Target progs are bound
         // below once `progs` is owned by `NativeEncode`.
         let mut callblock_infos: Vec<EncCallBlockInfo> =
@@ -2155,6 +2476,24 @@ impl NativeEncode {
             });
         }
 
+        // Materialize the `EncSetInfo`s (element sub-chain entry is
+        // `ExecBuf`-relative; the prog is bound below).
+        let mut set_infos: Vec<EncSetInfo> = Vec::with_capacity(c.set_infos.len());
+        for b in &c.set_infos {
+            let element_entry: unsafe extern "C" fn(*mut EncCtx) =
+                unsafe { core::mem::transmute(base.add(b.element_entry_offset)) };
+            set_infos.push(EncSetInfo {
+                field_offset: b.field_offset,
+                thunks_ctx: b.thunks_ctx,
+                len: b.len,
+                iter_init: b.iter_init,
+                iter_next: b.iter_next,
+                iter_dealloc: b.iter_dealloc,
+                element_entry,
+                element_prog: core::ptr::null(),
+            });
+        }
+
         // Materialize each enum's variant table (payload entries `ExecBuf`-relative;
         // payload progs bound below).
         let mut enum_variants: Vec<Vec<EncEnumVariantInfo>> =
@@ -2192,10 +2531,12 @@ impl NativeEncode {
             bytes_infos: c.bytes_infos,
             opt_infos,
             result_infos,
+            pointer_infos,
             opaque_infos: c.opaque_infos,
             dynamic_infos: c.dynamic_infos,
             callblock_infos,
             map_infos,
+            set_infos,
             enum_infos,
             enum_variants,
             last_size: AtomicUsize::new(0),
@@ -2230,6 +2571,14 @@ impl NativeEncode {
             let ptr: *const EncResultInfo = &ne.result_infos[f.resultinfo];
             ne.progs[f.prog_index][f.slot] = ptr as u64;
         }
+        // Bind each pointer's pointee prog and its prog slot to the `EncPointerInfo`.
+        for (b, info) in c.pointer_infos.iter().zip(ne.pointer_infos.iter_mut()) {
+            info.pointee_prog = ne.progs[b.pointee_prog_index].as_ptr();
+        }
+        for f in &c.pointer_fixups {
+            let ptr: *const EncPointerInfo = &ne.pointer_infos[f.pointerinfo];
+            ne.progs[f.prog_index][f.slot] = ptr as u64;
+        }
         // Bind each opaque field's prog slot to the `EncOpaqueInfo`.
         for f in &c.opaque_fixups {
             let ptr: *const EncOpaqueInfo = &ne.opaque_infos[f.opaqueinfo];
@@ -2260,6 +2609,14 @@ impl NativeEncode {
         }
         for f in &c.map_fixups {
             let ptr: *const EncMapInfo = &ne.map_infos[f.mapinfo];
+            ne.progs[f.prog_index][f.slot] = ptr as u64;
+        }
+        // Bind each set's element sub-chain prog, then its prog slot.
+        for (b, info) in c.set_infos.iter().zip(ne.set_infos.iter_mut()) {
+            info.element_prog = ne.progs[b.element_prog_index].as_ptr();
+        }
+        for f in &c.set_fixups {
+            let ptr: *const EncSetInfo = &ne.set_infos[f.setinfo];
             ne.progs[f.prog_index][f.slot] = ptr as u64;
         }
         // Bind each enum variant's payload prog, point each `EncEnumInfo` at its
@@ -3671,9 +4028,9 @@ mod tests {
     // per-pair allocation + insert on decode and a stateful iterator on encode
     // ====================================================================
 
-    use phon_ir::MapThunks;
-    use phon_ir::ir::MapOp;
-    use std::collections::BTreeMap;
+    use phon_ir::ir::{MapOp, SetOp};
+    use phon_ir::{MapThunks, SetThunks};
+    use std::collections::{BTreeMap, BTreeSet};
 
     // Hand-written `BTreeMap<String, u32>` thunks, mirroring the interpreter's map
     // test thunks: the engine decodes a key+value into scratch and `insert` moves
@@ -3872,6 +4229,132 @@ mod tests {
         // initialized map so the leak does not trip Miri (this path never runs under
         // Miri — JIT code can't — but keeps the test self-consistent).
         let partial = unsafe { core::ptr::read(slot.as_ptr().cast::<SU32>()) };
+        assert_eq!(partial.len(), 1);
+        drop(partial);
+    }
+
+    // ====================================================================
+    // Set: a LOOP with one element sub-chain, duplicate rejection on insert
+    // ====================================================================
+
+    type SSet = BTreeSet<String>;
+
+    unsafe extern "C" fn sset_len(_ctx: *const (), set: *const u8) -> usize {
+        unsafe { (*set.cast::<SSet>()).len() }
+    }
+    unsafe extern "C" fn sset_init_with_capacity(_ctx: *const (), set: *mut u8, _cap: usize) {
+        unsafe { core::ptr::write(set.cast::<SSet>(), BTreeSet::new()) };
+    }
+    unsafe extern "C" fn sset_insert(_ctx: *const (), set: *mut u8, value: *mut u8) -> bool {
+        let value = unsafe { core::ptr::read(value.cast::<String>()) };
+        unsafe { (*set.cast::<SSet>()).insert(value) }
+    }
+    struct SSetIter {
+        values: Vec<*const u8>,
+        pos: usize,
+    }
+    unsafe extern "C" fn sset_iter_init(_ctx: *const (), set: *const u8) -> *mut () {
+        let set = unsafe { &*set.cast::<SSet>() };
+        let values = set
+            .iter()
+            .map(|value| core::ptr::from_ref(value).cast::<u8>())
+            .collect();
+        Box::into_raw(Box::new(SSetIter { values, pos: 0 })).cast::<()>()
+    }
+    unsafe extern "C" fn sset_iter_next(
+        _ctx: *const (),
+        iter: *mut (),
+        value_out: *mut *const u8,
+    ) -> bool {
+        let it = unsafe { &mut *iter.cast::<SSetIter>() };
+        if it.pos >= it.values.len() {
+            return false;
+        }
+        let value = it.values[it.pos];
+        it.pos += 1;
+        unsafe {
+            *value_out = value;
+        }
+        true
+    }
+    unsafe extern "C" fn sset_iter_dealloc(_ctx: *const (), iter: *mut ()) {
+        drop(unsafe { Box::from_raw(iter.cast::<SSetIter>()) });
+    }
+    fn sset_thunks() -> SetThunks {
+        SetThunks {
+            ctx: core::ptr::null(),
+            len: sset_len,
+            init_with_capacity: sset_init_with_capacity,
+            insert: sset_insert,
+            iter_init: sset_iter_init,
+            iter_next: sset_iter_next,
+            iter_dealloc: sset_iter_dealloc,
+        }
+    }
+
+    fn sset_program() -> MemProgram {
+        vec![MemOp::Set(Box::new(SetOp {
+            field_offset: 0,
+            element: vec![MemOp::Bytes(Box::new(BytesOp {
+                field_offset: 0,
+                stride: 1,
+                elem_align: 1,
+                validate: validate_utf8,
+                thunks: str_thunks(),
+            }))],
+            elem_size: core::mem::size_of::<String>(),
+            elem_align: core::mem::align_of::<String>(),
+            min_wire: 1,
+            thunks: sset_thunks(),
+        }))]
+    }
+
+    fn sset_wire(set: &SSet) -> Vec<u8> {
+        let mut wire = (set.len() as u32).to_le_bytes().to_vec();
+        for value in set {
+            wire.extend_from_slice(&(value.len() as u32).to_le_bytes());
+            wire.extend_from_slice(value.as_bytes());
+        }
+        wire
+    }
+
+    #[test]
+    // r[verify ir.stencils]
+    // r[verify ir.memory]
+    fn jit_set_string_roundtrips() {
+        let program = sset_program();
+        let mut set = SSet::new();
+        set.insert("alpha".to_string());
+        set.insert("beta".to_string());
+        set.insert("gamma".to_string());
+
+        let enc = NativeEncode::compile(&program);
+        let got = unsafe { enc.run(core::ptr::from_ref(&set).cast::<u8>()) };
+        assert_eq!(got, sset_wire(&set));
+
+        let dec = NativeDecode::compile(&program);
+        let mut slot = MaybeUninit::<SSet>::uninit();
+        unsafe { dec.run(&got, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back, set);
+    }
+
+    #[test]
+    // r[verify validate.uniqueness]
+    fn jit_set_rejects_duplicate_element() {
+        let program = sset_program();
+        let mut wire = 2u32.to_le_bytes().to_vec();
+        for _ in 0..2 {
+            wire.extend_from_slice(&1u32.to_le_bytes());
+            wire.push(b'k');
+        }
+
+        let dec = NativeDecode::compile(&program);
+        let mut slot = MaybeUninit::<SSet>::uninit();
+        let err = unsafe { dec.run(&wire, slot.as_mut_ptr().cast::<u8>()) }.unwrap_err();
+        assert!(matches!(err, DecodeError::DuplicateElement), "got {err:?}");
+
+        let partial = unsafe { core::ptr::read(slot.as_ptr().cast::<SSet>()) };
         assert_eq!(partial.len(), 1);
         drop(partial);
     }
