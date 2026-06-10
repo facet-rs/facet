@@ -42,7 +42,7 @@ jobs:
         run: pnpm run build
 
       - name: Publish npm packages
-        run: pnpm -r --filter './typescript/packages/*' publish --access public --no-git-checks --report-summary
+        run: pnpm -r --filter './typescript/packages/*' publish --access public --tag rc --no-git-checks --report-summary
         env:
           NPM_CONFIG_PROVENANCE: "true"
 
