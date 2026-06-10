@@ -5,7 +5,7 @@
 //! time copy the stencils into executable memory and patch the holes to chain
 //! them. This crate provides exactly that bottom layer:
 //!
-//! - [`ExecBuf`] — allocate executable memory, copy machine code in, satisfy the
+//! - `ExecBuf` — allocate executable memory, copy machine code in, satisfy the
 //!   platform's write-xor-execute and instruction-cache rules, and free it on
 //!   drop. (Apple Silicon / `MAP_JIT` today; other backends slot in here.)
 //! - [`patch_branch26`] — patch an AArch64 `B`/`BL` (`BRANCH26`) immediate so a
