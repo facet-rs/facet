@@ -100,8 +100,8 @@ public extension BytesWitness {
 // MARK: - Sequence (per-element)
 
 public extension SeqWitness {
-    /// A `[Element]` of structured elements; `moveInitialize` makes decode correct
-    /// for trivial and managed elements alike.
+    /// A `[Element]` of structured elements; each element is moved out of the
+    /// engine scratch buffer exactly once.
     static func of<Element>(_ type: Element.Type) -> SeqWitness {
         SeqWitness(
             count: { $0.assumingMemoryBound(to: [Element].self).pointee.count },
@@ -111,12 +111,15 @@ public extension SeqWitness {
                 }
             },
             construct: { handle, src, count in
-                handle.assumingMemoryBound(to: [Element].self).initialize(to: Array(unsafeUninitializedCapacity: count) { dst, n in
-                    if count > 0 {
-                        dst.baseAddress!.moveInitialize(from: src.assumingMemoryBound(to: Element.self), count: count)
-                    }
-                    n = count
-                })
+                var array: [Element] = []
+                array.reserveCapacity(count)
+                for i in 0..<count {
+                    let value = src.advanced(by: i * MemoryLayout<Element>.stride)
+                        .assumingMemoryBound(to: Element.self)
+                        .move()
+                    array.append(value)
+                }
+                handle.assumingMemoryBound(to: [Element].self).initialize(to: array)
             }
         )
     }
