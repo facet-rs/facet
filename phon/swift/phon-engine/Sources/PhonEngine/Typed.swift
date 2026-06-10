@@ -102,10 +102,6 @@ private func lowerTypedNode(_ d: Descriptor, _ reg: Registry, _ base: Int, _ out
         guard arity == ra.fields.count else {
             throw CompactError.malformed("descriptor/schema field count mismatch")
         }
-        switch ra.construct {
-        case .inPlace: break
-        case .thunk: throw CompactError.unsupported("typed: thunk construction")
-        }
         // Splice each field in wire order, folding its memory offset into the base.
         for fa in ra.fields {
             try lowerTypedNode(fa.descriptor, reg, base + fa.offset, &out)

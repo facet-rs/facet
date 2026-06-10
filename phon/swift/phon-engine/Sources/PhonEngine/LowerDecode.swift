@@ -193,10 +193,6 @@ private func requireReaderBulk(_ reader: SchemaRef, matches writer: Resolved, _ 
 // r[impl compat.reader-only-fields]
 // r[impl compat.defaults-are-reader-side]
 private func lowerDecodeStruct(_ wFields: [Field], _ ra: RecordAccess, _ readerSchema: SchemaRef, _ reg: Registry, _ base: Int, _ out: inout MemProgram) throws {
-    switch ra.construct {
-    case .inPlace: break
-    case .thunk: throw CompactError.unsupported("typed: thunk construction")
-    }
     // Reader field names come from the reader schema, aligned by index with the
     // descriptor's fields (the bridge builds them in the same order).
     let rNamed = try readerStructFields(readerSchema, reg)

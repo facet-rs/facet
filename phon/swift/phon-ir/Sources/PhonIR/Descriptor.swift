@@ -382,8 +382,4 @@ public enum Construct {
     /// Decode writes each field into its offset in uninitialized storage; the
     /// value is valid once all fields are written. Plain structs and tuples.
     case inPlace
-    /// Decode fills a scratch buffer, then a closure builds the real value from
-    /// it. Types with construction invariants, or that can't be poked field by
-    /// field.
-    case thunk((_ scratch: UnsafeRawPointer, _ slot: UnsafeMutableRawPointer) -> Void)
 }
