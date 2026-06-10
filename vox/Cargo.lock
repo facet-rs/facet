@@ -738,15 +738,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "facet-cbor"
-version = "0.3.4"
-dependencies = [
- "facet",
- "facet-core",
- "facet-reflect",
-]
-
-[[package]]
 name = "facet-core"
 version = "0.50.0-rc.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3210,7 +3201,6 @@ name = "vox-codegen"
 version = "0.9.0-rc.0"
 dependencies = [
  "facet",
- "facet-cbor",
  "facet-core",
  "facet-value",
  "heck",
@@ -3230,7 +3220,6 @@ name = "vox-core"
 version = "0.9.0-rc.0"
 dependencies = [
  "facet",
- "facet-cbor",
  "facet-core",
  "facet-error",
  "facet-reflect",
@@ -3327,7 +3316,6 @@ version = "0.9.0-rc.0"
 dependencies = [
  "blake3",
  "facet",
- "facet-cbor",
  "facet-core",
  "indexmap",
 ]
@@ -3363,7 +3351,6 @@ dependencies = [
  "blake3",
  "bytes",
  "facet",
- "facet-cbor",
  "facet-core",
  "facet-path",
  "facet-reflect",
@@ -3926,7 +3913,6 @@ version = "0.2.2"
 dependencies = [
  "dprint-plugin-typescript",
  "facet",
- "facet-cbor",
  "facet-json",
  "figue",
  "prettyplease",

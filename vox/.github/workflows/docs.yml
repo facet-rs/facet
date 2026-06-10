@@ -43,10 +43,15 @@ jobs:
           path: docs/public
 
   deploy:
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: bearcove-ubuntu-24.04
+    # GitHub Pages deployment is an OIDC-authenticated GitHub API operation.
+    # Keep the build on Bearcove; run only this deploy action on GitHub-hosted.
+    runs-on: ubuntu-24.04
     needs: build
     steps:
       - name: Deploy to GitHub Pages

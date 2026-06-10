@@ -1,7 +1,7 @@
 //! Canonical schema model and wire payload types for vox.
 //!
 //! This crate contains the transport-independent schema data model, content
-//! hashing, and CBOR schema payload helpers shared by vox runtimes and codecs.
+//! hashing, and PHON schema metadata shared by vox runtimes and codecs.
 
 use facet::{Facet, OpaqueSerialize, PtrConst};
 use facet_core::Shape;
@@ -834,33 +834,6 @@ pub enum BindingDirection {
     Response,
 }
 
-/// CBOR-encoded payload inside a schema wire message.
-/// A struct so new fields can be added without breaking the wire format.
-#[derive(Facet, Clone, Debug)]
-pub struct SchemaPayload {
-    /// All schemas we're sending over. Sending the schema twice is a
-    /// protocol error: peers must bail out.
-    pub schemas: Vec<Schema>,
-
-    /// Hash of the schema of the type corresponding to this method.
-    /// When attached to `RequestCall`, this is the args tuple, e.g.
-    /// for `add(a: u32, b: u32) -> u64` it's `(u32, u32)`.
-    /// For `RequestResponse` it's `u64` in thea bove example.
-    pub root: TypeRef,
-}
-
-impl SchemaPayload {
-    /// CBOR-encode this prepared message for embedding in RequestCall/RequestResponse.
-    pub fn to_cbor(&self) -> SchemaBytes {
-        SchemaBytes(facet_cbor::to_vec(self).expect("schema CBOR serialization should not fail"))
-    }
-
-    /// Parse a CBOR-encoded schema message from bytes.
-    pub fn from_cbor(bytes: &[u8]) -> Result<SchemaPayload, facet_cbor::CborError> {
-        facet_cbor::from_slice(bytes)
-    }
-}
-
 /// Transparent wrapper around borrowed bytes that are already postcard-encoded.
 /// Used as a sentinel type for passthrough detection in serializers.
 #[repr(transparent)]
@@ -900,7 +873,6 @@ impl_reborrow_schema_identity!(
     PrimitiveType,
     SchemaBytes,
     BindingDirection,
-    SchemaPayload,
 );
 
 // SAFETY: this wrapper is covariant in `'a` and transparent over a byte slice.

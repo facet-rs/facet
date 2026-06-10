@@ -4899,7 +4899,7 @@ where
             vox_types::metadata().str("vox-service", "Noop").build(),
         )
         .await
-        .map_err(|e| format!("server CBOR handshake: {e}"));
+        .map_err(|e| format!("server PHON handshake: {e}"));
         let handshake_result = match handshake_result {
             Ok(r) => r,
             Err(err) => {
@@ -4942,7 +4942,7 @@ where
         vox_types::metadata().str("vox-service", "Noop").build(),
     )
     .await
-    .map_err(|e| format!("client CBOR handshake: {e}"))?;
+    .map_err(|e| format!("client PHON handshake: {e}"))?;
     let client_conduit =
         vox_core::BareConduit::<vox_types::MessageFamily, _>::new(vox_types::SplitLink {
             tx: client_tx,

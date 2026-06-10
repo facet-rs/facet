@@ -19,7 +19,6 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [dependencies]
 facet.workspace = true
 facet-core.workspace = true
-facet-cbor.workspace = true
 heck.workspace = true
 phon.workspace = true
 phon-engine.workspace = true

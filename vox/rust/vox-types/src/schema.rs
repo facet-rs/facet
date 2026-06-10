@@ -121,7 +121,7 @@ pub struct PreparedSchemaPlan {
 }
 
 impl PreparedSchemaPlan {
-    /// Wrap the bytes in the wire schema-payload carrier (now phon, not CBOR).
+    /// Wrap the bytes in the wire schema-payload carrier.
     pub fn to_payload(&self) -> SchemaBytes {
         SchemaBytes(self.bytes.clone())
     }
@@ -1297,27 +1297,6 @@ mod tests {
         assert_ne!(id, SchemaHash(43));
     }
 
-    // r[verify schema.format.self-contained]
-    #[test]
-    fn cbor_round_trip() {
-        let schema = Schema {
-            id: SchemaHash(1),
-            type_params: vec![],
-            kind: SchemaKind::Primitive {
-                primitive_type: PrimitiveType::U32,
-            },
-        };
-        let bytes = SchemaPayload {
-            schemas: vec![schema.clone()],
-            root: TypeRef::concrete(schema.id),
-        }
-        .to_cbor();
-        let payload = SchemaPayload::from_cbor(&bytes.0).expect("should parse CBOR");
-        assert_eq!(payload.schemas.len(), 1);
-        assert_eq!(payload.schemas[0].id, schema.id);
-        assert_eq!(payload.root, TypeRef::concrete(schema.id));
-    }
-
     #[test]
     fn primitive_u32() {
         let schemas = extract_schemas(<u32 as Facet>::SHAPE)
@@ -1539,7 +1518,7 @@ mod tests {
     }
 
     #[test]
-    fn cbor_payload_is_bytes() {
+    fn schema_bytes_payload_is_bytes() {
         let schemas = extract_schemas(SchemaBytes::SHAPE).unwrap().schemas.clone();
         assert_eq!(schemas.len(), 1);
         assert!(matches!(
@@ -2346,33 +2325,6 @@ mod tests {
                 assert!(matches!(value, TypeRef::Var { .. }), "value should be Var");
             }
             _ => unreachable!(),
-        }
-    }
-
-    #[test]
-    fn schema_payload_cbor_round_trip() {
-        let payload = SchemaPayload {
-            schemas: vec![],
-            root: TypeRef::Concrete {
-                type_id: SchemaHash(123),
-                args: vec![TypeRef::concrete(SchemaHash(456))],
-            },
-        };
-        let bytes = payload.to_cbor();
-        let parsed = SchemaPayload::from_cbor(&bytes.0).expect("should parse CBOR");
-        match &parsed.root {
-            TypeRef::Concrete { type_id, args } => {
-                assert_eq!(*type_id, SchemaHash(123));
-                assert_eq!(args.len(), 1);
-                match &args[0] {
-                    TypeRef::Concrete { type_id, args } => {
-                        assert_eq!(*type_id, SchemaHash(456));
-                        assert!(args.is_empty());
-                    }
-                    other => panic!("expected concrete arg, got {other:?}"),
-                }
-            }
-            other => panic!("expected concrete root, got {other:?}"),
         }
     }
 }
