@@ -1,6 +1,6 @@
 {
   "name": "@bearcove/phon-schema",
-  "version": "0.1.0",
+  "version": "0.2.0-rc.0",
   "private": false,
   "type": "module",
   "exports": {
@@ -21,7 +21,10 @@
       }
     }
   },
-  "files": ["dist", "README.md"],
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "dependencies": {
     "@noble/hashes": "^2.2.0"
   },
@@ -34,5 +37,11 @@
   "description": "phon's wire contract for TypeScript: schema model, schema identity, Value, and the self-describing codec.",
   "repository": "https://github.com/bearcove/phon",
   "homepage": "https://github.com/bearcove/phon",
-  "keywords": ["phon", "serialization", "schema", "rpc", "typescript"]
+  "keywords": [
+    "phon",
+    "serialization",
+    "schema",
+    "rpc",
+    "typescript"
+  ]
 }

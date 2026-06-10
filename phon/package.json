@@ -6,6 +6,7 @@
   "scripts": {
     "build": "pnpm --filter './typescript/packages/*' run build",
     "check": "pnpm -r run check",
+    "sync-ts-package-versions": "node scripts/sync-ts-package-versions.mjs",
     "test": "pnpm -r run test",
     "lint": "oxlint typescript"
   },
