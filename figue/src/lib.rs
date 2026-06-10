@@ -199,6 +199,7 @@ pub use crate::completions::{Shell, generate_completions_for_shape};
 pub use builder::builder;
 pub use config_format::{ConfigFormat, ConfigFormatError, JsonFormat, JsoncFormat};
 pub use config_value::ConfigValue;
+pub use config_value_parser::{ConfigValueDeserializeError, from_config_value};
 pub use driver::{Driver, DriverError, DriverOutcome, DriverOutput, DriverReport};
 pub use error::{ArgsErrorKind, ArgsErrorWithInput};
 pub use extract::{ExtractError, ExtractMissingField};
@@ -209,6 +210,78 @@ pub use help::{
 pub use json_schema::{JsonSchemaError, JsonSchemaFile, generate_json_schemas, write_json_schemas};
 pub use layers::env::MockEnv;
 pub use layers::file::FormatRegistry;
+
+/// Error from [`from_str`] / [`from_str_with_format`]: the config text failed to
+/// parse, or the parsed value did not deserialize into the target type.
+#[derive(Debug)]
+pub enum FromStrError {
+    /// The text was not valid for the chosen [`ConfigFormat`].
+    Parse(ConfigFormatError),
+    /// The parsed [`ConfigValue`] did not deserialize into the target type.
+    Deserialize(ConfigValueDeserializeError),
+}
+
+impl core::fmt::Display for FromStrError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            FromStrError::Parse(e) => write!(f, "config parse error: {e}"),
+            FromStrError::Deserialize(e) => write!(f, "config deserialize error: {e}"),
+        }
+    }
+}
+
+impl core::error::Error for FromStrError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            FromStrError::Parse(e) => Some(e),
+            FromStrError::Deserialize(e) => Some(e),
+        }
+    }
+}
+
+/// Deserialize an in-memory config string into `T` using `format`, filling
+/// missing fields from their `#[facet(default)]`s.
+///
+/// This is the file layer of [`builder`] applied to a string you already hold
+/// — e.g. an `include_str!`'d embedded config — instead of a path on disk. No
+/// CLI or environment layering is performed; layer those on top afterward by
+/// mutating the returned value. Partial inputs are fine: any field the string
+/// omits takes its `Facet` default, so this round-trips the same partial-over-
+/// default semantics as `--cfg file.jsonc`.
+///
+/// # Example
+///
+/// ```rust
+/// use facet::Facet;
+/// use figue::JsoncFormat;
+///
+/// #[derive(Facet)]
+/// struct Cfg {
+///     #[facet(default = 8)]
+///     workers: u32,
+///     #[facet(default)]
+///     verbose: bool,
+/// }
+///
+/// // Comments allowed; omitted `verbose` falls back to its default.
+/// let cfg: Cfg = figue::from_str_with_format("{ \"workers\": 12 } // tuned", &JsoncFormat).unwrap();
+/// assert_eq!(cfg.workers, 12);
+/// assert!(!cfg.verbose);
+/// ```
+pub fn from_str_with_format<T, F>(contents: &str, format: &F) -> Result<T, FromStrError>
+where
+    T: Facet<'static>,
+    F: ConfigFormat,
+{
+    let value = format.parse(contents).map_err(FromStrError::Parse)?;
+    from_config_value::<T>(&value).map_err(FromStrError::Deserialize)
+}
+
+/// Convenience for [`from_str_with_format`] with [`JsoncFormat`] (JSON with
+/// `//` and `/* */` comments) — the format used for `--cfg` files.
+pub fn from_str<T: Facet<'static>>(contents: &str) -> Result<T, FromStrError> {
+    from_str_with_format(contents, &JsoncFormat)
+}
 
 /// Parse command-line arguments from `std::env::args()`.
 ///
