@@ -9,8 +9,7 @@
 <div class="layout">
     <aside class="sidebar">
         <nav class="sidebar-nav">
-            {% for sub_path in root_section.subsections %}
-            {% set sub = get_section(path=sub_path) %}
+            {% for sub in root_section.subsections %}
             <div class="sidebar-section">
                 <h3><a href="{{ sub.permalink }}"{% if section.path == sub.path %} class="active"{% endif %}>{{ sub.title }}</a></h3>
                 <ul>

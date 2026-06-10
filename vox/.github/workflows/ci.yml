@@ -244,6 +244,9 @@ jobs:
       - name: Install Playwright browsers
         run: pnpm --filter "@bearcove/vox-playwright-tests" exec playwright install --with-deps chromium
 
+      - name: Build Rust WebSocket peer server
+        run: cargo build -p peer-server --bin ws-peer-server
+
       - name: Run TypeScript browser tests
         run: pnpm --filter "@bearcove/vox-playwright-tests" run test
 
@@ -361,6 +364,9 @@ jobs:
 
       - name: Install Playwright browsers
         run: pnpm --filter "@bearcove/vox-wasm-playwright-tests" exec playwright install --with-deps chromium
+
+      - name: Build Rust WebSocket peer server
+        run: cargo build -p peer-server --bin ws-peer-server
 
       - name: Run Wasm browser tests
         env:
