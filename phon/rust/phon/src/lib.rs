@@ -2,7 +2,7 @@
 //! facet (`r[crates.concern-separation]`).
 //!
 //! This is where Rust types become phon: facet metadata is turned into a
-//! [`schema`] and a [`descriptor`], and the typed `encode::<T>` / `decode::<T>`
+//! `schema` and `descriptor`, and the typed `encode::<T>` / `decode::<T>`
 //! API wraps the engine. With the `jit` feature on, the typed API routes through
 //! `phon-jit` when the lowered program is supported by the native backend; with
 //! it off, or for ops the native backend does not compile yet, it runs the

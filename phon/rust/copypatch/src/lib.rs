@@ -10,7 +10,7 @@
 //!   drop. (Apple Silicon / `MAP_JIT` today; other backends slot in here.)
 //! - [`patch_branch26`] — patch an AArch64 `B`/`BL` (`BRANCH26`) immediate so a
 //!   copied stencil's continuation branch targets the next stencil.
-//! - [`extract`] (the `build` feature) — at *build* time, compile a stencil
+//! - the `extract` module (the `build` feature) — at *build* time, compile a stencil
 //!   source file with rustc (`--emit=obj`) and pull each stencil's bytes and its
 //!   continuation relocations out of the object file by symbol. Use this from a
 //!   `build.rs` (depend on copypatch with `features = ["build"]`).

@@ -8,7 +8,7 @@
 //!
 //! Two products fall out of one walk of the `Shape`:
 //! - a **schema batch** with real content-derived ids (via
-//!   [`resolve_ids`](phon_schema::resolve_ids)), for a registry — the *wire* view;
+//!   [`resolve_ids`]), for a registry — the *wire* view;
 //! - a **descriptor** carrying those same ids plus the memory offsets — the
 //!   *memory* view.
 //!
@@ -41,7 +41,7 @@ use phon_schema::{
 };
 
 /// phon's view of a Rust type, derived from its facet `Shape`: the resolved
-/// schema batch (for a [`Registry`](phon_engine::Registry)), the root schema id,
+/// schema batch (for a [`Registry`]), the root schema id,
 /// and the descriptor.
 // r[impl schema-identity.closure]
 #[derive(Clone, Debug)]
@@ -57,7 +57,7 @@ pub struct Derived {
     pub descriptor: Descriptor,
     /// Block descriptors for the recursive (cyclic) schemas reachable from the root:
     /// the full body of each, keyed by its schema id. Empty for a non-recursive type.
-    /// The engine lowers each into a callable block ([`MemOp::CallBlock`]).
+    /// The engine lowers each into a callable block ([`MemOp::CallBlock`](phon_ir::MemOp::CallBlock)).
     pub descriptor_blocks: std::collections::HashMap<SchemaId, Descriptor>,
 }
 
@@ -2061,7 +2061,7 @@ unsafe extern "C" fn opaque_encode(ctx: *const (), field: *const u8, out: *mut V
 #[repr(transparent)]
 pub struct RawOpaqueBytes<'a>(pub &'a [u8]);
 
-/// The sentinel shape recognized by [`opaque_encode`] for passthrough bytes.
+/// The sentinel shape recognized by `opaque_encode` for passthrough bytes.
 pub static RAW_OPAQUE_BYTES_SHAPE: Shape =
     Shape::builder_for_sized::<RawOpaqueBytes<'static>>("RawOpaqueBytes").build();
 

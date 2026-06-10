@@ -116,7 +116,7 @@ pub struct EnumArm {
 }
 
 /// A lowered *typed* program: the memory side of the IR. Where [`Program`] builds
-/// a dynamic [`Value`](facet_value::Value) on a stack, a `MemProgram` moves bytes
+/// a dynamic `facet_value::Value` on a stack, a `MemProgram` moves bytes
 /// between the wire and a value's in-memory layout, at offsets the descriptor
 /// supplies (`r[ir.memory]`). The same op stream is consumed by encode and decode;
 /// direction is selected by the executor, and decode-only compat ops simply never
@@ -157,7 +157,7 @@ pub enum MemOp {
     },
     /// A Rust native-sized integer (`usize`/`isize`) whose wire primitive is
     /// fixed-width (`u64`/`i64`) on every platform. On 64-bit little-endian
-    /// targets this can lower to [`Scalar`]; this op exists for narrower hosts,
+    /// targets this can lower to [`Self::Scalar`]; this op exists for narrower hosts,
     /// where correctness requires widening/narrowing instead of an 8-byte copy.
     NativeInt {
         offset: usize,

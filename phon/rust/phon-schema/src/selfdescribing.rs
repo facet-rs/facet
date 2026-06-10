@@ -4,7 +4,7 @@
 //! schema is an ordinary phon value, so it rides the one mode that needs nothing
 //! agreed in advance — that is how two peers bootstrap schema exchange
 //! (`r[self-describing.bootstraps-schemas]`). The encoding is a hand-written,
-//! full-fidelity walk of the typed `Schema` (the coarse [`Value`](crate::Value)
+//! full-fidelity walk of the typed `Schema` (the coarse [`Value`]
 //! can't round-trip a schema's `u32` counts and enum variants), using the rich
 //! tag table directly.
 //!

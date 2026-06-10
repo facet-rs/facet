@@ -13,6 +13,7 @@
 //! machine-code toolchain lands.
 //!
 //! [`Program`]: phon_ir::ir::Program
+//! [`MemProgram`]: phon_ir::ir::MemProgram
 
 use phon_ir::ir::{MemOp, MemProgram};
 use phon_ir::{PointerThunks, SeqThunks};

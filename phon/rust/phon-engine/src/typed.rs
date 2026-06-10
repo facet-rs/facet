@@ -2,7 +2,7 @@
 //! [`MemProgram`], then run it to encode or decode a value living in this
 //! process's memory.
 //!
-//! This is the memory counterpart to the dynamic [`Value`](facet_value::Value)
+//! This is the memory counterpart to the dynamic [`Value`]
 //! path. The split is phon's schema+descriptor pairing: the **schema** (resolved
 //! through the registry) decides the wire bytes and their order; the
 //! **descriptor** says where each field lives in memory. Because the wire is
