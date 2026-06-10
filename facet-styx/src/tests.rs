@@ -49,6 +49,7 @@ mod event_assert {
             ParseEventKind::Scalar(ScalarValue::Bytes(_)) => "Scalar(bytes)".to_string(),
             ParseEventKind::VariantTag(Some(name)) => format!("VariantTag({})", name),
             ParseEventKind::VariantTag(None) => "VariantTag(@)".to_string(),
+            other => format!("{:?}", other),
         }
     }
 

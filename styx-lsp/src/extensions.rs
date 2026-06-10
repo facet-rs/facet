@@ -238,9 +238,8 @@ impl ExtensionManager {
         let dispatcher = StyxLspHostDispatcher::new(host_impl);
 
         // Initiate vox session (LSP is the initiator)
-        let client = vox::initiator_on(StreamLink::new(stdout, stdin), vox::TransportMode::Bare)
+        let client = vox::initiator_on(StreamLink::new(stdout, stdin))
             .on_connection(dispatcher)
-            .non_resumable()
             .establish::<StyxLspExtensionClient>()
             .await
             .map_err(|e| {

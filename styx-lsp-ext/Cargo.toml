@@ -1,6 +1,6 @@
 [package]
 name = "styx-lsp-ext"
-version = "4.0.0"
+version = "5.0.0-rc.0"
 edition.workspace = true
 description = "Protocol types for Styx LSP extensions"
 license.workspace = true
@@ -13,5 +13,5 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 facet.workspace = true
-styx-tree = { path = "../styx-tree", version = "4.0", features = ["facet"] }
+styx-tree = { path = "../styx-tree", version = "5.0.0-rc.0", features = ["facet"] }
 vox.workspace = true

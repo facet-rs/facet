@@ -1,6 +1,6 @@
 [package]
 name = "facet-styx"
-version = "4.0.0"
+version = "5.0.0-rc.0"
 edition.workspace = true
 description = "Facet integration for the Styx configuration language"
 license.workspace = true

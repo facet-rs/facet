@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.0.0-rc.0](https://github.com/bearcove/styx/compare/styx-parse-v4.0.0...styx-parse-v5.0.0-rc.0) - 2026-06-10
+
+### Other
+
+- update dependencies for Facet 0.50, Figue 5, and Vox 0.9 prereleases
+
 ## [4.0.0](https://github.com/bearcove/styx/compare/styx-parse-v3.0.1...styx-parse-v4.0.0) - 2026-04-15
 
 ### Other
