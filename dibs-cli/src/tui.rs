@@ -1380,7 +1380,13 @@ impl App {
     fn show_migration_error(&mut self, err: &VoxError<DibsError>) {
         // Try to extract SqlError from the nested error
         let sql_err = match err {
-            VoxError::User(DibsError::MigrationFailed(e)) => e,
+            VoxError::User(e) => match e.as_ref() {
+                DibsError::MigrationFailed(e) => e,
+                _ => {
+                    self.show_error(format!("{err:?}"));
+                    return;
+                }
+            },
             _ => {
                 self.show_error(format!("{err:?}"));
                 return;

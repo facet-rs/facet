@@ -1,6 +1,6 @@
 [package]
 name = "dibs-runtime"
-version = "0.1.0"
+version = "0.2.0-rc.0"
 edition = "2024"
 description = "Runtime types for dibs-generated query code"
 license = "MIT OR Apache-2.0"
@@ -15,7 +15,7 @@ tokio-postgres.workspace = true
 facet.workspace = true
 facet-tokio-postgres = { workspace = true, features = ["jiff02", "rust_decimal", "uuid"] }
 facet-value.workspace = true
-dibs-jsonb = { version = "0.1.0", path = "../dibs-jsonb" }
+dibs-jsonb = { version = "0.2.0-rc.0", path = "../dibs-jsonb" }
 jiff.workspace = true
 uuid.workspace = true
 rust_decimal.workspace = true

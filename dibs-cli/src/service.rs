@@ -115,7 +115,6 @@ pub async fn connect_to_service(db_config: &DbConfig) -> Result<ServiceConnectio
     // Establish vox session (we're the acceptor).
     let link = vox_stream::StreamLink::tcp(stream);
     let client = vox::acceptor_on(link)
-        .non_resumable()
         .establish::<DibsServiceClient>()
         .await
         .map_err(|e| ServiceError::Connection(format!("Vox handshake failed: {}", e)))?;
@@ -212,7 +211,6 @@ impl BuildProcess {
                 // Establish vox session.
                 let link = vox_stream::StreamLink::tcp(stream);
                 let client = vox::acceptor_on(link)
-                    .non_resumable()
                     .establish::<DibsServiceClient>()
                     .await
                     .map_err(|e| {

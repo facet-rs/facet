@@ -103,9 +103,8 @@ async fn run_service_async(addr: SocketAddr) {
     let result = async {
         let stream = TcpStream::connect(addr).await?;
         let link = vox_stream::StreamLink::tcp(stream);
-        vox::initiator_on(link, vox::TransportMode::Bare)
+        vox::initiator_on(link)
             .on_connection(dispatcher)
-            .non_resumable()
             .establish::<vox::NoopClient>()
             .await
             .map_err(std::io::Error::other)

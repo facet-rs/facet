@@ -54,7 +54,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     match vox::acceptor_on(link)
                         .on_connection(dispatcher)
-                        .non_resumable()
                         .establish::<vox::NoopClient>()
                         .await
                     {

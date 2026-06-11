@@ -1,6 +1,6 @@
 [package]
 name = "facet-tokio-postgres"
-version = "0.44.0"
+version = "0.50.0-rc.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "Deserialize tokio-postgres Rows into any type implementing Facet"
