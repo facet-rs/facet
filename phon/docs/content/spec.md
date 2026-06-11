@@ -970,6 +970,18 @@ The compatibility algorithm is:
 > are incompatible and decoding must not begin. You find out before touching
 > the payload, not partway through it.
 
+> r[compat.failure-is-loud]
+>
+> An unbuildable plan, a mid-decode error, or a schema the reader cannot
+> resolve surfaces as an explicit, typed error at every public API surface, in
+> every language binding. No binding may map such a failure to an empty value,
+> a language default, an Ok-with-missing-fields, or a silent skip — and no
+> caller (vox dispatch included) may swallow it without producing a diagnostic.
+> Compatible schemas translate seamlessly; incompatible ones fail loudly; there
+> is no third behavior. (Incident 2026-06-11: a wire-dialect skew between
+> peers surfaced as silently-vanishing struct payloads while scalar calls kept
+> working — hours of cross-repo debugging that an error would have prevented.)
+
 > r[compat.field-matching]
 >
 > Struct fields are matched by name, not by declaration position. The plan maps
