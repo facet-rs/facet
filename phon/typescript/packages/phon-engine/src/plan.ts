@@ -27,8 +27,9 @@ import {
 import type { Field, Primitive, SchemaKind, SchemaRef, Value, Variant, VariantPayload } from "@bearcove/phon-schema";
 import { canonicalKey } from "@bearcove/phon-schema";
 import { checkFixedCount, decodePrimitive, decodeRef, product } from "./compact.ts";
+import { MESSAGE_MAX_DEPTH } from "./limits.ts";
 
-const MAX_DEPTH = 128;
+const PLAN_MAX_DEPTH = 128;
 
 // ============================================================================
 // Errors
@@ -161,7 +162,7 @@ function canBuildPlan(writerRoot: bigint, readerRoot: bigint, reg: Registry): bo
 }
 
 function planRef(w: SchemaRef, r: SchemaRef, ctx: PlanCtx, depth: number): Node {
-  if (depth > MAX_DEPTH) throw new IncompatibleError("schema nests too deep");
+  if (depth > PLAN_MAX_DEPTH) throw new IncompatibleError("schema nests too deep");
   // A recursive (cyclic) reader schema lowers to a callable block: emit a
   // `callBlock` back-edge and build the block once (its body translates the writer
   // against the reader at that position — the same-schema identity in the compat
@@ -397,7 +398,7 @@ export function decode(bytes: Uint8Array, writerRoot: bigint, readerRoot: bigint
 }
 
 function exec(node: Node, r: Reader, reg: Registry, blocks: Map<bigint, Node>, depth: number): Value {
-  if (depth > MAX_DEPTH) throw new DecodeError("maximum nesting depth exceeded");
+  if (depth > MESSAGE_MAX_DEPTH) throw new DecodeError("maximum nesting depth exceeded");
   switch (node.kind) {
     case "callBlock": {
       // A recursive back-edge: decode with the cyclic schema's block plan. The

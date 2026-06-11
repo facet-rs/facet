@@ -34,10 +34,9 @@ import {
 } from "@bearcove/phon-schema";
 import type { Primitive, SchemaKind, SchemaRef, Value, VariantPayload } from "@bearcove/phon-schema";
 import { checkFixedCount, decodeRef, encode, product } from "./compact.ts";
+import { MESSAGE_MAX_DEPTH } from "./limits.ts";
 import type { Node, Payload, Plan, StructPlan } from "./plan.ts";
 import { buildPlan, decodeWithPlan, WriterOnlyVariantError } from "./plan.ts";
-
-const RUNTIME_MAX_DEPTH = 128;
 
 /// The fixed helper surface the generated code closes over. `new Function` has no
 /// access to module scope, so everything it needs is passed in as an argument.
@@ -291,8 +290,6 @@ function recursiveBlockIds(root: bigint, reg: Registry): Set<bigint> {
   return new Set(buildPlan(root, root, reg).blocks.keys());
 }
 
-const ENC_RUNTIME_MAX_DEPTH = 128;
-
 /// The JS write statements for a primitive scalar (a ByteSink `out` is in scope;
 /// `v` is the value expression). Mirrors compact.ts encodePrimitive.
 function scalarWrite(p: Primitive, v: string): string {
@@ -359,7 +356,7 @@ class EncCodegen {
     const fn = this.blockName(schema);
     const kind = this.reg.resolve({ kind: "concrete", id: schema, args: [] });
     let out = `function ${fn}(__value, __depth) {\n`;
-    out += `if (__depth > ${ENC_RUNTIME_MAX_DEPTH}) throw new H.EncodeError("maximum nesting depth exceeded");\n`;
+    out += `if (__depth > ${MESSAGE_MAX_DEPTH}) throw new H.EncodeError("maximum nesting depth exceeded");\n`;
     out += this.genEnc(kind, "__value", "__depth");
     out += `}\n`;
     return out;
@@ -516,7 +513,7 @@ class Codegen {
   private genBlock(schema: bigint, block: Node): string {
     const fn = this.blockName(schema);
     let out = `function ${fn}(__depth) {\n`;
-    out += `if (__depth > ${RUNTIME_MAX_DEPTH}) throw new H.DecodeError("maximum nesting depth exceeded");\n`;
+    out += `if (__depth > ${MESSAGE_MAX_DEPTH}) throw new H.DecodeError("maximum nesting depth exceeded");\n`;
     out += `let __ret;\n`;
     out += this.genStmt(block, "__ret", "__depth");
     out += `return __ret;\n`;

@@ -42,6 +42,7 @@ import type {
   Value,
   VariantPayload,
 } from "@bearcove/phon-schema";
+import { MESSAGE_MAX_DEPTH } from "./limits.ts";
 
 // ============================================================================
 // Public API
@@ -66,8 +67,6 @@ export function decode(bytes: Uint8Array, root: bigint, reg: Registry): Value {
   if (r.remaining() !== 0) throw new DecodeError(`${r.remaining()} trailing bytes`);
   return v;
 }
-
-const MAX_DEPTH = 128;
 
 // ============================================================================
 // Encode
@@ -248,7 +247,7 @@ function encodePrimitive(out: ByteSink, value: Value, p: Primitive): void {
 
 // r[impl decode.chained]
 export function decodeRef(r: Reader, ref: SchemaRef, reg: Registry, depth: number): Value {
-  if (depth > MAX_DEPTH) throw new DecodeError("maximum nesting depth exceeded");
+  if (depth > MESSAGE_MAX_DEPTH) throw new DecodeError("maximum nesting depth exceeded");
   return decodeKind(r, reg.resolve(ref), reg, depth);
 }
 

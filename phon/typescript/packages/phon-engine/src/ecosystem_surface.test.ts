@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { primitiveId, resolveIds, Registry } from "@bearcove/phon-schema";
 import { buildPlan, compile, compileEncoder, decodeCompact, decodeTyped, encode as encodeCompact, encodeTyped, recordJitFallbacks } from "./index.ts";
 import { ID, REG, fixtures, root } from "./ecosystem_surface.fixtures.ts";
+import type { Typed } from "./typed.ts";
 import type { Field, Primitive, SchemaKind, SchemaRef, Value } from "@bearcove/phon-schema";
 
 const NS = 0xec00_0000_0000_0000n;
@@ -10,6 +11,45 @@ const ref = (schema: bigint): SchemaRef => ({ kind: "concrete", id: schema, args
 const prim = (primitive: Primitive): SchemaRef => ref(primitiveId(primitive));
 const field = (name: string, schema: SchemaRef, required = true): Field => ({ name, schema, required });
 const schema = (schemaId: bigint, kind: SchemaKind) => ({ id: schemaId, typeParams: [], kind });
+
+interface FlameNodeFixture {
+  address: bigint;
+  function_name: number | null;
+  binary: number | null;
+  on_cpu_ns: bigint;
+  off_cpu: {
+    sleep_ns: bigint;
+    io_ns: bigint;
+    mutex_ns: bigint;
+  };
+  children: FlameNodeFixture[];
+}
+
+function makeDeepStaxFlamegraphUpdate(depth: number): Typed {
+  let node: FlameNodeFixture = {
+    address: 0x1000n + BigInt(depth),
+    function_name: 1,
+    binary: 2,
+    on_cpu_ns: 1n,
+    off_cpu: { sleep_ns: 0n, io_ns: 0n, mutex_ns: 0n },
+    children: [],
+  };
+  for (let i = depth - 1; i >= 0; i--) {
+    node = {
+      address: 0x1000n + BigInt(i),
+      function_name: i % 2,
+      binary: 2,
+      on_cpu_ns: BigInt(depth - i + 1),
+      off_cpu: { sleep_ns: BigInt(i), io_ns: 0n, mutex_ns: 0n },
+      children: [node],
+    };
+  }
+  return {
+    total_on_cpu_ns: BigInt(depth + 1),
+    strings: ["root", "poll", "libstax.dylib"],
+    root: node,
+  } as unknown as Typed;
+}
 // r[verify type-system.dynamic]
 // r[verify type-system.variant-payloads]
 // r[verify compact.schema-driven]
@@ -35,6 +75,16 @@ describe("ecosystem surface fixtures", () => {
       expect(fallbacks).toEqual([]);
     });
   }
+
+  it("accepts production-depth Stax recursive flamegraph stacks", () => {
+    const update = makeDeepStaxFlamegraphUpdate(96);
+    const flameRoot = root(ID.staxFlamegraphUpdate);
+    const wire = encodeTyped(update, flameRoot, REG, { jit: false });
+
+    expect(decodeTyped(wire, flameRoot, flameRoot, REG, { jit: false })).toEqual(update);
+    expect(decodeTyped(wire, flameRoot, flameRoot, REG, { jit: true })).toEqual(update);
+    expect([...encodeTyped(update, flameRoot, REG, { jit: true })]).toEqual([...wire]);
+  });
 });
 
 // r[verify type-system.external]

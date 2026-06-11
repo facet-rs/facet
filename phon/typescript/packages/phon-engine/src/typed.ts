@@ -54,6 +54,7 @@ import type {
   VariantPayload,
 } from "@bearcove/phon-schema";
 import { checkFixedCount, decodeRef, encode, product } from "./compact.ts";
+import { MESSAGE_MAX_DEPTH } from "./limits.ts";
 import { buildPlan, WriterOnlyVariantError } from "./plan.ts";
 import type { Node, Payload, Plan, StructPlan } from "./plan.ts";
 import { compile, jitAvailable } from "./jit.ts";
@@ -267,8 +268,6 @@ const TYPED_ENCODE_HELPERS: TypedEncodeHelpers = {
   charCode: typedCharCode,
 };
 
-const TYPED_RUNTIME_MAX_DEPTH = 128;
-
 function typedScalarExpr(p: Primitive): string {
   switch (p) {
     case "bool": return "r.readBool()";
@@ -346,7 +345,7 @@ class TypedDecodeCodegen {
     const fn = this.blockName(schema);
     const kind = this.reg.resolve({ kind: "concrete", id: schema, args: [] });
     let out = `function ${fn}(__depth) {\n`;
-    out += `if (__depth > ${TYPED_RUNTIME_MAX_DEPTH}) throw new H.DecodeError("maximum nesting depth exceeded");\n`;
+    out += `if (__depth > ${MESSAGE_MAX_DEPTH}) throw new H.DecodeError("maximum nesting depth exceeded");\n`;
     out += `let __ret;\n`;
     out += this.genStmt(block, kind, "__ret", "__depth");
     out += `return __ret;\n`;
@@ -644,7 +643,7 @@ class TypedEncodeCodegen {
     const fn = this.blockName(schema);
     const kind = this.reg.resolve({ kind: "concrete", id: schema, args: [] });
     let out = `function ${fn}(__value, __depth) {\n`;
-    out += `if (__depth > ${TYPED_RUNTIME_MAX_DEPTH}) throw new H.EncodeError("maximum nesting depth exceeded");\n`;
+    out += `if (__depth > ${MESSAGE_MAX_DEPTH}) throw new H.EncodeError("maximum nesting depth exceeded");\n`;
     out += this.genEnc(kind, "__value", "__depth");
     out += `}\n`;
     return out;
