@@ -65,7 +65,7 @@ contract, or another language in sync from one source of truth.
 | Crate | What it does | Source |
 |-------|--------------|--------|
 | [`facet-typescript`](https://docs.rs/facet-typescript) | Generate TypeScript type definitions. | [facet-rs/facet-format](https://github.com/facet-rs/facet-format) |
-| [`facet-zod`](https://github.com/facet-rs/facet/tree/main/facet-zod) | Generate [Zod](https://zod.dev) schemas (runtime validation + inferred TS types). *Unreleased — landing on crates.io soon.* | [facet-rs/facet](https://github.com/facet-rs/facet) |
+| [`facet-zod`](https://github.com/facet-rs/facet-format/tree/main/facet-zod) | Generate [Zod](https://zod.dev) schemas (runtime validation + inferred TS types). *Unreleased — landing on crates.io soon.* | [facet-rs/facet-format](https://github.com/facet-rs/facet-format) |
 | [`facet-json-schema`](https://docs.rs/facet-json-schema) | Generate JSON Schema documents. | [facet-rs/facet-format](https://github.com/facet-rs/facet-format) |
 | [`facet-python`](https://docs.rs/facet-python) | Generate Python type definitions. | [facet-rs/facet-format](https://github.com/facet-rs/facet-format) |
 
