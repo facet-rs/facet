@@ -1,0 +1,10 @@
+---
+source: facet-lua/src/serializer.rs
+expression: lua
+---
+{
+    items = {
+        "hello",
+        "world",
+    },
+}

@@ -58,7 +58,7 @@ iddqd = ["facet-core/iddqd"]
 axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]
 
 # yoke support
-yoke = ["facet-core/yoke"]
+yoke = ["facet-core/yoke", "facet-format-suite/yoke"]
 
 [lints]
 workspace = true

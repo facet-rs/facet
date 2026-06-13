@@ -1,0 +1,51 @@
+[package]
+name = "facet-lua"
+version = "0.50.0-rc.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Generate Lua type annotations and serialize or deserialize Lua table syntax"
+keywords = ["lua", "codegen", "serialization", "facet", "types"]
+categories = ["development-tools", "encoding"]
+homepage = "https://facet.rs"
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+facet = { workspace = true }
+facet-core = { workspace = true }
+facet-format = { path = "../facet-format", version = "0.50.0-rc.0", default-features = false }
+facet-reflect = { workspace = true }
+
+[dev-dependencies]
+facet = { path = "../facet", features = ["std", "all-impls", "net", "iddqd"] }
+facet-format = { path = "../facet-format", features = ["net"] }
+facet-format-suite = { path = "../facet-format-suite", features = [
+  "third-party",
+  "net",
+] }
+insta = { workspace = true }
+libtest-mimic = { workspace = true }
+
+[[test]]
+name = "format_suite"
+harness = false
+
+[features]
+default = []
+std = []
+net = ["facet-format/net", "facet-core/net"]
+
+# iddqd support
+iddqd = ["facet/iddqd"]
+
+# yoke support
+yoke = ["facet-core/yoke", "facet-format-suite/yoke"]
+
+[lints]
+workspace = true

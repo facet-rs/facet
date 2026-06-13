@@ -1,0 +1,6 @@
+---
+source: facet-lua/src/annotations.rs
+expression: lua
+---
+---@class Data
+---@field items string[]

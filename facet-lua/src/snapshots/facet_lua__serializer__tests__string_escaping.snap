@@ -1,0 +1,5 @@
+---
+source: facet-lua/src/serializer.rs
+expression: lua
+---
+{content="hello \"world\"\nnew\tline\\backslash"}

@@ -1,0 +1,44 @@
+---
+source: facet-lua/src/serializer.rs
+expression: to_string_pretty(&sink).unwrap()
+---
+{
+    numbers = {
+        small_u64 = 7,
+        big_u64 = "18446744073709551615",
+        big_u128 = "340282366920938463463374607431768211455",
+        min_i128 = "-170141183460469231731687303715884105728",
+        whole_float = 1.0,
+        neg_zero = -0.0,
+        pos_inf = math.huge,
+        neg_inf = -math.huge,
+        nan = 0/0,
+        neg_nan = -0/0,
+    },
+    strings = {
+        escapes = "quote:\" backslash:\\ newline:\n tab:\t",
+        control_then_digit = "\0015",
+        unicode = "héllo 🦀",
+        single_char = "A",
+    },
+    int_keys = {
+        [-2] = "neg",
+        [1] = "one",
+    },
+    numeric_looking_string_keys = {
+        ["1"] = 1,
+    },
+    keyword_key = {
+        ["end"] = true,
+    },
+    nested = {
+        {
+            1,
+            2,
+        },
+        {},
+    },
+    empty_list = {},
+    none = nil,
+    some = 42,
+}

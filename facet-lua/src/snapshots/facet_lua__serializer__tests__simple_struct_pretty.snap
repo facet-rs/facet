@@ -1,0 +1,8 @@
+---
+source: facet-lua/src/serializer.rs
+expression: lua
+---
+{
+    name = "Alice",
+    age = 30,
+}

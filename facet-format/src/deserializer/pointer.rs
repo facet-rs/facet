@@ -166,9 +166,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 ));
             }
 
-            if self.is_non_self_describing() {
-                self.parser.hint_sequence();
-            }
+            // Most self-describing parsers ignore this, but formats with
+            // ambiguous container syntax can use it to disambiguate empty
+            // borrowed slices.
+            self.parser.hint_sequence();
             let event = self.expect_event("sequence for &[T]")?;
             let _guard = SpanGuard::new(self.last_span);
             if !matches!(event.kind, ParseEventKind::SequenceStart(_)) {
@@ -206,10 +207,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         if wip.is_building_smart_ptr_slice() {
             // Deserialize the list elements into the slice builder
             // We can't use deserialize_list() because it calls begin_list() which interferes
-            // Hint to non-self-describing parsers that a sequence is expected
-            if self.is_non_self_describing() {
-                self.parser.hint_sequence();
-            }
+            // Most self-describing parsers ignore this, but formats with
+            // ambiguous container syntax can use it to disambiguate empty smart
+            // pointer slices.
+            self.parser.hint_sequence();
             let event = self.expect_event("value")?;
             let _guard = SpanGuard::new(self.last_span);
 

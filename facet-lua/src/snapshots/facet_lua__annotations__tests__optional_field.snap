@@ -1,0 +1,7 @@
+---
+source: facet-lua/src/annotations.rs
+expression: lua
+---
+---@class Config
+---@field required string
+---@field optional? string

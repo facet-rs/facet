@@ -884,11 +884,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             };
         }
 
-        // Fallback: element-by-element deserialization
-        // Hint to non-self-describing parsers that a sequence is expected
-        if self.is_non_self_describing() {
-            self.parser.hint_sequence();
-        }
+        // Fallback: element-by-element deserialization. Most self-describing
+        // parsers ignore this, but formats with ambiguous container syntax
+        // (for example Lua's `{}`) can use it to disambiguate empty sequences.
+        self.parser.hint_sequence();
 
         let event = self.expect_event("value")?;
         trace!(?event, "deserialize_list: got container start event");
@@ -967,11 +966,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             }
         };
 
-        // Hint to non-self-describing parsers that a fixed-size array is expected
-        // (unlike hint_sequence, this doesn't read a length prefix)
-        if self.is_non_self_describing() {
-            self.parser.hint_array(array_len);
-        }
+        // Hint that a fixed-size array is expected. Most self-describing parsers
+        // ignore this, but formats with ambiguous container syntax can use it to
+        // disambiguate empty arrays.
+        self.parser.hint_array(array_len);
 
         let event = self.expect_event("value")?;
 
@@ -1031,10 +1029,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
 
-        // Hint to non-self-describing parsers that a sequence is expected
-        if self.is_non_self_describing() {
-            self.parser.hint_sequence();
-        }
+        // Hint that a set is represented by a sequence. Most self-describing
+        // parsers ignore this, but formats with ambiguous container syntax can
+        // use it to disambiguate empty sets.
+        self.parser.hint_sequence();
 
         let event = self.expect_event("value")?;
 

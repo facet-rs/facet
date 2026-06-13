@@ -1,6 +1,7 @@
 mod flatten_defaults;
 mod flatten_in_externally_tagged_enum;
 mod format_specific_proxy;
+mod int_map_keys;
 mod issue_1236;
 mod issue_1582;
 mod issue_1721_1724;

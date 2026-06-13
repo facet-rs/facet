@@ -131,6 +131,18 @@ pub trait FormatParser<'de> {
         true // Default: most formats are self-describing
     }
 
+    /// Whether the parser relies on `hint_sequence`/`hint_array` to
+    /// disambiguate container syntax (for example Lua's `{}`, which could be
+    /// an empty array or an empty map).
+    ///
+    /// When true, the deserializer bypasses event buffering so hints reach
+    /// the parser before the corresponding events are produced, and the
+    /// parser may reclassify an already-peeked container-start event when a
+    /// hint arrives.
+    fn needs_container_hints(&self) -> bool {
+        false
+    }
+
     /// Hint to the parser that a struct with the given number of fields is expected.
     ///
     /// For non-self-describing formats, this allows the parser to emit the correct
@@ -157,7 +169,10 @@ pub trait FormatParser<'de> {
     /// For non-self-describing formats, this triggers reading the length prefix
     /// and setting up sequence state.
     ///
-    /// Self-describing formats can ignore this hint.
+    /// Unlike the schema-driven hints above, this is called for *all*
+    /// formats: self-describing formats with ambiguous container syntax (see
+    /// [`needs_container_hints`](Self::needs_container_hints)) use it to
+    /// disambiguate; others can ignore it.
     fn hint_sequence(&mut self) {
         // Default: ignore (self-describing formats don't need this)
     }
@@ -196,7 +211,8 @@ pub trait FormatParser<'de> {
     /// is known at compile time (from the type), so no length prefix is read.
     /// This differs from `hint_sequence` which reads a length prefix for Vec/slices.
     ///
-    /// Self-describing formats can ignore this hint.
+    /// Like [`hint_sequence`](Self::hint_sequence), this is called for *all*
+    /// formats; only parsers that need container disambiguation consume it.
     fn hint_array(&mut self, _len: usize) {
         // Default: ignore (self-describing formats don't need this)
     }
