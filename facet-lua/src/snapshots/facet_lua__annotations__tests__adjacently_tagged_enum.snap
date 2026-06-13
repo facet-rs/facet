@@ -1,0 +1,20 @@
+---
+source: facet-lua/src/annotations.rs
+expression: lua
+---
+---@alias Action Action.Stop | Action.Move | Action.Resize
+
+---@class Action.Move
+---@field t "Move"
+---@field c number
+
+---@class Action.Resize
+---@field t "Resize"
+---@field c Action.Resize._
+
+---@class Action.Resize._
+---@field width integer
+---@field height integer
+
+---@class Action.Stop
+---@field t "Stop"

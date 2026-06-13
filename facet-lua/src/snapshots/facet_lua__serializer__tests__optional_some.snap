@@ -1,0 +1,8 @@
+---
+source: facet-lua/src/serializer.rs
+expression: lua_some
+---
+{
+    required = "yes",
+    optional = "value",
+}

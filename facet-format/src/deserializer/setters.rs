@@ -230,46 +230,53 @@ pub(crate) fn deserialize_map_key_terminal_inner<'input, const BORROW: bool>(
         return Ok(wip);
     }
 
-    // Check if target is a numeric type - parse the string key as a number
+    // Check if target is a numeric type - parse the string key as a number.
+    // The key must be parsed to the exact target width: `Partial::set` stores
+    // the value as-is and does not convert between numeric sizes.
     if let Type::Primitive(PrimitiveType::Numeric(num_ty)) = &shape.ty {
-        match num_ty {
-            NumericType::Integer { signed } => {
-                if *signed {
-                    let n: i64 = key.parse().map_err(|_| DeserializeError {
-                        span: Some(span),
-                        path: None,
-                        kind: DeserializeErrorKind::UnexpectedToken {
-                            expected: "valid integer for map key",
-                            got: alloc::format!("string '{}'", key).into(),
-                        },
-                    })?;
-                    // Use set for each size - the Partial handles type conversion
-                    wip = wip.set(n)?;
-                } else {
-                    let n: u64 = key.parse().map_err(|_| DeserializeError {
-                        span: Some(span),
-                        path: None,
-                        kind: DeserializeErrorKind::UnexpectedToken {
-                            expected: "valid unsigned integer for map key",
-                            got: alloc::format!("string '{}'", key).into(),
-                        },
-                    })?;
-                    wip = wip.set(n)?;
-                }
-                return Ok(wip);
-            }
-            NumericType::Float => {
-                let n: f64 = key.parse().map_err(|_| DeserializeError {
+        macro_rules! set_parsed_key {
+            ($ty:ty, $expected:literal) => {{
+                let n: $ty = key.parse().map_err(|_| DeserializeError {
                     span: Some(span),
                     path: None,
                     kind: DeserializeErrorKind::UnexpectedToken {
-                        expected: "valid float for map key",
+                        expected: $expected,
                         got: alloc::format!("string '{}'", key).into(),
                     },
                 })?;
                 wip = wip.set(n)?;
                 return Ok(wip);
+            }};
+        }
+        match ScalarType::try_from_shape(shape) {
+            Some(ScalarType::I8) => set_parsed_key!(i8, "valid integer for map key"),
+            Some(ScalarType::I16) => set_parsed_key!(i16, "valid integer for map key"),
+            Some(ScalarType::I32) => set_parsed_key!(i32, "valid integer for map key"),
+            Some(ScalarType::I64) => set_parsed_key!(i64, "valid integer for map key"),
+            Some(ScalarType::I128) => set_parsed_key!(i128, "valid integer for map key"),
+            Some(ScalarType::ISize) => set_parsed_key!(isize, "valid integer for map key"),
+            Some(ScalarType::U8) => set_parsed_key!(u8, "valid unsigned integer for map key"),
+            Some(ScalarType::U16) => set_parsed_key!(u16, "valid unsigned integer for map key"),
+            Some(ScalarType::U32) => set_parsed_key!(u32, "valid unsigned integer for map key"),
+            Some(ScalarType::U64) => set_parsed_key!(u64, "valid unsigned integer for map key"),
+            Some(ScalarType::U128) => set_parsed_key!(u128, "valid unsigned integer for map key"),
+            Some(ScalarType::USize) => {
+                set_parsed_key!(usize, "valid unsigned integer for map key")
             }
+            Some(ScalarType::F32) => set_parsed_key!(f32, "valid float for map key"),
+            Some(ScalarType::F64) => set_parsed_key!(f64, "valid float for map key"),
+            _ => {}
+        }
+        match num_ty {
+            // Fallback for numeric primitives without a ScalarType mapping
+            NumericType::Integer { signed } => {
+                if *signed {
+                    set_parsed_key!(i64, "valid integer for map key")
+                } else {
+                    set_parsed_key!(u64, "valid unsigned integer for map key")
+                }
+            }
+            NumericType::Float => set_parsed_key!(f64, "valid float for map key"),
             // A numeric primitive kind added since this match was written.
             _ => {
                 return Err(DeserializeError {

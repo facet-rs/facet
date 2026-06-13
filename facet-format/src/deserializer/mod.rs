@@ -197,10 +197,16 @@ pub struct FormatDeserializer<'parser, 'input, const BORROW: bool> {
     buffer_capacity: usize,
 
     /// Whether the parser is non-self-describing (postcard, etc.).
-    /// For these formats, we bypass buffering entirely because hints
-    /// clear the parser's peeked event and must take effect immediately.
+    /// Gates the schema-driven hints (`hint_struct_fields`, `hint_enum`,
+    /// `hint_scalar_type`, ...) that only those formats consume.
     /// Computed once at construction time.
     is_non_self_describing: bool,
+
+    /// Whether to bypass event buffering. True for non-self-describing
+    /// formats and for parsers that need container hints (Lua): hints clear
+    /// or reclassify the parser's peeked event and must take effect
+    /// immediately, which buffered events would defeat.
+    bypass_event_buffer: bool,
 
     _marker: PhantomData<&'input ()>,
 }
@@ -217,12 +223,14 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, true> {
         buffer_capacity: usize,
     ) -> Self {
         let is_non_self_describing = !parser.is_self_describing();
+        let bypass_event_buffer = is_non_self_describing || parser.needs_container_hints();
         Self {
             parser,
             last_span: Span { offset: 0, len: 0 },
             event_buffer: VecDeque::with_capacity(buffer_capacity),
             buffer_capacity,
             is_non_self_describing,
+            bypass_event_buffer,
             _marker: PhantomData,
         }
     }
@@ -240,12 +248,14 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
         buffer_capacity: usize,
     ) -> Self {
         let is_non_self_describing = !parser.is_self_describing();
+        let bypass_event_buffer = is_non_self_describing || parser.needs_container_hints();
         Self {
             parser,
             last_span: Span { offset: 0, len: 0 },
             event_buffer: VecDeque::with_capacity(buffer_capacity),
             buffer_capacity,
             is_non_self_describing,
+            bypass_event_buffer,
             _marker: PhantomData,
         }
     }
@@ -450,9 +460,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         &mut self,
         expected: &'static str,
     ) -> Result<ParseEvent<'input>, DeserializeError> {
-        // For non-self-describing formats, bypass buffering entirely
-        // because hints clear the parser's peeked event and must take effect immediately
-        if self.is_non_self_describing() {
+        // Bypass buffering for non-self-describing and hint-dependent
+        // formats: hints clear or reclassify the parser's peeked event and
+        // must take effect immediately
+        if self.bypass_event_buffer {
             let event = self.parser.next_event()?.ok_or_else(|| {
                 DeserializeErrorKind::UnexpectedEof { expected }.with_span(self.last_span)
             })?;
@@ -489,8 +500,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// Peek at the next event, returning None if EOF is reached.
     #[inline]
     fn peek_event_opt(&mut self) -> Result<Option<ParseEvent<'input>>, DeserializeError> {
-        // For non-self-describing formats, bypass buffering entirely
-        if self.is_non_self_describing() {
+        // Bypass buffering for non-self-describing and hint-dependent formats
+        if self.bypass_event_buffer {
             let event = self.parser.peek_event()?;
             if let Some(ref _e) = event {
                 trace!(?_e, "peek_event_opt (direct): peeked event");
@@ -519,6 +530,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     ///
     /// If the full sequence is buffered (ends with `SequenceEnd`), this
     /// returns the exact count. Otherwise it returns a partial count.
+    ///
+    /// In bypass mode (`bypass_event_buffer`) the buffer is always empty and
+    /// this returns 0 — capacity pre-reservation is simply unavailable there.
     #[inline]
     pub(crate) fn count_buffered_sequence_items(&self) -> usize {
         use crate::ParseEventKind;
@@ -625,6 +639,15 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// Read the next event, returning None if EOF is reached.
     #[inline]
     fn next_event_opt(&mut self) -> Result<Option<ParseEvent<'input>>, DeserializeError> {
+        // Bypass buffering for non-self-describing and hint-dependent formats
+        if self.bypass_event_buffer {
+            let event = self.parser.next_event()?;
+            if let Some(ref event) = event {
+                self.last_span = event.span;
+            }
+            return Ok(event);
+        }
+
         // Refill if empty
         if self.event_buffer.is_empty() {
             self.refill_buffer()?;

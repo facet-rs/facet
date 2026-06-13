@@ -462,9 +462,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         element_shape: &'static Shape,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
-        if self.is_non_self_describing() {
-            self.parser.hint_sequence();
-        }
+        // Most self-describing parsers ignore this, but formats with ambiguous
+        // container syntax can use it to disambiguate empty dynamic sequences.
+        self.parser.hint_sequence();
 
         let event = self.expect_event("sequence start")?;
         if !matches!(event.kind, ParseEventKind::SequenceStart(_)) {
@@ -504,9 +504,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         len: usize,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
-        if self.is_non_self_describing() {
-            self.parser.hint_array(len);
-        }
+        // Most self-describing parsers ignore this, but formats with ambiguous
+        // container syntax can use it to disambiguate empty dynamic arrays.
+        self.parser.hint_array(len);
 
         let event = self.expect_event("array start")?;
         if !matches!(event.kind, ParseEventKind::SequenceStart(_)) {

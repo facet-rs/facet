@@ -53,6 +53,7 @@ members = [
   "facet-json-schema",
   "facet-typescript",
   "facet-python",
+  "facet-lua",
   "facet-value",
   "facet-zod",
 
@@ -96,6 +97,7 @@ facet-format = { path = "facet-format", version = "0.50.0-rc.0" }
 facet-format-suite = { path = "facet-format-suite", version = "0.50.0-rc.0" }
 facet-json = { path = "facet-json", version = "0.50.0-rc.0" }
 facet-json-classics = { path = "facet-json-classics", version = "0.50.0-rc.0" }
+facet-lua = { path = "facet-lua", version = "0.50.0-rc.0" }
 facet-msgpack = { path = "facet-msgpack", version = "0.50.0-rc.0" }
 facet-path = { path = "facet-path", version = "0.50.0-rc.0" }
 facet-postcard = { path = "facet-postcard", version = "0.50.0-rc.0" }
@@ -202,6 +204,7 @@ facet-format-suite = { path = "facet-format-suite" }
 facet-json = { path = "facet-json" }
 facet-json-classics = { path = "facet-json-classics" }
 facet-json-schema = { path = "facet-json-schema" }
+facet-lua = { path = "facet-lua" }
 facet-msgpack = { path = "facet-msgpack" }
 facet-postcard = { path = "facet-postcard" }
 facet-python = { path = "facet-python" }

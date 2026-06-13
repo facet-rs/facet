@@ -1,0 +1,7 @@
+---
+source: facet-lua/src/annotations.rs
+expression: lua
+---
+---@class User
+---@field name string
+---@field age integer

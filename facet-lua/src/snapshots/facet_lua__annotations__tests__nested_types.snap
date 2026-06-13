@@ -1,0 +1,10 @@
+---
+source: facet-lua/src/annotations.rs
+expression: lua
+---
+---@class Inner
+---@field value integer
+
+---@class Outer
+---@field inner Inner
+---@field name string

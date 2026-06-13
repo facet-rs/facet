@@ -1,0 +1,45 @@
+---
+source: facet-lua/src/serializer.rs
+expression: to_string_pretty(&all).unwrap()
+---
+{
+    ext_unit = "Unit",
+    ext_newtype = {
+        Newtype = 7,
+    },
+    ext_tuple = {
+        Tuple = {
+            1,
+            true,
+        },
+    },
+    ext_struct = {
+        Struct = {
+            a = 2,
+            b = "x",
+        },
+    },
+    int_unit = {
+        type = "Ping",
+    },
+    int_struct = {
+        type = "Echo",
+        message = "hi",
+    },
+    adj_unit = {
+        t = "Stop",
+    },
+    adj_newtype = {
+        t = "Move",
+        c = 1.5,
+    },
+    adj_struct = {
+        t = "Resize",
+        c = {
+            w = 3,
+            h = 4,
+        },
+    },
+    untagged_text = "t",
+    untagged_number = 2.5,
+}

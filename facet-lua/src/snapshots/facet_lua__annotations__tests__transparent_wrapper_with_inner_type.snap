@@ -1,0 +1,8 @@
+---
+source: facet-lua/src/annotations.rs
+expression: lua
+---
+---@class Inner
+---@field value integer
+
+---@alias Wrapper Inner
