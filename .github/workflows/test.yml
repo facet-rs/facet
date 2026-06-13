@@ -175,7 +175,7 @@ jobs:
         with:
           manifest-path: Cargo.toml
           baseline-rev: origin/main
-          exclude: facet-testattrs, facet-cargo-toml, facet-axum, rusqlite-facet, rediff, facet-dessert, facet-format, facet-json, facet-json-classics, facet-postcard, facet-msgpack, facet-toml, facet-yaml, facet-format-suite, facet-asn1, facet-csv, facet-xdr, facet-json-schema, facet-typescript, facet-python, facet-value, facet-zod
+          exclude: facet-testattrs, facet-cargo-toml, facet-axum, rusqlite-facet, rediff, facet-dessert, facet-format, facet-json, facet-json-classics, facet-postcard, facet-msgpack, facet-toml, facet-yaml, facet-format-suite, facet-asn1, facet-csv, facet-xdr, facet-json-schema, facet-typescript, facet-python, facet-lua, facet-value, facet-zod
           verbose: true
 
   test-aarch64-apple-darwin:
