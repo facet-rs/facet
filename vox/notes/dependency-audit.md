@@ -24,6 +24,11 @@ The next pass removed `xtask`'s in-process TypeScript formatter. TypeScript
 codegen now writes the generator output directly instead of routing it through
 `dprint-plugin-typescript`.
 
+The next pass removed proc-macro crate-name detection from
+`vox-macros-core`. `#[vox::service]` generated code now assumes the runtime
+crate is available as `vox`, which lets the macro core drop `facet-cargo-toml`
+and the TOML/Facet format stack it pulled in just to parse `Cargo.toml`.
+
 Checks from that pass:
 
 - `cargo metadata --format-version 1 --no-deps` plus a mechanical comparison
@@ -37,8 +42,9 @@ Checks from that pass:
 - Workspace-wide `terminal-light` is still present because `xtask` uses `figue`,
   whose default feature stack activates `facet-pretty/default`. That is an
   `xtask`/tooling graph issue, not a direct `vox` runtime dependency.
-- Workspace-wide `facet-error` is still present through `facet-cargo-toml` and
-  `figue`; it is no longer a direct `vox-core` edge.
+- Workspace-wide `facet-error` is still present through `figue`; it is no
+  longer a direct `vox-core` edge, and `facet-cargo-toml` is no longer present
+  in the workspace graph.
 - `rust-examples` no longer contains `bench_client`, `bench_runner`, `shootout`,
   or their report assets, and no longer directly depends on `hdrhistogram`,
   `indicatif`, `serde`, `serde_json`, `sysinfo`, `subject-rust`, `vox-ffi`,
@@ -175,13 +181,11 @@ Risk:
 ### `facet-value` and `facet-format`
 
 `facet-value` is not just a small dynamic value type in this graph. It depends
-on `facet-format`, and `facet-format/default` brings:
+on `facet-format`, which brings the generic format/deserializer layer and:
 
-- `facet-toml`
 - `facet-solver`
 - `facet-solver` suggestions
 - `strsim`
-- `figue`
 
 This looks primarily like an upstream feature-shaping problem. Vox can still
 audit where it truly needs `facet-value`, but the cleaner fix is likely making
@@ -225,8 +229,9 @@ Candidate:
 
 Status:
 
-- Landed for `vox-core`. `facet-error` remains in the workspace through
-  `facet-cargo-toml` and `figue`.
+- Landed for `vox-core`. A later macro-core cleanup also removed
+  `facet-cargo-toml`, so the remaining workspace `facet-error` edge is through
+  `figue`.
 
 ### Workspace `facet` feature coupling
 

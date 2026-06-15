@@ -9,11 +9,7 @@ use ::quote::{format_ident, quote};
 use heck::ToSnakeCase;
 use proc_macro2::TokenStream as TokenStream2;
 
-pub mod crate_name;
-
 pub use vox_macros_parse::*;
-
-use crate_name::FoundCrate;
 
 /// Error type for validation/codegen errors.
 #[derive(Debug, Clone)]
@@ -50,14 +46,7 @@ pub fn parse(tokens: &TokenStream2) -> Result<ServiceTrait, Error> {
 
 /// Returns the token stream for accessing the `vox` crate.
 pub fn vox_crate() -> TokenStream2 {
-    match crate_name::crate_name("vox") {
-        Ok(FoundCrate::Itself) => quote! { crate },
-        Ok(FoundCrate::Name(name)) => {
-            let ident = format_ident!("{}", name);
-            quote! { ::#ident }
-        }
-        Err(_) => quote! { ::vox },
-    }
+    quote! { ::vox }
 }
 
 /// Convert a parsed type into a token stream where every borrowed lifetime is `'static`.

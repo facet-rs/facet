@@ -100,7 +100,6 @@ facet-pretty = { version = "0.50.0-rc.0", default-features = false }
 facet-json = { version = "0.50.0-rc.0" }
 facet-value = { version = "0.50.0-rc.0" }
 facet-testhelpers = { version = "0.50.0-rc.0" }
-facet-cargo-toml = { version = "0.50.0-rc.0" }
 
 # Futures utilities
 futures-channel = "0.3"
