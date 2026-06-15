@@ -496,10 +496,10 @@ impl PrecomputedValidator {
                 scalar_type,
             } => {
                 let s = unsafe { Self::get_string(field_ptr, scalar_type) };
-                if Self::matches_pattern(s, pattern) {
-                    Ok(())
-                } else {
-                    Err(format!("'{}' does not match pattern '{}'", s, pattern))
+                match Self::matches_pattern(s, pattern) {
+                    Ok(true) => Ok(()),
+                    Ok(false) => Err(format!("'{}' does not match pattern '{}'", s, pattern)),
+                    Err(err) => Err(err),
                 }
             }
             ValidatorKind::Contains {
@@ -725,18 +725,20 @@ impl PrecomputedValidator {
         s.starts_with("http://") || s.starts_with("https://")
     }
 
-    fn matches_pattern(s: &str, pattern: &str) -> bool {
-        // Use regex crate if available, otherwise basic substring match
+    fn matches_pattern(s: &str, pattern: &str) -> Result<bool, alloc::string::String> {
         #[cfg(feature = "regex")]
         {
-            regex::Regex::new(pattern)
+            Ok(regex::Regex::new(pattern)
                 .map(|re| re.is_match(s))
-                .unwrap_or(false)
+                .unwrap_or(false))
         }
         #[cfg(not(feature = "regex"))]
         {
-            // Fallback: treat pattern as literal substring
-            s.contains(pattern)
+            let _ = s;
+            let _ = pattern;
+            Err(alloc::string::String::from(
+                "validate::regex requires the facet-reflect `regex` feature",
+            ))
         }
     }
 }
@@ -2274,6 +2276,23 @@ impl TypePlanCore {
 mod tests {
     use super::*;
     use facet::Facet;
+
+    #[test]
+    #[cfg(not(feature = "regex"))]
+    fn regex_validator_reports_missing_feature() {
+        let err = PrecomputedValidator::matches_pattern("ABC", "^[A-Z]+$").unwrap_err();
+        assert_eq!(
+            err,
+            "validate::regex requires the facet-reflect `regex` feature"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "regex")]
+    fn regex_validator_uses_regex_when_enabled() {
+        assert!(PrecomputedValidator::matches_pattern("ABC", "^[A-Z]+$").unwrap());
+        assert!(!PrecomputedValidator::matches_pattern("abc", "^[A-Z]+$").unwrap());
+    }
 
     #[derive(Facet)]
     struct TestStruct {

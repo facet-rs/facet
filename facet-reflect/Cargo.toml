@@ -17,13 +17,13 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
-default = ["std", "regex"]
+default = ["std"]
 std = ["alloc", "facet-core/std", "facet-path/std"] # Enable the standard library features
 alloc = ["facet-core/alloc", "facet-path/alloc"] # Enable the allocation features
 tracing = [
   "dep:tracing",
 ] # Enable logging of reflection operations (mostly for internal development)
-regex = ["dep:regex"] # Enable regex-based validators (email, url, regex pattern matching)
+regex = ["dep:regex"] # Enable validate::regex pattern matching
 slow-tests = [] # Enable slow tests (compile tests)
 ci = ["slow-tests"] # CI feature
 fuzz-tests = [] # Test-only feature to keep fuzz cfgs compiling
