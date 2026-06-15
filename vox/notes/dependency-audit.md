@@ -20,6 +20,10 @@ The benchmark clients/report generators should live in a separate repository
 that consumes Vox from the outside, instead of living in the main workspace as
 example targets.
 
+The next pass removed `xtask`'s in-process TypeScript formatter. TypeScript
+codegen now writes the generator output directly instead of routing it through
+`dprint-plugin-typescript`.
+
 Checks from that pass:
 
 - `cargo metadata --format-version 1 --no-deps` plus a mechanical comparison
@@ -39,6 +43,10 @@ Checks from that pass:
   or their report assets, and no longer directly depends on `hdrhistogram`,
   `indicatif`, `serde`, `serde_json`, `sysinfo`, `subject-rust`, `vox-ffi`,
   `facet`, or `spec-proto`.
+- `cargo tree --workspace -i dprint-plugin-typescript -e normal -e features --format "{p} {f}"`
+  reports that `dprint-plugin-typescript` is absent.
+- `cargo tree --workspace -i serde -e normal -e features --format "{p} {f}"`
+  reports that `serde` is absent from the host/default Rust workspace graph.
 
 ## Scope and commands
 
@@ -58,6 +66,9 @@ Primary commands used:
   `terminal-light`
 - `cargo fmt --all --check`
 - `cargo check --workspace --all-targets --message-format=short`
+- `cargo check -p xtask --message-format=short`
+- `cargo xtask codegen --typescript`
+- `cd typescript && pnpm check`
 - `tracey_validate`
 
 The first `--target all` pass needed `moire-wasm`, which was not cached. After
@@ -67,7 +78,10 @@ the registry cache. No files in the workspace were edited by that download.
 ## Snapshot
 
 The host/default normal dependency graph resolved to roughly 289 unique
-package-version entries during the audit.
+package-version entries during the original audit. After the Moire, examples,
+stale-declaration, and TypeScript-formatter removals, the broad workspace graph
+resolves to roughly 264 unique package-version entries in the same
+`cargo tree --workspace --prefix none --format "{p}"` count.
 
 After PR #379, Moire is no longer in the dependency graph. The remaining
 dependency mass is concentrated in a few places:
@@ -76,8 +90,8 @@ dependency mass is concentrated in a few places:
 - `facet-value` reaches into `facet-format`, which currently brings solver and
   formatting ergonomics along with value handling.
 - `rust-examples` bundles several unrelated benchmark/demo tools into one crate.
-- `xtask` pulls the Deno/SWC/dprint stack through in-process TypeScript
-  formatting.
+- `xtask` still pulls the `figue` CLI stack, including rich diagnostics and
+  terminal-theme support through current default features.
 
 ## Moire
 
@@ -250,11 +264,11 @@ That removal also dropped benchmark-only ties to `subject-rust`, `vox-ffi`,
 
 ## `xtask` and TypeScript formatting
 
-`xtask` uses `dprint-plugin-typescript` in-process for generated TypeScript
-formatting. That single dependency brings the Deno/SWC stack, including many
-proc macros and duplicate dependency families.
+Status: removed from the workspace.
 
-Observed related mass includes:
+Before removal, `xtask` used `dprint-plugin-typescript` in-process for generated
+TypeScript formatting. That single dependency brought the Deno/SWC stack,
+including many proc macros and duplicate dependency families:
 
 - `deno_ast`
 - `swc_common`
@@ -269,13 +283,10 @@ Observed related mass includes:
 - `serde`
 - `url`/ICU-related dependencies through the SWC/Deno branch
 
-Candidate:
-
-- Use an external formatter command for generated TypeScript, or split
-  TypeScript formatting into a separate helper crate/tool so normal Rust
-  workspace checks do not pay for the full Deno/SWC stack.
-
-This should be weighed against reproducibility of generated TypeScript output.
+The landed cleanup removes the formatter dependency entirely. `cargo xtask
+codegen --typescript` now writes raw generator output and the checked-in
+generated TypeScript was regenerated from that path. `cd typescript && pnpm
+check` still passes.
 
 ## Declared workspace dependencies with no package edge
 
@@ -317,22 +328,19 @@ Notable duplicate-version families from `cargo tree --duplicates`:
   - `0.4.x` through `tempfile`, `vox-core`, wasm-bindgen, and WASI target
     branches
 - `hashbrown`
-  - older versions through SWC/dprint
-  - newer versions through `facet-reflect` and `indexmap`
+  - the SWC/dprint branch that introduced older versions has been removed
 - `object`
   - `0.37.x` through `backtrace` and build support
   - `0.39.x` through `copypatch` build dependencies
 - `thiserror`
   - `1.x` through `terminal-light`
-  - `2.x` through `tungstenite` and Deno/SWC
-- `rand`
-  - `0.8.x` through `phf_generator`
-  - `0.9.x` through `tungstenite`
+  - `2.x` through `tungstenite`
 - `syn`
-  - `1.x` through `dprint-core-macros`
-  - `2.x` through many modern proc macro dependencies
+  - the old `syn@1` branch from `dprint-core-macros` has been removed
+  - `syn@2` remains through modern proc macro dependencies and `xtask`'s
+    Rust-source generation path
 
-Most of these are second-order effects of the Moire, dprint/SWC,
+Most remaining duplicate families are second-order effects of the facet/phon,
 terminal-theme, and websocket branches. It is probably more useful to shrink
 the root branches first than to chase the duplicates directly.
 
@@ -340,7 +348,5 @@ the root branches first than to chase the duplicates directly.
 
 1. Tighten `facet-reflect` if Vox does not need `validate::regex` behavior from
    `facet-reflect/default`.
-2. Isolate `xtask` TypeScript formatting so the Deno/SWC stack is not paid by
-   ordinary Rust workspace graph analysis.
-3. Investigate whether `figue` can be used by `xtask` without rich diagnostics,
+2. Investigate whether `figue` can be used by `xtask` without rich diagnostics,
    or whether CLI parsing should move away from the default `figue` stack.

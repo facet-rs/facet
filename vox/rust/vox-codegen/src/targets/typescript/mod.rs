@@ -145,6 +145,10 @@ pub fn generate_service(service: &ServiceDescriptor) -> String {
     // Service descriptor (references {service}Methods above)
     output.push_str(&generate_descriptor(service));
 
+    let len = output.trim_end_matches('\n').len();
+    output.truncate(len);
+    output.push('\n');
+
     output
 }
 

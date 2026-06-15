@@ -354,44 +354,6 @@ fn check_schema_compat_policy() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn fmt_typescript(path: &std::path::Path, text: String) -> String {
-    use dprint_plugin_typescript::configuration::ConfigurationBuilder;
-    use dprint_plugin_typescript::{FormatTextOptions, format_text};
-    let config = ConfigurationBuilder::new().build();
-    let panic_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(|_| {}));
-    let formatted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        format_text(FormatTextOptions {
-            path,
-            extension: None,
-            text: text.clone(),
-            config: &config,
-            external_formatter: None,
-        })
-    }));
-    std::panic::set_hook(panic_hook);
-    match formatted {
-        Ok(Ok(Some(formatted))) => formatted,
-        Ok(Ok(None)) => text,
-        Ok(Err(e)) => {
-            eprintln!("warning: dprint failed to format {}: {e}", path.display());
-            text
-        }
-        Err(payload) => {
-            let message = payload
-                .downcast_ref::<&str>()
-                .copied()
-                .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
-                .unwrap_or("non-string panic payload");
-            eprintln!(
-                "warning: dprint panicked while formatting {}: {message}",
-                path.display(),
-            );
-            text
-        }
-    }
-}
-
 fn fmt_swift(path: &std::path::Path, text: String) -> String {
     fn try_swift_formatter(
         path: &std::path::Path,
@@ -475,7 +437,7 @@ fn codegen_typescript(workspace_root: &std::path::Path) -> Result<(), Box<dyn st
         let ts = vox_codegen::targets::typescript::generate_service(service);
         let filename = format!("{}.generated.ts", service.service_name.to_lowercase());
         let out_path = out_dir.join(&filename);
-        write_if_changed(&out_path, fmt_typescript(&out_path, ts))?;
+        write_if_changed(&out_path, ts)?;
     }
 
     // Generate TypeScript for the evolved testbed (schema compat testing)
@@ -483,7 +445,7 @@ fn codegen_typescript(workspace_root: &std::path::Path) -> Result<(), Box<dyn st
         let evolved = spec_proto::evolved::testbed_service_descriptor();
         let ts = vox_codegen::targets::typescript::generate_service(evolved);
         let out_path = out_dir.join("testbed_evolved.generated.ts");
-        write_if_changed(&out_path, fmt_typescript(&out_path, ts))?;
+        write_if_changed(&out_path, ts)?;
     }
 
     codegen_typescript_wire(workspace_root)?;
@@ -502,7 +464,7 @@ fn codegen_typescript_wire(
         .join("src")
         .join("wire.phon.generated.ts");
     let wire = vox_codegen::targets::typescript::generate_phon_wire();
-    write_if_changed(&wire_path, fmt_typescript(&wire_path, wire))?;
+    write_if_changed(&wire_path, wire)?;
 
     // The phon HandshakeMessage module for vox-core.
     let hs_path = workspace_root
@@ -512,7 +474,7 @@ fn codegen_typescript_wire(
         .join("src")
         .join("handshake.phon.generated.ts");
     let hs = vox_codegen::targets::typescript::generate_phon_handshake();
-    write_if_changed(&hs_path, fmt_typescript(&hs_path, hs))?;
+    write_if_changed(&hs_path, hs)?;
 
     Ok(())
 }
