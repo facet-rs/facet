@@ -56,17 +56,19 @@ async fn main() -> Result<()> {
         .wrap_err("binding TCP listener")?;
     let addr = listener.local_addr().wrap_err("reading listener addr")?;
     println!("[demo] listening on {addr}");
+    let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
 
     let server_task = tokio::spawn(async move {
         println!("[server] waiting for client");
         let (socket, _) = listener.accept().await.expect("accept");
-        println!("[server] client connected; establishing session");
-        let server_caller_guard = vox::acceptor_on(StreamLink::tcp(socket))
+        println!("[server] client connected; establishing connection");
+        let server_connection = vox::acceptor_on(StreamLink::tcp(socket))
             .on_connection(WordLabDispatcher::new(WordLabService))
-            .establish::<WordLabClient>()
+            .establish_connection()
             .await
             .expect("server establish");
-        let _server_caller_guard = server_caller_guard;
+        let _ = server_ready_tx.send(());
+        let _server_connection = server_connection;
         std::future::pending::<()>().await;
     });
 
@@ -74,11 +76,19 @@ async fn main() -> Result<()> {
     let socket = tokio::net::TcpStream::connect(addr)
         .await
         .wrap_err("connecting client socket")?;
-    let client = vox::initiator_on(StreamLink::tcp(socket))
-        .establish::<WordLabClient>()
+    let connection = vox::initiator_on(StreamLink::tcp(socket))
+        .establish_connection()
         .await
-        .map_err(|e| eyre!("failed to establish initiator session: {e:?}"))?;
-    println!("[client] session established");
+        .map_err(|e| eyre!("failed to establish initiator connection: {e:?}"))?;
+    println!("[client] connection established");
+    server_ready_rx
+        .await
+        .map_err(|_| eyre!("server task ended before signaling readiness"))?;
+    let client: WordLabClient = connection
+        .open_lane()
+        .await
+        .map_err(|e| eyre!("open WordLab lane failed: {e:?}"))?;
+    println!("[client] WordLab lane open");
 
     println!("[client] calling is_short");
     assert!(
@@ -153,6 +163,7 @@ async fn main() -> Result<()> {
 
     // The demo is complete; stop background loops.
     server_task.abort();
+    let _ = server_task.await;
     println!("[demo] borrowed_and_channels: complete");
 
     Ok(())

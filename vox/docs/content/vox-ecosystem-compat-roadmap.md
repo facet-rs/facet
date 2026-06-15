@@ -128,20 +128,13 @@ pnpm --filter @bearcove/phon-engine run check
 pnpm --filter @bearcove/phon-engine exec vitest run src/typed.test.ts
 ```
 
-## Benchmark Entry Points
+## Benchmark Harness
 
 Closure requires correctness first. Once the focused and broad corpus tests are
-green, record at least the benchmark entry points that exercise the hot paths:
-
-```sh
-cargo run --release -p rust-examples --example bench_client -- --addr ffi:// --workload gnarly --payload-sizes 16,1024 --in-flights 1,16 --count 1000 --json
-cargo run --release -p rust-examples --example bench_runner -- --addr 127.0.0.1:64977 --payload-sizes 16,1024 --in-flights 1,16 --count 1000 --json -- --workload gnarly
-```
-
-`bench_client --addr ffi://` exercises the Rust in-process FFI path.
-`bench_runner` starts an external subject over TCP; replace `64977` with a
-free local TCP port. The local-socket Swift benchmark path is not part of this
-gate until session establishment is fixed there.
+green, benchmark Vox from an external harness repository that depends on Vox
+like any other user. Keep transport and codec benchmarks outside this repo so
+the main workspace does not pay for benchmark-only dependencies during ordinary
+checks.
 
 Record median numbers in `notes/perf-baselines.md` when the numbers are meant
 to become a baseline.

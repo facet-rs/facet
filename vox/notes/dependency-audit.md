@@ -15,6 +15,11 @@ The next low-risk cleanup pass removed stale `[workspace.dependencies]`
 declarations, removed `vox-core`'s unused direct `facet-error` dependency, and
 changed the shared `facet-pretty` dependency to `default-features = false`.
 
+A follow-up examples pass removed the benchmark harness from `rust-examples`.
+The benchmark clients/report generators should live in a separate repository
+that consumes Vox from the outside, instead of living in the main workspace as
+example targets.
+
 Checks from that pass:
 
 - `cargo metadata --format-version 1 --no-deps` plus a mechanical comparison
@@ -30,6 +35,10 @@ Checks from that pass:
   `xtask`/tooling graph issue, not a direct `vox` runtime dependency.
 - Workspace-wide `facet-error` is still present through `facet-cargo-toml` and
   `figue`; it is no longer a direct `vox-core` edge.
+- `rust-examples` no longer contains `bench_client`, `bench_runner`, `shootout`,
+  or their report assets, and no longer directly depends on `hdrhistogram`,
+  `indicatif`, `serde`, `serde_json`, `sysinfo`, `subject-rust`, `vox-ffi`,
+  `facet`, or `spec-proto`.
 
 ## Scope and commands
 
@@ -223,22 +232,21 @@ Risk:
 
 ## Examples
 
-`rust-examples` is a major aggregation point. It has one Cargo package for
-several unrelated tools, so compiling any example package context pays for all
-of these roots:
+Status: the benchmark harness has been removed from this workspace. Future
+benchmark work should happen in a separate repository that depends on Vox from
+the outside.
+
+Before removal, `rust-examples` was a major aggregation point. It had one Cargo
+package for several unrelated tools, so compiling any example package context
+paid for all of these roots:
 
 - `hdrhistogram` via `examples/bench_client.rs`
 - `sysinfo` via `examples/bench_runner.rs`
 - `indicatif` via `examples/shootout.rs`
 - `serde` and `serde_json` via `examples/shootout.rs`
 
-Candidate:
-
-- Split heavyweight benchmark/shootout tools into separate crates, or gate them
-  behind package features.
-
-This is especially attractive because these dependencies are not core Vox
-runtime dependencies; they are observation/benchmark tooling.
+That removal also dropped benchmark-only ties to `subject-rust`, `vox-ffi`,
+`facet`, and `spec-proto` from `rust-examples`.
 
 ## `xtask` and TypeScript formatting
 
@@ -332,8 +340,7 @@ the root branches first than to chase the duplicates directly.
 
 1. Tighten `facet-reflect` if Vox does not need `validate::regex` behavior from
    `facet-reflect/default`.
-2. Split or feature-gate heavyweight `rust-examples` tools.
-3. Isolate `xtask` TypeScript formatting so the Deno/SWC stack is not paid by
+2. Isolate `xtask` TypeScript formatting so the Deno/SWC stack is not paid by
    ordinary Rust workspace graph analysis.
-4. Investigate whether `figue` can be used by `xtask` without rich diagnostics,
+3. Investigate whether `figue` can be used by `xtask` without rich diagnostics,
    or whether CLI parsing should move away from the default `figue` stack.

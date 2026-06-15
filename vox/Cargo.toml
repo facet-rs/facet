@@ -127,7 +127,6 @@ prettyplease = "0.2"
 insta = "1"
 unsynn = "0.3"
 windows-sys = "0.61"
-serde = { version = "1", features = ["derive"] }
 eyre = "0.6"
 
 [profile.release]

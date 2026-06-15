@@ -49,26 +49,36 @@ async fn main() -> Result<()> {
         .wrap_err("binding TCP listener")?;
     let addr = listener.local_addr().wrap_err("reading listener addr")?;
     println!("[demo] listening on {addr}");
+    let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
 
     let server_task = tokio::spawn(async move {
         let (socket, _) = listener.accept().await.expect("accept");
-        let server_guard = vox::acceptor_on(StreamLink::tcp(socket))
+        let server_connection = vox::acceptor_on(StreamLink::tcp(socket))
             .on_connection(NumberLabDispatcher::new(NumberLabService))
-            .establish::<NumberLabClient>()
+            .establish_connection()
             .await
             .expect("server establish");
-        let _server_guard = server_guard;
+        let _ = server_ready_tx.send(());
+        let _server_connection = server_connection;
         std::future::pending::<()>().await;
     });
 
     let socket = tokio::net::TcpStream::connect(addr)
         .await
         .wrap_err("connecting")?;
-    let client = vox::initiator_on(StreamLink::tcp(socket))
-        .establish::<NumberLabClient>()
+    let connection = vox::initiator_on(StreamLink::tcp(socket))
+        .establish_connection()
         .await
         .map_err(|e| eyre!("establish failed: {e:?}"))?;
-    println!("[client] session established");
+    println!("[client] connection established");
+    server_ready_rx
+        .await
+        .map_err(|_| eyre!("server task ended before signaling readiness"))?;
+    let client: NumberLabClient = connection
+        .open_lane()
+        .await
+        .map_err(|e| eyre!("open NumberLab lane failed: {e:?}"))?;
+    println!("[client] NumberLab lane open");
 
     // --- Rx<T> in arg position: client-to-server streaming ---
     println!("\n[client] calling sum (client→server streaming via Rx<i64>)");
@@ -105,6 +115,7 @@ async fn main() -> Result<()> {
     println!("[client] squares returned {squares:?}");
 
     server_task.abort();
+    let _ = server_task.await;
     println!("\n[demo] rx_streaming: complete");
     Ok(())
 }
