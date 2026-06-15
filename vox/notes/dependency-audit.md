@@ -29,6 +29,14 @@ The next pass removed proc-macro crate-name detection from
 crate is available as `vox`, which lets the macro core drop `facet-cargo-toml`
 and the TOML/Facet format stack it pulled in just to parse `Cargo.toml`.
 
+The next pass moved the Facet crates that still live in `facet-rs/facet` onto
+git `main` via `[patch.crates-io]`, after upstream `facet-reflect` stopped
+enabling `regex` by default and changed `validate::regex` without the feature
+from fake substring matching to a loud validation error. `facet-json`,
+`facet-value`, `facet-format`, and `facet-dessert` remain on the published RCs
+because those packages are not currently present in the `facet-rs/facet` main
+repository.
+
 Checks from that pass:
 
 - `cargo metadata --format-version 1 --no-deps` plus a mechanical comparison
@@ -53,6 +61,16 @@ Checks from that pass:
   reports that `dprint-plugin-typescript` is absent.
 - `cargo tree --workspace -i serde -e normal -e features --format "{p} {f}"`
   reports that `serde` is absent from the host/default Rust workspace graph.
+- `cargo tree --workspace -i regex -e normal -e features --format "{p} {f}"`
+  now reports that no `regex` package is present in the workspace graph.
+- `cargo tree --workspace -i facet-reflect -e normal -e features --format "{p} {f}"`
+  shows `facet-reflect` coming from
+  `https://github.com/facet-rs/facet?branch=main#936327dc` with
+  `alloc,default,std`, and without the `regex` feature.
+- `cargo tree --workspace -i regex-automata -e normal -e features --format "{p} {f}"`
+  still reports `regex-automata` through `tracing-subscriber/env-filter`; that
+  is a separate tooling/runtime logging edge, not the old
+  `facet-reflect -> regex` edge.
 
 ## Scope and commands
 
@@ -92,7 +110,8 @@ resolves to roughly 264 unique package-version entries in the same
 After PR #379, Moire is no longer in the dependency graph. The remaining
 dependency mass is concentrated in a few places:
 
-- `facet-reflect` is reached by many core paths and enables `regex` by default.
+- `facet-reflect` is reached by many core paths, but no longer enables `regex`
+  by default in Vox because the Facet repo crates are patched to git `main`.
 - `facet-value` reaches into `facet-format`, which currently brings solver and
   formatting ergonomics along with value handling.
 - `rust-examples` bundles several unrelated benchmark/demo tools into one crate.
@@ -161,22 +180,23 @@ runtime graph/debugger machinery.
 
 ### `facet-reflect` and `regex`
 
-`regex` is present because `facet-reflect/default = ["std", "regex"]`.
+Historical status: `regex` was present because
+`facet-reflect/default = ["std", "regex"]`.
 
 The `regex` code path is partial type-plan validation for `validate::regex`
 attributes. Without the `regex` feature, `facet-reflect` falls back to literal
 substring matching for that helper.
 
-Candidate:
+Status:
 
-- If Vox does not need `validate::regex`, use `facet-reflect` with
-  `default-features = false` and explicit `features = ["std"]` or whatever
-  subset is actually needed.
-
-Risk:
-
-- This is a shared workspace dependency choice, so every direct
-  `facet-reflect.workspace = true` user shares the resulting feature set.
+- Landed upstream on Facet `main`: `facet-reflect/default` is now just `std`,
+  and `validate::regex` without the `regex` feature returns a validation error
+  instead of doing substring matching.
+- Vox now patches the Facet crates that still live in `facet-rs/facet` to git
+  `main`, locked to commit `936327dcb4abb55a038e9de6524fbc5defcb9165` in
+  `Cargo.lock`.
+- `facet-json` and `facet-value` stay on the RC packages for now because they
+  currently live outside the `facet-rs/facet` main workspace.
 
 ### `facet-value` and `facet-format`
 

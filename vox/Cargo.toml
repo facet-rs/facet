@@ -127,6 +127,21 @@ unsynn = "0.3"
 windows-sys = "0.61"
 eyre = "0.6"
 
+[patch.crates-io]
+facet = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-core = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-error = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-macro-parse = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-macro-types = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-macros = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-macros-impl = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-path = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-pretty = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-reflect = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-solver = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-testhelpers = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-testhelpers-macros = { git = "https://github.com/facet-rs/facet", branch = "main" }
+
 [profile.release]
 debug = 1
 
