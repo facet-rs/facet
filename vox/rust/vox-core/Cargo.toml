@@ -33,7 +33,6 @@ tracing.workspace = true
 smallvec.workspace = true
 getrandom.workspace = true
 zerocopy.workspace = true
-facet-error.workspace = true
 futures-util.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

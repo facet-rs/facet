@@ -70,10 +70,7 @@ phon-ir = "0.2.0-rc.0"
 phon-schema = "0.2.0-rc.0"
 phon-jit = "0.2.0-rc.0"
 phon-codegen = "0.2.0-rc.0"
-ur-taking-me-with-you = { path = "rust/ur-taking-me-with-you", version = "8.0.0" }
 
-arc-swap = "1"
-museair = "0.4"
 bitflags = "2.11.0"
 structstruck = "0.5.1"
 bytes = "1"
@@ -97,16 +94,13 @@ passfd = "0.1"
 # facet ecosystem
 facet = { version = "0.50.0-rc.0", features = ["camino", "reflect"] }
 facet-core = { version = "0.50.0-rc.0" }
-facet-postcard = { version = "0.50.0-rc.0", features = ["camino"] }
 facet-path = { version = "0.50.0-rc.0" }
 facet-reflect = { version = "0.50.0-rc.0" }
-facet-format = { version = "0.50.0-rc.0" }
-facet-pretty = { version = "0.50.0-rc.0" }
+facet-pretty = { version = "0.50.0-rc.0", default-features = false }
 facet-json = { version = "0.50.0-rc.0" }
 facet-value = { version = "0.50.0-rc.0" }
 facet-testhelpers = { version = "0.50.0-rc.0" }
 facet-cargo-toml = { version = "0.50.0-rc.0" }
-facet-error = { version = "0.50.0-rc.0" }
 
 # Futures utilities
 futures-channel = "0.3"
@@ -121,33 +115,19 @@ web-sys = "0.3"
 # Tracing
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-static_assertions = "1.1.0"
-ulid = "1"
 
 indexmap = "2"
 smallvec = "1.15.1"
 getrandom = { version = "0.4", features = ["wasm_js"] }
 zerocopy = { version = "0.8", features = ["derive"] }
 
-# Benchmarking
-divan = "0.1"
 dprint-plugin-typescript = "0.96"
 figue = "5.0.0-rc.0"
 prettyplease = "0.2"
 insta = "1"
 unsynn = "0.3"
-cbindgen = "0.29"
-loom = "0.7"
 windows-sys = "0.61"
-tarpc = { version = "0.37", features = ["tokio1", "serde1"] }
-tonic = "0.14"
-prost = "0.14"
-tonic-prost = "0.14"
-tonic-prost-build = "0.14"
 serde = { version = "1", features = ["derive"] }
-hyper-util = "0.1"
-tower = "0.5"
-tokio-stream = "0.1"
 eyre = "0.6"
 
 [profile.release]
