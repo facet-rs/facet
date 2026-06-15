@@ -1,11 +1,12 @@
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
 import {
+  accept,
+  ConnectionError,
+  type ConnectionHandle,
   Driver,
-  SessionError,
-  session,
+  type Lane,
   type Link,
   type Rx,
-  type SessionHandle,
   type Tx,
 } from "@bearcove/vox-core";
 import type {
@@ -337,28 +338,33 @@ export interface TsWsServerHandle {
 
 export async function startTsWsServer(port: number): Promise<TsWsServerHandle> {
   const wss = new WebSocketServer({ host: "127.0.0.1", port });
-  const activeSessions = new Set<SessionHandle>();
+  const activeConnections = new Set<ConnectionHandle>();
   const activeDrivers = new Set<Promise<void>>();
 
   const dispatcher = new TestbedDispatcher(new TestbedService());
+  const driveLane = (lane: Lane) => {
+    const driver = new Driver(lane, dispatcher);
+    const run = driver.run().catch((error) => {
+      if (!(error instanceof ConnectionError)) {
+        throw error;
+      }
+    }).finally(() => {
+      activeDrivers.delete(run);
+    });
+    activeDrivers.add(run);
+  };
 
   wss.on("connection", (socket) => {
     const link = new NodeWsLink(socket);
-    void session.acceptorTransport(link).then((established) => {
-      const handle = established.handle();
-      activeSessions.add(handle);
-      const driver = new Driver(established.rootConnection(), dispatcher);
-      const run = driver.run().catch((error) => {
-        if (!(error instanceof SessionError)) {
-          throw error;
-        }
-      }).finally(() => {
-        activeDrivers.delete(run);
-        activeSessions.delete(handle);
+    void accept(link, { onLane: driveLane }).then((connection) => {
+      const handle = connection.handle();
+      activeConnections.add(handle);
+      void connection.closed().finally(() => {
+        activeConnections.delete(handle);
       });
-      activeDrivers.add(run);
+      driveLane(connection.lane());
     }).catch((error) => {
-      console.error("[ts-ws-server] session error:", error);
+      console.error("[ts-ws-server] connection error:", error);
       link.close();
     });
   });
@@ -370,7 +376,7 @@ export async function startTsWsServer(port: number): Promise<TsWsServerHandle> {
 
   return {
     async close(): Promise<void> {
-      for (const handle of activeSessions) {
+      for (const handle of activeConnections) {
         handle.shutdown();
       }
       for (const client of wss.clients) {

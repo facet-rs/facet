@@ -7,7 +7,7 @@ use crate::BareConduit;
 /// Implemented for:
 /// - [`BareConduit`] → identity (pass-through)
 ///
-/// This allows [`crate::Session`] connection handling methods to accept
+/// This allows [`crate::Connection`] connection handling methods to accept
 /// already-constructed conduits without additional wrapping.
 pub trait IntoConduit {
     /// The conduit type produced by this conversion.

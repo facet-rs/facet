@@ -25,7 +25,7 @@ vox-ffi = { workspace = true }
 vox-types = { workspace = true }
 spec-proto.workspace = true
 facet-value.workspace = true
-tokio = { workspace = true, features = ["rt", "net"] }
-moire = { workspace = true }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "net"] }
+vox-rt = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

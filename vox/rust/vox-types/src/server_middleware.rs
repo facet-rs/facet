@@ -9,7 +9,7 @@ use std::{
 use facet_reflect::Peek;
 
 use crate::{
-    ConnectionId, Metadata, MethodDescriptor, Payload, ReplySink, RequestContext, RequestId,
+    LaneId, Metadata, MethodDescriptor, Payload, ReplySink, RequestContext, RequestId,
     RequestResponse,
 };
 
@@ -153,7 +153,7 @@ impl<'a> ServerRequest<'a> {
     }
 
     /// Virtual connection identifier for this call, when available.
-    pub fn connection_id(&self) -> Option<crate::ConnectionId> {
+    pub fn connection_id(&self) -> Option<crate::LaneId> {
         self.context.connection_id()
     }
 
@@ -173,7 +173,7 @@ impl<'a> ServerRequest<'a> {
 pub struct ServerResponseContext {
     method: &'static MethodDescriptor,
     request_id: Option<RequestId>,
-    connection_id: Option<ConnectionId>,
+    connection_id: Option<LaneId>,
     extensions: Extensions,
 }
 
@@ -182,7 +182,7 @@ impl ServerResponseContext {
     pub const fn new(
         method: &'static MethodDescriptor,
         request_id: Option<RequestId>,
-        connection_id: Option<ConnectionId>,
+        connection_id: Option<LaneId>,
         extensions: Extensions,
     ) -> Self {
         Self {
@@ -204,7 +204,7 @@ impl ServerResponseContext {
     }
 
     /// Virtual connection identifier for this call, when available.
-    pub const fn connection_id(&self) -> Option<ConnectionId> {
+    pub const fn connection_id(&self) -> Option<LaneId> {
         self.connection_id
     }
 
@@ -355,7 +355,7 @@ where
         self.inner.as_ref().and_then(|reply| reply.request_id())
     }
 
-    fn connection_id(&self) -> Option<crate::ConnectionId> {
+    fn connection_id(&self) -> Option<crate::LaneId> {
         self.inner.as_ref().and_then(|reply| reply.connection_id())
     }
 }

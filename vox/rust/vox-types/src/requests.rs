@@ -3,18 +3,18 @@ use facet::Facet;
 // r[impl connection]
 // r[impl connection.root]
 declare_id!(
-    /// Connection ID identifying a virtual connection on a link.
+    /// Lane ID identifying a service lane on a Vox connection.
     ///
-    /// Connection 0 is the root connection, established implicitly when the link is created.
-    /// Additional connections are opened via Connect/Accept messages.
-    ConnectionId, u64
+    /// Lane 0 is reserved for connection control. Application services use
+    /// lanes opened with `LaneOpen` / `LaneAccept`.
+    LaneId, u64
 );
 
-impl ConnectionId {
-    /// The root connection (always exists on a link).
+impl LaneId {
+    /// The reserved connection-control lane.
     pub const ROOT: Self = Self(0);
 
-    /// Check if this is the root connection.
+    /// Check if this is the reserved connection-control lane.
     pub const fn is_root(self) -> bool {
         self.0 == Self::ROOT.0
     }
@@ -23,7 +23,7 @@ impl ConnectionId {
 declare_id!(
     /// Request ID identifying an in-flight RPC request.
     ///
-    /// Request IDs are unique within a connection and monotonically increasing.
+    /// Request IDs are unique within a lane and monotonically increasing.
     RequestId, u64
 );
 

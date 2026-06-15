@@ -47,14 +47,14 @@ final class LockedQueue<T>: @unchecked Sendable {
     }
 }
 
-func makeDriverAndConnection(
+func makeDriverAndLane(
     conduit: any Conduit,
     dispatcher: any ServiceDispatcher,
     role: Role,
     negotiated: Negotiated,
-    connectionAcceptor: (any ConnectionAcceptor)? = nil,
-    keepalive: SessionKeepaliveConfig? = nil
-) -> (Connection, Driver) {
+    laneAcceptor: (any LaneAcceptor)? = nil,
+    keepalive: ConnectionKeepaliveConfig? = nil
+) -> (Lane, Driver) {
     let commandQueue = LockedQueue<HandleCommand>()
     let taskQueue = LockedQueue<DriverQueuedTaskMessage>()
     var continuation: AsyncStream<DriverEvent>.Continuation!
@@ -84,8 +84,8 @@ func makeDriverAndConnection(
         return false
     }
 
-    let handle = ConnectionHandle(
-        connectionId: 0,
+    let handle = LaneHandle(
+        laneId: 0,
         commandTx: commandSender,
         taskTx: taskSender,
         role: role,
@@ -98,7 +98,7 @@ func makeDriverAndConnection(
         role: role,
         negotiated: negotiated,
         handle: handle,
-        connectionAcceptor: connectionAcceptor,
+        laneAcceptor: laneAcceptor,
         keepalive: keepalive,
         eventStream: eventStream,
         eventContinuation: continuation,
@@ -106,20 +106,20 @@ func makeDriverAndConnection(
         taskQueue: taskQueue
     )
 
-    return (Connection(handle: handle, schemaReceiveTracker: driver.schemaReceiveTracker), driver)
+    return (Lane(handle: handle, schemaReceiveTracker: driver.schemaReceiveTracker), driver)
 }
 
-func makeSessionDriverAndConnection(
+func makeConnectionDriverAndControlLane(
     conduit: any Conduit,
     dispatcher: any ServiceDispatcher,
     role: Role,
     negotiated: Negotiated,
-    connectionAcceptor: (any ConnectionAcceptor)? = nil,
-    keepalive: SessionKeepaliveConfig? = nil,
-    localRootSettings: ConnectionSettings,
-    peerRootSettings: ConnectionSettings,
+    laneAcceptor: (any LaneAcceptor)? = nil,
+    keepalive: ConnectionKeepaliveConfig? = nil,
+    localControlSettings: ConnectionSettings,
+    peerControlSettings: ConnectionSettings,
     peerMessageSchema: [UInt8]
-) -> (Connection, Driver, SessionHandle) {
+) -> (Lane, Driver, ConnectionHandle) {
     let commandQueue = LockedQueue<HandleCommand>()
     let taskQueue = LockedQueue<DriverQueuedTaskMessage>()
     var continuation: AsyncStream<DriverEvent>.Continuation!
@@ -149,8 +149,8 @@ func makeSessionDriverAndConnection(
         return false
     }
 
-    let handle = ConnectionHandle(
-        connectionId: 0,
+    let handle = LaneHandle(
+        laneId: 0,
         commandTx: commandSender,
         taskTx: taskSender,
         role: role,
@@ -163,21 +163,21 @@ func makeSessionDriverAndConnection(
         role: role,
         negotiated: negotiated,
         handle: handle,
-        connectionAcceptor: connectionAcceptor,
+        laneAcceptor: laneAcceptor,
         keepalive: keepalive,
         eventStream: eventStream,
         eventContinuation: continuation,
         commandQueue: commandQueue,
         taskQueue: taskQueue,
-        localRootSettings: localRootSettings,
-        peerRootSettings: peerRootSettings,
+        localControlSettings: localControlSettings,
+        peerControlSettings: peerControlSettings,
         peerMessageSchema: peerMessageSchema
     )
 
-    let sessionHandle = SessionHandle(
+    let connectionHandle = ConnectionHandle(
         commandTx: commandSender,
         eventContinuation: continuation
     )
 
-    return (Connection(handle: handle, schemaReceiveTracker: driver.schemaReceiveTracker), driver, sessionHandle)
+    return (Lane(handle: handle, schemaReceiveTracker: driver.schemaReceiveTracker), driver, connectionHandle)
 }

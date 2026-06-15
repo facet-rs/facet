@@ -43,7 +43,7 @@ vox-websocket = { workspace = true, optional = true }
 facet.workspace = true
 facet-pretty.workspace = true
 facet-reflect.workspace = true
-moire.workspace = true
+vox-rt.workspace = true
 tracing.workspace = true
 tokio.workspace = true
 tokio-rustls = { workspace = true, optional = true }

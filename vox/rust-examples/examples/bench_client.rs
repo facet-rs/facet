@@ -936,7 +936,7 @@ async fn run_ffi_bench(cfg: Config) -> Result<()> {
         let link = ffi_bench_server::accept().await.expect("accept ffi link");
         let _conn = vox::acceptor_on(link)
             .on_connection(TestbedDispatcher::new(TestbedService))
-            .establish::<vox::NoopClient>()
+            .establish_connection()
             .await
             .expect("ffi server handshake");
         std::future::pending::<()>().await
@@ -1033,7 +1033,7 @@ async fn main() -> Result<()> {
 
     vox::serve(
         &serve_addr,
-        vox::acceptor_fn(move |req, conn| {
+        vox::lane_acceptor_fn(move |req, conn| {
             let _ = req.service();
             let client: Arc<TestbedClient> = Arc::new(conn.handle_with_client(()));
             let cfg = cfg.clone();

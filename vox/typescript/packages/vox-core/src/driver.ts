@@ -19,7 +19,7 @@ import { SchemaCompatibilityError } from "./schema_tracker.ts";
 import { Extensions } from "./middleware.ts";
 import { RequestContext } from "./request_context.ts";
 import { type ServerCallOutcome, type ServerMiddleware } from "./server_middleware.ts";
-import type { ConnectionHandle, IncomingCall } from "./session.ts";
+import type { IncomingCall, Lane } from "./session.ts";
 import { voxLogger } from "./logger.ts";
 
 export interface Dispatcher {
@@ -55,8 +55,8 @@ class VoxCallImpl implements VoxCall {
 
   private readonly method: MethodDescriptor;
   private readonly requestId: bigint;
-  private readonly connection: ConnectionHandle;
-  private readonly connectionEpoch: number;
+  private readonly lane: Lane;
+  private readonly laneEpoch: number;
   private readonly taskSender: TaskSender;
   private readonly schemaSendTracker: import("./schema_tracker.ts").SchemaSendTracker;
   private readonly methodSchemas: PhonMethodSchemas;
@@ -65,8 +65,8 @@ class VoxCallImpl implements VoxCall {
   constructor(
     method: MethodDescriptor,
     requestId: bigint,
-    connection: ConnectionHandle,
-    connectionEpoch: number,
+    lane: Lane,
+    laneEpoch: number,
     taskSender: TaskSender,
     schemaSendTracker: import("./schema_tracker.ts").SchemaSendTracker,
     methodSchemas: PhonMethodSchemas,
@@ -74,8 +74,8 @@ class VoxCallImpl implements VoxCall {
   ) {
     this.method = method;
     this.requestId = requestId;
-    this.connection = connection;
-    this.connectionEpoch = connectionEpoch;
+    this.lane = lane;
+    this.laneEpoch = laneEpoch;
     this.taskSender = taskSender;
     this.schemaSendTracker = schemaSendTracker;
     this.methodSchemas = methodSchemas;
@@ -151,7 +151,7 @@ class VoxCallImpl implements VoxCall {
   }
 
   private sendPayload(payload: Uint8Array): void {
-    if (this.connection.currentEpoch() !== this.connectionEpoch) {
+    if (this.lane.currentEpoch() !== this.laneEpoch) {
       return;
     }
     this.taskSender({
@@ -164,7 +164,7 @@ class VoxCallImpl implements VoxCall {
 }
 
 export class Driver {
-  private readonly connection: ConnectionHandle;
+  private readonly lane: Lane;
   private readonly dispatcher: Dispatcher;
   private readonly middlewares: ServerMiddleware[];
   private readonly taskQueue: TaskMessage[] = [];
@@ -172,25 +172,25 @@ export class Driver {
   private wakeupResolve: (() => void) | null = null;
 
   static new(
-    connection: ConnectionHandle,
+    lane: Lane,
     dispatcher: Dispatcher,
     middlewares: ServerMiddleware[] = [],
   ): Driver {
-    return new Driver(connection, dispatcher, middlewares);
+    return new Driver(lane, dispatcher, middlewares);
   }
 
   constructor(
-    connection: ConnectionHandle,
+    lane: Lane,
     dispatcher: Dispatcher,
     middlewares: ServerMiddleware[] = [],
   ) {
-    this.connection = connection;
+    this.lane = lane;
     this.dispatcher = dispatcher;
     this.middlewares = middlewares;
   }
 
   withMiddleware(middleware: ServerMiddleware): Driver {
-    return new Driver(this.connection, this.dispatcher, [...this.middlewares, middleware]);
+    return new Driver(this.lane, this.dispatcher, [...this.middlewares, middleware]);
   }
 
   async run(): Promise<void> {
@@ -207,10 +207,10 @@ export class Driver {
       await this.flushTaskQueue();
 
       if (!pendingIncoming) {
-        pendingIncoming = this.connection.nextIncomingCall();
+        pendingIncoming = this.lane.nextIncomingCall();
       }
       if (!pendingCancel) {
-        pendingCancel = this.connection.nextIncomingCancel();
+        pendingCancel = this.lane.nextIncomingCancel();
       }
 
       const wakeup = new Promise<"wakeup">((resolve) => {
@@ -262,29 +262,29 @@ export class Driver {
       const message = this.taskQueue.shift()!;
       switch (message.kind) {
         case "data":
-          await this.connection.sendChannelData(message.channelId, message.payload).catch((error) => {
+          await this.lane.sendChannelData(message.channelId, message.payload).catch((error) => {
             voxLogger()?.error("[vox:driver] failed to send channel data", error);
           });
           break;
         case "close":
-          await this.connection.sendChannelClose(message.channelId).catch((error) => {
+          await this.lane.sendChannelClose(message.channelId).catch((error) => {
             voxLogger()?.error("[vox:driver] failed to send channel close", error);
           });
           break;
         case "grantCredit":
-          await this.connection.sendChannelCredit(message.channelId, message.additional).catch((error) => {
+          await this.lane.sendChannelCredit(message.channelId, message.additional).catch((error) => {
             voxLogger()?.error("[vox:driver] failed to grant channel credit", error);
           });
           break;
         case "schema":
-          await this.connection
+          await this.lane
             .sendSchemas(message.methodId, message.direction, message.schemas)
             .catch((error) => {
               voxLogger()?.error("[vox:driver] failed to send schema message", error);
             });
           break;
         case "response":
-          await this.connection
+          await this.lane
             .sendResponse(
               message.requestId,
               message.payload,
@@ -310,7 +310,7 @@ export class Driver {
     voxLogger()?.debug(`[vox:driver] handleCall: methodId=${incoming.methodId} method=${method?.name ?? "UNKNOWN"}`);
     if (!method) {
       voxLogger()?.debug(`[vox:driver] unknown method, sending error response`);
-      await this.connection.sendResponse(incoming.requestId, encodeUnknownMethod(descriptor));
+      await this.lane.sendResponse(incoming.requestId, encodeUnknownMethod(descriptor));
       return;
     }
 
@@ -322,7 +322,7 @@ export class Driver {
     );
 
     const taskSender: TaskSender = (message) => {
-      if (this.connection.currentEpoch() !== incoming.connectionEpoch) {
+      if (this.lane.currentEpoch() !== incoming.laneEpoch) {
         return;
       }
       this.taskQueue.push(message);
@@ -332,17 +332,17 @@ export class Driver {
     const methodSchemas = descriptor.send_schemas[methodKey(method.id)];
     if (!methodSchemas) {
       voxLogger()?.error(`[vox:driver] no phon schemas for method ${method.id}`);
-      await this.connection.sendResponse(incoming.requestId, encodeInvalidPayload(descriptor));
+      await this.lane.sendResponse(incoming.requestId, encodeInvalidPayload(descriptor));
       return;
     }
 
     const call = new VoxCallImpl(
       method,
       incoming.requestId,
-      this.connection,
-      incoming.connectionEpoch,
+      this.lane,
+      incoming.laneEpoch,
       taskSender,
-      this.connection.getSchemaSendTracker(),
+      this.lane.getSchemaSendTracker(),
       methodSchemas,
       descriptor.registry,
     );
@@ -394,7 +394,7 @@ export class Driver {
     return (message) => {
       if (!advertised && message.kind === "data") {
         advertised = true;
-        const schemas = this.connection.getSchemaSendTracker().prepareSchemas(
+        const schemas = this.lane.getSchemaSendTracker().prepareSchemas(
           method.id,
           "args",
           methodSchemas.argsSchemaClosure,
@@ -420,7 +420,7 @@ export class Driver {
     // r[impl schema.exchange.channels.rx-args]
     const role = channelElementRole(channel);
     return (bytes) => {
-      const decoder = this.connection.getSchemaTracker().buildAuxiliaryDecoder(
+      const decoder = this.lane.getSchemaTracker().buildAuxiliaryDecoder(
         method.id,
         "args",
         role,
@@ -450,14 +450,14 @@ export class Driver {
     const registry = descriptor.registry;
 
     // Decode the args tuple using the peer's writer closure (recorded by
-    // the session in the `schemas:` field) against our `argsRoot` reader. The session
+    // the connection in the `schemas:` field) against our `argsRoot` reader. The connection
     // receive path requires a binding even for 0-arg methods.
     // r[impl schema.exchange.required]
     // r[impl schema.errors.call-level.callee]
-    this.connection.getSchemaTracker().requireReceived(method.id, "args");
+    this.lane.getSchemaTracker().requireReceived(method.id, "args");
     let values: unknown[] = [];
     if (incoming.args.length > 0) {
-      const decoder = this.connection.getSchemaTracker().buildDecoder(
+      const decoder = this.lane.getSchemaTracker().buildDecoder(
         method.id,
         "args",
         ms.argsRoot,
@@ -477,9 +477,9 @@ export class Driver {
     // arg at a channel position is the 4-byte LE wire index into that list
     // (`r[rpc.channel.payload-encoding]`); resolve it to a `ChannelId` and replace
     // the slot with a runtime handle whose per-item codec is keyed on the element.
-    const channelRegistry = this.connection.getChannelRegistry();
-    const creditOut = this.connection.peerSettings.initial_channel_credit ?? DEFAULT_INITIAL_CREDIT;
-    const creditIn = this.connection.localSettings.initial_channel_credit ?? DEFAULT_INITIAL_CREDIT;
+    const channelRegistry = this.lane.getChannelRegistry();
+    const creditOut = this.lane.peerSettings.initial_channel_credit ?? DEFAULT_INITIAL_CREDIT;
+    const creditIn = this.lane.localSettings.initial_channel_credit ?? DEFAULT_INITIAL_CREDIT;
     const serverTxTaskSender = ms.channels.some((ch) => ch.direction === "tx")
       ? this.argsSchemaAdvertisingTaskSender(method, ms, taskSender)
       : taskSender;
@@ -491,7 +491,7 @@ export class Driver {
         throw new Error(`channel wire index ${wireIndex} out of range (${incoming.channels.length})`);
       }
       channelRegistry.rememberContext(channelId, {
-        connectionId: this.connection.id,
+        laneId: this.lane.id,
         requestId: incoming.requestId,
         service: descriptor.service_name,
         method: method.name,

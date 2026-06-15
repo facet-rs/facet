@@ -4,9 +4,9 @@
 
 import { tcpConnector } from "@bearcove/vox-tcp";
 import {
+  connect,
   Driver,
-  SessionError,
-  session,
+  ConnectionError,
   type Dispatcher,
   type Metadata,
 } from "@bearcove/vox-core";
@@ -19,34 +19,33 @@ export async function runSubjectServer(createDispatcher: () => Dispatcher, metad
       throw new Error("PEER_ADDR env var not set");
     }
 
-    const acceptConnections = process.env.ACCEPT_CONNECTIONS === "1";
+    const acceptLanes = process.env.ACCEPT_CONNECTIONS !== "0";
 
-    console.error(`server mode: connecting to ${addr}, acceptConnections=${acceptConnections}`);
-    const established = await session.initiator(tcpConnector(addr), {
+    console.error(`server mode: connecting to ${addr}, acceptLanes=${acceptLanes}`);
+    const connection = await connect(tcpConnector(addr), {
       metadata,
-      onConnection: acceptConnections
-        ? (connection) => {
-            const driver = new Driver(connection, createDispatcher());
+      onLane: acceptLanes
+        ? (lane) => {
+            const driver = new Driver(lane, createDispatcher());
             void driver.run();
           }
         : undefined,
     });
-    const root = established.rootConnection();
-    const driver = new Driver(root, createDispatcher());
-    const handle = established.handle();
+    const driver = new Driver(connection.lane(), createDispatcher());
+    const handle = connection.handle();
 
     try {
       await driver.run();
     } catch (e) {
-      if (e instanceof SessionError) {
-        console.error(`[harness] session error: ${e.message}`);
+      if (e instanceof ConnectionError) {
+        console.error(`[harness] connection error: ${e.message}`);
         return;
       }
       throw e;
     } finally {
       // r[impl hosted.subject.lifecycle]
       handle.shutdown();
-      await established.closed().catch(() => {});
+      await connection.closed().catch(() => {});
     }
   });
 }

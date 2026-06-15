@@ -68,12 +68,12 @@ impl FdVault for Vault {
     }
 }
 
-async fn fd_pair() -> (FdVaultClient, vox::NoopClient) {
+async fn fd_pair() -> (FdVaultClient, vox::ConnectionHandle) {
     let (client_link, server_link) = FdStreamLink::pair().unwrap();
     let server = tokio::spawn(async move {
         vox::acceptor_on(server_link)
             .on_connection(FdVaultDispatcher::new(Vault))
-            .establish::<vox::NoopClient>()
+            .establish_connection()
             .await
             .expect("server establish")
     });
@@ -125,7 +125,7 @@ async fn non_fd_transport_refuses_to_carry_an_fd() {
         let (sock, _) = listener.accept().await.unwrap();
         vox::acceptor_on(StreamLink::tcp(sock))
             .on_connection(FdVaultDispatcher::new(Vault))
-            .establish::<vox::NoopClient>()
+            .establish_connection()
             .await
             .expect("server establish")
     });

@@ -66,7 +66,7 @@ pub struct Sorry {
 /// Result of a completed phon handshake.
 #[derive(Debug, Clone)]
 pub struct HandshakeResult {
-    pub role: crate::SessionRole,
+    pub role: crate::ConnectionRole,
     pub our_settings: ConnectionSettings,
     pub peer_settings: ConnectionSettings,
     pub our_schema: Vec<u8>,

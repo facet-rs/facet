@@ -1,6 +1,6 @@
 use std::sync::OnceLock;
 
-use crate::{ConnectionId, Extensions, Metadata, MethodDescriptor, RequestId};
+use crate::{Extensions, LaneId, Metadata, MethodDescriptor, RequestId};
 
 /// Borrowed per-request context exposed to opted-in Rust service handlers.
 ///
@@ -11,7 +11,7 @@ pub struct RequestContext<'a> {
     method: &'static MethodDescriptor,
     metadata: &'a Metadata,
     request_id: Option<RequestId>,
-    connection_id: Option<ConnectionId>,
+    connection_id: Option<LaneId>,
     extensions: &'a Extensions,
 }
 
@@ -35,7 +35,7 @@ impl<'a> RequestContext<'a> {
         method: &'static MethodDescriptor,
         metadata: &'a Metadata,
         request_id: Option<RequestId>,
-        connection_id: Option<ConnectionId>,
+        connection_id: Option<LaneId>,
         extensions: &'a Extensions,
     ) -> Self {
         Self {
@@ -63,7 +63,7 @@ impl<'a> RequestContext<'a> {
     }
 
     /// Virtual connection identifier for this call, when the reply sink exposes it.
-    pub fn connection_id(&self) -> Option<ConnectionId> {
+    pub fn connection_id(&self) -> Option<LaneId> {
         self.connection_id
     }
 
@@ -80,7 +80,7 @@ fn empty_extensions() -> &'static Extensions {
 
 #[cfg(test)]
 mod tests {
-    use crate::{ConnectionId, Metadata, MethodDescriptorOptions, RequestId, method_descriptor};
+    use crate::{LaneId, Metadata, MethodDescriptorOptions, RequestId, method_descriptor};
 
     use super::RequestContext;
 
@@ -102,12 +102,12 @@ mod tests {
             method,
             &metadata,
             Some(RequestId(11)),
-            Some(ConnectionId(13)),
+            Some(LaneId(13)),
             super::empty_extensions(),
         );
 
         assert_eq!(context.request_id(), Some(RequestId(11)));
-        assert_eq!(context.connection_id(), Some(ConnectionId(13)));
+        assert_eq!(context.connection_id(), Some(LaneId(13)));
         assert_eq!(context.method().id, method.id);
         assert_eq!(context.method().method_name, "demo");
     }

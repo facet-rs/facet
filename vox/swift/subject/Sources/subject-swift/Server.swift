@@ -17,7 +17,7 @@ public struct Server {
 
         // r[impl transport.unix]
         // r[impl hosted.peer-addr]
-        let session: Session
+        let connection: Connection
 
         if peerAddr.hasPrefix("local://") {
             let path = String(peerAddr.dropFirst("local://".count))
@@ -32,12 +32,11 @@ public struct Server {
             FileHandle.standardError.write(
                 Data("[subject-server] acceptConnections=\(acceptConnections)\n".utf8))
             FileHandle.standardError.write(
-                Data("[subject-server] creating initiator session\n".utf8))
-            session = try await Session.initiator(
+                Data("[subject-server] creating initiator connection\n".utf8))
+            connection = try await Connection.connect(
                 connector,
-                dispatcher: dispatcher,
-                onConnection: acceptConnections
-                    ? DefaultConnectionAcceptor(dispatcher: dispatcher) : nil
+                onLane: acceptConnections
+                    ? DefaultLaneAcceptor(dispatcher: dispatcher) : nil
             )
         } else {
             guard let colonIdx = peerAddr.lastIndex(of: ":") else {
@@ -58,22 +57,21 @@ public struct Server {
             FileHandle.standardError.write(
                 Data("[subject-server] acceptConnections=\(acceptConnections)\n".utf8))
             FileHandle.standardError.write(
-                Data("[subject-server] creating initiator session\n".utf8))
-            session = try await Session.initiator(
+                Data("[subject-server] creating initiator connection\n".utf8))
+            connection = try await Connection.connect(
                 connector,
-                dispatcher: dispatcher,
-                onConnection: acceptConnections
-                    ? DefaultConnectionAcceptor(dispatcher: dispatcher) : nil
+                onLane: acceptConnections
+                    ? DefaultLaneAcceptor(dispatcher: dispatcher) : nil
             )
         }
 
-        let rootConnection = session.connection
-        _ = rootConnection
+        let connectionHandle = connection.handle
+        _ = connectionHandle
         FileHandle.standardError.write(
             Data(
-                "[subject-server] session created, root connection retained, entering run loop\n"
+                "[subject-server] connection created, handle retained, entering run loop\n"
                     .utf8))
-        try await session.run()
+        try await connection.run()
         FileHandle.standardError.write(Data("[subject-server] run loop exited\n".utf8))
     }
 }

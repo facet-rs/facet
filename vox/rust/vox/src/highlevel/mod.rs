@@ -10,8 +10,7 @@ use std::time::{Duration, Instant};
 ))]
 use vox_core::initiator;
 use vox_core::{
-    ConnectionAcceptor, ConnectionRequest, FromVoxSession, NoopClient, PendingConnection,
-    SessionError,
+    ConnectionError, ConnectionHandle, FromVoxLane, LaneAcceptor, LaneRequest, PendingLane,
 };
 use vox_types::{
     DEFAULT_INITIAL_CHANNEL_CREDIT, Link, MaybeSend, MaybeSync, Metadata, VoxObserver,
@@ -58,7 +57,7 @@ type BoxHighLevelFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 #[cfg(target_arch = "wasm32")]
 type BoxHighLevelFuture<T> = Pin<Box<dyn Future<Output = T>>>;
 
-/// Connect to a remote vox service, returning a typed client.
+/// Connect to a remote Vox endpoint, returning a connection handle.
 ///
 /// The address string determines the transport:
 ///
@@ -75,14 +74,25 @@ type BoxHighLevelFuture<T> = Pin<Box<dyn Future<Output = T>>>;
 /// # }
 /// # #[tokio::main(flavor = "current_thread")]
 /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let client: HelloClient = vox::connect("127.0.0.1:9000").await?;
+/// let conn = vox::connect("127.0.0.1:9000").await?;
+/// let client: HelloClient = conn.open_lane().await?;
 /// let reply = client.say_hello().await?;
 /// # Ok(())
 /// # }
 /// ```
 // r[impl rpc.session-setup]
-pub fn connect<Client: FromVoxSession>(addr: impl std::fmt::Display) -> ConnectBuilder<Client> {
+pub fn connect(addr: impl std::fmt::Display) -> ConnectBuilder {
     ConnectBuilder::new(addr.to_string())
+}
+
+/// Connect and open one typed service lane.
+pub fn connect_lane<Client: FromVoxLane>(
+    addr: impl std::fmt::Display,
+) -> ConnectLaneBuilder<Client> {
+    ConnectLaneBuilder {
+        inner: connect(addr),
+        _client: std::marker::PhantomData,
+    }
 }
 
 enum ConnectAddress {
@@ -94,7 +104,7 @@ enum ConnectAddress {
     Ws(String),
 }
 
-fn parse_connect_address(addr: String) -> Result<ConnectAddress, SessionError> {
+fn parse_connect_address(addr: String) -> Result<ConnectAddress, ConnectionError> {
     let (scheme, host) = match addr.split_once("://") {
         Some((scheme, host)) => (scheme.to_string(), host.to_string()),
         None => ("tcp".to_string(), addr),
@@ -113,24 +123,23 @@ fn parse_connect_address(addr: String) -> Result<ConnectAddress, SessionError> {
         "local" => Ok(ConnectAddress::Local(host)),
         #[cfg(all(feature = "transport-websocket", not(target_arch = "wasm32")))]
         "ws" | "wss" => Ok(ConnectAddress::Ws(format!("{scheme}://{host}"))),
-        _ => Err(SessionError::Protocol(format!(
+        _ => Err(ConnectionError::Protocol(format!(
             "unknown transport scheme: {scheme:?}"
         ))),
     }
 }
 
-pub struct ConnectBuilder<Client> {
+pub struct ConnectBuilder {
     addr: String,
     metadata: Metadata,
-    on_connection: Option<Arc<dyn ConnectionAcceptor>>,
+    on_connection: Option<Arc<dyn LaneAcceptor>>,
     connect_timeout: Option<Duration>,
     channel_capacity: u32,
     observer: Option<VoxObserverHandle>,
     wait_for_service: Option<Duration>,
-    _client: std::marker::PhantomData<Client>,
 }
 
-impl<Client> ConnectBuilder<Client> {
+impl ConnectBuilder {
     fn new(addr: String) -> Self {
         Self {
             addr,
@@ -140,12 +149,11 @@ impl<Client> ConnectBuilder<Client> {
             channel_capacity: DEFAULT_INITIAL_CHANNEL_CREDIT,
             observer: None,
             wait_for_service: None,
-            _client: std::marker::PhantomData,
         }
     }
 
     // r[impl rpc.virtual-connection.accept]
-    pub fn on_connection(mut self, acceptor: impl ConnectionAcceptor) -> Self {
+    pub fn on_connection(mut self, acceptor: impl LaneAcceptor) -> Self {
         self.on_connection = Some(Arc::new(acceptor));
         self
     }
@@ -194,18 +202,17 @@ const INITIAL_CONNECT_BACKOFF_MAX: Duration = Duration::from_secs(5);
 const CHANNEL_CAPACITY_ZERO_ERROR: &str = "channel_capacity must be greater than zero";
 
 // r[impl rpc.flow-control.credit.initial.zero]
-fn validate_channel_capacity(channel_capacity: u32) -> Result<(), SessionError> {
+fn validate_channel_capacity(channel_capacity: u32) -> Result<(), ConnectionError> {
     if channel_capacity == 0 {
-        return Err(SessionError::Protocol(CHANNEL_CAPACITY_ZERO_ERROR.into()));
+        return Err(ConnectionError::Protocol(
+            CHANNEL_CAPACITY_ZERO_ERROR.into(),
+        ));
     }
     Ok(())
 }
 
-impl<Client> ConnectBuilder<Client>
-where
-    Client: FromVoxSession,
-{
-    pub async fn establish(self) -> Result<Client, SessionError> {
+impl ConnectBuilder {
+    pub async fn establish(self) -> Result<ConnectionHandle, ConnectionError> {
         let ConnectBuilder {
             addr,
             metadata,
@@ -214,12 +221,10 @@ where
             channel_capacity,
             observer,
             wait_for_service,
-            _client: _,
         } = self;
         validate_channel_capacity(channel_capacity)?;
 
         tracing::debug!(
-            service = Client::SERVICE_NAME,
             %addr,
             channel_capacity,
             wait_for_service = wait_for_service.is_some(),
@@ -238,7 +243,7 @@ where
                     // slow attempt cannot exceed the caller-supplied timeout.
                     let now = Instant::now();
                     if now >= deadline {
-                        return Err(SessionError::ConnectTimeout);
+                        return Err(ConnectionError::ConnectTimeout);
                     }
                     let remaining = deadline - now;
 
@@ -250,21 +255,21 @@ where
                         channel_capacity,
                         observer.clone(),
                     );
-                    let result = match moire::time::timeout(remaining, attempt).await {
+                    let result = match vox_rt::time::timeout(remaining, attempt).await {
                         Ok(r) => r,
-                        Err(_) => Err(SessionError::ConnectTimeout),
+                        Err(_) => Err(ConnectionError::ConnectTimeout),
                     };
 
                     match result {
-                        Ok(client) => {
-                            tracing::debug!(
-                                service = Client::SERVICE_NAME,
-                                "vox high-level connect established"
-                            );
-                            return Ok(client);
+                        Ok(connection) => {
+                            tracing::debug!("vox high-level connect established");
+                            return Ok(connection);
                         }
                         Err(e)
-                            if !matches!(e, SessionError::Io(_) | SessionError::ConnectTimeout) =>
+                            if !matches!(
+                                e,
+                                ConnectionError::Io(_) | ConnectionError::ConnectTimeout
+                            ) =>
                         {
                             return Err(e);
                         }
@@ -276,12 +281,11 @@ where
                             let remaining = deadline - now;
                             let sleep = backoff.min(remaining);
                             tracing::debug!(
-                                service = Client::SERVICE_NAME,
                                 error = ?e,
                                 ?sleep,
                                 "vox high-level connect attempt failed; backing off"
                             );
-                            moire::time::sleep(sleep).await;
+                            vox_rt::time::sleep(sleep).await;
                             backoff = backoff.saturating_mul(2).min(INITIAL_CONNECT_BACKOFF_MAX);
                         }
                     }
@@ -298,15 +302,8 @@ where
                 )
                 .await;
                 match &result {
-                    Ok(_) => tracing::debug!(
-                        service = Client::SERVICE_NAME,
-                        "vox high-level connect established"
-                    ),
-                    Err(error) => tracing::debug!(
-                        service = Client::SERVICE_NAME,
-                        ?error,
-                        "vox high-level connect failed"
-                    ),
+                    Ok(_) => tracing::debug!("vox high-level connect established"),
+                    Err(error) => tracing::debug!(?error, "vox high-level connect failed"),
                 }
                 result
             }
@@ -316,11 +313,11 @@ where
     async fn establish_once(
         parsed: &ConnectAddress,
         metadata: vox_types::Metadata,
-        on_connection: Option<Arc<dyn ConnectionAcceptor>>,
+        on_connection: Option<Arc<dyn LaneAcceptor>>,
         connect_timeout: Option<Duration>,
         channel_capacity: u32,
         observer: Option<VoxObserverHandle>,
-    ) -> Result<Client, SessionError> {
+    ) -> Result<ConnectionHandle, ConnectionError> {
         #[cfg(not(any(
             feature = "transport-tcp",
             feature = "transport-local",
@@ -338,7 +335,6 @@ where
             #[cfg(feature = "transport-tcp")]
             ConnectAddress::Tcp(host) => {
                 tracing::trace!(
-                    service = Client::SERVICE_NAME,
                     transport = "tcp",
                     %host,
                     "vox high-level connect attempt"
@@ -354,12 +350,11 @@ where
                 if let Some(observer) = observer.clone() {
                     builder = builder.observer_handle(observer);
                 }
-                builder.metadata(metadata).establish::<Client>().await
+                builder.metadata(metadata).establish_connection().await
             }
             #[cfg(feature = "transport-local")]
             ConnectAddress::Local(host) => {
                 tracing::trace!(
-                    service = Client::SERVICE_NAME,
                     transport = "local",
                     %host,
                     "vox high-level connect attempt"
@@ -375,7 +370,7 @@ where
                 if let Some(observer) = observer.clone() {
                     builder = builder.observer_handle(observer);
                 }
-                builder.metadata(metadata).establish::<Client>().await
+                builder.metadata(metadata).establish_connection().await
             }
             // Native-only: `ws_link_source` is the tokio-tungstenite reconnect
             // source. Wasm clients use the lower-level vox_websocket::WsLink
@@ -383,7 +378,6 @@ where
             #[cfg(all(feature = "transport-websocket", not(target_arch = "wasm32")))]
             ConnectAddress::Ws(url) => {
                 tracing::trace!(
-                    service = Client::SERVICE_NAME,
                     transport = "ws",
                     %url,
                     "vox high-level connect attempt"
@@ -399,21 +393,81 @@ where
                 if let Some(observer) = observer {
                     builder = builder.observer_handle(observer);
                 }
-                builder.metadata(metadata).establish::<Client>().await
+                builder.metadata(metadata).establish_connection().await
             }
             #[allow(unreachable_patterns)]
-            _ => Err(SessionError::Protocol(
+            _ => Err(ConnectionError::Protocol(
                 "transport not enabled in this vox build".to_string(),
             )),
         }
     }
 }
 
-impl<Client> IntoFuture for ConnectBuilder<Client>
+impl IntoFuture for ConnectBuilder {
+    type Output = Result<ConnectionHandle, ConnectionError>;
+    type IntoFuture = Pin<Box<dyn Future<Output = Self::Output> + 'static>>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        Box::pin(self.establish())
+    }
+}
+
+pub struct ConnectLaneBuilder<Client> {
+    inner: ConnectBuilder,
+    _client: std::marker::PhantomData<Client>,
+}
+
+impl<Client> ConnectLaneBuilder<Client> {
+    pub fn on_connection(mut self, acceptor: impl LaneAcceptor) -> Self {
+        self.inner = self.inner.on_connection(acceptor);
+        self
+    }
+
+    pub fn metadata(mut self, metadata: Metadata) -> Self {
+        self.inner = self.inner.metadata(metadata);
+        self
+    }
+
+    pub fn connect_timeout(mut self, timeout: Duration) -> Self {
+        self.inner = self.inner.connect_timeout(timeout);
+        self
+    }
+
+    pub fn channel_capacity(mut self, channel_capacity: u32) -> Self {
+        self.inner = self.inner.channel_capacity(channel_capacity);
+        self
+    }
+
+    pub fn observer(mut self, observer: impl VoxObserver) -> Self {
+        self.inner = self.inner.observer(observer);
+        self
+    }
+
+    pub fn observer_handle(mut self, observer: VoxObserverHandle) -> Self {
+        self.inner = self.inner.observer_handle(observer);
+        self
+    }
+
+    pub fn wait_for_service(mut self, timeout: Duration) -> Self {
+        self.inner = self.inner.wait_for_service(timeout);
+        self
+    }
+}
+
+impl<Client> ConnectLaneBuilder<Client>
 where
-    Client: FromVoxSession + 'static,
+    Client: FromVoxLane,
 {
-    type Output = Result<Client, SessionError>;
+    pub async fn establish(self) -> Result<Client, ConnectionError> {
+        self.inner.establish().await?.open_lane::<Client>().await
+    }
+}
+
+impl<Client> IntoFuture for ConnectLaneBuilder<Client>
+where
+    Client: FromVoxLane + 'static,
+{
+    type Output = Result<Client, ConnectionError>;
     type IntoFuture = Pin<Box<dyn Future<Output = Self::Output> + 'static>>;
 
     fn into_future(self) -> Self::IntoFuture {
@@ -451,7 +505,7 @@ where
 /// # Ok(())
 /// # }
 /// ```
-pub fn serve<A: ConnectionAcceptor>(addr: impl std::fmt::Display, acceptor: A) -> ServeBuilder<A> {
+pub fn serve<A: LaneAcceptor>(addr: impl std::fmt::Display, acceptor: A) -> ServeBuilder<A> {
     ServeBuilder::new(addr.to_string(), acceptor)
 }
 
@@ -493,7 +547,7 @@ impl<A> ServeBuilder<A> {
 
 impl<A> ServeBuilder<A>
 where
-    A: ConnectionAcceptor,
+    A: LaneAcceptor,
 {
     pub async fn run(self) -> Result<(), ServeError> {
         let Self {
@@ -547,7 +601,7 @@ where
 
 impl<A> IntoFuture for ServeBuilder<A>
 where
-    A: ConnectionAcceptor,
+    A: LaneAcceptor,
 {
     type Output = Result<(), ServeError>;
     type IntoFuture = BoxHighLevelFuture<Self::Output>;
@@ -559,7 +613,7 @@ where
 
 /// Serve a vox service on a pre-bound listener.
 ///
-/// Takes a [`VoxListener`] (e.g. `TcpListener`) and a [`ConnectionAcceptor`].
+/// Takes a [`VoxListener`] (e.g. `TcpListener`) and a [`LaneAcceptor`].
 /// Each incoming connection is handled in a spawned task. Runs until an I/O
 /// error occurs on the listener.
 ///
@@ -587,7 +641,7 @@ where
     L: VoxListener,
     <L::Link as Link>::Tx: MaybeSend + MaybeSync + 'static,
     <L::Link as Link>::Rx: MaybeSend + 'static,
-    A: ConnectionAcceptor,
+    A: LaneAcceptor,
 {
     ServeListenerBuilder::new(listener, acceptor)
 }
@@ -633,35 +687,35 @@ where
     L: VoxListener,
     <L::Link as Link>::Tx: MaybeSend + MaybeSync + 'static,
     <L::Link as Link>::Rx: MaybeSend + 'static,
-    A: ConnectionAcceptor,
+    A: LaneAcceptor,
 {
-    pub async fn run(mut self) -> Result<(), SessionError> {
+    pub async fn run(mut self) -> Result<(), ConnectionError> {
         validate_channel_capacity(self.channel_capacity)?;
-        let acceptor: Arc<dyn ConnectionAcceptor> = Arc::new(self.acceptor);
+        let acceptor: Arc<dyn LaneAcceptor> = Arc::new(self.acceptor);
         loop {
             tracing::trace!("vox high-level listener waiting for connection");
-            let link = self.listener.accept().await.map_err(SessionError::Io)?;
+            let link = self.listener.accept().await.map_err(ConnectionError::Io)?;
             tracing::debug!("vox high-level listener accepted raw connection");
             let acceptor = acceptor.clone();
             let observer = self.observer.clone();
             let channel_capacity = self.channel_capacity;
-            moire::spawn(async move {
-                tracing::trace!("vox high-level listener establishing root session");
+            vox_rt::spawn(async move {
+                tracing::trace!("vox high-level listener establishing connection");
                 let mut builder = vox_core::acceptor_on(link)
                     .on_connection(AcceptorRef(acceptor))
                     .channel_capacity(channel_capacity);
                 if let Some(observer) = observer {
                     builder = builder.observer_handle(observer);
                 }
-                let result = builder.establish::<NoopClient>().await;
+                let result = builder.establish_connection().await;
                 match result {
-                    Ok(client) => {
-                        tracing::debug!("vox high-level listener established root session");
-                        client.caller.closed().await;
-                        tracing::debug!("vox high-level listener root session closed");
+                    Ok(connection) => {
+                        tracing::debug!("vox high-level listener established connection");
+                        connection.closed().await;
+                        tracing::debug!("vox high-level listener connection closed");
                     }
                     Err(error) => {
-                        tracing::debug!(?error, "vox high-level listener root session failed");
+                        tracing::debug!(?error, "vox high-level listener connection failed");
                     }
                 }
             });
@@ -674,9 +728,9 @@ where
     L: VoxListener,
     <L::Link as Link>::Tx: MaybeSend + MaybeSync + 'static,
     <L::Link as Link>::Rx: MaybeSend + 'static,
-    A: ConnectionAcceptor,
+    A: LaneAcceptor,
 {
-    type Output = Result<(), SessionError>;
+    type Output = Result<(), ConnectionError>;
     type IntoFuture = BoxHighLevelFuture<Self::Output>;
 
     fn into_future(self) -> Self::IntoFuture {
@@ -684,15 +738,11 @@ where
     }
 }
 
-/// Wrapper that implements `ConnectionAcceptor` by delegating to an `Arc<dyn ConnectionAcceptor>`.
-struct AcceptorRef(Arc<dyn ConnectionAcceptor>);
+/// Wrapper that implements `LaneAcceptor` by delegating to an `Arc<dyn LaneAcceptor>`.
+struct AcceptorRef(Arc<dyn LaneAcceptor>);
 
-impl ConnectionAcceptor for AcceptorRef {
-    fn accept(
-        &self,
-        request: &ConnectionRequest,
-        connection: PendingConnection,
-    ) -> Result<(), Metadata> {
+impl LaneAcceptor for AcceptorRef {
+    fn accept(&self, request: &LaneRequest, connection: PendingLane) -> Result<(), Metadata> {
         self.0.accept(request, connection)
     }
 }

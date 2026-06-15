@@ -57,15 +57,15 @@ async fn local_keepalive_rx_argument_survives_large_item_burst() {
         let server_link = listener.accept().await.expect("accept");
         let client = vox::acceptor_on(server_link)
             .channel_capacity(64)
-            .keepalive(vox::SessionKeepaliveConfig {
+            .keepalive(vox::ConnectionKeepaliveConfig {
                 ping_interval: Duration::from_secs(5),
                 pong_timeout: Duration::from_secs(30),
             })
             .on_connection(BulkChannelStashDispatcher::new(service))
-            .establish::<vox::NoopClient>()
+            .establish_connection()
             .await
             .expect("server establish");
-        client.caller.closed().await;
+        client.closed().await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -75,7 +75,7 @@ async fn local_keepalive_rx_argument_survives_large_item_burst() {
         .expect("connect");
     let client = vox::initiator_on(client_link)
         .channel_capacity(64)
-        .keepalive(vox::SessionKeepaliveConfig {
+        .keepalive(vox::ConnectionKeepaliveConfig {
             ping_interval: Duration::from_secs(5),
             pong_timeout: Duration::from_secs(30),
         })

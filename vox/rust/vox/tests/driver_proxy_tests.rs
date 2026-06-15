@@ -1,6 +1,6 @@
-//! Tests for proxy_connections — transparent call forwarding between sessions.
+//! Tests for proxy_lanes — transparent call forwarding between sessions.
 
-use vox::{ConnectionSettings, Driver, Metadata, Parity, SessionHandle, memory_link_pair};
+use vox::{ConnectionHandle, ConnectionSettings, Driver, Metadata, Parity, memory_link_pair};
 
 #[vox::service]
 trait Echo {
@@ -17,14 +17,14 @@ impl Echo for EchoService {
 }
 
 struct ProxyAcceptor {
-    upstream_session: SessionHandle,
+    upstream_session: ConnectionHandle,
 }
 
-impl vox::ConnectionAcceptor for ProxyAcceptor {
+impl vox::LaneAcceptor for ProxyAcceptor {
     fn accept(
         &self,
-        request: &vox::ConnectionRequest,
-        connection: vox::PendingConnection,
+        request: &vox::LaneRequest,
+        connection: vox::PendingLane,
     ) -> Result<(), Metadata> {
         if request.service() == "Noop" {
             connection.handle_with(());
@@ -34,7 +34,7 @@ impl vox::ConnectionAcceptor for ProxyAcceptor {
         let incoming = connection.into_handle();
         tokio::spawn(async move {
             let upstream = upstream_session
-                .open_connection(
+                .open_lane_handle(
                     ConnectionSettings {
                         parity: Parity::Odd,
                         max_concurrent_requests: 64,
@@ -44,14 +44,14 @@ impl vox::ConnectionAcceptor for ProxyAcceptor {
                 )
                 .await
                 .expect("open upstream connection");
-            let _ = vox::proxy_connections(incoming, upstream).await;
+            let _ = vox::proxy_lanes(incoming, upstream).await;
         });
         Ok(())
     }
 }
 
 #[tokio::test]
-async fn proxy_connections_forwards_calls() {
+async fn proxy_lanes_forwards_calls() {
     // guest-a <-> host <-> guest-b
     // guest-a opens a vconn through host, which proxies to guest-b.
     let (host_b_link, guest_b_link) = memory_link_pair(16);
@@ -61,7 +61,7 @@ async fn proxy_connections_forwards_calls() {
     let guest_b_task = tokio::spawn(async move {
         let guard = vox::acceptor_on(guest_b_link)
             .on_connection(EchoDispatcher::new(EchoService))
-            .establish::<vox::NoopClient>()
+            .establish_connection()
             .await
             .expect("guest-b establish");
         let _guard = guard;
@@ -70,10 +70,10 @@ async fn proxy_connections_forwards_calls() {
 
     // host <-> guest-b root session
     let _host_to_b = vox::initiator_on(host_b_link)
-        .establish::<vox::NoopClient>()
+        .establish_connection()
         .await
         .expect("host<->guest-b establish");
-    let host_to_b_session = _host_to_b.session.clone().unwrap();
+    let host_to_b_session = _host_to_b.clone();
 
     // host: accepts connections from guest-a and proxies to guest-b
     let host_for_a_task = tokio::spawn(async move {
@@ -81,7 +81,7 @@ async fn proxy_connections_forwards_calls() {
             .on_connection(ProxyAcceptor {
                 upstream_session: host_to_b_session,
             })
-            .establish::<vox::NoopClient>()
+            .establish_connection()
             .await
             .expect("host<->guest-a establish");
         let _guard = guard;
@@ -90,14 +90,14 @@ async fn proxy_connections_forwards_calls() {
 
     // guest-a <-> host root session
     let _guest_a_root = vox::initiator_on(guest_a_link)
-        .establish::<vox::NoopClient>()
+        .establish_connection()
         .await
         .expect("guest-a establish");
-    let guest_a_session = _guest_a_root.session.clone().unwrap();
+    let guest_a_session = _guest_a_root.clone();
 
     // Open a proxied vconn from guest-a through host to guest-b.
     let proxy_conn = guest_a_session
-        .open_connection(
+        .open_lane_handle(
             ConnectionSettings {
                 parity: Parity::Odd,
                 max_concurrent_requests: 64,
@@ -118,7 +118,7 @@ async fn proxy_connections_forwards_calls() {
     assert_eq!(result, 777);
 
     guest_a_session
-        .close_connection(proxy_conn_id, Default::default())
+        .close_lane(proxy_conn_id, Default::default())
         .await
         .expect("close proxy connection");
 

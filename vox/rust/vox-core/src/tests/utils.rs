@@ -5,16 +5,33 @@ use std::sync::{
 
 use facet::Facet;
 use vox_types::{
-    Conduit, ConduitRx, ConnectionSettings, Handler, HandshakeResult, Message, MessageFamily,
-    MessagePayload, Parity, Payload, ReplySink, RequestCall, RequestResponse, SelfRef, SessionRole,
-    Tx,
+    Conduit, ConduitRx, ConnectionRole, ConnectionSettings, Handler, HandshakeResult, Message,
+    MessageFamily, MessagePayload, Parity, Payload, ReplySink, RequestCall, RequestResponse,
+    SelfRef, Tx,
 };
 
 use crate::{BareConduit, DriverReplySink, memory_link_pair};
 
+#[derive(Clone)]
+pub(crate) struct TestLaneClient {
+    pub(crate) caller: crate::Caller,
+    pub(crate) connection: Option<crate::connection::ConnectionHandle>,
+}
+
+impl crate::FromVoxLane for TestLaneClient {
+    const SERVICE_NAME: &'static str = "Noop";
+
+    fn from_vox_lane(
+        caller: crate::Caller,
+        connection: Option<crate::connection::ConnectionHandle>,
+    ) -> Self {
+        Self { caller, connection }
+    }
+}
+
 pub(crate) fn test_acceptor_handshake() -> HandshakeResult {
     HandshakeResult {
-        role: SessionRole::Acceptor,
+        role: ConnectionRole::Acceptor,
         our_settings: ConnectionSettings {
             parity: Parity::Even,
             max_concurrent_requests: 64,
@@ -33,7 +50,7 @@ pub(crate) fn test_acceptor_handshake() -> HandshakeResult {
 
 pub(crate) fn test_initiator_handshake() -> HandshakeResult {
     HandshakeResult {
-        role: SessionRole::Initiator,
+        role: ConnectionRole::Initiator,
         our_settings: ConnectionSettings {
             parity: Parity::Odd,
             max_concurrent_requests: 64,
@@ -133,7 +150,7 @@ impl Handler<DriverReplySink> for EchoHandler {
     ) {
         let call = call.get();
         let args_bytes = match &call.args {
-            Payload::Encoded(bytes) => *bytes,
+            Payload::Encoded(bytes) => bytes,
             _ => panic!("expected incoming payload"),
         };
 
@@ -178,15 +195,15 @@ impl Handler<DriverReplySink> for BlockingHandler {
     }
 }
 
-use crate::session::{ConnectionAcceptor, ConnectionRequest, PendingConnection};
+use crate::connection::{LaneAcceptor, LaneRequest, PendingLane};
 
 pub(crate) struct EchoAcceptor;
 
-impl ConnectionAcceptor for EchoAcceptor {
+impl LaneAcceptor for EchoAcceptor {
     fn accept(
         &self,
-        _request: &ConnectionRequest,
-        connection: PendingConnection,
+        _request: &LaneRequest,
+        connection: PendingLane,
     ) -> Result<(), vox_types::Metadata> {
         connection.handle_with(EchoHandler);
         Ok(())

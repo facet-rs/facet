@@ -44,31 +44,32 @@ The output contains:
 
 - `GreeterClient` — typed caller
 - `GreeterHandler` interface — implement this on the server
-- `GreeterDispatcher` — wires a `GreeterHandler` into the vox session
+- `GreeterDispatcher` — wires a `GreeterHandler` into a service lane
 - `greeter_descriptor` — schema and method metadata used by the runtime
 
 ## 3) Use the generated client
 
 ```ts
-import { session } from "@bearcove/vox-core";
+import { connect } from "@bearcove/vox-core";
 import { wsConnector } from "@bearcove/vox-ws";
 import { GreeterClient } from "@acme/vox-generated/greeter.ts";
 
-const established = await session.initiator(wsConnector("ws://127.0.0.1:9000"));
-const client = new GreeterClient(established.rootConnection().caller());
+const conn = await connect(wsConnector("ws://127.0.0.1:9000"));
+const client = await conn.openLane(GreeterClient);
 
 const msg = await client.hello("world");
 console.log(msg);
 ```
 
 If the generated module exposes a `connectGreeter` helper (for WebSocket), you
-can also use that shorthand directly.
+can also use that lane-opening shorthand directly.
 
 ## 4) Use the generated dispatcher on the server
 
 ```ts
-import { session } from "@bearcove/vox-core";
-import { tcpConnector } from "@bearcove/vox-tcp";
+import net from "node:net";
+import { accept } from "@bearcove/vox-core";
+import { acceptTcp } from "@bearcove/vox-tcp";
 import { Driver } from "@bearcove/vox-core";
 import { GreeterDispatcher, type GreeterHandler } from "@acme/vox-generated/greeter.ts";
 
@@ -78,22 +79,28 @@ class GreeterService implements GreeterHandler {
   }
 }
 
-const established = await session.initiator(tcpConnector("127.0.0.1:9000"));
-const driver = new Driver(
-  established.rootConnection(),
-  new GreeterDispatcher(new GreeterService()),
-);
-await driver.run();
+const server = net.createServer((socket) => {
+  void (async () => {
+    const conn = await accept(acceptTcp(socket));
+    const driver = new Driver(
+      conn.lane(),
+      new GreeterDispatcher(new GreeterService()),
+    );
+    await driver.run();
+  })();
+});
+
+server.listen(9000, "127.0.0.1");
 ```
 
 ## 5) Connection loss and keepalive
 
-Vox sessions are bound to one conduit attachment. If that attachment breaks,
-the session ends and in-flight request attempts fail. Vox does not resume the
-session, replay requests, or automatically issue replacement calls.
+Vox connections are bound to one link attachment. If that attachment breaks,
+the connection ends and in-flight request attempts fail. Vox does not resume the
+connection, replay requests, or automatically issue replacement calls.
 
 Applications that want to recover after attachment loss should establish a new
-session and issue new calls explicitly.
+connection and issue new calls explicitly.
 
 ### Keepalive for silent drops
 
@@ -106,7 +113,7 @@ data can no longer flow.
 Enable keepalive to catch these silent drops:
 
 ```ts
-const established = await session.initiator(wsConnector("ws://api.example.com"), {
+const conn = await connect(wsConnector("ws://api.example.com"), {
   keepaliveIntervalMs: 15_000,   // send a Ping every 15 s
   keepaliveTimeoutMs:   5_000,   // give up if no Pong within 5 s
 });
@@ -114,7 +121,7 @@ const established = await session.initiator(wsConnector("ws://api.example.com"),
 
 Vox sends a protocol-level `Ping` message every `keepaliveIntervalMs`. If the
 peer does not reply with a `Pong` within `keepaliveTimeoutMs` (default: half
-the interval), the connection is forcibly closed and the session ends.
+the interval), the connection is forcibly closed.
 
 Choose values appropriate for your environment:
 
@@ -130,12 +137,12 @@ the interval as the timeout.
 ### Full production example
 
 ```ts
-import { session } from "@bearcove/vox-core";
+import { connect } from "@bearcove/vox-core";
 import { wsConnector } from "@bearcove/vox-ws";
 import { ApiClient } from "@acme/generated/api.ts";
 
-async function connect(): Promise<ApiClient> {
-  const established = await session.initiator(
+async function connectApi(): Promise<ApiClient> {
+  const conn = await connect(
     wsConnector("wss://api.example.com"),
     {
       // Detect silent drops (important on mobile).
@@ -144,14 +151,14 @@ async function connect(): Promise<ApiClient> {
     },
   );
 
-  return new ApiClient(established.rootConnection().caller());
+  return conn.openLane(ApiClient);
 }
 ```
 
 ## 6) Channels (streaming)
 
 Vox supports bidirectional streaming via typed channels. Channels are created
-as a `(Tx, Rx)` pair and one end is passed to a method call; the session
+as a `(Tx, Rx)` pair and one end is passed to a method call; the lane
 manages the lifetime automatically.
 
 **Important:** always initiate the call *before* consuming the channel. The
@@ -227,7 +234,7 @@ try {
   if (e instanceof RpcError) {
     switch (e.code) {
       case RpcErrorCode.CANCELLED:      /* request was cancelled */ break;
-      case RpcErrorCode.INDETERMINATE:  /* session broke mid-call — may or may not have executed */ break;
+      case RpcErrorCode.INDETERMINATE:  /* connection broke mid-call — may or may not have executed */ break;
       case RpcErrorCode.UNKNOWN_METHOD: /* server doesn't know this method */ break;
       default: /* other protocol error */ break;
     }
@@ -236,7 +243,7 @@ try {
 ```
 
 `INDETERMINATE` means the connection dropped while the call was in flight and
-the session could not confirm whether the server executed it. The runtime does
+the runtime could not confirm whether the server executed it. The runtime does
 not replay the call automatically; callers must decide whether to issue a new
 call.
 

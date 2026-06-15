@@ -67,19 +67,19 @@ extension Driver {
         }
     }
 
-    func makeConnection(
+    func makeLane(
         connectionId: UInt64,
         localSettings: ConnectionSettings,
         peerSettings: ConnectionSettings
-    ) -> Connection {
-        let handle = ConnectionHandle(
-            connectionId: connectionId,
+    ) -> Lane {
+        let handle = LaneHandle(
+            laneId: connectionId,
             commandTx: commandSender(),
             taskTx: taskQueueSender(connectionId: connectionId),
             role: roleForParity(localSettings.parity),
             maxConcurrentRequests: peerSettings.maxConcurrentRequests
         )
-        return Connection(handle: handle, schemaReceiveTracker: schemaReceiveTracker)
+        return Lane(handle: handle, schemaReceiveTracker: schemaReceiveTracker)
     }
 
     /// Get the task sender for handlers to send responses.
@@ -159,7 +159,7 @@ extension Driver {
         try await sendOrEnqueue(wireMsg)
     }
 
-    /// Handle a command from ConnectionHandle.
+    /// Handle a command from a lane or connection handle.
     /// r[impl rpc.caller]
     /// r[impl rpc.request]
     /// r[impl rpc.pipelining]
@@ -174,8 +174,8 @@ extension Driver {
                 return
             }
             if connectionId != 0 {
-                let isVirtualOpen = await virtualConnState.contains(connectionId)
-                guard isVirtualOpen else {
+                let isLaneOpen = await laneState.contains(connectionId)
+                guard isLaneOpen else {
                     responseTx(.failure(.connectionClosed))
                     return
                 }
@@ -271,13 +271,13 @@ extension Driver {
             if !installed {
                 timeoutTask.cancel()
             }
-        case .openConnection(let settings, let metadata, let dispatcher, let responseTx):
+        case .openLane(let settings, let metadata, let dispatcher, let responseTx):
             let isClosed = await state.isConnectionClosed()
             guard !isClosed else {
                 responseTx(.failure(.connectionClosed))
                 return
             }
-            guard !(await state.isRootInternallyClosed()) else {
+            guard !(await state.isControlLaneInternallyClosed()) else {
                 responseTx(.failure(.connectionClosed))
                 return
             }
@@ -288,10 +288,10 @@ extension Driver {
                 return
             }
 
-            let connId = await virtualConnState.allocateConnId()
-            await virtualConnState.addPendingOutbound(
+            let connId = await laneState.allocateLaneId()
+            await laneState.addPendingOutbound(
                 connId,
-                pending: PendingVirtualConnection(
+                pending: PendingOutboundLane(
                     localSettings: settings,
                     dispatcher: dispatcher,
                     responseTx: responseTx
@@ -303,25 +303,25 @@ extension Driver {
                     messageConnect(connectionId: connId, settings: settings, metadata: metadata)
                 )
             } catch {
-                let pending = await virtualConnState.takePendingOutbound(connId)
+                let pending = await laneState.takePendingOutbound(connId)
                 pending?.responseTx(.failure(.transportError(String(describing: error))))
             }
-        case .releaseConnection(let connectionId):
-            await handleConnectionLivenessRelease(connectionId: connectionId)
+        case .releaseLane(let laneId):
+            await handleLaneLivenessRelease(connectionId: laneId)
         }
     }
 
-    func handleConnectionLivenessRelease(connectionId: UInt64) async {
+    func handleLaneLivenessRelease(connectionId: UInt64) async {
         if connectionId == 0 {
             // r[impl rpc.caller.liveness.root-internal-close]
             // r[impl rpc.caller.liveness.root-teardown-condition]
-            await state.markRootInternallyClosed()
-            await finishIfRootClosedAndNoVirtualConnections()
+            await state.markControlLaneInternallyClosed()
+            await finishIfControlLaneClosedAndNoServiceLanes()
             return
         }
 
         // r[impl rpc.caller.liveness.last-drop-closes-connection]
-        guard await virtualConnState.removeConnection(connectionId) else {
+        guard await laneState.removeLane(connectionId) else {
             return
         }
         await failPendingResponses(connectionId: connectionId)
@@ -332,7 +332,7 @@ extension Driver {
             eventContinuation.finish()
             return
         }
-        await finishIfRootClosedAndNoVirtualConnections()
+        await finishIfControlLaneClosedAndNoServiceLanes()
     }
 
     func flushPendingCalls() async throws {

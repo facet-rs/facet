@@ -10,10 +10,10 @@ export type {
   Message,
   MessagePayload,
   ProtocolError,
-  ConnectionOpen,
-  ConnectionAccept,
-  ConnectionReject,
-  ConnectionClose,
+  LaneOpen,
+  LaneAccept,
+  LaneReject,
+  LaneClose,
   RequestMessage,
   RequestBody,
   RequestCall,
@@ -41,7 +41,7 @@ import type {
 } from "./wire.phon.generated.ts";
 
 // Branded id aliases (all `bigint` on the wire).
-export type ConnectionId = bigint;
+export type LaneId = bigint;
 export type RequestId = bigint;
 export type MethodId = bigint;
 export type ChannelId = bigint;
@@ -110,46 +110,46 @@ export function connectionSettings(
   };
 }
 
-export function messageProtocolError(description: string, connId: bigint = 0n): Message {
-  return { connection_id: connId, payload: { tag: "ProtocolError", value: { description } } };
+export function messageProtocolError(description: string, laneId: bigint = 0n): Message {
+  return { lane_id: laneId, payload: { tag: "ProtocolError", value: { description } } };
 }
 
-export function messagePing(nonce: bigint, connId: bigint = 0n): Message {
-  return { connection_id: connId, payload: { tag: "Ping", value: { nonce } } };
+export function messagePing(nonce: bigint, laneId: bigint = 0n): Message {
+  return { lane_id: laneId, payload: { tag: "Ping", value: { nonce } } };
 }
 
-export function messagePong(nonce: bigint, connId: bigint = 0n): Message {
-  return { connection_id: connId, payload: { tag: "Pong", value: { nonce } } };
+export function messagePong(nonce: bigint, laneId: bigint = 0n): Message {
+  return { lane_id: laneId, payload: { tag: "Pong", value: { nonce } } };
 }
 
-export function messageConnect(
-  connId: bigint,
+export function messageLaneOpen(
+  laneId: bigint,
   connection_settings: ConnectionSettings,
   metadata: Metadata = emptyMetadata(),
 ): Message {
   return {
-    connection_id: connId,
-    payload: { tag: "ConnectionOpen", value: { connection_settings, metadata } },
+    lane_id: laneId,
+    payload: { tag: "LaneOpen", value: { connection_settings, metadata } },
   };
 }
 
-export function messageAccept(
-  connId: bigint,
+export function messageLaneAccept(
+  laneId: bigint,
   connection_settings: ConnectionSettings,
   metadata: Metadata = emptyMetadata(),
 ): Message {
   return {
-    connection_id: connId,
-    payload: { tag: "ConnectionAccept", value: { connection_settings, metadata } },
+    lane_id: laneId,
+    payload: { tag: "LaneAccept", value: { connection_settings, metadata } },
   };
 }
 
-export function messageReject(connId: bigint, metadata: Metadata = emptyMetadata()): Message {
-  return { connection_id: connId, payload: { tag: "ConnectionReject", value: { metadata } } };
+export function messageLaneReject(laneId: bigint, metadata: Metadata = emptyMetadata()): Message {
+  return { lane_id: laneId, payload: { tag: "LaneReject", value: { metadata } } };
 }
 
-export function messageGoodbye(connId: bigint = 0n, metadata: Metadata = emptyMetadata()): Message {
-  return { connection_id: connId, payload: { tag: "ConnectionClose", value: { metadata } } };
+export function messageLaneClose(laneId: bigint = 0n, metadata: Metadata = emptyMetadata()): Message {
+  return { lane_id: laneId, payload: { tag: "LaneClose", value: { metadata } } };
 }
 
 export function messageRequest(
@@ -158,11 +158,11 @@ export function messageRequest(
   payload: Uint8Array,
   metadata: Metadata = emptyMetadata(),
   channels: bigint[] = [],
-  connId: bigint = 0n,
+  laneId: bigint = 0n,
   schemas: number[] = [],
 ): Message {
   return {
-    connection_id: connId,
+    lane_id: laneId,
     payload: {
       tag: "RequestMessage",
       value: {
@@ -180,11 +180,11 @@ export function messageResponse(
   requestId: bigint,
   payload: Uint8Array,
   metadata: Metadata = emptyMetadata(),
-  connId: bigint = 0n,
+  laneId: bigint = 0n,
   schemas: number[] = [],
 ): Message {
   return {
-    connection_id: connId,
+    lane_id: laneId,
     payload: {
       tag: "RequestMessage",
       value: {
@@ -199,12 +199,12 @@ export function messageSchema(
   methodId: bigint,
   direction: "args" | "response",
   schemas: number[],
-  connId: bigint = 0n,
+  laneId: bigint = 0n,
 ): Message {
   const bindingDirection: BindingDirection =
     direction === "args" ? { tag: "Args" } : { tag: "Response" };
   return {
-    connection_id: connId,
+    lane_id: laneId,
     payload: {
       tag: "SchemaMessage",
       value: {
@@ -218,11 +218,11 @@ export function messageSchema(
 
 export function messageCancel(
   requestId: bigint,
-  connId: bigint = 0n,
+  laneId: bigint = 0n,
   metadata: Metadata = emptyMetadata(),
 ): Message {
   return {
-    connection_id: connId,
+    lane_id: laneId,
     payload: {
       tag: "RequestMessage",
       value: { id: requestId, body: { tag: "Cancel", value: { metadata } } },
@@ -230,9 +230,9 @@ export function messageCancel(
   };
 }
 
-export function messageData(channelId: bigint, payload: Uint8Array, connId: bigint = 0n): Message {
+export function messageData(channelId: bigint, payload: Uint8Array, laneId: bigint = 0n): Message {
   return {
-    connection_id: connId,
+    lane_id: laneId,
     payload: {
       tag: "ChannelMessage",
       value: { id: channelId, body: { tag: "Item", value: { item: payload } } },
@@ -242,11 +242,11 @@ export function messageData(channelId: bigint, payload: Uint8Array, connId: bigi
 
 export function messageClose(
   channelId: bigint,
-  connId: bigint = 0n,
+  laneId: bigint = 0n,
   metadata: Metadata = emptyMetadata(),
 ): Message {
   return {
-    connection_id: connId,
+    lane_id: laneId,
     payload: {
       tag: "ChannelMessage",
       value: { id: channelId, body: { tag: "Close", value: { metadata } } },
@@ -256,11 +256,11 @@ export function messageClose(
 
 export function messageReset(
   channelId: bigint,
-  connId: bigint = 0n,
+  laneId: bigint = 0n,
   metadata: Metadata = emptyMetadata(),
 ): Message {
   return {
-    connection_id: connId,
+    lane_id: laneId,
     payload: {
       tag: "ChannelMessage",
       value: { id: channelId, body: { tag: "Reset", value: { metadata } } },
@@ -268,9 +268,9 @@ export function messageReset(
   };
 }
 
-export function messageCredit(channelId: bigint, additional: number, connId: bigint = 0n): Message {
+export function messageCredit(channelId: bigint, additional: number, laneId: bigint = 0n): Message {
   return {
-    connection_id: connId,
+    lane_id: laneId,
     payload: {
       tag: "ChannelMessage",
       value: { id: channelId, body: { tag: "GrantCredit", value: { additional } } },

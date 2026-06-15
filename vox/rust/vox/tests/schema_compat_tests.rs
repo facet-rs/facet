@@ -8,7 +8,7 @@
 
 use vox_core::{BareConduit, MemoryLink, acceptor_conduit, initiator_conduit, memory_link_pair};
 use vox_types::{
-    ConnectionSettings, HandshakeResult, MessageFamily, Parity, SessionRole, VoxError,
+    ConnectionRole, ConnectionSettings, HandshakeResult, MessageFamily, Parity, VoxError,
 };
 
 type MessageConduit = BareConduit<MessageFamily, MemoryLink>;
@@ -20,7 +20,7 @@ fn conduit_pair() -> (MessageConduit, MessageConduit) {
 
 fn test_acceptor_handshake(service: &'static str) -> HandshakeResult {
     HandshakeResult {
-        role: SessionRole::Acceptor,
+        role: ConnectionRole::Acceptor,
         our_settings: ConnectionSettings {
             parity: Parity::Even,
             max_concurrent_requests: 64,
@@ -39,7 +39,7 @@ fn test_acceptor_handshake(service: &'static str) -> HandshakeResult {
 
 fn test_initiator_handshake(service: &'static str) -> HandshakeResult {
     HandshakeResult {
-        role: SessionRole::Initiator,
+        role: ConnectionRole::Initiator,
         our_settings: ConnectionSettings {
             parity: Parity::Odd,
             max_concurrent_requests: 64,

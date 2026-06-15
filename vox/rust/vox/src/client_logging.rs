@@ -150,7 +150,36 @@ mod tests {
     };
 
     use super::{ClientLogging, ClientLoggingOptions, RedactedMetadata};
-    use crate::{MethodDescriptor, MethodId, meta_set, metadata};
+    use crate::{
+        LaneAcceptor, LaneRequest, Metadata, MethodDescriptor, MethodId, PendingLane, meta_set,
+        metadata,
+    };
+
+    #[derive(Clone)]
+    struct LoggingTestClient {
+        caller: crate::Caller,
+    }
+
+    impl crate::FromVoxLane for LoggingTestClient {
+        const SERVICE_NAME: &'static str = "Audit";
+
+        fn from_vox_lane(
+            caller: crate::Caller,
+            _connection: Option<crate::ConnectionHandle>,
+        ) -> Self {
+            Self { caller }
+        }
+    }
+
+    struct AuditLaneAcceptor;
+
+    impl LaneAcceptor for AuditLaneAcceptor {
+        fn accept(&self, request: &LaneRequest, lane: PendingLane) -> Result<(), Metadata> {
+            assert_eq!(request.service(), "Audit");
+            lane.handle_with(());
+            Ok(())
+        }
+    }
 
     // r[verify rpc.metadata.sigils]
     #[test]
@@ -181,26 +210,27 @@ mod tests {
         );
         let _guard = tracing::subscriber::set_default(subscriber);
 
-        // Set up a real in-memory connection and immediately close the server
-        // side so the client caller returns SendFailed.
+        // Set up a real in-memory connection, open the Audit service lane, and
+        // then close the server side so the client caller returns SendFailed.
         let (link_a, _break_a, link_b, break_b) = breakable_link_pair(16);
 
-        // Server side: establish and immediately close
         let server = tokio::spawn(async move {
-            let _caller = crate::acceptor_on(link_b)
-                .establish::<crate::NoopClient>()
+            let connection = crate::acceptor_on(link_b)
+                .on_connection(AuditLaneAcceptor)
+                .establish_connection()
                 .await
                 .expect("server establish");
-            // Close the link so the client gets an error on next call
-            break_b.close().await;
+            connection.closed().await;
         });
 
         // Client side: establish with the logging middleware
         let caller = crate::initiator_on(link_a)
-            .establish::<crate::NoopClient>()
+            .establish::<LoggingTestClient>()
             .await
             .expect("client establish");
 
+        // Close the link so the client gets an error on next call.
+        break_b.close().await;
         server.await.expect("server task");
 
         // Build a client with logging middleware

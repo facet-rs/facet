@@ -26,8 +26,9 @@ mod memory_link;
 #[cfg(not(target_arch = "wasm32"))]
 pub use memory_link::*;
 
-mod session;
-pub use session::*;
+#[path = "session/mod.rs"]
+mod connection;
+pub use connection::*;
 
 mod driver;
 pub use driver::*;

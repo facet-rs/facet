@@ -14,7 +14,7 @@ fn probe<T: Facet<'static>>(name: &str) {
 
 #[test]
 fn probe_vox_wire_types() {
-    probe::<ConnectionId>("ConnectionId");
+    probe::<LaneId>("LaneId");
     probe::<RequestCall>("RequestCall");
     probe::<MessagePayload>("MessagePayload");
     probe::<Message>("Message");
@@ -28,7 +28,7 @@ fn probe_vox_wire_types() {
 fn message_with_value_payload_roundtrips() {
     let args: u32 = 42;
     let msg = Message {
-        connection_id: ConnectionId(1),
+        lane_id: LaneId(1),
         payload: MessagePayload::RequestMessage(RequestMessage {
             id: RequestId(7),
             body: RequestBody::Call(RequestCall {
@@ -47,7 +47,7 @@ fn message_with_value_payload_roundtrips() {
     let bytes = vox_phon::to_vec(&msg).expect("encode Message");
 
     let decoded: Message = vox_phon::from_slice_borrowed(&bytes).expect("decode Message");
-    assert_eq!(decoded.connection_id, ConnectionId(1));
+    assert_eq!(decoded.lane_id, LaneId(1));
 
     let MessagePayload::RequestMessage(rm) = &decoded.payload else {
         panic!("expected RequestMessage, got {:?}", decoded.payload);

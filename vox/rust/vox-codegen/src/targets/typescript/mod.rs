@@ -198,15 +198,15 @@ fn generate_imports(service: &ServiceDescriptor, w: &mut CodeWriter<&mut String>
             || shape_contains_dynamic_value(m.return_shape)
     });
 
-    // Core runtime: descriptor types + Caller + session/conduit helpers
+    // Core runtime: descriptor types + Caller + connection/lane helpers
     cw_writeln!(
         w,
-        "import type {{ Caller, MethodDescriptor, ServiceDescriptor, VoxCall, Dispatcher, RequestContext, SessionTransportOptions }} from \"@bearcove/vox-core\";"
+        "import type {{ Caller, MethodDescriptor, ServiceDescriptor, VoxCall, Dispatcher, RequestContext, ConnectLaneOptions }} from \"@bearcove/vox-core\";"
     )
     .unwrap();
     cw_writeln!(
         w,
-        "import {{ session, voxServiceMetadata }} from \"@bearcove/vox-core\";"
+        "import {{ connectLane, voxServiceMetadata }} from \"@bearcove/vox-core\";"
     )
     .unwrap();
 
@@ -772,7 +772,7 @@ mod tests {
     // r[verify rpc.handler]
     // r[verify rpc.one-service-per-connection]
     // r[verify rpc.session-setup]
-    fn generated_typescript_emits_rpc_caller_handler_and_session_shapes() {
+    fn generated_typescript_emits_rpc_caller_handler_and_lane_shapes() {
         let echo = method_descriptor::<(String,), String>(
             "TestSvc",
             "echo",
@@ -810,6 +810,8 @@ mod tests {
         );
         assert!(
             generated.contains("export class TestSvcClient implements TestSvcCaller")
+                && generated.contains("static get descriptor(): ServiceDescriptor {")
+                && generated.contains("return testSvc_descriptor;")
                 && generated.contains("private caller: Caller;")
                 && generated.contains("const __voxResult = await this.caller.call({")
                 && generated.contains("method: \"TestSvc.echo\",")
@@ -818,11 +820,11 @@ mod tests {
             "generated TypeScript client must delegate request serialization/response handling to Caller:\n{generated}"
         );
         assert!(
-            generated.contains("const established = await session.initiator(wsConnector(url),")
-                && generated.contains("metadata: voxServiceMetadata(\"TestSvc\")")
-                && generated
-                    .contains("return new TestSvcClient(established.rootConnection().caller());"),
-            "generated TypeScript connect helper must build a client from the root connection caller:\n{generated}"
+            generated.contains("return connectLane(wsConnector(url), TestSvcClient, {")
+                && generated.contains(
+                    "laneMetadata: options.laneMetadata ?? voxServiceMetadata(\"TestSvc\"),"
+                ),
+            "generated TypeScript connect helper must open a service lane:\n{generated}"
         );
         assert!(
             generated.contains("export interface TestSvcHandler {")

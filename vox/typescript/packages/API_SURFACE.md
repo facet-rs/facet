@@ -6,8 +6,8 @@ This document defines the intended public entrypoints for TypeScript workspace p
 
 `@bearcove/vox-core` is the runtime/client package. Its root export is intentionally limited to:
 
-- Connection/handshake runtime (`Connection`, `ConnectionError`, `helloExchange*`, `defaultHello`)
-- Dispatcher and call plumbing (`ServiceDispatcher`, `ChannelingDispatcher`, `Caller`, `CallBuilder`, middleware types)
+- Connection/lane runtime (`Connection`, `ConnectionHandle`, `Lane`, `connect`, `accept`, `connectLane`, `ConnectionError`)
+- Dispatcher and call plumbing (`Driver`, `Dispatcher`, `Caller`, middleware types)
 - Generated-code channeling surface (`Tx`, `Rx`, `channel`, descriptor types)
 - Metadata helpers (`ClientMetadata`, conversions)
 - RPC error helpers (`RpcError`, `RpcErrorCode`, `decodeUserError`)
@@ -19,7 +19,7 @@ Low-level channel/schema internals are not part of the curated root API.
 `@bearcove/vox-tcp` is transport-focused. Its root export is intentionally limited to:
 
 - TCP framing/transport (`LengthPrefixedFramed`, `Server`, `ConnectOptions`)
-- Minimal connection surface needed by transport consumers (`Connection`, `ConnectionError`, `Negotiated`, `HelloExchangeOptions`)
+- Link sources and acceptors consumed by `@bearcove/vox-core` connection helpers
 
 Convenience re-exports of channel internals are intentionally excluded.
 

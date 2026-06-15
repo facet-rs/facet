@@ -17,13 +17,13 @@ use std::{
 };
 
 use facet::{Facet, PtrConst, Shape};
-use moire::sync::SyncMutex;
 pub use phon::api::{JitFallbackRecord, JitFallbackReport, MethodJitFallbackReport};
 use phon::derive::{Derived, of_shape};
 use phon_engine::{Registry, typed};
 use phon_ir::Lowered;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 use phon_ir::MemOp;
+use vox_rt::sync::SyncMutex;
 
 pub mod schema;
 pub use schema::{
@@ -381,7 +381,7 @@ mod tests {
     use phon_engine::typed;
     use spec_proto::DodecaParseResult;
     use vox_types::{
-        BindingDirection, ConnectionId, Message, MessagePayload, MethodId, Payload, RequestBody,
+        BindingDirection, LaneId, Message, MessagePayload, MethodId, Payload, RequestBody,
         RequestCall, RequestId, RequestMessage, SchemaBytes, SchemaMessage,
     };
 
@@ -591,7 +591,7 @@ mod tests {
     #[test]
     fn native_message_schema_message_encode_matches_interpreter() {
         let message = Message {
-            connection_id: ConnectionId(7),
+            lane_id: LaneId(7),
             payload: MessagePayload::SchemaMessage(SchemaMessage {
                 method_id: MethodId(0x0102_0304_0506_0708),
                 direction: BindingDirection::Args,
@@ -608,7 +608,7 @@ mod tests {
     fn native_message_request_call_encode_matches_interpreter() {
         let args = [0x18, 0x24, 0x42, 0x99];
         let message = Message {
-            connection_id: ConnectionId(7),
+            lane_id: LaneId(7),
             payload: MessagePayload::RequestMessage(RequestMessage {
                 id: RequestId(9),
                 body: RequestBody::Call(RequestCall {

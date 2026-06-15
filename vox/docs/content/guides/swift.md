@@ -66,38 +66,28 @@ Generated Swift output includes:
 
 ## 3) Wire a Swift client
 
-`GreeterClient` takes a `VoxConnection`.
+`GreeterClient` takes a `VoxLane`. A `Connection` owns the driven Vox runtime
+over one link; service clients are built on lanes opened from that connection.
 
 ```swift
 import Foundation
 import VoxRuntime
 
-struct NoopDispatcher: ServiceDispatcher {
-    func preregister(methodId: UInt64, payload: [UInt8], channels: [UInt64], registry: ChannelRegistry) async {}
-    func dispatch(
-        methodId: UInt64,
-        payload: [UInt8],
-        channels: [UInt64],
-        requestId: UInt64,
-        registry: ChannelRegistry,
-        taskTx: @escaping @Sendable (TaskMessage) -> Void
-    ) async {}
+let connection = try await Connection.connect(TcpConnector(host: "127.0.0.1", port: 9000))
+let driver = Task {
+    try await connection.run()
 }
 
-let transport = try await connect(host: "127.0.0.1", port: 9000)
-let (handle, driver) = try await establishInitiator(
-    transport: transport,
-    dispatcher: NoopDispatcher(),
-    acceptConnections: false
+let lane = try await connection.openLane(
+    settings: ConnectionSettings(parity: .even, maxConcurrentRequests: 64, initialChannelCredit: 16),
+    metadata: emptyMetadata().metaSetting("vox-service", .string("Greeter"))
 )
-
-Task {
-    try await driver.run()
-}
-
-let client = GreeterClient(connection: handle)
+let client = GreeterClient(connection: lane)
 let reply = try await client.hello(name: "world")
 print(reply)
+
+connection.shutdown()
+try await driver.value
 ```
 
 ## 4) Wire a Swift server
@@ -143,16 +133,16 @@ final class GreeterDispatcherAdapter: ServiceDispatcher {
 }
 ```
 
-Then establish as acceptor and run the driver:
+Then establish as acceptor and run the connection:
 
 ```swift
-let transport = try await connect(host: "127.0.0.1", port: 9000)
-let (_, driver) = try await establishAcceptor(
-    transport: transport,
-    dispatcher: GreeterDispatcherAdapter(handler: MyGreeterService()),
-    acceptConnections: true
+let connection = try await Connection.accept(
+    TcpAcceptor(host: "127.0.0.1", port: 9000),
+    onLane: DefaultLaneAcceptor(
+        dispatcher: GreeterDispatcherAdapter(handler: MyGreeterService())
+    )
 )
-try await driver.run()
+try await connection.run()
 ```
 
 ## 5) Keep codegen and runtime versions aligned

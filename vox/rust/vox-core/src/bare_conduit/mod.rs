@@ -189,7 +189,7 @@ where
     type Msg = F;
     type Error = BareConduitError;
 
-    #[moire::instrument]
+    #[vox_rt::instrument]
     async fn recv(&mut self) -> Result<Option<SelfRef<F::Msg<'static>>>, Self::Error> {
         let backing = match self.link_rx.recv().await.map_err(|error| {
             BareConduitError::Io(std::io::Error::other(format!("link recv failed: {error}")))
@@ -270,10 +270,10 @@ mod tests {
         let (a_tx, _a_rx) = a_conduit.split();
         let (_b_tx, mut b_rx) = b_conduit.split();
 
-        // Send a ConnectionReject with non-empty metadata
+        // Send a LaneReject with non-empty metadata
         let msg = Message {
-            connection_id: ConnectionId(1),
-            payload: MessagePayload::ConnectionReject(ConnectionReject {
+            lane_id: LaneId(1),
+            payload: MessagePayload::LaneReject(LaneReject {
                 metadata: metadata()
                     .str("error", "missing required vox-service metadata")
                     .build(),
@@ -285,14 +285,14 @@ mod tests {
         // Receive and verify
         let received = b_rx.recv().await.unwrap().unwrap();
         let msg = received.get();
-        if let MessagePayload::ConnectionReject(reject) = &msg.payload {
+        if let MessagePayload::LaneReject(reject) = &msg.payload {
             assert_eq!(reject.metadata.meta_len(), 1, "expected 1 metadata entry");
             assert_eq!(
                 reject.metadata.meta_str("error"),
                 Some("missing required vox-service metadata"),
             );
         } else {
-            panic!("expected ConnectionReject, got {:?}", msg.payload);
+            panic!("expected LaneReject, got {:?}", msg.payload);
         }
     }
 }

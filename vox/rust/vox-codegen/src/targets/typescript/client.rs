@@ -88,6 +88,9 @@ pub fn generate_client_impl(service: &ServiceDescriptor) -> String {
     out.push_str(&format!(
         "export class {service_name}Client implements {service_name}Caller {{\n"
     ));
+    out.push_str("  static get descriptor(): ServiceDescriptor {\n");
+    out.push_str(&format!("    return {service_name_lower}_descriptor;\n"));
+    out.push_str("  }\n\n");
     out.push_str("  private caller: Caller;\n\n");
     out.push_str("  constructor(caller: Caller) {\n");
     out.push_str("    this.caller = caller;\n");
@@ -190,14 +193,11 @@ pub fn generate_connect_function(service: &ServiceDescriptor) -> String {
     ));
     out.push_str(" */\n");
     out.push_str(&format!(
-        "export async function connect{service_name}(\n  url: string,\n  options: SessionTransportOptions = {{}},\n): Promise<{service_name}Client> {{\n"
+        "export async function connect{service_name}(\n  url: string,\n  options: ConnectLaneOptions = {{}},\n): Promise<{service_name}Client> {{\n"
     ));
     out.push_str(&format!(
-        "  const established = await session.initiator(wsConnector(url), {{ ...options, metadata: voxServiceMetadata(\"{}\") }});\n",
+        "  return connectLane(wsConnector(url), {service_name}Client, {{\n    ...options,\n    laneMetadata: options.laneMetadata ?? voxServiceMetadata(\"{}\"),\n  }});\n",
         service.service_name
-    ));
-    out.push_str(&format!(
-        "  return new {service_name}Client(established.rootConnection().caller());\n"
     ));
     out.push_str("}\n\n");
     out

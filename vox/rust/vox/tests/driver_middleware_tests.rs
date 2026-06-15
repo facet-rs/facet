@@ -66,7 +66,7 @@ async fn middleware_hooks_fire_in_order() {
     let server = tokio::spawn(async move {
         vox::acceptor_on(server_link)
             .on_connection(EchoDispatcher::new(EchoService))
-            .establish::<vox::NoopClient>()
+            .establish_connection()
             .await
             .expect("server establish")
     });
@@ -142,7 +142,7 @@ async fn middleware_can_inject_metadata() {
     let server = tokio::spawn(async move {
         vox::acceptor_on(server_link)
             .on_connection(MetadataProbeDispatcher::new(MetadataProbeService))
-            .establish::<vox::NoopClient>()
+            .establish_connection()
             .await
             .expect("server establish")
     });

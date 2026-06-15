@@ -6,6 +6,7 @@
 //! args tuple and response wire type (`Result<T, VoxError<E>>`), plus the merged
 //! `{service}Registry`.
 
+use base64::{Engine, engine::general_purpose::STANDARD};
 use facet_core::Shape;
 use heck::ToLowerCamelCase;
 use vox_types::{ServiceDescriptor, ShapeKind, classify_shape, is_rx, is_tx};
@@ -29,12 +30,12 @@ fn root_id(shape: &'static Shape) -> u64 {
         .0
 }
 
-/// A shape's schema closure bytes as a Swift `[UInt8]` literal body.
+/// A shape's schema closure bytes as a Swift expression yielding `[UInt8]`.
 // r[impl schema.principles.once-per-type]
 // r[impl schema.format.self-contained]
 // r[impl schema.tracking.transitive]
 // r[impl schema.format.binding-roots]
-fn closure_bytes(shape: &'static Shape, auxiliary_roots: &[(String, &'static Shape)]) -> String {
+fn closure_expr(shape: &'static Shape, auxiliary_roots: &[(String, &'static Shape)]) -> String {
     let auxiliary_roots: Vec<(&str, &'static Shape)> = auxiliary_roots
         .iter()
         .map(|(role, shape)| (role.as_str(), *shape))
@@ -45,11 +46,15 @@ fn closure_bytes(shape: &'static Shape, auxiliary_roots: &[(String, &'static Sha
         vox_phon::schema_bytes_for_shape_with_auxiliary_roots(shape, &auxiliary_roots)
             .expect("phon schema bytes")
     };
-    bytes
-        .iter()
-        .map(u8::to_string)
-        .collect::<Vec<_>>()
-        .join(", ")
+    let encoded = STANDARD.encode(bytes);
+    let mut out = String::from("voxSchemaClosure(\"\"\"\n");
+    for chunk in encoded.as_bytes().chunks(100) {
+        out.push_str("          ");
+        out.push_str(std::str::from_utf8(chunk).expect("base64 is utf-8"));
+        out.push('\n');
+    }
+    out.push_str("          \"\"\")");
+    out
 }
 
 // r[impl schema.exchange.channels]
@@ -107,6 +112,16 @@ pub fn generate_phon_service(service: &ServiceDescriptor) -> String {
     out.push_str(
         "// MARK: - phon service schemas (registry + per-method roots/descriptors/channels)\n\n",
     );
+    out.push_str(
+        r#"private func voxSchemaClosure(_ base64: String) -> [UInt8] {
+    guard let data = Data(base64Encoded: base64, options: .ignoreUnknownCharacters) else {
+        preconditionFailure("invalid generated phon schema closure")
+    }
+    return [UInt8](data)
+}
+
+"#,
+    );
 
     // Per-method descriptor globals (the args tuple + the `Result<T, VoxError<E>>`
     // wire type). Built once; immutable — `nonisolated(unsafe)` like the envelope.
@@ -144,15 +159,15 @@ pub fn generate_phon_service(service: &ServiceDescriptor) -> String {
         let ok_root = root_id(ok_shape(m.return_shape));
         let response_root = root_id(m.response_wire_shape);
         let channel_auxiliary_roots = channel_auxiliary_roots(m);
-        let args_closure = closure_bytes(m.args_shape, &channel_auxiliary_roots);
-        let response_closure = closure_bytes(m.response_wire_shape, &[]);
+        let args_closure = closure_expr(m.args_shape, &channel_auxiliary_roots);
+        let response_closure = closure_expr(m.response_wire_shape, &[]);
 
         out.push_str(&format!("    {}: PhonMethodSchemas(\n", hex_u64(method_id)));
         out.push_str(&format!(
             "        argsRoot: SchemaId({}),\n",
             hex_u64(args_root)
         ));
-        out.push_str(&format!("        argsSchemaClosure: [{args_closure}],\n"));
+        out.push_str(&format!("        argsSchemaClosure: {args_closure},\n"));
         out.push_str(&format!(
             "        argsDescriptor: {name}_{mname}_ArgsDescriptor,\n"
         ));
@@ -168,7 +183,7 @@ pub fn generate_phon_service(service: &ServiceDescriptor) -> String {
             hex_u64(response_root)
         ));
         out.push_str(&format!(
-            "        responseSchemaClosure: [{response_closure}],\n"
+            "        responseSchemaClosure: {response_closure},\n"
         ));
         out.push_str(&format!(
             "        responseDescriptor: {name}_{mname}_ResponseDescriptor,\n"
@@ -195,9 +210,9 @@ pub fn generate_phon_service(service: &ServiceDescriptor) -> String {
                 }
                 first = false;
                 out.push_str(&format!(
-                    "PhonChannelMeta(index: {i}, isTx: {is_tx_dir}, elementRoot: SchemaId({}), elementSchemaClosure: [{}])",
+                    "PhonChannelMeta(index: {i}, isTx: {is_tx_dir}, elementRoot: SchemaId({}), elementSchemaClosure: {})",
                     hex_u64(root_id(element)),
-                    closure_bytes(element, &[])
+                    closure_expr(element, &[])
                 ));
             }
         }

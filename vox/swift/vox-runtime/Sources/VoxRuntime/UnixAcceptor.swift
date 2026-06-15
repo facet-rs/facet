@@ -9,7 +9,7 @@ import Foundation
 /// and keeps accepting connections across multiple `openAttachment()` calls.
 /// r[impl transport.stream.local]
 /// r[impl transport.stream.kinds]
-public final class UnixAcceptor: SessionConnector, Sendable {
+public final class UnixAcceptor: ConnectionConnector, Sendable {
     public let path: String
 
     private let state: AcceptorState

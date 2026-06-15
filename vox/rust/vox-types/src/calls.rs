@@ -1,8 +1,8 @@
 use std::{future::Future, pin::Pin, sync::Arc};
 
 use crate::{
-    ConnectionId, MaybeSend, MaybeSendFuture, MaybeSync, Metadata, MethodId, RequestCall,
-    RequestId, RequestResponse, SchemaRecvTracker, SelfRef, VoxError,
+    LaneId, MaybeSend, MaybeSendFuture, MaybeSync, Metadata, MethodId, RequestCall, RequestId,
+    RequestResponse, SchemaRecvTracker, SelfRef, VoxError,
 };
 
 /// A boxed future that is `Send` on native targets and `!Send` on wasm32.
@@ -206,7 +206,7 @@ pub trait ReplySink: MaybeSend + MaybeSync + 'static {
     }
 
     /// Return the virtual connection identifier for this reply sink when available.
-    fn connection_id(&self) -> Option<ConnectionId> {
+    fn connection_id(&self) -> Option<LaneId> {
         None
     }
 }

@@ -68,7 +68,7 @@ private actor RecordingConduit: Conduit {
     }
 }
 
-private struct NoopDispatcher: ServiceDispatcher {
+private struct EmptyServiceDispatcher: ServiceDispatcher {
     func encodeVoxError(_: VoxRuntimeError) -> [UInt8] {
         []
     }
@@ -191,9 +191,9 @@ func schemaTrackerDecodePlanFailureIsBindingLocal() {
 // r[verify schema.exchange.required]
 func callerAdvertisesArgsSchemaWithFirstRequestOnConnection() async throws {
     let conduit = RecordingConduit()
-    let (_, driver) = makeDriverAndConnection(
+    let (_, driver) = makeDriverAndLane(
         conduit: conduit,
-        dispatcher: NoopDispatcher(),
+        dispatcher: EmptyServiceDispatcher(),
         role: .initiator,
         negotiated: Negotiated(
             maxPayloadSize: 1024,
@@ -253,9 +253,9 @@ func callerAdvertisesArgsSchemaWithFirstRequestOnConnection() async throws {
 // r[verify schema.exchange.required]
 func calleeAdvertisesResponseSchemaWithFirstResponseOnConnection() async throws {
     let conduit = RecordingConduit()
-    let (_, driver) = makeDriverAndConnection(
+    let (_, driver) = makeDriverAndLane(
         conduit: conduit,
-        dispatcher: NoopDispatcher(),
+        dispatcher: EmptyServiceDispatcher(),
         role: .acceptor,
         negotiated: Negotiated(
             maxPayloadSize: 1024,

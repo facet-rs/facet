@@ -21,7 +21,7 @@ default = []
 diagnostics = []
 
 [dependencies]
-moire.workspace = true
+vox-rt.workspace = true
 vox-core.workspace = true
 vox-types.workspace = true
 tracing.workspace = true

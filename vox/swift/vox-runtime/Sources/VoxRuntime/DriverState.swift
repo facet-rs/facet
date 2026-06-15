@@ -26,7 +26,7 @@ actor DriverState {
     var inFlightResponseContext: [UInt64: InFlightResponseContext] = [:]
     private var finalizedRequests: [UInt64: FinalizedRequest] = [:]
     var isClosed = false
-    private var rootInternallyClosed = false
+    private var controlLaneInternallyClosed = false
 
     func addPendingResponse(
         _ requestId: UInt64,
@@ -174,25 +174,26 @@ actor DriverState {
         isClosed
     }
 
-    func markRootInternallyClosed() {
-        rootInternallyClosed = true
+    func markControlLaneInternallyClosed() {
+        controlLaneInternallyClosed = true
     }
 
-    func isRootInternallyClosed() -> Bool {
-        rootInternallyClosed
+    func isControlLaneInternallyClosed() -> Bool {
+        controlLaneInternallyClosed
     }
 }
 
-/// Actor for virtual connection state.
-actor VirtualConnectionState {
-    struct VirtualConnectionRecord: Sendable {
+/// Actor for service-lane state.
+actor LaneState {
+    struct LaneRecord: Sendable {
         let dispatcher: any ServiceDispatcher
         let localSettings: ConnectionSettings
+        let channelRegistry: ChannelRegistry
     }
 
     private var nextConnId: UInt64
-    private var virtualConnections: [UInt64: VirtualConnectionRecord] = [:]
-    private var pendingOutbound: [UInt64: PendingVirtualConnection] = [:]
+    private var lanes: [UInt64: LaneRecord] = [:]
+    private var pendingOutbound: [UInt64: PendingOutboundLane] = [:]
 
     init(role: Role) {
         nextConnId = firstId(for: role)
@@ -200,45 +201,47 @@ actor VirtualConnectionState {
 
     // r[impl connection.open]
     // r[impl connection.parity]
-    func allocateConnId() -> UInt64 {
+    func allocateLaneId() -> UInt64 {
         let id = nextConnId
         nextConnId += 2
         return id
     }
 
     func contains(_ connId: UInt64) -> Bool {
-        virtualConnections[connId] != nil || pendingOutbound[connId] != nil
+        lanes[connId] != nil || pendingOutbound[connId] != nil
     }
 
-    func addConnection(
+    func addLane(
         _ connId: UInt64,
         dispatcher: any ServiceDispatcher,
-        localSettings: ConnectionSettings
+        localSettings: ConnectionSettings,
+        channelRegistry: ChannelRegistry
     ) {
-        virtualConnections[connId] = VirtualConnectionRecord(
+        lanes[connId] = LaneRecord(
             dispatcher: dispatcher,
-            localSettings: localSettings
+            localSettings: localSettings,
+            channelRegistry: channelRegistry
         )
     }
 
     @discardableResult
-    func removeConnection(_ connId: UInt64) -> Bool {
-        virtualConnections.removeValue(forKey: connId) != nil
+    func removeLane(_ connId: UInt64) -> Bool {
+        lanes.removeValue(forKey: connId) != nil
     }
 
-    func connection(for connId: UInt64) -> VirtualConnectionRecord? {
-        virtualConnections[connId]
+    func lane(for connId: UInt64) -> LaneRecord? {
+        lanes[connId]
     }
 
     func isEmpty() -> Bool {
-        virtualConnections.isEmpty && pendingOutbound.isEmpty
+        lanes.isEmpty && pendingOutbound.isEmpty
     }
 
-    func addPendingOutbound(_ connId: UInt64, pending: PendingVirtualConnection) {
+    func addPendingOutbound(_ connId: UInt64, pending: PendingOutboundLane) {
         pendingOutbound[connId] = pending
     }
 
-    func takePendingOutbound(_ connId: UInt64) -> PendingVirtualConnection? {
+    func takePendingOutbound(_ connId: UInt64) -> PendingOutboundLane? {
         pendingOutbound.removeValue(forKey: connId)
     }
 }

@@ -4853,6 +4853,16 @@ func sameDibsMigrateResult(_ lhs: DibsMigrateResult, _ rhs: DibsMigrateResult) -
 
 // MARK: - Server Mode
 
+private func serviceLaneMetadata(_ service: String) -> Metadata {
+    var metadata: Metadata = .null
+    metadata.metaSet("vox-service", .string(service))
+    return metadata
+}
+
+private func defaultLaneSettings() -> ConnectionSettings {
+    ConnectionSettings(parity: .odd, maxConcurrentRequests: 64, initialChannelCredit: 16)
+}
+
 /// In "server" mode, the subject acts as the RPC server (handler).
 /// But it CONNECTS TO the test harness (specified by PEER_ADDR).
 func runServer() async throws {
@@ -4866,10 +4876,7 @@ func runServer() async throws {
     let acceptConnections = ProcessInfo.processInfo.environment["ACCEPT_CONNECTIONS"] != "0"
     log("server mode: connecting to \(addr), acceptConnections=\(acceptConnections)")
 
-    var rootMetadata: Metadata = .null
-    rootMetadata.metaSet("vox-service", .string("Testbed"))
-    rootMetadata.metaSet("vox-connection-kind", .string("root"))
-    let session: Session
+    let connection: Connection
     if addr.hasPrefix("local://") {
         let path = String(addr.dropFirst("local://".count))
         guard !path.isEmpty else {
@@ -4877,12 +4884,10 @@ func runServer() async throws {
             throw SubjectError.invalidAddr
         }
         let connector = UnixConnector(path: path)
-        session = try await Session.initiator(
+        connection = try await Connection.connect(
             connector,
-            dispatcher: dispatcher,
-            onConnection: acceptConnections
-                ? DefaultConnectionAcceptor(dispatcher: dispatcher) : nil,
-            metadata: rootMetadata
+            onLane: acceptConnections
+                ? DefaultLaneAcceptor(dispatcher: dispatcher) : nil
         )
     } else {
         let parts = addr.split(separator: ":")
@@ -4892,27 +4897,23 @@ func runServer() async throws {
         }
         let host = String(parts[0])
         let connector = TcpConnector(host: host, port: port)
-        session = try await Session.initiator(
+        connection = try await Connection.connect(
             connector,
-            dispatcher: dispatcher,
-            onConnection: acceptConnections
-                ? DefaultConnectionAcceptor(dispatcher: dispatcher) : nil,
-            metadata: rootMetadata
+            onLane: acceptConnections
+                ? DefaultLaneAcceptor(dispatcher: dispatcher) : nil
         )
     }
 
-    let rootConnection = session.rootConnection
-    _ = rootConnection
     do {
         // r[impl hosted.subject.lifecycle]
-        try await session.run()
+        try await connection.run()
     } catch {
         // r[impl hosted.subject.lifecycle]
-        session.handle.shutdown()
+        connection.handle.shutdown()
         throw error
     }
     // r[impl hosted.subject.lifecycle]
-    session.handle.shutdown()
+    connection.handle.shutdown()
 }
 
 // MARK: - Client Mode
@@ -6242,9 +6243,9 @@ func runClient() async throws {
     let handler = TestbedService()
     let dispatcher = TestbedDispatcher(handler: handler)
 
-    let session = try await Session.initiator(
+    let connection = try await Connection.connect(
         connector,
-        dispatcher: dispatcher
+        onLane: DefaultLaneAcceptor(dispatcher: dispatcher)
     )
 
     log("handshake complete")
@@ -6253,25 +6254,29 @@ func runClient() async throws {
     let driverTask = Task {
         do {
             // r[impl hosted.subject.lifecycle]
-            try await session.run()
+            try await connection.run()
         } catch {
             log("driver error: \(error)")
         }
     }
 
     // Create client
-    let client = TestbedClient(connection: session.connection)
+    let lane = try await connection.openLane(
+        settings: defaultLaneSettings(),
+        metadata: serviceLaneMetadata("Testbed")
+    )
+    let client = TestbedClient(connection: lane)
     let scenario = ProcessInfo.processInfo.environment["CLIENT_SCENARIO"] ?? "echo"
     do {
         try await runClientScenario(client: client, scenario: scenario)
     } catch {
         // r[impl hosted.subject.lifecycle]
-        session.handle.shutdown()
+        connection.handle.shutdown()
         await driverTask.value
         throw error
     }
     // r[impl hosted.subject.lifecycle]
-    session.handle.shutdown()
+    connection.handle.shutdown()
     await driverTask.value
 }
 
@@ -6281,22 +6286,21 @@ func runServerListen() async throws {
     let acceptConnections = ProcessInfo.processInfo.environment["ACCEPT_CONNECTIONS"] == "1"
     let handler = TestbedService()
     let dispatcher = TestbedDispatcher(handler: handler)
-    let session = try await Session.acceptor(
+    let connection = try await Connection.accept(
         acceptor,
-        dispatcher: dispatcher,
-        onConnection: acceptConnections
-            ? DefaultConnectionAcceptor(dispatcher: dispatcher) : nil
+        onLane: acceptConnections
+            ? DefaultLaneAcceptor(dispatcher: dispatcher) : nil
     )
     do {
         // r[impl hosted.subject.lifecycle]
-        try await session.run()
+        try await connection.run()
     } catch {
         // r[impl hosted.subject.lifecycle]
-        session.handle.shutdown()
+        connection.handle.shutdown()
         throw error
     }
     // r[impl hosted.subject.lifecycle]
-    session.handle.shutdown()
+    connection.handle.shutdown()
 }
 
 // MARK: - Errors

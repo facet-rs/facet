@@ -37,20 +37,17 @@ public protocol ServiceDispatcher: Sendable {
     ) async
 }
 
-/// A `ServiceDispatcher` that serves nothing — every call returns `unknownMethod`.
-///
-/// Use it to anchor a connection that exists only as a session base: the common case is the
-/// root connection when the real services live on virtual connections opened via
-/// `SessionHandle.openConnection`. Pairs with `NoopClient` on the peer.
-public struct NoopDispatcher: ServiceDispatcher {
-    public init() {}
+/// Internal dispatcher for the reserved control lane while the Swift runtime still
+/// bridges onto the current wire messages.
+struct ConnectionControlDispatcher: ServiceDispatcher {
+    init() {}
 
-    public func encodeVoxError(_: VoxRuntimeError) -> [UInt8] {
-        // The Noop service has no methods, so a real error response is never produced.
+    func encodeVoxError(_: VoxRuntimeError) -> [UInt8] {
+        // The control lane has no public service methods.
         []
     }
 
-    public func preregister(
+    func preregister(
         methodId _: UInt64,
         payload _: [UInt8],
         channels: [UInt64],
@@ -61,7 +58,7 @@ public struct NoopDispatcher: ServiceDispatcher {
         }
     }
 
-    public func dispatch(
+    func dispatch(
         methodId: UInt64,
         payload _: [UInt8],
         requestId: UInt64,

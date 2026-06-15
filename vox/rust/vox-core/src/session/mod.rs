@@ -7,15 +7,15 @@ use std::{
 };
 
 use facet_core::Shape;
-use moire::sync::mpsc;
 use tokio::sync::{mpsc as tokio_mpsc, oneshot as tokio_oneshot, watch};
 use tracing::{trace, warn};
+use vox_rt::sync::mpsc;
 use vox_types::{
-    BoxFut, ChannelMessage, ConduitRx, ConduitTx, ConnectionAccept, ConnectionClose, ConnectionId,
-    ConnectionOpen, ConnectionReject, ConnectionSettings, Handler, HandshakeResult, IdAllocator,
-    MaybeSend, MaybeSync, Message, MessageFamily, MessagePayload, Metadata, Parity, RequestBody,
-    RequestId, RequestMessage, RequestResponse, SchemaMessage, SelfRef, SessionRole, TrySendError,
-    VoxDebugSnapshot, VoxObserverHandle,
+    BoxFut, ChannelMessage, ConduitRx, ConduitTx, ConnectionRole, ConnectionSettings, Handler,
+    HandshakeResult, IdAllocator, LaneAccept, LaneClose, LaneId, LaneOpen, LaneReject, MaybeSend,
+    MaybeSync, Message, MessageFamily, MessagePayload, Metadata, Parity, RequestBody, RequestId,
+    RequestMessage, RequestResponse, SchemaMessage, SelfRef, TrySendError, VoxDebugSnapshot,
+    VoxObserverHandle,
 };
 use vox_types::{
     ConnectionCloseReason, ConnectionDebugSnapshot, ConnectionDebugState, DecodeErrorKind,
@@ -25,9 +25,9 @@ use vox_types::{
 mod builders;
 pub use builders::*;
 
-/// Session-level protocol keepalive configuration.
+/// Connection-level protocol keepalive configuration.
 #[derive(Debug, Clone, Copy)]
-pub struct SessionKeepaliveConfig {
+pub struct ConnectionKeepaliveConfig {
     pub ping_interval: Duration,
     pub pong_timeout: Duration,
 }
@@ -38,19 +38,19 @@ pub struct SessionKeepaliveConfig {
 
 /// Metadata wrapper with typed getters for well-known `vox-*` keys.
 ///
-/// Passed to [`ConnectionAcceptor::accept`] when a peer opens a connection.
-pub struct ConnectionRequest<'a> {
+/// Passed to [`LaneAcceptor::accept`] when a peer opens a connection.
+pub struct LaneRequest<'a> {
     metadata: &'a vox_types::Metadata,
     service: &'a str,
 }
 
-impl<'a> ConnectionRequest<'a> {
+impl<'a> LaneRequest<'a> {
     /// Build a connection request from metadata.
     ///
     /// Returns an error if the required `vox-service` metadata key is missing.
-    pub fn new(metadata: &'a vox_types::Metadata) -> Result<Self, SessionError> {
+    pub fn new(metadata: &'a vox_types::Metadata) -> Result<Self, ConnectionError> {
         let service = vox_types::metadata_get_str(metadata, "vox-service").ok_or_else(|| {
-            SessionError::Protocol("missing required vox-service metadata".into())
+            ConnectionError::Protocol("missing required vox-service metadata".into())
         })?;
         Ok(Self { metadata, service })
     }
@@ -101,110 +101,79 @@ impl<'a> ConnectionRequest<'a> {
 /// The acceptor receives this and decides its fate by calling one of:
 /// - `handle_with(handler)` — run a Driver with this handler (common case)
 /// - `proxy_to(other_handle)` — pipe messages to/from another connection
-/// - `into_handle()` — take the raw ConnectionHandle for custom use
-pub struct PendingConnection {
-    handle: Option<ConnectionHandle>,
-    caller_slot: Option<Arc<std::sync::Mutex<Option<crate::Caller>>>>,
+/// - `into_handle()` — take the raw LaneHandle for custom use
+pub struct PendingLane {
+    handle: Option<LaneHandle>,
 }
 
-impl PendingConnection {
-    fn new(handle: ConnectionHandle) -> Self {
+impl PendingLane {
+    fn new(handle: LaneHandle) -> Self {
         Self {
             handle: Some(handle),
-            caller_slot: None,
-        }
-    }
-
-    /// Create a PendingConnection that captures the Caller when handle_with is called.
-    fn with_caller_slot(
-        handle: ConnectionHandle,
-        caller_slot: Arc<std::sync::Mutex<Option<crate::Caller>>>,
-    ) -> Self {
-        Self {
-            handle: Some(handle),
-            caller_slot: Some(caller_slot),
         }
     }
 
     /// Accept this connection and run a Driver with the given handler.
     pub fn handle_with(mut self, handler: impl Handler<crate::DriverReplySink> + 'static) {
-        let handle = self
-            .handle
-            .take()
-            .expect("PendingConnection already consumed");
+        let handle = self.handle.take().expect("PendingLane already consumed");
         let conn_id = handle.connection_id();
-        trace!(%conn_id, "PendingConnection::handle_with: creating driver");
+        trace!(%conn_id, "PendingLane::handle_with: creating driver");
         let mut driver = crate::Driver::new(handle, handler);
-        if let Some(slot) = &self.caller_slot {
-            let caller = crate::Caller::new(driver.caller());
-            *slot.lock().unwrap() = Some(caller);
-        }
         #[cfg(not(target_arch = "wasm32"))]
         tokio::spawn(async move {
-            trace!(%conn_id, "PendingConnection driver starting");
+            trace!(%conn_id, "PendingLane driver starting");
             driver.run().await;
-            trace!(%conn_id, "PendingConnection driver exited");
+            trace!(%conn_id, "PendingLane driver exited");
         });
         #[cfg(target_arch = "wasm32")]
         wasm_bindgen_futures::spawn_local(async move { driver.run().await });
     }
 
     /// Accept this connection, run a Driver, and return a typed client for the peer.
-    pub fn handle_with_client<C: crate::FromVoxSession>(
+    pub fn handle_with_client<C: crate::FromVoxLane>(
         mut self,
         handler: impl Handler<crate::DriverReplySink> + 'static,
     ) -> C {
-        let handle = self
-            .handle
-            .take()
-            .expect("PendingConnection already consumed");
+        let handle = self.handle.take().expect("PendingLane already consumed");
         let conn_id = handle.connection_id();
-        trace!(%conn_id, "PendingConnection::handle_with_client: creating driver");
+        trace!(%conn_id, "PendingLane::handle_with_client: creating driver");
         let mut driver = crate::Driver::new(handle, handler);
         let caller = crate::Caller::new(driver.caller());
-        if let Some(slot) = &self.caller_slot {
-            *slot.lock().unwrap() = Some(caller.clone());
-        }
         #[cfg(not(target_arch = "wasm32"))]
         tokio::spawn(async move {
-            trace!(%conn_id, "PendingConnection driver starting");
+            trace!(%conn_id, "PendingLane driver starting");
             driver.run().await;
-            trace!(%conn_id, "PendingConnection driver exited");
+            trace!(%conn_id, "PendingLane driver exited");
         });
         #[cfg(target_arch = "wasm32")]
         wasm_bindgen_futures::spawn_local(async move { driver.run().await });
-        C::from_vox_session(caller, None)
+        C::from_vox_lane(caller, None)
     }
 
     /// Accept this connection and proxy all traffic to/from another connection.
-    pub fn proxy_to(mut self, other: ConnectionHandle) {
-        let handle = self
-            .handle
-            .take()
-            .expect("PendingConnection already consumed");
+    pub fn proxy_to(mut self, other: LaneHandle) {
+        let handle = self.handle.take().expect("PendingLane already consumed");
         #[cfg(not(target_arch = "wasm32"))]
         tokio::spawn(async move {
-            let _ = proxy_connections(handle, other).await;
+            let _ = proxy_lanes(handle, other).await;
         });
         #[cfg(target_arch = "wasm32")]
         wasm_bindgen_futures::spawn_local(async move {
-            let _ = proxy_connections(handle, other).await;
+            let _ = proxy_lanes(handle, other).await;
         });
     }
 
-    /// Take the raw ConnectionHandle for custom use.
-    pub fn into_handle(mut self) -> ConnectionHandle {
-        self.handle
-            .take()
-            .expect("PendingConnection already consumed")
+    /// Take the raw LaneHandle for custom use.
+    pub fn into_handle(mut self) -> LaneHandle {
+        self.handle.take().expect("PendingLane already consumed")
     }
 }
 
-impl Drop for PendingConnection {
+impl Drop for PendingLane {
     fn drop(&mut self) {
         if let Some(handle) = self.handle.take() {
             let conn_id = handle.connection_id();
-            warn!(%conn_id, "PendingConnection dropped without being consumed — closing connection");
+            warn!(%conn_id, "PendingLane dropped without being consumed — closing connection");
             if let Some(tx) = handle.control_tx.as_ref() {
                 let _ = send_drop_control(tx, DropControlRequest::Close(conn_id));
             }
@@ -213,81 +182,63 @@ impl Drop for PendingConnection {
 }
 
 // r[impl rpc.virtual-connection.accept]
-pub trait ConnectionAcceptor: MaybeSend + MaybeSync + 'static {
-    fn accept(
-        &self,
-        request: &ConnectionRequest,
-        connection: PendingConnection,
-    ) -> Result<(), Metadata>;
+pub trait LaneAcceptor: MaybeSend + MaybeSync + 'static {
+    fn accept(&self, request: &LaneRequest, connection: PendingLane) -> Result<(), Metadata>;
 }
 
-/// Any `Handler<DriverReplySink>` is automatically a `ConnectionAcceptor`.
-impl<H> ConnectionAcceptor for H
+/// Any `Handler<DriverReplySink>` is automatically a `LaneAcceptor`.
+impl<H> LaneAcceptor for H
 where
     H: Handler<crate::DriverReplySink> + Clone + MaybeSend + MaybeSync + 'static,
 {
-    fn accept(
-        &self,
-        _request: &ConnectionRequest,
-        connection: PendingConnection,
-    ) -> Result<(), Metadata> {
+    fn accept(&self, _request: &LaneRequest, connection: PendingLane) -> Result<(), Metadata> {
         connection.handle_with(self.clone());
         Ok(())
     }
 }
 
-/// Wrapper that turns a closure into a `ConnectionAcceptor`.
-pub struct AcceptorFn<F>(pub F);
+/// Wrapper that turns a closure into a `LaneAcceptor`.
+pub struct LaneAcceptorFn<F>(pub F);
 
-impl<F> ConnectionAcceptor for AcceptorFn<F>
+impl<F> LaneAcceptor for LaneAcceptorFn<F>
 where
-    F: Fn(&ConnectionRequest, PendingConnection) -> Result<(), Metadata>
-        + MaybeSend
-        + MaybeSync
-        + 'static,
+    F: Fn(&LaneRequest, PendingLane) -> Result<(), Metadata> + MaybeSend + MaybeSync + 'static,
 {
-    fn accept(
-        &self,
-        request: &ConnectionRequest,
-        connection: PendingConnection,
-    ) -> Result<(), Metadata> {
+    fn accept(&self, request: &LaneRequest, connection: PendingLane) -> Result<(), Metadata> {
         (self.0)(request, connection)
     }
 }
 
-/// Create a `ConnectionAcceptor` from a closure.
-pub fn acceptor_fn<F>(f: F) -> AcceptorFn<F>
+/// Create a `LaneAcceptor` from a closure.
+pub fn lane_acceptor_fn<F>(f: F) -> LaneAcceptorFn<F>
 where
-    F: Fn(&ConnectionRequest, PendingConnection) -> Result<(), Metadata>
-        + MaybeSend
-        + MaybeSync
-        + 'static,
+    F: Fn(&LaneRequest, PendingLane) -> Result<(), Metadata> + MaybeSend + MaybeSync + 'static,
 {
-    AcceptorFn(f)
+    LaneAcceptorFn(f)
 }
 
 // ---------------------------------------------------------------------------
-// Open/close request types (from SessionHandle → run loop)
+// Open/close request types (from ConnectionHandle → run loop)
 // ---------------------------------------------------------------------------
 
 struct OpenRequest {
     settings: ConnectionSettings,
     metadata: Metadata,
-    result_tx: moire::sync::oneshot::Sender<Result<ConnectionHandle, SessionError>>,
+    result_tx: vox_rt::sync::oneshot::Sender<Result<LaneHandle, ConnectionError>>,
 }
 
 struct CloseRequest {
-    conn_id: ConnectionId,
+    conn_id: LaneId,
     metadata: Metadata,
-    result_tx: moire::sync::oneshot::Sender<Result<(), SessionError>>,
+    result_tx: vox_rt::sync::oneshot::Sender<Result<(), ConnectionError>>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) enum DropControlRequest {
     Shutdown,
-    Close(ConnectionId),
+    Close(LaneId),
     ProtocolClose {
-        conn_id: ConnectionId,
+        conn_id: LaneId,
         description: String,
     },
 }
@@ -315,62 +266,79 @@ fn send_drop_control(
 }
 
 // ---------------------------------------------------------------------------
-// SessionHandle — cloneable handle for opening/closing virtual connections
+// ConnectionHandle — cloneable handle for opening/closing service lanes
 // ---------------------------------------------------------------------------
 
-/// Cloneable handle for opening and closing virtual connections.
+/// Cloneable handle for opening and closing service lanes.
 ///
-/// Returned by the session builder alongside the `Session` and root
-/// `ConnectionHandle`. The session's `run()` loop must be running
-/// concurrently for requests to be processed.
+/// The connection's `run()` loop must be running concurrently for lane-open
+/// requests and RPC traffic to be processed.
 // r[impl rpc.virtual-connection.open]
 #[derive(Clone)]
-pub struct SessionHandle {
+pub struct ConnectionHandle {
     open_tx: mpsc::Sender<OpenRequest>,
     close_tx: mpsc::Sender<CloseRequest>,
     control_tx: mpsc::UnboundedSender<DropControlRequest>,
+    _control_caller: Option<crate::Caller>,
 }
 
-impl SessionHandle {
-    /// Open a typed virtual connection on the session.
+impl ConnectionHandle {
+    /// Resolve when the connection's private control lane closes.
+    pub async fn closed(&self) {
+        if let Some(caller) = &self._control_caller {
+            caller.closed().await;
+        }
+    }
+
+    /// Open a typed service lane on this connection using default lane limits.
     ///
     /// Sends `vox-service` metadata automatically from the client's
     /// `SERVICE_NAME`. Creates a `Driver` and spawns it, returning
     /// a ready-to-use typed client.
-    pub async fn open<Client: crate::FromVoxSession>(
+    pub async fn open_lane<Client: crate::FromVoxLane>(&self) -> Result<Client, ConnectionError> {
+        self.open_lane_with_settings(ConnectionSettings {
+            parity: Parity::Odd,
+            max_concurrent_requests: 64,
+            initial_channel_credit: vox_types::DEFAULT_INITIAL_CHANNEL_CREDIT,
+        })
+        .await
+    }
+
+    /// Open a typed service lane with explicit lane settings.
+    pub async fn open_lane_with_settings<Client: crate::FromVoxLane>(
         &self,
         settings: ConnectionSettings,
-    ) -> Result<Client, SessionError> {
+    ) -> Result<Client, ConnectionError> {
         use crate::{Caller, Driver};
 
         let metadata = vox_types::metadata()
             .str(
-                crate::session::builders::VOX_SERVICE_METADATA_KEY,
+                crate::connection::builders::VOX_SERVICE_METADATA_KEY,
                 Client::SERVICE_NAME,
             )
             .build();
-        let handle = self.open_connection(settings, metadata).await?;
+        let handle = self.open_lane_handle(settings, metadata).await?;
         let mut driver = Driver::new(handle, ());
         let caller = Caller::new(driver.caller());
         #[cfg(not(target_arch = "wasm32"))]
         tokio::spawn(async move { driver.run().await });
         #[cfg(target_arch = "wasm32")]
         wasm_bindgen_futures::spawn_local(async move { driver.run().await });
-        Ok(Client::from_vox_session(caller, None))
+        Ok(Client::from_vox_lane(caller, Some(self.clone())))
     }
 
-    /// Open a new virtual connection on the session.
+    /// Open a raw service lane on this connection.
     ///
-    /// Allocates a connection ID, sends `ConnectionOpen` to the peer, and
-    /// waits for `ConnectionAccept` or `ConnectionReject`. The session's
-    /// `run()` loop processes the response and completes the returned future.
+    /// Allocates a lane ID, sends `LaneOpen` to the peer, and waits for
+    /// `LaneAccept` or `LaneReject`. The connection's `run()` loop processes
+    /// the response and completes the returned future.
     // r[impl connection.open]
-    pub async fn open_connection(
+    pub async fn open_lane_handle(
         &self,
         settings: ConnectionSettings,
         metadata: Metadata,
-    ) -> Result<ConnectionHandle, SessionError> {
-        let (result_tx, result_rx) = moire::sync::oneshot::channel("session.open_result");
+    ) -> Result<LaneHandle, ConnectionError> {
+        let (result_tx, result_rx) = vox_rt::sync::oneshot::channel("session.open_result");
         self.open_tx
             .send(OpenRequest {
                 settings,
@@ -378,57 +346,56 @@ impl SessionHandle {
                 result_tx,
             })
             .await
-            .map_err(|_| SessionError::Protocol("session closed".into()))?;
+            .map_err(|_| ConnectionError::Protocol("connection closed".into()))?;
         result_rx
             .await
-            .map_err(|_| SessionError::Protocol("session closed".into()))?
+            .map_err(|_| ConnectionError::Protocol("connection closed".into()))?
     }
 
-    /// Close a virtual connection.
+    /// Close an open service lane.
     ///
-    /// Sends `ConnectionClose` to the peer and removes the connection slot.
-    /// After this returns, no further messages will be routed to the
-    /// connection's driver.
+    /// Sends `LaneClose` to the peer and removes the lane slot. After this
+    /// returns, no further messages will be routed to the lane's driver.
     // r[impl connection.close]
-    pub async fn close_connection(
+    pub async fn close_lane(
         &self,
-        conn_id: ConnectionId,
+        lane_id: LaneId,
         metadata: Metadata,
-    ) -> Result<(), SessionError> {
-        let (result_tx, result_rx) = moire::sync::oneshot::channel("session.close_result");
+    ) -> Result<(), ConnectionError> {
+        let (result_tx, result_rx) = vox_rt::sync::oneshot::channel("session.close_result");
         self.close_tx
             .send(CloseRequest {
-                conn_id,
+                conn_id: lane_id,
                 metadata,
                 result_tx,
             })
             .await
-            .map_err(|_| SessionError::Protocol("session closed".into()))?;
+            .map_err(|_| ConnectionError::Protocol("connection closed".into()))?;
         result_rx
             .await
-            .map_err(|_| SessionError::Protocol("session closed".into()))?
+            .map_err(|_| ConnectionError::Protocol("connection closed".into()))?
     }
 
-    /// Request shutdown of the entire session (root + all virtual connections).
-    pub fn shutdown(&self) -> Result<(), SessionError> {
+    /// Request shutdown of the entire connection and all lanes.
+    pub fn shutdown(&self) -> Result<(), ConnectionError> {
         send_drop_control(&self.control_tx, DropControlRequest::Shutdown)
-            .map_err(|_| SessionError::Protocol("session closed".into()))
+            .map_err(|_| ConnectionError::Protocol("connection closed".into()))
     }
 }
 
 // ---------------------------------------------------------------------------
-// Session
+// Connection
 // ---------------------------------------------------------------------------
 
-/// Session state machine.
+/// Connection state machine.
 // r[impl session]
 // r[impl rpc.one-service-per-connection]
-pub struct Session {
+pub struct Connection {
     /// Conduit receiver
     rx: Box<dyn DynConduitRx>,
 
     // r[impl session.role]
-    role: SessionRole,
+    role: ConnectionRole,
 
     /// Our local parity — determines which connection IDs we allocate.
     // r[impl session.parity]
@@ -440,20 +407,20 @@ pub struct Session {
     peer_root_settings: Option<ConnectionSettings>,
 
     /// Connection state (active, pending inbound, pending outbound).
-    conns: BTreeMap<ConnectionId, ConnectionSlot>,
+    conns: BTreeMap<LaneId, ConnectionSlot>,
     /// Whether the root connection was internally closed because all root callers dropped.
     root_closed_internal: bool,
 
     /// Allocator for outbound virtual connection IDs (uses session parity).
-    conn_ids: IdAllocator<ConnectionId>,
+    conn_ids: IdAllocator<LaneId>,
 
     /// Callback for accepting inbound virtual connections.
-    on_connection: Option<Arc<dyn ConnectionAcceptor>>,
+    on_connection: Option<Arc<dyn LaneAcceptor>>,
 
-    /// Receiver for open requests from SessionHandle.
+    /// Receiver for open requests from ConnectionHandle.
     open_rx: mpsc::Receiver<OpenRequest>,
 
-    /// Receiver for close requests from SessionHandle.
+    /// Receiver for close requests from ConnectionHandle.
     close_rx: mpsc::Receiver<CloseRequest>,
 
     /// Sender/receiver for drop-driven session/connection control requests.
@@ -461,7 +428,7 @@ pub struct Session {
     control_rx: mpsc::UnboundedReceiver<DropControlRequest>,
 
     /// Optional proactive keepalive runtime config for connection ID 0.
-    keepalive: Option<SessionKeepaliveConfig>,
+    keepalive: Option<ConnectionKeepaliveConfig>,
 
     observer: Option<VoxObserverHandle>,
 }
@@ -481,7 +448,7 @@ struct KeepaliveRuntime {
 #[derive(Debug)]
 pub struct ConnectionState {
     /// Unique connection identifier
-    pub id: ConnectionId,
+    pub id: LaneId,
 
     /// Our settings
     pub local_settings: ConnectionSettings,
@@ -506,7 +473,7 @@ enum ConnectionSlot {
 /// Debug-printable wrapper that omits the oneshot sender.
 struct PendingOutboundData {
     local_settings: ConnectionSettings,
-    result_tx: Option<moire::sync::oneshot::Sender<Result<ConnectionHandle, SessionError>>>,
+    result_tx: Option<vox_rt::sync::oneshot::Sender<Result<LaneHandle, ConnectionError>>>,
 }
 
 impl std::fmt::Debug for PendingOutboundData {
@@ -519,7 +486,7 @@ impl std::fmt::Debug for PendingOutboundData {
 
 #[derive(Clone)]
 pub(crate) struct ConnectionSender {
-    connection_id: ConnectionId,
+    lane_id: LaneId,
     pub(crate) sess_core: Arc<SessionCore>,
     failures: Arc<mpsc::UnboundedSender<(RequestId, FailureDisposition)>>,
 }
@@ -590,8 +557,8 @@ fn forwarded_channel_body<'a>(body: &'a vox_types::ChannelBody<'a>) -> vox_types
 }
 
 impl ConnectionSender {
-    pub(crate) fn connection_id(&self) -> ConnectionId {
-        self.connection_id
+    pub(crate) fn connection_id(&self) -> LaneId {
+        self.lane_id
     }
 
     pub(crate) async fn send_with_binder<'a>(
@@ -614,7 +581,7 @@ impl ConnectionSender {
             ConnectionMessage::Schema(s) => MessagePayload::SchemaMessage(s),
         };
         let message = Message {
-            connection_id: self.connection_id,
+            lane_id: self.lane_id,
             payload,
         };
         self.sess_core
@@ -635,7 +602,7 @@ impl ConnectionSender {
         self.sess_core
             .send_with_options(
                 Message {
-                    connection_id: self.connection_id,
+                    lane_id: self.lane_id,
                     payload: MessagePayload::ChannelMessage(channel),
                 },
                 None,
@@ -663,7 +630,7 @@ impl ConnectionSender {
             .collect();
         self.sess_core.try_send_with_options(
             Message {
-                connection_id: self.connection_id,
+                lane_id: self.lane_id,
                 payload: MessagePayload::ChannelMessage(channel),
             },
             None,
@@ -699,7 +666,7 @@ impl ConnectionSender {
         self.sess_core
             .send(
                 Message {
-                    connection_id: self.connection_id,
+                    lane_id: self.lane_id,
                     payload,
                 },
                 None,
@@ -744,12 +711,8 @@ impl ConnectionSender {
         method_id: vox_types::MethodId,
         response: &mut RequestResponse<'_>,
     ) {
-        self.sess_core.prepare_response_for_method(
-            self.connection_id,
-            request_id,
-            method_id,
-            response,
-        );
+        self.sess_core
+            .prepare_response_for_method(self.lane_id, request_id, method_id, response);
     }
 
     /// Attach the method's response schema for an explicit wire `shape`. Used when the
@@ -763,7 +726,7 @@ impl ConnectionSender {
         response: &mut RequestResponse<'_>,
     ) {
         self.sess_core.prepare_response_for_shape(
-            self.connection_id,
+            self.lane_id,
             request_id,
             method_id,
             shape,
@@ -778,7 +741,7 @@ impl ConnectionSender {
     }
 }
 
-pub struct ConnectionHandle {
+pub struct LaneHandle {
     pub(crate) sender: ConnectionSender,
     pub(crate) rx: mpsc::Receiver<RecvMessage>,
     pub(crate) failures_rx: mpsc::UnboundedReceiver<(RequestId, FailureDisposition)>,
@@ -791,10 +754,10 @@ pub struct ConnectionHandle {
     pub(crate) observer: Option<VoxObserverHandle>,
 }
 
-impl std::fmt::Debug for ConnectionHandle {
+impl std::fmt::Debug for LaneHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ConnectionHandle")
-            .field("connection_id", &self.sender.connection_id)
+        f.debug_struct("LaneHandle")
+            .field("lane_id", &self.sender.lane_id)
             .finish()
     }
 }
@@ -818,10 +781,10 @@ pub(crate) struct RecvMessage {
     pub fds: vox_types::FrameFds,
 }
 
-impl ConnectionHandle {
+impl LaneHandle {
     /// Returns the connection ID for this handle.
-    pub fn connection_id(&self) -> ConnectionId {
-        self.sender.connection_id
+    pub fn connection_id(&self) -> LaneId {
+        self.sender.lane_id
     }
 
     /// Resolve when this connection closes.
@@ -889,18 +852,15 @@ impl ConnectionHandle {
 /// This is a protocol-level bridge: it does not inspect service schemas or method IDs.
 /// It exits when either side closes or a forward send fails, then requests closure of
 /// both underlying connections.
-pub async fn proxy_connections(
-    left: ConnectionHandle,
-    right: ConnectionHandle,
-) -> Result<(), SessionError> {
+pub async fn proxy_lanes(left: LaneHandle, right: LaneHandle) -> Result<(), ConnectionError> {
     if left.parity == right.parity {
-        return Err(SessionError::Protocol(
-            "proxy_connections requires opposite parities".into(),
+        return Err(ConnectionError::Protocol(
+            "proxy_lanes requires opposite parities".into(),
         ));
     }
     let left_conn_id = left.connection_id();
     let right_conn_id = right.connection_id();
-    let ConnectionHandle {
+    let LaneHandle {
         sender: left_sender,
         rx: mut left_rx,
         failures_rx: _left_failures_rx,
@@ -911,7 +871,7 @@ pub async fn proxy_connections(
         parity: _left_parity,
         observer: _left_observer,
     } = left;
-    let ConnectionHandle {
+    let LaneHandle {
         sender: right_sender,
         rx: mut right_rx,
         failures_rx: _right_failures_rx,
@@ -955,14 +915,14 @@ pub async fn proxy_connections(
 
 /// Errors that can occur during session establishment or operation.
 #[derive(Debug)]
-pub enum SessionError {
+pub enum ConnectionError {
     Io(std::io::Error),
     Protocol(String),
     Rejected(Metadata),
     ConnectTimeout,
 }
 
-impl SessionError {
+impl ConnectionError {
     /// Returns `true` if a later connection attempt may succeed.
     ///
     /// I/O errors and timeouts are transient — the remote might become available
@@ -973,7 +933,7 @@ impl SessionError {
     }
 }
 
-impl std::fmt::Display for SessionError {
+impl std::fmt::Display for ConnectionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Io(e) => write!(f, "io error: {e}"),
@@ -984,7 +944,7 @@ impl std::fmt::Display for SessionError {
     }
 }
 
-impl std::error::Error for SessionError {}
+impl std::error::Error for ConnectionError {}
 
 fn classify_session_recv_error(error: &std::io::Error) -> ConnectionCloseReason {
     let message = error.to_string();
@@ -1004,7 +964,7 @@ fn classify_decode_error(error: &std::io::Error) -> Option<DecodeErrorKind> {
     }
 }
 
-impl Session {
+impl Connection {
     // r[impl rpc.observability.session-errors]
     // r[impl rpc.observability.driver]
     fn observe_session_recv_error(&self, error: &std::io::Error) {
@@ -1032,7 +992,7 @@ impl Session {
 
     fn close_connection_for_protocol_error(
         &mut self,
-        conn_id: ConnectionId,
+        conn_id: LaneId,
         detail: impl std::fmt::Display,
     ) {
         warn!(%conn_id, "closing connection after protocol error: {detail}");
@@ -1042,7 +1002,7 @@ impl Session {
 
     fn record_received_schema_bytes(
         &mut self,
-        _conn_id: ConnectionId,
+        _conn_id: LaneId,
         schema_recv_tracker: Arc<vox_types::SchemaRecvTracker>,
         method_id: vox_types::MethodId,
         direction: vox_types::BindingDirection,
@@ -1060,12 +1020,12 @@ impl Session {
     fn pre_handshake<Tx, Rx>(
         tx: Tx,
         rx: Rx,
-        on_connection: Option<Arc<dyn ConnectionAcceptor>>,
+        on_connection: Option<Arc<dyn LaneAcceptor>>,
         open_rx: mpsc::Receiver<OpenRequest>,
         close_rx: mpsc::Receiver<CloseRequest>,
         control_tx: mpsc::UnboundedSender<DropControlRequest>,
         control_rx: mpsc::UnboundedReceiver<DropControlRequest>,
-        keepalive: Option<SessionKeepaliveConfig>,
+        keepalive: Option<ConnectionKeepaliveConfig>,
         observer: Option<VoxObserverHandle>,
     ) -> Self
     where
@@ -1083,10 +1043,10 @@ impl Session {
             channel_gates: std::sync::Mutex::new(HashMap::new()),
         });
         spawn_outbound_worker(outbound_rx);
-        Session {
+        Connection {
             rx: Box::new(rx),
-            role: SessionRole::Initiator, // overwritten in establish_as_*
-            parity: Parity::Odd,          // overwritten in establish_as_*
+            role: ConnectionRole::Initiator, // overwritten in establish_as_*
+            parity: Parity::Odd,             // overwritten in establish_as_*
             sess_core,
             local_root_settings: ConnectionSettings {
                 parity: Parity::Odd,
@@ -1111,7 +1071,7 @@ impl Session {
     fn establish_from_handshake(
         &mut self,
         result: HandshakeResult,
-    ) -> Result<ConnectionHandle, SessionError> {
+    ) -> Result<LaneHandle, ConnectionError> {
         self.role = result.role;
         self.parity = result.our_settings.parity;
         self.conn_ids = IdAllocator::new(result.our_settings.parity);
@@ -1125,22 +1085,22 @@ impl Session {
         &mut self,
         local_settings: ConnectionSettings,
         peer_settings: ConnectionSettings,
-    ) -> ConnectionHandle {
-        self.make_connection_handle(ConnectionId::ROOT, local_settings, peer_settings)
+    ) -> LaneHandle {
+        self.make_connection_handle(LaneId::ROOT, local_settings, peer_settings)
     }
 
     fn make_connection_handle(
         &mut self,
-        conn_id: ConnectionId,
+        conn_id: LaneId,
         local_settings: ConnectionSettings,
         peer_settings: ConnectionSettings,
-    ) -> ConnectionHandle {
+    ) -> LaneHandle {
         let label = format!("session.conn{}", conn_id.0);
         let (conn_tx, conn_rx) = mpsc::channel::<RecvMessage>(&label, 64);
         let (failures_tx, failures_rx) = mpsc::unbounded_channel(format!("{label}.failures"));
         let (closed_tx, closed_rx) = watch::channel(None);
         let sender = ConnectionSender {
-            connection_id: conn_id,
+            lane_id: conn_id,
             sess_core: Arc::clone(&self.sess_core),
             failures: Arc::new(failures_tx),
         };
@@ -1166,7 +1126,7 @@ impl Session {
             }),
         );
 
-        ConnectionHandle {
+        LaneHandle {
             sender,
             rx: conn_rx,
             failures_rx,
@@ -1181,7 +1141,7 @@ impl Session {
 
     /// Run the session recv loop: read from the conduit, demux by connection
     /// ID, and route to the appropriate connection's driver. Also processes
-    /// open/close requests from the SessionHandle.
+    /// open/close requests from the ConnectionHandle.
     // r[impl session.message]
     pub async fn run(&mut self) {
         let mut keepalive_runtime = self.make_keepalive_runtime();
@@ -1261,7 +1221,7 @@ impl Session {
         keepalive_runtime: &mut Option<KeepaliveRuntime>,
     ) {
         let msg_ref = msg.get();
-        let conn_id = msg_ref.connection_id;
+        let conn_id = msg_ref.lane_id;
         match &msg_ref.payload {
             MessagePayload::Ping(ping) => {
                 // r[impl session.keepalive]
@@ -1269,7 +1229,7 @@ impl Session {
                     .sess_core
                     .send(
                         Message {
-                            connection_id: conn_id,
+                            lane_id: conn_id,
                             payload: MessagePayload::Pong(vox_types::Pong { nonce: ping.nonce }),
                         },
                         None,
@@ -1319,11 +1279,11 @@ impl Session {
         }
         vox_types::selfref_match!(msg, payload {
             // r[impl connection.close.semantics]
-            MessagePayload::ConnectionClose(_) => {
+            MessagePayload::LaneClose(_) => {
                 if conn_id.is_root() {
-                    warn!("received ConnectionClose for root connection");
+                    warn!("received LaneClose for root connection");
                 } else {
-                    trace!(conn_id = conn_id.0, "received ConnectionClose for virtual connection");
+                    trace!(conn_id = conn_id.0, "received LaneClose for virtual connection");
                 }
                 // Remove the connection — dropping conn_tx causes the Driver's rx
                 // to return None, which exits its run loop. All in-flight handlers
@@ -1331,13 +1291,13 @@ impl Session {
                 self.remove_connection_with_reason(&conn_id, ConnectionCloseReason::Remote);
                 self.maybe_request_shutdown_after_root_closed();
             }
-            MessagePayload::ConnectionOpen(open) => {
+            MessagePayload::LaneOpen(open) => {
                 self.handle_inbound_open(conn_id, open).await;
             }
-            MessagePayload::ConnectionAccept(accept) => {
+            MessagePayload::LaneAccept(accept) => {
                 self.handle_inbound_accept(conn_id, accept);
             }
-            MessagePayload::ConnectionReject(reject) => {
+            MessagePayload::LaneReject(reject) => {
                 self.handle_inbound_reject(conn_id, reject);
             }
             MessagePayload::RequestMessage(r) => {
@@ -1539,7 +1499,7 @@ impl Session {
             .sess_core
             .send(
                 Message {
-                    connection_id: ConnectionId::ROOT,
+                    lane_id: LaneId::ROOT,
                     payload: MessagePayload::Ping(vox_types::Ping { nonce }),
                 },
                 None,
@@ -1559,7 +1519,7 @@ impl Session {
         true
     }
 
-    async fn handle_inbound_open(&mut self, conn_id: ConnectionId, open: SelfRef<ConnectionOpen>) {
+    async fn handle_inbound_open(&mut self, conn_id: LaneId, open: SelfRef<LaneOpen>) {
         // Validate: connection ID must match peer's parity (opposite of ours).
         let peer_parity = self.parity.other();
         if !conn_id.has_parity(peer_parity) {
@@ -1568,8 +1528,8 @@ impl Session {
                 .sess_core
                 .send(
                     Message {
-                        connection_id: conn_id,
-                        payload: MessagePayload::ConnectionReject(vox_types::ConnectionReject {
+                        lane_id: conn_id,
+                        payload: MessagePayload::LaneReject(vox_types::LaneReject {
                             metadata: vox_types::Metadata::default(),
                         }),
                     },
@@ -1587,8 +1547,8 @@ impl Session {
                 .sess_core
                 .send(
                     Message {
-                        connection_id: conn_id,
-                        payload: MessagePayload::ConnectionReject(vox_types::ConnectionReject {
+                        lane_id: conn_id,
+                        payload: MessagePayload::LaneReject(vox_types::LaneReject {
                             metadata: vox_types::Metadata::default(),
                         }),
                     },
@@ -1606,8 +1566,8 @@ impl Session {
                 .sess_core
                 .send(
                     Message {
-                        connection_id: conn_id,
-                        payload: MessagePayload::ConnectionReject(vox_types::ConnectionReject {
+                        lane_id: conn_id,
+                        payload: MessagePayload::LaneReject(vox_types::LaneReject {
                             metadata: vox_types::Metadata::default(),
                         }),
                     },
@@ -1625,8 +1585,8 @@ impl Session {
                 .sess_core
                 .send(
                     Message {
-                        connection_id: conn_id,
-                        payload: MessagePayload::ConnectionReject(vox_types::ConnectionReject {
+                        lane_id: conn_id,
+                        payload: MessagePayload::LaneReject(vox_types::LaneReject {
                             metadata: vox_types::metadata()
                                 .str("error", "initial_channel_credit must be greater than zero")
                                 .build(),
@@ -1655,7 +1615,7 @@ impl Session {
         // Let the acceptor decide the connection's fate.
         let mut metadata = open.metadata.clone();
         vox_types::meta_set(&mut metadata, "vox-connection-kind", "virtual");
-        let request = match ConnectionRequest::new(&metadata) {
+        let request = match LaneRequest::new(&metadata) {
             Ok(r) => r,
             Err(e) => {
                 trace!(%conn_id, %e, "rejecting virtual connection");
@@ -1664,14 +1624,10 @@ impl Session {
                     .sess_core
                     .send(
                         Message {
-                            connection_id: conn_id,
-                            payload: MessagePayload::ConnectionReject(
-                                vox_types::ConnectionReject {
-                                    metadata: vox_types::metadata()
-                                        .str("error", e.to_string())
-                                        .build(),
-                                },
-                            ),
+                            lane_id: conn_id,
+                            payload: MessagePayload::LaneReject(vox_types::LaneReject {
+                                metadata: vox_types::metadata().str("error", e.to_string()).build(),
+                            }),
                         },
                         None,
                         None,
@@ -1680,23 +1636,21 @@ impl Session {
                 return;
             }
         };
-        let pending = PendingConnection::new(handle);
+        let pending = PendingLane::new(handle);
         let acceptor = self.on_connection.as_ref().unwrap();
         trace!(%conn_id, "calling acceptor for virtual connection");
         match acceptor.accept(&request, pending) {
             Ok(()) => {
-                trace!(%conn_id, "acceptor accepted virtual connection, sending ConnectionAccept");
+                trace!(%conn_id, "acceptor accepted virtual connection, sending LaneAccept");
                 let _ = self
                     .sess_core
                     .send(
                         Message {
-                            connection_id: conn_id,
-                            payload: MessagePayload::ConnectionAccept(
-                                vox_types::ConnectionAccept {
-                                    connection_settings: our_settings,
-                                    metadata: vox_types::Metadata::default(),
-                                },
-                            ),
+                            lane_id: conn_id,
+                            payload: MessagePayload::LaneAccept(vox_types::LaneAccept {
+                                connection_settings: our_settings,
+                                metadata: vox_types::Metadata::default(),
+                            }),
                         },
                         None,
                         None,
@@ -1711,12 +1665,10 @@ impl Session {
                     .sess_core
                     .send(
                         Message {
-                            connection_id: conn_id,
-                            payload: MessagePayload::ConnectionReject(
-                                vox_types::ConnectionReject {
-                                    metadata: reject_metadata,
-                                },
-                            ),
+                            lane_id: conn_id,
+                            payload: MessagePayload::LaneReject(vox_types::LaneReject {
+                                metadata: reject_metadata,
+                            }),
                         },
                         None,
                         None,
@@ -1726,7 +1678,7 @@ impl Session {
         }
     }
 
-    fn handle_inbound_accept(&mut self, conn_id: ConnectionId, accept: SelfRef<ConnectionAccept>) {
+    fn handle_inbound_accept(&mut self, conn_id: LaneId, accept: SelfRef<LaneAccept>) {
         let accept = accept.get();
         let slot = self.remove_connection(&conn_id);
         match slot {
@@ -1734,7 +1686,7 @@ impl Session {
                 if accept.connection_settings.initial_channel_credit == 0 =>
             {
                 if let Some(tx) = pending.result_tx.take() {
-                    let _ = tx.send(Err(SessionError::Protocol(
+                    let _ = tx.send(Err(ConnectionError::Protocol(
                         "initial_channel_credit must be greater than zero".into(),
                     )));
                 }
@@ -1760,13 +1712,13 @@ impl Session {
         }
     }
 
-    fn handle_inbound_reject(&mut self, conn_id: ConnectionId, reject: SelfRef<ConnectionReject>) {
+    fn handle_inbound_reject(&mut self, conn_id: LaneId, reject: SelfRef<LaneReject>) {
         let reject = reject.get();
         let slot = self.remove_connection(&conn_id);
         match slot {
             Some(ConnectionSlot::PendingOutbound(mut pending)) => {
                 if let Some(tx) = pending.result_tx.take() {
-                    let _ = tx.send(Err(SessionError::Rejected(reject.metadata.clone())));
+                    let _ = tx.send(Err(ConnectionError::Rejected(reject.metadata.clone())));
                 }
             }
             Some(other) => {
@@ -1779,7 +1731,7 @@ impl Session {
     // r[impl connection.open]
     async fn handle_open_request(&mut self, req: OpenRequest) {
         if req.settings.initial_channel_credit == 0 {
-            let _ = req.result_tx.send(Err(SessionError::Protocol(
+            let _ = req.result_tx.send(Err(ConnectionError::Protocol(
                 "initial_channel_credit must be greater than zero".into(),
             )));
             return;
@@ -1787,13 +1739,13 @@ impl Session {
 
         let conn_id = self.conn_ids.alloc();
 
-        // Send ConnectionOpen to the peer.
+        // Send LaneOpen to the peer.
         let send_result = self
             .sess_core
             .send(
                 Message {
-                    connection_id: conn_id,
-                    payload: MessagePayload::ConnectionOpen(ConnectionOpen {
+                    lane_id: conn_id,
+                    payload: MessagePayload::LaneOpen(LaneOpen {
                         connection_settings: req.settings.clone(),
                         metadata: req.metadata,
                     }),
@@ -1804,14 +1756,14 @@ impl Session {
             .await;
 
         if send_result.is_err() {
-            let _ = req.result_tx.send(Err(SessionError::Protocol(
-                "failed to send ConnectionOpen".into(),
+            let _ = req.result_tx.send(Err(ConnectionError::Protocol(
+                "failed to send LaneOpen".into(),
             )));
             return;
         }
 
         // Store the pending state. The run loop will complete the oneshot
-        // when ConnectionAccept or ConnectionReject arrives.
+        // when LaneAccept or LaneReject arrives.
         self.conns.insert(
             conn_id,
             ConnectionSlot::PendingOutbound(PendingOutboundData {
@@ -1824,7 +1776,7 @@ impl Session {
     // r[impl connection.close]
     async fn handle_close_request(&mut self, req: CloseRequest) {
         if req.conn_id.is_root() {
-            let _ = req.result_tx.send(Err(SessionError::Protocol(
+            let _ = req.result_tx.send(Err(ConnectionError::Protocol(
                 "cannot close root connection".into(),
             )));
             return;
@@ -1836,19 +1788,19 @@ impl Session {
             .remove_connection_with_reason(&req.conn_id, ConnectionCloseReason::Local)
             .is_none()
         {
-            let _ = req
-                .result_tx
-                .send(Err(SessionError::Protocol("connection not found".into())));
+            let _ = req.result_tx.send(Err(ConnectionError::Protocol(
+                "connection not found".into(),
+            )));
             return;
         }
 
-        // Send ConnectionClose to the peer.
+        // Send LaneClose to the peer.
         let send_result = self
             .sess_core
             .send(
                 Message {
-                    connection_id: req.conn_id,
-                    payload: MessagePayload::ConnectionClose(ConnectionClose {
+                    lane_id: req.conn_id,
+                    payload: MessagePayload::LaneClose(LaneClose {
                         metadata: req.metadata,
                     }),
                 },
@@ -1858,8 +1810,8 @@ impl Session {
             .await;
 
         if send_result.is_err() {
-            let _ = req.result_tx.send(Err(SessionError::Protocol(
-                "failed to send ConnectionClose".into(),
+            let _ = req.result_tx.send(Err(ConnectionError::Protocol(
+                "failed to send LaneClose".into(),
             )));
             return;
         }
@@ -1892,8 +1844,8 @@ impl Session {
                         .sess_core
                         .send(
                             Message {
-                                connection_id: conn_id,
-                                payload: MessagePayload::ConnectionClose(ConnectionClose {
+                                lane_id: conn_id,
+                                payload: MessagePayload::LaneClose(LaneClose {
                                     metadata: vox_types::Metadata::default(),
                                 }),
                             },
@@ -1914,7 +1866,7 @@ impl Session {
                     .sess_core
                     .send(
                         Message {
-                            connection_id: ConnectionId::ROOT,
+                            lane_id: LaneId::ROOT,
                             payload: MessagePayload::ProtocolError(vox_types::ProtocolError {
                                 description: &description,
                             }),
@@ -1933,13 +1885,13 @@ impl Session {
         self.conns.keys().any(|id| !id.is_root())
     }
 
-    fn remove_connection(&mut self, conn_id: &ConnectionId) -> Option<ConnectionSlot> {
+    fn remove_connection(&mut self, conn_id: &LaneId) -> Option<ConnectionSlot> {
         self.remove_connection_with_reason(conn_id, ConnectionCloseReason::Unknown)
     }
 
     fn remove_connection_with_reason(
         &mut self,
-        conn_id: &ConnectionId,
+        conn_id: &LaneId,
         reason: ConnectionCloseReason,
     ) -> Option<ConnectionSlot> {
         trace!(%conn_id, "remove_connection called");
@@ -2030,7 +1982,7 @@ impl From<vox_types::ChannelWriterSchemaPlan> for PendingSchemaSend {
 }
 
 struct OutboundBatch {
-    conn_id: ConnectionId,
+    conn_id: LaneId,
     request_id: Option<RequestId>,
     payload_kind: &'static str,
     conn_state: Arc<std::sync::Mutex<SendConnState>>,
@@ -2080,7 +2032,7 @@ async fn run_outbound_worker(mut rx: tokio_mpsc::Receiver<OutboundBatch>) {
             }
 
             let schema_msg = Message {
-                connection_id: batch.conn_id,
+                lane_id: batch.conn_id,
                 payload: MessagePayload::SchemaMessage(SchemaMessage {
                     method_id: schema_send.method_id,
                     direction: schema_send.direction,
@@ -2188,12 +2140,12 @@ struct SessionCoreInner {
     tx: Arc<dyn DynConduitTx>,
 
     /// Per-connection state re: sent schemas, etc.
-    conns: HashMap<ConnectionId, Arc<std::sync::Mutex<SendConnState>>>,
+    conns: HashMap<LaneId, Arc<std::sync::Mutex<SendConnState>>>,
 }
 
 fn get_or_create_send_conn_state(
     inner: &mut SessionCoreInner,
-    conn_id: ConnectionId,
+    conn_id: LaneId,
 ) -> Arc<std::sync::Mutex<SendConnState>> {
     inner
         .conns
@@ -2302,7 +2254,7 @@ impl SessionCore {
         channel_method: Option<&'static vox_types::MethodDescriptor>,
         extra_schema_sends: Vec<PendingSchemaSend>,
     ) -> Result<PreparedOutboundBatch, ()> {
-        let conn_id = msg.connection_id;
+        let conn_id = msg.lane_id;
         let (request_id, payload_kind) = match &msg.payload {
             MessagePayload::RequestMessage(req) => {
                 let kind = match &req.body {
@@ -2314,10 +2266,10 @@ impl SessionCore {
             }
             MessagePayload::SchemaMessage(_) => (None, "schema"),
             MessagePayload::ChannelMessage(_) => (None, "channel"),
-            MessagePayload::ConnectionOpen(_) => (None, "connection.open"),
-            MessagePayload::ConnectionAccept(_) => (None, "connection.accept"),
-            MessagePayload::ConnectionReject(_) => (None, "connection.reject"),
-            MessagePayload::ConnectionClose(_) => (None, "connection.close"),
+            MessagePayload::LaneOpen(_) => (None, "connection.open"),
+            MessagePayload::LaneAccept(_) => (None, "connection.accept"),
+            MessagePayload::LaneReject(_) => (None, "connection.reject"),
+            MessagePayload::LaneClose(_) => (None, "connection.close"),
             MessagePayload::ProtocolError(_) => (None, "protocol.error"),
             MessagePayload::Ping(_) => (None, "ping"),
             MessagePayload::Pong(_) => (None, "pong"),
@@ -2503,7 +2455,7 @@ impl SessionCore {
         channel_method: Option<&'static vox_types::MethodDescriptor>,
         extra_schema_sends: Vec<PendingSchemaSend>,
     ) -> Result<(), ()> {
-        let connection_id = msg.connection_id;
+        let connection_id = msg.lane_id;
         // r[impl rpc.channel.item] Hold an outbound channel item/close until the Call
         // that opened its channel has been enqueued — the sender upholds frame order.
         if let Some(channel_id) = gated_channel_id(&msg) {
@@ -2558,7 +2510,7 @@ impl SessionCore {
         channel_method: Option<&'static vox_types::MethodDescriptor>,
         extra_schema_sends: Vec<PendingSchemaSend>,
     ) -> Result<(), TrySendError<()>> {
-        let connection_id = msg.connection_id;
+        let connection_id = msg.lane_id;
         // r[impl rpc.channel.item] A channel item whose declaring Call hasn't been
         // enqueued yet can't go out (frame order); signal backpressure so the caller
         // retries — the async `send` path parks instead.
@@ -2602,7 +2554,7 @@ impl SessionCore {
     /// method_id when sending the response.
     pub(crate) fn record_incoming_call(
         &self,
-        conn_id: ConnectionId,
+        conn_id: LaneId,
         request_id: RequestId,
         method_id: vox_types::MethodId,
     ) {
@@ -2623,7 +2575,7 @@ impl SessionCore {
 
     pub(crate) fn take_outgoing_call_method(
         &self,
-        conn_id: ConnectionId,
+        conn_id: LaneId,
         request_id: RequestId,
     ) -> Option<vox_types::MethodId> {
         let inner = self.inner.lock().expect("session core mutex poisoned");
@@ -2638,7 +2590,7 @@ impl SessionCore {
 
     pub(crate) fn prepare_response_for_method(
         &self,
-        conn_id: ConnectionId,
+        conn_id: LaneId,
         request_id: RequestId,
         method_id: vox_types::MethodId,
         response: &mut RequestResponse<'_>,
@@ -2684,7 +2636,7 @@ impl SessionCore {
     /// `r[schema.exchange]`).
     pub(crate) fn prepare_response_for_shape(
         &self,
-        conn_id: ConnectionId,
+        conn_id: LaneId,
         _request_id: RequestId,
         method_id: vox_types::MethodId,
         shape: &'static Shape,
@@ -2925,10 +2877,10 @@ where
 mod tests {
     use std::sync::Mutex;
 
-    use moire::sync::mpsc;
+    use vox_rt::sync::mpsc;
     use vox_types::{
-        Backing, BindingDirection, Conduit, ConnectionAccept, ConnectionReject, DriverEvent,
-        HandshakeResult, Payload, RequestCall, SelfRef, TransportEvent, VoxObserverHandle,
+        Backing, BindingDirection, Conduit, DriverEvent, HandshakeResult, LaneAccept, LaneReject,
+        Payload, RequestCall, SelfRef, TransportEvent, VoxObserverHandle,
     };
 
     use super::*;
@@ -2940,7 +2892,7 @@ mod tests {
 
     #[derive(Debug)]
     struct CapturedMessage {
-        connection_id: ConnectionId,
+        lane_id: LaneId,
         payload: CapturedPayload,
     }
 
@@ -2990,7 +2942,7 @@ mod tests {
                 _ => CapturedPayload::Other,
             };
             Ok(CapturedMessage {
-                connection_id: item.connection_id,
+                lane_id: item.lane_id,
                 payload,
             })
         }
@@ -3040,7 +2992,7 @@ mod tests {
         }
     }
 
-    fn make_session() -> Session {
+    fn make_session() -> Connection {
         let (a, b) = crate::memory_link_pair(32);
         // Keep the peer link alive so sess_core sends don't fail with broken pipe.
         std::mem::forget(b);
@@ -3049,12 +3001,12 @@ mod tests {
         let (_open_tx, open_rx) = mpsc::channel::<OpenRequest>("session.open.test", 4);
         let (_close_tx, close_rx) = mpsc::channel::<CloseRequest>("session.close.test", 4);
         let (control_tx, control_rx) = mpsc::unbounded_channel("session.control.test");
-        Session::pre_handshake(
+        Connection::pre_handshake(
             tx, rx, None, open_rx, close_rx, control_tx, control_rx, None, None,
         )
     }
 
-    fn make_session_with_observer(observer: VoxObserverHandle) -> Session {
+    fn make_session_with_observer(observer: VoxObserverHandle) -> Connection {
         let (a, b) = crate::memory_link_pair(32);
         std::mem::forget(b);
         let conduit = crate::BareConduit::new(a);
@@ -3062,7 +3014,7 @@ mod tests {
         let (_open_tx, open_rx) = mpsc::channel::<OpenRequest>("session.open.observed.test", 4);
         let (_close_tx, close_rx) = mpsc::channel::<CloseRequest>("session.close.observed.test", 4);
         let (control_tx, control_rx) = mpsc::unbounded_channel("session.control.observed.test");
-        Session::pre_handshake(
+        Connection::pre_handshake(
             tx,
             rx,
             None,
@@ -3075,13 +3027,11 @@ mod tests {
         )
     }
 
-    fn make_capturing_session(
-        sent: Arc<Mutex<Vec<CapturedMessage>>>,
-    ) -> (Session, ConnectionHandle) {
+    fn make_capturing_session(sent: Arc<Mutex<Vec<CapturedMessage>>>) -> (Connection, LaneHandle) {
         let (_open_tx, open_rx) = mpsc::channel::<OpenRequest>("session.open.capture.test", 4);
         let (_close_tx, close_rx) = mpsc::channel::<CloseRequest>("session.close.capture.test", 4);
         let (control_tx, control_rx) = mpsc::unbounded_channel("session.control.capture.test");
-        let mut session = Session::pre_handshake(
+        let mut session = Connection::pre_handshake(
             CapturingTx { sent },
             PendingRx,
             None,
@@ -3114,7 +3064,7 @@ mod tests {
         peer_settings: ConnectionSettings,
     ) -> HandshakeResult {
         HandshakeResult {
-            role: SessionRole::Initiator,
+            role: ConnectionRole::Initiator,
             our_settings,
             peer_settings,
             our_schema: vec![],
@@ -3123,10 +3073,10 @@ mod tests {
         }
     }
 
-    fn accept_ref() -> SelfRef<ConnectionAccept> {
+    fn accept_ref() -> SelfRef<LaneAccept> {
         SelfRef::owning(
             Backing::Boxed(Box::<[u8]>::default()),
-            ConnectionAccept {
+            LaneAccept {
                 connection_settings: ConnectionSettings {
                     parity: Parity::Even,
                     max_concurrent_requests: 64,
@@ -3137,10 +3087,10 @@ mod tests {
         )
     }
 
-    fn zero_credit_accept_ref() -> SelfRef<ConnectionAccept> {
+    fn zero_credit_accept_ref() -> SelfRef<LaneAccept> {
         SelfRef::owning(
             Backing::Boxed(Box::<[u8]>::default()),
-            ConnectionAccept {
+            LaneAccept {
                 connection_settings: ConnectionSettings {
                     parity: Parity::Even,
                     max_concurrent_requests: 64,
@@ -3151,10 +3101,10 @@ mod tests {
         )
     }
 
-    fn reject_ref() -> SelfRef<ConnectionReject> {
+    fn reject_ref() -> SelfRef<LaneReject> {
         SelfRef::owning(
             Backing::Boxed(Box::<[u8]>::default()),
-            ConnectionReject {
+            LaneReject {
                 metadata: vox_types::Metadata::default(),
             },
         )
@@ -3209,7 +3159,7 @@ mod tests {
             assert!(driver_events.iter().any(|event| matches!(
                 event,
                 DriverEvent::ConnectionClosed {
-                    connection_id: ConnectionId::ROOT,
+                    connection_id: LaneId::ROOT,
                     reason
                 } if *reason == expected_reason
             )));
@@ -3217,7 +3167,7 @@ mod tests {
                 driver_events.iter().any(|event| matches!(
                     event,
                     DriverEvent::DecodeError {
-                        connection_id: ConnectionId::ROOT,
+                        connection_id: LaneId::ROOT,
                         kind: DecodeErrorKind::Payload,
                     }
                 )),
@@ -3279,7 +3229,7 @@ mod tests {
         {
             let captured = sent.lock().expect("captured message mutex poisoned");
             assert_eq!(captured.len(), 2);
-            assert_eq!(captured[0].connection_id, ConnectionId::ROOT);
+            assert_eq!(captured[0].lane_id, LaneId::ROOT);
             match &captured[0].payload {
                 CapturedPayload::Schema {
                     method_id: actual_method_id,
@@ -3296,7 +3246,7 @@ mod tests {
                 }
                 other => panic!("expected schema message before request, got {other:?}"),
             }
-            assert_eq!(captured[1].connection_id, ConnectionId::ROOT);
+            assert_eq!(captured[1].lane_id, LaneId::ROOT);
             match &captured[1].payload {
                 CapturedPayload::Call {
                     request_id,
@@ -3355,7 +3305,7 @@ mod tests {
         handle
             .sender
             .sess_core
-            .record_incoming_call(ConnectionId::ROOT, request_id, method_id);
+            .record_incoming_call(LaneId::ROOT, request_id, method_id);
 
         let first_response: Result<u32, vox_types::VoxError<core::convert::Infallible>> = Ok(99);
         handle
@@ -3374,7 +3324,7 @@ mod tests {
         {
             let captured = sent.lock().expect("captured message mutex poisoned");
             assert_eq!(captured.len(), 2);
-            assert_eq!(captured[0].connection_id, ConnectionId::ROOT);
+            assert_eq!(captured[0].lane_id, LaneId::ROOT);
             match &captured[0].payload {
                 CapturedPayload::Schema {
                     method_id: actual_method_id,
@@ -3396,7 +3346,7 @@ mod tests {
                 }
                 other => panic!("expected schema message before response, got {other:?}"),
             }
-            assert_eq!(captured[1].connection_id, ConnectionId::ROOT);
+            assert_eq!(captured[1].lane_id, LaneId::ROOT);
             match &captured[1].payload {
                 CapturedPayload::Response {
                     request_id: actual_request_id,
@@ -3410,11 +3360,10 @@ mod tests {
         }
 
         let second_request_id = RequestId(13);
-        handle.sender.sess_core.record_incoming_call(
-            ConnectionId::ROOT,
-            second_request_id,
-            method_id,
-        );
+        handle
+            .sender
+            .sess_core
+            .record_incoming_call(LaneId::ROOT, second_request_id, method_id);
         let second_response: Result<u32, vox_types::VoxError<core::convert::Infallible>> = Ok(100);
         handle
             .sender
@@ -3446,8 +3395,8 @@ mod tests {
     #[tokio::test]
     async fn duplicate_connection_accept_is_ignored_after_first() {
         let mut session = make_session();
-        let conn_id = ConnectionId(1);
-        let (result_tx, result_rx) = moire::sync::oneshot::channel("session.test.open_result");
+        let conn_id = LaneId(1);
+        let (result_tx, result_rx) = vox_rt::sync::oneshot::channel("session.test.open_result");
 
         session.conns.insert(
             conn_id,
@@ -3481,8 +3430,8 @@ mod tests {
     #[tokio::test]
     async fn duplicate_connection_reject_is_ignored_after_first() {
         let mut session = make_session();
-        let conn_id = ConnectionId(1);
-        let (result_tx, result_rx) = moire::sync::oneshot::channel("session.test.open_result");
+        let conn_id = LaneId(1);
+        let (result_tx, result_rx) = vox_rt::sync::oneshot::channel("session.test.open_result");
 
         session.conns.insert(
             conn_id,
@@ -3501,7 +3450,7 @@ mod tests {
             .await
             .expect("pending outbound result should resolve");
         assert!(
-            matches!(result, Err(SessionError::Rejected(_))),
+            matches!(result, Err(ConnectionError::Rejected(_))),
             "expected rejection, got: {result:?}"
         );
 
@@ -3516,8 +3465,8 @@ mod tests {
     #[tokio::test]
     async fn inbound_accept_with_zero_initial_credit_rejects_pending_open() {
         let mut session = make_session();
-        let conn_id = ConnectionId(1);
-        let (result_tx, result_rx) = moire::sync::oneshot::channel("session.test.open_result");
+        let conn_id = LaneId(1);
+        let (result_tx, result_rx) = vox_rt::sync::oneshot::channel("session.test.open_result");
 
         session.conns.insert(
             conn_id,
@@ -3538,7 +3487,7 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(SessionError::Protocol(ref message))
+                Err(ConnectionError::Protocol(ref message))
                     if message == "initial_channel_credit must be greater than zero"
             ),
             "expected zero-credit protocol error, got: {result:?}"
@@ -3552,7 +3501,7 @@ mod tests {
     #[test]
     fn out_of_order_accept_or_reject_without_pending_is_ignored() {
         let mut session = make_session();
-        let conn_id = ConnectionId(99);
+        let conn_id = LaneId(99);
 
         session.handle_inbound_accept(conn_id, accept_ref());
         session.handle_inbound_reject(conn_id, reject_ref());
@@ -3566,12 +3515,13 @@ mod tests {
     #[tokio::test]
     async fn close_request_clears_pending_outbound_open() {
         let mut session = make_session();
-        let (open_result_tx, open_result_rx) = moire::sync::oneshot::channel("session.open.result");
+        let (open_result_tx, open_result_rx) =
+            vox_rt::sync::oneshot::channel("session.open.result");
         let (close_result_tx, close_result_rx) =
-            moire::sync::oneshot::channel("session.close.result");
+            vox_rt::sync::oneshot::channel("session.close.result");
 
         session.conns.insert(
-            ConnectionId(1),
+            LaneId(1),
             ConnectionSlot::PendingOutbound(PendingOutboundData {
                 local_settings: ConnectionSettings {
                     parity: Parity::Odd,
@@ -3584,7 +3534,7 @@ mod tests {
 
         session
             .handle_close_request(CloseRequest {
-                conn_id: ConnectionId(1),
+                conn_id: LaneId(1),
                 metadata: vox_types::Metadata::default(),
                 result_tx: close_result_tx,
             })

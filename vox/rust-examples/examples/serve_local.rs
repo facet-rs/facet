@@ -33,7 +33,7 @@ async fn main() -> Result<()> {
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-    let client: HelloClient = vox::connect(&addr).await?;
+    let client: HelloClient = vox::connect_lane(&addr).await?;
     let reply = client.say_hello("unix socket".into()).await?;
     println!("{reply}");
 

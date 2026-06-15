@@ -6,6 +6,8 @@ members = [
   "spec/spec-proto",
   "spec/spec-tests",
   "rust/vox-types",
+  "rust/vox-rt",
+  "rust/vox-rt-macros",
   "rust/vox-schema",
   "rust/vox-core",
   "rust/vox-stream",
@@ -44,6 +46,8 @@ categories = ["network-programming", "asynchronous"]
 # Internal crates
 vox = { path = "rust/vox", version = "0.9.0-rc.0" }
 vox-types = { path = "rust/vox-types", version = "0.9.0-rc.0" }
+vox-rt = { path = "rust/vox-rt", version = "0.9.0-rc.0" }
+vox-rt-macros = { path = "rust/vox-rt-macros", version = "0.9.0-rc.0" }
 vox-schema = { path = "rust/vox-schema", version = "0.9.0-rc.0" }
 vox-macros-parse = { path = "rust/vox-macros-parse", version = "0.9.0-rc.0" }
 vox-macros-core = { path = "rust/vox-macros-core", version = "0.9.0-rc.0" }
@@ -68,10 +72,6 @@ phon-jit = "0.2.0-rc.0"
 phon-codegen = "0.2.0-rc.0"
 ur-taking-me-with-you = { path = "rust/ur-taking-me-with-you", version = "8.0.0" }
 
-# Not internal crates
-moire = "2.0.0-rc.0"
-moire-types = "2.0.0-rc.0"
-
 arc-swap = "1"
 museair = "0.4"
 bitflags = "2.11.0"
@@ -83,6 +83,7 @@ proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full"] }
 tokio = { version = "1", features = ["sync", "rt", "time", "macros", "io-util"] }
+parking_lot = "0.12"
 wasmtimer = { version = "0.4", default-features = false, features = ["tokio"] }
 tokio-tungstenite = "0.29"
 tokio-rustls = "0.26"
@@ -148,11 +149,6 @@ hyper-util = "0.1"
 tower = "0.5"
 tokio-stream = "0.1"
 eyre = "0.6"
-
-# # Uncomment to develop moire
-# [patch."https://github.com/bearcove/moire"]
-# moire = { path = "../moire/crates/moire" }
-# moire-types = { path = "../moire/crates/moire-types" }
 
 [profile.release]
 debug = 1

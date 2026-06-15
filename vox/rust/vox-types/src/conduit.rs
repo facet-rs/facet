@@ -105,7 +105,7 @@ pub trait ConduitAcceptor {
 
 /// Whether the session is acting as initiator or acceptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SessionRole {
+pub enum ConnectionRole {
     Initiator,
     Acceptor,
 }

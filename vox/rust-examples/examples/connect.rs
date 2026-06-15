@@ -29,7 +29,7 @@ async fn main() -> Result<()> {
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     // Client
-    let client: HelloClient = vox::connect("127.0.0.1:9000").await?;
+    let client: HelloClient = vox::connect_lane("127.0.0.1:9000").await?;
     let reply = client.say_hello("world".into()).await?;
     println!("{reply}");
 

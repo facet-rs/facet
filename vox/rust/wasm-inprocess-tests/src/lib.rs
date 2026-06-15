@@ -830,16 +830,15 @@ pub fn start_acceptor(on_message: js_sys::Function) -> JsInProcessLink {
 
         match acceptor_on(link)
             .on_connection(TestbedDispatcher::new(TestbedService))
-            .establish::<TestbedClient>()
+            .establish_connection()
             .await
         {
-            Ok(_root_caller_guard) => {
+            Ok(connection) => {
                 console_log!("In-process acceptor: session established");
-                // Keep the session alive
-                std::future::pending::<()>().await;
+                connection.closed().await;
             }
             Err(e) => {
-                console_error!("In-process acceptor: handshake failed: {:?}", e);
+                console_error!("In-process acceptor: session failed: {:?}", e);
             }
         }
     });

@@ -3,7 +3,7 @@
 
 use std::collections::VecDeque;
 
-use moire::sync::mpsc;
+use vox_rt::sync::mpsc;
 use vox_types::{Backing, Link, LinkRx, LinkTx};
 
 use crate::{Attachment, LinkSource};

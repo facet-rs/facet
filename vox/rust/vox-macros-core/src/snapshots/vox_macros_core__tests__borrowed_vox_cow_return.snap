@@ -3,11 +3,11 @@ source: rust/vox-macros-core/src/lib.rs
 expression: "generate(quote!\n{\n    trait TextSvc\n    {\n        async fn normalize(&self, input: String) -> ::std::borrow::Cow<'vox,\n        str>;\n    }\n})"
 ---
 #[allow(non_snake_case, clippy::all)]
-pub fn text_svc_service_descriptor() -> &'static ::vox::session::ServiceDescriptor {
-    static DESCRIPTOR: std::sync::OnceLock<&'static ::vox::session::ServiceDescriptor> =
+pub fn text_svc_service_descriptor() -> &'static ::vox::connection::ServiceDescriptor {
+    static DESCRIPTOR: std::sync::OnceLock<&'static ::vox::connection::ServiceDescriptor> =
         std::sync::OnceLock::new();
     DESCRIPTOR.get_or_init(|| {
-        let methods: Vec<&'static ::vox::session::MethodDescriptor> =
+        let methods: Vec<&'static ::vox::connection::MethodDescriptor> =
             vec![::vox::hash::method_descriptor::<
                 (String,),
                 ::std::borrow::Cow<'static, str>,
@@ -24,7 +24,7 @@ pub fn text_svc_service_descriptor() -> &'static ::vox::session::ServiceDescript
                     doc: None,
                 },
             )];
-        Box::leak(Box::new(::vox::session::ServiceDescriptor {
+        Box::leak(Box::new(::vox::connection::ServiceDescriptor {
             service_name: "TextSvc",
             methods: Box::leak(methods.into_boxed_slice()),
             doc: None,
@@ -182,21 +182,21 @@ where
             .await;
     }
 }
-#[doc = "Client for the `TextSvc` service.\n\nStores a [`Caller`](:: vox::Caller) and an optional [`SessionHandle`](:: vox::SessionHandle) as public fields."]
+#[doc = "Client for the `TextSvc` service.\n\nStores a [`Caller`](:: vox::Caller) and an optional [`ConnectionHandle`](:: vox::ConnectionHandle) as public fields."]
 #[must_use = "Dropping this client may close the connection if it is the last caller."]
 #[derive(Clone)]
 pub struct TextSvcClient {
     #[doc = r" The underlying caller for making RPC calls."]
     pub caller: ::vox::Caller,
-    #[doc = r" The session handle, if this client is on a root connection."]
-    pub session: Option<::vox::SessionHandle>,
+    #[doc = r" The connection handle backing this service lane, when available."]
+    pub connection: Option<::vox::ConnectionHandle>,
 }
 impl TextSvcClient {
     #[doc = r" Create a new client wrapping the given caller."]
     pub fn new(caller: ::vox::Caller) -> Self {
         Self {
             caller: caller.with_service(text_svc_service_descriptor()),
-            session: None,
+            connection: None,
         }
     }
     #[doc = r" Append a client middleware to this client."]
@@ -205,7 +205,7 @@ impl TextSvcClient {
             caller: self
                 .caller
                 .with_middleware(text_svc_service_descriptor(), middleware),
-            session: self.session,
+            connection: self.connection,
         }
     }
     pub async fn normalize(
@@ -288,12 +288,12 @@ impl TextSvcClient {
         })
     }
 }
-impl ::vox::FromVoxSession for TextSvcClient {
+impl ::vox::FromVoxLane for TextSvcClient {
     const SERVICE_NAME: &'static str = "TextSvc";
-    fn from_vox_session(caller: ::vox::Caller, session: Option<::vox::SessionHandle>) -> Self {
+    fn from_vox_lane(caller: ::vox::Caller, connection: Option<::vox::ConnectionHandle>) -> Self {
         Self {
             caller: caller.with_service(text_svc_service_descriptor()),
-            session,
+            connection,
         }
     }
 }

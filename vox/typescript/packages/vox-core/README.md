@@ -4,11 +4,11 @@ Core TypeScript runtime abstractions for Vox connections, calls, and channeling.
 
 ## Role in the Vox stack
 
-`@bearcove/vox-core` implements TypeScript-side runtime behavior at the `Requests / Channels`, `Connections`, and `Session` layers.
+`@bearcove/vox-core` implements TypeScript-side runtime behavior for links, connections, service lanes, requests, and channels.
 
 ## What this package provides
 
-- Caller/connection abstractions for generated and hand-written clients
+- Connection/lane abstractions for generated and hand-written clients
 - Call-building and middleware-style runtime plumbing
 - Channeling primitives used by higher-level transports and generated bindings
 

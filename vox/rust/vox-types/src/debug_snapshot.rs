@@ -3,7 +3,7 @@ use std::time::Duration;
 use crate::time::Instant;
 use crate::{
     ChannelCloseReason, ChannelDebugContext, ChannelDirection, ChannelId, ChannelResetReason,
-    ConnectionCloseReason, ConnectionId, MethodId, RequestId,
+    ConnectionCloseReason, LaneId, MethodId, RequestId,
 };
 
 // r[impl rpc.debug.snapshot]
@@ -29,7 +29,7 @@ pub enum DriverTaskStatus {
 
 #[derive(Clone, Debug)]
 pub struct ConnectionDebugSnapshot {
-    pub connection_id: ConnectionId,
+    pub connection_id: LaneId,
     pub endpoint: Option<String>,
     pub surface: Option<String>,
     pub component: Option<String>,
@@ -79,7 +79,7 @@ pub enum ChannelReceiverState {
 
 #[derive(Clone, Debug)]
 pub struct ChannelDebugSnapshot {
-    pub connection_id: ConnectionId,
+    pub connection_id: LaneId,
     pub channel_id: ChannelId,
     pub direction: ChannelDirection,
     pub debug: Option<ChannelDebugContext>,

@@ -396,7 +396,7 @@ fn generate_service_descriptor_fn(parsed: &ServiceTrait, vox: &TokenStream2) -> 
     let method_count = method_descriptors.len();
     let methods_init = if method_count <= 8 {
         quote! {
-            let methods: Vec<&'static #vox::session::MethodDescriptor> = vec![#(#method_descriptors),*];
+            let methods: Vec<&'static #vox::connection::MethodDescriptor> = vec![#(#method_descriptors),*];
         }
     } else {
         let method_descriptor_pushes = method_descriptors.iter().map(|descriptor| {
@@ -406,18 +406,18 @@ fn generate_service_descriptor_fn(parsed: &ServiceTrait, vox: &TokenStream2) -> 
         });
 
         quote! {
-            let mut methods: Vec<&'static #vox::session::MethodDescriptor> = Vec::with_capacity(#method_count);
+            let mut methods: Vec<&'static #vox::connection::MethodDescriptor> = Vec::with_capacity(#method_count);
             #(#method_descriptor_pushes)*
         }
     };
 
     quote! {
         #[allow(non_snake_case, clippy::all)]
-        pub fn #descriptor_fn_name() -> &'static #vox::session::ServiceDescriptor {
-            static DESCRIPTOR: std::sync::OnceLock<&'static #vox::session::ServiceDescriptor> = std::sync::OnceLock::new();
+        pub fn #descriptor_fn_name() -> &'static #vox::connection::ServiceDescriptor {
+            static DESCRIPTOR: std::sync::OnceLock<&'static #vox::connection::ServiceDescriptor> = std::sync::OnceLock::new();
             DESCRIPTOR.get_or_init(|| {
                 #methods_init
-                Box::leak(Box::new(#vox::session::ServiceDescriptor {
+                Box::leak(Box::new(#vox::connection::ServiceDescriptor {
                     service_name: #service_name,
                     methods: Box::leak(methods.into_boxed_slice()),
                     doc: #service_doc_expr,
@@ -637,7 +637,7 @@ fn generate_dispatcher(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream
             }
         }
 
-        // ConnectionAcceptor is implemented via blanket impl on Handler<DriverReplySink>.
+        // LaneAcceptor is implemented via blanket impl on Handler<DriverReplySink>.
     }
 }
 
@@ -840,7 +840,7 @@ fn generate_client(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream2 {
 
     let client_doc = format!(
         "Client for the `{service_name}` service.\n\n\
-        Stores a [`Caller`]({vox}::Caller) and an optional [`SessionHandle`]({vox}::SessionHandle) as public fields.",
+        Stores a [`Caller`]({vox}::Caller) and an optional [`ConnectionHandle`]({vox}::ConnectionHandle) as public fields.",
     );
 
     let client_methods: Vec<TokenStream2> = parsed
@@ -856,8 +856,8 @@ fn generate_client(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream2 {
         pub struct #client_name {
             /// The underlying caller for making RPC calls.
             pub caller: #vox::Caller,
-            /// The session handle, if this client is on a root connection.
-            pub session: Option<#vox::SessionHandle>,
+            /// The connection handle backing this service lane, when available.
+            pub connection: Option<#vox::ConnectionHandle>,
         }
 
         impl #client_name {
@@ -865,7 +865,7 @@ fn generate_client(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream2 {
             pub fn new(caller: #vox::Caller) -> Self {
                 Self {
                     caller: caller.with_service(#descriptor_fn_name()),
-                    session: None,
+                    connection: None,
                 }
             }
 
@@ -875,23 +875,23 @@ fn generate_client(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream2 {
                     caller: self
                         .caller
                         .with_middleware(#descriptor_fn_name(), middleware),
-                    session: self.session,
+                    connection: self.connection,
                 }
             }
 
             #(#client_methods)*
         }
 
-        impl #vox::FromVoxSession for #client_name {
+        impl #vox::FromVoxLane for #client_name {
             const SERVICE_NAME: &'static str = #service_name_str;
 
-            fn from_vox_session(
+            fn from_vox_lane(
                 caller: #vox::Caller,
-                session: Option<#vox::SessionHandle>,
+                connection: Option<#vox::ConnectionHandle>,
             ) -> Self {
                 Self {
                     caller: caller.with_service(#descriptor_fn_name()),
-                    session,
+                    connection,
                 }
             }
         }

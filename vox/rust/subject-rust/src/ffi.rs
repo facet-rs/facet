@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::{fs::OpenOptions, io::Write};
 
-use spec_proto::{TestbedClient, TestbedDispatcher};
+use spec_proto::TestbedDispatcher;
 use tokio::runtime::Builder;
 use tracing::info;
 use vox::acceptor_on;
@@ -122,19 +122,17 @@ fn bootstrap_service_once(peer: *const vox_link_vtable) {
 
             let establish = acceptor_on(link)
                 .on_connection(TestbedDispatcher::new(TestbedService))
-                .establish::<TestbedClient>()
+                .establish_connection()
                 .await;
             match establish {
-                Ok(client) => {
+                Ok(connection) => {
                     info!("ffi runtime: acceptor established");
                     ffi_log("[subject-rust ffi] runtime thread: establish succeeded");
-                    ffi_log("[subject-rust ffi] runtime thread: waiting for caller close");
-                    client.caller.closed().await;
-                    ffi_log("[subject-rust ffi] runtime thread: caller closed");
-                    if let Some(session) = client.session.as_ref() {
-                        let _ = session.shutdown();
-                        ffi_log("[subject-rust ffi] runtime thread: session shutdown requested");
-                    }
+                    ffi_log("[subject-rust ffi] runtime thread: waiting for connection close");
+                    connection.closed().await;
+                    ffi_log("[subject-rust ffi] runtime thread: connection closed");
+                    let _ = connection.shutdown();
+                    ffi_log("[subject-rust ffi] runtime thread: connection shutdown requested");
                 }
                 Err(error) => {
                     ffi_log(&format!(

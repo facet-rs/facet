@@ -14,7 +14,7 @@ import Foundation
 // r[impl rpc.channel.payload-encoding]
 
 /// The initial channel credit window (in items) both peers advertise at handshake
-/// (`SessionEstablishment.swift` `initialChannelCredit`). Credit is per-item: a sender
+/// (`ConnectionEstablishment.swift` `initialChannelCredit`). Credit is per-item: a sender
 /// may send this many items before a grant, and the receiver re-grants as it consumes
 /// (replenishment threshold = window/2). This MUST match the advertised window — using
 /// a larger value here starves the sender (the receiver would only re-grant after
@@ -40,7 +40,7 @@ public func channelWireIndex(_ data: Data) -> Int {
 
 // MARK: - Client-side binding (the caller keeps the paired handle)
 
-extension VoxConnection {
+extension VoxLane {
     /// Bind an `Rx<T>` argument: the method wants an `Rx` (callee receives), so the
     /// caller passed an `Rx` and keeps the paired `Tx` — the caller SENDS. Inject the
     /// phon typed encode codec into the paired `Tx`, allocate a channel id, bind the

@@ -1,5 +1,5 @@
 use eyre::{Result, eyre};
-use vox::{ConnectionSettings, Metadata, Parity, SessionHandle};
+use vox::{ConnectionHandle, ConnectionSettings, Metadata, Parity};
 
 #[vox::service]
 trait MathText {
@@ -21,14 +21,10 @@ impl MathText for UpstreamMathText {
 }
 
 fn upstream_acceptor(
-    request: &vox::ConnectionRequest,
-    connection: vox::PendingConnection,
+    request: &vox::LaneRequest,
+    connection: vox::PendingLane,
 ) -> Result<(), Metadata> {
     match request.service() {
-        "Noop" => {
-            connection.handle_with(());
-            Ok(())
-        }
         "MathText" => {
             connection.handle_with(MathTextDispatcher::new(UpstreamMathText));
             Ok(())
@@ -39,32 +35,28 @@ fn upstream_acceptor(
 
 #[derive(Clone)]
 struct ProxyAcceptor {
-    upstream_session: SessionHandle,
+    upstream_connection: ConnectionHandle,
 }
 
-impl vox::ConnectionAcceptor for ProxyAcceptor {
+impl vox::LaneAcceptor for ProxyAcceptor {
     fn accept(
         &self,
-        request: &vox::ConnectionRequest,
-        connection: vox::PendingConnection,
+        request: &vox::LaneRequest,
+        connection: vox::PendingLane,
     ) -> Result<(), Metadata> {
         match request.service() {
-            "Noop" => {
-                connection.handle_with(());
-                return Ok(());
-            }
             "MathText" => {}
             _ => {
                 return Err(vox::metadata().str("error", "unknown service").build());
             }
         }
 
-        let upstream_session = self.upstream_session.clone();
+        let upstream_connection = self.upstream_connection.clone();
         let incoming_handle = connection.into_handle();
         tokio::spawn(async move {
-            println!("[host] guest-a opened proxy vconn; opening upstream vconn to guest-b");
-            match upstream_session
-                .open_connection(
+            println!("[host] guest-a opened proxy lane; opening upstream lane to guest-b");
+            match upstream_connection
+                .open_lane_handle(
                     ConnectionSettings {
                         parity: Parity::Odd,
                         max_concurrent_requests: 64,
@@ -77,11 +69,11 @@ impl vox::ConnectionAcceptor for ProxyAcceptor {
                 .await
             {
                 Ok(upstream_conn) => {
-                    println!("[host] upstream vconn to guest-b is ready");
-                    let _ = vox::proxy_connections(incoming_handle, upstream_conn).await;
+                    println!("[host] upstream lane to guest-b is ready");
+                    let _ = vox::proxy_lanes(incoming_handle, upstream_conn).await;
                 }
                 Err(err) => {
-                    let msg = format!("failed to open upstream vconn: {err:?}");
+                    let msg = format!("failed to open upstream lane: {err:?}");
                     eprintln!("[host] {msg}");
                 }
             }
@@ -96,7 +88,7 @@ async fn main() -> Result<()> {
     let (host_a_link, guest_a_link) = vox::memory_link_pair(64);
     let (host_b_link, guest_b_link) = vox::memory_link_pair(64);
 
-    println!("[guest-b] starting root session");
+    println!("[guest-b] starting connection");
     let guest_b_task = tokio::spawn(async move {
         let guest_b_root_guard = vox::acceptor_on_link(
             guest_b_link,
@@ -108,16 +100,16 @@ async fn main() -> Result<()> {
         )
         .await
         .expect("guest-b acceptor_on_link")
-        .on_connection(vox::acceptor_fn(upstream_acceptor))
-        .establish::<vox::NoopClient>()
+        .on_connection(vox::lane_acceptor_fn(upstream_acceptor))
+        .establish_connection()
         .await
         .expect("guest-b establish");
-        let _guest_b_root_guard = guest_b_root_guard;
+        let _guest_b_connection = guest_b_root_guard;
         std::future::pending::<()>().await;
     });
 
-    println!("[host] establishing session to guest-b");
-    let _host_root_to_b_guard = vox::initiator_on_link(
+    println!("[host] establishing connection to guest-b");
+    let host_connection_to_b = vox::initiator_on_link(
         host_b_link,
         ConnectionSettings {
             parity: Parity::Odd,
@@ -127,15 +119,14 @@ async fn main() -> Result<()> {
     )
     .await
     .map_err(|e| eyre!("host<->guest-b initiator_on_link failed: {e:?}"))?
-    .establish::<vox::NoopClient>()
+    .establish_connection()
     .await
     .map_err(|e| eyre!("host<->guest-b establish failed: {e:?}"))?;
-    let upstream_session_handle = _host_root_to_b_guard.session.clone().unwrap();
-    println!("[host] host<->guest-b root session ready");
+    println!("[host] host<->guest-b connection ready");
 
-    println!("[host] starting root session for guest-a");
+    println!("[host] starting connection for guest-a");
     let proxy_acceptor = ProxyAcceptor {
-        upstream_session: upstream_session_handle,
+        upstream_connection: host_connection_to_b,
     };
     let host_for_a_task = tokio::spawn(async move {
         let host_root_for_a_guard = vox::acceptor_on_link(
@@ -149,15 +140,15 @@ async fn main() -> Result<()> {
         .await
         .expect("host<->guest-a acceptor_on_link")
         .on_connection(proxy_acceptor)
-        .establish::<vox::NoopClient>()
+        .establish_connection()
         .await
         .expect("host<->guest-a establish");
-        let _host_root_for_a_guard = host_root_for_a_guard;
+        let _host_connection_for_a = host_root_for_a_guard;
         std::future::pending::<()>().await;
     });
 
-    println!("[guest-a] establishing root session to host");
-    let _guest_a_root_guard = vox::initiator_on_link(
+    println!("[guest-a] establishing connection to host");
+    let guest_a_connection = vox::initiator_on_link(
         guest_a_link,
         ConnectionSettings {
             parity: Parity::Odd,
@@ -167,21 +158,20 @@ async fn main() -> Result<()> {
     )
     .await
     .map_err(|e| eyre!("guest-a<->host initiator_on_link failed: {e:?}"))?
-    .establish::<vox::NoopClient>()
+    .establish_connection()
     .await
     .map_err(|e| eyre!("guest-a<->host establish failed: {e:?}"))?;
-    let guest_a_session_handle = _guest_a_root_guard.session.clone().unwrap();
-    println!("[guest-a] root session ready");
+    println!("[guest-a] connection ready");
 
-    println!("[guest-a] opening proxy vconn to host");
-    let proxy_client: MathTextClient = guest_a_session_handle
-        .open(ConnectionSettings {
+    println!("[guest-a] opening proxy lane to host");
+    let proxy_client: MathTextClient = guest_a_connection
+        .open_lane_with_settings(ConnectionSettings {
             parity: Parity::Odd,
             max_concurrent_requests: 64,
             initial_channel_credit: 16,
         })
         .await
-        .map_err(|e| eyre!("guest-a open proxy vconn failed: {e:?}"))?;
+        .map_err(|e| eyre!("guest-a open proxy lane failed: {e:?}"))?;
 
     println!("[guest-a] calling add via host proxy to guest-b");
     let added = proxy_client

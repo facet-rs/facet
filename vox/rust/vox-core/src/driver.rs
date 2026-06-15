@@ -9,15 +9,15 @@ use vox_types::time::Instant;
 
 use futures_util::future::{AbortHandle, Abortable, FutureExt as FuturesFutureExt};
 use futures_util::stream::{FuturesUnordered, StreamExt as _};
-use moire::sync::{Semaphore, SyncMutex};
 use tokio::sync::watch;
+use vox_rt::sync::{Semaphore, SyncMutex};
 
-use moire::task::FutureExt as _;
+use vox_rt::task::FutureExt as _;
 use vox_types::{
     BoxFut, CallResult, ChannelBinder, ChannelBody, ChannelClose, ChannelCreditReplenisher,
     ChannelCreditReplenisherHandle, ChannelEventContext, ChannelId, ChannelItem,
     ChannelLivenessHandle, ChannelMailboxReceiver, ChannelMailboxSender, ChannelMessage,
-    ChannelSink, ConnectionId, CreditSink, Handler, IdAllocator, IncomingChannelMessage, MaybeSend,
+    ChannelSink, CreditSink, Handler, IdAllocator, IncomingChannelMessage, LaneId, MaybeSend,
     MaybeSendFuture, MaybeSync, Parity, Payload, ReplySink, RequestBody, RequestCall, RequestId,
     RequestMessage, RequestResponse, SelfRef, TrySendError, TxError, VoxError, channel_mailbox,
 };
@@ -31,10 +31,10 @@ use vox_types::{
     VoxDebugSnapshot,
 };
 
-use crate::session::{
-    ConnectionHandle, ConnectionMessage, ConnectionSender, DropControlRequest, FailureDisposition,
+use crate::connection::{
+    ConnectionMessage, ConnectionSender, DropControlRequest, FailureDisposition, LaneHandle,
 };
-use moire::sync::mpsc;
+use vox_rt::sync::mpsc;
 
 /// A pending response for one outbound request attempt.
 ///
@@ -50,7 +50,7 @@ struct PendingResponse {
     fds: vox_types::FrameFds,
 }
 
-type ResponseSlot = moire::sync::oneshot::Sender<PendingResponse>;
+type ResponseSlot = vox_rt::sync::oneshot::Sender<PendingResponse>;
 
 struct InFlightHandler {
     /// Aborts the handler future hosted on `Driver::handler_futs`. Triggered
@@ -283,7 +283,7 @@ impl ChannelRuntimeDebug {
 
     fn snapshot(
         &self,
-        connection_id: ConnectionId,
+        connection_id: LaneId,
         channel_id: ChannelId,
         available_send_credit: Option<u32>,
     ) -> ChannelDebugSnapshot {
@@ -337,7 +337,7 @@ impl ChannelRuntimeDebug {
 /// `pending_responses` is keyed by request ID and therefore tracks live
 /// request attempts.
 struct DriverShared {
-    connection_id: ConnectionId,
+    connection_id: LaneId,
     pending_responses: SyncMutex<BTreeMap<RequestId, ResponseSlot>>,
     request_ids: SyncMutex<IdAllocator<RequestId>>,
     channel_ids: SyncMutex<IdAllocator<ChannelId>>,
@@ -790,9 +790,9 @@ mod tests {
 
     #[tokio::test]
     async fn replenisher_batches_at_half_the_initial_window() {
-        let (tx, mut rx) = moire::sync::mpsc::unbounded_channel("test.replenisher");
+        let (tx, mut rx) = vox_rt::sync::mpsc::unbounded_channel("test.replenisher");
         let replenisher = DriverChannelCreditReplenisher::new(
-            vox_types::ConnectionId::ROOT,
+            vox_types::LaneId::ROOT,
             ChannelId(7),
             None,
             std::sync::Weak::new(),
@@ -825,9 +825,9 @@ mod tests {
 
     #[tokio::test]
     async fn replenisher_grants_one_by_one_for_single_credit_windows() {
-        let (tx, mut rx) = moire::sync::mpsc::unbounded_channel("test.replenisher.single");
+        let (tx, mut rx) = vox_rt::sync::mpsc::unbounded_channel("test.replenisher.single");
         let replenisher = DriverChannelCreditReplenisher::new(
-            vox_types::ConnectionId::ROOT,
+            vox_types::LaneId::ROOT,
             ChannelId(9),
             None,
             std::sync::Weak::new(),
@@ -928,7 +928,7 @@ impl ReplySink for DriverReplySink {
         Some(self.request_id)
     }
 
-    fn connection_id(&self) -> Option<vox_types::ConnectionId> {
+    fn connection_id(&self) -> Option<vox_types::LaneId> {
         self.sender.as_ref().map(|sender| sender.connection_id())
     }
 }
@@ -990,7 +990,7 @@ impl ChannelSink for DriverChannelSink {
         Some(self.channel_id)
     }
 
-    fn connection_id(&self) -> Option<vox_types::ConnectionId> {
+    fn connection_id(&self) -> Option<vox_types::LaneId> {
         Some(self.sender.connection_id())
     }
 
@@ -1299,41 +1299,18 @@ impl Caller {
     }
 }
 
-/// Trait for constructing a typed client from a vox session.
+/// Trait for constructing a typed client from a Vox service lane.
 ///
 /// Generated `*Client` types implement this to receive both the caller
-/// and an optional session handle. Root connections pass `Some(handle)`;
-/// virtual connections pass `None`.
-pub trait FromVoxSession {
+/// and an optional connection handle.
+pub trait FromVoxLane {
     /// The service name for this client, used for automatic `vox-service` metadata.
-    /// Generated clients return `Some("ServiceName")`. `NoopClient` returns `None`.
     const SERVICE_NAME: &'static str;
 
-    fn from_vox_session(
+    fn from_vox_lane(
         caller: Caller,
-        session_handle: Option<crate::session::SessionHandle>,
+        connection_handle: Option<crate::connection::ConnectionHandle>,
     ) -> Self;
-}
-
-/// Liveness-only client for a connection root.
-///
-/// Keeps the root connection alive but intentionally exposes no outbound RPC API.
-/// Use this as the type parameter to `establish()` when you don't need a typed client.
-#[must_use = "Dropping NoopClient may close the connection if it is the last caller."]
-#[derive(Clone)]
-pub struct NoopClient {
-    /// The underlying caller keeping the connection alive.
-    pub caller: Caller,
-    /// The session handle, if this client is on a root connection.
-    pub session: Option<crate::session::SessionHandle>,
-}
-
-impl FromVoxSession for NoopClient {
-    const SERVICE_NAME: &'static str = "Noop";
-
-    fn from_vox_session(caller: Caller, session: Option<crate::session::SessionHandle>) -> Self {
-        Self { caller, session }
-    }
 }
 
 #[derive(Clone)]
@@ -1819,7 +1796,7 @@ impl DriverCaller {
 
         // Register the response slot before sending, so the driver can
         // route the response even if it arrives before we start awaiting.
-        let (tx, rx) = moire::sync::oneshot::channel("driver.response");
+        let (tx, rx) = vox_rt::sync::oneshot::channel("driver.response");
         self.shared.pending_responses.lock().insert(req_id, tx);
         self.shared.start_request(
             req_id,
@@ -1953,7 +1930,7 @@ impl DriverCaller {
 /// incoming requests to a `Handler`, and manages channel state / flow control.
 pub struct Driver<H: Handler<DriverReplySink>> {
     sender: ConnectionSender,
-    rx: mpsc::Receiver<crate::session::RecvMessage>,
+    rx: mpsc::Receiver<crate::connection::RecvMessage>,
     failures_rx: mpsc::UnboundedReceiver<(RequestId, FailureDisposition)>,
     closed_rx: watch::Receiver<Option<ConnectionCloseReason>>,
     local_control_rx: mpsc::UnboundedReceiver<DriverLocalControl>,
@@ -1989,7 +1966,7 @@ enum DriverLocalControl {
 }
 
 struct DriverChannelCreditReplenisher {
-    connection_id: ConnectionId,
+    connection_id: LaneId,
     channel_id: ChannelId,
     debug_context: Option<ChannelDebugContext>,
     shared: Weak<DriverShared>,
@@ -2001,7 +1978,7 @@ struct DriverChannelCreditReplenisher {
 
 impl DriverChannelCreditReplenisher {
     fn new(
-        connection_id: ConnectionId,
+        connection_id: LaneId,
         channel_id: ChannelId,
         debug_context: Option<ChannelDebugContext>,
         shared: Weak<DriverShared>,
@@ -2060,7 +2037,7 @@ impl ChannelCreditReplenisher for DriverChannelCreditReplenisher {
         Some(self.channel_id)
     }
 
-    fn connection_id(&self) -> Option<ConnectionId> {
+    fn connection_id(&self) -> Option<LaneId> {
         Some(self.connection_id)
     }
 
@@ -2121,9 +2098,9 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
         }
     }
 
-    pub fn new(handle: ConnectionHandle, handler: H) -> Self {
+    pub fn new(handle: LaneHandle, handler: H) -> Self {
         let conn_id = handle.connection_id();
-        let ConnectionHandle {
+        let LaneHandle {
             sender,
             rx,
             failures_rx,
@@ -2449,9 +2426,9 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
         }
     }
 
-    async fn handle_recv(&mut self, recv: crate::session::RecvMessage) {
+    async fn handle_recv(&mut self, recv: crate::connection::RecvMessage) {
         self.shared.mark_inbound_progress();
-        let crate::session::RecvMessage { schemas, msg, fds } = recv;
+        let crate::connection::RecvMessage { schemas, msg, fds } = recv;
         let msg_ref = msg.get();
         match msg_ref {
             ConnectionMessage::Request(req) => {

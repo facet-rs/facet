@@ -1,9 +1,9 @@
 import Foundation
 
-struct SessionHandshakeResult {
+struct ConnectionHandshakeResult {
     let negotiated: Negotiated
-    let localRootSettings: ConnectionSettings
-    let peerRootSettings: ConnectionSettings
+    let localControlSettings: ConnectionSettings
+    let peerControlSettings: ConnectionSettings
     let peerMetadata: Metadata
     /// The peer's advertised Message schema closure, used to build the conduit's
     /// compatibility decoder.
@@ -82,7 +82,7 @@ func performInitiatorHandshake(
     maxConcurrentRequests: UInt32,
     initialChannelCredit: UInt32 = 16,
     metadata: Metadata = .null
-) async throws -> SessionHandshakeResult {
+) async throws -> ConnectionHandshakeResult {
     traceLog(.handshake, "initiator sending Hello")
     let ourSettings = try makeConnectionSettings(
         parity: .odd,
@@ -131,10 +131,10 @@ func performInitiatorHandshake(
             + "maxConcurrentRequests=\(negotiated.maxConcurrentRequests)"
     )
 
-    return SessionHandshakeResult(
+    return ConnectionHandshakeResult(
         negotiated: negotiated,
-        localRootSettings: ourSettings,
-        peerRootSettings: peerHello.connectionSettings,
+        localControlSettings: ourSettings,
+        peerControlSettings: peerHello.connectionSettings,
         peerMetadata: peerHello.metadata,
         peerMessageSchema: peerSchema
     )
@@ -156,7 +156,7 @@ func performAcceptorHandshake(
     maxConcurrentRequests: UInt32,
     initialChannelCredit: UInt32 = 16,
     metadata: Metadata = .null
-) async throws -> SessionHandshakeResult {
+) async throws -> ConnectionHandshakeResult {
     let peerHello: Hello
     switch try await recvHandshake(link) {
     case .hello(let hello):
@@ -207,10 +207,10 @@ func performAcceptorHandshake(
             + "maxConcurrentRequests=\(negotiated.maxConcurrentRequests)"
     )
 
-    return SessionHandshakeResult(
+    return ConnectionHandshakeResult(
         negotiated: negotiated,
-        localRootSettings: ourSettings,
-        peerRootSettings: peerHello.connectionSettings,
+        localControlSettings: ourSettings,
+        peerControlSettings: peerHello.connectionSettings,
         peerMetadata: peerHello.metadata,
         peerMessageSchema: peerSchema
     )
@@ -231,13 +231,13 @@ func buildEstablishedConduit(
 func establishInitiator(
     attachment: LinkAttachment,
     dispatcher: any ServiceDispatcher,
-    connectionAcceptor: (any ConnectionAcceptor)? = nil,
+    laneAcceptor: (any LaneAcceptor)? = nil,
     maxPayloadSize: UInt32? = nil,
     maxConcurrentRequests: UInt32 = 64,
     initialChannelCredit: UInt32 = 16,
-    keepalive: SessionKeepaliveConfig? = nil,
+    keepalive: ConnectionKeepaliveConfig? = nil,
     metadata: Metadata = .null
-) async throws -> (Connection, Driver, SessionHandle, Metadata) {
+) async throws -> (Lane, Driver, ConnectionHandle, Metadata) {
     warnLog("[vox-establish] initiator: starting handshake")
     let ourMaxPayload = maxPayloadSize ?? (1024 * 1024)
     let handshake = try await performInitiatorHandshake(
@@ -256,15 +256,15 @@ func establishInitiator(
     )
     try await conduit.setMaxFrameSize(Int(handshake.negotiated.maxPayloadSize) + 64)
 
-    let (connection, driver, handle) = makeSessionDriverAndConnection(
+    let (connection, driver, handle) = makeConnectionDriverAndControlLane(
         conduit: conduit,
         dispatcher: dispatcher,
         role: .initiator,
         negotiated: handshake.negotiated,
-        connectionAcceptor: connectionAcceptor,
+        laneAcceptor: laneAcceptor,
         keepalive: keepalive,
-        localRootSettings: handshake.localRootSettings,
-        peerRootSettings: handshake.peerRootSettings,
+        localControlSettings: handshake.localControlSettings,
+        peerControlSettings: handshake.peerControlSettings,
         peerMessageSchema: handshake.peerMessageSchema
     )
     return (connection, driver, handle, handshake.peerMetadata)
@@ -274,17 +274,17 @@ func establishInitiator(
 func establishInitiator(
     link: any Link,
     dispatcher: any ServiceDispatcher,
-    connectionAcceptor: (any ConnectionAcceptor)? = nil,
+    laneAcceptor: (any LaneAcceptor)? = nil,
     maxPayloadSize: UInt32? = nil,
     maxConcurrentRequests: UInt32 = 64,
     initialChannelCredit: UInt32 = 16,
-    keepalive: SessionKeepaliveConfig? = nil,
+    keepalive: ConnectionKeepaliveConfig? = nil,
     metadata: Metadata = .null
-) async throws -> (Connection, Driver, SessionHandle, Metadata) {
+) async throws -> (Lane, Driver, ConnectionHandle, Metadata) {
     try await establishInitiator(
         attachment: .initiator(link),
         dispatcher: dispatcher,
-        connectionAcceptor: connectionAcceptor,
+        laneAcceptor: laneAcceptor,
         maxPayloadSize: maxPayloadSize,
         maxConcurrentRequests: maxConcurrentRequests,
         initialChannelCredit: initialChannelCredit,
@@ -297,17 +297,17 @@ func establishInitiator(
 func establishInitiator(
     conduit: any Link,
     dispatcher: any ServiceDispatcher,
-    connectionAcceptor: (any ConnectionAcceptor)? = nil,
+    laneAcceptor: (any LaneAcceptor)? = nil,
     maxPayloadSize: UInt32? = nil,
     maxConcurrentRequests: UInt32 = 64,
     initialChannelCredit: UInt32 = 16,
-    keepalive: SessionKeepaliveConfig? = nil,
+    keepalive: ConnectionKeepaliveConfig? = nil,
     metadata: Metadata = .null
-) async throws -> (Connection, Driver, SessionHandle, Metadata) {
+) async throws -> (Lane, Driver, ConnectionHandle, Metadata) {
     try await establishInitiator(
         link: conduit,
         dispatcher: dispatcher,
-        connectionAcceptor: connectionAcceptor,
+        laneAcceptor: laneAcceptor,
         maxPayloadSize: maxPayloadSize,
         maxConcurrentRequests: maxConcurrentRequests,
         initialChannelCredit: initialChannelCredit,
@@ -322,13 +322,13 @@ func establishInitiator(
 func establishAcceptor(
     attachment: LinkAttachment,
     dispatcher: any ServiceDispatcher,
-    connectionAcceptor: (any ConnectionAcceptor)? = nil,
+    laneAcceptor: (any LaneAcceptor)? = nil,
     maxPayloadSize: UInt32? = nil,
     maxConcurrentRequests: UInt32 = 64,
     initialChannelCredit: UInt32 = 16,
-    keepalive: SessionKeepaliveConfig? = nil,
+    keepalive: ConnectionKeepaliveConfig? = nil,
     metadata: Metadata = .null
-) async throws -> (Connection, Driver, SessionHandle, Metadata) {
+) async throws -> (Lane, Driver, ConnectionHandle, Metadata) {
     warnLog("[vox-establish] acceptor: prologueComplete=\(attachment.hasCompletedPrologue)")
     if !attachment.hasCompletedPrologue {
         warnLog("[vox-establish] acceptor: running link prologue")
@@ -353,15 +353,15 @@ func establishAcceptor(
     )
     try await conduit.setMaxFrameSize(Int(handshake.negotiated.maxPayloadSize) + 64)
 
-    let (connection, driver, handle) = makeSessionDriverAndConnection(
+    let (connection, driver, handle) = makeConnectionDriverAndControlLane(
         conduit: conduit,
         dispatcher: dispatcher,
         role: .acceptor,
         negotiated: handshake.negotiated,
-        connectionAcceptor: connectionAcceptor,
+        laneAcceptor: laneAcceptor,
         keepalive: keepalive,
-        localRootSettings: handshake.localRootSettings,
-        peerRootSettings: handshake.peerRootSettings,
+        localControlSettings: handshake.localControlSettings,
+        peerControlSettings: handshake.peerControlSettings,
         peerMessageSchema: handshake.peerMessageSchema
     )
     return (connection, driver, handle, handshake.peerMetadata)
@@ -371,17 +371,17 @@ func establishAcceptor(
 func establishAcceptor(
     link: any Link,
     dispatcher: any ServiceDispatcher,
-    connectionAcceptor: (any ConnectionAcceptor)? = nil,
+    laneAcceptor: (any LaneAcceptor)? = nil,
     maxPayloadSize: UInt32? = nil,
     maxConcurrentRequests: UInt32 = 64,
     initialChannelCredit: UInt32 = 16,
-    keepalive: SessionKeepaliveConfig? = nil,
+    keepalive: ConnectionKeepaliveConfig? = nil,
     metadata: Metadata = .null
-) async throws -> (Connection, Driver, SessionHandle, Metadata) {
+) async throws -> (Lane, Driver, ConnectionHandle, Metadata) {
     try await establishAcceptor(
         attachment: .init(link: link),
         dispatcher: dispatcher,
-        connectionAcceptor: connectionAcceptor,
+        laneAcceptor: laneAcceptor,
         maxPayloadSize: maxPayloadSize,
         maxConcurrentRequests: maxConcurrentRequests,
         initialChannelCredit: initialChannelCredit,
@@ -394,17 +394,17 @@ func establishAcceptor(
 func establishAcceptor(
     conduit: any Link,
     dispatcher: any ServiceDispatcher,
-    connectionAcceptor: (any ConnectionAcceptor)? = nil,
+    laneAcceptor: (any LaneAcceptor)? = nil,
     maxPayloadSize: UInt32? = nil,
     maxConcurrentRequests: UInt32 = 64,
     initialChannelCredit: UInt32 = 16,
-    keepalive: SessionKeepaliveConfig? = nil,
+    keepalive: ConnectionKeepaliveConfig? = nil,
     metadata: Metadata = .null
-) async throws -> (Connection, Driver, SessionHandle, Metadata) {
+) async throws -> (Lane, Driver, ConnectionHandle, Metadata) {
     try await establishAcceptor(
         link: conduit,
         dispatcher: dispatcher,
-        connectionAcceptor: connectionAcceptor,
+        laneAcceptor: laneAcceptor,
         maxPayloadSize: maxPayloadSize,
         maxConcurrentRequests: maxConcurrentRequests,
         initialChannelCredit: initialChannelCredit,

@@ -1,7 +1,7 @@
 disallowed-types = [
-  { path = "tokio::sync::Mutex", reason = "Use moire wrappers" },
-  { path = "tokio::sync::RwLock", reason = "Use moire wrappers" },
+  { path = "tokio::sync::Mutex", reason = "Use vox-rt wrappers" },
+  { path = "tokio::sync::RwLock", reason = "Use vox-rt wrappers" },
 
-  { path = "std::sync::RwLock", reason = "Use moire wrappers" },
-  { path = "parking_lot::RwLock", reason = "Use moire wrappers" },
+  { path = "std::sync::RwLock", reason = "Use vox-rt wrappers" },
+  { path = "parking_lot::RwLock", reason = "Use vox-rt wrappers" },
 ]

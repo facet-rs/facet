@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use vox_core::ConnectionAcceptor;
+use vox_core::LaneAcceptor;
 use vox_types::VoxObserverHandle;
 
 use super::{ServeError, VoxListener, serve_listener};
@@ -95,7 +95,7 @@ fn parse_query_params(s: &str) -> (&str, std::collections::HashMap<String, std::
 
 pub(super) async fn serve_wss(
     host: &str,
-    acceptor: impl ConnectionAcceptor,
+    acceptor: impl LaneAcceptor,
     channel_capacity: u32,
     observer: Option<VoxObserverHandle>,
 ) -> Result<(), ServeError> {

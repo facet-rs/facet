@@ -2,11 +2,11 @@ use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
 
 use vox_core::{BareConduit, acceptor_conduit, initiator_conduit};
-use vox_types::{ConnectionSettings, HandshakeResult, Link, Parity, SessionRole};
+use vox_types::{ConnectionRole, ConnectionSettings, HandshakeResult, Link, Parity};
 
 fn test_acceptor_handshake(service: &'static str) -> HandshakeResult {
     HandshakeResult {
-        role: SessionRole::Acceptor,
+        role: ConnectionRole::Acceptor,
         our_settings: ConnectionSettings {
             parity: Parity::Even,
             max_concurrent_requests: 64,
@@ -25,7 +25,7 @@ fn test_acceptor_handshake(service: &'static str) -> HandshakeResult {
 
 fn test_initiator_handshake(service: &'static str) -> HandshakeResult {
     HandshakeResult {
-        role: SessionRole::Initiator,
+        role: ConnectionRole::Initiator,
         our_settings: ConnectionSettings {
             parity: Parity::Odd,
             max_concurrent_requests: 64,
@@ -366,7 +366,7 @@ pub async fn run_adder_end_to_end<L>(
         let server_caller_guard =
             acceptor_conduit(server_conduit, test_acceptor_handshake("Adder"))
                 .on_connection(AdderDispatcher::new(MyAdder))
-                .establish::<AdderClient>()
+                .establish_connection()
                 .await
                 .expect("server handshake failed");
         let _ = server_ready_tx.send(());
@@ -402,7 +402,7 @@ pub async fn run_request_context_end_to_end<L>(
         let server_caller_guard =
             acceptor_conduit(server_conduit, test_acceptor_handshake("ContextProbe"))
                 .on_connection(ContextProbeDispatcher::new(ContextProbeService))
-                .establish::<ContextProbeClient>()
+                .establish_connection()
                 .await
                 .expect("server handshake failed");
         let _ = server_ready_tx.send(());
@@ -459,7 +459,7 @@ pub async fn run_server_middleware_end_to_end<L>(
         let server_caller_guard =
             acceptor_conduit(server_conduit, test_acceptor_handshake("MiddlewareProbe"))
                 .on_connection(dispatcher)
-                .establish::<MiddlewareProbeClient>()
+                .establish_connection()
                 .await
                 .expect("server handshake failed");
         let _ = server_ready_tx.send(());
@@ -517,7 +517,7 @@ pub async fn run_server_request_peek_end_to_end<L>(
         let server_caller_guard =
             acceptor_conduit(server_conduit, test_acceptor_handshake("Adder"))
                 .on_connection(dispatcher)
-                .establish::<AdderClient>()
+                .establish_connection()
                 .await
                 .expect("server handshake failed");
         let _ = server_ready_tx.send(());
@@ -568,7 +568,7 @@ pub async fn run_server_response_peek_end_to_end<L>(
         let server_caller_guard =
             acceptor_conduit(server_conduit, test_acceptor_handshake("Adder"))
                 .on_connection(dispatcher)
-                .establish::<AdderClient>()
+                .establish_connection()
                 .await
                 .expect("server handshake failed");
         let _ = server_ready_tx.send(());
@@ -618,7 +618,7 @@ pub async fn run_client_middleware_end_to_end<L>(
         .on_connection(ClientMiddlewareProbeDispatcher::new(
             ClientMiddlewareProbeService,
         ))
-        .establish::<ClientMiddlewareProbeClient>()
+        .establish_connection()
         .await
         .expect("server handshake failed");
         let _ = server_ready_tx.send(());
@@ -685,7 +685,7 @@ pub async fn run_borrowed_return_survives_teardown_over_generated_client<L>(
         .on_connection(BorrowedPayloadProbeDispatcher::new(
             BorrowedPayloadProbeService::new(),
         ))
-        .establish::<BorrowedPayloadProbeClient>()
+        .establish_connection()
         .await
         .expect("server handshake failed");
         let _ = server_ready_tx.send(());
@@ -700,7 +700,7 @@ pub async fn run_borrowed_return_survives_teardown_over_generated_client<L>(
     .establish::<BorrowedPayloadProbeClient>()
     .await
     .expect("client handshake failed");
-    let client_session_handle = client.session.clone().unwrap();
+    let client_session_handle = client.connection.clone().unwrap();
 
     server_ready_rx.await.expect("server setup failed");
 

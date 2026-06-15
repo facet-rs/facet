@@ -17,6 +17,7 @@ description = "Language bindings codegen for vox"
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
+base64 = "0.21"
 facet.workspace = true
 facet-core.workspace = true
 heck.workspace = true

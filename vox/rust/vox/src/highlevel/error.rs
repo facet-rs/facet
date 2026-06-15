@@ -1,4 +1,4 @@
-use vox_core::SessionError;
+use vox_core::ConnectionError;
 
 /// Error returned by [`super::serve()`].
 #[derive(Debug)]
@@ -11,8 +11,8 @@ pub enum ServeError {
     LockHeldUnhealthy { addr: String },
     /// Unknown or unsupported transport scheme.
     UnsupportedScheme { scheme: String },
-    /// Session-level error from the accept loop.
-    Session(SessionError),
+    /// Connection-level error from the accept loop.
+    Connection(ConnectionError),
 }
 
 impl std::fmt::Display for ServeError {
@@ -29,7 +29,7 @@ impl std::fmt::Display for ServeError {
             Self::UnsupportedScheme { scheme } => {
                 write!(f, "unsupported transport scheme: {scheme:?}")
             }
-            Self::Session(e) => write!(f, "{e}"),
+            Self::Connection(e) => write!(f, "{e}"),
         }
     }
 }
@@ -38,7 +38,7 @@ impl std::error::Error for ServeError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(e) => Some(e),
-            Self::Session(e) => Some(e),
+            Self::Connection(e) => Some(e),
             _ => None,
         }
     }
@@ -50,8 +50,8 @@ impl From<std::io::Error> for ServeError {
     }
 }
 
-impl From<SessionError> for ServeError {
-    fn from(e: SessionError) -> Self {
-        Self::Session(e)
+impl From<ConnectionError> for ServeError {
+    fn from(e: ConnectionError) -> Self {
+        Self::Connection(e)
     }
 }

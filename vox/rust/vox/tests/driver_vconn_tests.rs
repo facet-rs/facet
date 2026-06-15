@@ -3,7 +3,9 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
-use vox::{ConnectionSettings, Driver, Parity, SessionHandle, memory_link_pair};
+use vox::{
+    ConnectionError, ConnectionHandle, ConnectionSettings, Driver, Parity, memory_link_pair,
+};
 
 #[vox::service]
 trait Echo {
@@ -19,17 +21,17 @@ impl Echo for EchoService {
     }
 }
 
-async fn vconn_server(server_link: impl vox::Link + Send + 'static) -> vox::NoopClient {
+async fn vconn_server(server_link: impl vox::Link + Send + 'static) -> vox::ConnectionHandle {
     vox::acceptor_on(server_link)
         .on_connection(EchoDispatcher::new(EchoService))
-        .establish::<vox::NoopClient>()
+        .establish_connection()
         .await
         .expect("server establish")
 }
 
-async fn open_echo_vconn(session: &SessionHandle) -> EchoClient {
+async fn open_echo_vconn(session: &ConnectionHandle) -> EchoClient {
     session
-        .open::<EchoClient>(ConnectionSettings {
+        .open_lane_with_settings::<EchoClient>(ConnectionSettings {
             parity: Parity::Odd,
             max_concurrent_requests: 64,
             initial_channel_credit: 16,
@@ -45,10 +47,10 @@ async fn open_virtual_connection_and_call() {
     let server = tokio::spawn(async move { vconn_server(server_link).await });
 
     let root = vox::initiator_on(client_link)
-        .establish::<vox::NoopClient>()
+        .establish_connection()
         .await
         .expect("client establish");
-    let session = root.session.clone().unwrap();
+    let session = root.clone();
 
     let _server_guard = server.await.expect("server task");
     let vconn_client = open_echo_vconn(&session).await;
@@ -75,10 +77,10 @@ async fn dropping_root_waits_for_virtual_connections() {
             let handle = tokio::spawn(fut);
             let _ = session_tx.send(handle);
         })
-        .establish::<vox::NoopClient>()
+        .establish_connection()
         .await
         .expect("client establish");
-    let session = root.session.clone().unwrap();
+    let session = root.clone();
 
     let _server_guard = server.await.expect("server task");
     let client_session = session_rx.await.expect("session handle");
@@ -118,7 +120,7 @@ async fn schema_tracker_is_per_connection_not_per_session() {
     let server = tokio::spawn(async move {
         vox::acceptor_on(server_link)
             .on_connection(EchoDispatcher::new(EchoService))
-            .establish::<vox::NoopClient>()
+            .establish_connection()
             .await
             .expect("server establish")
     });
@@ -127,7 +129,7 @@ async fn schema_tracker_is_per_connection_not_per_session() {
         .establish::<EchoClient>()
         .await
         .expect("client establish");
-    let session = root.session.clone().unwrap();
+    let session = root.connection.clone().unwrap();
 
     let _server_guard = server.await.expect("server task");
     let session_handle = session;
@@ -164,8 +166,8 @@ async fn reject_virtual_connection() {
 
     let server = tokio::spawn(async move {
         vox::acceptor_on(server_link)
-            .on_connection(vox::acceptor_fn(
-                |req: &vox::ConnectionRequest, conn: vox::PendingConnection| match req.service() {
+            .on_connection(vox::lane_acceptor_fn(
+                |req: &vox::LaneRequest, conn: vox::PendingLane| match req.service() {
                     "Noop" => {
                         conn.handle_with(());
                         Ok(())
@@ -173,22 +175,22 @@ async fn reject_virtual_connection() {
                     _ => Err(Default::default()),
                 },
             ))
-            .establish::<vox::NoopClient>()
+            .establish_connection()
             .await
             .expect("server establish")
     });
 
     let _root = vox::initiator_on(client_link)
-        .establish::<vox::NoopClient>()
+        .establish_connection()
         .await
         .expect("client establish");
-    let session = _root.session.clone().unwrap();
+    let session = _root.clone();
 
     let _server_guard = server.await.expect("server task");
     let session_handle = session;
 
     let result = session_handle
-        .open_connection(
+        .open_lane_handle(
             ConnectionSettings {
                 parity: Parity::Odd,
                 max_concurrent_requests: 64,
@@ -208,22 +210,22 @@ async fn open_virtual_connection_without_acceptor_is_rejected() {
     // Server with NO on_connection acceptor.
     let server = tokio::spawn(async move {
         vox::acceptor_on(server_link)
-            .establish::<vox::NoopClient>()
+            .establish_connection()
             .await
             .expect("server establish")
     });
 
     let _root = vox::initiator_on(client_link)
-        .establish::<vox::NoopClient>()
+        .establish_connection()
         .await
         .expect("client establish");
-    let session = _root.session.clone().unwrap();
+    let session = _root.clone();
 
     let _server_guard = server.await.expect("server task");
     let session_handle = session;
 
     let result = session_handle
-        .open_connection(
+        .open_lane_handle(
             ConnectionSettings {
                 parity: Parity::Odd,
                 max_concurrent_requests: 64,
@@ -233,7 +235,10 @@ async fn open_virtual_connection_without_acceptor_is_rejected() {
         )
         .await;
 
-    assert!(result.is_ok(), "default acceptor should accept connections");
+    assert!(
+        matches!(result, Err(ConnectionError::Rejected(_))),
+        "expected Rejected, got: {result:?}"
+    );
 }
 
 #[tokio::test]
@@ -245,22 +250,22 @@ async fn close_virtual_connection() {
             .on_connection(CounterDispatcher::new(CounterService {
                 count: std::sync::Arc::new(AtomicU32::new(0)),
             }))
-            .establish::<vox::NoopClient>()
+            .establish_connection()
             .await
             .expect("server establish")
     });
 
     let _root = vox::initiator_on(client_link)
-        .establish::<vox::NoopClient>()
+        .establish_connection()
         .await
         .expect("client establish");
-    let session = _root.session.clone().unwrap();
+    let session = _root.clone();
 
     let _server_guard = server.await.expect("server task");
     let session_handle = session;
 
     let vconn_handle = session_handle
-        .open_connection(
+        .open_lane_handle(
             ConnectionSettings {
                 parity: Parity::Odd,
                 max_concurrent_requests: 64,
@@ -281,7 +286,7 @@ async fn close_virtual_connection() {
     assert_eq!(r, 1);
 
     session_handle
-        .close_connection(conn_id, Default::default())
+        .close_lane(conn_id, Default::default())
         .await
         .expect("close vconn");
 
@@ -297,23 +302,23 @@ async fn close_root_connection_is_rejected() {
 
     let server = tokio::spawn(async move {
         vox::acceptor_on(server_link)
-            .establish::<vox::NoopClient>()
+            .establish_connection()
             .await
             .expect("server establish")
     });
 
     let _root = vox::initiator_on(client_link)
-        .establish::<vox::NoopClient>()
+        .establish_connection()
         .await
         .expect("client establish");
-    let session = _root.session.clone().unwrap();
+    let session = _root.clone();
 
     let _server_guard = server.await.expect("server task");
     let session_handle = session;
 
     // Connection ID 0 is the root connection.
     let result = session_handle
-        .close_connection(vox::ConnectionId(0), Default::default())
+        .close_lane(vox::LaneId(0), Default::default())
         .await;
     assert!(result.is_err(), "closing root connection should fail");
 }

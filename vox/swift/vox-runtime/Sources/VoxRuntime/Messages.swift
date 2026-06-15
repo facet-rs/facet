@@ -97,7 +97,7 @@ func messageConnect(
     // r[impl session.connection-settings.open]
     Message(
         connectionId: connectionId,
-        payload: .connectionOpen(ConnectionOpen(connectionSettings: settings, metadata: metadata)))
+        payload: .laneOpen(LaneOpen(connectionSettings: settings, metadata: metadata)))
 }
 
 func messageAccept(
@@ -108,16 +108,16 @@ func messageAccept(
     // r[impl session.connection-settings.open]
     Message(
         connectionId: connectionId,
-        payload: .connectionAccept(ConnectionAccept(connectionSettings: settings, metadata: metadata)))
+        payload: .laneAccept(LaneAccept(connectionSettings: settings, metadata: metadata)))
 }
 
 func messageReject(connectionId: UInt64, metadata: Metadata = .null) -> Message {
     // r[impl connection.open.rejection]
-    Message(connectionId: connectionId, payload: .connectionReject(ConnectionReject(metadata: metadata)))
+    Message(connectionId: connectionId, payload: .laneReject(LaneReject(metadata: metadata)))
 }
 
 func messageConnectionClose(connectionId: UInt64, metadata: Metadata = .null) -> Message {
-    Message(connectionId: connectionId, payload: .connectionClose(ConnectionClose(metadata: metadata)))
+    Message(connectionId: connectionId, payload: .laneClose(LaneClose(metadata: metadata)))
 }
 
 func messageData(channelId: UInt64, item: [UInt8], connectionId: UInt64 = 0) -> Message {

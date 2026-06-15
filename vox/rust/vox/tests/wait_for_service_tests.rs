@@ -1,7 +1,7 @@
 //! Tests for ConnectBuilder::wait_for_service initial-connect waiting.
 
 use std::time::Duration;
-use vox_core::SessionError;
+use vox_core::ConnectionError;
 
 #[vox::service]
 trait Echo {
@@ -35,7 +35,7 @@ async fn wait_for_service_retries_until_service_appears() {
         })
     };
 
-    let client: EchoClient = vox::connect(&addr)
+    let client: EchoClient = vox::connect_lane(&addr)
         .connect_timeout(Duration::from_millis(100))
         .wait_for_service(Duration::from_secs(5))
         .await
@@ -56,7 +56,7 @@ async fn wait_for_service_times_out_when_service_never_starts() {
     let addr = listener.local_addr().expect("local_addr");
     drop(listener);
 
-    let result = vox::connect::<EchoClient>(format!("tcp://{addr}"))
+    let result = vox::connect_lane::<EchoClient>(format!("tcp://{addr}"))
         .connect_timeout(Duration::from_millis(50))
         .wait_for_service(Duration::from_millis(200))
         .establish()
@@ -67,7 +67,10 @@ async fn wait_for_service_times_out_when_service_never_starts() {
         Ok(_) => panic!("expected failure when service never starts"),
     };
     assert!(
-        matches!(err, SessionError::Io(_) | SessionError::ConnectTimeout),
+        matches!(
+            err,
+            ConnectionError::Io(_) | ConnectionError::ConnectTimeout
+        ),
         "error should be a transient connect failure (Io or ConnectTimeout), got: {err:?}"
     );
 }
@@ -93,7 +96,7 @@ async fn wait_for_service_deadline_caps_individual_attempt() {
     });
 
     let start = std::time::Instant::now();
-    let result = vox::connect::<EchoClient>(format!("tcp://{addr}"))
+    let result = vox::connect_lane::<EchoClient>(format!("tcp://{addr}"))
         .connect_timeout(Duration::from_secs(5)) // much larger than wait_for_service
         .wait_for_service(Duration::from_millis(200))
         .establish()
@@ -111,7 +114,7 @@ async fn wait_for_service_deadline_caps_individual_attempt() {
 #[tokio::test]
 async fn wait_for_service_fails_immediately_on_protocol_error() {
     // Server that immediately closes the connection without speaking vox.
-    // This causes SessionError::Protocol (link closed during transport prologue),
+    // This causes ConnectionError::Protocol (link closed during transport prologue),
     // which is terminal for this peer and must not consume the full wait_for_service timeout.
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -126,7 +129,7 @@ async fn wait_for_service_fails_immediately_on_protocol_error() {
     });
 
     let start = std::time::Instant::now();
-    let result = vox::connect::<EchoClient>(format!("tcp://{addr}"))
+    let result = vox::connect_lane::<EchoClient>(format!("tcp://{addr}"))
         .connect_timeout(Duration::from_millis(100))
         .wait_for_service(Duration::from_secs(10)) // long timeout — should NOT be consumed
         .establish()
@@ -143,7 +146,7 @@ async fn wait_for_service_fails_immediately_on_protocol_error() {
         "terminal connection error should fail fast, not wait the full timeout; elapsed: {elapsed:?}"
     );
     assert!(
-        matches!(err, SessionError::Protocol(_)),
-        "expected SessionError::Protocol for peer that closed connection, got: {err:?}"
+        matches!(err, ConnectionError::Protocol(_)),
+        "expected ConnectionError::Protocol for peer that closed connection, got: {err:?}"
     );
 }

@@ -13,7 +13,7 @@ WebSocket transport binding for Vox in TypeScript.
 
 ## Fits with
 
-- `@bearcove/vox-core` for connection/session runtime behavior
+- `@bearcove/vox-core` for connection/lane runtime behavior
 - `@bearcove/vox-tcp` where shared transport logic is reused
 - `@bearcove/vox-wire` for protocol message payloads
 

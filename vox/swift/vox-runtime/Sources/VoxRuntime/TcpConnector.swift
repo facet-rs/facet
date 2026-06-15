@@ -1,10 +1,10 @@
-public protocol SessionConnector: Sendable {
+public protocol ConnectionConnector: Sendable {
     func openAttachment() async throws -> LinkAttachment
 }
 
 // r[impl transport.stream]
 // r[impl transport.stream.kinds]
-public struct TcpConnector: SessionConnector, LinkSource, Sendable {
+public struct TcpConnector: ConnectionConnector, LinkSource, Sendable {
     public let host: String
     public let port: Int
 
@@ -22,7 +22,7 @@ public struct TcpConnector: SessionConnector, LinkSource, Sendable {
     }
 }
 
-public struct UnixConnector: SessionConnector, LinkSource, Sendable {
+public struct UnixConnector: ConnectionConnector, LinkSource, Sendable {
     public let path: String
 
     public init(path: String) {

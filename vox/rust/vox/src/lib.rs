@@ -61,10 +61,10 @@
 //! # }
 //! ```
 //!
-//! For multi-service routing, use [`acceptor_fn()`]:
+//! For multi-service routing, use [`lane_acceptor_fn()`]:
 //!
 //! ```ignore
-//! vox::serve("0.0.0.0:9000", vox::acceptor_fn(|req, conn| {
+//! vox::serve("0.0.0.0:9000", vox::lane_acceptor_fn(|req, conn| {
 //!     match req.service() {
 //!         "Hello" => { conn.handle_with(HelloDispatcher::new(HelloService)); Ok(()) }
 //!         "Chat" => { conn.handle_with(ChatDispatcher::new(ChatService)); Ok(()) }
@@ -80,7 +80,7 @@
 //! ```ignore
 //! client.caller.closed().await;     // wait for disconnect
 //! client.caller.is_connected();     // check liveness
-//! client.session.as_ref();          // access session handle (virtual connections)
+//! client.connection.as_ref();          // access session handle (virtual connections)
 //! client.say_hello().await?;        // service method — no name clash
 //! ```
 //!
@@ -92,8 +92,8 @@
 //! - [`initiator_on()`] / [`acceptor_on()`] — establish over a raw [`Link`]
 //! - [`memory_link_pair()`] — in-process link pair for testing
 //! - [`Driver`] — run inbound RPC on a connection handle
-//! - [`SessionHandle`] — open/close virtual connections
-//! - [`proxy_connections()`] — bridge two connection handles
+//! - [`ConnectionHandle`] — open/close virtual connections
+//! - [`proxy_lanes()`] — bridge two connection handles
 
 mod highlevel;
 pub use highlevel::*;
@@ -150,8 +150,7 @@ pub use vox_types::{
     ConnectionCloseReason,
     ConnectionDebugSnapshot,
     ConnectionDebugState,
-    // Types
-    ConnectionId,
+    ConnectionRole,
     ConnectionSettings,
     DecodeErrorKind,
     DriverEvent,
@@ -160,6 +159,8 @@ pub use vox_types::{
     Extensions,
     Handler,
     HandshakeResult,
+    // Types
+    LaneId,
     Link,
     LinkRx,
     LinkTx,
@@ -198,7 +199,6 @@ pub use vox_types::{
     ServerResponseContext,
     ServerResponsePayload,
     ServiceDescriptor,
-    SessionRole,
     SinkCall,
     SourceLocation,
     TransportEvent,
@@ -231,7 +231,7 @@ pub use vox_types::{meta_set, metadata};
 
 // ── vox-core: curated public API ──────────────────────────────────────
 
-// Session establishment — builder entry points
+// Connection establishment — builder entry points
 #[cfg(feature = "runtime")]
 pub use vox_core::{
     acceptor_conduit, acceptor_on, acceptor_transport, initiator, initiator_conduit, initiator_on,
@@ -242,30 +242,29 @@ pub use vox_core::{
 #[cfg(feature = "runtime")]
 pub use vox_core::{acceptor_on_link, initiator_on_link};
 
-// Session types
+// Connection types
 #[cfg(feature = "runtime")]
 pub use vox_core::{
-    ConnectionHandle, ConnectionRequest, ConnectionState, PendingConnection, Session,
-    SessionConfig, SessionError, SessionHandle, SessionKeepaliveConfig,
+    Connection, ConnectionConfig, ConnectionError, ConnectionHandle, ConnectionKeepaliveConfig,
+    ConnectionState, LaneHandle, LaneRequest, PendingLane,
 };
 
 // Connection acceptor
 #[cfg(feature = "runtime")]
-pub use vox_core::{AcceptorFn, ConnectionAcceptor, acceptor_fn, proxy_connections};
+pub use vox_core::{LaneAcceptor, LaneAcceptorFn, lane_acceptor_fn, proxy_lanes};
 
-// Session builders (for advanced customization)
+// Connection builders (for advanced customization)
 #[cfg(feature = "runtime")]
 pub use vox_core::{
-    BoxSessionFuture, SessionAcceptorBuilder, SessionInitiatorBuilder,
-    SessionSourceInitiatorBuilder, SessionTransportAcceptorBuilder,
-    SessionTransportInitiatorBuilder, VOX_SERVICE_METADATA_KEY,
+    BoxConnectionFuture, ConnectionAcceptorBuilder, ConnectionInitiatorBuilder,
+    ConnectionSourceInitiatorBuilder, ConnectionTransportAcceptorBuilder,
+    ConnectionTransportInitiatorBuilder, VOX_SERVICE_METADATA_KEY,
 };
 
 // Driver — runs inbound RPC on a connection handle
 #[cfg(feature = "runtime")]
 pub use vox_core::{
-    Caller, Driver, DriverCaller, DriverChannelSink, DriverReplySink, ErasedHandler,
-    FromVoxSession, NoopClient,
+    Caller, Driver, DriverCaller, DriverChannelSink, DriverReplySink, ErasedHandler, FromVoxLane,
 };
 
 // Conduit types
@@ -339,7 +338,7 @@ pub use vox_types::channel::{
     set_channel_binder, with_channel_binder,
 };
 
-// Re-export the session module (generated code uses `vox::session::ServiceDescriptor`)
-pub mod session {
+// Re-export descriptor types used by generated clients and dispatchers.
+pub mod connection {
     pub use vox_types::{MethodDescriptor, ServiceDescriptor};
 }

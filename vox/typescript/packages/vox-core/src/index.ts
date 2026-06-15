@@ -38,15 +38,23 @@ export {
 } from "./conduit.ts";
 
 export {
-  Session,
-  SessionHandle,
+  Connection,
   ConnectionHandle,
-  SessionError,
-  session,
+  Lane,
+  ConnectionError,
+  connect,
+  accept,
+  connectOnLink,
+  acceptOnLink,
+  connectLane,
+  defaultLaneSettings,
   type IncomingCall,
-  type ConnectionDebugSnapshot,
-  type SessionBuilderOptions,
-  type SessionTransportOptions,
+  type LaneDebugSnapshot,
+  type ConnectionBuilderOptions,
+  type ConnectionTransportOptions,
+  type LaneOpenOptions,
+  type LaneClientConstructor,
+  type ConnectLaneOptions,
 } from "./session.ts";
 
 export {

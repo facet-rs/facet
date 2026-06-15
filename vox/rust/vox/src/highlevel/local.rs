@@ -1,9 +1,9 @@
 #[cfg(unix)]
 use std::time::Duration;
 
-use vox_core::ConnectionAcceptor;
+use vox_core::LaneAcceptor;
 #[cfg(unix)]
-use vox_core::{NoopClient, initiator};
+use vox_core::initiator;
 use vox_types::VoxObserverHandle;
 
 use super::{ServeError, VoxListener, serve_listener};
@@ -19,7 +19,7 @@ impl VoxListener for vox_stream::LocalLinkAcceptor {
 #[cfg(unix)]
 pub(super) async fn serve_local(
     host: &str,
-    acceptor: impl ConnectionAcceptor,
+    acceptor: impl LaneAcceptor,
     channel_capacity: u32,
     observer: Option<VoxObserverHandle>,
 ) -> Result<(), ServeError> {
@@ -31,7 +31,7 @@ pub(super) async fn serve_local(
         vox_stream::LocalLockOutcome::Held => {
             let health = tokio::time::timeout(Duration::from_secs(5), async {
                 let source = vox_stream::local_link_source(host);
-                initiator(source).establish::<NoopClient>().await
+                initiator(source).establish_connection().await
             })
             .await;
             return match health {
@@ -56,7 +56,7 @@ pub(super) async fn serve_local(
 #[cfg(not(unix))]
 pub(super) async fn serve_local(
     host: &str,
-    acceptor: impl ConnectionAcceptor,
+    acceptor: impl LaneAcceptor,
     channel_capacity: u32,
     observer: Option<VoxObserverHandle>,
 ) -> Result<(), ServeError> {

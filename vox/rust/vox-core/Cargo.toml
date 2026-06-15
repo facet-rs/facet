@@ -19,7 +19,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
 default = []
-diagnostics = ["moire/diagnostics"]
+diagnostics = []
 
 [dependencies]
 vox-types.workspace = true
@@ -28,7 +28,7 @@ facet-core.workspace = true
 facet-reflect.workspace = true
 vox-phon.workspace = true
 tokio.workspace = true
-moire.workspace = true
+vox-rt.workspace = true
 tracing.workspace = true
 smallvec.workspace = true
 getrandom.workspace = true

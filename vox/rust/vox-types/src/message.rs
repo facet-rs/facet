@@ -4,9 +4,7 @@
 
 use std::marker::PhantomData;
 
-use crate::{
-    BindingDirection, ChannelId, ConnectionId, Metadata, MethodId, RequestId, SchemaBytes,
-};
+use crate::{BindingDirection, ChannelId, LaneId, Metadata, MethodId, RequestId, SchemaBytes};
 use facet::{Facet, FacetOpaqueAdapter, OpaqueDeserialize, OpaqueSerialize, PtrConst, Shape};
 use vox_phon::raw_opaque_bytes;
 
@@ -14,7 +12,7 @@ use vox_phon::raw_opaque_bytes;
 // r[impl rpc.flow-control.credit.initial]
 pub const DEFAULT_INITIAL_CHANNEL_CREDIT: u32 = 16;
 
-/// Per-connection limits advertised by a peer.
+/// Per-lane limits advertised by a peer.
 // r[impl session.connection-settings]
 // r[impl session.parity]
 // r[impl connection.parity]
@@ -24,9 +22,9 @@ pub const DEFAULT_INITIAL_CHANNEL_CREDIT: u32 = 16;
 // r[impl rpc.flow-control.credit.initial]
 #[derive(Debug, Clone, PartialEq, Eq, Facet)]
 pub struct ConnectionSettings {
-    /// Whether this peer will use odd or even IDs for requests and channels on this connection.
+    /// Whether this peer will use odd or even IDs for requests and channels on this lane.
     pub parity: Parity,
-    /// Maximum number of in-flight requests this peer is willing to accept on this connection.
+    /// Maximum number of in-flight requests this peer is willing to accept on this lane.
     pub max_concurrent_requests: u32,
     /// Initial per-channel credit this peer grants for channels it receives.
     #[facet(default = DEFAULT_INITIAL_CHANNEL_CREDIT)]
@@ -38,8 +36,7 @@ impl<'payload> Message<'payload> {
     // Adding constructors or getters is forbidden.
 }
 
-/// Whether a peer will use odd or even IDs for requests and channels
-/// on a given connection.
+/// Whether a peer will use odd or even IDs for requests and channels on a lane.
 // r[impl session.parity]
 // r[impl session.role]
 // r[impl connection.parity]
@@ -69,8 +66,8 @@ structstruck::strike! {
     // r[impl session.symmetry]
     #[structstruck::each[derive(Debug, Facet)]]
     pub struct Message<'payload> {
-        /// Connection ID: 0 for control messages (ProtocolError, Ping, Pong)
-        pub connection_id: ConnectionId,
+        /// Lane ID. ID 0 is reserved for connection-control messages.
+        pub lane_id: LaneId,
 
         /// Message payload
         pub payload:
@@ -91,41 +88,41 @@ structstruck::strike! {
                 }),
 
                 // ========================================================================
-                // Connection control
+                // Lane control
                 // ========================================================================
 
-                /// Request a new virtual connection. This is sent on the desired connection
-                /// ID, even though it doesn't exist yet.
+                /// Request a new service lane. This is sent on the desired lane ID,
+                /// even though it does not exist yet.
                 // r[impl connection.open]
                 // r[impl connection.virtual]
                 // r[impl session.connection-settings.open]
-                ConnectionOpen(pub struct ConnectionOpen {
-                    /// Connection limits advertised by the opener.
+                LaneOpen(pub struct LaneOpen {
+                    /// Lane limits advertised by the opener.
                     /// Parity is included in ConnectionSettings.
                     pub connection_settings: ConnectionSettings,
 
-                    /// Metadata associated with the connection.
+                    /// Metadata associated with the lane.
                     pub metadata: Metadata,
                 }),
 
-                /// Accept a virtual connection request — sent on the connection ID requested.
+                /// Accept a lane request, sent on the requested lane ID.
                 // r[impl session.connection-settings.open]
-                ConnectionAccept(pub struct ConnectionAccept {
-                    /// Connection limits advertised by the accepter.
+                LaneAccept(pub struct LaneAccept {
+                    /// Lane limits advertised by the accepter.
                     pub connection_settings: ConnectionSettings,
 
-                    /// Metadata associated with the connection.
+                    /// Metadata associated with the lane.
                     pub metadata: Metadata,
                 }),
 
-                /// Reject a virtual connection request — sent on the connection ID requested.
-                ConnectionReject(pub struct ConnectionReject {
+                /// Reject a lane request, sent on the requested lane ID.
+                LaneReject(pub struct LaneReject {
                     /// Metadata associated with the rejection.
                     pub metadata: Metadata,
                 }),
 
-                /// Close a virtual connection. Trying to close conn 0 is a protocol error.
-                ConnectionClose(pub struct ConnectionClose {
+                /// Close a service lane. Trying to close lane 0 is a protocol error.
+                LaneClose(pub struct LaneClose {
                     /// Metadata associated with the close.
                     pub metadata: Metadata,
                 }),
@@ -137,7 +134,7 @@ structstruck::strike! {
 
                 RequestMessage(
                     pub struct RequestMessage<'payload> {
-                        /// Unique (connection-wide) request identifier, caller-allocated (as per parity)
+                        /// Unique lane-scoped request identifier, caller-allocated (as per parity)
                         pub id: RequestId,
 
                         /// Request paylaod
@@ -397,10 +394,10 @@ macro_rules! impl_reborrow_owned {
     };
 }
 impl_reborrow_owned!(
-    ConnectionOpen,
-    ConnectionAccept,
-    ConnectionReject,
-    ConnectionClose,
+    LaneOpen,
+    LaneAccept,
+    LaneReject,
+    LaneClose,
     ChannelClose,
     ChannelReset,
     SchemaMessage,
@@ -431,10 +428,10 @@ mod tests {
             payloads,
             [
                 "ProtocolError",
-                "ConnectionOpen",
-                "ConnectionAccept",
-                "ConnectionReject",
-                "ConnectionClose",
+                "LaneOpen",
+                "LaneAccept",
+                "LaneReject",
+                "LaneClose",
                 "RequestMessage",
                 "SchemaMessage",
                 "ChannelMessage",

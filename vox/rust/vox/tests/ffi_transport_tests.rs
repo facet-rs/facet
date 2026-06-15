@@ -1,4 +1,4 @@
-use vox::{ConnectionSettings, Parity, SessionHandle};
+use vox::{ConnectionHandle, ConnectionSettings, Parity};
 use vox_ffi::declare_link_endpoint;
 
 #[vox::service]
@@ -42,16 +42,16 @@ fn connection_settings() -> ConnectionSettings {
     }
 }
 
-async fn open_ping(session: &SessionHandle) -> PingClient {
+async fn open_ping(session: &ConnectionHandle) -> PingClient {
     session
-        .open(connection_settings())
+        .open_lane_with_settings(connection_settings())
         .await
         .expect("open Ping virtual connection")
 }
 
-async fn open_pong(session: &SessionHandle) -> PongClient {
+async fn open_pong(session: &ConnectionHandle) -> PongClient {
     session
-        .open(connection_settings())
+        .open_lane_with_settings(connection_settings())
         .await
         .expect("open Pong virtual connection")
 }
@@ -66,10 +66,10 @@ async fn ffi_transport_supports_bidirectional_calls_with_two_services_when_a_ini
         let link = ffi_pair_ab_b::accept().await.expect("accept ffi link");
         let root = vox::acceptor_on(link)
             .on_connection(PongDispatcher::new(PongService))
-            .establish::<vox::NoopClient>()
+            .establish_connection()
             .await
             .expect("acceptor establish");
-        let session = root.session.clone().expect("acceptor session");
+        let session = root.clone();
         let ping = open_ping(&session).await;
         let response = ping.ping(7).await.expect("Ping call over FFI");
         (response, root)
@@ -78,10 +78,10 @@ async fn ffi_transport_supports_bidirectional_calls_with_two_services_when_a_ini
     let link = ffi_pair_ab_a::connect(ffi_pair_ab_b::vtable()).expect("connect ffi link");
     let root = vox::initiator_on(link)
         .on_connection(PingDispatcher::new(PingService))
-        .establish::<vox::NoopClient>()
+        .establish_connection()
         .await
         .expect("initiator establish");
-    let session = root.session.clone().expect("initiator session");
+    let session = root.clone();
     let pong = open_pong(&session).await;
 
     assert_eq!(pong.pong(11).await.expect("Pong call over FFI"), 2_011);
@@ -101,10 +101,10 @@ async fn ffi_transport_supports_bidirectional_calls_with_two_services_when_b_ini
         let link = ffi_pair_ba_a::accept().await.expect("accept ffi link");
         let root = vox::acceptor_on(link)
             .on_connection(PingDispatcher::new(PingService))
-            .establish::<vox::NoopClient>()
+            .establish_connection()
             .await
             .expect("acceptor establish");
-        let session = root.session.clone().expect("acceptor session");
+        let session = root.clone();
         let pong = open_pong(&session).await;
         let response = pong.pong(13).await.expect("Pong call over FFI");
         (response, root)
@@ -113,10 +113,10 @@ async fn ffi_transport_supports_bidirectional_calls_with_two_services_when_b_ini
     let link = ffi_pair_ba_b::connect(ffi_pair_ba_a::vtable()).expect("connect ffi link");
     let root = vox::initiator_on(link)
         .on_connection(PongDispatcher::new(PongService))
-        .establish::<vox::NoopClient>()
+        .establish_connection()
         .await
         .expect("initiator establish");
-    let session = root.session.clone().expect("initiator session");
+    let session = root.clone();
     let ping = open_ping(&session).await;
 
     assert_eq!(ping.ping(5).await.expect("Ping call over FFI"), 1_005);

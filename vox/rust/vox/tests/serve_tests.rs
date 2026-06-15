@@ -46,7 +46,7 @@ async fn serve_and_connect() {
     // Give server a moment to start accepting.
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-    let client: EchoClient = vox::connect(format!("tcp://{addr}"))
+    let client: EchoClient = vox::connect_lane(format!("tcp://{addr}"))
         .await
         .expect("connect");
     let result = client.echo(42).await.expect("echo");
@@ -71,7 +71,7 @@ async fn connect_builder_establish_matches_await() {
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-    let client = vox::connect::<EchoClient>(format!("tcp://{addr}"))
+    let client = vox::connect_lane::<EchoClient>(format!("tcp://{addr}"))
         .establish()
         .await
         .expect("connect");
@@ -107,7 +107,7 @@ async fn high_level_builders_accept_channel_capacity() {
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-    let client: EchoClient = vox::connect(format!("tcp://{addr}"))
+    let client: EchoClient = vox::connect_lane(format!("tcp://{addr}"))
         .channel_capacity(2)
         .await
         .expect("connect");
@@ -119,9 +119,11 @@ async fn high_level_builders_accept_channel_capacity() {
 // r[verify rpc.flow-control.credit.initial.zero]
 #[tokio::test]
 async fn connect_builder_rejects_zero_channel_capacity() {
-    let result: Result<EchoClient, _> = vox::connect("tcp://127.0.0.1:1").channel_capacity(0).await;
+    let result: Result<EchoClient, _> = vox::connect_lane("tcp://127.0.0.1:1")
+        .channel_capacity(0)
+        .await;
     match result {
-        Err(vox::SessionError::Protocol(message)) => {
+        Err(vox::ConnectionError::Protocol(message)) => {
             assert_eq!(message, "channel_capacity must be greater than zero");
         }
         Ok(_) => panic!("connect unexpectedly succeeded"),
@@ -137,7 +139,7 @@ async fn serve_builder_rejects_zero_channel_capacity() {
         .run()
         .await;
     match result {
-        Err(vox::ServeError::Session(vox::SessionError::Protocol(message))) => {
+        Err(vox::ServeError::Connection(vox::ConnectionError::Protocol(message))) => {
             assert_eq!(message, "channel_capacity must be greater than zero");
         }
         Ok(_) => panic!("serve unexpectedly succeeded"),
@@ -156,7 +158,7 @@ async fn serve_listener_builder_rejects_zero_channel_capacity() {
         .run()
         .await;
     match result {
-        Err(vox::SessionError::Protocol(message)) => {
+        Err(vox::ConnectionError::Protocol(message)) => {
             assert_eq!(message, "channel_capacity must be greater than zero");
         }
         Ok(_) => panic!("serve_listener unexpectedly succeeded"),
@@ -178,12 +180,12 @@ async fn connect_builder_can_configure_inbound_virtual_connections_before_await(
         let (socket, _) = listener.accept().await.expect("accept");
         let root = vox::acceptor_on(vox::transport::tcp::StreamLink::tcp(socket))
             .on_connection(PingDispatcher::new(PingService))
-            .establish::<vox::NoopClient>()
+            .establish_connection()
             .await
             .expect("server establish");
-        let session = root.session.clone().expect("server session");
+        let session = root.clone();
         let client: EchoClient = session
-            .open(vox::ConnectionSettings {
+            .open_lane_with_settings(vox::ConnectionSettings {
                 parity: vox::Parity::Odd,
                 max_concurrent_requests: 64,
                 initial_channel_credit: 16,
@@ -196,7 +198,7 @@ async fn connect_builder_can_configure_inbound_virtual_connections_before_await(
         root
     });
 
-    let client: PingClient = vox::connect(format!("tcp://{addr}"))
+    let client: PingClient = vox::connect_lane(format!("tcp://{addr}"))
         .on_connection(EchoDispatcher::new(EchoService))
         .await
         .expect("connect");
@@ -229,7 +231,7 @@ async fn serve_local_with_lock() {
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-    let client: EchoClient = vox::connect(&addr).await.expect("connect");
+    let client: EchoClient = vox::connect_lane(&addr).await.expect("connect");
     let result = client.echo(99).await.expect("echo");
     assert_eq!(result, 99);
 
@@ -261,7 +263,9 @@ async fn serve_websocket() {
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-    let client: EchoClient = vox::connect(format!("ws://{addr}")).await.expect("connect");
+    let client: EchoClient = vox::connect_lane(format!("ws://{addr}"))
+        .await
+        .expect("connect");
     let result = client.echo(7).await.expect("echo");
     assert_eq!(result, 7);
 

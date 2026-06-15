@@ -156,17 +156,15 @@ async fn listen_and_serve() -> Result<(), String> {
         .map_err(|e| format!("accept: {e}"))?;
     stream.set_nodelay(true).ok();
 
-    let client = acceptor_on(vox_stream::StreamLink::tcp(stream))
+    let connection = acceptor_on(vox_stream::StreamLink::tcp(stream))
         .on_connection(TestbedDispatcher::new(TestbedService))
-        .establish::<TestbedClient>()
+        .establish_connection()
         .await
         .map_err(|e| format!("handshake: {e}"))?;
 
     // r[impl hosted.subject.lifecycle]
-    client.caller.closed().await;
-    if let Some(session) = client.session.as_ref() {
-        session.shutdown().ok();
-    }
+    connection.closed().await;
+    connection.shutdown().ok();
     Ok(())
 }
 
@@ -179,25 +177,23 @@ async fn connect_and_serve() -> Result<(), String> {
         None => ("tcp", addr.clone()),
     };
 
-    let root_caller_guard = match scheme {
+    let connection = match scheme {
         "tcp" => initiator(tcp_link_source(host))
             .on_connection(dispatcher.clone())
-            .establish::<TestbedClient>()
+            .establish_connection()
             .await
             .map_err(|e| format!("handshake failed: {e}"))?,
         "local" => initiator(local_link_source(host))
             .on_connection(dispatcher.clone())
-            .establish::<TestbedClient>()
+            .establish_connection()
             .await
             .map_err(|e| format!("handshake failed: {e}"))?,
         _ => return Err(format!("unsupported PEER_ADDR scheme: {scheme}")),
     };
 
     // r[impl hosted.subject.lifecycle]
-    root_caller_guard.caller.closed().await;
-    if let Some(session) = root_caller_guard.session.as_ref() {
-        session.shutdown().ok();
-    }
+    connection.closed().await;
+    connection.shutdown().ok();
     Ok(())
 }
 
@@ -2004,8 +2000,8 @@ async fn run_client() -> Result<(), String> {
         other => return Err(format!("unknown CLIENT_SCENARIO: {other}")),
     }
 
-    if let Some(session) = client.session.as_ref() {
-        session.shutdown().ok();
+    if let Some(connection) = client.connection.as_ref() {
+        connection.shutdown().ok();
     }
     tokio::time::timeout(Duration::from_secs(1), client.caller.closed())
         .await

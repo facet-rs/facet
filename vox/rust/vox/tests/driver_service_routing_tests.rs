@@ -38,10 +38,10 @@ async fn root_connect_sends_vox_service_and_factory_sees_it() {
     let seen_service = Arc::new(Mutex::new(None::<String>));
 
     // Server uses a factory that records the service name it sees.
-    let factory = vox::acceptor_fn({
+    let factory = vox::lane_acceptor_fn({
         let seen_service = seen_service.clone();
-        move |request: &vox::ConnectionRequest,
-              connection: vox::PendingConnection|
+        move |request: &vox::LaneRequest,
+              connection: vox::PendingLane|
               -> Result<(), vox::Metadata> {
             *seen_service.lock().unwrap() = Some(request.service().to_string());
             connection.handle_with(EchoDispatcher::new(EchoService));
@@ -52,22 +52,22 @@ async fn root_connect_sends_vox_service_and_factory_sees_it() {
     let server = tokio::spawn(async move {
         vox::acceptor_on(server_link)
             .on_connection(factory)
-            .establish::<vox::NoopClient>()
+            .establish_connection()
             .await
             .expect("server establish")
     });
 
     let root = vox::initiator_on(client_link)
-        .establish::<vox::NoopClient>()
+        .establish_connection()
         .await
         .expect("client establish");
 
     let _server_guard = server.await.expect("server task");
-    let session = root.session.clone().unwrap();
+    let session = root.clone();
 
     // Open a typed Echo vconn — this triggers the factory
     let echo: EchoClient = session
-        .open(ConnectionSettings {
+        .open_lane_with_settings(ConnectionSettings {
             parity: Parity::Odd,
             max_concurrent_requests: 64,
             initial_channel_credit: 16,
@@ -87,10 +87,8 @@ async fn root_connect_sends_vox_service_and_factory_sees_it() {
 async fn service_factory_routes_virtual_connections() {
     let (client_link, server_link) = memory_link_pair(16);
 
-    let factory = vox::acceptor_fn(
-        |request: &vox::ConnectionRequest,
-         connection: vox::PendingConnection|
-         -> Result<(), vox::Metadata> {
+    let factory = vox::lane_acceptor_fn(
+        |request: &vox::LaneRequest, connection: vox::PendingLane| -> Result<(), vox::Metadata> {
             match request.service() {
                 "Echo" => {
                     connection.handle_with(EchoDispatcher::new(EchoService));
@@ -112,22 +110,22 @@ async fn service_factory_routes_virtual_connections() {
     let server = tokio::spawn(async move {
         vox::acceptor_on(server_link)
             .on_connection(factory)
-            .establish::<vox::NoopClient>()
+            .establish_connection()
             .await
             .expect("server establish")
     });
 
     let root = vox::initiator_on(client_link)
-        .establish::<vox::NoopClient>()
+        .establish_connection()
         .await
         .expect("client establish");
 
     let _server_guard = server.await.expect("server task");
-    let session = root.session.clone().unwrap();
+    let session = root.clone();
 
     // Open a typed Echo vconn
     let echo: EchoClient = session
-        .open(ConnectionSettings {
+        .open_lane_with_settings(ConnectionSettings {
             parity: Parity::Odd,
             max_concurrent_requests: 64,
             initial_channel_credit: 16,
@@ -140,7 +138,7 @@ async fn service_factory_routes_virtual_connections() {
 
     // Open a typed Adder vconn
     let adder: AdderClient = session
-        .open(ConnectionSettings {
+        .open_lane_with_settings(ConnectionSettings {
             parity: Parity::Odd,
             max_concurrent_requests: 64,
             initial_channel_credit: 16,
@@ -156,10 +154,8 @@ async fn service_factory_routes_virtual_connections() {
 async fn service_factory_rejects_unknown_service() {
     let (client_link, server_link) = memory_link_pair(16);
 
-    let factory = vox::acceptor_fn(
-        |request: &vox::ConnectionRequest,
-         connection: vox::PendingConnection|
-         -> Result<(), vox::Metadata> {
+    let factory = vox::lane_acceptor_fn(
+        |request: &vox::LaneRequest, connection: vox::PendingLane| -> Result<(), vox::Metadata> {
             match request.service() {
                 "Echo" => {
                     connection.handle_with(EchoDispatcher::new(EchoService));
@@ -177,22 +173,22 @@ async fn service_factory_rejects_unknown_service() {
     let server = tokio::spawn(async move {
         vox::acceptor_on(server_link)
             .on_connection(factory)
-            .establish::<vox::NoopClient>()
+            .establish_connection()
             .await
             .expect("server establish")
     });
 
     let root = vox::initiator_on(client_link)
-        .establish::<vox::NoopClient>()
+        .establish_connection()
         .await
         .expect("client establish");
 
     let _server_guard = server.await.expect("server task");
-    let session = root.session.clone().unwrap();
+    let session = root.clone();
 
     // Adder is not in the factory — should be rejected
     let result = session
-        .open::<AdderClient>(ConnectionSettings {
+        .open_lane_with_settings::<AdderClient>(ConnectionSettings {
             parity: Parity::Odd,
             max_concurrent_requests: 64,
             initial_channel_credit: 16,

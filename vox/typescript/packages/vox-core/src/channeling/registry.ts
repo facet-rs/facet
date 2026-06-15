@@ -1,4 +1,4 @@
-// Channel registry for managing active channels on a connection.
+// Channel registry for managing active channels on a lane.
 
 import { type ChannelId, ChannelError, DEFAULT_INITIAL_CREDIT } from "./types.ts";
 import { createChannel, type Channel, ChannelReceiver } from "./channel.ts";
@@ -25,7 +25,7 @@ export type OutgoingTrySendDetail =
   | "closed";
 
 export interface ChannelDebugContext {
-  connectionId?: bigint;
+  laneId?: bigint;
   requestId?: bigint;
   service?: string;
   method?: string;

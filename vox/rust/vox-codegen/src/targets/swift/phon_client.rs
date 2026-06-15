@@ -74,10 +74,10 @@ pub fn generate_phon_client(service: &ServiceDescriptor) -> String {
     out.push_str(&format!(
         "public final class {service_name}Client: {service_name}Caller, Sendable {{\n"
     ));
-    out.push_str("    private let connection: VoxConnection\n");
+    out.push_str("    private let connection: VoxLane\n");
     out.push_str("    private let timeout: TimeInterval?\n\n");
     out.push_str(
-        "    public init(connection: VoxConnection, timeout: TimeInterval? = 30.0) {\n        self.connection = connection\n        self.timeout = timeout\n    }\n\n",
+        "    public init(connection: VoxLane, timeout: TimeInterval? = 30.0) {\n        self.connection = connection\n        self.timeout = timeout\n    }\n\n",
     );
 
     for method in service.methods {

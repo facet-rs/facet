@@ -3,11 +3,11 @@ source: rust/vox-macros-core/src/lib.rs
 expression: "generate(quote!\n{ pub trait Adder { async fn add(&self, a: i32, b: i32) -> i32; } })"
 ---
 #[allow(non_snake_case, clippy::all)]
-pub fn adder_service_descriptor() -> &'static ::vox::session::ServiceDescriptor {
-    static DESCRIPTOR: std::sync::OnceLock<&'static ::vox::session::ServiceDescriptor> =
+pub fn adder_service_descriptor() -> &'static ::vox::connection::ServiceDescriptor {
+    static DESCRIPTOR: std::sync::OnceLock<&'static ::vox::connection::ServiceDescriptor> =
         std::sync::OnceLock::new();
     DESCRIPTOR.get_or_init(|| {
-        let methods: Vec<&'static ::vox::session::MethodDescriptor> =
+        let methods: Vec<&'static ::vox::connection::MethodDescriptor> =
             vec![
                 ::vox::hash::method_descriptor::<(i32, i32), i32>(
                     "Adder",
@@ -23,7 +23,7 @@ pub fn adder_service_descriptor() -> &'static ::vox::session::ServiceDescriptor 
                     },
                 ),
             ];
-        Box::leak(Box::new(::vox::session::ServiceDescriptor {
+        Box::leak(Box::new(::vox::connection::ServiceDescriptor {
             service_name: "Adder",
             methods: Box::leak(methods.into_boxed_slice()),
             doc: None,
@@ -179,21 +179,21 @@ where
             .await;
     }
 }
-#[doc = "Client for the `Adder` service.\n\nStores a [`Caller`](:: vox::Caller) and an optional [`SessionHandle`](:: vox::SessionHandle) as public fields."]
+#[doc = "Client for the `Adder` service.\n\nStores a [`Caller`](:: vox::Caller) and an optional [`ConnectionHandle`](:: vox::ConnectionHandle) as public fields."]
 #[must_use = "Dropping this client may close the connection if it is the last caller."]
 #[derive(Clone)]
 pub struct AdderClient {
     #[doc = r" The underlying caller for making RPC calls."]
     pub caller: ::vox::Caller,
-    #[doc = r" The session handle, if this client is on a root connection."]
-    pub session: Option<::vox::SessionHandle>,
+    #[doc = r" The connection handle backing this service lane, when available."]
+    pub connection: Option<::vox::ConnectionHandle>,
 }
 impl AdderClient {
     #[doc = r" Create a new client wrapping the given caller."]
     pub fn new(caller: ::vox::Caller) -> Self {
         Self {
             caller: caller.with_service(adder_service_descriptor()),
-            session: None,
+            connection: None,
         }
     }
     #[doc = r" Append a client middleware to this client."]
@@ -202,7 +202,7 @@ impl AdderClient {
             caller: self
                 .caller
                 .with_middleware(adder_service_descriptor(), middleware),
-            session: self.session,
+            connection: self.connection,
         }
     }
     pub async fn add(&self, a: i32, b: i32) -> Result<i32, ::vox::VoxError> {
@@ -276,12 +276,12 @@ impl AdderClient {
         })
     }
 }
-impl ::vox::FromVoxSession for AdderClient {
+impl ::vox::FromVoxLane for AdderClient {
     const SERVICE_NAME: &'static str = "Adder";
-    fn from_vox_session(caller: ::vox::Caller, session: Option<::vox::SessionHandle>) -> Self {
+    fn from_vox_lane(caller: ::vox::Caller, connection: Option<::vox::ConnectionHandle>) -> Self {
         Self {
             caller: caller.with_service(adder_service_descriptor()),
-            session,
+            connection,
         }
     }
 }

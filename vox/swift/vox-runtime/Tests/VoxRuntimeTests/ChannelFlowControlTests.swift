@@ -68,8 +68,8 @@ private final class TaskMessageInbox: @unchecked Sendable {
     }
 }
 
-private func testConnection(taskInbox: TaskMessageInbox = TaskMessageInbox()) -> (Connection, TaskMessageInbox) {
-    let handle = ConnectionHandle(
+private func testLane(taskInbox: TaskMessageInbox = TaskMessageInbox()) -> (Lane, TaskMessageInbox) {
+    let handle = LaneHandle(
         commandTx: { _ in false },
         taskTx: { message in
             taskInbox.append(message)
@@ -77,7 +77,7 @@ private func testConnection(taskInbox: TaskMessageInbox = TaskMessageInbox()) ->
         },
         role: .initiator
     )
-    return (Connection(handle: handle, schemaReceiveTracker: SchemaTracker()), taskInbox)
+    return (Lane(handle: handle, schemaReceiveTracker: SchemaTracker()), taskInbox)
 }
 
 @Suite(.serialized)
@@ -92,7 +92,7 @@ struct ChannelFlowControlTests {
     // r[verify rpc.channel.pair.tx-read]
     // r[verify rpc.channel.payload-encoding]
     @Test func clientRxArgumentBindsPairedTxForSending() async throws {
-        let (connection, inbox) = testConnection()
+        let (connection, inbox) = testLane()
         let (tx, rx): (UnboundTx<Int32>, UnboundRx<Int32>) = channel()
 
         let channelId = await connection.bindClientRxArg(rx, serialize: encI32)
@@ -122,7 +122,7 @@ struct ChannelFlowControlTests {
     // r[verify rpc.channel.pair.rx-take]
     // r[verify rpc.channel.payload-encoding]
     @Test func clientTxArgumentBindsPairedRxForReceiving() async throws {
-        let (connection, _) = testConnection()
+        let (connection, _) = testLane()
         let (tx, rx): (UnboundTx<Int32>, UnboundRx<Int32>) = channel()
 
         let channelId = await connection.bindClientTxArg(tx, deserialize: decI32)

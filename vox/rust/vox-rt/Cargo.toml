@@ -1,0 +1,29 @@
+[package]
+name = "vox-rt"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+homepage.workspace = true
+documentation.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Small runtime facade for Vox"
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+tokio = { version = "1", default-features = false, features = ["sync", "rt", "time"] }
+vox-rt-macros.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+parking_lot.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures.workspace = true
+wasmtimer.workspace = true

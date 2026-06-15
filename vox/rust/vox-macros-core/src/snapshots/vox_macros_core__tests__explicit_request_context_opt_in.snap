@@ -3,11 +3,11 @@ source: rust/vox-macros-core/src/lib.rs
 expression: "generate(quote!\n{\n    trait Audit\n    {\n        #[vox::context] async fn record(&self, payload: String) -> &'vox str;\n        async fn ping(&self) -> u64;\n    }\n})"
 ---
 #[allow(non_snake_case, clippy::all)]
-pub fn audit_service_descriptor() -> &'static ::vox::session::ServiceDescriptor {
-    static DESCRIPTOR: std::sync::OnceLock<&'static ::vox::session::ServiceDescriptor> =
+pub fn audit_service_descriptor() -> &'static ::vox::connection::ServiceDescriptor {
+    static DESCRIPTOR: std::sync::OnceLock<&'static ::vox::connection::ServiceDescriptor> =
         std::sync::OnceLock::new();
     DESCRIPTOR.get_or_init(|| {
-        let methods: Vec<&'static ::vox::session::MethodDescriptor> =
+        let methods: Vec<&'static ::vox::connection::MethodDescriptor> =
             vec![
                 ::vox::hash::method_descriptor::<(String,), &'static str>(
                     "Audit",
@@ -36,7 +36,7 @@ pub fn audit_service_descriptor() -> &'static ::vox::session::ServiceDescriptor 
                     },
                 ),
             ];
-        Box::leak(Box::new(::vox::session::ServiceDescriptor {
+        Box::leak(Box::new(::vox::connection::ServiceDescriptor {
             service_name: "Audit",
             methods: Box::leak(methods.into_boxed_slice()),
             doc: None,
@@ -264,21 +264,21 @@ where
             .await;
     }
 }
-#[doc = "Client for the `Audit` service.\n\nStores a [`Caller`](:: vox::Caller) and an optional [`SessionHandle`](:: vox::SessionHandle) as public fields."]
+#[doc = "Client for the `Audit` service.\n\nStores a [`Caller`](:: vox::Caller) and an optional [`ConnectionHandle`](:: vox::ConnectionHandle) as public fields."]
 #[must_use = "Dropping this client may close the connection if it is the last caller."]
 #[derive(Clone)]
 pub struct AuditClient {
     #[doc = r" The underlying caller for making RPC calls."]
     pub caller: ::vox::Caller,
-    #[doc = r" The session handle, if this client is on a root connection."]
-    pub session: Option<::vox::SessionHandle>,
+    #[doc = r" The connection handle backing this service lane, when available."]
+    pub connection: Option<::vox::ConnectionHandle>,
 }
 impl AuditClient {
     #[doc = r" Create a new client wrapping the given caller."]
     pub fn new(caller: ::vox::Caller) -> Self {
         Self {
             caller: caller.with_service(audit_service_descriptor()),
-            session: None,
+            connection: None,
         }
     }
     #[doc = r" Append a client middleware to this client."]
@@ -287,7 +287,7 @@ impl AuditClient {
             caller: self
                 .caller
                 .with_middleware(audit_service_descriptor(), middleware),
-            session: self.session,
+            connection: self.connection,
         }
     }
     pub async fn record(
@@ -437,12 +437,12 @@ impl AuditClient {
         })
     }
 }
-impl ::vox::FromVoxSession for AuditClient {
+impl ::vox::FromVoxLane for AuditClient {
     const SERVICE_NAME: &'static str = "Audit";
-    fn from_vox_session(caller: ::vox::Caller, session: Option<::vox::SessionHandle>) -> Self {
+    fn from_vox_lane(caller: ::vox::Caller, connection: Option<::vox::ConnectionHandle>) -> Self {
         Self {
             caller: caller.with_service(audit_service_descriptor()),
-            session,
+            connection,
         }
     }
 }

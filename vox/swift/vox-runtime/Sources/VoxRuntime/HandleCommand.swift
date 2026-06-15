@@ -1,6 +1,6 @@
 import Foundation
 
-/// Commands from ConnectionHandle to Driver.
+/// Commands from lane and connection handles to Driver.
 enum HandleCommand: Sendable {
     case call(
         connectionId: UInt64,
@@ -13,11 +13,11 @@ enum HandleCommand: Sendable {
         responseTx: @Sendable (Result<[UInt8], ConnectionError>) -> Void,
         schemaInfo: ClientSchemaInfo?
     )
-    case openConnection(
+    case openLane(
         settings: ConnectionSettings,
         metadata: Metadata,
         dispatcher: (any ServiceDispatcher)?,
-        responseTx: @Sendable (Result<Connection, ConnectionError>) -> Void
+        responseTx: @Sendable (Result<Lane, ConnectionError>) -> Void
     )
-    case releaseConnection(connectionId: UInt64)
+    case releaseLane(laneId: UInt64)
 }

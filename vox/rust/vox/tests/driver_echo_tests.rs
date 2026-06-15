@@ -20,13 +20,13 @@ impl Echo for EchoService {
 }
 
 /// Set up a connected client/server pair over in-memory links.
-async fn echo_pair() -> (EchoClient, vox::NoopClient) {
+async fn echo_pair() -> (EchoClient, vox::ConnectionHandle) {
     let (client_link, server_link) = memory_link_pair(16);
 
     let server = tokio::spawn(async move {
         vox::acceptor_on(server_link)
             .on_connection(EchoDispatcher::new(EchoService))
-            .establish::<vox::NoopClient>()
+            .establish_connection()
             .await
             .expect("server establish")
     });
@@ -72,7 +72,7 @@ async fn dropping_one_client_clone_keeps_session_alive() {
                 let _ = server_session_tx.send(handle);
             })
             .on_connection(EchoDispatcher::new(EchoService))
-            .establish::<vox::NoopClient>()
+            .establish_connection()
             .await
             .expect("server establish")
     });
@@ -127,7 +127,7 @@ async fn dropping_root_caller_shuts_down_session() {
                 let _ = server_session_tx.send(handle);
             })
             .on_connection(EchoDispatcher::new(EchoService))
-            .establish::<vox::NoopClient>()
+            .establish_connection()
             .await
             .expect("server establish")
     });
@@ -169,16 +169,17 @@ async fn echo_call_across_memory_link() {
 async fn in_flight_call_returns_error_when_peer_closes() {
     let (client_link, server_link) = memory_link_pair(16);
 
-    // Server: establish then immediately drop to close connection.
+    // Server: establish then shut down the whole connection.
     let server = tokio::spawn(async move {
         let server = vox::acceptor_on(server_link)
             .on_connection(EchoDispatcher::new(EchoService))
-            .establish::<vox::NoopClient>()
+            .establish_connection()
             .await
             .expect("server establish");
-        // Keep alive briefly so client can establish, then drop.
+        // Keep alive briefly so client can establish, then close.
         tokio::time::sleep(Duration::from_millis(50)).await;
-        drop(server);
+        server.shutdown().expect("server shutdown");
+        server.closed().await;
     });
 
     let client = vox::initiator_on(client_link)

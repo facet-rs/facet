@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::{ChannelDirection, ChannelId, ConnectionId, MethodId, RequestId};
+use crate::{ChannelDirection, ChannelId, LaneId, MethodId, RequestId};
 
 pub type VoxObserverHandle = Arc<dyn VoxObserver>;
 
@@ -116,7 +116,7 @@ impl ChannelDebugContext {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ChannelEventContext {
-    pub connection_id: Option<ConnectionId>,
+    pub connection_id: Option<LaneId>,
     pub channel_id: ChannelId,
     pub debug: Option<ChannelDebugContext>,
 }
@@ -216,47 +216,47 @@ pub enum ProtocolErrorKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DriverEvent {
     ConnectionOpened {
-        connection_id: ConnectionId,
+        connection_id: LaneId,
     },
     ConnectionClosed {
-        connection_id: ConnectionId,
+        connection_id: LaneId,
         reason: ConnectionCloseReason,
     },
     RequestStarted {
-        connection_id: ConnectionId,
+        connection_id: LaneId,
         request_id: RequestId,
         method_id: MethodId,
     },
     RequestFinished {
-        connection_id: ConnectionId,
+        connection_id: LaneId,
         request_id: RequestId,
         outcome: RpcOutcome,
         elapsed: Duration,
     },
     OutboundQueueFull {
-        connection_id: ConnectionId,
+        connection_id: LaneId,
     },
     OutboundQueueClosed {
-        connection_id: ConnectionId,
+        connection_id: LaneId,
     },
     FrameRead {
-        connection_id: ConnectionId,
+        connection_id: LaneId,
         bytes: usize,
     },
     FrameWritten {
-        connection_id: ConnectionId,
+        connection_id: LaneId,
         bytes: usize,
     },
     DecodeError {
-        connection_id: ConnectionId,
+        connection_id: LaneId,
         kind: DecodeErrorKind,
     },
     EncodeError {
-        connection_id: ConnectionId,
+        connection_id: LaneId,
         kind: EncodeErrorKind,
     },
     ProtocolError {
-        connection_id: ConnectionId,
+        connection_id: LaneId,
         kind: ProtocolErrorKind,
     },
 }
@@ -264,15 +264,15 @@ pub enum DriverEvent {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TransportEvent {
     FrameRead {
-        connection_id: Option<ConnectionId>,
+        connection_id: Option<LaneId>,
         bytes: usize,
     },
     FrameWritten {
-        connection_id: Option<ConnectionId>,
+        connection_id: Option<LaneId>,
         bytes: usize,
     },
     Closed {
-        connection_id: Option<ConnectionId>,
+        connection_id: Option<LaneId>,
         reason: ConnectionCloseReason,
     },
 }
@@ -677,7 +677,7 @@ mod tests {
 
     fn sample_channel() -> ChannelEventContext {
         ChannelEventContext {
-            connection_id: Some(ConnectionId(42)),
+            connection_id: Some(LaneId(42)),
             channel_id: ChannelId(99),
             debug: Some(ChannelDebugContext {
                 label: Some("per-request debug label"),
@@ -695,7 +695,7 @@ mod tests {
 
     fn assert_metric_labels_hide_ids(labels: ObserverMetricLabels) {
         let rendered = format!("{labels:?}");
-        assert!(!rendered.contains("ConnectionId"));
+        assert!(!rendered.contains("LaneId"));
         assert!(!rendered.contains("RequestId"));
         assert!(!rendered.contains("ChannelId"));
         assert!(!rendered.contains("MethodId"));
@@ -721,11 +721,11 @@ mod tests {
             initial_credit: 16,
         });
         observer.transport_event(TransportEvent::FrameRead {
-            connection_id: Some(ConnectionId(1)),
+            connection_id: Some(LaneId(1)),
             bytes: 64,
         });
         observer.driver_event(DriverEvent::ConnectionOpened {
-            connection_id: ConnectionId(1),
+            connection_id: LaneId(1),
         });
 
         assert_eq!(
@@ -830,20 +830,20 @@ mod tests {
         let cases = [
             (
                 DriverEvent::ConnectionOpened {
-                    connection_id: ConnectionId(7),
+                    connection_id: LaneId(7),
                 },
                 ObserverMetricKind::DriverConnectionOpened,
             ),
             (
                 DriverEvent::ConnectionClosed {
-                    connection_id: ConnectionId(7),
+                    connection_id: LaneId(7),
                     reason: ConnectionCloseReason::Protocol,
                 },
                 ObserverMetricKind::DriverConnectionClosed,
             ),
             (
                 DriverEvent::RequestStarted {
-                    connection_id: ConnectionId(7),
+                    connection_id: LaneId(7),
                     request_id: RequestId(11),
                     method_id: MethodId(13),
                 },
@@ -851,7 +851,7 @@ mod tests {
             ),
             (
                 DriverEvent::RequestFinished {
-                    connection_id: ConnectionId(7),
+                    connection_id: LaneId(7),
                     request_id: RequestId(11),
                     outcome: RpcOutcome::Indeterminate,
                     elapsed: Duration::from_millis(2),
@@ -860,47 +860,47 @@ mod tests {
             ),
             (
                 DriverEvent::OutboundQueueFull {
-                    connection_id: ConnectionId(7),
+                    connection_id: LaneId(7),
                 },
                 ObserverMetricKind::DriverOutboundQueueFull,
             ),
             (
                 DriverEvent::OutboundQueueClosed {
-                    connection_id: ConnectionId(7),
+                    connection_id: LaneId(7),
                 },
                 ObserverMetricKind::DriverOutboundQueueClosed,
             ),
             (
                 DriverEvent::FrameRead {
-                    connection_id: ConnectionId(7),
+                    connection_id: LaneId(7),
                     bytes: 128,
                 },
                 ObserverMetricKind::DriverFrameRead,
             ),
             (
                 DriverEvent::FrameWritten {
-                    connection_id: ConnectionId(7),
+                    connection_id: LaneId(7),
                     bytes: 256,
                 },
                 ObserverMetricKind::DriverFrameWritten,
             ),
             (
                 DriverEvent::DecodeError {
-                    connection_id: ConnectionId(7),
+                    connection_id: LaneId(7),
                     kind: DecodeErrorKind::Payload,
                 },
                 ObserverMetricKind::DriverDecodeError,
             ),
             (
                 DriverEvent::EncodeError {
-                    connection_id: ConnectionId(7),
+                    connection_id: LaneId(7),
                     kind: EncodeErrorKind::Transport,
                 },
                 ObserverMetricKind::DriverEncodeError,
             ),
             (
                 DriverEvent::ProtocolError {
-                    connection_id: ConnectionId(7),
+                    connection_id: LaneId(7),
                     kind: ProtocolErrorKind::FlowControl,
                 },
                 ObserverMetricKind::DriverProtocolError,
@@ -909,7 +909,7 @@ mod tests {
 
         for (event, kind) in cases {
             assert!(
-                format!("{event:?}").contains("ConnectionId(7)"),
+                format!("{event:?}").contains("LaneId(7)"),
                 "driver events should retain connection IDs for logs/debug"
             );
             let labels = event.metric_labels();
@@ -940,7 +940,7 @@ mod tests {
 
         let channel_labels = ChannelEvent::TrySend {
             channel: ChannelEventContext {
-                connection_id: Some(ConnectionId(42)),
+                connection_id: Some(LaneId(42)),
                 channel_id: ChannelId(99),
                 debug: Some(ChannelDebugContext {
                     label: Some("per-request debug label"),
@@ -963,7 +963,7 @@ mod tests {
         assert_eq!(channel_labels.method, Some("stream"));
         assert_eq!(channel_labels.outcome, Some("full-runtime-queue"));
         let rendered = format!("{channel_labels:?}");
-        assert!(!rendered.contains("ConnectionId"));
+        assert!(!rendered.contains("LaneId"));
         assert!(!rendered.contains("ChannelId"));
         assert!(!rendered.contains("per-request debug label"));
         assert!(!rendered.contains("alloc::string::String"));
@@ -974,7 +974,7 @@ mod tests {
     #[test]
     fn metric_labels_project_driver_and_transport_events_without_ids() {
         let driver_labels = DriverEvent::DecodeError {
-            connection_id: ConnectionId(77),
+            connection_id: LaneId(77),
             kind: DecodeErrorKind::Payload,
         }
         .metric_labels();
@@ -983,7 +983,7 @@ mod tests {
         assert_eq!(driver_labels.error_kind, Some("payload"));
 
         let transport_labels = TransportEvent::Closed {
-            connection_id: Some(ConnectionId(88)),
+            connection_id: Some(LaneId(88)),
             reason: ConnectionCloseReason::Transport,
         }
         .metric_labels();

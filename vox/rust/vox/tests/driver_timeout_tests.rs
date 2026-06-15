@@ -23,7 +23,7 @@ async fn connect_timeout_fires_when_server_never_responds() {
 
     let elapsed = start.elapsed();
     match result {
-        Err(vox::SessionError::ConnectTimeout) => {} // expected
+        Err(vox::ConnectionError::ConnectTimeout) => {} // expected
         Err(other) => panic!("expected ConnectTimeout, got: {other}"),
         Ok(_) => panic!("expected ConnectTimeout, but establish succeeded"),
     }

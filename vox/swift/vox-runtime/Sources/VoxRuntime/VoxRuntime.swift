@@ -9,10 +9,10 @@ public typealias PostcardDecoder<T> = (inout ByteBuffer) throws -> T
 
 // `ClientSchemaInfo` now lives in SchemaTracker.swift (phon model).
 
-// MARK: - VoxConnection Protocol
+// MARK: - VoxLane Protocol
 
-/// Protocol for vox connections (used by generated clients).
-public protocol VoxConnection: Sendable {
+/// Protocol for vox lanes (used by generated clients).
+public protocol VoxLane: Sendable {
     /// Make a raw RPC call. `channels` carries the out-of-band channel ids the caller
     /// allocated for this call's `Tx`/`Rx` args (empty for non-channel methods).
     func call(
@@ -39,7 +39,7 @@ public protocol VoxConnection: Sendable {
     var schemaReceiveTracker: SchemaTracker { get }
 }
 
-extension VoxConnection {
+extension VoxLane {
     /// Convenience overload without `channels` — non-channel methods call this; it
     /// delegates to the primary requirement with an empty channel list.
     public func call(
@@ -139,7 +139,7 @@ extension VoxConnection {
 
 }
 
-// MARK: - Connection VoxConnection Conformance
+// MARK: - Lane VoxLane Conformance
 
 // MARK: - VoxRuntimeError
 

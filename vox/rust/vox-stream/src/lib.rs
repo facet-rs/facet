@@ -526,7 +526,7 @@ pub async fn connect(pipe_name: impl AsRef<str>) -> io::Result<LocalStream> {
         match tokio::net::windows::named_pipe::ClientOptions::new().open(pipe_name) {
             Ok(client) => return Ok(client),
             Err(e) if e.raw_os_error() == Some(231) => {
-                moire::time::sleep(std::time::Duration::from_millis(50)).await;
+                vox_rt::time::sleep(std::time::Duration::from_millis(50)).await;
             }
             Err(e) => return Err(e),
         }
@@ -683,7 +683,7 @@ pub struct LocalLinkAcceptor {
     #[cfg(windows)]
     addr: String,
     #[cfg(windows)]
-    pending: moire::sync::Mutex<tokio::net::windows::named_pipe::NamedPipeServer>,
+    pending: vox_rt::sync::Mutex<tokio::net::windows::named_pipe::NamedPipeServer>,
 }
 
 /// A held file lock that keeps a [`LocalLinkAcceptor`] exclusively owned.
@@ -789,7 +789,7 @@ impl LocalLinkAcceptor {
             .create(&addr)?;
         Ok(Self {
             addr,
-            pending: moire::sync::Mutex::new("local-link-acceptor.pending", server),
+            pending: vox_rt::sync::Mutex::new("local-link-acceptor.pending", server),
         })
     }
 

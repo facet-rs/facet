@@ -93,29 +93,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async-channel"
-version = "2.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "924ed96dd52d1b75e9c1a3e6275715fd320f5f9439fb5a4a11fa51f4221158d2"
-dependencies = [
- "concurrent-queue",
- "event-listener-strategy",
- "futures-core",
- "pin-project-lite",
-]
-
-[[package]]
-name = "async-lock"
-version = "3.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "290f7f2596bd5b78a9fec8088ccd89180d7f9f55b94b0576823bbbdc72ee8311"
-dependencies = [
- "event-listener",
- "event-listener-strategy",
- "pin-project-lite",
-]
-
-[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -310,15 +287,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "concurrent-queue"
-version = "2.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ca0197aee26d1ae37445ee532fefce43251d24cc7c166799f4d46817f1d3973"
-dependencies = [
- "crossbeam-utils",
-]
-
-[[package]]
 name = "console"
 version = "0.16.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -444,16 +412,6 @@ checksum = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a"
 dependencies = [
  "generic-array",
  "typenum",
-]
-
-[[package]]
-name = "ctor"
-version = "0.2.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32a2785755761f3ddc1492979ce1e48d2c00d09311c39e4466429188f3dd6501"
-dependencies = [
- "quote",
- "syn 2.0.117",
 ]
 
 [[package]]
@@ -678,27 +636,6 @@ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "event-listener"
-version = "5.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e13b66accf52311f30a0db42147dadea9850cb48cd070028831ae5f5d4b856ab"
-dependencies = [
- "concurrent-queue",
- "parking",
- "pin-project-lite",
-]
-
-[[package]]
-name = "event-listener-strategy"
-version = "0.5.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8be9f3dfaaffdae2972880079a491a1a8bb7cbed0b8dd7a347f668b4150a3b93"
-dependencies = [
- "event-listener",
- "pin-project-lite",
 ]
 
 [[package]]
@@ -1169,18 +1106,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e629b9b98ef3dd8afe6ca2bd0f89306cec16d43d907889945bc5d6687f2f13c7"
 
 [[package]]
-name = "gloo-timers"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbb143cf96099802033e0d4f4963b19fd2e0b728bcf076cd9cf7f6634f092994"
-dependencies = [
- "futures-channel",
- "futures-core",
- "js-sys",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "hashbrown"
 version = "0.14.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1598,122 +1523,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "moire"
-version = "2.0.0-rc.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe357ecd78fc5dbb38df1b975ed5542908a40629f9cbdccf1c8130bd03ee509c"
-dependencies = [
- "moire-macros",
- "moire-macros-noop",
- "moire-tokio",
- "moire-wasm",
-]
-
-[[package]]
-name = "moire-macros"
-version = "2.0.0-rc.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7fe1c4ab4047988c07533c0ea1641519018be5f9c8524912ec93907ae44cc979"
-dependencies = [
- "proc-macro2",
- "quote",
- "unsynn",
-]
-
-[[package]]
-name = "moire-macros-noop"
-version = "2.0.0-rc.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96fbfad00504253bac67fe1b8074f7bbd6a9fcacf63472a63a2e8d7ccdec19d7"
-
-[[package]]
-name = "moire-runtime"
-version = "2.0.0-rc.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "beed9184c655e7f5c11e657aff9a36ab2870e30417a0e29a3ac861d04006315c"
-dependencies = [
- "ctor",
- "facet",
- "facet-json",
- "facet-value",
- "moire-trace-capture",
- "moire-trace-types",
- "moire-types",
- "moire-wire",
- "tokio",
-]
-
-[[package]]
-name = "moire-tokio"
-version = "2.0.0-rc.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7578183f76b792a6c9c165b11ae7b9e5c69220c19ef1373655596754e9ece6f4"
-dependencies = [
- "moire-runtime",
- "moire-types",
- "parking_lot",
- "tokio",
-]
-
-[[package]]
-name = "moire-trace-capture"
-version = "2.0.0-rc.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86d8a9ed465e7c9b52cd90445974c568684e31784793a0654eb9a4a22739be87"
-dependencies = [
- "libc",
- "moire-trace-types",
-]
-
-[[package]]
-name = "moire-trace-types"
-version = "2.0.0-rc.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ae2abde8ed990d31da5b4ecd8920240e2dd0832cafce5f41cafcad9e5d8e57a"
-dependencies = [
- "facet",
-]
-
-[[package]]
-name = "moire-types"
-version = "2.0.0-rc.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c4d5dc2b09ad7aed54b8022db1a7a76f2264e8328f62ca24661a0d26a6bfadf"
-dependencies = [
- "facet",
- "facet-value",
- "moire-trace-types",
-]
-
-[[package]]
-name = "moire-wasm"
-version = "2.0.0-rc.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56243032be8586da90784087877917bc337e6b0cea72c0a0b4ca496045920564"
-dependencies = [
- "async-channel",
- "async-lock",
- "event-listener",
- "futures-channel",
- "futures-util",
- "gloo-timers",
- "moire-types",
- "wasm-bindgen-futures",
-]
-
-[[package]]
-name = "moire-wire"
-version = "2.0.0-rc.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d10e39253dfb2b27ded818613570cdc6e598d80c3f9078bcc8d142c5ebe99a2"
-dependencies = [
- "facet",
- "facet-json",
- "moire-trace-types",
- "moire-types",
-]
-
-[[package]]
 name = "mutants"
 version = "0.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1848,12 +1657,6 @@ dependencies = [
  "supports-color 2.1.0",
  "supports-color 3.0.2",
 ]
-
-[[package]]
-name = "parking"
-version = "2.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f38d5652c16fde515bb1ecef450ab0f6a219d619a7274976324d5e377f7dceba"
 
 [[package]]
 name = "parking_lot"
@@ -2513,13 +2316,13 @@ version = "0.2.2"
 dependencies = [
  "facet-value",
  "libc",
- "moire",
  "spec-proto",
  "tempfile",
  "tokio",
  "vox",
  "vox-core",
  "vox-local",
+ "vox-rt",
  "vox-stream",
  "vox-types",
  "vox-websocket",
@@ -2592,7 +2395,6 @@ name = "subject-rust"
 version = "0.2.2"
 dependencies = [
  "facet-value",
- "moire",
  "spec-proto",
  "tokio",
  "tracing",
@@ -2601,6 +2403,7 @@ dependencies = [
  "vox-core",
  "vox-ffi",
  "vox-local",
+ "vox-rt",
  "vox-stream",
  "vox-types",
 ]
@@ -2920,7 +2723,6 @@ dependencies = [
  "bytes",
  "libc",
  "mio",
- "parking_lot",
  "pin-project-lite",
  "signal-hook-registry",
  "socket2",
@@ -3179,7 +2981,6 @@ dependencies = [
  "facet",
  "facet-pretty",
  "facet-reflect",
- "moire",
  "rustls",
  "rustls-pemfile",
  "tempfile",
@@ -3190,6 +2991,7 @@ dependencies = [
  "vox-core",
  "vox-ffi",
  "vox-phon",
+ "vox-rt",
  "vox-service-macros",
  "vox-stream",
  "vox-types",
@@ -3200,6 +3002,7 @@ dependencies = [
 name = "vox-codegen"
 version = "0.9.0-rc.0"
 dependencies = [
+ "base64",
  "facet",
  "facet-core",
  "facet-value",
@@ -3226,13 +3029,13 @@ dependencies = [
  "facet-testhelpers",
  "futures-util",
  "getrandom 0.4.2",
- "moire",
  "smallvec 1.15.1",
  "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
  "vox-phon",
+ "vox-rt",
  "vox-types",
  "wasm-bindgen-futures",
  "zerocopy",
@@ -3300,15 +3103,30 @@ name = "vox-phon"
 version = "0.9.0-rc.0"
 dependencies = [
  "facet",
- "moire",
  "phon",
  "phon-engine",
  "phon-ir",
  "phon-jit",
  "phon-schema",
  "spec-proto",
+ "vox-rt",
  "vox-types",
 ]
+
+[[package]]
+name = "vox-rt"
+version = "0.9.0-rc.0"
+dependencies = [
+ "parking_lot",
+ "tokio",
+ "vox-rt-macros",
+ "wasm-bindgen-futures",
+ "wasmtimer",
+]
+
+[[package]]
+name = "vox-rt-macros"
+version = "0.9.0-rc.0"
 
 [[package]]
 name = "vox-schema"
@@ -3333,13 +3151,13 @@ name = "vox-stream"
 version = "0.9.0-rc.0"
 dependencies = [
  "libc",
- "moire",
  "tempfile",
  "tokio",
  "tracing",
  "vox-core",
  "vox-fdpass",
  "vox-phon",
+ "vox-rt",
  "vox-types",
 ]
 
@@ -3358,11 +3176,11 @@ dependencies = [
  "futures-channel",
  "heck",
  "indexmap",
- "moire",
  "smallvec 1.15.1",
  "structstruck",
  "tokio",
  "vox-phon",
+ "vox-rt",
  "vox-schema",
  "wasmtimer",
 ]

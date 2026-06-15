@@ -3,14 +3,14 @@
 
 import type {
   Caller,
+  ConnectLaneOptions,
   Dispatcher,
   MethodDescriptor,
   RequestContext,
   ServiceDescriptor,
-  SessionTransportOptions,
   VoxCall,
 } from "@bearcove/vox-core";
-import { session, voxServiceMetadata } from "@bearcove/vox-core";
+import { connectLane, voxServiceMetadata } from "@bearcove/vox-core";
 import { wsConnector } from "@bearcove/vox-ws";
 
 // Named type definitions
@@ -203,6 +203,10 @@ export interface TestbedCaller {
 
 // Client implementation for Testbed
 export class TestbedClient implements TestbedCaller {
+  static get descriptor(): ServiceDescriptor {
+    return testbed_descriptor;
+  }
+
   private caller: Caller;
 
   constructor(caller: Caller) {
@@ -289,13 +293,12 @@ export class TestbedClient implements TestbedCaller {
  */
 export async function connectTestbed(
   url: string,
-  options: SessionTransportOptions = {},
+  options: ConnectLaneOptions = {},
 ): Promise<TestbedClient> {
-  const established = await session.initiator(wsConnector(url), {
+  return connectLane(wsConnector(url), TestbedClient, {
     ...options,
-    metadata: voxServiceMetadata("Testbed"),
+    laneMetadata: options.laneMetadata ?? voxServiceMetadata("Testbed"),
   });
-  return new TestbedClient(established.rootConnection().caller());
 }
 
 // Handler interface for Testbed

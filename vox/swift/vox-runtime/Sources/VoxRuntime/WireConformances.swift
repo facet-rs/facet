@@ -18,3 +18,14 @@ extension ConnectionSettings: Equatable {
             && a.initialChannelCredit == b.initialChannelCredit
     }
 }
+
+extension Message {
+    public var connectionId: UInt64 {
+        get { laneId }
+        set { laneId = newValue }
+    }
+
+    public init(connectionId: UInt64, payload: MessagePayload) {
+        self.init(laneId: connectionId, payload: payload)
+    }
+}

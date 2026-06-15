@@ -20,10 +20,10 @@ struct DriverQueuedCall: Sendable {
     let schemaInfo: ClientSchemaInfo?
 }
 
-struct PendingVirtualConnection: Sendable {
+struct PendingOutboundLane: Sendable {
     let localSettings: ConnectionSettings
     let dispatcher: (any ServiceDispatcher)?
-    let responseTx: @Sendable (Result<Connection, ConnectionError>) -> Void
+    let responseTx: @Sendable (Result<Lane, ConnectionError>) -> Void
 }
 
 struct DriverKeepaliveRuntime {

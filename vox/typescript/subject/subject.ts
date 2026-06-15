@@ -232,10 +232,11 @@ import { tcpConnector, acceptTcp } from "@bearcove/vox-tcp";
 import { createServer as createTcpServer, type AddressInfo } from "net";
 import { wsConnector } from "@bearcove/vox-ws";
 import {
+  accept,
+  connect,
   Driver,
-  SessionError,
+  ConnectionError,
   channel,
-  session,
   setVoxLogger,
   voxServiceMetadata,
   type Tx,
@@ -5028,30 +5029,29 @@ async function runServer() {
     throw new Error("PEER_ADDR env var not set");
   }
 
-  // r[impl rpc.virtual-connection.accept] - Check if we should accept incoming virtual connections.
-  const acceptConnections = process.env.ACCEPT_CONNECTIONS === "1";
+  // r[impl rpc.virtual-connection.accept] - Check if we should accept incoming service lanes.
+  const acceptLanes = process.env.ACCEPT_CONNECTIONS !== "0";
 
-  console.error(`server mode: connecting to ${addr}, acceptConnections=${acceptConnections}`);
-  const established = await session.initiator(makeConnector(addr), {
+  console.error(`server mode: connecting to ${addr}, acceptLanes=${acceptLanes}`);
+  const connection = await connect(makeConnector(addr), {
     metadata: voxServiceMetadata("Testbed"),
-    onConnection: acceptConnections
-      ? (connection) => {
+    onLane: acceptLanes
+      ? (lane) => {
           const driver = new Driver(
-            connection,
+            lane,
             new TestbedDispatcher(new TestbedService()),
           );
           void driver.run();
         }
       : undefined,
   });
-  const root = established.rootConnection();
-  const driver = new Driver(root, new TestbedDispatcher(new TestbedService()));
-  const handle = established.handle();
+  const driver = new Driver(connection.lane(), new TestbedDispatcher(new TestbedService()));
+  const handle = connection.handle();
 
   try {
     await driver.run();
   } catch (e) {
-    if (e instanceof SessionError) {
+    if (e instanceof ConnectionError) {
       // Clean shutdown
       return;
     }
@@ -5071,11 +5071,11 @@ async function runClient() {
   const scenario = process.env.CLIENT_SCENARIO ?? "echo";
   console.error(`client mode: connecting to ${addr}, scenario=${scenario}`);
 
-  const established = await session.initiator(makeConnector(addr), {
+  const connection = await connect(makeConnector(addr));
+  const client = await connection.openLane(TestbedClient, {
     metadata: voxServiceMetadata("Testbed"),
   });
-  const client = new TestbedClient(established.rootConnection().caller());
-  const handle = established.handle();
+  const handle = connection.handle();
 
   try {
     switch (scenario) {
@@ -6296,7 +6296,7 @@ async function runClient() {
   } finally {
     // r[impl hosted.subject.lifecycle]
     handle.shutdown();
-    await established.closed().catch(() => {});
+    await connection.closed().catch(() => {});
   }
 
 }
@@ -6321,19 +6321,26 @@ async function runServerListen() {
     });
   });
 
-  const established = await session.acceptorOn(acceptTcp(socket), {
+  const connection = await accept(acceptTcp(socket), {
     metadata: voxServiceMetadata("Testbed"),
+    onLane: (lane) => {
+      const driver = new Driver(
+        lane,
+        new TestbedDispatcher(new TestbedService()),
+      );
+      void driver.run();
+    },
   });
   const driver = new Driver(
-    established.rootConnection(),
+    connection.lane(),
     new TestbedDispatcher(new TestbedService()),
   );
-  const handle = established.handle();
+  const handle = connection.handle();
 
   try {
     await driver.run();
   } catch (e) {
-    if (e instanceof SessionError) return;
+    if (e instanceof ConnectionError) return;
     throw e;
   } finally {
     // r[impl hosted.subject.lifecycle]

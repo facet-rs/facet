@@ -10,19 +10,19 @@ import Foundation
 /// Uses AsyncStream to multiplex between:
 /// - Incoming messages from transport
 /// - Task messages from handlers (Data/Close/Response)
-/// - Commands from ConnectionHandle
+/// - Commands from lane and connection handles
 public final class Driver: @unchecked Sendable {
     var conduit: any Conduit
     let dispatcher: any ServiceDispatcher
     let role: Role
     let negotiated: Negotiated
-    let handle: ConnectionHandle
-    let connectionAcceptor: (any ConnectionAcceptor)?
-    let keepalive: SessionKeepaliveConfig?
+    let handle: LaneHandle
+    let laneAcceptor: (any LaneAcceptor)?
+    let keepalive: ConnectionKeepaliveConfig?
 
     let serverRegistry: ChannelRegistry
     let state: DriverState
-    let virtualConnState: VirtualConnectionState
+    let laneState: LaneState
     let schemaSendTracker: SchemaSendTracker
     /// Writer schema closures the peer advertised (per method+direction), used by
     /// the dispatcher to build args compat decoders.
@@ -35,8 +35,8 @@ public final class Driver: @unchecked Sendable {
     var pendingTaskMessages: [DriverQueuedWireMessage] = []
     var pendingCalls: [DriverQueuedCall] = []
 
-    let localRootSettings: ConnectionSettings?
-    let peerRootSettings: ConnectionSettings?
+    let localControlSettings: ConnectionSettings?
+    let peerControlSettings: ConnectionSettings?
     let peerMessageSchema: [UInt8]
 
     init(
@@ -44,25 +44,25 @@ public final class Driver: @unchecked Sendable {
         dispatcher: any ServiceDispatcher,
         role: Role,
         negotiated: Negotiated,
-        handle: ConnectionHandle,
-        connectionAcceptor: (any ConnectionAcceptor)? = nil,
-        keepalive: SessionKeepaliveConfig? = nil
+        handle: LaneHandle,
+        laneAcceptor: (any LaneAcceptor)? = nil,
+        keepalive: ConnectionKeepaliveConfig? = nil
     ) {
         self.conduit = conduit
         self.dispatcher = dispatcher
         self.role = role
         self.negotiated = negotiated
         self.handle = handle
-        self.connectionAcceptor = connectionAcceptor
+        self.laneAcceptor = laneAcceptor
         self.keepalive = keepalive
         self.serverRegistry = ChannelRegistry()
         self.state = DriverState()
-        self.virtualConnState = VirtualConnectionState(role: role)
+        self.laneState = LaneState(role: role)
         self.schemaSendTracker = SchemaSendTracker()
         self.commandQueue = LockedQueue<HandleCommand>()
         self.taskQueue = LockedQueue<DriverQueuedTaskMessage>()
-        self.localRootSettings = nil
-        self.peerRootSettings = nil
+        self.localControlSettings = nil
+        self.peerControlSettings = nil
         self.peerMessageSchema = []
 
         // Create event stream
@@ -79,16 +79,16 @@ public final class Driver: @unchecked Sendable {
         dispatcher: any ServiceDispatcher,
         role: Role,
         negotiated: Negotiated,
-        handle: ConnectionHandle,
-        connectionAcceptor: (any ConnectionAcceptor)?,
-        keepalive: SessionKeepaliveConfig?,
+        handle: LaneHandle,
+        laneAcceptor: (any LaneAcceptor)?,
+        keepalive: ConnectionKeepaliveConfig?,
         eventStream: AsyncStream<DriverEvent>,
         eventContinuation: AsyncStream<DriverEvent>.Continuation,
         commandQueue: LockedQueue<HandleCommand>,
         taskQueue: LockedQueue<DriverQueuedTaskMessage>,
         schemaSendTracker: SchemaSendTracker = SchemaSendTracker(),
-        localRootSettings: ConnectionSettings? = nil,
-        peerRootSettings: ConnectionSettings? = nil,
+        localControlSettings: ConnectionSettings? = nil,
+        peerControlSettings: ConnectionSettings? = nil,
         peerMessageSchema: [UInt8] = []
     ) {
         self.conduit = conduit
@@ -96,18 +96,18 @@ public final class Driver: @unchecked Sendable {
         self.role = role
         self.negotiated = negotiated
         self.handle = handle
-        self.connectionAcceptor = connectionAcceptor
+        self.laneAcceptor = laneAcceptor
         self.keepalive = keepalive
         self.serverRegistry = ChannelRegistry()
         self.state = DriverState()
-        self.virtualConnState = VirtualConnectionState(role: role)
+        self.laneState = LaneState(role: role)
         self.schemaSendTracker = schemaSendTracker
         self.eventStream = eventStream
         self.eventContinuation = eventContinuation
         self.commandQueue = commandQueue
         self.taskQueue = taskQueue
-        self.localRootSettings = localRootSettings
-        self.peerRootSettings = peerRootSettings
+        self.localControlSettings = localControlSettings
+        self.peerControlSettings = peerControlSettings
         self.peerMessageSchema = peerMessageSchema
     }
 }

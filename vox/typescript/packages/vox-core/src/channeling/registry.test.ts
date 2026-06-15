@@ -172,7 +172,7 @@ describe("ChannelRegistry", () => {
     const channelId = 21n;
     registry.registerOutgoing(channelId, 1);
     registry.rememberContext(channelId, {
-      connectionId: 0n,
+      laneId: 0n,
       requestId: 5n,
       service: "Echo",
       method: "stream",
@@ -186,7 +186,7 @@ describe("ChannelRegistry", () => {
           channelId,
           state: "outgoing",
           context: {
-            connectionId: 0n,
+            laneId: 0n,
             requestId: 5n,
             service: "Echo",
             method: "stream",
@@ -203,7 +203,7 @@ describe("ChannelRegistry", () => {
       channelId,
       state: "closed",
       context: {
-        connectionId: 0n,
+        laneId: 0n,
         requestId: 5n,
         service: "Echo",
         method: "stream",

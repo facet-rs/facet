@@ -4143,6 +4143,6 @@ pub enum LookupError {
     AccessDenied = 1,
 }
 
-pub fn all_services() -> Vec<&'static vox::session::ServiceDescriptor> {
+pub fn all_services() -> Vec<&'static vox::ServiceDescriptor> {
     vec![testbed_service_descriptor()]
 }

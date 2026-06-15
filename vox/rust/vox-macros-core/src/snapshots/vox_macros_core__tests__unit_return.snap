@@ -3,11 +3,11 @@ source: rust/vox-macros-core/src/lib.rs
 expression: "generate(quote! { trait Notifier { async fn notify(&self, msg: String); } })"
 ---
 #[allow(non_snake_case, clippy::all)]
-pub fn notifier_service_descriptor() -> &'static ::vox::session::ServiceDescriptor {
-    static DESCRIPTOR: std::sync::OnceLock<&'static ::vox::session::ServiceDescriptor> =
+pub fn notifier_service_descriptor() -> &'static ::vox::connection::ServiceDescriptor {
+    static DESCRIPTOR: std::sync::OnceLock<&'static ::vox::connection::ServiceDescriptor> =
         std::sync::OnceLock::new();
     DESCRIPTOR.get_or_init(|| {
-        let methods: Vec<&'static ::vox::session::MethodDescriptor> =
+        let methods: Vec<&'static ::vox::connection::MethodDescriptor> =
             vec![
                 ::vox::hash::method_descriptor::<(String,), ()>(
                     "Notifier",
@@ -23,7 +23,7 @@ pub fn notifier_service_descriptor() -> &'static ::vox::session::ServiceDescript
                     },
                 ),
             ];
-        Box::leak(Box::new(::vox::session::ServiceDescriptor {
+        Box::leak(Box::new(::vox::connection::ServiceDescriptor {
             service_name: "Notifier",
             methods: Box::leak(methods.into_boxed_slice()),
             doc: None,
@@ -183,21 +183,21 @@ where
             .await;
     }
 }
-#[doc = "Client for the `Notifier` service.\n\nStores a [`Caller`](:: vox::Caller) and an optional [`SessionHandle`](:: vox::SessionHandle) as public fields."]
+#[doc = "Client for the `Notifier` service.\n\nStores a [`Caller`](:: vox::Caller) and an optional [`ConnectionHandle`](:: vox::ConnectionHandle) as public fields."]
 #[must_use = "Dropping this client may close the connection if it is the last caller."]
 #[derive(Clone)]
 pub struct NotifierClient {
     #[doc = r" The underlying caller for making RPC calls."]
     pub caller: ::vox::Caller,
-    #[doc = r" The session handle, if this client is on a root connection."]
-    pub session: Option<::vox::SessionHandle>,
+    #[doc = r" The connection handle backing this service lane, when available."]
+    pub connection: Option<::vox::ConnectionHandle>,
 }
 impl NotifierClient {
     #[doc = r" Create a new client wrapping the given caller."]
     pub fn new(caller: ::vox::Caller) -> Self {
         Self {
             caller: caller.with_service(notifier_service_descriptor()),
-            session: None,
+            connection: None,
         }
     }
     #[doc = r" Append a client middleware to this client."]
@@ -206,7 +206,7 @@ impl NotifierClient {
             caller: self
                 .caller
                 .with_middleware(notifier_service_descriptor(), middleware),
-            session: self.session,
+            connection: self.connection,
         }
     }
     pub async fn notify(&self, msg: String) -> Result<(), ::vox::VoxError> {
@@ -280,12 +280,12 @@ impl NotifierClient {
         })
     }
 }
-impl ::vox::FromVoxSession for NotifierClient {
+impl ::vox::FromVoxLane for NotifierClient {
     const SERVICE_NAME: &'static str = "Notifier";
-    fn from_vox_session(caller: ::vox::Caller, session: Option<::vox::SessionHandle>) -> Self {
+    fn from_vox_lane(caller: ::vox::Caller, connection: Option<::vox::ConnectionHandle>) -> Self {
         Self {
             caller: caller.with_service(notifier_service_descriptor()),
-            session,
+            connection,
         }
     }
 }

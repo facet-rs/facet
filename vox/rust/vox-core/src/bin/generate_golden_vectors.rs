@@ -4,10 +4,9 @@ use std::{fs, path::PathBuf};
 
 use vox_types::{
     ChannelBody, ChannelClose, ChannelGrantCredit, ChannelId, ChannelItem, ChannelMessage,
-    ChannelReset, ConnectionAccept, ConnectionClose, ConnectionId, ConnectionOpen,
-    ConnectionReject, ConnectionSettings, Message, MessagePayload, Metadata, MethodId, Parity,
-    Payload, ProtocolError, RequestBody, RequestCall, RequestCancel, RequestId, RequestMessage,
-    RequestResponse, VoxError,
+    ChannelReset, ConnectionSettings, LaneAccept, LaneClose, LaneId, LaneOpen, LaneReject, Message,
+    MessagePayload, Metadata, MethodId, Parity, Payload, ProtocolError, RequestBody, RequestCall,
+    RequestCancel, RequestId, RequestMessage, RequestResponse, VoxError,
 };
 
 fn fixture_root() -> PathBuf {
@@ -296,7 +295,7 @@ fn main() {
     write_fixture(
         "wire/message_protocol_error.bin",
         &encode_message(&Message {
-            connection_id: ConnectionId::ROOT,
+            lane_id: LaneId::ROOT,
             payload: MessagePayload::ProtocolError(ProtocolError {
                 description: "bad frame sequence",
             }),
@@ -306,8 +305,8 @@ fn main() {
     write_fixture(
         "wire/message_connection_open.bin",
         &encode_message(&Message {
-            connection_id: ConnectionId(2),
-            payload: MessagePayload::ConnectionOpen(ConnectionOpen {
+            lane_id: LaneId(2),
+            payload: MessagePayload::LaneOpen(LaneOpen {
                 connection_settings: conn_settings.clone(),
                 metadata: meta.clone(),
             }),
@@ -317,8 +316,8 @@ fn main() {
     write_fixture(
         "wire/message_connection_accept.bin",
         &encode_message(&Message {
-            connection_id: ConnectionId(2),
-            payload: MessagePayload::ConnectionAccept(ConnectionAccept {
+            lane_id: LaneId(2),
+            payload: MessagePayload::LaneAccept(LaneAccept {
                 connection_settings: ConnectionSettings {
                     parity: Parity::Even,
                     max_concurrent_requests: 96,
@@ -332,8 +331,8 @@ fn main() {
     write_fixture(
         "wire/message_connection_reject.bin",
         &encode_message(&Message {
-            connection_id: ConnectionId(4),
-            payload: MessagePayload::ConnectionReject(ConnectionReject {
+            lane_id: LaneId(4),
+            payload: MessagePayload::LaneReject(LaneReject {
                 metadata: meta.clone(),
             }),
         }),
@@ -342,8 +341,8 @@ fn main() {
     write_fixture(
         "wire/message_connection_close.bin",
         &encode_message(&Message {
-            connection_id: ConnectionId(2),
-            payload: MessagePayload::ConnectionClose(ConnectionClose {
+            lane_id: LaneId(2),
+            payload: MessagePayload::LaneClose(LaneClose {
                 metadata: meta.clone(),
             }),
         }),
@@ -353,7 +352,7 @@ fn main() {
     write_fixture(
         "wire/message_request_call.bin",
         &encode_message(&Message {
-            connection_id: ConnectionId(2),
+            lane_id: LaneId(2),
             payload: MessagePayload::RequestMessage(RequestMessage {
                 id: RequestId(11),
                 body: RequestBody::Call(RequestCall {
@@ -371,7 +370,7 @@ fn main() {
     write_fixture(
         "wire/message_request_response.bin",
         &encode_message(&Message {
-            connection_id: ConnectionId(2),
+            lane_id: LaneId(2),
             payload: MessagePayload::RequestMessage(RequestMessage {
                 id: RequestId(11),
                 body: RequestBody::Response(RequestResponse {
@@ -386,7 +385,7 @@ fn main() {
     write_fixture(
         "wire/message_request_cancel.bin",
         &encode_message(&Message {
-            connection_id: ConnectionId(2),
+            lane_id: LaneId(2),
             payload: MessagePayload::RequestMessage(RequestMessage {
                 id: RequestId(11),
                 body: RequestBody::Cancel(RequestCancel {
@@ -400,7 +399,7 @@ fn main() {
     write_fixture(
         "wire/message_channel_item.bin",
         &encode_message(&Message {
-            connection_id: ConnectionId(2),
+            lane_id: LaneId(2),
             payload: MessagePayload::ChannelMessage(ChannelMessage {
                 id: ChannelId(3),
                 body: ChannelBody::Item(ChannelItem {
@@ -413,7 +412,7 @@ fn main() {
     write_fixture(
         "wire/message_channel_close.bin",
         &encode_message(&Message {
-            connection_id: ConnectionId(2),
+            lane_id: LaneId(2),
             payload: MessagePayload::ChannelMessage(ChannelMessage {
                 id: ChannelId(3),
                 body: ChannelBody::Close(ChannelClose {
@@ -426,7 +425,7 @@ fn main() {
     write_fixture(
         "wire/message_channel_reset.bin",
         &encode_message(&Message {
-            connection_id: ConnectionId(2),
+            lane_id: LaneId(2),
             payload: MessagePayload::ChannelMessage(ChannelMessage {
                 id: ChannelId(3),
                 body: ChannelBody::Reset(ChannelReset {
@@ -439,7 +438,7 @@ fn main() {
     write_fixture(
         "wire/message_channel_grant_credit.bin",
         &encode_message(&Message {
-            connection_id: ConnectionId(2),
+            lane_id: LaneId(2),
             payload: MessagePayload::ChannelMessage(ChannelMessage {
                 id: ChannelId(3),
                 body: ChannelBody::GrantCredit(ChannelGrantCredit { additional: 1024 }),

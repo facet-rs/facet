@@ -1,10 +1,10 @@
 use std::{future::Future, pin::Pin, sync::Arc};
 
-use moire::sync::mpsc;
+use vox_rt::sync::mpsc;
 use vox_types::{
     Conduit, ConnectionSettings, DEFAULT_INITIAL_CHANNEL_CREDIT, HandshakeResult, Link, MaybeSend,
-    MaybeSync, MessageFamily, Metadata, MetadataExt, Parity, SplitLink, VoxObserver,
-    VoxObserverHandle, metadata_into_owned,
+    MaybeSync, MessageFamily, Metadata, Parity, SplitLink, VoxObserver, VoxObserverHandle,
+    metadata_into_owned,
 };
 
 use crate::LinkSource;
@@ -14,30 +14,26 @@ use crate::{
 };
 
 use super::{
-    CloseRequest, ConnectionAcceptor, OpenRequest, Session, SessionError, SessionHandle,
-    SessionKeepaliveConfig,
+    CloseRequest, Connection, ConnectionError, ConnectionHandle, ConnectionKeepaliveConfig,
+    LaneAcceptor, OpenRequest,
 };
-use crate::FromVoxSession;
 
 /// Well-known metadata key for service name routing.
 pub const VOX_SERVICE_METADATA_KEY: &str = "vox-service";
 
-/// Inject `vox-service` metadata from `Client::SERVICE_NAME`.
-fn inject_service_metadata<Client: FromVoxSession>(metadata: &mut Metadata) {
-    vox_types::meta_set(metadata, VOX_SERVICE_METADATA_KEY, Client::SERVICE_NAME);
-}
+use crate::FromVoxLane;
 
 /// A pinned, boxed session future. On non-WASM this is `Send + 'static`;
 /// on WASM it's `'static` only (no `Send` requirement).
 #[cfg(not(target_arch = "wasm32"))]
-pub type BoxSessionFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+pub type BoxConnectionFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
 #[cfg(target_arch = "wasm32")]
-pub type BoxSessionFuture = Pin<Box<dyn Future<Output = ()> + 'static>>;
+pub type BoxConnectionFuture = Pin<Box<dyn Future<Output = ()> + 'static>>;
 
 #[cfg(not(target_arch = "wasm32"))]
-type SpawnFn = Box<dyn FnOnce(BoxSessionFuture) + Send + 'static>;
+type SpawnFn = Box<dyn FnOnce(BoxConnectionFuture) + Send + 'static>;
 #[cfg(target_arch = "wasm32")]
-type SpawnFn = Box<dyn FnOnce(BoxSessionFuture) + 'static>;
+type SpawnFn = Box<dyn FnOnce(BoxConnectionFuture) + 'static>;
 
 #[cfg(not(target_arch = "wasm32"))]
 fn default_spawn_fn() -> SpawnFn {
@@ -58,22 +54,22 @@ fn default_spawn_fn() -> SpawnFn {
 pub fn initiator_conduit<I: IntoConduit>(
     into_conduit: I,
     handshake_result: HandshakeResult,
-) -> SessionInitiatorBuilder<I::Conduit> {
-    SessionInitiatorBuilder::new(into_conduit.into_conduit(), handshake_result)
+) -> ConnectionInitiatorBuilder<I::Conduit> {
+    ConnectionInitiatorBuilder::new(into_conduit.into_conduit(), handshake_result)
 }
 
-pub fn initiator<S>(source: S) -> SessionSourceInitiatorBuilder<S>
+pub fn initiator<S>(source: S) -> ConnectionSourceInitiatorBuilder<S>
 where
     S: LinkSource,
 {
-    SessionSourceInitiatorBuilder::new(source)
+    ConnectionSourceInitiatorBuilder::new(source)
 }
 
 pub fn acceptor_conduit<I: IntoConduit>(
     into_conduit: I,
     handshake_result: HandshakeResult,
-) -> SessionAcceptorBuilder<I::Conduit> {
-    SessionAcceptorBuilder::new(into_conduit.into_conduit(), handshake_result)
+) -> ConnectionAcceptorBuilder<I::Conduit> {
+    ConnectionAcceptorBuilder::new(into_conduit.into_conduit(), handshake_result)
 }
 
 /// Convenience: perform the phon handshake as initiator on a raw link, then return
@@ -82,8 +78,8 @@ pub async fn initiator_on_link<L: Link>(
     link: L,
     settings: ConnectionSettings,
 ) -> Result<
-    SessionInitiatorBuilder<BareConduit<MessageFamily, SplitLink<L::Tx, L::Rx>>>,
-    SessionError,
+    ConnectionInitiatorBuilder<BareConduit<MessageFamily, SplitLink<L::Tx, L::Rx>>>,
+    ConnectionError,
 >
 where
     L::Tx: MaybeSend + MaybeSync + 'static,
@@ -95,8 +91,8 @@ where
             .await
             .map_err(session_error_from_handshake)?;
     let message_plan =
-        crate::MessagePlan::from_handshake(&handshake_result).map_err(SessionError::Protocol)?;
-    Ok(SessionInitiatorBuilder::new(
+        crate::MessagePlan::from_handshake(&handshake_result).map_err(ConnectionError::Protocol)?;
+    Ok(ConnectionInitiatorBuilder::new(
         BareConduit::with_message_plan(SplitLink { tx, rx }, message_plan),
         handshake_result,
     ))
@@ -107,7 +103,10 @@ where
 pub async fn acceptor_on_link<L: Link>(
     link: L,
     settings: ConnectionSettings,
-) -> Result<SessionAcceptorBuilder<BareConduit<MessageFamily, SplitLink<L::Tx, L::Rx>>>, SessionError>
+) -> Result<
+    ConnectionAcceptorBuilder<BareConduit<MessageFamily, SplitLink<L::Tx, L::Rx>>>,
+    ConnectionError,
+>
 where
     L::Tx: MaybeSend + MaybeSync + 'static,
     L::Rx: MaybeSend + 'static,
@@ -118,41 +117,41 @@ where
             .await
             .map_err(session_error_from_handshake)?;
     let message_plan =
-        crate::MessagePlan::from_handshake(&handshake_result).map_err(SessionError::Protocol)?;
-    Ok(SessionAcceptorBuilder::new(
+        crate::MessagePlan::from_handshake(&handshake_result).map_err(ConnectionError::Protocol)?;
+    Ok(ConnectionAcceptorBuilder::new(
         BareConduit::with_message_plan(SplitLink { tx, rx }, message_plan),
         handshake_result,
     ))
 }
 
-pub fn initiator_on<L: Link>(link: L) -> SessionTransportInitiatorBuilder<L> {
-    SessionTransportInitiatorBuilder::new(link)
+pub fn initiator_on<L: Link>(link: L) -> ConnectionTransportInitiatorBuilder<L> {
+    ConnectionTransportInitiatorBuilder::new(link)
 }
 
-pub fn initiator_transport<L: Link>(link: L) -> SessionTransportInitiatorBuilder<L> {
+pub fn initiator_transport<L: Link>(link: L) -> ConnectionTransportInitiatorBuilder<L> {
     initiator_on(link)
 }
 
-pub fn acceptor_on<L: Link>(link: L) -> SessionTransportAcceptorBuilder<L> {
-    SessionTransportAcceptorBuilder::new(link)
+pub fn acceptor_on<L: Link>(link: L) -> ConnectionTransportAcceptorBuilder<L> {
+    ConnectionTransportAcceptorBuilder::new(link)
 }
 
-pub fn acceptor_transport<L: Link>(link: L) -> SessionTransportAcceptorBuilder<L> {
+pub fn acceptor_transport<L: Link>(link: L) -> ConnectionTransportAcceptorBuilder<L> {
     acceptor_on(link)
 }
 
 /// Shared configuration for all session builders.
-pub struct SessionConfig {
+pub struct ConnectionConfig {
     pub root_settings: ConnectionSettings,
     pub metadata: Metadata,
-    pub on_connection: Option<Arc<dyn ConnectionAcceptor>>,
-    pub keepalive: Option<SessionKeepaliveConfig>,
+    pub on_connection: Option<Arc<dyn LaneAcceptor>>,
+    pub keepalive: Option<ConnectionKeepaliveConfig>,
     pub spawn_fn: SpawnFn,
     pub connect_timeout: Option<std::time::Duration>,
     pub observer: Option<VoxObserverHandle>,
 }
 
-impl SessionConfig {
+impl ConnectionConfig {
     fn with_settings(root_settings: ConnectionSettings) -> Self {
         Self {
             root_settings,
@@ -166,7 +165,7 @@ impl SessionConfig {
     }
 }
 
-impl Default for SessionConfig {
+impl Default for ConnectionConfig {
     fn default() -> Self {
         Self::with_settings(ConnectionSettings {
             parity: Parity::Odd,
@@ -176,16 +175,16 @@ impl Default for SessionConfig {
     }
 }
 
-pub struct SessionInitiatorBuilder<C> {
+pub struct ConnectionInitiatorBuilder<C> {
     conduit: C,
     handshake_result: HandshakeResult,
-    config: SessionConfig,
+    config: ConnectionConfig,
 }
 
-impl<C> SessionInitiatorBuilder<C> {
+impl<C> ConnectionInitiatorBuilder<C> {
     fn new(conduit: C, handshake_result: HandshakeResult) -> Self {
         let root_settings = handshake_result.our_settings.clone();
-        let config = SessionConfig::with_settings(root_settings);
+        let config = ConnectionConfig::with_settings(root_settings);
         Self {
             conduit,
             handshake_result,
@@ -193,12 +192,12 @@ impl<C> SessionInitiatorBuilder<C> {
         }
     }
 
-    pub fn on_connection(mut self, acceptor: impl ConnectionAcceptor) -> Self {
+    pub fn on_connection(mut self, acceptor: impl LaneAcceptor) -> Self {
         self.config.on_connection = Some(Arc::new(acceptor));
         self
     }
 
-    pub fn keepalive(mut self, keepalive: SessionKeepaliveConfig) -> Self {
+    pub fn keepalive(mut self, keepalive: ConnectionKeepaliveConfig) -> Self {
         self.config.keepalive = Some(keepalive);
         self
     }
@@ -228,7 +227,7 @@ impl<C> SessionInitiatorBuilder<C> {
     /// Override the function used to spawn the session background task.
     /// Defaults to `tokio::spawn` on non-WASM and `wasm_bindgen_futures::spawn_local` on WASM.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn spawn_fn(mut self, f: impl FnOnce(BoxSessionFuture) + Send + 'static) -> Self {
+    pub fn spawn_fn(mut self, f: impl FnOnce(BoxConnectionFuture) + Send + 'static) -> Self {
         self.config.spawn_fn = Box::new(f);
         self
     }
@@ -236,16 +235,16 @@ impl<C> SessionInitiatorBuilder<C> {
     /// Override the function used to spawn the session background task.
     /// Defaults to `tokio::spawn` on non-WASM and `wasm_bindgen_futures::spawn_local` on WASM.
     #[cfg(target_arch = "wasm32")]
-    pub fn spawn_fn(mut self, f: impl FnOnce(BoxSessionFuture) + 'static) -> Self {
+    pub fn spawn_fn(mut self, f: impl FnOnce(BoxConnectionFuture) + 'static) -> Self {
         self.config.spawn_fn = Box::new(f);
         self
     }
 
-    /// Establish a session using the given settings, on the given link source, etc,
+    /// Establish the Vox connection and start its driven runtime.
     ///
-    ///   - requiring (as an arg) a handler for the service the local peer will serve
-    ///   - returning a caller for the service we expect the remote peer to serve
-    pub async fn establish<Client: FromVoxSession>(self) -> Result<Client, SessionError>
+    /// The root/control lane is private and transitional; user services are
+    /// reached by opening lanes on the returned [`ConnectionHandle`].
+    pub async fn establish_connection(self) -> Result<ConnectionHandle, ConnectionError>
     where
         C: Conduit<Msg = MessageFamily> + 'static,
         C::Tx: MaybeSend + MaybeSync + 'static,
@@ -253,21 +252,18 @@ impl<C> SessionInitiatorBuilder<C> {
     {
         let Self {
             conduit,
-            mut handshake_result,
+            handshake_result,
             config,
         } = self;
         validate_negotiated_root_settings(&config.root_settings, &handshake_result)?;
-        let mut peer_metadata = std::mem::take(&mut handshake_result.peer_metadata);
         let (tx, rx) = conduit.split();
         let (open_tx, open_rx) = mpsc::channel::<OpenRequest>("session.open", 4);
         let (close_tx, close_rx) = mpsc::channel::<CloseRequest>("session.close", 4);
         let (control_tx, control_rx) = mpsc::unbounded_channel("session.control");
-        let acceptor: Arc<dyn ConnectionAcceptor> =
-            config.on_connection.unwrap_or_else(|| Arc::new(()));
-        let mut session = Session::pre_handshake(
+        let mut connection = Connection::pre_handshake(
             tx,
             rx,
-            Some(acceptor.clone()),
+            config.on_connection,
             open_rx,
             close_rx,
             control_tx.clone(),
@@ -275,57 +271,46 @@ impl<C> SessionInitiatorBuilder<C> {
             config.keepalive,
             config.observer.clone(),
         );
-        let handle = session.establish_from_handshake(handshake_result)?;
-        let session_handle = SessionHandle {
+        let root_lane = connection.establish_from_handshake(handshake_result)?;
+        let mut root_driver = crate::Driver::new(root_lane, ());
+        let control_caller = crate::Caller::new(root_driver.caller());
+        #[cfg(not(target_arch = "wasm32"))]
+        tokio::spawn(async move { root_driver.run().await });
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(async move { root_driver.run().await });
+
+        let connection_handle = ConnectionHandle {
             open_tx,
             close_tx,
             control_tx,
+            _control_caller: Some(control_caller),
         };
-        // Route the root connection through the acceptor.
-        let caller_slot = Arc::new(std::sync::Mutex::new(None::<crate::Caller>));
-        let pending = super::PendingConnection::with_caller_slot(handle, caller_slot.clone());
-        vox_types::meta_set(
-            &mut peer_metadata,
-            VOX_SERVICE_METADATA_KEY,
-            Client::SERVICE_NAME,
-        );
-        let request = super::ConnectionRequest::new(&peer_metadata)?;
-        tracing::debug!(
-            service = Client::SERVICE_NAME,
-            "vox root connection routing to acceptor"
-        );
-        match acceptor.accept(&request, pending) {
-            Ok(()) => tracing::debug!(
-                service = Client::SERVICE_NAME,
-                "vox root connection accepted"
-            ),
-            Err(metadata) => {
-                tracing::debug!(
-                    service = Client::SERVICE_NAME,
-                    metadata_len = metadata.meta_len(),
-                    "vox root connection rejected"
-                );
-                return Err(SessionError::Rejected(metadata));
-            }
-        }
-        let caller =
-            caller_slot.lock().unwrap().take().expect(
-                "root connection acceptor must call handle_with (not into_handle or proxy_to)",
-            );
-        let client = Client::from_vox_session(caller, Some(session_handle));
-        (config.spawn_fn)(Box::pin(async move { session.run().await }));
-        Ok(client)
+        (config.spawn_fn)(Box::pin(async move { connection.run().await }));
+        Ok(connection_handle)
+    }
+
+    /// Establish a connection and open the requested service lane.
+    pub async fn establish<Client: FromVoxLane>(self) -> Result<Client, ConnectionError>
+    where
+        C: Conduit<Msg = MessageFamily> + 'static,
+        C::Tx: MaybeSend + MaybeSync + 'static,
+        C::Rx: MaybeSend + 'static,
+    {
+        self.establish_connection()
+            .await?
+            .open_lane::<Client>()
+            .await
     }
 }
 
-pub struct SessionSourceInitiatorBuilder<S> {
+pub struct ConnectionSourceInitiatorBuilder<S> {
     source: S,
-    config: SessionConfig,
+    config: ConnectionConfig,
 }
 
-impl<S> SessionSourceInitiatorBuilder<S> {
+impl<S> ConnectionSourceInitiatorBuilder<S> {
     fn new(source: S) -> Self {
-        let config = SessionConfig::default();
+        let config = ConnectionConfig::default();
         Self { source, config }
     }
 
@@ -366,12 +351,12 @@ impl<S> SessionSourceInitiatorBuilder<S> {
         self
     }
 
-    pub fn on_connection(mut self, acceptor: impl ConnectionAcceptor) -> Self {
+    pub fn on_connection(mut self, acceptor: impl LaneAcceptor) -> Self {
         self.config.on_connection = Some(Arc::new(acceptor));
         self
     }
 
-    pub fn keepalive(mut self, keepalive: SessionKeepaliveConfig) -> Self {
+    pub fn keepalive(mut self, keepalive: ConnectionKeepaliveConfig) -> Self {
         self.config.keepalive = Some(keepalive);
         self
     }
@@ -382,18 +367,18 @@ impl<S> SessionSourceInitiatorBuilder<S> {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn spawn_fn(mut self, f: impl FnOnce(BoxSessionFuture) + Send + 'static) -> Self {
+    pub fn spawn_fn(mut self, f: impl FnOnce(BoxConnectionFuture) + Send + 'static) -> Self {
         self.config.spawn_fn = Box::new(f);
         self
     }
 
     #[cfg(target_arch = "wasm32")]
-    pub fn spawn_fn(mut self, f: impl FnOnce(BoxSessionFuture) + 'static) -> Self {
+    pub fn spawn_fn(mut self, f: impl FnOnce(BoxConnectionFuture) + 'static) -> Self {
         self.config.spawn_fn = Box::new(f);
         self
     }
 
-    pub async fn establish<Client: FromVoxSession>(self) -> Result<Client, SessionError>
+    pub async fn establish_connection(self) -> Result<ConnectionHandle, ConnectionError>
     where
         S: LinkSource,
         S::Link: Link + MaybeSend + 'static,
@@ -401,33 +386,42 @@ impl<S> SessionSourceInitiatorBuilder<S> {
         <S::Link as Link>::Rx: MaybeSend + 'static,
     {
         let connect_timeout = self.config.connect_timeout;
-        let fut = self.establish_inner::<Client>();
+        let fut = self.establish_connection_inner();
         match connect_timeout {
             Some(timeout) => vox_types::time::tokio::timeout(timeout, fut)
                 .await
-                .map_err(|_| SessionError::ConnectTimeout)?,
+                .map_err(|_| ConnectionError::ConnectTimeout)?,
             None => fut.await,
         }
     }
 
-    // r[impl transport.prologue.first-payload]
-    // r[impl transport.prologue.post-accept]
-    async fn establish_inner<Client: FromVoxSession>(self) -> Result<Client, SessionError>
+    pub async fn establish<Client: FromVoxLane>(self) -> Result<Client, ConnectionError>
     where
         S: LinkSource,
         S::Link: Link + MaybeSend + 'static,
         <S::Link as Link>::Tx: MaybeSend + MaybeSync + 'static,
         <S::Link as Link>::Rx: MaybeSend + 'static,
     {
-        let Self {
-            mut source,
-            mut config,
-        } = self;
-        inject_service_metadata::<Client>(&mut config.metadata);
+        self.establish_connection()
+            .await?
+            .open_lane::<Client>()
+            .await
+    }
+
+    // r[impl transport.prologue.first-payload]
+    // r[impl transport.prologue.post-accept]
+    async fn establish_connection_inner(self) -> Result<ConnectionHandle, ConnectionError>
+    where
+        S: LinkSource,
+        S::Link: Link + MaybeSend + 'static,
+        <S::Link as Link>::Tx: MaybeSend + MaybeSync + 'static,
+        <S::Link as Link>::Rx: MaybeSend + 'static,
+    {
+        let Self { mut source, config } = self;
 
         {
             {
-                let attachment = source.next_link().await.map_err(SessionError::Io)?;
+                let attachment = source.next_link().await.map_err(ConnectionError::Io)?;
                 let mut link = initiate_transport(attachment.into_link())
                     .await
                     .map_err(session_error_from_transport)?;
@@ -440,27 +434,27 @@ impl<S> SessionSourceInitiatorBuilder<S> {
                 .await
                 .map_err(session_error_from_handshake)?;
                 let message_plan = crate::MessagePlan::from_handshake(&handshake_result)
-                    .map_err(SessionError::Protocol)?;
-                let builder = SessionInitiatorBuilder::new(
+                    .map_err(ConnectionError::Protocol)?;
+                let builder = ConnectionInitiatorBuilder::new(
                     BareConduit::with_message_plan(link, message_plan),
                     handshake_result,
                 );
-                SessionTransportInitiatorBuilder::<S::Link>::apply_common_parts(builder, config)
-                    .establish()
+                ConnectionTransportInitiatorBuilder::<S::Link>::apply_common_parts(builder, config)
+                    .establish_connection()
                     .await
             }
         }
     }
 }
 
-pub struct SessionTransportInitiatorBuilder<L> {
+pub struct ConnectionTransportInitiatorBuilder<L> {
     link: L,
-    config: SessionConfig,
+    config: ConnectionConfig,
 }
 
-impl<L> SessionTransportInitiatorBuilder<L> {
+impl<L> ConnectionTransportInitiatorBuilder<L> {
     fn new(link: L) -> Self {
-        let config = SessionConfig::default();
+        let config = ConnectionConfig::default();
         Self { link, config }
     }
 
@@ -501,12 +495,12 @@ impl<L> SessionTransportInitiatorBuilder<L> {
         self
     }
 
-    pub fn on_connection(mut self, acceptor: impl ConnectionAcceptor) -> Self {
+    pub fn on_connection(mut self, acceptor: impl LaneAcceptor) -> Self {
         self.config.on_connection = Some(Arc::new(acceptor));
         self
     }
 
-    pub fn keepalive(mut self, keepalive: SessionKeepaliveConfig) -> Self {
+    pub fn keepalive(mut self, keepalive: ConnectionKeepaliveConfig) -> Self {
         self.config.keepalive = Some(keepalive);
         self
     }
@@ -517,45 +511,57 @@ impl<L> SessionTransportInitiatorBuilder<L> {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn spawn_fn(mut self, f: impl FnOnce(BoxSessionFuture) + Send + 'static) -> Self {
+    pub fn spawn_fn(mut self, f: impl FnOnce(BoxConnectionFuture) + Send + 'static) -> Self {
         self.config.spawn_fn = Box::new(f);
         self
     }
 
     #[cfg(target_arch = "wasm32")]
-    pub fn spawn_fn(mut self, f: impl FnOnce(BoxSessionFuture) + 'static) -> Self {
+    pub fn spawn_fn(mut self, f: impl FnOnce(BoxConnectionFuture) + 'static) -> Self {
         self.config.spawn_fn = Box::new(f);
         self
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub async fn establish<Client: FromVoxSession>(self) -> Result<Client, SessionError>
+    pub async fn establish_connection(self) -> Result<ConnectionHandle, ConnectionError>
     where
         L: Link + Send + 'static,
         L::Tx: MaybeSend + MaybeSync + 'static,
         L::Rx: MaybeSend + 'static,
     {
         let connect_timeout = self.config.connect_timeout;
-        let fut = self.establish_inner::<Client>();
+        let fut = self.establish_connection_inner();
         match connect_timeout {
             Some(timeout) => vox_types::time::tokio::timeout(timeout, fut)
                 .await
-                .map_err(|_| SessionError::ConnectTimeout)?,
+                .map_err(|_| ConnectionError::ConnectTimeout)?,
             None => fut.await,
         }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    // r[impl transport.prologue.first-payload]
-    // r[impl transport.prologue.post-accept]
-    async fn establish_inner<Client: FromVoxSession>(self) -> Result<Client, SessionError>
+    pub async fn establish<Client: FromVoxLane>(self) -> Result<Client, ConnectionError>
     where
         L: Link + Send + 'static,
         L::Tx: MaybeSend + MaybeSync + 'static,
         L::Rx: MaybeSend + 'static,
     {
-        let Self { link, mut config } = self;
-        inject_service_metadata::<Client>(&mut config.metadata);
+        self.establish_connection()
+            .await?
+            .open_lane::<Client>()
+            .await
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    // r[impl transport.prologue.first-payload]
+    // r[impl transport.prologue.post-accept]
+    async fn establish_connection_inner(self) -> Result<ConnectionHandle, ConnectionError>
+    where
+        L: Link + Send + 'static,
+        L::Tx: MaybeSend + MaybeSync + 'static,
+        L::Rx: MaybeSend + 'static,
+    {
+        let Self { link, config } = self;
         let link = initiate_transport(link)
             .await
             .map_err(session_error_from_transport)?;
@@ -565,24 +571,36 @@ impl<L> SessionTransportInitiatorBuilder<L> {
     #[cfg(target_arch = "wasm32")]
     // r[impl transport.prologue.first-payload]
     // r[impl transport.prologue.post-accept]
-    pub async fn establish<Client: FromVoxSession>(self) -> Result<Client, SessionError>
+    pub async fn establish_connection(self) -> Result<ConnectionHandle, ConnectionError>
     where
         L: Link + 'static,
         L::Tx: MaybeSend + MaybeSync + 'static,
         L::Rx: MaybeSend + 'static,
     {
-        let Self { link, mut config } = self;
-        inject_service_metadata::<Client>(&mut config.metadata);
+        let Self { link, config } = self;
         let link = initiate_transport(link)
             .await
             .map_err(session_error_from_transport)?;
         Self::finish_with_bare_parts(link, config).await
     }
 
-    async fn finish_with_bare_parts<Client: FromVoxSession>(
+    #[cfg(target_arch = "wasm32")]
+    pub async fn establish<Client: FromVoxLane>(self) -> Result<Client, ConnectionError>
+    where
+        L: Link + 'static,
+        L::Tx: MaybeSend + MaybeSync + 'static,
+        L::Rx: MaybeSend + 'static,
+    {
+        self.establish_connection()
+            .await?
+            .open_lane::<Client>()
+            .await
+    }
+
+    async fn finish_with_bare_parts(
         mut link: SplitLink<L::Tx, L::Rx>,
-        config: SessionConfig,
-    ) -> Result<Client, SessionError>
+        config: ConnectionConfig,
+    ) -> Result<ConnectionHandle, ConnectionError>
     where
         L: Link + 'static,
         L::Tx: MaybeSend + MaybeSync + 'static,
@@ -597,34 +615,36 @@ impl<L> SessionTransportInitiatorBuilder<L> {
         .await
         .map_err(session_error_from_handshake)?;
         let message_plan = crate::MessagePlan::from_handshake(&handshake_result)
-            .map_err(SessionError::Protocol)?;
-        let builder = SessionInitiatorBuilder::new(
+            .map_err(ConnectionError::Protocol)?;
+        let builder = ConnectionInitiatorBuilder::new(
             BareConduit::with_message_plan(link, message_plan),
             handshake_result,
         );
-        Self::apply_common_parts(builder, config).establish().await
+        Self::apply_common_parts(builder, config)
+            .establish_connection()
+            .await
     }
 
     #[allow(clippy::too_many_arguments)]
     fn apply_common_parts<C>(
-        mut builder: SessionInitiatorBuilder<C>,
-        config: SessionConfig,
-    ) -> SessionInitiatorBuilder<C> {
+        mut builder: ConnectionInitiatorBuilder<C>,
+        config: ConnectionConfig,
+    ) -> ConnectionInitiatorBuilder<C> {
         builder.config = config;
         builder
     }
 }
 
-pub struct SessionAcceptorBuilder<C> {
+pub struct ConnectionAcceptorBuilder<C> {
     conduit: C,
     handshake_result: HandshakeResult,
-    config: SessionConfig,
+    config: ConnectionConfig,
 }
 
-impl<C> SessionAcceptorBuilder<C> {
+impl<C> ConnectionAcceptorBuilder<C> {
     fn new(conduit: C, handshake_result: HandshakeResult) -> Self {
         let root_settings = handshake_result.our_settings.clone();
-        let config = SessionConfig::with_settings(root_settings);
+        let config = ConnectionConfig::with_settings(root_settings);
         Self {
             conduit,
             handshake_result,
@@ -632,12 +652,12 @@ impl<C> SessionAcceptorBuilder<C> {
         }
     }
 
-    pub fn on_connection(mut self, acceptor: impl ConnectionAcceptor) -> Self {
+    pub fn on_connection(mut self, acceptor: impl LaneAcceptor) -> Self {
         self.config.on_connection = Some(Arc::new(acceptor));
         self
     }
 
-    pub fn keepalive(mut self, keepalive: SessionKeepaliveConfig) -> Self {
+    pub fn keepalive(mut self, keepalive: ConnectionKeepaliveConfig) -> Self {
         self.config.keepalive = Some(keepalive);
         self
     }
@@ -667,7 +687,7 @@ impl<C> SessionAcceptorBuilder<C> {
     /// Override the function used to spawn the session background task.
     /// Defaults to `tokio::spawn` on non-WASM and `wasm_bindgen_futures::spawn_local` on WASM.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn spawn_fn(mut self, f: impl FnOnce(BoxSessionFuture) + Send + 'static) -> Self {
+    pub fn spawn_fn(mut self, f: impl FnOnce(BoxConnectionFuture) + Send + 'static) -> Self {
         self.config.spawn_fn = Box::new(f);
         self
     }
@@ -675,13 +695,13 @@ impl<C> SessionAcceptorBuilder<C> {
     /// Override the function used to spawn the session background task.
     /// Defaults to `tokio::spawn` on non-WASM and `wasm_bindgen_futures::spawn_local` on WASM.
     #[cfg(target_arch = "wasm32")]
-    pub fn spawn_fn(mut self, f: impl FnOnce(BoxSessionFuture) + 'static) -> Self {
+    pub fn spawn_fn(mut self, f: impl FnOnce(BoxConnectionFuture) + 'static) -> Self {
         self.config.spawn_fn = Box::new(f);
         self
     }
 
-    #[moire::instrument]
-    pub async fn establish<Client: FromVoxSession>(self) -> Result<Client, SessionError>
+    #[vox_rt::instrument]
+    pub async fn establish_connection(self) -> Result<ConnectionHandle, ConnectionError>
     where
         C: Conduit<Msg = MessageFamily> + 'static,
         C::Tx: MaybeSend + MaybeSync + 'static,
@@ -689,21 +709,18 @@ impl<C> SessionAcceptorBuilder<C> {
     {
         let Self {
             conduit,
-            mut handshake_result,
+            handshake_result,
             config,
         } = self;
         validate_negotiated_root_settings(&config.root_settings, &handshake_result)?;
-        let mut peer_metadata = std::mem::take(&mut handshake_result.peer_metadata);
         let (tx, rx) = conduit.split();
         let (open_tx, open_rx) = mpsc::channel::<OpenRequest>("session.open", 4);
         let (close_tx, close_rx) = mpsc::channel::<CloseRequest>("session.close", 4);
         let (control_tx, control_rx) = mpsc::unbounded_channel("session.control");
-        let acceptor: Arc<dyn ConnectionAcceptor> =
-            config.on_connection.unwrap_or_else(|| Arc::new(()));
-        let mut session = Session::pre_handshake(
+        let mut connection = Connection::pre_handshake(
             tx,
             rx,
-            Some(acceptor.clone()),
+            config.on_connection,
             open_rx,
             close_rx,
             control_tx.clone(),
@@ -711,59 +728,47 @@ impl<C> SessionAcceptorBuilder<C> {
             config.keepalive,
             config.observer.clone(),
         );
-        let handle = session.establish_from_handshake(handshake_result)?;
-        let session_handle = SessionHandle {
+        let root_lane = connection.establish_from_handshake(handshake_result)?;
+        let mut root_driver = crate::Driver::new(root_lane, ());
+        let control_caller = crate::Caller::new(root_driver.caller());
+        #[cfg(not(target_arch = "wasm32"))]
+        tokio::spawn(async move { root_driver.run().await });
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(async move { root_driver.run().await });
+
+        let connection_handle = ConnectionHandle {
             open_tx,
             close_tx,
             control_tx,
+            _control_caller: Some(control_caller),
         };
-        // Route the root connection through the acceptor.
-        let caller_slot = Arc::new(std::sync::Mutex::new(None::<crate::Caller>));
-        let pending = super::PendingConnection::with_caller_slot(handle, caller_slot.clone());
-        vox_types::meta_set(
-            &mut peer_metadata,
-            VOX_SERVICE_METADATA_KEY,
-            Client::SERVICE_NAME,
-        );
-        let request = super::ConnectionRequest::new(&peer_metadata)?;
-        tracing::debug!(
-            service = Client::SERVICE_NAME,
-            "vox root connection routing to acceptor"
-        );
-        match acceptor.accept(&request, pending) {
-            Ok(()) => tracing::debug!(
-                service = Client::SERVICE_NAME,
-                "vox root connection accepted"
-            ),
-            Err(metadata) => {
-                tracing::debug!(
-                    service = Client::SERVICE_NAME,
-                    metadata_len = metadata.meta_len(),
-                    "vox root connection rejected"
-                );
-                return Err(SessionError::Rejected(metadata));
-            }
-        }
-        let caller =
-            caller_slot.lock().unwrap().take().expect(
-                "root connection acceptor must call handle_with (not into_handle or proxy_to)",
-            );
-        let client = Client::from_vox_session(caller, Some(session_handle));
-        (config.spawn_fn)(Box::pin(async move { session.run().await }));
-        Ok(client)
+        (config.spawn_fn)(Box::pin(async move { connection.run().await }));
+        Ok(connection_handle)
+    }
+
+    pub async fn establish<Client: FromVoxLane>(self) -> Result<Client, ConnectionError>
+    where
+        C: Conduit<Msg = MessageFamily> + 'static,
+        C::Tx: MaybeSend + MaybeSync + 'static,
+        C::Rx: MaybeSend + 'static,
+    {
+        self.establish_connection()
+            .await?
+            .open_lane::<Client>()
+            .await
     }
 }
 
-pub struct SessionTransportAcceptorBuilder<L: Link> {
+pub struct ConnectionTransportAcceptorBuilder<L: Link> {
     link: L,
-    config: SessionConfig,
+    config: ConnectionConfig,
 }
 
-impl<L: Link> SessionTransportAcceptorBuilder<L> {
+impl<L: Link> ConnectionTransportAcceptorBuilder<L> {
     fn new(link: L) -> Self {
         Self {
             link,
-            config: SessionConfig::with_settings(ConnectionSettings {
+            config: ConnectionConfig::with_settings(ConnectionSettings {
                 parity: Parity::Even,
                 max_concurrent_requests: 64,
                 initial_channel_credit: DEFAULT_INITIAL_CHANNEL_CREDIT,
@@ -803,12 +808,12 @@ impl<L: Link> SessionTransportAcceptorBuilder<L> {
         self
     }
 
-    pub fn on_connection(mut self, acceptor: impl ConnectionAcceptor) -> Self {
+    pub fn on_connection(mut self, acceptor: impl LaneAcceptor) -> Self {
         self.config.on_connection = Some(Arc::new(acceptor));
         self
     }
 
-    pub fn keepalive(mut self, keepalive: SessionKeepaliveConfig) -> Self {
+    pub fn keepalive(mut self, keepalive: ConnectionKeepaliveConfig) -> Self {
         self.config.keepalive = Some(keepalive);
         self
     }
@@ -819,26 +824,25 @@ impl<L: Link> SessionTransportAcceptorBuilder<L> {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn spawn_fn(mut self, f: impl FnOnce(BoxSessionFuture) + Send + 'static) -> Self {
+    pub fn spawn_fn(mut self, f: impl FnOnce(BoxConnectionFuture) + Send + 'static) -> Self {
         self.config.spawn_fn = Box::new(f);
         self
     }
 
     #[cfg(target_arch = "wasm32")]
-    pub fn spawn_fn(mut self, f: impl FnOnce(BoxSessionFuture) + 'static) -> Self {
+    pub fn spawn_fn(mut self, f: impl FnOnce(BoxConnectionFuture) + 'static) -> Self {
         self.config.spawn_fn = Box::new(f);
         self
     }
 
-    #[moire::instrument]
-    pub async fn establish<Client: FromVoxSession>(self) -> Result<Client, SessionError>
+    #[vox_rt::instrument]
+    pub async fn establish_connection(self) -> Result<ConnectionHandle, ConnectionError>
     where
         L: Link + MaybeSend + 'static,
         L::Tx: MaybeSend + MaybeSync + 'static,
         L::Rx: MaybeSend + 'static,
     {
-        let Self { link, mut config } = self;
-        inject_service_metadata::<Client>(&mut config.metadata);
+        let Self { link, config } = self;
         let mut link = accept_transport(link)
             .await
             .map_err(session_error_from_transport)?;
@@ -851,18 +855,33 @@ impl<L: Link> SessionTransportAcceptorBuilder<L> {
         .await
         .map_err(session_error_from_handshake)?;
         let message_plan = crate::MessagePlan::from_handshake(&handshake_result)
-            .map_err(SessionError::Protocol)?;
-        let builder = SessionAcceptorBuilder::new(
+            .map_err(ConnectionError::Protocol)?;
+        let builder = ConnectionAcceptorBuilder::new(
             BareConduit::with_message_plan(link, message_plan),
             handshake_result,
         );
-        Self::apply_common_parts(builder, config).establish().await
+        Self::apply_common_parts(builder, config)
+            .establish_connection()
+            .await
+    }
+
+    #[vox_rt::instrument]
+    pub async fn establish<Client: FromVoxLane>(self) -> Result<Client, ConnectionError>
+    where
+        L: Link + MaybeSend + 'static,
+        L::Tx: MaybeSend + MaybeSync + 'static,
+        L::Rx: MaybeSend + 'static,
+    {
+        self.establish_connection()
+            .await?
+            .open_lane::<Client>()
+            .await
     }
 
     fn apply_common_parts<C>(
-        mut builder: SessionAcceptorBuilder<C>,
-        config: SessionConfig,
-    ) -> SessionAcceptorBuilder<C> {
+        mut builder: ConnectionAcceptorBuilder<C>,
+        config: ConnectionConfig,
+    ) -> ConnectionAcceptorBuilder<C> {
         builder.config = config;
         builder
     }
@@ -871,42 +890,42 @@ impl<L: Link> SessionTransportAcceptorBuilder<L> {
 fn validate_negotiated_root_settings(
     expected_root_settings: &ConnectionSettings,
     handshake_result: &HandshakeResult,
-) -> Result<(), SessionError> {
+) -> Result<(), ConnectionError> {
     if expected_root_settings.initial_channel_credit == 0
         || handshake_result.peer_settings.initial_channel_credit == 0
     {
-        return Err(SessionError::Protocol(
+        return Err(ConnectionError::Protocol(
             "initial_channel_credit must be greater than zero".into(),
         ));
     }
 
     if handshake_result.our_settings != *expected_root_settings {
-        return Err(SessionError::Protocol(
+        return Err(ConnectionError::Protocol(
             "negotiated root settings do not match builder settings".into(),
         ));
     }
     Ok(())
 }
 
-fn session_error_from_handshake(error: crate::HandshakeError) -> SessionError {
+fn session_error_from_handshake(error: crate::HandshakeError) -> ConnectionError {
     match error {
-        crate::HandshakeError::Io(io) => SessionError::Io(io),
+        crate::HandshakeError::Io(io) => ConnectionError::Io(io),
         crate::HandshakeError::PeerClosed => {
-            SessionError::Protocol("peer closed during handshake".into())
+            ConnectionError::Protocol("peer closed during handshake".into())
         }
-        other => SessionError::Protocol(other.to_string()),
+        other => ConnectionError::Protocol(other.to_string()),
     }
 }
 
-fn session_error_from_transport(error: crate::TransportPrologueError) -> SessionError {
+fn session_error_from_transport(error: crate::TransportPrologueError) -> ConnectionError {
     match error {
-        crate::TransportPrologueError::Io(io) => SessionError::Io(io),
+        crate::TransportPrologueError::Io(io) => ConnectionError::Io(io),
         crate::TransportPrologueError::LinkDead => {
-            SessionError::Protocol("link closed during transport prologue".into())
+            ConnectionError::Protocol("link closed during transport prologue".into())
         }
-        crate::TransportPrologueError::Protocol(message) => SessionError::Protocol(message),
+        crate::TransportPrologueError::Protocol(message) => ConnectionError::Protocol(message),
         crate::TransportPrologueError::Rejected(reason) => {
-            SessionError::Protocol(format!("transport rejected: {reason}"))
+            ConnectionError::Protocol(format!("transport rejected: {reason}"))
         }
     }
 }
@@ -918,7 +937,7 @@ mod tests {
     // r[verify rpc.flow-control.max-concurrent-requests.default]
     #[test]
     fn session_config_default_advertises_request_limit() {
-        let config = SessionConfig::default();
+        let config = ConnectionConfig::default();
         assert_eq!(config.root_settings.max_concurrent_requests, 64);
     }
 }

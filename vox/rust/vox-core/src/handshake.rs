@@ -1,5 +1,5 @@
 use vox_types::{
-    ConnectionSettings, HandshakeMessage, HandshakeResult, LinkRx, LinkTx, SessionRole,
+    ConnectionRole, ConnectionSettings, HandshakeMessage, HandshakeResult, LinkRx, LinkTx,
 };
 
 const INITIAL_CHANNEL_CREDIT_ZERO_ERROR: &str = "initial_channel_credit must be greater than zero";
@@ -156,7 +156,7 @@ pub async fn handshake_as_initiator<Tx: LinkTx, Rx: LinkRx>(
     send_handshake(tx, &HandshakeMessage::LetsGo(vox_types::LetsGo {})).await?;
 
     Ok(HandshakeResult {
-        role: SessionRole::Initiator,
+        role: ConnectionRole::Initiator,
         our_settings: settings,
         peer_settings: hy.connection_settings,
         our_schema,
@@ -236,7 +236,7 @@ pub async fn handshake_as_acceptor<Tx: LinkTx, Rx: LinkRx>(
     }
 
     Ok(HandshakeResult {
-        role: SessionRole::Acceptor,
+        role: ConnectionRole::Acceptor,
         our_settings,
         peer_settings: hello.connection_settings,
         our_schema,

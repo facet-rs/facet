@@ -94,11 +94,9 @@ use tokio::process::{Child, Command};
 use tokio::sync::oneshot;
 use vox::{Rx, Tx};
 use vox_core::{
-    DriverReplySink, SessionHandle, acceptor_conduit, acceptor_on, acceptor_transport,
-    memory_link_pair,
+    ConnectionHandle, acceptor_conduit, acceptor_on, acceptor_transport, memory_link_pair,
 };
 use vox_stream::StreamLink;
-use vox_types::{RequestCall, SelfRef};
 use vox_websocket::WsLink;
 
 const SUBJECT_WAIT_HEARTBEAT: Duration = Duration::from_millis(500);
@@ -109,12 +107,12 @@ const SPEC_RUNTIME_STACK_BYTES: usize = 32 * 1024 * 1024;
 /// immediately and then re-raised. This prevents the silent-task-panic
 /// problem where tokio tasks panic and nobody notices, causing mysterious
 /// timeouts in tests.
-pub fn spawn_loud<F>(fut: F) -> moire::task::JoinHandle<F::Output>
+pub fn spawn_loud<F>(fut: F) -> vox_rt::task::JoinHandle<F::Output>
 where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
 {
-    moire::task::spawn(async move {
+    vox_rt::task::spawn(async move {
         // Inner spawn so we can catch the panic via JoinError
         let inner = tokio::task::spawn(fut);
         match inner.await {
@@ -168,19 +166,6 @@ impl SubjectSpec {
             language,
             transport: SubjectTestTransport::Ws,
         }
-    }
-}
-
-#[derive(Clone)]
-struct NoopHandler;
-
-impl vox_types::Handler<DriverReplySink> for NoopHandler {
-    async fn handle(
-        &self,
-        _call: SelfRef<RequestCall<'static>>,
-        _reply: DriverReplySink,
-        _schemas: std::sync::Arc<vox_types::SchemaRecvTracker>,
-    ) {
     }
 }
 
@@ -3403,7 +3388,7 @@ impl Testbed for TestbedService {
 
     async fn post_reply_generate(&self, output: Tx<i32>) {
         spawn_loud(async move {
-            moire::time::sleep(Duration::from_millis(10)).await;
+            vox_rt::time::sleep(Duration::from_millis(10)).await;
             for i in 0..5 {
                 if output.send(i).await.is_err() {
                     break;
@@ -4358,7 +4343,9 @@ async fn spawn_subject_cmd_with_env(
 
 /// Listen on a random TCP port, upgrade incoming connection to WebSocket,
 /// complete the vox handshake, and return a ready `TestbedClient`.
-pub async fn accept_subject_ws(cmd: &str) -> Result<(TestbedClient, Child, SessionHandle), String> {
+pub async fn accept_subject_ws(
+    cmd: &str,
+) -> Result<(TestbedClient, Child, ConnectionHandle), String> {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .map_err(|e| format!("bind: {e}"))?;
@@ -4409,12 +4396,12 @@ pub async fn accept_subject_ws(cmd: &str) -> Result<(TestbedClient, Child, Sessi
             return Err(format!("handshake: {err}"));
         }
     };
-    let sh = client.session.clone().unwrap();
+    let connection = client.connection.clone().unwrap();
 
-    Ok((client, child, sh))
+    Ok((client, child, connection))
 }
 
-pub async fn accept_subject() -> Result<(TestbedClient, Child, SessionHandle), String> {
+pub async fn accept_subject() -> Result<(TestbedClient, Child, ConnectionHandle), String> {
     let spec = SubjectSpec {
         language: SubjectLanguage::Rust,
         transport: subject_transport(),
@@ -4424,7 +4411,7 @@ pub async fn accept_subject() -> Result<(TestbedClient, Child, SessionHandle), S
 
 pub async fn accept_subject_spec(
     spec: SubjectSpec,
-) -> Result<(TestbedClient, Child, SessionHandle), String> {
+) -> Result<(TestbedClient, Child, ConnectionHandle), String> {
     let cmd = subject_cmd_for_language(spec.language);
     match spec.transport {
         SubjectTestTransport::Tcp => accept_subject_tcp(&cmd).await,
@@ -4435,15 +4422,14 @@ pub async fn accept_subject_spec(
 /// Accept a subject over TCP given a custom command string.
 pub async fn accept_subject_cmd_tcp(
     cmd: &str,
-) -> Result<(TestbedClient, Child, SessionHandle), String> {
+) -> Result<(TestbedClient, Child, ConnectionHandle), String> {
     accept_subject_tcp(cmd).await
 }
 
 /// Spawn a subject, establish a connection, run a test closure, and clean up.
 ///
-/// Monitors the child process in a background task — if the subject dies,
-/// the session handle is dropped so pending calls fail immediately instead
-/// of hanging until a timeout.
+/// Monitors the child process in a background task so subject death interrupts
+/// the scenario instead of waiting for a call timeout.
 pub async fn with_subject<F, T>(spec: SubjectSpec, f: F) -> Result<T, String>
 where
     F: AsyncFnOnce(&TestbedClient) -> Result<T, String>,
@@ -4457,7 +4443,7 @@ pub async fn with_subject_cmd<F, T>(spec: SubjectSpec, cmd: &str, f: F) -> Resul
 where
     F: AsyncFnOnce(&TestbedClient) -> Result<T, String>,
 {
-    let (client, mut child, session_handle) = match spec.transport {
+    let (client, mut child, connection_handle) = match spec.transport {
         SubjectTestTransport::Tcp => accept_subject_tcp(cmd).await?,
         SubjectTestTransport::Ws => accept_subject_ws(cmd).await?,
     };
@@ -4482,9 +4468,15 @@ where
     };
 
     drop(client);
-    drop(session_handle);
+    let _ = connection_handle.shutdown();
+    drop(connection_handle);
     if !child_waited
-        && !wait_for_child_exit(&mut child, "session close", Duration::from_millis(500)).await
+        && !wait_for_child_exit(
+            &mut child,
+            "connection shutdown",
+            Duration::from_millis(500),
+        )
+        .await
     {
         terminate_child(&mut child, "test completed before subject exited").await;
     }
@@ -4494,7 +4486,7 @@ where
 
 pub async fn accept_subject_with_transport(
     transport: SubjectTestTransport,
-) -> Result<(TestbedClient, Child, SessionHandle), String> {
+) -> Result<(TestbedClient, Child, ConnectionHandle), String> {
     accept_subject_spec(SubjectSpec {
         language: SubjectLanguage::Rust,
         transport,
@@ -4722,10 +4714,10 @@ async fn run_subject_client_scenario_tcp(
         stream.set_nodelay(true).ok();
         match acceptor_on(StreamLink::tcp(stream))
             .on_connection(TestbedDispatcher::new(TestbedService::new()))
-            .establish::<TestbedClient>()
+            .establish_connection()
             .await
         {
-            Ok(_client) => {
+            Ok(_connection) => {
                 std::future::pending::<()>().await;
             }
             Err(e) => {
@@ -4797,10 +4789,10 @@ async fn run_subject_client_scenario_ws(
         };
         match acceptor_on(ws)
             .on_connection(TestbedDispatcher::new(TestbedService::new()))
-            .establish::<TestbedClient>()
+            .establish_connection()
             .await
         {
-            Ok(_client) => {
+            Ok(_connection) => {
                 std::future::pending::<()>().await;
             }
             Err(e) => {
@@ -4896,7 +4888,7 @@ where
                 max_concurrent_requests: 64,
                 initial_channel_credit: 16,
             },
-            vox_types::metadata().str("vox-service", "Noop").build(),
+            vox_types::Metadata::default(),
         )
         .await
         .map_err(|e| format!("server PHON handshake: {e}"));
@@ -4914,10 +4906,10 @@ where
             });
         let setup = acceptor_conduit(server_conduit, handshake_result)
             .on_connection(TestbedDispatcher::new(TestbedService::new()))
-            .establish::<TestbedClient>()
+            .establish_connection()
             .await
             .map_err(|e| format!("server handshake: {e}"));
-        let server_caller_guard = match setup {
+        let server_connection = match setup {
             Ok(parts) => parts,
             Err(err) => {
                 let _ = server_ready_tx.send(Err(err));
@@ -4926,7 +4918,7 @@ where
         };
 
         let _ = server_ready_tx.send(Ok(()));
-        let _server_caller_guard = server_caller_guard;
+        let _server_connection = server_connection;
         std::future::pending::<()>().await;
     });
 
@@ -4939,7 +4931,7 @@ where
             max_concurrent_requests: 64,
             initial_channel_credit: 16,
         },
-        vox_types::metadata().str("vox-service", "Noop").build(),
+        vox_types::Metadata::default(),
     )
     .await
     .map_err(|e| format!("client PHON handshake: {e}"))?;
@@ -4949,7 +4941,6 @@ where
             rx: client_rx,
         });
     let client = vox_core::initiator_conduit(client_conduit, client_handshake)
-        .on_connection(NoopHandler)
         .establish::<TestbedClient>()
         .await
         .map_err(|e| format!("client handshake: {e}"))?;
@@ -4961,7 +4952,7 @@ where
     Ok(client)
 }
 
-async fn accept_subject_tcp(cmd: &str) -> Result<(TestbedClient, Child, SessionHandle), String> {
+async fn accept_subject_tcp(cmd: &str) -> Result<(TestbedClient, Child, ConnectionHandle), String> {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .map_err(|e| format!("bind: {e}"))?;
@@ -5022,7 +5013,6 @@ async fn accept_subject_tcp(cmd: &str) -> Result<(TestbedClient, Child, SessionH
     stream.set_nodelay(true).unwrap();
 
     let client = match acceptor_transport(StreamLink::tcp(stream))
-        .on_connection(NoopHandler)
         .establish::<TestbedClient>()
         .await
     {
@@ -5032,7 +5022,7 @@ async fn accept_subject_tcp(cmd: &str) -> Result<(TestbedClient, Child, SessionH
             return Err(format!("handshake: {err}"));
         }
     };
-    let sh = client.session.clone().unwrap();
+    let connection = client.connection.clone().unwrap();
 
-    Ok((client, child, sh))
+    Ok((client, child, connection))
 }

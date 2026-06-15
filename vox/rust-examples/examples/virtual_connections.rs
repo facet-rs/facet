@@ -50,15 +50,8 @@ impl StringLab for StringLabService {
     }
 }
 
-fn lab_acceptor(
-    request: &vox::ConnectionRequest,
-    connection: vox::PendingConnection,
-) -> Result<(), Metadata> {
+fn lab_acceptor(request: &vox::LaneRequest, connection: vox::PendingLane) -> Result<(), Metadata> {
     match request.service() {
-        "Noop" => {
-            connection.handle_with(());
-            Ok(())
-        }
         "CounterLab" => {
             connection.handle_with(CounterLabDispatcher::new(CounterLabService::new()));
             Ok(())
@@ -85,14 +78,14 @@ async fn main() -> Result<()> {
     let server_task = tokio::spawn(async move {
         println!("[server] waiting for client");
         let (socket, _) = listener.accept().await.expect("accept");
-        println!("[server] client connected; establishing root session");
-        let server_root_guard = vox::acceptor_on(StreamLink::tcp(socket))
-            .on_connection(vox::acceptor_fn(lab_acceptor))
-            .establish::<vox::NoopClient>()
+        println!("[server] client connected; establishing connection");
+        let server_connection = vox::acceptor_on(StreamLink::tcp(socket))
+            .on_connection(vox::lane_acceptor_fn(lab_acceptor))
+            .establish_connection()
             .await
             .expect("server establish");
         let _ = server_ready_tx.send(());
-        let _server_root_guard = server_root_guard;
+        let _server_connection = server_connection;
         std::future::pending::<()>().await;
     });
 
@@ -100,12 +93,11 @@ async fn main() -> Result<()> {
     let socket = tokio::net::TcpStream::connect(addr)
         .await
         .wrap_err("connecting client socket")?;
-    let _root_caller_guard = vox::initiator_on(StreamLink::tcp(socket))
-        .establish::<vox::NoopClient>()
+    let connection_handle = vox::initiator_on(StreamLink::tcp(socket))
+        .establish_connection()
         .await
-        .map_err(|e| eyre!("failed to establish initiator session: {e:?}"))?;
-    let session_handle = _root_caller_guard.session.clone().unwrap();
-    println!("[client] root session established");
+        .map_err(|e| eyre!("failed to establish initiator connection: {e:?}"))?;
+    println!("[client] connection established");
     server_ready_rx
         .await
         .map_err(|_| eyre!("server task ended before signaling readiness"))?;
@@ -116,15 +108,15 @@ async fn main() -> Result<()> {
         initial_channel_credit: 16,
     };
 
-    println!("[client] opening counter virtual connection");
-    let counter_client: CounterLabClient = session_handle
-        .open(settings.clone())
+    println!("[client] opening counter lane");
+    let counter_client: CounterLabClient = connection_handle
+        .open_lane_with_settings(settings.clone())
         .await
         .map_err(|e| eyre!("open(CounterLab) failed: {e:?}"))?;
 
-    println!("[client] opening string virtual connection");
-    let string_client: StringLabClient = session_handle
-        .open(settings)
+    println!("[client] opening string lane");
+    let string_client: StringLabClient = connection_handle
+        .open_lane_with_settings(settings)
         .await
         .map_err(|e| eyre!("open(StringLab) failed: {e:?}"))?;
 
@@ -165,7 +157,7 @@ async fn main() -> Result<()> {
     );
     println!("[client] StringLab::shout -> BETA");
 
-    println!("[client] closing session");
+    println!("[client] closing connection");
     server_task.abort();
     println!("[demo] virtual_connections: complete");
 

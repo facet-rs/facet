@@ -1,89 +1,230 @@
 import Foundation
 import PhonSchema
 
-// r[impl rpc.caller]
+// r[impl session]
+// r[impl connection.root]
 public final class Connection: @unchecked Sendable {
-    let handle: ConnectionHandle
-    /// Writer schema closures the peer advertised — the generated client uses them for
-    /// response decode against the server's advertised response schema through this.
-    public let schemaReceiveTracker: SchemaTracker
+    public let role: Role
+    let controlLane: Lane
+    let driver: Driver
+    public let handle: ConnectionHandle
+    public let peerMetadata: Metadata
 
-    init(handle: ConnectionHandle, schemaReceiveTracker: SchemaTracker) {
+    init(
+        role: Role,
+        controlLane: Lane,
+        driver: Driver,
+        handle: ConnectionHandle,
+        peerMetadata: Metadata
+    ) {
+        self.role = role
+        self.controlLane = controlLane
+        self.driver = driver
         self.handle = handle
-        self.schemaReceiveTracker = schemaReceiveTracker
+        self.peerMetadata = peerMetadata
     }
 
-    deinit {
-        // r[impl rpc.caller.liveness.refcounted]
-        // r[impl rpc.caller.liveness.last-drop-closes-connection]
-        // r[impl rpc.caller.liveness.root-internal-close]
-        // r[impl rpc.caller.liveness.root-teardown-condition]
-        handle.releaseConnectionLiveness()
+    public func run() async throws {
+        try await driver.run()
     }
 
-    public var channelAllocator: ChannelIdAllocator {
-        handle.channelAllocator
-    }
-
-    public var connectionId: UInt64 {
-        handle.connectionId
-    }
-
-    public var incomingChannelRegistry: ChannelRegistry {
-        handle.channelRegistry
-    }
-
-    public var taskSender: TaskSender {
-        { [weak self] msg in
-            self?.sendTaskMessage(msg)
-        }
-    }
-
-    public func call(
-        methodId: UInt64,
-        metadata: Metadata,
-        payload: [UInt8],
-        channels: [UInt64] = [],
-        timeout: TimeInterval?,
-        finalizeChannels: (@Sendable () -> Void)? = nil,
-        schemaInfo: ClientSchemaInfo? = nil
-    ) async throws -> [UInt8] {
-        // r[impl rpc.caller]
-        try await callRaw(
-            methodId: methodId,
+    public func openLane(
+        settings: ConnectionSettings,
+        metadata: Metadata = emptyMetadata(),
+        dispatcher: (any ServiceDispatcher)? = nil
+    ) async throws -> Lane {
+        try await handle.openLane(
+            settings: settings,
             metadata: metadata,
-            payload: payload,
-            channels: channels,
-            timeout: timeout,
-            finalizeChannels: finalizeChannels,
-            schemaInfo: schemaInfo
+            dispatcher: dispatcher
         )
     }
 
-    public func callRaw(
-        methodId: UInt64,
-        metadata: Metadata = .null,
-        payload: [UInt8],
-        channels: [UInt64] = [],
-        timeout: TimeInterval? = nil,
-        finalizeChannels: (@Sendable () -> Void)? = nil,
-        schemaInfo: ClientSchemaInfo? = nil
-    ) async throws -> [UInt8] {
-        // r[impl rpc.request]
-        try await handle.callRaw(
-            methodId: methodId,
-            metadata: metadata,
-            payload: payload,
-            channels: channels,
-            timeout: timeout,
-            finalizeChannels: finalizeChannels,
-            schemaInfo: schemaInfo
+    public func shutdown() {
+        handle.shutdown()
+    }
+
+    public static func connect(
+        _ connector: some ConnectionConnector,
+        onLane: (any LaneAcceptor)? = nil,
+        keepalive: ConnectionKeepaliveConfig? = nil,
+        metadata: Metadata = .null
+    ) async throws -> Connection {
+        try await connect(
+            connector,
+            controlDispatcher: ConnectionControlDispatcher(),
+            onLane: onLane,
+            keepalive: keepalive,
+            metadata: metadata
         )
     }
 
-    public func sendTaskMessage(_ msg: TaskMessage) {
-        handle.sendTaskMessage(msg)
+    static func connect(
+        _ connector: some ConnectionConnector,
+        controlDispatcher: any ServiceDispatcher,
+        onLane: (any LaneAcceptor)? = nil,
+        keepalive: ConnectionKeepaliveConfig? = nil,
+        metadata: Metadata = .null
+    ) async throws -> Connection {
+        // r[impl rpc.session-setup]
+        let attachment = try await connector.openAttachment()
+        let (controlLane, driver, handle, peerMetadata) =
+            try await establishInitiator(
+                attachment: attachment,
+                dispatcher: controlDispatcher,
+                laneAcceptor: onLane,
+                keepalive: keepalive,
+                metadata: metadata
+            )
+        return Connection(
+            role: .initiator,
+            controlLane: controlLane,
+            driver: driver,
+            handle: handle,
+            peerMetadata: peerMetadata
+        )
+    }
+
+    public static func accept(
+        _ connector: some ConnectionConnector,
+        onLane: (any LaneAcceptor)? = nil,
+        keepalive: ConnectionKeepaliveConfig? = nil,
+        metadata: Metadata = .null
+    ) async throws -> Connection {
+        try await accept(
+            connector,
+            controlDispatcher: ConnectionControlDispatcher(),
+            onLane: onLane,
+            keepalive: keepalive,
+            metadata: metadata
+        )
+    }
+
+    static func accept(
+        _ connector: some ConnectionConnector,
+        controlDispatcher: any ServiceDispatcher,
+        onLane: (any LaneAcceptor)? = nil,
+        keepalive: ConnectionKeepaliveConfig? = nil,
+        metadata: Metadata = .null
+    ) async throws -> Connection {
+        // r[impl rpc.session-setup]
+        let attachment = try await connector.openAttachment()
+        return try await accept(
+            attachment,
+            controlDispatcher: controlDispatcher,
+            onLane: onLane,
+            keepalive: keepalive,
+            metadata: metadata
+        )
+    }
+
+    public static func connect(
+        overFreshLink link: any Link,
+        onLane: (any LaneAcceptor)? = nil,
+        keepalive: ConnectionKeepaliveConfig? = nil,
+        metadata: Metadata = .null
+    ) async throws -> Connection {
+        try await connect(
+            overFreshLink: link,
+            controlDispatcher: ConnectionControlDispatcher(),
+            onLane: onLane,
+            keepalive: keepalive,
+            metadata: metadata
+        )
+    }
+
+    static func connect(
+        overFreshLink link: any Link,
+        controlDispatcher: any ServiceDispatcher,
+        onLane: (any LaneAcceptor)? = nil,
+        keepalive: ConnectionKeepaliveConfig? = nil,
+        metadata: Metadata = .null
+    ) async throws -> Connection {
+        // r[impl rpc.session-setup]
+        let (controlLane, driver, handle, peerMetadata) =
+            try await establishInitiator(
+                attachment: .fresh(link),
+                dispatcher: controlDispatcher,
+                laneAcceptor: onLane,
+                keepalive: keepalive,
+                metadata: metadata
+            )
+        return Connection(
+            role: .initiator,
+            controlLane: controlLane,
+            driver: driver,
+            handle: handle,
+            peerMetadata: peerMetadata
+        )
+    }
+
+    public static func accept(
+        _ attachment: LinkAttachment,
+        onLane: (any LaneAcceptor)? = nil,
+        keepalive: ConnectionKeepaliveConfig? = nil,
+        metadata: Metadata = .null
+    ) async throws -> Connection {
+        try await accept(
+            attachment,
+            controlDispatcher: ConnectionControlDispatcher(),
+            onLane: onLane,
+            keepalive: keepalive,
+            metadata: metadata
+        )
+    }
+
+    static func accept(
+        _ attachment: LinkAttachment,
+        controlDispatcher: any ServiceDispatcher,
+        onLane: (any LaneAcceptor)? = nil,
+        keepalive: ConnectionKeepaliveConfig? = nil,
+        metadata: Metadata = .null
+    ) async throws -> Connection {
+        // r[impl rpc.session-setup]
+        let (controlLane, driver, handle, peerMetadata) =
+            try await establishAcceptor(
+                attachment: attachment,
+                dispatcher: controlDispatcher,
+                laneAcceptor: onLane,
+                keepalive: keepalive,
+                metadata: metadata
+            )
+        return Connection(
+            role: .acceptor,
+            controlLane: controlLane,
+            driver: driver,
+            handle: handle,
+            peerMetadata: peerMetadata
+        )
+    }
+
+    public static func accept(
+        freshLink link: any Link,
+        onLane: (any LaneAcceptor)? = nil,
+        keepalive: ConnectionKeepaliveConfig? = nil,
+        metadata: Metadata = .null
+    ) async throws -> Connection {
+        try await accept(
+            .fresh(link),
+            onLane: onLane,
+            keepalive: keepalive,
+            metadata: metadata
+        )
+    }
+
+    static func accept(
+        freshLink link: any Link,
+        controlDispatcher: any ServiceDispatcher,
+        onLane: (any LaneAcceptor)? = nil,
+        keepalive: ConnectionKeepaliveConfig? = nil,
+        metadata: Metadata = .null
+    ) async throws -> Connection {
+        try await accept(
+            .fresh(link),
+            controlDispatcher: controlDispatcher,
+            onLane: onLane,
+            keepalive: keepalive,
+            metadata: metadata
+        )
     }
 }
-
-extension Connection: VoxConnection {}

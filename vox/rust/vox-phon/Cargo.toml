@@ -13,7 +13,7 @@ description = "phon as a vox codec: encode/decode facet types through phon's typ
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-moire = { workspace = true }
+vox-rt = { workspace = true }
 phon = { workspace = true, features = ["jit"] }
 phon-engine = { workspace = true }
 phon-ir = { workspace = true }

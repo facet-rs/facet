@@ -4,7 +4,7 @@
 //! connect to. It uses the vox runtime (dispatcher, channels, etc.) to
 //! provide a real vox peer for the TypeScript client to talk to.
 
-use spec_proto::{TestbedClient, TestbedDispatcher};
+use spec_proto::TestbedDispatcher;
 use std::env;
 use subject_rust::TestbedService;
 use tokio::net::TcpListener;
@@ -54,9 +54,9 @@ async fn run() -> Result<(), String> {
                 }
             };
 
-            let root_caller_guard = match acceptor_transport(ws_link)
+            let connection = match acceptor_transport(ws_link)
                 .on_connection(TestbedDispatcher::new(TestbedService))
-                .establish::<TestbedClient>()
+                .establish_connection()
                 .await
             {
                 Ok(v) => v,
@@ -67,8 +67,7 @@ async fn run() -> Result<(), String> {
             };
 
             eprintln!("Connection established with {}", peer);
-            let _root_caller_guard = root_caller_guard;
-            std::future::pending::<()>().await;
+            connection.closed().await;
         });
     }
 }

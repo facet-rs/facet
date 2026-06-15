@@ -13,7 +13,7 @@ TCP transport binding for Vox in TypeScript.
 
 ## Fits with
 
-- `@bearcove/vox-core` for session/call orchestration
+- `@bearcove/vox-core` for connection/lane/call orchestration
 - `@bearcove/vox-wire` for protocol payloads
 
 Part of the Vox workspace: <https://github.com/bearcove/vox>

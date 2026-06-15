@@ -5,11 +5,8 @@
 
 import {
   channel,
-  session,
-  voxServiceMetadata,
 } from "@bearcove/vox-core";
 import { connectTestbed, TestbedClient } from "@bearcove/vox-generated/testbed.generated.ts";
-import { WsLinkSource } from "@bearcove/vox-ws";
 
 // Make test results available to Playwright
 declare global {

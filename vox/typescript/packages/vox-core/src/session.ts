@@ -8,9 +8,10 @@ import {
   type Metadata,
   emptyMetadata,
   coerceMetadata,
-  messageAccept,
-  messageConnect,
-  messageGoodbye,
+  messageLaneAccept,
+  messageLaneOpen,
+  messageLaneClose,
+  messageLaneReject,
   messageProtocolError,
   messageRequest,
   messageResponse,
@@ -30,6 +31,7 @@ import {
   Role,
   bindPhonChannels,
   type ChannelRegistryDebugSnapshot,
+  type ServiceDescriptor,
 } from "./channeling/index.ts";
 import type { Caller, CallerRequest } from "./caller.ts";
 import { MiddlewareCaller } from "./caller.ts";
@@ -57,6 +59,7 @@ import {
   handshakeAsAcceptor,
   handshakeAsInitiator,
   type HandshakeResult,
+  voxServiceMetadata,
 } from "./handshake.ts";
 import { splitQualifiedMethodName } from "./observer.ts";
 
@@ -87,11 +90,11 @@ export interface IncomingCall {
   args: Uint8Array;
   channels: bigint[];
   metadata: Metadata;
-  connectionEpoch: number;
+  laneEpoch: number;
 }
 
-export interface ConnectionDebugSnapshot {
-  connectionId: bigint;
+export interface LaneDebugSnapshot {
+  laneId: bigint;
   closed: boolean;
   pendingResponseCount: number;
   pendingRequestIds: bigint[];
@@ -109,18 +112,18 @@ export interface ConnectionDebugSnapshot {
   channels: ChannelRegistryDebugSnapshot;
 }
 
-export interface SessionBuilderOptions {
+export interface ConnectionBuilderOptions {
   maxConcurrentRequests?: number;
   channelCapacity?: number;
   metadata?: Metadata;
-  onConnection?: (connection: ConnectionHandle) => void | Promise<void>;
+  onLane?: (lane: Lane) => void | Promise<void>;
   /**
-   * If set, the session sends a Ping every `keepaliveIntervalMs` milliseconds
+   * If set, the connection sends a Ping every `keepaliveIntervalMs` milliseconds
    * and expects a Pong back within `keepaliveTimeoutMs` (default: half the
-   * interval). If no Pong arrives in time the session closes. Set to 0 or
+   * interval). If no Pong arrives in time the connection closes. Set to 0 or
    * undefined to disable keepalive.
    *
-   * Recommended for WebSocket connections where silent network drops are
+   * Recommended for WebSocket lanes where silent network drops are
    * common (proxies, mobile networks, etc.) and the underlying transport
    * may not surface a close/error event promptly.
    */
@@ -132,24 +135,39 @@ export interface SessionBuilderOptions {
   keepaliveTimeoutMs?: number;
 }
 
-export interface SessionTransportOptions extends SessionBuilderOptions {
+export interface ConnectionTransportOptions extends ConnectionBuilderOptions {
+}
+
+export interface LaneOpenOptions {
+  settings?: ConnectionSettings;
+  metadata?: Metadata;
+}
+
+export interface LaneClientConstructor<T> {
+  new(caller: Caller): T;
+  descriptor?: ServiceDescriptor;
+}
+
+export interface ConnectLaneOptions extends ConnectionTransportOptions {
+  laneSettings?: ConnectionSettings;
+  laneMetadata?: Metadata;
 }
 
 const DEFAULT_CHANNEL_CAPACITY = 16;
 
-function channelCapacityFromOptions(options: SessionBuilderOptions): number {
+function channelCapacityFromOptions(options: ConnectionBuilderOptions): number {
   const channelCapacity = options.channelCapacity ?? DEFAULT_CHANNEL_CAPACITY;
   // r[impl rpc.flow-control.credit.initial.high-level]
   // r[impl rpc.flow-control.credit.initial.zero]
   if (channelCapacity <= 0) {
-    throw SessionError.protocol("initial_channel_credit must be greater than zero");
+    throw ConnectionError.protocol("initial_channel_credit must be greater than zero");
   }
   return channelCapacity;
 }
 
-type SessionTransport = Link | LinkSource;
+type ConnectionTransport = Link | LinkSource;
 
-function isLinkSource(value: SessionTransport): value is LinkSource {
+function isLinkSource(value: ConnectionTransport): value is LinkSource {
   return typeof (value as LinkSource).nextLink === "function";
 }
 
@@ -176,8 +194,8 @@ interface EstablishedTransport {
 // r[impl transport.prologue.first-payload]
 // r[impl transport.prologue.post-accept]
 async function makeInitiatorEstablishedTransport(
-  transport: SessionTransport,
-  options: SessionTransportOptions,
+  transport: ConnectionTransport,
+  options: ConnectionTransportOptions,
 ): Promise<EstablishedTransport> {
   const localSettings: ConnectionSettings = {
     parity: { tag: "Odd" },
@@ -231,8 +249,8 @@ async function makeInitiatorEstablishedTransport(
 // r[impl transport.prologue.first-payload]
 // r[impl transport.prologue.post-accept]
 async function makeAcceptorEstablishedTransport(
-  transport: SessionTransport,
-  options: SessionTransportOptions,
+  transport: ConnectionTransport,
+  options: ConnectionTransportOptions,
 ): Promise<EstablishedTransport> {
   const attachment = isLinkSource(transport)
     ? await transport.nextLink()
@@ -259,7 +277,7 @@ async function makeAcceptorEstablishedTransport(
   };
 }
 
-export class SessionError extends Error {
+export class ConnectionError extends Error {
   readonly isProtocolError: boolean;
   readonly receivedFromPeer: boolean;
 
@@ -268,40 +286,40 @@ export class SessionError extends Error {
     options: { isProtocolError?: boolean; receivedFromPeer?: boolean } = {},
   ) {
     super(message);
-    this.name = "SessionError";
+    this.name = "ConnectionError";
     this.isProtocolError = options.isProtocolError ?? false;
     this.receivedFromPeer = options.receivedFromPeer ?? false;
   }
 
-  static closed(): SessionError {
-    return new SessionError("session closed");
+  static closed(): ConnectionError {
+    return new ConnectionError("connection closed");
   }
 
-  static protocol(message: string): SessionError {
-    return new SessionError(message, { isProtocolError: true });
+  static protocol(message: string): ConnectionError {
+    return new ConnectionError(message, { isProtocolError: true });
   }
 
-  static peerProtocol(message: string): SessionError {
-    return new SessionError(message, { isProtocolError: true, receivedFromPeer: true });
+  static peerProtocol(message: string): ConnectionError {
+    return new ConnectionError(message, { isProtocolError: true, receivedFromPeer: true });
   }
 }
 
-class SessionCore {
+class ConnectionCore {
   private conduit: Conduit<Message>;
-  private readonly connections = new Map<bigint, ConnectionHandle>();
-  private readonly pendingConnections = new Map<
+  private readonly lanes = new Map<bigint, Lane>();
+  private readonly pendingLanes = new Map<
     bigint,
     {
       localSettings: ConnectionSettings;
-      result: Deferred<ConnectionHandle>;
+      result: Deferred<Lane>;
     }
   >();
-  private readonly sessionHandle: SessionHandle;
+  private readonly connectionHandle: ConnectionHandle;
   private sendChain: Promise<void> = Promise.resolve();
-  private nextConnectionId: bigint;
+  private nextLaneId: bigint;
   private closed = false;
-  private closeError: SessionError | null = null;
-  private rootConnectionValue: ConnectionHandle | null = null;
+  private closeError: ConnectionError | null = null;
+  private initialLaneValue: Lane | null = null;
   private runPromise: Promise<void> | null = null;
   private readonly keepaliveIntervalMs: number;
   private readonly keepaliveTimeoutMs: number;
@@ -309,61 +327,61 @@ class SessionCore {
   private keepalivePendingNonce: bigint | null = null;
   private keepalivePongTimer: ReturnType<typeof setTimeout> | null = null;
   private nextKeepaliveNonce = 1n;
-  private readonly localRootSettings: ConnectionSettings;
-  private readonly peerRootSettings: ConnectionSettings;
-  private readonly onConnection?: (connection: ConnectionHandle) => void | Promise<void>;
-  private rootInternallyClosed = false;
+  private readonly localInitialLaneSettings: ConnectionSettings;
+  private readonly peerInitialLaneSettings: ConnectionSettings;
+  private readonly onLane?: (lane: Lane) => void | Promise<void>;
+  private initialLaneInternallyClosed = false;
 
   constructor(
     conduit: Conduit<Message>,
-    localRootSettings: ConnectionSettings,
-    peerRootSettings: ConnectionSettings,
-    onConnection?: (connection: ConnectionHandle) => void | Promise<void>,
+    localInitialLaneSettings: ConnectionSettings,
+    peerInitialLaneSettings: ConnectionSettings,
+    onLane?: (lane: Lane) => void | Promise<void>,
     keepaliveIntervalMs = 0,
     keepaliveTimeoutMs = 0,
   ) {
     this.conduit = conduit;
-    this.localRootSettings = localRootSettings;
-    this.peerRootSettings = peerRootSettings;
+    this.localInitialLaneSettings = localInitialLaneSettings;
+    this.peerInitialLaneSettings = peerInitialLaneSettings;
     // r[impl session.parity]
-    this.nextConnectionId = firstIdForParity(localRootSettings.parity);
-    this.sessionHandle = new SessionHandle(this);
-    this.onConnection = onConnection;
+    this.nextLaneId = firstIdForParity(localInitialLaneSettings.parity);
+    this.connectionHandle = new ConnectionHandle(this);
+    this.onLane = onLane;
     this.keepaliveIntervalMs = keepaliveIntervalMs;
     this.keepaliveTimeoutMs =
       keepaliveTimeoutMs > 0 ? keepaliveTimeoutMs : Math.floor(keepaliveIntervalMs / 2);
   }
 
-  sessionHandleValue(): SessionHandle {
-    return this.sessionHandle;
+  connectionHandleValue(): ConnectionHandle {
+    return this.connectionHandle;
   }
 
-  defaultConnectionSettings(): ConnectionSettings {
+  defaultLaneSettings(): ConnectionSettings {
     return {
-      parity: this.localRootSettings.parity,
-      max_concurrent_requests: this.localRootSettings.max_concurrent_requests,
-      initial_channel_credit: this.localRootSettings.initial_channel_credit,
+      parity: this.localInitialLaneSettings.parity,
+      max_concurrent_requests: this.localInitialLaneSettings.max_concurrent_requests,
+      initial_channel_credit: this.localInitialLaneSettings.initial_channel_credit,
     };
   }
 
-  rootConnection(): ConnectionHandle {
+  initialLane(): Lane {
     // r[impl connection]
     // r[impl connection.root]
-    if (!this.rootConnectionValue) {
-      this.rootConnectionValue = new ConnectionHandle(
+    if (!this.initialLaneValue) {
+      this.initialLaneValue = new Lane(
         this,
         0n,
-        this.localRootSettings,
-        this.peerRootSettings,
+        this.localInitialLaneSettings,
+        this.peerInitialLaneSettings,
       );
-      this.connections.set(0n, this.rootConnectionValue);
+      this.lanes.set(0n, this.initialLaneValue);
     }
-    return this.rootConnectionValue;
+    return this.initialLaneValue;
   }
 
   failPendingAttempts(error: Error): void {
-    for (const connection of this.connections.values()) {
-      connection.failPendingAttempts(error);
+    for (const lane of this.lanes.values()) {
+      lane.failPendingAttempts(error);
     }
   }
 
@@ -372,18 +390,18 @@ class SessionCore {
       return;
     }
     this.runPromise = this.run().catch(async (error) => {
-      voxLogger()?.error(`[vox:session] run loop error:`, error);
-      const sessionError = error instanceof SessionError
+      voxLogger()?.error(`[vox:connection] run loop error:`, error);
+      const connectionError = error instanceof ConnectionError
         ? error
-        : new SessionError(String(error));
+        : new ConnectionError(String(error));
       if (
-        sessionError.isProtocolError &&
-        !sessionError.receivedFromPeer &&
+        connectionError.isProtocolError &&
+        !connectionError.receivedFromPeer &&
         !this.closed
       ) {
-        await this.sendProtocolError(sessionError.message);
+        await this.sendProtocolError(connectionError.message);
       }
-      this.fail(sessionError);
+      this.fail(connectionError);
     });
     // r[impl session.keepalive]
     if (this.keepaliveIntervalMs > 0) {
@@ -407,13 +425,13 @@ class SessionCore {
     }
     const nonce = this.nextKeepaliveNonce++;
     this.keepalivePendingNonce = nonce;
-    void this.sendMessage({ connection_id: 0n, payload: { tag: "Ping", value: { nonce } } }).catch(() => {});
+    void this.sendMessage({ lane_id: 0n, payload: { tag: "Ping", value: { nonce } } }).catch(() => {});
 
     // Expect a Pong within keepaliveTimeoutMs.
     this.keepalivePongTimer = setTimeout(() => {
       if (this.keepalivePendingNonce === nonce && !this.closed) {
         voxLogger()?.debug(
-          `[vox:session] keepalive timeout — no Pong received, treating as dead connection`,
+          `[vox:connection] keepalive timeout - no Pong received, treating as dead connection`,
         );
         this.keepalivePendingNonce = null;
         this.conduit.close();
@@ -437,54 +455,54 @@ class SessionCore {
     return this.runPromise ?? Promise.resolve();
   }
 
-  async openConnection(
+  async openLane(
     settings: ConnectionSettings,
     metadata: Metadata = emptyMetadata(),
-  ): Promise<ConnectionHandle> {
+  ): Promise<Lane> {
     // r[impl connection]
     // r[impl connection.virtual]
     // r[impl connection.open]
     // r[impl rpc.virtual-connection.open]
     this.assertOpen();
     if (settings.initial_channel_credit <= 0) {
-      throw SessionError.protocol("initial_channel_credit must be greater than zero");
+      throw ConnectionError.protocol("initial_channel_credit must be greater than zero");
     }
 
-    const connectionId = this.allocateConnectionId();
-    const result = deferred<ConnectionHandle>();
-    this.pendingConnections.set(connectionId, {
+    const laneId = this.allocateLaneId();
+    const result = deferred<Lane>();
+    this.pendingLanes.set(laneId, {
       localSettings: settings,
       result,
     });
 
     try {
-      await this.sendMessage(messageConnect(connectionId, settings, metadata));
+      await this.sendMessage(messageLaneOpen(laneId, settings, metadata));
     } catch (error) {
-      this.pendingConnections.delete(connectionId);
+      this.pendingLanes.delete(laneId);
       throw error;
     }
 
     return result.promise;
   }
 
-  async closeConnection(connectionId: bigint, metadata: Metadata = emptyMetadata()): Promise<void> {
+  async closeLane(laneId: bigint, metadata: Metadata = emptyMetadata()): Promise<void> {
     // r[impl connection]
     // r[impl connection.virtual]
     // r[impl connection.close]
     // r[impl connection.close.semantics]
     this.assertOpen();
-    if (connectionId === 0n) {
-      throw new SessionError("cannot close root connection");
+    if (laneId === 0n) {
+      throw new ConnectionError("cannot close the initial lane through closeLane");
     }
 
-    const connection = this.connections.get(connectionId);
-    if (!connection) {
-      throw SessionError.protocol(`unknown connection ${connectionId}`);
+    const lane = this.lanes.get(laneId);
+    if (!lane) {
+      throw ConnectionError.protocol(`unknown lane ${laneId}`);
     }
 
-    connection.close(SessionError.closed());
-    this.connections.delete(connectionId);
-    await this.sendMessage(messageGoodbye(connectionId, metadata));
+    lane.close(ConnectionError.closed());
+    this.lanes.delete(laneId);
+    await this.sendMessage(messageLaneClose(laneId, metadata));
     this.maybeShutdownAfterRootInternalClose();
   }
 
@@ -492,14 +510,14 @@ class SessionCore {
     this.assertOpen();
 
     voxLogger()?.debug(
-      `[vox:session] sendMessage: tag=${message.payload.tag} conn=${message.connection_id}`,
+      `[vox:connection] sendMessage: tag=${message.payload.tag} lane=${message.lane_id}`,
     );
     const op = this.sendChain.then(() => this.conduit.send(message));
     this.sendChain = op.then(() => undefined, () => undefined);
     await op;
   }
 
-  fail(error: SessionError): void {
+  fail(error: ConnectionError): void {
     if (this.closed) {
       return;
     }
@@ -509,44 +527,44 @@ class SessionCore {
     this.closeError = error;
     this.conduit.close();
 
-    for (const pending of this.pendingConnections.values()) {
+    for (const pending of this.pendingLanes.values()) {
       pending.result.reject(error);
     }
-    this.pendingConnections.clear();
+    this.pendingLanes.clear();
 
-    for (const connection of this.connections.values()) {
-      connection.close(error);
+    for (const lane of this.lanes.values()) {
+      lane.close(error);
     }
-    this.connections.clear();
+    this.lanes.clear();
   }
 
   shutdown(): void {
-    this.fail(SessionError.closed());
+    this.fail(ConnectionError.closed());
   }
 
-  callerLivenessDropped(connectionId: bigint): void {
-    if (connectionId === 0n) {
+  callerLivenessDropped(laneId: bigint): void {
+    if (laneId === 0n) {
       // r[impl rpc.caller.liveness.root-internal-close]
-      this.rootInternallyClosed = true;
+      this.initialLaneInternallyClosed = true;
       // r[impl rpc.caller.liveness.root-teardown-condition]
       this.maybeShutdownAfterRootInternalClose();
       return;
     }
 
     // r[impl rpc.caller.liveness.last-drop-closes-connection]
-    void this.closeConnection(connectionId).catch((error) => {
+    void this.closeLane(laneId).catch((error) => {
       if (!this.closed) {
-        this.fail(error instanceof SessionError ? error : new SessionError(String(error)));
+        this.fail(error instanceof ConnectionError ? error : new ConnectionError(String(error)));
       }
     });
   }
 
   private maybeShutdownAfterRootInternalClose(): void {
-    if (!this.rootInternallyClosed || this.closed) {
+    if (!this.initialLaneInternallyClosed || this.closed) {
       return;
     }
-    for (const connectionId of this.connections.keys()) {
-      if (connectionId !== 0n) {
+    for (const laneId of this.lanes.keys()) {
+      if (laneId !== 0n) {
         return;
       }
     }
@@ -555,23 +573,23 @@ class SessionCore {
 
   private assertOpen(): void {
     if (this.closed) {
-      throw this.closeError ?? SessionError.closed();
+      throw this.closeError ?? ConnectionError.closed();
     }
   }
 
-  private allocateConnectionId(): bigint {
+  private allocateLaneId(): bigint {
     // r[impl session.parity]
-    const id = this.nextConnectionId;
-    this.nextConnectionId += 2n;
+    const id = this.nextLaneId;
+    this.nextLaneId += 2n;
     return id;
   }
 
-  private getConnection(connectionId: bigint): ConnectionHandle {
-    const connection = this.connections.get(connectionId);
-    if (!connection) {
-      throw SessionError.protocol(`unknown connection ${connectionId}`);
+  private getLane(laneId: bigint): Lane {
+    const lane = this.lanes.get(laneId);
+    if (!lane) {
+      throw ConnectionError.protocol(`unknown lane ${laneId}`);
     }
-    return connection;
+    return lane;
   }
 
   private async run(): Promise<void> {
@@ -582,20 +600,20 @@ class SessionCore {
       const message = await this.conduit.recv();
       if (!message) {
         this.clearKeepaliveTimers();
-        this.failPendingAttempts(new SessionError("connection lost"));
-        throw SessionError.closed();
+        this.failPendingAttempts(new ConnectionError("connection lost"));
+        throw ConnectionError.closed();
       }
       await this.handleMessage(message);
     }
   }
 
   private async handleMessage(message: Message): Promise<void> {
-    voxLogger()?.debug(`[vox:session] handleMessage: tag=${message.payload.tag} conn=${message.connection_id}`);
+    voxLogger()?.debug(`[vox:connection] handleMessage: tag=${message.payload.tag} lane=${message.lane_id}`);
     switch (message.payload.tag) {
       case "Ping":
         // r[impl session.keepalive]
         void this.sendMessage({
-          connection_id: 0n,
+          lane_id: 0n,
           payload: { tag: "Pong", value: { nonce: message.payload.value.nonce } },
         }).catch(() => {});
         return;
@@ -611,54 +629,54 @@ class SessionCore {
         return;
 
       case "ProtocolError":
-        throw SessionError.peerProtocol(message.payload.value.description);
+        throw ConnectionError.peerProtocol(message.payload.value.description);
 
-      case "ConnectionOpen":
-        await this.handleConnectionOpen(message.connection_id, message.payload.value);
+      case "LaneOpen":
+        await this.handleLaneOpen(message.lane_id, message.payload.value);
         return;
 
-      case "ConnectionAccept":
-        this.handleConnectionAccept(message.connection_id, message.payload.value.connection_settings);
+      case "LaneAccept":
+        this.handleLaneAccept(message.lane_id, message.payload.value.connection_settings);
         return;
 
-      case "ConnectionReject":
-        this.handleConnectionReject(message.connection_id);
+      case "LaneReject":
+        this.handleLaneReject(message.lane_id);
         return;
 
-      case "ConnectionClose":
-        this.handleConnectionClose(message.connection_id);
+      case "LaneClose":
+        this.handleLaneClose(message.lane_id);
         return;
 
       case "RequestMessage":
-        await this.handleRequestMessage(message.connection_id, message.payload.value);
+        await this.handleRequestMessage(message.lane_id, message.payload.value);
         return;
 
       case "SchemaMessage":
-        this.handleSchemaMessage(message.connection_id, message.payload.value);
+        this.handleSchemaMessage(message.lane_id, message.payload.value);
         return;
 
       case "ChannelMessage":
-        this.handleChannelMessage(message.connection_id, message.payload.value);
+        this.handleChannelMessage(message.lane_id, message.payload.value);
         return;
 
     }
   }
 
   private handleSchemaMessage(
-    connectionId: bigint,
+    laneId: bigint,
     schemaMessage: SchemaMessage,
   ): void {
-    const connection = this.getConnection(connectionId);
+    const lane = this.getLane(laneId);
     const direction = schemaMessage.direction.tag === "Args" ? "args" : "response";
     try {
       // r[impl schema.tracking.received]
-      connection.getSchemaTracker().recordReceived(
+      lane.getSchemaTracker().recordReceived(
         schemaMessage.method_id,
         direction,
         new Uint8Array(schemaMessage.schemas),
       );
     } catch (error) {
-      throw SessionError.protocol(error instanceof Error ? error.message : String(error));
+      throw ConnectionError.protocol(error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -667,12 +685,12 @@ class SessionCore {
     try {
       await this.conduit.send(messageProtocolError(description));
     } catch (error) {
-      voxLogger()?.debug("[vox:session] failed to send protocol error", error);
+      voxLogger()?.debug("[vox:connection] failed to send protocol error", error);
     }
   }
 
-  private async handleConnectionOpen(
-    connectionId: bigint,
+  private async handleLaneOpen(
+    laneId: bigint,
     value: { connection_settings: ConnectionSettings; metadata: unknown },
   ): Promise<void> {
     // r[impl connection]
@@ -681,19 +699,13 @@ class SessionCore {
     // r[impl rpc.virtual-connection.accept]
     // r[impl connection.open.rejection]
     // r[impl session.connection-settings.open]
-    if (!this.onConnection) {
-      await this.sendMessage({
-        connection_id: connectionId,
-        payload: { tag: "ConnectionReject", value: { metadata: emptyMetadata() } },
-      });
+    if (!this.onLane) {
+      await this.sendMessage(messageLaneReject(laneId));
       return;
     }
 
     if (value.connection_settings.initial_channel_credit <= 0) {
-      await this.sendMessage({
-        connection_id: connectionId,
-        payload: { tag: "ConnectionReject", value: { metadata: emptyMetadata() } },
-      });
+      await this.sendMessage(messageLaneReject(laneId));
       return;
     }
 
@@ -703,57 +715,57 @@ class SessionCore {
       max_concurrent_requests: value.connection_settings.max_concurrent_requests,
       initial_channel_credit: value.connection_settings.initial_channel_credit,
     };
-    const connection = new ConnectionHandle(
+    const lane = new Lane(
       this,
-      connectionId,
+      laneId,
       localSettings,
       value.connection_settings,
     );
-    this.connections.set(connectionId, connection);
-    await this.sendMessage(messageAccept(connectionId, localSettings, emptyMetadata()));
-    void this.onConnection(connection);
+    this.lanes.set(laneId, lane);
+    await this.sendMessage(messageLaneAccept(laneId, localSettings, emptyMetadata()));
+    void this.onLane(lane);
   }
 
-  private handleConnectionAccept(
-    connectionId: bigint,
+  private handleLaneAccept(
+    laneId: bigint,
     peerSettings: ConnectionSettings,
   ): void {
-    const pending = this.pendingConnections.get(connectionId);
+    const pending = this.pendingLanes.get(laneId);
     if (!pending) {
       return;
     }
-    this.pendingConnections.delete(connectionId);
-    const connection = new ConnectionHandle(
+    this.pendingLanes.delete(laneId);
+    const lane = new Lane(
       this,
-      connectionId,
+      laneId,
       pending.localSettings,
       peerSettings,
     );
-    this.connections.set(connectionId, connection);
-    pending.result.resolve(connection);
+    this.lanes.set(laneId, lane);
+    pending.result.resolve(lane);
   }
 
-  private handleConnectionReject(connectionId: bigint): void {
-    const pending = this.pendingConnections.get(connectionId);
+  private handleLaneReject(laneId: bigint): void {
+    const pending = this.pendingLanes.get(laneId);
     if (!pending) {
       return;
     }
-    this.pendingConnections.delete(connectionId);
-    pending.result.reject(new SessionError(`connection ${connectionId} rejected`));
+    this.pendingLanes.delete(laneId);
+    pending.result.reject(new ConnectionError(`lane ${laneId} rejected`));
   }
 
-  private handleConnectionClose(connectionId: bigint): void {
-    const connection = this.connections.get(connectionId);
-    if (!connection) {
+  private handleLaneClose(laneId: bigint): void {
+    const lane = this.lanes.get(laneId);
+    if (!lane) {
       return;
     }
-    connection.close(SessionError.closed());
-    this.connections.delete(connectionId);
+    lane.close(ConnectionError.closed());
+    this.lanes.delete(laneId);
     this.maybeShutdownAfterRootInternalClose();
   }
 
   private async handleRequestMessage(
-    connectionId: bigint,
+    laneId: bigint,
     request: RequestMessage,
   ): Promise<void> {
     // r[impl rpc]
@@ -763,75 +775,75 @@ class SessionCore {
     // r[impl rpc.cancel]
     // r[impl rpc.cancel.channels]
     // r[impl rpc.pipelining]
-    const connection = this.getConnection(connectionId);
+    const lane = this.getLane(laneId);
     switch (request.body.tag) {
       case "Call": {
         const callSchemas = request.body.value.schemas;
         if (callSchemas && callSchemas.length > 0) {
           try {
             // r[impl schema.tracking.received]
-            connection.getSchemaTracker().recordReceived(
+            lane.getSchemaTracker().recordReceived(
               request.body.value.method_id,
               "args",
               new Uint8Array(callSchemas),
             );
           } catch (error) {
-            throw SessionError.protocol(error instanceof Error ? error.message : String(error));
+            throw ConnectionError.protocol(error instanceof Error ? error.message : String(error));
           }
         }
         try {
           // r[impl schema.exchange.required]
-          connection.getSchemaTracker().requireReceived(request.body.value.method_id, "args");
+          lane.getSchemaTracker().requireReceived(request.body.value.method_id, "args");
         } catch (error) {
-          throw SessionError.protocol(error instanceof Error ? error.message : String(error));
+          throw ConnectionError.protocol(error instanceof Error ? error.message : String(error));
         }
-        connection.beginIncomingRequest(request.id);
-        connection.enqueueIncomingCall({
+        lane.beginIncomingRequest(request.id);
+        lane.enqueueIncomingCall({
           requestId: request.id,
           methodId: request.body.value.method_id,
           args: request.body.value.args,
           channels: request.body.value.channels,
           metadata: coerceMetadata(request.body.value.metadata),
-          connectionEpoch: connection.currentEpoch(),
+          laneEpoch: lane.currentEpoch(),
         });
         return;
       }
 
       case "Response": {
-        const methodId = connection.pendingResponseMethodId(request.id);
+        const methodId = lane.pendingResponseMethodId(request.id);
         const responseSchemas = request.body.value.schemas;
         if (methodId !== undefined && responseSchemas && responseSchemas.length > 0) {
           try {
             // r[impl schema.tracking.received]
-            connection.getSchemaTracker().recordReceived(
+            lane.getSchemaTracker().recordReceived(
               methodId,
               "response",
               new Uint8Array(responseSchemas),
             );
           } catch (error) {
-            throw SessionError.protocol(error instanceof Error ? error.message : String(error));
+            throw ConnectionError.protocol(error instanceof Error ? error.message : String(error));
           }
         }
         if (methodId !== undefined) {
           try {
             // r[impl schema.exchange.required]
-            connection.getSchemaTracker().requireReceived(methodId, "response");
+            lane.getSchemaTracker().requireReceived(methodId, "response");
           } catch (error) {
-            throw SessionError.protocol(error instanceof Error ? error.message : String(error));
+            throw ConnectionError.protocol(error instanceof Error ? error.message : String(error));
           }
         }
-        connection.resolveResponse(request.id, request.body.value.ret);
+        lane.resolveResponse(request.id, request.body.value.ret);
         return;
       }
 
       case "Cancel":
-        connection.enqueueIncomingCancel(request.id);
+        lane.enqueueIncomingCancel(request.id);
         return;
     }
   }
 
   private handleChannelMessage(
-    connectionId: bigint,
+    laneId: bigint,
     channel: ChannelMessage,
   ): void {
     // r[impl rpc.channel.item]
@@ -840,41 +852,41 @@ class SessionCore {
     // r[impl rpc.channel.reset]
     // r[impl rpc.flow-control]
     // r[impl rpc.flow-control.credit.grant]
-    const connection = this.getConnection(connectionId);
+    const lane = this.getLane(laneId);
     switch (channel.body.tag) {
       case "Item":
-        connection.routeChannelData(channel.id, channel.body.value.item);
+        lane.routeChannelData(channel.id, channel.body.value.item);
         return;
 
       case "Close":
       case "Reset":
-        connection.closeChannel(channel.id);
+        lane.closeChannel(channel.id);
         return;
 
       case "GrantCredit":
-        connection.grantChannelCredit(channel.id, channel.body.value.additional);
+        lane.grantChannelCredit(channel.id, channel.body.value.additional);
         return;
     }
   }
 
 }
 
-export class SessionHandle {
-  private readonly core: SessionCore;
+export class ConnectionHandle {
+  private readonly core: ConnectionCore;
 
-  constructor(core: SessionCore) {
+  constructor(core: ConnectionCore) {
     this.core = core;
   }
 
-  openConnection(
-    settings: ConnectionSettings = this.core.defaultConnectionSettings(),
+  openLane(
+    settings: ConnectionSettings = this.core.defaultLaneSettings(),
     metadata: Metadata = emptyMetadata(),
-  ): Promise<ConnectionHandle> {
-    return this.core.openConnection(settings, metadata);
+  ): Promise<Lane> {
+    return this.core.openLane(settings, metadata);
   }
 
-  closeConnection(connectionId: bigint, metadata: Metadata = emptyMetadata()): Promise<void> {
-    return this.core.closeConnection(connectionId, metadata);
+  closeLane(laneId: bigint, metadata: Metadata = emptyMetadata()): Promise<void> {
+    return this.core.closeLane(laneId, metadata);
   }
 
   shutdown(): void {
@@ -886,7 +898,7 @@ export class SessionHandle {
   }
 }
 
-export class ConnectionHandle {
+export class Lane {
   private readonly role: Role;
   private readonly channelAllocator: ChannelIdAllocator;
   private readonly channelRegistry: ChannelRegistry;
@@ -904,18 +916,18 @@ export class ConnectionHandle {
   private flushRequested = false;
   private callerRefs = 0;
 
-  private readonly session: SessionCore;
+  private readonly connection: ConnectionCore;
   readonly id: bigint;
   readonly localSettings: ConnectionSettings;
   readonly peerSettings: ConnectionSettings;
 
   constructor(
-    session: SessionCore,
+    connection: ConnectionCore,
     id: bigint,
     localSettings: ConnectionSettings,
     peerSettings: ConnectionSettings,
   ) {
-    this.session = session;
+    this.connection = connection;
     this.id = id;
     this.localSettings = localSettings;
     this.peerSettings = peerSettings;
@@ -932,12 +944,12 @@ export class ConnectionHandle {
     this.nextRequestId = firstIdForParity(localSettings.parity);
   }
 
-  sessionHandle(): SessionHandle {
-    return this.session.sessionHandleValue();
+  connectionHandle(): ConnectionHandle {
+    return this.connection.connectionHandleValue();
   }
 
   caller(): Caller {
-    return new ConnectionHandleCaller(this, this.retainCaller());
+    return new LaneCaller(this, this.retainCaller());
   }
 
   getChannelAllocator(): ChannelIdAllocator {
@@ -962,9 +974,9 @@ export class ConnectionHandle {
 
   // r[impl rpc.debug.snapshot]
   // r[impl rpc.observability.channel.context]
-  debugSnapshot(): ConnectionDebugSnapshot {
+  debugSnapshot(): LaneDebugSnapshot {
     return {
-      connectionId: this.id,
+      laneId: this.id,
       closed: this.closed,
       pendingResponseCount: this.pendingResponses.size,
       pendingRequestIds: [...this.pendingResponses.keys()],
@@ -985,7 +997,7 @@ export class ConnectionHandle {
 
   async call(request: CallerRequest): Promise<unknown> {
     if (this.closed) {
-      throw SessionError.closed();
+      throw ConnectionError.closed();
     }
 
     const { methodSchemas, registry } = request;
@@ -1057,7 +1069,7 @@ export class ConnectionHandle {
           reject,
           timer: setTimeout(() => {
             this.clearPendingState(state);
-            reject(new SessionError("timeout waiting for response"));
+            reject(new ConnectionError("timeout waiting for response"));
           }, request.timeoutMs ?? DEFAULT_TIMEOUT_MS),
           methodId: request.descriptor.id,
           payload: initial.payload.slice(),
@@ -1079,7 +1091,7 @@ export class ConnectionHandle {
     }
 
     // Decode the response against the server's advertised `Result<T, VoxError<E>>`
-    // schema binding. The session receive path enforces that the binding arrived
+    // schema binding. The connection receive path enforces that the binding arrived
     // before resolving this payload; reaching this point without it is a local invariant
     // failure, not a same-schema shortcut.
     // r[impl schema.errors.call-level]
@@ -1135,26 +1147,26 @@ export class ConnectionHandle {
     schemas: number[] = [],
   ): Promise<void> {
     try {
-      await this.session.sendMessage(messageResponse(requestId, payload, metadata, this.id, schemas));
+      await this.connection.sendMessage(messageResponse(requestId, payload, metadata, this.id, schemas));
     } finally {
       this.finishIncomingRequest(requestId);
     }
   }
 
   async sendCancel(requestId: bigint, metadata: Metadata = emptyMetadata()): Promise<void> {
-    await this.session.sendMessage(messageCancel(requestId, this.id, metadata));
+    await this.connection.sendMessage(messageCancel(requestId, this.id, metadata));
   }
 
   async sendChannelData(channelId: bigint, payload: Uint8Array): Promise<void> {
-    await this.session.sendMessage(messageData(channelId, payload, this.id));
+    await this.connection.sendMessage(messageData(channelId, payload, this.id));
   }
 
   async sendChannelClose(channelId: bigint, metadata: Metadata = emptyMetadata()): Promise<void> {
-    await this.session.sendMessage(messageClose(channelId, this.id, metadata));
+    await this.connection.sendMessage(messageClose(channelId, this.id, metadata));
   }
 
   async sendChannelCredit(channelId: bigint, additional: number): Promise<void> {
-    await this.session.sendMessage(messageCredit(channelId, additional, this.id));
+    await this.connection.sendMessage(messageCredit(channelId, additional, this.id));
   }
 
   async sendSchemas(
@@ -1162,7 +1174,7 @@ export class ConnectionHandle {
     direction: "args" | "response",
     schemas: Uint8Array,
   ): Promise<void> {
-    await this.session.sendMessage(messageSchema(methodId, direction, Array.from(schemas), this.id));
+    await this.connection.sendMessage(messageSchema(methodId, direction, Array.from(schemas), this.id));
   }
 
   enqueueIncomingCall(call: IncomingCall): void {
@@ -1173,10 +1185,10 @@ export class ConnectionHandle {
     // r[impl rpc.flow-control.max-concurrent-requests]
     // r[impl rpc.flow-control.max-concurrent-requests.inbound]
     if (this.inboundLiveRequests.has(requestId)) {
-      throw SessionError.protocol(`duplicate live request ${requestId}`);
+      throw ConnectionError.protocol(`duplicate live request ${requestId}`);
     }
     if (this.inboundLiveRequests.size >= this.localSettings.max_concurrent_requests) {
-      throw SessionError.protocol(
+      throw ConnectionError.protocol(
         `max_concurrent_requests exceeded for connection ${this.id}`,
       );
     }
@@ -1207,7 +1219,7 @@ export class ConnectionHandle {
       return;
     }
     voxLogger()?.debug(
-      `[vox:session] resolveResponse: req=${requestId} payload=${payload.length}`,
+      `[vox:connection] resolveResponse: req=${requestId} payload=${payload.length}`,
     );
     this.clearPendingState(state, { finalizeChannels: false });
     state.resolve(payload);
@@ -1222,7 +1234,7 @@ export class ConnectionHandle {
       this.channelRegistry.routeData(channelId, payload);
     } catch (error) {
       if (error instanceof ChannelError) {
-        this.close(new SessionError(error.message));
+        this.close(new ConnectionError(error.message));
         return;
       }
       throw error;
@@ -1290,7 +1302,7 @@ export class ConnectionHandle {
       released = true;
       this.callerRefs -= 1;
       if (this.callerRefs === 0 && !this.closed) {
-        this.session.callerLivenessDropped(this.id);
+        this.connection.callerLivenessDropped(this.id);
       }
     };
   }
@@ -1328,9 +1340,9 @@ export class ConnectionHandle {
       // r[impl schema.exchange.caller]
       const schemas = state.computeSchemas?.();
       voxLogger()?.debug(
-        `[vox:session] sendPendingRequest: req=${requestId} method=${state.methodId} payload=${state.payload.length} channels=${state.channels.length} schemas=${schemas?.length ?? 0}`,
+        `[vox:connection] sendPendingRequest: req=${requestId} method=${state.methodId} payload=${state.payload.length} channels=${state.channels.length} schemas=${schemas?.length ?? 0}`,
       );
-      await this.session.sendMessage(
+      await this.connection.sendMessage(
         messageRequest(
           requestId,
           state.methodId,
@@ -1349,7 +1361,7 @@ export class ConnectionHandle {
         return;
       }
       this.clearPendingState(state);
-      state.reject(error instanceof Error ? error : new SessionError(String(error)));
+      state.reject(error instanceof Error ? error : new ConnectionError(String(error)));
     }
   }
 
@@ -1373,7 +1385,7 @@ export class ConnectionHandle {
     for (let index = 0; index < channels.length; index += 1) {
       const meta = metas[index];
       this.channelRegistry.rememberContext(channels[index]!, {
-        connectionId: this.id,
+        laneId: this.id,
         requestId,
         service,
         method,
@@ -1430,26 +1442,26 @@ export class ConnectionHandle {
   }
 }
 
-class ConnectionHandleCaller implements Caller {
-  private readonly connection: ConnectionHandle;
+class LaneCaller implements Caller {
+  private readonly lane: Lane;
   private readonly releaseCaller: () => void;
   private disposed = false;
 
-  constructor(connection: ConnectionHandle, releaseCaller: () => void) {
-    this.connection = connection;
+  constructor(lane: Lane, releaseCaller: () => void) {
+    this.lane = lane;
     this.releaseCaller = releaseCaller;
   }
 
   call(request: CallerRequest): Promise<unknown> {
-    return this.connection.call(request);
+    return this.lane.call(request);
   }
 
   getChannelAllocator(): ChannelIdAllocator {
-    return this.connection.getChannelAllocator();
+    return this.lane.getChannelAllocator();
   }
 
   getChannelRegistry(): ChannelRegistry {
-    return this.connection.getChannelRegistry();
+    return this.lane.getChannelRegistry();
   }
 
   with(middleware: ClientMiddleware): Caller {
@@ -1465,39 +1477,104 @@ class ConnectionHandleCaller implements Caller {
   }
 }
 
-export class Session {
-  private readonly core: SessionCore;
+function metadataForLaneClient<T>(
+  clientCtor: LaneClientConstructor<T>,
+  metadata: Metadata | undefined,
+): Metadata {
+  if (metadata) {
+    return metadata;
+  }
+  return clientCtor.descriptor
+    ? voxServiceMetadata(clientCtor.descriptor.service_name)
+    : emptyMetadata();
+}
 
-  private constructor(core: SessionCore) {
+function connectionOptionsForConnectLane(options: ConnectLaneOptions): ConnectionTransportOptions {
+  const {
+    laneSettings: _laneSettings,
+    laneMetadata: _laneMetadata,
+    ...connectionOptions
+  } = options;
+  return connectionOptions;
+}
+
+export function defaultLaneSettings(
+  role: Role,
+  maxConcurrentRequests = 64,
+  channelCapacity = DEFAULT_CHANNEL_CAPACITY,
+): ConnectionSettings {
+  // r[impl rpc.flow-control.credit.initial.high-level]
+  // r[impl rpc.flow-control.credit.initial.zero]
+  if (channelCapacity <= 0) {
+    throw ConnectionError.protocol("initial_channel_credit must be greater than zero");
+  }
+
+  return {
+    // r[impl session.parity]
+    parity: parityFromRole(role),
+    // r[impl rpc.flow-control.max-concurrent-requests.default]
+    max_concurrent_requests: maxConcurrentRequests,
+    initial_channel_credit: channelCapacity,
+  };
+}
+
+export class Connection {
+  private readonly core: ConnectionCore;
+
+  private constructor(core: ConnectionCore) {
     this.core = core;
   }
 
-  static initiatorConduit(
+  static connectConduit(
     conduit: Conduit<Message>,
     handshake: HandshakeResult,
-    options: SessionBuilderOptions = {},
-  ): Session {
-    const core = new SessionCore(
+    options: ConnectionBuilderOptions = {},
+  ): Connection {
+    const core = new ConnectionCore(
       conduit,
       handshake.localSettings,
       handshake.peerSettings,
-      options.onConnection,
+      options.onLane,
       options.keepaliveIntervalMs ?? 0,
       options.keepaliveTimeoutMs ?? 0,
     );
-    core.rootConnection();
+    core.initialLane();
     core.start();
-    return new Session(core);
+    return new Connection(core);
   }
 
-
-
-  rootConnection(): ConnectionHandle {
-    return this.core.rootConnection();
+  static acceptConduit(
+    conduit: Conduit<Message>,
+    handshake: HandshakeResult,
+    options: ConnectionBuilderOptions = {},
+  ): Connection {
+    return Connection.connectConduit(conduit, handshake, options);
   }
 
-  handle(): SessionHandle {
-    return this.core.sessionHandleValue();
+  lane(): Lane {
+    return this.core.initialLane();
+  }
+
+  handle(): ConnectionHandle {
+    return this.core.connectionHandleValue();
+  }
+
+  openRawLane(options: LaneOpenOptions = {}): Promise<Lane> {
+    return this.core.openLane(
+      options.settings ?? this.core.defaultLaneSettings(),
+      options.metadata ?? emptyMetadata(),
+    );
+  }
+
+  async openLane<T>(
+    clientCtor: LaneClientConstructor<T>,
+    options: LaneOpenOptions = {},
+  ): Promise<T> {
+    const lane = await this.openRawLane({
+      settings: options.settings,
+      metadata: metadataForLaneClient(clientCtor, options.metadata),
+    });
+    return new clientCtor(lane.caller());
   }
 
   closed(): Promise<void> {
@@ -1505,137 +1582,80 @@ export class Session {
   }
 }
 
-export const session = {
-  async initiator(
-    transport: SessionTransport,
-    options: SessionTransportOptions = {},
-  ): Promise<Session> {
-    const established = await makeInitiatorEstablishedTransport(transport, options);
-    return Session.initiatorConduit(
-      established.conduit,
-      established.handshake,
-      options,
-    );
-  },
+export async function connect(
+  transport: ConnectionTransport,
+  options: ConnectionTransportOptions = {},
+): Promise<Connection> {
+  const established = await makeInitiatorEstablishedTransport(transport, options);
+  return Connection.connectConduit(
+    established.conduit,
+    established.handshake,
+    options,
+  );
+}
 
-  initiatorConduit(
-    conduit: Conduit<Message>,
-    handshake: HandshakeResult,
-    options: SessionBuilderOptions = {},
-  ): Session {
-    return Session.initiatorConduit(conduit, handshake, options);
-  },
+export async function accept(
+  transport: ConnectionTransport,
+  options: ConnectionTransportOptions = {},
+): Promise<Connection> {
+  const established = await makeAcceptorEstablishedTransport(transport, options);
+  return Connection.acceptConduit(
+    established.conduit,
+    established.handshake,
+    options,
+  );
+}
 
-  acceptorConduit(
-    conduit: Conduit<Message>,
-    handshake: HandshakeResult,
-    options: SessionBuilderOptions = {},
-  ): Session {
-    return Session.initiatorConduit(conduit, handshake, options);
-  },
+export async function connectOnLink(
+  link: Link,
+  options: ConnectionTransportOptions = {},
+): Promise<Connection> {
+  const localSettings: ConnectionSettings = {
+    parity: { tag: "Odd" },
+    max_concurrent_requests: options.maxConcurrentRequests ?? 64,
+    initial_channel_credit: channelCapacityFromOptions(options),
+  };
+  const handshake = await handshakeAsInitiator(
+    link,
+    localSettings,
+    options.metadata ?? emptyMetadata(),
+  );
+  return Connection.connectConduit(
+    new BareConduit(link, buildMessageDecodePlan(handshake.peerMessageSchema)),
+    handshake,
+    options,
+  );
+}
 
-  async initiatorOnLink(
-    link: Link,
-    options: SessionTransportOptions = {},
-  ): Promise<Session> {
-    const localSettings: ConnectionSettings = {
-      parity: { tag: "Odd" },
-      max_concurrent_requests: options.maxConcurrentRequests ?? 64,
-      initial_channel_credit: channelCapacityFromOptions(options),
-    };
-    const handshake = await handshakeAsInitiator(
-      link,
-      localSettings,
-      options.metadata ?? emptyMetadata(),
-    );
-    return Session.initiatorConduit(
-      new BareConduit(link, buildMessageDecodePlan(handshake.peerMessageSchema)),
-      handshake,
-      options,
-    );
-  },
+export async function acceptOnLink(
+  link: Link,
+  options: ConnectionTransportOptions = {},
+): Promise<Connection> {
+  const localSettings: ConnectionSettings = {
+    parity: { tag: "Even" },
+    max_concurrent_requests: options.maxConcurrentRequests ?? 64,
+    initial_channel_credit: channelCapacityFromOptions(options),
+  };
+  const handshake = await handshakeAsAcceptor(
+    link,
+    localSettings,
+    options.metadata ?? emptyMetadata(),
+  );
+  return Connection.acceptConduit(
+    new BareConduit(link, buildMessageDecodePlan(handshake.peerMessageSchema)),
+    handshake,
+    options,
+  );
+}
 
-  async acceptorOnLink(
-    link: Link,
-    options: SessionTransportOptions = {},
-  ): Promise<Session> {
-    const localSettings: ConnectionSettings = {
-      parity: { tag: "Even" },
-      max_concurrent_requests: options.maxConcurrentRequests ?? 64,
-      initial_channel_credit: channelCapacityFromOptions(options),
-    };
-    const handshake = await handshakeAsAcceptor(
-      link,
-      localSettings,
-      options.metadata ?? emptyMetadata(),
-    );
-    return Session.initiatorConduit(
-      new BareConduit(link, buildMessageDecodePlan(handshake.peerMessageSchema)),
-      handshake,
-      options,
-    );
-  },
-
-  async initiatorOn(
-    transport: SessionTransport,
-    options: SessionTransportOptions = {},
-  ): Promise<Session> {
-    const established = await makeInitiatorEstablishedTransport(transport, options);
-    return Session.initiatorConduit(
-      established.conduit,
-      established.handshake,
-      options,
-    );
-  },
-
-  async acceptorOn(
-    transport: SessionTransport,
-    options: SessionTransportOptions = {},
-  ): Promise<Session> {
-    const established = await makeAcceptorEstablishedTransport(transport, options);
-    return Session.initiatorConduit(
-      established.conduit,
-      established.handshake,
-      options,
-    );
-  },
-
-  async initiatorTransport(
-    transport: SessionTransport,
-    options: SessionTransportOptions = {},
-  ): Promise<Session> {
-    return session.initiator(transport, options);
-  },
-
-  async acceptorTransport(
-    transport: SessionTransport,
-    options: SessionTransportOptions = {},
-  ): Promise<Session> {
-    const established = await makeAcceptorEstablishedTransport(transport, options);
-    return Session.initiatorConduit(
-      established.conduit,
-      established.handshake,
-      options,
-    );
-  },
-
-  rootSettings(
-    role: Role,
-    maxConcurrentRequests = 64,
-    channelCapacity = DEFAULT_CHANNEL_CAPACITY,
-  ): ConnectionSettings {
-    // r[impl rpc.flow-control.credit.initial.high-level]
-    // r[impl rpc.flow-control.credit.initial.zero]
-    if (channelCapacity <= 0) {
-      throw SessionError.protocol("initial_channel_credit must be greater than zero");
-    }
-
-    return {
-      // r[impl session.parity]
-      parity: parityFromRole(role),
-      // r[impl rpc.flow-control.max-concurrent-requests.default]
-      max_concurrent_requests: maxConcurrentRequests,
-      initial_channel_credit: channelCapacity,
-    };
-  },
-};
+export async function connectLane<T>(
+  transport: ConnectionTransport,
+  clientCtor: LaneClientConstructor<T>,
+  options: ConnectLaneOptions = {},
+): Promise<T> {
+  const connection = await connect(transport, connectionOptionsForConnectLane(options));
+  return connection.openLane(clientCtor, {
+    settings: options.laneSettings,
+    metadata: options.laneMetadata,
+  });
+}

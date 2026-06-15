@@ -85,6 +85,7 @@ fn validate_channel_rules(service: &ServiceDescriptor) {
 mod tests {
     use std::collections::BTreeSet;
 
+    use base64::{Engine, engine::general_purpose::STANDARD};
     use facet::{Facet, Shape};
     use vox_types::{
         MethodDescriptor, MethodDescriptorOptions, MethodId, Rx, ServiceDescriptor, Tx,
@@ -95,20 +96,16 @@ mod tests {
 
     use super::generate_service;
 
-    fn bytes_literal(text: &str) -> String {
-        text.as_bytes()
-            .iter()
-            .map(u8::to_string)
-            .collect::<Vec<_>>()
-            .join(", ")
-    }
-
-    fn byte_array_literal(bytes: &[u8]) -> String {
-        bytes
-            .iter()
-            .map(u8::to_string)
-            .collect::<Vec<_>>()
-            .join(", ")
+    fn schema_closure_expr(bytes: &[u8]) -> String {
+        let encoded = STANDARD.encode(bytes);
+        let mut out = String::from("voxSchemaClosure(\"\"\"\n");
+        for chunk in encoded.as_bytes().chunks(100) {
+            out.push_str("          ");
+            out.push_str(std::str::from_utf8(chunk).expect("base64 is utf-8"));
+            out.push('\n');
+        }
+        out.push_str("          \"\"\")");
+        out
     }
 
     fn parse_self_describing_unique_bundle(
@@ -255,15 +252,15 @@ mod tests {
         );
         assert!(
             generated.contains(&format!(
-                "argsSchemaClosure: [{}]",
-                byte_array_literal(&args_closure)
+                "argsSchemaClosure: {}",
+                schema_closure_expr(&args_closure)
             )),
             "generated Swift must embed the self-contained phon args closure:\n{generated}"
         );
         assert!(
             generated.contains(&format!(
-                "responseSchemaClosure: [{}]",
-                byte_array_literal(&response_closure)
+                "responseSchemaClosure: {}",
+                schema_closure_expr(&response_closure)
             )),
             "generated Swift must embed the self-contained phon response closure:\n{generated}"
         );
@@ -385,9 +382,9 @@ mod tests {
         );
         assert!(
             generated.contains("public final class TestSvcClient: TestSvcCaller, Sendable {")
-                && generated.contains("    private let connection: VoxConnection")
+                && generated.contains("    private let connection: VoxLane")
                 && generated
-                    .contains("    public init(connection: VoxConnection, timeout: TimeInterval? = 30.0)")
+                    .contains("    public init(connection: VoxLane, timeout: TimeInterval? = 30.0)")
                 && generated.contains("let payload = encodeVoxTyped(message, testSvc_echo_ArgsEncoder)")
                 && generated.contains(&format!(
                     "methodId: {echo_id}, metadata: .null, payload: payload, timeout: timeout,"
@@ -396,7 +393,7 @@ mod tests {
                     "schemaInfo: ClientSchemaInfo(methodSchemas: testSvcMethods[{echo_id}]!, registry: testSvcRegistry)"
                 ))
                 && generated.contains("let result: Result<String, VoxError<Infallible>> = try decodeVoxTyped(respDecoder, response)"),
-            "generated Swift client must delegate request serialization and response handling to VoxConnection:\n{generated}"
+            "generated Swift client must delegate request serialization and response handling to VoxLane:\n{generated}"
         );
         assert!(
             generated.contains("public protocol TestSvcHandler: Sendable {")
@@ -510,6 +507,20 @@ mod tests {
         };
 
         let generated = generate_service(&service);
+        let args_closure = vox_phon::schema_bytes_for_shape_with_auxiliary_roots(
+            subscribe.args_shape,
+            &[
+                (
+                    "channel.arg.0.tx.element",
+                    <NestedInner as facet::Facet>::SHAPE,
+                ),
+                (
+                    "channel.arg.1.rx.element",
+                    <NestedInner as facet::Facet>::SHAPE,
+                ),
+            ],
+        )
+        .expect("args schema closure with channel auxiliary roots");
         assert!(
             generated.contains("channel.arg.0.tx.element"),
             "Tx<T> channel receive decode must use the named auxiliary root:\n{generated}"
@@ -519,12 +530,11 @@ mod tests {
             "Rx<T> channel receive decode must use the named auxiliary root:\n{generated}"
         );
         assert!(
-            generated.contains(&bytes_literal("channel.arg.0.tx.element")),
-            "Tx<T> element root must be carried in argsSchemaClosure auxiliary roots:\n{generated}"
-        );
-        assert!(
-            generated.contains(&bytes_literal("channel.arg.1.rx.element")),
-            "Rx<T> element root must be carried in argsSchemaClosure auxiliary roots:\n{generated}"
+            generated.contains(&format!(
+                "argsSchemaClosure: {}",
+                schema_closure_expr(&args_closure)
+            )),
+            "channel element roots must be carried in argsSchemaClosure auxiliary roots:\n{generated}"
         );
         assert!(
             generated.contains("buildAuxiliaryDecodeFn"),
