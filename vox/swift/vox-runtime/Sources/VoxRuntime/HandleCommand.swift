@@ -19,5 +19,9 @@ enum HandleCommand: Sendable {
         dispatcher: (any ServiceDispatcher)?,
         responseTx: @Sendable (Result<Lane, ConnectionError>) -> Void
     )
-    case releaseLane(laneId: UInt64)
+    case closeLane(
+        laneId: UInt64,
+        metadata: Metadata,
+        responseTx: @Sendable (Result<Void, ConnectionError>) -> Void
+    )
 }

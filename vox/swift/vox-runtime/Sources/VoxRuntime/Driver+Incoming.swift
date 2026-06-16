@@ -173,7 +173,6 @@ extension Driver {
             }
             await removeLane(msg.connectionId)
             await failPendingResponses(connectionId: msg.connectionId)
-            await finishIfControlLaneClosedAndNoServiceLanes()
         case .requestMessage(let request):
             switch request.body {
             case .call(let call):
@@ -470,13 +469,4 @@ extension Driver {
         }
     }
 
-    func finishIfControlLaneClosedAndNoServiceLanes() async {
-        guard await state.isControlLaneInternallyClosed() else {
-            return
-        }
-        guard await laneState.isEmpty() else {
-            return
-        }
-        eventContinuation.finish()
-    }
 }

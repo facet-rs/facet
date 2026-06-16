@@ -2016,7 +2016,7 @@ struct ConnectionFailureTests {
 
     // r[verify rpc.caller.liveness.refcounted]
     // r[verify rpc.caller.liveness.last-drop-closes-connection]
-    @Test func droppingLastOutboundServiceLaneReferenceSendsClose() async throws {
+    @Test func droppingLastOutboundServiceLaneReferenceDoesNotSendClose() async throws {
         let transport = ScriptedTransport()
         let (controlLane, driver, connectionHandle, _) = try await establishInitiator(
             conduit: transport,
@@ -2069,8 +2069,13 @@ struct ConnectionFailureTests {
                     == nil)
 
             secondReference = nil
+            #expect(
+                await awaitConnectionClose(transport, connectionId: connId, timeoutMs: 100)
+                    == nil)
+
+            try await connectionHandle.closeLane(connId)
             guard await awaitConnectionClose(transport, connectionId: connId) != nil else {
-                Issue.record("expected virtual LaneClose after last reference")
+                Issue.record("expected service lane LaneClose after explicit close")
                 return
             }
         }
@@ -2164,8 +2169,13 @@ struct ConnectionFailureTests {
             }
 
             serviceLane = nil
+            #expect(
+                await awaitConnectionClose(transport, connectionId: connId, timeoutMs: 100)
+                    == nil)
+
+            try await connectionHandle.closeLane(connId)
             guard await awaitConnectionClose(transport, connectionId: connId) != nil else {
-                Issue.record("expected service lane LaneClose after lane drop")
+                Issue.record("expected service lane LaneClose after explicit close")
                 return
             }
 

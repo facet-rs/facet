@@ -119,6 +119,10 @@ class MemoryLink {
     waiting?.(null);
   }
 
+  queuedPayloadCount(): number {
+    return this.queue.length;
+  }
+
   isClosed(): boolean {
     return this.closed;
   }
@@ -411,8 +415,8 @@ describe("session", () => {
     const initiatorFirstOpen = decodeMessage(
       (await withTimeout(rawServerLink.recv(), "initiator first connection open"))!,
     );
-    expect(initiatorFirstOpen.connection_id).toBe(1n);
-    expect(initiatorFirstOpen.payload.tag).toBe("ConnectionOpen");
+    expect(initiatorFirstOpen.lane_id).toBe(1n);
+    expect(initiatorFirstOpen.payload.tag).toBe("LaneOpen");
     await rawServerLink.send(encodeMessage(messageLaneAccept(1n, acceptedSettings)));
     await withTimeout(initiatorFirst, "initiator first connection accept");
 
@@ -420,8 +424,8 @@ describe("session", () => {
     const initiatorSecondOpen = decodeMessage(
       (await withTimeout(rawServerLink.recv(), "initiator second connection open"))!,
     );
-    expect(initiatorSecondOpen.connection_id).toBe(3n);
-    expect(initiatorSecondOpen.payload.tag).toBe("ConnectionOpen");
+    expect(initiatorSecondOpen.lane_id).toBe(3n);
+    expect(initiatorSecondOpen.payload.tag).toBe("LaneOpen");
     await rawServerLink.send(encodeMessage(messageLaneAccept(3n, acceptedSettings)));
     await withTimeout(initiatorSecond, "initiator second connection accept");
 
@@ -439,8 +443,8 @@ describe("session", () => {
     const acceptorFirstOpen = decodeMessage(
       (await withTimeout(rawClientLink.recv(), "acceptor first connection open"))!,
     );
-    expect(acceptorFirstOpen.connection_id).toBe(2n);
-    expect(acceptorFirstOpen.payload.tag).toBe("ConnectionOpen");
+    expect(acceptorFirstOpen.lane_id).toBe(2n);
+    expect(acceptorFirstOpen.payload.tag).toBe("LaneOpen");
     await rawClientLink.send(encodeMessage(messageLaneAccept(2n, acceptedSettings)));
     await withTimeout(acceptorFirst, "acceptor first connection accept");
 
@@ -448,8 +452,8 @@ describe("session", () => {
     const acceptorSecondOpen = decodeMessage(
       (await withTimeout(rawClientLink.recv(), "acceptor second connection open"))!,
     );
-    expect(acceptorSecondOpen.connection_id).toBe(4n);
-    expect(acceptorSecondOpen.payload.tag).toBe("ConnectionOpen");
+    expect(acceptorSecondOpen.lane_id).toBe(4n);
+    expect(acceptorSecondOpen.payload.tag).toBe("LaneOpen");
     await rawClientLink.send(encodeMessage(messageLaneAccept(4n, acceptedSettings)));
     await withTimeout(acceptorSecond, "acceptor second connection accept");
 
@@ -481,7 +485,7 @@ describe("session", () => {
     });
     const initiatorSession = await withTimeout(
       establishRawInitiator(clientLink, rawServerLink, {
-        onConnection: (connection) => acceptConnection(connection),
+        onLane: (connection) => acceptConnection(connection),
       }),
       "raw initiator establishment",
     );
@@ -492,8 +496,8 @@ describe("session", () => {
     const accept = decodeMessage(
       (await withTimeout(rawServerLink.recv(), "service lane accept"))!,
     );
-    expect(accept.connection_id).toBe(2n);
-    expect(accept.payload.tag).toBe("ConnectionAccept");
+    expect(accept.lane_id).toBe(2n);
+    expect(accept.payload.tag).toBe("LaneAccept");
     const connection = await withTimeout(acceptedConnection, "accepted connection callback");
     expect(connection.id).toBe(2n);
     expect(connection.localSettings.parity).toEqual({ tag: "Even" });
@@ -520,7 +524,7 @@ describe("session", () => {
     const response = decodeMessage(
       (await withTimeout(rawServerLink.recv(), "service lane response"))!,
     );
-    expect(response.connection_id).toBe(2n);
+    expect(response.lane_id).toBe(2n);
     expect(response.payload.tag).toBe("RequestMessage");
     if (response.payload.tag === "RequestMessage") {
       expect(response.payload.value.id).toBe(77n);
@@ -552,8 +556,8 @@ describe("session", () => {
     const reject = decodeMessage(
       (await withTimeout(rawServerLink.recv(), "service lane reject"))!,
     );
-    expect(reject.connection_id).toBe(2n);
-    expect(reject.payload.tag).toBe("ConnectionReject");
+    expect(reject.lane_id).toBe(2n);
+    expect(reject.payload.tag).toBe("LaneReject");
 
     clientLink.close();
     rawServerLink.close();
@@ -598,7 +602,7 @@ describe("session", () => {
     );
     const serverRoot = serverSession.lane();
     await expect(serverSession.handle().closeLane(0n)).rejects.toThrow(
-      /cannot close initial lane/,
+      /cannot close the initial lane/,
     );
 
     await clientLink.send(
@@ -630,7 +634,7 @@ describe("session", () => {
     expect(payload).not.toBeNull();
     const message = decodeMessage(payload!);
     expect(message).toEqual({
-      connection_id: 0n,
+      lane_id: 0n,
       payload: { tag: "Pong", value: { nonce: 123n } },
     });
 
@@ -681,7 +685,7 @@ describe("session", () => {
     const payload = await withTimeout(clientLink.recv(), "protocol error frame");
     expect(payload).not.toBeNull();
     const message = decodeMessage(payload!);
-    expect(message.connection_id).toBe(0n);
+    expect(message.lane_id).toBe(0n);
     expect(message.payload.tag).toBe("ProtocolError");
     if (message.payload.tag === "ProtocolError") {
       expect(message.payload.value.description).toContain("missing args schema binding");
@@ -778,7 +782,7 @@ describe("session", () => {
     await Promise.allSettled([request(), request()]);
 
     const calls = sent.map((message) => {
-      expect(message.connection_id).toBe(13n);
+      expect(message.lane_id).toBe(13n);
       expect(message.payload.tag).toBe("RequestMessage");
       const requestMessage = message.payload.tag === "RequestMessage"
         ? message.payload.value
@@ -958,7 +962,7 @@ describe("session", () => {
     const lateResponse = decodeMessage(
       (await withTimeout(clientLink.recv(), "post-cancel response"))!,
     );
-    expect(lateResponse.connection_id).toBe(0n);
+    expect(lateResponse.lane_id).toBe(0n);
     expect(lateResponse.payload.tag).toBe("RequestMessage");
     if (lateResponse.payload.tag === "RequestMessage") {
       expect(lateResponse.payload.value.id).toBe(1n);
@@ -1058,7 +1062,7 @@ describe("session", () => {
     const payload = await withTimeout(clientLink.recv(), "max-concurrent protocol error");
     expect(payload).not.toBeNull();
     const message = decodeMessage(payload!);
-    expect(message.connection_id).toBe(0n);
+    expect(message.lane_id).toBe(0n);
     expect(message.payload.tag).toBe("ProtocolError");
     if (message.payload.tag === "ProtocolError") {
       expect(message.payload.value.description).toContain("max_concurrent_requests");
@@ -1069,9 +1073,8 @@ describe("session", () => {
     serverLink.close();
   });
 
-  // r[verify connection.close]
   // r[verify rpc.caller.liveness.last-drop-closes-connection]
-  it("closes a service lane when its last caller is disposed", async () => {
+  it("does not close a service lane when its last caller is disposed", async () => {
     const settings: ConnectionSettings = {
       parity: { tag: "Odd" },
       max_concurrent_requests: 64,
@@ -1092,18 +1095,23 @@ describe("session", () => {
     const open = decodeMessage(
       (await withTimeout(rawServerLink.recv(), "service lane open"))!,
     );
-    expect(open.connection_id).toBe(1n);
+    expect(open.lane_id).toBe(1n);
     await rawServerLink.send(encodeMessage(messageLaneAccept(1n, peerSettings)));
     const connection = await withTimeout(opened, "service lane accept");
 
     const caller = connection.caller();
     caller.dispose();
 
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(rawServerLink.queuedPayloadCount()).toBe(0);
+    expect(connection.isClosed()).toBe(false);
+
+    await initiatorSession.handle().closeLane(open.lane_id);
     const close = decodeMessage(
-      (await withTimeout(rawServerLink.recv(), "service lane close"))!,
+      (await withTimeout(rawServerLink.recv(), "explicit service lane close"))!,
     );
-    expect(close.connection_id).toBe(1n);
-    expect(close.payload.tag).toBe("ConnectionClose");
+    expect(close.lane_id).toBe(1n);
+    expect(close.payload.tag).toBe("LaneClose");
 
     initiatorLink.close();
     rawServerLink.close();
@@ -1112,7 +1120,7 @@ describe("session", () => {
   });
 
   // r[verify rpc.caller.liveness.refcounted]
-  it("keeps a service lane live until all callers are disposed", async () => {
+  it("disposing service lane callers only releases local references", async () => {
     const settings: ConnectionSettings = {
       parity: { tag: "Odd" },
       max_concurrent_requests: 64,
@@ -1133,7 +1141,7 @@ describe("session", () => {
     const open = decodeMessage(
       (await withTimeout(rawServerLink.recv(), "service lane open"))!,
     );
-    await rawServerLink.send(encodeMessage(messageLaneAccept(open.connection_id, peerSettings)));
+    await rawServerLink.send(encodeMessage(messageLaneAccept(open.lane_id, peerSettings)));
     const connection = await withTimeout(opened, "service lane accept");
 
     const firstCaller = connection.caller();
@@ -1141,14 +1149,20 @@ describe("session", () => {
 
     firstCaller.dispose();
     await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(rawServerLink.queuedPayloadCount()).toBe(0);
     expect(connection.isClosed()).toBe(false);
 
     secondCaller.dispose();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(rawServerLink.queuedPayloadCount()).toBe(0);
+    expect(connection.isClosed()).toBe(false);
+
+    await initiatorSession.handle().closeLane(open.lane_id);
     const close = decodeMessage(
-      (await withTimeout(rawServerLink.recv(), "service lane close after last caller"))!,
+      (await withTimeout(rawServerLink.recv(), "explicit service lane close"))!,
     );
-    expect(close.connection_id).toBe(open.connection_id);
-    expect(close.payload.tag).toBe("ConnectionClose");
+    expect(close.lane_id).toBe(open.lane_id);
+    expect(close.payload.tag).toBe("LaneClose");
     expect(connection.isClosed()).toBe(true);
 
     initiatorLink.close();
@@ -1179,11 +1193,11 @@ describe("session", () => {
     const open = decodeMessage(
       (await withTimeout(rawServerLink.recv(), "service lane open"))!,
     );
-    await rawServerLink.send(encodeMessage(messageLaneAccept(open.connection_id, peerSettings)));
+    await rawServerLink.send(encodeMessage(messageLaneAccept(open.lane_id, peerSettings)));
     const connection = await withTimeout(opened, "service lane accept");
     expect(connection.isClosed()).toBe(false);
 
-    await rawServerLink.send(encodeMessage(messageLaneClose(open.connection_id)));
+    await rawServerLink.send(encodeMessage(messageLaneClose(open.lane_id)));
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(connection.isClosed()).toBe(true);
 
@@ -1195,7 +1209,7 @@ describe("session", () => {
           new Uint8Array(),
           emptyMetadata(),
           [],
-          open.connection_id,
+          open.lane_id,
           [],
         ),
       ),
@@ -1203,11 +1217,11 @@ describe("session", () => {
     const errorPayload = await withTimeout(rawServerLink.recv(), "post-close protocol error");
     expect(errorPayload).not.toBeNull();
     const errorMessage = decodeMessage(errorPayload!);
-    expect(errorMessage.connection_id).toBe(0n);
+    expect(errorMessage.lane_id).toBe(0n);
     expect(errorMessage.payload.tag).toBe("ProtocolError");
     if (errorMessage.payload.tag === "ProtocolError") {
       expect(errorMessage.payload.value.description).toContain(
-        `unknown connection ${open.connection_id}`,
+        `unknown lane ${open.lane_id}`,
       );
     }
 
@@ -1217,7 +1231,7 @@ describe("session", () => {
 
   // r[verify rpc.caller.liveness.root-internal-close]
   // r[verify rpc.caller.liveness.root-teardown-condition]
-  it("tears down after root caller disposal only once virtual callers are gone", async () => {
+  it("does not tear down after root and service caller disposal", async () => {
     const settings: ConnectionSettings = {
       parity: { tag: "Odd" },
       max_concurrent_requests: 64,
@@ -1238,7 +1252,7 @@ describe("session", () => {
     const open = decodeMessage(
       (await withTimeout(rawServerLink.recv(), "service lane open"))!,
     );
-    await rawServerLink.send(encodeMessage(messageLaneAccept(open.connection_id, peerSettings)));
+    await rawServerLink.send(encodeMessage(messageLaneAccept(open.lane_id, peerSettings)));
     const connection = await withTimeout(opened, "service lane accept");
 
     const rootCaller = initiatorSession.lane().caller();
@@ -1249,13 +1263,12 @@ describe("session", () => {
     expect(initiatorLink.isClosed()).toBe(false);
 
     virtualCaller.dispose();
-    const close = decodeMessage(
-      (await withTimeout(rawServerLink.recv(), "virtual close after root disposal"))!,
-    );
-    expect(close.connection_id).toBe(open.connection_id);
-    expect(close.payload.tag).toBe("ConnectionClose");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(rawServerLink.queuedPayloadCount()).toBe(0);
+    expect(initiatorLink.isClosed()).toBe(false);
 
-    await withTimeout(initiatorSession.closed(), "root liveness teardown");
+    initiatorSession.handle().shutdown();
+    await withTimeout(initiatorSession.closed(), "explicit shutdown teardown");
     expect(initiatorLink.isClosed()).toBe(true);
 
     rawServerLink.close();
@@ -1529,7 +1542,7 @@ describe("session", () => {
     expect(pollCount).toBe(3);
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({
-      connection_id: 0n,
+      lane_id: 0n,
       payload: {
         tag: "ChannelMessage",
         value: {

@@ -330,7 +330,6 @@ class ConnectionCore {
   private readonly localInitialLaneSettings: ConnectionSettings;
   private readonly peerInitialLaneSettings: ConnectionSettings;
   private readonly onLane?: (lane: Lane) => void | Promise<void>;
-  private initialLaneInternallyClosed = false;
 
   constructor(
     conduit: Conduit<Message>,
@@ -503,7 +502,6 @@ class ConnectionCore {
     lane.close(ConnectionError.closed());
     this.lanes.delete(laneId);
     await this.sendMessage(messageLaneClose(laneId, metadata));
-    this.maybeShutdownAfterRootInternalClose();
   }
 
   async sendMessage(message: Message): Promise<void> {
@@ -540,35 +538,6 @@ class ConnectionCore {
 
   shutdown(): void {
     this.fail(ConnectionError.closed());
-  }
-
-  callerLivenessDropped(laneId: bigint): void {
-    if (laneId === 0n) {
-      // r[impl rpc.caller.liveness.root-internal-close]
-      this.initialLaneInternallyClosed = true;
-      // r[impl rpc.caller.liveness.root-teardown-condition]
-      this.maybeShutdownAfterRootInternalClose();
-      return;
-    }
-
-    // r[impl rpc.caller.liveness.last-drop-closes-connection]
-    void this.closeLane(laneId).catch((error) => {
-      if (!this.closed) {
-        this.fail(error instanceof ConnectionError ? error : new ConnectionError(String(error)));
-      }
-    });
-  }
-
-  private maybeShutdownAfterRootInternalClose(): void {
-    if (!this.initialLaneInternallyClosed || this.closed) {
-      return;
-    }
-    for (const laneId of this.lanes.keys()) {
-      if (laneId !== 0n) {
-        return;
-      }
-    }
-    this.shutdown();
   }
 
   private assertOpen(): void {
@@ -761,7 +730,6 @@ class ConnectionCore {
     }
     lane.close(ConnectionError.closed());
     this.lanes.delete(laneId);
-    this.maybeShutdownAfterRootInternalClose();
   }
 
   private async handleRequestMessage(
@@ -1293,6 +1261,9 @@ export class Lane {
 
   private retainCaller(): () => void {
     // r[impl rpc.caller.liveness.refcounted]
+    // r[impl rpc.caller.liveness.last-drop-closes-connection]
+    // r[impl rpc.caller.liveness.root-internal-close]
+    // r[impl rpc.caller.liveness.root-teardown-condition]
     this.callerRefs += 1;
     let released = false;
     return () => {
@@ -1301,9 +1272,6 @@ export class Lane {
       }
       released = true;
       this.callerRefs -= 1;
-      if (this.callerRefs === 0 && !this.closed) {
-        this.connection.callerLivenessDropped(this.id);
-      }
     };
   }
 

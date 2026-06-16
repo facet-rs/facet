@@ -277,10 +277,6 @@ extension Driver {
                 responseTx(.failure(.connectionClosed))
                 return
             }
-            guard !(await state.isControlLaneInternallyClosed()) else {
-                responseTx(.failure(.connectionClosed))
-                return
-            }
             guard settings.initialChannelCredit > 0 else {
                 responseTx(
                     .failure(.protocolViolation(rule: "rpc.flow-control.credit.initial.zero"))
@@ -306,33 +302,48 @@ extension Driver {
                 let pending = await laneState.takePendingOutbound(connId)
                 pending?.responseTx(.failure(.transportError(String(describing: error))))
             }
-        case .releaseLane(let laneId):
-            await handleLaneLivenessRelease(connectionId: laneId)
+        case .closeLane(let laneId, let metadata, let responseTx):
+            await handleLaneCloseRequest(
+                connectionId: laneId,
+                metadata: metadata,
+                responseTx: responseTx
+            )
         }
     }
 
-    func handleLaneLivenessRelease(connectionId: UInt64) async {
-        if connectionId == 0 {
-            // r[impl rpc.caller.liveness.root-internal-close]
-            // r[impl rpc.caller.liveness.root-teardown-condition]
-            await state.markControlLaneInternallyClosed()
-            await finishIfControlLaneClosedAndNoServiceLanes()
+    func handleLaneCloseRequest(
+        connectionId: UInt64,
+        metadata: Metadata,
+        responseTx: @Sendable (Result<Void, ConnectionError>) -> Void
+    ) async {
+        // r[impl connection.close]
+        // r[impl connection.close.semantics]
+        let isClosed = await state.isConnectionClosed()
+        guard !isClosed else {
+            responseTx(.failure(.connectionClosed))
             return
         }
 
-        // r[impl rpc.caller.liveness.last-drop-closes-connection]
+        if connectionId == 0 {
+            responseTx(.failure(.protocolViolation(rule: "connection.close")))
+            return
+        }
+
         guard await laneState.removeLane(connectionId) else {
+            responseTx(.failure(.protocolViolation(rule: "connection.close")))
             return
         }
         await failPendingResponses(connectionId: connectionId)
         do {
-            try await sendOrEnqueue(messageConnectionClose(connectionId: connectionId))
+            try await sendOrEnqueue(
+                messageConnectionClose(connectionId: connectionId, metadata: metadata))
         } catch {
             await failAllPending()
             eventContinuation.finish()
+            responseTx(.failure(.transportError(String(describing: error))))
             return
         }
-        await finishIfControlLaneClosedAndNoServiceLanes()
+        responseTx(.success(()))
     }
 
     func flushPendingCalls() async throws {

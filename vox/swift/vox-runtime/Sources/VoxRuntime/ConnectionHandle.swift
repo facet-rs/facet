@@ -39,6 +39,33 @@ public final class ConnectionHandle: @unchecked Sendable {
         }
     }
 
+    /// Close an open service lane.
+    ///
+    /// r[impl connection]
+    /// r[impl connection.virtual]
+    /// r[impl connection.close]
+    /// r[impl connection.close.semantics]
+    public func closeLane(
+        _ laneId: UInt64,
+        metadata: Metadata = emptyMetadata()
+    ) async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            let responseTx = SingleResume<Void> { result in
+                continuation.resume(with: result)
+            }
+            let accepted = commandTx(
+                .closeLane(
+                    laneId: laneId,
+                    metadata: metadata,
+                    responseTx: { result in responseTx(result) }
+                ))
+            guard accepted else {
+                responseTx(.failure(.connectionClosed))
+                return
+            }
+        }
+    }
+
     /// Request shutdown of the driven connection.
     public func shutdown() {
         eventContinuation.finish()

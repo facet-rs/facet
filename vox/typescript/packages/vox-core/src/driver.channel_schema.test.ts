@@ -91,7 +91,7 @@ describe("Driver channel schema exchange", () => {
         args: Uint8Array;
         channels: bigint[];
         metadata: ReturnType<typeof emptyMetadata>;
-        connectionEpoch: number;
+        laneEpoch: number;
       }): Promise<void>;
     };
 
@@ -101,7 +101,7 @@ describe("Driver channel schema exchange", () => {
       args: Uint8Array.of(0xff),
       channels: [99n],
       metadata: emptyMetadata(),
-      connectionEpoch: 0,
+      laneEpoch: 0,
     });
 
     expect(dispatchCount).toBe(0);
@@ -116,8 +116,8 @@ describe("Driver channel schema exchange", () => {
         sessionEchoRegistry,
       ),
     ).toEqual({
-      tag: "Err",
-      value: {
+      ok: false,
+      error: {
         tag: "UnknownMethod",
       },
     });
@@ -141,7 +141,7 @@ describe("Driver channel schema exchange", () => {
         args: new Uint8Array(),
         channels: [],
         metadata: emptyMetadata(),
-        connectionEpoch: 0,
+        laneEpoch: 0,
       },
       {
         requestId: 2n,
@@ -149,7 +149,7 @@ describe("Driver channel schema exchange", () => {
         args: new Uint8Array(),
         channels: [],
         metadata: emptyMetadata(),
-        connectionEpoch: 0,
+        laneEpoch: 0,
       },
       null,
     ];
@@ -210,7 +210,7 @@ describe("Driver channel schema exchange", () => {
         ECHO_METHOD_SCHEMAS.responseRoot,
         sessionEchoRegistry,
       ),
-    ).toEqual({ tag: "Ok", value: 2 });
+    ).toEqual({ ok: true, value: 2 });
   });
 
   // r[verify rpc]
@@ -284,7 +284,7 @@ describe("Driver channel schema exchange", () => {
         args: Uint8Array;
         channels: bigint[];
         metadata: ReturnType<typeof emptyMetadata>;
-        connectionEpoch: number;
+        laneEpoch: number;
       }): Promise<void>;
     };
 
@@ -294,7 +294,7 @@ describe("Driver channel schema exchange", () => {
       args: Uint8Array.of(0),
       channels: [41n, 43n],
       metadata: emptyMetadata(),
-      connectionEpoch: 0,
+      laneEpoch: 0,
     });
 
     expect(ordinaryArg).toBe("ordinary");
@@ -354,7 +354,7 @@ describe("Driver channel schema exchange", () => {
         args: Uint8Array;
         channels: bigint[];
         metadata: ReturnType<typeof emptyMetadata>;
-        connectionEpoch: number;
+        laneEpoch: number;
       }): Promise<void>;
     };
 
@@ -364,7 +364,7 @@ describe("Driver channel schema exchange", () => {
       args: Uint8Array.of(1),
       channels: [],
       metadata: emptyMetadata(),
-      connectionEpoch: 0,
+      laneEpoch: 0,
     });
 
     expect(dispatchCount).toBe(0);
@@ -381,8 +381,8 @@ describe("Driver channel schema exchange", () => {
         sessionEchoRegistry,
       ),
     ).toEqual({
-      tag: "Err",
-      value: {
+      ok: false,
+      error: {
         tag: "InvalidPayload",
         value: "Schema compatibility error: args decode plan failed",
       },
@@ -428,7 +428,7 @@ describe("Driver channel schema exchange", () => {
         args: Uint8Array;
         channels: bigint[];
         metadata: ReturnType<typeof emptyMetadata>;
-        connectionEpoch: number;
+        laneEpoch: number;
       }): Promise<void>;
     };
 
@@ -438,7 +438,7 @@ describe("Driver channel schema exchange", () => {
       args: new Uint8Array(),
       channels: [],
       metadata: emptyMetadata(),
-      connectionEpoch: 0,
+      laneEpoch: 0,
     });
 
     expect(sent).toHaveLength(1);

@@ -16,10 +16,8 @@ public final class Lane: @unchecked Sendable {
     deinit {
         // r[impl rpc.caller.liveness.refcounted]
         // r[impl rpc.caller.liveness.last-drop-closes-connection]
-        guard laneId != 0 else {
-            return
-        }
-        handle.releaseLaneLiveness()
+        // r[impl rpc.caller.liveness.root-internal-close]
+        // r[impl rpc.caller.liveness.root-teardown-condition]
     }
 
     public var channelAllocator: ChannelIdAllocator {

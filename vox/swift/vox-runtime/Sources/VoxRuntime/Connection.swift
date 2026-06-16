@@ -40,6 +40,13 @@ public final class Connection: @unchecked Sendable {
         )
     }
 
+    public func closeLane(
+        _ laneId: UInt64,
+        metadata: Metadata = emptyMetadata()
+    ) async throws {
+        try await handle.closeLane(laneId, metadata: metadata)
+    }
+
     public func shutdown() {
         handle.shutdown()
     }

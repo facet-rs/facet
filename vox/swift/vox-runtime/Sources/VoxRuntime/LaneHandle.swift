@@ -98,8 +98,4 @@ final class LaneHandle: @unchecked Sendable {
     func sendTaskMessage(_ msg: TaskMessage) {
         _ = taskTx(msg)
     }
-
-    func releaseLaneLiveness() {
-        _ = commandTx(.releaseLane(laneId: laneId))
-    }
 }

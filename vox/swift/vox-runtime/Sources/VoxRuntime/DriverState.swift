@@ -26,7 +26,6 @@ actor DriverState {
     var inFlightResponseContext: [UInt64: InFlightResponseContext] = [:]
     private var finalizedRequests: [UInt64: FinalizedRequest] = [:]
     var isClosed = false
-    private var controlLaneInternallyClosed = false
 
     func addPendingResponse(
         _ requestId: UInt64,
@@ -172,14 +171,6 @@ actor DriverState {
 
     func isConnectionClosed() -> Bool {
         isClosed
-    }
-
-    func markControlLaneInternallyClosed() {
-        controlLaneInternallyClosed = true
-    }
-
-    func isControlLaneInternallyClosed() -> Bool {
-        controlLaneInternallyClosed
     }
 }
 
