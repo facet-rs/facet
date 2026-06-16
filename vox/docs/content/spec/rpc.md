@@ -66,6 +66,14 @@ weight = 12
 > Each connection is bound to exactly one service. If a peer needs to talk
 > multiple protocols, it opens additional virtual connections — one per service.
 
+> r[rpc.one-service-per-lane]
+>
+> In the rootless connection model, each service lane is bound to exactly one
+> service. A connection MAY carry multiple service lanes. Generated clients and
+> dispatchers are lane-local: a generated client sends requests on one accepted
+> service lane, and a dispatcher handles requests for that lane's service
+> namespace.
+
 > r[rpc.handler]
 >
 > A handler handles incoming requests on a connection. It is a user-provided
@@ -180,6 +188,72 @@ registered on the session builder; otherwise they are rejected.
 >   * The request ID of the request being responded to
 >   * The serialized return value
 >   * Metadata
+
+> r[rpc.request.scope]
+>
+> A request scope is the runtime owner of one request attempt. It includes the
+> request message, response message when present, every raw channel introduced
+> by that request, cancellation state, request-local progress events, and
+> observer/debug context for that work.
+>
+> A response may be delivered before the request scope is terminal. In that
+> case, the scope remains live while any raw channel introduced by the request
+> is still live, or while explicit request-local progress state remains live.
+
+> r[rpc.request.scope.terminal]
+>
+> A request scope becomes terminal when either:
+>
+>   * it fails before a successful response is delivered;
+>   * it is cancelled;
+>   * its lane or connection is lost; or
+>   * its response has been delivered and all raw channels and explicit progress
+>     state introduced by the request are terminal.
+>
+> Once a request scope is terminal, no further request, response, raw channel,
+> cancellation, credit, or progress event may be associated with it.
+
+> r[rpc.request.scope.channels]
+>
+> Raw channels MUST NOT outlive the request scope that introduced them. If a
+> request scope becomes terminal because of failure, cancellation, lane closure,
+> connection loss, or protocol error, implementations MUST make every associated
+> raw channel terminal with a reason that preserves the terminal condition.
+>
+> A replacement request attempt under the same operation MUST NOT inherit raw
+> channels from the failed or cancelled request scope. Durable or resumable
+> delivery requires an explicit primitive distinct from raw `Tx<T>` and
+> `Rx<T>`.
+
+> r[rpc.operation]
+>
+> An operation is an optional logical unit of work above request scopes. It may
+> group multiple replacement request attempts for retry, resume, idempotency,
+> or distributed tracing. In the absence of operation metadata, a single request
+> scope is also the smallest observable unit of work.
+>
+> Operation identity does not own raw channels. Raw `Tx<T>` and `Rx<T>` values
+> are owned by the request scope that introduced them.
+
+> r[rpc.retry.operation-level]
+>
+> Retries are operation-level policy, not link, conduit, connection, or lane
+> replay. A retry attempt MUST allocate a fresh request ID, create a fresh
+> request scope, and bind fresh raw channels if the method carries channels.
+> Vox runtimes MUST NOT silently replay a request attempt after transport
+> uncertainty unless an explicit retry policy and method semantics allow a
+> replacement attempt.
+
+> r[rpc.timeout.idle-progress]
+>
+> Idle timeout policy applies to request scopes or operations, not merely to
+> "time until response". Request-associated activity that may reset an idle
+> timer includes request acceptance, response delivery, channel item delivery,
+> channel close/reset, channel credit that proves receiver-side consumption,
+> explicit request progress, cancellation, and drain/retire transitions.
+>
+> Connection keepalive, unrelated logs, and spans that are not associated with
+> the request scope or operation MUST NOT count as request progress.
 
 > r[rpc.request.id-allocation]
 >
@@ -301,12 +375,12 @@ registered on the session builder; otherwise they are rejected.
 > allocation and association scope: it supplies the channel IDs and the
 > request/service/method context used for observability and diagnostics.
 >
-> Endpoint ownership controls channel lifetime. Once a channel endpoint has
-> been handed to user code, returning a response, returning an application
-> error, or cancelling the request MUST NOT implicitly close or reset that
-> channel. A channel may outlive the request/response exchange and remains
-> live until the sender closes it, the receiver resets it, an endpoint is
-> otherwise explicitly made terminal, or the connection is torn down.
+> Endpoint ownership controls channel lifetime only while the request scope is
+> live. A response may be delivered while associated channels remain live, but
+> those channels remain owned by the same request scope. Returning a terminal
+> request failure, cancelling the request scope, closing the lane, losing the
+> connection, or hitting a protocol error MUST make associated raw channels
+> terminal; they do not become connection-owned resources.
 >
 > If the runtime allocates or binds channel state for a request but fails
 > before handing the corresponding endpoint to user code, it MUST tear down
@@ -479,9 +553,9 @@ registered on the session builder; otherwise they are rejected.
 > Channel observer events and debug snapshots SHOULD include the connection ID
 > and best-effort local debug context for each channel when available. This
 > context SHOULD include the request ID, service, and method that introduced
-> the channel, and SHOULD remain available even after that request has
-> finished. Rust implementations SHOULD capture source location and payload
-> type context for locally created channel pairs.
+> the channel, and SHOULD remain available after the response is delivered and
+> after the request scope becomes terminal. Rust implementations SHOULD capture
+> source location and payload type context for locally created channel pairs.
 
 > r[rpc.debug.snapshot]
 >
@@ -490,8 +564,9 @@ registered on the session builder; otherwise they are rejected.
 > flow-controlled Vox channel path. Snapshots SHOULD include connection,
 > request, channel, flow-control, and runtime queue/task state when available.
 > Channel snapshots SHOULD preserve the request/service/method association that
-> introduced the channel, plus the current or final state of that request when
-> known.
+> introduced the channel, plus whether that request scope is waiting for a
+> response, responded but still live, succeeded, failed, cancelled, lane-closed,
+> or connection-lost when known.
 
 > r[rpc.transport.stream.cancel-safe-recv]
 >
@@ -521,6 +596,15 @@ registered on the session builder; otherwise they are rejected.
 > collapse decode, protocol, or transport receive failures into an ordinary
 > graceful shutdown.
 
+> r[rpc.observability.establishment]
+>
+> Runtime observers SHOULD report establishment events for the layers that
+> exist on a given transport path: endpoint resolution, TCP or Unix socket or
+> named-pipe or in-process link creation, TLS or platform security handshake,
+> WebSocket upgrade, Vox transport prologue, connection handshake, schema
+> decode-plan construction, and service-lane open/accept/reject. Observers MUST
+> NOT invent TCP, TLS, or WebSocket phases for transports that do not have them.
+
 > r[rpc.observability.low-cardinality]
 >
 > Metrics derived from observer events MUST use low-cardinality labels such as
@@ -538,9 +622,10 @@ registered on the session builder; otherwise they are rejected.
 
 > r[rpc.cancel.channels]
 >
-> Cancelling a request does not automatically close or reset any channels
-> that were created as part of that request. Channels have independent
-> lifecycles and MUST be closed or reset explicitly.
+> Cancelling a request transitions its request scope to a terminal cancelled
+> state. Implementations MUST make every raw channel introduced by that request
+> terminal with a cancellation reason. Cancellation MUST NOT be reported to
+> channel receivers as graceful EOF.
 
 # Pipelining
 

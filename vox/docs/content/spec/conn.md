@@ -1,6 +1,6 @@
 +++
 title = "Connectivity"
-description = "Links, conduits, sessions, and connections"
+description = "Links, conduits, connections, and lanes"
 weight = 11
 +++
 
@@ -198,6 +198,80 @@ weight = 11
 > `BareConduit` does not provide any feature on top of
 > serialization/deserialization. It carries post-handshake session traffic on an
 > accepted link.
+
+# Connection and lane model
+
+> r[connection.model]
+>
+> A Vox connection is the authenticated, observable protocol envelope
+> established over one accepted link. It owns handshake state, peer identity,
+> transport evidence, keepalive, observability state, and the lifecycle of
+> service lanes carried by that link.
+>
+> The historical implementation term `Session` refers to this same protocol
+> envelope. Public APIs SHOULD use `Connection` for this object. Compatibility
+> layers MAY keep internal `Session` names while migrating existing code.
+
+> r[lane]
+>
+> A lane is a request, response, and channel namespace inside one connection.
+> Application RPC traffic runs on lanes. Each lane has its own request ID and
+> channel ID allocation state, request limits, channel credit configuration,
+> schema tracking, and service-local observer context.
+
+> r[lane.service]
+>
+> A service lane is bound to exactly one service namespace. If a peer needs to
+> call multiple services over one connection, it MUST open multiple lanes, one
+> per service. A service lane MUST NOT mix unrelated service namespaces in one
+> request/channel ID namespace.
+
+> r[lane.control]
+>
+> Lane ID 0 is reserved for connection-control traffic such as protocol errors,
+> keepalive, and connection-level lifecycle messages. Lane ID 0 MUST NOT be
+> exposed by public APIs as an application service lane, root service, generated
+> caller, or liveness-only `Noop` client.
+
+> r[lane.open]
+>
+> Either peer MAY request a service lane by allocating a nonzero lane ID using
+> its connection parity and sending a lane-open request for the desired service.
+> The lane is usable for requests only after the counterpart accepts it. Sending
+> a request, response, or channel message on a lane before acceptance is a
+> protocol error.
+
+> r[lane.open.result]
+>
+> Lane-open rejection MUST be structured enough for callers and diagnostics to
+> distinguish at least: unknown service, forbidden, not ready, draining, schema
+> incompatible, and policy rejected. Discovery and rejection details SHOULD be
+> filtered by authorization; a peer MUST NOT learn every implemented service
+> merely because it can open a connection.
+
+> r[lane.wire.compat]
+>
+> During the rootless-lane migration, implementations MAY encode lane
+> open/accept/reject/close using the historical `OpenConnection`,
+> `AcceptConnection`, `RejectConnection`, and `CloseConnection` message
+> variants. When used this way, those messages have lane semantics, not public
+> root-service semantics, and ID 0 remains the private control lane.
+
+> r[connection.lifecycle.driven]
+>
+> Listening, accepted connections, and manually established connections are
+> driven by explicit futures or tasks. Dropping an ordinary generated client,
+> lane handle, or connection handle MUST NOT be the protocol action that stops a
+> listener or accepted peer. If a connection stops because its driver future was
+> never run, cancelled, or completed, diagnostics SHOULD identify the driver
+> lifecycle as the cause.
+
+> r[connection.shutdown.explicit]
+>
+> Graceful connection shutdown is an explicit async operation or shutdown
+> signal. Dropping a public handle may release a local reference and MAY trigger
+> best-effort cleanup, but it MUST NOT be the only way to perform graceful
+> drain, retire, close, or peer notification.
 
 # Sessions
 
