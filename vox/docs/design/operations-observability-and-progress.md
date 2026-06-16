@@ -20,36 +20,37 @@ Today:
 - request metadata can carry tracing and deadline information, but no
   operation metadata keys are currently specified as protocol semantics.
 
-This means a channel-bearing method call has two competing interpretations:
+The previous channel model gave a channel-bearing method call two competing
+interpretations:
 
 - the request/response exchange is done once the response arrives;
 - the request still feels active because the channels introduced by that
   request are still active.
 
-The current spec already says channels may outlive the response. That is useful
-and intentional, but it is not intuitive enough as the only model. Users and
-agents tend to keep the method handler pending to preserve channels, because
-the call looks like the natural owner of the streaming work.
+That was too easy to misuse. Users and agents tended to keep the method handler
+pending to preserve channels, because the call looked like the natural owner of
+the streaming work.
 
 We should make the natural model explicit: channels are request-scoped, and the
-response is not the request lifetime boundary.
+response is the request lifetime boundary.
 
 ## Direction
 
 Make channels request-scoped.
 
 A request owns the channels introduced by that request. The method handler may
-produce its response promptly, but the request scope remains alive while any of
-its channels, progress signals, or associated spans are still alive.
+produce its response only after its raw channels and request-local progress are
+terminal.
 
-A successful response is not the request lifetime boundary. A terminal request
-failure is. If the request scope fails, associated channels should observe that
-scope failure instead of silently drifting into an unowned connection-level
-state. If Vox ever supports detached channels, detachment should be explicit in
-the protocol and API.
+Response delivery is the successful request lifetime boundary. Terminal request
+failure, cancellation, lane closure, connection loss, and protocol errors are
+failure boundaries. In all cases, associated channels should observe that scope
+termination instead of silently drifting into an unowned connection-level state.
+If Vox ever supports detached channels, detachment should be explicit in the
+protocol and API.
 
 This lets devtools show the request as the lane that owns the channel traffic
-without requiring the method handler to hang forever.
+while making an open handler an honest sign of ongoing request-scoped work.
 
 An operation identity can still exist above request attempts when retry,
 resume, or cross-peer tracing needs it. In the common case, the operation and
@@ -99,15 +100,19 @@ Runtimes should associate a request scope with:
 When a request carries `vox-operation-id`, runtimes should also associate the
 request scope with that operation.
 
-The response may be delivered before the request scope is terminal. In that
-case, tooling should keep the request lane alive while associated channels,
-progress signals, or spans remain active.
+Raw channels and request-local progress remain part of the in-flight request
+scope. A response terminates that request scope, so tooling should show channel
+traffic, progress signals, and request spans under the request that introduced
+them while the request is still live, and preserve that association after the
+scope is terminal.
 
 This gives devtools the intuitive picture:
 
-- the method handler does not need to hang forever;
-- the response can return promptly;
-- channel traffic still appears under the request that introduced it.
+- progress-only methods keep the request open while progress channels are
+  active;
+- response delivery is the terminal transition for the request scope;
+- channel traffic still appears under the request that introduced it, including
+  in post-terminal debug snapshots.
 
 ## Progress and Idle Timeouts
 

@@ -119,18 +119,19 @@ request scope.
 
 A **request scope** is the runtime owner of one request attempt, the response
 when present, channels introduced by that request, request-local progress, and
-observer/debug context. A response can be delivered before the request scope is
-terminal if request-scoped channels remain live.
+observer/debug context. Raw channels introduced by a request are live only while
+that request scope is still in flight. Delivering the response makes the request
+scope terminal, so a method that wants to keep raw channels live must keep the
+request open until those channels are terminal.
 
 A **request attempt** is one concrete wire-level delivery attempt for a call.
 A request attempt is carried by a `RequestCall`, identified by a `RequestId`,
 and sent on one service lane. A request attempt may succeed, fail, be
 cancelled, or be abandoned by lane or connection failure.
 
-A **response** is the terminal reply to one request attempt. On the wire, a
-response is carried by `RequestResponse` and is matched to a prior request
-attempt by `RequestId`. A response is not necessarily the terminal event for
-the request scope that carried it.
+A **response** is the terminal reply to one request attempt and the terminal
+event for its request scope. On the wire, a response is carried by
+`RequestResponse` and is matched to a prior request attempt by `RequestId`.
 
 In summary:
 

@@ -170,9 +170,10 @@ weight = 12
 > by that request, cancellation state, request-local progress events, and
 > observer/debug context for that work.
 >
-> A response may be delivered before the request scope is terminal. In that
-> case, the scope remains live while any raw channel introduced by the request
-> is still live, or while explicit request-local progress state remains live.
+> Raw channel and request-local progress activity are part of the in-flight
+> request scope. A response MUST NOT be delivered while raw channels introduced
+> by that request, or explicit request-local progress state, are still live.
+> Delivering a response makes the request scope terminal.
 
 > r[rpc.request.scope.terminal]
 >
@@ -181,18 +182,25 @@ weight = 12
 >   * it fails before a successful response is delivered;
 >   * it is cancelled;
 >   * its lane or connection is lost; or
->   * its response has been delivered and all raw channels and explicit progress
->     state introduced by the request are terminal.
+>   * its response has been delivered.
 >
 > Once a request scope is terminal, no further request, response, raw channel,
 > cancellation, credit, or progress event may be associated with it.
 
 > r[rpc.request.scope.channels]
 >
-> Raw channels MUST NOT outlive the request scope that introduced them. If a
-> request scope becomes terminal because of failure, cancellation, lane closure,
-> connection loss, or protocol error, implementations MUST make every associated
-> raw channel terminal with a reason that preserves the terminal condition.
+> Raw channels MUST NOT outlive the request scope that introduced them and MUST
+> NOT remain live after the request response is delivered. If a request scope
+> becomes terminal because of response delivery, failure, cancellation, lane
+> closure, connection loss, or protocol error, implementations MUST make every
+> associated raw channel terminal with a reason that preserves the terminal
+> condition.
+>
+> A handler that needs to keep sending or receiving on a raw channel must keep
+> the request scope in flight until that raw channel is terminal. A handler that
+> needs an important value stream after a method result MUST expose that stream
+> as an explicit service-level resource, handle, or demand protocol rather than
+> as a raw Vox channel.
 >
 > A replacement request attempt under the same operation MUST NOT inherit raw
 > channels from the failed or cancelled request scope. Durable or resumable
@@ -207,7 +215,8 @@ weight = 12
 > scope is also the smallest observable unit of work.
 >
 > Operation identity does not own raw channels. Raw `Tx<T>` and `Rx<T>` values
-> are owned by the request scope that introduced them.
+> are owned by the request scope that introduced them and cannot be promoted to
+> operation-scoped state.
 
 > r[rpc.retry.operation-level]
 >
@@ -220,11 +229,11 @@ weight = 12
 
 > r[rpc.timeout.idle-progress]
 >
-> Idle timeout policy applies to request scopes or operations, not merely to
-> "time until response". Request-associated activity that may reset an idle
-> timer includes request acceptance, response delivery, channel item delivery,
-> channel close/reset, channel credit that proves receiver-side consumption,
-> explicit request progress, cancellation, and drain/retire transitions.
+> Idle timeout policy applies to request scopes or operations. While a request
+> scope is in flight, request-associated activity that may reset an idle timer
+> includes request acceptance, channel item delivery, channel close/reset,
+> channel credit that proves receiver-side consumption, explicit request
+> progress, cancellation, drain/retire transitions, and response delivery.
 >
 > Connection keepalive, unrelated logs, and spans that are not associated with
 > the request scope or operation MUST NOT count as request progress.
@@ -352,11 +361,16 @@ weight = 12
 > request/service/method context used for observability and diagnostics.
 >
 > Endpoint ownership controls channel lifetime only while the request scope is
-> live. A response may be delivered while associated channels remain live, but
-> those channels remain owned by the same request scope. Returning a terminal
-> request failure, cancelling the request scope, closing the lane, losing the
-> connection, or hitting a protocol error MUST make associated raw channels
-> terminal; they do not become connection-owned resources.
+> live. Associated channels must be terminal before, or as part of, response
+> delivery. Returning a terminal request failure, cancelling the request scope,
+> closing the lane, losing the connection, hitting a protocol error, or
+> delivering the response MUST make associated raw channels terminal; they do
+> not become connection-owned resources.
+>
+> Raw channels are request sidebands, not durable streams. Protocols that need
+> durable, resumable, or independently demanded stream values MUST model those
+> values above raw channels, for example as service-level handles plus requests
+> for particular items or byte ranges.
 >
 > If the runtime allocates or binds channel state for a request but fails
 > before handing the corresponding endpoint to user code, it MUST tear down
@@ -375,6 +389,10 @@ weight = 12
 > items and terminal channel messages in order, or report channel/lane/connection
 > closure. Lossy application policy belongs above this layer through APIs such
 > as `Tx::try_send`.
+>
+> This is an in-scope delivery guarantee only. It does not make raw channels
+> stable across request response, lane close, connection loss, reconnect, retry,
+> or process death.
 
 > r[rpc.channel.connection-closure]
 >
@@ -535,9 +553,9 @@ weight = 12
 > (historically named connection ID on the wire) and best-effort local debug
 > context for each channel when available. This context SHOULD include the
 > request ID, service, and method that introduced the channel, and SHOULD remain
-> available after the response is delivered and after the request scope becomes
-> terminal. Rust implementations SHOULD capture source location and payload type
-> context for locally created channel pairs.
+> available after the request scope becomes terminal. Rust implementations
+> SHOULD capture source location and payload type context for locally created
+> channel pairs.
 
 > r[rpc.debug.snapshot]
 >
@@ -547,8 +565,8 @@ weight = 12
 > lane, request, channel, flow-control, and runtime queue/task state when
 > available. Channel snapshots SHOULD preserve the request/service/method
 > association that introduced the channel, plus whether that request scope is
-> waiting for a response, responded but still live, succeeded, failed,
-> cancelled, lane-closed, or connection-lost when known.
+> waiting for a response, succeeded, failed, cancelled, lane-closed, or
+> connection-lost when known.
 
 > r[rpc.transport.stream.cancel-safe-recv]
 >

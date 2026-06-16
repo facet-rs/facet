@@ -454,8 +454,8 @@ extension Rx: AsyncSequence {
 ///
 /// r[impl rpc.channel.item] - Data messages routed by channel_id; items for a
 /// not-yet-bound channel are buffered and drained when the channel binds.
-/// r[impl rpc.channel.lifecycle] - Channels may outlive the response.
-/// r[impl rpc.channel.lifecycle] - Call completion independent of channel lifecycle.
+/// r[impl rpc.channel.lifecycle] - Channels are request-scoped sidebands.
+/// r[impl rpc.channel.lifecycle] - Response delivery terminates associated channels.
 public actor ChannelRegistry {
     private var receivers: [ChannelId: ChannelReceiver] = [:]
     private var pendingData: [ChannelId: [[UInt8]]] = [:]
