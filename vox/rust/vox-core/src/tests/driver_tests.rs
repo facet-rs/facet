@@ -205,8 +205,10 @@ async fn expect_protocol_close(caller: &crate::Caller, label: &str) {
 }
 
 // r[verify rpc.caller.liveness.refcounted]
+// r[verify rpc.caller.liveness.root-internal-close]
+// r[verify rpc.caller.liveness.root-teardown-condition]
 #[tokio::test]
-async fn dropping_one_root_caller_clone_keeps_session_alive_until_last_drop() {
+async fn dropping_root_callers_does_not_shutdown_connection() {
     let (client_conduit, server_conduit) = message_conduit_pair();
 
     let (client_session_tx, client_session_rx) =
@@ -238,9 +240,10 @@ async fn dropping_one_root_caller_clone_keeps_session_alive_until_last_drop() {
         .await
         .expect("client handshake failed");
 
-    let server_caller_guard = server_task.await.expect("server setup failed");
+    let server_connection = server_task.await.expect("server setup failed");
     let client_session = client_session_rx.await.expect("client session handle sent");
     let server_session = server_session_rx.await.expect("server session handle sent");
+    let client_connection = caller.connection.clone().expect("client connection handle");
 
     let caller_clone = caller.clone();
     drop(caller_clone);
@@ -265,7 +268,20 @@ async fn dropping_one_root_caller_clone_keeps_session_alive_until_last_drop() {
     assert_eq!(echoed, 42);
 
     drop(caller);
-    drop(server_caller_guard);
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert!(
+        !client_session.is_finished(),
+        "dropping the last client caller must not shut down the client connection"
+    );
+    assert!(
+        !server_session.is_finished(),
+        "dropping the peer handle must not be needed to keep the server connection alive"
+    );
+
+    client_connection
+        .shutdown()
+        .expect("client shutdown request");
+    let _ = server_connection.shutdown();
 
     tokio::time::timeout(std::time::Duration::from_millis(500), client_session)
         .await
@@ -313,8 +329,12 @@ async fn dropping_root_caller_keeps_session_alive_while_bound_stream_rx_exists()
         .await
         .expect("client handshake failed");
 
-    let (_server_connection, server_caller) = server_task.await.expect("server setup failed");
+    let (server_connection, server_caller) = server_task.await.expect("server setup failed");
     let client_session = client_session_rx.await.expect("client session handle sent");
+    let client_connection = root_caller
+        .connection
+        .clone()
+        .expect("client connection handle");
 
     let (updates_tx, mut updates_rx) = channel::<u32>();
     let args = SubscribeArgs {
@@ -381,6 +401,10 @@ async fn dropping_root_caller_keeps_session_alive_while_bound_stream_rx_exists()
 
     drop(updates_rx);
     drop(server_caller);
+    client_connection
+        .shutdown()
+        .expect("client shutdown request");
+    let _ = server_connection.shutdown();
 
     tokio::time::timeout(std::time::Duration::from_millis(500), client_session)
         .await
@@ -1263,8 +1287,10 @@ async fn keepalive_timeout_returns_cancelled_when_pongs_are_missing() {
     );
 }
 
+// r[verify rpc.caller.liveness.root-internal-close]
+// r[verify rpc.caller.liveness.root-teardown-condition]
 #[tokio::test]
-async fn dropping_root_caller_shuts_down_session() {
+async fn dropping_root_caller_does_not_shut_down_session() {
     let (client_conduit, server_conduit) = message_conduit_pair();
 
     let (client_session_tx, client_session_rx) =
@@ -1296,12 +1322,28 @@ async fn dropping_root_caller_shuts_down_session() {
         .await
         .expect("client handshake failed");
 
-    let _server_caller_guard = server_task.await.expect("server setup failed");
+    let server_connection = server_task.await.expect("server setup failed");
 
     let client_session = client_session_rx.await.expect("client session handle sent");
     let server_session = server_session_rx.await.expect("server session handle sent");
+    let client_connection = caller.connection.clone().expect("client connection handle");
 
     drop(caller);
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert!(
+        !client_session.is_finished(),
+        "dropping the root caller must not shut down the client connection"
+    );
+    assert!(
+        !server_session.is_finished(),
+        "dropping the root caller must not shut down the server connection"
+    );
+
+    client_connection
+        .shutdown()
+        .expect("client shutdown request");
+    let _ = server_connection.shutdown();
 
     tokio::time::timeout(std::time::Duration::from_millis(500), client_session)
         .await

@@ -772,16 +772,7 @@ impl DriverShared {
     }
 }
 
-struct CallerDropGuard {
-    control_tx: mpsc::UnboundedSender<DropControlRequest>,
-    request: DropControlRequest,
-}
-
-impl Drop for CallerDropGuard {
-    fn drop(&mut self) {
-        let _ = self.control_tx.send(self.request.clone());
-    }
-}
+struct CallerLiveness;
 
 #[cfg(test)]
 mod tests {
@@ -1172,7 +1163,7 @@ impl Handler<DriverReplySink> for Box<dyn ErasedHandler> {
 /// This is the primary type for making outbound RPC calls. Generated `*Client`
 /// types store a `Caller` as a public field. Use `with_middleware()` to add
 /// client middleware to the call chain.
-#[must_use = "Dropping this caller may close the connection if it is the last caller."]
+#[must_use = "Dropping this caller does not close the connection; shut down explicitly with ConnectionHandle when needed."]
 #[derive(Clone)]
 pub struct Caller {
     inner: Arc<DriverCaller>,
@@ -1318,7 +1309,7 @@ struct DriverChannelBinder {
     sender: ConnectionSender,
     shared: Arc<DriverShared>,
     local_control_tx: mpsc::UnboundedSender<DriverLocalControl>,
-    drop_guard: Option<Arc<CallerDropGuard>>,
+    liveness: Arc<CallerLiveness>,
 }
 
 fn register_rx_channel_impl(
@@ -1509,9 +1500,7 @@ impl DriverChannelEndpoint for DriverChannelBinder {
     }
 
     fn endpoint_liveness(&self) -> Option<ChannelLivenessHandle> {
-        self.drop_guard
-            .as_ref()
-            .map(|guard| guard.clone() as ChannelLivenessHandle)
+        Some(self.liveness.clone() as ChannelLivenessHandle)
     }
 }
 
@@ -1596,7 +1585,7 @@ pub struct DriverCaller {
     shared: Arc<DriverShared>,
     local_control_tx: mpsc::UnboundedSender<DriverLocalControl>,
     closed_rx: watch::Receiver<Option<ConnectionCloseReason>>,
-    _drop_guard: Option<Arc<CallerDropGuard>>,
+    liveness: Arc<CallerLiveness>,
 }
 
 impl DriverCaller {
@@ -1640,9 +1629,7 @@ impl DriverChannelEndpoint for DriverCaller {
     }
 
     fn endpoint_liveness(&self) -> Option<ChannelLivenessHandle> {
-        self._drop_guard
-            .as_ref()
-            .map(|guard| guard.clone() as ChannelLivenessHandle)
+        Some(self.liveness.clone() as ChannelLivenessHandle)
     }
 }
 
@@ -1948,8 +1935,7 @@ pub struct Driver<H: Handler<DriverReplySink>> {
     handler_futs: FuturesUnordered<HandlerFut>,
     local_control_tx: mpsc::UnboundedSender<DriverLocalControl>,
     drop_control_seed: Option<mpsc::UnboundedSender<DropControlRequest>>,
-    drop_control_request: DropControlRequest,
-    drop_guard: SyncMutex<Option<Weak<CallerDropGuard>>>,
+    caller_liveness: SyncMutex<Option<Weak<CallerLiveness>>>,
 }
 
 enum DriverLocalControl {
@@ -2111,7 +2097,6 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             parity,
             observer,
         } = handle;
-        let drop_control_request = DropControlRequest::Close(conn_id);
         let (local_control_tx, local_control_rx) = mpsc::unbounded_channel("driver.local_control");
         Self {
             sender,
@@ -2150,8 +2135,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             handler_futs: FuturesUnordered::new(),
             local_control_tx,
             drop_control_seed: control_tx,
-            drop_control_request,
-            drop_guard: SyncMutex::new("driver.drop_guard", None),
+            caller_liveness: SyncMutex::new("driver.caller_liveness", None),
         }
     }
 
@@ -2160,38 +2144,33 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
     // r[impl rpc.caller.liveness.last-drop-closes-connection]
     // r[impl rpc.caller.liveness.root-internal-close]
     // r[impl rpc.caller.liveness.root-teardown-condition]
-    fn existing_drop_guard(&self) -> Option<Arc<CallerDropGuard>> {
-        self.drop_guard.lock().as_ref().and_then(Weak::upgrade)
+    fn existing_caller_liveness(&self) -> Option<Arc<CallerLiveness>> {
+        self.caller_liveness.lock().as_ref().and_then(Weak::upgrade)
     }
 
-    fn connection_drop_guard(&self) -> Option<Arc<CallerDropGuard>> {
-        if let Some(existing) = self.existing_drop_guard() {
-            Some(existing)
-        } else if let Some(seed) = &self.drop_control_seed {
-            let mut guard = self.drop_guard.lock();
-            if let Some(existing) = guard.as_ref().and_then(Weak::upgrade) {
-                Some(existing)
-            } else {
-                let arc = Arc::new(CallerDropGuard {
-                    control_tx: seed.clone(),
-                    request: self.drop_control_request.clone(),
-                });
-                *guard = Some(Arc::downgrade(&arc));
-                Some(arc)
-            }
+    fn caller_liveness(&self) -> Arc<CallerLiveness> {
+        if let Some(existing) = self.existing_caller_liveness() {
+            existing
         } else {
-            None
+            let mut liveness = self.caller_liveness.lock();
+            if let Some(existing) = liveness.as_ref().and_then(Weak::upgrade) {
+                existing
+            } else {
+                let arc = Arc::new(CallerLiveness);
+                *liveness = Some(Arc::downgrade(&arc));
+                arc
+            }
         }
     }
 
     pub fn caller(&self) -> DriverCaller {
-        let drop_guard = self.connection_drop_guard();
+        let liveness = self.caller_liveness();
         DriverCaller {
             sender: self.sender.clone(),
             shared: Arc::clone(&self.shared),
             local_control_tx: self.local_control_tx.clone(),
             closed_rx: self.closed_rx.clone(),
-            _drop_guard: drop_guard,
+            liveness,
         }
     }
 
@@ -2216,7 +2195,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             sender: self.sender.clone(),
             shared: Arc::clone(&self.shared),
             local_control_tx: self.local_control_tx.clone(),
-            drop_guard: self.existing_drop_guard(),
+            liveness: self.caller_liveness(),
         }
     }
 

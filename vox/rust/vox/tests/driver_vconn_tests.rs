@@ -58,6 +58,8 @@ async fn open_virtual_connection_and_call() {
     let result = vconn_client.echo(123).await.expect("vconn echo");
     assert_eq!(result, 123);
 
+    let _ = session.shutdown();
+    let _ = _server_guard.shutdown();
     drop(vconn_client);
     drop(root);
 }
@@ -65,7 +67,7 @@ async fn open_virtual_connection_and_call() {
 // r[verify rpc.caller.liveness.root-internal-close]
 // r[verify rpc.caller.liveness.root-teardown-condition]
 #[tokio::test]
-async fn dropping_root_waits_for_virtual_connections() {
+async fn dropping_root_and_virtual_clients_does_not_shutdown_connection() {
     let (client_link, server_link) = memory_link_pair(16);
 
     let (session_tx, session_rx) = tokio::sync::oneshot::channel::<tokio::task::JoinHandle<()>>();
@@ -85,16 +87,16 @@ async fn dropping_root_waits_for_virtual_connections() {
     let _server_guard = server.await.expect("server task");
     let client_session = session_rx.await.expect("session handle");
 
-    let session_handle = session;
+    let session_handle = session.clone();
     let vconn_client = open_echo_vconn(&session_handle).await;
 
-    // Drop root — session should stay alive because vconn is still active.
+    // Drop root: ordinary handle drop is inert.
     drop(root);
     drop(session_handle);
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert!(
         !client_session.is_finished(),
-        "session should remain alive while virtual connection exists"
+        "session should remain alive after dropping root handles"
     );
 
     // vconn still works.
@@ -104,8 +106,16 @@ async fn dropping_root_waits_for_virtual_connections() {
         .expect("vconn echo after root drop");
     assert_eq!(result, 7);
 
-    // Drop vconn — session should now shut down.
+    // Drop vconn too: shutdown still remains explicit.
     drop(vconn_client);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        !client_session.is_finished(),
+        "session should remain alive after dropping all public clients"
+    );
+
+    let _ = _server_guard.shutdown();
+    let _ = session.shutdown();
 
     tokio::time::timeout(Duration::from_millis(500), client_session)
         .await

@@ -408,9 +408,6 @@ pub struct Connection {
 
     /// Connection state (active, pending inbound, pending outbound).
     conns: BTreeMap<LaneId, ConnectionSlot>,
-    /// Whether the root connection was internally closed because all root callers dropped.
-    root_closed_internal: bool,
-
     /// Allocator for outbound virtual connection IDs (uses session parity).
     conn_ids: IdAllocator<LaneId>,
 
@@ -997,7 +994,6 @@ impl Connection {
     ) {
         warn!(%conn_id, "closing connection after protocol error: {detail}");
         self.remove_connection_with_reason(&conn_id, ConnectionCloseReason::Protocol);
-        self.maybe_request_shutdown_after_root_closed();
     }
 
     fn record_received_schema_bytes(
@@ -1055,7 +1051,6 @@ impl Connection {
             },
             peer_root_settings: None,
             conns: BTreeMap::new(),
-            root_closed_internal: false,
             conn_ids: IdAllocator::new(Parity::Odd), // overwritten in establish_as_*
             on_connection,
             open_rx,
@@ -1271,7 +1266,6 @@ impl Connection {
                 };
                 if conn_tx.send(recv_msg).await.is_err() {
                     self.remove_connection_with_reason(&conn_id, ConnectionCloseReason::Unknown);
-                    self.maybe_request_shutdown_after_root_closed();
                 }
                 return;
             }
@@ -1289,7 +1283,6 @@ impl Connection {
                 // to return None, which exits its run loop. All in-flight handlers
                 // are dropped, triggering DriverReplySink::drop → Cancelled responses.
                 self.remove_connection_with_reason(&conn_id, ConnectionCloseReason::Remote);
-                self.maybe_request_shutdown_after_root_closed();
             }
             MessagePayload::LaneOpen(open) => {
                 self.handle_inbound_open(conn_id, open).await;
@@ -1411,7 +1404,6 @@ impl Connection {
                 );
                 if conn_tx.send(recv_msg).await.is_err() {
                     self.remove_connection_with_reason(&conn_id, ConnectionCloseReason::Unknown);
-                    self.maybe_request_shutdown_after_root_closed();
                 }
             }
             MessagePayload::ChannelMessage(c) => {
@@ -1427,7 +1419,6 @@ impl Connection {
                 };
                 if conn_tx.send(recv_msg).await.is_err() {
                     self.remove_connection_with_reason(&conn_id, ConnectionCloseReason::Unknown);
-                    self.maybe_request_shutdown_after_root_closed();
                 }
             }
             MessagePayload::ProtocolError(_) => {
@@ -1817,7 +1808,6 @@ impl Connection {
         }
 
         let _ = req.result_tx.send(Ok(()));
-        self.maybe_request_shutdown_after_root_closed();
     }
 
     async fn handle_drop_control_request(&mut self, req: DropControlRequest) -> bool {
@@ -1827,13 +1817,9 @@ impl Connection {
                 false
             }
             DropControlRequest::Close(conn_id) => {
-                // r[impl rpc.caller.liveness.last-drop-closes-connection]
                 if conn_id.is_root() {
-                    // r[impl rpc.caller.liveness.root-internal-close]
-                    trace!("root callers dropped; internally closing root connection");
-                    self.root_closed_internal = true;
-                    // r[impl rpc.caller.liveness.root-teardown-condition]
-                    return self.has_virtual_connections();
+                    trace!("ignoring root close control request");
+                    return true;
                 }
 
                 if self
@@ -1855,7 +1841,7 @@ impl Connection {
                         .await;
                 }
 
-                !self.root_closed_internal || self.has_virtual_connections()
+                true
             }
             DropControlRequest::ProtocolClose {
                 conn_id,
@@ -1879,10 +1865,6 @@ impl Connection {
                 false
             }
         }
-    }
-
-    fn has_virtual_connections(&self) -> bool {
-        self.conns.keys().any(|id| !id.is_root())
     }
 
     fn remove_connection(&mut self, conn_id: &LaneId) -> Option<ConnectionSlot> {
@@ -1929,12 +1911,6 @@ impl Connection {
             }
         }
         self.conns.clear();
-    }
-
-    fn maybe_request_shutdown_after_root_closed(&self) {
-        if self.root_closed_internal && !self.has_virtual_connections() {
-            let _ = send_drop_control(&self.control_tx, DropControlRequest::Shutdown);
-        }
     }
 }
 

@@ -840,7 +840,7 @@ fn generate_client(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream2 {
 
     quote! {
         #[doc = #client_doc]
-        #[must_use = "Dropping this client may close the connection if it is the last caller."]
+        #[must_use = "Dropping this client does not close the connection; shut down explicitly with ConnectionHandle when needed."]
         #[derive(Clone)]
         pub struct #client_name {
             /// The underlying caller for making RPC calls.

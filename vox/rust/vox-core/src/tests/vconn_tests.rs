@@ -1,7 +1,10 @@
+use std::sync::{Arc, Mutex};
+
 use vox_rt::task::FutureExt;
 use vox_types::{
-    ChannelBinder, ConnectionCloseReason, ConnectionSettings, IncomingChannelMessage, Metadata,
-    MethodId, Parity, Payload, ReplySink, RequestCall, RequestResponse, SelfRef,
+    ChannelBinder, ConnectionCloseReason, ConnectionSettings, DriverEvent, IncomingChannelMessage,
+    LaneId, Metadata, MethodId, Parity, Payload, ReplySink, RequestCall, RequestResponse, SelfRef,
+    VoxObserver, VoxObserverHandle,
 };
 
 use super::utils::*;
@@ -48,6 +51,35 @@ async fn call_u32(caller: &crate::Caller, value: u32) -> u32 {
         _ => panic!("expected incoming payload in response"),
     };
     vox_phon::from_slice(ret_bytes).expect("deserialize response")
+}
+
+#[derive(Default)]
+struct RecordingDriverObserver {
+    events: Mutex<Vec<DriverEvent>>,
+}
+
+impl RecordingDriverObserver {
+    fn saw_lane_closed(&self, lane_id: LaneId) -> bool {
+        self.events
+            .lock()
+            .expect("observer events mutex poisoned")
+            .iter()
+            .any(|event| {
+                matches!(
+                    event,
+                    DriverEvent::ConnectionClosed { connection_id, .. } if *connection_id == lane_id
+                )
+            })
+    }
+}
+
+impl VoxObserver for RecordingDriverObserver {
+    fn driver_event(&self, event: DriverEvent) {
+        self.events
+            .lock()
+            .expect("observer events mutex poisoned")
+            .push(event);
+    }
 }
 
 // r[verify rpc.virtual-connection.open]
@@ -307,7 +339,6 @@ async fn close_unknown_virtual_connection_is_rejected() {
 
 // r[verify connection.close]
 // r[verify connection.close.semantics]
-// r[verify rpc.caller.liveness.last-drop-closes-connection]
 #[tokio::test]
 async fn close_virtual_connection() {
     let (client_conduit, server_conduit) = message_conduit_pair();
@@ -391,8 +422,10 @@ async fn close_virtual_connection() {
 
 // r[verify rpc.caller.liveness.last-drop-closes-connection]
 #[tokio::test]
-async fn dropping_last_virtual_caller_closes_virtual_connection() {
+async fn dropping_last_virtual_caller_does_not_close_virtual_connection() {
     let (client_conduit, server_conduit) = message_conduit_pair();
+    let observer = Arc::new(RecordingDriverObserver::default());
+    let observer_handle: VoxObserverHandle = observer.clone();
 
     let server_task = vox_rt::task::spawn(
         async move {
@@ -406,6 +439,7 @@ async fn dropping_last_virtual_caller_closes_virtual_connection() {
     );
 
     let _client_caller_guard = initiator_conduit(client_conduit, test_initiator_handshake())
+        .observer_handle(observer_handle)
         .establish::<TestLaneClient>()
         .await
         .expect("client handshake failed");
@@ -424,6 +458,7 @@ async fn dropping_last_virtual_caller_closes_virtual_connection() {
         )
         .await
         .expect("open virtual connection");
+    let conn_id = vconn_handle.connection_id();
 
     let mut vconn_driver = Driver::new(vconn_handle, ());
     let vconn_caller = crate::Caller::new(vconn_driver.caller());
@@ -448,6 +483,20 @@ async fn dropping_last_virtual_caller_closes_virtual_connection() {
     assert_eq!(echoed, 11);
 
     drop(vconn_caller);
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert!(
+        !observer.saw_lane_closed(conn_id),
+        "dropping the last public caller must not close the service lane"
+    );
+
+    connection_handle
+        .close_lane(conn_id, Default::default())
+        .await
+        .expect("explicit close should close virtual connection");
+    assert!(
+        observer.saw_lane_closed(conn_id),
+        "explicit close should emit the lane close event"
+    );
 }
 
 // r[verify connection.close.semantics]
@@ -517,7 +566,7 @@ async fn close_virtual_connection_closes_registered_rx_channels() {
 // r[verify rpc.caller.liveness.root-internal-close]
 // r[verify rpc.caller.liveness.root-teardown-condition]
 #[tokio::test]
-async fn dropping_root_caller_waits_for_virtual_connections_before_session_shutdown() {
+async fn dropping_root_and_virtual_callers_does_not_shutdown_session() {
     let (client_conduit, server_conduit) = message_conduit_pair();
 
     let (client_session_tx, client_session_rx) =
@@ -553,7 +602,7 @@ async fn dropping_root_caller_waits_for_virtual_connections_before_session_shutd
         .expect("client handshake failed");
     let connection_handle = root_caller.connection.clone().unwrap();
 
-    let server_caller_guard = server_task.await.expect("server setup failed");
+    let server_connection = server_task.await.expect("server setup failed");
     let client_session = client_session_rx.await.expect("client session handle sent");
 
     let vconn_handle = connection_handle
@@ -598,7 +647,16 @@ async fn dropping_root_caller_waits_for_virtual_connections_before_session_shutd
     assert_eq!(echoed, 7);
 
     drop(vconn_caller);
-    drop(server_caller_guard);
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert!(
+        !client_session.is_finished(),
+        "dropping all public callers must not shut down the connection"
+    );
+
+    connection_handle
+        .shutdown()
+        .expect("client shutdown request");
+    let _ = server_connection.shutdown();
 
     tokio::time::timeout(std::time::Duration::from_millis(500), client_session)
         .await

@@ -97,9 +97,14 @@ async fn dropping_one_client_clone_keeps_session_alive() {
     let result = client.echo(42).await.expect("call after clone drop");
     assert_eq!(result, 42);
 
-    // Drop everything — sessions should shut down.
+    let client_connection = client.connection.clone().expect("client connection handle");
+
+    // Dropping clients is inert; shutdown is explicit.
     drop(client);
-    drop(server_guard);
+    client_connection
+        .shutdown()
+        .expect("client shutdown request");
+    let _ = server_guard.shutdown();
 
     tokio::time::timeout(Duration::from_millis(500), client_session)
         .await
@@ -112,7 +117,7 @@ async fn dropping_one_client_clone_keeps_session_alive() {
 }
 
 #[tokio::test]
-async fn dropping_root_caller_shuts_down_session() {
+async fn dropping_root_caller_does_not_shut_down_session() {
     let (client_link, server_link) = memory_link_pair(16);
 
     let (server_session_tx, server_session_rx) =
@@ -144,9 +149,24 @@ async fn dropping_root_caller_shuts_down_session() {
     let server_guard = server_task.await.expect("server task");
     let client_session = client_session_rx.await.expect("client session");
     let server_session = server_session_rx.await.expect("server session");
+    let client_connection = client.connection.clone().expect("client connection handle");
 
     drop(client);
-    drop(server_guard);
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        !client_session.is_finished(),
+        "dropping the root client must not shut down the client connection"
+    );
+    assert!(
+        !server_session.is_finished(),
+        "dropping the root client must not shut down the server connection"
+    );
+
+    client_connection
+        .shutdown()
+        .expect("client shutdown request");
+    let _ = server_guard.shutdown();
 
     tokio::time::timeout(Duration::from_millis(500), client_session)
         .await

@@ -356,7 +356,7 @@ where
     }
 }
 #[doc = "Client for the `WordLab` service.\n\nStores a [`Caller`](:: vox::Caller) and an optional [`ConnectionHandle`](:: vox::ConnectionHandle) as public fields."]
-#[must_use = "Dropping this client may close the connection if it is the last caller."]
+#[must_use = "Dropping this client does not close the connection; shut down explicitly with ConnectionHandle when needed."]
 #[derive(Clone)]
 pub struct WordLabClient {
     #[doc = r" The underlying caller for making RPC calls."]
