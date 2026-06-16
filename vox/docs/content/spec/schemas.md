@@ -63,7 +63,7 @@ vox identifies types by their phon **schema ID**: a `u64` content hash of a
 type declaration's phon-level structure (`phon r[schema-identity.content-hash]`,
 `phon r[schema-identity.computation]`). The hash is structural and
 language-independent — the same declaration produces the same ID regardless of
-connection, session, process, or source language, and language-level wrappers
+connection, lane, process, or source language, and language-level wrappers
 (Rust newtypes, TypeScript aliases) over the same underlying type collapse to
 the same ID. vox does not define its own hashing; it uses phon's.
 
@@ -72,45 +72,42 @@ the same ID. vox does not define its own hashing; it uses phon's.
 > A vox type ID is a phon schema ID — a `u64` content hash, computed by phon
 > (`phon r[schema-identity.content-hash]`). Implementations MUST use phon's
 > identity so that IDs match across languages and persist across connections
-> and sessions.
+> and lanes.
 
 Content hashes give type IDs a universal meaning. A peer that receives a schema
-tagged with a content hash it has already seen — from this connection, a
-previous connection, or a persistent store — knows it already has that schema.
-This supports efficient schema tracking for later connections and local schema
-caches.
+tagged with a content hash it has already seen — from this lane, another
+connection, or a persistent store — knows it already has that schema. This
+supports efficient schema tracking for later lanes and local schema caches.
 
 > r[schema.type-id.per-connection]
 >
-> Every connection starts with zero schema knowledge. A peer MUST NOT
-> assume that schemas sent on one connection are available on another,
-> even within the same session. Each connection half has its own
+> Every service lane starts with zero application-schema knowledge. A peer MUST
+> NOT assume that schemas sent on one lane are available on another lane, even
+> within the same Vox connection. Each lane half has its own
 > sent/received tracking. However, because type IDs are content hashes,
-> a peer MAY use a previously received schema (from another connection
+> a peer MAY use a previously received schema (from another lane
 > or a persistent cache) to build a decode plan without waiting for the
 > schema to be resent — as long as it does not send data until the remote
 > peer has confirmed (by sending its own schemas) that it can read it.
 
-Per-connection tracking is required because connections within a session
-may terminate at different peers. Consider this topology:
+Per-lane tracking is required because service lanes can be routed or proxied
+independently. Consider this topology:
 
 ```
-     B  → C  (Conn 0 aka root connection)
-A ← (B) ← C  (Conn 1)
+     B  -> C  (lane 1: HTTP cell service)
+A <- (B) <- C  (lane 3: host DevTools service, proxied by B)
 ```
 
-Connection 0 (root) between B and C serves one set of services. C
-requests a virtual connection (ID 1), which B forwards to A. B routes
-`MessagePayload`s for connection 1 between A and C without inspecting
-their content — B does not know what services A and C are speaking on
-that connection, and does not need to.
+Lane 1 between B and C serves one set of services. C requests another service
+lane, which B routes to A. B routes `MessagePayload`s for that lane between A
+and C without inspecting their content: B does not know what services A and C
+are speaking on that lane, and does not need to.
 
-If schema knowledge leaked across connections — for example, if a peer
-assumed "I already sent `String`'s schema on connection 0, so I don't
-need to send it on connection 1" — the proxy would break. A never saw
-connection 0's schemas; it only sees connection 1. Each connection is
-an independent communication channel that may reach a different peer,
-so schema state must be tracked independently per connection.
+If schema knowledge leaked across lanes — for example, if a peer assumed
+"I already sent `String`'s schema on lane 1, so I don't need to send it on lane
+3" — the proxy would break. A never saw lane 1's schemas; it only sees lane 3.
+Each service lane is an independent application-schema scope that may reach a
+different peer, so schema state must be tracked independently per lane.
 
 # Schema delivery
 
@@ -120,7 +117,7 @@ schema-closure bytes:
   * **Inline with the data.** A `RequestCall` and a `RequestResponse` each carry
     a `schemas` field (phon schema-closure bytes for that message's argument or
     response root). It is non-empty the first time a `(method_id, direction)`
-    binding is used on a connection and empty thereafter.
+    binding is used on a lane and empty thereafter.
   * **Standalone `SchemaMessage`.** A binding may also be advertised ahead of
     its first payload-bearing message, so a batch can establish all required
     bindings before their first use. A `SchemaMessage` carries the same
@@ -137,13 +134,13 @@ A schema binding is self-describing and self-contained: it identifies the root
 type IDs that matter for the binding and includes every composite schema the
 receiver needs, so the receiver can rebuild a phon registry and decode plans
 from the binding alone (plus any composites already received on this
-connection).
+lane).
 
 > r[schema.format.self-contained]
 >
 > When a carrier includes schemas, the set of schemas MUST be self-contained:
 > every type ID referenced by any schema in the closure MUST either be defined
-> in the same closure or have been previously received on this connection. The
+> in the same closure or have been previously received on this lane. The
 > receiver MUST be able to build phon decode plans for all included types before
 > deserializing the payload.
 
@@ -154,18 +151,17 @@ connection).
 > include:
 >
 >   * All schemas for the method's types that have not been previously sent on
->     this connection, and
+>     this lane, and
 >   * The primary root type ID for one `(method_id, direction)` binding.
 >
 > The root type for a response is always the full `Result<T, VoxError<E>>` wire
 > type, regardless of whether the handler succeeded or failed.
 >
 > A carrier binds exactly one `(method_id, direction)` pair. If all schemas for
-> that method's types have already been sent on this connection, the closure MAY
+> that method's types have already been sent on this lane, the closure MAY
 > contain only the root (no new composite schemas) — but the binding MUST still
 > be established the first time this `(method_id, direction)` pair is introduced
-> on the connection, so the receiver knows which type ID is the root for this
-> method.
+> on the lane, so the receiver knows which type ID is the root for this method.
 
 > r[schema.format.binding-roots]
 >
@@ -203,13 +199,13 @@ connection).
 
 # Schema tracking
 
-Each peer maintains, per connection:
+Each peer maintains, per lane:
 
 > r[schema.tracking.sent]
 >
 > Each peer MUST track the set of `(method_id, direction)` bindings for which
 > it has sent schema-binding bytes to the other peer. This set starts empty
-> and grows monotonically over the connection lifetime.
+> and grows monotonically over the lane lifetime.
 
 > r[schema.tracking.received]
 >
@@ -229,7 +225,7 @@ Each peer maintains, per connection:
 > r[schema.tracking.bindings]
 >
 > Each peer MUST track the set of (method_id, direction) pairs for which
-> it has established bindings on this connection. A binding MUST be sent
+> it has established bindings on this lane. A binding MUST be sent
 > the first time a method's schemas are delivered for a given direction,
 > even if all the schemas themselves were already sent by a previous call
 > to a different method.
@@ -238,12 +234,12 @@ Each peer maintains, per connection:
 
 Schema exchange operates at two levels:
 
-1. **Protocol level (per-session):** The `Message` envelope schema is exchanged
-   during the handshake (see `r[session.handshake]`). This lets the protocol
-   framing itself evolve without breaking changes.
+1. **Protocol level (per-connection):** The `Message` envelope schema is
+   exchanged during the connection handshake (see `r[session.handshake]`). This
+   lets the protocol framing itself evolve without breaking changes.
 
-2. **Application level (per-connection):** Method argument and response schemas
-   are exchanged lazily, scoped to each connection. This lets service types
+2. **Application level (per-lane):** Method argument and response schemas
+   are exchanged lazily, scoped to each service lane. This lets service types
    evolve independently.
 
 The rest of this section describes application-level schema exchange.
@@ -258,7 +254,7 @@ for the entire service interface up front.
 > r[schema.exchange.caller]
 >
 > Before sending a `Request`, the caller MUST check whether the schemas for
-> the method's argument types have been sent to this peer on this connection.
+> the method's argument types have been sent to this peer on this lane.
 > If any have not, the caller MUST include the unsent schema closure (and the
 > method binding) with — or ahead of — the `Request`
 > (see `r[schema.format.delivery]`).
@@ -267,7 +263,7 @@ for the entire service interface up front.
 >
 > Before sending any `Response` for a method, the callee MUST check whether
 > the schemas for the method's **statically-known response type** have been
-> sent to this peer on this connection. If any have not, the callee MUST
+> sent to this peer on this lane. If any have not, the callee MUST
 > include the unsent schema closure and the method binding with — or ahead of —
 > the `Response`.
 >
@@ -318,10 +314,10 @@ for the entire service interface up front.
 >
 > Application-level schema exchange is mandatory. If a peer receives a
 > `Request` or `Response` and either (a) the schemas for any referenced
-> type have not been received on that connection, or (b) no
+> type have not been received on that lane, or (b) no
 > method binding for this `(method_id, direction)` pair has been
-> received on this connection, this is a protocol error and the
-> connection MUST be torn down. The sender is always responsible for
+> received on this lane, this is a protocol error and the
+> lane MUST be torn down. The sender is always responsible for
 > sending both schemas and bindings before the data that needs them.
 
 > r[schema.exchange.idempotent]
@@ -331,12 +327,13 @@ for the entire service interface up front.
 > types), no schemas need to be included. The `r[schema.principles.once-per-type]`
 > rule applies — each type ID is sent at most once. The binding for a new
 > `(method_id, direction)` pair MUST still be established the first time it is
-> introduced on the connection (see `r[schema.tracking.bindings]`).
+> introduced on the lane (see `r[schema.tracking.bindings]`).
 
 # Method identity without signatures
 
-Schema exchange is mandatory (see `r[session.handshake]`). Since peers
-always have each other's type metadata, method identity no longer needs
+Schema exchange is mandatory (see `r[session.handshake]`). Since peers always
+have each other's protocol and application type metadata before decoding data,
+method identity no longer needs
 to encode the full type signature. Two versions of a service may have
 the same method with evolved argument types — including the signature
 hash in the method ID would make these look like different methods,

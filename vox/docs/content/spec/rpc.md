@@ -63,8 +63,9 @@ weight = 12
 
 > r[rpc.one-service-per-connection]
 >
-> Each connection is bound to exactly one service. If a peer needs to talk
-> multiple protocols, it opens additional virtual connections — one per service.
+> Historical compatibility wording: where older implementation references say
+> "connection" for a service namespace, the rootless model reads that as
+> "lane". Each public service lane is bound to exactly one service.
 
 > r[rpc.one-service-per-lane]
 >
@@ -76,96 +77,69 @@ weight = 12
 
 > r[rpc.handler]
 >
-> A handler handles incoming requests on a connection. It is a user-provided
-> implementation of a service trait. The vox runtime takes care of
-> deserializing arguments, routing to the right method, and sending back responses.
+> A handler handles incoming requests on a service lane. It is a user-provided
+> implementation of a service trait. The vox runtime takes care of deserializing
+> arguments, routing to the right method, and sending back responses.
 
 > r[rpc.caller]
 >
-> A caller makes outgoing requests on a connection. It is a generated struct
+> A caller makes outgoing requests on a service lane. It is a generated struct
 > (e.g. `AdderClient`) that provides async methods matching the source trait
 > signature, and takes care of serialization and response handling internally.
 > Successful responses include both return data and response metadata.
 
 > r[rpc.caller.liveness.refcounted]
 >
-> Runtime caller handles for a given connection MUST share a refcounted liveness
-> guard. Cloning a caller increments that refcount; dropping a caller decrements
-> it. A connection is considered caller-live while this refcount is greater than
-> zero.
+> Runtime caller handles for a given service lane MAY share refcounted local
+> state. Cloning a caller keeps that local state reachable; dropping a caller
+> releases only that local reference. Caller handle liveness is not a protocol
+> signal and MUST NOT be the mechanism that performs graceful lane close,
+> connection drain, or peer notification.
 
 > r[rpc.caller.liveness.last-drop-closes-connection]
 >
-> When the caller liveness refcount for a non-root connection reaches zero, the
-> runtime MUST close that connection as if the local peer requested a graceful
-> close. This close operation MUST be automatic and MUST NOT require the user to
-> pass the `ConnectionId` manually.
+> Despite this historical requirement name, dropping the last public caller for
+> a nonzero lane MUST NOT automatically close that lane as if the local peer
+> requested a graceful close. Dropping the last caller releases local resources
+> for that handle graph; graceful lane close requires an explicit async close,
+> retire, or drain operation.
 
 > r[rpc.caller.liveness.root-internal-close]
 >
-> When the caller liveness refcount for the root connection reaches zero, the
-> runtime MUST mark the root connection as internally closed. It MUST NOT send a
-> protocol `CloseConnection` message for connection ID 0.
+> There is no public root caller in the rootless model. Dropping public handles
+> MUST NOT internally close ID 0. ID 0 is connection-control traffic and is
+> closed only by explicit connection shutdown, connection drain completion,
+> protocol error, or connection failure.
 
 > r[rpc.caller.liveness.root-teardown-condition]
 >
-> Once the root is internally closed, the session MUST be torn down when and only
-> when there are no live virtual connections left.
+> Connection teardown is driven by the connection driver, explicit shutdown or
+> drain policy, protocol error, or underlying transport/link failure. It MUST NOT
+> be driven by generated caller liveness.
 
 > r[rpc.session-setup]
 >
-> When establishing a session, the user provides a handler for the root
-> connection and starts a driver for that connection. Generated clients are
-> then built from `driver.caller()`.
-
-In code, this looks like:
-
-```rust
-let (mut session, handle, _session_handle) = vox_core::session::initiator(conduit)
-    .establish()
-    .await?;
-
-let dispatcher = AdderDispatcher::new(my_adder_handler);
-let mut driver = vox_core::Driver::new(handle, dispatcher, vox_types::Parity::Odd);
-let client = AdderClient::new(driver.caller());
-let response = client.add(3, 5).await?;
-let result = response.ret;
-```
-
-`session.run()` and `driver.run()` must run concurrently for calls to flow.
+> When establishing a Vox connection, the runtime MUST make the connection
+> driver explicit enough that user code can keep it running and observe its
+> terminal outcome. Service handlers and generated clients attach to service
+> lanes, not to a public root caller on ID 0.
 
 > r[rpc.virtual-connection.accept]
 >
-> When a virtual connection is opened by the counterpart, the accepting peer
-> receives the connection metadata, decides whether to accept it, and receives
-> a connection handle in its acceptance callback. A generated client for that
-> connection is created from that connection's driver caller.
+> When a counterpart requests a service lane, the accepting peer receives the
+> lane metadata, decides whether to accept it, and receives a lane handle in its
+> acceptance callback. A generated client for that lane is created from that
+> lane's caller context.
 
 > r[rpc.virtual-connection.open]
 >
-> A peer may open a virtual connection on an existing session via
-> `SessionHandle::open_connection(...)`, receiving a connection handle when the
-> counterpart accepts it.
-
-In Rust, virtual connections are independent driver/caller contexts:
-
-```rust
-let vconn_handle = session_handle
-    .open_connection(
-        vox_types::ConnectionSettings {
-            parity: vox_types::Parity::Odd,
-            max_concurrent_requests: 64,
-        },
-        vec![],
-    )
-    .await?;
-
-let mut vconn_driver = vox_core::Driver::new(vconn_handle, vconn_dispatcher, vox_types::Parity::Odd);
-let vconn_client = MyServiceClient::new(vconn_driver.caller());
-```
-
-Inbound virtual connections are accepted only when `.on_connection(...)` is
-registered on the session builder; otherwise they are rejected.
+> A peer may open a service lane on an existing Vox connection, receiving a lane
+> handle when the counterpart accepts it. Compatibility APIs may still spell this
+> `SessionHandle::open_connection(...)` and return a `ConnectionHandle`; those
+> names refer to service-lane state in the rootless model.
+>
+> Inbound service lanes are accepted only when a lane acceptor is configured;
+> otherwise they are rejected.
 
 # Requests and responses
 
@@ -173,8 +147,8 @@ registered on the session builder; otherwise they are rejected.
 >
 > A `Request` message carries:
 >
->   * A request ID, unique within the connection, allocated by the caller
->     using the connection's parity
+>   * A request ID, unique within the service lane, allocated by the caller
+>     using the lane's parity
 >   * A method ID (see `r[rpc.method-id]`)
 >   * Serialized arguments
 >   * A list of channel IDs for channels that appear in the arguments,
@@ -257,16 +231,16 @@ registered on the session builder; otherwise they are rejected.
 
 > r[rpc.request.id-allocation]
 >
-> Request IDs are allocated by the caller using the connection's parity.
-> Sending a `Request` with an ID that does not match the caller's parity,
-> or reusing an ID that is still in flight, is a protocol error.
+> Request IDs are allocated by the caller using the lane's parity. Sending a
+> `Request` with an ID that does not match the caller's parity, or reusing an
+> ID that is still in flight on that lane, is a protocol error.
 
 > r[rpc.unknown-method]
 >
 > If a handler receives a request with a method ID it does not recognize,
 > it MUST send an error response indicating the method is unknown.
-> This is a call-level error, not a protocol error — the connection
-> remains open.
+> This is a call-level error, not a protocol error: the lane and connection
+> remain open.
 
 # Fallible methods
 
@@ -308,26 +282,28 @@ registered on the session builder; otherwise they are rejected.
 
 > r[rpc.fallible.vox-error.outcome]
 >
-> `VoxError` variants distinguish terminal call outcomes from session
+> `VoxError` variants distinguish terminal call outcomes from connection
 > interruptions:
 >
 >   * **Terminal call outcome** — the handler or protocol reached a definite
 >     outcome for this call: `User`, `UnknownMethod`, `InvalidPayload`,
 >     `Cancelled`
->   * **Session interruption** — the session ended before this call received a
->     terminal response: `ConnectionClosed`, `SessionShutdown`, `SendFailed`
+>   * **Connection interruption** — the connection ended before this call
+>     received a terminal response. Current APIs may spell this as
+>     `ConnectionClosed`, `SessionShutdown`, or `SendFailed` while migration is
+>     in progress.
 >   * **Indeterminate** — the runtime cannot safely determine whether the
 >     request attempt reached a terminal outcome
 >
 > Vox runtimes MUST NOT automatically replay or resume RPC calls after any
-> `VoxError`. Applications that recover after a session interruption or
+> `VoxError`. Applications that recover after a connection interruption or
 > indeterminate outcome must establish the recovery policy themselves and issue
 > any replacement call explicitly.
 
 > r[rpc.error.scope]
 >
-> Call errors affect only that call. The connection remains open and other
-> in-flight requests are unaffected.
+> Call errors affect only that call. The lane and connection remain open and
+> other in-flight requests are unaffected.
 
 # Channels
 
@@ -366,8 +342,8 @@ registered on the session builder; otherwise they are rejected.
 
 > r[rpc.channel.allocation]
 >
-> Channel IDs are allocated using the connection's parity. The caller
-> allocates IDs for channels that appear in the request arguments.
+> Channel IDs are allocated using the lane's parity. The caller allocates IDs
+> for channels that appear in the request arguments.
 
 > r[rpc.channel.lifecycle]
 >
@@ -396,7 +372,7 @@ registered on the session builder; otherwise they are rejected.
 > Once a `ChannelItem` has been accepted by a reliable `Tx::send`, the local
 > runtime MUST NOT drop it because an internal receive queue is full. Internal
 > queue capacity is backpressure: the receiving runtime MUST preserve accepted
-> items and terminal channel messages in order, or report channel/connection
+> items and terminal channel messages in order, or report channel/lane/connection
 > closure. Lossy application policy belongs above this layer through APIs such
 > as `Tx::try_send`.
 
@@ -404,7 +380,9 @@ registered on the session builder; otherwise they are rejected.
 >
 > If the underlying connection terminates while a channel receiver is still
 > live and no channel `Close` or `Reset` has been delivered, the receiver MUST
-> observe connection closure as an error rather than a graceful channel EOF.
+> observe connection closure as an error rather than a graceful channel EOF. If
+> only the service lane terminates, the receiver MUST observe lane closure as an
+> error rather than graceful EOF.
 
 > r[rpc.channel.close]
 >
@@ -429,23 +407,23 @@ registered on the session builder; otherwise they are rejected.
 
 > r[rpc.flow-control.max-concurrent-requests]
 >
-> Each connection has two independent directional request limits: one for
+> Each service lane has two independent directional request limits: one for
 > request attempts sent by the local peer, and one for request attempts
 > sent by the counterpart. Each peer advertises the maximum number of
-> concurrent request attempts it is willing to accept on that connection.
+> concurrent request attempts it is willing to accept on that lane.
 >
 > A peer's advertised `max_concurrent_requests` limits how many concurrent
-> request attempts the other peer may send on that connection.
+> request attempts the other peer may send on that lane.
 
 > r[rpc.flow-control.max-concurrent-requests.outbound]
 >
 > A peer MUST NOT send a new request attempt if doing so would exceed the
-> counterpart's advertised `max_concurrent_requests` for that connection.
+> counterpart's advertised `max_concurrent_requests` for that lane.
 
 > r[rpc.flow-control.max-concurrent-requests.inbound]
 >
 > If a peer receives a request attempt that exceeds its own advertised
-> `max_concurrent_requests` for that connection, it MUST treat that as a
+> `max_concurrent_requests` for that lane, it MUST treat that as a
 > protocol violation.
 
 > r[rpc.flow-control.max-concurrent-requests.counting]
@@ -456,18 +434,19 @@ registered on the session builder; otherwise they are rejected.
 
 > r[rpc.flow-control.max-concurrent-requests.session-failure]
 >
-> Request-attempt accounting is session-local. When the conduit or session
-> fails, in-flight request attempts on that session are no longer live. The
-> conduit layer MUST NOT reconnect, preserve, replay, or retransmit those
-> attempts. A later call requires a new session or a still-live existing session
-> and consumes its own fresh request concurrency while that request attempt is
-> live.
+> Request-attempt accounting is lane-local. When the conduit, link, or Vox
+> connection fails, in-flight request attempts on every lane of that connection
+> are no longer live. The conduit layer MUST NOT reconnect, preserve, replay, or
+> retransmit those attempts. A later call requires a new connection or a
+> still-live existing connection and consumes its own fresh lane request
+> concurrency while that request attempt is live.
 
 > r[rpc.flow-control.max-concurrent-requests.default]
 >
 > The default limit is carried in `ConnectionSettings`, which is embedded
-> in `Hello` (for the root connection) and `OpenConnection` (for virtual
-> connections). See `r[session.connection-settings]`.
+> in `Hello` (for connection defaults and compatibility control/root lane
+> settings) and `OpenConnection` (for service lanes). See
+> `r[session.connection-settings]`.
 
 ## Channel credit
 
@@ -480,10 +459,10 @@ registered on the session builder; otherwise they are rejected.
 
 > r[rpc.flow-control.credit.initial]
 >
-> Initial credit is negotiated/configured per connection as
+> Initial credit is negotiated/configured per lane as
 > `ConnectionSettings.initial_channel_credit`. When a channel is created
 > (as part of a request), the sender starts with the receiver's advertised
-> initial credit for that connection, so the sender can transmit immediately
+> initial credit for that lane, so the sender can transmit immediately
 > without waiting one RTT for the first `GrantCredit`. The receiver provisions
 > a bounded inbound queue of the same size for that channel. The default
 > initial channel credit is 16 items. Implementations MAY expose configuration
@@ -492,9 +471,10 @@ registered on the session builder; otherwise they are rejected.
 > r[rpc.flow-control.credit.initial.high-level]
 >
 > High-level connection and serving APIs SHOULD expose the same initial channel
-> credit / channel capacity configuration as lower-level session builders. The
-> configured value MUST be applied to the root connection settings used during
-> the session handshake.
+> credit / channel capacity configuration as lower-level connection builders.
+> The configured value MUST be applied to the connection-default lane settings
+> advertised during the connection handshake and to service-lane settings unless
+> a lane explicitly overrides it.
 
 > r[rpc.flow-control.credit.initial.zero]
 >
@@ -507,8 +487,9 @@ registered on the session builder; otherwise they are rejected.
 > r[rpc.flow-control.credit.grant]
 >
 > The receiver of a channel sends a `GrantCredit` message to add credit.
-> `GrantCredit` carries a connection ID, a channel ID, and an `additional`
-> count (u32). The sender's available credit increases by `additional`.
+> `GrantCredit` carries a lane ID (historically named connection ID on the
+> wire), a channel ID, and an `additional` count (u32). The sender's available
+> credit increases by `additional`.
 > The receiver MAY send `GrantCredit` at any time after the channel exists.
 
 > r[rpc.flow-control.credit.grant.additive]
@@ -529,8 +510,8 @@ registered on the session builder; otherwise they are rejected.
 > A nonblocking channel send MUST NOT wait for credit or transport queue
 > capacity. If sending would block because no credit or local queue capacity is
 > available, it MUST fail with `Full(value)` and return ownership of the value.
-> If the channel is terminal or the underlying connection is closed, it MUST
-> fail with `Closed(value)` and return ownership of the value.
+> If the channel is terminal or its lane or underlying connection is closed, it
+> MUST fail with `Closed(value)` and return ownership of the value.
 
 # Runtime observability
 
@@ -550,31 +531,32 @@ registered on the session builder; otherwise they are rejected.
 
 > r[rpc.observability.channel.context]
 >
-> Channel observer events and debug snapshots SHOULD include the connection ID
-> and best-effort local debug context for each channel when available. This
-> context SHOULD include the request ID, service, and method that introduced
-> the channel, and SHOULD remain available after the response is delivered and
-> after the request scope becomes terminal. Rust implementations SHOULD capture
-> source location and payload type context for locally created channel pairs.
+> Channel observer events and debug snapshots SHOULD include the lane ID
+> (historically named connection ID on the wire) and best-effort local debug
+> context for each channel when available. This context SHOULD include the
+> request ID, service, and method that introduced the channel, and SHOULD remain
+> available after the response is delivered and after the request scope becomes
+> terminal. Rust implementations SHOULD capture source location and payload type
+> context for locally created channel pairs.
 
 > r[rpc.debug.snapshot]
 >
 > Implementations SHOULD expose a local runtime debug snapshot API that inspects
 > in-process runtime state directly rather than sending requests over the
 > flow-controlled Vox channel path. Snapshots SHOULD include connection,
-> request, channel, flow-control, and runtime queue/task state when available.
-> Channel snapshots SHOULD preserve the request/service/method association that
-> introduced the channel, plus whether that request scope is waiting for a
-> response, responded but still live, succeeded, failed, cancelled, lane-closed,
-> or connection-lost when known.
+> lane, request, channel, flow-control, and runtime queue/task state when
+> available. Channel snapshots SHOULD preserve the request/service/method
+> association that introduced the channel, plus whether that request scope is
+> waiting for a response, responded but still live, succeeded, failed,
+> cancelled, lane-closed, or connection-lost when known.
 
 > r[rpc.transport.stream.cancel-safe-recv]
 >
-> Stream transport receive operations exposed to session runtime loops MUST be
-> cancellation-safe. If a session stops polling `LinkRx::recv` because another
-> runtime branch wins selection, any partially-read length-prefixed frame MUST
-> continue to completion in transport-owned state rather than corrupting the
-> next receive attempt.
+> Stream transport receive operations exposed to connection runtime loops MUST
+> be cancellation-safe. If a connection driver stops polling `LinkRx::recv`
+> because another runtime branch wins selection, any partially-read
+> length-prefixed frame MUST continue to completion in transport-owned state
+> rather than corrupting the next receive attempt.
 
 > r[rpc.observability.channel.try-send-detail]
 >
@@ -584,14 +566,14 @@ registered on the session builder; otherwise they are rejected.
 
 > r[rpc.observability.driver]
 >
-> Driver observers SHOULD report connection lifecycle, request lifecycle,
-> outbound runtime queue saturation/closure, encode/decode failures, and
-> protocol violations. Connection IDs and request IDs are suitable for local
-> debugging but MUST NOT be used as default metric labels.
+> Driver observers SHOULD report connection lifecycle, lane lifecycle, request
+> lifecycle, outbound runtime queue saturation/closure, encode/decode failures,
+> and protocol violations. Lane IDs, connection IDs, and request IDs are
+> suitable for local debugging but MUST NOT be used as default metric labels.
 
 > r[rpc.observability.session-errors]
 >
-> Session receive errors from the conduit or transport MUST be surfaced as
+> Connection receive errors from the conduit or transport MUST be surfaced as
 > runtime diagnostics and connection close reasons. Implementations MUST NOT
 > collapse decode, protocol, or transport receive failures into an ordinary
 > graceful shutdown.
@@ -609,8 +591,8 @@ registered on the session builder; otherwise they are rejected.
 >
 > Metrics derived from observer events MUST use low-cardinality labels such as
 > service, method, side, outcome, error kind, and channel direction. Request
-> IDs, connection IDs, channel IDs, peer addresses, operation IDs, and metadata
-> values MUST NOT be used as metric labels by default.
+> IDs, lane IDs, connection IDs, channel IDs, peer addresses, operation IDs, and
+> metadata values MUST NOT be used as metric labels by default.
 
 # Cancellation
 
@@ -631,9 +613,9 @@ registered on the session builder; otherwise they are rejected.
 
 > r[rpc.pipelining]
 >
-> Multiple requests MAY be in flight simultaneously on a connection. Each
+> Multiple requests MAY be in flight simultaneously on a service lane. Each
 > request is independent; a slow or failed request MUST NOT block other
-> requests.
+> requests on the same lane.
 
 # Metadata
 
@@ -726,7 +708,7 @@ On the wire this is a `Value` map `{ "trace-id": "abc123", "attempt": 2,
 > `channel<T>()` returns a linked `(Tx<T>, Rx<T>)` pair for one logical
 > unidirectional channel. Before binding, neither endpoint has a channel ID,
 > element codec, or transport binding. Runtime channel capacity defaults to
-> 16 items unless the session is configured otherwise.
+> 16 items unless the connection or lane is configured otherwise.
 
 > r[rpc.channel.pair.binding-propagation]
 >
