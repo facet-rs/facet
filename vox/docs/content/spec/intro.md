@@ -11,8 +11,8 @@ weight = 10
 > TypeScript, etc.) are generated from Rust definitions.
 
 This specification describes the current protocol model. Every fresh link
-begins with a transport prologue below the conduit/session layers so an
-incompatible peer is rejected before session establishment.
+begins with a transport prologue below the conduit/connection layers so an
+incompatible peer is rejected before Vox connection establishment.
 
 ## Defining a service
 
@@ -77,9 +77,9 @@ WebSocket; but a vox connection sits several layers above a "TCP connection".
 +------------------------+
 | Requests / Channels    |  RPC calls and streaming data
 +------------------------+
-| Connections            |  request/channel ID namespace
+| Service Lanes          |  service-local request/channel namespace
 +------------------------+
-| Session                |  set of connections over one BareConduit
+| Connection             |  peer identity, handshake, lanes, keepalive
 +------------------------+
 | Conduit                |  phon serialization over a link
 +------------------------+
@@ -96,10 +96,13 @@ The layers have distinct failure boundaries:
   vox transport protocol on that link.
 - A **Conduit** is a `BareConduit` bound to one link. It does not hide link
   failure, reconnect, replay, or preserve in-flight request attempts.
-- A **Session** runs above one `BareConduit` and ends when that conduit fails.
-- A **Connection** is scoped to a session, not to an individual conduit.
+- A **Connection** runs above one `BareConduit` and ends when that conduit
+  fails. The historical implementation term for this protocol envelope is
+  "session".
+- A **Lane** is a service-local request/channel namespace inside one
+  connection.
 
-# Terminology: call, request attempt, and response
+# Terminology: call, operation, request scope, request attempt, and response
 
 vox uses several related terms that refer to different layers of the system.
 This specification uses them consistently as follows.
@@ -109,24 +112,39 @@ Calling a generated client method creates one call. Handling an incoming RPC
 in a service implementation handles one call. A call has one terminal outcome
 from the application's point of view.
 
+An **operation** is an optional logical unit of work above request scopes. It
+can group replacement request attempts for retry, resume, idempotency, or
+distributed tracing. In the common case, one call creates one operation and one
+request scope.
+
+A **request scope** is the runtime owner of one request attempt, the response
+when present, channels introduced by that request, request-local progress, and
+observer/debug context. A response can be delivered before the request scope is
+terminal if request-scoped channels remain live.
+
 A **request attempt** is one concrete wire-level delivery attempt for a call.
 A request attempt is carried by a `RequestCall`, identified by a `RequestId`,
-and sent on one connection. A request attempt may succeed, fail, be cancelled,
-or be abandoned by connection/session failure.
+and sent on one service lane. A request attempt may succeed, fail, be
+cancelled, or be abandoned by lane or connection failure.
 
 A **response** is the terminal reply to one request attempt. On the wire, a
 response is carried by `RequestResponse` and is matched to a prior request
-attempt by `RequestId`.
+attempt by `RequestId`. A response is not necessarily the terminal event for
+the request scope that carried it.
 
 In summary:
 
-- one **call** creates one **request attempt**
-- each **request attempt** has at most one terminal **response**
+- one **call** usually creates one **operation**
+- one **operation** may create one or more **request scopes**
+- each **request scope** owns one **request attempt**
+- each **request attempt** has at most one **response**
 
 This distinction matters for failure handling:
 
-- conduit/session failure abandons in-flight **request attempts**
-- the conduit layer never reconnects, retries, or replays a request attempt
+- raw channels are scoped to the **request scope** that introduced them
+- lane or connection failure abandons in-flight **request attempts**
+- the conduit and connection layers never reconnect, retry, or replay a request
+  attempt
 
-A caller that wants to issue another request after failure does so as a new
-call with a fresh request attempt.
+A caller that wants to retry after failure does so through operation-level
+policy with a fresh request scope and request attempt.
