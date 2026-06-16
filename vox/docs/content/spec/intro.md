@@ -102,7 +102,7 @@ The layers have distinct failure boundaries:
 - A **Lane** is a service-local request/channel namespace inside one
   connection.
 
-# Terminology: call, operation, request scope, request attempt, and response
+# Terminology: call, request scope, request attempt, and response
 
 vox uses several related terms that refer to different layers of the system.
 This specification uses them consistently as follows.
@@ -111,11 +111,6 @@ A **call** is the application-level RPC invocation as seen by the programmer.
 Calling a generated client method creates one call. Handling an incoming RPC
 in a service implementation handles one call. A call has one terminal outcome
 from the application's point of view.
-
-An **operation** is an optional logical unit of work above request scopes. It
-can group replacement request attempts for retry, resume, idempotency, or
-distributed tracing. In the common case, one call creates one operation and one
-request scope.
 
 A **request scope** is the runtime owner of one request attempt, the response
 when present, channels introduced by that request, request-local progress, and
@@ -135,8 +130,7 @@ event for its request scope. On the wire, a response is carried by
 
 In summary:
 
-- one **call** usually creates one **operation**
-- one **operation** may create one or more **request scopes**
+- one **call** creates one **request scope**
 - each **request scope** owns one **request attempt**
 - each **request attempt** has at most one **response**
 
@@ -147,5 +141,6 @@ This distinction matters for failure handling:
 - the conduit and connection layers never reconnect, retry, or replay a request
   attempt
 
-A caller that wants to retry after failure does so through operation-level
-policy with a fresh request scope and request attempt.
+This specification does not define operation identity, retry, resume, or durable
+stream semantics. Higher-level services may define those protocols explicitly,
+but raw Vox channels do not provide them.

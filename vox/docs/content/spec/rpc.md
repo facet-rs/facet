@@ -202,41 +202,21 @@ weight = 12
 > as an explicit service-level resource, handle, or demand protocol rather than
 > as a raw Vox channel.
 >
-> A replacement request attempt under the same operation MUST NOT inherit raw
-> channels from the failed or cancelled request scope. Durable or resumable
-> delivery requires an explicit primitive distinct from raw `Tx<T>` and
-> `Rx<T>`.
-
-> r[rpc.operation]
->
-> An operation is an optional logical unit of work above request scopes. It may
-> group multiple replacement request attempts for retry, resume, idempotency,
-> or distributed tracing. In the absence of operation metadata, a single request
-> scope is also the smallest observable unit of work.
->
-> Operation identity does not own raw channels. Raw `Tx<T>` and `Rx<T>` values
-> are owned by the request scope that introduced them and cannot be promoted to
-> operation-scoped state.
-
-> r[rpc.retry.operation-level]
->
-> Retries are operation-level policy, not link, conduit, connection, or lane
-> replay. A retry attempt MUST allocate a fresh request ID, create a fresh
-> request scope, and bind fresh raw channels if the method carries channels.
-> Vox runtimes MUST NOT silently replay a request attempt after transport
-> uncertainty unless an explicit retry policy and method semantics allow a
-> replacement attempt.
+> Retry, resume, durable delivery, and detached streams are outside raw channel
+> semantics. A higher-level service may define those protocols explicitly, but
+> raw `Tx<T>` and `Rx<T>` endpoints are owned only by the request scope that
+> introduced them.
 
 > r[rpc.timeout.idle-progress]
 >
-> Idle timeout policy applies to request scopes or operations. While a request
-> scope is in flight, request-associated activity that may reset an idle timer
-> includes request acceptance, channel item delivery, channel close/reset,
-> channel credit that proves receiver-side consumption, explicit request
-> progress, cancellation, drain/retire transitions, and response delivery.
+> Idle timeout policy applies to request scopes. While a request scope is in
+> flight, request-associated activity that may reset an idle timer includes
+> request acceptance, channel item delivery, channel close/reset, channel credit
+> that proves receiver-side consumption, explicit request progress,
+> cancellation, drain/retire transitions, and response delivery.
 >
 > Connection keepalive, unrelated logs, and spans that are not associated with
-> the request scope or operation MUST NOT count as request progress.
+> the request scope MUST NOT count as request progress.
 
 > r[rpc.request.id-allocation]
 >
@@ -391,8 +371,8 @@ weight = 12
 > as `Tx::try_send`.
 >
 > This is an in-scope delivery guarantee only. It does not make raw channels
-> stable across request response, lane close, connection loss, reconnect, retry,
-> or process death.
+> stable across request response, lane close, connection loss, reconnect, or
+> process death.
 
 > r[rpc.channel.connection-closure]
 >
@@ -609,8 +589,8 @@ weight = 12
 >
 > Metrics derived from observer events MUST use low-cardinality labels such as
 > service, method, side, outcome, error kind, and channel direction. Request
-> IDs, lane IDs, connection IDs, channel IDs, peer addresses, operation IDs, and
-> metadata values MUST NOT be used as metric labels by default.
+> IDs, lane IDs, connection IDs, channel IDs, peer addresses, and metadata
+> values MUST NOT be used as metric labels by default.
 
 # Cancellation
 
