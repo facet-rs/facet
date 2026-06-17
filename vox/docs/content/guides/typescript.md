@@ -82,7 +82,8 @@ class GreeterService implements GreeterHandler {
 const server = net.createServer((socket) => {
   void (async () => {
     const conn = await accept(acceptTcp(socket), {
-      onLane: (lane) => {
+      onLane: async (_request, pending) => {
+        const lane = await pending.accept();
         const driver = new Driver(
           lane,
           new GreeterDispatcher(new GreeterService()),
@@ -98,6 +99,10 @@ const server = net.createServer((socket) => {
 
 server.listen(9000, "127.0.0.1");
 ```
+
+`onLane` receives the peer's `LaneRequest` plus a `PendingLane`. Accept the
+pending lane to attach a dispatcher, optionally with a lane grant; reject it to
+return a structured lane-open policy error.
 
 ## 5) Connection loss and keepalive
 
