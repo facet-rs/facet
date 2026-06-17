@@ -150,6 +150,7 @@ pub use vox_types::{
     ConnectionCloseReason,
     ConnectionRole,
     ConnectionSettings,
+    Decline,
     DecodeErrorKind,
     DriverEvent,
     DriverTaskStatus,
@@ -158,6 +159,7 @@ pub use vox_types::{
     EstablishmentEvent,
     EstablishmentOutcome,
     EstablishmentPhase,
+    EstablishmentRejectReason,
     Extensions,
     Handler,
     HandshakeResult,
@@ -259,9 +261,10 @@ pub use vox_core::{acceptor_on_link, initiator_on_link};
 // Connection types
 #[cfg(feature = "runtime")]
 pub use vox_core::{
-    Connection, ConnectionConfig, ConnectionError, ConnectionHandle, ConnectionKeepaliveConfig,
-    LaneHandle, LaneRejectReason, LaneRejection, LaneRequest, LaneState, PendingLane,
-    VOX_LANE_REJECT_MESSAGE_METADATA_KEY, VOX_LANE_REJECT_REASON_METADATA_KEY,
+    AnonymousIdentityResolver, Connection, ConnectionConfig, ConnectionError, ConnectionHandle,
+    ConnectionKeepaliveConfig, IdentityResolver, IdentityResolverFn, LaneHandle, LaneRejectReason,
+    LaneRejection, LaneRequest, LaneState, PendingLane, VOX_LANE_REJECT_MESSAGE_METADATA_KEY,
+    VOX_LANE_REJECT_REASON_METADATA_KEY, identity_resolver_fn,
 };
 
 // Connection acceptor

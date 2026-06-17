@@ -11,6 +11,8 @@ use vox::{ConnectionSettings, LaneRejectReason, LaneRejection, Parity};
 trait CounterLab {
     async fn bump(&self) -> u32;
     async fn echo(&self, value: String) -> String;
+    #[vox::context]
+    async fn grant_scope(&self) -> String;
 }
 
 #[vox::service]
@@ -39,6 +41,20 @@ impl CounterLab for CounterLabService {
     async fn echo(&self, value: String) -> String {
         format!("echo:{value}")
     }
+
+    async fn grant_scope(&self, cx: &vox::RequestContext<'_>) -> String {
+        use vox::MetadataExt;
+
+        cx.authorization()
+            .and_then(|authorization| {
+                authorization
+                    .lane_grant()
+                    .metadata()
+                    .meta_str("grant-scope")
+                    .map(str::to_owned)
+            })
+            .unwrap_or_else(|| "none".to_owned())
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -56,11 +72,27 @@ fn lab_acceptor(
 ) -> std::result::Result<(), LaneRejection> {
     match request.service() {
         "CounterLab" => {
-            connection.handle_with(CounterLabDispatcher::new(CounterLabService::new()));
+            let grant = vox::LaneGrant::from_metadata(
+                vox::metadata()
+                    .str("tenant", "lab")
+                    .str("grant-scope", "counter:read-write")
+                    .build(),
+            );
+            connection
+                .with_grant(grant)
+                .handle_with(CounterLabDispatcher::new(CounterLabService::new()));
             Ok(())
         }
         "StringLab" => {
-            connection.handle_with(StringLabDispatcher::new(StringLabService));
+            let grant = vox::LaneGrant::from_metadata(
+                vox::metadata()
+                    .str("tenant", "lab")
+                    .str("grant-scope", "string:read-write")
+                    .build(),
+            );
+            connection
+                .with_grant(grant)
+                .handle_with(StringLabDispatcher::new(StringLabService));
             Ok(())
         }
         _ => Err(LaneRejection::with_message(
@@ -152,6 +184,16 @@ async fn main() -> Result<()> {
         "echo:alpha"
     );
     println!("[client] CounterLab::echo -> echo:alpha");
+
+    println!("[client] calling CounterLab::grant_scope");
+    assert_eq!(
+        counter_client
+            .grant_scope()
+            .await
+            .map_err(|e| eyre!("counter_client.grant_scope failed: {e:?}"))?,
+        "counter:read-write"
+    );
+    println!("[client] CounterLab::grant_scope -> counter:read-write");
 
     println!("[client] calling StringLab::shout");
     assert_eq!(

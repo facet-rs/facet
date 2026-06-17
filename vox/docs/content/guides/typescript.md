@@ -104,6 +104,57 @@ server.listen(9000, "127.0.0.1");
 pending lane to attach a dispatcher, optionally with a lane grant; reject it to
 return a structured lane-open policy error.
 
+## 4.5) Connection and lane policy
+
+Handshake metadata carries early peer-authored claims. An identity resolver
+verifies those claims locally and returns either an immutable connection
+identity or a structured `Decline`:
+
+```ts
+import {
+  declineIdentity,
+  emptyMetadata,
+  identityBasis,
+  LaneRejection,
+  peerIdentityFromBasis,
+} from "@bearcove/vox-core";
+
+const metadata = emptyMetadata();
+metadata.set("-#authorization", "Bearer local-dev");
+
+const conn = await connect(wsConnector("ws://127.0.0.1:9000"), {
+  metadata,
+  identityResolver: (context) => {
+    if (context.claims.get("-#authorization") !== "Bearer local-dev") {
+      return declineIdentity("unauthenticated");
+    }
+    return peerIdentityFromBasis(
+      identityBasis("application-user", "verified-claim-backed", "local-dev-user"),
+    );
+  },
+});
+```
+
+Lane metadata can carry later claims, but those do not rewrite the connection
+identity. Verify them in lane policy and attach the result as a lane grant:
+
+```ts
+onLane: async (request, pending) => {
+  if (request.service !== "Greeter") {
+    pending.reject(LaneRejection.withMessage("unknown-service", "unknown service"));
+    return;
+  }
+
+  const grantMetadata = emptyMetadata();
+  grantMetadata.set("tenant", "lab");
+  grantMetadata.set("grant-scope", "greeter:read");
+  const lane = await pending.accept({ metadata: grantMetadata });
+
+  const driver = new Driver(lane, new GreeterDispatcher(new GreeterService()));
+  void driver.run();
+}
+```
+
 ## 5) Connection loss and keepalive
 
 Vox connections are bound to one link attachment. If that attachment breaks,

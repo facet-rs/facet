@@ -90,7 +90,61 @@ connection.shutdown()
 try await driver.value
 ```
 
-## 4) Wire a Swift server
+## 4) Connection and lane policy
+
+Handshake metadata carries early peer-authored claims. An identity resolver
+verifies those claims locally and either returns the immutable connection
+identity or throws `ConnectionDeclinedError`, which sends `Decline` during the
+handshake:
+
+```swift
+let authMetadata = emptyMetadata()
+    .metaSetting("-#authorization", .string("Bearer local-dev"))
+
+let connection = try await Connection.connect(
+    TcpConnector(host: "127.0.0.1", port: 9000),
+    metadata: authMetadata,
+    identityResolver: { context in
+        guard context.claims.metaStr("-#authorization") == "Bearer local-dev" else {
+            throw ConnectionDeclinedError(reason: .unauthenticated)
+        }
+        return PeerIdentity.fromBasis(
+            IdentityBasis(
+                form: .applicationUser,
+                provenance: .verifiedClaimBacked,
+                redacted: "local-dev-user"
+            )
+        )
+    }
+)
+```
+
+Late credentials in lane or request metadata do not rewrite the connection
+identity. Verify them in lane/request policy and record the result in a lane
+grant:
+
+```swift
+struct GreeterLaneAcceptor: LaneAcceptor {
+    let dispatcher: any ServiceDispatcher
+
+    func accept(request: LaneRequest, lane: PendingLane) {
+        guard request.service == "Greeter" else {
+            lane.reject(.withMessage(.unknownService, "unknown service"))
+            return
+        }
+
+        var grant = emptyMetadata()
+        grant.metaSet("tenant", .string("lab"))
+        grant.metaSet("grant-scope", .string("greeter:read"))
+        lane.handleWith(dispatcher, grant: LaneGrant(metadata: grant))
+    }
+}
+```
+
+Generated handlers that receive `RequestContext` can read the grant from
+`context.authorization.laneGrant`.
+
+## 5) Wire a Swift server
 
 `GreeterChannelingDispatcher` is generated per service; wrap it in a `ServiceDispatcher` adapter.
 
@@ -138,14 +192,14 @@ Then establish as acceptor and run the connection:
 ```swift
 let connection = try await Connection.accept(
     TcpAcceptor(host: "127.0.0.1", port: 9000),
-    onLane: DefaultLaneAcceptor(
+    onLane: GreeterLaneAcceptor(
         dispatcher: GreeterDispatcherAdapter(handler: MyGreeterService())
     )
 )
 try await connection.run()
 ```
 
-## 5) Channel lifetime
+## 6) Channel lifetime
 
 Generated Swift clients and dispatchers use `Tx<T>`/`Rx<T>` for raw Vox
 channels. Those channels are request-scoped sidebands: start the call that binds
@@ -154,6 +208,6 @@ The method response terminates the request scope, so channel data that matters
 must be sent and drained before, or as part of, the response. Durable or
 resumable streams belong in explicit service-level protocols, not raw channels.
 
-## 6) Keep codegen and runtime versions aligned
+## 7) Keep codegen and runtime versions aligned
 
 Generated Swift code assumes the same protocol/runtime major version as your Rust descriptors and `VoxRuntime`.

@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use vox_core::LaneAcceptor;
-use vox_types::VoxObserverHandle;
+use vox_core::{IdentityResolver, LaneAcceptor};
+use vox_types::{Metadata, VoxObserverHandle};
 
-use super::{ServeError, VoxListener, serve_listener};
+use super::{IdentityResolverRef, ServeError, VoxListener, serve_listener};
 
 /// A [`VoxListener`] that accepts TCP connections, terminates TLS, then upgrades to WebSocket.
 pub struct WssListener {
@@ -96,8 +96,10 @@ fn parse_query_params(s: &str) -> (&str, std::collections::HashMap<String, std::
 pub(super) async fn serve_wss(
     host: &str,
     acceptor: impl LaneAcceptor,
+    metadata: Metadata,
     channel_capacity: u32,
     observer: Option<VoxObserverHandle>,
+    identity_resolver: Option<Arc<dyn IdentityResolver>>,
 ) -> Result<(), ServeError> {
     let (host_part, params) = parse_query_params(host);
     let cert = params.get("cert").ok_or_else(|| {
@@ -114,8 +116,12 @@ pub(super) async fn serve_wss(
     })?;
     let listener = WssListener::bind(host_part, cert.as_ref(), key.as_ref()).await?;
     let mut builder = serve_listener(listener, acceptor).channel_capacity(channel_capacity);
+    builder = builder.metadata(metadata);
     if let Some(observer) = observer {
         builder = builder.observer_handle(observer);
+    }
+    if let Some(resolver) = identity_resolver {
+        builder = builder.identity_resolver(IdentityResolverRef(resolver));
     }
     Ok(builder.await?)
 }

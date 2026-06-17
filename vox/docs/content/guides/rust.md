@@ -26,8 +26,22 @@ The best way to learn the Rust API is to run the examples in order, from simples
 
 > ```rust
 > match request.service() {
->     "CounterLab" => lane.handle_with(CounterLabDispatcher::new(counter)),
->     "StringLab" => lane.handle_with(StringLabDispatcher::new(strings)),
+>     "CounterLab" => lane
+>         .with_grant(vox::LaneGrant::from_metadata(
+>             vox::metadata()
+>                 .str("tenant", "lab")
+>                 .str("grant-scope", "counter:read-write")
+>                 .build(),
+>         ))
+>         .handle_with(CounterLabDispatcher::new(counter)),
+>     "StringLab" => lane
+>         .with_grant(vox::LaneGrant::from_metadata(
+>             vox::metadata()
+>                 .str("tenant", "lab")
+>                 .str("grant-scope", "string:read-write")
+>                 .build(),
+>         ))
+>         .handle_with(StringLabDispatcher::new(strings)),
 >     _ => return Err(vox::LaneRejection::with_message(
 >         vox::LaneRejectReason::UnknownService,
 >         "unknown service",
@@ -85,6 +99,50 @@ let server_task = tokio::spawn(async move {
 
 let client: WordLabClient = vox::connect_lane("127.0.0.1:9000").await?;
 ```
+
+## Connection policy
+
+Handshake metadata carries early peer-authored claims. An identity resolver
+verifies those claims against locally asserted transport evidence and either
+returns the immutable connection identity or sends `Decline` during the
+handshake:
+
+```rust
+let resolver = vox::identity_resolver_fn(|cx: vox::IdentityResolutionContext<'_>| {
+    use vox::MetadataExt;
+
+    match cx.claims.meta_str("-#authorization") {
+        Some("Bearer local-dev") => Ok(vox::PeerIdentity::from_basis(
+            vox::IdentityBasis::new(
+                vox::PeerIdentityForm::ApplicationUser,
+                vox::IdentityBasisProvenance::VerifiedClaimBacked,
+                "local-dev-user",
+            ),
+        )),
+        _ => Err(vox::Decline::new(
+            vox::EstablishmentRejectReason::Unauthenticated,
+        )),
+    }
+});
+
+tokio::spawn(async move {
+    vox::serve("127.0.0.1:9000", WordLabDispatcher::new(WordLabService))
+        .identity_resolver(resolver)
+        .await
+});
+
+let client = vox::connect("127.0.0.1:9000")
+    .metadata(
+        vox::metadata()
+            .str("-#authorization", "Bearer local-dev")
+            .build(),
+    )
+    .await?;
+```
+
+Late credentials in lane or request metadata do not rewrite the connection
+identity. Verify them in lane/request policy and record the result in a lane
+grant or request-local state.
 
 Lane acceptors can attach local policy output to the lane. Request handlers
 that opt into `RequestContext` can read the same grant for each call:

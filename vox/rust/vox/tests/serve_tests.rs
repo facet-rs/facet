@@ -81,6 +81,86 @@ async fn connect_builder_establish_matches_await() {
     server.abort();
 }
 
+// r[verify connection.handshake.metadata]
+// r[verify connection.identity.resolver]
+// r[verify connection.policy.establishment.rejection]
+#[tokio::test]
+async fn high_level_builders_forward_connection_policy() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("local_addr");
+
+    fn require_local_dev(
+        cx: vox::IdentityResolutionContext<'_>,
+    ) -> Result<vox::PeerIdentity, vox::Decline> {
+        use vox::MetadataExt;
+
+        match cx.claims.meta_str("-#authorization") {
+            Some("Bearer local-dev") => Ok(vox::PeerIdentity::from_basis(vox::IdentityBasis::new(
+                vox::PeerIdentityForm::ApplicationUser,
+                vox::IdentityBasisProvenance::VerifiedClaimBacked,
+                "local-dev-user",
+            ))),
+            _ => Err(vox::Decline::new(
+                vox::EstablishmentRejectReason::Unauthenticated,
+            )),
+        }
+    }
+
+    fn require_echo_server(
+        cx: vox::IdentityResolutionContext<'_>,
+    ) -> Result<vox::PeerIdentity, vox::Decline> {
+        use vox::MetadataExt;
+
+        match cx.claims.meta_str("server-name") {
+            Some("echo") => Ok(vox::PeerIdentity::from_basis(vox::IdentityBasis::new(
+                vox::PeerIdentityForm::ApplicationUser,
+                vox::IdentityBasisProvenance::VerifiedClaimBacked,
+                "echo-server",
+            ))),
+            _ => Err(vox::Decline::new(vox::EstablishmentRejectReason::Forbidden)),
+        }
+    }
+
+    let server = tokio::spawn(async move {
+        vox::serve_listener(listener, EchoDispatcher::new(EchoService))
+            .metadata(vox::metadata().str("server-name", "echo").build())
+            .identity_resolver(vox::identity_resolver_fn(require_local_dev))
+            .await
+            .expect("serve");
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let rejected: Result<EchoClient, _> = vox::connect_lane(format!("tcp://{addr}"))
+        .identity_resolver(vox::identity_resolver_fn(require_echo_server))
+        .await;
+    match rejected {
+        Err(vox::ConnectionError::EstablishmentRejected(decline)) => {
+            assert_eq!(
+                decline.reason,
+                vox::EstablishmentRejectReason::Unauthenticated
+            );
+        }
+        Ok(_) => panic!("connect unexpectedly succeeded"),
+        Err(other) => panic!("expected establishment rejection, got {other:?}"),
+    }
+
+    let client: EchoClient = vox::connect_lane(format!("tcp://{addr}"))
+        .metadata(
+            vox::metadata()
+                .str("-#authorization", "Bearer local-dev")
+                .build(),
+        )
+        .identity_resolver(vox::identity_resolver_fn(require_echo_server))
+        .await
+        .expect("connect");
+    assert_eq!(client.echo(88).await.expect("echo"), 88);
+
+    server.abort();
+}
+
 #[test]
 fn try_send_error_is_reexported_from_vox() {
     let err = vox::TrySendError::Full(42_u32);

@@ -10,11 +10,12 @@ use std::time::{Duration, Instant};
 ))]
 use vox_core::initiator;
 use vox_core::{
-    ConnectionError, ConnectionHandle, FromVoxLane, LaneAcceptor, LaneRequest, PendingLane,
+    ConnectionError, ConnectionHandle, FromVoxLane, IdentityResolver, LaneAcceptor, LaneRequest,
+    PendingLane,
 };
 use vox_types::{
-    DEFAULT_INITIAL_CHANNEL_CREDIT, Link, MaybeSend, MaybeSync, Metadata, VoxObserver,
-    VoxObserverHandle, metadata_into_owned,
+    DEFAULT_INITIAL_CHANNEL_CREDIT, Decline, IdentityResolutionContext, Link, MaybeSend, MaybeSync,
+    Metadata, PeerIdentity, VoxObserver, VoxObserverHandle, metadata_into_owned,
 };
 
 mod error;
@@ -136,6 +137,7 @@ pub struct ConnectBuilder {
     connect_timeout: Option<Duration>,
     channel_capacity: u32,
     observer: Option<VoxObserverHandle>,
+    identity_resolver: Option<Arc<dyn IdentityResolver>>,
     wait_for_service: Option<Duration>,
 }
 
@@ -148,6 +150,7 @@ impl ConnectBuilder {
             connect_timeout: Some(Duration::from_secs(5)),
             channel_capacity: DEFAULT_INITIAL_CHANNEL_CREDIT,
             observer: None,
+            identity_resolver: None,
             wait_for_service: None,
         }
     }
@@ -187,6 +190,12 @@ impl ConnectBuilder {
         self
     }
 
+    // r[impl connection.identity.resolver]
+    pub fn identity_resolver(mut self, resolver: impl IdentityResolver) -> Self {
+        self.identity_resolver = Some(Arc::new(resolver));
+        self
+    }
+
     /// Wait for the service to become reachable until `timeout`.
     ///
     /// Only transient failures (I/O errors, connect timeouts) are attempted again.
@@ -221,6 +230,7 @@ impl ConnectBuilder {
             connect_timeout,
             channel_capacity,
             observer,
+            identity_resolver,
             wait_for_service,
         } = self;
         validate_channel_capacity(channel_capacity)?;
@@ -255,6 +265,7 @@ impl ConnectBuilder {
                         connect_timeout,
                         channel_capacity,
                         observer.clone(),
+                        identity_resolver.clone(),
                     );
                     let result = match vox_rt::time::timeout(remaining, attempt).await {
                         Ok(r) => r,
@@ -300,6 +311,7 @@ impl ConnectBuilder {
                     connect_timeout,
                     channel_capacity,
                     observer,
+                    identity_resolver,
                 )
                 .await;
                 match &result {
@@ -318,6 +330,7 @@ impl ConnectBuilder {
         connect_timeout: Option<Duration>,
         channel_capacity: u32,
         observer: Option<VoxObserverHandle>,
+        identity_resolver: Option<Arc<dyn IdentityResolver>>,
     ) -> Result<ConnectionHandle, ConnectionError> {
         #[cfg(not(any(
             feature = "transport-tcp",
@@ -330,6 +343,7 @@ impl ConnectBuilder {
             &connect_timeout,
             channel_capacity,
             &observer,
+            &identity_resolver,
         );
 
         match parsed {
@@ -351,6 +365,9 @@ impl ConnectBuilder {
                 if let Some(observer) = observer.clone() {
                     builder = builder.observer_handle(observer);
                 }
+                if let Some(resolver) = identity_resolver.clone() {
+                    builder = builder.identity_resolver(IdentityResolverRef(resolver));
+                }
                 builder.metadata(metadata).establish_connection().await
             }
             #[cfg(feature = "transport-local")]
@@ -370,6 +387,9 @@ impl ConnectBuilder {
                 builder = builder.channel_capacity(channel_capacity);
                 if let Some(observer) = observer.clone() {
                     builder = builder.observer_handle(observer);
+                }
+                if let Some(resolver) = identity_resolver.clone() {
+                    builder = builder.identity_resolver(IdentityResolverRef(resolver));
                 }
                 builder.metadata(metadata).establish_connection().await
             }
@@ -393,6 +413,9 @@ impl ConnectBuilder {
                 builder = builder.channel_capacity(channel_capacity);
                 if let Some(observer) = observer {
                     builder = builder.observer_handle(observer);
+                }
+                if let Some(resolver) = identity_resolver {
+                    builder = builder.identity_resolver(IdentityResolverRef(resolver));
                 }
                 builder.metadata(metadata).establish_connection().await
             }
@@ -446,6 +469,11 @@ impl<Client> ConnectLaneBuilder<Client> {
 
     pub fn observer_handle(mut self, observer: VoxObserverHandle) -> Self {
         self.inner = self.inner.observer_handle(observer);
+        self
+    }
+
+    pub fn identity_resolver(mut self, resolver: impl IdentityResolver) -> Self {
+        self.inner = self.inner.identity_resolver(resolver);
         self
     }
 
@@ -513,8 +541,10 @@ pub fn serve<A: LaneAcceptor>(addr: impl std::fmt::Display, acceptor: A) -> Serv
 pub struct ServeBuilder<A> {
     addr: String,
     acceptor: A,
+    metadata: Metadata,
     channel_capacity: u32,
     observer: Option<VoxObserverHandle>,
+    identity_resolver: Option<Arc<dyn IdentityResolver>>,
 }
 
 impl<A> ServeBuilder<A> {
@@ -522,9 +552,17 @@ impl<A> ServeBuilder<A> {
         Self {
             addr,
             acceptor,
+            metadata: vox_types::Metadata::default(),
             channel_capacity: DEFAULT_INITIAL_CHANNEL_CREDIT,
             observer: None,
+            identity_resolver: None,
         }
+    }
+
+    // r[impl connection.handshake.metadata]
+    pub fn metadata(mut self, metadata: Metadata) -> Self {
+        self.metadata = metadata;
+        self
     }
 
     // r[impl rpc.flow-control.credit.initial.high-level]
@@ -544,6 +582,12 @@ impl<A> ServeBuilder<A> {
         self.observer = Some(observer);
         self
     }
+
+    // r[impl connection.identity.resolver]
+    pub fn identity_resolver(mut self, resolver: impl IdentityResolver) -> Self {
+        self.identity_resolver = Some(Arc::new(resolver));
+        self
+    }
 }
 
 impl<A> ServeBuilder<A>
@@ -554,10 +598,13 @@ where
         let Self {
             addr,
             acceptor,
+            metadata,
             channel_capacity,
             observer,
+            identity_resolver,
         } = self;
         validate_channel_capacity(channel_capacity)?;
+        let metadata = metadata_into_owned(metadata);
         let (scheme, host) = match addr.split_once("://") {
             Some((scheme, host)) => (scheme.to_string(), host.to_string()),
             None => ("tcp".to_string(), addr),
@@ -568,7 +615,7 @@ where
             feature = "transport-websocket",
             feature = "transport-websocket-tls"
         )))]
-        let _ = (&host, &acceptor, &observer);
+        let _ = (&host, &acceptor, &metadata, &observer, &identity_resolver);
 
         match scheme.as_str() {
             #[cfg(feature = "transport-tcp")]
@@ -576,25 +623,53 @@ where
                 let listener = tokio::net::TcpListener::bind(&host).await?;
                 let mut builder =
                     serve_listener(listener, acceptor).channel_capacity(channel_capacity);
+                builder = builder.metadata(metadata);
                 if let Some(observer) = observer {
                     builder = builder.observer_handle(observer);
+                }
+                if let Some(resolver) = identity_resolver {
+                    builder = builder.identity_resolver(IdentityResolverRef(resolver));
                 }
                 Ok(builder.await?)
             }
             #[cfg(feature = "transport-local")]
-            "local" => local::serve_local(&host, acceptor, channel_capacity, observer).await,
+            "local" => {
+                local::serve_local(
+                    &host,
+                    acceptor,
+                    metadata,
+                    channel_capacity,
+                    observer,
+                    identity_resolver,
+                )
+                .await
+            }
             #[cfg(all(feature = "transport-websocket", not(target_arch = "wasm32")))]
             "ws" => {
                 let listener = WsListener::bind(&host).await?;
                 let mut builder =
                     serve_listener(listener, acceptor).channel_capacity(channel_capacity);
+                builder = builder.metadata(metadata);
                 if let Some(observer) = observer {
                     builder = builder.observer_handle(observer);
+                }
+                if let Some(resolver) = identity_resolver {
+                    builder = builder.identity_resolver(IdentityResolverRef(resolver));
                 }
                 Ok(builder.await?)
             }
             #[cfg(all(feature = "transport-websocket-tls", not(target_arch = "wasm32")))]
-            "wss" => wss::serve_wss(&host, acceptor, channel_capacity, observer).await,
+            "wss" => {
+                wss::serve_wss(
+                    &host,
+                    acceptor,
+                    metadata,
+                    channel_capacity,
+                    observer,
+                    identity_resolver,
+                )
+                .await
+            }
             _ => Err(ServeError::UnsupportedScheme { scheme }),
         }
     }
@@ -650,8 +725,10 @@ where
 pub struct ServeListenerBuilder<L, A> {
     listener: L,
     acceptor: A,
+    metadata: Metadata,
     channel_capacity: u32,
     observer: Option<VoxObserverHandle>,
+    identity_resolver: Option<Arc<dyn IdentityResolver>>,
 }
 
 impl<L, A> ServeListenerBuilder<L, A> {
@@ -659,9 +736,17 @@ impl<L, A> ServeListenerBuilder<L, A> {
         Self {
             listener,
             acceptor,
+            metadata: vox_types::Metadata::default(),
             channel_capacity: DEFAULT_INITIAL_CHANNEL_CREDIT,
             observer: None,
+            identity_resolver: None,
         }
+    }
+
+    // r[impl connection.handshake.metadata]
+    pub fn metadata(mut self, metadata: Metadata) -> Self {
+        self.metadata = metadata;
+        self
     }
 
     // r[impl rpc.flow-control.credit.initial.high-level]
@@ -681,6 +766,12 @@ impl<L, A> ServeListenerBuilder<L, A> {
         self.observer = Some(observer);
         self
     }
+
+    // r[impl connection.identity.resolver]
+    pub fn identity_resolver(mut self, resolver: impl IdentityResolver) -> Self {
+        self.identity_resolver = Some(Arc::new(resolver));
+        self
+    }
 }
 
 impl<L, A> ServeListenerBuilder<L, A>
@@ -698,15 +789,21 @@ where
             let link = self.listener.accept().await.map_err(ConnectionError::Io)?;
             tracing::debug!("vox high-level listener accepted raw connection");
             let acceptor = acceptor.clone();
+            let metadata = self.metadata.clone();
             let observer = self.observer.clone();
             let channel_capacity = self.channel_capacity;
+            let identity_resolver = self.identity_resolver.clone();
             vox_rt::spawn(async move {
                 tracing::trace!("vox high-level listener establishing connection");
                 let mut builder = vox_core::acceptor_on(link)
                     .on_lane(AcceptorRef(acceptor))
+                    .metadata(metadata)
                     .channel_capacity(channel_capacity);
                 if let Some(observer) = observer {
                     builder = builder.observer_handle(observer);
+                }
+                if let Some(resolver) = identity_resolver {
+                    builder = builder.identity_resolver(IdentityResolverRef(resolver));
                 }
                 let result = builder.establish_connection().await;
                 match result {
@@ -749,5 +846,14 @@ impl LaneAcceptor for AcceptorRef {
         connection: PendingLane,
     ) -> Result<(), vox_core::LaneRejection> {
         self.0.accept(request, connection)
+    }
+}
+
+/// Wrapper that implements `IdentityResolver` by delegating to an `Arc<dyn IdentityResolver>`.
+struct IdentityResolverRef(Arc<dyn IdentityResolver>);
+
+impl IdentityResolver for IdentityResolverRef {
+    fn resolve(&self, context: IdentityResolutionContext<'_>) -> Result<PeerIdentity, Decline> {
+        self.0.resolve(context)
     }
 }
