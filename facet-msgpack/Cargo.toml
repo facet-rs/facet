@@ -27,7 +27,7 @@ http-body-util = { version = "0.1", default-features = false, optional = true }
 
 [dev-dependencies]
 divan = { workspace = true }
-facet = { workspace = true, features = ["std", "all-impls", "iddqd"] }
+facet = { path = "../facet", features = ["std", "all-impls", "iddqd"] }
 facet-format = { path = "../facet-format", features = ["net"] }
 facet-format-suite = { path = "../facet-format-suite", features = [
   "third-party",

@@ -20,7 +20,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 facet-core = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
-facet = { workspace = true, features = ["all-impls"] }
+facet = { path = "../facet", features = ["all-impls"] }
 facet-json = { path = "../facet-json" }
 insta = { workspace = true }
 

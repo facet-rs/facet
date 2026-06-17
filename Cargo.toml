@@ -37,6 +37,25 @@ members = [
   "facet-urlencoded",
   "facet-axum",
 
+  # formats, dynamic values, and schema/codegen
+  "facet-dessert",
+  "facet-format",
+  "facet-json",
+  "facet-json-classics",
+  "facet-postcard",
+  "facet-msgpack",
+  "facet-toml",
+  "facet-yaml",
+  "facet-format-suite",
+  "facet-asn1",
+  "facet-csv",
+  "facet-xdr",
+  "facet-json-schema",
+  "facet-typescript",
+  "facet-python",
+  "facet-value",
+  "facet-zod",
+
   # utilities
   "facet-path",
   "facet-validate",
@@ -70,22 +89,32 @@ facet = { path = "facet", version = "0.50.0-rc.0" }
 facet-axum = { path = "facet-axum", version = "0.50.0-rc.0" }
 facet-core = { path = "facet-core" }
 facet-cargo-toml = { path = "facet-cargo-toml", version = "0.50.0-rc.0" }
+facet-default = { path = "facet-default", version = "0.50.0-rc.0" }
+facet-dessert = { path = "facet-dessert", version = "0.50.0-rc.0" }
 facet-error = { path = "facet-error", version = "0.50.0-rc.0" }
-facet-json = "0.50.0-rc.0"
-facet-msgpack = "0.50.0-rc.0"
-facet-postcard = "0.50.0-rc.0"
+facet-format = { path = "facet-format", version = "0.50.0-rc.0" }
+facet-format-suite = { path = "facet-format-suite", version = "0.50.0-rc.0" }
+facet-json = { path = "facet-json", version = "0.50.0-rc.0" }
+facet-json-classics = { path = "facet-json-classics", version = "0.50.0-rc.0" }
+facet-msgpack = { path = "facet-msgpack", version = "0.50.0-rc.0" }
+facet-path = { path = "facet-path", version = "0.50.0-rc.0" }
+facet-postcard = { path = "facet-postcard", version = "0.50.0-rc.0" }
 facet-pretty = { path = "facet-pretty" }
 facet-reflect = { path = "facet-reflect", version = "0.50.0-rc.0" }
-facet-toml = "0.50.0-rc.0"
+facet-solver = { path = "facet-solver", version = "0.50.0-rc.0" }
+facet-testhelpers = { path = "facet-testhelpers", version = "0.50.0-rc.0" }
+facet-toml = { path = "facet-toml", version = "0.50.0-rc.0" }
 facet-xml = "0.50.0-rc.0"
-facet-yaml = "0.50.0-rc.0"
 facet-urlencoded = { path = "facet-urlencoded", version = "0.50.0-rc.0" }
-facet-value = "0.50.0-rc.0"
+facet-value = { path = "facet-value", version = "0.50.0-rc.0" }
+facet-yaml = { path = "facet-yaml", version = "0.50.0-rc.0" }
 strid = { path = "strid", version = "11.0.0-rc.0" }
 strid-macros = { path = "strid-macros", version = "11.0.0-rc.0" }
 arborium = { version = "^2.4.5", default-features = false, features = ["lang-json"] }
 autocfg = "^1.5.0"
 axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio", "json"] }
+bolero = "^0.13.4"
+brotli = "8"
 bytes = { version = "^1.11.0", default-features = false }
 bytestring = { version = "^1.4.0", default-features = false }
 camino = "^1.2.1"
@@ -120,8 +149,12 @@ rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
 smallvec = { version = "^1.15", default-features = false }
 iddqd = { version = "^0.4.0", default-features = false }
 confusables = "^0.1"
+indoc = "^2.0.7"
 indextree = "^4"
+libtest-mimic = "^0.8.1"
 palette = { version = "^0.7", default-features = false, features = ["std"] }
+serde = { version = "^1.0.228", default-features = false, features = ["alloc", "derive"] }
+serde_json = { version = "^1.0.145", features = ["alloc"] }
 terminal-colorsaurus = "^1"
 unicode-width = "^0.2"
 
@@ -161,6 +194,23 @@ facet-testhelpers = { path = "facet-testhelpers" }
 facet-axum = { path = "facet-axum" }
 facet-cargo-toml = { path = "facet-cargo-toml" }
 facet-urlencoded = { path = "facet-urlencoded" }
+facet-asn1 = { path = "facet-asn1" }
+facet-csv = { path = "facet-csv" }
+facet-dessert = { path = "facet-dessert" }
+facet-format = { path = "facet-format" }
+facet-format-suite = { path = "facet-format-suite" }
+facet-json = { path = "facet-json" }
+facet-json-classics = { path = "facet-json-classics" }
+facet-json-schema = { path = "facet-json-schema" }
+facet-msgpack = { path = "facet-msgpack" }
+facet-postcard = { path = "facet-postcard" }
+facet-python = { path = "facet-python" }
+facet-toml = { path = "facet-toml" }
+facet-typescript = { path = "facet-typescript" }
+facet-value = { path = "facet-value" }
+facet-xdr = { path = "facet-xdr" }
+facet-yaml = { path = "facet-yaml" }
+facet-zod = { path = "facet-zod" }
 rusqlite-facet = { path = "rusqlite-facet" }
 rediff = { path = "rediff" }
 strid = { path = "strid" }

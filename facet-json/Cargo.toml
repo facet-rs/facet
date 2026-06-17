@@ -39,7 +39,7 @@ mime = { version = "0.3", optional = true }
 compact_str = { workspace = true }
 facet-json-classics = { path = "../facet-json-classics" }
 divan = { workspace = true }
-facet = { workspace = true, features = [
+facet = { path = "../facet", features = [
   "std",
   "doc",
   "net",
@@ -51,8 +51,8 @@ facet = { workspace = true, features = [
 serde = { workspace = true }
 tendril = "0.5.0"
 facet-format = { path = "../facet-format", features = ["net", "tracing"] }
-facet-reflect = { workspace = true, features = ["tracing"] }
-facet-testhelpers = { workspace = true }
+facet-reflect = { path = "../facet-reflect", features = ["tracing"] }
+facet-testhelpers = { path = "../facet-testhelpers" }
 serde_json = { workspace = true }
 facet-format-suite = { path = "../facet-format-suite", features = [
   "third-party",

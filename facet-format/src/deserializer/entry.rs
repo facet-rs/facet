@@ -774,11 +774,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         let mut pending_field_name: Option<Cow<'input, str>> = None;
 
         // Read through the structure
-        loop {
-            let Ok(event) = self.expect_event("evidence") else {
-                break;
-            };
-
+        while let Ok(event) = self.expect_event("evidence") {
             match event.kind {
                 ParseEventKind::StructStart(_) => {
                     depth += 1;
