@@ -51,6 +51,7 @@ pub enum EstablishmentPhase {
     ServiceLaneOpen,
     LaneAuthorization,
     LaneGrant,
+    LaneGrantRevocation,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -637,6 +638,7 @@ const fn establishment_phase_label(phase: EstablishmentPhase) -> &'static str {
         EstablishmentPhase::ServiceLaneOpen => "service-lane-open",
         EstablishmentPhase::LaneAuthorization => "lane-authorization",
         EstablishmentPhase::LaneGrant => "lane-grant",
+        EstablishmentPhase::LaneGrantRevocation => "lane-grant-revocation",
     }
 }
 

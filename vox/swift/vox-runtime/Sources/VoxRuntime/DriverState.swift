@@ -343,8 +343,8 @@ actor LaneState {
     }
 
     @discardableResult
-    func removeLane(_ laneId: UInt64) -> Bool {
-        lanes.removeValue(forKey: laneId) != nil
+    func removeLane(_ laneId: UInt64) -> LaneRecord? {
+        lanes.removeValue(forKey: laneId)
     }
 
     func lane(for laneId: UInt64) -> LaneRecord? {
@@ -353,6 +353,12 @@ actor LaneState {
 
     func isEmpty() -> Bool {
         lanes.isEmpty && pendingOutbound.isEmpty
+    }
+
+    func drainLanes() -> [(UInt64, LaneRecord)] {
+        let drained = Array(lanes)
+        lanes.removeAll()
+        return drained
     }
 
     func addPendingOutbound(_ laneId: UInt64, pending: PendingOutboundLane) {

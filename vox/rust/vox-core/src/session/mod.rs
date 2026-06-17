@@ -2,7 +2,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     future::Future,
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -342,7 +342,7 @@ impl PendingLane {
 
     fn take_handle(&mut self) -> LaneHandle {
         let mut handle = self.handle.take().expect("PendingLane already consumed");
-        handle.lane_grant = self.lane_grant.clone();
+        handle.set_lane_grant(self.lane_grant.clone());
         handle
     }
 
@@ -721,6 +721,7 @@ pub struct LaneState {
 
     /// Per-lane schema recv tracker.
     schema_recv_tracker: Arc<vox_types::SchemaRecvTracker>,
+    lane_grant: Arc<Mutex<LaneGrant>>,
 }
 
 #[derive(Debug)]
@@ -1038,6 +1039,7 @@ pub struct LaneHandle {
     pub(crate) peer_identity: PeerIdentity,
     pub(crate) peer_evidence: PeerEvidence,
     pub(crate) lane_grant: LaneGrant,
+    pub(crate) lane_grant_state: Arc<Mutex<LaneGrant>>,
 }
 
 impl std::fmt::Debug for LaneHandle {
@@ -1068,6 +1070,14 @@ pub(crate) struct RecvMessage {
 }
 
 impl LaneHandle {
+    fn set_lane_grant(&mut self, grant: LaneGrant) {
+        *self
+            .lane_grant_state
+            .lock()
+            .expect("lane grant state mutex poisoned") = grant.clone();
+        self.lane_grant = grant;
+    }
+
     /// Returns the lane ID for this handle.
     pub fn lane_id(&self) -> LaneId {
         self.sender.lane_id
@@ -1178,6 +1188,7 @@ pub async fn proxy_lanes(left: LaneHandle, right: LaneHandle) -> Result<(), Conn
         peer_identity: _left_peer_identity,
         peer_evidence: _left_peer_evidence,
         lane_grant: _left_lane_grant,
+        lane_grant_state: _left_lane_grant_state,
     } = left;
     let LaneHandle {
         sender: right_sender,
@@ -1192,6 +1203,7 @@ pub async fn proxy_lanes(left: LaneHandle, right: LaneHandle) -> Result<(), Conn
         peer_identity: _right_peer_identity,
         peer_evidence: _right_peer_evidence,
         lane_grant: _right_lane_grant,
+        lane_grant_state: _right_lane_grant_state,
     } = right;
 
     loop {
@@ -1431,6 +1443,7 @@ impl Connection {
         let parity = local_settings.parity;
         let handle_local_settings = local_settings.clone();
         let handle_peer_settings = peer_settings.clone();
+        let lane_grant_state = Arc::new(Mutex::new(LaneGrant::empty()));
         trace!(%conn_id, "make_connection_handle: inserting slot into conns");
         if let Some(observer) = &self.observer {
             observer.driver_event(vox_types::DriverEvent::LaneOpened { lane_id: conn_id });
@@ -1444,6 +1457,7 @@ impl Connection {
                 conn_tx,
                 closed_tx,
                 schema_recv_tracker: Arc::new(vox_types::SchemaRecvTracker::new()),
+                lane_grant: Arc::clone(&lane_grant_state),
             }),
         );
 
@@ -1460,6 +1474,7 @@ impl Connection {
             peer_identity: self.peer_identity.clone(),
             peer_evidence: self.peer_evidence.clone(),
             lane_grant: LaneGrant::empty(),
+            lane_grant_state,
         }
     }
 
@@ -2059,7 +2074,7 @@ impl Connection {
                             lane_id: conn_id,
                             payload: MessagePayload::LaneAccept(vox_types::LaneAccept {
                                 connection_settings: our_settings,
-                                metadata: vox_types::Metadata::default(),
+                                metadata: self.lane_grant_metadata(&conn_id),
                             }),
                         },
                         None,
@@ -2132,11 +2147,14 @@ impl Connection {
                 }
             }
             Some(ConnectionSlot::PendingOutbound(mut pending)) => {
-                let handle = self.make_connection_handle(
+                let mut handle = self.make_connection_handle(
                     conn_id,
                     pending.local_settings.clone(),
                     accept.connection_settings.clone(),
                 );
+                let grant = LaneGrant::from_metadata(accept.metadata.clone());
+                self.observe_lane_grant_creation(conn_id, &grant);
+                handle.set_lane_grant(grant);
 
                 observe_establishment_finished(
                     self.observer.as_ref(),
@@ -2357,6 +2375,63 @@ impl Connection {
         self.remove_connection_with_reason(conn_id, ConnectionCloseReason::Unknown)
     }
 
+    fn lane_grant_metadata(&self, conn_id: &LaneId) -> Metadata {
+        let Some(ConnectionSlot::Active(state)) = self.conns.get(conn_id) else {
+            return Metadata::default();
+        };
+        state
+            .lane_grant
+            .lock()
+            .expect("lane grant state mutex poisoned")
+            .metadata()
+            .clone()
+    }
+
+    fn observe_lane_grant_creation(&self, conn_id: LaneId, grant: &LaneGrant) {
+        if grant.is_empty() {
+            return;
+        }
+        let started_at = observe_establishment_started(
+            self.observer.as_ref(),
+            self.role,
+            EstablishmentPhase::LaneGrant,
+            Some(conn_id),
+        );
+        observe_establishment_finished(
+            self.observer.as_ref(),
+            self.role,
+            EstablishmentPhase::LaneGrant,
+            Some(conn_id),
+            EstablishmentOutcome::Ok,
+            started_at,
+        );
+    }
+
+    fn observe_lane_grant_revocation(&self, conn_id: LaneId, state: &LaneState) {
+        let has_grant = !state
+            .lane_grant
+            .lock()
+            .expect("lane grant state mutex poisoned")
+            .is_empty();
+        if !has_grant {
+            return;
+        }
+        let started_at = observe_establishment_started(
+            self.observer.as_ref(),
+            self.role,
+            EstablishmentPhase::LaneGrantRevocation,
+            Some(conn_id),
+        );
+        observe_establishment_finished(
+            self.observer.as_ref(),
+            self.role,
+            EstablishmentPhase::LaneGrantRevocation,
+            Some(conn_id),
+            EstablishmentOutcome::Ok,
+            started_at,
+        );
+    }
+
     fn remove_connection_with_reason(
         &mut self,
         conn_id: &LaneId,
@@ -2366,6 +2441,7 @@ impl Connection {
         let slot = self.conns.remove(conn_id);
         if let Some(ConnectionSlot::Active(state)) = &slot {
             let _ = state.closed_tx.send(Some(reason));
+            self.observe_lane_grant_revocation(*conn_id, state);
             if let Some(observer) = &self.observer {
                 observer.driver_event(vox_types::DriverEvent::LaneClosed {
                     lane_id: *conn_id,
@@ -2392,6 +2468,7 @@ impl Connection {
                     conn_id
                 );
                 let _ = state.closed_tx.send(Some(reason));
+                self.observe_lane_grant_revocation(*conn_id, state);
                 if let Some(observer) = &self.observer {
                     observer.driver_event(vox_types::DriverEvent::LaneClosed {
                         lane_id: *conn_id,

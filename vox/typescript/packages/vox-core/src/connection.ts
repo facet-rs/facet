@@ -783,6 +783,7 @@ class ConnectionCore {
       throw ConnectionError.protocol(`unknown lane ${laneId}`);
     }
 
+    this.observeLaneGrantRevocation(laneId, lane);
     lane.close(ConnectionError.closed());
     this.lanes.delete(laneId);
     await this.sendMessage(messageLaneClose(laneId, metadata));
@@ -821,7 +822,8 @@ class ConnectionCore {
     }
     this.pendingLanes.clear();
 
-    for (const lane of this.lanes.values()) {
+    for (const [laneId, lane] of this.lanes) {
+      this.observeLaneGrantRevocation(laneId, lane);
       lane.close(error);
     }
     this.lanes.clear();
@@ -899,7 +901,11 @@ class ConnectionCore {
 
       case "LaneAccept":
         // r[impl lane.wire.compat]
-        this.handleLaneAccept(message.lane_id, message.payload.value.connection_settings);
+        this.handleLaneAccept(
+          message.lane_id,
+          message.payload.value.connection_settings,
+          coerceMetadata(message.payload.value.metadata),
+        );
         return;
 
       case "LaneReject":
@@ -1185,6 +1191,7 @@ class ConnectionCore {
   private handleLaneAccept(
     laneId: bigint,
     peerSettings: ConnectionSettings,
+    grantMetadata: Metadata,
   ): void {
     const pending = this.pendingLanes.get(laneId);
     if (!pending) {
@@ -1196,8 +1203,10 @@ class ConnectionCore {
       laneId,
       pending.localSettings,
       peerSettings,
+      { metadata: grantMetadata },
     );
     this.lanes.set(laneId, lane);
+    this.observeLaneGrantCreation(laneId, lane.laneGrant);
     observeEstablishmentFinished(
       this.observer,
       pending.establishmentContext,
@@ -1230,8 +1239,35 @@ class ConnectionCore {
     if (!lane) {
       return;
     }
+    this.observeLaneGrantRevocation(laneId, lane);
     lane.close(ConnectionError.closed());
     this.lanes.delete(laneId);
+  }
+
+  private observeLaneGrantRevocation(laneId: bigint, lane: Lane): void {
+    if (lane.laneGrant.metadata.size === 0) {
+      return;
+    }
+    const context: EstablishmentContext = {
+      role: this.establishmentRole(),
+      phase: "lane-grant-revocation",
+      laneId,
+    };
+    const startedAt = observeEstablishmentStarted(this.observer, context);
+    observeEstablishmentFinished(this.observer, context, startedAt, "ok");
+  }
+
+  private observeLaneGrantCreation(laneId: bigint, grant: LaneGrant): void {
+    if (grant.metadata.size === 0) {
+      return;
+    }
+    const context: EstablishmentContext = {
+      role: this.establishmentRole(),
+      phase: "lane-grant",
+      laneId,
+    };
+    const startedAt = observeEstablishmentStarted(this.observer, context);
+    observeEstablishmentFinished(this.observer, context, startedAt, "ok");
   }
 
   private async handleRequestMessage(

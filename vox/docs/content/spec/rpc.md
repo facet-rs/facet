@@ -583,7 +583,9 @@ weight = 12
 > WebSocket upgrade, Vox transport prologue, connection handshake, schema
 > decode-plan construction, identity resolution, establishment policy
 > acceptance or rejection, service-lane open/accept/reject, lane authorization,
-> and lane-grant creation/revocation. Observers MUST NOT invent TCP, TLS, or
+> lane-grant creation, and lane-grant revocation. Grant creation SHOULD use
+> the `lane-grant` phase; grant revocation SHOULD use the
+> `lane-grant-revocation` phase. Observers MUST NOT invent TCP, TLS, or
 > WebSocket phases for transports that do not have them.
 
 > r[rpc.observability.low-cardinality]

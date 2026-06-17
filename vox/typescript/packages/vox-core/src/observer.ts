@@ -20,7 +20,8 @@ export type EstablishmentPhase =
   | "schema-decode-plan"
   | "service-lane-open"
   | "lane-authorization"
-  | "lane-grant";
+  | "lane-grant"
+  | "lane-grant-revocation";
 
 export type EstablishmentOutcome =
   | "ok"

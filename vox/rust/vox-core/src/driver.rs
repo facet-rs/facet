@@ -2328,6 +2328,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             peer_identity,
             peer_evidence,
             lane_grant,
+            lane_grant_state: _lane_grant_state,
         } = handle;
         let (local_control_tx, local_control_rx) = mpsc::unbounded_channel("driver.local_control");
         let authorization_context =

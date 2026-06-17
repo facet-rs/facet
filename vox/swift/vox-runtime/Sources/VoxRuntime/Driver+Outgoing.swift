@@ -452,10 +452,11 @@ extension Driver {
             return
         }
 
-        guard await laneState.removeLane(laneId) else {
+        guard let record = await laneState.removeLane(laneId) else {
             responseTx(.failure(.protocolViolation(rule: "connection.close")))
             return
         }
+        observeLaneGrantRevocation(laneId: laneId, grant: record.laneGrant)
         await failPendingResponses(laneId: laneId)
         do {
             try await sendOrEnqueue(

@@ -119,6 +119,7 @@ public enum VoxEstablishmentPhase: String, Equatable, Sendable {
     case serviceLaneOpen = "service-lane-open"
     case laneAuthorization = "lane-authorization"
     case laneGrant = "lane-grant"
+    case laneGrantRevocation = "lane-grant-revocation"
 }
 
 public enum VoxEstablishmentOutcome: String, Equatable, Sendable {

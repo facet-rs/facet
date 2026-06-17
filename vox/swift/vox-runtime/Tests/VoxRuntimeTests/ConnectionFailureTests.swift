@@ -1189,10 +1189,15 @@ struct ConnectionFailureTests {
                             maxConcurrentRequests: 8,
                             initialChannelCredit: 16
                         ),
-                        metadata: .null
+                        metadata: meta([("grant-scope", "observer")])
                     )
                 )
                 _ = try await awaitTaskResult(acceptedTask)
+                try await connectionHandle.closeLane(acceptedId)
+                guard await awaitLaneClose(transport, laneId: acceptedId) != nil else {
+                    Issue.record("expected accepted lane close")
+                    return
+                }
 
                 let rejectedTask: Task<Lane, Error> = Task {
                     try await connectionHandle.openLane(
@@ -1236,6 +1241,25 @@ struct ConnectionFailureTests {
                     "finished:initiator:service-lane-open:1:ok",
                     "started:initiator:service-lane-open:3:-",
                     "finished:initiator:service-lane-open:3:rejected",
+                ])
+
+                let grantLabels = establishmentLabels(
+                    observer.establishmentSnapshot().filter { event in
+                        switch event {
+                        case .started(let context):
+                            return context.phase == .laneGrant
+                                || context.phase == .laneGrantRevocation
+                        case .finished(let context, _, _, _):
+                            return context.phase == .laneGrant
+                                || context.phase == .laneGrantRevocation
+                        }
+                    }
+                )
+                #expect(grantLabels == [
+                    "started:initiator:lane-grant:1:-",
+                    "finished:initiator:lane-grant:1:ok",
+                    "started:initiator:lane-grant-revocation:1:-",
+                    "finished:initiator:lane-grant-revocation:1:ok",
                 ])
             }
         }

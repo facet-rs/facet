@@ -22,7 +22,31 @@ extension Driver {
     // r[impl lane.close]
     // r[impl lane.service.compat]
     func removeLane(_ laneId: UInt64) async {
-        await laneState.removeLane(laneId)
+        if let record = await laneState.removeLane(laneId) {
+            observeLaneGrantRevocation(laneId: laneId, grant: record.laneGrant)
+        }
+    }
+
+    func observeLaneGrantRevocation(laneId: UInt64, grant: LaneGrant) {
+        guard !grant.metadata.metaIsEmpty else { return }
+        let context = VoxEstablishmentContext(
+            role: voxEstablishmentRole(role),
+            phase: .laneGrantRevocation,
+            laneId: laneId
+        )
+        let startedAt = observeEstablishmentStarted(context)
+        observeEstablishmentFinished(context, startedAt: startedAt, outcome: .ok)
+    }
+
+    func observeLaneGrantCreation(laneId: UInt64, grant: LaneGrant) {
+        guard !grant.metadata.metaIsEmpty else { return }
+        let context = VoxEstablishmentContext(
+            role: voxEstablishmentRole(role),
+            phase: .laneGrant,
+            laneId: laneId
+        )
+        let startedAt = observeEstablishmentStarted(context)
+        observeEstablishmentFinished(context, startedAt: startedAt, outcome: .ok)
     }
 
     /// Handle an incoming message.
@@ -302,12 +326,15 @@ extension Driver {
                 localSettings: pending.localSettings,
                 peerSettings: accept.connectionSettings
             )
+            let grant = LaneGrant(metadata: accept.metadata)
             await laneState.addLane(
                 msg.laneId,
                 dispatcher: pending.dispatcher ?? dispatcher,
                 localSettings: pending.localSettings,
-                channelRegistry: lane.incomingChannelRegistry
+                channelRegistry: lane.incomingChannelRegistry,
+                laneGrant: grant
             )
+            observeLaneGrantCreation(laneId: msg.laneId, grant: grant)
             observeEstablishmentFinished(
                 pending.establishmentContext,
                 startedAt: pending.establishmentStartedAt,
@@ -682,6 +709,11 @@ extension Driver {
     func failAllPending() async {
         // r[impl rpc.flow-control.max-concurrent-requests.connection-failure]
         // r[impl rpc.channel.connection-closure]
+        let lanes = await laneState.drainLanes()
+        for (laneId, record) in lanes {
+            observeLaneGrantRevocation(laneId: laneId, grant: record.laneGrant)
+        }
+
         await handle.closeRequestSemaphore()
 
         let responses = await state.claimAllPendingResponses(reason: "connection-closed")

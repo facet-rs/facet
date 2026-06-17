@@ -1064,10 +1064,18 @@ describe("connection", () => {
       (await withTimeout(rawServerLink.recv(), "observed service lane open"))!,
     );
     expect(acceptedOpen.payload.tag).toBe("LaneOpen");
+    const grantMetadata = emptyMetadata();
+    grantMetadata.set("grant-scope", "observer");
     await rawServerLink.send(
-      encodeMessage(messageLaneAccept(acceptedOpen.lane_id, acceptedSettings)),
+      encodeMessage(messageLaneAccept(acceptedOpen.lane_id, acceptedSettings, grantMetadata)),
     );
-    await withTimeout(accepted, "observed service lane accept");
+    const acceptedLane = await withTimeout(accepted, "observed service lane accept");
+    expect(acceptedLane.laneGrant.metadata.get("grant-scope")).toBe("observer");
+    await initiatorConnection.handle().closeLane(acceptedOpen.lane_id);
+    const close = decodeMessage(
+      (await withTimeout(rawServerLink.recv(), "observed service lane close"))!,
+    );
+    expect(close.payload.tag).toBe("LaneClose");
 
     const rejected = initiatorConnection.handle()
       .openLane(requestedSettings)
@@ -1095,6 +1103,18 @@ describe("connection", () => {
       "finished:initiator:service-lane-open:1:ok",
       "started:initiator:service-lane-open:3:-",
       "finished:initiator:service-lane-open:3:rejected",
+    ]);
+    const grantLabels = establishmentLabels(
+      events.filter((event) =>
+        event.context.phase === "lane-grant" ||
+        event.context.phase === "lane-grant-revocation"
+      ),
+    );
+    expect(grantLabels).toEqual([
+      "started:initiator:lane-grant:1:-",
+      "finished:initiator:lane-grant:1:ok",
+      "started:initiator:lane-grant-revocation:1:-",
+      "finished:initiator:lane-grant-revocation:1:ok",
     ]);
 
     initiatorLink.close();

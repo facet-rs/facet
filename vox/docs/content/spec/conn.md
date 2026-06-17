@@ -443,8 +443,9 @@ without pretending that all of those paths have the same security evidence.
 > that were already authorized under the previous grant.
 >
 > Closing a lane to enforce grant revocation may terminate in-flight requests
-> according to the lane-close semantics. That is operational termination, not a
-> retroactive authorization reversal.
+> according to the lane-close semantics. Closing a granted lane is an
+> observable lane-grant revocation for that lane. That is operational
+> termination, not a retroactive authorization reversal.
 
 > r[lane.authorization.filtered]
 >

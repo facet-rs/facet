@@ -1263,7 +1263,7 @@ fn connection_error_from_transport(error: crate::TransportPrologueError) -> Conn
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use vox_types::{EstablishmentContext, EstablishmentEvent, LaneId};
+    use vox_types::{EstablishmentContext, EstablishmentEvent, LaneId, MetadataExt};
 
     use super::*;
 
@@ -1304,7 +1304,10 @@ mod tests {
                 .on_lane(crate::lane_acceptor_fn(
                     |request: &crate::LaneRequest, lane: crate::PendingLane| {
                         if request.service() == "Noop" {
-                            lane.handle_with(());
+                            lane.with_grant(vox_types::LaneGrant::from_metadata(
+                                vox_types::metadata().str("grant-scope", "observer").build(),
+                            ))
+                            .handle_with(());
                             Ok(())
                         } else {
                             Err(crate::LaneRejection::new(
@@ -1336,6 +1339,10 @@ mod tests {
             )
             .await
             .expect("accepted service lane");
+        assert_eq!(
+            accepted.lane_grant().metadata().meta_str("grant-scope"),
+            Some("observer")
+        );
         client
             .close_lane(accepted.lane_id(), Metadata::default())
             .await
@@ -1380,6 +1387,7 @@ mod tests {
             EstablishmentPhase::ServiceLaneOpen,
             EstablishmentPhase::LaneAuthorization,
             EstablishmentPhase::LaneGrant,
+            EstablishmentPhase::LaneGrantRevocation,
         ] {
             assert!(
                 contexts.iter().any(|context| context.phase == phase),
