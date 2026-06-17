@@ -15,6 +15,9 @@ public typealias PostcardDecoder<T> = (inout ByteBuffer) throws -> T
 public protocol VoxLane: Sendable {
     /// Make a raw RPC call. `channels` carries the out-of-band channel ids the caller
     /// allocated for this call's `Tx`/`Rx` args (empty for non-channel methods).
+    ///
+    /// `timeout` is a request-idle timeout. Request-associated channel activity
+    /// resets this timer; it is not a hard wall-clock response deadline.
     func call(
         methodId: UInt64,
         metadata: Metadata,

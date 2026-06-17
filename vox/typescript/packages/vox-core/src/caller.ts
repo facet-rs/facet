@@ -58,7 +58,8 @@ export interface CallerRequest {
   channels?: bigint[];
 
   /**
-   * Request timeout in milliseconds.
+   * Request-idle timeout in milliseconds. Request-associated channel activity
+   * resets this timer; it is not a hard wall-clock response deadline.
    */
   timeoutMs?: number;
 
