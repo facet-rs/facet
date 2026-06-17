@@ -129,6 +129,15 @@ version_group = "strid"
 changelog_path = "strid/CHANGELOG.md"
 
 # ============================================================================
+# SQLite integration - coordinated from this monorepo, preserving its major line
+# ============================================================================
+
+[[package]]
+name = "rusqlite-facet"
+version_group = "rusqlite-facet"
+changelog_path = "rusqlite-facet/CHANGELOG.md"
+
+# ============================================================================
 # Dev-only packages - excluded from releases
 # ============================================================================
 
