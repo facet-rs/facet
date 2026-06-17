@@ -35,6 +35,7 @@ members = [
 
   # misc.
   "facet-urlencoded",
+  "facet-axum",
 
   # utilities
   "facet-path",
@@ -64,17 +65,25 @@ repository = "https://github.com/facet-rs/facet"
 
 [workspace.dependencies]
 facet = { path = "facet", version = "0.50.0-rc.0" }
+facet-axum = { path = "facet-axum", version = "0.50.0-rc.0" }
 facet-core = { path = "facet-core" }
 facet-cargo-toml = { path = "facet-cargo-toml", version = "0.50.0-rc.0" }
 facet-error = { path = "facet-error", version = "0.50.0-rc.0" }
+facet-json = "0.50.0-rc.0"
+facet-msgpack = "0.50.0-rc.0"
+facet-postcard = "0.50.0-rc.0"
 facet-pretty = { path = "facet-pretty" }
 facet-reflect = { path = "facet-reflect", version = "0.50.0-rc.0" }
 facet-toml = "0.50.0-rc.0"
+facet-xml = "0.50.0-rc.0"
+facet-yaml = "0.50.0-rc.0"
+facet-urlencoded = { path = "facet-urlencoded", version = "0.50.0-rc.0" }
 facet-value = "0.50.0-rc.0"
 strid = { path = "strid", version = "11.0.0-rc.0" }
 strid-macros = { path = "strid-macros", version = "11.0.0-rc.0" }
 arborium = { version = "^2.4.5", default-features = false, features = ["lang-json"] }
 autocfg = "^1.5.0"
+axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio", "json"] }
 bytes = { version = "^1.11.0", default-features = false }
 bytestring = { version = "^1.4.0", default-features = false }
 camino = "^1.2.1"
@@ -97,6 +106,8 @@ static_assertions = "^1.1.0"
 strsim = "0.11"
 tempfile = "^3.23.0"
 time = { version = "^0.3.44", features = ["formatting", "macros", "parsing"] }
+tokio = { version = "1", features = ["io-util", "rt", "rt-multi-thread"] }
+tower = { version = "0.5", default-features = false, features = ["util"] }
 tracing = { version = "^0.1.43", default-features = false, features = ["std"] }
 tracing-subscriber = { version = "^0.3.22", default-features = false, features = ["fmt", "std"] }
 ulid = "^1.2.1"
@@ -139,7 +150,9 @@ facet-pretty = { path = "facet-pretty" }
 facet-reflect = { path = "facet-reflect" }
 facet-solver = { path = "facet-solver" }
 facet-testhelpers = { path = "facet-testhelpers" }
+facet-axum = { path = "facet-axum" }
 facet-cargo-toml = { path = "facet-cargo-toml" }
+facet-urlencoded = { path = "facet-urlencoded" }
 strid = { path = "strid" }
 strid-macros = { path = "strid-macros" }
 strid-examples = { path = "strid-examples" }

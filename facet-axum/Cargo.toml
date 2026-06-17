@@ -1,14 +1,20 @@
 [package]
 name = "facet-axum"
 version = "0.50.0-rc.0"
-edition = "2024"
-rust-version = "1.90.0"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/facet-rs/facet-axum"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
 description = "Axum integration for Facet - extractors and responses using Facet's serialization"
+repository.workspace = true
 keywords = ["axum", "web", "json", "serialization", "facet"]
 categories = ["web-programming", "encoding"]
 homepage = "https://facet.rs"
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
 default = ["json", "form"]
@@ -22,19 +28,19 @@ postcard = ["facet-postcard/axum"]
 all = ["json", "form", "yaml", "toml", "xml", "msgpack", "postcard"]
 
 [dependencies]
-facet-json = { version = "0.50.0-rc.0", optional = true }
-facet-msgpack = { version = "0.50.0-rc.0", optional = true }
-facet-postcard = { version = "0.50.0-rc.0", optional = true }
-facet-toml = { version = "0.50.0-rc.0", optional = true }
-facet-xml = { version = "0.50.0-rc.0", optional = true }
-facet-yaml = { version = "0.50.0-rc.0", optional = true }
-facet-urlencoded = { version = "0.50.0-rc.0", optional = true }
+facet-json = { workspace = true, optional = true }
+facet-msgpack = { workspace = true, optional = true }
+facet-postcard = { workspace = true, optional = true }
+facet-toml = { workspace = true, optional = true }
+facet-xml = { workspace = true, optional = true }
+facet-yaml = { workspace = true, optional = true }
+facet-urlencoded = { workspace = true, optional = true }
 
 [dev-dependencies]
-axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio", "json"] }
-facet = { version = "0.50.0-rc.0", features = ["all-impls", "doc"] }
-tokio = { version = "1", features = ["io-util", "rt", "rt-multi-thread"] }
-tower = { version = "0.5", default-features = false, features = ["util"] }
+axum.workspace = true
+facet = { path = "../facet", features = ["all-impls", "doc"] }
+tokio.workspace = true
+tower.workspace = true
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(facet_no_doc)"] }
+[lints]
+workspace = true

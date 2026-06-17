@@ -94,7 +94,7 @@ Day-to-day ergonomics: better output, better errors, less boilerplate.
 
 | Crate | What it does | Source |
 |-------|--------------|--------|
-| [`facet-axum`](https://docs.rs/facet-axum) | [axum](https://docs.rs/axum) extractors and responses backed by facet instead of serde. | [facet-rs/facet-axum](https://github.com/facet-rs/facet-axum) |
+| [`facet-axum`](https://docs.rs/facet-axum) | [axum](https://docs.rs/axum) extractors and responses backed by facet instead of serde. [Guide](@/ecosystem/facet-axum/_index.md). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-axum) |
 | [`facet-egui`](https://docs.rs/facet-egui) | An [egui](https://www.egui.rs) inspector/editor widget for any `Facet` type — live, type-driven UI straight from a `Shape`. *Community-maintained.* | [Erik1000/facet-egui](https://github.com/Erik1000/facet-egui) |
 
 ## Building blocks

@@ -175,7 +175,7 @@ jobs:
         with:
           manifest-path: Cargo.toml
           baseline-rev: origin/main
-          exclude: facet-testattrs, facet-cargo-toml
+          exclude: facet-testattrs, facet-cargo-toml, facet-axum
           verbose: true
 
   test-aarch64-apple-darwin:
