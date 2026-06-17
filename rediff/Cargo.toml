@@ -1,18 +1,19 @@
 [package]
 name = "rediff"
 version = "0.50.0-rc.0"
-edition = "2024"
-rust-version = "1.90.0"
+edition.workspace = true
+rust-version.workspace = true
 authors = ["Amos Wenger <amos@bearcove.eu>"]
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/bearcove/rediff"
+license.workspace = true
+repository.workspace = true
 description = "Diff and compare Facet values with detailed structural difference reporting"
 documentation = "https://docs.rs/rediff"
 keywords = ["diff", "compare", "testing", "facet", "assertion"]
 categories = ["development-tools::testing", "rust-patterns"]
-homepage = "https://github.com/bearcove/rediff"
+homepage = "https://facet.rs"
 
-[package.metadata]
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
@@ -22,24 +23,23 @@ default = []
 tracing = ["dep:tracing"]
 
 [dependencies]
-# Core facet dependencies
-facet = { version = "0.50.0-rc.0" }
-facet-core = { version = "0.50.0-rc.0" }
-facet-pretty = { version = "0.50.0-rc.0" }
-facet-reflect = { version = "0.50.0-rc.0" }
-
-# From facet-diff-core
-confusables = "0.1"
-indextree = "4"
-owo-colors = "4"
-palette = { version = "0.7", default-features = false, features = ["std"] }
-terminal-colorsaurus = "1"
-unicode-width = "0.2"
-
-tracing = { version = "0.1", default-features = false, optional = true }
+facet.workspace = true
+facet-core.workspace = true
+facet-pretty.workspace = true
+facet-reflect.workspace = true
+confusables.workspace = true
+indextree.workspace = true
+owo-colors.workspace = true
+palette.workspace = true
+terminal-colorsaurus.workspace = true
+unicode-width.workspace = true
+tracing = { workspace = true, optional = true }
 
 [dev-dependencies]
-facet = { version = "0.50.0-rc.0", features = [
+facet = { path = "../facet", features = [
   "all-impls",
 ] }
-tracing = "0.1"
+tracing.workspace = true
+
+[lints]
+workspace = true

@@ -42,6 +42,7 @@ members = [
   "facet-validate",
   "facet-cargo-toml",
   "rusqlite-facet",
+  "rediff",
 
   # strongly-typed string IDs
   "strid",
@@ -118,6 +119,11 @@ rust_decimal = { version = "^1.38.0", default-features = false, features = ["std
 rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
 smallvec = { version = "^1.15", default-features = false }
 iddqd = { version = "^0.4.0", default-features = false }
+confusables = "^0.1"
+indextree = "^4"
+palette = { version = "^0.7", default-features = false, features = ["std"] }
+terminal-colorsaurus = "^1"
+unicode-width = "^0.2"
 
 # Allow the facet_no_doc cfg in generated code
 # See: https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html
@@ -156,6 +162,7 @@ facet-axum = { path = "facet-axum" }
 facet-cargo-toml = { path = "facet-cargo-toml" }
 facet-urlencoded = { path = "facet-urlencoded" }
 rusqlite-facet = { path = "rusqlite-facet" }
+rediff = { path = "rediff" }
 strid = { path = "strid" }
 strid-macros = { path = "strid-macros" }
 strid-examples = { path = "strid-examples" }
