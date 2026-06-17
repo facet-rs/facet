@@ -89,8 +89,8 @@ fn empty_extensions() -> &'static Extensions {
 #[cfg(test)]
 mod tests {
     use crate::{
-        LaneGrant, LaneId, Metadata, MethodDescriptorOptions, RequestAuthorizationContext,
-        RequestId, method_descriptor,
+        LaneGrant, LaneId, Metadata, MetadataExt, MethodDescriptorOptions,
+        RequestAuthorizationContext, RequestId, method_descriptor,
     };
 
     use super::RequestContext;
@@ -123,6 +123,8 @@ mod tests {
         assert_eq!(context.method().method_name, "demo");
     }
 
+    // r[verify connection.identity.late-claims]
+    // r[verify request.authorization]
     #[test]
     fn authorization_context_is_exposed_from_extensions() {
         let method = method_descriptor::<(), ()>(
@@ -137,10 +139,12 @@ mod tests {
         );
         let metadata = Metadata::default();
         let extensions = crate::Extensions::new();
+        let lane_grant =
+            LaneGrant::from_metadata(crate::metadata().str("grant-scope", "demo").build());
         extensions.insert(RequestAuthorizationContext::new(
             crate::PeerIdentity::anonymous(),
             crate::PeerEvidence::none(),
-            LaneGrant::empty(),
+            lane_grant,
         ));
 
         let context = RequestContext::with_extensions(method, &metadata, &extensions);
@@ -150,6 +154,12 @@ mod tests {
             .expect("authorization context should be present");
         assert!(authorization.peer_identity().is_anonymous());
         assert!(authorization.peer_evidence().is_empty());
-        assert!(authorization.lane_grant().is_empty());
+        assert_eq!(
+            authorization
+                .lane_grant()
+                .metadata()
+                .meta_str("grant-scope"),
+            Some("demo")
+        );
     }
 }

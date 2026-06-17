@@ -24,9 +24,11 @@ import { Registry, hexToBytes, primitiveId, resolveIds } from "@bearcove/phon-sc
 import { BareConduit } from "./conduit.ts";
 import {
   ConnectionDeclinedError,
+  compositePeerIdentity,
   declineIdentity,
   handshakeAsAcceptor,
   handshakeAsInitiator,
+  identityBasis,
   syntheticPeerEvidence,
   voxServiceMetadata,
 } from "./handshake.ts";
@@ -328,6 +330,7 @@ describe("connection", () => {
   // r[verify connection.peer]
   // r[verify connection.role]
   // r[verify connection.symmetry]
+  // r[verify rpc.metadata.records]
   it("exchanges phon handshake schemas, settings, roles, and metadata", async () => {
     const [clientLink, serverLink] = memoryLinkPair();
     const clientSettings: ConnectionSettings = {
@@ -365,6 +368,87 @@ describe("connection", () => {
     expect(Array.from(serverHandshake.peerMessageSchema)).toEqual(
       Array.from(hexToBytes(messageSchemaClosure)),
     );
+
+    clientLink.close();
+    serverLink.close();
+  });
+
+  // r[verify connection.handshake.metadata]
+  // r[verify connection.evidence]
+  // r[verify connection.identity]
+  // r[verify connection.identity.forms]
+  // r[verify connection.identity.inputs]
+  // r[verify connection.identity.local]
+  // r[verify connection.identity.redaction]
+  // r[verify connection.identity.scope]
+  // r[verify connection.identity.use-cases]
+  // r[verify connection.policy.establishment]
+  it("resolves peer identity from local evidence and verified handshake metadata", async () => {
+    const [clientLink, serverLink] = memoryLinkPair();
+    const clientSettings: ConnectionSettings = {
+      parity: { tag: "Odd" },
+      max_concurrent_requests: 64,
+      initial_channel_credit: 16,
+    };
+    const peerEvidence = syntheticPeerEvidence("memory-link");
+    const initiator = handshakeAsInitiator(
+      clientLink,
+      clientSettings,
+      emptyMetadata(),
+      {
+        peerEvidence,
+        identityResolver: (context) => {
+          expect(context.role).toBe("initiator");
+          expect(context.claims.get("server-auth")).toBe("token-ok");
+          expect(context.evidence.items).toEqual([
+            { kind: "synthetic", label: "memory-link" },
+          ]);
+          return compositePeerIdentity([
+            identityBasis("synthetic", "evidence-backed", "memory-link"),
+            identityBasis("application-user", "verified-claim-backed", "user:7"),
+          ]);
+        },
+      },
+    );
+
+    const hello = decodeHandshakeFrame(
+      (await withTimeout(serverLink.recv(), "initiator Hello"))!,
+    );
+    expect(hello.tag).toBe("Hello");
+
+    const serverMetadata = new Map([
+      ["server-auth", "token-ok"],
+      ["traceparent", "redacted-by-policy"],
+    ]);
+    await serverLink.send(
+      encodeHandshakeFrame({
+        tag: "HelloYourself",
+        value: {
+          connection_settings: {
+            parity: { tag: "Even" },
+            max_concurrent_requests: 64,
+            initial_channel_credit: 16,
+          },
+          message_payload_schema: Array.from(hexToBytes(messageSchemaClosure)),
+          metadata: serverMetadata,
+        },
+      }),
+    );
+
+    const response = decodeHandshakeFrame(
+      (await withTimeout(serverLink.recv(), "initiator LetsGo"))!,
+    );
+    expect(response.tag).toBe("LetsGo");
+
+    const result = await withTimeout(initiator, "initiator policy handshake");
+    expect(result.peerMetadata.get("server-auth")).toBe("token-ok");
+    expect(result.peerEvidence.items).toEqual(peerEvidence.items);
+    expect(result.peerIdentity.epoch).toBe(0);
+    expect(result.peerIdentity.form).toBe("composite");
+    expect(result.peerIdentity.bases).toEqual([
+      { form: "synthetic", provenance: "evidence-backed", redacted: "memory-link" },
+      { form: "application-user", provenance: "verified-claim-backed", redacted: "user:7" },
+    ]);
 
     clientLink.close();
     serverLink.close();
@@ -463,6 +547,7 @@ describe("connection", () => {
   // r[verify connection.handshake.decline]
   // r[verify connection.policy.establishment.rejection]
   // r[verify connection.identity.resolver]
+  // r[verify rejection.reason.taxonomy]
   it("acceptor sends Decline when identity resolver rejects initiator claims", async () => {
     const [clientLink, serverLink] = memoryLinkPair();
     const serverSettings: ConnectionSettings = {
@@ -741,6 +826,10 @@ describe("connection", () => {
 
   // r[verify lane.service.compat]
   // r[verify lane.accept.api]
+  // r[verify lane.authorization]
+  // r[verify lane.authorization.context]
+  // r[verify request.authorization]
+  // r[verify connection.identity.late-claims]
   // r[verify lane]
   // r[verify lane.open]
   // r[verify lane.wire.compat]
@@ -806,6 +895,8 @@ describe("connection", () => {
     expect(incoming?.requestId).toBe(77n);
     expect(incoming?.methodId).toBe(ECHO_METHOD.id);
     expect(Array.from(incoming?.args ?? [])).toEqual([0x07]);
+    expect(incoming?.authorization.peerIdentity.form).toBe("anonymous");
+    expect(incoming?.authorization.peerEvidence.items).toEqual([]);
     expect(incoming?.authorization.laneGrant.metadata.get("grant-scope")).toBe("echo:raw");
 
     await connection.sendResponse(77n, new Uint8Array([0x01]));
@@ -862,6 +953,8 @@ describe("connection", () => {
   });
 
   // r[verify lane.authorization]
+  // r[verify lane.authorization.filtered]
+  // r[verify rejection.reason.taxonomy]
   // r[verify lane.open.wire.rejection]
   it("lets lane acceptors reject inbound service lanes with structured reasons", async () => {
     const peerSettings: ConnectionSettings = {

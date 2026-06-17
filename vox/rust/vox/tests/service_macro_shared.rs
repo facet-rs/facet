@@ -447,6 +447,8 @@ pub async fn run_request_context_end_to_end<L>(
 
     server_ready_rx.await.expect("server setup failed");
 
+    // r[verify lane.authorization]
+    // r[verify lane.authorization.context]
     let described = client
         .describe()
         .await

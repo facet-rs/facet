@@ -229,6 +229,8 @@ async fn control_and_service_lanes_bind_separate_services() {
 // r[verify lane.open]
 // r[verify lane.open.result]
 // r[verify lane.wire.compat]
+// r[verify lane.authorization.filtered]
+// r[verify rejection.reason.taxonomy]
 #[tokio::test]
 async fn reject_service_lane() {
     let (client_conduit, server_conduit) = message_conduit_pair();

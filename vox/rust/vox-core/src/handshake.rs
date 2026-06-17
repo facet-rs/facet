@@ -362,7 +362,10 @@ pub async fn handshake_as_acceptor_with_policy<Tx: LinkTx, Rx: LinkRx>(
 
 #[cfg(test)]
 mod tests {
-    use vox_types::{EstablishmentRejectReason, Link, Parity, PeerEvidence};
+    use vox_types::{
+        EstablishmentRejectReason, IdentityBasis, IdentityBasisProvenance, Link, Parity,
+        PeerEvidence, PeerEvidenceItem, PeerIdentity, PeerIdentityForm,
+    };
 
     use super::*;
 
@@ -391,6 +394,7 @@ mod tests {
     // r[verify connection.handshake.protocol-schema]
     // r[verify connection.handshake.lane-settings]
     // r[verify connection.peer]
+    // r[verify rpc.metadata.records]
     #[tokio::test]
     async fn hello_and_hello_yourself_carry_connection_settings() {
         let (client_link, server_link) = crate::memory_link_pair(4);
@@ -448,9 +452,117 @@ mod tests {
         assert!(result.peer_identity.is_anonymous());
     }
 
+    // r[verify connection.handshake.metadata]
+    // r[verify connection.evidence]
+    // r[verify connection.identity]
+    // r[verify connection.identity.forms]
+    // r[verify connection.identity.inputs]
+    // r[verify connection.identity.local]
+    // r[verify connection.identity.redaction]
+    // r[verify connection.identity.scope]
+    // r[verify connection.identity.use-cases]
+    // r[verify connection.policy.establishment]
+    #[tokio::test]
+    async fn identity_resolver_builds_identity_from_local_evidence_and_verified_claims() {
+        let (client_link, server_link) = crate::memory_link_pair(4);
+        let (client_tx, mut client_rx) = client_link.split();
+        let (server_tx, mut server_rx) = server_link.split();
+
+        let peer_evidence = unsafe {
+            PeerEvidence::from_runtime_asserted(vec![PeerEvidenceItem::Tls {
+                verified_subject: Some("CN=server".into()),
+                alpn: Some("vox".into()),
+            }])
+        };
+        let resolver = crate::identity_resolver_fn(|context| {
+            assert_eq!(context.role, ConnectionRole::Initiator);
+            assert_eq!(
+                vox_types::metadata_get_str(context.claims, "server-auth"),
+                Some("token-ok")
+            );
+            let [
+                PeerEvidenceItem::Tls {
+                    verified_subject,
+                    alpn,
+                },
+            ] = context.evidence.items()
+            else {
+                panic!("expected TLS evidence, got {:?}", context.evidence.items());
+            };
+            assert_eq!(verified_subject.as_deref(), Some("CN=server"));
+            assert_eq!(alpn.as_deref(), Some("vox"));
+
+            Ok(PeerIdentity::composite(vec![
+                IdentityBasis::new(
+                    PeerIdentityForm::CertificateBacked,
+                    IdentityBasisProvenance::EvidenceBacked,
+                    "tls:server",
+                ),
+                IdentityBasis::new(
+                    PeerIdentityForm::ApplicationUser,
+                    IdentityBasisProvenance::VerifiedClaimBacked,
+                    "user:7",
+                ),
+            ]))
+        });
+
+        let initiator = tokio::spawn(async move {
+            handshake_as_initiator_with_policy(
+                &client_tx,
+                &mut client_rx,
+                settings(Parity::Odd, 16),
+                vox_types::Metadata::default(),
+                peer_evidence,
+                &resolver,
+            )
+            .await
+        });
+
+        let hello = recv_handshake(&mut server_rx).await.expect("recv hello");
+        assert!(matches!(hello, HandshakeMessage::Hello(_)));
+
+        let peer_metadata = vox_types::metadata()
+            .str("server-auth", "token-ok")
+            .str("traceparent", "redacted-by-policy")
+            .build();
+        send_handshake(
+            &server_tx,
+            &HandshakeMessage::HelloYourself(vox_types::HelloYourself {
+                connection_settings: settings(Parity::Even, 16),
+                message_payload_schema: message_schema(),
+                metadata: peer_metadata.clone(),
+            }),
+        )
+        .await
+        .expect("send hello-yourself");
+
+        let lets_go = recv_handshake(&mut server_rx).await.expect("recv lets-go");
+        assert!(matches!(lets_go, HandshakeMessage::LetsGo(_)));
+
+        let result = initiator
+            .await
+            .expect("initiator task")
+            .expect("initiator handshake");
+        assert_eq!(result.peer_metadata, peer_metadata);
+        assert_eq!(result.peer_evidence.items().len(), 1);
+        assert_eq!(result.peer_identity.form(), PeerIdentityForm::Composite);
+        assert_eq!(result.peer_identity.bases().len(), 2);
+        assert_eq!(
+            result.peer_identity.bases()[0].provenance,
+            IdentityBasisProvenance::EvidenceBacked
+        );
+        assert_eq!(result.peer_identity.bases()[0].redacted, "tls:server");
+        assert_eq!(
+            result.peer_identity.bases()[1].provenance,
+            IdentityBasisProvenance::VerifiedClaimBacked
+        );
+        assert_eq!(result.peer_identity.bases()[1].redacted, "user:7");
+    }
+
     // r[verify connection.handshake.decline]
     // r[verify connection.policy.establishment.rejection]
     // r[verify connection.identity.resolver]
+    // r[verify rejection.reason.taxonomy]
     #[tokio::test]
     async fn acceptor_declines_when_identity_resolver_rejects_initiator_claims() {
         let (client_link, server_link) = crate::memory_link_pair(4);

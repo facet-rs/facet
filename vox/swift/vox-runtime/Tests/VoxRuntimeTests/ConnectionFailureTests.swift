@@ -332,6 +332,7 @@ private func establishmentLabels(_ events: [VoxEstablishmentObserverEvent]) -> [
 // r[verify connection.peer]
 // r[verify connection.role]
 // r[verify schema.interaction.metadata]
+// r[verify rpc.metadata.records]
 func acceptorConnectionExposesPeerHandshakeMetadata() async throws {
     let metadata = meta([("vixenfs-sid", "abc123")])
     let link = ScriptedTransport(
@@ -355,6 +356,75 @@ func acceptorConnectionExposesPeerHandshakeMetadata() async throws {
     #expect(connection.driver.dispatcher is EmptyServiceDispatcher)
     #expect(connection.controlLane.handle === connection.driver.handle)
     #expect(connection.peerMetadata == metadata)
+}
+
+@Test
+// r[verify connection.handshake.metadata]
+// r[verify connection.evidence]
+// r[verify connection.identity]
+// r[verify connection.identity.forms]
+// r[verify connection.identity.inputs]
+// r[verify connection.identity.local]
+// r[verify connection.identity.redaction]
+// r[verify connection.identity.scope]
+// r[verify connection.identity.use-cases]
+// r[verify connection.policy.establishment]
+func initiatorResolvesPeerIdentityFromEvidenceAndHandshakeMetadata() async throws {
+    let metadata = meta([
+        ("server-auth", "token-ok"),
+        ("traceparent", "redacted-by-policy"),
+    ])
+    let link = ScriptedTransport(
+        initialHandshake: .helloYourself(
+            HelloYourself(
+                connectionSettings: ConnectionSettings(
+                    parity: .even,
+                    maxConcurrentRequests: 64,
+                    initialChannelCredit: 16
+                ),
+                messagePayloadSchema: Data(MessageSchemaClosure),
+                metadata: metadata
+            ))
+    )
+
+    let connection = try await Connection.connect(
+        ScriptedConnector(transport: link, peerEvidence: .synthetic("memory-link")),
+        controlDispatcher: EmptyServiceDispatcher(),
+        identityResolver: { context in
+            #expect(context.role == .initiator)
+            #expect(context.claims.metaStr("server-auth") == "token-ok")
+            if case .synthetic(label: let label) = context.evidence.items.first {
+                #expect(label == "memory-link")
+            } else {
+                Issue.record("expected synthetic peer evidence")
+            }
+            return PeerIdentity.composite([
+                IdentityBasis(
+                    form: .synthetic,
+                    provenance: .evidenceBacked,
+                    redacted: "memory-link"
+                ),
+                IdentityBasis(
+                    form: .applicationUser,
+                    provenance: .verifiedClaimBacked,
+                    redacted: "user:7"
+                ),
+            ])
+        }
+    )
+
+    #expect(connection.peerMetadata.metaStr("server-auth") == "token-ok")
+    if case .synthetic(label: let label) = connection.peerEvidence.items.first {
+        #expect(label == "memory-link")
+    } else {
+        Issue.record("expected connection peer evidence")
+    }
+    #expect(connection.peerIdentity.epoch == 0)
+    #expect(connection.peerIdentity.form == .composite)
+    #expect(connection.peerIdentity.bases == [
+        IdentityBasis(form: .synthetic, provenance: .evidenceBacked, redacted: "memory-link"),
+        IdentityBasis(form: .applicationUser, provenance: .verifiedClaimBacked, redacted: "user:7"),
+    ])
 }
 
 @Test
@@ -398,6 +468,7 @@ func acceptorSendsSorryForInvalidPeerMessageSchema() async throws {
 // r[verify connection.handshake.decline]
 // r[verify connection.policy.establishment.rejection]
 // r[verify connection.identity.resolver]
+// r[verify rejection.reason.taxonomy]
 func acceptorSendsDeclineWhenIdentityResolverRejectsInitiatorClaims() async throws {
     let link = ScriptedTransport(
         initialHandshake: .hello(
@@ -532,6 +603,44 @@ private struct ImmediateResponseDispatcher: ServiceDispatcher {
         taskTx: @escaping @Sendable (TaskMessage) -> Void
     ) async {
         taskTx(.response(requestId: requestId, payload: [0x01]))
+    }
+}
+
+private struct AuthorizationProbeDispatcher: ServiceDispatcher {
+    func preregister(
+        methodId _: UInt64,
+        payload _: [UInt8],
+        channels _: [UInt64],
+        registry _: ChannelRegistry
+    ) async {}
+
+    func dispatch(
+        methodId _: UInt64,
+        payload _: [UInt8],
+        requestId: UInt64,
+        channels _: [UInt64],
+        registry _: ChannelRegistry,
+        schemaSendTracker _: SchemaSendTracker,
+        schemaReceiveTracker _: SchemaTracker,
+        context: RequestContext,
+        taskTx: @escaping @Sendable (TaskMessage) -> Void
+    ) async {
+        #expect(context.authorization.peerIdentity.form == .anonymous)
+        #expect(context.authorization.peerEvidence.items.isEmpty)
+        #expect(context.authorization.laneGrant.metadata.metaStr("grant-scope") == "swift-probe")
+        taskTx(.response(requestId: requestId, payload: [0x01]))
+    }
+}
+
+private struct GrantingLaneAcceptor: LaneAcceptor {
+    let dispatcher: any ServiceDispatcher
+
+    func accept(request: LaneRequest, lane: PendingLane) {
+        #expect(request.service == "Noop")
+        lane.handleWith(
+            dispatcher,
+            grant: LaneGrant(metadata: meta([("grant-scope", "swift-probe")]))
+        )
     }
 }
 
@@ -2613,6 +2722,10 @@ struct ConnectionFailureTests {
 
     // r[verify lane.accept.api]
     // r[verify lane.service.compat]
+    // r[verify lane.authorization]
+    // r[verify lane.authorization.context]
+    // r[verify request.authorization]
+    // r[verify connection.identity.late-claims]
     // r[verify connection.symmetry]
     // r[verify lane.service]
     @Test func inboundOpenLaneAcceptsAndDispatchesOnServiceLane() async throws {
@@ -2620,7 +2733,7 @@ struct ConnectionFailureTests {
         let (controlLane, driver, _, _) = try await establishInitiator(
             conduit: transport,
             dispatcher: EmptyServiceDispatcher(),
-            laneAcceptor: DefaultLaneAcceptor(dispatcher: ImmediateResponseDispatcher())
+            laneAcceptor: GrantingLaneAcceptor(dispatcher: AuthorizationProbeDispatcher())
         )
         #expect(controlLane.laneId == 0)
         let driverTask: Task<Void, Error> = Task {
@@ -2649,6 +2762,7 @@ struct ConnectionFailureTests {
             }
             #expect(accept.connectionSettings.parity == .even)
             #expect(accept.connectionSettings.initialChannelCredit == 16)
+            #expect(accept.metadata.metaStr("grant-scope") == "swift-probe")
 
             await transport.enqueueMessage(
                 .request(
@@ -2672,6 +2786,8 @@ struct ConnectionFailureTests {
     // r[verify lane.open.wire.rejection]
     // r[verify lane.open.result]
     // r[verify lane.wire.compat]
+    // r[verify lane.authorization.filtered]
+    // r[verify rejection.reason.taxonomy]
     @Test func inboundOpenLaneRejectsWithStructuredReasonWhenNoAcceptor() async throws {
         let transport = ScriptedTransport()
         let (controlLane, driver, _, _) = try await establishInitiator(
