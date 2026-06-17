@@ -356,7 +356,13 @@ export async function startTsWsServer(port: number): Promise<TsWsServerHandle> {
 
   wss.on("connection", (socket) => {
     const link = new NodeWsLink(socket);
-    void accept(link, { onLane: driveLane }).then((connection) => {
+    void accept(link, {
+      onLane: (_request, pending) => {
+        void pending.accept().then(driveLane).catch((error) => {
+          console.error("[ts-ws-server] lane accept error:", error);
+        });
+      },
+    }).then((connection) => {
       const handle = connection.handle();
       activeConnections.add(handle);
       void connection.closed().finally(() => {

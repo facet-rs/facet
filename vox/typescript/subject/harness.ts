@@ -25,10 +25,14 @@ export async function runSubjectServer(createDispatcher: () => Dispatcher, metad
     const connection = await connect(tcpConnector(addr), {
       metadata,
       onLane: acceptLanes
-        ? (lane) => {
-            const driver = new Driver(lane, createDispatcher());
-            void driver.run().catch((e: unknown) => {
-              console.error(`[harness] service lane error: ${e instanceof Error ? e.message : String(e)}`);
+        ? (_request, pending) => {
+            void pending.accept().then((lane) => {
+              const driver = new Driver(lane, createDispatcher());
+              void driver.run().catch((e: unknown) => {
+                console.error(`[harness] service lane error: ${e instanceof Error ? e.message : String(e)}`);
+              });
+            }).catch((e: unknown) => {
+              console.error(`[harness] service lane accept error: ${e instanceof Error ? e.message : String(e)}`);
             });
           }
         : undefined,

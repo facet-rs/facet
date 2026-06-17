@@ -5028,13 +5028,17 @@ async function runServer() {
   const connection = await connect(makeConnector(addr), {
     metadata: voxServiceMetadata("Testbed"),
     onLane: acceptLanes
-      ? (lane) => {
-          const driver = new Driver(
-            lane,
-            new TestbedDispatcher(new TestbedService()),
-          );
-          void driver.run().catch((e: unknown) => {
-            console.error(`[subject] service lane error: ${e instanceof Error ? e.message : String(e)}`);
+      ? (_request, pending) => {
+          void pending.accept().then((lane) => {
+            const driver = new Driver(
+              lane,
+              new TestbedDispatcher(new TestbedService()),
+            );
+            void driver.run().catch((e: unknown) => {
+              console.error(`[subject] service lane error: ${e instanceof Error ? e.message : String(e)}`);
+            });
+          }).catch((e: unknown) => {
+            console.error(`[subject] service lane accept error: ${e instanceof Error ? e.message : String(e)}`);
           });
         }
       : undefined,
@@ -6317,13 +6321,17 @@ async function runServerListen() {
 
   const connection = await accept(acceptTcp(socket), {
     metadata: voxServiceMetadata("Testbed"),
-    onLane: (lane) => {
-      const driver = new Driver(
-        lane,
-        new TestbedDispatcher(new TestbedService()),
-      );
-      void driver.run().catch((e: unknown) => {
-        console.error(`[subject] service lane error: ${e instanceof Error ? e.message : String(e)}`);
+    onLane: (_request, pending) => {
+      void pending.accept().then((lane) => {
+        const driver = new Driver(
+          lane,
+          new TestbedDispatcher(new TestbedService()),
+        );
+        void driver.run().catch((e: unknown) => {
+          console.error(`[subject] service lane error: ${e instanceof Error ? e.message : String(e)}`);
+        });
+      }).catch((e: unknown) => {
+        console.error(`[subject] service lane accept error: ${e instanceof Error ? e.message : String(e)}`);
       });
     },
   });
