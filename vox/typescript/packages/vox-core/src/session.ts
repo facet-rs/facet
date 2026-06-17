@@ -4,6 +4,7 @@ import {
   type RequestMessage,
   type ChannelMessage,
   type SchemaMessage,
+  type LaneReject,
   type Message,
   type Metadata,
   emptyMetadata,
@@ -64,6 +65,81 @@ import {
 import { splitQualifiedMethodName } from "./observer.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+export const VOX_LANE_REJECT_REASON_METADATA_KEY = "vox-lane-reject-reason";
+export const VOX_LANE_REJECT_MESSAGE_METADATA_KEY = "vox-lane-reject-message";
+export const LANE_REJECT_REASONS = [
+  "unknown-service",
+  "forbidden",
+  "not-ready",
+  "draining",
+  "schema-incompatible",
+  "policy-rejected",
+] as const;
+export type LaneRejectReason = (typeof LANE_REJECT_REASONS)[number];
+
+function isLaneRejectReason(value: unknown): value is LaneRejectReason {
+  return typeof value === "string" &&
+    (LANE_REJECT_REASONS as readonly string[]).includes(value);
+}
+
+function metadataString(metadata: Metadata, key: string): string | undefined {
+  const value = metadata.get(key);
+  return typeof value === "string" ? value : undefined;
+}
+
+function laneRejectionMessage(
+  reason: LaneRejectReason,
+  message: string | undefined,
+): string {
+  return message
+    ? `lane open rejected: ${reason}: ${message}`
+    : `lane open rejected: ${reason}`;
+}
+
+// r[impl lane.open.result]
+export class LaneRejection {
+  readonly reason: LaneRejectReason;
+  readonly metadata: Metadata;
+
+  private constructor(reason: LaneRejectReason, metadata: Metadata) {
+    this.reason = reason;
+    this.metadata = metadata;
+  }
+
+  static new(reason: LaneRejectReason): LaneRejection {
+    return LaneRejection.withMetadata(reason);
+  }
+
+  static withMessage(reason: LaneRejectReason, message: string): LaneRejection {
+    const metadata = emptyMetadata();
+    metadata.set(VOX_LANE_REJECT_MESSAGE_METADATA_KEY, message);
+    return LaneRejection.withMetadata(reason, metadata);
+  }
+
+  static withMetadata(
+    reason: LaneRejectReason,
+    metadata: Metadata = emptyMetadata(),
+  ): LaneRejection {
+    const next = new Map(metadata);
+    next.set(VOX_LANE_REJECT_REASON_METADATA_KEY, reason);
+    return new LaneRejection(reason, next);
+  }
+
+  static fromMetadata(metadata: Metadata): LaneRejection {
+    const value = metadata.get(VOX_LANE_REJECT_REASON_METADATA_KEY);
+    const reason = isLaneRejectReason(value) ? value : "policy-rejected";
+    return LaneRejection.withMetadata(reason, metadata);
+  }
+
+  message(): string | undefined {
+    return metadataString(this.metadata, VOX_LANE_REJECT_MESSAGE_METADATA_KEY) ??
+      metadataString(this.metadata, "error");
+  }
+
+  toMetadata(): Metadata {
+    return new Map(this.metadata);
+  }
+}
 
 interface PendingResponse {
   resolve: (payload: Uint8Array) => void;
@@ -282,15 +358,21 @@ async function makeAcceptorEstablishedTransport(
 export class ConnectionError extends Error {
   readonly isProtocolError: boolean;
   readonly receivedFromPeer: boolean;
+  readonly rejection?: LaneRejection;
 
   constructor(
     message: string,
-    options: { isProtocolError?: boolean; receivedFromPeer?: boolean } = {},
+    options: {
+      isProtocolError?: boolean;
+      receivedFromPeer?: boolean;
+      rejection?: LaneRejection;
+    } = {},
   ) {
     super(message);
     this.name = "ConnectionError";
     this.isProtocolError = options.isProtocolError ?? false;
     this.receivedFromPeer = options.receivedFromPeer ?? false;
+    this.rejection = options.rejection;
   }
 
   static closed(): ConnectionError {
@@ -303,6 +385,13 @@ export class ConnectionError extends Error {
 
   static peerProtocol(message: string): ConnectionError {
     return new ConnectionError(message, { isProtocolError: true, receivedFromPeer: true });
+  }
+
+  static rejected(rejection: LaneRejection): ConnectionError {
+    return new ConnectionError(
+      laneRejectionMessage(rejection.reason, rejection.message()),
+      { rejection },
+    );
   }
 }
 
@@ -619,7 +708,7 @@ class ConnectionCore {
 
       case "LaneReject":
         // r[impl lane.wire.compat]
-        this.handleLaneReject(message.lane_id);
+        this.handleLaneReject(message.lane_id, message.payload.value);
         return;
 
       case "LaneClose":
@@ -681,12 +770,21 @@ class ConnectionCore {
     // r[impl connection.open.rejection]
     // r[impl session.connection-settings.open]
     if (!this.onLane) {
-      await this.sendMessage(messageLaneReject(laneId));
+      await this.sendLaneReject(
+        laneId,
+        LaneRejection.withMessage("not-ready", "no lane acceptor configured"),
+      );
       return;
     }
 
     if (value.connection_settings.initial_channel_credit <= 0) {
-      await this.sendMessage(messageLaneReject(laneId));
+      await this.sendLaneReject(
+        laneId,
+        LaneRejection.withMessage(
+          "policy-rejected",
+          "initial_channel_credit must be greater than zero",
+        ),
+      );
       return;
     }
 
@@ -705,6 +803,14 @@ class ConnectionCore {
     this.lanes.set(laneId, lane);
     await this.sendMessage(messageLaneAccept(laneId, localSettings, emptyMetadata()));
     void this.onLane(lane);
+  }
+
+  // r[impl lane.open.result]
+  private async sendLaneReject(
+    laneId: bigint,
+    rejection: LaneRejection,
+  ): Promise<void> {
+    await this.sendMessage(messageLaneReject(laneId, rejection.toMetadata()));
   }
 
   private handleLaneAccept(
@@ -726,13 +832,15 @@ class ConnectionCore {
     pending.result.resolve(lane);
   }
 
-  private handleLaneReject(laneId: bigint): void {
+  // r[impl lane.open.result]
+  private handleLaneReject(laneId: bigint, reject: LaneReject): void {
     const pending = this.pendingLanes.get(laneId);
     if (!pending) {
       return;
     }
     this.pendingLanes.delete(laneId);
-    pending.result.reject(new ConnectionError(`lane ${laneId} rejected`));
+    const rejection = LaneRejection.fromMetadata(coerceMetadata(reject.metadata));
+    pending.result.reject(ConnectionError.rejected(rejection));
   }
 
   private handleLaneClose(laneId: bigint): void {

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { decodeTyped, encodeTyped } from "@bearcove/phon-engine";
 import {
   type ConnectionSettings,
+  coerceMetadata,
   decodeMessage,
   emptyMetadata,
   encodeMessage,
@@ -12,6 +13,7 @@ import {
   messageCancel,
   messageLaneAccept,
   messageLaneOpen,
+  messageLaneReject,
   messageLaneClose,
   messageSchemaClosure,
   parseSchemaClosure,
@@ -25,6 +27,7 @@ import {
   Connection,
   Lane,
   ConnectionError,
+  LaneRejection,
   accept,
   connect,
   defaultLaneSettings,
@@ -573,6 +576,7 @@ describe("session", () => {
   });
 
   // r[verify connection.open.rejection]
+  // r[verify lane.open.result]
   it("rejects inbound service lanes when no acceptor is configured", async () => {
     const peerSettings: ConnectionSettings = {
       parity: { tag: "Odd" },
@@ -593,8 +597,60 @@ describe("session", () => {
     );
     expect(reject.lane_id).toBe(2n);
     expect(reject.payload.tag).toBe("LaneReject");
+    if (reject.payload.tag === "LaneReject") {
+      const rejection = LaneRejection.fromMetadata(
+        coerceMetadata(reject.payload.value.metadata),
+      );
+      expect(rejection.reason).toBe("not-ready");
+      expect(rejection.message()).toBe("no lane acceptor configured");
+    }
 
     clientLink.close();
+    rawServerLink.close();
+    initiatorSession.handle().shutdown();
+    await Promise.allSettled([initiatorSession.closed()]);
+  });
+
+  // r[verify lane.open.result]
+  it("surfaces peer lane-open rejection metadata to callers", async () => {
+    const requestedSettings: ConnectionSettings = {
+      parity: { tag: "Odd" },
+      max_concurrent_requests: 64,
+      initial_channel_credit: 16,
+    };
+    const [initiatorLink, rawServerLink] = memoryLinkPair();
+    const initiatorSession = await withTimeout(
+      establishRawInitiator(initiatorLink, rawServerLink),
+      "raw initiator establishment",
+    );
+
+    const opened = initiatorSession.handle()
+      .openLane(requestedSettings)
+      .catch((error: unknown) => error);
+    const open = decodeMessage(
+      (await withTimeout(rawServerLink.recv(), "service lane open"))!,
+    );
+    expect(open.payload.tag).toBe("LaneOpen");
+
+    await rawServerLink.send(
+      encodeMessage(
+        messageLaneReject(
+          open.lane_id,
+          LaneRejection.withMessage("unknown-service", "service is hidden").toMetadata(),
+        ),
+      ),
+    );
+
+    const error = await opened;
+    expect(error).toBeInstanceOf(ConnectionError);
+    const connectionError = error as ConnectionError;
+    expect(connectionError.message).toBe(
+      "lane open rejected: unknown-service: service is hidden",
+    );
+    expect(connectionError.rejection?.reason).toBe("unknown-service");
+    expect(connectionError.rejection?.message()).toBe("service is hidden");
+
+    initiatorLink.close();
     rawServerLink.close();
     initiatorSession.handle().shutdown();
     await Promise.allSettled([initiatorSession.closed()]);
