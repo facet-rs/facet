@@ -41,10 +41,10 @@ extension Driver {
         case .schemaMessage(let schema):
             // The peer advertises a binding's (writer) schema closure out-of-band, as a
             // standalone message sent before the payload it describes (mirrors the Rust
-            // connection runtime: rust/vox-core/src/session/mod.rs SchemaMessage send/recv). Record it
-            // into the same receive tracker the dispatcher uses for compatibility decode. Messages are
-            // delivered in order, so the schema is recorded before the Call/Response that
-            // needs it is handled.
+            // connection runtime SchemaMessage send/recv). Record it into the same
+            // receive tracker the dispatcher uses for compatibility decode. Messages
+            // are delivered in order, so the schema is recorded before the
+            // Call/Response that needs it is handled.
             // r[impl schema.tracking.received]
             let dir: SchemaBindingDirection
             switch schema.direction {
