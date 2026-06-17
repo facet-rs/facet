@@ -2,13 +2,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use facet::Facet;
 use vox_rt::task::FutureExt;
 use vox_types::{
     Backing, ChannelBody, ChannelClose, ChannelDirection, ChannelGrantCredit, ChannelId,
     ChannelItem, ChannelMessage, ChannelSink, ConnectionRole, ConnectionSettings, Handler,
     HandshakeResult, IncomingChannelMessage, Message, MessagePayload, Metadata, MethodId, Parity,
     Payload, ReplySink, RequestBody, RequestCall, RequestCancel, RequestId, RequestMessage,
-    RequestResponse, Rx, SelfRef, Tx, VoxError, channel,
+    RequestResponse, RequestTerminationReason, Rx, SelfRef, Tx, VoxError, channel,
 };
 
 use super::utils::*;
@@ -133,6 +134,93 @@ where
         .expect("client handshake failed");
     let (server_connection, server_client) = server_task.await.expect("server setup failed");
     (client, server_client, server_connection)
+}
+
+#[derive(Clone, Copy)]
+struct ImmediateReplyHandler;
+
+impl Handler<crate::DriverReplySink> for ImmediateReplyHandler {
+    async fn handle(
+        &self,
+        _call: SelfRef<RequestCall<'static>>,
+        reply: crate::DriverReplySink,
+        _schemas: std::sync::Arc<vox_types::SchemaRecvTracker>,
+    ) {
+        let result = 7_u32;
+        reply
+            .send_reply(RequestResponse {
+                ret: Payload::outgoing(&result),
+                schemas: Default::default(),
+                metadata: Default::default(),
+            })
+            .await;
+    }
+}
+
+#[derive(Facet)]
+struct ReceiveArgs {
+    input: Rx<u32>,
+}
+
+fn request_arg_bytes(call: &RequestCall<'_>) -> (Vec<ChannelId>, Vec<u8>) {
+    let Payload::Encoded(bytes) = &call.args else {
+        panic!("expected encoded request args");
+    };
+    (call.channels.clone(), bytes.to_vec())
+}
+
+fn decode_request_args<T: Facet<'static>>(
+    channels: Vec<ChannelId>,
+    bytes: &[u8],
+    binder: &dyn vox_types::ChannelBinder,
+) -> T {
+    vox_types::channel::provide_channels(channels, || {
+        vox_types::channel::with_channel_binder(binder, || {
+            vox_phon::from_slice(bytes).expect("decode request args")
+        })
+    })
+}
+
+#[derive(Clone)]
+struct CaptureRxBlockingHandler {
+    captured_rx: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Rx<u32>>>>>,
+    was_cancelled: Arc<AtomicBool>,
+}
+
+impl Handler<crate::DriverReplySink> for CaptureRxBlockingHandler {
+    async fn handle(
+        &self,
+        call: SelfRef<RequestCall<'static>>,
+        reply: crate::DriverReplySink,
+        _schemas: std::sync::Arc<vox_types::SchemaRecvTracker>,
+    ) {
+        let args = {
+            let (channels, bytes) = request_arg_bytes(call.get());
+            let binder = reply
+                .channel_binder()
+                .expect("reply sink should expose channel binder");
+            decode_request_args::<ReceiveArgs>(channels, &bytes, binder)
+        };
+        if let Some(sender) = self
+            .captured_rx
+            .lock()
+            .expect("captured rx mutex poisoned")
+            .take()
+        {
+            let _ = sender.send(args.input);
+        }
+
+        let was_cancelled = self.was_cancelled.clone();
+        let _reply = reply;
+        struct DropGuard(Arc<AtomicBool>);
+        impl Drop for DropGuard {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let _guard = DropGuard(was_cancelled);
+        std::future::pending::<()>().await;
+    }
 }
 
 async fn captured_test_lane_pair<H>(
@@ -412,6 +500,50 @@ async fn bound_stream_rx_works_after_public_caller_drop_when_connection_is_drive
         .expect("client session task failed");
 }
 
+// r[verify rpc.request.scope.channels]
+// r[verify rpc.channel.lifecycle]
+#[tokio::test]
+async fn response_delivery_terminalizes_request_channels() {
+    let (client_caller, _server_caller, _server_connection) =
+        captured_test_lane_pair(ImmediateReplyHandler).await;
+
+    let (updates_tx, mut updates_rx) = channel::<u32>();
+    let args = SubscribeArgs {
+        updates: updates_tx,
+    };
+
+    let response = client_caller
+        .caller
+        .call(RequestCall {
+            channels: Vec::new(),
+            method_id: MethodId(1),
+            args: Payload::outgoing(&args),
+            schemas: Default::default(),
+            metadata: Default::default(),
+        })
+        .await
+        .expect("call should receive response");
+    let response = response.get();
+    let ret_bytes = match &response.ret {
+        Payload::Encoded(bytes) => bytes,
+        _ => panic!("expected incoming payload in response"),
+    };
+    let result: u32 = vox_phon::from_slice(ret_bytes).expect("deserialize response");
+    assert_eq!(result, 7);
+
+    let err = match updates_rx.recv().await {
+        Ok(_) => panic!("response delivery should terminate live request channel"),
+        Err(err) => err,
+    };
+    assert!(
+        matches!(
+            err,
+            vox_types::RxError::RequestTerminated(RequestTerminationReason::ResponseDelivered)
+        ),
+        "expected response-delivered request termination, got {err:?}"
+    );
+}
+
 // r[verify rpc.cancel]
 // r[verify rpc.cancel.channels]
 #[tokio::test]
@@ -501,6 +633,116 @@ async fn cancel_aborts_in_flight_handler() {
     }
 
     // Verify the handler was actually cancelled (drop guard fired).
+    assert!(
+        was_cancelled_check.load(Ordering::SeqCst),
+        "handler should have been cancelled"
+    );
+}
+
+// r[verify rpc.request.scope.channels]
+// r[verify rpc.cancel.channels]
+#[tokio::test]
+async fn cancel_terminalizes_request_channels_as_cancelled() {
+    let (client_conduit, server_conduit) = message_conduit_pair();
+    let (rx_sender, rx_receiver) = tokio::sync::oneshot::channel();
+    let captured_rx = Arc::new(Mutex::new(Some(rx_sender)));
+    let was_cancelled = Arc::new(AtomicBool::new(false));
+    let was_cancelled_check = was_cancelled.clone();
+
+    let server_task = vox_rt::task::spawn(
+        {
+            let captured_rx = captured_rx.clone();
+            async move {
+                acceptor_conduit(server_conduit, test_acceptor_handshake())
+                    .on_connection(CaptureRxBlockingHandler {
+                        captured_rx,
+                        was_cancelled,
+                    })
+                    .establish_connection()
+                    .await
+                    .expect("server handshake failed")
+            }
+        }
+        .named("server_setup"),
+    );
+
+    let caller = initiator_conduit(client_conduit, test_initiator_handshake())
+        .establish::<TestLaneClient>()
+        .await
+        .expect("client handshake failed");
+    let client_sender = caller.caller.driver().connection_sender().clone();
+
+    let _server_caller_guard = server_task.await.expect("server setup failed");
+
+    let (updates_tx, updates_rx) = channel::<u32>();
+    let call_task = vox_rt::task::spawn(
+        async move {
+            let args = ReceiveArgs { input: updates_rx };
+            caller
+                .caller
+                .call(RequestCall {
+                    channels: Vec::new(),
+                    method_id: MethodId(1),
+                    args: Payload::outgoing(&args),
+                    schemas: Default::default(),
+                    metadata: Default::default(),
+                })
+                .await
+        }
+        .named("client_call_with_rx_channel"),
+    );
+
+    let mut server_rx = tokio::time::timeout(Duration::from_millis(500), rx_receiver)
+        .await
+        .expect("timed out waiting for server to decode Rx")
+        .expect("server handler dropped before sending Rx");
+
+    client_sender
+        .send(ConnectionMessage::Request(RequestMessage {
+            id: RequestId(1),
+            body: RequestBody::Cancel(RequestCancel {
+                metadata: Metadata::default(),
+            }),
+        }))
+        .await
+        .expect("send cancel");
+
+    let recv = tokio::time::timeout(Duration::from_millis(500), server_rx.recv())
+        .await
+        .expect("timed out waiting for server Rx termination");
+    let err = match recv {
+        Ok(_) => panic!("cancel should terminate live request channel"),
+        Err(err) => err,
+    };
+    assert!(
+        matches!(
+            err,
+            vox_types::RxError::RequestTerminated(RequestTerminationReason::Cancelled)
+        ),
+        "expected cancelled request termination, got {err:?}"
+    );
+
+    drop(updates_tx);
+    let result = call_task.await.expect("call task join");
+    let response = result.expect("call should receive a cancellation response");
+    let response = response.get();
+    let ret_bytes = match &response.ret {
+        Payload::Encoded(bytes) => bytes,
+        _ => panic!("expected incoming payload in response"),
+    };
+    let error: Result<(), VoxError> =
+        vox_phon::from_slice(ret_bytes).expect("deserialize response");
+    assert!(
+        matches!(error, Err(VoxError::Cancelled)),
+        "expected Err(VoxError::Cancelled) in response payload"
+    );
+
+    for _ in 0..20 {
+        if was_cancelled_check.load(Ordering::SeqCst) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     assert!(
         was_cancelled_check.load(Ordering::SeqCst),
         "handler should have been cancelled"

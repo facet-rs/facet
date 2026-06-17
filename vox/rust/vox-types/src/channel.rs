@@ -1000,6 +1000,16 @@ where
             closed.store(true, Ordering::Release);
             Err(RxError::ConnectionClosed(reason))
         }
+        Some(IncomingChannelMessage::RequestTerminated(reason)) => {
+            observe_optional_replenisher_channel(replenisher, debug_context, |channel| {
+                ChannelEvent::Closed {
+                    channel,
+                    reason: ChannelCloseReason::RequestTerminated,
+                }
+            });
+            closed.store(true, Ordering::Release);
+            Err(RxError::RequestTerminated(reason))
+        }
         None => {
             observe_optional_replenisher_channel(replenisher, debug_context, |channel| {
                 ChannelEvent::Closed {
@@ -1235,8 +1245,16 @@ pub enum IncomingChannelMessage {
     Item(SelfRef<ChannelItem<'static>>),
     Close(SelfRef<ChannelClose>),
     Reset(SelfRef<ChannelReset>),
+    RequestTerminated(RequestTerminationReason),
     // r[impl rpc.channel.connection-closure]
     ConnectionClosed(ConnectionCloseReason),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RequestTerminationReason {
+    ResponseDelivered,
+    Cancelled,
+    Failed,
 }
 
 pub struct LogicalIncomingChannelMessage {
@@ -2069,6 +2087,7 @@ impl<T> FacetOpaqueAdapter for RxChannelAdapter<T> {
 pub enum RxError {
     Unbound,
     Reset,
+    RequestTerminated(RequestTerminationReason),
     ConnectionClosed(ConnectionCloseReason),
     Deserialize(String),
     Protocol(String),
@@ -2079,6 +2098,12 @@ impl std::fmt::Display for RxError {
         match self {
             Self::Unbound => write!(f, "channel is not bound"),
             Self::Reset => write!(f, "channel reset by peer"),
+            Self::RequestTerminated(reason) => {
+                write!(
+                    f,
+                    "request scope terminated while receiving channel: {reason:?}"
+                )
+            }
             Self::ConnectionClosed(reason) => {
                 write!(f, "connection closed while receiving channel: {reason:?}")
             }

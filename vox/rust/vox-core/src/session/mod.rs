@@ -572,6 +572,17 @@ impl ConnectionSender {
         binder: Option<&'a dyn vox_types::ChannelBinder>,
         channel_method: Option<&'static vox_types::MethodDescriptor>,
     ) -> Result<(), ()> {
+        self.send_with_binder_and_method_observing_channels(msg, binder, channel_method, |_| {})
+            .await
+    }
+
+    pub(crate) async fn send_with_binder_and_method_observing_channels<'a>(
+        &self,
+        msg: ConnectionMessage<'a>,
+        binder: Option<&'a dyn vox_types::ChannelBinder>,
+        channel_method: Option<&'static vox_types::MethodDescriptor>,
+        declared_channels: impl FnOnce(&[vox_types::ChannelId]),
+    ) -> Result<(), ()> {
         let payload = match msg {
             ConnectionMessage::Request(r) => MessagePayload::RequestMessage(r),
             ConnectionMessage::Channel(c) => MessagePayload::ChannelMessage(c),
@@ -582,7 +593,14 @@ impl ConnectionSender {
             payload,
         };
         self.sess_core
-            .send_with_options(message, binder, None, channel_method, Vec::new())
+            .send_with_options(
+                message,
+                binder,
+                None,
+                channel_method,
+                Vec::new(),
+                declared_channels,
+            )
             .await
             .map_err(|_| ())
     }
@@ -606,6 +624,7 @@ impl ConnectionSender {
                 None,
                 None,
                 extra_schema_sends,
+                |_| {},
             )
             .await
             .map_err(|_| ())
@@ -1974,6 +1993,10 @@ type PreparedOutboundBatch = (
     Vec<vox_types::ChannelId>,
 );
 
+struct PrepareOutboundError {
+    gated_channels: Vec<vox_types::ChannelId>,
+}
+
 async fn run_outbound_worker(mut rx: tokio_mpsc::Receiver<OutboundBatch>) {
     while let Some(batch) = rx.recv().await {
         trace!(
@@ -2229,7 +2252,7 @@ impl SessionCore {
         forwarded_schemas: Option<&vox_types::SchemaRecvTracker>,
         channel_method: Option<&'static vox_types::MethodDescriptor>,
         extra_schema_sends: Vec<PendingSchemaSend>,
-    ) -> Result<PreparedOutboundBatch, ()> {
+    ) -> Result<PreparedOutboundBatch, PrepareOutboundError> {
         let conn_id = msg.lane_id;
         let (request_id, payload_kind) = match &msg.payload {
             MessagePayload::RequestMessage(req) => {
@@ -2355,11 +2378,7 @@ impl SessionCore {
             let encoded = match encoded {
                 Ok(encoded) => encoded,
                 Err(_) => {
-                    // Encode failed after gates were registered: release them so any
-                    // parked `tx.send` unblocks (and then fails on the dead call/conn)
-                    // rather than hanging forever.
-                    self.open_channel_gates(&gated_channels);
-                    return Err(());
+                    return Err(PrepareOutboundError { gated_channels });
                 }
             };
             if let MessagePayload::RequestMessage(req) = &mut msg.payload
@@ -2384,8 +2403,7 @@ impl SessionCore {
         let payload_send = match prepared {
             Ok(send) => send,
             Err(_) => {
-                self.open_channel_gates(&gated_channels);
-                return Err(());
+                return Err(PrepareOutboundError { gated_channels });
             }
         };
         trace!(
@@ -2419,7 +2437,7 @@ impl SessionCore {
         binder: Option<&'a dyn vox_types::ChannelBinder>,
         forwarded_schemas: Option<&vox_types::SchemaRecvTracker>,
     ) -> Result<(), ()> {
-        self.send_with_options(msg, binder, forwarded_schemas, None, Vec::new())
+        self.send_with_options(msg, binder, forwarded_schemas, None, Vec::new(), |_| {})
             .await
     }
 
@@ -2430,6 +2448,7 @@ impl SessionCore {
         forwarded_schemas: Option<&vox_types::SchemaRecvTracker>,
         channel_method: Option<&'static vox_types::MethodDescriptor>,
         extra_schema_sends: Vec<PendingSchemaSend>,
+        declared_channels: impl FnOnce(&[vox_types::ChannelId]),
     ) -> Result<(), ()> {
         let connection_id = msg.lane_id;
         // r[impl rpc.channel.item] Hold an outbound channel item/close until the Call
@@ -2437,13 +2456,21 @@ impl SessionCore {
         if let Some(channel_id) = gated_channel_id(&msg) {
             self.await_channel_gate(channel_id).await;
         }
-        let (batch, result_rx, gated_channels) = self.prepare_outbound_batch(
+        let (batch, result_rx, gated_channels) = match self.prepare_outbound_batch(
             msg,
             binder,
             forwarded_schemas,
             channel_method,
             extra_schema_sends,
-        )?;
+        ) {
+            Ok(prepared) => prepared,
+            Err(err) => {
+                self.open_channel_gates(&err.gated_channels);
+                declared_channels(&err.gated_channels);
+                return Err(());
+            }
+        };
+        declared_channels(&gated_channels);
         let queued = self.outbound_tx.send(batch).await;
         // This Call is now on the queue (or the queue is gone): release its channels'
         // gates so parked items follow it — unconditionally, so a failed enqueue never
@@ -2495,15 +2522,19 @@ impl SessionCore {
         {
             return Err(TrySendError::Full(()));
         }
-        let (batch, _result_rx, gated_channels) = self
-            .prepare_outbound_batch(
-                msg,
-                binder,
-                forwarded_schemas,
-                channel_method,
-                extra_schema_sends,
-            )
-            .map_err(|_| TrySendError::Closed(()))?;
+        let (batch, _result_rx, gated_channels) = match self.prepare_outbound_batch(
+            msg,
+            binder,
+            forwarded_schemas,
+            channel_method,
+            extra_schema_sends,
+        ) {
+            Ok(prepared) => prepared,
+            Err(err) => {
+                self.open_channel_gates(&err.gated_channels);
+                return Err(TrySendError::Closed(()));
+            }
+        };
         let result = self.outbound_tx.try_send(batch).map_err(|err| match err {
             tokio_mpsc::error::TrySendError::Full(_) => {
                 if let Some(observer) = &self.observer {

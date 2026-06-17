@@ -70,6 +70,7 @@ pub enum ChannelCloseReason {
     Remote,
     Dropped,
     ConnectionClosed,
+    RequestTerminated,
     ReceiverDropped,
     Unknown,
 }
@@ -577,6 +578,7 @@ const fn channel_close_reason_label(reason: ChannelCloseReason) -> &'static str 
         ChannelCloseReason::Remote => "remote",
         ChannelCloseReason::Dropped => "dropped",
         ChannelCloseReason::ConnectionClosed => "connection-closed",
+        ChannelCloseReason::RequestTerminated => "request-terminated",
         ChannelCloseReason::ReceiverDropped => "receiver-dropped",
         ChannelCloseReason::Unknown => "unknown",
     }

@@ -19,7 +19,7 @@ use vox_types::{
     ChannelMailboxReceiver, ChannelMailboxSender, ChannelMessage, ChannelSink, CreditSink, Handler,
     IdAllocator, IncomingChannelMessage, LaneId, MaybeSend, MaybeSendFuture, MaybeSync, Parity,
     Payload, ReplySink, RequestBody, RequestCall, RequestId, RequestMessage, RequestResponse,
-    SelfRef, TrySendError, TxError, VoxError, channel_mailbox,
+    RequestTerminationReason, SelfRef, TrySendError, TxError, VoxError, channel_mailbox,
 };
 use vox_types::{
     ChannelCloseReason, ChannelDebugContext, ChannelDirection, ChannelEvent, ChannelResetReason,
@@ -555,6 +555,7 @@ impl DriverShared {
         service: Option<&'static str>,
         method: Option<&'static str>,
         state: RequestDebugState,
+        associated_channels: Vec<ChannelId>,
     ) {
         self.request_debug.lock().insert(
             request_id,
@@ -565,16 +566,76 @@ impl DriverShared {
                 started_at: Instant::now(),
                 state,
                 response_sender_blocked: Some(false),
-                associated_channels: Vec::new(),
+                associated_channels,
             },
         );
     }
 
-    fn finish_request(&self, request_id: RequestId, state: RequestDebugState) {
-        if let Some(request) = self.request_debug.lock().get_mut(&request_id) {
-            request.state = state;
+    // r[impl rpc.request.scope.channels]
+    // r[impl rpc.channel.lifecycle]
+    fn associate_request_channels(&self, request_id: RequestId, channels: &[ChannelId]) {
+        if channels.is_empty() {
+            return;
         }
-        self.request_debug.lock().remove(&request_id);
+        if let Some(request) = self.request_debug.lock().get_mut(&request_id) {
+            for channel_id in channels {
+                if !request.associated_channels.contains(channel_id) {
+                    request.associated_channels.push(*channel_id);
+                }
+            }
+        }
+    }
+
+    // r[impl rpc.request.scope.channels]
+    // r[impl rpc.channel.lifecycle]
+    fn finish_request(
+        &self,
+        request_id: RequestId,
+        state: RequestDebugState,
+        termination: RequestTerminationReason,
+    ) {
+        let associated_channels = {
+            let mut requests = self.request_debug.lock();
+            let Some(mut request) = requests.remove(&request_id) else {
+                return;
+            };
+            request.state = state;
+            request.associated_channels
+        };
+        self.terminate_request_channels(associated_channels, termination);
+    }
+
+    fn terminate_request_channels(
+        &self,
+        channels: Vec<ChannelId>,
+        termination: RequestTerminationReason,
+    ) {
+        for channel_id in channels {
+            self.terminate_request_channel(channel_id, termination);
+        }
+    }
+
+    fn terminate_request_channel(
+        &self,
+        channel_id: ChannelId,
+        termination: RequestTerminationReason,
+    ) {
+        if !self.terminal_channels.lock().insert(channel_id) {
+            return;
+        }
+
+        if let Some(semaphore) = self.channel_credits.lock().remove(&channel_id) {
+            semaphore.close();
+        }
+
+        if let Some(sender) = self.channel_senders.lock().remove(&channel_id) {
+            let _ = sender.force_send(IncomingChannelMessage::RequestTerminated(termination));
+        }
+
+        self.observe_channel(channel_id, None, |channel| ChannelEvent::Closed {
+            channel,
+            reason: ChannelCloseReason::RequestTerminated,
+        });
     }
 
     fn record_send_started(&self, channel_id: ChannelId) {
@@ -1742,14 +1803,15 @@ impl DriverCaller {
             });
         }
         let finish_request = |outcome: RpcOutcome| {
-            self.shared.finish_request(
-                req_id,
-                if outcome == RpcOutcome::Ok {
-                    RequestDebugState::Finished
-                } else {
-                    RequestDebugState::Failed
-                },
-            );
+            let (state, termination) = if outcome == RpcOutcome::Ok {
+                (
+                    RequestDebugState::Finished,
+                    RequestTerminationReason::ResponseDelivered,
+                )
+            } else {
+                (RequestDebugState::Failed, RequestTerminationReason::Failed)
+            };
+            self.shared.finish_request(req_id, state, termination);
             if let Some(observer) = &self.shared.observer {
                 observer.driver_event(DriverEvent::RequestFinished {
                     connection_id: self.sender.connection_id(),
@@ -1770,6 +1832,7 @@ impl DriverCaller {
             Some(service_name),
             Some(method_name),
             RequestDebugState::WaitingForResponse,
+            Vec::new(),
         );
 
         // r[depends schema.exchange.channels]
@@ -1791,9 +1854,10 @@ impl DriverCaller {
             method = method_name,
             "vox caller sending request"
         );
+        let shared = Arc::clone(&self.shared);
         if self
             .sender
-            .send_with_binder_and_method(
+            .send_with_binder_and_method_observing_channels(
                 ConnectionMessage::Request(RequestMessage {
                     id: req_id,
                     body: RequestBody::Call(RequestCall {
@@ -1808,6 +1872,7 @@ impl DriverCaller {
                 }),
                 Some(self),
                 method,
+                move |channels| shared.associate_request_channels(req_id, channels),
             )
             .await
             .is_err()
@@ -2183,7 +2248,15 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                     tracing::trace!(%req_id, in_flight_found, ?reply_disposition, "failures_rx computed disposition");
                     // Clean up the handler tracking entry.
                     self.in_flight_handlers.remove(&req_id);
-                    self.shared.finish_request(req_id, RequestDebugState::Failed);
+                    let termination = match disposition {
+                        FailureDisposition::Cancelled => RequestTerminationReason::Cancelled,
+                        FailureDisposition::Indeterminate => RequestTerminationReason::Failed,
+                    };
+                    self.shared.finish_request(
+                        req_id,
+                        RequestDebugState::Failed,
+                        termination,
+                    );
                     tracing::trace!(%req_id, in_flight = self.in_flight_handlers.len(), "handler removed on failure");
                     let had_pending = self.shared.pending_responses.lock().remove(&req_id).is_some();
                     tracing::trace!(%req_id, had_pending, "failures_rx checked pending_responses");
@@ -2251,7 +2324,11 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                     match item {
                         Ok(HandlerCompletion::Finished(req_id)) => {
                             let removed = self.in_flight_handlers.remove(&req_id).is_some();
-                            self.shared.finish_request(req_id, RequestDebugState::Finished);
+                            self.shared.finish_request(
+                                req_id,
+                                RequestDebugState::Finished,
+                                RequestTerminationReason::ResponseDelivered,
+                            );
                             tracing::trace!(
                                 %req_id,
                                 removed,
@@ -2505,6 +2582,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             let call_ref = call.get();
             let handler = Arc::clone(&self.handler);
             let method_id = call_ref.method_id;
+            let associated_channels = call_ref.channels.clone();
 
             let reply = DriverReplySink {
                 sender: Some(self.sender.clone()),
@@ -2518,6 +2596,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 None,
                 None,
                 RequestDebugState::Dispatching,
+                associated_channels,
             );
             let (abort, abort_reg) = AbortHandle::new_pair();
             let handler_fut: Pin<Box<dyn MaybeSendFuture<Output = HandlerCompletion> + 'static>> =
@@ -2586,8 +2665,11 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             if let Some(in_flight) = self.in_flight_handlers.remove(&req_id) {
                 tracing::trace!(%req_id, "aborting handler");
                 in_flight.abort.abort();
-                self.shared
-                    .finish_request(req_id, RequestDebugState::Failed);
+                self.shared.finish_request(
+                    req_id,
+                    RequestDebugState::Failed,
+                    RequestTerminationReason::Cancelled,
+                );
                 tracing::trace!(%req_id, in_flight = self.in_flight_handlers.len(), "handler removed on cancel");
             }
             // The response is sent automatically: aborting drops DriverReplySink →
