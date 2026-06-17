@@ -256,6 +256,13 @@ impl DomSerializer for ElementSerializer {
             let elem = self.stack.last_mut().ok_or(ElementSerializeError)?;
             elem.attrs.insert(name.to_string(), value_str);
             Ok(())
+        } else if let Ok(value) = value.into_enum()
+            && let Ok(variant) = value.active_variant()
+        {
+            let elem = self.stack.last_mut().ok_or(ElementSerializeError)?;
+            elem.attrs
+                .insert(name.to_string(), variant.effective_name().to_string());
+            Ok(())
         } else {
             Err(ElementSerializeError)
         }
