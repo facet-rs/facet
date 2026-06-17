@@ -45,8 +45,12 @@ pub enum EstablishmentPhase {
     WebSocketUpgrade,
     VoxTransportPrologue,
     ConnectionHandshake,
+    IdentityResolution,
+    ConnectionPolicy,
     SchemaDecodePlan,
     ServiceLaneOpen,
+    LaneAuthorization,
+    LaneGrant,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -627,8 +631,12 @@ const fn establishment_phase_label(phase: EstablishmentPhase) -> &'static str {
         EstablishmentPhase::WebSocketUpgrade => "websocket-upgrade",
         EstablishmentPhase::VoxTransportPrologue => "vox-transport-prologue",
         EstablishmentPhase::ConnectionHandshake => "connection-handshake",
+        EstablishmentPhase::IdentityResolution => "identity-resolution",
+        EstablishmentPhase::ConnectionPolicy => "connection-policy",
         EstablishmentPhase::SchemaDecodePlan => "schema-decode-plan",
         EstablishmentPhase::ServiceLaneOpen => "service-lane-open",
+        EstablishmentPhase::LaneAuthorization => "lane-authorization",
+        EstablishmentPhase::LaneGrant => "lane-grant",
     }
 }
 

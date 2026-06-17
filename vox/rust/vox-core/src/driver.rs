@@ -19,9 +19,9 @@ use vox_types::{
     ChannelCreditReplenisherHandle, ChannelEventContext, ChannelId, ChannelItem,
     ChannelMailboxReceiver, ChannelMailboxSender, ChannelMessage, ChannelSink, CreditSink, Handler,
     IdAllocator, IncomingChannelMessage, LaneId, MaybeSend, MaybeSendFuture, MaybeSync, Parity,
-    Payload, ReplySink, RequestBody, RequestCall, RequestCancel, RequestId, RequestMessage,
-    RequestResponse, RequestTerminationReason, SelfRef, TrySendError, TxError, VoxError,
-    channel_mailbox,
+    Payload, ReplySink, RequestAuthorizationContext, RequestBody, RequestCall, RequestCancel,
+    RequestId, RequestMessage, RequestResponse, RequestTerminationReason, SelfRef, TrySendError,
+    TxError, VoxError, channel_mailbox,
 };
 use vox_types::{
     ChannelCloseReason, ChannelDebugContext, ChannelDirection, ChannelEvent, ChannelResetReason,
@@ -1056,6 +1056,7 @@ pub struct DriverReplySink {
     request_id: RequestId,
     method_id: vox_types::MethodId,
     binder: DriverChannelBinder,
+    authorization_context: RequestAuthorizationContext,
 }
 
 impl ReplySink for DriverReplySink {
@@ -1128,6 +1129,10 @@ impl ReplySink for DriverReplySink {
 
     fn lane_id(&self) -> Option<vox_types::LaneId> {
         self.sender.as_ref().map(|sender| sender.lane_id())
+    }
+
+    fn authorization_context(&self) -> Option<RequestAuthorizationContext> {
+        Some(self.authorization_context.clone())
     }
 }
 
@@ -2150,6 +2155,7 @@ pub struct Driver<H: Handler<DriverReplySink>> {
     local_control_tx: mpsc::UnboundedSender<DriverLocalControl>,
     drop_control_seed: Option<mpsc::UnboundedSender<DropControlRequest>>,
     suppressed_failures: HashSet<RequestId>,
+    authorization_context: RequestAuthorizationContext,
 }
 
 enum DriverLocalControl {
@@ -2319,8 +2325,13 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             peer_settings,
             parity,
             observer,
+            peer_identity,
+            peer_evidence,
+            lane_grant,
         } = handle;
         let (local_control_tx, local_control_rx) = mpsc::unbounded_channel("driver.local_control");
+        let authorization_context =
+            RequestAuthorizationContext::new(peer_identity, peer_evidence, lane_grant);
         Self {
             sender,
             rx,
@@ -2360,6 +2371,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             local_control_tx,
             drop_control_seed: control_tx,
             suppressed_failures: HashSet::new(),
+            authorization_context,
         }
     }
 
@@ -2822,6 +2834,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 request_id: req_id,
                 method_id: call_ref.method_id,
                 binder: self.internal_binder(),
+                authorization_context: self.authorization_context.clone(),
             };
             self.shared.start_request(
                 req_id,

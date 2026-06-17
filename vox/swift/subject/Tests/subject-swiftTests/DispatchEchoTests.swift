@@ -44,7 +44,15 @@ private final class ResponseBox: @unchecked Sendable {
     await dispatcher.dispatch(
         methodId: echoId, payload: argsPayload, requestId: 1, channels: [],
         registry: ChannelRegistry(), schemaSendTracker: sendTracker,
-        schemaReceiveTracker: recvTracker, taskTx: taskTx)
+        schemaReceiveTracker: recvTracker,
+        context: RequestContext(
+            methodId: echoId,
+            requestId: 1,
+            laneId: 0,
+            metadata: .null,
+            authorization: .anonymous
+        ),
+        taskTx: taskTx)
 
     guard case .response(let requestId, let payload, let methodId, let schemas) = box.get() else {
         Issue.record("expected a .response TaskMessage")

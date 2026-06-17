@@ -9,8 +9,8 @@ use std::{
 use facet_reflect::Peek;
 
 use crate::{
-    LaneId, Metadata, MethodDescriptor, Payload, ReplySink, RequestContext, RequestId,
-    RequestResponse,
+    LaneId, Metadata, MethodDescriptor, Payload, ReplySink, RequestAuthorizationContext,
+    RequestContext, RequestId, RequestResponse,
 };
 
 /// Per-request type-indexed storage shared across middleware hooks and handlers.
@@ -160,6 +160,11 @@ impl<'a> ServerRequest<'a> {
     /// Per-request middleware extensions bag.
     pub fn extensions(&self) -> &'a Extensions {
         self.context.extensions()
+    }
+
+    /// Authorization context resolved by the driver for this request, when available.
+    pub fn authorization(&self) -> Option<RequestAuthorizationContext> {
+        self.context.authorization()
     }
 
     /// Reflective view of the decoded argument tuple for this call.
@@ -357,6 +362,12 @@ where
 
     fn lane_id(&self) -> Option<crate::LaneId> {
         self.inner.as_ref().and_then(|reply| reply.lane_id())
+    }
+
+    fn authorization_context(&self) -> Option<RequestAuthorizationContext> {
+        self.inner
+            .as_ref()
+            .and_then(|reply| reply.authorization_context())
     }
 }
 

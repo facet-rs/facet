@@ -194,6 +194,275 @@ Connection/Lane/RequestScope runtime contract.
 > object. Compatibility module names that still contain older vocabulary are not
 > part of the public protocol model.
 
+# Connection identity, evidence, and policy
+
+Vox separates peer-authored metadata from facts asserted by the local transport
+or embedding runtime. This lets the same connection policy model apply to mTLS,
+Unix sockets, named pipes, XPC, in-process transports, and memory transports
+without pretending that all of those paths have the same security evidence.
+
+> r[connection.evidence]
+>
+> **Transport evidence** is locally asserted information about the counterpart
+> or about the path used to create the accepted link. Examples include a
+> verified TLS/mTLS certificate, an ALPN result, Unix peer credentials,
+> platform process identity, an XPC audit token, an in-process component
+> identity, or a synthetic identity supplied by a test transport.
+>
+> Transport evidence is not ordinary request, response, or lane metadata. A
+> value sent by the counterpart MUST NOT become transport evidence merely
+> because it appears in metadata or in a payload.
+>
+> A value surfaced by a transport is evidence only to the extent that the local
+> transport, kernel, cryptographic stack, or embedding runtime asserted or
+> verified it. Peer-authored values that arrive through a transport, such as
+> SNI, Host, Origin, path, query parameters, WebSocket upgrade headers, cookies,
+> bearer tokens, or forwarded identity headers, are claims rather than
+> transport evidence. An ALPN result is evidence for the locally observed
+> negotiated protocol; the peer-influenced values riding beside it are not.
+>
+> Evidence MUST be constructible only by trusted transport, platform, runtime,
+> embedding, or test harness code. Application payloads, metadata, service
+> handlers, and policy callbacks MUST NOT be able to fabricate locally asserted
+> evidence.
+
+> r[connection.identity.inputs]
+>
+> Identity resolution consumes distinct input classes:
+>
+>   * transport/runtime evidence asserted locally;
+>   * counterpart-authored claims carried in handshake metadata, lane metadata,
+>     request metadata, or payloads;
+>   * local configuration and verifier output.
+>
+> Implementations MUST keep the trust boundary between these input classes
+> visible. A bearer token, username, service name, socket address, or other
+> counterpart-authored value is a claim until local policy verifies it. Verifier
+> output may contribute to peer identity, but the original claim MUST NOT be
+> exposed as locally asserted transport evidence.
+
+> r[connection.identity.resolver]
+>
+> The **identity resolver** runs at the connection establishment policy
+> boundary, after transport/runtime evidence for the accepted link is available
+> and before the connection is established. Vox core provides the pipeline and
+> typed policy context; the application, embedding runtime, or transport
+> integration supplies the actual verifier logic.
+>
+> The resolver returns either a connection-scoped peer identity or a connection
+> policy rejection. Identity resolution and establishment policy MUST complete
+> during the handshake: the acceptor resolves the initiator before sending
+> `HelloYourself`, and the initiator resolves the acceptor before sending
+> `LetsGo`. `Decline` is the structured carrier for establishment policy
+> rejection. The resolver MUST NOT be hidden inside ordinary metadata handling,
+> generated service dispatch, or individual method handlers.
+>
+> The resolver MUST NOT depend on opening an application service lane on the
+> connection being established. Resolver work is on the connection
+> establishment path, so implementations SHOULD make resolver diagnostics and
+> time spent in the resolver observable.
+>
+> This handshake provides no multi-round authentication exchange. Challenge
+> response, credential refresh, and re-authentication are not connection
+> establishment semantics in this version; they require a future explicit
+> protocol or service-level authorization state.
+
+> r[connection.identity]
+>
+> A connection's **peer identity** is the local peer's policy-resolved view of
+> its counterpart for this Vox connection. Peer identity is computed from
+> transport evidence, verified counterpart claims, local configuration, and
+> policy. Lane and request authorization consume this resolved identity rather
+> than interpreting raw transport details directly.
+>
+> A connection MUST have an identity before application service lanes are
+> accepted. If no identity resolver is configured, the default identity is
+> anonymous/unauthenticated, optionally accompanied by whatever transport
+> evidence the link supplied.
+
+> r[connection.identity.late-claims]
+>
+> Claims that first appear after connection identity has been resolved, such as
+> credentials in lane metadata or request metadata, MAY be verified by lane or
+> request authorization policy. Such verifier output can affect that lane or
+> request, but it never becomes transport evidence. Connection identity is
+> immutable for the lifetime of that identity epoch. A connection has exactly
+> one identity epoch in this version. A future re-authentication protocol, if
+> defined, MUST create an explicit new identity epoch and MUST NOT
+> retroactively reinterpret lanes, requests, channels, logs, or observer events
+> that belonged to an earlier epoch.
+>
+> Expiring or revoked credentials presented after establishment are handled by
+> lane authorization, request authorization, lane-grant revocation, or
+> connection teardown. They MUST NOT mutate or downgrade the connection
+> identity in place.
+
+> r[connection.identity.forms]
+>
+> Public APIs SHOULD preserve enough structure for policy code to distinguish
+> common identity forms without string parsing:
+>
+>   * anonymous or unauthenticated counterpart;
+>   * synthetic test identity;
+>   * local process or platform identity;
+>   * certificate-backed identity;
+>   * application/user identity produced by a local verifier;
+>   * composite identity that records more than one verified basis.
+>
+> The exact platform-specific payloads are implementation-defined, but their
+> trust boundary MUST remain visible.
+> Composite identities MUST preserve per-basis provenance so policy can
+> distinguish evidence-backed identity bases from verified-claim-backed identity
+> bases. Synthetic and test identities are distinguishable identity forms and
+> are not implicitly privileged.
+
+> r[connection.identity.use-cases]
+>
+> The identity model MUST be able to represent the following cases without
+> treating peer-authored metadata as transport evidence:
+>
+>   * a WAN service authenticated by TLS or mTLS evidence;
+>   * a server-authenticated TLS connection whose client identity is established
+>     by a locally verified token claim;
+>   * a WebSocket or TCP connection whose application user is established by a
+>     locally verified token or credential claim available during connection
+>     establishment;
+>   * a deployment behind a trusted local frontend, load balancer, sidecar, or
+>     proxy where forwarded peer data is a claim verified against the frontend's
+>     own evidence-backed identity and local policy;
+>   * a gateway or on-behalf-of service where the connection identity is the
+>     gateway and downstream users, tenants, or capabilities are represented as
+>     lane-scoped or request-scoped claims;
+>   * a Unix-socket peer identified by local peer credentials such as UID, GID,
+>     PID, or platform-provided process information;
+>   * a macOS XPC peer identified by audit-token and code-signing evidence;
+>   * an in-process, FFI, or shared-library peer identified by the embedding
+>     runtime;
+>   * a memory/test peer identified by synthetic test evidence.
+
+> r[connection.identity.local]
+>
+> Peer identity is local to one side of the connection. Each peer resolves its
+> counterpart independently. A counterpart's self-description, socket address,
+> service name, lane metadata, or connection role MUST NOT be treated as
+> authoritative identity unless local policy explicitly verifies and accepts it.
+
+> r[connection.identity.scope]
+>
+> Peer identity is connection-scoped by default. Implementations MUST NOT assume
+> that two identities observed on different connections refer to the same
+> principal unless the identity form includes a stable verified principal and
+> policy defines equality for that form.
+
+> r[connection.identity.redaction]
+>
+> Evidence and identity may contain secrets, personal data, host paths,
+> certificate material, process identifiers, or other sensitive values.
+> Observers and logs MUST expose redacted/debug forms by default. Raw evidence
+> MAY be available to policy code, but it MUST NOT be used as a default metric
+> label or emitted into ordinary logs without an explicit opt-in.
+
+> r[connection.policy.establishment]
+>
+> Connection policy MAY reject a connection after transport evidence is
+> available and before the connection is established. When rejection happens
+> after Vox can send handshake messages, the rejecting peer MUST send `Decline`
+> before abandoning the link. The outward reason MAY be redacted or less
+> specific than the local policy decision.
+>
+> A rejected connection MUST also surface a local diagnostic that distinguishes
+> policy rejection, missing or unconfigured policy, transport failure, protocol
+> failure, and ordinary graceful shutdown. If the transport or platform security
+> layer fails before Vox can send any protocol response, a local diagnostic is
+> sufficient.
+
+> r[connection.policy.establishment.rejection]
+>
+> Structured establishment rejection MUST carry a typed reason, not a free-form
+> string. It MUST represent at least unauthenticated, forbidden, not ready,
+> draining, unsupported, and policy rejected. It MAY carry metadata or a
+> human-readable diagnostic message subject to redaction. Authentication and
+> authorization failures MUST NOT rely on untyped string matching for
+> programmatic behavior.
+>
+> `TransportReject` remains available for transport-prologue refusal before the
+> Vox handshake can be interpreted. `Sorry` is reserved for handshake schema or
+> protocol compatibility failure (see `r[connection.handshake.sorry]`) and
+> SHOULD NOT be used for policy rejection once a structured establishment
+> rejection carrier is available.
+>
+> When an acceptor rejects establishment policy, it sends `Decline` in place of
+> `HelloYourself`. When an initiator rejects establishment policy, it sends
+> `Decline` in place of `LetsGo`. If policy rejection and compatibility failure
+> are both applicable, the rejecting peer SHOULD choose the less revealing
+> outward reason while preserving precise local diagnostics.
+
+> r[rejection.reason.taxonomy]
+>
+> Vox rejection carriers use typed reasons so callers and diagnostics do not
+> depend on message text:
+>
+> | Layer | Carrier | Required reason space |
+> | --- | --- | --- |
+> | Transport prologue | `TransportReject` | Transport-prologue reasons such as unsupported prologue. |
+> | Connection establishment | `Decline` | `Unauthenticated`, `Forbidden`, `NotReady`, `Draining`, `Unsupported`, `PolicyRejected`. |
+> | Service lane open | `RejectConnection` compatibility wire / lane reject | `UnknownService`, `Forbidden`, `NotReady`, `Draining`, `SchemaIncompatible`, `PolicyRejected`. |
+>
+> Implementations MAY add more specific reasons, but every reason MUST map to a
+> stable typed value and to one of the required reason categories for
+> cross-language behavior.
+
+> r[lane.authorization]
+>
+> Opening a service lane is an authorization point. The accepting peer decides
+> whether to accept or reject the lane-open request using the resolved
+> connection identity, available evidence, requested service namespace, lane
+> metadata, local readiness, resource limits, and policy.
+>
+> While a lane-open request is pending, the lane is not usable for application
+> requests. If policy refuses the lane, the rejecting peer MUST send a
+> structured lane-open rejection.
+>
+> Either peer may open lanes, regardless of which side initiated the underlying
+> link. Lane authorization always uses the accepting peer's local view of its
+> counterpart identity and the lane-open metadata it received.
+
+> r[lane.authorization.context]
+>
+> Lane authorization MAY produce a lane-scoped authorization context, also
+> called a lane grant. The lane grant records the authority, tenant, scope,
+> readiness, resource limits, or verifier output that the accepting peer wants
+> subsequent requests on that lane to inherit.
+>
+> A lane grant is bound to the accepted lane and remains associated with that
+> lane until the lane closes, the connection closes, or local policy explicitly
+> revokes it. If policy revokes a lane grant, the implementation MUST make the
+> revocation observable and MUST either proactively close the lane with a
+> structured reason, or leave the lane open but reject subsequent requests with
+> an authorization error. Revocation MUST NOT retroactively reinterpret requests
+> that were already authorized under the previous grant.
+>
+> Closing a lane to enforce grant revocation may terminate in-flight requests
+> according to the lane-close semantics. That is operational termination, not a
+> retroactive authorization reversal.
+
+> r[lane.authorization.filtered]
+>
+> Discovery and rejection details are subject to authorization. The protocol
+> MUST be able to represent unknown service, forbidden, not ready, draining,
+> schema incompatible, and policy rejected, but local policy MAY choose a less
+> revealing outward reason when exposing the more precise reason would disclose
+> service existence or sensitive policy details.
+
+> r[request.authorization]
+>
+> Implementations MAY authorize individual requests after a lane has opened.
+> Request authorization consumes the connection identity, lane/service identity,
+> lane authorization context if any, method identity, request metadata, lane
+> policy state, and local readiness. Request metadata can carry credentials or
+> policy inputs, but those values are peer-authored until a local verifier
+> validates them.
+
 > r[lane]
 >
 > A lane is a request, response, and channel namespace inside one connection.
@@ -225,11 +494,11 @@ Connection/Lane/RequestScope runtime contract.
 
 > r[lane.open.result]
 >
-> Lane-open rejection MUST be structured enough for callers and diagnostics to
-> distinguish at least: unknown service, forbidden, not ready, draining, schema
-> incompatible, and policy rejected. Discovery and rejection details SHOULD be
-> filtered by authorization; a peer MUST NOT learn every implemented service
-> merely because it can open a connection.
+> Lane-open rejection MUST be structured enough to represent at least: unknown
+> service, forbidden, not ready, draining, schema incompatible, and policy
+> rejected. Discovery and rejection details SHOULD be filtered by authorization;
+> a peer MUST NOT learn every implemented service merely because it can open a
+> connection.
 
 > r[lane.wire.compat]
 >
@@ -318,9 +587,10 @@ succeeds, the `BareConduit` carries connection `Message` traffic.
 > Schemas may be delivered inline with `Request` and `Response` payloads or
 > via a standalone `SchemaMessage` binding (see `r[schema.format.delivery]`).
 >
-> `Hello`, `HelloYourself`, `LetsGo`, and `Sorry` are NOT message payloads.
-> They are phon self-describing handshake messages exchanged before the
-> phon-encoded `MessagePayload` enum is used (see `r[connection.handshake]`).
+> `Hello`, `HelloYourself`, `LetsGo`, `Decline`, and `Sorry` are NOT message
+> payloads. They are phon self-describing handshake messages exchanged before
+> the phon-encoded `MessagePayload` enum is used (see
+> `r[connection.handshake]`).
 
 > r[connection.handshake]
 >
@@ -339,6 +609,9 @@ succeeds, the `BareConduit` carries connection `Message` traffic.
 >    - `message_payload_schema`: the phon schema-closure bytes describing the
 >      initiator's `Message` envelope and all types it references (the enum used
 >      for all subsequent communication)
+>    - `metadata`: early peer-authored metadata for connection-establishment
+>      claims and connection extensions; a peer presenting no early metadata MAY
+>      encode it as unit/null
 >
 > 2. The acceptor adopts the opposite parity, builds a phon decode plan for the
 >    initiator's `Message` schema, and replies with one of:
@@ -348,22 +621,57 @@ succeeds, the `BareConduit` carries connection `Message` traffic.
 >        control lane ID 0
 >      - `message_payload_schema`: the phon schema-closure bytes describing the
 >        acceptor's `Message` envelope and all types it references
+>      - `metadata`: early peer-authored metadata for connection-establishment
+>        claims and connection extensions; a peer presenting no early metadata
+>        MAY encode it as unit/null
+>    - **`Decline`** if the acceptor's identity resolver or connection policy
+>      refuses establishment
 >    - **`Sorry`** if the schemas are incompatible (see `r[connection.handshake.sorry]`)
 >
 > 3. The initiator builds a phon decode plan for the acceptor's `Message` schema
 >    and replies with one of:
 >    - **`LetsGo`**: confirms compatibility; the connection is established
->    - **`Sorry`**: rejects the connection
+>    - **`Decline`**: refuses establishment due to connection policy, for
+>      example because the initiator's identity resolver rejected the acceptor's
+>      identity or claims
+>    - **`Sorry`**: rejects the connection due to schema compatibility
+
+> r[connection.handshake.metadata]
+>
+> Handshake metadata is peer-authored metadata carried by `Hello` and
+> `HelloYourself` before application service lanes are accepted. It may carry
+> early credential claims, routing hints, tracing context, or extension data for
+> connection establishment. It is not transport evidence. Authentication
+> claims in handshake metadata are claims until the local identity resolver
+> verifies them.
+>
+> Observers and logs MUST treat handshake metadata as sensitive by default and
+> MUST NOT render its values without redaction, independent of whether keys use
+> the sensitive-key sigil from `r[rpc.metadata.sigils]`. Metadata sigils remain
+> useful for values that are safe to render or forward under local policy, but
+> handshake metadata starts from a default-sensitive posture because it is the
+> early-claims carrier.
 
 > r[connection.handshake.phon]
 >
-> All handshake messages (`Hello`, `HelloYourself`, `LetsGo`, `Sorry`) MUST
-> be phon self-describing values. phon's self-describing mode is tag-led and
-> needs no prior schema to parse (`phon r[self-describing.tag-led]`), avoiding
-> the chicken-and-egg problem of needing a schema to read a schema. After
-> `LetsGo`, all subsequent communication is phon-compact `MessagePayload`
-> values, decoded using phon decode plans built from the `message_payload_schema`
-> closures exchanged in the handshake.
+> All handshake messages (`Hello`, `HelloYourself`, `LetsGo`, `Decline`,
+> `Sorry`) MUST be phon self-describing values. phon's self-describing mode is
+> tag-led and needs no prior schema to parse (`phon r[self-describing.tag-led]`),
+> avoiding the chicken-and-egg problem of needing a schema to read a schema.
+> After `LetsGo`, all subsequent communication is phon-compact `MessagePayload`
+> values, decoded using phon decode plans built from the
+> `message_payload_schema` closures exchanged in the handshake.
+
+> r[connection.handshake.decline]
+>
+> `Decline` is the structured handshake carrier for connection-establishment
+> policy rejection. It MUST contain a structured reason, not a free-form string,
+> and MAY contain metadata or a human-readable diagnostic message subject to
+> redaction. It is used when Vox can speak the handshake but local policy
+> refuses establishment, such as unauthenticated, forbidden, not ready,
+> draining, unsupported, or policy rejected cases.
+> After sending or receiving `Decline`, the connection MUST NOT proceed and the
+> conduit SHOULD be closed.
 
 > r[connection.handshake.sorry]
 >
@@ -371,6 +679,8 @@ succeeds, the `BareConduit` carries connection `Message` traffic.
 > which variants or fields the rejecting peer requires that the other peer's
 > schema does not provide. After sending or receiving `Sorry`, the connection
 > MUST NOT proceed and the conduit SHOULD be closed.
+> `Sorry` is for schema or handshake protocol compatibility failure, not
+> authentication or authorization policy rejection.
 
 > r[connection.handshake.protocol-schema]
 >

@@ -318,7 +318,12 @@ export class Driver {
       descriptor.service_name,
       method,
       incoming.metadata,
-      new Extensions(),
+      {
+        requestId: incoming.requestId,
+        laneId: this.lane.id,
+        authorization: incoming.authorization,
+        extensions: new Extensions(),
+      },
     );
 
     const taskSender: TaskSender = (message) => {

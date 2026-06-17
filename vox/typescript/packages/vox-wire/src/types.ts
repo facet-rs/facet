@@ -57,6 +57,7 @@ export type ChannelId = bigint;
 // r[impl rpc.metadata.keys]
 // r[impl rpc.metadata.duplicates]
 // r[impl rpc.metadata.unknown]
+// r[impl rpc.metadata.records]
 // r[impl schema.interaction.metadata]
 // ---------------------------------------------------------------------------
 
@@ -127,6 +128,7 @@ export function messageLaneOpen(
   connection_settings: ConnectionSettings,
   metadata: Metadata = emptyMetadata(),
 ): Message {
+  // r[impl rpc.metadata.records]
   return {
     lane_id: laneId,
     payload: { tag: "LaneOpen", value: { connection_settings, metadata } },
@@ -138,6 +140,7 @@ export function messageLaneAccept(
   connection_settings: ConnectionSettings,
   metadata: Metadata = emptyMetadata(),
 ): Message {
+  // r[impl rpc.metadata.records]
   return {
     lane_id: laneId,
     payload: { tag: "LaneAccept", value: { connection_settings, metadata } },
@@ -145,10 +148,12 @@ export function messageLaneAccept(
 }
 
 export function messageLaneReject(laneId: bigint, metadata: Metadata = emptyMetadata()): Message {
+  // r[impl rpc.metadata.records]
   return { lane_id: laneId, payload: { tag: "LaneReject", value: { metadata } } };
 }
 
 export function messageLaneClose(laneId: bigint = 0n, metadata: Metadata = emptyMetadata()): Message {
+  // r[impl rpc.metadata.records]
   return { lane_id: laneId, payload: { tag: "LaneClose", value: { metadata } } };
 }
 
@@ -161,6 +166,7 @@ export function messageRequest(
   laneId: bigint = 0n,
   schemas: number[] = [],
 ): Message {
+  // r[impl rpc.metadata.records]
   return {
     lane_id: laneId,
     payload: {
@@ -183,6 +189,7 @@ export function messageResponse(
   laneId: bigint = 0n,
   schemas: number[] = [],
 ): Message {
+  // r[impl rpc.metadata.records]
   return {
     lane_id: laneId,
     payload: {
@@ -221,6 +228,7 @@ export function messageCancel(
   laneId: bigint = 0n,
   metadata: Metadata = emptyMetadata(),
 ): Message {
+  // r[impl rpc.metadata.records]
   return {
     lane_id: laneId,
     payload: {
@@ -245,6 +253,7 @@ export function messageClose(
   laneId: bigint = 0n,
   metadata: Metadata = emptyMetadata(),
 ): Message {
+  // r[impl rpc.metadata.records]
   return {
     lane_id: laneId,
     payload: {
@@ -259,6 +268,7 @@ export function messageReset(
   laneId: bigint = 0n,
   metadata: Metadata = emptyMetadata(),
 ): Message {
+  // r[impl rpc.metadata.records]
   return {
     lane_id: laneId,
     payload: {

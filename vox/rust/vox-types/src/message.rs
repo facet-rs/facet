@@ -91,6 +91,7 @@ structstruck::strike! {
                 // Lane control
                 // ========================================================================
 
+                // r[impl rpc.metadata.records]
                 /// Request a new service lane. This is sent on the desired lane ID,
                 /// even though it does not exist yet.
                 // r[impl lane.open.wire]
@@ -106,6 +107,7 @@ structstruck::strike! {
                 }),
 
                 /// Accept a lane request, sent on the requested lane ID.
+                // r[impl rpc.metadata.records]
                 // r[impl lane.open.settings]
                 LaneAccept(pub struct LaneAccept {
                     /// Lane limits advertised by the accepter.
@@ -116,12 +118,14 @@ structstruck::strike! {
                 }),
 
                 /// Reject a lane request, sent on the requested lane ID.
+                // r[impl rpc.metadata.records]
                 LaneReject(pub struct LaneReject {
                     /// Metadata associated with the rejection.
                     pub metadata: Metadata,
                 }),
 
                 /// Close a service lane. Trying to close lane 0 is a protocol error.
+                // r[impl rpc.metadata.records]
                 LaneClose(pub struct LaneClose {
                     /// Metadata associated with the close.
                     pub metadata: Metadata,
@@ -132,6 +136,7 @@ structstruck::strike! {
                 // RPC
                 // ========================================================================
 
+                // r[impl rpc.metadata.records]
                 RequestMessage(
                     pub struct RequestMessage<'payload> {
                         /// Unique lane-scoped request identifier, caller-allocated (as per parity)
@@ -440,7 +445,7 @@ mod tests {
             ]
         );
 
-        for handshake_variant in ["Hello", "HelloYourself", "LetsGo", "Sorry"] {
+        for handshake_variant in ["Hello", "HelloYourself", "LetsGo", "Decline", "Sorry"] {
             assert!(
                 !payloads.contains(&handshake_variant),
                 "{handshake_variant} is a phon handshake message, not a compact MessagePayload"

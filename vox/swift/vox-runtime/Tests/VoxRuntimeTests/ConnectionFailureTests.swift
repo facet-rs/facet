@@ -264,15 +264,17 @@ private struct EmptyServiceDispatcher: ServiceDispatcher {
         registry _: ChannelRegistry,
         schemaSendTracker _: SchemaSendTracker,
         schemaReceiveTracker _: SchemaTracker,
+        context _: RequestContext,
         taskTx _: @escaping @Sendable (TaskMessage) -> Void
     ) async {}
 }
 
 private struct ScriptedConnector: ConnectionConnector {
     let transport: ScriptedTransport
+    var peerEvidence: PeerEvidence = .none
 
     func openAttachment() async throws -> LinkAttachment {
-        .initiator(transport)
+        .initiator(transport, peerEvidence: peerEvidence)
     }
 }
 
@@ -392,6 +394,99 @@ func acceptorSendsSorryForInvalidPeerMessageSchema() async throws {
     #expect(sorry.reason == "unsupported message compatibility plan")
 }
 
+@Test
+// r[verify connection.handshake.decline]
+// r[verify connection.policy.establishment.rejection]
+// r[verify connection.identity.resolver]
+func acceptorSendsDeclineWhenIdentityResolverRejectsInitiatorClaims() async throws {
+    let link = ScriptedTransport(
+        initialHandshake: .hello(
+            Hello(
+                parity: .odd,
+                connectionSettings: ConnectionSettings(
+                    parity: .odd,
+                    maxConcurrentRequests: 64,
+                    initialChannelCredit: 16
+                ),
+                messagePayloadSchema: Data(MessageSchemaClosure),
+                metadata: meta([("auth", "nope")])
+            ))
+    )
+
+    do {
+        _ = try await Connection.accept(
+            .fresh(link, peerEvidence: .synthetic("memory-link")),
+            controlDispatcher: EmptyServiceDispatcher(),
+            identityResolver: { context in
+                #expect(context.role == .acceptor)
+                #expect(context.claims.metaStr("auth") == "nope")
+                throw ConnectionDeclinedError(reason: .forbidden)
+            }
+        )
+        Issue.record("expected connection decline")
+    } catch let declined as ConnectionDeclinedError {
+        #expect(declined.decline.reason == .forbidden)
+        #expect(declined.receivedFromPeer == false)
+    } catch {
+        Issue.record("expected ConnectionDeclinedError, got \(String(describing: error))")
+    }
+
+    let sent = await link.sentHandshakeMessages()
+    guard case .decline(let decline) = sent.first else {
+        Issue.record("expected Decline handshake")
+        return
+    }
+    #expect(decline.reason == .forbidden)
+}
+
+@Test
+// r[verify connection.handshake.decline]
+// r[verify connection.policy.establishment.rejection]
+// r[verify connection.identity.resolver]
+func initiatorSendsDeclineWhenIdentityResolverRejectsAcceptorClaims() async throws {
+    let link = ScriptedTransport(
+        initialHandshake: .helloYourself(
+            HelloYourself(
+                connectionSettings: ConnectionSettings(
+                    parity: .even,
+                    maxConcurrentRequests: 64,
+                    initialChannelCredit: 16
+                ),
+                messagePayloadSchema: Data(MessageSchemaClosure),
+                metadata: meta([("server-auth", "bad")])
+            ))
+    )
+
+    do {
+        _ = try await Connection.connect(
+            ScriptedConnector(transport: link, peerEvidence: .synthetic("memory-link")),
+            controlDispatcher: EmptyServiceDispatcher(),
+            identityResolver: { context in
+                #expect(context.role == .initiator)
+                #expect(context.claims.metaStr("server-auth") == "bad")
+                throw ConnectionDeclinedError(reason: .forbidden)
+            }
+        )
+        Issue.record("expected connection decline")
+    } catch let declined as ConnectionDeclinedError {
+        #expect(declined.decline.reason == .forbidden)
+        #expect(declined.receivedFromPeer == false)
+    } catch {
+        Issue.record("expected ConnectionDeclinedError, got \(String(describing: error))")
+    }
+
+    let sent = await link.sentHandshakeMessages()
+    guard sent.contains(where: {
+        if case .decline(let decline) = $0 {
+            return decline.reason == .forbidden
+        }
+        return false
+    }) else {
+        Issue.record("expected Decline handshake")
+        return
+    }
+}
+
 // r[verify transport.prologue.first-payload]
 // r[verify transport.prologue.post-accept]
 @Test func acceptorConnectionConsumesTransportPrologueBeforeHandshake() async throws {
@@ -433,6 +528,7 @@ private struct ImmediateResponseDispatcher: ServiceDispatcher {
         registry _: ChannelRegistry,
         schemaSendTracker _: SchemaSendTracker,
         schemaReceiveTracker _: SchemaTracker,
+        context _: RequestContext,
         taskTx: @escaping @Sendable (TaskMessage) -> Void
     ) async {
         taskTx(.response(requestId: requestId, payload: [0x01]))
@@ -455,6 +551,7 @@ private struct PipeliningDispatcher: ServiceDispatcher {
         registry _: ChannelRegistry,
         schemaSendTracker _: SchemaSendTracker,
         schemaReceiveTracker _: SchemaTracker,
+        context _: RequestContext,
         taskTx: @escaping @Sendable (TaskMessage) -> Void
     ) async {
         if methodId == 1 {
@@ -507,6 +604,7 @@ private struct BlockingFlowControlDispatcher: ServiceDispatcher {
         registry _: ChannelRegistry,
         schemaSendTracker _: SchemaSendTracker,
         schemaReceiveTracker _: SchemaTracker,
+        context _: RequestContext,
         taskTx: @escaping @Sendable (TaskMessage) -> Void
     ) async {
         await gate.markStarted()
@@ -554,6 +652,7 @@ private struct CancelChannelDispatcher: ServiceDispatcher {
         registry _: ChannelRegistry,
         schemaSendTracker _: SchemaSendTracker,
         schemaReceiveTracker _: SchemaTracker,
+        context _: RequestContext,
         taskTx _: @escaping @Sendable (TaskMessage) -> Void
     ) async {}
 }
@@ -892,6 +991,10 @@ struct ConnectionFailureTests {
             let labels = establishmentLabels(observer.establishmentSnapshot())
             for expected in [
                 "started:initiator:connection-handshake:-:-",
+                "started:initiator:identity-resolution:-:-",
+                "started:initiator:connection-policy:-:-",
+                "finished:initiator:connection-policy:-:ok",
+                "finished:initiator:identity-resolution:-:ok",
                 "finished:initiator:connection-handshake:-:ok",
                 "started:initiator:schema-decode-plan:-:-",
                 "finished:initiator:schema-decode-plan:-:ok",
@@ -927,6 +1030,10 @@ struct ConnectionFailureTests {
                 "started:acceptor:transport-prologue:-:-",
                 "finished:acceptor:transport-prologue:-:ok",
                 "started:acceptor:connection-handshake:-:-",
+                "started:acceptor:identity-resolution:-:-",
+                "started:acceptor:connection-policy:-:-",
+                "finished:acceptor:connection-policy:-:ok",
+                "finished:acceptor:identity-resolution:-:ok",
                 "finished:acceptor:connection-handshake:-:ok",
                 "started:acceptor:schema-decode-plan:-:-",
                 "finished:acceptor:schema-decode-plan:-:ok",

@@ -88,6 +88,7 @@ private struct EmptyServiceDispatcher: ServiceDispatcher {
         registry _: ChannelRegistry,
         schemaSendTracker _: SchemaSendTracker,
         schemaReceiveTracker _: SchemaTracker,
+        context _: RequestContext,
         taskTx _: @escaping @Sendable (TaskMessage) -> Void
     ) async {}
 }

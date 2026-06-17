@@ -45,6 +45,8 @@ pub(crate) fn test_acceptor_handshake() -> HandshakeResult {
         our_schema: vec![],
         peer_schema: vec![],
         peer_metadata: vox_types::metadata().str("vox-service", "Noop").build(),
+        peer_evidence: vox_types::PeerEvidence::none(),
+        peer_identity: vox_types::PeerIdentity::anonymous(),
     }
 }
 
@@ -64,6 +66,8 @@ pub(crate) fn test_initiator_handshake() -> HandshakeResult {
         our_schema: vec![],
         peer_schema: vec![],
         peer_metadata: vox_types::metadata().str("vox-service", "Noop").build(),
+        peer_evidence: vox_types::PeerEvidence::none(),
+        peer_identity: vox_types::PeerIdentity::anonymous(),
     }
 }
 

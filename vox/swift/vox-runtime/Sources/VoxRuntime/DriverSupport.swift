@@ -119,7 +119,9 @@ func makeConnectionDriverAndControlLane(
     keepalive: ConnectionKeepaliveConfig? = nil,
     localControlSettings: ConnectionSettings,
     peerControlSettings: ConnectionSettings,
-    peerMessageSchema: [UInt8]
+    peerMessageSchema: [UInt8],
+    peerEvidence: PeerEvidence = .none,
+    peerIdentity: PeerIdentity = .anonymous
 ) -> (Lane, Driver, ConnectionHandle) {
     let commandQueue = LockedQueue<HandleCommand>()
     let taskQueue = LockedQueue<DriverQueuedTaskMessage>()
@@ -172,12 +174,16 @@ func makeConnectionDriverAndControlLane(
         taskQueue: taskQueue,
         localControlSettings: localControlSettings,
         peerControlSettings: peerControlSettings,
-        peerMessageSchema: peerMessageSchema
+        peerMessageSchema: peerMessageSchema,
+        peerEvidence: peerEvidence,
+        peerIdentity: peerIdentity
     )
 
     let connectionHandle = ConnectionHandle(
         commandTx: commandSender,
-        eventContinuation: continuation
+        eventContinuation: continuation,
+        peerEvidence: peerEvidence,
+        peerIdentity: peerIdentity
     )
 
     return (Lane(handle: handle, schemaReceiveTracker: driver.schemaReceiveTracker), driver, connectionHandle)

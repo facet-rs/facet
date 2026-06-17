@@ -10,6 +10,8 @@ public final class Connection: @unchecked Sendable {
     let driver: Driver
     public let handle: ConnectionHandle
     public let peerMetadata: Metadata
+    public var peerEvidence: PeerEvidence { handle.peerEvidence }
+    public var peerIdentity: PeerIdentity { handle.peerIdentity }
 
     init(
         role: Role,
@@ -63,14 +65,16 @@ public final class Connection: @unchecked Sendable {
         _ connector: some ConnectionConnector,
         onLane: (any LaneAcceptor)? = nil,
         keepalive: ConnectionKeepaliveConfig? = nil,
-        metadata: Metadata = .null
+        metadata: Metadata = .null,
+        identityResolver: IdentityResolver? = nil
     ) async throws -> Connection {
         try await connect(
             connector,
             controlDispatcher: ConnectionControlDispatcher(),
             onLane: onLane,
             keepalive: keepalive,
-            metadata: metadata
+            metadata: metadata,
+            identityResolver: identityResolver
         )
     }
 
@@ -79,7 +83,8 @@ public final class Connection: @unchecked Sendable {
         controlDispatcher: any ServiceDispatcher,
         onLane: (any LaneAcceptor)? = nil,
         keepalive: ConnectionKeepaliveConfig? = nil,
-        metadata: Metadata = .null
+        metadata: Metadata = .null,
+        identityResolver: IdentityResolver? = nil
     ) async throws -> Connection {
         // r[impl rpc.connection-setup]
         let attachment = try await connector.openAttachment()
@@ -89,7 +94,8 @@ public final class Connection: @unchecked Sendable {
                 dispatcher: controlDispatcher,
                 laneAcceptor: onLane,
                 keepalive: keepalive,
-                metadata: metadata
+                metadata: metadata,
+                identityResolver: identityResolver
             )
         return Connection(
             role: .initiator,
@@ -104,14 +110,16 @@ public final class Connection: @unchecked Sendable {
         _ connector: some ConnectionConnector,
         onLane: (any LaneAcceptor)? = nil,
         keepalive: ConnectionKeepaliveConfig? = nil,
-        metadata: Metadata = .null
+        metadata: Metadata = .null,
+        identityResolver: IdentityResolver? = nil
     ) async throws -> Connection {
         try await accept(
             connector,
             controlDispatcher: ConnectionControlDispatcher(),
             onLane: onLane,
             keepalive: keepalive,
-            metadata: metadata
+            metadata: metadata,
+            identityResolver: identityResolver
         )
     }
 
@@ -120,7 +128,8 @@ public final class Connection: @unchecked Sendable {
         controlDispatcher: any ServiceDispatcher,
         onLane: (any LaneAcceptor)? = nil,
         keepalive: ConnectionKeepaliveConfig? = nil,
-        metadata: Metadata = .null
+        metadata: Metadata = .null,
+        identityResolver: IdentityResolver? = nil
     ) async throws -> Connection {
         // r[impl rpc.connection-setup]
         let attachment = try await connector.openAttachment()
@@ -129,7 +138,8 @@ public final class Connection: @unchecked Sendable {
             controlDispatcher: controlDispatcher,
             onLane: onLane,
             keepalive: keepalive,
-            metadata: metadata
+            metadata: metadata,
+            identityResolver: identityResolver
         )
     }
 
@@ -137,14 +147,16 @@ public final class Connection: @unchecked Sendable {
         overFreshLink link: any Link,
         onLane: (any LaneAcceptor)? = nil,
         keepalive: ConnectionKeepaliveConfig? = nil,
-        metadata: Metadata = .null
+        metadata: Metadata = .null,
+        identityResolver: IdentityResolver? = nil
     ) async throws -> Connection {
         try await connect(
             overFreshLink: link,
             controlDispatcher: ConnectionControlDispatcher(),
             onLane: onLane,
             keepalive: keepalive,
-            metadata: metadata
+            metadata: metadata,
+            identityResolver: identityResolver
         )
     }
 
@@ -153,7 +165,8 @@ public final class Connection: @unchecked Sendable {
         controlDispatcher: any ServiceDispatcher,
         onLane: (any LaneAcceptor)? = nil,
         keepalive: ConnectionKeepaliveConfig? = nil,
-        metadata: Metadata = .null
+        metadata: Metadata = .null,
+        identityResolver: IdentityResolver? = nil
     ) async throws -> Connection {
         // r[impl rpc.connection-setup]
         let (controlLane, driver, handle, peerMetadata) =
@@ -162,7 +175,8 @@ public final class Connection: @unchecked Sendable {
                 dispatcher: controlDispatcher,
                 laneAcceptor: onLane,
                 keepalive: keepalive,
-                metadata: metadata
+                metadata: metadata,
+                identityResolver: identityResolver
             )
         return Connection(
             role: .initiator,
@@ -177,14 +191,16 @@ public final class Connection: @unchecked Sendable {
         _ attachment: LinkAttachment,
         onLane: (any LaneAcceptor)? = nil,
         keepalive: ConnectionKeepaliveConfig? = nil,
-        metadata: Metadata = .null
+        metadata: Metadata = .null,
+        identityResolver: IdentityResolver? = nil
     ) async throws -> Connection {
         try await accept(
             attachment,
             controlDispatcher: ConnectionControlDispatcher(),
             onLane: onLane,
             keepalive: keepalive,
-            metadata: metadata
+            metadata: metadata,
+            identityResolver: identityResolver
         )
     }
 
@@ -193,7 +209,8 @@ public final class Connection: @unchecked Sendable {
         controlDispatcher: any ServiceDispatcher,
         onLane: (any LaneAcceptor)? = nil,
         keepalive: ConnectionKeepaliveConfig? = nil,
-        metadata: Metadata = .null
+        metadata: Metadata = .null,
+        identityResolver: IdentityResolver? = nil
     ) async throws -> Connection {
         // r[impl rpc.connection-setup]
         let (controlLane, driver, handle, peerMetadata) =
@@ -202,7 +219,8 @@ public final class Connection: @unchecked Sendable {
                 dispatcher: controlDispatcher,
                 laneAcceptor: onLane,
                 keepalive: keepalive,
-                metadata: metadata
+                metadata: metadata,
+                identityResolver: identityResolver
             )
         return Connection(
             role: .acceptor,
@@ -217,13 +235,15 @@ public final class Connection: @unchecked Sendable {
         freshLink link: any Link,
         onLane: (any LaneAcceptor)? = nil,
         keepalive: ConnectionKeepaliveConfig? = nil,
-        metadata: Metadata = .null
+        metadata: Metadata = .null,
+        identityResolver: IdentityResolver? = nil
     ) async throws -> Connection {
         try await accept(
             .fresh(link),
             onLane: onLane,
             keepalive: keepalive,
-            metadata: metadata
+            metadata: metadata,
+            identityResolver: identityResolver
         )
     }
 
@@ -232,14 +252,16 @@ public final class Connection: @unchecked Sendable {
         controlDispatcher: any ServiceDispatcher,
         onLane: (any LaneAcceptor)? = nil,
         keepalive: ConnectionKeepaliveConfig? = nil,
-        metadata: Metadata = .null
+        metadata: Metadata = .null,
+        identityResolver: IdentityResolver? = nil
     ) async throws -> Connection {
         try await accept(
             .fresh(link),
             controlDispatcher: controlDispatcher,
             onLane: onLane,
             keepalive: keepalive,
-            metadata: metadata
+            metadata: metadata,
+            identityResolver: identityResolver
         )
     }
 }

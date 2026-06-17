@@ -412,7 +412,7 @@ mod tests {
             generated.contains("public final class TestSvcDispatcher: ServiceDispatcher {")
                 && generated.contains("    private let handler: TestSvcHandler")
                 && generated.contains("    public init(handler: TestSvcHandler) { self.handler = handler }")
-                && generated.contains("public func dispatch(methodId: UInt64, payload: [UInt8], requestId: UInt64, channels: [UInt64], registry: ChannelRegistry, schemaSendTracker: SchemaSendTracker, schemaReceiveTracker: SchemaTracker, taskTx: @escaping @Sendable (TaskMessage) -> Void) async")
+                && generated.contains("public func dispatch(methodId: UInt64, payload: [UInt8], requestId: UInt64, channels: [UInt64], registry: ChannelRegistry, schemaSendTracker: SchemaSendTracker, schemaReceiveTracker: SchemaTracker, context: RequestContext, taskTx: @escaping @Sendable (TaskMessage) -> Void) async")
                 && generated.contains(&format!(
                     "case {echo_id}: await dispatch_echo(payload: payload, requestId: requestId, schemaSendTracker: schemaSendTracker, schemaReceiveTracker: schemaReceiveTracker, taskTx: taskTx)"
                 ))

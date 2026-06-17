@@ -8,7 +8,8 @@
 
 use vox_core::{BareConduit, MemoryLink, acceptor_conduit, initiator_conduit, memory_link_pair};
 use vox_types::{
-    ConnectionRole, ConnectionSettings, HandshakeResult, MessageFamily, Parity, VoxError,
+    ConnectionRole, ConnectionSettings, HandshakeResult, MessageFamily, Parity, PeerEvidence,
+    PeerIdentity, VoxError,
 };
 
 type MessageConduit = BareConduit<MessageFamily, MemoryLink>;
@@ -34,6 +35,8 @@ fn test_acceptor_handshake(service: &'static str) -> HandshakeResult {
         our_schema: vec![],
         peer_schema: vec![],
         peer_metadata: vox::metadata().str("vox-service", service).build(),
+        peer_evidence: PeerEvidence::none(),
+        peer_identity: PeerIdentity::anonymous(),
     }
 }
 
@@ -53,6 +56,8 @@ fn test_initiator_handshake(service: &'static str) -> HandshakeResult {
         our_schema: vec![],
         peer_schema: vec![],
         peer_metadata: vox::metadata().str("vox-service", service).build(),
+        peer_evidence: PeerEvidence::none(),
+        peer_identity: PeerIdentity::anonymous(),
     }
 }
 

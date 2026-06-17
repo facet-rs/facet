@@ -11,6 +11,7 @@ pub enum HandshakeMessage {
     Hello(Hello),
     HelloYourself(HelloYourself),
     LetsGo(LetsGo),
+    Decline(Decline),
     Sorry(Sorry),
 }
 
@@ -30,6 +31,8 @@ pub struct Hello {
     /// for all subsequent communication.
     pub message_payload_schema: Vec<u8>,
     /// Metadata sent by the initiator (e.g. `vox-service` for service routing).
+    // r[impl connection.handshake.metadata]
+    // r[impl rpc.metadata.records]
     #[facet(default)]
     pub metadata: Metadata,
 }
@@ -47,6 +50,8 @@ pub struct HelloYourself {
     /// The acceptor's schema for MessagePayload.
     pub message_payload_schema: Vec<u8>,
     /// Metadata sent by the acceptor.
+    // r[impl connection.handshake.metadata]
+    // r[impl rpc.metadata.records]
     #[facet(default)]
     pub metadata: Metadata,
 }
@@ -55,6 +60,66 @@ pub struct HelloYourself {
 /// Sent by the initiator to confirm schema compatibility and establish the connection.
 #[derive(Debug, Clone, Facet)]
 pub struct LetsGo {}
+
+// r[impl rejection.reason.taxonomy]
+// r[impl connection.policy.establishment.rejection]
+/// Typed connection-establishment policy rejection reason.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Facet)]
+#[repr(u8)]
+pub enum EstablishmentRejectReason {
+    Unauthenticated,
+    Forbidden,
+    NotReady,
+    Draining,
+    Unsupported,
+    PolicyRejected,
+}
+
+impl EstablishmentRejectReason {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Unauthenticated => "unauthenticated",
+            Self::Forbidden => "forbidden",
+            Self::NotReady => "not-ready",
+            Self::Draining => "draining",
+            Self::Unsupported => "unsupported",
+            Self::PolicyRejected => "policy-rejected",
+        }
+    }
+}
+
+impl std::fmt::Display for EstablishmentRejectReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+// r[impl connection.handshake.decline]
+// r[impl connection.policy.establishment.rejection]
+/// Sent by either peer to reject connection establishment due to policy.
+#[derive(Debug, Clone, Facet)]
+pub struct Decline {
+    pub reason: EstablishmentRejectReason,
+    // r[impl rpc.metadata.records]
+    #[facet(default)]
+    pub metadata: Metadata,
+}
+
+impl Decline {
+    #[must_use]
+    pub fn new(reason: EstablishmentRejectReason) -> Self {
+        Self {
+            reason,
+            metadata: Metadata::default(),
+        }
+    }
+
+    #[must_use]
+    pub fn with_metadata(reason: EstablishmentRejectReason, metadata: Metadata) -> Self {
+        Self { reason, metadata }
+    }
+}
 
 // r[impl connection.handshake.sorry]
 /// Sent by either peer to reject the connection due to schema incompatibility.
@@ -73,4 +138,10 @@ pub struct HandshakeResult {
     pub peer_schema: Vec<u8>,
     /// Metadata received from the peer during handshake.
     pub peer_metadata: Metadata,
+    /// Locally asserted evidence used while resolving the peer identity.
+    // r[impl connection.evidence]
+    pub peer_evidence: crate::PeerEvidence,
+    /// Local policy-resolved identity for the peer.
+    // r[impl connection.identity]
+    pub peer_identity: crate::PeerIdentity,
 }

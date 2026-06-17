@@ -38,6 +38,8 @@ public final class Driver: @unchecked Sendable {
     let localControlSettings: ConnectionSettings?
     let peerControlSettings: ConnectionSettings?
     let peerMessageSchema: [UInt8]
+    let peerEvidence: PeerEvidence
+    let peerIdentity: PeerIdentity
 
     init(
         conduit: any Conduit,
@@ -64,6 +66,8 @@ public final class Driver: @unchecked Sendable {
         self.localControlSettings = nil
         self.peerControlSettings = nil
         self.peerMessageSchema = []
+        self.peerEvidence = .none
+        self.peerIdentity = .anonymous
 
         // Create event stream
         var continuation: AsyncStream<DriverEvent>.Continuation!
@@ -89,7 +93,9 @@ public final class Driver: @unchecked Sendable {
         schemaSendTracker: SchemaSendTracker = SchemaSendTracker(),
         localControlSettings: ConnectionSettings? = nil,
         peerControlSettings: ConnectionSettings? = nil,
-        peerMessageSchema: [UInt8] = []
+        peerMessageSchema: [UInt8] = [],
+        peerEvidence: PeerEvidence = .none,
+        peerIdentity: PeerIdentity = .anonymous
     ) {
         self.conduit = conduit
         self.dispatcher = dispatcher
@@ -109,6 +115,8 @@ public final class Driver: @unchecked Sendable {
         self.localControlSettings = localControlSettings
         self.peerControlSettings = peerControlSettings
         self.peerMessageSchema = peerMessageSchema
+        self.peerEvidence = peerEvidence
+        self.peerIdentity = peerIdentity
     }
 
     // r[impl rpc.debug.snapshot]

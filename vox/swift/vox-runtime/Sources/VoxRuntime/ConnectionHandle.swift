@@ -3,13 +3,19 @@ import Foundation
 public final class ConnectionHandle: @unchecked Sendable {
     private let commandTx: @Sendable (HandleCommand) -> Bool
     private let eventContinuation: AsyncStream<DriverEvent>.Continuation
+    public let peerEvidence: PeerEvidence
+    public let peerIdentity: PeerIdentity
 
     init(
         commandTx: @escaping @Sendable (HandleCommand) -> Bool,
-        eventContinuation: AsyncStream<DriverEvent>.Continuation
+        eventContinuation: AsyncStream<DriverEvent>.Continuation,
+        peerEvidence: PeerEvidence = .none,
+        peerIdentity: PeerIdentity = .anonymous
     ) {
         self.commandTx = commandTx
         self.eventContinuation = eventContinuation
+        self.peerEvidence = peerEvidence
+        self.peerIdentity = peerIdentity
     }
 
     /// Open a service lane on the existing connection.

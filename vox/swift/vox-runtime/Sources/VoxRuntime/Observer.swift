@@ -113,8 +113,12 @@ public enum VoxEstablishmentRole: String, Equatable, Sendable {
 public enum VoxEstablishmentPhase: String, Equatable, Sendable {
     case transportPrologue = "transport-prologue"
     case connectionHandshake = "connection-handshake"
+    case identityResolution = "identity-resolution"
+    case connectionPolicy = "connection-policy"
     case schemaDecodePlan = "schema-decode-plan"
     case serviceLaneOpen = "service-lane-open"
+    case laneAuthorization = "lane-authorization"
+    case laneGrant = "lane-grant"
 }
 
 public enum VoxEstablishmentOutcome: String, Equatable, Sendable {
@@ -260,10 +264,12 @@ func withObservedEstablishment<T>(
         observeEstablishmentFinished(context, startedAt: startedAt, outcome: .ok)
         return result
     } catch {
+        let outcome: VoxEstablishmentOutcome =
+            error is ConnectionDeclinedError ? .rejected : .error
         observeEstablishmentFinished(
             context,
             startedAt: startedAt,
-            outcome: .error,
+            outcome: outcome,
             error: error
         )
         throw error

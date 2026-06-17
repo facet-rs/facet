@@ -1,5 +1,6 @@
 use vox_types::{
-    ConnectionRole, ConnectionSettings, HandshakeMessage, HandshakeResult, LinkRx, LinkTx,
+    ConnectionRole, ConnectionSettings, Decline, HandshakeMessage, HandshakeResult,
+    IdentityResolutionContext, LinkRx, LinkTx, Metadata, PeerEvidence, PeerIdentity,
 };
 
 const INITIAL_CHANNEL_CREDIT_ZERO_ERROR: &str = "initial_channel_credit must be greater than zero";
@@ -11,6 +12,7 @@ pub enum HandshakeError {
     Decode(String),
     PeerClosed,
     Protocol(String),
+    Declined(Decline),
     Sorry(String),
 }
 
@@ -22,6 +24,7 @@ impl std::fmt::Display for HandshakeError {
             Self::Decode(e) => write!(f, "handshake decode error: {e}"),
             Self::PeerClosed => write!(f, "peer closed during handshake"),
             Self::Protocol(msg) => write!(f, "handshake protocol error: {msg}"),
+            Self::Declined(decline) => write!(f, "handshake declined: {}", decline.reason),
             Self::Sorry(reason) => write!(f, "handshake rejected: {reason}"),
         }
     }
@@ -84,8 +87,24 @@ fn handshake_tag(msg: &HandshakeMessage) -> &'static str {
         HandshakeMessage::Hello(_) => "Hello",
         HandshakeMessage::HelloYourself(_) => "HelloYourself",
         HandshakeMessage::LetsGo(_) => "LetsGo",
+        HandshakeMessage::Decline(_) => "Decline",
         HandshakeMessage::Sorry(_) => "Sorry",
     }
+}
+
+// r[impl connection.identity.resolver]
+// r[impl connection.policy.establishment]
+fn resolve_peer_identity(
+    role: ConnectionRole,
+    peer_evidence: &PeerEvidence,
+    peer_claims: &Metadata,
+    identity_resolver: &dyn crate::IdentityResolver,
+) -> Result<PeerIdentity, Decline> {
+    identity_resolver.resolve(IdentityResolutionContext {
+        role,
+        evidence: peer_evidence,
+        claims: peer_claims,
+    })
 }
 
 // r[impl connection.handshake]
@@ -97,13 +116,42 @@ fn handshake_tag(msg: &HandshakeMessage) -> &'static str {
 ///
 /// Three-step exchange:
 /// 1. Send Hello
-/// 2. Receive HelloYourself (or Sorry)
-/// 3. Send LetsGo (or Sorry)
+/// 2. Receive HelloYourself (or Decline/Sorry)
+/// 3. Send LetsGo (or Decline/Sorry)
 pub async fn handshake_as_initiator<Tx: LinkTx, Rx: LinkRx>(
     tx: &Tx,
     rx: &mut Rx,
     settings: ConnectionSettings,
-    metadata: vox_types::Metadata,
+    metadata: Metadata,
+) -> Result<HandshakeResult, HandshakeError> {
+    let identity_resolver = crate::AnonymousIdentityResolver;
+    handshake_as_initiator_with_policy(
+        tx,
+        rx,
+        settings,
+        metadata,
+        PeerEvidence::none(),
+        &identity_resolver,
+    )
+    .await
+}
+
+// r[impl connection.handshake]
+// r[impl connection.handshake.metadata]
+// r[impl connection.handshake.decline]
+// r[impl connection.identity.inputs]
+// r[impl connection.identity.resolver]
+// r[impl connection.identity]
+// r[impl connection.policy.establishment]
+// r[impl connection.policy.establishment.rejection]
+/// Perform the phon handshake as the initiator with explicit connection policy.
+pub async fn handshake_as_initiator_with_policy<Tx: LinkTx, Rx: LinkRx>(
+    tx: &Tx,
+    rx: &mut Rx,
+    settings: ConnectionSettings,
+    metadata: Metadata,
+    peer_evidence: PeerEvidence,
+    identity_resolver: &dyn crate::IdentityResolver,
 ) -> Result<HandshakeResult, HandshakeError> {
     validate_initial_channel_credit(&settings)?;
 
@@ -123,10 +171,11 @@ pub async fn handshake_as_initiator<Tx: LinkTx, Rx: LinkRx>(
     let response = recv_handshake(rx).await?;
     let hy = match response {
         HandshakeMessage::HelloYourself(hy) => hy,
+        HandshakeMessage::Decline(decline) => return Err(HandshakeError::Declined(decline)),
         HandshakeMessage::Sorry(sorry) => return Err(HandshakeError::Sorry(sorry.reason)),
         _ => {
             return Err(HandshakeError::Protocol(
-                "expected HelloYourself or Sorry".into(),
+                "expected HelloYourself, Decline, or Sorry".into(),
             ));
         }
     };
@@ -141,6 +190,20 @@ pub async fn handshake_as_initiator<Tx: LinkTx, Rx: LinkRx>(
         .await?;
         return Err(HandshakeError::Protocol(reason));
     }
+
+    let peer_identity = match resolve_peer_identity(
+        ConnectionRole::Initiator,
+        &peer_evidence,
+        &hy.metadata,
+        identity_resolver,
+    ) {
+        Ok(identity) => identity,
+        Err(decline) => {
+            send_handshake(tx, &HandshakeMessage::Decline(decline.clone())).await?;
+            return Err(HandshakeError::Declined(decline));
+        }
+    };
+
     if let Err(reason) = crate::validate_message_writer_schema(&hy.message_payload_schema) {
         send_handshake(
             tx,
@@ -162,6 +225,8 @@ pub async fn handshake_as_initiator<Tx: LinkTx, Rx: LinkRx>(
         our_schema,
         peer_schema: hy.message_payload_schema,
         peer_metadata: hy.metadata,
+        peer_evidence,
+        peer_identity,
     })
 }
 
@@ -174,13 +239,42 @@ pub async fn handshake_as_initiator<Tx: LinkTx, Rx: LinkRx>(
 ///
 /// Three-step exchange:
 /// 1. Receive Hello
-/// 2. Send HelloYourself (or Sorry)
-/// 3. Receive LetsGo (or Sorry)
+/// 2. Send HelloYourself (or Decline/Sorry)
+/// 3. Receive LetsGo (or Decline/Sorry)
 pub async fn handshake_as_acceptor<Tx: LinkTx, Rx: LinkRx>(
     tx: &Tx,
     rx: &mut Rx,
     settings: ConnectionSettings,
-    metadata: vox_types::Metadata,
+    metadata: Metadata,
+) -> Result<HandshakeResult, HandshakeError> {
+    let identity_resolver = crate::AnonymousIdentityResolver;
+    handshake_as_acceptor_with_policy(
+        tx,
+        rx,
+        settings,
+        metadata,
+        PeerEvidence::none(),
+        &identity_resolver,
+    )
+    .await
+}
+
+// r[impl connection.handshake]
+// r[impl connection.handshake.metadata]
+// r[impl connection.handshake.decline]
+// r[impl connection.identity.inputs]
+// r[impl connection.identity.resolver]
+// r[impl connection.identity]
+// r[impl connection.policy.establishment]
+// r[impl connection.policy.establishment.rejection]
+/// Perform the phon handshake as the acceptor with explicit connection policy.
+pub async fn handshake_as_acceptor_with_policy<Tx: LinkTx, Rx: LinkRx>(
+    tx: &Tx,
+    rx: &mut Rx,
+    settings: ConnectionSettings,
+    metadata: Metadata,
+    peer_evidence: PeerEvidence,
+    identity_resolver: &dyn crate::IdentityResolver,
 ) -> Result<HandshakeResult, HandshakeError> {
     validate_initial_channel_credit(&settings)?;
 
@@ -200,6 +294,20 @@ pub async fn handshake_as_acceptor<Tx: LinkTx, Rx: LinkRx>(
         .await?;
         return Err(HandshakeError::Protocol(reason));
     }
+
+    let peer_identity = match resolve_peer_identity(
+        ConnectionRole::Acceptor,
+        &peer_evidence,
+        &hello.metadata,
+        identity_resolver,
+    ) {
+        Ok(identity) => identity,
+        Err(decline) => {
+            send_handshake(tx, &HandshakeMessage::Decline(decline.clone())).await?;
+            return Err(HandshakeError::Declined(decline));
+        }
+    };
+
     if let Err(reason) = crate::validate_message_writer_schema(&hello.message_payload_schema) {
         send_handshake(
             tx,
@@ -231,8 +339,13 @@ pub async fn handshake_as_acceptor<Tx: LinkTx, Rx: LinkRx>(
     let response = recv_handshake(rx).await?;
     match response {
         HandshakeMessage::LetsGo(_) => {}
+        HandshakeMessage::Decline(decline) => return Err(HandshakeError::Declined(decline)),
         HandshakeMessage::Sorry(sorry) => return Err(HandshakeError::Sorry(sorry.reason)),
-        _ => return Err(HandshakeError::Protocol("expected LetsGo or Sorry".into())),
+        _ => {
+            return Err(HandshakeError::Protocol(
+                "expected LetsGo, Decline, or Sorry".into(),
+            ));
+        }
     }
 
     Ok(HandshakeResult {
@@ -242,12 +355,14 @@ pub async fn handshake_as_acceptor<Tx: LinkTx, Rx: LinkRx>(
         our_schema,
         peer_schema: hello.message_payload_schema,
         peer_metadata: hello.metadata,
+        peer_evidence,
+        peer_identity,
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use vox_types::{Link, Parity};
+    use vox_types::{EstablishmentRejectReason, Link, Parity, PeerEvidence};
 
     use super::*;
 
@@ -329,6 +444,142 @@ mod tests {
         assert_eq!(result.peer_settings, acceptor_expected);
         assert_eq!(result.peer_schema, acceptor_schema);
         assert_eq!(result.peer_metadata, acceptor_metadata);
+        assert!(result.peer_evidence.is_empty());
+        assert!(result.peer_identity.is_anonymous());
+    }
+
+    // r[verify connection.handshake.decline]
+    // r[verify connection.policy.establishment.rejection]
+    // r[verify connection.identity.resolver]
+    #[tokio::test]
+    async fn acceptor_declines_when_identity_resolver_rejects_initiator_claims() {
+        let (client_link, server_link) = crate::memory_link_pair(4);
+        let (client_tx, mut client_rx) = client_link.split();
+        let (server_tx, mut server_rx) = server_link.split();
+
+        let acceptor = tokio::spawn(async move {
+            let resolver = crate::identity_resolver_fn(|context| {
+                assert_eq!(context.role, ConnectionRole::Acceptor);
+                assert_eq!(
+                    vox_types::metadata_get_str(context.claims, "auth"),
+                    Some("nope")
+                );
+                Err(Decline::new(EstablishmentRejectReason::Forbidden))
+            });
+            handshake_as_acceptor_with_policy(
+                &server_tx,
+                &mut server_rx,
+                settings(Parity::Even, 16),
+                vox_types::Metadata::default(),
+                unsafe { PeerEvidence::synthetic("memory-link") },
+                &resolver,
+            )
+            .await
+        });
+
+        send_handshake(
+            &client_tx,
+            &HandshakeMessage::Hello(vox_types::Hello {
+                parity: Parity::Odd,
+                connection_settings: settings(Parity::Odd, 16),
+                message_payload_schema: message_schema(),
+                metadata: vox_types::metadata().str("auth", "nope").build(),
+            }),
+        )
+        .await
+        .expect("send hello");
+
+        let response = recv_handshake(&mut client_rx).await.expect("recv decline");
+        assert!(
+            matches!(
+                response,
+                HandshakeMessage::Decline(vox_types::Decline {
+                    reason: EstablishmentRejectReason::Forbidden,
+                    ..
+                })
+            ),
+            "expected Decline::Forbidden, got: {response:?}"
+        );
+
+        let result = acceptor.await.expect("acceptor task");
+        assert!(
+            matches!(
+                result,
+                Err(HandshakeError::Declined(vox_types::Decline {
+                    reason: EstablishmentRejectReason::Forbidden,
+                    ..
+                }))
+            ),
+            "expected acceptor Declined::Forbidden, got: {result:?}"
+        );
+    }
+
+    // r[verify connection.handshake.decline]
+    // r[verify connection.policy.establishment.rejection]
+    // r[verify connection.identity.resolver]
+    #[tokio::test]
+    async fn initiator_declines_when_identity_resolver_rejects_acceptor_claims() {
+        let (client_link, server_link) = crate::memory_link_pair(4);
+        let (client_tx, mut client_rx) = client_link.split();
+        let (server_tx, mut server_rx) = server_link.split();
+
+        let initiator = tokio::spawn(async move {
+            let resolver = crate::identity_resolver_fn(|context| {
+                assert_eq!(context.role, ConnectionRole::Initiator);
+                assert_eq!(
+                    vox_types::metadata_get_str(context.claims, "server-auth"),
+                    Some("bad")
+                );
+                Err(Decline::new(EstablishmentRejectReason::Forbidden))
+            });
+            handshake_as_initiator_with_policy(
+                &client_tx,
+                &mut client_rx,
+                settings(Parity::Odd, 16),
+                vox_types::Metadata::default(),
+                unsafe { PeerEvidence::synthetic("memory-link") },
+                &resolver,
+            )
+            .await
+        });
+
+        let hello = recv_handshake(&mut server_rx).await.expect("recv hello");
+        assert!(matches!(hello, HandshakeMessage::Hello(_)));
+
+        send_handshake(
+            &server_tx,
+            &HandshakeMessage::HelloYourself(vox_types::HelloYourself {
+                connection_settings: settings(Parity::Even, 16),
+                message_payload_schema: message_schema(),
+                metadata: vox_types::metadata().str("server-auth", "bad").build(),
+            }),
+        )
+        .await
+        .expect("send hello-yourself");
+
+        let response = recv_handshake(&mut server_rx).await.expect("recv decline");
+        assert!(
+            matches!(
+                response,
+                HandshakeMessage::Decline(vox_types::Decline {
+                    reason: EstablishmentRejectReason::Forbidden,
+                    ..
+                })
+            ),
+            "expected Decline::Forbidden, got: {response:?}"
+        );
+
+        let result = initiator.await.expect("initiator task");
+        assert!(
+            matches!(
+                result,
+                Err(HandshakeError::Declined(vox_types::Decline {
+                    reason: EstablishmentRejectReason::Forbidden,
+                    ..
+                }))
+            ),
+            "expected initiator Declined::Forbidden, got: {result:?}"
+        );
     }
 
     // r[verify connection.handshake.sorry]

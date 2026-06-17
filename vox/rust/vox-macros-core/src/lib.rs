@@ -692,6 +692,9 @@ fn generate_dispatch_arm(
     let context_setup = {
         quote! {
             let extensions = #vox::Extensions::new();
+            if let Some(authorization) = reply.authorization_context() {
+                extensions.insert(authorization);
+            }
             let context = #vox::RequestContext::with_transport(
                 #descriptor_fn_name().methods[#idx],
                 &request_call.metadata,

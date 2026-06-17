@@ -5,6 +5,8 @@ struct ConnectionHandshakeResult {
     let localControlSettings: ConnectionSettings
     let peerControlSettings: ConnectionSettings
     let peerMetadata: Metadata
+    let peerEvidence: PeerEvidence
+    let peerIdentity: PeerIdentity
     /// The peer's advertised Message schema closure, used to build the conduit's
     /// compatibility decoder.
     let peerMessageSchema: [UInt8]
@@ -24,6 +26,41 @@ func oppositeParity(_ parity: Parity) -> Parity {
 // r[impl connection.handshake.sorry]
 func sendHandshakeSorry(_ link: any Link, reason: String) async {
     try? await sendHandshake(link, .sorry(Sorry(reason: reason)))
+}
+
+// r[impl connection.handshake.decline]
+// r[impl connection.policy.establishment.rejection]
+// r[impl rejection.reason.taxonomy]
+// r[impl rpc.metadata.records]
+func sendHandshakeDecline(_ link: any Link, decline: Decline) async {
+    try? await sendHandshake(link, .decline(decline))
+}
+
+// r[impl connection.identity.resolver]
+// r[impl connection.policy.establishment]
+func resolvePeerIdentity(
+    role: VoxEstablishmentRole,
+    evidence: PeerEvidence,
+    claims: Metadata,
+    identityResolver: IdentityResolver?,
+    on link: any Link
+) async throws -> PeerIdentity {
+    let resolver = identityResolver ?? { _ in PeerIdentity.anonymous }
+    let context = IdentityResolutionContext(role: role, evidence: evidence, claims: claims)
+    do {
+        return try await withObservedEstablishment(
+            VoxEstablishmentContext(role: role, phase: .identityResolution)
+        ) {
+            try await withObservedEstablishment(
+                VoxEstablishmentContext(role: role, phase: .connectionPolicy)
+            ) {
+                try await resolver(context)
+            }
+        }
+    } catch let decline as ConnectionDeclinedError {
+        await sendHandshakeDecline(link, decline: decline.decline)
+        throw decline
+    }
 }
 
 // r[impl connection.handshake.protocol-schema]
@@ -68,6 +105,8 @@ func makeConnectionSettings(
 
 // r[impl connection.protocol]
 // r[impl connection.handshake]
+// r[impl connection.handshake.metadata]
+// r[impl rpc.metadata.records]
 // r[impl connection.handshake.phon]
 // r[impl connection.handshake.protocol-schema]
 // r[impl connection.handshake.protocol-schema.connection-scoped]
@@ -81,7 +120,9 @@ func performInitiatorHandshake(
     maxPayloadSize: UInt32,
     maxConcurrentRequests: UInt32,
     initialChannelCredit: UInt32 = 16,
-    metadata: Metadata = .null
+    metadata: Metadata = .null,
+    peerEvidence: PeerEvidence = .none,
+    identityResolver: IdentityResolver? = nil
 ) async throws -> ConnectionHandshakeResult {
     traceLog(.handshake, "initiator sending Hello")
     let ourSettings = try makeConnectionSettings(
@@ -102,6 +143,8 @@ func performInitiatorHandshake(
     case .helloYourself(let helloYourself):
         traceLog(.handshake, "initiator received HelloYourself")
         peerHello = helloYourself
+    case .decline(let decline):
+        throw ConnectionDeclinedError(decline: decline, receivedFromPeer: true)
     case .sorry(let sorry):
         throw ConnectionError.handshakeFailed(sorry.reason)
     default:
@@ -112,6 +155,13 @@ func performInitiatorHandshake(
     try validateInitialChannelCredit(peerHello.connectionSettings.initialChannelCredit)
 
     let peerSchema = [UInt8](peerHello.messagePayloadSchema)
+    let peerIdentity = try await resolvePeerIdentity(
+        role: .initiator,
+        evidence: peerEvidence,
+        claims: peerHello.metadata,
+        identityResolver: identityResolver,
+        on: link
+    )
     try await requireIdentityMessageSchema(peerSchema, on: link)
 
     try await sendHandshake(link, .letsGo(LetsGo()))
@@ -136,12 +186,16 @@ func performInitiatorHandshake(
         localControlSettings: ourSettings,
         peerControlSettings: peerHello.connectionSettings,
         peerMetadata: peerHello.metadata,
+        peerEvidence: peerEvidence,
+        peerIdentity: peerIdentity,
         peerMessageSchema: peerSchema
     )
 }
 
 // r[impl connection.protocol]
 // r[impl connection.handshake]
+// r[impl connection.handshake.metadata]
+// r[impl rpc.metadata.records]
 // r[impl connection.handshake.phon]
 // r[impl connection.handshake.protocol-schema]
 // r[impl connection.handshake.protocol-schema.connection-scoped]
@@ -155,7 +209,9 @@ func performAcceptorHandshake(
     maxPayloadSize: UInt32,
     maxConcurrentRequests: UInt32,
     initialChannelCredit: UInt32 = 16,
-    metadata: Metadata = .null
+    metadata: Metadata = .null,
+    peerEvidence: PeerEvidence = .none,
+    identityResolver: IdentityResolver? = nil
 ) async throws -> ConnectionHandshakeResult {
     let peerHello: Hello
     switch try await recvHandshake(link) {
@@ -168,6 +224,13 @@ func performAcceptorHandshake(
 
     let peerSchema = [UInt8](peerHello.messagePayloadSchema)
     try validateInitialChannelCredit(peerHello.connectionSettings.initialChannelCredit)
+    let peerIdentity = try await resolvePeerIdentity(
+        role: .acceptor,
+        evidence: peerEvidence,
+        claims: peerHello.metadata,
+        identityResolver: identityResolver,
+        on: link
+    )
     try await requireIdentityMessageSchema(peerSchema, on: link)
 
     let ourSettings = try makeConnectionSettings(
@@ -187,6 +250,8 @@ func performAcceptorHandshake(
     case .letsGo:
         traceLog(.handshake, "acceptor received LetsGo")
         break
+    case .decline(let decline):
+        throw ConnectionDeclinedError(decline: decline, receivedFromPeer: true)
     case .sorry(let sorry):
         throw ConnectionError.handshakeFailed(sorry.reason)
     default:
@@ -212,6 +277,8 @@ func performAcceptorHandshake(
         localControlSettings: ourSettings,
         peerControlSettings: peerHello.connectionSettings,
         peerMetadata: peerHello.metadata,
+        peerEvidence: peerEvidence,
+        peerIdentity: peerIdentity,
         peerMessageSchema: peerSchema
     )
 }
@@ -241,7 +308,8 @@ func establishInitiator(
     maxConcurrentRequests: UInt32 = 64,
     initialChannelCredit: UInt32 = 16,
     keepalive: ConnectionKeepaliveConfig? = nil,
-    metadata: Metadata = .null
+    metadata: Metadata = .null,
+    identityResolver: IdentityResolver? = nil
 ) async throws -> (Lane, Driver, ConnectionHandle, Metadata) {
     warnLog("[vox-establish] initiator: starting handshake")
     let ourMaxPayload = maxPayloadSize ?? (1024 * 1024)
@@ -253,7 +321,9 @@ func establishInitiator(
             maxPayloadSize: ourMaxPayload,
             maxConcurrentRequests: maxConcurrentRequests,
             initialChannelCredit: initialChannelCredit,
-            metadata: metadata
+            metadata: metadata,
+            peerEvidence: attachment.peerEvidence,
+            identityResolver: identityResolver
         )
     }
     warnLog("[vox-establish] initiator: handshake done")
@@ -274,7 +344,9 @@ func establishInitiator(
         keepalive: keepalive,
         localControlSettings: handshake.localControlSettings,
         peerControlSettings: handshake.peerControlSettings,
-        peerMessageSchema: handshake.peerMessageSchema
+        peerMessageSchema: handshake.peerMessageSchema,
+        peerEvidence: handshake.peerEvidence,
+        peerIdentity: handshake.peerIdentity
     )
     return (connection, driver, handle, handshake.peerMetadata)
 }
@@ -288,7 +360,8 @@ func establishInitiator(
     maxConcurrentRequests: UInt32 = 64,
     initialChannelCredit: UInt32 = 16,
     keepalive: ConnectionKeepaliveConfig? = nil,
-    metadata: Metadata = .null
+    metadata: Metadata = .null,
+    identityResolver: IdentityResolver? = nil
 ) async throws -> (Lane, Driver, ConnectionHandle, Metadata) {
     try await establishInitiator(
         attachment: .initiator(link),
@@ -298,7 +371,8 @@ func establishInitiator(
         maxConcurrentRequests: maxConcurrentRequests,
         initialChannelCredit: initialChannelCredit,
         keepalive: keepalive,
-        metadata: metadata
+        metadata: metadata,
+        identityResolver: identityResolver
     )
 }
 
@@ -311,7 +385,8 @@ func establishInitiator(
     maxConcurrentRequests: UInt32 = 64,
     initialChannelCredit: UInt32 = 16,
     keepalive: ConnectionKeepaliveConfig? = nil,
-    metadata: Metadata = .null
+    metadata: Metadata = .null,
+    identityResolver: IdentityResolver? = nil
 ) async throws -> (Lane, Driver, ConnectionHandle, Metadata) {
     try await establishInitiator(
         link: conduit,
@@ -321,7 +396,8 @@ func establishInitiator(
         maxConcurrentRequests: maxConcurrentRequests,
         initialChannelCredit: initialChannelCredit,
         keepalive: keepalive,
-        metadata: metadata
+        metadata: metadata,
+        identityResolver: identityResolver
     )
 }
 
@@ -336,7 +412,8 @@ func establishAcceptor(
     maxConcurrentRequests: UInt32 = 64,
     initialChannelCredit: UInt32 = 16,
     keepalive: ConnectionKeepaliveConfig? = nil,
-    metadata: Metadata = .null
+    metadata: Metadata = .null,
+    identityResolver: IdentityResolver? = nil
 ) async throws -> (Lane, Driver, ConnectionHandle, Metadata) {
     warnLog("[vox-establish] acceptor: prologueComplete=\(attachment.hasCompletedPrologue)")
     if !attachment.hasCompletedPrologue {
@@ -355,7 +432,9 @@ func establishAcceptor(
             maxPayloadSize: ourMaxPayload,
             maxConcurrentRequests: maxConcurrentRequests,
             initialChannelCredit: initialChannelCredit,
-            metadata: metadata
+            metadata: metadata,
+            peerEvidence: attachment.peerEvidence,
+            identityResolver: identityResolver
         )
     }
 
@@ -375,7 +454,9 @@ func establishAcceptor(
         keepalive: keepalive,
         localControlSettings: handshake.localControlSettings,
         peerControlSettings: handshake.peerControlSettings,
-        peerMessageSchema: handshake.peerMessageSchema
+        peerMessageSchema: handshake.peerMessageSchema,
+        peerEvidence: handshake.peerEvidence,
+        peerIdentity: handshake.peerIdentity
     )
     return (connection, driver, handle, handshake.peerMetadata)
 }
@@ -389,7 +470,8 @@ func establishAcceptor(
     maxConcurrentRequests: UInt32 = 64,
     initialChannelCredit: UInt32 = 16,
     keepalive: ConnectionKeepaliveConfig? = nil,
-    metadata: Metadata = .null
+    metadata: Metadata = .null,
+    identityResolver: IdentityResolver? = nil
 ) async throws -> (Lane, Driver, ConnectionHandle, Metadata) {
     try await establishAcceptor(
         attachment: .init(link: link),
@@ -399,7 +481,8 @@ func establishAcceptor(
         maxConcurrentRequests: maxConcurrentRequests,
         initialChannelCredit: initialChannelCredit,
         keepalive: keepalive,
-        metadata: metadata
+        metadata: metadata,
+        identityResolver: identityResolver
     )
 }
 
@@ -412,7 +495,8 @@ func establishAcceptor(
     maxConcurrentRequests: UInt32 = 64,
     initialChannelCredit: UInt32 = 16,
     keepalive: ConnectionKeepaliveConfig? = nil,
-    metadata: Metadata = .null
+    metadata: Metadata = .null,
+    identityResolver: IdentityResolver? = nil
 ) async throws -> (Lane, Driver, ConnectionHandle, Metadata) {
     try await establishAcceptor(
         link: conduit,
@@ -422,6 +506,7 @@ func establishAcceptor(
         maxConcurrentRequests: maxConcurrentRequests,
         initialChannelCredit: initialChannelCredit,
         keepalive: keepalive,
-        metadata: metadata
+        metadata: metadata,
+        identityResolver: identityResolver
     )
 }

@@ -33,6 +33,7 @@ public protocol ServiceDispatcher: Sendable {
         registry: ChannelRegistry,
         schemaSendTracker: SchemaSendTracker,
         schemaReceiveTracker: SchemaTracker,
+        context: RequestContext,
         taskTx: @escaping @Sendable (TaskMessage) -> Void
     ) async
 }
@@ -66,6 +67,7 @@ struct ConnectionControlDispatcher: ServiceDispatcher {
         registry _: ChannelRegistry,
         schemaSendTracker _: SchemaSendTracker,
         schemaReceiveTracker _: SchemaTracker,
+        context _: RequestContext,
         taskTx: @escaping @Sendable (TaskMessage) -> Void
     ) async {
         taskTx(.response(requestId: requestId, payload: [], methodId: methodId))

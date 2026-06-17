@@ -6,22 +6,37 @@ public enum LinkAttachmentState: Sendable {
 public struct LinkAttachment: Sendable {
     public let link: any Link
     public let state: LinkAttachmentState
+    public let peerEvidence: PeerEvidence
 
-    public init(link: any Link, state: LinkAttachmentState = .fresh) {
+    public init(
+        link: any Link,
+        state: LinkAttachmentState = .fresh,
+        peerEvidence: PeerEvidence = .none
+    ) {
         self.link = link
         self.state = state
+        self.peerEvidence = peerEvidence
     }
 
-    public static func initiator(_ link: any Link) -> Self {
-        Self(link: link, state: .fresh)
+    public static func initiator(
+        _ link: any Link,
+        peerEvidence: PeerEvidence = .none
+    ) -> Self {
+        Self(link: link, state: .fresh, peerEvidence: peerEvidence)
     }
 
-    public static func fresh(_ link: any Link) -> Self {
-        Self(link: link, state: .fresh)
+    public static func fresh(
+        _ link: any Link,
+        peerEvidence: PeerEvidence = .none
+    ) -> Self {
+        Self(link: link, state: .fresh, peerEvidence: peerEvidence)
     }
 
-    public static func prologueComplete(_ link: any Link) -> Self {
-        Self(link: link, state: .prologueComplete)
+    public static func prologueComplete(
+        _ link: any Link,
+        peerEvidence: PeerEvidence = .none
+    ) -> Self {
+        Self(link: link, state: .prologueComplete, peerEvidence: peerEvidence)
     }
 
     public var hasCompletedPrologue: Bool {
@@ -109,7 +124,10 @@ struct TransportedLinkSource<Base: LinkSource>: LinkSource {
 
         do {
             try await performInitiatorLinkPrologue(link: attachment.link)
-            return .prologueComplete(attachment.link)
+            return .prologueComplete(
+                attachment.link,
+                peerEvidence: attachment.peerEvidence
+            )
         } catch {
             try? await attachment.link.close()
             throw error

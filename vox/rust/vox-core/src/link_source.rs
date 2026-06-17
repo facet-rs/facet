@@ -6,21 +6,41 @@
 
 use std::future::Future;
 
-use vox_types::{Link, MaybeSend};
+use vox_types::{Link, MaybeSend, PeerEvidence};
 
 /// One transport attachment consumed by [`LinkSource::next_link`].
 pub struct Attachment<L> {
     link: L,
+    peer_evidence: PeerEvidence,
 }
 
 impl<L> Attachment<L> {
     /// Build an attachment around a single ready-to-use link.
     pub fn initiator(link: L) -> Self {
-        Self { link }
+        Self {
+            link,
+            peer_evidence: PeerEvidence::none(),
+        }
+    }
+
+    /// Attach locally asserted evidence supplied by the transport or embedding runtime.
+    // r[impl connection.evidence]
+    pub fn with_runtime_evidence(mut self, evidence: PeerEvidence) -> Self {
+        self.peer_evidence = evidence;
+        self
+    }
+
+    #[must_use]
+    pub fn peer_evidence(&self) -> &PeerEvidence {
+        &self.peer_evidence
     }
 
     pub fn into_link(self) -> L {
         self.link
+    }
+
+    pub fn into_parts(self) -> (L, PeerEvidence) {
+        (self.link, self.peer_evidence)
     }
 }
 

@@ -3,6 +3,9 @@ import Foundation
 public let voxLaneRejectReasonMetadataKey = "vox-lane-reject-reason"
 public let voxLaneRejectMessageMetadataKey = "vox-lane-reject-message"
 
+// r[impl lane.authorization]
+// r[impl lane.authorization.filtered]
+// r[impl rejection.reason.taxonomy]
 public enum LaneRejectReason: String, CaseIterable, Sendable {
     case unknownService = "unknown-service"
     case forbidden
@@ -13,6 +16,8 @@ public enum LaneRejectReason: String, CaseIterable, Sendable {
 }
 
 // r[impl lane.open.result]
+// r[impl lane.authorization]
+// r[impl lane.authorization.filtered]
 public struct LaneRejection: Sendable {
     public let reason: LaneRejectReason
     public let metadata: Metadata

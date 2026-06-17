@@ -15,8 +15,12 @@ export type EstablishmentRole = "initiator" | "acceptor";
 export type EstablishmentPhase =
   | "transport-prologue"
   | "connection-handshake"
+  | "identity-resolution"
+  | "connection-policy"
   | "schema-decode-plan"
-  | "service-lane-open";
+  | "service-lane-open"
+  | "lane-authorization"
+  | "lane-grant";
 
 export type EstablishmentOutcome =
   | "ok"

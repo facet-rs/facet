@@ -563,8 +563,10 @@ weight = 12
 >
 > Driver observers SHOULD report connection lifecycle, lane lifecycle, request
 > lifecycle, outbound runtime queue saturation/closure, encode/decode failures,
-> and protocol violations. Lane IDs, connection IDs, and request IDs are
-> suitable for local debugging but MUST NOT be used as default metric labels.
+> protocol violations, identity-resolution decisions, establishment policy
+> decisions, lane-authorization decisions, and lane-grant creation/revocation.
+> Lane IDs, connection IDs, and request IDs are suitable for local debugging but
+> MUST NOT be used as default metric labels.
 
 > r[rpc.observability.connection-errors]
 >
@@ -579,15 +581,18 @@ weight = 12
 > exist on a given transport path: endpoint resolution, TCP or Unix socket or
 > named-pipe or in-process link creation, TLS or platform security handshake,
 > WebSocket upgrade, Vox transport prologue, connection handshake, schema
-> decode-plan construction, and service-lane open/accept/reject. Observers MUST
-> NOT invent TCP, TLS, or WebSocket phases for transports that do not have them.
+> decode-plan construction, identity resolution, establishment policy
+> acceptance or rejection, service-lane open/accept/reject, lane authorization,
+> and lane-grant creation/revocation. Observers MUST NOT invent TCP, TLS, or
+> WebSocket phases for transports that do not have them.
 
 > r[rpc.observability.low-cardinality]
 >
 > Metrics derived from observer events MUST use low-cardinality labels such as
-> service, method, side, outcome, error kind, and channel direction. Request
-> IDs, lane IDs, connection IDs, channel IDs, peer addresses, and metadata
-> values MUST NOT be used as metric labels by default.
+> service, method, side, outcome, error kind, rejection reason, identity form,
+> and channel direction. Request IDs, lane IDs, connection IDs, channel IDs,
+> peer addresses, identity values, evidence values, and metadata values MUST
+> NOT be used as metric labels by default.
 
 # Cancellation
 
@@ -616,11 +621,40 @@ weight = 12
 
 > r[rpc.metadata]
 >
-> Requests and Responses carry **metadata**: a self-describing phon `Value` map
-> from UTF-8 string keys to arbitrary `Value`s, for out-of-band information such
-> as tracing context, authentication tokens, or deadlines. Because metadata is a
-> self-describing `Value`, it is not nominally typed and does not participate in
-> schema exchange (see `r[schema.interaction.metadata]`).
+> Vox protocol records may carry **metadata**: a self-describing phon `Value`
+> map from UTF-8 string keys to arbitrary `Value`s, for out-of-band information
+> such as tracing context, authentication claims, routing hints, deadlines, or
+> diagnostic details. Handshake messages, lane-open/lane-close records,
+> requests, responses, cancellation, and channel lifecycle records may all use
+> metadata where their wire type provides a metadata field.
+>
+> Because metadata is a self-describing `Value`, it is not nominally typed and
+> does not participate in schema exchange (see `r[schema.interaction.metadata]`).
+
+> r[rpc.metadata.records]
+>
+> The following protocol records carry metadata:
+>
+> | Record | Metadata field | Semantics |
+> | --- | --- | --- |
+> | `Hello` | `metadata` | Early peer-authored connection-establishment claims and extensions; default-sensitive. |
+> | `HelloYourself` | `metadata` | Early peer-authored connection-establishment claims and extensions; default-sensitive. |
+> | `Decline` | `metadata` | Redactable establishment-rejection detail. |
+> | `OpenConnection` / lane open | `metadata` | Requested service, lane-scoped claims, routing hints, and lane-open options. |
+> | `AcceptConnection` / lane accept | `metadata` | Lane-accept detail, including grant-related public detail if policy exposes it. |
+> | `RejectConnection` / lane reject | `metadata` | Structured lane-rejection reason and redactable diagnostic detail. |
+> | `CloseConnection` / lane close | `metadata` | Lane-close reason and diagnostic detail. |
+> | `Request.Call` | `metadata` | Request-scoped claims, tracing context, deadlines, and call options. |
+> | `Request.Response` | `metadata` | Response metadata and diagnostic detail. |
+> | `Request.Cancel` | `metadata` | Cancellation reason and diagnostic detail. |
+> | `Channel.Close` | `metadata` | Channel close reason and diagnostic detail. |
+> | `Channel.Reset` | `metadata` | Channel reset reason and diagnostic detail. |
+>
+> The following protocol records do not carry metadata in this version:
+> `TransportHello`, `TransportAccept`, `TransportReject`, `LetsGo`, `Sorry`,
+> `ProtocolError`, `SchemaMessage`, `Channel.Item`, `Channel.GrantCredit`,
+> `Ping`, and `Pong`. `Channel.Item` intentionally has no metadata field so
+> channel item delivery does not acquire per-item metadata overhead.
 
 > r[rpc.metadata.value]
 >

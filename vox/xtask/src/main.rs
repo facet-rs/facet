@@ -578,6 +578,8 @@ fn codegen_swift_wire(workspace_root: &std::path::Path) -> Result<(), Box<dyn st
         wire_type!("Hello", rt::Hello),
         wire_type!("HelloYourself", rt::HelloYourself),
         wire_type!("LetsGo", rt::LetsGo),
+        wire_type!("EstablishmentRejectReason", rt::EstablishmentRejectReason),
+        wire_type!("Decline", rt::Decline),
         wire_type!("Sorry", rt::Sorry),
         wire_type!("HandshakeMessage", rt::HandshakeMessage),
     ];

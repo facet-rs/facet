@@ -16,6 +16,10 @@ import {
   connectionEchoMethods,
   CONNECTION_ECHO_METHOD_ID,
 } from "./connection_echo.fixture.ts";
+import {
+  anonymousRequestAuthorizationContext,
+  type RequestAuthorizationContext,
+} from "./handshake.ts";
 
 const METHOD: MethodDescriptor = {
   name: "stream",
@@ -92,6 +96,7 @@ describe("Driver channel schema exchange", () => {
         channels: bigint[];
         metadata: ReturnType<typeof emptyMetadata>;
         laneEpoch: number;
+        authorization: RequestAuthorizationContext;
       }): Promise<void>;
     };
 
@@ -102,6 +107,7 @@ describe("Driver channel schema exchange", () => {
       channels: [99n],
       metadata: emptyMetadata(),
       laneEpoch: 0,
+      authorization: anonymousRequestAuthorizationContext(),
     });
 
     expect(dispatchCount).toBe(0);
@@ -142,6 +148,7 @@ describe("Driver channel schema exchange", () => {
         channels: [],
         metadata: emptyMetadata(),
         laneEpoch: 0,
+        authorization: anonymousRequestAuthorizationContext(),
       },
       {
         requestId: 2n,
@@ -150,6 +157,7 @@ describe("Driver channel schema exchange", () => {
         channels: [],
         metadata: emptyMetadata(),
         laneEpoch: 0,
+        authorization: anonymousRequestAuthorizationContext(),
       },
       null,
     ];
@@ -285,6 +293,7 @@ describe("Driver channel schema exchange", () => {
         channels: bigint[];
         metadata: ReturnType<typeof emptyMetadata>;
         laneEpoch: number;
+        authorization: RequestAuthorizationContext;
       }): Promise<void>;
     };
 
@@ -295,6 +304,7 @@ describe("Driver channel schema exchange", () => {
       channels: [41n, 43n],
       metadata: emptyMetadata(),
       laneEpoch: 0,
+      authorization: anonymousRequestAuthorizationContext(),
     });
 
     expect(ordinaryArg).toBe("ordinary");
@@ -355,6 +365,7 @@ describe("Driver channel schema exchange", () => {
         channels: bigint[];
         metadata: ReturnType<typeof emptyMetadata>;
         laneEpoch: number;
+        authorization: RequestAuthorizationContext;
       }): Promise<void>;
     };
 
@@ -365,6 +376,7 @@ describe("Driver channel schema exchange", () => {
       channels: [],
       metadata: emptyMetadata(),
       laneEpoch: 0,
+      authorization: anonymousRequestAuthorizationContext(),
     });
 
     expect(dispatchCount).toBe(0);
@@ -429,6 +441,7 @@ describe("Driver channel schema exchange", () => {
         channels: bigint[];
         metadata: ReturnType<typeof emptyMetadata>;
         laneEpoch: number;
+        authorization: RequestAuthorizationContext;
       }): Promise<void>;
     };
 
@@ -439,6 +452,7 @@ describe("Driver channel schema exchange", () => {
       channels: [],
       metadata: emptyMetadata(),
       laneEpoch: 0,
+      authorization: anonymousRequestAuthorizationContext(),
     });
 
     expect(sent).toHaveLength(1);

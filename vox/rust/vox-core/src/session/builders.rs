@@ -2,21 +2,23 @@ use std::{future::Future, pin::Pin, sync::Arc};
 
 use vox_rt::sync::mpsc;
 use vox_types::{
-    Conduit, ConnectionRole, ConnectionSettings, DEFAULT_INITIAL_CHANNEL_CREDIT,
-    EstablishmentOutcome, EstablishmentPhase, HandshakeResult, Link, LinkRx, LinkTx, MaybeSend,
-    MaybeSync, MessageFamily, Metadata, Parity, SplitLink, VoxObserver, VoxObserverHandle,
-    metadata_into_owned,
+    Conduit, ConnectionRole, ConnectionSettings, DEFAULT_INITIAL_CHANNEL_CREDIT, Decline,
+    EstablishmentOutcome, EstablishmentPhase, HandshakeResult, IdentityResolutionContext, Link,
+    LinkRx, LinkTx, MaybeSend, MaybeSync, MessageFamily, Metadata, Parity, PeerEvidence,
+    PeerIdentity, SplitLink, VoxObserver, VoxObserverHandle, metadata_into_owned,
 };
 
-use crate::LinkSource;
+use crate::{Attachment, LinkSource};
 use crate::{
-    BareConduit, IntoConduit, accept_transport, handshake_as_acceptor, handshake_as_initiator,
+    BareConduit, IntoConduit, accept_transport, handshake_as_acceptor,
+    handshake_as_acceptor_with_policy, handshake_as_initiator, handshake_as_initiator_with_policy,
     initiate_transport,
 };
 
 use super::{
-    CloseRequest, Connection, ConnectionError, ConnectionHandle, ConnectionKeepaliveConfig,
-    LaneAcceptor, OpenRequest, observe_establishment_finished, observe_establishment_started,
+    AnonymousIdentityResolver, CloseRequest, Connection, ConnectionError, ConnectionHandle,
+    ConnectionKeepaliveConfig, IdentityResolver, LaneAcceptor, OpenRequest,
+    observe_establishment_finished, observe_establishment_started,
 };
 
 /// Well-known metadata key for service name routing.
@@ -141,10 +143,17 @@ pub fn acceptor_transport<L: Link>(link: L) -> ConnectionTransportAcceptorBuilde
     acceptor_on(link)
 }
 
+pub fn acceptor_attachment<L: Link>(
+    attachment: Attachment<L>,
+) -> ConnectionTransportAcceptorBuilder<L> {
+    ConnectionTransportAcceptorBuilder::from_attachment(attachment)
+}
+
 /// Shared configuration for all connection builders.
 pub struct ConnectionConfig {
     pub connection_settings: ConnectionSettings,
     pub metadata: Metadata,
+    pub identity_resolver: Arc<dyn IdentityResolver>,
     pub lane_acceptor: Option<Arc<dyn LaneAcceptor>>,
     pub keepalive: Option<ConnectionKeepaliveConfig>,
     pub spawn_fn: SpawnFn,
@@ -157,6 +166,7 @@ impl ConnectionConfig {
         Self {
             connection_settings,
             metadata: vox_types::Metadata::default(),
+            identity_resolver: Arc::new(AnonymousIdentityResolver),
             lane_acceptor: None,
             keepalive: None,
             spawn_fn: default_spawn_fn(),
@@ -207,6 +217,68 @@ fn message_plan_from_handshake_observed(
             );
             Err(ConnectionError::Protocol(error))
         }
+    }
+}
+
+struct ObservedIdentityResolver {
+    role: ConnectionRole,
+    resolver: Arc<dyn IdentityResolver>,
+    observer: Option<VoxObserverHandle>,
+}
+
+impl IdentityResolver for ObservedIdentityResolver {
+    fn resolve(&self, context: IdentityResolutionContext<'_>) -> Result<PeerIdentity, Decline> {
+        let identity_started_at = observe_establishment_started(
+            self.observer.as_ref(),
+            self.role,
+            EstablishmentPhase::IdentityResolution,
+            None,
+        );
+        let policy_started_at = observe_establishment_started(
+            self.observer.as_ref(),
+            self.role,
+            EstablishmentPhase::ConnectionPolicy,
+            None,
+        );
+
+        let result = self.resolver.resolve(context);
+        let outcome = if result.is_ok() {
+            EstablishmentOutcome::Ok
+        } else {
+            EstablishmentOutcome::Rejected
+        };
+
+        observe_establishment_finished(
+            self.observer.as_ref(),
+            self.role,
+            EstablishmentPhase::IdentityResolution,
+            None,
+            outcome,
+            identity_started_at,
+        );
+        observe_establishment_finished(
+            self.observer.as_ref(),
+            self.role,
+            EstablishmentPhase::ConnectionPolicy,
+            None,
+            outcome,
+            policy_started_at,
+        );
+
+        result
+    }
+}
+
+fn handshake_outcome_from_error(error: &crate::HandshakeError) -> EstablishmentOutcome {
+    match error {
+        crate::HandshakeError::Declined(_) | crate::HandshakeError::Sorry(_) => {
+            EstablishmentOutcome::Rejected
+        }
+        crate::HandshakeError::Io(_)
+        | crate::HandshakeError::Encode(_)
+        | crate::HandshakeError::Decode(_)
+        | crate::HandshakeError::PeerClosed
+        | crate::HandshakeError::Protocol(_) => EstablishmentOutcome::Error,
     }
 }
 
@@ -290,6 +362,8 @@ async fn handshake_as_initiator_observed<Tx: LinkTx, Rx: LinkRx>(
     rx: &mut Rx,
     settings: ConnectionSettings,
     metadata: Metadata,
+    peer_evidence: PeerEvidence,
+    identity_resolver: Arc<dyn IdentityResolver>,
     observer: Option<&VoxObserverHandle>,
 ) -> Result<HandshakeResult, ConnectionError> {
     let started_at = observe_establishment_started(
@@ -298,7 +372,21 @@ async fn handshake_as_initiator_observed<Tx: LinkTx, Rx: LinkRx>(
         EstablishmentPhase::ConnectionHandshake,
         None,
     );
-    match handshake_as_initiator(tx, rx, settings, metadata).await {
+    let observed_resolver = ObservedIdentityResolver {
+        role: ConnectionRole::Initiator,
+        resolver: identity_resolver,
+        observer: observer.cloned(),
+    };
+    match handshake_as_initiator_with_policy(
+        tx,
+        rx,
+        settings,
+        metadata,
+        peer_evidence,
+        &observed_resolver,
+    )
+    .await
+    {
         Ok(handshake_result) => {
             observe_establishment_finished(
                 observer,
@@ -316,7 +404,7 @@ async fn handshake_as_initiator_observed<Tx: LinkTx, Rx: LinkRx>(
                 ConnectionRole::Initiator,
                 EstablishmentPhase::ConnectionHandshake,
                 None,
-                EstablishmentOutcome::Error,
+                handshake_outcome_from_error(&error),
                 started_at,
             );
             Err(connection_error_from_handshake(error))
@@ -330,6 +418,8 @@ async fn handshake_as_acceptor_observed<Tx: LinkTx, Rx: LinkRx>(
     rx: &mut Rx,
     settings: ConnectionSettings,
     metadata: Metadata,
+    peer_evidence: PeerEvidence,
+    identity_resolver: Arc<dyn IdentityResolver>,
     observer: Option<&VoxObserverHandle>,
 ) -> Result<HandshakeResult, ConnectionError> {
     let started_at = observe_establishment_started(
@@ -338,7 +428,21 @@ async fn handshake_as_acceptor_observed<Tx: LinkTx, Rx: LinkRx>(
         EstablishmentPhase::ConnectionHandshake,
         None,
     );
-    match handshake_as_acceptor(tx, rx, settings, metadata).await {
+    let observed_resolver = ObservedIdentityResolver {
+        role: ConnectionRole::Acceptor,
+        resolver: identity_resolver,
+        observer: observer.cloned(),
+    };
+    match handshake_as_acceptor_with_policy(
+        tx,
+        rx,
+        settings,
+        metadata,
+        peer_evidence,
+        &observed_resolver,
+    )
+    .await
+    {
         Ok(handshake_result) => {
             observe_establishment_finished(
                 observer,
@@ -356,7 +460,7 @@ async fn handshake_as_acceptor_observed<Tx: LinkTx, Rx: LinkRx>(
                 ConnectionRole::Acceptor,
                 EstablishmentPhase::ConnectionHandshake,
                 None,
-                EstablishmentOutcome::Error,
+                handshake_outcome_from_error(&error),
                 started_at,
             );
             Err(connection_error_from_handshake(error))
@@ -444,6 +548,8 @@ impl<C> ConnectionInitiatorBuilder<C> {
             handshake_result,
             config,
         } = self;
+        let peer_identity = handshake_result.peer_identity.clone();
+        let peer_evidence = handshake_result.peer_evidence.clone();
         validate_negotiated_connection_settings(&config.connection_settings, &handshake_result)?;
         let (tx, rx) = conduit.split();
         let (open_tx, open_rx) = mpsc::channel::<OpenRequest>("connection.open", 4);
@@ -472,6 +578,8 @@ impl<C> ConnectionInitiatorBuilder<C> {
             open_tx,
             close_tx,
             control_tx,
+            peer_identity,
+            peer_evidence,
             _control_caller: Some(control_caller),
         };
         (config.spawn_fn)(Box::pin(async move { connection.run().await }));
@@ -537,6 +645,12 @@ impl<S> ConnectionSourceInitiatorBuilder<S> {
 
     pub fn metadata(mut self, metadata: Metadata) -> Self {
         self.config.metadata = metadata;
+        self
+    }
+
+    // r[impl connection.identity.resolver]
+    pub fn identity_resolver(mut self, resolver: impl IdentityResolver) -> Self {
+        self.config.identity_resolver = Arc::new(resolver);
         self
     }
 
@@ -611,11 +725,16 @@ impl<S> ConnectionSourceInitiatorBuilder<S> {
         {
             {
                 let attachment = source.next_link().await.map_err(ConnectionError::Io)?;
+                let peer_evidence = attachment.peer_evidence().clone();
                 let link =
                     initiate_transport_observed(attachment.into_link(), config.observer.as_ref())
                         .await?;
-                ConnectionTransportInitiatorBuilder::<S::Link>::finish_with_bare_parts(link, config)
-                    .await
+                ConnectionTransportInitiatorBuilder::<S::Link>::finish_with_bare_parts(
+                    link,
+                    config,
+                    peer_evidence,
+                )
+                .await
             }
         }
     }
@@ -666,6 +785,12 @@ impl<L> ConnectionTransportInitiatorBuilder<L> {
 
     pub fn metadata(mut self, metadata: Metadata) -> Self {
         self.config.metadata = metadata;
+        self
+    }
+
+    // r[impl connection.identity.resolver]
+    pub fn identity_resolver(mut self, resolver: impl IdentityResolver) -> Self {
+        self.config.identity_resolver = Arc::new(resolver);
         self
     }
 
@@ -737,7 +862,7 @@ impl<L> ConnectionTransportInitiatorBuilder<L> {
     {
         let Self { link, config } = self;
         let link = initiate_transport_observed(link, config.observer.as_ref()).await?;
-        Self::finish_with_bare_parts(link, config).await
+        Self::finish_with_bare_parts(link, config, PeerEvidence::none()).await
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -751,7 +876,7 @@ impl<L> ConnectionTransportInitiatorBuilder<L> {
     {
         let Self { link, config } = self;
         let link = initiate_transport_observed(link, config.observer.as_ref()).await?;
-        Self::finish_with_bare_parts(link, config).await
+        Self::finish_with_bare_parts(link, config, PeerEvidence::none()).await
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -770,6 +895,7 @@ impl<L> ConnectionTransportInitiatorBuilder<L> {
     async fn finish_with_bare_parts(
         mut link: SplitLink<L::Tx, L::Rx>,
         config: ConnectionConfig,
+        peer_evidence: PeerEvidence,
     ) -> Result<ConnectionHandle, ConnectionError>
     where
         L: Link + 'static,
@@ -781,6 +907,8 @@ impl<L> ConnectionTransportInitiatorBuilder<L> {
             &mut link.rx,
             config.connection_settings.clone(),
             metadata_into_owned(config.metadata.clone()),
+            peer_evidence,
+            Arc::clone(&config.identity_resolver),
             config.observer.as_ref(),
         )
         .await?;
@@ -885,6 +1013,8 @@ impl<C> ConnectionAcceptorBuilder<C> {
             handshake_result,
             config,
         } = self;
+        let peer_identity = handshake_result.peer_identity.clone();
+        let peer_evidence = handshake_result.peer_evidence.clone();
         validate_negotiated_connection_settings(&config.connection_settings, &handshake_result)?;
         let (tx, rx) = conduit.split();
         let (open_tx, open_rx) = mpsc::channel::<OpenRequest>("connection.open", 4);
@@ -913,6 +1043,8 @@ impl<C> ConnectionAcceptorBuilder<C> {
             open_tx,
             close_tx,
             control_tx,
+            peer_identity,
+            peer_evidence,
             _control_caller: Some(control_caller),
         };
         (config.spawn_fn)(Box::pin(async move { connection.run().await }));
@@ -934,6 +1066,7 @@ impl<C> ConnectionAcceptorBuilder<C> {
 
 pub struct ConnectionTransportAcceptorBuilder<L: Link> {
     link: L,
+    peer_evidence: PeerEvidence,
     config: ConnectionConfig,
 }
 
@@ -941,11 +1074,20 @@ impl<L: Link> ConnectionTransportAcceptorBuilder<L> {
     fn new(link: L) -> Self {
         Self {
             link,
+            peer_evidence: PeerEvidence::none(),
             config: ConnectionConfig::with_settings(ConnectionSettings {
                 parity: Parity::Even,
                 max_concurrent_requests: 64,
                 initial_channel_credit: DEFAULT_INITIAL_CHANNEL_CREDIT,
             }),
+        }
+    }
+
+    fn from_attachment(attachment: Attachment<L>) -> Self {
+        let (link, peer_evidence) = attachment.into_parts();
+        Self {
+            peer_evidence,
+            ..Self::new(link)
         }
     }
 
@@ -978,6 +1120,12 @@ impl<L: Link> ConnectionTransportAcceptorBuilder<L> {
 
     pub fn metadata(mut self, metadata: Metadata) -> Self {
         self.config.metadata = metadata;
+        self
+    }
+
+    // r[impl connection.identity.resolver]
+    pub fn identity_resolver(mut self, resolver: impl IdentityResolver) -> Self {
+        self.config.identity_resolver = Arc::new(resolver);
         self
     }
 
@@ -1015,13 +1163,19 @@ impl<L: Link> ConnectionTransportAcceptorBuilder<L> {
         L::Tx: MaybeSend + MaybeSync + 'static,
         L::Rx: MaybeSend + 'static,
     {
-        let Self { link, config } = self;
+        let Self {
+            link,
+            peer_evidence,
+            config,
+        } = self;
         let mut link = accept_transport_observed(link, config.observer.as_ref()).await?;
         let handshake_result = handshake_as_acceptor_observed(
             &link.tx,
             &mut link.rx,
             config.connection_settings.clone(),
             metadata_into_owned(config.metadata.clone()),
+            peer_evidence,
+            Arc::clone(&config.identity_resolver),
             config.observer.as_ref(),
         )
         .await?;
@@ -1087,6 +1241,7 @@ fn connection_error_from_handshake(error: crate::HandshakeError) -> ConnectionEr
         crate::HandshakeError::PeerClosed => {
             ConnectionError::Protocol("peer closed during handshake".into())
         }
+        crate::HandshakeError::Declined(decline) => ConnectionError::EstablishmentRejected(decline),
         other => ConnectionError::Protocol(other.to_string()),
     }
 }
@@ -1219,8 +1374,12 @@ mod tests {
         for phase in [
             EstablishmentPhase::VoxTransportPrologue,
             EstablishmentPhase::ConnectionHandshake,
+            EstablishmentPhase::IdentityResolution,
+            EstablishmentPhase::ConnectionPolicy,
             EstablishmentPhase::SchemaDecodePlan,
             EstablishmentPhase::ServiceLaneOpen,
+            EstablishmentPhase::LaneAuthorization,
+            EstablishmentPhase::LaneGrant,
         ] {
             assert!(
                 contexts.iter().any(|context| context.phase == phase),

@@ -2,7 +2,9 @@ use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
 
 use vox_core::{BareConduit, acceptor_conduit, initiator_conduit};
-use vox_types::{ConnectionRole, ConnectionSettings, HandshakeResult, Link, Parity};
+use vox_types::{
+    ConnectionRole, ConnectionSettings, HandshakeResult, Link, Parity, PeerEvidence, PeerIdentity,
+};
 
 fn test_acceptor_handshake(service: &'static str) -> HandshakeResult {
     HandshakeResult {
@@ -20,6 +22,8 @@ fn test_acceptor_handshake(service: &'static str) -> HandshakeResult {
         our_schema: vec![],
         peer_schema: vec![],
         peer_metadata: vox::metadata().str("vox-service", service).build(),
+        peer_evidence: PeerEvidence::none(),
+        peer_identity: PeerIdentity::anonymous(),
     }
 }
 
@@ -39,6 +43,8 @@ fn test_initiator_handshake(service: &'static str) -> HandshakeResult {
         our_schema: vec![],
         peer_schema: vec![],
         peer_metadata: vox::metadata().str("vox-service", service).build(),
+        peer_evidence: PeerEvidence::none(),
+        peer_identity: PeerIdentity::anonymous(),
     }
 }
 
@@ -72,7 +78,22 @@ struct ContextProbeService;
 impl ContextProbe for ContextProbeService {
     async fn describe(&self, cx: &vox::RequestContext<'_>) -> String {
         use vox::MetadataExt;
-        format!("{}:{}", cx.method().method_name, cx.metadata().meta_len(),)
+        let scope = cx
+            .authorization()
+            .and_then(|authorization| {
+                authorization
+                    .lane_grant()
+                    .metadata()
+                    .meta_str("grant-scope")
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| "none".to_string());
+        format!(
+            "{}:{}:{}",
+            cx.method().method_name,
+            cx.metadata().meta_len(),
+            scope,
+        )
     }
 
     async fn plain(&self) -> String {
@@ -399,9 +420,18 @@ pub async fn run_request_context_end_to_end<L>(
 
     let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
     let server_task = tokio::task::spawn(async move {
+        let acceptor = vox::lane_acceptor_fn(|request, lane| {
+            assert_eq!(request.service(), "ContextProbe");
+            let grant = vox::LaneGrant::from_metadata(
+                vox::metadata().str("grant-scope", "context-probe").build(),
+            );
+            lane.with_grant(grant)
+                .handle_with(ContextProbeDispatcher::new(ContextProbeService));
+            Ok(())
+        });
         let server_caller_guard =
             acceptor_conduit(server_conduit, test_acceptor_handshake("ContextProbe"))
-                .on_lane(ContextProbeDispatcher::new(ContextProbeService))
+                .on_lane(acceptor)
                 .establish_connection()
                 .await
                 .expect("server handshake failed");
@@ -422,7 +452,7 @@ pub async fn run_request_context_end_to_end<L>(
         .await
         .expect("describe call should succeed");
     // No call policy metadata is auto-injected.
-    assert_eq!(described, "describe:0");
+    assert_eq!(described, "describe:0:context-probe");
 
     let plain = client.plain().await.expect("plain call should succeed");
     assert_eq!(plain, "plain");

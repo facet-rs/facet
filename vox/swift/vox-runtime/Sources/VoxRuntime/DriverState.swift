@@ -304,6 +304,7 @@ actor LaneState {
         let dispatcher: any ServiceDispatcher
         let localSettings: ConnectionSettings
         let channelRegistry: ChannelRegistry
+        let laneGrant: LaneGrant
     }
 
     private var nextLaneId: UInt64
@@ -330,12 +331,14 @@ actor LaneState {
         _ laneId: UInt64,
         dispatcher: any ServiceDispatcher,
         localSettings: ConnectionSettings,
-        channelRegistry: ChannelRegistry
+        channelRegistry: ChannelRegistry,
+        laneGrant: LaneGrant = .empty
     ) {
         lanes[laneId] = LaneRecord(
             dispatcher: dispatcher,
             localSettings: localSettings,
-            channelRegistry: channelRegistry
+            channelRegistry: channelRegistry,
+            laneGrant: laneGrant
         )
     }
 

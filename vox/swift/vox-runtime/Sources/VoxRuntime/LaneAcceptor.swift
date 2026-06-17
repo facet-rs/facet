@@ -3,11 +3,29 @@ import Foundation
 // MARK: - LaneRequest
 
 /// Metadata wrapper for an incoming lane-open request.
+// r[impl lane.authorization]
+// r[impl lane.authorization.context]
 public struct LaneRequest: Sendable {
     /// All metadata entries from the lane-open message.
     public let metadata: Metadata
     /// The service name, extracted from the "vox-service" metadata key.
     public let service: String
+    /// The immutable identity resolved for the peer during connection establishment.
+    public let peerIdentity: PeerIdentity
+    /// Locally asserted evidence used to resolve the peer identity.
+    public let peerEvidence: PeerEvidence
+
+    public init(
+        metadata: Metadata,
+        service: String,
+        peerIdentity: PeerIdentity = .anonymous,
+        peerEvidence: PeerEvidence = .none
+    ) {
+        self.metadata = metadata
+        self.service = service
+        self.peerIdentity = peerIdentity
+        self.peerEvidence = peerEvidence
+    }
 }
 
 // MARK: - PendingLane
@@ -21,11 +39,11 @@ public struct LaneRequest: Sendable {
 public final class PendingLane: @unchecked Sendable {
     private let lock = NSLock()
     private var handled = false
-    private let acceptFn: @Sendable (any ServiceDispatcher) -> Void
+    private let acceptFn: @Sendable (any ServiceDispatcher, LaneGrant) -> Void
     private let rejectFn: @Sendable (LaneRejection) -> Void
 
     init(
-        accept: @escaping @Sendable (any ServiceDispatcher) -> Void,
+        accept: @escaping @Sendable (any ServiceDispatcher, LaneGrant) -> Void,
         reject: @escaping @Sendable (LaneRejection) -> Void
     ) {
         self.acceptFn = accept
@@ -34,13 +52,14 @@ public final class PendingLane: @unchecked Sendable {
 
     /// Accept the lane and route it to the given dispatcher.
     /// Safe to call multiple times; only the first call takes effect.
-    public func handleWith(_ dispatcher: any ServiceDispatcher) {
+    // r[impl lane.authorization.context]
+    public func handleWith(_ dispatcher: any ServiceDispatcher, grant: LaneGrant = .empty) {
         lock.lock()
         let wasHandled = handled
         handled = true
         lock.unlock()
         if !wasHandled {
-            acceptFn(dispatcher)
+            acceptFn(dispatcher, grant)
         }
     }
 

@@ -982,6 +982,8 @@ fn message_plan_from_identical_schemas_round_trips() {
         our_schema: our_schema.clone(),
         peer_schema: our_schema,
         peer_metadata: vox_types::metadata().str("vox-service", "Noop").build(),
+        peer_evidence: vox_types::PeerEvidence::none(),
+        peer_identity: vox_types::PeerIdentity::anonymous(),
     };
     let plan = crate::MessagePlan::from_handshake(&handshake_result)
         .expect("should build message plan from identical schemas");
@@ -1936,6 +1938,8 @@ async fn initiator_builder_customization_controls_allocated_connection_parity() 
                     our_schema: vec![],
                     peer_schema: vec![],
                     peer_metadata: vox_types::metadata().str("vox-service", "Noop").build(),
+                    peer_evidence: vox_types::PeerEvidence::none(),
+                    peer_identity: vox_types::PeerIdentity::anonymous(),
                 },
             )
             .on_lane(EchoAcceptor)
@@ -1963,6 +1967,8 @@ async fn initiator_builder_customization_controls_allocated_connection_parity() 
             our_schema: vec![],
             peer_schema: vec![],
             peer_metadata: vox_types::metadata().str("vox-service", "Noop").build(),
+            peer_evidence: vox_types::PeerEvidence::none(),
+            peer_identity: vox_types::PeerIdentity::anonymous(),
         },
     )
     .establish::<TestLaneClient>()
@@ -2015,6 +2021,8 @@ async fn acceptor_builder_customization_supports_opening_connections() {
                     our_schema: vec![],
                     peer_schema: vec![],
                     peer_metadata: vox_types::metadata().str("vox-service", "Noop").build(),
+                    peer_evidence: vox_types::PeerEvidence::none(),
+                    peer_identity: vox_types::PeerIdentity::anonymous(),
                 },
             )
             .on_lane(EchoAcceptor)
@@ -2042,6 +2050,8 @@ async fn acceptor_builder_customization_supports_opening_connections() {
             our_schema: vec![],
             peer_schema: vec![],
             peer_metadata: vox_types::metadata().str("vox-service", "Noop").build(),
+            peer_evidence: vox_types::PeerEvidence::none(),
+            peer_identity: vox_types::PeerIdentity::anonymous(),
         },
     )
     .establish_connection()

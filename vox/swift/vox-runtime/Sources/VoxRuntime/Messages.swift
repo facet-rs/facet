@@ -21,6 +21,7 @@ func messageRequest(
     schemas: [UInt8] = []
 ) -> Message {
     // r[impl rpc.request]
+    // r[impl rpc.metadata.records]
     // r[impl connection.message]
     // r[impl connection.message.lane-id]
     // r[impl connection.message.payloads]
@@ -44,6 +45,7 @@ func messageResponse(
     schemas: [UInt8] = []
 ) -> Message {
     // r[impl rpc.response]
+    // r[impl rpc.metadata.records]
     // r[impl connection.message]
     // r[impl connection.message.lane-id]
     // r[impl connection.message.payloads]
@@ -82,6 +84,7 @@ func messageCancel(
     laneId: UInt64 = 0
 ) -> Message {
     // r[impl rpc.cancel]
+    // r[impl rpc.metadata.records]
     Message(
         laneId: laneId,
         payload: .requestMessage(RequestMessage(
@@ -95,6 +98,7 @@ func messageLaneOpen(
     metadata: Metadata = .null
 ) -> Message {
     // r[impl lane.open.settings]
+    // r[impl rpc.metadata.records]
     Message(
         laneId: laneId,
         payload: .laneOpen(LaneOpen(connectionSettings: settings, metadata: metadata)))
@@ -106,6 +110,7 @@ func messageLaneAccept(
     metadata: Metadata = .null
 ) -> Message {
     // r[impl lane.open.settings]
+    // r[impl rpc.metadata.records]
     Message(
         laneId: laneId,
         payload: .laneAccept(LaneAccept(connectionSettings: settings, metadata: metadata)))
@@ -113,10 +118,12 @@ func messageLaneAccept(
 
 func messageLaneReject(laneId: UInt64, metadata: Metadata = .null) -> Message {
     // r[impl lane.open.wire.rejection]
+    // r[impl rpc.metadata.records]
     Message(laneId: laneId, payload: .laneReject(LaneReject(metadata: metadata)))
 }
 
 func messageLaneClose(laneId: UInt64, metadata: Metadata = .null) -> Message {
+    // r[impl rpc.metadata.records]
     Message(laneId: laneId, payload: .laneClose(LaneClose(metadata: metadata)))
 }
 
@@ -127,12 +134,14 @@ func messageData(channelId: UInt64, item: [UInt8], laneId: UInt64 = 0) -> Messag
 }
 
 func messageChannelClose(channelId: UInt64, laneId: UInt64 = 0, metadata: Metadata = .null) -> Message {
+    // r[impl rpc.metadata.records]
     Message(
         laneId: laneId,
         payload: .channelMessage(ChannelMessage(id: channelId, body: .close(ChannelClose(metadata: metadata)))))
 }
 
 func messageChannelReset(channelId: UInt64, laneId: UInt64 = 0, metadata: Metadata = .null) -> Message {
+    // r[impl rpc.metadata.records]
     Message(
         laneId: laneId,
         payload: .channelMessage(ChannelMessage(id: channelId, body: .reset(ChannelReset(metadata: metadata)))))

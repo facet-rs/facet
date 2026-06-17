@@ -43,6 +43,7 @@ specs (
                     typescript/packages/vox-core/src/connection.ts
                     typescript/packages/vox-core/src/connection.test.ts
                     typescript/packages/vox-core/src/conduit.ts
+                    typescript/packages/vox-core/src/handshake.ts
                     typescript/packages/vox-core/src/link.ts
                     typescript/packages/vox-core/src/link.test.ts
                     typescript/packages/vox-core/src/transport.ts
@@ -58,6 +59,7 @@ specs (
                     typescript/packages/vox-core/src/metadata.test.ts
                     typescript/packages/vox-core/src/observer.ts
                     typescript/packages/vox-core/src/observer.test.ts
+                    typescript/packages/vox-core/src/request_context.ts
                     typescript/packages/vox-core/src/server_logging.ts
                     typescript/packages/vox-core/src/schema_tracker.ts
                     typescript/packages/vox-core/src/schema_tracker.test.ts

@@ -1,3 +1,5 @@
+import type { PeerEvidence } from "./handshake.ts";
+
 // r[impl link]
 // r[impl link.message]
 // r[impl link.rx.recv]
@@ -18,6 +20,7 @@ export interface Link {
 export interface LinkAttachment<L extends Link = Link> {
   link: L;
   clientHello?: Uint8Array;
+  peerEvidence?: PeerEvidence;
 }
 
 // r[impl link.split]
@@ -29,6 +32,7 @@ export interface LinkSource<L extends Link = Link> {
 export function singleLinkSource<L extends Link = Link>(
   link: L,
   clientHello?: Uint8Array,
+  peerEvidence?: PeerEvidence,
 ): LinkSource<L> {
   let used = false;
   return {
@@ -37,7 +41,7 @@ export function singleLinkSource<L extends Link = Link>(
         throw new Error("single-use LinkSource exhausted");
       }
       used = true;
-      return { link, clientHello };
+      return { link, clientHello, peerEvidence };
     },
   };
 }

@@ -1,11 +1,14 @@
 use std::sync::OnceLock;
 
-use crate::{Extensions, LaneId, Metadata, MethodDescriptor, RequestId};
+use crate::{
+    Extensions, LaneId, Metadata, MethodDescriptor, RequestAuthorizationContext, RequestId,
+};
 
 /// Borrowed per-request context exposed to opted-in Rust service handlers.
 ///
 /// This is constructed by generated dispatchers from the inbound request and
 /// borrows request metadata directly rather than cloning it.
+// r[impl request.authorization]
 #[derive(Clone, Copy, Debug)]
 pub struct RequestContext<'a> {
     method: &'static MethodDescriptor,
@@ -71,6 +74,11 @@ impl<'a> RequestContext<'a> {
     pub fn extensions(&self) -> &'a Extensions {
         self.extensions
     }
+
+    /// Authorization context resolved by the driver for this request, when available.
+    pub fn authorization(&self) -> Option<RequestAuthorizationContext> {
+        self.extensions.get_cloned()
+    }
 }
 
 fn empty_extensions() -> &'static Extensions {
@@ -80,7 +88,10 @@ fn empty_extensions() -> &'static Extensions {
 
 #[cfg(test)]
 mod tests {
-    use crate::{LaneId, Metadata, MethodDescriptorOptions, RequestId, method_descriptor};
+    use crate::{
+        LaneGrant, LaneId, Metadata, MethodDescriptorOptions, RequestAuthorizationContext,
+        RequestId, method_descriptor,
+    };
 
     use super::RequestContext;
 
@@ -110,5 +121,35 @@ mod tests {
         assert_eq!(context.lane_id(), Some(LaneId(13)));
         assert_eq!(context.method().id, method.id);
         assert_eq!(context.method().method_name, "demo");
+    }
+
+    #[test]
+    fn authorization_context_is_exposed_from_extensions() {
+        let method = method_descriptor::<(), ()>(
+            "demo-service",
+            "demo",
+            &[],
+            &[],
+            MethodDescriptorOptions {
+                response_wire_shape: <Result<(), crate::VoxError> as facet::Facet>::SHAPE,
+                doc: None,
+            },
+        );
+        let metadata = Metadata::default();
+        let extensions = crate::Extensions::new();
+        extensions.insert(RequestAuthorizationContext::new(
+            crate::PeerIdentity::anonymous(),
+            crate::PeerEvidence::none(),
+            LaneGrant::empty(),
+        ));
+
+        let context = RequestContext::with_extensions(method, &metadata, &extensions);
+
+        let authorization = context
+            .authorization()
+            .expect("authorization context should be present");
+        assert!(authorization.peer_identity().is_anonymous());
+        assert!(authorization.peer_evidence().is_empty());
+        assert!(authorization.lane_grant().is_empty());
     }
 }

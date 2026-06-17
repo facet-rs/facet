@@ -11,12 +11,12 @@ use tokio::sync::{mpsc as tokio_mpsc, oneshot as tokio_oneshot, watch};
 use tracing::{trace, warn};
 use vox_rt::sync::mpsc;
 use vox_types::{
-    BoxFut, ChannelMessage, ConduitRx, ConduitTx, ConnectionRole, ConnectionSettings,
+    BoxFut, ChannelMessage, ConduitRx, ConduitTx, ConnectionRole, ConnectionSettings, Decline,
     EstablishmentContext, EstablishmentEvent, EstablishmentOutcome, EstablishmentPhase, Handler,
-    HandshakeResult, IdAllocator, LaneAccept, LaneClose, LaneId, LaneOpen, LaneReject, MaybeSend,
-    MaybeSync, Message, MessageFamily, MessagePayload, Metadata, Parity, RequestBody, RequestId,
-    RequestMessage, RequestResponse, SchemaMessage, SelfRef, TrySendError, VoxDebugSnapshot,
-    VoxObserverHandle,
+    HandshakeResult, IdAllocator, IdentityResolutionContext, LaneAccept, LaneClose, LaneGrant,
+    LaneId, LaneOpen, LaneReject, MaybeSend, MaybeSync, Message, MessageFamily, MessagePayload,
+    Metadata, Parity, PeerEvidence, PeerIdentity, RequestBody, RequestId, RequestMessage,
+    RequestResponse, SchemaMessage, SelfRef, TrySendError, VoxDebugSnapshot, VoxObserverHandle,
 };
 use vox_types::{
     ConnectionCloseReason, DecodeErrorKind, DriverTaskStatus, LaneDebugSnapshot, LaneDebugState,
@@ -36,6 +36,9 @@ pub const VOX_LANE_REJECT_REASON_METADATA_KEY: &str = "vox-lane-reject-reason";
 pub const VOX_LANE_REJECT_MESSAGE_METADATA_KEY: &str = "vox-lane-reject-message";
 
 // r[impl lane.open.result]
+// r[impl lane.authorization]
+// r[impl lane.authorization.filtered]
+// r[impl rejection.reason.taxonomy]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LaneRejectReason {
     UnknownService,
@@ -80,6 +83,8 @@ impl std::fmt::Display for LaneRejectReason {
 }
 
 // r[impl lane.open.result]
+// r[impl lane.authorization]
+// r[impl lane.authorization.filtered]
 #[derive(Debug, Clone)]
 pub struct LaneRejection {
     reason: LaneRejectReason,
@@ -192,23 +197,74 @@ pub(crate) fn observe_establishment_finished(
 // Connection acceptor trait
 // ---------------------------------------------------------------------------
 
+/// Resolves the counterpart identity during the connection handshake.
+// r[impl connection.identity.resolver]
+pub trait IdentityResolver: MaybeSend + MaybeSync + 'static {
+    fn resolve(&self, context: IdentityResolutionContext<'_>) -> Result<PeerIdentity, Decline>;
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct AnonymousIdentityResolver;
+
+impl IdentityResolver for AnonymousIdentityResolver {
+    fn resolve(&self, _context: IdentityResolutionContext<'_>) -> Result<PeerIdentity, Decline> {
+        Ok(PeerIdentity::anonymous())
+    }
+}
+
+pub struct IdentityResolverFn<F>(pub F);
+
+impl<F> IdentityResolver for IdentityResolverFn<F>
+where
+    F: for<'a> Fn(IdentityResolutionContext<'a>) -> Result<PeerIdentity, Decline>
+        + MaybeSend
+        + MaybeSync
+        + 'static,
+{
+    fn resolve(&self, context: IdentityResolutionContext<'_>) -> Result<PeerIdentity, Decline> {
+        (self.0)(context)
+    }
+}
+
+pub fn identity_resolver_fn<F>(f: F) -> IdentityResolverFn<F>
+where
+    F: for<'a> Fn(IdentityResolutionContext<'a>) -> Result<PeerIdentity, Decline>
+        + MaybeSend
+        + MaybeSync
+        + 'static,
+{
+    IdentityResolverFn(f)
+}
+
 /// Metadata wrapper with typed getters for well-known `vox-*` keys.
 ///
 /// Passed to [`LaneAcceptor::accept`] when a peer opens a service lane.
+// r[impl lane.authorization]
 pub struct LaneRequest<'a> {
     metadata: &'a vox_types::Metadata,
     service: &'a str,
+    peer_identity: &'a PeerIdentity,
+    peer_evidence: &'a PeerEvidence,
 }
 
 impl<'a> LaneRequest<'a> {
     /// Build a lane-open request from metadata.
     ///
     /// Returns an error if the required `vox-service` metadata key is missing.
-    pub fn new(metadata: &'a vox_types::Metadata) -> Result<Self, ConnectionError> {
+    pub fn new(
+        metadata: &'a vox_types::Metadata,
+        peer_identity: &'a PeerIdentity,
+        peer_evidence: &'a PeerEvidence,
+    ) -> Result<Self, ConnectionError> {
         let service = vox_types::metadata_get_str(metadata, "vox-service").ok_or_else(|| {
             ConnectionError::Protocol("missing required vox-service metadata".into())
         })?;
-        Ok(Self { metadata, service })
+        Ok(Self {
+            metadata,
+            service,
+            peer_identity,
+            peer_evidence,
+        })
     }
 
     /// The requested service name (`vox-service` metadata key).
@@ -240,6 +296,18 @@ impl<'a> LaneRequest<'a> {
     pub fn metadata(&self) -> &'a vox_types::Metadata {
         self.metadata
     }
+
+    /// The immutable identity resolved for the peer when the connection was established.
+    // r[impl lane.authorization.context]
+    pub fn peer_identity(&self) -> &'a PeerIdentity {
+        self.peer_identity
+    }
+
+    /// Locally asserted evidence that contributed to connection identity resolution.
+    // r[impl lane.authorization.context]
+    pub fn peer_evidence(&self) -> &'a PeerEvidence {
+        self.peer_evidence
+    }
 }
 
 /// A service lane that has been opened but not yet accepted.
@@ -253,18 +321,34 @@ impl<'a> LaneRequest<'a> {
 /// Dropping an unconsumed `PendingLane` is only a local safety fallback.
 pub struct PendingLane {
     handle: Option<LaneHandle>,
+    lane_grant: LaneGrant,
 }
 
 impl PendingLane {
     fn new(handle: LaneHandle) -> Self {
         Self {
             handle: Some(handle),
+            lane_grant: LaneGrant::empty(),
         }
+    }
+
+    /// Attach the local lane grant that authorizes requests on this lane.
+    #[must_use]
+    // r[impl lane.authorization.context]
+    pub fn with_grant(mut self, grant: LaneGrant) -> Self {
+        self.lane_grant = grant;
+        self
+    }
+
+    fn take_handle(&mut self) -> LaneHandle {
+        let mut handle = self.handle.take().expect("PendingLane already consumed");
+        handle.lane_grant = self.lane_grant.clone();
+        handle
     }
 
     /// Accept this service lane and run a Driver with the given handler.
     pub fn handle_with(mut self, handler: impl Handler<crate::DriverReplySink> + 'static) {
-        let handle = self.handle.take().expect("PendingLane already consumed");
+        let handle = self.take_handle();
         let conn_id = handle.lane_id();
         trace!(%conn_id, "PendingLane::handle_with: creating driver");
         let mut driver = crate::Driver::new(handle, handler);
@@ -283,7 +367,7 @@ impl PendingLane {
         mut self,
         handler: impl Handler<crate::DriverReplySink> + 'static,
     ) -> C {
-        let handle = self.handle.take().expect("PendingLane already consumed");
+        let handle = self.take_handle();
         let conn_id = handle.lane_id();
         trace!(%conn_id, "PendingLane::handle_with_client: creating driver");
         let mut driver = crate::Driver::new(handle, handler);
@@ -301,7 +385,7 @@ impl PendingLane {
 
     /// Accept this service lane and proxy all traffic to/from another lane.
     pub fn proxy_to(mut self, other: LaneHandle) {
-        let handle = self.handle.take().expect("PendingLane already consumed");
+        let handle = self.take_handle();
         #[cfg(not(target_arch = "wasm32"))]
         tokio::spawn(async move {
             let _ = proxy_lanes(handle, other).await;
@@ -314,7 +398,7 @@ impl PendingLane {
 
     /// Take the raw LaneHandle for custom use.
     pub fn into_handle(mut self) -> LaneHandle {
-        self.handle.take().expect("PendingLane already consumed")
+        self.take_handle()
     }
 }
 
@@ -431,10 +515,25 @@ pub struct ConnectionHandle {
     open_tx: mpsc::Sender<OpenRequest>,
     close_tx: mpsc::Sender<CloseRequest>,
     control_tx: mpsc::UnboundedSender<DropControlRequest>,
+    peer_identity: PeerIdentity,
+    peer_evidence: PeerEvidence,
     _control_caller: Option<crate::Caller>,
 }
 
 impl ConnectionHandle {
+    /// The immutable identity resolved for the peer at connection establishment.
+    // r[impl connection.identity]
+    // r[impl connection.identity.scope]
+    pub fn peer_identity(&self) -> &PeerIdentity {
+        &self.peer_identity
+    }
+
+    /// Locally asserted evidence used to resolve the peer identity.
+    // r[impl connection.evidence]
+    pub fn peer_evidence(&self) -> &PeerEvidence {
+        &self.peer_evidence
+    }
+
     /// Resolve when the connection's private control lane closes.
     // r[impl lane.control]
     pub async fn closed(&self) {
@@ -566,6 +665,8 @@ pub struct Connection {
     connection_core: Arc<ConnectionCore>,
     local_connection_settings: ConnectionSettings,
     peer_connection_settings: Option<ConnectionSettings>,
+    peer_identity: PeerIdentity,
+    peer_evidence: PeerEvidence,
 
     /// Service lane state (active, pending inbound, pending outbound).
     conns: BTreeMap<LaneId, ConnectionSlot>,
@@ -934,6 +1035,9 @@ pub struct LaneHandle {
     /// The parity this side should use for allocating request/channel IDs.
     pub parity: Parity,
     pub(crate) observer: Option<VoxObserverHandle>,
+    pub(crate) peer_identity: PeerIdentity,
+    pub(crate) peer_evidence: PeerEvidence,
+    pub(crate) lane_grant: LaneGrant,
 }
 
 impl std::fmt::Debug for LaneHandle {
@@ -967,6 +1071,25 @@ impl LaneHandle {
     /// Returns the lane ID for this handle.
     pub fn lane_id(&self) -> LaneId {
         self.sender.lane_id
+    }
+
+    /// The immutable peer identity resolved during connection establishment.
+    // r[impl request.authorization]
+    pub fn peer_identity(&self) -> &PeerIdentity {
+        &self.peer_identity
+    }
+
+    /// Locally asserted peer evidence available to this lane.
+    // r[impl request.authorization]
+    pub fn peer_evidence(&self) -> &PeerEvidence {
+        &self.peer_evidence
+    }
+
+    /// The local lane grant associated with this lane.
+    // r[impl lane.authorization.context]
+    // r[impl request.authorization]
+    pub fn lane_grant(&self) -> &LaneGrant {
+        &self.lane_grant
     }
 
     /// Resolve when this lane closes.
@@ -1052,6 +1175,9 @@ pub async fn proxy_lanes(left: LaneHandle, right: LaneHandle) -> Result<(), Conn
         peer_settings: _left_peer_settings,
         parity: _left_parity,
         observer: _left_observer,
+        peer_identity: _left_peer_identity,
+        peer_evidence: _left_peer_evidence,
+        lane_grant: _left_lane_grant,
     } = left;
     let LaneHandle {
         sender: right_sender,
@@ -1063,6 +1189,9 @@ pub async fn proxy_lanes(left: LaneHandle, right: LaneHandle) -> Result<(), Conn
         peer_settings: _right_peer_settings,
         parity: _right_parity,
         observer: _right_observer,
+        peer_identity: _right_peer_identity,
+        peer_evidence: _right_peer_evidence,
+        lane_grant: _right_lane_grant,
     } = right;
 
     loop {
@@ -1100,6 +1229,7 @@ pub async fn proxy_lanes(left: LaneHandle, right: LaneHandle) -> Result<(), Conn
 pub enum ConnectionError {
     Io(std::io::Error),
     Protocol(String),
+    EstablishmentRejected(vox_types::Decline),
     Rejected(LaneRejection),
     ConnectTimeout,
 }
@@ -1120,6 +1250,9 @@ impl std::fmt::Display for ConnectionError {
         match self {
             Self::Io(e) => write!(f, "io error: {e}"),
             Self::Protocol(msg) => write!(f, "protocol error: {msg}"),
+            Self::EstablishmentRejected(decline) => {
+                write!(f, "connection establishment rejected: {}", decline.reason)
+            }
             Self::Rejected(rejection) => {
                 if let Some(message) = rejection.message() {
                     write!(f, "lane open rejected: {}: {message}", rejection.reason())
@@ -1241,6 +1374,8 @@ impl Connection {
                 initial_channel_credit: 16,
             },
             peer_connection_settings: None,
+            peer_identity: PeerIdentity::anonymous(),
+            peer_evidence: PeerEvidence::none(),
             conns: BTreeMap::new(),
             conn_ids: IdAllocator::new(Parity::Odd), // overwritten in establish_as_*
             lane_acceptor,
@@ -1263,6 +1398,8 @@ impl Connection {
         self.conn_ids = IdAllocator::new(result.our_settings.parity);
         self.local_connection_settings = result.our_settings.clone();
         self.peer_connection_settings = Some(result.peer_settings.clone());
+        self.peer_identity = result.peer_identity.clone();
+        self.peer_evidence = result.peer_evidence.clone();
 
         Ok(self.make_control_lane_handle(result.our_settings, result.peer_settings))
     }
@@ -1320,6 +1457,9 @@ impl Connection {
             peer_settings: handle_peer_settings,
             parity,
             observer: self.observer.clone(),
+            peer_identity: self.peer_identity.clone(),
+            peer_evidence: self.peer_evidence.clone(),
+            lane_grant: LaneGrant::empty(),
         }
     }
 
@@ -1778,6 +1918,12 @@ impl Connection {
         // r[impl lane.open.wire.rejection]
         // Call the acceptor callback. If none is registered, reject.
         if self.lane_acceptor.is_none() {
+            let authorization_started_at = observe_establishment_started(
+                self.observer.as_ref(),
+                self.role,
+                EstablishmentPhase::LaneAuthorization,
+                Some(conn_id),
+            );
             Self::send_lane_reject(
                 Arc::clone(&self.connection_core),
                 conn_id,
@@ -1787,6 +1933,14 @@ impl Connection {
                 ),
             )
             .await;
+            observe_establishment_finished(
+                self.observer.as_ref(),
+                self.role,
+                EstablishmentPhase::LaneAuthorization,
+                Some(conn_id),
+                EstablishmentOutcome::Rejected,
+                authorization_started_at,
+            );
             observe_establishment_finished(
                 self.observer.as_ref(),
                 self.role,
@@ -1836,10 +1990,16 @@ impl Connection {
 
         // Let the acceptor decide the service lane's fate.
         let metadata = open.metadata.clone();
-        let request = match LaneRequest::new(&metadata) {
+        let request = match LaneRequest::new(&metadata, &self.peer_identity, &self.peer_evidence) {
             Ok(r) => r,
             Err(e) => {
                 trace!(%conn_id, %e, "rejecting service lane");
+                let authorization_started_at = observe_establishment_started(
+                    self.observer.as_ref(),
+                    self.role,
+                    EstablishmentPhase::LaneAuthorization,
+                    Some(conn_id),
+                );
                 self.conns.remove(&conn_id);
                 Self::send_lane_reject(
                     Arc::clone(&self.connection_core),
@@ -1847,6 +2007,14 @@ impl Connection {
                     LaneRejection::with_message(LaneRejectReason::UnknownService, e.to_string()),
                 )
                 .await;
+                observe_establishment_finished(
+                    self.observer.as_ref(),
+                    self.role,
+                    EstablishmentPhase::LaneAuthorization,
+                    Some(conn_id),
+                    EstablishmentOutcome::Rejected,
+                    authorization_started_at,
+                );
                 observe_establishment_finished(
                     self.observer.as_ref(),
                     self.role,
@@ -1861,9 +2029,29 @@ impl Connection {
         let pending = PendingLane::new(handle);
         let acceptor = self.lane_acceptor.as_ref().unwrap();
         trace!(%conn_id, "calling acceptor for service lane");
+        let authorization_started_at = observe_establishment_started(
+            self.observer.as_ref(),
+            self.role,
+            EstablishmentPhase::LaneAuthorization,
+            Some(conn_id),
+        );
         match acceptor.accept(&request, pending) {
             Ok(()) => {
+                observe_establishment_finished(
+                    self.observer.as_ref(),
+                    self.role,
+                    EstablishmentPhase::LaneAuthorization,
+                    Some(conn_id),
+                    EstablishmentOutcome::Ok,
+                    authorization_started_at,
+                );
                 trace!(%conn_id, "acceptor accepted service lane, sending LaneAccept");
+                let grant_started_at = observe_establishment_started(
+                    self.observer.as_ref(),
+                    self.role,
+                    EstablishmentPhase::LaneGrant,
+                    Some(conn_id),
+                );
                 let _ = self
                     .connection_core
                     .send(
@@ -1881,6 +2069,14 @@ impl Connection {
                 observe_establishment_finished(
                     self.observer.as_ref(),
                     self.role,
+                    EstablishmentPhase::LaneGrant,
+                    Some(conn_id),
+                    EstablishmentOutcome::Ok,
+                    grant_started_at,
+                );
+                observe_establishment_finished(
+                    self.observer.as_ref(),
+                    self.role,
                     EstablishmentPhase::ServiceLaneOpen,
                     Some(conn_id),
                     EstablishmentOutcome::Ok,
@@ -1888,6 +2084,14 @@ impl Connection {
                 );
             }
             Err(rejection) => {
+                observe_establishment_finished(
+                    self.observer.as_ref(),
+                    self.role,
+                    EstablishmentPhase::LaneAuthorization,
+                    Some(conn_id),
+                    EstablishmentOutcome::Rejected,
+                    authorization_started_at,
+                );
                 // Clean up the connection slot we created.
                 trace!(%conn_id, "acceptor rejected, removing conn slot");
                 self.conns.remove(&conn_id);
@@ -3344,6 +3548,8 @@ mod tests {
             our_schema: vec![],
             peer_schema: vec![],
             peer_metadata: vox_types::Metadata::default(),
+            peer_evidence: vox_types::PeerEvidence::none(),
+            peer_identity: vox_types::PeerIdentity::anonymous(),
         }
     }
 

@@ -7,13 +7,15 @@ extension Driver {
         _ laneId: UInt64,
         dispatcher: any ServiceDispatcher,
         localSettings: ConnectionSettings,
-        channelRegistry: ChannelRegistry = ChannelRegistry()
+        channelRegistry: ChannelRegistry = ChannelRegistry(),
+        laneGrant: LaneGrant = .empty
     ) async {
         await laneState.addLane(
             laneId,
             dispatcher: dispatcher,
             localSettings: localSettings,
-            channelRegistry: channelRegistry
+            channelRegistry: channelRegistry,
+            laneGrant: laneGrant
         )
     }
 
@@ -104,6 +106,12 @@ extension Driver {
             if let acceptor = laneAcceptor {
                 let metadata = open.metadata
                 guard let service = metadata.metaStr("vox-service") else {
+                    let authorizationContext = VoxEstablishmentContext(
+                        role: voxEstablishmentRole(role),
+                        phase: .laneAuthorization,
+                        laneId: msg.laneId
+                    )
+                    let authorizationStartedAt = observeEstablishmentStarted(authorizationContext)
                     let rejection = LaneRejection.withMessage(
                         .unknownService,
                         "missing vox-service metadata"
@@ -113,6 +121,11 @@ extension Driver {
                             laneId: msg.laneId,
                             metadata: rejection.toMetadata()
                         ))
+                    observeEstablishmentFinished(
+                        authorizationContext,
+                        startedAt: authorizationStartedAt,
+                        outcome: .rejected
+                    )
                     observeEstablishmentFinished(
                         establishmentContext,
                         startedAt: establishmentStartedAt,
@@ -151,25 +164,62 @@ extension Driver {
                         outcome: .error,
                         error: error
                     )
-                    throw error
+                        throw error
                 }
-                let request = LaneRequest(metadata: metadata, service: service)
+                let request = LaneRequest(
+                    metadata: metadata,
+                    service: service,
+                    peerIdentity: peerIdentity,
+                    peerEvidence: peerEvidence
+                )
                 let laneId = msg.laneId
+                let authorizationContext = VoxEstablishmentContext(
+                    role: voxEstablishmentRole(role),
+                    phase: .laneAuthorization,
+                    laneId: laneId
+                )
+                let authorizationStartedAt = observeEstablishmentStarted(authorizationContext)
                 let pending = PendingLane(
-                    accept: { [weak self] dispatcher in
+                    accept: { [weak self] dispatcher, grant in
                         guard let self else { return }
                         Task {
+                            observeEstablishmentFinished(
+                                authorizationContext,
+                                startedAt: authorizationStartedAt,
+                                outcome: .ok
+                            )
                             await self.addLane(
                                 laneId,
                                 dispatcher: dispatcher,
-                                localSettings: localSettings
+                                localSettings: localSettings,
+                                laneGrant: grant
                             )
-                            try? await self.conduit.send(
-                                messageLaneAccept(
-                                    laneId: laneId,
-                                    settings: localSettings,
-                                    metadata: .null
-                                ))
+                            let grantContext = VoxEstablishmentContext(
+                                role: voxEstablishmentRole(self.role),
+                                phase: .laneGrant,
+                                laneId: laneId
+                            )
+                            let grantStartedAt = observeEstablishmentStarted(grantContext)
+                            do {
+                                try await self.conduit.send(
+                                    messageLaneAccept(
+                                        laneId: laneId,
+                                        settings: localSettings,
+                                        metadata: grant.metadata
+                                    ))
+                                observeEstablishmentFinished(
+                                    grantContext,
+                                    startedAt: grantStartedAt,
+                                    outcome: .ok
+                                )
+                            } catch {
+                                observeEstablishmentFinished(
+                                    grantContext,
+                                    startedAt: grantStartedAt,
+                                    outcome: .error,
+                                    error: error
+                                )
+                            }
                             observeEstablishmentFinished(
                                 establishmentContext,
                                 startedAt: establishmentStartedAt,
@@ -180,6 +230,11 @@ extension Driver {
                     reject: { [weak self] rejection in
                         guard let self else { return }
                         Task {
+                            observeEstablishmentFinished(
+                                authorizationContext,
+                                startedAt: authorizationStartedAt,
+                                outcome: .rejected
+                            )
                             try? await self.conduit.send(
                                 messageLaneReject(
                                     laneId: laneId,
@@ -195,6 +250,12 @@ extension Driver {
                 )
                 acceptor.accept(request: request, lane: pending)
             } else {
+                let authorizationContext = VoxEstablishmentContext(
+                    role: voxEstablishmentRole(role),
+                    phase: .laneAuthorization,
+                    laneId: msg.laneId
+                )
+                let authorizationStartedAt = observeEstablishmentStarted(authorizationContext)
                 let rejection = LaneRejection.withMessage(
                     .notReady,
                     "no lane acceptor configured"
@@ -204,6 +265,11 @@ extension Driver {
                         laneId: msg.laneId,
                         metadata: rejection.toMetadata()
                     ))
+                observeEstablishmentFinished(
+                    authorizationContext,
+                    startedAt: authorizationStartedAt,
+                    outcome: .rejected
+                )
                 observeEstablishmentFinished(
                     establishmentContext,
                     startedAt: establishmentStartedAt,
@@ -382,6 +448,7 @@ extension Driver {
     /// r[impl rpc.service.methods]
     /// r[impl lane.service]
     /// r[impl rpc.pipelining]
+    /// r[impl request.authorization]
     func handleRequest(
         laneId: UInt64,
         requestId: UInt64,
@@ -394,15 +461,18 @@ extension Driver {
         let effectiveDispatcher: any ServiceDispatcher
         let localMaxConcurrentRequests: UInt32
         let channelRegistry: ChannelRegistry
+        let laneGrant: LaneGrant
         if laneId == 0 {
             effectiveDispatcher = dispatcher
             localMaxConcurrentRequests =
                 localControlSettings?.maxConcurrentRequests ?? negotiated.maxConcurrentRequests
             channelRegistry = serverRegistry
+            laneGrant = .empty
         } else if let laneRecord = await laneState.lane(for: laneId) {
             effectiveDispatcher = laneRecord.dispatcher
             localMaxConcurrentRequests = laneRecord.localSettings.maxConcurrentRequests
             channelRegistry = laneRecord.channelRegistry
+            laneGrant = laneRecord.laneGrant
         } else {
             try await sendProtocolError("call.lifecycle.unknown-connection-id")
             throw ConnectionError.protocolViolation(
@@ -445,6 +515,17 @@ extension Driver {
         )
 
         let taskTx = taskSender(laneId: laneId)
+        let requestContext = RequestContext(
+            methodId: methodId,
+            requestId: requestId,
+            laneId: laneId,
+            metadata: metadata,
+            authorization: RequestAuthorizationContext(
+                peerIdentity: peerIdentity,
+                peerEvidence: peerEvidence,
+                laneGrant: laneGrant
+            )
+        )
         traceLog(.driver, "handleRequest method=\(methodId) req=\(requestId) channels=\(channels)")
         await effectiveDispatcher.preregister(
             methodId: methodId,
@@ -463,6 +544,7 @@ extension Driver {
                 registry: channelRegistry,
                 schemaSendTracker: schemaSendTracker,
                 schemaReceiveTracker: schemaReceiveTracker,
+                context: requestContext,
                 taskTx: taskTx
             )
         }

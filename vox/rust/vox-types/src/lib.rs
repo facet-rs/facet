@@ -129,6 +129,9 @@ pub use client_middleware::*;
 mod observer;
 pub use observer::*;
 
+mod policy;
+pub use policy::*;
+
 pub mod time;
 
 mod debug_snapshot;

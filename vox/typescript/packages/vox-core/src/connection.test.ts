@@ -22,7 +22,14 @@ import {
 } from "@bearcove/vox-wire";
 import { Registry, hexToBytes, primitiveId, resolveIds } from "@bearcove/phon-schema";
 import { BareConduit } from "./conduit.ts";
-import { handshakeAsAcceptor, handshakeAsInitiator } from "./handshake.ts";
+import {
+  ConnectionDeclinedError,
+  declineIdentity,
+  handshakeAsAcceptor,
+  handshakeAsInitiator,
+  syntheticPeerEvidence,
+  voxServiceMetadata,
+} from "./handshake.ts";
 import {
   Connection,
   Lane,
@@ -282,12 +289,17 @@ async function establishInboundServiceLane(
   });
   const serverConnection = await withTimeout(
     establishRawAcceptor(clientLink, serverLink, {
-      onLane: (lane) => acceptLane(lane),
+      onLane: (request, lane) => {
+        expect(request.service).toBe("RawService");
+        void lane.accept().then(acceptLane);
+      },
     }),
     "raw acceptor establishment",
   );
 
-  await clientLink.send(encodeMessage(messageLaneOpen(laneId, peerSettings, emptyMetadata())));
+  await clientLink.send(
+    encodeMessage(messageLaneOpen(laneId, peerSettings, voxServiceMetadata("RawService"))),
+  );
   const accept = decodeMessage(
     (await withTimeout(clientLink.recv(), "service lane accept"))!,
   );
@@ -448,6 +460,126 @@ describe("connection", () => {
     serverLink.close();
   });
 
+  // r[verify connection.handshake.decline]
+  // r[verify connection.policy.establishment.rejection]
+  // r[verify connection.identity.resolver]
+  it("acceptor sends Decline when identity resolver rejects initiator claims", async () => {
+    const [clientLink, serverLink] = memoryLinkPair();
+    const serverSettings: ConnectionSettings = {
+      parity: { tag: "Even" },
+      max_concurrent_requests: 64,
+      initial_channel_credit: 16,
+    };
+    const acceptor = handshakeAsAcceptor(
+      serverLink,
+      serverSettings,
+      emptyMetadata(),
+      {
+        peerEvidence: syntheticPeerEvidence("memory-link"),
+        identityResolver: (context) => {
+          expect(context.role).toBe("acceptor");
+          expect(context.claims.get("auth")).toBe("nope");
+          return declineIdentity("forbidden");
+        },
+      },
+    ).then(() => undefined, (error: unknown) => error);
+
+    await clientLink.send(
+      encodeHandshakeFrame({
+        tag: "Hello",
+        value: {
+          parity: { tag: "Odd" },
+          connection_settings: {
+            parity: { tag: "Odd" },
+            max_concurrent_requests: 64,
+            initial_channel_credit: 16,
+          },
+          message_payload_schema: Array.from(hexToBytes(messageSchemaClosure)),
+          metadata: new Map([["auth", "nope"]]),
+        },
+      }),
+    );
+
+    const response = decodeHandshakeFrame(
+      (await withTimeout(clientLink.recv(), "acceptor handshake Decline"))!,
+    );
+    expect(response.tag).toBe("Decline");
+    if (response.tag === "Decline") {
+      expect(response.value.reason.tag).toBe("Forbidden");
+    }
+    const error = await withTimeout(acceptor, "acceptor decline");
+    expect(error).toBeInstanceOf(ConnectionDeclinedError);
+    if (error instanceof ConnectionDeclinedError) {
+      expect(error.reason).toBe("forbidden");
+      expect(error.receivedFromPeer).toBe(false);
+    }
+
+    clientLink.close();
+    serverLink.close();
+  });
+
+  // r[verify connection.handshake.decline]
+  // r[verify connection.policy.establishment.rejection]
+  // r[verify connection.identity.resolver]
+  it("initiator sends Decline when identity resolver rejects acceptor claims", async () => {
+    const [clientLink, serverLink] = memoryLinkPair();
+    const clientSettings: ConnectionSettings = {
+      parity: { tag: "Odd" },
+      max_concurrent_requests: 64,
+      initial_channel_credit: 16,
+    };
+    const initiator = handshakeAsInitiator(
+      clientLink,
+      clientSettings,
+      emptyMetadata(),
+      {
+        peerEvidence: syntheticPeerEvidence("memory-link"),
+        identityResolver: (context) => {
+          expect(context.role).toBe("initiator");
+          expect(context.claims.get("server-auth")).toBe("bad");
+          return declineIdentity("forbidden");
+        },
+      },
+    ).then(() => undefined, (error: unknown) => error);
+
+    const hello = decodeHandshakeFrame(
+      (await withTimeout(serverLink.recv(), "initiator Hello"))!,
+    );
+    expect(hello.tag).toBe("Hello");
+
+    await serverLink.send(
+      encodeHandshakeFrame({
+        tag: "HelloYourself",
+        value: {
+          connection_settings: {
+            parity: { tag: "Even" },
+            max_concurrent_requests: 64,
+            initial_channel_credit: 16,
+          },
+          message_payload_schema: Array.from(hexToBytes(messageSchemaClosure)),
+          metadata: new Map([["server-auth", "bad"]]),
+        },
+      }),
+    );
+
+    const response = decodeHandshakeFrame(
+      (await withTimeout(serverLink.recv(), "initiator handshake Decline"))!,
+    );
+    expect(response.tag).toBe("Decline");
+    if (response.tag === "Decline") {
+      expect(response.value.reason.tag).toBe("Forbidden");
+    }
+    const error = await withTimeout(initiator, "initiator decline");
+    expect(error).toBeInstanceOf(ConnectionDeclinedError);
+    if (error instanceof ConnectionDeclinedError) {
+      expect(error.reason).toBe("forbidden");
+      expect(error.receivedFromPeer).toBe(false);
+    }
+
+    clientLink.close();
+    serverLink.close();
+  });
+
   // r[verify rpc.observability.establishment]
   it("reports connection establishment phases over transport prologue", async () => {
     const [clientLink, serverLink] = memoryLinkPair();
@@ -465,6 +597,10 @@ describe("connection", () => {
       "started:initiator:transport-prologue:-:-",
       "finished:initiator:transport-prologue:-:ok",
       "started:initiator:connection-handshake:-:-",
+      "started:initiator:identity-resolution:-:-",
+      "started:initiator:connection-policy:-:-",
+      "finished:initiator:identity-resolution:-:ok",
+      "finished:initiator:connection-policy:-:ok",
       "finished:initiator:connection-handshake:-:ok",
       "started:initiator:schema-decode-plan:-:-",
       "finished:initiator:schema-decode-plan:-:ok",
@@ -473,6 +609,10 @@ describe("connection", () => {
       "started:acceptor:transport-prologue:-:-",
       "finished:acceptor:transport-prologue:-:ok",
       "started:acceptor:connection-handshake:-:-",
+      "started:acceptor:identity-resolution:-:-",
+      "started:acceptor:connection-policy:-:-",
+      "finished:acceptor:identity-resolution:-:ok",
+      "finished:acceptor:connection-policy:-:ok",
       "finished:acceptor:connection-handshake:-:ok",
       "started:acceptor:schema-decode-plan:-:-",
       "finished:acceptor:schema-decode-plan:-:ok",
@@ -500,12 +640,20 @@ describe("connection", () => {
 
     expect(establishmentLabels(clientEvents)).toEqual([
       "started:initiator:connection-handshake:-:-",
+      "started:initiator:identity-resolution:-:-",
+      "started:initiator:connection-policy:-:-",
+      "finished:initiator:identity-resolution:-:ok",
+      "finished:initiator:connection-policy:-:ok",
       "finished:initiator:connection-handshake:-:ok",
       "started:initiator:schema-decode-plan:-:-",
       "finished:initiator:schema-decode-plan:-:ok",
     ]);
     expect(establishmentLabels(serverEvents)).toEqual([
       "started:acceptor:connection-handshake:-:-",
+      "started:acceptor:identity-resolution:-:-",
+      "started:acceptor:connection-policy:-:-",
+      "finished:acceptor:identity-resolution:-:ok",
+      "finished:acceptor:connection-policy:-:ok",
       "finished:acceptor:connection-handshake:-:ok",
       "started:acceptor:schema-decode-plan:-:-",
       "finished:acceptor:schema-decode-plan:-:ok",
@@ -614,21 +762,29 @@ describe("connection", () => {
     const acceptedConnection = new Promise<Lane>((resolve) => {
       acceptConnection = resolve;
     });
+    const grantMetadata = emptyMetadata();
+    grantMetadata.set("grant-scope", "echo:raw");
     const initiatorConnection = await withTimeout(
       establishRawInitiator(clientLink, rawServerLink, {
-        onLane: (connection) => acceptConnection(connection),
+        onLane: (request, pending) => {
+          expect(request.service).toBe("Echo");
+          void pending.accept({ metadata: grantMetadata }).then(acceptConnection);
+        },
       }),
       "raw initiator establishment",
     );
 
     await rawServerLink.send(
-      encodeMessage(messageLaneOpen(2n, peerSettings, emptyMetadata())),
+      encodeMessage(messageLaneOpen(2n, peerSettings, voxServiceMetadata("Echo"))),
     );
     const accept = decodeMessage(
       (await withTimeout(rawServerLink.recv(), "service lane accept"))!,
     );
     expect(accept.lane_id).toBe(2n);
     expect(accept.payload.tag).toBe("LaneAccept");
+    if (accept.payload.tag === "LaneAccept") {
+      expect(accept.payload.value.metadata.get("grant-scope")).toBe("echo:raw");
+    }
     const connection = await withTimeout(acceptedConnection, "accepted connection callback");
     expect(connection.id).toBe(2n);
     expect(connection.localSettings.parity).toEqual({ tag: "Even" });
@@ -650,6 +806,7 @@ describe("connection", () => {
     expect(incoming?.requestId).toBe(77n);
     expect(incoming?.methodId).toBe(ECHO_METHOD.id);
     expect(Array.from(incoming?.args ?? [])).toEqual([0x07]);
+    expect(incoming?.authorization.laneGrant.metadata.get("grant-scope")).toBe("echo:raw");
 
     await connection.sendResponse(77n, new Uint8Array([0x01]));
     const response = decodeMessage(
@@ -683,7 +840,7 @@ describe("connection", () => {
     );
 
     await rawServerLink.send(
-      encodeMessage(messageLaneOpen(2n, peerSettings, emptyMetadata())),
+      encodeMessage(messageLaneOpen(2n, peerSettings, voxServiceMetadata("NoAcceptor"))),
     );
     const reject = decodeMessage(
       (await withTimeout(rawServerLink.recv(), "service lane reject"))!,
@@ -702,6 +859,45 @@ describe("connection", () => {
     rawServerLink.close();
     initiatorConnection.handle().shutdown();
     await Promise.allSettled([initiatorConnection.closed()]);
+  });
+
+  // r[verify lane.authorization]
+  // r[verify lane.open.wire.rejection]
+  it("lets lane acceptors reject inbound service lanes with structured reasons", async () => {
+    const peerSettings: ConnectionSettings = {
+      parity: { tag: "Odd" },
+      max_concurrent_requests: 64,
+      initial_channel_credit: 16,
+    };
+    const [clientLink, rawServerLink] = memoryLinkPair();
+    const serverConnection = await withTimeout(
+      establishRawInitiator(clientLink, rawServerLink, {
+        onLane: (request, pending) => {
+          expect(request.service).toBe("Secret");
+          void pending.reject(LaneRejection.withMessage("forbidden", "not for this peer"));
+        },
+      }),
+      "raw initiator establishment with rejecting acceptor",
+    );
+
+    await rawServerLink.send(
+      encodeMessage(messageLaneOpen(2n, peerSettings, voxServiceMetadata("Secret"))),
+    );
+    const reject = decodeMessage(
+      (await withTimeout(rawServerLink.recv(), "service lane policy reject"))!,
+    );
+    expect(reject.lane_id).toBe(2n);
+    expect(reject.payload.tag).toBe("LaneReject");
+    if (reject.payload.tag === "LaneReject") {
+      const rejection = LaneRejection.fromMetadata(coerceMetadata(reject.payload.value.metadata));
+      expect(rejection.reason).toBe("forbidden");
+      expect(rejection.message()).toBe("not for this peer");
+    }
+
+    clientLink.close();
+    rawServerLink.close();
+    serverConnection.handle().shutdown();
+    await Promise.allSettled([serverConnection.closed()]);
   });
 
   // r[verify lane.open.result]

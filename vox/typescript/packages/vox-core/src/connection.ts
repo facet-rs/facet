@@ -57,9 +57,17 @@ import {
   performInitiatorTransportPrologue,
 } from "./transport_prologue.ts";
 import {
+  ConnectionDeclinedError,
+  emptyLaneGrant,
   handshakeAsAcceptor,
   handshakeAsInitiator,
   type HandshakeResult,
+  type IdentityResolver,
+  type LaneGrant,
+  type PeerEvidence,
+  type PeerIdentity,
+  requestAuthorizationContext,
+  type RequestAuthorizationContext,
   voxServiceMetadata,
 } from "./handshake.ts";
 import {
@@ -82,6 +90,9 @@ export const LANE_REJECT_REASONS = [
   "schema-incompatible",
   "policy-rejected",
 ] as const;
+// r[impl lane.authorization]
+// r[impl lane.authorization.filtered]
+// r[impl rejection.reason.taxonomy]
 export type LaneRejectReason = (typeof LANE_REJECT_REASONS)[number];
 
 function isLaneRejectReason(value: unknown): value is LaneRejectReason {
@@ -104,6 +115,8 @@ function laneRejectionMessage(
 }
 
 // r[impl lane.open.result]
+// r[impl lane.authorization]
+// r[impl lane.authorization.filtered]
 export class LaneRejection {
   readonly reason: LaneRejectReason;
   readonly metadata: Metadata;
@@ -148,6 +161,51 @@ export class LaneRejection {
   }
 }
 
+// r[impl lane.authorization]
+// r[impl lane.authorization.context]
+export interface LaneRequest {
+  readonly metadata: Metadata;
+  readonly service: string;
+  readonly peerIdentity: PeerIdentity;
+  readonly peerEvidence: PeerEvidence;
+}
+
+// r[impl lane.accept.api]
+export type LaneAcceptor =
+  (request: LaneRequest, lane: PendingLane) => void | Promise<void>;
+
+// r[impl lane.accept.api]
+// r[impl lane.authorization.context]
+export class PendingLane {
+  private handled = false;
+
+  constructor(
+    readonly id: bigint,
+    private readonly acceptFn: (grant: LaneGrant) => Promise<Lane>,
+    private readonly rejectFn: (rejection: LaneRejection) => Promise<void>,
+  ) {}
+
+  isHandled(): boolean {
+    return this.handled;
+  }
+
+  async accept(grant: LaneGrant = emptyLaneGrant()): Promise<Lane> {
+    if (this.handled) {
+      throw new Error("PendingLane already handled");
+    }
+    this.handled = true;
+    return await this.acceptFn(grant);
+  }
+
+  async reject(rejection: LaneRejection = LaneRejection.new("policy-rejected")): Promise<void> {
+    if (this.handled) {
+      throw new Error("PendingLane already handled");
+    }
+    this.handled = true;
+    await this.rejectFn(rejection);
+  }
+}
+
 interface PendingResponse {
   resolve: (payload: Uint8Array) => void;
   reject: (error: Error) => void;
@@ -170,12 +228,14 @@ interface PendingResponse {
 }
 
 export interface IncomingCall {
+  // r[impl request.authorization]
   requestId: bigint;
   methodId: bigint;
   args: Uint8Array;
   channels: bigint[];
   metadata: Metadata;
   laneEpoch: number;
+  authorization: RequestAuthorizationContext;
 }
 
 export interface LaneDebugSnapshot {
@@ -201,7 +261,8 @@ export interface ConnectionBuilderOptions {
   maxConcurrentRequests?: number;
   channelCapacity?: number;
   metadata?: Metadata;
-  onLane?: (lane: Lane) => void | Promise<void>;
+  identityResolver?: IdentityResolver;
+  onLane?: LaneAcceptor;
   observer?: VoxObserver;
   /**
    * If set, the connection sends a Ping every `keepaliveIntervalMs` milliseconds
@@ -277,7 +338,13 @@ async function observeEstablishment<T>(
     observeEstablishmentFinished(observer, context, startedAt, "ok");
     return result;
   } catch (error) {
-    observeEstablishmentFinished(observer, context, startedAt, "error", error);
+    observeEstablishmentFinished(
+      observer,
+      context,
+      startedAt,
+      error instanceof ConnectionDeclinedError ? "rejected" : "error",
+      error,
+    );
     throw error;
   }
 }
@@ -313,6 +380,7 @@ async function makeInitiatorEstablishedTransport(
 
   if (isLinkSource(transport)) {
     const attachment = await transport.nextLink();
+    const peerEvidence = attachment.peerEvidence;
     await observeEstablishment(
       observer,
       { role: "initiator", phase: "transport-prologue" },
@@ -325,6 +393,11 @@ async function makeInitiatorEstablishedTransport(
         attachment.link,
         localSettings,
         options.metadata ?? emptyMetadata(),
+        {
+          peerEvidence,
+          identityResolver: options.identityResolver,
+          observer,
+        },
       ),
     );
     const messagePlan = await observeEstablishment(
@@ -351,6 +424,10 @@ async function makeInitiatorEstablishedTransport(
       transport,
       localSettings,
       options.metadata ?? emptyMetadata(),
+      {
+        identityResolver: options.identityResolver,
+        observer,
+      },
     ),
   );
   const messagePlan = await observeEstablishment(
@@ -387,6 +464,7 @@ async function makeAcceptorEstablishedTransport(
   const attachment = isLinkSource(transport)
     ? await transport.nextLink()
     : { link: transport };
+  const peerEvidence = attachment.peerEvidence;
   await observeEstablishment(
     observer,
     { role: "acceptor", phase: "transport-prologue" },
@@ -407,6 +485,11 @@ async function makeAcceptorEstablishedTransport(
       attachment.link,
       localSettings,
       options.metadata ?? emptyMetadata(),
+      {
+        peerEvidence,
+        identityResolver: options.identityResolver,
+        observer,
+      },
     ),
   );
   const messagePlan = await observeEstablishment(
@@ -488,14 +571,18 @@ class ConnectionCore {
   private nextKeepaliveNonce = 1n;
   private readonly localInitialLaneSettings: ConnectionSettings;
   private readonly peerInitialLaneSettings: ConnectionSettings;
-  private readonly onLane?: (lane: Lane) => void | Promise<void>;
+  private readonly peerIdentity: PeerIdentity;
+  private readonly peerEvidence: PeerEvidence;
+  private readonly onLane?: LaneAcceptor;
   private readonly observer?: VoxObserver;
 
   constructor(
     conduit: Conduit<Message>,
     localInitialLaneSettings: ConnectionSettings,
     peerInitialLaneSettings: ConnectionSettings,
-    onLane?: (lane: Lane) => void | Promise<void>,
+    peerIdentity: PeerIdentity,
+    peerEvidence: PeerEvidence,
+    onLane?: LaneAcceptor,
     keepaliveIntervalMs = 0,
     keepaliveTimeoutMs = 0,
     observer?: VoxObserver,
@@ -503,6 +590,8 @@ class ConnectionCore {
     this.conduit = conduit;
     this.localInitialLaneSettings = localInitialLaneSettings;
     this.peerInitialLaneSettings = peerInitialLaneSettings;
+    this.peerIdentity = peerIdentity;
+    this.peerEvidence = peerEvidence;
     // r[impl connection.lane-id-parity]
     this.nextLaneId = firstIdForParity(localInitialLaneSettings.parity);
     this.connectionHandle = new ConnectionHandle(this);
@@ -515,6 +604,17 @@ class ConnectionCore {
 
   connectionHandleValue(): ConnectionHandle {
     return this.connectionHandle;
+  }
+
+  peerIdentityValue(): PeerIdentity {
+    // r[impl connection.identity]
+    // r[impl connection.identity.scope]
+    return this.peerIdentity;
+  }
+
+  peerEvidenceValue(): PeerEvidence {
+    // r[impl connection.evidence]
+    return this.peerEvidence;
   }
 
   defaultLaneSettings(): ConnectionSettings {
@@ -865,6 +965,8 @@ class ConnectionCore {
     // r[impl lane.accept.api]
     // r[impl lane.open.wire.rejection]
     // r[impl lane.open.settings]
+    // r[impl lane.authorization]
+    // r[impl lane.authorization.context]
     const establishmentContext: EstablishmentContext = {
       role: roleName(roleFromParity(this.localInitialLaneSettings.parity)),
       phase: "service-lane-open",
@@ -874,20 +976,6 @@ class ConnectionCore {
       this.observer,
       establishmentContext,
     );
-
-    if (!this.onLane) {
-      observeEstablishmentFinished(
-        this.observer,
-        establishmentContext,
-        establishmentStartedAt,
-        "rejected",
-      );
-      await this.sendLaneReject(
-        laneId,
-        LaneRejection.withMessage("not-ready", "no lane acceptor configured"),
-      );
-      return;
-    }
 
     if (value.connection_settings.initial_channel_credit <= 0) {
       observeEstablishmentFinished(
@@ -907,40 +995,183 @@ class ConnectionCore {
       return;
     }
 
+    const authorizationContext: EstablishmentContext = {
+      role: establishmentContext.role,
+      phase: "lane-authorization",
+      laneId,
+    };
+    const authorizationStartedAt = observeEstablishmentStarted(
+      this.observer,
+      authorizationContext,
+    );
+
+    if (!this.onLane) {
+      observeEstablishmentFinished(
+        this.observer,
+        authorizationContext,
+        authorizationStartedAt,
+        "rejected",
+      );
+      observeEstablishmentFinished(
+        this.observer,
+        establishmentContext,
+        establishmentStartedAt,
+        "rejected",
+      );
+      await this.sendLaneReject(
+        laneId,
+        LaneRejection.withMessage("not-ready", "no lane acceptor configured"),
+      );
+      return;
+    }
+
     const localSettings: ConnectionSettings = {
       // r[impl lane.request-channel-parity]
       parity: oppositeParity(value.connection_settings.parity),
       max_concurrent_requests: value.connection_settings.max_concurrent_requests,
       initial_channel_credit: value.connection_settings.initial_channel_credit,
     };
-    const lane = new Lane(
-      this,
-      laneId,
-      localSettings,
-      value.connection_settings,
-    );
-    this.lanes.set(laneId, lane);
-    try {
-      await this.sendMessage(messageLaneAccept(laneId, localSettings, emptyMetadata()));
-    } catch (error) {
-      this.lanes.delete(laneId);
-      lane.close(error instanceof Error ? error : new ConnectionError(String(error)));
+
+    const metadata = coerceMetadata(value.metadata);
+    const service = metadataString(metadata, "vox-service");
+    if (!service) {
+      observeEstablishmentFinished(
+        this.observer,
+        authorizationContext,
+        authorizationStartedAt,
+        "rejected",
+      );
+      await this.sendLaneReject(
+        laneId,
+        LaneRejection.withMessage("unknown-service", "missing required vox-service metadata"),
+      );
       observeEstablishmentFinished(
         this.observer,
         establishmentContext,
         establishmentStartedAt,
-        "error",
-        error,
+        "rejected",
       );
+      return;
+    }
+
+    const request: LaneRequest = {
+      metadata,
+      service,
+      peerIdentity: this.peerIdentity,
+      peerEvidence: this.peerEvidence,
+    };
+    const pending = new PendingLane(
+      laneId,
+      async (grant) => {
+        const lane = new Lane(
+          this,
+          laneId,
+          localSettings,
+          value.connection_settings,
+          grant,
+        );
+        this.lanes.set(laneId, lane);
+        observeEstablishmentFinished(
+          this.observer,
+          authorizationContext,
+          authorizationStartedAt,
+          "ok",
+        );
+        const grantContext: EstablishmentContext = {
+          role: establishmentContext.role,
+          phase: "lane-grant",
+          laneId,
+        };
+        const grantStartedAt = observeEstablishmentStarted(
+          this.observer,
+          grantContext,
+        );
+        try {
+          await this.sendMessage(messageLaneAccept(laneId, localSettings, grant.metadata));
+          observeEstablishmentFinished(
+            this.observer,
+            grantContext,
+            grantStartedAt,
+            "ok",
+          );
+        } catch (error) {
+          this.lanes.delete(laneId);
+          lane.close(error instanceof Error ? error : new ConnectionError(String(error)));
+          observeEstablishmentFinished(
+            this.observer,
+            grantContext,
+            grantStartedAt,
+            "error",
+            error,
+          );
+          observeEstablishmentFinished(
+            this.observer,
+            establishmentContext,
+            establishmentStartedAt,
+            "error",
+            error,
+          );
+          throw error;
+        }
+        observeEstablishmentFinished(
+          this.observer,
+          establishmentContext,
+          establishmentStartedAt,
+          "ok",
+        );
+        return lane;
+      },
+      async (rejection) => {
+        observeEstablishmentFinished(
+          this.observer,
+          authorizationContext,
+          authorizationStartedAt,
+          "rejected",
+        );
+        try {
+          await this.sendLaneReject(laneId, rejection);
+          observeEstablishmentFinished(
+            this.observer,
+            establishmentContext,
+            establishmentStartedAt,
+            "rejected",
+          );
+        } catch (error) {
+          observeEstablishmentFinished(
+            this.observer,
+            establishmentContext,
+            establishmentStartedAt,
+            "error",
+            error,
+          );
+          throw error;
+        }
+      },
+    );
+
+    try {
+      await this.onLane(request, pending);
+    } catch (error) {
+      if (!pending.isHandled()) {
+        await pending.reject(
+          LaneRejection.withMessage(
+            "policy-rejected",
+            error instanceof Error ? error.message : String(error),
+          ),
+        );
+        return;
+      }
       throw error;
     }
-    observeEstablishmentFinished(
-      this.observer,
-      establishmentContext,
-      establishmentStartedAt,
-      "ok",
-    );
-    void this.onLane(lane);
+
+    if (!pending.isHandled()) {
+      await pending.reject(
+        LaneRejection.withMessage(
+          "policy-rejected",
+          "lane acceptor returned without accepting or rejecting",
+        ),
+      );
+    }
   }
 
   // r[impl lane.open.result]
@@ -1014,6 +1245,7 @@ class ConnectionCore {
     // r[impl rpc.cancel]
     // r[impl rpc.cancel.channels]
     // r[impl rpc.pipelining]
+    // r[impl request.authorization]
     const lane = this.getLane(laneId);
     switch (request.body.tag) {
       case "Call": {
@@ -1044,6 +1276,7 @@ class ConnectionCore {
           channels: request.body.value.channels,
           metadata: coerceMetadata(request.body.value.metadata),
           laneEpoch: lane.currentEpoch(),
+          authorization: lane.requestAuthorization(this.peerIdentity, this.peerEvidence),
         });
         return;
       }
@@ -1120,6 +1353,17 @@ export class ConnectionHandle {
     this.core = core;
   }
 
+  peerIdentity(): PeerIdentity {
+    // r[impl connection.identity]
+    // r[impl connection.identity.scope]
+    return this.core.peerIdentityValue();
+  }
+
+  peerEvidence(): PeerEvidence {
+    // r[impl connection.evidence]
+    return this.core.peerEvidenceValue();
+  }
+
   openLane(
     settings: ConnectionSettings = this.core.defaultLaneSettings(),
     metadata: Metadata = emptyMetadata(),
@@ -1165,17 +1409,20 @@ export class Lane {
   readonly id: bigint;
   readonly localSettings: ConnectionSettings;
   readonly peerSettings: ConnectionSettings;
+  readonly laneGrant: LaneGrant;
 
   constructor(
     connection: ConnectionCore,
     id: bigint,
     localSettings: ConnectionSettings,
     peerSettings: ConnectionSettings,
+    laneGrant: LaneGrant = emptyLaneGrant(),
   ) {
     this.connection = connection;
     this.id = id;
     this.localSettings = localSettings;
     this.peerSettings = peerSettings;
+    this.laneGrant = laneGrant;
     // r[impl rpc.flow-control.max-concurrent-requests]
     // r[impl rpc.flow-control.max-concurrent-requests.outbound]
     this.outboundRequestLimit = new AsyncSemaphore(peerSettings.max_concurrent_requests);
@@ -1215,6 +1462,14 @@ export class Lane {
 
   currentEpoch(): number {
     return this.epoch;
+  }
+
+  requestAuthorization(
+    peerIdentity: PeerIdentity,
+    peerEvidence: PeerEvidence,
+  ): RequestAuthorizationContext {
+    // r[impl request.authorization]
+    return requestAuthorizationContext(peerIdentity, peerEvidence, this.laneGrant);
   }
 
   // r[impl rpc.debug.snapshot]
@@ -1876,6 +2131,8 @@ export class Connection {
       conduit,
       handshake.localSettings,
       handshake.peerSettings,
+      handshake.peerIdentity,
+      handshake.peerEvidence,
       options.onLane,
       options.keepaliveIntervalMs ?? 0,
       options.keepaliveTimeoutMs ?? 0,
@@ -1961,6 +2218,10 @@ export async function connectOnLink(
       link,
       localSettings,
       options.metadata ?? emptyMetadata(),
+      {
+        identityResolver: options.identityResolver,
+        observer: options.observer,
+      },
     ),
   );
   const messagePlan = await observeEstablishment(
@@ -1991,6 +2252,10 @@ export async function acceptOnLink(
       link,
       localSettings,
       options.metadata ?? emptyMetadata(),
+      {
+        identityResolver: options.identityResolver,
+        observer: options.observer,
+      },
     ),
   );
   const messagePlan = await observeEstablishment(

@@ -1,8 +1,8 @@
 use std::{future::Future, pin::Pin, sync::Arc};
 
 use crate::{
-    LaneId, MaybeSend, MaybeSendFuture, MaybeSync, Metadata, MethodId, RequestCall, RequestId,
-    RequestResponse, SchemaRecvTracker, SelfRef, VoxError,
+    LaneId, MaybeSend, MaybeSendFuture, MaybeSync, Metadata, MethodId, RequestAuthorizationContext,
+    RequestCall, RequestId, RequestResponse, SchemaRecvTracker, SelfRef, VoxError,
 };
 
 /// A boxed future that is `Send` on native targets and `!Send` on wasm32.
@@ -207,6 +207,11 @@ pub trait ReplySink: MaybeSend + MaybeSync + 'static {
 
     /// Return the lane identifier for this reply sink when available.
     fn lane_id(&self) -> Option<LaneId> {
+        None
+    }
+
+    /// Return request authorization facts exposed by this reply sink when available.
+    fn authorization_context(&self) -> Option<RequestAuthorizationContext> {
         None
     }
 }

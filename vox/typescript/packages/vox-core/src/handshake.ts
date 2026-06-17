@@ -15,8 +15,16 @@ import {
   registry,
   schemaId,
   handshakeSchemaClosure,
+  type Decline,
+  type EstablishmentRejectReason as WireEstablishmentRejectReason,
   type HandshakeMessage,
 } from "./handshake.phon.generated.ts";
+import {
+  observeEstablishmentFinished,
+  observeEstablishmentStarted,
+  type EstablishmentRole,
+  type VoxObserver,
+} from "./observer.ts";
 
 // Re-export Metadata for downstream consumers that used to import it from here.
 export type { Metadata } from "@bearcove/vox-wire";
@@ -26,6 +34,227 @@ export interface HandshakeResult {
   peerSettings: ConnectionSettings;
   peerMessageSchema: Uint8Array;
   peerMetadata: Metadata;
+  peerEvidence: PeerEvidence;
+  peerIdentity: PeerIdentity;
+}
+
+export const ESTABLISHMENT_REJECT_REASONS = [
+  "unauthenticated",
+  "forbidden",
+  "not-ready",
+  "draining",
+  "unsupported",
+  "policy-rejected",
+] as const;
+// r[impl rejection.reason.taxonomy]
+// r[impl connection.policy.establishment.rejection]
+export type EstablishmentRejectReason = (typeof ESTABLISHMENT_REJECT_REASONS)[number];
+
+// r[impl connection.identity.use-cases]
+// r[impl connection.identity.redaction]
+export type PeerEvidenceItem =
+  | { kind: "synthetic"; label: string }
+  | { kind: "tls"; verifiedSubject?: string; alpn?: string }
+  | { kind: "unix-peer-credentials"; uid?: number; gid?: number; pid?: number }
+  | { kind: "platform-process"; description: string }
+  | { kind: "xpc"; codeSigningIdentity: string }
+  | { kind: "in-process"; component: string };
+
+const peerEvidenceBrand: unique symbol = Symbol("vox.peerEvidence");
+
+// r[impl connection.evidence]
+export interface PeerEvidence {
+  readonly [peerEvidenceBrand]: true;
+  readonly items: readonly PeerEvidenceItem[];
+}
+
+export type PeerIdentityForm =
+  | "anonymous"
+  | "synthetic"
+  | "local-process"
+  | "certificate-backed"
+  | "application-user"
+  | "composite";
+
+export type IdentityBasisProvenance =
+  | "evidence-backed"
+  | "verified-claim-backed"
+  | "synthetic";
+
+// r[impl connection.identity.forms]
+export interface IdentityBasis {
+  readonly form: PeerIdentityForm;
+  readonly provenance: IdentityBasisProvenance;
+  readonly redacted: string;
+}
+
+// r[impl connection.identity]
+// r[impl connection.identity.late-claims]
+// r[impl connection.identity.scope]
+export interface PeerIdentity {
+  readonly epoch: 0;
+  readonly form: PeerIdentityForm;
+  readonly bases: readonly IdentityBasis[];
+}
+
+// r[impl connection.identity.inputs]
+// r[impl connection.identity.local]
+export interface IdentityResolutionContext {
+  readonly role: EstablishmentRole;
+  readonly evidence: PeerEvidence;
+  readonly claims: Metadata;
+}
+
+export interface IdentityDecline {
+  readonly kind: "decline";
+  readonly reason: EstablishmentRejectReason;
+  readonly metadata?: Metadata;
+}
+
+export type IdentityResolution = PeerIdentity | IdentityDecline;
+export type IdentityResolver =
+  (context: IdentityResolutionContext) => IdentityResolution | Promise<IdentityResolution>;
+
+export interface HandshakePolicyOptions {
+  peerEvidence?: PeerEvidence;
+  identityResolver?: IdentityResolver;
+  observer?: VoxObserver;
+}
+
+export class ConnectionDeclinedError extends Error {
+  readonly reason: EstablishmentRejectReason;
+  readonly metadata: Metadata;
+  readonly receivedFromPeer: boolean;
+
+  constructor(
+    reason: EstablishmentRejectReason,
+    metadata: Metadata = emptyMetadata(),
+    receivedFromPeer = false,
+  ) {
+    super(`connection establishment rejected: ${reason}`);
+    this.name = "ConnectionDeclinedError";
+    this.reason = reason;
+    this.metadata = metadata;
+    this.receivedFromPeer = receivedFromPeer;
+  }
+}
+
+export function noPeerEvidence(): PeerEvidence {
+  return { [peerEvidenceBrand]: true, items: [] };
+}
+
+export function syntheticPeerEvidence(label: string): PeerEvidence {
+  return { [peerEvidenceBrand]: true, items: [{ kind: "synthetic", label }] };
+}
+
+export function anonymousPeerIdentity(): PeerIdentity {
+  return { epoch: 0, form: "anonymous", bases: [] };
+}
+
+export function identityBasis(
+  form: PeerIdentityForm,
+  provenance: IdentityBasisProvenance,
+  redacted: string,
+): IdentityBasis {
+  return { form, provenance, redacted };
+}
+
+export function peerIdentityFromBasis(basis: IdentityBasis): PeerIdentity {
+  return { epoch: 0, form: basis.form, bases: [basis] };
+}
+
+export function compositePeerIdentity(bases: readonly IdentityBasis[]): PeerIdentity {
+  return {
+    epoch: 0,
+    form: bases.length <= 1 ? bases[0]?.form ?? "anonymous" : "composite",
+    bases: [...bases],
+  };
+}
+
+// r[impl lane.authorization.context]
+// r[impl request.authorization]
+export interface LaneGrant {
+  readonly metadata: Metadata;
+}
+
+export function emptyLaneGrant(): LaneGrant {
+  return { metadata: emptyMetadata() };
+}
+
+// r[impl request.authorization]
+export interface RequestAuthorizationContext {
+  readonly peerIdentity: PeerIdentity;
+  readonly peerEvidence: PeerEvidence;
+  readonly laneGrant: LaneGrant;
+}
+
+export function requestAuthorizationContext(
+  peerIdentity: PeerIdentity,
+  peerEvidence: PeerEvidence,
+  laneGrant: LaneGrant = emptyLaneGrant(),
+): RequestAuthorizationContext {
+  return { peerIdentity, peerEvidence, laneGrant };
+}
+
+export function anonymousRequestAuthorizationContext(): RequestAuthorizationContext {
+  return requestAuthorizationContext(
+    anonymousPeerIdentity(),
+    noPeerEvidence(),
+    emptyLaneGrant(),
+  );
+}
+
+export function declineIdentity(
+  reason: EstablishmentRejectReason,
+  metadata: Metadata = emptyMetadata(),
+): IdentityDecline {
+  return { kind: "decline", reason, metadata };
+}
+
+function isIdentityDecline(value: IdentityResolution): value is IdentityDecline {
+  return "kind" in value && value.kind === "decline";
+}
+
+function wireRejectReason(reason: EstablishmentRejectReason): WireEstablishmentRejectReason {
+  switch (reason) {
+    case "unauthenticated":
+      return { tag: "Unauthenticated" };
+    case "forbidden":
+      return { tag: "Forbidden" };
+    case "not-ready":
+      return { tag: "NotReady" };
+    case "draining":
+      return { tag: "Draining" };
+    case "unsupported":
+      return { tag: "Unsupported" };
+    case "policy-rejected":
+      return { tag: "PolicyRejected" };
+  }
+}
+
+function rejectReasonFromWire(reason: WireEstablishmentRejectReason): EstablishmentRejectReason {
+  switch (reason.tag) {
+    case "Unauthenticated":
+      return "unauthenticated";
+    case "Forbidden":
+      return "forbidden";
+    case "NotReady":
+      return "not-ready";
+    case "Draining":
+      return "draining";
+    case "Unsupported":
+      return "unsupported";
+    case "PolicyRejected":
+      return "policy-rejected";
+  }
+}
+
+function declineErrorFromWire(decline: Decline): ConnectionDeclinedError {
+  return new ConnectionDeclinedError(
+    rejectReasonFromWire(decline.reason),
+    coerceMetadata(decline.metadata),
+    true,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -90,6 +319,84 @@ async function sendSorryAndReject(link: Link, reason: string): Promise<never> {
   throw new Error(reason);
 }
 
+async function sendDeclineAndReject(
+  link: Link,
+  reason: EstablishmentRejectReason,
+  metadata: Metadata = emptyMetadata(),
+): Promise<never> {
+  // r[impl connection.handshake.decline]
+  // r[impl connection.policy.establishment.rejection]
+  // r[impl rpc.metadata.records]
+  await sendHandshake(link, {
+    tag: "Decline",
+    value: {
+      reason: wireRejectReason(reason),
+      metadata,
+    },
+  });
+  throw new ConnectionDeclinedError(reason, metadata);
+}
+
+// r[impl connection.identity.resolver]
+// r[impl connection.policy.establishment]
+async function resolvePeerIdentity(
+  role: EstablishmentRole,
+  claims: Metadata,
+  link: Link,
+  options: HandshakePolicyOptions,
+): Promise<PeerIdentity> {
+  const evidence = options.peerEvidence ?? noPeerEvidence();
+  const resolver = options.identityResolver ??
+    (() => anonymousPeerIdentity());
+  const identityContext = { role, phase: "identity-resolution" as const };
+  const policyContext = { role, phase: "connection-policy" as const };
+  const identityStartedAt = observeEstablishmentStarted(options.observer, identityContext);
+  const policyStartedAt = observeEstablishmentStarted(options.observer, policyContext);
+
+  try {
+    const result = await resolver({ role, evidence, claims });
+    if (isIdentityDecline(result)) {
+      await sendDeclineAndReject(
+        link,
+        result.reason,
+        result.metadata ?? emptyMetadata(),
+      );
+      throw new Error("unreachable after sending Decline");
+    }
+    const identity: PeerIdentity = result;
+    observeEstablishmentFinished(
+      options.observer,
+      identityContext,
+      identityStartedAt,
+      "ok",
+    );
+    observeEstablishmentFinished(
+      options.observer,
+      policyContext,
+      policyStartedAt,
+      "ok",
+    );
+    return identity;
+  } catch (error) {
+    const outcome = error instanceof ConnectionDeclinedError ? "rejected" : "error";
+    observeEstablishmentFinished(
+      options.observer,
+      identityContext,
+      identityStartedAt,
+      outcome,
+      error,
+    );
+    observeEstablishmentFinished(
+      options.observer,
+      policyContext,
+      policyStartedAt,
+      outcome,
+      error,
+    );
+    throw error;
+  }
+}
+
 function oppositeParity(parity: Parity): Parity {
   return parity.tag === "Odd" ? { tag: "Even" } : { tag: "Odd" };
 }
@@ -103,7 +410,10 @@ export async function handshakeAsInitiator(
   link: Link,
   settings: ConnectionSettings,
   metadata: Metadata = emptyMetadata(),
+  policy: HandshakePolicyOptions = {},
 ): Promise<HandshakeResult> {
+  // r[impl connection.handshake.metadata]
+  // r[impl rpc.metadata.records]
   await sendHandshake(link, {
     tag: "Hello",
     value: {
@@ -115,14 +425,23 @@ export async function handshakeAsInitiator(
   });
 
   const response = await recvHandshake(link);
+  if (response.tag === "Decline") {
+    throw declineErrorFromWire(response.value);
+  }
   if (response.tag === "Sorry") {
     throw new Error(`handshake rejected: ${response.value.reason}`);
   }
   if (response.tag !== "HelloYourself") {
-    throw new Error("expected HelloYourself during handshake");
+    throw new Error("expected HelloYourself, Decline, or Sorry during handshake");
   }
 
+  const helloYourself = response;
+  const peerMetadata = coerceMetadata(helloYourself.value.metadata);
   const peerMessageSchema = new Uint8Array(response.value.message_payload_schema);
+  if (helloYourself.value.connection_settings.initial_channel_credit <= 0) {
+    await sendSorryAndReject(link, "initial_channel_credit must be greater than zero");
+  }
+  const peerIdentity = await resolvePeerIdentity("initiator", peerMetadata, link, policy);
   const rejectionReason = peerMessageSchemaRejectionReason(peerMessageSchema);
   if (rejectionReason !== null) {
     await sendSorryAndReject(link, rejectionReason);
@@ -130,13 +449,13 @@ export async function handshakeAsInitiator(
 
   await sendHandshake(link, { tag: "LetsGo", value: {} });
 
-  const helloYourself = response;
-  const peerMetadata = coerceMetadata(helloYourself.value.metadata);
   return {
     localSettings: settings,
     peerSettings: helloYourself.value.connection_settings,
     peerMessageSchema,
     peerMetadata,
+    peerEvidence: policy.peerEvidence ?? noPeerEvidence(),
+    peerIdentity,
   };
 }
 
@@ -144,13 +463,21 @@ export async function handshakeAsAcceptor(
   link: Link,
   settings: ConnectionSettings,
   metadata: Metadata = emptyMetadata(),
+  policy: HandshakePolicyOptions = {},
 ): Promise<HandshakeResult> {
+  // r[impl connection.handshake.metadata]
+  // r[impl rpc.metadata.records]
   const first = await recvHandshake(link);
   if (first.tag !== "Hello") {
     throw new Error("expected Hello during handshake");
   }
   const hello = first;
+  const peerMetadata = coerceMetadata(hello.value.metadata);
   const peerMessageSchema = new Uint8Array(hello.value.message_payload_schema);
+  if (hello.value.connection_settings.initial_channel_credit <= 0) {
+    await sendSorryAndReject(link, "initial_channel_credit must be greater than zero");
+  }
+  const peerIdentity = await resolvePeerIdentity("acceptor", peerMetadata, link, policy);
   const rejectionReason = peerMessageSchemaRejectionReason(peerMessageSchema);
   if (rejectionReason !== null) {
     await sendSorryAndReject(link, rejectionReason);
@@ -170,19 +497,23 @@ export async function handshakeAsAcceptor(
   });
 
   const third = await recvHandshake(link);
+  if (third.tag === "Decline") {
+    throw declineErrorFromWire(third.value);
+  }
   if (third.tag === "Sorry") {
     throw new Error(`handshake rejected: ${third.value.reason}`);
   }
   if (third.tag !== "LetsGo") {
-    throw new Error("expected LetsGo during handshake");
+    throw new Error("expected LetsGo, Decline, or Sorry during handshake");
   }
 
-  const peerMetadata = coerceMetadata(hello.value.metadata);
   return {
     localSettings,
     peerSettings: hello.value.connection_settings,
     peerMessageSchema,
     peerMetadata,
+    peerEvidence: policy.peerEvidence ?? noPeerEvidence(),
+    peerIdentity,
   };
 }
 

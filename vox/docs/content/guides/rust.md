@@ -25,10 +25,13 @@ The best way to learn the Rust API is to run the examples in order, from simples
 - Learn: `open_lane`, metadata-based accept, and independent per-lane drivers.
 
 > ```rust
-> match requested_service(metadata) {
->     Some("counter") => { ... }
->     Some("string") => { ... }
->     _ => Err(...),
+> match request.service() {
+>     "CounterLab" => lane.handle_with(CounterLabDispatcher::new(counter)),
+>     "StringLab" => lane.handle_with(StringLabDispatcher::new(strings)),
+>     _ => return Err(vox::LaneRejection::with_message(
+>         vox::LaneRejectReason::UnknownService,
+>         "unknown service",
+>     )),
 > }
 > ```
 
@@ -81,6 +84,32 @@ let server_task = tokio::spawn(async move {
 });
 
 let client: WordLabClient = vox::connect_lane("127.0.0.1:9000").await?;
+```
+
+Lane acceptors can attach local policy output to the lane. Request handlers
+that opt into `RequestContext` can read the same grant for each call:
+
+```rust
+let acceptor = vox::lane_acceptor_fn(|request, lane| {
+    let grant = vox::LaneGrant::from_metadata(
+        vox::metadata()
+            .str("tenant", request.service())
+            .str("scope", "words:read")
+            .build(),
+    );
+    lane.with_grant(grant)
+        .handle_with(WordLabDispatcher::new(WordLabService));
+    Ok(())
+});
+
+async fn describe(&self, cx: &vox::RequestContext<'_>) -> String {
+    use vox::MetadataExt;
+
+    let tenant = cx
+        .authorization()
+        .and_then(|auth| auth.lane_grant().metadata().meta_str("tenant").map(str::to_owned));
+    tenant.unwrap_or_else(|| "anonymous".to_owned())
+}
 ```
 
 For borrowed returns, implementations receive a `Call` sink:
