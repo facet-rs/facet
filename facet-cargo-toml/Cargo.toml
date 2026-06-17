@@ -1,24 +1,31 @@
 [package]
 name = "facet-cargo-toml"
 version = "0.50.0-rc.0"
-edition = "2024"
 authors = ["Amos Wenger <amos@bearcove.eu>"]
-license = "MIT OR Apache-2.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
 description = "Typed Cargo.toml and Cargo.lock parser using facet"
-repository = "https://github.com/bearcove/facet-cargo-toml"
+repository.workspace = true
 keywords = ["cargo", "toml", "parser", "manifest", "lockfile"]
 categories = ["development-tools", "parser-implementations"]
 
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
-facet = { version = "0.50.0-rc.0", features = ["camino"] }
-facet-error = "0.50.0-rc.0"
-facet-toml = "0.50.0-rc.0"
-facet-reflect = "0.50.0-rc.0"
-facet-value = "0.50.0-rc.0"
-camino = "1.2"
+camino.workspace = true
+facet = { workspace = true, features = ["camino"] }
+facet-error.workspace = true
+facet-reflect.workspace = true
+facet-toml.workspace = true
+facet-value.workspace = true
 
 [dev-dependencies]
-datatest-stable = "0.3"
+datatest-stable.workspace = true
 
 [[test]]
 name = "bearcove_manifests"
@@ -27,3 +34,6 @@ harness = false
 [[test]]
 name = "bearcove_lockfiles"
 harness = false
+
+[lints]
+workspace = true
