@@ -152,9 +152,9 @@ impl<'a> ServerRequest<'a> {
         self.context.request_id()
     }
 
-    /// Virtual connection identifier for this call, when available.
-    pub fn connection_id(&self) -> Option<crate::LaneId> {
-        self.context.connection_id()
+    /// Lane identifier for this call, when available.
+    pub fn lane_id(&self) -> Option<crate::LaneId> {
+        self.context.lane_id()
     }
 
     /// Per-request middleware extensions bag.
@@ -173,7 +173,7 @@ impl<'a> ServerRequest<'a> {
 pub struct ServerResponseContext {
     method: &'static MethodDescriptor,
     request_id: Option<RequestId>,
-    connection_id: Option<LaneId>,
+    lane_id: Option<LaneId>,
     extensions: Extensions,
 }
 
@@ -182,13 +182,13 @@ impl ServerResponseContext {
     pub const fn new(
         method: &'static MethodDescriptor,
         request_id: Option<RequestId>,
-        connection_id: Option<LaneId>,
+        lane_id: Option<LaneId>,
         extensions: Extensions,
     ) -> Self {
         Self {
             method,
             request_id,
-            connection_id,
+            lane_id,
             extensions,
         }
     }
@@ -203,9 +203,9 @@ impl ServerResponseContext {
         self.request_id
     }
 
-    /// Virtual connection identifier for this call, when available.
-    pub const fn connection_id(&self) -> Option<LaneId> {
-        self.connection_id
+    /// Lane identifier for this call, when available.
+    pub const fn lane_id(&self) -> Option<LaneId> {
+        self.lane_id
     }
 
     /// Per-request middleware extensions bag.
@@ -355,8 +355,8 @@ where
         self.inner.as_ref().and_then(|reply| reply.request_id())
     }
 
-    fn connection_id(&self) -> Option<crate::LaneId> {
-        self.inner.as_ref().and_then(|reply| reply.connection_id())
+    fn lane_id(&self) -> Option<crate::LaneId> {
+        self.inner.as_ref().and_then(|reply| reply.lane_id())
     }
 }
 

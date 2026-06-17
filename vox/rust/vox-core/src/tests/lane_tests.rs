@@ -68,7 +68,7 @@ impl RecordingDriverObserver {
             .any(|event| {
                 matches!(
                     event,
-                    DriverEvent::ConnectionClosed { connection_id, .. } if *connection_id == lane_id
+                    DriverEvent::LaneClosed { lane_id: event_lane_id, .. } if *event_lane_id == lane_id
                 )
             })
     }
@@ -131,7 +131,7 @@ async fn open_service_lane_and_call() {
         .await
         .expect("open service lane");
     assert!(
-        !lane_handle.connection_id().is_root(),
+        !lane_handle.lane_id().is_root(),
         "service lane id should not be the control lane"
     );
 
@@ -397,7 +397,7 @@ async fn close_service_lane() {
         .await
         .expect("open service lane");
 
-    let conn_id = lane_handle.connection_id();
+    let conn_id = lane_handle.lane_id();
     assert!(
         !conn_id.is_root(),
         "service lane should not be the control lane"
@@ -485,7 +485,7 @@ async fn dropping_last_lane_caller_does_not_close_service_lane() {
         )
         .await
         .expect("open service lane");
-    let conn_id = lane_handle.connection_id();
+    let conn_id = lane_handle.lane_id();
 
     let mut lane_driver = Driver::new(lane_handle, ());
     let lane_caller = crate::Caller::new(lane_driver.caller());
@@ -564,7 +564,7 @@ async fn close_service_lane_closes_registered_rx_channels() {
         .await
         .expect("open service lane");
 
-    let conn_id = lane_handle.connection_id();
+    let conn_id = lane_handle.lane_id();
     let mut lane_driver = Driver::new(lane_handle, ());
     let caller = crate::Caller::new(lane_driver.caller());
     vox_rt::task::spawn(async move { lane_driver.run().await }.named("lane_client_driver"));

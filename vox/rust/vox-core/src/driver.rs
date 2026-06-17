@@ -28,9 +28,8 @@ use vox_types::{
     ChannelSendOutcome, ChannelTrySendOutcome, DriverEvent, RpcOutcome, VoxObserverHandle,
 };
 use vox_types::{
-    ChannelDebugSnapshot, ChannelReceiverState, ConnectionCloseReason, ConnectionDebugSnapshot,
-    ConnectionDebugState, DriverTaskStatus, RequestDebugSnapshot, RequestDebugState,
-    VoxDebugSnapshot,
+    ChannelDebugSnapshot, ChannelReceiverState, ConnectionCloseReason, DriverTaskStatus,
+    LaneDebugSnapshot, LaneDebugState, RequestDebugSnapshot, RequestDebugState, VoxDebugSnapshot,
 };
 
 use crate::connection::{
@@ -380,12 +379,12 @@ impl ChannelRuntimeDebug {
 
     fn snapshot(
         &self,
-        connection_id: LaneId,
+        lane_id: LaneId,
         channel_id: ChannelId,
         available_send_credit: Option<u32>,
     ) -> ChannelDebugSnapshot {
         ChannelDebugSnapshot {
-            connection_id,
+            lane_id,
             channel_id,
             direction: self.direction,
             debug: self.debug,
@@ -434,7 +433,7 @@ impl ChannelRuntimeDebug {
 /// `pending_responses` is keyed by request ID and therefore tracks live
 /// request attempts.
 struct DriverShared {
-    connection_id: LaneId,
+    lane_id: LaneId,
     pending_responses: SyncMutex<BTreeMap<RequestId, ResponseSlot>>,
     request_ids: SyncMutex<IdAllocator<RequestId>>,
     channel_ids: SyncMutex<IdAllocator<ChannelId>>,
@@ -532,7 +531,7 @@ impl DriverShared {
             .and_then(ChannelDebugContext::into_option)
             .or_else(|| self.channel_contexts.lock().get(&channel_id).copied());
         ChannelEventContext {
-            connection_id: Some(self.connection_id),
+            lane_id: Some(self.lane_id),
             channel_id,
             debug,
         }
@@ -899,7 +898,7 @@ impl DriverShared {
     fn debug_snapshot(
         &self,
         sender: &ConnectionSender,
-        state: ConnectionDebugState,
+        state: LaneDebugState,
         driver_task_status: DriverTaskStatus,
     ) -> VoxDebugSnapshot {
         let now = Instant::now();
@@ -916,7 +915,7 @@ impl DriverShared {
             .iter()
             .map(|(channel_id, channel)| {
                 channel.snapshot(
-                    self.connection_id,
+                    self.lane_id,
                     *channel_id,
                     credits.get(channel_id).copied().flatten(),
                 )
@@ -933,8 +932,8 @@ impl DriverShared {
         let (outbound_queue_depth, outbound_queue_capacity) =
             sender.connection_core.outbound_queue_stats();
         VoxDebugSnapshot {
-            connections: vec![ConnectionDebugSnapshot {
-                connection_id: self.connection_id,
+            lanes: vec![LaneDebugSnapshot {
+                lane_id: self.lane_id,
                 endpoint: None,
                 surface: None,
                 component: None,
@@ -972,11 +971,11 @@ impl DriverShared {
         *self.close_reason.lock() = Some(reason);
     }
 
-    fn connection_debug_state(&self, closed: bool) -> ConnectionDebugState {
+    fn lane_debug_state(&self, closed: bool) -> LaneDebugState {
         if closed {
-            ConnectionDebugState::Closed
+            LaneDebugState::Closed
         } else {
-            ConnectionDebugState::Open
+            LaneDebugState::Open
         }
     }
 }
@@ -1068,7 +1067,7 @@ impl ReplySink for DriverReplySink {
 
         vox_types::dlog!(
             "[driver] send_reply: conn={:?} req={:?} method={:?} payload={}",
-            sender.connection_id(),
+            sender.lane_id(),
             self.request_id,
             self.method_id,
             match &response.ret {
@@ -1077,7 +1076,7 @@ impl ReplySink for DriverReplySink {
             },
         );
         tracing::debug!(
-            conn_id = ?sender.connection_id(),
+            conn_id = ?sender.lane_id(),
             req_id = ?self.request_id,
             method_id = ?self.method_id,
             payload = match &response.ret {
@@ -1101,7 +1100,7 @@ impl ReplySink for DriverReplySink {
 
         vox_types::dlog!(
             "[driver] send_reply direct send: conn={:?} req={:?} method={:?}",
-            sender.connection_id(),
+            sender.lane_id(),
             self.request_id,
             self.method_id
         );
@@ -1110,7 +1109,7 @@ impl ReplySink for DriverReplySink {
             .await
         {
             tracing::debug!(
-                conn_id = ?sender.connection_id(),
+                conn_id = ?sender.lane_id(),
                 req_id = ?self.request_id,
                 method_id = ?self.method_id,
                 "vox driver reply send failed"
@@ -1127,8 +1126,8 @@ impl ReplySink for DriverReplySink {
         Some(self.request_id)
     }
 
-    fn connection_id(&self) -> Option<vox_types::LaneId> {
-        self.sender.as_ref().map(|sender| sender.connection_id())
+    fn lane_id(&self) -> Option<vox_types::LaneId> {
+        self.sender.as_ref().map(|sender| sender.lane_id())
     }
 }
 
@@ -1189,8 +1188,8 @@ impl ChannelSink for DriverChannelSink {
         Some(self.channel_id)
     }
 
-    fn connection_id(&self) -> Option<vox_types::LaneId> {
-        Some(self.sender.connection_id())
+    fn lane_id(&self) -> Option<vox_types::LaneId> {
+        Some(self.sender.lane_id())
     }
 
     fn debug_context(&self) -> Option<ChannelDebugContext> {
@@ -1551,7 +1550,7 @@ fn register_rx_channel_impl(
     vox_types::BoundChannelReceiver {
         receiver: rx,
         replenisher: Some(Arc::new(DriverChannelCreditReplenisher::new(
-            shared.connection_id,
+            shared.lane_id,
             channel_id,
             debug_context,
             Arc::downgrade(shared),
@@ -1900,7 +1899,7 @@ impl DriverCaller {
         self.shared.debug_snapshot(
             &self.sender,
             self.shared
-                .connection_debug_state(self.closed_rx.borrow().is_some()),
+                .lane_debug_state(self.closed_rx.borrow().is_some()),
             if self.closed_rx.borrow().is_some() {
                 DriverTaskStatus::Dead
             } else {
@@ -1937,7 +1936,7 @@ impl DriverCaller {
             .map(|method| (method.service_name, method.method_name))
             .unwrap_or(("<unknown>", "<unknown>"));
         tracing::debug!(
-            conn_id = ?self.sender.connection_id(),
+            conn_id = ?self.sender.lane_id(),
             ?req_id,
             method_id = ?call.method_id,
             service = service_name,
@@ -1946,7 +1945,7 @@ impl DriverCaller {
         );
         if let Some(observer) = &self.shared.observer {
             observer.driver_event(DriverEvent::RequestStarted {
-                connection_id: self.sender.connection_id(),
+                lane_id: self.sender.lane_id(),
                 request_id: req_id,
                 method_id: call.method_id,
             });
@@ -1970,7 +1969,7 @@ impl DriverCaller {
             self.shared.finish_request(req_id, state, termination);
             if let Some(observer) = &self.shared.observer {
                 observer.driver_event(DriverEvent::RequestFinished {
-                    connection_id: self.sender.connection_id(),
+                    lane_id: self.sender.lane_id(),
                     request_id: req_id,
                     outcome,
                     elapsed: request_started_at.elapsed(),
@@ -2003,7 +2002,7 @@ impl DriverCaller {
         // writer element roots threaded into Rx construction.
         self.shared.mark_outbound_progress();
         tracing::debug!(
-            conn_id = ?self.sender.connection_id(),
+            conn_id = ?self.sender.lane_id(),
             ?req_id,
             method_id = ?call.method_id,
             service = service_name,
@@ -2034,7 +2033,7 @@ impl DriverCaller {
             .is_err()
         {
             tracing::debug!(
-                conn_id = ?self.sender.connection_id(),
+                conn_id = ?self.sender.lane_id(),
                 ?req_id,
                 method_id = ?call.method_id,
                 service = service_name,
@@ -2047,7 +2046,7 @@ impl DriverCaller {
         }
         self.shared.mark_request_progress(req_id);
         tracing::debug!(
-            conn_id = ?self.sender.connection_id(),
+            conn_id = ?self.sender.lane_id(),
             ?req_id,
             method_id = ?call.method_id,
             service = service_name,
@@ -2064,7 +2063,7 @@ impl DriverCaller {
                     match result {
                         Ok(Ok(pending)) => {
                             tracing::debug!(
-                                conn_id = ?self.sender.connection_id(),
+                                conn_id = ?self.sender.lane_id(),
                                 ?req_id,
                                 method_id = ?call.method_id,
                                 service = service_name,
@@ -2167,7 +2166,7 @@ enum DriverLocalControl {
 }
 
 struct DriverChannelCreditReplenisher {
-    connection_id: LaneId,
+    lane_id: LaneId,
     channel_id: ChannelId,
     debug_context: Option<ChannelDebugContext>,
     shared: Weak<DriverShared>,
@@ -2179,7 +2178,7 @@ struct DriverChannelCreditReplenisher {
 
 impl DriverChannelCreditReplenisher {
     fn new(
-        connection_id: LaneId,
+        lane_id: LaneId,
         channel_id: ChannelId,
         debug_context: Option<ChannelDebugContext>,
         shared: Weak<DriverShared>,
@@ -2188,7 +2187,7 @@ impl DriverChannelCreditReplenisher {
         observer: Option<VoxObserverHandle>,
     ) -> Self {
         Self {
-            connection_id,
+            lane_id,
             channel_id,
             debug_context,
             shared,
@@ -2238,8 +2237,8 @@ impl ChannelCreditReplenisher for DriverChannelCreditReplenisher {
         Some(self.channel_id)
     }
 
-    fn connection_id(&self) -> Option<LaneId> {
-        Some(self.connection_id)
+    fn lane_id(&self) -> Option<LaneId> {
+        Some(self.lane_id)
     }
 
     fn debug_context(&self) -> Option<ChannelDebugContext> {
@@ -2287,13 +2286,13 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
 
     fn protocol_violation(&self, description: String) {
         tracing::warn!(
-            conn_id = ?self.sender.connection_id(),
+            conn_id = ?self.sender.lane_id(),
             %description,
             "closing connection after protocol violation"
         );
         if let Some(control_tx) = &self.drop_control_seed {
             let _ = control_tx.send(DropControlRequest::ProtocolClose {
-                conn_id: self.sender.connection_id(),
+                conn_id: self.sender.lane_id(),
                 description,
             });
         }
@@ -2309,7 +2308,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
         handler: H,
         request_timeout: RequestTimeoutPolicy,
     ) -> Self {
-        let conn_id = handle.connection_id();
+        let conn_id = handle.lane_id();
         let LaneHandle {
             sender,
             rx,
@@ -2330,7 +2329,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             local_control_rx,
             handler: Arc::new(handler),
             shared: Arc::new(DriverShared {
-                connection_id: conn_id,
+                lane_id: conn_id,
                 pending_responses: SyncMutex::new("driver.pending_responses", BTreeMap::new()),
                 request_ids: SyncMutex::new("driver.request_ids", IdAllocator::new(parity)),
                 channel_ids: SyncMutex::new("driver.channel_ids", IdAllocator::new(parity)),
@@ -2379,7 +2378,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
         self.shared.debug_snapshot(
             &self.sender,
             self.shared
-                .connection_debug_state(self.closed_rx.borrow().is_some()),
+                .lane_debug_state(self.closed_rx.borrow().is_some()),
             DriverTaskStatus::Alive,
         )
     }
@@ -2675,7 +2674,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             ConnectionMessage::Request(req) => {
                 vox_types::dlog!(
                     "[driver] handle_recv request: conn={:?} req={:?} body={} method={:?}",
-                    self.sender.connection_id(),
+                    self.sender.lane_id(),
                     req.id,
                     match &req.body {
                         RequestBody::Call(_) => "Call",
@@ -2689,18 +2688,18 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 );
                 match &req.body {
                     RequestBody::Call(call) => tracing::trace!(
-                        conn_id = self.sender.connection_id().0,
+                        conn_id = self.sender.lane_id().0,
                         req_id = req.id.0,
                         method_id = call.method_id.0,
                         "driver received call"
                     ),
                     RequestBody::Response(_) => tracing::trace!(
-                        conn_id = self.sender.connection_id().0,
+                        conn_id = self.sender.lane_id().0,
                         req_id = req.id.0,
                         "driver received response message"
                     ),
                     RequestBody::Cancel(_) => tracing::trace!(
-                        conn_id = self.sender.connection_id().0,
+                        conn_id = self.sender.lane_id().0,
                         req_id = req.id.0,
                         "driver received cancel message"
                     ),
@@ -2803,7 +2802,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             };
             vox_types::dlog!(
                 "[driver] inbound call: conn={:?} req={:?} method={:?}",
-                self.sender.connection_id(),
+                self.sender.lane_id(),
                 req_id,
                 method_id
             );
@@ -2874,7 +2873,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
         } else if is_response {
             vox_types::dlog!(
                 "[driver] inbound response: conn={:?} req={:?}",
-                self.sender.connection_id(),
+                self.sender.lane_id(),
                 req_id
             );
             tracing::trace!(%req_id, "driver received response");
@@ -2890,7 +2889,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
         } else if is_cancel {
             vox_types::dlog!(
                 "[driver] inbound cancel: conn={:?} req={:?}",
-                self.sender.connection_id(),
+                self.sender.lane_id(),
                 req_id
             );
             // r[impl rpc.cancel]
@@ -2936,7 +2935,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 if self.shared.terminal_channels.lock().contains(&chan_id) {
                     self.shared.record_inbound_item_not_enqueued(chan_id);
                     tracing::trace!(
-                        conn_id = self.sender.connection_id().0,
+                        conn_id = self.sender.lane_id().0,
                         channel_id = chan_id.0,
                         "driver dropped item for terminal channel"
                     );
@@ -2944,7 +2943,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 }
 
                 tracing::trace!(
-                    conn_id = self.sender.connection_id().0,
+                    conn_id = self.sender.lane_id().0,
                     channel_id = chan_id.0,
                     "driver received channel item"
                 );
@@ -2981,7 +2980,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 }
                 let sender = self.shared.inbound_channel_sender(chan_id);
                 tracing::trace!(
-                    conn_id = self.sender.connection_id().0,
+                    conn_id = self.sender.lane_id().0,
                     channel_id = chan_id.0,
                     "driver received channel close"
                 );
@@ -3013,7 +3012,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 }
                 let sender = self.shared.inbound_channel_sender(chan_id);
                 tracing::trace!(
-                    conn_id = self.sender.connection_id().0,
+                    conn_id = self.sender.lane_id().0,
                     channel_id = chan_id.0,
                     "driver received channel reset"
                 );
@@ -3049,7 +3048,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                     }
                 });
                 tracing::trace!(
-                    conn_id = self.sender.connection_id().0,
+                    conn_id = self.sender.lane_id().0,
                     channel_id = chan_id.0,
                     additional,
                     "driver received channel credit"

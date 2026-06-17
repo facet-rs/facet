@@ -19,8 +19,7 @@ use vox_types::{
     VoxObserverHandle,
 };
 use vox_types::{
-    ConnectionCloseReason, ConnectionDebugSnapshot, ConnectionDebugState, DecodeErrorKind,
-    DriverTaskStatus,
+    ConnectionCloseReason, DecodeErrorKind, DriverTaskStatus, LaneDebugSnapshot, LaneDebugState,
 };
 
 mod builders;
@@ -263,7 +262,7 @@ impl PendingLane {
     /// Accept this service lane and run a Driver with the given handler.
     pub fn handle_with(mut self, handler: impl Handler<crate::DriverReplySink> + 'static) {
         let handle = self.handle.take().expect("PendingLane already consumed");
-        let conn_id = handle.connection_id();
+        let conn_id = handle.lane_id();
         trace!(%conn_id, "PendingLane::handle_with: creating driver");
         let mut driver = crate::Driver::new(handle, handler);
         #[cfg(not(target_arch = "wasm32"))]
@@ -282,7 +281,7 @@ impl PendingLane {
         handler: impl Handler<crate::DriverReplySink> + 'static,
     ) -> C {
         let handle = self.handle.take().expect("PendingLane already consumed");
-        let conn_id = handle.connection_id();
+        let conn_id = handle.lane_id();
         trace!(%conn_id, "PendingLane::handle_with_client: creating driver");
         let mut driver = crate::Driver::new(handle, handler);
         let caller = crate::Caller::new(driver.caller());
@@ -319,7 +318,7 @@ impl PendingLane {
 impl Drop for PendingLane {
     fn drop(&mut self) {
         if let Some(handle) = self.handle.take() {
-            let conn_id = handle.connection_id();
+            let conn_id = handle.lane_id();
             warn!(%conn_id, "PendingLane dropped without being consumed — closing service lane");
             if let Some(tx) = handle.control_tx.as_ref() {
                 let _ = send_drop_control(tx, DropControlRequest::Close(conn_id));
@@ -600,10 +599,10 @@ struct KeepaliveRuntime {
 }
 
 // r[impl lane.id.compat]
-/// Static data for one active connection.
+/// Static data for one active lane.
 #[derive(Debug)]
-pub struct ConnectionState {
-    /// Unique connection identifier
+pub struct LaneState {
+    /// Unique lane identifier.
     pub id: LaneId,
 
     /// Our settings
@@ -612,17 +611,17 @@ pub struct ConnectionState {
     /// The peer's settings
     pub peer_settings: ConnectionSettings,
 
-    /// Sender for routing incoming messages to the per-connection driver task.
+    /// Sender for routing incoming messages to the per-lane driver task.
     conn_tx: mpsc::Sender<RecvMessage>,
     closed_tx: watch::Sender<Option<ConnectionCloseReason>>,
 
-    /// Per-connection schema recv tracker — schemas are scoped to a connection.
+    /// Per-lane schema recv tracker.
     schema_recv_tracker: Arc<vox_types::SchemaRecvTracker>,
 }
 
 #[derive(Debug)]
 enum ConnectionSlot {
-    Active(ConnectionState),
+    Active(LaneState),
     PendingOutbound(PendingOutboundData),
 }
 
@@ -714,7 +713,7 @@ fn forwarded_channel_body<'a>(body: &'a vox_types::ChannelBody<'a>) -> vox_types
 }
 
 impl ConnectionSender {
-    pub(crate) fn connection_id(&self) -> LaneId {
+    pub(crate) fn lane_id(&self) -> LaneId {
         self.lane_id
     }
 
@@ -962,12 +961,12 @@ pub(crate) struct RecvMessage {
 }
 
 impl LaneHandle {
-    /// Returns the connection ID for this handle.
-    pub fn connection_id(&self) -> LaneId {
+    /// Returns the lane ID for this handle.
+    pub fn lane_id(&self) -> LaneId {
         self.sender.lane_id
     }
 
-    /// Resolve when this connection closes.
+    /// Resolve when this lane closes.
     pub async fn closed(&self) {
         if self.closed_rx.borrow().is_some() {
             return;
@@ -980,7 +979,7 @@ impl LaneHandle {
         }
     }
 
-    /// Return whether this connection is still considered connected.
+    /// Return whether this lane is still considered connected.
     pub fn is_connected(&self) -> bool {
         self.closed_rx.borrow().is_none()
     }
@@ -994,15 +993,15 @@ impl LaneHandle {
         let (outbound_queue_depth, outbound_queue_capacity) =
             self.sender.connection_core.outbound_queue_stats();
         VoxDebugSnapshot {
-            connections: vec![ConnectionDebugSnapshot {
-                connection_id: self.connection_id(),
+            lanes: vec![LaneDebugSnapshot {
+                lane_id: self.lane_id(),
                 endpoint: None,
                 surface: None,
                 component: None,
                 state: if self.closed_rx.borrow().is_some() {
-                    ConnectionDebugState::Closed
+                    LaneDebugState::Closed
                 } else {
-                    ConnectionDebugState::Open
+                    LaneDebugState::Open
                 },
                 outstanding_requests: 0,
                 requests: Vec::new(),
@@ -1038,8 +1037,8 @@ pub async fn proxy_lanes(left: LaneHandle, right: LaneHandle) -> Result<(), Conn
             "proxy_lanes requires opposite parities".into(),
         ));
     }
-    let left_conn_id = left.connection_id();
-    let right_conn_id = right.connection_id();
+    let left_conn_id = left.lane_id();
+    let right_conn_id = right.lane_id();
     let LaneHandle {
         sender: left_sender,
         rx: mut left_rx,
@@ -1163,7 +1162,7 @@ impl Connection {
                 matches!(slot, ConnectionSlot::Active(_)).then_some(*conn_id)
             }) {
                 observer.driver_event(vox_types::DriverEvent::DecodeError {
-                    connection_id: conn_id,
+                    lane_id: conn_id,
                     kind,
                 });
             }
@@ -1171,7 +1170,7 @@ impl Connection {
         }
 
         observer.transport_event(vox_types::TransportEvent::Closed {
-            connection_id: None,
+            lane_id: None,
             reason: classify_connection_recv_error(error),
         });
     }
@@ -1294,13 +1293,11 @@ impl Connection {
         let handle_peer_settings = peer_settings.clone();
         trace!(%conn_id, "make_connection_handle: inserting slot into conns");
         if let Some(observer) = &self.observer {
-            observer.driver_event(vox_types::DriverEvent::ConnectionOpened {
-                connection_id: conn_id,
-            });
+            observer.driver_event(vox_types::DriverEvent::LaneOpened { lane_id: conn_id });
         }
         self.conns.insert(
             conn_id,
-            ConnectionSlot::Active(ConnectionState {
+            ConnectionSlot::Active(LaneState {
                 id: conn_id,
                 local_settings,
                 peer_settings,
@@ -1393,7 +1390,7 @@ impl Connection {
             }
         }
 
-        // Drop all connection slots so per-connection drivers exit immediately.
+        // Drop all lane slots so per-lane drivers exit immediately.
         self.close_all_connections(ConnectionCloseReason::ConnectionShutdown);
         trace!("connection recv loop exited");
     }
@@ -2163,8 +2160,8 @@ impl Connection {
         if let Some(ConnectionSlot::Active(state)) = &slot {
             let _ = state.closed_tx.send(Some(reason));
             if let Some(observer) = &self.observer {
-                observer.driver_event(vox_types::DriverEvent::ConnectionClosed {
-                    connection_id: *conn_id,
+                observer.driver_event(vox_types::DriverEvent::LaneClosed {
+                    lane_id: *conn_id,
                     reason,
                 });
             }
@@ -2176,7 +2173,7 @@ impl Connection {
     fn close_all_connections(&mut self, reason: ConnectionCloseReason) {
         trace!(role = ?self.role, count = self.conns.len(), "close_all_connections");
         vox_types::dlog!(
-            "[connection {:?}] close_all_connections: {} slots",
+            "[connection {:?}] close_all_lanes: {} slots",
             self.role,
             self.conns.len()
         );
@@ -2189,8 +2186,8 @@ impl Connection {
                 );
                 let _ = state.closed_tx.send(Some(reason));
                 if let Some(observer) = &self.observer {
-                    observer.driver_event(vox_types::DriverEvent::ConnectionClosed {
-                        connection_id: *conn_id,
+                    observer.driver_event(vox_types::DriverEvent::LaneClosed {
+                        lane_id: *conn_id,
                         reason,
                     });
                 }
@@ -2717,7 +2714,7 @@ impl ConnectionCore {
         extra_schema_sends: Vec<PendingSchemaSend>,
         declared_channels: impl FnOnce(&[vox_types::ChannelId]),
     ) -> Result<(), ()> {
-        let connection_id = msg.lane_id;
+        let lane_id = msg.lane_id;
         // r[impl rpc.channel.item] Hold an outbound channel item/close until the Call
         // that opened its channel has been enqueued — the sender upholds frame order.
         if let Some(channel_id) = gated_channel_id(&msg) {
@@ -2745,15 +2742,14 @@ impl ConnectionCore {
         self.open_channel_gates(&gated_channels);
         if queued.is_err() {
             if let Some(observer) = &self.observer {
-                observer
-                    .driver_event(vox_types::DriverEvent::OutboundQueueClosed { connection_id });
+                observer.driver_event(vox_types::DriverEvent::OutboundQueueClosed { lane_id });
             }
             return Err(());
         }
-        trace!(conn_id = %connection_id, "connection queued outbound batch");
+        trace!(conn_id = %lane_id, "connection queued outbound batch");
         let result = result_rx.await.map_err(|_| ());
         trace!(
-            conn_id = %connection_id,
+            conn_id = %lane_id,
             ok = result.as_ref().map(|inner| inner.is_ok()).unwrap_or(false),
             "connection outbound batch completed"
         );
@@ -2762,7 +2758,7 @@ impl ConnectionCore {
             Err(_) => {
                 if let Some(observer) = &self.observer {
                     observer.driver_event(vox_types::DriverEvent::EncodeError {
-                        connection_id,
+                        lane_id,
                         kind: vox_types::EncodeErrorKind::Transport,
                     });
                 }
@@ -2780,7 +2776,7 @@ impl ConnectionCore {
         channel_method: Option<&'static vox_types::MethodDescriptor>,
         extra_schema_sends: Vec<PendingSchemaSend>,
     ) -> Result<(), TrySendError<()>> {
-        let connection_id = msg.lane_id;
+        let lane_id = msg.lane_id;
         // r[impl rpc.channel.item] A channel item whose declaring Call hasn't been
         // enqueued yet can't go out (frame order); signal backpressure so the caller
         // retries — the async `send` path parks instead.
@@ -2805,16 +2801,13 @@ impl ConnectionCore {
         let result = self.outbound_tx.try_send(batch).map_err(|err| match err {
             tokio_mpsc::error::TrySendError::Full(_) => {
                 if let Some(observer) = &self.observer {
-                    observer
-                        .driver_event(vox_types::DriverEvent::OutboundQueueFull { connection_id });
+                    observer.driver_event(vox_types::DriverEvent::OutboundQueueFull { lane_id });
                 }
                 TrySendError::Full(())
             }
             tokio_mpsc::error::TrySendError::Closed(_) => {
                 if let Some(observer) = &self.observer {
-                    observer.driver_event(vox_types::DriverEvent::OutboundQueueClosed {
-                        connection_id,
-                    });
+                    observer.driver_event(vox_types::DriverEvent::OutboundQueueClosed { lane_id });
                 }
                 TrySendError::Closed(())
             }
@@ -3436,8 +3429,8 @@ mod tests {
             let driver_events = driver_events.lock().expect("driver events mutex poisoned");
             assert!(driver_events.iter().any(|event| matches!(
                 event,
-                DriverEvent::ConnectionClosed {
-                    connection_id: LaneId::ROOT,
+                DriverEvent::LaneClosed {
+                    lane_id: LaneId::ROOT,
                     reason
                 } if *reason == expected_reason
             )));
@@ -3445,7 +3438,7 @@ mod tests {
                 driver_events.iter().any(|event| matches!(
                     event,
                     DriverEvent::DecodeError {
-                        connection_id: LaneId::ROOT,
+                        lane_id: LaneId::ROOT,
                         kind: DecodeErrorKind::Payload,
                     }
                 )),
@@ -3459,7 +3452,7 @@ mod tests {
                 transport_events.iter().any(|event| matches!(
                     event,
                     TransportEvent::Closed {
-                        connection_id: None,
+                        lane_id: None,
                         reason
                     } if *reason == expected_reason
                 )),
@@ -3695,13 +3688,13 @@ mod tests {
             .await
             .expect("pending outbound result should resolve")
             .expect("accept should resolve as Ok");
-        assert_eq!(handle.connection_id(), conn_id);
+        assert_eq!(handle.lane_id(), conn_id);
 
         connection.handle_inbound_accept(conn_id, accept_ref());
         assert!(
             matches!(
                 connection.conns.get(&conn_id),
-                Some(ConnectionSlot::Active(ConnectionState { id, .. })) if *id == conn_id
+                Some(ConnectionSlot::Active(LaneState { id, .. })) if *id == conn_id
             ),
             "duplicate accept should keep existing active connection state"
         );

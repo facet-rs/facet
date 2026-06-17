@@ -9,11 +9,11 @@ use crate::{
 // r[impl rpc.debug.snapshot]
 #[derive(Clone, Debug, Default)]
 pub struct VoxDebugSnapshot {
-    pub connections: Vec<ConnectionDebugSnapshot>,
+    pub lanes: Vec<LaneDebugSnapshot>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ConnectionDebugState {
+pub enum LaneDebugState {
     Open,
     Closing,
     Closed,
@@ -28,12 +28,12 @@ pub enum DriverTaskStatus {
 }
 
 #[derive(Clone, Debug)]
-pub struct ConnectionDebugSnapshot {
-    pub connection_id: LaneId,
+pub struct LaneDebugSnapshot {
+    pub lane_id: LaneId,
     pub endpoint: Option<String>,
     pub surface: Option<String>,
     pub component: Option<String>,
-    pub state: ConnectionDebugState,
+    pub state: LaneDebugState,
     pub outstanding_requests: usize,
     pub requests: Vec<RequestDebugSnapshot>,
     pub open_channels: Vec<ChannelDebugSnapshot>,
@@ -82,7 +82,7 @@ pub enum ChannelReceiverState {
 
 #[derive(Clone, Debug)]
 pub struct ChannelDebugSnapshot {
-    pub connection_id: LaneId,
+    pub lane_id: LaneId,
     pub channel_id: ChannelId,
     pub direction: ChannelDirection,
     pub debug: Option<ChannelDebugContext>,

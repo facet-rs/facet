@@ -1182,7 +1182,7 @@ mod tests {
             .await
             .expect("accepted service lane");
         client
-            .close_lane(accepted.connection_id(), Metadata::default())
+            .close_lane(accepted.lane_id(), Metadata::default())
             .await
             .expect("close accepted service lane");
 

@@ -696,7 +696,7 @@ fn generate_dispatch_arm(
                 #descriptor_fn_name().methods[#idx],
                 &request_call.metadata,
                 reply.request_id(),
-                reply.connection_id(),
+                reply.lane_id(),
                 &extensions,
             );
             if !self.middlewares.is_empty() {
@@ -727,7 +727,7 @@ fn generate_dispatch_arm(
                 #vox::ServerResponseContext::new(
                     context.method(),
                     context.request_id(),
-                    context.connection_id(),
+                    context.lane_id(),
                     context.extensions().clone(),
                 ),
                 self.middlewares.clone(),
@@ -745,7 +745,7 @@ fn generate_dispatch_arm(
                 #vox::ServerResponseContext::new(
                     context.method(),
                     context.request_id(),
-                    context.connection_id(),
+                    context.lane_id(),
                     context.extensions().clone(),
                 ),
                 self.middlewares.clone(),
@@ -764,7 +764,7 @@ fn generate_dispatch_arm(
                 #vox::ServerResponseContext::new(
                     context.method(),
                     context.request_id(),
-                    context.connection_id(),
+                    context.lane_id(),
                     context.extensions().clone(),
                 ),
                 self.middlewares.clone(),

@@ -380,7 +380,7 @@ pub trait ChannelCreditReplenisher: crate::MaybeSend + crate::MaybeSync + 'stati
         None
     }
 
-    fn connection_id(&self) -> Option<LaneId> {
+    fn lane_id(&self) -> Option<LaneId> {
         None
     }
 
@@ -863,7 +863,7 @@ fn sink_event_context(
     fallback: ChannelDebugContext,
 ) -> ChannelEventContext {
     ChannelEventContext {
-        connection_id: sink.connection_id(),
+        lane_id: sink.lane_id(),
         channel_id,
         debug: merge_debug_context(sink.debug_context(), fallback),
     }
@@ -875,7 +875,7 @@ fn replenisher_event_context(
     fallback: ChannelDebugContext,
 ) -> ChannelEventContext {
     ChannelEventContext {
-        connection_id: replenisher.connection_id(),
+        lane_id: replenisher.lane_id(),
         channel_id,
         debug: merge_debug_context(replenisher.debug_context(), fallback),
     }
@@ -1059,7 +1059,7 @@ pub trait ChannelSink: crate::MaybeSend + crate::MaybeSync + 'static {
         None
     }
 
-    fn connection_id(&self) -> Option<LaneId> {
+    fn lane_id(&self) -> Option<LaneId> {
         None
     }
 
@@ -1179,8 +1179,8 @@ impl<S: ChannelSink> ChannelSink for CreditSink<S> {
         self.inner.channel_id()
     }
 
-    fn connection_id(&self) -> Option<LaneId> {
-        self.inner.connection_id()
+    fn lane_id(&self) -> Option<LaneId> {
+        self.inner.lane_id()
     }
 
     fn debug_context(&self) -> Option<ChannelDebugContext> {

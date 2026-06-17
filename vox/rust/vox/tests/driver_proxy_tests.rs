@@ -108,7 +108,7 @@ async fn proxy_lanes_forwards_calls() {
         .await
         .expect("open proxy connection");
 
-    let proxy_conn_id = proxy_conn.connection_id();
+    let proxy_conn_id = proxy_conn.lane_id();
     let mut proxy_driver = Driver::new(proxy_conn, ());
     let proxy_caller = vox::Caller::new(proxy_driver.caller());
     tokio::spawn(async move { proxy_driver.run().await });

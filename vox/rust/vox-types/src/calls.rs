@@ -206,7 +206,7 @@ pub trait ReplySink: MaybeSend + MaybeSync + 'static {
     }
 
     /// Return the lane identifier for this reply sink when available.
-    fn connection_id(&self) -> Option<LaneId> {
+    fn lane_id(&self) -> Option<LaneId> {
         None
     }
 }

@@ -344,7 +344,7 @@ async fn wait_for_outstanding_requests(caller: &crate::Caller, expected: usize) 
     for _ in 0..50 {
         let outstanding = caller
             .debug_snapshot()
-            .connections
+            .lanes
             .iter()
             .map(|connection| connection.outstanding_requests)
             .sum::<usize>();
@@ -382,7 +382,7 @@ async fn expect_protocol_close(caller: &crate::Caller, label: &str) {
         .unwrap_or_else(|_| panic!("{label} connection should close after protocol violation"));
     let snapshot = caller.debug_snapshot();
     assert_eq!(
-        snapshot.connections[0].close_reason,
+        snapshot.lanes[0].close_reason,
         Some(vox_types::ConnectionCloseReason::Protocol),
         "{label} close reason"
     );
@@ -1040,11 +1040,7 @@ async fn call_through_phon_handshake_reaches_handler() {
 
     let _server_caller = server_result.expect("server establish failed");
     let caller = client_result.expect("client establish failed");
-    assert!(
-        !caller.caller.debug_snapshot().connections[0]
-            .connection_id
-            .is_root()
-    );
+    assert!(!caller.caller.debug_snapshot().lanes[0].lane_id.is_root());
 
     let response = tokio::time::timeout(
         Duration::from_secs(1),
@@ -1642,7 +1638,7 @@ async fn inbound_max_concurrent_requests_violation_closes_connection() {
         .expect("server connection should close after inbound limit violation");
     let server_snapshot = server_guard.caller.debug_snapshot();
     assert_eq!(
-        server_snapshot.connections[0].close_reason,
+        server_snapshot.lanes[0].close_reason,
         Some(vox_types::ConnectionCloseReason::Protocol)
     );
 
@@ -1988,7 +1984,7 @@ async fn initiator_builder_customization_controls_allocated_connection_parity() 
         .await
         .expect("open service lane");
 
-    let conn_id = lane_handle.connection_id();
+    let conn_id = lane_handle.lane_id();
     assert!(
         conn_id.has_parity(Parity::Even),
         "initiator parity should drive allocated connection ids"
@@ -2066,7 +2062,7 @@ async fn acceptor_builder_customization_supports_opening_connections() {
         .await
         .expect("acceptor opens service lane");
 
-    let conn_id = lane_handle.connection_id();
+    let conn_id = lane_handle.lane_id();
     assert!(
         conn_id.has_parity(Parity::Odd),
         "acceptor should allocate odd ids when peer initiator parity is even"
@@ -2121,7 +2117,7 @@ async fn service_lane_request_ids_use_connection_parity() {
         )
         .await
         .expect("open service lane");
-    let lane_id = lane_handle.connection_id();
+    let lane_id = lane_handle.lane_id();
     assert!(
         lane_id.has_parity(Parity::Odd),
         "connection parity should allocate the service lane id"
@@ -2146,8 +2142,8 @@ async fn service_lane_request_ids_use_connection_parity() {
 
     wait_for_outstanding_requests(&lane_caller, 1).await;
     let snapshot = lane_caller.debug_snapshot();
-    assert_eq!(snapshot.connections[0].connection_id, lane_id);
-    assert_eq!(snapshot.connections[0].requests[0].request_id, RequestId(2));
+    assert_eq!(snapshot.lanes[0].lane_id, lane_id);
+    assert_eq!(snapshot.lanes[0].requests[0].request_id, RequestId(2));
 
     connection_handle
         .close_lane(lane_id, Default::default())
@@ -2350,15 +2346,10 @@ async fn debug_snapshot_reports_driver_channel_credit_state() {
 
     let snapshot = server_caller.caller.debug_snapshot();
     let connection = snapshot
-        .connections
+        .lanes
         .iter()
         .find(|connection| {
-            connection.connection_id
-                == server_caller
-                    .caller
-                    .driver()
-                    .connection_sender()
-                    .connection_id()
+            connection.lane_id == server_caller.caller.driver().connection_sender().lane_id()
         })
         .expect("snapshot should include caller connection");
     let channel = connection
@@ -2368,7 +2359,7 @@ async fn debug_snapshot_reports_driver_channel_credit_state() {
         .expect("snapshot should include created channel");
 
     assert_eq!(channel.direction, ChannelDirection::Tx);
-    assert_eq!(channel.connection_id, connection.connection_id);
+    assert_eq!(channel.lane_id, connection.lane_id);
     assert_eq!(channel.initial_credit, 16);
     assert_eq!(channel.available_send_credit, Some(15));
     assert_eq!(channel.current_permit_count, Some(15));
@@ -2681,7 +2672,7 @@ async fn proxy_lanes_forwards_calls_without_service_specific_proxy_code() {
         )
         .await
         .expect("guest-a open proxy connection");
-    let proxy_conn_id = proxy_conn.connection_id();
+    let proxy_conn_id = proxy_conn.lane_id();
 
     let mut proxy_driver = Driver::new(proxy_conn, ());
     let proxy_caller = crate::Caller::new(proxy_driver.caller());

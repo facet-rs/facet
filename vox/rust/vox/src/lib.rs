@@ -148,8 +148,6 @@ pub use vox_types::{
     ConduitRx,
     ConduitTx,
     ConnectionCloseReason,
-    ConnectionDebugSnapshot,
-    ConnectionDebugState,
     ConnectionRole,
     ConnectionSettings,
     DecodeErrorKind,
@@ -163,6 +161,8 @@ pub use vox_types::{
     Extensions,
     Handler,
     HandshakeResult,
+    LaneDebugSnapshot,
+    LaneDebugState,
     // Types
     LaneId,
     Link,
@@ -250,7 +250,7 @@ pub use vox_core::{acceptor_on_link, initiator_on_link};
 #[cfg(feature = "runtime")]
 pub use vox_core::{
     Connection, ConnectionConfig, ConnectionError, ConnectionHandle, ConnectionKeepaliveConfig,
-    ConnectionState, LaneHandle, LaneRejectReason, LaneRejection, LaneRequest, PendingLane,
+    LaneHandle, LaneRejectReason, LaneRejection, LaneRequest, LaneState, PendingLane,
     VOX_LANE_REJECT_MESSAGE_METADATA_KEY, VOX_LANE_REJECT_REASON_METADATA_KEY,
 };
 

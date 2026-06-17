@@ -63,7 +63,7 @@ impl VoxObserver for RecordingObserver {
 }
 
 struct ObservedTrySendSink {
-    connection_id: LaneId,
+    lane_id: LaneId,
     channel_id: ChannelId,
     debug_context: ChannelDebugContext,
     observer: VoxObserverHandle,
@@ -82,8 +82,8 @@ impl ChannelSink for ObservedTrySendSink {
         Some(self.channel_id)
     }
 
-    fn connection_id(&self) -> Option<LaneId> {
-        Some(self.connection_id)
+    fn lane_id(&self) -> Option<LaneId> {
+        Some(self.lane_id)
     }
 
     fn debug_context(&self) -> Option<ChannelDebugContext> {
@@ -161,7 +161,7 @@ fn observer_distinguishes_try_send_full_credit_from_runtime_queue() {
     let mut credit_full_tx = Tx::<u32>::unbound();
     credit_full_tx.bind(Arc::new(CreditSink::new(
         ObservedTrySendSink {
-            connection_id: LaneId(5),
+            lane_id: LaneId(5),
             channel_id: ChannelId(7),
             debug_context: ChannelDebugContext {
                 label: Some("credit-full"),
@@ -180,7 +180,7 @@ fn observer_distinguishes_try_send_full_credit_from_runtime_queue() {
     let mut runtime_full_tx = Tx::<u32>::unbound();
     runtime_full_tx.bind(Arc::new(CreditSink::new(
         ObservedTrySendSink {
-            connection_id: LaneId(5),
+            lane_id: LaneId(5),
             channel_id: ChannelId(9),
             debug_context: ChannelDebugContext {
                 label: Some("runtime-full"),
@@ -200,14 +200,14 @@ fn observer_distinguishes_try_send_full_credit_from_runtime_queue() {
     assert!(events.iter().any(|event| matches!(
         event,
         ChannelEvent::TrySend { channel, outcome: ChannelTrySendOutcome::FullCredit }
-            if channel.connection_id == Some(LaneId(5))
+            if channel.lane_id == Some(LaneId(5))
                 && channel.channel_id == ChannelId(7)
                 && channel.debug.and_then(|debug| debug.label) == Some("credit-full")
     )));
     assert!(events.iter().any(|event| matches!(
         event,
         ChannelEvent::TrySend { channel, outcome: ChannelTrySendOutcome::FullRuntimeQueue }
-            if channel.connection_id == Some(LaneId(5))
+            if channel.lane_id == Some(LaneId(5))
                 && channel.channel_id == ChannelId(9)
                 && channel.debug.and_then(|debug| debug.label) == Some("runtime-full")
     )));

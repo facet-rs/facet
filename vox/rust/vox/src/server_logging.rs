@@ -290,7 +290,7 @@ mod tests {
                 &crate::ServerResponseContext::new(
                     request.method(),
                     request.request_id(),
-                    request.connection_id(),
+                    request.lane_id(),
                     request.extensions().clone(),
                 ),
                 crate::ServerResponse::new(&response),
@@ -369,7 +369,7 @@ mod tests {
                 &crate::ServerResponseContext::new(
                     request.method(),
                     request.request_id(),
-                    request.connection_id(),
+                    request.lane_id(),
                     request.extensions().clone(),
                 ),
                 crate::ServerResponse::new(&response),

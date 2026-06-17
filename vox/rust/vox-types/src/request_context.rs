@@ -11,7 +11,7 @@ pub struct RequestContext<'a> {
     method: &'static MethodDescriptor,
     metadata: &'a Metadata,
     request_id: Option<RequestId>,
-    connection_id: Option<LaneId>,
+    lane_id: Option<LaneId>,
     extensions: &'a Extensions,
 }
 
@@ -35,14 +35,14 @@ impl<'a> RequestContext<'a> {
         method: &'static MethodDescriptor,
         metadata: &'a Metadata,
         request_id: Option<RequestId>,
-        connection_id: Option<LaneId>,
+        lane_id: Option<LaneId>,
         extensions: &'a Extensions,
     ) -> Self {
         Self {
             method,
             metadata,
             request_id,
-            connection_id,
+            lane_id,
             extensions,
         }
     }
@@ -62,9 +62,9 @@ impl<'a> RequestContext<'a> {
         self.request_id
     }
 
-    /// Virtual connection identifier for this call, when the reply sink exposes it.
-    pub fn connection_id(&self) -> Option<LaneId> {
-        self.connection_id
+    /// Lane identifier for this call, when the reply sink exposes it.
+    pub fn lane_id(&self) -> Option<LaneId> {
+        self.lane_id
     }
 
     /// Per-request middleware extensions bag.
@@ -107,7 +107,7 @@ mod tests {
         );
 
         assert_eq!(context.request_id(), Some(RequestId(11)));
-        assert_eq!(context.connection_id(), Some(LaneId(13)));
+        assert_eq!(context.lane_id(), Some(LaneId(13)));
         assert_eq!(context.method().id, method.id);
         assert_eq!(context.method().method_name, "demo");
     }

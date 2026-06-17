@@ -291,7 +291,7 @@ async fn close_service_lane() {
         .await
         .expect("open service lane");
 
-    let conn_id = lane_handle.connection_id();
+    let conn_id = lane_handle.lane_id();
     let mut lane_driver = Driver::new(lane_handle, ());
     let caller = vox::Caller::new(lane_driver.caller());
     tokio::spawn(async move { lane_driver.run().await });
