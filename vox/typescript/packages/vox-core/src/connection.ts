@@ -1249,7 +1249,7 @@ class ConnectionCore {
       return;
     }
     const context: EstablishmentContext = {
-      role: this.establishmentRole(),
+      role: roleName(roleFromParity(this.localInitialLaneSettings.parity)),
       phase: "lane-grant-revocation",
       laneId,
     };
@@ -1262,7 +1262,7 @@ class ConnectionCore {
       return;
     }
     const context: EstablishmentContext = {
-      role: this.establishmentRole(),
+      role: roleName(roleFromParity(this.localInitialLaneSettings.parity)),
       phase: "lane-grant",
       laneId,
     };
