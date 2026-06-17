@@ -124,6 +124,20 @@ async fn main() -> Result<()> {
     let (output_tx, mut output_rx) = channel::<String>();
     println!("[client] created transform channels");
 
+    let recv_task = tokio::spawn(async move {
+        let mut got = Vec::new();
+        while let Some(item) = output_rx
+            .recv()
+            .await
+            .wrap_err("receiving from output_rx")?
+        {
+            let item = item.get();
+            println!("[client/recv] <- {}", item.as_str());
+            got.push(item.to_string());
+        }
+        Ok::<_, eyre::Report>(got)
+    });
+
     let send_task = tokio::spawn(async move {
         for word in ["one", "two", "three"] {
             println!("[client/send] -> {word}");
@@ -148,16 +162,7 @@ async fn main() -> Result<()> {
     println!("[client] transform returned count={count}");
     send_task.await.wrap_err("joining send_task")?;
 
-    let mut got = Vec::new();
-    while let Some(item) = output_rx
-        .recv()
-        .await
-        .wrap_err("receiving from output_rx")?
-    {
-        let item = item.get();
-        println!("[client/recv] <- {}", item.as_str());
-        got.push(item.to_string());
-    }
+    let got = recv_task.await.wrap_err("joining recv_task")??;
     assert_eq!(got, vec!["item:one", "item:two", "item:three"]);
     println!("[client] output stream complete: {got:?}");
 

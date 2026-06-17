@@ -145,6 +145,15 @@ let connection = try await Connection.accept(
 try await connection.run()
 ```
 
-## 5) Keep codegen and runtime versions aligned
+## 5) Channel lifetime
+
+Generated Swift clients and dispatchers use `Tx<T>`/`Rx<T>` for raw Vox
+channels. Those channels are request-scoped sidebands: start the call that binds
+the channel, then drive channel send/receive work concurrently with that call.
+The method response terminates the request scope, so channel data that matters
+must be sent and drained before, or as part of, the response. Durable or
+resumable streams belong in explicit service-level protocols, not raw channels.
+
+## 6) Keep codegen and runtime versions aligned
 
 Generated Swift code assumes the same protocol/runtime major version as your Rust descriptors and `VoxRuntime`.

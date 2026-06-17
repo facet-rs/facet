@@ -101,16 +101,20 @@ async fn main() -> Result<()> {
     // --- Tx<T> in arg position: server-to-client streaming ---
     println!("\n[client] calling squares (server→client streaming via Tx<i64>)");
     let (output_tx, mut output_rx) = channel::<i64>();
+    let recv_task = tokio::spawn(async move {
+        let mut squares = Vec::new();
+        while let Some(val) = output_rx.recv().await.wrap_err("recv")? {
+            let val = val.get();
+            println!("[client/recv] <- {}", *val);
+            squares.push(*val);
+        }
+        Ok::<_, eyre::Report>(squares)
+    });
     client
         .squares(5, output_tx)
         .await
         .map_err(|e| eyre!("squares failed: {e:?}"))?;
-    let mut squares = Vec::new();
-    while let Some(val) = output_rx.recv().await.wrap_err("recv")? {
-        let val = val.get();
-        println!("[client/recv] <- {}", *val);
-        squares.push(*val);
-    }
+    let squares = recv_task.await.wrap_err("joining squares receiver")??;
     assert_eq!(squares, vec![1, 4, 9, 16, 25]);
     println!("[client] squares returned {squares:?}");
 

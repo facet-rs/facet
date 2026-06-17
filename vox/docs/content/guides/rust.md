@@ -95,4 +95,12 @@ async fn classify<'vox>(
 }
 ```
 
+## Channel lifetime
+
+Raw `Tx<T>`/`Rx<T>` channels are request-scoped sidebands. Start the call that
+binds the channel, then drive channel send/receive work concurrently with that
+call. The method response terminates the request scope, so channel data that
+matters must be sent and drained before, or as part of, the response. Durable or
+resumable streams belong in explicit service-level protocols, not raw channels.
+
 For non-Rust bindings, generate code from service descriptors with `vox-codegen`.
