@@ -119,6 +119,7 @@ actor DriverState {
         _ requestId: UInt64,
         connectionId: UInt64,
         responseMetadata: Metadata,
+        channels: [UInt64],
         localMaxConcurrentRequests: UInt32
     ) -> AddInFlightResult {
         guard !inFlightRequests.contains(requestId) else {
@@ -138,7 +139,8 @@ actor DriverState {
         inFlightRequests.insert(requestId)
         inFlightResponseContext[requestId] = InFlightResponseContext(
             connectionId: connectionId,
-            responseMetadata: responseMetadata
+            responseMetadata: responseMetadata,
+            channels: channels
         )
         return .inserted
     }
@@ -146,14 +148,16 @@ actor DriverState {
     func removeInFlight(_ requestId: UInt64) -> (
         removed: Bool,
         connectionId: UInt64,
-        responseMetadata: Metadata
+        responseMetadata: Metadata,
+        channels: [UInt64]
     ) {
         let removed = inFlightRequests.remove(requestId) != nil
         let context = inFlightResponseContext.removeValue(forKey: requestId)
         return (
             removed,
             context?.connectionId ?? 0,
-            context?.responseMetadata ?? .null
+            context?.responseMetadata ?? .null,
+            context?.channels ?? []
         )
     }
 

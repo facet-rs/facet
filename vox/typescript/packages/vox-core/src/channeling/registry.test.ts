@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { ChannelRegistry } from "./registry.ts";
 import { Tx } from "./tx.ts";
+import { ChannelError } from "./types.ts";
 import { setVoxLogger } from "../logger.ts";
 
 afterEach(() => {
@@ -148,6 +149,30 @@ describe("ChannelRegistry", () => {
     expect(() => registry.routeData(channelId, Uint8Array.of(7))).toThrow(/data after close/i);
   });
 
+  // r[verify rpc.channel.reset]
+  it("reports reset to incoming receivers as an error", async () => {
+    const registry = new ChannelRegistry();
+    const channelId = 10n;
+    const payload = Uint8Array.of(99);
+
+    const rx = registry.registerIncoming(channelId, 1);
+    registry.routeData(channelId, payload);
+    registry.reset(channelId);
+
+    await expect(rx.recv()).resolves.toEqual(payload);
+    await expect(rx.recv()).rejects.toMatchObject({ kind: "reset" });
+  });
+
+  // r[verify rpc.request.scope.channels]
+  it("preserves terminal request-scope error before the receiver is registered", async () => {
+    const registry = new ChannelRegistry();
+
+    registry.reset(12n, ChannelError.cancelled());
+    const rx = registry.registerIncoming(12n, 1);
+
+    await expect(rx.recv()).rejects.toMatchObject({ kind: "cancelled" });
+  });
+
   // r[verify rpc.channel.connection-closure]
   it("closeAll terminates live incoming receivers and blocked outgoing senders", async () => {
     const registry = new ChannelRegistry();
@@ -159,7 +184,7 @@ describe("ChannelRegistry", () => {
 
     registry.closeAll();
 
-    await expect(rx.recv()).resolves.toBeNull();
+    await expect(rx.recv()).rejects.toMatchObject({ kind: "connectionClosed" });
     await expect(blockedSend).rejects.toMatchObject({ kind: "closed" });
     expect(registry.pollOutgoing()).toEqual({ kind: "done" });
   });

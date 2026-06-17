@@ -109,12 +109,13 @@ export class Rx<T> {
   /**
    * Receive the next value from this channel.
    *
-   * Returns the value, or null when the channel is closed.
+   * Returns the value, or null after a graceful `CloseChannel`.
    *
    * r[impl rpc.channel.item]
    * r[impl rpc.channel.pair.rx-take]
    *
-   * @throws If the Rx is not bound yet
+   * @throws If the Rx is not bound yet, or if the request/lane/connection ends
+   * before a graceful channel close arrives.
    */
   async recv(): Promise<T | null> {
     if (!this.isBound || this.receiver === undefined || this.deserialize === undefined) {
@@ -136,7 +137,8 @@ export class Rx<T> {
   /**
    * Iterate over all values in the channel.
    *
-   * This is an async iterator that yields values until the channel closes.
+   * This is an async iterator that yields values until the channel closes
+   * gracefully, and throws if the request/lane/connection ends first.
    *
    * @throws If the Rx is not bound yet
    */
@@ -151,7 +153,7 @@ export class Rx<T> {
   }
 
   finishCallBinding(): void {
-    this.logicalSender?.close();
+    this.logicalSender?.close(ChannelError.requestClosed());
   }
 
   private attachIncomingBinding(
@@ -201,16 +203,22 @@ export class Rx<T> {
     generation: number,
   ): void {
     void (async () => {
-      while (true) {
-        const bytes = await transportReceiver.recv();
-        if (bytes === null) {
-          if (this.bindingGeneration === generation) {
-            logicalSender.close();
+      try {
+        while (true) {
+          const bytes = await transportReceiver.recv();
+          if (bytes === null) {
+            if (this.bindingGeneration === generation) {
+              logicalSender.close();
+            }
+            return;
           }
-          return;
+          if (!logicalSender.send(bytes)) {
+            return;
+          }
         }
-        if (!logicalSender.send(bytes)) {
-          return;
+      } catch (error) {
+        if (this.bindingGeneration === generation) {
+          logicalSender.close(error instanceof Error ? error : new Error(String(error)));
         }
       }
     })();

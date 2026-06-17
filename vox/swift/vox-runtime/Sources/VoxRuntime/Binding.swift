@@ -15,6 +15,7 @@ public final class UnboundTx<T: Sendable>: @unchecked Sendable {
     private var serialize: (@Sendable (T, inout ByteBuffer) -> Void)?
     private var bound = false
     private var closed = false
+    private var callBindingFinalized = false
     private let lock = NSLock()
     private var bindingWaiters: [CheckedContinuation<Void, Never>] = []
     weak var pairedRx: AnyObject?
@@ -40,8 +41,8 @@ public final class UnboundTx<T: Sendable>: @unchecked Sendable {
             self.taskTx = taskTx
             self.credit = credit
             self.bound = true
-            let shouldCloseImmediately = self.closed
-            self.closed = false
+            let shouldCloseImmediately = self.closed && !self.callBindingFinalized
+            self.closed = self.callBindingFinalized
             let waiters = self.bindingWaiters
             self.bindingWaiters.removeAll()
             return (waiters, shouldCloseImmediately)
@@ -109,7 +110,24 @@ public final class UnboundTx<T: Sendable>: @unchecked Sendable {
     }
 
     func finishCallBinding() {
-        close()
+        let (waiters, credit) = lock.withLock {
+            () -> ([CheckedContinuation<Void, Never>], ChannelCreditController?) in
+            if !closed {
+                closed = true
+            }
+            callBindingFinalized = true
+            let waiters = bindingWaiters
+            bindingWaiters.removeAll()
+            return (waiters, self.credit)
+        }
+        if let credit {
+            Task {
+                await credit.close()
+            }
+        }
+        for waiter in waiters {
+            waiter.resume()
+        }
         (pairedRx as? AnyCallBindingFinalizableChannel)?.finishCallBinding()
     }
 
@@ -207,13 +225,13 @@ public final class UnboundRx<T: Sendable>: @unchecked Sendable {
         }
     }
 
-    /// Receive the next value, or nil if closed.
+    /// Receive the next value, or nil after a graceful channel close.
     /// r[impl rpc.channel.pair.rx-take]
     public func recv() async throws -> T? {
         while true {
             let receiver = lock.withLock { receivers.first }
             if let receiver {
-                if let bytes = await receiver.recv() {
+                if let bytes = try await receiver.recv() {
                     guard let deserialize = lock.withLock({ self.deserialize }) else {
                         throw ChannelError.notBound
                     }
@@ -254,11 +272,15 @@ public final class UnboundRx<T: Sendable>: @unchecked Sendable {
     }
 
     func finishCallBinding() {
-        let waiters = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
+        let (waiters, receivers) = lock.withLock {
+            () -> ([CheckedContinuation<Void, Never>], [ChannelReceiver]) in
             callBindingFinalized = true
             let waiters = bindingWaiters
             bindingWaiters.removeAll()
-            return waiters
+            return (waiters, self.receivers)
+        }
+        for receiver in receivers {
+            receiver.deliverReset(.requestClosed)
         }
         for waiter in waiters {
             waiter.resume()

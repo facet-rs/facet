@@ -3,6 +3,7 @@ import Foundation
 struct InFlightResponseContext: Sendable {
     let connectionId: UInt64
     let responseMetadata: Metadata
+    let channels: [UInt64]
 }
 
 enum DriverEvent: Sendable {

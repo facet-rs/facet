@@ -765,7 +765,7 @@ class ConnectionCore {
         } catch (error) {
           throw ConnectionError.protocol(error instanceof Error ? error.message : String(error));
         }
-        lane.beginIncomingRequest(request.id);
+        lane.beginIncomingRequest(request.id, request.body.value.channels);
         lane.enqueueIncomingCall({
           requestId: request.id,
           methodId: request.body.value.method_id,
@@ -827,8 +827,11 @@ class ConnectionCore {
         return;
 
       case "Close":
-      case "Reset":
         lane.closeChannel(channel.id);
+        return;
+
+      case "Reset":
+        lane.resetChannel(channel.id);
         return;
 
       case "GrantCredit":
@@ -874,6 +877,7 @@ export class Lane {
   private readonly incomingCancels = new AsyncQueue<bigint>();
   private readonly pendingResponses = new Map<bigint, PendingResponse>();
   private readonly inboundLiveRequests = new Set<bigint>();
+  private readonly inboundRequestChannels = new Map<bigint, bigint[]>();
   private readonly outboundRequestLimit: AsyncSemaphore;
   private readonly schemaTracker = new SchemaTracker();
   private readonly schemaSendTracker = new SchemaSendTracker();
@@ -1149,7 +1153,7 @@ export class Lane {
     this.incomingCalls.push(call);
   }
 
-  beginIncomingRequest(requestId: bigint): void {
+  beginIncomingRequest(requestId: bigint, channels: bigint[] = []): void {
     // r[impl rpc.flow-control.max-concurrent-requests]
     // r[impl rpc.flow-control.max-concurrent-requests.inbound]
     if (this.inboundLiveRequests.has(requestId)) {
@@ -1161,11 +1165,17 @@ export class Lane {
       );
     }
     this.inboundLiveRequests.add(requestId);
+    this.inboundRequestChannels.set(requestId, [...channels]);
   }
 
-  finishIncomingRequest(requestId: bigint): void {
+  finishIncomingRequest(requestId: bigint, error = ChannelError.requestClosed()): void {
     // r[impl rpc.flow-control.max-concurrent-requests.counting]
     this.inboundLiveRequests.delete(requestId);
+    const channels = this.inboundRequestChannels.get(requestId) ?? [];
+    this.inboundRequestChannels.delete(requestId);
+    for (const channelId of channels) {
+      this.channelRegistry.reset(channelId, error);
+    }
   }
 
   nextIncomingCall(): Promise<IncomingCall | null> {
@@ -1173,7 +1183,7 @@ export class Lane {
   }
 
   enqueueIncomingCancel(requestId: bigint): void {
-    this.finishIncomingRequest(requestId);
+    this.finishIncomingRequest(requestId, ChannelError.cancelled());
     this.incomingCancels.push(requestId);
   }
 
@@ -1189,7 +1199,7 @@ export class Lane {
     voxLogger()?.debug(
       `[vox:connection] resolveResponse: req=${requestId} payload=${payload.length}`,
     );
-    this.clearPendingState(state, { finalizeChannels: false });
+    this.clearPendingState(state);
     state.resolve(payload);
   }
 
@@ -1213,6 +1223,10 @@ export class Lane {
     this.channelRegistry.close(channelId);
   }
 
+  resetChannel(channelId: bigint): void {
+    this.channelRegistry.reset(channelId);
+  }
+
   grantChannelCredit(channelId: bigint, additional: number): void {
     this.channelRegistry.grantCredit(channelId, additional);
   }
@@ -1224,8 +1238,9 @@ export class Lane {
     this.closed = true;
     this.incomingCalls.close();
     this.incomingCancels.close();
-    this.channelRegistry.closeAll();
+    this.channelRegistry.closeAll(ChannelError.connectionClosed());
     this.inboundLiveRequests.clear();
+    this.inboundRequestChannels.clear();
     // r[impl rpc.flow-control.max-concurrent-requests.session-failure]
     this.outboundRequestLimit.close(error);
     const pendingStates = new Set(this.pendingResponses.values());
@@ -1243,7 +1258,7 @@ export class Lane {
   }
 
   failPendingAttempts(error: Error): void {
-    this.channelRegistry.closeAll();
+    this.channelRegistry.closeAll(ChannelError.connectionClosed());
     this.outboundRequestLimit.close(error);
     const pendingStates = new Set(this.pendingResponses.values());
     this.pendingResponses.clear();
@@ -1277,7 +1292,7 @@ export class Lane {
 
   private clearPendingState(
     state: PendingResponse,
-    options: { finalizeChannels?: boolean } = {},
+    options: { finalizeChannels?: boolean; channelError?: ChannelError } = {},
   ): void {
     if (state.settled) {
       return;
@@ -1289,6 +1304,10 @@ export class Lane {
     }
     state.requestIds.clear();
     if (options.finalizeChannels !== false) {
+      const channelError = options.channelError ?? ChannelError.requestClosed();
+      for (const channelId of state.channels) {
+        this.channelRegistry.reset(channelId, channelError);
+      }
       state.finalizeChannels?.();
     }
   }

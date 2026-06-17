@@ -163,7 +163,8 @@ public final class ChannelReceiver: @unchecked Sendable {
     private let lock = NSLock()
     private var buffer: [[UInt8]] = []
     private var closed = false
-    private var waiter: CheckedContinuation<[UInt8]?, Never>?
+    private var terminalError: ChannelError?
+    private var waiter: CheckedContinuation<[UInt8]?, Error>?
     private let replenishmentThreshold: UInt32
     private let onConsumed: (@Sendable (UInt32) -> Void)?
     private var consumedSinceGrant: UInt32 = 0
@@ -178,7 +179,7 @@ public final class ChannelReceiver: @unchecked Sendable {
 
     public func deliver(_ data: [UInt8]) {
         // r[impl rpc.channel.delivery.reliable]
-        var toResume: CheckedContinuation<[UInt8]?, Never>?
+        var toResume: CheckedContinuation<[UInt8]?, Error>?
         lock.lock()
         if let w = waiter {
             waiter = nil
@@ -191,9 +192,10 @@ public final class ChannelReceiver: @unchecked Sendable {
     }
 
     public func deliverClose() {
-        var toResume: CheckedContinuation<[UInt8]?, Never>?
+        var toResume: CheckedContinuation<[UInt8]?, Error>?
         lock.lock()
         closed = true
+        terminalError = nil
         if let w = waiter {
             waiter = nil
             toResume = w
@@ -202,24 +204,24 @@ public final class ChannelReceiver: @unchecked Sendable {
         toResume?.resume(returning: nil)
     }
 
-    /// Handle reset - abruptly close without delivering buffered data.
-    public func deliverReset() {
-        var toResume: CheckedContinuation<[UInt8]?, Never>?
+    /// Handle reset - drain accepted buffered data, then surface a receive error.
+    public func deliverReset(_ error: ChannelError = .reset) {
+        var toResume: CheckedContinuation<[UInt8]?, Error>?
         lock.lock()
         closed = true
-        buffer.removeAll()
+        terminalError = error
         if let w = waiter {
             waiter = nil
             toResume = w
         }
         lock.unlock()
-        toResume?.resume(returning: nil)
+        toResume?.resume(throwing: error)
     }
 
-    public func recv() async -> [UInt8]? {
+    public func recv() async throws -> [UInt8]? {
         enum RecvState {
             case value([UInt8])
-            case closed
+            case closed(ChannelError?)
             case wait
         }
         let state = lock.withLock { () -> RecvState in
@@ -227,7 +229,7 @@ public final class ChannelReceiver: @unchecked Sendable {
                 return .value(buffer.removeFirst())
             }
             if closed {
-                return .closed
+                return .closed(terminalError)
             }
             return .wait
         }
@@ -236,12 +238,15 @@ public final class ChannelReceiver: @unchecked Sendable {
         case .value(let value):
             self.noteConsumptionIfNeeded()
             return value
-        case .closed:
+        case .closed(let error):
+            if let error {
+                throw error
+            }
             return nil
         case .wait:
             break
         }
-        value = await withCheckedContinuation { cont in
+        value = try await withCheckedThrowingContinuation { cont in
             lock.withLock {
                 if !buffer.isEmpty {
                     let value = buffer.removeFirst()
@@ -249,7 +254,11 @@ public final class ChannelReceiver: @unchecked Sendable {
                     return
                 }
                 if closed {
-                    cont.resume(returning: nil)
+                    if let terminalError {
+                        cont.resume(throwing: terminalError)
+                    } else {
+                        cont.resume(returning: nil)
+                    }
                     return
                 }
                 waiter = cont
@@ -416,12 +425,12 @@ public final class Rx<T: Sendable>: @unchecked Sendable {
         self.receiver = receiver
     }
 
-    /// Receive the next value, or nil if closed.
+    /// Receive the next value, or nil after a graceful channel close.
     public func recv() async throws -> T? {
         guard let receiver = receiver else {
             throw ChannelError.notBound
         }
-        guard let bytes = await receiver.recv() else {
+        guard let bytes = try await receiver.recv() else {
             return nil
         }
         var buf = ByteBufferAllocator().buffer(capacity: bytes.count)
@@ -459,7 +468,7 @@ extension Rx: AsyncSequence {
 public actor ChannelRegistry {
     private var receivers: [ChannelId: ChannelReceiver] = [:]
     private var pendingData: [ChannelId: [[UInt8]]] = [:]
-    private var pendingClose: Set<ChannelId> = []
+    private var pendingTerminal: [ChannelId: ChannelTerminal] = [:]
     private var knownChannels: Set<ChannelId> = []
     private var outgoingCredits: [ChannelId: ChannelCreditController] = [:]
 
@@ -495,9 +504,11 @@ public actor ChannelRegistry {
             }
         }
 
-        // Deliver pending close synchronously after all data
-        if pendingClose.remove(channelId) != nil {
-            receiver.deliverClose()
+        // Deliver pending terminal state synchronously after all accepted data.
+        if let terminal = pendingTerminal.removeValue(forKey: channelId) {
+            terminal.deliver(to: receiver)
+            receivers.removeValue(forKey: channelId)
+            knownChannels.remove(channelId)
         }
 
         return receiver
@@ -518,7 +529,7 @@ public actor ChannelRegistry {
     ///
     /// r[impl rpc.channel.close] - Data after close is rejected.
     public func deliverData(channelId: ChannelId, payload: [UInt8]) async -> Bool {
-        if pendingClose.contains(channelId) {
+        if pendingTerminal[channelId] != nil {
             return false
         }
         if let receiver = receivers[channelId] {
@@ -537,7 +548,7 @@ public actor ChannelRegistry {
         if let receiver = receivers[channelId] {
             receiver.deliverClose()
             receivers.removeValue(forKey: channelId)
-            pendingClose.insert(channelId)
+            pendingTerminal[channelId] = .close
             if let credit = outgoingCredits[channelId] {
                 await credit.close()
             }
@@ -545,7 +556,7 @@ public actor ChannelRegistry {
             return true
         }
         if knownChannels.contains(channelId) {
-            pendingClose.insert(channelId)
+            pendingTerminal[channelId] = .close
             if let credit = outgoingCredits[channelId] {
                 await credit.close()
             }
@@ -564,18 +575,17 @@ public actor ChannelRegistry {
     /// Deliver reset to a channel.
     ///
     /// r[impl rpc.channel.reset] - Reset abruptly terminates channel.
-    public func deliverReset(channelId: ChannelId) async {
+    public func deliverReset(channelId: ChannelId, error: ChannelError = .reset) async {
         if let receiver = receivers[channelId] {
-            receiver.deliverReset()
+            receiver.deliverReset(error)
             receivers.removeValue(forKey: channelId)
+        } else if knownChannels.contains(channelId) {
+            pendingTerminal[channelId] = .error(error)
         }
         if let credit = outgoingCredits[channelId] {
             await credit.close()
         }
         outgoingCredits.removeValue(forKey: channelId)
-        knownChannels.remove(channelId)
-        pendingData.removeValue(forKey: channelId)
-        pendingClose.remove(channelId)
     }
 
     /// Deliver credit to a channel.
@@ -591,7 +601,7 @@ public actor ChannelRegistry {
     public func closeAllChannels() async {
         // r[impl rpc.channel.connection-closure]
         for (_, receiver) in receivers {
-            receiver.deliverReset()
+            receiver.deliverReset(.connectionClosed)
         }
         receivers.removeAll()
         for (_, credit) in outgoingCredits {
@@ -600,14 +610,32 @@ public actor ChannelRegistry {
         outgoingCredits.removeAll()
         knownChannels.removeAll()
         pendingData.removeAll()
-        pendingClose.removeAll()
+        pendingTerminal.removeAll()
     }
 }
 
 // MARK: - Errors
 
-public enum ChannelError: Error {
+private enum ChannelTerminal {
+    case close
+    case error(ChannelError)
+
+    func deliver(to receiver: ChannelReceiver) {
+        switch self {
+        case .close:
+            receiver.deliverClose()
+        case .error(let error):
+            receiver.deliverReset(error)
+        }
+    }
+}
+
+public enum ChannelError: Error, Equatable {
     case notBound
     case closed
+    case reset
+    case requestClosed
+    case cancelled
+    case connectionClosed
     case unknown
 }

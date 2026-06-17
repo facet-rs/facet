@@ -1300,7 +1300,7 @@ struct ConnectionFailureTests {
     }
 
     // r[verify rpc.cancel.channels]
-    @Test func inboundCancelDoesNotCloseRequestChannels() async throws {
+    @Test func inboundCancelTerminalizesRequestChannels() async throws {
         let channelId: UInt64 = 1
         let capture = ChannelReceiverCapture()
         let transport = ScriptedTransport(
@@ -1325,7 +1325,7 @@ struct ConnectionFailureTests {
             try await driver.run()
         }
 
-        try await withAsyncCleanup({
+        await withAsyncCleanup({
             try? await transport.close()
             await cancelAndDrain(driverTask)
         }) {
@@ -1360,15 +1360,16 @@ struct ConnectionFailureTests {
             }
 
             await transport.enqueueMessage(messageCancel(requestId: 77))
-            await transport.enqueueMessage(
-                .data(connId: 0, channelId: channelId, payload: [0xCA, 0xFE])
-            )
 
             let receivedTask = Task<[UInt8]?, Error> {
-                await receiver.recv()
+                try await receiver.recv()
             }
-            let received = try await awaitTaskResult(receivedTask, timeoutMs: 1_000)
-            #expect(received == [0xCA, 0xFE])
+            do {
+                _ = try await awaitTaskResult(receivedTask, timeoutMs: 1_000)
+                Issue.record("expected request channel to observe cancellation")
+            } catch {
+                #expect(error as? VoxRuntime.ChannelError == .cancelled)
+            }
             #expect(await awaitProtocolReason(transport, timeoutMs: 100) == nil)
         }
     }

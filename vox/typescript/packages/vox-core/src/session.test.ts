@@ -918,9 +918,53 @@ describe("session", () => {
     await expect(call).rejects.toBeInstanceOf(ConnectionError);
   });
 
+  // r[verify rpc.request.scope.channels]
+  it("terminalizes caller receive channels when a response is delivered", async () => {
+    const localSettings: ConnectionSettings = {
+      parity: { tag: "Odd" },
+      max_concurrent_requests: 64,
+      initial_channel_credit: 16,
+    };
+    const peerSettings: ConnectionSettings = {
+      parity: { tag: "Even" },
+      max_concurrent_requests: 64,
+      initial_channel_credit: 16,
+    };
+    const fakeSession = {
+      sendMessage: async () => {},
+    };
+    const connection = new Lane(
+      fakeSession as never,
+      0n,
+      localSettings,
+      peerSettings,
+    );
+    const [tx, rx] = channel<number>();
+    const serverSendsSchemas: PhonMethodSchemas = {
+      ...CHANNEL_METHOD_SCHEMAS,
+      channels: [{ index: 0, direction: "tx", elementRoot: primitiveId("u32") }],
+    };
+
+    const call = connection.caller().call({
+      method: "Test.stream",
+      args: { numbers: tx },
+      descriptor: CHANNEL_METHOD,
+      methodSchemas: serverSendsSchemas,
+      registry: CHANNEL_REGISTRY,
+      timeoutMs: 1_000,
+    });
+    const observedCall = call.catch((error) => error);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    connection.resolveResponse(1n, Uint8Array.of(0, 0, 0, 0));
+
+    await expect(rx.recv()).rejects.toMatchObject({ kind: "requestClosed" });
+    await observedCall;
+  });
+
   // r[verify rpc.cancel]
   // r[verify rpc.cancel.channels]
-  it("queues inbound cancel without closing request channels", async () => {
+  it("queues inbound cancel and terminalizes request channels", async () => {
     const [clientLink, serverLink] = memoryLinkPair();
     const serverSession = await withTimeout(
       establishRawAcceptor(clientLink, serverLink),
@@ -954,9 +998,8 @@ describe("session", () => {
       inboundLiveRequestCount: 0,
     });
 
-    await clientLink.send(encodeMessage(messageData(11n, Uint8Array.of(4, 5, 6))));
-    expect(Array.from((await withTimeout(receiver.recv(), "post-cancel channel item")) ?? []))
-      .toEqual([4, 5, 6]);
+    await expect(withTimeout(receiver.recv(), "post-cancel channel terminal"))
+      .rejects.toMatchObject({ kind: "cancelled" });
 
     await serverRoot.sendResponse(1n, Uint8Array.of(9));
     const lateResponse = decodeMessage(

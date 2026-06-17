@@ -270,6 +270,7 @@ func calleeAdvertisesResponseSchemaWithFirstResponseOnConnection() async throws 
             9,
             connectionId: 0,
             responseMetadata: .null,
+            channels: [],
             localMaxConcurrentRequests: UInt32.max
         ) == .inserted
     )
@@ -288,6 +289,7 @@ func calleeAdvertisesResponseSchemaWithFirstResponseOnConnection() async throws 
             11,
             connectionId: 0,
             responseMetadata: .null,
+            channels: [],
             localMaxConcurrentRequests: UInt32.max
         ) == .inserted
     )

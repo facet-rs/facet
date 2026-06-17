@@ -275,7 +275,13 @@ export class Tx<T> {
   }
 
   finishCallBinding(): void {
-    this.close();
+    if (this.closed) return;
+    this.closed = true;
+    if (this.sender?.mode === "client") {
+      this.sender.sender.terminate();
+    } else {
+      this.sender?.credit.close();
+    }
   }
 
   private attachOutgoingBinding(

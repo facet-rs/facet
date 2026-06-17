@@ -182,6 +182,12 @@ weight = 12
 > associated raw channel terminal with a reason that preserves the terminal
 > condition.
 >
+> Channel receive APIs MUST distinguish graceful end-of-stream from terminal
+> request-scope failure. A receiver observes graceful EOF only after the
+> sender's `CloseChannel` has been delivered. Any other request-scope terminal
+> condition that reaches a live receiver MUST be reported as a receive error
+> carrying the terminal reason.
+>
 > A handler that needs to keep sending or receiving on a raw channel must keep
 > the request scope in flight until that raw channel is terminal. A handler that
 > needs an important value stream after a method result MUST expose that stream
@@ -373,12 +379,19 @@ weight = 12
 > The sender of a channel sends `CloseChannel` when it is done sending.
 > After sending `CloseChannel`, the sender MUST NOT send any more
 > `ChannelItem` messages on that channel.
+>
+> After all accepted `ChannelItem` messages before the `CloseChannel` have been
+> delivered, the receiver MUST observe graceful end-of-stream, not a receive
+> error.
 
 > r[rpc.channel.reset]
 >
 > The receiver of a channel sends `ResetChannel` to ask the sender to
 > stop sending. After receiving `ResetChannel`, the sender MUST stop
 > sending `ChannelItem` messages on that channel.
+>
+> If a `ResetChannel` reaches a live local receiver, the receiver MUST observe a
+> receive error, not graceful end-of-stream.
 
 # Flow control
 

@@ -234,12 +234,16 @@ interface IncomingCreditState {
 
 interface PendingIncomingState {
   items: Uint8Array[];
-  terminal: boolean;
+  terminal: IncomingTerminal | undefined;
 }
 
 function creditReplenishmentThreshold(initialCredit: number): number {
   return Math.max(1, Math.floor(initialCredit / 2));
 }
+
+type IncomingTerminal =
+  | { kind: "close" }
+  | { kind: "error"; error: ChannelError };
 
 /**
  * Sender handle for outgoing channel data.
@@ -316,6 +320,12 @@ export class OutgoingSender {
       this.state.credit.close();
     });
   }
+
+  terminate(): void {
+    this.state.queue.close();
+    this.state.credit.close();
+    this.notifyOutgoing?.();
+  }
 }
 
 /**
@@ -380,7 +390,7 @@ export class ChannelRegistry {
         channel.send(payload);
       }
       if (pending.terminal) {
-        channel.close();
+        channel.close(pending.terminal.kind === "error" ? pending.terminal.error : undefined);
         this.incomingCredit.delete(channelId);
         this.closed.add(channelId);
       } else {
@@ -467,7 +477,7 @@ export class ChannelRegistry {
         pending.items.push(payload);
         return;
       }
-      this.pendingIncoming.set(channelId, { items: [payload], terminal: false });
+      this.pendingIncoming.set(channelId, { items: [payload], terminal: undefined });
       return;
     }
 
@@ -544,39 +554,63 @@ export class ChannelRegistry {
   /**
    * Close an incoming channel.
    *
-   * r[impl rpc.channel.close] - Close terminates the channel.
-   * r[impl rpc.channel.reset] - Reset also terminates the channel locally.
+   * r[impl rpc.channel.close] - Close terminates the channel gracefully.
    */
   close(channelId: ChannelId): void {
     logChannelEvent("close", channelId);
+    this.terminateIncoming(channelId, { kind: "close" }, false);
+    this.terminateOutgoing(channelId);
+    this.closed.add(channelId);
+  }
+
+  /**
+   * Reset an incoming channel with a receive error.
+   *
+   * r[impl rpc.channel.reset] - Reset is not graceful EOF.
+   */
+  reset(channelId: ChannelId, error = ChannelError.reset(channelId)): void {
+    logChannelEvent("reset", channelId);
+    this.terminateIncoming(channelId, { kind: "error", error }, true);
+    this.terminateOutgoing(channelId);
+    this.closed.add(channelId);
+  }
+
+  private terminateIncoming(
+    channelId: ChannelId,
+    terminal: IncomingTerminal,
+    rememberUnbound: boolean,
+  ): void {
     const pending = this.pendingIncoming.get(channelId);
     if (pending) {
-      pending.terminal = true;
+      pending.terminal = terminal;
     }
 
     const channel = this.incoming.get(channelId);
     if (channel) {
-      channel.close();
+      channel.close(terminal.kind === "error" ? terminal.error : undefined);
       this.incoming.delete(channelId);
+    } else if (!pending && rememberUnbound) {
+      this.pendingIncoming.set(channelId, { items: [], terminal });
     }
     this.incomingCredit.delete(channelId);
+  }
 
+  private terminateOutgoing(channelId: ChannelId): void {
     const outgoing = this.outgoing.get(channelId);
     if (outgoing) {
       outgoing.credit.close();
       outgoing.queue.close();
       this.outgoing.delete(channelId);
     }
-    this.closed.add(channelId);
   }
 
-  closeAll(): void {
+  closeAll(error = ChannelError.connectionClosed()): void {
     // r[impl rpc.channel.connection-closure]
     for (const channelId of this.incoming.keys()) {
-      this.close(channelId);
+      this.reset(channelId, error);
     }
     for (const channelId of this.outgoing.keys()) {
-      this.close(channelId);
+      this.reset(channelId, error);
     }
     this.pendingIncoming.clear();
     this.pendingCredits.length = 0;

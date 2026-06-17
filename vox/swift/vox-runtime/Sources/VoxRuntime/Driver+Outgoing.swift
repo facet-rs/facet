@@ -27,6 +27,11 @@ extension Driver {
         guard responseContext.removed else {
             return nil
         }
+        await terminateRequestChannels(
+            connectionId: responseContext.connectionId,
+            channelIds: responseContext.channels,
+            error: .requestClosed
+        )
         return messageResponse(
             requestId: requestId,
             payload: payload,

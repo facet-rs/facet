@@ -8,14 +8,18 @@
 export interface Channel<T> {
   send(value: T): boolean;
   recv(): Promise<T | null>;
-  close(): void;
+  close(error?: Error): void;
   isClosed(): boolean;
 }
 
 interface ChannelState<T> {
   buffer: T[];
   closed: boolean;
-  waiters: Array<(value: T | null) => void>;
+  terminalError: Error | undefined;
+  waiters: Array<{
+    resolve: (value: T | null) => void;
+    reject: (error: Error) => void;
+  }>;
 }
 
 /**
@@ -25,6 +29,7 @@ export function createChannel<T>(): Channel<T> {
   const state: ChannelState<T> = {
     buffer: [],
     closed: false,
+    terminalError: undefined,
     waiters: [],
   };
 
@@ -37,7 +42,7 @@ export function createChannel<T>(): Channel<T> {
       // If there's a waiter, deliver directly
       const waiter = state.waiters.shift();
       if (waiter) {
-        waiter(value);
+        waiter.resolve(value);
         return true;
       }
 
@@ -53,21 +58,29 @@ export function createChannel<T>(): Channel<T> {
 
       // Channel closed and empty
       if (state.closed) {
+        if (state.terminalError) {
+          throw state.terminalError;
+        }
         return null;
       }
 
       // Wait for a value
-      return new Promise((resolve) => {
-        state.waiters.push(resolve);
+      return new Promise((resolve, reject) => {
+        state.waiters.push({ resolve, reject });
       });
     },
 
-    close(): void {
+    close(error?: Error): void {
       if (state.closed) return;
       state.closed = true;
+      state.terminalError = error;
       // Wake all waiters with null
       for (const waiter of state.waiters) {
-        waiter(null);
+        if (error) {
+          waiter.reject(error);
+        } else {
+          waiter.resolve(null);
+        }
       }
       state.waiters.length = 0;
     },
@@ -94,8 +107,8 @@ export class ChannelSender<T> {
     return this.channel.send(value);
   }
 
-  close(): void {
-    this.channel.close();
+  close(error?: Error): void {
+    this.channel.close(error);
   }
 }
 

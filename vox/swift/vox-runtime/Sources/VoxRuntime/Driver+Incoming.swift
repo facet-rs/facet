@@ -226,7 +226,12 @@ extension Driver {
                 pending.responseTx(.success(payload))
             case .cancel:
                 // r[impl rpc.cancel]
-                let _ = await state.removeInFlight(request.id)
+                let responseContext = await state.removeInFlight(request.id)
+                await terminateRequestChannels(
+                    connectionId: responseContext.connectionId,
+                    channelIds: responseContext.channels,
+                    error: .cancelled
+                )
             }
         case .channelMessage(let channel):
             switch channel.body {
@@ -290,6 +295,7 @@ extension Driver {
             requestId,
             connectionId: connId,
             responseMetadata: responseMetadataFromRequest(metadata),
+            channels: channels,
             localMaxConcurrentRequests: localMaxConcurrentRequests
         )
 
@@ -412,17 +418,35 @@ extension Driver {
         return await lane.channelRegistry.deliverClose(channelId: channelId)
     }
 
-    private func deliverChannelReset(connectionId: UInt64, channelId: UInt64) async {
+    func terminateRequestChannels(
+        connectionId: UInt64,
+        channelIds: [UInt64],
+        error: ChannelError
+    ) async {
+        for channelId in channelIds {
+            await deliverChannelReset(
+                connectionId: connectionId,
+                channelId: channelId,
+                error: error
+            )
+        }
+    }
+
+    private func deliverChannelReset(
+        connectionId: UInt64,
+        channelId: UInt64,
+        error: ChannelError = .reset
+    ) async {
         if connectionId == 0 {
-            await serverRegistry.deliverReset(channelId: channelId)
-            await handle.channelRegistry.deliverReset(channelId: channelId)
+            await serverRegistry.deliverReset(channelId: channelId, error: error)
+            await handle.channelRegistry.deliverReset(channelId: channelId, error: error)
             return
         }
 
         guard let lane = await laneState.lane(for: connectionId) else {
             return
         }
-        await lane.channelRegistry.deliverReset(channelId: channelId)
+        await lane.channelRegistry.deliverReset(channelId: channelId, error: error)
     }
 
     private func deliverChannelCredit(connectionId: UInt64, channelId: UInt64, bytes: UInt32) async {

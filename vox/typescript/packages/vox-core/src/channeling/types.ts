@@ -22,6 +22,10 @@ export class ChannelError extends Error {
     | "unknown"
     | "dataAfterClose"
     | "closed"
+    | "reset"
+    | "requestClosed"
+    | "cancelled"
+    | "connectionClosed"
     | "serialize"
     | "deserialize"
     | "notBound"
@@ -32,6 +36,10 @@ export class ChannelError extends Error {
       | "unknown"
       | "dataAfterClose"
       | "closed"
+      | "reset"
+      | "requestClosed"
+      | "cancelled"
+      | "connectionClosed"
       | "serialize"
       | "deserialize"
       | "notBound"
@@ -53,6 +61,25 @@ export class ChannelError extends Error {
 
   static closed(): ChannelError {
     return new ChannelError("closed", "channel closed");
+  }
+
+  static reset(channelId?: ChannelId): ChannelError {
+    return new ChannelError(
+      "reset",
+      channelId === undefined ? "channel reset" : `channel ${channelId} reset`,
+    );
+  }
+
+  static requestClosed(): ChannelError {
+    return new ChannelError("requestClosed", "request scope ended before channel close");
+  }
+
+  static cancelled(): ChannelError {
+    return new ChannelError("cancelled", "request cancelled before channel close");
+  }
+
+  static connectionClosed(): ChannelError {
+    return new ChannelError("connectionClosed", "connection closed while channel was live");
   }
 
   static serialize(cause: unknown): ChannelError {

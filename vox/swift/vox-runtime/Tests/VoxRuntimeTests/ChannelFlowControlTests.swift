@@ -145,12 +145,18 @@ struct ChannelFlowControlTests {
 
         let closeReceiver = await registry.register(21, initialCredit: 2)
         #expect(await registry.deliverClose(channelId: 21))
-        #expect(await closeReceiver.recv() == nil)
+        #expect(try await closeReceiver.recv() == nil)
 
         let resetReceiver = await registry.register(23, initialCredit: 2)
         #expect(await registry.deliverData(channelId: 23, payload: [1, 2, 3]))
         await registry.deliverReset(channelId: 23)
-        #expect(await resetReceiver.recv() == nil)
+        #expect(try await resetReceiver.recv() == [1, 2, 3])
+        do {
+            _ = try await resetReceiver.recv()
+            Issue.record("expected reset receiver to observe channel error")
+        } catch {
+            #expect(error as? VoxRuntime.ChannelError == .reset)
+        }
     }
 
     // r[verify rpc.channel.connection-closure]
@@ -168,7 +174,12 @@ struct ChannelFlowControlTests {
 
         await registry.closeAllChannels()
 
-        #expect(await receiver.recv() == nil)
+        do {
+            _ = try await receiver.recv()
+            Issue.record("expected receiver to observe connection closure")
+        } catch {
+            #expect(error as? VoxRuntime.ChannelError == .connectionClosed)
+        }
         do {
             try await blockedSend.value
             Issue.record("expected blocked sender to observe channel closure")
@@ -283,7 +294,7 @@ struct ChannelFlowControlTests {
         }
 
         for i in 0..<8 {
-            let bytes = await receiver.recv()
+            let bytes = try await receiver.recv()
             #expect(bytes != nil)
             var itemBuf = ByteBufferAllocator().buffer(bytes: bytes!)
             let value = try decI32(from: &itemBuf)
