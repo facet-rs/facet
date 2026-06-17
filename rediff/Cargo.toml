@@ -1,0 +1,45 @@
+[package]
+name = "rediff"
+version = "0.50.0-rc.0"
+edition = "2024"
+rust-version = "1.90.0"
+authors = ["Amos Wenger <amos@bearcove.eu>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/bearcove/rediff"
+description = "Diff and compare Facet values with detailed structural difference reporting"
+documentation = "https://docs.rs/rediff"
+keywords = ["diff", "compare", "testing", "facet", "assertion"]
+categories = ["development-tools::testing", "rust-patterns"]
+homepage = "https://github.com/bearcove/rediff"
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[features]
+default = []
+tracing = ["dep:tracing"]
+
+[dependencies]
+# Core facet dependencies
+facet = { version = "0.50.0-rc.0" }
+facet-core = { version = "0.50.0-rc.0" }
+facet-pretty = { version = "0.50.0-rc.0" }
+facet-reflect = { version = "0.50.0-rc.0" }
+
+# From facet-diff-core
+confusables = "0.1"
+indextree = "4"
+owo-colors = "4"
+palette = { version = "0.7", default-features = false, features = ["std"] }
+terminal-colorsaurus = "1"
+unicode-width = "0.2"
+
+tracing = { version = "0.1", default-features = false, optional = true }
+
+[dev-dependencies]
+facet = { version = "0.50.0-rc.0", features = [
+  "all-impls",
+] }
+tracing = "0.1"

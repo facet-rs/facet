@@ -1,0 +1,1490 @@
+//! Layout rendering to output.
+
+use std::fmt::{self, Write};
+
+use confusables::Confusable;
+
+use super::backend::{AnsiBackend, ColorBackend, PlainBackend, SemanticColor};
+use super::flavor::DiffFlavor;
+use super::{AttrStatus, ChangedGroup, ElementChange, Layout, LayoutNode, ValueType};
+use crate::DiffSymbols;
+
+/// Per-position character differences between two equal-looking strings.
+/// `(index, old_char, new_char)`; a `None` means the string is shorter
+/// there. Mirrors the Display path's confusable explanation.
+fn char_diffs(a: &str, b: &str) -> Vec<(usize, Option<char>, Option<char>)> {
+    let ac: Vec<char> = a.chars().collect();
+    let bc: Vec<char> = b.chars().collect();
+    let mut out = Vec::new();
+    for i in 0..ac.len().max(bc.len()) {
+        match (ac.get(i), bc.get(i)) {
+            (Some(&l), Some(&r)) if l != r => out.push((i, Some(l), Some(r))),
+            (Some(&l), None) => out.push((i, Some(l), None)),
+            (None, Some(&r)) => out.push((i, None, Some(r))),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// True if the attribute is a *changed string* whose old/new values are
+/// visually confusable (look identical, differ only in codepoints).
+fn confusable_changed(layout: &Layout, attr: &super::Attr) -> bool {
+    if let AttrStatus::Changed { old, new } = &attr.status {
+        let a = layout.get_string(old.span);
+        let b = layout.get_string(new.span);
+        // Only quoted (string) values; `String` formats as
+        // ValueType::Other so we key off the rendered quotes instead.
+        if !(a.starts_with('"') && b.starts_with('"')) {
+            return false;
+        }
+        // The crate matches whole strings, so compare the unquoted body.
+        let (_, ab, _) = unquote(a);
+        let (_, bb, _) = unquote(b);
+        return ab != bb && (ab.is_confusable_with(bb) || bb.is_confusable_with(ab));
+    }
+    false
+}
+
+/// Render `c` with its codepoint: `'a' (U+0061)` or, for non-graphic
+/// chars, `'\u{0430}'`.
+fn char_with_codepoint(c: char) -> String {
+    if c.is_ascii_graphic() {
+        format!("'{}' (U+{:04X})", c, c as u32)
+    } else {
+        format!("'\\u{{{:04X}}}'", c as u32)
+    }
+}
+
+/// Syntax element type for context-aware coloring.
+#[derive(Clone, Copy)]
+#[allow(dead_code)]
+enum SyntaxElement {
+    Key,
+    Structure,
+    Comment,
+}
+
+/// Get the appropriate semantic color for a syntax element in a given context.
+const fn syntax_color(base: SyntaxElement, context: ElementChange) -> SemanticColor {
+    match (base, context) {
+        (SyntaxElement::Key, ElementChange::Deleted) => SemanticColor::DeletedKey,
+        (SyntaxElement::Key, ElementChange::Inserted) => SemanticColor::InsertedKey,
+        (SyntaxElement::Key, _) => SemanticColor::Key,
+
+        (SyntaxElement::Structure, ElementChange::Deleted) => SemanticColor::DeletedStructure,
+        (SyntaxElement::Structure, ElementChange::Inserted) => SemanticColor::InsertedStructure,
+        (SyntaxElement::Structure, _) => SemanticColor::Structure,
+
+        (SyntaxElement::Comment, ElementChange::Deleted) => SemanticColor::DeletedComment,
+        (SyntaxElement::Comment, ElementChange::Inserted) => SemanticColor::InsertedComment,
+        (SyntaxElement::Comment, _) => SemanticColor::Comment,
+    }
+}
+
+/// Get the appropriate semantic color for a value based on its type and context.
+const fn value_color(value_type: ValueType, context: ElementChange) -> SemanticColor {
+    match (value_type, context) {
+        (ValueType::String, ElementChange::Deleted) => SemanticColor::DeletedString,
+        (ValueType::String, ElementChange::Inserted) => SemanticColor::InsertedString,
+        (ValueType::String, _) => SemanticColor::String,
+
+        (ValueType::Number, ElementChange::Deleted) => SemanticColor::DeletedNumber,
+        (ValueType::Number, ElementChange::Inserted) => SemanticColor::InsertedNumber,
+        (ValueType::Number, _) => SemanticColor::Number,
+
+        (ValueType::Boolean, ElementChange::Deleted) => SemanticColor::DeletedBoolean,
+        (ValueType::Boolean, ElementChange::Inserted) => SemanticColor::InsertedBoolean,
+        (ValueType::Boolean, _) => SemanticColor::Boolean,
+
+        (ValueType::Null, ElementChange::Deleted) => SemanticColor::DeletedNull,
+        (ValueType::Null, ElementChange::Inserted) => SemanticColor::InsertedNull,
+        (ValueType::Null, _) => SemanticColor::Null,
+
+        // Other/unknown types use accent colors
+        (ValueType::Other, ElementChange::Deleted) => SemanticColor::Deleted,
+        (ValueType::Other, ElementChange::Inserted) => SemanticColor::Inserted,
+        (ValueType::Other, ElementChange::MovedFrom)
+        | (ValueType::Other, ElementChange::MovedTo) => SemanticColor::Moved,
+        (ValueType::Other, ElementChange::None) => SemanticColor::Unchanged,
+    }
+}
+
+/// Get semantic color for highlight background (changed values).
+const fn value_color_highlight(value_type: ValueType, context: ElementChange) -> SemanticColor {
+    match (value_type, context) {
+        (ValueType::String, ElementChange::Deleted) => SemanticColor::DeletedString,
+        (ValueType::String, ElementChange::Inserted) => SemanticColor::InsertedString,
+
+        (ValueType::Number, ElementChange::Deleted) => SemanticColor::DeletedNumber,
+        (ValueType::Number, ElementChange::Inserted) => SemanticColor::InsertedNumber,
+
+        (ValueType::Boolean, ElementChange::Deleted) => SemanticColor::DeletedBoolean,
+        (ValueType::Boolean, ElementChange::Inserted) => SemanticColor::InsertedBoolean,
+
+        (ValueType::Null, ElementChange::Deleted) => SemanticColor::DeletedNull,
+        (ValueType::Null, ElementChange::Inserted) => SemanticColor::InsertedNull,
+
+        // Highlight uses generic highlights for Other/unchanged
+        (_, ElementChange::Deleted) => SemanticColor::DeletedHighlight,
+        (_, ElementChange::Inserted) => SemanticColor::InsertedHighlight,
+        (_, ElementChange::MovedFrom) | (_, ElementChange::MovedTo) => {
+            SemanticColor::MovedHighlight
+        }
+        _ => SemanticColor::Unchanged,
+    }
+}
+
+/// Width of the compact one-line form
+/// `Tag { a, b unchanged, x: old → new, … }`. Used to decide whether an
+/// element's (scalar-only) changes are small enough to keep on one line.
+fn inline_element_width<F: DiffFlavor>(attrs: &[super::Attr], tag: &str, flavor: &F) -> usize {
+    let mut w = flavor.struct_open(tag).len() + 1; // "Tag {" + " "
+
+    let unchanged: Vec<&super::Attr> = attrs
+        .iter()
+        .filter(|a| matches!(a.status, AttrStatus::Unchanged { .. }))
+        .collect();
+    let changed_count = attrs
+        .iter()
+        .filter(|a| matches!(a.status, AttrStatus::Changed { .. }))
+        .count();
+
+    if !unchanged.is_empty() {
+        // Mirror render: one → `name: value`, many → `a, b unchanged`.
+        if let [only] = unchanged.as_slice()
+            && let AttrStatus::Unchanged { value } = &only.status
+        {
+            w += flavor.format_field_prefix(&only.name).len()
+                + value.width
+                + flavor.format_field_suffix().len();
+        } else {
+            let names_len: usize = unchanged.iter().map(|a| a.name.len()).sum::<usize>()
+                + 2 * unchanged.len().saturating_sub(1); // ", " joins
+            w += names_len + " unchanged".len();
+        }
+        if changed_count > 0 {
+            w += 2; // ", "
+        }
+    }
+
+    let mut first = true;
+    for attr in attrs {
+        if let AttrStatus::Changed { old, new } = &attr.status {
+            if !first {
+                w += 2; // ", "
+            }
+            first = false;
+            w += flavor.format_field_prefix(&attr.name).len()
+                + old.width
+                + 3 // " → "
+                + new.width
+                + flavor.format_field_suffix().len();
+        }
+    }
+
+    w + 1 + flavor.struct_close(tag, true).len() // " }"
+}
+
+/// Options for rendering a layout.
+#[derive(Clone, Debug)]
+pub struct RenderOptions<B: ColorBackend> {
+    /// Symbols to use for diff markers.
+    pub symbols: DiffSymbols,
+    /// Color backend for styling output.
+    pub backend: B,
+    /// Indentation string (default: 2 spaces).
+    pub indent: &'static str,
+}
+
+impl Default for RenderOptions<AnsiBackend> {
+    fn default() -> Self {
+        Self {
+            symbols: DiffSymbols::default(),
+            backend: AnsiBackend::default(),
+            indent: "    ",
+        }
+    }
+}
+
+impl RenderOptions<PlainBackend> {
+    /// Create options with plain backend (no colors).
+    pub fn plain() -> Self {
+        Self {
+            symbols: DiffSymbols::default(),
+            backend: PlainBackend,
+            indent: "    ",
+        }
+    }
+}
+
+impl<B: ColorBackend> RenderOptions<B> {
+    /// Create options with a custom backend.
+    pub fn with_backend(backend: B) -> Self {
+        Self {
+            symbols: DiffSymbols::default(),
+            backend,
+            indent: "    ",
+        }
+    }
+}
+
+/// Render a layout to a writer.
+///
+/// Starts at depth 1 to provide a gutter for change prefixes (- / +).
+pub fn render<W: Write, B: ColorBackend, F: DiffFlavor>(
+    layout: &Layout,
+    w: &mut W,
+    opts: &RenderOptions<B>,
+    flavor: &F,
+) -> fmt::Result {
+    render_node(layout, w, layout.root, 1, opts, flavor)
+}
+
+/// Render a layout to a String.
+pub fn render_to_string<B: ColorBackend, F: DiffFlavor>(
+    layout: &Layout,
+    opts: &RenderOptions<B>,
+    flavor: &F,
+) -> String {
+    let mut out = String::new();
+    render(layout, &mut out, opts, flavor).expect("writing to String cannot fail");
+    out
+}
+
+const fn element_change_to_semantic(change: ElementChange) -> SemanticColor {
+    match change {
+        ElementChange::None => SemanticColor::Unchanged,
+        ElementChange::Deleted => SemanticColor::Deleted,
+        ElementChange::Inserted => SemanticColor::Inserted,
+        ElementChange::MovedFrom | ElementChange::MovedTo => SemanticColor::Moved,
+    }
+}
+
+fn render_node<W: Write, B: ColorBackend, F: DiffFlavor>(
+    layout: &Layout,
+    w: &mut W,
+    node_id: indextree::NodeId,
+    depth: usize,
+    opts: &RenderOptions<B>,
+    flavor: &F,
+) -> fmt::Result {
+    let node = layout.get(node_id).expect("node exists");
+
+    match node {
+        LayoutNode::Element {
+            tag,
+            field_name,
+            attrs,
+            changed_groups,
+            change,
+        } => {
+            let tag = tag.as_ref();
+            let field_name = *field_name;
+            let change = *change;
+            let attrs = attrs.clone();
+            let changed_groups = changed_groups.clone();
+
+            render_element(
+                layout,
+                w,
+                node_id,
+                depth,
+                opts,
+                flavor,
+                tag,
+                field_name,
+                &attrs,
+                &changed_groups,
+                change,
+            )
+        }
+
+        LayoutNode::Sequence {
+            change,
+            item_type,
+            field_name,
+        } => {
+            let change = *change;
+            let item_type = *item_type;
+            let field_name = *field_name;
+            render_sequence(
+                layout, w, node_id, depth, opts, flavor, change, item_type, field_name,
+            )
+        }
+
+        LayoutNode::Tuple {
+            tag,
+            field_name,
+            change,
+        } => {
+            let tag = tag.clone();
+            let field_name = *field_name;
+            let change = *change;
+            render_tuple(
+                layout, w, node_id, depth, opts, flavor, &tag, field_name, change,
+            )
+        }
+
+        LayoutNode::Collapsed { count, names } => {
+            write_indent(w, depth, opts)?;
+            let label = if names.is_empty() {
+                format!(".. {count} unchanged")
+            } else {
+                let refs: Vec<&str> = names.iter().map(|c| c.as_ref()).collect();
+                crate::display::unchanged_label(&refs)
+            };
+            opts.backend
+                .write_styled(w, &label, SemanticColor::Comment)?;
+            writeln!(w)
+        }
+
+        LayoutNode::Text {
+            value,
+            change,
+            field_name,
+        } => {
+            let text = layout.get_string(value.span);
+            let change = *change;
+
+            write_change_line_start(w, depth, opts, change)?;
+            // Keep scalar deleted/inserted values labelled (e.g. a unit
+            // enum variant `state: Idle`), symmetric with Element.
+            if let Some(name) = field_name {
+                let prefix = flavor.format_child_open(name);
+                if !prefix.is_empty() {
+                    opts.backend
+                        .write_styled(w, &prefix, SemanticColor::Unchanged)?;
+                }
+            }
+
+            // Unchanged elements are context (e.g. kept sequence items):
+            // mute them instead of using their type color, consistent
+            // with every other unchanged-context spot.
+            let semantic = if change == ElementChange::None {
+                SemanticColor::Comment
+            } else {
+                value_color(value.value_type, change)
+            };
+            opts.backend.write_styled(w, text, semantic)?;
+            writeln!(w)
+        }
+
+        LayoutNode::ValueChange {
+            field_name,
+            old,
+            new,
+        } => {
+            write_indent(w, depth, opts)?;
+            if let Some(name) = field_name {
+                let prefix = flavor.format_child_open(name);
+                if !prefix.is_empty() {
+                    opts.backend.write_styled(w, &prefix, SemanticColor::Key)?;
+                }
+            }
+            opts.backend.write_styled(
+                w,
+                layout.get_string(old.span),
+                value_color_highlight(old.value_type, ElementChange::Deleted),
+            )?;
+            opts.backend
+                .write_styled(w, " → ", SemanticColor::Comment)?;
+            opts.backend.write_styled(
+                w,
+                layout.get_string(new.span),
+                value_color_highlight(new.value_type, ElementChange::Inserted),
+            )?;
+            writeln!(w)
+        }
+
+        LayoutNode::HexDump { field_name, lines } => {
+            let field_name = *field_name;
+            let lines = lines.clone();
+
+            if let Some(name) = field_name {
+                let prefix = flavor.format_child_open(name);
+                if !prefix.is_empty() {
+                    write_indent(w, depth, opts)?;
+                    opts.backend
+                        .write_styled(w, prefix.trim_end(), SemanticColor::Key)?;
+                    writeln!(w)?;
+                }
+            }
+
+            for line in &lines {
+                match line {
+                    crate::hexdump::HexLine::Collapsed(n) => {
+                        let label = if *n == 1 { "row" } else { "rows" };
+                        write_indent(w, depth, opts)?;
+                        let comment = flavor.comment(&format!(".. {n} unchanged {label}"));
+                        opts.backend
+                            .write_styled(w, &comment, SemanticColor::Comment)?;
+                        writeln!(w)?;
+                    }
+                    crate::hexdump::HexLine::Row {
+                        kind,
+                        offset,
+                        cells,
+                    } => {
+                        let (marker, marker_color) = match kind {
+                            crate::hexdump::RowKind::Removed => ('-', SemanticColor::Deleted),
+                            crate::hexdump::RowKind::Added => ('+', SemanticColor::Inserted),
+                        };
+                        write_indent_minus_prefix(w, depth, opts)?;
+                        opts.backend.write_prefix(w, marker, marker_color)?;
+                        write!(w, " ")?;
+
+                        let backend = &opts.backend;
+                        let paint = |s: &str, cls: crate::hexdump::Cls| -> String {
+                            let color = match cls {
+                                crate::hexdump::Cls::Equal => SemanticColor::Comment,
+                                crate::hexdump::Cls::Deleted => SemanticColor::Deleted,
+                                crate::hexdump::Cls::Inserted => SemanticColor::Inserted,
+                            };
+                            let mut tmp = String::new();
+                            backend.write_styled(&mut tmp, s, color).ok();
+                            tmp
+                        };
+                        let mut row = String::new();
+                        crate::hexdump::write_row(&mut row, *offset, cells, paint);
+                        write!(w, "{row}")?;
+                        writeln!(w)?;
+                    }
+                }
+            }
+            Ok(())
+        }
+
+        LayoutNode::ItemGroup {
+            items,
+            change,
+            collapsed_suffix,
+            item_type,
+        } => {
+            let items = items.clone();
+            let change = *change;
+            let collapsed_suffix = *collapsed_suffix;
+            let item_type = *item_type;
+
+            // For changed items, the prefix eats into the indent (goes in the "gutter")
+            if let Some(prefix) = change.prefix() {
+                // Write indent minus 2 chars, then prefix + space
+                write_indent_minus_prefix(w, depth, opts)?;
+                opts.backend
+                    .write_prefix(w, prefix, element_change_to_semantic(change))?;
+                write!(w, " ")?;
+            } else {
+                write_indent(w, depth, opts)?;
+            }
+
+            // Render items with flavor separator and optional wrapping
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    write!(w, "{}", flavor.item_separator())?;
+                }
+                let raw_value = layout.get_string(item.span);
+                let formatted = flavor.format_seq_item(item_type, raw_value);
+                let semantic = value_color(item.value_type, change);
+                opts.backend.write_styled(w, &formatted, semantic)?;
+            }
+
+            // Render collapsed suffix if present (context-aware)
+            if let Some(count) = collapsed_suffix {
+                let suffix = flavor.comment(&format!("{} more", count));
+                write!(w, " ")?;
+                opts.backend.write_styled(
+                    w,
+                    &suffix,
+                    syntax_color(SyntaxElement::Comment, change),
+                )?;
+            }
+
+            writeln!(w)
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
+    layout: &Layout,
+    w: &mut W,
+    node_id: indextree::NodeId,
+    depth: usize,
+    opts: &RenderOptions<B>,
+    flavor: &F,
+    tag: &str,
+    field_name: Option<&str>,
+    attrs: &[super::Attr],
+    changed_groups: &[ChangedGroup],
+    change: ElementChange,
+) -> fmt::Result {
+    // Handle transparent elements - render children only without wrapper
+    // This is used for Option types which should not create XML elements
+    if tag == "_transparent" {
+        for child_id in layout.children(node_id) {
+            render_node(layout, w, child_id, depth, opts, flavor)?;
+        }
+        return Ok(());
+    }
+
+    // Check what kinds of attribute changes we have
+    let has_changed_attrs = !changed_groups.is_empty();
+    let has_deleted_attrs = attrs
+        .iter()
+        .any(|a| matches!(a.status, AttrStatus::Deleted { .. }));
+    let has_inserted_attrs = attrs
+        .iter()
+        .any(|a| matches!(a.status, AttrStatus::Inserted { .. }));
+
+    let has_attr_changes = has_changed_attrs || has_deleted_attrs || has_inserted_attrs;
+
+    let children: Vec<_> = layout.children(node_id).collect();
+    let has_children = !children.is_empty();
+
+    // A `Collapsed` child is a "N unchanged" summary, not structural content.
+    // When an element also has attribute changes, show that summary at the
+    // top (like the Display path) instead of dangling it after the changes.
+    let collapsed_children: Vec<_> = children
+        .iter()
+        .copied()
+        .filter(|&id| matches!(layout.get(id), Some(LayoutNode::Collapsed { .. })))
+        .collect();
+
+    // Check if we can render as inline element diff (all attrs on one -/+ line pair).
+    // This compact `← old / → new` form only reads well when every change is a
+    // scalar *value* replacement. The moment keys/fields are added or removed
+    // (the common case for maps), the column-aligned `∅` placeholders become
+    // hard to follow — fall through to the multi-line per-entry form instead,
+    // which shows each change as its own `-`/`+` line.
+    // This is only viable when:
+    // 1. There are changed attributes (otherwise no need for a diff line)
+    // 2. No deleted or inserted attributes (structural churn → multi-line)
+    // 3. No children (self-closing element)
+    // 4. The compact one-liner fits the available width
+    // A confusable string change must never be compacted — its whole
+    // point is that the values look identical, so it needs the
+    // multi-line per-character / codepoint breakdown.
+    let has_confusable = attrs.iter().any(|a| confusable_changed(layout, a));
+
+    if has_changed_attrs
+        && !has_deleted_attrs
+        && !has_inserted_attrs
+        && !has_children
+        && !has_confusable
+    {
+        let indent_width = depth * opts.indent.len();
+        if inline_element_width(attrs, tag, flavor) <= 80usize.saturating_sub(indent_width) {
+            return render_inline_element(layout, w, depth, opts, flavor, tag, field_name, attrs);
+        }
+    }
+
+    let tag_color = match change {
+        ElementChange::None => SemanticColor::Structure,
+        ElementChange::Deleted => SemanticColor::DeletedStructure,
+        ElementChange::Inserted => SemanticColor::InsertedStructure,
+        ElementChange::MovedFrom | ElementChange::MovedTo => SemanticColor::Moved,
+    };
+
+    // Opening tag/struct
+    write_change_line_start(w, depth, opts, change)?;
+
+    // Render field name prefix if this element is a struct field (e.g., "point: " for Rust)
+    // Uses format_child_open which handles the difference between:
+    // - Rust/JSON: `field_name: `
+    // - XML: `` (empty - nested elements don't use attribute syntax)
+    if let Some(name) = field_name {
+        let prefix = flavor.format_child_open(name);
+        if !prefix.is_empty() {
+            opts.backend
+                .write_styled(w, &prefix, SemanticColor::Unchanged)?;
+        }
+    }
+
+    let open = flavor.struct_open(tag);
+    opts.backend.write_styled(w, &open, tag_color)?;
+
+    // Render type comment in muted color if present (context-aware)
+    if let Some(comment) = flavor.type_comment(tag) {
+        write!(w, " ")?;
+        opts.backend
+            .write_styled(w, &comment, syntax_color(SyntaxElement::Comment, change))?;
+    }
+
+    if has_attr_changes {
+        // Multi-line attribute format
+        writeln!(w)?;
+
+        // "N unchanged" summary first, so it reads as context for the changes.
+        for &cid in &collapsed_children {
+            render_node(layout, w, cid, depth + 1, opts, flavor)?;
+        }
+
+        // Render changed groups as -/+ line pairs
+        for group in changed_groups {
+            render_changed_group(layout, w, depth + 1, opts, flavor, attrs, group)?;
+        }
+
+        // Render deleted attributes (prefix uses indent gutter)
+        for (i, attr) in attrs.iter().enumerate() {
+            if let AttrStatus::Deleted { value } = &attr.status {
+                // Skip if already in a changed group
+                if changed_groups.iter().any(|g| g.attr_indices.contains(&i)) {
+                    continue;
+                }
+                write_indent_minus_prefix(w, depth + 1, opts)?;
+                opts.backend.write_prefix(w, '-', SemanticColor::Deleted)?;
+                write!(w, " ")?;
+                render_attr_deleted(layout, w, opts, flavor, &attr.name, value)?;
+                // Trailing comma (no highlight background)
+                opts.backend.write_styled(
+                    w,
+                    flavor.trailing_separator(),
+                    SemanticColor::Whitespace,
+                )?;
+                writeln!(w)?;
+            }
+        }
+
+        // Render inserted attributes (prefix uses indent gutter)
+        for (i, attr) in attrs.iter().enumerate() {
+            if let AttrStatus::Inserted { value } = &attr.status {
+                if changed_groups.iter().any(|g| g.attr_indices.contains(&i)) {
+                    continue;
+                }
+                write_indent_minus_prefix(w, depth + 1, opts)?;
+                opts.backend.write_prefix(w, '+', SemanticColor::Inserted)?;
+                write!(w, " ")?;
+                render_attr_inserted(layout, w, opts, flavor, &attr.name, value)?;
+                // Trailing comma (no highlight background)
+                opts.backend.write_styled(
+                    w,
+                    flavor.trailing_separator(),
+                    SemanticColor::Whitespace,
+                )?;
+                writeln!(w)?;
+            }
+        }
+
+        // Render unchanged attributes on one line
+        let unchanged: Vec<_> = attrs
+            .iter()
+            .filter(|a| matches!(a.status, AttrStatus::Unchanged { .. }))
+            .collect();
+        if !unchanged.is_empty() {
+            write_indent(w, depth + 1, opts)?;
+            for (i, attr) in unchanged.iter().enumerate() {
+                if i > 0 {
+                    write!(w, "{}", flavor.field_separator())?;
+                }
+                if let AttrStatus::Unchanged { value } = &attr.status {
+                    render_attr_unchanged(layout, w, opts, flavor, &attr.name, value)?;
+                }
+            }
+            // Trailing comma (no background)
+            opts.backend
+                .write_styled(w, flavor.trailing_separator(), SemanticColor::Whitespace)?;
+            writeln!(w)?;
+        }
+
+        // Close the opening. With children we only emit a separator if the
+        // flavor has one (e.g. XML `>`); Rust/JSON have none, so emitting an
+        // indented empty line here just leaves a stray blank line.
+        if has_children {
+            let open_close = flavor.struct_open_close();
+            if !open_close.is_empty() {
+                write_indent(w, depth, opts)?;
+                opts.backend.write_styled(w, open_close, tag_color)?;
+                writeln!(w)?;
+            }
+        } else {
+            write_change_line_start(w, depth, opts, change)?;
+            let close = flavor.struct_close(tag, true);
+            opts.backend.write_styled(w, &close, tag_color)?;
+            writeln!(w)?;
+        }
+    } else if has_children && !attrs.is_empty() {
+        // Unchanged attributes with children: put attrs on their own lines
+        writeln!(w)?;
+        for attr in attrs.iter() {
+            write_indent(w, depth + 1, opts)?;
+            if let AttrStatus::Unchanged { value } = &attr.status {
+                render_attr_unchanged(layout, w, opts, flavor, &attr.name, value)?;
+            }
+            // Trailing comma (no background)
+            opts.backend
+                .write_styled(w, flavor.trailing_separator(), SemanticColor::Whitespace)?;
+            writeln!(w)?;
+        }
+        // Close the opening (e.g., ">" for XML) - only if non-empty
+        let open_close = flavor.struct_open_close();
+        if !open_close.is_empty() {
+            write_indent(w, depth, opts)?;
+            opts.backend.write_styled(w, open_close, tag_color)?;
+            writeln!(w)?;
+        }
+    } else {
+        // Inline attributes (no changes, no children) or no attrs
+        for (i, attr) in attrs.iter().enumerate() {
+            if i > 0 {
+                write!(w, "{}", flavor.field_separator())?;
+            } else {
+                write!(w, " ")?;
+            }
+            if let AttrStatus::Unchanged { value } = &attr.status {
+                render_attr_unchanged(layout, w, opts, flavor, &attr.name, value)?;
+            }
+        }
+
+        if has_children {
+            // Close the opening tag (e.g., ">" for XML)
+            let open_close = flavor.struct_open_close();
+            opts.backend.write_styled(w, open_close, tag_color)?;
+        } else {
+            // Self-closing: ` }` — space before the close, matching the
+            // opening `Tag {` so we get `Tag { a, b }` not `Tag { a, b}`.
+            opts.backend
+                .write_styled(w, " ", SemanticColor::Whitespace)?;
+            let close = flavor.struct_close(tag, true);
+            opts.backend.write_styled(w, &close, tag_color)?;
+        }
+        writeln!(w)?;
+    }
+
+    // Children. Collapsed summaries were already rendered at the top of the
+    // changed block, so skip them here to avoid rendering them twice.
+    for child_id in children {
+        if has_attr_changes && collapsed_children.contains(&child_id) {
+            continue;
+        }
+        render_node(layout, w, child_id, depth + 1, opts, flavor)?;
+    }
+
+    // Closing tag (if we have children, we already printed opening part above)
+    if has_children {
+        write_change_line_start(w, depth, opts, change)?;
+        let close = flavor.struct_close(tag, false);
+        opts.backend.write_styled(w, &close, tag_color)?;
+        writeln!(w)?;
+    }
+
+    Ok(())
+}
+
+/// Render an element's scalar-only changes compactly on one line:
+/// `Tag { a, b unchanged, x: old → new, … }`.
+///
+/// Unchanged field *names* are summarized and muted; each changed
+/// field is `name: old → new` with only the old/new values on a
+/// highlight background. No `←/→`, no line background — the container
+/// itself didn't change, only the listed values did.
+#[allow(clippy::too_many_arguments)]
+fn render_inline_element<W: Write, B: ColorBackend, F: DiffFlavor>(
+    layout: &Layout,
+    w: &mut W,
+    depth: usize,
+    opts: &RenderOptions<B>,
+    flavor: &F,
+    tag: &str,
+    field_name: Option<&str>,
+    attrs: &[super::Attr],
+) -> fmt::Result {
+    write_indent(w, depth, opts)?;
+
+    if let Some(name) = field_name {
+        let prefix = flavor.format_child_open(name);
+        if !prefix.is_empty() {
+            opts.backend.write_styled(w, &prefix, SemanticColor::Key)?;
+        }
+    }
+
+    opts.backend
+        .write_styled(w, &flavor.struct_open(tag), SemanticColor::Structure)?;
+    opts.backend
+        .write_styled(w, " ", SemanticColor::Whitespace)?;
+
+    let unchanged: Vec<&super::Attr> = attrs
+        .iter()
+        .filter(|a| matches!(a.status, AttrStatus::Unchanged { .. }))
+        .collect();
+    let has_changed = attrs
+        .iter()
+        .any(|a| matches!(a.status, AttrStatus::Changed { .. }));
+
+    if !unchanged.is_empty() {
+        // One unchanged field: show `name: value` — it's about as short
+        // as "name unchanged" and far more informative. Two or more:
+        // summarize the names, which is where collapsing actually pays.
+        if unchanged.len() == 1
+            && let AttrStatus::Unchanged { value } = &unchanged[0].status
+        {
+            opts.backend.write_styled(
+                w,
+                &flavor.format_field(&unchanged[0].name, layout.get_string(value.span)),
+                SemanticColor::Comment,
+            )?;
+        } else {
+            let names = unchanged
+                .iter()
+                .map(|a| a.name.as_ref())
+                .collect::<Vec<_>>()
+                .join(", ");
+            opts.backend
+                .write_styled(w, &format!("{names} unchanged"), SemanticColor::Comment)?;
+        }
+        if has_changed {
+            opts.backend
+                .write_styled(w, ", ", SemanticColor::Whitespace)?;
+        }
+    }
+
+    let mut first = true;
+    for attr in attrs {
+        if let AttrStatus::Changed { old, new } = &attr.status {
+            if !first {
+                opts.backend
+                    .write_styled(w, ", ", SemanticColor::Whitespace)?;
+            }
+            first = false;
+            opts.backend.write_styled(
+                w,
+                &flavor.format_field_prefix(&attr.name),
+                SemanticColor::Key,
+            )?;
+            opts.backend.write_styled(
+                w,
+                layout.get_string(old.span),
+                value_color_highlight(old.value_type, ElementChange::Deleted),
+            )?;
+            opts.backend
+                .write_styled(w, " → ", SemanticColor::Comment)?;
+            opts.backend.write_styled(
+                w,
+                layout.get_string(new.span),
+                value_color_highlight(new.value_type, ElementChange::Inserted),
+            )?;
+            let suffix = flavor.format_field_suffix();
+            if !suffix.is_empty() {
+                opts.backend
+                    .write_styled(w, suffix, SemanticColor::Structure)?;
+            }
+        }
+    }
+
+    opts.backend
+        .write_styled(w, " ", SemanticColor::Whitespace)?;
+    opts.backend
+        .write_styled(w, &flavor.struct_close(tag, true), SemanticColor::Structure)?;
+    writeln!(w)
+}
+
+/// One positional element of a tuple, for inline rendering.
+enum TuplePiece {
+    Value(super::FormattedValue, ElementChange),
+    Change(super::FormattedValue, super::FormattedValue),
+}
+
+impl TuplePiece {
+    fn width(&self) -> usize {
+        match self {
+            TuplePiece::Value(v, _) => v.width,
+            TuplePiece::Change(o, n) => o.width + 3 + n.width, // " → "
+        }
+    }
+}
+
+/// Render a tuple / tuple-struct / tuple-enum-variant paren-style:
+/// `Tag( a, b → c )` on one line when every element is a simple
+/// scalar/value-change and it fits, else one element per line. No
+/// `N:` labels. An empty `tag` is an anonymous tuple (`( a, b )`).
+#[allow(clippy::too_many_arguments)]
+fn render_tuple<W: Write, B: ColorBackend, F: DiffFlavor>(
+    layout: &Layout,
+    w: &mut W,
+    node_id: indextree::NodeId,
+    depth: usize,
+    opts: &RenderOptions<B>,
+    flavor: &F,
+    tag: &str,
+    field_name: Option<&str>,
+    change: ElementChange,
+) -> fmt::Result {
+    let children: Vec<_> = layout.children(node_id).collect();
+
+    // Inline only if every element is a plain value or a value change.
+    let mut pieces = Vec::with_capacity(children.len());
+    let mut inlineable = true;
+    for &c in &children {
+        match layout.get(c) {
+            Some(LayoutNode::Text { value, change, .. }) => {
+                pieces.push(TuplePiece::Value(*value, *change));
+            }
+            Some(LayoutNode::ValueChange { old, new, .. }) => {
+                pieces.push(TuplePiece::Change(*old, *new));
+            }
+            _ => {
+                inlineable = false;
+                break;
+            }
+        }
+    }
+
+    let field_prefix = field_name.map(|n| flavor.format_child_open(n));
+    let prefix_w = field_prefix.as_deref().map_or(0, str::len);
+
+    let write_head = |w: &mut W| -> fmt::Result {
+        if let Some(p) = &field_prefix
+            && !p.is_empty()
+        {
+            opts.backend.write_styled(w, p, SemanticColor::Key)?;
+        }
+        if !tag.is_empty() {
+            opts.backend
+                .write_styled(w, tag, SemanticColor::Structure)?;
+        }
+        Ok(())
+    };
+
+    if inlineable {
+        let mut width = prefix_w + tag.len() + 2; // "()"
+        for (i, p) in pieces.iter().enumerate() {
+            if i > 0 {
+                width += 2; // ", "
+            }
+            width += p.width();
+        }
+
+        if width <= 80usize.saturating_sub(depth * opts.indent.len()) {
+            write_change_line_start(w, depth, opts, change)?;
+            write_head(w)?;
+            opts.backend
+                .write_styled(w, "(", SemanticColor::Structure)?;
+            for (i, p) in pieces.iter().enumerate() {
+                if i > 0 {
+                    opts.backend
+                        .write_styled(w, ", ", SemanticColor::Whitespace)?;
+                }
+                match p {
+                    TuplePiece::Value(v, ch) => {
+                        // Unchanged elements are context: mute them so the
+                        // `old → new` slot is what stands out.
+                        let color = if *ch == ElementChange::None {
+                            SemanticColor::Comment
+                        } else {
+                            value_color(v.value_type, *ch)
+                        };
+                        opts.backend
+                            .write_styled(w, layout.get_string(v.span), color)?;
+                    }
+                    TuplePiece::Change(o, n) => {
+                        opts.backend.write_styled(
+                            w,
+                            layout.get_string(o.span),
+                            value_color_highlight(o.value_type, ElementChange::Deleted),
+                        )?;
+                        opts.backend
+                            .write_styled(w, " → ", SemanticColor::Comment)?;
+                        opts.backend.write_styled(
+                            w,
+                            layout.get_string(n.span),
+                            value_color_highlight(n.value_type, ElementChange::Inserted),
+                        )?;
+                    }
+                }
+            }
+            opts.backend
+                .write_styled(w, ")", SemanticColor::Structure)?;
+            return writeln!(w);
+        }
+    }
+
+    // Multi-line: one element per line.
+    write_change_line_start(w, depth, opts, change)?;
+    write_head(w)?;
+    opts.backend
+        .write_styled(w, "(", SemanticColor::Structure)?;
+    writeln!(w)?;
+    for &c in &children {
+        render_node(layout, w, c, depth + 1, opts, flavor)?;
+    }
+    write_change_line_start(w, depth, opts, change)?;
+    opts.backend
+        .write_styled(w, ")", SemanticColor::Structure)?;
+    writeln!(w)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_sequence<W: Write, B: ColorBackend, F: DiffFlavor>(
+    layout: &Layout,
+    w: &mut W,
+    node_id: indextree::NodeId,
+    depth: usize,
+    opts: &RenderOptions<B>,
+    flavor: &F,
+    change: ElementChange,
+    _item_type: &str, // Item type available for future use (items use it via ItemGroup)
+    field_name: Option<&str>,
+) -> fmt::Result {
+    let children: Vec<_> = layout.children(node_id).collect();
+
+    let tag_color = match change {
+        ElementChange::None => SemanticColor::Structure,
+        ElementChange::Deleted => SemanticColor::DeletedStructure,
+        ElementChange::Inserted => SemanticColor::InsertedStructure,
+        ElementChange::MovedFrom | ElementChange::MovedTo => SemanticColor::Moved,
+    };
+
+    // Empty sequences: render on single line
+    if children.is_empty() {
+        // Always render empty sequences with field name (e.g., "elements: []")
+        // Only skip if unchanged AND no field name
+        if change == ElementChange::None && field_name.is_none() {
+            return Ok(());
+        }
+
+        write_indent(w, depth, opts)?;
+        if let Some(prefix) = change.prefix() {
+            opts.backend
+                .write_prefix(w, prefix, element_change_to_semantic(change))?;
+            write!(w, " ")?;
+        }
+
+        // Open and close with optional field name
+        if let Some(name) = field_name {
+            let open = flavor.format_seq_field_open(name);
+            let close = flavor.format_seq_field_close(name);
+            opts.backend.write_styled(w, &open, tag_color)?;
+            opts.backend.write_styled(w, &close, tag_color)?;
+        } else {
+            let open = flavor.seq_open();
+            let close = flavor.seq_close();
+            opts.backend.write_styled(w, &open, tag_color)?;
+            opts.backend.write_styled(w, &close, tag_color)?;
+        }
+
+        // Trailing comma for fields (context-aware)
+        if field_name.is_some() {
+            opts.backend
+                .write_styled(w, flavor.trailing_separator(), SemanticColor::Whitespace)?;
+        }
+        writeln!(w)?;
+        return Ok(());
+    }
+
+    // Opening bracket with optional field name
+    write_indent(w, depth, opts)?;
+    if let Some(prefix) = change.prefix() {
+        opts.backend
+            .write_prefix(w, prefix, element_change_to_semantic(change))?;
+        write!(w, " ")?;
+    }
+
+    // Open with optional field name
+    if let Some(name) = field_name {
+        let open = flavor.format_seq_field_open(name);
+        opts.backend.write_styled(w, &open, tag_color)?;
+    } else {
+        let open = flavor.seq_open();
+        opts.backend.write_styled(w, &open, tag_color)?;
+    }
+    writeln!(w)?;
+
+    // Children
+    for child_id in children {
+        render_node(layout, w, child_id, depth + 1, opts, flavor)?;
+    }
+
+    // Closing bracket
+    write_indent(w, depth, opts)?;
+    if let Some(prefix) = change.prefix() {
+        opts.backend
+            .write_prefix(w, prefix, element_change_to_semantic(change))?;
+        write!(w, " ")?;
+    }
+
+    // Close with optional field name
+    if let Some(name) = field_name {
+        let close = flavor.format_seq_field_close(name);
+        opts.backend.write_styled(w, &close, tag_color)?;
+    } else {
+        let close = flavor.seq_close();
+        opts.backend.write_styled(w, &close, tag_color)?;
+    }
+
+    // Trailing comma for fields (context-aware)
+    if field_name.is_some() {
+        opts.backend
+            .write_styled(w, flavor.trailing_separator(), SemanticColor::Whitespace)?;
+    }
+    writeln!(w)?;
+
+    Ok(())
+}
+
+/// Render changed attributes, one per line, as `name: old → new`.
+///
+/// This matches the Display path's compact form (a value change is one
+/// line, not a `-`/`+` pair) while keeping the layout theme: the old
+/// value gets the deleted highlight, the new value the inserted
+/// highlight. Genuinely removed/added keys still render as `-`/`+`
+/// lines elsewhere — only same-key value changes come through here.
+fn render_changed_group<W: Write, B: ColorBackend, F: DiffFlavor>(
+    layout: &Layout,
+    w: &mut W,
+    depth: usize,
+    opts: &RenderOptions<B>,
+    flavor: &F,
+    attrs: &[super::Attr],
+    group: &ChangedGroup,
+) -> fmt::Result {
+    for &idx in &group.attr_indices {
+        let attr = &attrs[idx];
+        if let AttrStatus::Changed { old, new } = &attr.status {
+            // No `-`/`+` gutter: align the content with the deleted/
+            // inserted lines (which spend 2 cols on the prefix).
+            write_indent(w, depth, opts)?;
+            opts.backend.write_styled(
+                w,
+                &flavor.format_field_prefix(&attr.name),
+                SemanticColor::Key,
+            )?;
+
+            if confusable_changed(layout, attr) {
+                render_confusable(
+                    w,
+                    opts,
+                    depth,
+                    layout.get_string(old.span),
+                    layout.get_string(new.span),
+                )?;
+                continue;
+            }
+
+            opts.backend.write_styled(
+                w,
+                layout.get_string(old.span),
+                value_color_highlight(old.value_type, ElementChange::Deleted),
+            )?;
+            opts.backend
+                .write_styled(w, " → ", SemanticColor::Comment)?;
+            opts.backend.write_styled(
+                w,
+                layout.get_string(new.span),
+                value_color_highlight(new.value_type, ElementChange::Inserted),
+            )?;
+            let suffix = flavor.format_field_suffix();
+            if !suffix.is_empty() {
+                opts.backend
+                    .write_styled(w, suffix, SemanticColor::Structure)?;
+            }
+            opts.backend
+                .write_styled(w, flavor.trailing_separator(), SemanticColor::Whitespace)?;
+            writeln!(w)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Strip one pair of surrounding double quotes, returning
+/// `(open_quote, body, close_quote)` so the body can be diffed by
+/// character while the quotes stay rendered.
+fn unquote(s: &str) -> (&str, &str, &str) {
+    if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
+        ("\"", &s[1..s.len() - 1], "\"")
+    } else {
+        ("", s, "")
+    }
+}
+
+/// Render a confusable string change: `name: ` is already written.
+/// Shows `old → new` with only the confusable characters highlighted
+/// (the rest muted, since the strings look identical), then a
+/// per-position codepoint breakdown indented underneath.
+fn render_confusable<W: Write, B: ColorBackend>(
+    w: &mut W,
+    opts: &RenderOptions<B>,
+    depth: usize,
+    old: &str,
+    new: &str,
+) -> fmt::Result {
+    let (oq, ob, oqc) = unquote(old);
+    let (nq, nb, nqc) = unquote(new);
+    let diffs = char_diffs(ob, nb);
+    let diff_pos: std::collections::HashSet<usize> = diffs.iter().map(|(i, ..)| *i).collect();
+
+    let write_body = |w: &mut W, q: &str, body: &str, qc: &str, hl: SemanticColor| -> fmt::Result {
+        opts.backend.write_styled(w, q, SemanticColor::Comment)?;
+        for (i, ch) in body.chars().enumerate() {
+            let color = if diff_pos.contains(&i) {
+                hl
+            } else {
+                SemanticColor::Comment
+            };
+            opts.backend.write_styled(w, &ch.to_string(), color)?;
+        }
+        opts.backend.write_styled(w, qc, SemanticColor::Comment)
+    };
+
+    write_body(w, oq, ob, oqc, SemanticColor::DeletedHighlight)?;
+    opts.backend
+        .write_styled(w, " → ", SemanticColor::Comment)?;
+    write_body(w, nq, nb, nqc, SemanticColor::InsertedHighlight)?;
+    writeln!(w)?;
+
+    for (pos, oc, nc) in &diffs {
+        write_indent(w, depth, opts)?;
+        opts.backend
+            .write_styled(w, &format!("  [{pos}]: "), SemanticColor::Comment)?;
+        match oc {
+            Some(c) => opts.backend.write_styled(
+                w,
+                &char_with_codepoint(*c),
+                SemanticColor::DeletedHighlight,
+            )?,
+            None => opts
+                .backend
+                .write_styled(w, "(missing)", SemanticColor::Comment)?,
+        }
+        opts.backend
+            .write_styled(w, " vs ", SemanticColor::Comment)?;
+        match nc {
+            Some(c) => opts.backend.write_styled(
+                w,
+                &char_with_codepoint(*c),
+                SemanticColor::InsertedHighlight,
+            )?,
+            None => opts
+                .backend
+                .write_styled(w, "(missing)", SemanticColor::Comment)?,
+        }
+        writeln!(w)?;
+    }
+    Ok(())
+}
+
+fn render_attr_unchanged<W: Write, B: ColorBackend, F: DiffFlavor>(
+    layout: &Layout,
+    w: &mut W,
+    opts: &RenderOptions<B>,
+    flavor: &F,
+    name: &str,
+    value: &super::FormattedValue,
+) -> fmt::Result {
+    let value_str = layout.get_string(value.span);
+    let formatted = flavor.format_field(name, value_str);
+    // One muted gray for all unchanged context (matches the inline
+    // form and the `.. unchanged` collapse — previously this used the
+    // lighter `Unchanged` gray, so two `path:` fields disagreed).
+    opts.backend
+        .write_styled(w, &formatted, SemanticColor::Comment)
+}
+
+fn render_attr_deleted<W: Write, B: ColorBackend, F: DiffFlavor>(
+    layout: &Layout,
+    w: &mut W,
+    opts: &RenderOptions<B>,
+    flavor: &F,
+    name: &str,
+    value: &super::FormattedValue,
+) -> fmt::Result {
+    let value_str = layout.get_string(value.span);
+    // Entire field uses highlight background for deleted (better contrast)
+    let formatted = flavor.format_field(name, value_str);
+    opts.backend
+        .write_styled(w, &formatted, SemanticColor::DeletedHighlight)
+}
+
+fn render_attr_inserted<W: Write, B: ColorBackend, F: DiffFlavor>(
+    layout: &Layout,
+    w: &mut W,
+    opts: &RenderOptions<B>,
+    flavor: &F,
+    name: &str,
+    value: &super::FormattedValue,
+) -> fmt::Result {
+    let value_str = layout.get_string(value.span);
+    // Entire field uses highlight background for inserted (better contrast)
+    let formatted = flavor.format_field(name, value_str);
+    opts.backend
+        .write_styled(w, &formatted, SemanticColor::InsertedHighlight)
+}
+
+fn write_indent<W: Write, B: ColorBackend>(
+    w: &mut W,
+    depth: usize,
+    opts: &RenderOptions<B>,
+) -> fmt::Result {
+    for _ in 0..depth {
+        write!(w, "{}", opts.indent)?;
+    }
+    Ok(())
+}
+
+/// Write indent minus 2 characters for the prefix gutter.
+/// The "- " or "+ " prefix will occupy those 2 characters.
+fn write_indent_minus_prefix<W: Write, B: ColorBackend>(
+    w: &mut W,
+    depth: usize,
+    opts: &RenderOptions<B>,
+) -> fmt::Result {
+    let total_indent = depth * opts.indent.len();
+    let gutter_indent = total_indent.saturating_sub(2);
+    for _ in 0..gutter_indent {
+        write!(w, " ")?;
+    }
+    Ok(())
+}
+
+/// Start a line for an element whose *whole self* changed (deleted /
+/// inserted / moved): put the marker in the gutter, exactly like every
+/// other diff line, so the open line, the fields and the closing brace
+/// all share one consistent gutter. When the element didn't change as a
+/// whole (`ElementChange::None`) this is just a normal indent.
+fn write_change_line_start<W: Write, B: ColorBackend>(
+    w: &mut W,
+    depth: usize,
+    opts: &RenderOptions<B>,
+    change: ElementChange,
+) -> fmt::Result {
+    if let Some(prefix) = change.prefix() {
+        write_indent_minus_prefix(w, depth, opts)?;
+        opts.backend
+            .write_prefix(w, prefix, element_change_to_semantic(change))?;
+        write!(w, " ")
+    } else {
+        write_indent(w, depth, opts)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::borrow::Cow;
+
+    use indextree::Arena;
+
+    use super::*;
+    use crate::layout::{Attr, FormatArena, FormattedValue, Layout, LayoutNode, XmlFlavor};
+
+    fn make_test_layout() -> Layout {
+        let mut strings = FormatArena::new();
+        let tree = Arena::new();
+
+        // Create a simple element with one changed attribute
+        let (red_span, red_width) = strings.push_str("red");
+        let (blue_span, blue_width) = strings.push_str("blue");
+
+        let fill_attr = Attr::changed(
+            "fill",
+            4,
+            FormattedValue::new(red_span, red_width),
+            FormattedValue::new(blue_span, blue_width),
+        );
+
+        let attrs = vec![fill_attr];
+        let changed_groups = super::super::group_changed_attrs(&attrs, 80, 0);
+
+        let root = LayoutNode::Element {
+            tag: Cow::Borrowed("rect"),
+            field_name: None,
+            attrs,
+            changed_groups,
+            change: ElementChange::None,
+        };
+
+        Layout::new(strings, tree, root)
+    }
+
+    #[test]
+    fn test_render_simple_change() {
+        let layout = make_test_layout();
+        let opts = RenderOptions::plain();
+        let output = render_to_string(&layout, &opts, &XmlFlavor);
+
+        // The compact inline form renders the change on one line as
+        // `<rect fill="red → blue" />` (only old/new highlighted; no
+        // ←/→ and no whole-element duplication).
+        assert!(output.contains("red → blue"), "got: {output:?}");
+        assert!(output.contains("<rect "), "got: {output:?}");
+        assert!(output.contains("/>"), "got: {output:?}");
+    }
+
+    #[test]
+    fn test_render_collapsed() {
+        let strings = FormatArena::new();
+        let tree = Arena::new();
+
+        let root = LayoutNode::collapsed(5);
+        let layout = Layout::new(strings, tree, root);
+
+        let opts = RenderOptions::plain();
+        let output = render_to_string(&layout, &opts, &XmlFlavor);
+
+        // Collapsed runs use the `..` convention in every flavor now,
+        // matching the Display path (diff output isn't valid XML anyway).
+        assert!(output.contains(".. 5 unchanged"), "got: {output:?}");
+    }
+
+    #[test]
+    fn test_render_with_children() {
+        let mut strings = FormatArena::new();
+        let mut tree = Arena::new();
+
+        // Parent element
+        let parent = tree.new_node(LayoutNode::Element {
+            tag: Cow::Borrowed("svg"),
+            field_name: None,
+            attrs: vec![],
+            changed_groups: vec![],
+            change: ElementChange::None,
+        });
+
+        // Child element with change
+        let (red_span, red_width) = strings.push_str("red");
+        let (blue_span, blue_width) = strings.push_str("blue");
+
+        let fill_attr = Attr::changed(
+            "fill",
+            4,
+            FormattedValue::new(red_span, red_width),
+            FormattedValue::new(blue_span, blue_width),
+        );
+        let attrs = vec![fill_attr];
+        let changed_groups = super::super::group_changed_attrs(&attrs, 80, 0);
+
+        let child = tree.new_node(LayoutNode::Element {
+            tag: Cow::Borrowed("rect"),
+            field_name: None,
+            attrs,
+            changed_groups,
+            change: ElementChange::None,
+        });
+
+        parent.append(child, &mut tree);
+
+        let layout = Layout {
+            strings,
+            tree,
+            root: parent,
+        };
+
+        let opts = RenderOptions::plain();
+        let output = render_to_string(&layout, &opts, &XmlFlavor);
+
+        assert!(output.contains("<svg>"));
+        assert!(output.contains("</svg>"));
+        assert!(output.contains("<rect"));
+    }
+
+    #[test]
+    fn test_ansi_backend_produces_escapes() {
+        let layout = make_test_layout();
+        let opts = RenderOptions::default();
+        let output = render_to_string(&layout, &opts, &XmlFlavor);
+
+        // Should contain ANSI escape codes
+        assert!(
+            output.contains("\x1b["),
+            "output should contain ANSI escapes"
+        );
+    }
+}
