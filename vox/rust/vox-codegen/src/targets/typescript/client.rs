@@ -203,11 +203,20 @@ pub fn generate_connect_function(service: &ServiceDescriptor) -> String {
     out
 }
 
-/// Generate complete client code (interface + implementation + connect helper).
-pub fn generate_client(service: &ServiceDescriptor) -> String {
+pub fn generate_client_with_connect_helper(
+    service: &ServiceDescriptor,
+    connect_helper: bool,
+) -> String {
     let mut out = String::new();
     out.push_str(&generate_caller_interface(service));
     out.push_str(&generate_client_impl(service));
-    out.push_str(&generate_connect_function(service));
+    if connect_helper {
+        out.push_str(&generate_connect_function(service));
+    }
     out
+}
+
+/// Generate complete client code (interface + implementation + connect helper).
+pub fn generate_client(service: &ServiceDescriptor) -> String {
+    generate_client_with_connect_helper(service, true)
 }

@@ -100,10 +100,30 @@ pub fn generate_method_ids(methods: &[&MethodDescriptor]) -> String {
     out
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ServiceGenerationOptions {
+    pub connect_helper: bool,
+}
+
+impl Default for ServiceGenerationOptions {
+    fn default() -> Self {
+        Self {
+            connect_helper: true,
+        }
+    }
+}
+
 /// Generate a complete TypeScript module for a service.
 ///
 /// This is the main entry point for TypeScript code generation.
 pub fn generate_service(service: &ServiceDescriptor) -> String {
+    generate_service_with_options(service, ServiceGenerationOptions::default())
+}
+
+pub fn generate_service_with_options(
+    service: &ServiceDescriptor,
+    options: ServiceGenerationOptions,
+) -> String {
     use crate::code_writer::CodeWriter;
     use crate::cw_writeln;
 
@@ -123,7 +143,7 @@ pub fn generate_service(service: &ServiceDescriptor) -> String {
     .unwrap();
     w.blank_line().unwrap();
 
-    generate_imports(service, &mut w);
+    generate_imports(service, &mut w, options);
     w.blank_line().unwrap();
 
     // Named types (structs and enums)
@@ -137,7 +157,10 @@ pub fn generate_service(service: &ServiceDescriptor) -> String {
     output.push_str(&generate_phon_service(service));
 
     // Client
-    output.push_str(&generate_client(service));
+    output.push_str(&client::generate_client_with_connect_helper(
+        service,
+        options.connect_helper,
+    ));
 
     // Server (handler interface + dispatcher)
     output.push_str(&generate_server(service));
@@ -179,7 +202,11 @@ fn validate_channel_rules(service: &ServiceDescriptor) {
 }
 
 /// Generate imports for the service module.
-fn generate_imports(service: &ServiceDescriptor, w: &mut CodeWriter<&mut String>) {
+fn generate_imports(
+    service: &ServiceDescriptor,
+    w: &mut CodeWriter<&mut String>,
+    options: ServiceGenerationOptions,
+) {
     use crate::cw_writeln;
     use vox_types::{ShapeKind, classify_shape, is_rx, is_tx};
 
@@ -202,20 +229,25 @@ fn generate_imports(service: &ServiceDescriptor, w: &mut CodeWriter<&mut String>
             || shape_contains_dynamic_value(m.return_shape)
     });
 
-    // Core runtime: descriptor types + Caller + connection/lane helpers
-    cw_writeln!(
-        w,
-        "import type {{ Caller, MethodDescriptor, ServiceDescriptor, VoxCall, Dispatcher, RequestContext, ConnectLaneOptions }} from \"@bearcove/vox-core\";"
-    )
-    .unwrap();
-    cw_writeln!(
-        w,
-        "import {{ connectLane, voxServiceMetadata }} from \"@bearcove/vox-core\";"
-    )
-    .unwrap();
-
-    // WebSocket transport for connect helper
-    cw_writeln!(w, "import {{ wsConnector }} from \"@bearcove/vox-ws\";").unwrap();
+    if options.connect_helper {
+        cw_writeln!(
+            w,
+            "import type {{ Caller, MethodDescriptor, ServiceDescriptor, VoxCall, Dispatcher, RequestContext, ConnectLaneOptions }} from \"@bearcove/vox-core\";"
+        )
+        .unwrap();
+        cw_writeln!(
+            w,
+            "import {{ connectLane, voxServiceMetadata }} from \"@bearcove/vox-core\";"
+        )
+        .unwrap();
+        cw_writeln!(w, "import {{ wsConnector }} from \"@bearcove/vox-ws\";").unwrap();
+    } else {
+        cw_writeln!(
+            w,
+            "import type {{ Caller, MethodDescriptor, ServiceDescriptor, VoxCall, Dispatcher, RequestContext }} from \"@bearcove/vox-core\";"
+        )
+        .unwrap();
+    }
 
     // RpcError for fallible client methods
     if has_fallible {
@@ -348,7 +380,7 @@ mod tests {
 
     use std::collections::BTreeSet;
 
-    use super::generate_service;
+    use super::{ServiceGenerationOptions, generate_service, generate_service_with_options};
     use crate::render::hex_u64;
     use facet::{Facet, Shape};
     use vox_types::{
@@ -847,6 +879,40 @@ mod tests {
                 ),
             "generated TypeScript dispatcher must route decoded args to the handler and reply through VoxCall:\n{generated}"
         );
+    }
+
+    #[test]
+    fn generated_typescript_can_omit_websocket_connect_helper() {
+        let ping = method_descriptor::<(), u64>(
+            "TestSvc",
+            "ping",
+            &[],
+            &[],
+            MethodDescriptorOptions {
+                response_wire_shape: <Result<u64, vox_types::VoxError> as Facet>::SHAPE,
+                doc: None,
+            },
+        );
+        let methods = Box::leak(vec![ping].into_boxed_slice());
+        let service = ServiceDescriptor {
+            service_name: "TestSvc",
+            methods,
+            doc: None,
+        };
+
+        let generated = generate_service_with_options(
+            &service,
+            ServiceGenerationOptions {
+                connect_helper: false,
+            },
+        );
+
+        assert!(generated.contains("export class TestSvcClient implements TestSvcCaller"));
+        assert!(!generated.contains("ConnectLaneOptions"));
+        assert!(!generated.contains("connectLane"));
+        assert!(!generated.contains("voxServiceMetadata"));
+        assert!(!generated.contains("wsConnector"));
+        assert!(!generated.contains("export async function connectTestSvc"));
     }
 
     #[test]
