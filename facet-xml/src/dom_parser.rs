@@ -336,11 +336,7 @@ impl<'de> DomParser<'de> for XmlParser<'de> {
         loop {
             let event = self.next_event()?;
             match event {
-                Some(DomEvent::NodeEnd) => {
-                    if self.depth < start_depth {
-                        break;
-                    }
-                }
+                Some(DomEvent::NodeEnd) if self.depth < start_depth => break,
                 None => break,
                 _ => {}
             }

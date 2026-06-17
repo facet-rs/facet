@@ -1,6 +1,6 @@
 [package]
 name = "facet-singularize"
-version.workspace = true
+version = "0.50.0-rc.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -22,7 +22,6 @@ gen-ie-exceptions = [
     "dep:facet-json",
     "dep:flate2",
     "dep:rc-zip-sync",
-    "dep:positioned-io",
     "dep:rmp",
     "dep:ureq",
     "dep:wordfreq",
@@ -35,7 +34,6 @@ facet-json = { workspace = true, optional = true }
 rmp = { version = "0.8", optional = true }
 flate2 = { version = "1.1", optional = true }
 rc-zip-sync = { version = "4", optional = true }
-positioned-io = { version = "0.3", optional = true }
 ureq = { version = "3.2", optional = true }
 wordfreq = { version = "0.2.3", optional = true }
 

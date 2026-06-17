@@ -175,6 +175,37 @@ name = "facet-zod"
 version_group = "facet"
 changelog_path = "CHANGELOG.md"
 
+# XML, DOM, and SVG crates
+[[package]]
+name = "facet-singularize"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-dom"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-xml"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-xml-node"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-atom"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-svg"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
 [[package]]
 name = "facet-lua"
 version_group = "facet"

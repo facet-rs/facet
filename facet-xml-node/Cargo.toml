@@ -1,6 +1,6 @@
 [package]
 name = "facet-xml-node"
-version.workspace = true
+version = "0.50.0-rc.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -22,10 +22,10 @@ facet-reflect = { workspace = true }
 facet-xml = { workspace = true }
 
 [dev-dependencies]
-facet-testhelpers = { workspace = true }
+facet-testhelpers = { path = "../facet-testhelpers" }
 facet-dom = { path = "../facet-dom", features = ["tracing"] }
 facet-xml = { path = "../facet-xml", features = ["tracing"] }
-facet-reflect = { workspace = true, features = ["tracing"] }
+facet-reflect = { path = "../facet-reflect", features = ["tracing"] }
 
 [lints]
 workspace = true

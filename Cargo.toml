@@ -57,6 +57,14 @@ members = [
   "facet-value",
   "facet-zod",
 
+  # XML, DOM, and SVG
+  "facet-singularize",
+  "facet-dom",
+  "facet-xml",
+  "facet-xml-node",
+  "facet-atom",
+  "facet-svg",
+
   # utilities
   "facet-path",
   "facet-validate",
@@ -87,11 +95,13 @@ repository = "https://github.com/facet-rs/facet"
 
 [workspace.dependencies]
 facet = { path = "facet", version = "0.50.0-rc.0" }
+facet-atom = { path = "facet-atom", version = "0.50.0-rc.0" }
 facet-axum = { path = "facet-axum", version = "0.50.0-rc.0" }
 facet-core = { path = "facet-core" }
 facet-cargo-toml = { path = "facet-cargo-toml", version = "0.50.0-rc.0" }
 facet-default = { path = "facet-default", version = "0.50.0-rc.0" }
 facet-dessert = { path = "facet-dessert", version = "0.50.0-rc.0" }
+facet-dom = { path = "facet-dom", version = "0.50.0-rc.0" }
 facet-error = { path = "facet-error", version = "0.50.0-rc.0" }
 facet-format = { path = "facet-format", version = "0.50.0-rc.0" }
 facet-format-suite = { path = "facet-format-suite", version = "0.50.0-rc.0" }
@@ -103,13 +113,17 @@ facet-path = { path = "facet-path", version = "0.50.0-rc.0" }
 facet-postcard = { path = "facet-postcard", version = "0.50.0-rc.0" }
 facet-pretty = { path = "facet-pretty" }
 facet-reflect = { path = "facet-reflect", version = "0.50.0-rc.0" }
+facet-singularize = { path = "facet-singularize", version = "0.50.0-rc.0" }
 facet-solver = { path = "facet-solver", version = "0.50.0-rc.0" }
+facet-svg = { path = "facet-svg", version = "0.50.0-rc.0" }
 facet-testhelpers = { path = "facet-testhelpers", version = "0.50.0-rc.0" }
 facet-toml = { path = "facet-toml", version = "0.50.0-rc.0" }
-facet-xml = "0.50.0-rc.0"
+facet-xml = { path = "facet-xml", version = "0.50.0-rc.0" }
+facet-xml-node = { path = "facet-xml-node", version = "0.50.0-rc.0" }
 facet-urlencoded = { path = "facet-urlencoded", version = "0.50.0-rc.0" }
 facet-value = { path = "facet-value", version = "0.50.0-rc.0" }
 facet-yaml = { path = "facet-yaml", version = "0.50.0-rc.0" }
+rediff = { path = "rediff", version = "0.50.0-rc.0" }
 strid = { path = "strid", version = "11.0.0-rc.0" }
 strid-macros = { path = "strid-macros", version = "11.0.0-rc.0" }
 arborium = { version = "^2.4.5", default-features = false, features = ["lang-json"] }
@@ -199,6 +213,7 @@ facet-urlencoded = { path = "facet-urlencoded" }
 facet-asn1 = { path = "facet-asn1" }
 facet-csv = { path = "facet-csv" }
 facet-dessert = { path = "facet-dessert" }
+facet-dom = { path = "facet-dom" }
 facet-format = { path = "facet-format" }
 facet-format-suite = { path = "facet-format-suite" }
 facet-json = { path = "facet-json" }
@@ -208,9 +223,14 @@ facet-lua = { path = "facet-lua" }
 facet-msgpack = { path = "facet-msgpack" }
 facet-postcard = { path = "facet-postcard" }
 facet-python = { path = "facet-python" }
+facet-singularize = { path = "facet-singularize" }
+facet-atom = { path = "facet-atom" }
+facet-svg = { path = "facet-svg" }
 facet-toml = { path = "facet-toml" }
 facet-typescript = { path = "facet-typescript" }
 facet-value = { path = "facet-value" }
+facet-xml = { path = "facet-xml" }
+facet-xml-node = { path = "facet-xml-node" }
 facet-xdr = { path = "facet-xdr" }
 facet-yaml = { path = "facet-yaml" }
 facet-zod = { path = "facet-zod" }
