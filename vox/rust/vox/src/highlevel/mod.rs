@@ -153,6 +153,7 @@ impl ConnectBuilder {
     }
 
     // r[impl rpc.virtual-connection.accept]
+    // r[impl lane.open]
     pub fn on_connection(mut self, acceptor: impl LaneAcceptor) -> Self {
         self.on_connection = Some(Arc::new(acceptor));
         self

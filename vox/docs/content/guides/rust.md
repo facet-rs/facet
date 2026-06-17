@@ -18,11 +18,11 @@ The best way to learn the Rust API is to run the examples in order, from simples
 > async fn transform(&self, prefix: &str, input: Rx<String>, output: Tx<String>) -> u32;
 > ```
 
-## 2) `virtual_connections` (multiple services on one session)
+## 2) `virtual_connections` (multiple service lanes on one connection)
 
 - Source: [rust-examples/examples/virtual_connections.rs](https://github.com/bearcove/vox/blob/main/rust-examples/examples/virtual_connections.rs)
 - Run: `cargo run -p rust-examples --example virtual_connections`
-- Learn: `open_connection`, metadata-based accept, and independent per-vconn drivers.
+- Learn: `open_lane`, metadata-based accept, and independent per-lane drivers.
 
 > ```rust
 > match requested_service(metadata) {
@@ -44,11 +44,11 @@ The best way to learn the Rust API is to run the examples in order, from simples
 > println!("[client] server restarted");
 > ```
 
-## 4) `memory_proxying` (connection-level proxying)
+## 4) `memory_proxying` (lane-level proxying)
 
 - Source: [rust-examples/examples/memory_proxying.rs](https://github.com/bearcove/vox/blob/main/rust-examples/examples/memory_proxying.rs)
 - Run: `cargo run -p rust-examples --example memory_proxying`
-- Learn: host bridges one virtual connection to another without service-specific forwarding code.
+- Learn: host bridges one service lane to another without service-specific forwarding code.
 
 > ```rust
 > vox::proxy_connections(incoming_handle, upstream_conn).await;

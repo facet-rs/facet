@@ -120,9 +120,9 @@ weight = 12
 > r[rpc.virtual-connection.open]
 >
 > A peer may open a service lane on an existing Vox connection, receiving a lane
-> handle when the counterpart accepts it. Compatibility APIs may still spell this
-> `SessionHandle::open_connection(...)` and return a `ConnectionHandle`; those
-> names refer to service-lane state in the rootless model.
+> handle when the counterpart accepts it. Historical compatibility APIs spelled
+> this as `SessionHandle::open_connection(...)` returning a `ConnectionHandle`;
+> those names referred to service-lane state in the rootless model.
 >
 > Inbound service lanes are accepted only when a lane acceptor is configured;
 > otherwise they are rejected.

@@ -295,6 +295,8 @@ async fn expect_protocol_close(caller: &crate::Caller, label: &str) {
 // r[verify rpc.caller.liveness.refcounted]
 // r[verify rpc.caller.liveness.root-internal-close]
 // r[verify rpc.caller.liveness.root-teardown-condition]
+// r[verify connection.lifecycle.driven]
+// r[verify connection.shutdown.explicit]
 #[tokio::test]
 async fn dropping_root_callers_does_not_shutdown_connection() {
     let (client_conduit, server_conduit) = message_conduit_pair();
@@ -812,6 +814,7 @@ fn message_plan_from_identical_schemas_round_trips() {
 // r[verify session.message]
 // r[verify session.message.connection-id]
 // r[verify connection]
+// r[verify connection.model]
 // r[verify connection.root]
 #[tokio::test]
 async fn call_through_phon_handshake_reaches_handler() {
@@ -1945,6 +1948,7 @@ async fn virtual_connection_request_ids_use_connection_parity() {
 
 // r[verify connection.close]
 // r[verify connection.root]
+// r[verify lane.control]
 #[tokio::test]
 async fn close_root_connection_is_rejected() {
     let (client_conduit, server_conduit) = message_conduit_pair();

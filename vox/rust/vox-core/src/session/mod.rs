@@ -38,14 +38,14 @@ pub struct ConnectionKeepaliveConfig {
 
 /// Metadata wrapper with typed getters for well-known `vox-*` keys.
 ///
-/// Passed to [`LaneAcceptor::accept`] when a peer opens a connection.
+/// Passed to [`LaneAcceptor::accept`] when a peer opens a service lane.
 pub struct LaneRequest<'a> {
     metadata: &'a vox_types::Metadata,
     service: &'a str,
 }
 
 impl<'a> LaneRequest<'a> {
-    /// Build a connection request from metadata.
+    /// Build a lane-open request from metadata.
     ///
     /// Returns an error if the required `vox-service` metadata key is missing.
     pub fn new(metadata: &'a vox_types::Metadata) -> Result<Self, ConnectionError> {
@@ -70,16 +70,6 @@ impl<'a> LaneRequest<'a> {
         vox_types::metadata_get_str(self.metadata, "vox-peer-addr")
     }
 
-    /// Whether this is a root or virtual connection.
-    pub fn is_root(&self) -> bool {
-        !self.is_virtual()
-    }
-
-    /// Whether this is a virtual connection.
-    pub fn is_virtual(&self) -> bool {
-        vox_types::metadata_get_str(self.metadata, "vox-connection-kind") == Some("virtual")
-    }
-
     /// Look up a string value by key.
     pub fn get_str(&self, key: &str) -> Option<&str> {
         vox_types::metadata_get_str(self.metadata, key)
@@ -96,11 +86,11 @@ impl<'a> LaneRequest<'a> {
     }
 }
 
-/// A connection that has been opened but not yet accepted.
+/// A service lane that has been opened but not yet accepted.
 ///
 /// The acceptor receives this and decides its fate by calling one of:
 /// - `handle_with(handler)` — run a Driver with this handler (common case)
-/// - `proxy_to(other_handle)` — pipe messages to/from another connection
+/// - `proxy_to(other_handle)` — pipe messages to/from another lane
 /// - `into_handle()` — take the raw LaneHandle for custom use
 pub struct PendingLane {
     handle: Option<LaneHandle>,
@@ -113,7 +103,7 @@ impl PendingLane {
         }
     }
 
-    /// Accept this connection and run a Driver with the given handler.
+    /// Accept this service lane and run a Driver with the given handler.
     pub fn handle_with(mut self, handler: impl Handler<crate::DriverReplySink> + 'static) {
         let handle = self.handle.take().expect("PendingLane already consumed");
         let conn_id = handle.connection_id();
@@ -129,7 +119,7 @@ impl PendingLane {
         wasm_bindgen_futures::spawn_local(async move { driver.run().await });
     }
 
-    /// Accept this connection, run a Driver, and return a typed client for the peer.
+    /// Accept this service lane, run a Driver, and return a typed client for the peer.
     pub fn handle_with_client<C: crate::FromVoxLane>(
         mut self,
         handler: impl Handler<crate::DriverReplySink> + 'static,
@@ -150,7 +140,7 @@ impl PendingLane {
         C::from_vox_lane(caller, None)
     }
 
-    /// Accept this connection and proxy all traffic to/from another connection.
+    /// Accept this service lane and proxy all traffic to/from another lane.
     pub fn proxy_to(mut self, other: LaneHandle) {
         let handle = self.handle.take().expect("PendingLane already consumed");
         #[cfg(not(target_arch = "wasm32"))]
@@ -173,7 +163,7 @@ impl Drop for PendingLane {
     fn drop(&mut self) {
         if let Some(handle) = self.handle.take() {
             let conn_id = handle.connection_id();
-            warn!(%conn_id, "PendingLane dropped without being consumed — closing connection");
+            warn!(%conn_id, "PendingLane dropped without being consumed — closing service lane");
             if let Some(tx) = handle.control_tx.as_ref() {
                 let _ = send_drop_control(tx, DropControlRequest::Close(conn_id));
             }
@@ -182,6 +172,7 @@ impl Drop for PendingLane {
 }
 
 // r[impl rpc.virtual-connection.accept]
+// r[impl lane.open]
 pub trait LaneAcceptor: MaybeSend + MaybeSync + 'static {
     fn accept(&self, request: &LaneRequest, connection: PendingLane) -> Result<(), Metadata>;
 }
@@ -273,6 +264,8 @@ fn send_drop_control(
 ///
 /// The connection's `run()` loop must be running concurrently for lane-open
 /// requests and RPC traffic to be processed.
+// r[impl connection.model]
+// r[impl connection.lifecycle.driven]
 // r[impl rpc.virtual-connection.open]
 #[derive(Clone)]
 pub struct ConnectionHandle {
@@ -284,6 +277,7 @@ pub struct ConnectionHandle {
 
 impl ConnectionHandle {
     /// Resolve when the connection's private control lane closes.
+    // r[impl lane.control]
     pub async fn closed(&self) {
         if let Some(caller) = &self._control_caller {
             caller.closed().await;
@@ -333,6 +327,8 @@ impl ConnectionHandle {
     /// `LaneAccept` or `LaneReject`. The connection's `run()` loop processes
     /// the response and completes the returned future.
     // r[impl connection.open]
+    // r[impl lane.open]
+    // r[impl lane.wire.compat]
     pub async fn open_lane_handle(
         &self,
         settings: ConnectionSettings,
@@ -357,6 +353,7 @@ impl ConnectionHandle {
     /// Sends `LaneClose` to the peer and removes the lane slot. After this
     /// returns, no further messages will be routed to the lane's driver.
     // r[impl connection.close]
+    // r[impl lane.wire.compat]
     pub async fn close_lane(
         &self,
         lane_id: LaneId,
@@ -377,6 +374,7 @@ impl ConnectionHandle {
     }
 
     /// Request shutdown of the entire connection and all lanes.
+    // r[impl connection.shutdown.explicit]
     pub fn shutdown(&self) -> Result<(), ConnectionError> {
         send_drop_control(&self.control_tx, DropControlRequest::Shutdown)
             .map_err(|_| ConnectionError::Protocol("connection closed".into()))
@@ -388,7 +386,11 @@ impl ConnectionHandle {
 // ---------------------------------------------------------------------------
 
 /// Connection state machine.
+// r[impl connection.model]
+// r[impl connection.lifecycle.driven]
 // r[impl session]
+// r[impl lane]
+// r[impl lane.control]
 // r[impl lane.service]
 pub struct Connection {
     /// Conduit receiver
@@ -397,7 +399,7 @@ pub struct Connection {
     // r[impl session.role]
     role: ConnectionRole,
 
-    /// Our local parity — determines which connection IDs we allocate.
+    /// Our local parity — determines which service lane IDs we allocate.
     // r[impl session.parity]
     parity: Parity,
 
@@ -406,12 +408,12 @@ pub struct Connection {
     local_root_settings: ConnectionSettings,
     peer_root_settings: Option<ConnectionSettings>,
 
-    /// Connection state (active, pending inbound, pending outbound).
+    /// Service lane state (active, pending inbound, pending outbound).
     conns: BTreeMap<LaneId, ConnectionSlot>,
-    /// Allocator for outbound virtual connection IDs (uses session parity).
+    /// Allocator for outbound service lane IDs (uses connection parity).
     conn_ids: IdAllocator<LaneId>,
 
-    /// Callback for accepting inbound virtual connections.
+    /// Callback for accepting inbound service lanes.
     on_connection: Option<Arc<dyn LaneAcceptor>>,
 
     /// Receiver for open requests from ConnectionHandle.
@@ -420,7 +422,7 @@ pub struct Connection {
     /// Receiver for close requests from ConnectionHandle.
     close_rx: mpsc::Receiver<CloseRequest>,
 
-    /// Sender/receiver for drop-driven session/connection control requests.
+    /// Sender/receiver for explicit connection and lane control requests.
     control_tx: mpsc::UnboundedSender<DropControlRequest>,
     control_rx: mpsc::UnboundedReceiver<DropControlRequest>,
 
@@ -1296,9 +1298,9 @@ impl Connection {
                 if conn_id.is_root() {
                     warn!("received LaneClose for root connection");
                 } else {
-                    trace!(conn_id = conn_id.0, "received LaneClose for virtual connection");
+                    trace!(conn_id = conn_id.0, "received LaneClose for service lane");
                 }
-                // Remove the connection — dropping conn_tx causes the Driver's rx
+                // Remove the service lane — dropping conn_tx causes the Driver's rx
                 // to return None, which exits its run loop. All in-flight handlers
                 // are dropped, triggering DriverReplySink::drop → Cancelled responses.
                 self.remove_connection_with_reason(&conn_id, ConnectionCloseReason::Remote);
@@ -1529,6 +1531,8 @@ impl Connection {
         true
     }
 
+    // r[impl lane.open]
+    // r[impl lane.wire.compat]
     async fn handle_inbound_open(&mut self, conn_id: LaneId, open: SelfRef<LaneOpen>) {
         // Validate: connection ID must match peer's parity (opposite of ours).
         let peer_parity = self.parity.other();
@@ -1615,20 +1619,19 @@ impl Connection {
             initial_channel_credit: open.connection_settings.initial_channel_credit,
         };
 
-        // Create the connection handle and activate it.
+        // Create the service lane handle and activate it.
         let handle = self.make_connection_handle(
             conn_id,
             our_settings.clone(),
             open.connection_settings.clone(),
         );
 
-        // Let the acceptor decide the connection's fate.
-        let mut metadata = open.metadata.clone();
-        vox_types::meta_set(&mut metadata, "vox-connection-kind", "virtual");
+        // Let the acceptor decide the service lane's fate.
+        let metadata = open.metadata.clone();
         let request = match LaneRequest::new(&metadata) {
             Ok(r) => r,
             Err(e) => {
-                trace!(%conn_id, %e, "rejecting virtual connection");
+                trace!(%conn_id, %e, "rejecting service lane");
                 self.conns.remove(&conn_id);
                 let _ = self
                     .sess_core
@@ -1648,10 +1651,10 @@ impl Connection {
         };
         let pending = PendingLane::new(handle);
         let acceptor = self.on_connection.as_ref().unwrap();
-        trace!(%conn_id, "calling acceptor for virtual connection");
+        trace!(%conn_id, "calling acceptor for service lane");
         match acceptor.accept(&request, pending) {
             Ok(()) => {
-                trace!(%conn_id, "acceptor accepted virtual connection, sending LaneAccept");
+                trace!(%conn_id, "acceptor accepted service lane, sending LaneAccept");
                 let _ = self
                     .sess_core
                     .send(
@@ -1688,6 +1691,8 @@ impl Connection {
         }
     }
 
+    // r[impl lane.open]
+    // r[impl lane.wire.compat]
     fn handle_inbound_accept(&mut self, conn_id: LaneId, accept: SelfRef<LaneAccept>) {
         let accept = accept.get();
         let slot = self.remove_connection(&conn_id);
@@ -1722,6 +1727,8 @@ impl Connection {
         }
     }
 
+    // r[impl lane.open]
+    // r[impl lane.wire.compat]
     fn handle_inbound_reject(&mut self, conn_id: LaneId, reject: SelfRef<LaneReject>) {
         let reject = reject.get();
         let slot = self.remove_connection(&conn_id);
@@ -1739,6 +1746,8 @@ impl Connection {
     }
 
     // r[impl connection.open]
+    // r[impl lane.open]
+    // r[impl lane.wire.compat]
     async fn handle_open_request(&mut self, req: OpenRequest) {
         if req.settings.initial_channel_credit == 0 {
             let _ = req.result_tx.send(Err(ConnectionError::Protocol(

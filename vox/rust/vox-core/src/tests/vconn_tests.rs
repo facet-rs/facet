@@ -86,6 +86,10 @@ impl VoxObserver for RecordingDriverObserver {
 // r[verify rpc.virtual-connection.accept]
 // r[verify connection.open]
 // r[verify connection.virtual]
+// r[verify lane]
+// r[verify lane.control]
+// r[verify lane.open]
+// r[verify lane.wire.compat]
 // r[verify session.connection-settings.open]
 // r[verify session.message]
 // r[verify session.message.connection-id]
@@ -113,7 +117,7 @@ async fn open_virtual_connection_and_call() {
 
     let _server_caller_guard = server_task.await.expect("server setup failed");
 
-    // Open a virtual connection.
+    // Open a service lane.
     let vconn_handle = connection_handle
         .open_lane_handle(
             ConnectionSettings {
@@ -124,18 +128,18 @@ async fn open_virtual_connection_and_call() {
             vox_types::metadata().str("vox-service", "Echo").build(),
         )
         .await
-        .expect("open virtual connection");
+        .expect("open service lane");
     assert!(
         !vconn_handle.connection_id().is_root(),
-        "virtual connection id should not be root"
+        "service lane id should not be the control lane"
     );
 
-    // Set up a driver on the client side for the virtual connection.
+    // Set up a driver on the client side for the service lane.
     let mut vconn_driver = Driver::new(vconn_handle, ());
     let caller = crate::Caller::new(vconn_driver.caller());
     vox_rt::task::spawn(async move { vconn_driver.run().await }.named("vconn_client_driver"));
 
-    // Make a call on the virtual connection.
+    // Make a call on the service lane.
     let args_value: u32 = 123;
     let response = caller
         .call(RequestCall {
@@ -157,6 +161,7 @@ async fn open_virtual_connection_and_call() {
     assert_eq!(result, 123);
 }
 
+// r[verify lane]
 // r[verify lane.service]
 #[tokio::test]
 async fn root_and_virtual_connections_bind_separate_services() {
@@ -205,7 +210,7 @@ async fn root_and_virtual_connections_bind_separate_services() {
             vox_types::metadata().str("vox-service", "Echo").build(),
         )
         .await
-        .expect("open virtual connection");
+        .expect("open service lane");
 
     let mut vconn_driver = Driver::new(vconn_handle, ());
     let vconn_caller = crate::Caller::new(vconn_driver.caller());
@@ -216,6 +221,8 @@ async fn root_and_virtual_connections_bind_separate_services() {
 }
 
 // r[verify connection.open.rejection]
+// r[verify lane.open]
+// r[verify lane.wire.compat]
 #[tokio::test]
 async fn reject_virtual_connection() {
     let (client_conduit, server_conduit) = message_conduit_pair();
@@ -247,7 +254,7 @@ async fn reject_virtual_connection() {
 
     let _server_caller_guard = server_task.await.expect("server setup failed");
 
-    // Try to open a virtual connection — should be rejected.
+    // Try to open an unknown service lane — should be rejected.
     let result = connection_handle
         .open_lane_handle(
             ConnectionSettings {
@@ -266,6 +273,8 @@ async fn reject_virtual_connection() {
 }
 
 // r[verify connection.open.rejection]
+// r[verify lane.open]
+// r[verify lane.wire.compat]
 #[tokio::test]
 async fn open_virtual_connection_without_acceptor_is_rejected() {
     let (client_conduit, server_conduit) = message_conduit_pair();
@@ -306,6 +315,7 @@ async fn open_virtual_connection_without_acceptor_is_rejected() {
 }
 
 // r[verify connection.close]
+// r[verify lane.wire.compat]
 #[tokio::test]
 async fn close_unknown_virtual_connection_is_rejected() {
     let (client_conduit, server_conduit) = message_conduit_pair();
@@ -339,6 +349,7 @@ async fn close_unknown_virtual_connection_is_rejected() {
 
 // r[verify connection.close]
 // r[verify connection.close.semantics]
+// r[verify lane.wire.compat]
 #[tokio::test]
 async fn close_virtual_connection() {
     let (client_conduit, server_conduit) = message_conduit_pair();
@@ -362,7 +373,7 @@ async fn close_virtual_connection() {
 
     let _server_caller_guard = server_task.await.expect("server setup failed");
 
-    // Open a virtual connection.
+    // Open a service lane.
     let vconn_handle = connection_handle
         .open_lane_handle(
             ConnectionSettings {
@@ -373,10 +384,13 @@ async fn close_virtual_connection() {
             vox_types::metadata().str("vox-service", "Echo").build(),
         )
         .await
-        .expect("open virtual connection");
+        .expect("open service lane");
 
     let conn_id = vconn_handle.connection_id();
-    assert!(!conn_id.is_root(), "virtual connection should not be root");
+    assert!(
+        !conn_id.is_root(),
+        "service lane should not be the control lane"
+    );
 
     // Set up a driver on the client side.
     let mut vconn_driver = Driver::new(vconn_handle, ());
@@ -384,7 +398,7 @@ async fn close_virtual_connection() {
     let caller_closed = caller.clone();
     vox_rt::task::spawn(async move { vconn_driver.run().await }.named("vconn_client_driver"));
 
-    // Make a call to confirm the connection works.
+    // Make a call to confirm the service lane works.
     let args_value: u32 = 42;
     let response = caller
         .call(RequestCall {
@@ -405,22 +419,24 @@ async fn close_virtual_connection() {
     let result: u32 = vox_phon::from_slice(ret_bytes).expect("deserialize");
     assert_eq!(result, 42);
 
-    // Close the virtual connection.
+    // Close the service lane.
     connection_handle
         .close_lane(conn_id, Default::default())
         .await
-        .expect("close virtual connection");
+        .expect("close service lane");
 
     tokio::time::timeout(std::time::Duration::from_secs(1), caller_closed.closed())
         .await
-        .expect("caller closed() should resolve after virtual connection close");
+        .expect("caller closed() should resolve after service lane close");
     assert!(
         !caller.is_connected(),
-        "caller should report disconnected after virtual connection close"
+        "caller should report disconnected after service lane close"
     );
 }
 
 // r[verify rpc.caller.liveness.last-drop-closes-connection]
+// r[verify connection.lifecycle.driven]
+// r[verify connection.shutdown.explicit]
 #[tokio::test]
 async fn dropping_last_virtual_caller_does_not_close_virtual_connection() {
     let (client_conduit, server_conduit) = message_conduit_pair();
@@ -457,7 +473,7 @@ async fn dropping_last_virtual_caller_does_not_close_virtual_connection() {
             vox_types::metadata().str("vox-service", "Echo").build(),
         )
         .await
-        .expect("open virtual connection");
+        .expect("open service lane");
     let conn_id = vconn_handle.connection_id();
 
     let mut vconn_driver = Driver::new(vconn_handle, ());
@@ -473,7 +489,7 @@ async fn dropping_last_virtual_caller_does_not_close_virtual_connection() {
             metadata: Default::default(),
         })
         .await
-        .expect("call should succeed before dropping virtual caller");
+        .expect("call should succeed before dropping lane caller");
     let response = response.get();
     let ret_bytes = match &response.ret {
         Payload::Encoded(bytes) => bytes,
@@ -492,7 +508,7 @@ async fn dropping_last_virtual_caller_does_not_close_virtual_connection() {
     connection_handle
         .close_lane(conn_id, Default::default())
         .await
-        .expect("explicit close should close virtual connection");
+        .expect("explicit close should close service lane");
     assert!(
         observer.saw_lane_closed(conn_id),
         "explicit close should emit the lane close event"
@@ -501,6 +517,7 @@ async fn dropping_last_virtual_caller_does_not_close_virtual_connection() {
 
 // r[verify connection.close.semantics]
 // r[verify rpc.channel.close]
+// r[verify lane.wire.compat]
 #[tokio::test]
 async fn close_virtual_connection_closes_registered_rx_channels() {
     let (client_conduit, server_conduit) = message_conduit_pair();
@@ -534,7 +551,7 @@ async fn close_virtual_connection_closes_registered_rx_channels() {
             vox_types::metadata().str("vox-service", "Echo").build(),
         )
         .await
-        .expect("open virtual connection");
+        .expect("open service lane");
 
     let conn_id = vconn_handle.connection_id();
     let mut vconn_driver = Driver::new(vconn_handle, ());
@@ -547,7 +564,7 @@ async fn close_virtual_connection_closes_registered_rx_channels() {
     connection_handle
         .close_lane(conn_id, Default::default())
         .await
-        .expect("close virtual connection");
+        .expect("close service lane");
 
     let recv_result = tokio::time::timeout(std::time::Duration::from_millis(200), rx_items.recv())
         .await
@@ -559,12 +576,14 @@ async fn close_virtual_connection_closes_registered_rx_channels() {
                 ConnectionCloseReason::Local
             ))
         ),
-        "registered Rx channel should report connection closure when virtual connection closes"
+        "registered Rx channel should report connection closure when service lane closes"
     );
 }
 
 // r[verify rpc.caller.liveness.root-internal-close]
 // r[verify rpc.caller.liveness.root-teardown-condition]
+// r[verify connection.lifecycle.driven]
+// r[verify connection.shutdown.explicit]
 #[tokio::test]
 async fn dropping_root_and_virtual_callers_does_not_shutdown_session() {
     let (client_conduit, server_conduit) = message_conduit_pair();
@@ -615,7 +634,7 @@ async fn dropping_root_and_virtual_callers_does_not_shutdown_session() {
             vox_types::metadata().str("vox-service", "Echo").build(),
         )
         .await
-        .expect("open virtual connection");
+        .expect("open service lane");
 
     let mut vconn_driver = Driver::new(vconn_handle, ());
     let vconn_caller = crate::Caller::new(vconn_driver.caller());
@@ -637,7 +656,7 @@ async fn dropping_root_and_virtual_callers_does_not_shutdown_session() {
             metadata: Default::default(),
         })
         .await
-        .expect("virtual connection should still be usable after root caller drop");
+        .expect("service lane should still be usable after root caller drop");
     let response = response.get();
     let ret_bytes = match &response.ret {
         Payload::Encoded(bytes) => bytes,

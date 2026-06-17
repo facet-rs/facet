@@ -580,7 +580,7 @@ has to forward calls somehow:
 ```
 
 Historically, this is where Vox virtual connections mattered: the HTTP server
-cell could ask the host-side session to create another request/channel
+cell could ask the host-side connection to create another request/channel
 namespace, then route browser traffic through that namespace without translating
 request IDs or channel IDs.
 
@@ -590,18 +590,16 @@ connection. Vox core does not need a public root caller to make the forwarding
 case work: ID 0 remains connection control, and every public service endpoint
 lives on an explicit lane.
 
-## Current Rust runtime compatibility API
+## Current Rust runtime API
 
-The current Rust runtime (`vox-core`) still exposes the historical naming while
-the implementation migrates:
-
-1. Create a `Session` and keep its driver future running.
-2. Open outbound service lanes via `SessionHandle::open_connection(...)`.
+1. Establish a `Connection` and keep its driver future running.
+2. Open outbound service lanes via `ConnectionHandle::open_lane(...)` or
+   `ConnectionHandle::open_lane_handle(...)`.
 3. Accept inbound service lanes by registering `.on_connection(...)` on the
-   session builder.
+   connection builder.
 
-Each compatibility `ConnectionHandle` is a service-lane handle: it gets its own
-driver state, request/channel ID allocators, dispatcher, and caller context.
+Each `LaneHandle` is a service-lane handle: it gets its own driver state,
+request/channel ID allocators, dispatcher, and caller context.
 The rootless public API should teach this as "open or accept a service lane on
 an explicitly driven Vox connection", not as "keep a root connection caller
 alive".

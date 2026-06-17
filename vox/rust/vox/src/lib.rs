@@ -1,4 +1,4 @@
-//! vox — type-safe RPC with channels, virtual connections, and automatic schema evolution.
+//! vox — type-safe RPC with channels, service lanes, and automatic schema evolution.
 //!
 //! # Defining a service
 //!
@@ -80,20 +80,20 @@
 //! ```ignore
 //! client.caller.closed().await;     // wait for disconnect
 //! client.caller.is_connected();     // check liveness
-//! client.connection.as_ref();          // access session handle (virtual connections)
+//! client.connection.as_ref();       // access connection handle (service lanes)
 //! client.say_hello().await?;        // service method — no name clash
 //! ```
 //!
 //! # Lower-level APIs
 //!
-//! For advanced use (custom transports, in-memory testing, virtual connections),
+//! For advanced use (custom transports, in-memory testing, multiple service lanes),
 //! use the builder APIs directly:
 //!
 //! - [`initiator_on()`] / [`acceptor_on()`] — establish over a raw [`Link`]
 //! - [`memory_link_pair()`] — in-process link pair for testing
-//! - [`Driver`] — run inbound RPC on a connection handle
-//! - [`ConnectionHandle`] — open/close virtual connections
-//! - [`proxy_lanes()`] — bridge two connection handles
+//! - [`Driver`] — run inbound RPC on a service lane handle
+//! - [`ConnectionHandle`] — open/close service lanes
+//! - [`proxy_lanes()`] — bridge two service lane handles
 
 mod highlevel;
 pub use highlevel::*;
