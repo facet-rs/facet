@@ -119,32 +119,27 @@ pub async fn stream_values(count: u32, output: Tx<i32>) {
 }
 
 pub async fn stream_post_reply_values(output: Tx<i32>) {
-    vox_rt::task::spawn(async move {
-        vox_rt::time::sleep(std::time::Duration::from_millis(10)).await;
-        for i in 0..5 {
-            debug!(i, "post-reply sending value");
-            if let Err(e) = output.send(i).await {
-                error!(i, ?e, "post-reply send failed");
-                break;
-            }
+    for i in 0..5 {
+        debug!(i, "request-scoped sending value");
+        if let Err(e) = output.send(i).await {
+            error!(i, ?e, "request-scoped send failed");
+            break;
         }
-        output.close(Default::default()).await.ok();
-    });
+    }
+    output.close(Default::default()).await.ok();
 }
 
 pub async fn sum_post_reply_values(mut input: Rx<i32>, result: Tx<i64>) {
-    vox_rt::task::spawn(async move {
-        let mut total: i64 = 0;
-        while let Ok(Some(n)) = input.recv().await {
-            let n = n.get();
-            debug!(n = *n, total, "post-reply received number");
-            total += *n as i64;
-        }
-        if let Err(e) = result.send(total).await {
-            error!(total, ?e, "post-reply result send failed");
-        }
-        result.close(Default::default()).await.ok();
-    });
+    let mut total: i64 = 0;
+    while let Ok(Some(n)) = input.recv().await {
+        let n = n.get();
+        debug!(n = *n, total, "request-scoped received number");
+        total += *n as i64;
+    }
+    if let Err(e) = result.send(total).await {
+        error!(total, ?e, "request-scoped result send failed");
+    }
+    result.close(Default::default()).await.ok();
 }
 
 pub fn sample_dodeca_data_content() -> String {

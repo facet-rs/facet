@@ -13,9 +13,10 @@ with Tracey requirements. Until then this file should not contain Tracey
 requirement annotations.
 
 Companion review:
-`docs/design/lane-model-user-review-and-reliability.md` checks this model
-against local Vox users and sketches retry, reliable-stream, and observability
-semantics.
+`docs/design/lane-model-user-review-and-reliability.md` is an archived
+brainstorm that checked this model against local Vox users. Its retry,
+operation, and reliable-stream material is not part of the active Vox-core
+design round.
 
 ## Problem
 
@@ -492,29 +493,21 @@ service connection.
 
 ## Retry and Reliable Delivery
 
-Retries should not happen below a Vox connection or below a request scope.
+Retry, resume, reliable delivery, and operation identity are not part of the
+active Vox-core design round. The core rule for this document is narrower:
+links and connections do not replay requests, and raw channels are
+request-scoped sidebands.
 
-Transport/rendezvous/mux/link code can reconnect or re-establish links only
-when it has an explicit higher-level operation telling it what is safe to
-resume. A raw send failure is not proof that the peer did not observe the
-frame. Lane reopen is also not a delivery guarantee; it only recreates a
-service namespace inside a live connection.
+Transport/rendezvous/mux/link code may reconnect or re-establish links, but
+that is not RPC retry. A raw send failure is not proof that the peer did not
+observe the frame. Lane reopen is also not a delivery guarantee; it only
+recreates a service namespace inside a live connection.
 
 Raw Vox channels are ordered streams with flow control. They are not durable
-queues. Reliable delivery across peer death needs a layer above request scopes:
-
-- operation ID;
-- idempotency or replacement semantics;
-- per-stream sequence numbers;
-- acknowledgement/commit points;
-- retention policy;
-- replay/resume policy;
-- application-visible indeterminate outcomes.
-
-The rootless/mux-link model does not solve reliable delivery by itself, but it
-does give retries a cleaner boundary: retry by opening a new Vox connection or
-issuing a replacement request scope under the same operation identity, never by
-silently replaying link/session frames.
+queues. Reliable delivery across peer death needs a service-level protocol with
+its own handle, authentication, retention, acknowledgement, and resume
+semantics. Vixen's `Producing::force(PartKey) -> Part` shape is the current
+example of important stream data being modeled above raw channels.
 
 ## Tutorial Sketches
 

@@ -106,14 +106,16 @@ pub trait Testbed {
         logs: Tx<DibsMigrationLog>,
     ) -> Result<DibsMigrateResult, DibsError>;
 
-    /// Server returns before streaming numbers back to the client.
+    /// Historical name: server streams numbers on a request-scoped channel, then
+    /// returns after the channel is terminal.
     ///
-    /// Tests: callee-held `Tx<T>` outlives the unary method response.
+    /// Tests: callee-held `Tx<T>` remains live while the request is in flight.
     async fn post_reply_generate(&self, output: Tx<i32>);
 
-    /// Server returns before receiving numbers from the client, then reports their sum.
+    /// Historical name: server receives numbers and reports their sum on a
+    /// request-scoped channel before returning.
     ///
-    /// Tests: callee-held `Rx<T>` outlives the unary method response.
+    /// Tests: callee-held `Rx<T>` remains live while the request is in flight.
     async fn post_reply_sum(&self, input: Rx<i32>, result: Tx<i64>);
 
     // ========================================================================

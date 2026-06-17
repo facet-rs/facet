@@ -1,7 +1,7 @@
 # Connect/Serve API Simplification With Per-Connection Factory
 
 Design notes for simplifying the public Rust API while preserving advanced
-session features (virtual connections, resume, middleware, etc).
+connection features (service lanes, middleware, etc).
 
 ## Context
 
@@ -241,7 +241,8 @@ Desired direction:
 ## Retry/Resume Layer ✅
 
 **Removed.** Conduit-level retry/resume was deleted from the runtime surface;
-retry policy belongs above Vox RPC.
+retry, resume, operation identity, and durable streams are not part of the
+active Vox-core design round.
 
 ## Facade Crate Re-export Hygiene
 
@@ -326,11 +327,11 @@ feature entirely.
 **Done.** Two knobs:
 
 - `connect_timeout`: bounds each individual connection attempt (transport
-  + handshake). Default 5s in `vox::connect()`. Applied to both initial
-  `establish()` and each reconnection attempt in `BareSourceRecoverer`.
+  + handshake). Default 5s in `vox::connect()`. Applied to the initial
+  `establish()` and to transport reconnection attempts in `BareSourceRecoverer`.
 - `recovery_timeout`: bounds total recovery time after a link breaks. If
-  the session can't reconnect within this window, it gives up and the
-  session dies. No default (unlimited retries unless set).
+  the connection can't reconnect within this window, it gives up and the
+  connection closes. No default (unlimited reconnection attempts unless set).
 
 `SessionConfig` refactored: helpers pass config as a whole struct instead
 of destructuring into 8+ individual fields.

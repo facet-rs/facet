@@ -389,7 +389,7 @@ impl ConnectionHandle {
 
 /// Connection state machine.
 // r[impl session]
-// r[impl rpc.one-service-per-connection]
+// r[impl lane.service]
 pub struct Connection {
     /// Conduit receiver
     rx: Box<dyn DynConduitRx>,

@@ -157,7 +157,7 @@ async fn open_virtual_connection_and_call() {
     assert_eq!(result, 123);
 }
 
-// r[verify rpc.one-service-per-connection]
+// r[verify lane.service]
 #[tokio::test]
 async fn root_and_virtual_connections_bind_separate_services() {
     let (client_conduit, server_conduit) = message_conduit_pair();

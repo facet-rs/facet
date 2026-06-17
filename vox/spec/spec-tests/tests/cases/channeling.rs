@@ -114,7 +114,6 @@ pub fn run_channeling_transform_bidirectional(spec: SubjectSpec) {
     .unwrap();
 }
 
-// r[verify channeling.lifecycle.outlives-response]
 // r[verify channeling.type]
 // r[verify channeling.data]
 // r[verify channeling.close]
@@ -146,7 +145,6 @@ pub fn run_channeling_post_reply_generate_server_to_client(spec: SubjectSpec) {
     .unwrap();
 }
 
-// r[verify channeling.lifecycle.outlives-response]
 // r[verify channeling.type]
 // r[verify channeling.data]
 // r[verify channeling.close]
@@ -157,15 +155,17 @@ pub fn run_channeling_post_reply_sum_client_to_server(spec: SubjectSpec) {
         let (input_tx, input_rx) = vox::channel::<i32>();
         let (result_tx, mut result_rx) = vox::channel::<i64>();
 
+        spawn_loud(async move {
+            for n in [1i32, 2, 3, 4, 5] {
+                input_tx.send(n).await.unwrap();
+            }
+            input_tx.close(Default::default()).await.unwrap();
+        });
+
         client
             .post_reply_sum(input_rx, result_tx)
             .await
             .map_err(|e| format!("post_reply_sum: {e:?}"))?;
-
-        for n in [1i32, 2, 3, 4, 5] {
-            input_tx.send(n).await.unwrap();
-        }
-        input_tx.close(Default::default()).await.unwrap();
 
         let total = match result_rx.recv().await {
             Ok(Some(total)) => *total.get(),
@@ -176,7 +176,7 @@ pub fn run_channeling_post_reply_sum_client_to_server(spec: SubjectSpec) {
         };
 
         if total != 15 {
-            return Err(format!("expected post-reply sum 15, got {total}"));
+            return Err(format!("expected request-scoped sum 15, got {total}"));
         }
 
         match result_rx.recv().await {

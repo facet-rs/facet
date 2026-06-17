@@ -4978,15 +4978,17 @@ export interface TestbedCaller {
   /** Dibs migration runner with streamed migration logs. */
   dibsMigrate(request: DibsMigrateRequest, logs: unknown): Promise<{ ok: true; value: DibsMigrateResult } | { ok: false; error: DibsError }>;
   /**
-   * Server returns before streaming numbers back to the client.
+   * Historical name: server streams numbers on a request-scoped channel, then
+   * returns after the channel is terminal.
    *
-   * Tests: callee-held `Tx<T>` outlives the unary method response.
+   * Tests: callee-held `Tx<T>` remains live while the request is in flight.
    */
   postReplyGenerate(output: unknown): Promise<void>;
   /**
-   * Server returns before receiving numbers from the client, then reports their sum.
+   * Historical name: server receives numbers and reports their sum on a
+   * request-scoped channel before returning.
    *
-   * Tests: callee-held `Rx<T>` outlives the unary method response.
+   * Tests: callee-held `Rx<T>` remains live while the request is in flight.
    */
   postReplySum(input: unknown, result: unknown): Promise<void>;
   /** Echo a point back. */
@@ -5640,9 +5642,10 @@ export class TestbedClient implements TestbedCaller {
   }
 
   /**
-   * Server returns before streaming numbers back to the client.
+   * Historical name: server streams numbers on a request-scoped channel, then
+   * returns after the channel is terminal.
    *
-   * Tests: callee-held `Tx<T>` outlives the unary method response.
+   * Tests: callee-held `Tx<T>` remains live while the request is in flight.
    */
   async postReplyGenerate(output: unknown): Promise<void> {
     const __voxResult = await this.caller.call({
@@ -5656,9 +5659,10 @@ export class TestbedClient implements TestbedCaller {
   }
 
   /**
-   * Server returns before receiving numbers from the client, then reports their sum.
+   * Historical name: server receives numbers and reports their sum on a
+   * request-scoped channel before returning.
    *
-   * Tests: callee-held `Rx<T>` outlives the unary method response.
+   * Tests: callee-held `Rx<T>` remains live while the request is in flight.
    */
   async postReplySum(input: unknown, result: unknown): Promise<void> {
     const __voxResult = await this.caller.call({

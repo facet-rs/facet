@@ -61,20 +61,6 @@ weight = 12
 > [schema exchange specification](../schemas/) for details on decode plans
 > and compatibility rules).
 
-> r[rpc.one-service-per-connection]
->
-> Historical compatibility wording: where older implementation references say
-> "connection" for a service namespace, the rootless model reads that as
-> "lane". Each public service lane is bound to exactly one service.
-
-> r[rpc.one-service-per-lane]
->
-> In the rootless connection model, each service lane is bound to exactly one
-> service. A connection MAY carry multiple service lanes. Generated clients and
-> dispatchers are lane-local: a generated client sends requests on one accepted
-> service lane, and a dispatcher handles requests for that lane's service
-> namespace.
-
 > r[rpc.handler]
 >
 > A handler handles incoming requests on a service lane. It is a user-provided

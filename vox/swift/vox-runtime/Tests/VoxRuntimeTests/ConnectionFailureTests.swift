@@ -2187,7 +2187,7 @@ struct ConnectionFailureTests {
     // r[verify rpc.virtual-connection.accept]
     // r[verify connection.virtual]
     // r[verify session.symmetry]
-    // r[verify rpc.one-service-per-connection]
+    // r[verify lane.service]
     @Test func inboundOpenLaneAcceptsAndDispatchesOnServiceLane() async throws {
         let transport = ScriptedTransport()
         let (controlLane, driver, _, _) = try await establishInitiator(

@@ -4193,27 +4193,19 @@ class TestbedService implements TestbedHandler {
   }
 
   async postReplyGenerate(output: Tx<number>): Promise<void> {
-    setTimeout(() => {
-      void (async () => {
-        for (let i = 0; i < 5; i++) {
-          await output.send(i);
-        }
-        output.close();
-      })();
-    }, 10);
+    for (let i = 0; i < 5; i++) {
+      await output.send(i);
+    }
+    output.close();
   }
 
   async postReplySum(input: Rx<number>, result: Tx<bigint>): Promise<void> {
-    setTimeout(() => {
-      void (async () => {
-        let total = 0n;
-        for await (const n of input) {
-          total += BigInt(n);
-        }
-        await result.send(total);
-        result.close();
-      })();
-    }, 0);
+    let total = 0n;
+    for await (const n of input) {
+      total += BigInt(n);
+    }
+    await result.send(total);
+    result.close();
   }
 
   // Complex type methods
@@ -6270,7 +6262,7 @@ async function runClient() {
       const [inputTx, inputRx] = channel<number>();
       const [resultTx, resultRx] = channel<bigint>();
 
-      await client.postReplySum(inputRx, resultTx);
+      const call = client.postReplySum(inputRx, resultTx);
 
       for (const n of [1, 2, 3, 4, 5]) {
         await inputTx.send(n);
@@ -6287,6 +6279,7 @@ async function runClient() {
         throw new Error(`post_reply_sum: expected result channel close, got extra value ${String(extra)}`);
       }
 
+      await call;
       console.error(`post_reply_sum OK`);
       break;
     }

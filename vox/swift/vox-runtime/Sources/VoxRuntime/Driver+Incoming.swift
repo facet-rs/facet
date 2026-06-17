@@ -257,7 +257,7 @@ extension Driver {
     /// r[impl rpc.service]
     /// r[impl rpc.handler]
     /// r[impl rpc.service.methods]
-    /// r[impl rpc.one-service-per-connection]
+    /// r[impl lane.service]
     /// r[impl rpc.pipelining]
     func handleRequest(
         connId: UInt64,

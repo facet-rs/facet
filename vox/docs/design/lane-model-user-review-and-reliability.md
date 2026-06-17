@@ -1,11 +1,17 @@
 # Lane Model User Review, Retries, and Reliability
 
-Status: tentative design review, not spec.
+Status: obsolete brainstorm archive, not spec.
+
+This note predates the narrowed direction in
+`docs/design/operations-observability-and-progress.md`: Vox core currently
+specifies request scopes and raw request-scoped channels only. Retry, resume,
+operation identity, reliable streams, and durable delivery are out of scope for
+the active Vox-core design round. Treat the retry/reliable-stream sections below
+as historical exploration, not an implementation roadmap.
 
 This note reviews the rootless connection and service-lane direction against
-real Vox users found in this workspace. It also sketches the missing retry,
-reliable-stream, and observability pieces that would make the model complete
-enough to implement.
+real Vox users found in this workspace. It also preserves earlier sketches for
+retry, reliable-stream, and observability pieces.
 
 The target model under review:
 

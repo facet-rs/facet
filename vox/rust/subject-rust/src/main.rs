@@ -793,15 +793,17 @@ async fn run_client() -> Result<(), String> {
             let (input_tx, input_rx) = vox::channel::<i32>();
             let (result_tx, mut result_rx) = vox::channel::<i64>();
 
+            tokio::spawn(async move {
+                for n in [1i32, 2, 3, 4, 5] {
+                    input_tx.send(n).await.unwrap();
+                }
+                input_tx.close(Default::default()).await.unwrap();
+            });
+
             client
                 .post_reply_sum(input_rx, result_tx)
                 .await
                 .map_err(|e| format!("post_reply_sum failed: {e:?}"))?;
-
-            for n in [1i32, 2, 3, 4, 5] {
-                input_tx.send(n).await.unwrap();
-            }
-            input_tx.close(Default::default()).await.unwrap();
 
             let total = match result_rx.recv().await {
                 Ok(Some(total)) => *total.get(),

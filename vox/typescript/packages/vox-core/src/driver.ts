@@ -197,7 +197,7 @@ export class Driver {
     // r[impl rpc]
     // r[impl rpc.service]
     // r[impl rpc.handler]
-    // r[impl rpc.one-service-per-connection]
+    // r[impl lane.service]
     // r[impl rpc.pipelining]
     // r[impl rpc.session-setup]
     let pendingIncoming: Promise<IncomingCall | null> | null = null;
