@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 
 use facet::Facet;
+use facet_xml as xml;
 
 // proxy for elements that are actually a btree set
 #[derive(Debug, Facet)]
