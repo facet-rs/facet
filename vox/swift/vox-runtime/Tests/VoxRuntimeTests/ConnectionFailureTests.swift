@@ -295,7 +295,9 @@ private final class RecordingRuntimeObserver: VoxRuntimeObserver, @unchecked Sen
 
 @Test
 // r[verify session]
+// r[verify connection.model]
 // r[verify connection.root]
+// r[verify lane.control]
 // r[verify rpc.session-setup]
 // r[verify session.peer]
 // r[verify session.role]
@@ -609,6 +611,25 @@ private func awaitConnectionAccept(
     return nil
 }
 
+private func awaitConnectionReject(
+    _ transport: ScriptedTransport,
+    connectionId: UInt64,
+    timeoutMs: UInt64 = 1_000
+) async -> LaneReject? {
+    let start = ContinuousClock.now
+    let timeout = Duration.milliseconds(Int64(timeoutMs))
+    while ContinuousClock.now - start < timeout {
+        let sent = await transport.sent()
+        for message in sent where message.connectionId == connectionId {
+            if case .laneReject(let reject) = message.payload {
+                return reject
+            }
+        }
+        try? await Task.sleep(nanoseconds: 5_000_000)
+    }
+    return nil
+}
+
 private func awaitConnectionClose(
     _ transport: ScriptedTransport,
     connectionId: UInt64,
@@ -720,12 +741,12 @@ private func isTimeout(_ error: Error) -> Bool {
     return false
 }
 
-private func rejectedMetadata(_ error: Error) -> Metadata? {
+private func laneRejection(_ error: Error) -> LaneRejection? {
     guard let connError = error as? ConnectionError else {
         return nil
     }
-    if case .rejected(let metadata) = connError {
-        return metadata
+    if case .rejected(let rejection) = connError {
+        return rejection
     }
     return nil
 }
@@ -1930,6 +1951,8 @@ struct ConnectionFailureTests {
         }
     }
 
+    // r[verify lane]
+    // r[verify lane.open]
     // r[verify connection.open]
     // r[verify connection.parity]
     // r[verify rpc.virtual-connection.open]
@@ -2186,6 +2209,10 @@ struct ConnectionFailureTests {
 
     // r[verify rpc.caller.liveness.root-internal-close]
     // r[verify rpc.caller.liveness.root-teardown-condition]
+    // r[verify connection.lifecycle.driven]
+    // r[verify connection.shutdown.explicit]
+    // r[verify lane]
+    // r[verify lane.open]
     @Test func droppingControlLaneAndServiceLanesDoesNotStopDrivenConnection() async throws {
         let transport = ScriptedTransport()
         let driver: Driver
@@ -2346,6 +2373,48 @@ struct ConnectionFailureTests {
     }
 
     // r[verify connection.open.rejection]
+    // r[verify lane.open.result]
+    // r[verify lane.wire.compat]
+    @Test func inboundOpenLaneRejectsWithStructuredReasonWhenNoAcceptor() async throws {
+        let transport = ScriptedTransport()
+        let (controlLane, driver, _, _) = try await establishInitiator(
+            conduit: transport,
+            dispatcher: EmptyServiceDispatcher()
+        )
+        #expect(controlLane.connectionId == 0)
+        let driverTask: Task<Void, Error> = Task {
+            try await driver.run()
+        }
+        await withAsyncCleanup({
+            try? await transport.close()
+            await cancelAndDrain(driverTask)
+        }) {
+            let connId: UInt64 = 2
+            await transport.enqueueMessage(
+                messageConnect(
+                    connectionId: connId,
+                    settings: ConnectionSettings(
+                        parity: .odd,
+                        maxConcurrentRequests: 8,
+                        initialChannelCredit: 16
+                    ),
+                    metadata: meta([("vox-service", "Noop")])
+                )
+            )
+
+            guard let reject = await awaitConnectionReject(transport, connectionId: connId) else {
+                Issue.record("expected LaneReject")
+                return
+            }
+            let rejection = LaneRejection.fromMetadata(reject.metadata)
+            #expect(rejection.reason == .notReady)
+            #expect(rejection.message() == "no lane acceptor configured")
+        }
+    }
+
+    // r[verify connection.open.rejection]
+    // r[verify lane.open.result]
+    // r[verify lane.wire.compat]
     @Test func connectionHandleOpenLaneFailsOnReject() async throws {
         let transport = ScriptedTransport()
         let (controlLane, driver, connectionHandle, _) = try await establishInitiator(
@@ -2376,16 +2445,19 @@ struct ConnectionFailureTests {
                 return
             }
 
-            let rejectionMetadata = meta([("reason", "busy")])
+            let rejection = LaneRejection.withMessage(.draining, "busy")
             await transport.enqueueMessage(
-                messageReject(connectionId: connId, metadata: rejectionMetadata)
+                messageReject(connectionId: connId, metadata: rejection.toMetadata())
             )
 
             do {
                 _ = try await awaitTaskResult(openTask)
                 Issue.record("expected service lane lane-open rejection")
             } catch {
-                #expect(rejectedMetadata(error) == rejectionMetadata)
+                let parsed = laneRejection(error)
+                #expect(parsed?.reason == .draining)
+                #expect(parsed?.message() == "busy")
+                #expect(parsed?.metadata.metaStr(voxLaneRejectReasonMetadataKey) == "draining")
             }
         }
     }

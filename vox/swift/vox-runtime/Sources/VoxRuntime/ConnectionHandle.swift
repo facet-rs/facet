@@ -16,6 +16,7 @@ public final class ConnectionHandle: @unchecked Sendable {
     ///
     /// r[impl rpc.virtual-connection.open]
     /// r[impl connection.open]
+    /// r[impl lane.open]
     public func openLane(
         settings: ConnectionSettings,
         metadata: Metadata = emptyMetadata(),
@@ -67,6 +68,7 @@ public final class ConnectionHandle: @unchecked Sendable {
     }
 
     /// Request shutdown of the driven connection.
+    /// r[impl connection.shutdown.explicit]
     public func shutdown() {
         eventContinuation.finish()
     }

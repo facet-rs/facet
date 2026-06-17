@@ -74,6 +74,8 @@ extension Driver {
             // r[impl connection.open.rejection]
             // r[impl connection.open]
             // r[impl connection.parity]
+            // r[impl lane.open]
+            // r[impl lane.wire.compat]
             let peerRole = oppositeRole(role)
             guard idMatchesRole(msg.connectionId, peerRole) else {
                 try await sendProtocolError("connection.open")
@@ -86,14 +88,27 @@ extension Driver {
             if let acceptor = laneAcceptor {
                 let metadata = open.metadata
                 guard let service = metadata.metaStr("vox-service") else {
-                    // Missing or non-string vox-service metadata — reject
+                    let rejection = LaneRejection.withMessage(
+                        .unknownService,
+                        "missing vox-service metadata"
+                    )
                     try await conduit.send(
-                        messageReject(connectionId: msg.connectionId, metadata: .null))
+                        messageReject(
+                            connectionId: msg.connectionId,
+                            metadata: rejection.toMetadata()
+                        ))
                     return
                 }
                 guard open.connectionSettings.initialChannelCredit > 0 else {
+                    let rejection = LaneRejection.withMessage(
+                        .policyRejected,
+                        "initial_channel_credit must be greater than zero"
+                    )
                     try await conduit.send(
-                        messageReject(connectionId: msg.connectionId, metadata: .null))
+                        messageReject(
+                            connectionId: msg.connectionId,
+                            metadata: rejection.toMetadata()
+                        ))
                     return
                 }
                 let localSettings = try makeConnectionSettings(
@@ -120,21 +135,34 @@ extension Driver {
                                 ))
                         }
                     },
-                    reject: { [weak self] in
+                    reject: { [weak self] rejection in
                         guard let self else { return }
                         Task {
                             try? await self.conduit.send(
-                                messageReject(connectionId: connId, metadata: .null))
+                                messageReject(
+                                    connectionId: connId,
+                                    metadata: rejection.toMetadata()
+                                ))
                         }
                     }
                 )
                 acceptor.accept(request: request, lane: pending)
             } else {
-                try await conduit.send(messageReject(connectionId: msg.connectionId, metadata: .null))
+                let rejection = LaneRejection.withMessage(
+                    .notReady,
+                    "no lane acceptor configured"
+                )
+                try await conduit.send(
+                    messageReject(
+                        connectionId: msg.connectionId,
+                        metadata: rejection.toMetadata()
+                    ))
             }
         case .laneAccept(let accept):
             // r[impl connection.open]
             // r[impl rpc.virtual-connection.open]
+            // r[impl lane.open.result]
+            // r[impl lane.wire.compat]
             guard let pending = await laneState.takePendingOutbound(msg.connectionId) else {
                 break
             }
@@ -159,10 +187,12 @@ extension Driver {
             pending.responseTx(.success(lane))
         case .laneReject(let reject):
             // r[impl connection.open.rejection]
+            // r[impl lane.open.result]
+            // r[impl lane.wire.compat]
             guard let pending = await laneState.takePendingOutbound(msg.connectionId) else {
                 break
             }
-            pending.responseTx(.failure(.rejected(metadata: reject.metadata)))
+            pending.responseTx(.failure(.rejected(LaneRejection.fromMetadata(reject.metadata))))
         case .laneClose:
             // r[impl connection.close]
             warnLog("received LaneClose conn_id=\(msg.connectionId)")

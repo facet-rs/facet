@@ -21,11 +21,11 @@ public final class PendingLane: @unchecked Sendable {
     private let lock = NSLock()
     private var handled = false
     private let acceptFn: @Sendable (any ServiceDispatcher) -> Void
-    private let rejectFn: @Sendable () -> Void
+    private let rejectFn: @Sendable (LaneRejection) -> Void
 
     init(
         accept: @escaping @Sendable (any ServiceDispatcher) -> Void,
-        reject: @escaping @Sendable () -> Void
+        reject: @escaping @Sendable (LaneRejection) -> Void
     ) {
         self.acceptFn = accept
         self.rejectFn = reject
@@ -43,12 +43,25 @@ public final class PendingLane: @unchecked Sendable {
         }
     }
 
+    /// Reject the lane with structured metadata for the peer.
+    /// Safe to call multiple times; only the first call takes effect.
+    public func reject(_ rejection: LaneRejection = .new(.policyRejected)) {
+        lock.lock()
+        let wasHandled = handled
+        handled = true
+        lock.unlock()
+        if !wasHandled {
+            rejectFn(rejection)
+        }
+    }
+
     deinit {
         lock.lock()
         let wasHandled = handled
+        handled = true
         lock.unlock()
         if !wasHandled {
-            rejectFn()
+            rejectFn(.new(.policyRejected))
         }
     }
 }

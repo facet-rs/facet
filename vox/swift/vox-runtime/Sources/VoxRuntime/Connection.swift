@@ -2,7 +2,8 @@ import Foundation
 import PhonSchema
 
 // r[impl session]
-// r[impl connection.root]
+// r[impl connection.model]
+// r[impl connection.lifecycle.driven]
 public final class Connection: @unchecked Sendable {
     public let role: Role
     let controlLane: Lane
@@ -25,6 +26,7 @@ public final class Connection: @unchecked Sendable {
     }
 
     public func run() async throws {
+        // r[impl connection.lifecycle.driven]
         try await driver.run()
     }
 
@@ -48,6 +50,7 @@ public final class Connection: @unchecked Sendable {
     }
 
     public func shutdown() {
+        // r[impl connection.shutdown.explicit]
         handle.shutdown()
     }
 

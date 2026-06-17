@@ -1,6 +1,8 @@
 import Foundation
 import PhonSchema
 
+// r[impl lane]
+// r[impl lane.control]
 // r[impl rpc.caller]
 public final class Lane: @unchecked Sendable {
     let handle: LaneHandle
