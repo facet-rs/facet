@@ -90,6 +90,11 @@ version_group = "facet"
 changelog_path = "CHANGELOG.md"
 
 [[package]]
+name = "facet-cargo-toml"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
 name = "facet-testhelpers"
 version_group = "facet"
 changelog_path = "CHANGELOG.md"

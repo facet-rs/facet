@@ -39,6 +39,7 @@ members = [
   # utilities
   "facet-path",
   "facet-validate",
+  "facet-cargo-toml",
 
   # strongly-typed string IDs
   "strid",
@@ -64,7 +65,12 @@ repository = "https://github.com/facet-rs/facet"
 [workspace.dependencies]
 facet = { path = "facet", version = "0.50.0-rc.0" }
 facet-core = { path = "facet-core" }
+facet-cargo-toml = { path = "facet-cargo-toml", version = "0.50.0-rc.0" }
+facet-error = { path = "facet-error", version = "0.50.0-rc.0" }
 facet-pretty = { path = "facet-pretty" }
+facet-reflect = { path = "facet-reflect", version = "0.50.0-rc.0" }
+facet-toml = "0.50.0-rc.0"
+facet-value = "0.50.0-rc.0"
 strid = { path = "strid", version = "11.0.0-rc.0" }
 strid-macros = { path = "strid-macros", version = "11.0.0-rc.0" }
 arborium = { version = "^2.4.5", default-features = false, features = ["lang-json"] }
@@ -74,6 +80,7 @@ bytestring = { version = "^1.4.0", default-features = false }
 camino = "^1.2.1"
 compact_str = { version = "^0.9.0", default-features = false }
 chrono = { version = "^0.4.42", default-features = false, features = ["alloc"] }
+datatest-stable = "0.3"
 divan = "^0.1.21"
 eyre = "^0.6.12"
 http = "^1.4.0"
@@ -132,6 +139,7 @@ facet-pretty = { path = "facet-pretty" }
 facet-reflect = { path = "facet-reflect" }
 facet-solver = { path = "facet-solver" }
 facet-testhelpers = { path = "facet-testhelpers" }
+facet-cargo-toml = { path = "facet-cargo-toml" }
 strid = { path = "strid" }
 strid-macros = { path = "strid-macros" }
 strid-examples = { path = "strid-examples" }
