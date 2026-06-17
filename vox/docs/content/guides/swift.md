@@ -97,13 +97,23 @@ verifies those claims locally and either returns the immutable connection
 identity or throws `ConnectionDeclinedError`, which sends `Decline` during the
 handshake:
 
+Connector side:
+
 ```swift
 let authMetadata = emptyMetadata()
     .metaSetting("-#authorization", .string("Bearer local-dev"))
 
-let connection = try await Connection.connect(
+let clientConnection = try await Connection.connect(
     TcpConnector(host: "127.0.0.1", port: 9000),
-    metadata: authMetadata,
+    metadata: authMetadata
+)
+```
+
+Acceptor side:
+
+```swift
+let serverConnection = try await Connection.accept(
+    TcpAcceptor(host: "127.0.0.1", port: 9000),
     identityResolver: { context in
         guard context.claims.metaStr("-#authorization") == "Bearer local-dev" else {
             throw ConnectionDeclinedError(reason: .unauthenticated)
@@ -119,6 +129,12 @@ let connection = try await Connection.connect(
 )
 ```
 
+The peer that sends metadata does not verify its own metadata. In this example,
+the connector authors the early claim and the acceptor resolves the connector's
+identity from the peer claims it received. A connector-side resolver can also
+verify acceptor metadata or transport evidence, but it is still verifying the
+peer.
+
 Late credentials in lane or request metadata do not rewrite the connection
 identity. Verify them in lane/request policy and record the result in a lane
 grant:
@@ -128,6 +144,11 @@ struct GreeterLaneAcceptor: LaneAcceptor {
     let dispatcher: any ServiceDispatcher
 
     func accept(request: LaneRequest, lane: PendingLane) {
+        guard request.peerIdentity.form == .applicationUser else {
+            lane.reject(.withMessage(.forbidden, "connection is not authenticated"))
+            return
+        }
+
         guard request.service == "Greeter" else {
             lane.reject(.withMessage(.unknownService, "unknown service"))
             return
@@ -136,6 +157,10 @@ struct GreeterLaneAcceptor: LaneAcceptor {
         var grant = emptyMetadata()
         grant.metaSet("tenant", .string("lab"))
         grant.metaSet("grant-scope", .string("greeter:read"))
+        grant.metaSet(
+            "authenticated-peer",
+            .string(request.peerIdentity.bases.first?.redacted ?? "unknown")
+        )
         lane.handleWith(dispatcher, grant: LaneGrant(metadata: grant))
     }
 }

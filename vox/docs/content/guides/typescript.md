@@ -112,18 +112,28 @@ identity or a structured `Decline`:
 
 ```ts
 import {
+  accept,
+  connect,
   declineIdentity,
   emptyMetadata,
   identityBasis,
   LaneRejection,
   peerIdentityFromBasis,
 } from "@bearcove/vox-core";
+import { acceptTcp, tcpConnector } from "@bearcove/vox-tcp";
 
 const metadata = emptyMetadata();
 metadata.set("-#authorization", "Bearer local-dev");
 
-const conn = await connect(wsConnector("ws://127.0.0.1:9000"), {
+const clientConn = await connect(tcpConnector("127.0.0.1:9000"), {
   metadata,
+});
+```
+
+Inside the accepting peer's socket handler:
+
+```ts
+const serverConn = await accept(acceptTcp(socket), {
   identityResolver: (context) => {
     if (context.claims.get("-#authorization") !== "Bearer local-dev") {
       return declineIdentity("unauthenticated");
@@ -135,19 +145,33 @@ const conn = await connect(wsConnector("ws://127.0.0.1:9000"), {
 });
 ```
 
+The peer that sends metadata does not verify its own metadata. In this example,
+the connector authors the early claim and the acceptor resolves the connector's
+identity from the peer claims it received. A connector-side resolver can also
+verify acceptor metadata or transport evidence, but it is still verifying the
+peer.
+
 Lane metadata can carry later claims, but those do not rewrite the connection
 identity. Verify them in lane policy and attach the result as a lane grant:
 
 ```ts
 onLane: async (request, pending) => {
+  if (request.peerIdentity.form !== "application-user") {
+    await pending.reject(
+      LaneRejection.withMessage("forbidden", "connection is not authenticated"),
+    );
+    return;
+  }
+
   if (request.service !== "Greeter") {
-    pending.reject(LaneRejection.withMessage("unknown-service", "unknown service"));
+    await pending.reject(LaneRejection.withMessage("unknown-service", "unknown service"));
     return;
   }
 
   const grantMetadata = emptyMetadata();
   grantMetadata.set("tenant", "lab");
   grantMetadata.set("grant-scope", "greeter:read");
+  grantMetadata.set("authenticated-peer", request.peerIdentity.bases[0]?.redacted ?? "unknown");
   const lane = await pending.accept({ metadata: grantMetadata });
 
   const driver = new Driver(lane, new GreeterDispatcher(new GreeterService()));

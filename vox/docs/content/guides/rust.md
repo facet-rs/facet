@@ -22,15 +22,19 @@ The best way to learn the Rust API is to run the examples in order, from simples
 
 - Source: [rust-examples/examples/service_lanes.rs](https://github.com/bearcove/vox/blob/main/rust-examples/examples/service_lanes.rs)
 - Run: `cargo run -p rust-examples --example service_lanes`
-- Learn: `open_lane`, metadata-based accept, and independent per-lane drivers.
+- Learn: structured `Decline`, connection identity resolution, lane grants,
+  `open_lane`, and independent per-lane drivers.
 
 > ```rust
+> let authenticated_peer = authenticated_peer_label(request)?;
+>
 > match request.service() {
 >     "CounterLab" => lane
 >         .with_grant(vox::LaneGrant::from_metadata(
 >             vox::metadata()
 >                 .str("tenant", "lab")
 >                 .str("grant-scope", "counter:read-write")
+>                 .str("authenticated-peer", authenticated_peer)
 >                 .build(),
 >         ))
 >         .handle_with(CounterLabDispatcher::new(counter)),
@@ -139,6 +143,12 @@ let client = vox::connect("127.0.0.1:9000")
     )
     .await?;
 ```
+
+The peer that sends metadata does not verify its own metadata. In this example,
+the connector authors the early claim and the acceptor resolves the connector's
+identity from the peer claims it received. A connector-side resolver can also
+verify acceptor metadata or transport evidence, but it is still verifying the
+peer.
 
 Late credentials in lane or request metadata do not rewrite the connection
 identity. Verify them in lane/request policy and record the result in a lane
