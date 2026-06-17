@@ -1,16 +1,17 @@
 # Rootless Connections and Service Lanes
 
-Status: tentative design note, not spec.
+Status: design background, not spec. The rootless direction has moved into
+`docs/content/spec/conn.md` and `docs/content/spec/rpc.md` as normative Tracey
+requirements.
 
 This note captures the current direction for simplifying Vox connection
 lifecycle, removing the root-service footgun, and preserving the unusually
 flexible proxy/topology cases that motivated virtual connections in the first
 place.
 
-If this direction survives review against real Vox users, the normative pieces
-should move into `docs/content/spec/conn.md` and `docs/content/spec/rpc.md`
-with Tracey requirements. Until then this file should not contain Tracey
-requirement annotations.
+This file is kept to explain the architectural pressure and vocabulary choice.
+It should not contain Tracey requirement annotations; update the spec files for
+normative behavior changes.
 
 Companion review:
 `docs/design/lane-model-user-review-and-reliability.md` is an archived
@@ -18,9 +19,9 @@ brainstorm that checked this model against local Vox users. Its retry,
 operation, and reliable-stream material is not part of the active Vox-core
 design round.
 
-## Problem
+## Historical Problem
 
-The current model has three concepts tangled together:
+The old model had three concepts tangled together:
 
 - a physical `Link`, which is already a dumb bidirectional message transport;
 - a `Session`, which performs the Vox handshake and owns many connection IDs;
@@ -37,7 +38,7 @@ peer by dropping something that looks like a useless no-op client.
 On the client side, the same model leaks into generated clients and session
 handles. The common HTTP/gRPC-shaped intuition is "connect, get a client, call
 methods". Vox can support stranger topologies, but ordinary users should not
-pay for them in the core API. The current API exposes the extra power through a
+pay for them in the core API. The old API exposed the extra power through a
 special root plus virtual connections, which makes the simple case look
 stranger than it needs to and makes the advanced case depend on a fake root
 service.
@@ -78,7 +79,7 @@ tcp/ws/ffi/xpc/etc link
 
 Lanes are not the problem. The special root lane is.
 
-The current "virtual connection" idea has two jobs mixed together:
+The old "virtual connection" idea had two jobs mixed together:
 
 - a service lane, where one lane is one service;
 - a topology trick, where one physical carrier creates another link-like path.
@@ -103,7 +104,7 @@ advanced transport or rendezvous, outside core RPC:
               -> link C -> Vox connection -> lanes...
 ```
 
-Tentative vocabulary:
+Vocabulary:
 
 | Old | Tentative | Meaning |
 | --- | --- | --- |
