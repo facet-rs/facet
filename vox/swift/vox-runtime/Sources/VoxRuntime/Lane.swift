@@ -30,10 +30,6 @@ public final class Lane: @unchecked Sendable {
         handle.laneId
     }
 
-    var connectionId: UInt64 {
-        handle.laneId
-    }
-
     public var incomingChannelRegistry: ChannelRegistry {
         handle.channelRegistry
     }

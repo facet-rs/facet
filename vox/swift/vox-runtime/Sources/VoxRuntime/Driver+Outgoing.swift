@@ -28,7 +28,7 @@ extension Driver {
             return nil
         }
         await terminateRequestChannels(
-            connectionId: responseContext.connectionId,
+            laneId: responseContext.laneId,
             channelIds: responseContext.channels,
             error: .requestClosed
         )
@@ -36,7 +36,7 @@ extension Driver {
             requestId: requestId,
             payload: payload,
             metadata: responseContext.responseMetadata,
-            connectionId: responseContext.connectionId,
+            laneId: responseContext.laneId,
             schemas: schemas
         )
     }
@@ -56,11 +56,11 @@ extension Driver {
         }
     }
 
-    private func taskQueueSender(connectionId: UInt64) -> @Sendable (TaskMessage) -> Bool {
+    private func taskQueueSender(laneId: UInt64) -> @Sendable (TaskMessage) -> Bool {
         let cont = eventContinuation
         let queue = taskQueue
         return { msg in
-            guard queue.push(DriverQueuedTaskMessage(connectionId: connectionId, taskMessage: msg))
+            guard queue.push(DriverQueuedTaskMessage(laneId: laneId, taskMessage: msg))
             else {
                 return false
             }
@@ -94,7 +94,7 @@ extension Driver {
 
     // r[impl rpc.observability.channel.context]
     func rememberOutboundChannelContexts(
-        connectionId: UInt64,
+        laneId: UInt64,
         requestId: UInt64,
         methodId: UInt64,
         channels: [UInt64]
@@ -102,10 +102,10 @@ extension Driver {
         guard !channels.isEmpty else {
             return
         }
-        if connectionId == 0 {
+        if laneId == 0 {
             await rememberChannelContexts(
                 registry: handle.channelRegistry,
-                laneId: connectionId,
+                laneId: laneId,
                 requestId: requestId,
                 methodId: methodId,
                 channels: channels,
@@ -113,12 +113,12 @@ extension Driver {
             )
             return
         }
-        guard let lane = await laneState.lane(for: connectionId) else {
+        guard let lane = await laneState.lane(for: laneId) else {
             return
         }
         await rememberChannelContexts(
             registry: lane.channelRegistry,
-            laneId: connectionId,
+            laneId: laneId,
             requestId: requestId,
             methodId: methodId,
             channels: channels,
@@ -127,23 +127,23 @@ extension Driver {
     }
 
     func channelContext(
-        connectionId: UInt64,
+        laneId: UInt64,
         channelId: UInt64
     ) async -> VoxChannelDebugContext? {
-        if connectionId == 0 {
+        if laneId == 0 {
             if let context = await handle.channelRegistry.context(for: channelId) {
                 return context
             }
             return await serverRegistry.context(for: channelId)
         }
-        guard let lane = await laneState.lane(for: connectionId) else {
+        guard let lane = await laneState.lane(for: laneId) else {
             return nil
         }
         return await lane.channelRegistry.context(for: channelId)
     }
 
     // r[impl rpc.observability.channel]
-    private func observeOutgoingChannelMessage(_ msg: TaskMessage, connectionId: UInt64) async {
+    private func observeOutgoingChannelMessage(_ msg: TaskMessage, laneId: UInt64) async {
         switch msg {
         case .data(let channelId, let payload):
             observeChannel(
@@ -152,7 +152,7 @@ extension Driver {
                     channelId: channelId,
                     direction: .outgoing,
                     bytes: payload.count,
-                    context: await channelContext(connectionId: connectionId, channelId: channelId)
+                    context: await channelContext(laneId: laneId, channelId: channelId)
                 ))
         case .close(let channelId):
             observeChannel(
@@ -160,7 +160,7 @@ extension Driver {
                     kind: .close,
                     channelId: channelId,
                     direction: .outgoing,
-                    context: await channelContext(connectionId: connectionId, channelId: channelId)
+                    context: await channelContext(laneId: laneId, channelId: channelId)
                 ))
         case .grantCredit(let channelId, let bytes):
             observeChannel(
@@ -169,7 +169,7 @@ extension Driver {
                     channelId: channelId,
                     direction: .outgoing,
                     additionalCredit: bytes,
-                    context: await channelContext(connectionId: connectionId, channelId: channelId)
+                    context: await channelContext(laneId: laneId, channelId: channelId)
                 ))
         case .schema, .response:
             break
@@ -177,14 +177,14 @@ extension Driver {
     }
 
     func makeLane(
-        connectionId: UInt64,
+        laneId: UInt64,
         localSettings: ConnectionSettings,
         peerSettings: ConnectionSettings
     ) -> Lane {
         let handle = LaneHandle(
-            laneId: connectionId,
+            laneId: laneId,
             commandTx: commandSender(),
-            taskTx: taskQueueSender(connectionId: connectionId),
+            taskTx: taskQueueSender(laneId: laneId),
             role: roleForParity(localSettings.parity),
             maxConcurrentRequests: peerSettings.maxConcurrentRequests
         )
@@ -192,8 +192,8 @@ extension Driver {
     }
 
     /// Get the task sender for handlers to send responses.
-    func taskSender(connectionId: UInt64) -> @Sendable (TaskMessage) -> Void {
-        let sink = taskQueueSender(connectionId: connectionId)
+    func taskSender(laneId: UInt64) -> @Sendable (TaskMessage) -> Void {
+        let sink = taskQueueSender(laneId: laneId)
         return { msg in
             _ = sink(msg)
         }
@@ -204,21 +204,21 @@ extension Driver {
     /// r[impl rpc.channel.connection-closure]
     func handleTaskMessage(_ queued: DriverQueuedTaskMessage) async throws {
         let msg = queued.taskMessage
-        let connectionId = queued.connectionId
+        let laneId = queued.laneId
         let wireMsg: Message
         let progressChannelId: UInt64?
         switch msg {
         case .data(let channelId, let payload):
-            wireMsg = messageData(channelId: channelId, item: payload, connectionId: connectionId)
+            wireMsg = messageData(channelId: channelId, item: payload, laneId: laneId)
             progressChannelId = channelId
         case .close(let channelId):
-            wireMsg = messageChannelClose(channelId: channelId, connectionId: connectionId)
+            wireMsg = messageChannelClose(channelId: channelId, laneId: laneId)
             progressChannelId = channelId
         case .grantCredit(let channelId, let bytes):
             wireMsg = messageCredit(
                 channelId: channelId,
                 additional: bytes,
-                connectionId: connectionId
+                laneId: laneId
             )
             progressChannelId = channelId
         case .schema(let methodId, let direction, let schemas):
@@ -226,7 +226,7 @@ extension Driver {
                 methodId: methodId,
                 direction: direction,
                 schemas: schemas,
-                connectionId: connectionId
+                laneId: laneId
             )
             progressChannelId = nil
         case .response(let requestId, let payload, let methodId, let responseSchemaClosure):
@@ -272,10 +272,10 @@ extension Driver {
             progressChannelId = nil
         }
         try await sendOrEnqueue(wireMsg)
-        await observeOutgoingChannelMessage(msg, connectionId: connectionId)
+        await observeOutgoingChannelMessage(msg, laneId: laneId)
         if let progressChannelId {
             await markChannelRequestProgress(
-                connectionId: connectionId,
+                laneId: laneId,
                 channelId: progressChannelId
             )
         }
@@ -288,15 +288,15 @@ extension Driver {
     func handleCommand(_ cmd: HandleCommand) async {
         switch cmd {
         case .call(
-            let connectionId, let requestId, let methodId, let metadata, let payload, let channels,
+            let laneId, let requestId, let methodId, let metadata, let payload, let channels,
             let timeout, let responseTx, let schemaInfo):
             let isClosed = await state.isConnectionClosed()
             guard !isClosed else {
                 responseTx(.failure(.connectionClosed))
                 return
             }
-            if connectionId != 0 {
-                let isLaneOpen = await laneState.contains(connectionId)
+            if laneId != 0 {
+                let isLaneOpen = await laneState.contains(laneId)
                 guard isLaneOpen else {
                     responseTx(.failure(.connectionClosed))
                     return
@@ -304,7 +304,7 @@ extension Driver {
             }
 
             let queuedCall = DriverQueuedCall(
-                connectionId: connectionId,
+                laneId: laneId,
                 requestId: requestId,
                 methodId: methodId,
                 metadata: metadata,
@@ -325,7 +325,7 @@ extension Driver {
                 return
             }
             await rememberOutboundChannelContexts(
-                connectionId: connectionId,
+                laneId: laneId,
                 requestId: requestId,
                 methodId: methodId,
                 channels: channels
@@ -347,7 +347,7 @@ extension Driver {
                 payload: payload,
                 metadata: metadata,
                 channels: channels,
-                connectionId: connectionId,
+                laneId: laneId,
                 schemas: schemas
             )
             do {
@@ -389,15 +389,15 @@ extension Driver {
                 return
             }
 
-            let connId = await laneState.allocateLaneId()
+            let laneId = await laneState.allocateLaneId()
             let establishmentContext = VoxEstablishmentContext(
                 role: voxEstablishmentRole(role),
                 phase: .serviceLaneOpen,
-                laneId: connId
+                laneId: laneId
             )
             let establishmentStartedAt = observeEstablishmentStarted(establishmentContext)
             await laneState.addPendingOutbound(
-                connId,
+                laneId,
                 pending: PendingOutboundLane(
                     localSettings: settings,
                     dispatcher: dispatcher,
@@ -409,10 +409,10 @@ extension Driver {
 
             do {
                 try await sendOrEnqueue(
-                    messageConnect(connectionId: connId, settings: settings, metadata: metadata)
+                    messageLaneOpen(laneId: laneId, settings: settings, metadata: metadata)
                 )
             } catch {
-                let pending = await laneState.takePendingOutbound(connId)
+                let pending = await laneState.takePendingOutbound(laneId)
                 if let pending {
                     observeEstablishmentFinished(
                         pending.establishmentContext,
@@ -425,7 +425,7 @@ extension Driver {
             }
         case .closeLane(let laneId, let metadata, let responseTx):
             await handleLaneCloseRequest(
-                connectionId: laneId,
+                laneId: laneId,
                 metadata: metadata,
                 responseTx: responseTx
             )
@@ -433,7 +433,7 @@ extension Driver {
     }
 
     func handleLaneCloseRequest(
-        connectionId: UInt64,
+        laneId: UInt64,
         metadata: Metadata,
         responseTx: @Sendable (Result<Void, ConnectionError>) -> Void
     ) async {
@@ -445,21 +445,21 @@ extension Driver {
             return
         }
 
-        if connectionId == 0 {
+        if laneId == 0 {
             // r[impl lane.control.compat]
             // r[impl lane.control]
             responseTx(.failure(.protocolViolation(rule: "connection.close")))
             return
         }
 
-        guard await laneState.removeLane(connectionId) else {
+        guard await laneState.removeLane(laneId) else {
             responseTx(.failure(.protocolViolation(rule: "connection.close")))
             return
         }
-        await failPendingResponses(connectionId: connectionId)
+        await failPendingResponses(laneId: laneId)
         do {
             try await sendOrEnqueue(
-                messageConnectionClose(connectionId: connectionId, metadata: metadata))
+                messageLaneClose(laneId: laneId, metadata: metadata))
         } catch {
             await failAllPending()
             eventContinuation.finish()
@@ -491,7 +491,7 @@ extension Driver {
                 payload: call.payload,
                 metadata: call.metadata,
                 channels: call.channels,
-                connectionId: call.connectionId,
+                laneId: call.laneId,
                 schemas: schemas
             )
 
@@ -569,9 +569,9 @@ extension Driver {
     }
 
     // r[impl rpc.timeout.idle-progress]
-    func markChannelRequestProgress(connectionId: UInt64, channelId: UInt64) async {
+    func markChannelRequestProgress(laneId: UInt64, channelId: UInt64) async {
         let contexts = await state.pendingTimeoutContexts(
-            connectionId: connectionId,
+            laneId: laneId,
             channelId: channelId
         )
         for context in contexts {
@@ -592,13 +592,13 @@ extension Driver {
         pending.timeoutTask?.cancel()
         warnLog("request timed out request_id=\(requestId) timeout_s=\(timeout)")
         await terminateRequestChannels(
-            connectionId: pending.request.connectionId,
+            laneId: pending.request.laneId,
             channelIds: pending.request.channels,
             error: .timedOut
         )
         pending.responseTx(.failure(.timeout))
         try? await conduit.send(
-            messageCancel(requestId: requestId, connectionId: pending.request.connectionId)
+            messageCancel(requestId: requestId, laneId: pending.request.laneId)
         )
     }
 }

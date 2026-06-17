@@ -4,13 +4,13 @@ extension Driver {
     // r[impl lane.accept.api]
     // r[impl lane.service.compat]
     func addLane(
-        _ connId: UInt64,
+        _ laneId: UInt64,
         dispatcher: any ServiceDispatcher,
         localSettings: ConnectionSettings,
         channelRegistry: ChannelRegistry = ChannelRegistry()
     ) async {
         await laneState.addLane(
-            connId,
+            laneId,
             dispatcher: dispatcher,
             localSettings: localSettings,
             channelRegistry: channelRegistry
@@ -19,8 +19,8 @@ extension Driver {
 
     // r[impl lane.close]
     // r[impl lane.service.compat]
-    func removeLane(_ connId: UInt64) async {
-        await laneState.removeLane(connId)
+    func removeLane(_ laneId: UInt64) async {
+        await laneState.removeLane(laneId)
     }
 
     /// Handle an incoming message.
@@ -79,11 +79,11 @@ extension Driver {
             let establishmentContext = VoxEstablishmentContext(
                 role: voxEstablishmentRole(role),
                 phase: .serviceLaneOpen,
-                laneId: msg.connectionId
+                laneId: msg.laneId
             )
             let establishmentStartedAt = observeEstablishmentStarted(establishmentContext)
             let peerRole = oppositeRole(role)
-            guard idMatchesRole(msg.connectionId, peerRole) else {
+            guard idMatchesRole(msg.laneId, peerRole) else {
                 observeEstablishmentFinished(
                     establishmentContext,
                     startedAt: establishmentStartedAt,
@@ -92,7 +92,7 @@ extension Driver {
                 try await sendProtocolError("connection.open")
                 throw ConnectionError.protocolViolation(rule: "connection.open")
             }
-            guard !(await laneState.contains(msg.connectionId)) else {
+            guard !(await laneState.contains(msg.laneId)) else {
                 observeEstablishmentFinished(
                     establishmentContext,
                     startedAt: establishmentStartedAt,
@@ -109,8 +109,8 @@ extension Driver {
                         "missing vox-service metadata"
                     )
                     try await conduit.send(
-                        messageReject(
-                            connectionId: msg.connectionId,
+                        messageLaneReject(
+                            laneId: msg.laneId,
                             metadata: rejection.toMetadata()
                         ))
                     observeEstablishmentFinished(
@@ -126,8 +126,8 @@ extension Driver {
                         "initial_channel_credit must be greater than zero"
                     )
                     try await conduit.send(
-                        messageReject(
-                            connectionId: msg.connectionId,
+                        messageLaneReject(
+                            laneId: msg.laneId,
                             metadata: rejection.toMetadata()
                         ))
                     observeEstablishmentFinished(
@@ -154,19 +154,19 @@ extension Driver {
                     throw error
                 }
                 let request = LaneRequest(metadata: metadata, service: service)
-                let connId = msg.connectionId
+                let laneId = msg.laneId
                 let pending = PendingLane(
                     accept: { [weak self] dispatcher in
                         guard let self else { return }
                         Task {
                             await self.addLane(
-                                connId,
+                                laneId,
                                 dispatcher: dispatcher,
                                 localSettings: localSettings
                             )
                             try? await self.conduit.send(
-                                messageAccept(
-                                    connectionId: connId,
+                                messageLaneAccept(
+                                    laneId: laneId,
                                     settings: localSettings,
                                     metadata: .null
                                 ))
@@ -181,8 +181,8 @@ extension Driver {
                         guard let self else { return }
                         Task {
                             try? await self.conduit.send(
-                                messageReject(
-                                    connectionId: connId,
+                                messageLaneReject(
+                                    laneId: laneId,
                                     metadata: rejection.toMetadata()
                                 ))
                             observeEstablishmentFinished(
@@ -200,8 +200,8 @@ extension Driver {
                     "no lane acceptor configured"
                 )
                 try await conduit.send(
-                    messageReject(
-                        connectionId: msg.connectionId,
+                    messageLaneReject(
+                        laneId: msg.laneId,
                         metadata: rejection.toMetadata()
                     ))
                 observeEstablishmentFinished(
@@ -215,7 +215,7 @@ extension Driver {
             // r[impl lane.open.api]
             // r[impl lane.open.result]
             // r[impl lane.wire.compat]
-            guard let pending = await laneState.takePendingOutbound(msg.connectionId) else {
+            guard let pending = await laneState.takePendingOutbound(msg.laneId) else {
                 break
             }
             do {
@@ -232,12 +232,12 @@ extension Driver {
                 throw ConnectionError.protocolViolation(rule: "connection.open")
             }
             let lane = makeLane(
-                connectionId: msg.connectionId,
+                laneId: msg.laneId,
                 localSettings: pending.localSettings,
                 peerSettings: accept.connectionSettings
             )
             await laneState.addLane(
-                msg.connectionId,
+                msg.laneId,
                 dispatcher: pending.dispatcher ?? dispatcher,
                 localSettings: pending.localSettings,
                 channelRegistry: lane.incomingChannelRegistry
@@ -252,7 +252,7 @@ extension Driver {
             // r[impl lane.open.wire.rejection]
             // r[impl lane.open.result]
             // r[impl lane.wire.compat]
-            guard let pending = await laneState.takePendingOutbound(msg.connectionId) else {
+            guard let pending = await laneState.takePendingOutbound(msg.laneId) else {
                 break
             }
             observeEstablishmentFinished(
@@ -263,14 +263,14 @@ extension Driver {
             pending.responseTx(.failure(.rejected(LaneRejection.fromMetadata(reject.metadata))))
         case .laneClose:
             // r[impl lane.close]
-            warnLog("received LaneClose lane_id=\(msg.connectionId)")
-            if msg.connectionId == 0 {
+            warnLog("received LaneClose lane_id=\(msg.laneId)")
+            if msg.laneId == 0 {
                 warnLog("received LaneClose for control lane; shutting down driver")
                 await failAllPending()
                 throw ConnectionError.connectionClosed
             }
-            await removeLane(msg.connectionId)
-            await failPendingResponses(connectionId: msg.connectionId)
+            await removeLane(msg.laneId)
+            await failPendingResponses(laneId: msg.laneId)
         case .requestMessage(let request):
             switch request.body {
             case .call(let call):
@@ -283,7 +283,7 @@ extension Driver {
                 }
                 let argsBytes = [UInt8](call.args)
                 try await handleRequest(
-                    connId: msg.connectionId,
+                    laneId: msg.laneId,
                     requestId: request.id,
                     methodId: call.methodId,
                     metadata: call.metadata,
@@ -330,7 +330,7 @@ extension Driver {
                 // r[impl rpc.request.scope.channels]
                 let responseContext = await state.removeInFlight(request.id)
                 await terminateRequestChannels(
-                    connectionId: responseContext.connectionId,
+                    laneId: responseContext.laneId,
                     channelIds: responseContext.channels,
                     error: .cancelled
                 )
@@ -340,34 +340,34 @@ extension Driver {
             case .item(let item):
                 let itemBytes = [UInt8](item.item)
                 try await handleData(
-                    connectionId: msg.connectionId,
+                    laneId: msg.laneId,
                     channelId: channel.id,
                     payload: itemBytes
                 )
                 await markChannelRequestProgress(
-                    connectionId: msg.connectionId,
+                    laneId: msg.laneId,
                     channelId: channel.id
                 )
             case .close:
-                try await handleClose(connectionId: msg.connectionId, channelId: channel.id)
+                try await handleClose(laneId: msg.laneId, channelId: channel.id)
                 await markChannelRequestProgress(
-                    connectionId: msg.connectionId,
+                    laneId: msg.laneId,
                     channelId: channel.id
                 )
             case .reset:
-                await deliverChannelReset(connectionId: msg.connectionId, channelId: channel.id)
+                await deliverChannelReset(laneId: msg.laneId, channelId: channel.id)
                 await markChannelRequestProgress(
-                    connectionId: msg.connectionId,
+                    laneId: msg.laneId,
                     channelId: channel.id
                 )
             case .grantCredit(let credit):
                 await deliverChannelCredit(
-                    connectionId: msg.connectionId,
+                    laneId: msg.laneId,
                     channelId: channel.id,
                     bytes: credit.additional
                 )
                 await markChannelRequestProgress(
-                    connectionId: msg.connectionId,
+                    laneId: msg.laneId,
                     channelId: channel.id
                 )
             }
@@ -383,7 +383,7 @@ extension Driver {
     /// r[impl lane.service]
     /// r[impl rpc.pipelining]
     func handleRequest(
-        connId: UInt64,
+        laneId: UInt64,
         requestId: UInt64,
         methodId: UInt64,
         metadata: Metadata,
@@ -394,12 +394,12 @@ extension Driver {
         let effectiveDispatcher: any ServiceDispatcher
         let localMaxConcurrentRequests: UInt32
         let channelRegistry: ChannelRegistry
-        if connId == 0 {
+        if laneId == 0 {
             effectiveDispatcher = dispatcher
             localMaxConcurrentRequests =
                 localControlSettings?.maxConcurrentRequests ?? negotiated.maxConcurrentRequests
             channelRegistry = serverRegistry
-        } else if let laneRecord = await laneState.lane(for: connId) {
+        } else if let laneRecord = await laneState.lane(for: laneId) {
             effectiveDispatcher = laneRecord.dispatcher
             localMaxConcurrentRequests = laneRecord.localSettings.maxConcurrentRequests
             channelRegistry = laneRecord.channelRegistry
@@ -411,7 +411,7 @@ extension Driver {
 
         let addInFlight = await state.addInFlight(
             requestId,
-            connectionId: connId,
+            laneId: laneId,
             responseMetadata: responseMetadataFromRequest(metadata),
             channels: channels,
             localMaxConcurrentRequests: localMaxConcurrentRequests
@@ -437,14 +437,14 @@ extension Driver {
 
         await rememberChannelContexts(
             registry: channelRegistry,
-            laneId: connId,
+            laneId: laneId,
             requestId: requestId,
             methodId: methodId,
             channels: channels,
             side: "server"
         )
 
-        let taskTx = taskSender(connectionId: connId)
+        let taskTx = taskSender(laneId: laneId)
         traceLog(.driver, "handleRequest method=\(methodId) req=\(requestId) channels=\(channels)")
         await effectiveDispatcher.preregister(
             methodId: methodId,
@@ -472,7 +472,7 @@ extension Driver {
     /// r[impl rpc.channel.item] - Data messages routed by channel_id; an item for a
     /// not-yet-bound channel is buffered (its declaring Call may not be processed yet).
     /// r[impl rpc.flow-control]
-    func handleData(connectionId: UInt64, channelId: UInt64, payload: [UInt8]) async throws {
+    func handleData(laneId: UInt64, channelId: UInt64, payload: [UInt8]) async throws {
         if channelId == 0 {
             try await sendProtocolError("rpc.channel.allocation")
             throw ConnectionError.protocolViolation(rule: "rpc.channel.allocation")
@@ -480,7 +480,7 @@ extension Driver {
 
         traceLog(.driver, "handleData: channelId=\(channelId)")
         let delivered = await deliverChannelData(
-            connectionId: connectionId,
+            laneId: laneId,
             channelId: channelId,
             payload: payload
         )
@@ -499,13 +499,13 @@ extension Driver {
     /// r[impl rpc.channel.allocation] - Channel ID 0 is reserved.
     /// r[impl rpc.channel.close] - Close terminates the channel.
     /// r[impl rpc.channel.connection-closure]
-    func handleClose(connectionId: UInt64, channelId: UInt64) async throws {
+    func handleClose(laneId: UInt64, channelId: UInt64) async throws {
         if channelId == 0 {
             try await sendProtocolError("rpc.channel.allocation")
             throw ConnectionError.protocolViolation(rule: "rpc.channel.allocation")
         }
 
-        let delivered = await deliverChannelClose(connectionId: connectionId, channelId: channelId)
+        let delivered = await deliverChannelClose(laneId: laneId, channelId: channelId)
 
         if !delivered {
             try await sendProtocolError("rpc.channel.item")
@@ -514,39 +514,39 @@ extension Driver {
     }
 
     private func deliverChannelData(
-        connectionId: UInt64,
+        laneId: UInt64,
         channelId: UInt64,
         payload: [UInt8]
     ) async -> Bool {
-        if connectionId == 0 {
+        if laneId == 0 {
             if await serverRegistry.deliverData(channelId: channelId, payload: payload) {
                 return true
             }
             return await handle.channelRegistry.deliverData(channelId: channelId, payload: payload)
         }
 
-        guard let lane = await laneState.lane(for: connectionId) else {
+        guard let lane = await laneState.lane(for: laneId) else {
             return false
         }
         return await lane.channelRegistry.deliverData(channelId: channelId, payload: payload)
     }
 
-    private func deliverChannelClose(connectionId: UInt64, channelId: UInt64) async -> Bool {
-        if connectionId == 0 {
+    private func deliverChannelClose(laneId: UInt64, channelId: UInt64) async -> Bool {
+        if laneId == 0 {
             if await serverRegistry.deliverClose(channelId: channelId) {
                 return true
             }
             return await handle.channelRegistry.deliverClose(channelId: channelId)
         }
 
-        guard let lane = await laneState.lane(for: connectionId) else {
+        guard let lane = await laneState.lane(for: laneId) else {
             return false
         }
         return await lane.channelRegistry.deliverClose(channelId: channelId)
     }
 
     func terminateRequestChannels(
-        connectionId: UInt64,
+        laneId: UInt64,
         channelIds: [UInt64],
         error: ChannelError
     ) async {
@@ -554,7 +554,7 @@ extension Driver {
         // r[impl rpc.channel.lifecycle]
         for channelId in channelIds {
             await deliverChannelReset(
-                connectionId: connectionId,
+                laneId: laneId,
                 channelId: channelId,
                 error: error
             )
@@ -562,30 +562,30 @@ extension Driver {
     }
 
     private func deliverChannelReset(
-        connectionId: UInt64,
+        laneId: UInt64,
         channelId: UInt64,
         error: ChannelError = .reset
     ) async {
-        if connectionId == 0 {
+        if laneId == 0 {
             await serverRegistry.deliverReset(channelId: channelId, error: error)
             await handle.channelRegistry.deliverReset(channelId: channelId, error: error)
             return
         }
 
-        guard let lane = await laneState.lane(for: connectionId) else {
+        guard let lane = await laneState.lane(for: laneId) else {
             return
         }
         await lane.channelRegistry.deliverReset(channelId: channelId, error: error)
     }
 
-    private func deliverChannelCredit(connectionId: UInt64, channelId: UInt64, bytes: UInt32) async {
-        if connectionId == 0 {
+    private func deliverChannelCredit(laneId: UInt64, channelId: UInt64, bytes: UInt32) async {
+        if laneId == 0 {
             await serverRegistry.deliverCredit(channelId: channelId, bytes: bytes)
             await handle.channelRegistry.deliverCredit(channelId: channelId, bytes: bytes)
             return
         }
 
-        guard let lane = await laneState.lane(for: connectionId) else {
+        guard let lane = await laneState.lane(for: laneId) else {
             return
         }
         await lane.channelRegistry.deliverCredit(channelId: channelId, bytes: bytes)
@@ -607,7 +607,7 @@ extension Driver {
         for (_, pending) in responses {
             pending.timeoutTask?.cancel()
             await terminateRequestChannels(
-                connectionId: pending.request.connectionId,
+                laneId: pending.request.laneId,
                 channelIds: pending.request.channels,
                 error: .connectionClosed
             )
@@ -615,16 +615,16 @@ extension Driver {
         }
     }
 
-    func failPendingResponses(connectionId: UInt64) async {
+    func failPendingResponses(laneId: UInt64) async {
         let responses = await state.claimPendingResponses(
-            connectionId: connectionId,
+            laneId: laneId,
             reason: "connection-closed"
         )
 
         for (_, pending) in responses {
             pending.timeoutTask?.cancel()
             await terminateRequestChannels(
-                connectionId: pending.request.connectionId,
+                laneId: pending.request.laneId,
                 channelIds: pending.request.channels,
                 error: .connectionClosed
             )

@@ -17,7 +17,7 @@ func messageRequest(
     payload: [UInt8],
     metadata: Metadata = .null,
     channels: [UInt64] = [],
-    connectionId: UInt64 = 0,
+    laneId: UInt64 = 0,
     schemas: [UInt8] = []
 ) -> Message {
     // r[impl rpc.request]
@@ -25,7 +25,7 @@ func messageRequest(
     // r[impl connection.message.lane-id]
     // r[impl connection.message.payloads]
     Message(
-        connectionId: connectionId,
+        laneId: laneId,
         payload: .requestMessage(RequestMessage(
             id: requestId,
             body: .call(RequestCall(
@@ -40,7 +40,7 @@ func messageResponse(
     requestId: UInt64,
     payload: [UInt8],
     metadata: Metadata = .null,
-    connectionId: UInt64 = 0,
+    laneId: UInt64 = 0,
     schemas: [UInt8] = []
 ) -> Message {
     // r[impl rpc.response]
@@ -48,7 +48,7 @@ func messageResponse(
     // r[impl connection.message.lane-id]
     // r[impl connection.message.payloads]
     Message(
-        connectionId: connectionId,
+        laneId: laneId,
         payload: .requestMessage(RequestMessage(
             id: requestId,
             body: .response(RequestResponse(
@@ -61,7 +61,7 @@ func messageSchema(
     methodId: UInt64,
     direction: SchemaBindingDirection,
     schemas: [UInt8],
-    connectionId: UInt64 = 0
+    laneId: UInt64 = 0
 ) -> Message {
     let wireDirection: BindingDirection
     switch direction {
@@ -69,7 +69,7 @@ func messageSchema(
     case .response: wireDirection = .response
     }
     return Message(
-        connectionId: connectionId,
+        laneId: laneId,
         payload: .schemaMessage(SchemaMessage(
             methodId: methodId,
             direction: wireDirection,
@@ -79,81 +79,81 @@ func messageSchema(
 func messageCancel(
     requestId: UInt64,
     metadata: Metadata = .null,
-    connectionId: UInt64 = 0
+    laneId: UInt64 = 0
 ) -> Message {
     // r[impl rpc.cancel]
     Message(
-        connectionId: connectionId,
+        laneId: laneId,
         payload: .requestMessage(RequestMessage(
             id: requestId,
             body: .cancel(RequestCancel(metadata: metadata)))))
 }
 
-func messageConnect(
-    connectionId: UInt64,
+func messageLaneOpen(
+    laneId: UInt64,
     settings: ConnectionSettings,
     metadata: Metadata = .null
 ) -> Message {
     // r[impl lane.open.settings]
     Message(
-        connectionId: connectionId,
+        laneId: laneId,
         payload: .laneOpen(LaneOpen(connectionSettings: settings, metadata: metadata)))
 }
 
-func messageAccept(
-    connectionId: UInt64,
+func messageLaneAccept(
+    laneId: UInt64,
     settings: ConnectionSettings,
     metadata: Metadata = .null
 ) -> Message {
     // r[impl lane.open.settings]
     Message(
-        connectionId: connectionId,
+        laneId: laneId,
         payload: .laneAccept(LaneAccept(connectionSettings: settings, metadata: metadata)))
 }
 
-func messageReject(connectionId: UInt64, metadata: Metadata = .null) -> Message {
+func messageLaneReject(laneId: UInt64, metadata: Metadata = .null) -> Message {
     // r[impl lane.open.wire.rejection]
-    Message(connectionId: connectionId, payload: .laneReject(LaneReject(metadata: metadata)))
+    Message(laneId: laneId, payload: .laneReject(LaneReject(metadata: metadata)))
 }
 
-func messageConnectionClose(connectionId: UInt64, metadata: Metadata = .null) -> Message {
-    Message(connectionId: connectionId, payload: .laneClose(LaneClose(metadata: metadata)))
+func messageLaneClose(laneId: UInt64, metadata: Metadata = .null) -> Message {
+    Message(laneId: laneId, payload: .laneClose(LaneClose(metadata: metadata)))
 }
 
-func messageData(channelId: UInt64, item: [UInt8], connectionId: UInt64 = 0) -> Message {
+func messageData(channelId: UInt64, item: [UInt8], laneId: UInt64 = 0) -> Message {
     Message(
-        connectionId: connectionId,
+        laneId: laneId,
         payload: .channelMessage(ChannelMessage(id: channelId, body: .item(ChannelItem(item: Data(item))))))
 }
 
-func messageChannelClose(channelId: UInt64, connectionId: UInt64 = 0, metadata: Metadata = .null) -> Message {
+func messageChannelClose(channelId: UInt64, laneId: UInt64 = 0, metadata: Metadata = .null) -> Message {
     Message(
-        connectionId: connectionId,
+        laneId: laneId,
         payload: .channelMessage(ChannelMessage(id: channelId, body: .close(ChannelClose(metadata: metadata)))))
 }
 
-func messageChannelReset(channelId: UInt64, connectionId: UInt64 = 0, metadata: Metadata = .null) -> Message {
+func messageChannelReset(channelId: UInt64, laneId: UInt64 = 0, metadata: Metadata = .null) -> Message {
     Message(
-        connectionId: connectionId,
+        laneId: laneId,
         payload: .channelMessage(ChannelMessage(id: channelId, body: .reset(ChannelReset(metadata: metadata)))))
 }
 
-func messageCredit(channelId: UInt64, additional: UInt32, connectionId: UInt64 = 0) -> Message {
+func messageCredit(channelId: UInt64, additional: UInt32, laneId: UInt64 = 0) -> Message {
     Message(
-        connectionId: connectionId,
+        laneId: laneId,
         payload: .channelMessage(ChannelMessage(id: channelId, body: .grantCredit(ChannelGrantCredit(additional: additional)))))
 }
 
-func messageProtocolError(description: String, connectionId: UInt64 = 0) -> Message {
-    Message(connectionId: connectionId, payload: .protocolError(ProtocolError(description: description)))
+func messageProtocolError(description: String, laneId: UInt64 = 0) -> Message {
+    Message(laneId: laneId, payload: .protocolError(ProtocolError(description: description)))
 }
 
-func messagePing(nonce: UInt64, connectionId: UInt64 = 0) -> Message {
-    Message(connectionId: connectionId, payload: .ping(Ping(nonce: nonce)))
+func messagePing(nonce: UInt64, laneId: UInt64 = 0) -> Message {
+    Message(laneId: laneId, payload: .ping(Ping(nonce: nonce)))
 }
 
-func messagePong(nonce: UInt64, connectionId: UInt64 = 0) -> Message {
-    Message(connectionId: connectionId, payload: .pong(Pong(nonce: nonce)))
+func messagePong(nonce: UInt64, laneId: UInt64 = 0) -> Message {
+    Message(laneId: laneId, payload: .pong(Pong(nonce: nonce)))
 }
 
 // MARK: - Message decoder (writer to reader — the ONE decode path)

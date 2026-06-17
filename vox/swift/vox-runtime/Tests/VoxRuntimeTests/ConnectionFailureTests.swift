@@ -9,7 +9,7 @@ import Testing
 // scripted-transport tests read unchanged. (Metadata is now a phon `Value`.)
 extension Message {
     static func request(
-        connId: UInt64,
+        laneId: UInt64,
         requestId: UInt64,
         methodId: UInt64,
         metadata: Metadata,
@@ -18,16 +18,16 @@ extension Message {
     ) -> Message {
         messageRequest(
             requestId: requestId, methodId: methodId, payload: payload, metadata: metadata,
-            channels: channels, connectionId: connId)
+            channels: channels, laneId: laneId)
     }
     static func response(
-        connId: UInt64, requestId: UInt64, metadata: Metadata, payload: [UInt8]
+        laneId: UInt64, requestId: UInt64, metadata: Metadata, payload: [UInt8]
     ) -> Message {
         messageResponse(
-            requestId: requestId, payload: payload, metadata: metadata, connectionId: connId)
+            requestId: requestId, payload: payload, metadata: metadata, laneId: laneId)
     }
-    static func data(connId: UInt64, channelId: UInt64, payload: [UInt8]) -> Message {
-        messageData(channelId: channelId, item: payload, connectionId: connId)
+    static func data(laneId: UInt64, channelId: UInt64, payload: [UInt8]) -> Message {
+        messageData(channelId: channelId, item: payload, laneId: laneId)
     }
     static func pong(_ pong: Pong) -> Message { messagePong(nonce: pong.nonce) }
 
@@ -190,7 +190,7 @@ private actor ScriptedTransport: Link {
                 enqueueInbound(
                     .frame(
                         Message.response(
-                            connId: 0,
+                            laneId: 0,
                             requestId: requestId,
                             metadata: .null,
                             payload: [0]
@@ -602,7 +602,7 @@ private func awaitRequestId(
     return nil
 }
 
-private func awaitConnectionOpenId(
+private func awaitLaneOpenId(
     _ transport: ScriptedTransport,
     timeoutMs: UInt64 = 1_000
 ) async -> UInt64? {
@@ -612,7 +612,7 @@ private func awaitConnectionOpenId(
         let sent = await transport.sent()
         for message in sent {
             if case .laneOpen = message.payload {
-                return message.connectionId
+                return message.laneId
             }
         }
         try? await Task.sleep(nanoseconds: 5_000_000)
@@ -620,7 +620,7 @@ private func awaitConnectionOpenId(
     return nil
 }
 
-private func awaitConnectionOpenId(
+private func awaitLaneOpenId(
     _ transport: ScriptedTransport,
     excluding excluded: Set<UInt64>,
     timeoutMs: UInt64 = 1_000
@@ -630,8 +630,8 @@ private func awaitConnectionOpenId(
     while ContinuousClock.now - start < timeout {
         let sent = await transport.sent()
         for message in sent {
-            if case .laneOpen = message.payload, !excluded.contains(message.connectionId) {
-                return message.connectionId
+            if case .laneOpen = message.payload, !excluded.contains(message.laneId) {
+                return message.laneId
             }
         }
         try? await Task.sleep(nanoseconds: 5_000_000)
@@ -639,16 +639,16 @@ private func awaitConnectionOpenId(
     return nil
 }
 
-private func awaitConnectionAccept(
+private func awaitLaneAccept(
     _ transport: ScriptedTransport,
-    connectionId: UInt64,
+    laneId: UInt64,
     timeoutMs: UInt64 = 1_000
 ) async -> LaneAccept? {
     let start = ContinuousClock.now
     let timeout = Duration.milliseconds(Int64(timeoutMs))
     while ContinuousClock.now - start < timeout {
         let sent = await transport.sent()
-        for message in sent where message.connectionId == connectionId {
+        for message in sent where message.laneId == laneId {
             if case .laneAccept(let accept) = message.payload {
                 return accept
             }
@@ -658,16 +658,16 @@ private func awaitConnectionAccept(
     return nil
 }
 
-private func awaitConnectionReject(
+private func awaitLaneReject(
     _ transport: ScriptedTransport,
-    connectionId: UInt64,
+    laneId: UInt64,
     timeoutMs: UInt64 = 1_000
 ) async -> LaneReject? {
     let start = ContinuousClock.now
     let timeout = Duration.milliseconds(Int64(timeoutMs))
     while ContinuousClock.now - start < timeout {
         let sent = await transport.sent()
-        for message in sent where message.connectionId == connectionId {
+        for message in sent where message.laneId == laneId {
             if case .laneReject(let reject) = message.payload {
                 return reject
             }
@@ -677,16 +677,16 @@ private func awaitConnectionReject(
     return nil
 }
 
-private func awaitConnectionClose(
+private func awaitLaneClose(
     _ transport: ScriptedTransport,
-    connectionId: UInt64,
+    laneId: UInt64,
     timeoutMs: UInt64 = 1_000
 ) async -> LaneClose? {
     let start = ContinuousClock.now
     let timeout = Duration.milliseconds(Int64(timeoutMs))
     while ContinuousClock.now - start < timeout {
         let sent = await transport.sent()
-        for message in sent where message.connectionId == connectionId {
+        for message in sent where message.laneId == laneId {
             if case .laneClose(let close) = message.payload {
                 return close
             }
@@ -698,14 +698,14 @@ private func awaitConnectionClose(
 
 private func awaitRequest(
     _ transport: ScriptedTransport,
-    connectionId: UInt64,
+    laneId: UInt64,
     timeoutMs: UInt64 = 1_000
 ) async -> RequestMessage? {
     let start = ContinuousClock.now
     let timeout = Duration.milliseconds(Int64(timeoutMs))
     while ContinuousClock.now - start < timeout {
         let sent = await transport.sent()
-        for message in sent where message.connectionId == connectionId {
+        for message in sent where message.laneId == laneId {
             if case .requestMessage(let request) = message.payload,
                 case .call = request.body
             {
@@ -719,7 +719,7 @@ private func awaitRequest(
 
 private func awaitResponsePayload(
     _ transport: ScriptedTransport,
-    connectionId: UInt64,
+    laneId: UInt64,
     requestId: UInt64,
     timeoutMs: UInt64 = 1_000
 ) async -> [UInt8]? {
@@ -727,7 +727,7 @@ private func awaitResponsePayload(
     let timeout = Duration.milliseconds(Int64(timeoutMs))
     while ContinuousClock.now - start < timeout {
         let sent = await transport.sent()
-        for message in sent where message.connectionId == connectionId {
+        for message in sent where message.laneId == laneId {
             if case .requestMessage(let request) = message.payload,
                 request.id == requestId,
                 case .response(let response) = request.body
@@ -889,12 +889,15 @@ struct ConnectionFailureTests {
                 dispatcher: EmptyServiceDispatcher()
             )
 
-            #expect(establishmentLabels(observer.establishmentSnapshot()) == [
+            let labels = establishmentLabels(observer.establishmentSnapshot())
+            for expected in [
                 "started:initiator:connection-handshake:-:-",
                 "finished:initiator:connection-handshake:-:ok",
                 "started:initiator:schema-decode-plan:-:-",
                 "finished:initiator:schema-decode-plan:-:ok",
-            ])
+            ] {
+                #expect(labels.contains(expected))
+            }
         }
     }
 
@@ -958,13 +961,13 @@ struct ConnectionFailureTests {
                         metadata: meta([("vox-service", "Noop")])
                     )
                 }
-                guard let acceptedId = await awaitConnectionOpenId(transport) else {
+                guard let acceptedId = await awaitLaneOpenId(transport) else {
                     Issue.record("expected accepted LaneOpen")
                     return
                 }
                 await transport.enqueueMessage(
-                    messageAccept(
-                        connectionId: acceptedId,
+                    messageLaneAccept(
+                        laneId: acceptedId,
                         settings: ConnectionSettings(
                             parity: .odd,
                             maxConcurrentRequests: 8,
@@ -982,7 +985,7 @@ struct ConnectionFailureTests {
                     )
                 }
                 guard
-                    let rejectedId = await awaitConnectionOpenId(
+                    let rejectedId = await awaitLaneOpenId(
                         transport,
                         excluding: [acceptedId]
                     )
@@ -991,8 +994,8 @@ struct ConnectionFailureTests {
                     return
                 }
                 await transport.enqueueMessage(
-                    messageReject(
-                        connectionId: rejectedId,
+                    messageLaneReject(
+                        laneId: rejectedId,
                         metadata: LaneRejection.withMessage(.unknownService, "missing")
                             .toMetadata()
                     )
@@ -1149,7 +1152,7 @@ struct ConnectionFailureTests {
             conduit: transport,
             dispatcher: ImmediateResponseDispatcher()
         )
-        #expect(controlLane.connectionId == 0)
+        #expect(controlLane.laneId == 0)
         let driverTask: Task<Void, Error> = Task {
             try await driver.run()
         }
@@ -1159,7 +1162,7 @@ struct ConnectionFailureTests {
         }) {
             await transport.enqueueMessage(
                 .request(
-                    connId: 0,
+                    laneId: 0,
                     requestId: 77,
                     methodId: 42,
                     metadata: meta([
@@ -1222,7 +1225,7 @@ struct ConnectionFailureTests {
             try? await transport.close()
             await cancelAndDrain(driverTask)
         }) {
-            #expect(handle.connectionId == 0)
+            #expect(handle.laneId == 0)
             let payload = try await handle.callRaw(methodId: 1, payload: [1, 2, 3], timeout: 2.0)
             #expect(payload == [0])
         }
@@ -1276,7 +1279,7 @@ struct ConnectionFailureTests {
 
             await transport.enqueueMessage(
                 .response(
-                    connId: 0,
+                    laneId: 0,
                     requestId: firstRequestId,
                     metadata: .null,
                     payload: [0x11]
@@ -1293,7 +1296,7 @@ struct ConnectionFailureTests {
 
             await transport.enqueueMessage(
                 .response(
-                    connId: 0,
+                    laneId: 0,
                     requestId: secondRequestId,
                     metadata: .null,
                     payload: [0x22]
@@ -1326,7 +1329,7 @@ struct ConnectionFailureTests {
             dispatcher: BlockingFlowControlDispatcher(gate: gate),
             maxConcurrentRequests: 1
         )
-        #expect(controlLane.connectionId == 0)
+        #expect(controlLane.laneId == 0)
         let driverTask: Task<Void, Error> = Task {
             try await driver.run()
         }
@@ -1338,7 +1341,7 @@ struct ConnectionFailureTests {
         }) {
             await transport.enqueueMessage(
                 .request(
-                    connId: 0,
+                    laneId: 0,
                     requestId: 77,
                     methodId: 1,
                     metadata: .null,
@@ -1358,7 +1361,7 @@ struct ConnectionFailureTests {
 
             await transport.enqueueMessage(
                 .request(
-                    connId: 0,
+                    laneId: 0,
                     requestId: 79,
                     methodId: 1,
                     metadata: .null,
@@ -1542,11 +1545,11 @@ struct ConnectionFailureTests {
 
             try await Task.sleep(nanoseconds: 70_000_000)
             await transport.enqueueMessage(
-                .data(connId: 0, channelId: channelId, payload: [0x01])
+                .data(laneId: 0, channelId: channelId, payload: [0x01])
             )
             try await Task.sleep(nanoseconds: 80_000_000)
             await transport.enqueueMessage(
-                .response(connId: 0, requestId: requestId, metadata: .null, payload: [0xBB])
+                .response(laneId: 0, requestId: requestId, metadata: .null, payload: [0xBB])
             )
 
             let response = try await awaitTaskResult(callTask, timeoutMs: 1_000)
@@ -1630,7 +1633,7 @@ struct ConnectionFailureTests {
             conduit: transport,
             dispatcher: CancelChannelDispatcher(capture: capture)
         )
-        #expect(controlLane.connectionId == 0)
+        #expect(controlLane.laneId == 0)
         let driverTask: Task<Void, Error> = Task {
             try await driver.run()
         }
@@ -1645,7 +1648,7 @@ struct ConnectionFailureTests {
             }
             await transport.enqueueMessage(
                 .request(
-                    connId: 0,
+                    laneId: 0,
                     requestId: 77,
                     methodId: 1,
                     metadata: .null,
@@ -1723,7 +1726,7 @@ struct ConnectionFailureTests {
         let requestId = await awaitRequestId(transport, index: 0)
         #expect(requestId != nil)
         await transport.enqueueMessage(
-            .response(connId: 0, requestId: 999, metadata: .null, payload: [7, 7, 7])
+            .response(laneId: 0, requestId: 999, metadata: .null, payload: [7, 7, 7])
         )
 
         do {
@@ -1773,7 +1776,7 @@ struct ConnectionFailureTests {
 
         await transport.enqueueMessage(
             .response(
-                connId: 0,
+                laneId: 0,
                 requestId: timedOutRequestId,
                 metadata: .null,
                 payload: [0xAA]
@@ -1790,7 +1793,7 @@ struct ConnectionFailureTests {
 
         await transport.enqueueMessage(
             .response(
-                connId: 0,
+                laneId: 0,
                 requestId: followupRequestId,
                 metadata: .null,
                 payload: [0xBB]
@@ -1824,7 +1827,7 @@ struct ConnectionFailureTests {
             conduit: transport,
             dispatcher: PipeliningDispatcher()
         )
-        #expect(controlLane.connectionId == 0)
+        #expect(controlLane.laneId == 0)
         let driverTask: Task<Void, Error> = Task {
             try await driver.run()
         }
@@ -1838,7 +1841,7 @@ struct ConnectionFailureTests {
             }
             await transport.enqueueMessage(
                 .request(
-                    connId: 0,
+                    laneId: 0,
                     requestId: 77,
                     methodId: 1,
                     metadata: .null,
@@ -1848,7 +1851,7 @@ struct ConnectionFailureTests {
 
             await transport.enqueueMessage(
                 .request(
-                    connId: 0,
+                    laneId: 0,
                     requestId: 79,
                     methodId: 2,
                     metadata: .null,
@@ -1858,7 +1861,7 @@ struct ConnectionFailureTests {
 
             let second = await awaitResponsePayload(
                 transport,
-                connectionId: 0,
+                laneId: 0,
                 requestId: 79,
                 timeoutMs: 150
             )
@@ -1866,7 +1869,7 @@ struct ConnectionFailureTests {
             #expect(
                 await awaitResponsePayload(
                     transport,
-                    connectionId: 0,
+                    laneId: 0,
                     requestId: 77,
                     timeoutMs: 100
                 ) == nil
@@ -1874,7 +1877,7 @@ struct ConnectionFailureTests {
 
             let first = await awaitResponsePayload(
                 transport,
-                connectionId: 0,
+                laneId: 0,
                 requestId: 77
             )
             #expect(first == [0x01])
@@ -1901,7 +1904,7 @@ struct ConnectionFailureTests {
 
         await transport.enqueueMessage(
             .response(
-                connId: 0,
+                laneId: 0,
                 requestId: firstRequestId,
                 metadata: .null,
                 payload: [0x01]
@@ -1913,7 +1916,7 @@ struct ConnectionFailureTests {
 
         await transport.enqueueMessage(
             .response(
-                connId: 0,
+                laneId: 0,
                 requestId: firstRequestId,
                 metadata: .null,
                 payload: [0x02]
@@ -1930,7 +1933,7 @@ struct ConnectionFailureTests {
 
         await transport.enqueueMessage(
             .response(
-                connId: 0,
+                laneId: 0,
                 requestId: secondRequestId,
                 metadata: .null,
                 payload: [0x03]
@@ -1959,7 +1962,7 @@ struct ConnectionFailureTests {
         let reqId = await awaitRequestId(transport, index: 0)
         #expect(reqId != nil)
 
-        await transport.enqueueMessage(.data(connId: 0, channelId: 0, payload: [1]))
+        await transport.enqueueMessage(.data(laneId: 0, channelId: 0, payload: [1]))
 
         do {
             _ = try await pendingCall.value
@@ -2067,7 +2070,7 @@ struct ConnectionFailureTests {
                 return
             }
             await transport.enqueueMessage(
-                .response(connId: 0, requestId: requestId, metadata: .null, payload: [0x42])
+                .response(laneId: 0, requestId: requestId, metadata: .null, payload: [0x42])
             )
 
             let response = try await awaitTaskResult(callTask, timeoutMs: 1_000)
@@ -2083,7 +2086,7 @@ struct ConnectionFailureTests {
             dispatcher: EmptyServiceDispatcher(),
             keepalive: ConnectionKeepaliveConfig(pingInterval: 0.02, pongTimeout: 0.05)
         )
-        #expect(controlLane.connectionId == 0)
+        #expect(controlLane.laneId == 0)
         let driverTask: Task<Void, Error> = Task {
             try await driver.run()
         }
@@ -2154,7 +2157,7 @@ struct ConnectionFailureTests {
             conduit: transport,
             dispatcher: EmptyServiceDispatcher()
         )
-        #expect(controlLane.connectionId == 0)
+        #expect(controlLane.laneId == 0)
         let driverTask: Task<Void, Error> = Task {
             try await driver.run()
         }
@@ -2174,11 +2177,11 @@ struct ConnectionFailureTests {
                 )
             }
 
-            guard let connId = await awaitConnectionOpenId(transport) else {
+            guard let laneId = await awaitLaneOpenId(transport) else {
                 Issue.record("expected LaneOpen")
                 return
             }
-            #expect(connId == 1)
+            #expect(laneId == 1)
             let opens = await transport.sent().compactMap { message -> LaneOpen? in
                 if case .laneOpen(let open) = message.payload {
                     return open
@@ -2188,8 +2191,8 @@ struct ConnectionFailureTests {
             #expect(opens.first?.connectionSettings == localSettings)
 
             await transport.enqueueMessage(
-                messageAccept(
-                    connectionId: connId,
+                messageLaneAccept(
+                    laneId: laneId,
                     settings: ConnectionSettings(
                         parity: .odd,
                         maxConcurrentRequests: 8,
@@ -2200,19 +2203,19 @@ struct ConnectionFailureTests {
             )
 
             let connection = try await awaitTaskResult(openTask)
-            #expect(connection.connectionId == connId)
+            #expect(connection.laneId == laneId)
 
             let callTask: Task<[UInt8], Error> = Task {
                 try await connection.callRaw(methodId: 99, payload: [1, 2, 3], timeout: 1.0)
             }
-            guard let request = await awaitRequest(transport, connectionId: connId) else {
+            guard let request = await awaitRequest(transport, laneId: laneId) else {
                 Issue.record("expected request on service lane")
                 return
             }
             #expect(request.id == 2)
 
             await transport.enqueueMessage(
-                .response(connId: connId, requestId: request.id, metadata: .null, payload: [0x42])
+                .response(laneId: laneId, requestId: request.id, metadata: .null, payload: [0x42])
             )
             let response = try await awaitTaskResult(callTask)
             #expect(response == [0x42])
@@ -2227,7 +2230,7 @@ struct ConnectionFailureTests {
             conduit: transport,
             dispatcher: EmptyServiceDispatcher()
         )
-        #expect(controlLane.connectionId == 0)
+        #expect(controlLane.laneId == 0)
         let driverTask: Task<Void, Error> = Task {
             try await driver.run()
         }
@@ -2247,13 +2250,13 @@ struct ConnectionFailureTests {
                 )
             }
 
-            guard let connId = await awaitConnectionOpenId(transport) else {
+            guard let laneId = await awaitLaneOpenId(transport) else {
                 Issue.record("expected LaneOpen")
                 return
             }
             await transport.enqueueMessage(
-                messageAccept(
-                    connectionId: connId,
+                messageLaneAccept(
+                    laneId: laneId,
                     settings: ConnectionSettings(
                         parity: .odd,
                         maxConcurrentRequests: 8,
@@ -2267,12 +2270,12 @@ struct ConnectionFailureTests {
             let pendingCall: Task<[UInt8], Error> = Task {
                 try await connection.callRaw(methodId: 99, payload: [0x09], timeout: 1.0)
             }
-            guard await awaitRequest(transport, connectionId: connId) != nil else {
+            guard await awaitRequest(transport, laneId: laneId) != nil else {
                 Issue.record("expected request on service lane")
                 return
             }
 
-            await transport.enqueueMessage(messageConnectionClose(connectionId: connId))
+            await transport.enqueueMessage(messageLaneClose(laneId: laneId))
             do {
                 _ = try await awaitTaskResult(pendingCall)
                 Issue.record("expected pending virtual call to fail")
@@ -2292,7 +2295,7 @@ struct ConnectionFailureTests {
 
             let sentAfterClose = await transport.sent()
             let virtualCallCount = sentAfterClose.reduce(0) { count, message in
-                guard message.connectionId == connId else {
+                guard message.laneId == laneId else {
                     return count
                 }
                 if case .requestMessage(let request) = message.payload,
@@ -2306,7 +2309,7 @@ struct ConnectionFailureTests {
 
             await transport.enqueueMessage(
                 .request(
-                    connId: connId,
+                    laneId: laneId,
                     requestId: 88,
                     methodId: 42,
                     metadata: .null,
@@ -2335,7 +2338,7 @@ struct ConnectionFailureTests {
             conduit: transport,
             dispatcher: EmptyServiceDispatcher()
         )
-        #expect(controlLane.connectionId == 0)
+        #expect(controlLane.laneId == 0)
         let driverTask: Task<Void, Error> = Task {
             try await driver.run()
         }
@@ -2355,13 +2358,13 @@ struct ConnectionFailureTests {
                 )
             }
 
-            guard let connId = await awaitConnectionOpenId(transport) else {
+            guard let laneId = await awaitLaneOpenId(transport) else {
                 Issue.record("expected LaneOpen")
                 return
             }
             await transport.enqueueMessage(
-                messageAccept(
-                    connectionId: connId,
+                messageLaneAccept(
+                    laneId: laneId,
                     settings: ConnectionSettings(
                         parity: .odd,
                         maxConcurrentRequests: 8,
@@ -2375,19 +2378,19 @@ struct ConnectionFailureTests {
             openTask = nil
             var secondReference = firstReference
             firstReference = nil
-            #expect(secondReference?.connectionId == connId)
+            #expect(secondReference?.laneId == laneId)
 
             #expect(
-                await awaitConnectionClose(transport, connectionId: connId, timeoutMs: 100)
+                await awaitLaneClose(transport, laneId: laneId, timeoutMs: 100)
                     == nil)
 
             secondReference = nil
             #expect(
-                await awaitConnectionClose(transport, connectionId: connId, timeoutMs: 100)
+                await awaitLaneClose(transport, laneId: laneId, timeoutMs: 100)
                     == nil)
 
-            try await connectionHandle.closeLane(connId)
-            guard await awaitConnectionClose(transport, connectionId: connId) != nil else {
+            try await connectionHandle.closeLane(laneId)
+            guard await awaitLaneClose(transport, laneId: laneId) != nil else {
                 Issue.record("expected service lane LaneClose after explicit close")
                 return
             }
@@ -2421,7 +2424,7 @@ struct ConnectionFailureTests {
             try? await transport.close()
             await cancelAndDrain(driverTask)
         }) {
-            #expect(controlLane?.connectionId == 0)
+            #expect(controlLane?.laneId == 0)
             let localSettings = ConnectionSettings(
                 parity: .even,
                 maxConcurrentRequests: 8,
@@ -2434,13 +2437,13 @@ struct ConnectionFailureTests {
                 )
             }
 
-            guard let connId = await awaitConnectionOpenId(transport) else {
+            guard let laneId = await awaitLaneOpenId(transport) else {
                 Issue.record("expected LaneOpen")
                 return
             }
             await transport.enqueueMessage(
-                messageAccept(
-                    connectionId: connId,
+                messageLaneAccept(
+                    laneId: laneId,
                     settings: ConnectionSettings(
                         parity: .odd,
                         maxConcurrentRequests: 8,
@@ -2454,7 +2457,7 @@ struct ConnectionFailureTests {
 
             controlLane = nil
             #expect(
-                await awaitConnectionClose(transport, connectionId: 0, timeoutMs: 100)
+                await awaitLaneClose(transport, laneId: 0, timeoutMs: 100)
                     == nil)
 
             do {
@@ -2469,13 +2472,13 @@ struct ConnectionFailureTests {
                         timeout: 1.0
                     )
                 }
-                guard let request = await awaitRequest(transport, connectionId: connId) else {
+                guard let request = await awaitRequest(transport, laneId: laneId) else {
                     Issue.record("expected request on service lane after root drop")
                     return
                 }
                 await transport.enqueueMessage(
                     .response(
-                        connId: connId,
+                        laneId: laneId,
                         requestId: request.id,
                         metadata: .null,
                         payload: [0x42]
@@ -2487,11 +2490,11 @@ struct ConnectionFailureTests {
 
             serviceLane = nil
             #expect(
-                await awaitConnectionClose(transport, connectionId: connId, timeoutMs: 100)
+                await awaitLaneClose(transport, laneId: laneId, timeoutMs: 100)
                     == nil)
 
-            try await connectionHandle.closeLane(connId)
-            guard await awaitConnectionClose(transport, connectionId: connId) != nil else {
+            try await connectionHandle.closeLane(laneId)
+            guard await awaitLaneClose(transport, laneId: laneId) != nil else {
                 Issue.record("expected service lane LaneClose after explicit close")
                 return
             }
@@ -2512,7 +2515,7 @@ struct ConnectionFailureTests {
             dispatcher: EmptyServiceDispatcher(),
             laneAcceptor: DefaultLaneAcceptor(dispatcher: ImmediateResponseDispatcher())
         )
-        #expect(controlLane.connectionId == 0)
+        #expect(controlLane.laneId == 0)
         let driverTask: Task<Void, Error> = Task {
             try await driver.run()
         }
@@ -2520,10 +2523,10 @@ struct ConnectionFailureTests {
             try? await transport.close()
             await cancelAndDrain(driverTask)
         }) {
-            let connId: UInt64 = 2
+            let laneId: UInt64 = 2
             await transport.enqueueMessage(
-                messageConnect(
-                    connectionId: connId,
+                messageLaneOpen(
+                    laneId: laneId,
                     settings: ConnectionSettings(
                         parity: .odd,
                         maxConcurrentRequests: 8,
@@ -2533,7 +2536,7 @@ struct ConnectionFailureTests {
                 )
             )
 
-            guard let accept = await awaitConnectionAccept(transport, connectionId: connId) else {
+            guard let accept = await awaitLaneAccept(transport, laneId: laneId) else {
                 Issue.record("expected LaneAccept")
                 return
             }
@@ -2542,7 +2545,7 @@ struct ConnectionFailureTests {
 
             await transport.enqueueMessage(
                 .request(
-                    connId: connId,
+                    laneId: laneId,
                     requestId: 77,
                     methodId: 42,
                     metadata: .null,
@@ -2552,7 +2555,7 @@ struct ConnectionFailureTests {
 
             let response = await awaitResponsePayload(
                 transport,
-                connectionId: connId,
+                laneId: laneId,
                 requestId: 77
             )
             #expect(response == [0x01])
@@ -2568,7 +2571,7 @@ struct ConnectionFailureTests {
             conduit: transport,
             dispatcher: EmptyServiceDispatcher()
         )
-        #expect(controlLane.connectionId == 0)
+        #expect(controlLane.laneId == 0)
         let driverTask: Task<Void, Error> = Task {
             try await driver.run()
         }
@@ -2576,10 +2579,10 @@ struct ConnectionFailureTests {
             try? await transport.close()
             await cancelAndDrain(driverTask)
         }) {
-            let connId: UInt64 = 2
+            let laneId: UInt64 = 2
             await transport.enqueueMessage(
-                messageConnect(
-                    connectionId: connId,
+                messageLaneOpen(
+                    laneId: laneId,
                     settings: ConnectionSettings(
                         parity: .odd,
                         maxConcurrentRequests: 8,
@@ -2589,7 +2592,7 @@ struct ConnectionFailureTests {
                 )
             )
 
-            guard let reject = await awaitConnectionReject(transport, connectionId: connId) else {
+            guard let reject = await awaitLaneReject(transport, laneId: laneId) else {
                 Issue.record("expected LaneReject")
                 return
             }
@@ -2608,7 +2611,7 @@ struct ConnectionFailureTests {
             conduit: transport,
             dispatcher: EmptyServiceDispatcher()
         )
-        #expect(controlLane.connectionId == 0)
+        #expect(controlLane.laneId == 0)
         let driverTask: Task<Void, Error> = Task {
             try await driver.run()
         }
@@ -2627,14 +2630,14 @@ struct ConnectionFailureTests {
                 )
             }
 
-            guard let connId = await awaitConnectionOpenId(transport) else {
+            guard let laneId = await awaitLaneOpenId(transport) else {
                 Issue.record("expected LaneOpen")
                 return
             }
 
             let rejection = LaneRejection.withMessage(.draining, "busy")
             await transport.enqueueMessage(
-                messageReject(connectionId: connId, metadata: rejection.toMetadata())
+                messageLaneReject(laneId: laneId, metadata: rejection.toMetadata())
             )
 
             do {

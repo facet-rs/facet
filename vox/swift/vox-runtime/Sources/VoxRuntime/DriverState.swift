@@ -18,7 +18,7 @@ actor DriverState {
     private struct FinalizedRequest: Sendable {
         let reason: String
         let atUptimeNs: UInt64
-        let connectionId: UInt64?
+        let laneId: UInt64?
         let channels: [UInt64]
     }
 
@@ -58,15 +58,15 @@ actor DriverState {
         markFinalizedRequest(
             requestId,
             reason: reason,
-            connectionId: pending.request.connectionId,
+            laneId: pending.request.laneId,
             channels: pending.request.channels
         )
         return pending
     }
 
-    func claimPendingResponses(connectionId: UInt64, reason: String) -> [UInt64: PendingCall] {
+    func claimPendingResponses(laneId: UInt64, reason: String) -> [UInt64: PendingCall] {
         let requestIds = pendingResponses.compactMap { requestId, pending in
-            pending.request.connectionId == connectionId ? requestId : nil
+            pending.request.laneId == laneId ? requestId : nil
         }
         var claimed: [UInt64: PendingCall] = [:]
         for requestId in requestIds {
@@ -77,7 +77,7 @@ actor DriverState {
             markFinalizedRequest(
                 requestId,
                 reason: reason,
-                connectionId: pending.request.connectionId,
+                laneId: pending.request.laneId,
                 channels: pending.request.channels
             )
         }
@@ -87,7 +87,7 @@ actor DriverState {
     func markFinalizedRequest(
         _ requestId: UInt64,
         reason: String,
-        connectionId: UInt64? = nil,
+        laneId: UInt64? = nil,
         channels: [UInt64] = []
     ) {
         guard retainFinalizedRequests else {
@@ -97,7 +97,7 @@ actor DriverState {
         finalizedRequests[requestId] = FinalizedRequest(
             reason: reason,
             atUptimeNs: now,
-            connectionId: connectionId,
+            laneId: laneId,
             channels: channels
         )
         pruneFinalizedRequests(now: now)
@@ -161,11 +161,11 @@ actor DriverState {
 
     // r[impl rpc.timeout.idle-progress]
     func pendingTimeoutContexts(
-        connectionId: UInt64,
+        laneId: UInt64,
         channelId: UInt64
     ) -> [PendingTimeoutContext] {
         pendingResponses.compactMap { requestId, pending in
-            guard pending.request.connectionId == connectionId,
+            guard pending.request.laneId == laneId,
                 pending.request.channels.contains(channelId),
                 let timeout = pending.request.timeout
             else {
@@ -181,7 +181,7 @@ actor DriverState {
     // r[impl rpc.request.scope]
     func addInFlight(
         _ requestId: UInt64,
-        connectionId: UInt64,
+        laneId: UInt64,
         responseMetadata: Metadata,
         channels: [UInt64],
         localMaxConcurrentRequests: UInt32
@@ -190,19 +190,19 @@ actor DriverState {
             return .duplicate
         }
 
-        let inFlightOnConnection = inFlightResponseContext.values.lazy.filter {
-            $0.connectionId == connectionId
+        let inFlightOnLane = inFlightResponseContext.values.lazy.filter {
+            $0.laneId == laneId
         }.count
-        if UInt64(inFlightOnConnection) >= UInt64(localMaxConcurrentRequests) {
+        if UInt64(inFlightOnLane) >= UInt64(localMaxConcurrentRequests) {
             return .limitExceeded(
                 limit: localMaxConcurrentRequests,
-                inFlight: inFlightOnConnection
+                inFlight: inFlightOnLane
             )
         }
 
         inFlightRequests.insert(requestId)
         inFlightResponseContext[requestId] = InFlightResponseContext(
-            connectionId: connectionId,
+            laneId: laneId,
             responseMetadata: responseMetadata,
             channels: channels
         )
@@ -212,7 +212,7 @@ actor DriverState {
     // r[impl rpc.request.scope.terminal]
     func removeInFlight(_ requestId: UInt64) -> (
         removed: Bool,
-        connectionId: UInt64,
+        laneId: UInt64,
         responseMetadata: Metadata,
         channels: [UInt64]
     ) {
@@ -220,7 +220,7 @@ actor DriverState {
         let context = inFlightResponseContext.removeValue(forKey: requestId)
         return (
             removed,
-            context?.connectionId ?? 0,
+            context?.laneId ?? 0,
             context?.responseMetadata ?? .null,
             context?.channels ?? []
         )
@@ -239,7 +239,7 @@ actor DriverState {
             markFinalizedRequest(
                 requestId,
                 reason: reason,
-                connectionId: pending.request.connectionId,
+                laneId: pending.request.laneId,
                 channels: pending.request.channels
             )
         }
@@ -255,7 +255,7 @@ actor DriverState {
         let pending = pendingResponses.map { requestId, pending in
             VoxRequestScopeDebugSnapshot(
                 requestId: requestId,
-                laneId: pending.request.connectionId,
+                laneId: pending.request.laneId,
                 state: .waitingForResponse,
                 channelIds: pending.request.channels
             )
@@ -263,7 +263,7 @@ actor DriverState {
         let inFlight = inFlightResponseContext.map { requestId, context in
             VoxRequestScopeDebugSnapshot(
                 requestId: requestId,
-                laneId: context.connectionId,
+                laneId: context.laneId,
                 state: .handlerRunning,
                 channelIds: context.channels
             )
@@ -271,7 +271,7 @@ actor DriverState {
         let finalized = finalizedRequests.map { requestId, finalized in
             VoxRequestScopeDebugSnapshot(
                 requestId: requestId,
-                laneId: finalized.connectionId,
+                laneId: finalized.laneId,
                 state: Self.debugState(forFinalizedReason: finalized.reason),
                 channelIds: finalized.channels
             )
@@ -306,33 +306,33 @@ actor LaneState {
         let channelRegistry: ChannelRegistry
     }
 
-    private var nextConnId: UInt64
+    private var nextLaneId: UInt64
     private var lanes: [UInt64: LaneRecord] = [:]
     private var pendingOutbound: [UInt64: PendingOutboundLane] = [:]
 
     init(role: Role) {
-        nextConnId = firstId(for: role)
+        nextLaneId = firstId(for: role)
     }
 
     // r[impl lane.open.wire]
     // r[impl lane.request-channel-parity]
     func allocateLaneId() -> UInt64 {
-        let id = nextConnId
-        nextConnId += 2
+        let id = nextLaneId
+        nextLaneId += 2
         return id
     }
 
-    func contains(_ connId: UInt64) -> Bool {
-        lanes[connId] != nil || pendingOutbound[connId] != nil
+    func contains(_ laneId: UInt64) -> Bool {
+        lanes[laneId] != nil || pendingOutbound[laneId] != nil
     }
 
     func addLane(
-        _ connId: UInt64,
+        _ laneId: UInt64,
         dispatcher: any ServiceDispatcher,
         localSettings: ConnectionSettings,
         channelRegistry: ChannelRegistry
     ) {
-        lanes[connId] = LaneRecord(
+        lanes[laneId] = LaneRecord(
             dispatcher: dispatcher,
             localSettings: localSettings,
             channelRegistry: channelRegistry
@@ -340,24 +340,24 @@ actor LaneState {
     }
 
     @discardableResult
-    func removeLane(_ connId: UInt64) -> Bool {
-        lanes.removeValue(forKey: connId) != nil
+    func removeLane(_ laneId: UInt64) -> Bool {
+        lanes.removeValue(forKey: laneId) != nil
     }
 
-    func lane(for connId: UInt64) -> LaneRecord? {
-        lanes[connId]
+    func lane(for laneId: UInt64) -> LaneRecord? {
+        lanes[laneId]
     }
 
     func isEmpty() -> Bool {
         lanes.isEmpty && pendingOutbound.isEmpty
     }
 
-    func addPendingOutbound(_ connId: UInt64, pending: PendingOutboundLane) {
-        pendingOutbound[connId] = pending
+    func addPendingOutbound(_ laneId: UInt64, pending: PendingOutboundLane) {
+        pendingOutbound[laneId] = pending
     }
 
-    func takePendingOutbound(_ connId: UInt64) -> PendingOutboundLane? {
-        pendingOutbound.removeValue(forKey: connId)
+    func takePendingOutbound(_ laneId: UInt64) -> PendingOutboundLane? {
+        pendingOutbound.removeValue(forKey: laneId)
     }
 
     // r[impl rpc.debug.snapshot]

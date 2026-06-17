@@ -1,7 +1,7 @@
 import Foundation
 
 struct InFlightResponseContext: Sendable {
-    let connectionId: UInt64
+    let laneId: UInt64
     let responseMetadata: Metadata
     let channels: [UInt64]
 }
@@ -75,7 +75,7 @@ func makeDriverAndLane(
         return false
     }
     let taskSender: @Sendable (TaskMessage) -> Bool = { msg in
-        guard taskQueue.push(DriverQueuedTaskMessage(connectionId: 0, taskMessage: msg)) else {
+        guard taskQueue.push(DriverQueuedTaskMessage(laneId: 0, taskMessage: msg)) else {
             return false
         }
         let result = capturedContinuation.yield(.wake)
@@ -140,7 +140,7 @@ func makeConnectionDriverAndControlLane(
         return false
     }
     let taskSender: @Sendable (TaskMessage) -> Bool = { msg in
-        guard taskQueue.push(DriverQueuedTaskMessage(connectionId: 0, taskMessage: msg)) else {
+        guard taskQueue.push(DriverQueuedTaskMessage(laneId: 0, taskMessage: msg)) else {
             return false
         }
         let result = capturedContinuation.yield(.wake)

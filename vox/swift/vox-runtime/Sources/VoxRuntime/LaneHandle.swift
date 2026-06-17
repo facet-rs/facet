@@ -68,7 +68,7 @@ final class LaneHandle: @unchecked Sendable {
             }
             let accepted = commandTx(
                 .call(
-                    connectionId: laneId,
+                    laneId: laneId,
                     requestId: requestId,
                     methodId: methodId,
                     metadata: metadata,

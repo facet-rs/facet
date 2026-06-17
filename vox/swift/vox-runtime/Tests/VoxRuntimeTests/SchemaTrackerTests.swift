@@ -205,7 +205,7 @@ func callerAdvertisesArgsSchemaWithFirstRequestOnConnection() async throws {
     let schemaInfo = testClientSchemaInfo(argsSchemaClosure: schemas)
 
     await driver.handleCommand(.call(
-        connectionId: 0,
+        laneId: 0,
         requestId: 1,
         methodId: 77,
         metadata: .null,
@@ -216,7 +216,7 @@ func callerAdvertisesArgsSchemaWithFirstRequestOnConnection() async throws {
         schemaInfo: schemaInfo
     ))
     await driver.handleCommand(.call(
-        connectionId: 0,
+        laneId: 0,
         requestId: 3,
         methodId: 77,
         metadata: .null,
@@ -268,14 +268,14 @@ func calleeAdvertisesResponseSchemaWithFirstResponseOnConnection() async throws 
     #expect(
         await driver.state.addInFlight(
             9,
-            connectionId: 0,
+            laneId: 0,
             responseMetadata: .null,
             channels: [],
             localMaxConcurrentRequests: UInt32.max
         ) == .inserted
     )
     try await driver.handleTaskMessage(DriverQueuedTaskMessage(
-        connectionId: 0,
+        laneId: 0,
         taskMessage: .response(
             requestId: 9,
             payload: [7],
@@ -287,14 +287,14 @@ func calleeAdvertisesResponseSchemaWithFirstResponseOnConnection() async throws 
     #expect(
         await driver.state.addInFlight(
             11,
-            connectionId: 0,
+            laneId: 0,
             responseMetadata: .null,
             channels: [],
             localMaxConcurrentRequests: UInt32.max
         ) == .inserted
     )
     try await driver.handleTaskMessage(DriverQueuedTaskMessage(
-        connectionId: 0,
+        laneId: 0,
         taskMessage: .response(
             requestId: 11,
             payload: [8],

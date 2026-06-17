@@ -3,7 +3,7 @@ import Foundation
 /// Commands from lane and connection handles to Driver.
 enum HandleCommand: Sendable {
     case call(
-        connectionId: UInt64,
+        laneId: UInt64,
         requestId: UInt64,
         methodId: UInt64,
         metadata: Metadata,

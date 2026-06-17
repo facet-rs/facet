@@ -1,7 +1,7 @@
 import Foundation
 
 struct DriverQueuedTaskMessage: Sendable {
-    let connectionId: UInt64
+    let laneId: UInt64
     let taskMessage: TaskMessage
 }
 
@@ -10,7 +10,7 @@ struct DriverQueuedWireMessage: Sendable {
 }
 
 struct DriverQueuedCall: Sendable {
-    let connectionId: UInt64
+    let laneId: UInt64
     let requestId: UInt64
     let methodId: UInt64
     let metadata: Metadata
