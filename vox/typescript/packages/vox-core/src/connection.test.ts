@@ -33,14 +33,14 @@ import {
   connect,
   connectOnLink,
   defaultLaneSettings,
-} from "./session.ts";
+} from "./connection.ts";
 import type { EstablishmentEvent } from "./observer.ts";
 import { Role, channel, type MethodDescriptor } from "./channeling/index.ts";
 import {
-  sessionEchoRegistry,
-  sessionEchoMethods,
-  SESSION_ECHO_METHOD_ID,
-} from "./session_echo.fixture.ts";
+  connectionEchoRegistry,
+  connectionEchoMethods,
+  CONNECTION_ECHO_METHOD_ID,
+} from "./connection_echo.fixture.ts";
 import { SchemaCompatibilityError, type PhonMethodSchemas } from "./schema_tracker.ts";
 import {
   handshakeSchemaClosure,
@@ -49,8 +49,8 @@ import {
   type HandshakeMessage,
 } from "./handshake.phon.generated.ts";
 
-const ECHO_METHOD_KEY = `0x${SESSION_ECHO_METHOD_ID.toString(16).padStart(16, "0")}`;
-const ECHO_METHOD_SCHEMAS = sessionEchoMethods[ECHO_METHOD_KEY]!;
+const ECHO_METHOD_KEY = `0x${CONNECTION_ECHO_METHOD_ID.toString(16).padStart(16, "0")}`;
+const ECHO_METHOD_SCHEMAS = connectionEchoMethods[ECHO_METHOD_KEY]!;
 const CHANNEL_ARGS_SCHEMAS = resolveIds([
   {
     id: 1n,
@@ -301,10 +301,10 @@ async function establishInboundServiceLane(
 
 const ECHO_METHOD: MethodDescriptor = {
   name: "echo",
-  id: SESSION_ECHO_METHOD_ID,
+  id: CONNECTION_ECHO_METHOD_ID,
 };
 
-describe("session", () => {
+describe("connection", () => {
   // r[verify connection.protocol]
   // r[verify connection.handshake]
   // r[verify connection.handshake.phon]
@@ -522,7 +522,7 @@ describe("session", () => {
   // r[verify lane.service.compat]
   // r[verify lane.open.wire]
   // r[verify lane.open.api]
-  it("allocates service lane ids from local session parity", async () => {
+  it("allocates service lane ids from local connection parity", async () => {
     const requestedSettings: ConnectionSettings = {
       parity: { tag: "Odd" },
       max_concurrent_requests: 64,
@@ -850,7 +850,7 @@ describe("session", () => {
         connect(clientLink),
         accept(serverLink),
       ]),
-      "transport session establishment",
+      "transport connection establishment",
     );
     expect("lane" in serverSession).toBe(false);
     await expect(serverSession.handle().closeLane(0n)).rejects.toThrow(
@@ -974,7 +974,7 @@ describe("session", () => {
         args: { value: 55 },
         descriptor: ECHO_METHOD,
         methodSchemas: ECHO_METHOD_SCHEMAS,
-        registry: sessionEchoRegistry,
+        registry: connectionEchoRegistry,
         timeoutMs: 1,
       });
 
@@ -1025,7 +1025,7 @@ describe("session", () => {
         args: { value: 55 },
         descriptor: ECHO_METHOD,
         methodSchemas: ECHO_METHOD_SCHEMAS,
-        registry: sessionEchoRegistry,
+        registry: connectionEchoRegistry,
         timeoutMs: 10,
       });
       const observedCall = call.catch((error: unknown) => error);
@@ -1079,7 +1079,7 @@ describe("session", () => {
         args: { value: 55 },
         descriptor: ECHO_METHOD,
         methodSchemas: ECHO_METHOD_SCHEMAS,
-        registry: sessionEchoRegistry,
+        registry: connectionEchoRegistry,
         timeoutMs: 80,
         channels: [7n],
       });
@@ -1093,7 +1093,7 @@ describe("session", () => {
       const payload = encodeTyped(
         { tag: "Ok", value: 55 } as never,
         ECHO_METHOD_SCHEMAS.responseRoot,
-        sessionEchoRegistry,
+        connectionEchoRegistry,
       );
       connection.resolveResponse(1n, payload);
 
@@ -1138,7 +1138,7 @@ describe("session", () => {
         args: { value: 55 },
         descriptor: ECHO_METHOD,
         methodSchemas: ECHO_METHOD_SCHEMAS,
-        registry: sessionEchoRegistry,
+        registry: connectionEchoRegistry,
         timeoutMs: 1,
       });
 
@@ -1190,7 +1190,7 @@ describe("session", () => {
         args: { value: 55 },
         descriptor: ECHO_METHOD,
         methodSchemas: ECHO_METHOD_SCHEMAS,
-        registry: sessionEchoRegistry,
+        registry: connectionEchoRegistry,
         timeoutMs: 1_000,
       }).catch((error: unknown) => error);
 
@@ -1412,7 +1412,7 @@ describe("session", () => {
         args: { value: 55 },
         descriptor: ECHO_METHOD,
         methodSchemas: ECHO_METHOD_SCHEMAS,
-        registry: sessionEchoRegistry,
+        registry: connectionEchoRegistry,
         timeoutMs: 1_000,
       });
 
@@ -1733,7 +1733,7 @@ describe("session", () => {
       args: { value: 55 },
       descriptor: ECHO_METHOD,
       methodSchemas: ECHO_METHOD_SCHEMAS,
-      registry: sessionEchoRegistry,
+      registry: connectionEchoRegistry,
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -1787,7 +1787,7 @@ describe("session", () => {
       args: { value: 55 },
       descriptor: ECHO_METHOD,
       methodSchemas: ECHO_METHOD_SCHEMAS,
-      registry: sessionEchoRegistry,
+      registry: connectionEchoRegistry,
       timeoutMs: 1_000,
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -1881,7 +1881,7 @@ describe("session", () => {
         args: { value: 55 },
         descriptor: ECHO_METHOD,
         methodSchemas: ECHO_METHOD_SCHEMAS,
-        registry: sessionEchoRegistry,
+        registry: connectionEchoRegistry,
         timeoutMs: 1_000,
       });
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -1890,7 +1890,7 @@ describe("session", () => {
       const payload = encodeTyped(
         { tag: "Err", value: wireError } as never,
         ECHO_METHOD_SCHEMAS.responseRoot,
-        sessionEchoRegistry,
+        connectionEchoRegistry,
       );
       connection.resolveResponse(1n, payload);
 

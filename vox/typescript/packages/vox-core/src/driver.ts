@@ -19,7 +19,7 @@ import { SchemaCompatibilityError } from "./schema_tracker.ts";
 import { Extensions } from "./middleware.ts";
 import { RequestContext } from "./request_context.ts";
 import { type ServerCallOutcome, type ServerMiddleware } from "./server_middleware.ts";
-import type { IncomingCall, Lane } from "./session.ts";
+import type { IncomingCall, Lane } from "./connection.ts";
 import { voxLogger } from "./logger.ts";
 
 export interface Dispatcher {

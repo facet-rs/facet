@@ -6,7 +6,7 @@ import { bindPhonChannels } from "./binding.ts";
 import { channel } from "./pair.ts";
 import { ChannelRegistry } from "./registry.ts";
 import { Role } from "./types.ts";
-import { sessionEchoRegistry } from "../session_echo.fixture.ts";
+import { connectionEchoRegistry } from "../connection_echo.fixture.ts";
 
 const U32_ROOT = 0x281c5be4f2ee63b4n;
 
@@ -83,7 +83,7 @@ describe("bindPhonChannels", () => {
       [{ index: 0, direction: "rx", elementRoot: U32_ROOT }],
       allocator,
       registry,
-      sessionEchoRegistry,
+      connectionEchoRegistry,
       { incoming: 4, outgoing: 4 },
     );
 
@@ -113,7 +113,7 @@ describe("bindPhonChannels", () => {
       ],
       allocator,
       registry,
-      sessionEchoRegistry,
+      connectionEchoRegistry,
       { incoming: 4, outgoing: 4 },
     );
 

@@ -12,10 +12,10 @@ import {
 } from "./schema_tracker.ts";
 import { ChannelRegistry, type MethodDescriptor, type TaskMessage } from "./channeling/index.ts";
 import {
-  sessionEchoRegistry,
-  sessionEchoMethods,
-  SESSION_ECHO_METHOD_ID,
-} from "./session_echo.fixture.ts";
+  connectionEchoRegistry,
+  connectionEchoMethods,
+  CONNECTION_ECHO_METHOD_ID,
+} from "./connection_echo.fixture.ts";
 
 const METHOD: MethodDescriptor = {
   name: "stream",
@@ -31,11 +31,11 @@ const METHOD_SCHEMAS: PhonMethodSchemas = {
   channels: [{ index: 0, direction: "tx", elementRoot: 9n }],
 };
 
-const ECHO_METHOD_KEY = `0x${SESSION_ECHO_METHOD_ID.toString(16).padStart(16, "0")}`;
-const ECHO_METHOD_SCHEMAS = sessionEchoMethods[ECHO_METHOD_KEY]!;
+const ECHO_METHOD_KEY = `0x${CONNECTION_ECHO_METHOD_ID.toString(16).padStart(16, "0")}`;
+const ECHO_METHOD_SCHEMAS = connectionEchoMethods[ECHO_METHOD_KEY]!;
 const ECHO_METHOD: MethodDescriptor = {
   name: "echo",
-  id: SESSION_ECHO_METHOD_ID,
+  id: CONNECTION_ECHO_METHOD_ID,
 };
 const CHANNEL_DISCOVERY_METHOD_ID = 0x1234n;
 const CHANNEL_DISCOVERY_METHOD_KEY = `0x${CHANNEL_DISCOVERY_METHOD_ID.toString(16).padStart(16, "0")}`;
@@ -77,7 +77,7 @@ describe("Driver channel schema exchange", () => {
         getDescriptor: () => ({
           service_name: "Test",
           send_schemas: { [ECHO_METHOD_KEY]: ECHO_METHOD_SCHEMAS },
-          registry: sessionEchoRegistry,
+          registry: connectionEchoRegistry,
           methods: new Map([[ECHO_METHOD.id, ECHO_METHOD]]),
         }),
         dispatch: async () => {
@@ -113,7 +113,7 @@ describe("Driver channel schema exchange", () => {
         sent[0].payload,
         ECHO_METHOD_SCHEMAS.responseRoot,
         ECHO_METHOD_SCHEMAS.responseRoot,
-        sessionEchoRegistry,
+        connectionEchoRegistry,
       ),
     ).toEqual({
       ok: false,
@@ -174,7 +174,7 @@ describe("Driver channel schema exchange", () => {
         getDescriptor: () => ({
           service_name: "Test",
           send_schemas: { [ECHO_METHOD_KEY]: ECHO_METHOD_SCHEMAS },
-          registry: sessionEchoRegistry,
+          registry: connectionEchoRegistry,
           methods: new Map([[ECHO_METHOD.id, ECHO_METHOD]]),
         }),
         dispatch: async (_context, _method, _args, call) => {
@@ -208,7 +208,7 @@ describe("Driver channel schema exchange", () => {
         sent[0].payload,
         ECHO_METHOD_SCHEMAS.responseRoot,
         ECHO_METHOD_SCHEMAS.responseRoot,
-        sessionEchoRegistry,
+        connectionEchoRegistry,
       ),
     ).toEqual({ ok: true, value: 2 });
   });
@@ -256,7 +256,7 @@ describe("Driver channel schema exchange", () => {
         getDescriptor: () => ({
           service_name: "Test",
           send_schemas: { [CHANNEL_DISCOVERY_METHOD_KEY]: CHANNEL_DISCOVERY_SCHEMAS },
-          registry: sessionEchoRegistry,
+          registry: connectionEchoRegistry,
           methods: new Map([[CHANNEL_DISCOVERY_METHOD.id, CHANNEL_DISCOVERY_METHOD]]),
         }),
         dispatch: async (_context, _method, args, call) => {
@@ -340,7 +340,7 @@ describe("Driver channel schema exchange", () => {
         getDescriptor: () => ({
           service_name: "Test",
           send_schemas: { [ECHO_METHOD_KEY]: ECHO_METHOD_SCHEMAS },
-          registry: sessionEchoRegistry,
+          registry: connectionEchoRegistry,
           methods: new Map([[ECHO_METHOD.id, ECHO_METHOD]]),
         }),
         dispatch: async () => {
@@ -378,7 +378,7 @@ describe("Driver channel schema exchange", () => {
         sent[0].payload,
         ECHO_METHOD_SCHEMAS.responseRoot,
         ECHO_METHOD_SCHEMAS.responseRoot,
-        sessionEchoRegistry,
+        connectionEchoRegistry,
       ),
     ).toEqual({
       ok: false,
@@ -414,7 +414,7 @@ describe("Driver channel schema exchange", () => {
         getDescriptor: () => ({
           service_name: "Test",
           send_schemas: { [ECHO_METHOD_KEY]: ECHO_METHOD_SCHEMAS },
-          registry: sessionEchoRegistry,
+          registry: connectionEchoRegistry,
           methods: new Map([[ECHO_METHOD.id, ECHO_METHOD]]),
         }),
         dispatch: async (_context, _method, _args, call) => {

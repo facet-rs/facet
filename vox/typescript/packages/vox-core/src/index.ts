@@ -60,7 +60,7 @@ export {
   type LaneOpenOptions,
   type LaneClientConstructor,
   type ConnectLaneOptions,
-} from "./session.ts";
+} from "./connection.ts";
 
 export {
   Driver,

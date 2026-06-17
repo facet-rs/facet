@@ -40,8 +40,8 @@ specs (
                     typescript/subject/timeout.ts
                     typescript/packages/vox-core/src/call_builder.ts
                     typescript/packages/vox-core/src/caller.ts
-                    typescript/packages/vox-core/src/session.ts
-                    typescript/packages/vox-core/src/session.test.ts
+                    typescript/packages/vox-core/src/connection.ts
+                    typescript/packages/vox-core/src/connection.test.ts
                     typescript/packages/vox-core/src/conduit.ts
                     typescript/packages/vox-core/src/link.ts
                     typescript/packages/vox-core/src/link.test.ts
