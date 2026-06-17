@@ -163,9 +163,9 @@ async function connectApi(): Promise<ApiClient> {
 
 ## 6) Channels (streaming)
 
-Vox supports bidirectional streaming via typed channels. Channels are created
-as a `(Tx, Rx)` pair and one end is passed to a method call; the lane
-manages the lifetime automatically.
+Vox supports bidirectional streaming via typed raw channels. Channels are
+created as a `(Tx, Rx)` pair and one end is passed to a method call; the
+request scope that introduced the channel owns the lifetime.
 
 **Important:** always initiate the call *before* consuming the channel. The
 channel is bound (becomes usable) when it is passed to a method, not when
@@ -213,6 +213,10 @@ const drain = (async () => {
 
 await Promise.all([callPromise, drain]);
 ```
+
+The method response terminates the request scope. Raw channels that need to
+carry important data must finish before or as part of that response; durable or
+resumable streams should be modeled as explicit service-level protocols.
 
 ## 7) Error handling
 
