@@ -93,6 +93,9 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let (host_a_link, guest_a_link) = vox::memory_link_pair(64);
     let (host_b_link, guest_b_link) = vox::memory_link_pair(64);
+    let (guest_b_ready_tx, guest_b_ready_rx) = tokio::sync::oneshot::channel::<ConnectionHandle>();
+    let (host_for_a_ready_tx, host_for_a_ready_rx) =
+        tokio::sync::oneshot::channel::<ConnectionHandle>();
 
     println!("[guest-b] starting connection");
     let guest_b_task = tokio::spawn(async move {
@@ -110,8 +113,8 @@ async fn main() -> Result<()> {
         .establish_connection()
         .await
         .expect("guest-b establish");
-        let _guest_b_connection = guest_b_connection_guard;
-        std::future::pending::<()>().await;
+        let _ = guest_b_ready_tx.send(guest_b_connection_guard.clone());
+        guest_b_connection_guard.closed().await;
     });
 
     println!("[host] establishing connection to guest-b");
@@ -128,9 +131,13 @@ async fn main() -> Result<()> {
     .establish_connection()
     .await
     .map_err(|e| eyre!("host<->guest-b establish failed: {e:?}"))?;
+    let guest_b_connection_shutdown = guest_b_ready_rx
+        .await
+        .map_err(|_| eyre!("guest-b task ended before signaling readiness"))?;
     println!("[host] host<->guest-b connection ready");
 
     println!("[host] starting connection for guest-a");
+    let host_connection_to_b_shutdown = host_connection_to_b.clone();
     let proxy_acceptor = ProxyAcceptor {
         upstream_connection: host_connection_to_b,
     };
@@ -149,8 +156,8 @@ async fn main() -> Result<()> {
         .establish_connection()
         .await
         .expect("host<->guest-a establish");
-        let _host_connection_for_a = host_connection_for_a_guard;
-        std::future::pending::<()>().await;
+        let _ = host_for_a_ready_tx.send(host_connection_for_a_guard.clone());
+        host_connection_for_a_guard.closed().await;
     });
 
     println!("[guest-a] establishing connection to host");
@@ -167,6 +174,9 @@ async fn main() -> Result<()> {
     .establish_connection()
     .await
     .map_err(|e| eyre!("guest-a<->host establish failed: {e:?}"))?;
+    let host_connection_for_a_shutdown = host_for_a_ready_rx
+        .await
+        .map_err(|_| eyre!("host<->guest-a task ended before signaling readiness"))?;
     println!("[guest-a] connection ready");
 
     println!("[guest-a] opening proxy lane to host");
@@ -195,8 +205,27 @@ async fn main() -> Result<()> {
     println!("[guest-a] reverse(\"stressed\") -> {reversed}");
     assert_eq!(reversed, "desserts");
 
-    guest_b_task.abort();
-    host_for_a_task.abort();
+    println!("[guest-a] shutting down guest-a<->host connection");
+    guest_a_connection
+        .shutdown()
+        .expect("guest-a<->host shutdown");
+    host_connection_for_a_shutdown
+        .shutdown()
+        .expect("host<->guest-a shutdown");
+    host_for_a_task
+        .await
+        .map_err(|e| eyre!("joining host_for_a_task failed: {e}"))?;
+
+    println!("[host] shutting down host<->guest-b connection");
+    host_connection_to_b_shutdown
+        .shutdown()
+        .expect("host<->guest-b shutdown");
+    guest_b_connection_shutdown
+        .shutdown()
+        .expect("guest-b shutdown");
+    guest_b_task
+        .await
+        .map_err(|e| eyre!("joining guest_b_task failed: {e}"))?;
     println!("[demo] memory_proxying: complete");
     Ok(())
 }

@@ -79,7 +79,8 @@ async fn main() -> Result<()> {
         .wrap_err("binding TCP listener")?;
     let addr = listener.local_addr().wrap_err("reading listener addr")?;
     println!("[demo] listening on {addr}");
-    let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
+    let (server_ready_tx, server_ready_rx) =
+        tokio::sync::oneshot::channel::<vox::ConnectionHandle>();
 
     let server_task = tokio::spawn(async move {
         println!("[server] waiting for client");
@@ -90,9 +91,8 @@ async fn main() -> Result<()> {
             .establish_connection()
             .await
             .expect("server establish");
-        let _ = server_ready_tx.send(());
-        let _server_connection = server_connection;
-        std::future::pending::<()>().await;
+        let _ = server_ready_tx.send(server_connection.clone());
+        server_connection.closed().await;
     });
 
     println!("[client] connecting");
@@ -104,7 +104,7 @@ async fn main() -> Result<()> {
         .await
         .map_err(|e| eyre!("failed to establish initiator connection: {e:?}"))?;
     println!("[client] connection established");
-    server_ready_rx
+    let server_connection = server_ready_rx
         .await
         .map_err(|_| eyre!("server task ended before signaling readiness"))?;
 
@@ -163,8 +163,12 @@ async fn main() -> Result<()> {
     );
     println!("[client] StringLab::shout -> BETA");
 
-    println!("[client] closing connection");
-    server_task.abort();
+    println!("[client] shutting down connection");
+    connection_handle.shutdown().expect("connection shutdown");
+    server_connection
+        .shutdown()
+        .expect("server connection shutdown");
+    server_task.await.wrap_err("joining server_task")?;
     println!("[demo] service_lanes: complete");
 
     Ok(())

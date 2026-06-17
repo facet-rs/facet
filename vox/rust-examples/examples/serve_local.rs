@@ -37,7 +37,11 @@ async fn main() -> Result<()> {
     let reply = client.say_hello("unix socket".into()).await?;
     println!("{reply}");
 
-    drop(client);
+    client
+        .connection
+        .as_ref()
+        .expect("generated client carries connection handle")
+        .shutdown()?;
     server.abort();
     Ok(())
 }
