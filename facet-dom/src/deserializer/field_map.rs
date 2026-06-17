@@ -862,9 +862,11 @@ pub(crate) fn get_item_type_rename(shape: &facet_core::Shape) -> Option<&'static
     item_shape.get_builtin_attr_value::<&str>("rename")
 }
 
-/// Get the default element name for a collection's item type.
+/// Get the default element name for a collection's user-defined item type.
 ///
 /// For `Vec<SomeInteger>`, this returns `"someInteger"` (the type name in lowerCamelCase).
+/// Built-in scalar item types return `None`, so `Vec<String>` falls back to the
+/// singularized field name (`tracks` -> `track`) instead of matching `<string>`.
 /// This is used when no explicit rename is specified on either the field or the item type.
 pub(crate) fn get_item_type_default_element_name(shape: &facet_core::Shape) -> Option<String> {
     // Get the item shape for collections
@@ -885,8 +887,18 @@ pub(crate) fn get_item_type_default_element_name(shape: &facet_core::Shape) -> O
         _ => None,
     }?;
 
-    // Use the item type's type_identifier, converted to element name format
-    Some(crate::naming::to_element_name(item_shape.type_identifier).into_owned())
+    match &item_shape.ty {
+        Type::User(UserType::Struct(_) | UserType::Union(_)) => {
+            Some(crate::naming::to_element_name(item_shape.type_identifier).into_owned())
+        }
+        Type::User(UserType::Enum(_)) => None,
+        Type::Undefined
+        | Type::Sequence(_)
+        | Type::Primitive(_)
+        | Type::Pointer(_)
+        | Type::User(UserType::Opaque) => None,
+        _ => None,
+    }
 }
 
 /// Check if the item type of a collection has an `xml::tag` or `html::tag` field.
