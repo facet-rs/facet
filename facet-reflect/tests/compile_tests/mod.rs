@@ -67,6 +67,7 @@ fn run_compilation_test(test: &CompilationTest) {
     let workspace_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let facet_path = workspace_dir.join("facet");
     let facet_reflect_path = workspace_dir.join("facet-reflect");
+    let workspace_lockfile = workspace_dir.join("Cargo.lock");
 
     // Create src directory
     fs::create_dir(project_dir.join("src")).expect("Failed to create src directory");
@@ -80,7 +81,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-eyre = "0.6"
 facet = {{ path = {:?} }}
 facet-reflect = {{ path = {:?} }}
     "#,
@@ -90,6 +90,8 @@ facet-reflect = {{ path = {:?} }}
 
     // Write the Cargo.toml file
     fs::write(project_dir.join("Cargo.toml"), cargo_toml).expect("Failed to write Cargo.toml");
+    fs::copy(workspace_lockfile, project_dir.join("Cargo.lock"))
+        .expect("Failed to copy Cargo.lock");
 
     // Write the main.rs file
     fs::write(project_dir.join("src").join("main.rs"), test.source)
@@ -103,7 +105,7 @@ facet-reflect = {{ path = {:?} }}
     // Run cargo build
     let mut cmd = std::process::Command::new("cargo");
     cmd.current_dir(project_dir)
-        .args(["build", "--color=always"])
+        .args(["build", "--offline", "--color=always"])
         .env("CARGO_TERM_COLOR", "always")
         .env("CARGO_TARGET_DIR", &target_dir); // Use source-hash based target directory
 

@@ -1054,6 +1054,22 @@ fn elements_singularization_tracks_to_track() {
 }
 
 #[test]
+fn elements_singularization_string_items_use_field_name() {
+    use facet_xml as xml;
+
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(rename = "playlist")]
+    struct Playlist {
+        #[facet(xml::elements)]
+        tracks: Vec<String>,
+    }
+
+    let xml = r#"<playlist><track>Song A</track><track>Song B</track></playlist>"#;
+    let parsed: Playlist = facet_xml::from_str(xml).unwrap();
+    assert_eq!(parsed.tracks, vec!["Song A", "Song B"]);
+}
+
+#[test]
 fn elements_singularization_entries_to_entry() {
     use facet_xml as xml;
 

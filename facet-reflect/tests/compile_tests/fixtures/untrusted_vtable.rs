@@ -13,7 +13,7 @@
 use facet::Facet;
 use facet_reflect::{ListLikeDef, Peek, PeekList, PeekListLike, PeekNdArray};
 
-fn main() -> eyre::Result<()> {
+fn main() {
     let values = vec![1, 2, 3];
     let peek = Peek::new(&values);
 
@@ -29,6 +29,4 @@ fn main() -> eyre::Result<()> {
         // This line should fail to compile - new() is unsafe
         let _ndarray = PeekNdArray::new(peek, ndarray_def);
     }
-
-    Ok(())
 }
