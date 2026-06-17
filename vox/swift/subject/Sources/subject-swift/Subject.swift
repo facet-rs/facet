@@ -6279,7 +6279,7 @@ func runClient() async throws {
 func runServerListen() async throws {
     let listenPort = ProcessInfo.processInfo.environment["LISTEN_PORT"].flatMap(Int.init) ?? 0
     let acceptor = TcpAcceptor(host: "127.0.0.1", port: listenPort)
-    let acceptConnections = ProcessInfo.processInfo.environment["ACCEPT_CONNECTIONS"] == "1"
+    let acceptConnections = ProcessInfo.processInfo.environment["ACCEPT_CONNECTIONS"] != "0"
     let handler = TestbedService()
     let dispatcher = TestbedDispatcher(handler: handler)
     let connection = try await Connection.accept(

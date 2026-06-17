@@ -194,6 +194,10 @@ private struct HandshakeHarness {
             acceptedSocket.set(connFd)
             defer { close(connFd) }
 
+            let linkPrologue = try readLinkPrologue(connFd)
+            try validateVoxLinkPrologue(linkPrologue, fdCapable: false)
+            try writeLinkPrologue(connFd, fdCapable: false)
+
             let transportHello = try readRawFrame(connFd)
             guard let transportHello else {
                 return nil
@@ -270,8 +274,16 @@ private func writeRawFrame(_ fd: Int32, bytes: [UInt8]) throws {
     try writeAll(fd, bytes: frame)
 }
 
+private func writeLinkPrologue(_ fd: Int32, fdCapable: Bool) throws {
+    try writeAll(fd, bytes: voxLinkPrologue(fdCapable: fdCapable))
+}
+
 private func writeFrame(_ fd: Int32, message: VoxRuntime.Message) throws {
     try writeRawFrame(fd, bytes: encodeMessage(message))
+}
+
+private func readLinkPrologue(_ fd: Int32) throws -> [UInt8] {
+    try readExactly(fd, count: voxLinkPrologueLen)
 }
 
 private func readRawFrame(_ fd: Int32) throws -> [UInt8]? {

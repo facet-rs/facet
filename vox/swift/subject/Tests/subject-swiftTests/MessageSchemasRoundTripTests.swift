@@ -13,7 +13,7 @@ import VoxRuntime
     let schemaBytes: [UInt8] = Array(1...40)
     let retBytes: [UInt8] = [9, 8, 7, 6, 5]
     let msg = Message(
-        connectionId: 0,
+        laneId: 0,
         payload: .requestMessage(
             RequestMessage(
                 id: 42,
@@ -42,7 +42,7 @@ import VoxRuntime
     let schemaBytes: [UInt8] = Array(50...90)
     let argBytes: [UInt8] = [1, 2, 3, 4]
     let msg = Message(
-        connectionId: 0,
+        laneId: 0,
         payload: .requestMessage(
             RequestMessage(
                 id: 7,
