@@ -40,9 +40,4 @@ structstruck.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio.workspace = true
 
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-futures-channel.workspace = true
-tokio.workspace = true
-wasmtimer.workspace = true
-
 [dev-dependencies]

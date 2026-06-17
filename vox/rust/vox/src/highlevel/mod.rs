@@ -4,9 +4,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 #[cfg(any(
-    feature = "transport-tcp",
-    feature = "transport-local",
-    feature = "transport-websocket"
+    all(feature = "transport-tcp", not(target_arch = "wasm32")),
+    all(feature = "transport-local", not(target_arch = "wasm32")),
+    all(feature = "transport-websocket", not(target_arch = "wasm32"))
 ))]
 use vox_core::initiator;
 use vox_core::{
@@ -21,10 +21,10 @@ use vox_types::{
 mod error;
 pub use error::ServeError;
 
-#[cfg(feature = "transport-tcp")]
+#[cfg(all(feature = "transport-tcp", not(target_arch = "wasm32")))]
 mod tcp;
 
-#[cfg(feature = "transport-local")]
+#[cfg(all(feature = "transport-local", not(target_arch = "wasm32")))]
 mod local;
 
 // Server-side: ws/wss listeners use tokio::net::TcpListener and only make
@@ -97,9 +97,9 @@ pub fn connect_lane<Client: FromVoxLane>(
 }
 
 enum ConnectAddress {
-    #[cfg(feature = "transport-tcp")]
+    #[cfg(all(feature = "transport-tcp", not(target_arch = "wasm32")))]
     Tcp(String),
-    #[cfg(feature = "transport-local")]
+    #[cfg(all(feature = "transport-local", not(target_arch = "wasm32")))]
     Local(String),
     #[cfg(all(feature = "transport-websocket", not(target_arch = "wasm32")))]
     Ws(String),
@@ -111,16 +111,16 @@ fn parse_connect_address(addr: String) -> Result<ConnectAddress, ConnectionError
         None => ("tcp".to_string(), addr),
     };
     #[cfg(not(any(
-        feature = "transport-tcp",
-        feature = "transport-local",
-        feature = "transport-websocket"
+        all(feature = "transport-tcp", not(target_arch = "wasm32")),
+        all(feature = "transport-local", not(target_arch = "wasm32")),
+        all(feature = "transport-websocket", not(target_arch = "wasm32"))
     )))]
     let _ = &host;
 
     match scheme.as_str() {
-        #[cfg(feature = "transport-tcp")]
+        #[cfg(all(feature = "transport-tcp", not(target_arch = "wasm32")))]
         "tcp" => Ok(ConnectAddress::Tcp(host)),
-        #[cfg(feature = "transport-local")]
+        #[cfg(all(feature = "transport-local", not(target_arch = "wasm32")))]
         "local" => Ok(ConnectAddress::Local(host)),
         #[cfg(all(feature = "transport-websocket", not(target_arch = "wasm32")))]
         "ws" | "wss" => Ok(ConnectAddress::Ws(format!("{scheme}://{host}"))),
@@ -333,9 +333,9 @@ impl ConnectBuilder {
         identity_resolver: Option<Arc<dyn IdentityResolver>>,
     ) -> Result<ConnectionHandle, ConnectionError> {
         #[cfg(not(any(
-            feature = "transport-tcp",
-            feature = "transport-local",
-            feature = "transport-websocket"
+            all(feature = "transport-tcp", not(target_arch = "wasm32")),
+            all(feature = "transport-local", not(target_arch = "wasm32")),
+            all(feature = "transport-websocket", not(target_arch = "wasm32"))
         )))]
         let _ = (
             &metadata,
@@ -347,7 +347,7 @@ impl ConnectBuilder {
         );
 
         match parsed {
-            #[cfg(feature = "transport-tcp")]
+            #[cfg(all(feature = "transport-tcp", not(target_arch = "wasm32")))]
             ConnectAddress::Tcp(host) => {
                 tracing::trace!(
                     transport = "tcp",
@@ -370,7 +370,7 @@ impl ConnectBuilder {
                 }
                 builder.metadata(metadata).establish_connection().await
             }
-            #[cfg(feature = "transport-local")]
+            #[cfg(all(feature = "transport-local", not(target_arch = "wasm32")))]
             ConnectAddress::Local(host) => {
                 tracing::trace!(
                     transport = "local",
@@ -610,15 +610,15 @@ where
             None => ("tcp".to_string(), addr),
         };
         #[cfg(not(any(
-            feature = "transport-tcp",
-            feature = "transport-local",
-            feature = "transport-websocket",
+            all(feature = "transport-tcp", not(target_arch = "wasm32")),
+            all(feature = "transport-local", not(target_arch = "wasm32")),
+            all(feature = "transport-websocket", not(target_arch = "wasm32")),
             feature = "transport-websocket-tls"
         )))]
         let _ = (&host, &acceptor, &metadata, &observer, &identity_resolver);
 
         match scheme.as_str() {
-            #[cfg(feature = "transport-tcp")]
+            #[cfg(all(feature = "transport-tcp", not(target_arch = "wasm32")))]
             "tcp" => {
                 let listener = tokio::net::TcpListener::bind(&host).await?;
                 let mut builder =
@@ -632,7 +632,7 @@ where
                 }
                 Ok(builder.await?)
             }
-            #[cfg(feature = "transport-local")]
+            #[cfg(all(feature = "transport-local", not(target_arch = "wasm32")))]
             "local" => {
                 local::serve_local(
                     &host,

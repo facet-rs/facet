@@ -1,22 +1,11 @@
 //! Cross-platform time primitives.
-//!
-//! On native targets these are re-exports of `std::time` and `tokio::time`. On
-//! `wasm32-unknown-unknown` they come from `wasmtimer`, because both
-//! `std::time::Instant::now()` and tokio's time driver are unsupported there.
 
-#[cfg(not(target_arch = "wasm32"))]
-pub use std::time::Instant;
-#[cfg(target_arch = "wasm32")]
-pub use wasmtimer::std::Instant;
+pub use vox_rt::time::Instant;
 
-/// Tokio time primitives that work on wasm.
+/// Runtime time primitives.
 ///
-/// Mirrors the subset of `tokio::time` we actually use.
+/// This module keeps the historical path used by Vox internals while delegating
+/// to `vox-rt`, whose wasm implementation does not depend on Tokio.
 pub mod tokio {
-    #[cfg(not(target_arch = "wasm32"))]
-    pub use ::tokio::time::{Instant, MissedTickBehavior, interval, sleep, timeout};
-    #[cfg(target_arch = "wasm32")]
-    pub use wasmtimer::std::Instant;
-    #[cfg(target_arch = "wasm32")]
-    pub use wasmtimer::tokio::{MissedTickBehavior, interval, sleep, timeout};
+    pub use vox_rt::time::{Instant, MissedTickBehavior, interval, sleep, timeout};
 }

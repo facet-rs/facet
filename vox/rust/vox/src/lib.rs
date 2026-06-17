@@ -95,7 +95,9 @@
 //! - [`ConnectionHandle`] — open/close service lanes
 //! - [`proxy_lanes()`] — bridge two service lane handles
 
+#[cfg(feature = "runtime")]
 mod highlevel;
+#[cfg(feature = "runtime")]
 pub use highlevel::*;
 
 mod client_logging;
@@ -320,13 +322,13 @@ pub use vox_core::{DynConduitRx, DynConduitTx};
 /// - `transport-websocket`
 pub mod transport {
     /// TCP byte-stream transport (`vox-stream`).
-    #[cfg(feature = "transport-tcp")]
+    #[cfg(all(feature = "transport-tcp", not(target_arch = "wasm32")))]
     pub mod tcp {
         pub use vox_stream::{StreamLink, TcpLinkSource, tcp_link_source};
     }
 
     /// Local IPC transport (`vox-stream`): Unix sockets / Windows named pipes.
-    #[cfg(feature = "transport-local")]
+    #[cfg(all(feature = "transport-local", not(target_arch = "wasm32")))]
     pub mod local {
         pub use vox_stream::{
             LocalLink, LocalLinkAcceptor, LocalLinkSource, LocalListener, LocalServerStream,

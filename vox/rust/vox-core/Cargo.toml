@@ -27,13 +27,15 @@ facet.workspace = true
 facet-core.workspace = true
 facet-reflect.workspace = true
 vox-phon.workspace = true
-tokio.workspace = true
 vox-rt.workspace = true
 tracing.workspace = true
 smallvec.workspace = true
 getrandom.workspace = true
 zerocopy.workspace = true
 futures-util.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures.workspace = true

@@ -10,8 +10,7 @@ use vox_types::time::Instant;
 
 use futures_util::future::{AbortHandle, Abortable, FutureExt as FuturesFutureExt};
 use futures_util::stream::{FuturesUnordered, StreamExt as _};
-use tokio::sync::watch;
-use vox_rt::sync::{Semaphore, SyncMutex};
+use vox_rt::sync::{Semaphore, SyncMutex, watch};
 
 use vox_rt::task::FutureExt as _;
 use vox_types::{
@@ -2060,44 +2059,64 @@ impl DriverCaller {
         );
 
         let mut closed_rx = self.closed_rx.clone();
-        let mut response = std::pin::pin!(rx.named("awaiting_response"));
+        let response = rx.named("awaiting_response").fuse();
+        futures_util::pin_mut!(response);
 
         let pending: PendingResponse = loop {
-            tokio::select! {
-                result = &mut response => {
-                    match result {
-                        Ok(Ok(pending)) => {
-                            tracing::debug!(
-                                conn_id = ?self.sender.lane_id(),
-                                ?req_id,
-                                method_id = ?call.method_id,
-                                service = service_name,
-                                method = method_name,
-                                "vox caller received response"
-                            );
-                            break pending;
-                        }
-                        Ok(Err(error)) => {
-                            let outcome = match &error {
-                                VoxError::Cancelled => RpcOutcome::Cancelled,
-                                VoxError::TimedOut => RpcOutcome::TimedOut,
-                                VoxError::ConnectionClosed | VoxError::ConnectionShutdown => RpcOutcome::Closed,
-                                VoxError::SendFailed => RpcOutcome::SendFailed,
-                                VoxError::Indeterminate => RpcOutcome::Indeterminate,
-                                VoxError::User(_) | VoxError::UnknownMethod | VoxError::InvalidPayload(_) => {
-                                    RpcOutcome::Error
-                                }
-                            };
-                            finish_request(outcome);
-                            return Err(error);
-                        }
-                        Err(_) => {
-                            finish_request(RpcOutcome::Closed);
-                            return Err(VoxError::ConnectionClosed);
-                        }
-                    }
+            enum AwaitResponseEvent {
+                Response(
+                    Result<
+                        Result<PendingResponse, VoxError>,
+                        vox_rt::sync::oneshot::error::RecvError,
+                    >,
+                ),
+                Closed(Result<(), vox_rt::sync::watch::RecvError>),
+            }
+
+            let event = {
+                let closed = closed_rx.changed().fuse();
+                futures_util::pin_mut!(closed);
+                futures_util::select_biased! {
+                    result = response => AwaitResponseEvent::Response(result),
+                    changed = closed => AwaitResponseEvent::Closed(changed),
                 }
-                changed = closed_rx.changed() => {
+            };
+
+            match event {
+                AwaitResponseEvent::Response(result) => match result {
+                    Ok(Ok(pending)) => {
+                        tracing::debug!(
+                            conn_id = ?self.sender.lane_id(),
+                            ?req_id,
+                            method_id = ?call.method_id,
+                            service = service_name,
+                            method = method_name,
+                            "vox caller received response"
+                        );
+                        break pending;
+                    }
+                    Ok(Err(error)) => {
+                        let outcome = match &error {
+                            VoxError::Cancelled => RpcOutcome::Cancelled,
+                            VoxError::TimedOut => RpcOutcome::TimedOut,
+                            VoxError::ConnectionClosed | VoxError::ConnectionShutdown => {
+                                RpcOutcome::Closed
+                            }
+                            VoxError::SendFailed => RpcOutcome::SendFailed,
+                            VoxError::Indeterminate => RpcOutcome::Indeterminate,
+                            VoxError::User(_)
+                            | VoxError::UnknownMethod
+                            | VoxError::InvalidPayload(_) => RpcOutcome::Error,
+                        };
+                        finish_request(outcome);
+                        return Err(error);
+                    }
+                    Err(_) => {
+                        finish_request(RpcOutcome::Closed);
+                        return Err(VoxError::ConnectionClosed);
+                    }
+                },
+                AwaitResponseEvent::Closed(changed) => {
                     vox_types::dlog!("[CALLER] closed_rx fired, value={:?}", *closed_rx.borrow());
                     if changed.is_err() || closed_rx.borrow().is_some() {
                         self.shared.pending_responses.lock().remove(&req_id);
@@ -2472,34 +2491,69 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
         loop {
             tracing::trace!("driver select loop top");
             let idle_sleep_duration = self.shared.next_request_idle_sleep_duration();
-            let has_idle_sleep = idle_sleep_duration.is_some();
-            tokio::select! {
-                biased;
-                Some(ctrl) = self.local_control_rx.recv() => {
-                    self.handle_local_control(ctrl).await;
-                }
-                _ = async {
+            let has_handlers = !self.handler_futs.is_empty();
+
+            enum DriverRunEvent {
+                LocalControl(Option<DriverLocalControl>),
+                IdleExpired,
+                Failure(Option<(RequestId, FailureDisposition)>),
+                Recv(Option<crate::connection::RecvMessage>),
+                Handler(Option<Result<HandlerCompletion, futures_util::future::Aborted>>),
+            }
+
+            let event = {
+                let local_control = self.local_control_rx.recv().fuse();
+                let idle = async {
                     if let Some(duration) = idle_sleep_duration {
                         vox_types::time::tokio::sleep(duration).await;
+                    } else {
+                        futures_util::future::pending::<()>().await;
                     }
-                }, if has_idle_sleep => {
+                }
+                .fuse();
+                let failures = self.failures_rx.recv().fuse();
+                let recv = self.rx.recv().fuse();
+                let handler = async {
+                    if has_handlers {
+                        self.handler_futs.next().await
+                    } else {
+                        futures_util::future::pending().await
+                    }
+                }
+                .fuse();
+                futures_util::pin_mut!(local_control, idle, failures, recv, handler);
+                futures_util::select_biased! {
+                    ctrl = local_control => DriverRunEvent::LocalControl(ctrl),
+                    () = idle => DriverRunEvent::IdleExpired,
+                    failure = failures => DriverRunEvent::Failure(failure),
+                    recv = recv => DriverRunEvent::Recv(recv),
+                    item = handler => DriverRunEvent::Handler(item),
+                }
+            };
+
+            match event {
+                DriverRunEvent::LocalControl(Some(ctrl)) => {
+                    self.handle_local_control(ctrl).await;
+                }
+                DriverRunEvent::IdleExpired => {
                     self.expire_idle_requests().await;
                 }
-                Some((req_id, disposition)) = self.failures_rx.recv() => {
+                DriverRunEvent::Failure(Some((req_id, disposition))) => {
                     tracing::trace!(%req_id, ?disposition, "failures_rx fired");
                     if self.suppressed_failures.remove(&req_id) {
                         tracing::trace!(%req_id, "suppressing post-timeout reply-sink failure");
                         continue;
                     }
                     let in_flight_found = self.in_flight_handlers.contains_key(&req_id);
-                    let in_flight_method_id =
-                        self.in_flight_handlers.get(&req_id).map(|in_flight| in_flight.method_id);
+                    let in_flight_method_id = self
+                        .in_flight_handlers
+                        .get(&req_id)
+                        .map(|in_flight| in_flight.method_id);
                     let reply_disposition = self
                         .in_flight_handlers
                         .get(&req_id)
                         .map(|in_flight| {
-                            let has_channels =
-                                self.handler.args_have_channels(in_flight.method_id);
+                            let has_channels = self.handler.args_have_channels(in_flight.method_id);
                             if has_channels {
                                 Some(FailureDisposition::Indeterminate)
                             } else {
@@ -2514,11 +2568,8 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                         FailureDisposition::Cancelled => RequestTerminationReason::Cancelled,
                         FailureDisposition::Indeterminate => RequestTerminationReason::Failed,
                     };
-                    self.shared.finish_request(
-                        req_id,
-                        RequestDebugState::Failed,
-                        termination,
-                    );
+                    self.shared
+                        .finish_request(req_id, RequestDebugState::Failed, termination);
                     tracing::trace!(%req_id, in_flight = self.in_flight_handlers.len(), "handler removed on failure");
                     let pending = self.shared.pending_responses.lock().remove(&req_id);
                     let had_pending = pending.is_some();
@@ -2550,23 +2601,16 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                     }
                     tracing::trace!(%req_id, "failures_rx: error response sent");
                 }
-                recv = self.rx.recv() => {
-                    match recv {
-                        Some(recv) => {
-                            self.handle_recv(recv).await;
-                        }
-                        None => {
-                            tracing::trace!("driver rx closed, exiting loop");
-                            break;
-                        }
+                DriverRunEvent::Recv(recv) => match recv {
+                    Some(recv) => {
+                        self.handle_recv(recv).await;
                     }
-                }
-                // The handler-future arm only fires when at least one
-                // handler is in flight. The guard is essential:
-                // `FuturesUnordered::next` on an empty stream returns
-                // `Poll::Ready(None)` immediately, which would spin the
-                // select loop.
-                Some(item) = self.handler_futs.next(), if !self.handler_futs.is_empty() => {
+                    None => {
+                        tracing::trace!("driver rx closed, exiting loop");
+                        break;
+                    }
+                },
+                DriverRunEvent::Handler(Some(item)) => {
                     match item {
                         Ok(HandlerCompletion::Finished(req_id)) => {
                             let removed = self.in_flight_handlers.remove(&req_id).is_some();
@@ -2582,7 +2626,10 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                                 "handler completion processed",
                             );
                         }
-                        Ok(HandlerCompletion::Panicked { request_id, method_id }) => {
+                        Ok(HandlerCompletion::Panicked {
+                            request_id,
+                            method_id,
+                        }) => {
                             tracing::error!(
                                 req_id = ?request_id,
                                 ?method_id,
@@ -2595,6 +2642,9 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                         }
                     }
                 }
+                DriverRunEvent::LocalControl(None)
+                | DriverRunEvent::Failure(None)
+                | DriverRunEvent::Handler(None) => {}
             }
         }
 

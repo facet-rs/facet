@@ -7,9 +7,9 @@ use std::{
 };
 
 use facet_core::Shape;
-use tokio::sync::{mpsc as tokio_mpsc, oneshot as tokio_oneshot, watch};
+use futures_util::FutureExt as _;
 use tracing::{trace, warn};
-use vox_rt::sync::mpsc;
+use vox_rt::sync::{Notify, mpsc, oneshot, watch};
 use vox_types::{
     BoxFut, ChannelMessage, ConduitRx, ConduitTx, ConnectionRole, ConnectionSettings, Decline,
     EstablishmentContext, EstablishmentDetails, EstablishmentEvent, EstablishmentOutcome,
@@ -1233,23 +1233,41 @@ pub async fn proxy_lanes(left: LaneHandle, right: LaneHandle) -> Result<(), Conn
     } = right;
 
     loop {
-        tokio::select! {
-            recv = left_rx.recv() => {
-                let Some(recv) = recv else {
-                    break;
-                };
-                if right_sender.send_owned(recv.schemas, recv.msg).await.is_err() {
+        enum ProxyEvent {
+            Left(Option<RecvMessage>),
+            Right(Option<RecvMessage>),
+        }
+
+        let event = {
+            let left = left_rx.recv().fuse();
+            let right = right_rx.recv().fuse();
+            futures_util::pin_mut!(left, right);
+            futures_util::select_biased! {
+                recv = left => ProxyEvent::Left(recv),
+                recv = right => ProxyEvent::Right(recv),
+            }
+        };
+
+        match event {
+            ProxyEvent::Left(Some(recv)) => {
+                if right_sender
+                    .send_owned(recv.schemas, recv.msg)
+                    .await
+                    .is_err()
+                {
                     break;
                 }
             }
-            recv = right_rx.recv() => {
-                let Some(recv) = recv else {
-                    break;
-                };
-                if left_sender.send_owned(recv.schemas, recv.msg).await.is_err() {
+            ProxyEvent::Right(Some(recv)) => {
+                if left_sender
+                    .send_owned(recv.schemas, recv.msg)
+                    .await
+                    .is_err()
+                {
                     break;
                 }
             }
+            ProxyEvent::Left(None) | ProxyEvent::Right(None) => break,
         }
     }
 
@@ -1390,7 +1408,7 @@ impl Connection {
         Tx: ConduitTx<Msg = MessageFamily> + MaybeSend + MaybeSync + 'static,
         Rx: ConduitRx<Msg = MessageFamily> + MaybeSend + 'static,
     {
-        let (outbound_tx, outbound_rx) = tokio_mpsc::channel(256);
+        let (outbound_tx, outbound_rx) = mpsc::channel("connection.outbound", 256);
         let connection_core = Arc::new(ConnectionCore {
             inner: std::sync::Mutex::new(ConnectionCoreInner {
                 tx: Arc::new(tx) as Arc<dyn DynConduitTx>,
@@ -1517,10 +1535,39 @@ impl Connection {
         });
 
         loop {
-            tokio::select! {
-                biased;
+            enum RunEvent {
+                Message(std::io::Result<Option<SelfRef<Message<'static>>>>),
+                Open(Option<OpenRequest>),
+                Close(Option<CloseRequest>),
+                Control(Option<DropControlRequest>),
+                Keepalive,
+            }
 
-                msg = self.rx.recv_msg() => {
+            let event = {
+                let msg = self.rx.recv_msg().fuse();
+                let open = self.open_rx.recv().fuse();
+                let close = self.close_rx.recv().fuse();
+                let control = self.control_rx.recv().fuse();
+                let keepalive = async {
+                    if let Some(interval) = keepalive_tick.as_mut() {
+                        interval.tick().await;
+                    } else {
+                        futures_util::future::pending::<()>().await;
+                    }
+                }
+                .fuse();
+                futures_util::pin_mut!(msg, open, close, control, keepalive);
+                futures_util::select_biased! {
+                    msg = msg => RunEvent::Message(msg),
+                    req = open => RunEvent::Open(req),
+                    req = close => RunEvent::Close(req),
+                    req = control => RunEvent::Control(req),
+                    () = keepalive => RunEvent::Keepalive,
+                }
+            };
+
+            match event {
+                RunEvent::Message(msg) => {
                     vox_types::dlog!("[connection {:?}] recv_msg returned", self.role);
                     match msg {
                         Ok(Some(msg)) => {
@@ -1530,7 +1577,10 @@ impl Connection {
                             self.handle_message(msg, fds, &mut keepalive_runtime).await;
                         }
                         Ok(None) => {
-                            vox_types::dlog!("[connection {:?}] recv loop: conduit returned EOF", self.role);
+                            vox_types::dlog!(
+                                "[connection {:?}] recv loop: conduit returned EOF",
+                                self.role
+                            );
                             self.close_all_connections(ConnectionCloseReason::Remote);
                             break;
                         }
@@ -1543,34 +1593,35 @@ impl Connection {
                                 ?close_reason,
                                 "connection receive failed; closing connections if recovery is unavailable"
                             );
-                            vox_types::dlog!("[connection {:?}] recv loop: conduit recv error: {}", self.role, error);
+                            vox_types::dlog!(
+                                "[connection {:?}] recv loop: conduit recv error: {}",
+                                self.role,
+                                error
+                            );
                             self.close_all_connections(close_reason);
                             break;
                         }
                     }
                 }
-                Some(req) = self.open_rx.recv() => {
+                RunEvent::Open(Some(req)) => {
                     self.handle_open_request(req).await;
                 }
-                Some(req) = self.close_rx.recv() => {
+                RunEvent::Close(Some(req)) => {
                     self.handle_close_request(req).await;
                 }
-                Some(req) = self.control_rx.recv() => {
+                RunEvent::Control(Some(req)) => {
                     if !self.handle_drop_control_request(req).await {
                         self.close_all_connections(ConnectionCloseReason::Local);
                         break;
                     }
                 }
-                _ = async {
-                    if let Some(interval) = keepalive_tick.as_mut() {
-                        interval.tick().await;
-                    }
-                }, if keepalive_tick.is_some() => {
+                RunEvent::Keepalive => {
                     if !self.handle_keepalive_tick(&mut keepalive_runtime).await {
                         self.close_all_connections(ConnectionCloseReason::Protocol);
                         break;
                     }
                 }
+                RunEvent::Open(None) | RunEvent::Close(None) | RunEvent::Control(None) => {}
             }
         }
 
@@ -2513,12 +2564,12 @@ impl Connection {
 /// (`r[impl rpc.channel.item]`).
 struct ChannelGate {
     opened: std::sync::atomic::AtomicBool,
-    notify: tokio::sync::Notify,
+    notify: Notify,
 }
 
 pub(crate) struct ConnectionCore {
     inner: std::sync::Mutex<ConnectionCoreInner>,
-    outbound_tx: tokio_mpsc::Sender<OutboundBatch>,
+    outbound_tx: mpsc::Sender<OutboundBatch>,
     observer: Option<VoxObserverHandle>,
     /// Open gates for channels the local side opened but whose declaring Call has not
     /// yet been enqueued. Keyed by channel id; entries removed when opened.
@@ -2556,12 +2607,12 @@ struct OutboundBatch {
     tx: Arc<dyn DynConduitTx>,
     schema_sends: Vec<PendingSchemaSend>,
     payload_send: OutboundSend,
-    result_tx: tokio_oneshot::Sender<std::io::Result<()>>,
+    result_tx: oneshot::Sender<std::io::Result<()>>,
 }
 
 type PreparedOutboundBatch = (
     OutboundBatch,
-    tokio_oneshot::Receiver<std::io::Result<()>>,
+    oneshot::Receiver<std::io::Result<()>>,
     Vec<vox_types::ChannelId>,
 );
 
@@ -2569,7 +2620,7 @@ struct PrepareOutboundError {
     gated_channels: Vec<vox_types::ChannelId>,
 }
 
-async fn run_outbound_worker(mut rx: tokio_mpsc::Receiver<OutboundBatch>) {
+async fn run_outbound_worker(mut rx: mpsc::Receiver<OutboundBatch>) {
     while let Some(batch) = rx.recv().await {
         trace!(
             conn_id = %batch.conn_id,
@@ -2658,7 +2709,7 @@ async fn run_outbound_worker(mut rx: tokio_mpsc::Receiver<OutboundBatch>) {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn spawn_outbound_worker(rx: tokio_mpsc::Receiver<OutboundBatch>) {
+fn spawn_outbound_worker(rx: mpsc::Receiver<OutboundBatch>) {
     if tokio::runtime::Handle::try_current().is_ok() {
         tokio::spawn(run_outbound_worker(rx));
         return;
@@ -2674,7 +2725,7 @@ fn spawn_outbound_worker(rx: tokio_mpsc::Receiver<OutboundBatch>) {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn spawn_outbound_worker(rx: tokio_mpsc::Receiver<OutboundBatch>) {
+fn spawn_outbound_worker(rx: mpsc::Receiver<OutboundBatch>) {
     wasm_bindgen_futures::spawn_local(run_outbound_worker(rx));
 }
 
@@ -2757,7 +2808,7 @@ impl ConnectionCore {
             .or_insert_with(|| {
                 Arc::new(ChannelGate {
                     opened: std::sync::atomic::AtomicBool::new(false),
-                    notify: tokio::sync::Notify::new(),
+                    notify: Notify::new("connection.channel_gate"),
                 })
             });
     }
@@ -2985,7 +3036,7 @@ impl ConnectionCore {
             "connection prepared outbound payload"
         );
 
-        let (result_tx, result_rx) = tokio_oneshot::channel();
+        let (result_tx, result_rx) = oneshot::channel("connection.outbound.result");
         Ok((
             OutboundBatch {
                 conn_id,
@@ -3107,13 +3158,13 @@ impl ConnectionCore {
             }
         };
         let result = self.outbound_tx.try_send(batch).map_err(|err| match err {
-            tokio_mpsc::error::TrySendError::Full(_) => {
+            mpsc::error::TrySendError::Full(_) => {
                 if let Some(observer) = &self.observer {
                     observer.driver_event(vox_types::DriverEvent::OutboundQueueFull { lane_id });
                 }
                 TrySendError::Full(())
             }
-            tokio_mpsc::error::TrySendError::Closed(_) => {
+            mpsc::error::TrySendError::Closed(_) => {
                 if let Some(observer) = &self.observer {
                     observer.driver_event(vox_types::DriverEvent::OutboundQueueClosed { lane_id });
                 }

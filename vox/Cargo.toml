@@ -81,7 +81,7 @@ quote = "1"
 syn = { version = "2", features = ["full"] }
 tokio = { version = "1", features = ["sync", "rt", "time", "macros", "io-util"] }
 parking_lot = "0.12"
-wasmtimer = { version = "0.4", default-features = false, features = ["tokio"] }
+wasmtimer = { version = "0.4", default-features = false }
 tokio-tungstenite = "0.29"
 tokio-rustls = "0.26"
 rustls = "0.23"

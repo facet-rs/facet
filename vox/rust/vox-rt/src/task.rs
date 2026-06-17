@@ -74,7 +74,7 @@ where
 
 #[cfg(target_arch = "wasm32")]
 pub struct JoinHandle<T> {
-    rx: tokio::sync::oneshot::Receiver<T>,
+    rx: futures_channel::oneshot::Receiver<T>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -88,7 +88,7 @@ impl<T> JoinHandle<T> {
 
 #[cfg(target_arch = "wasm32")]
 impl<T> Future for JoinHandle<T> {
-    type Output = Result<T, tokio::sync::oneshot::error::RecvError>;
+    type Output = Result<T, futures_channel::oneshot::Canceled>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = unsafe { self.get_unchecked_mut() };
@@ -109,7 +109,7 @@ where
     T: 'static,
     F: Future<Output = T> + 'static,
 {
-    let (tx, rx) = tokio::sync::oneshot::channel();
+    let (tx, rx) = futures_channel::oneshot::channel();
     wasm_bindgen_futures::spawn_local(async move {
         let result = future.await;
         let _ = tx.send(result);

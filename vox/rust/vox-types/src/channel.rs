@@ -8,9 +8,6 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use facet::{Facet, FacetOpaqueAdapter, OpaqueDeserialize, OpaqueSerialize};
 use facet_core::PtrConst;
-#[cfg(not(target_arch = "wasm32"))]
-use tokio::sync::TryAcquireError;
-#[cfg(target_arch = "wasm32")]
 use vox_rt::sync::TryAcquireError;
 use vox_rt::sync::{Notify, Semaphore};
 
