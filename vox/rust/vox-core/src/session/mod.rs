@@ -248,6 +248,9 @@ impl<'a> LaneRequest<'a> {
 /// - `handle_with(handler)` — run a Driver with this handler (common case)
 /// - `proxy_to(other_handle)` — pipe messages to/from another lane
 /// - `into_handle()` — take the raw LaneHandle for custom use
+///
+/// To reject a lane, the `LaneAcceptor` should return `Err(LaneRejection)`.
+/// Dropping an unconsumed `PendingLane` is only a local safety fallback.
 pub struct PendingLane {
     handle: Option<LaneHandle>,
 }

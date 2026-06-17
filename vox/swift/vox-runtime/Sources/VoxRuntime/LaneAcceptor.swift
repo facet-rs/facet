@@ -15,8 +15,9 @@ public struct LaneRequest: Sendable {
 /// An inbound service lane awaiting a handler decision.
 ///
 /// Call `handleWith(_:)` to accept the lane with a specific service dispatcher.
-/// If the `PendingLane` is dropped (deallocated) without calling `handleWith(_:)`,
-/// the lane is automatically rejected.
+/// Call `reject(_:)` to reject it with structured metadata. If the `PendingLane`
+/// is deallocated without either call, the runtime rejects it with
+/// `.policyRejected` as a safety fallback.
 public final class PendingLane: @unchecked Sendable {
     private let lock = NSLock()
     private var handled = false
@@ -71,14 +72,14 @@ public final class PendingLane: @unchecked Sendable {
 /// Routes incoming service lanes to appropriate service dispatchers.
 ///
 /// Implement this protocol to decide, per lane, which `ServiceDispatcher`
-/// should handle it — or to reject it by dropping the `PendingLane`.
+/// should handle it — or to reject it explicitly with `PendingLane.reject(_:)`.
 public protocol LaneAcceptor: Sendable {
     /// Called for each incoming service lane.
     ///
     /// - Parameters:
     ///   - request: Metadata about the incoming lane, including the service name.
-    ///   - lane: The pending lane. Call `handleWith(_:)` to accept, or let it
-    ///     drop to reject.
+    ///   - lane: The pending lane. Call `handleWith(_:)` to accept, or
+    ///     `reject(_:)` to reject with structured metadata.
     func accept(request: LaneRequest, lane: PendingLane)
 }
 
