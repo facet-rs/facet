@@ -3,7 +3,7 @@ use std::{
     future::Future,
     pin::Pin,
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use facet_core::Shape;
@@ -11,7 +11,8 @@ use tokio::sync::{mpsc as tokio_mpsc, oneshot as tokio_oneshot, watch};
 use tracing::{trace, warn};
 use vox_rt::sync::mpsc;
 use vox_types::{
-    BoxFut, ChannelMessage, ConduitRx, ConduitTx, ConnectionRole, ConnectionSettings, Handler,
+    BoxFut, ChannelMessage, ConduitRx, ConduitTx, ConnectionRole, ConnectionSettings,
+    EstablishmentContext, EstablishmentEvent, EstablishmentOutcome, EstablishmentPhase, Handler,
     HandshakeResult, IdAllocator, LaneAccept, LaneClose, LaneId, LaneOpen, LaneReject, MaybeSend,
     MaybeSync, Message, MessageFamily, MessagePayload, Metadata, Parity, RequestBody, RequestId,
     RequestMessage, RequestResponse, SchemaMessage, SelfRef, TrySendError, VoxDebugSnapshot,
@@ -143,6 +144,48 @@ impl LaneRejection {
 impl Default for LaneRejection {
     fn default() -> Self {
         Self::new(LaneRejectReason::PolicyRejected)
+    }
+}
+
+// r[impl rpc.observability.establishment]
+pub(crate) fn observe_establishment_started(
+    observer: Option<&VoxObserverHandle>,
+    role: ConnectionRole,
+    phase: EstablishmentPhase,
+    lane_id: Option<LaneId>,
+) -> Instant {
+    let started_at = Instant::now();
+    if let Some(observer) = observer {
+        observer.establishment_event(EstablishmentEvent::Started {
+            context: EstablishmentContext {
+                role,
+                phase,
+                lane_id,
+            },
+        });
+    }
+    started_at
+}
+
+// r[impl rpc.observability.establishment]
+pub(crate) fn observe_establishment_finished(
+    observer: Option<&VoxObserverHandle>,
+    role: ConnectionRole,
+    phase: EstablishmentPhase,
+    lane_id: Option<LaneId>,
+    outcome: EstablishmentOutcome,
+    started_at: Instant,
+) {
+    if let Some(observer) = observer {
+        observer.establishment_event(EstablishmentEvent::Finished {
+            context: EstablishmentContext {
+                role,
+                phase,
+                lane_id,
+            },
+            outcome,
+            elapsed: started_at.elapsed(),
+        });
     }
 }
 
@@ -586,6 +629,7 @@ enum ConnectionSlot {
 /// Debug-printable wrapper that omits the oneshot sender.
 struct PendingOutboundData {
     local_settings: ConnectionSettings,
+    establishment_started_at: Instant,
     result_tx: Option<vox_rt::sync::oneshot::Sender<Result<LaneHandle, ConnectionError>>>,
 }
 
@@ -1675,6 +1719,13 @@ impl Connection {
     // r[impl lane.wire.compat]
     // r[impl lane.open.result]
     async fn handle_inbound_open(&mut self, conn_id: LaneId, open: SelfRef<LaneOpen>) {
+        let establishment_started_at = observe_establishment_started(
+            self.observer.as_ref(),
+            self.role,
+            EstablishmentPhase::ServiceLaneOpen,
+            Some(conn_id),
+        );
+
         // Validate: connection ID must match peer's parity (opposite of ours).
         let peer_parity = self.parity.other();
         if !conn_id.has_parity(peer_parity) {
@@ -1687,6 +1738,14 @@ impl Connection {
                 ),
             )
             .await;
+            observe_establishment_finished(
+                self.observer.as_ref(),
+                self.role,
+                EstablishmentPhase::ServiceLaneOpen,
+                Some(conn_id),
+                EstablishmentOutcome::Error,
+                establishment_started_at,
+            );
             return;
         }
 
@@ -1701,6 +1760,14 @@ impl Connection {
                 ),
             )
             .await;
+            observe_establishment_finished(
+                self.observer.as_ref(),
+                self.role,
+                EstablishmentPhase::ServiceLaneOpen,
+                Some(conn_id),
+                EstablishmentOutcome::Error,
+                establishment_started_at,
+            );
             return;
         }
 
@@ -1716,6 +1783,14 @@ impl Connection {
                 ),
             )
             .await;
+            observe_establishment_finished(
+                self.observer.as_ref(),
+                self.role,
+                EstablishmentPhase::ServiceLaneOpen,
+                Some(conn_id),
+                EstablishmentOutcome::Rejected,
+                establishment_started_at,
+            );
             return;
         }
 
@@ -1731,6 +1806,14 @@ impl Connection {
                 ),
             )
             .await;
+            observe_establishment_finished(
+                self.observer.as_ref(),
+                self.role,
+                EstablishmentPhase::ServiceLaneOpen,
+                Some(conn_id),
+                EstablishmentOutcome::Error,
+                establishment_started_at,
+            );
             return;
         }
 
@@ -1760,6 +1843,14 @@ impl Connection {
                     LaneRejection::with_message(LaneRejectReason::UnknownService, e.to_string()),
                 )
                 .await;
+                observe_establishment_finished(
+                    self.observer.as_ref(),
+                    self.role,
+                    EstablishmentPhase::ServiceLaneOpen,
+                    Some(conn_id),
+                    EstablishmentOutcome::Rejected,
+                    establishment_started_at,
+                );
                 return;
             }
         };
@@ -1783,12 +1874,28 @@ impl Connection {
                         None,
                     )
                     .await;
+                observe_establishment_finished(
+                    self.observer.as_ref(),
+                    self.role,
+                    EstablishmentPhase::ServiceLaneOpen,
+                    Some(conn_id),
+                    EstablishmentOutcome::Ok,
+                    establishment_started_at,
+                );
             }
             Err(rejection) => {
                 // Clean up the connection slot we created.
                 trace!(%conn_id, "acceptor rejected, removing conn slot");
                 self.conns.remove(&conn_id);
                 Self::send_lane_reject(Arc::clone(&self.sess_core), conn_id, rejection).await;
+                observe_establishment_finished(
+                    self.observer.as_ref(),
+                    self.role,
+                    EstablishmentPhase::ServiceLaneOpen,
+                    Some(conn_id),
+                    EstablishmentOutcome::Rejected,
+                    establishment_started_at,
+                );
             }
         }
     }
@@ -1802,6 +1909,14 @@ impl Connection {
             Some(ConnectionSlot::PendingOutbound(mut pending))
                 if accept.connection_settings.initial_channel_credit == 0 =>
             {
+                observe_establishment_finished(
+                    self.observer.as_ref(),
+                    self.role,
+                    EstablishmentPhase::ServiceLaneOpen,
+                    Some(conn_id),
+                    EstablishmentOutcome::Error,
+                    pending.establishment_started_at,
+                );
                 if let Some(tx) = pending.result_tx.take() {
                     let _ = tx.send(Err(ConnectionError::Protocol(
                         "initial_channel_credit must be greater than zero".into(),
@@ -1815,6 +1930,14 @@ impl Connection {
                     accept.connection_settings.clone(),
                 );
 
+                observe_establishment_finished(
+                    self.observer.as_ref(),
+                    self.role,
+                    EstablishmentPhase::ServiceLaneOpen,
+                    Some(conn_id),
+                    EstablishmentOutcome::Ok,
+                    pending.establishment_started_at,
+                );
                 if let Some(tx) = pending.result_tx.take() {
                     let _ = tx.send(Ok(handle));
                 }
@@ -1837,6 +1960,14 @@ impl Connection {
         let slot = self.remove_connection(&conn_id);
         match slot {
             Some(ConnectionSlot::PendingOutbound(mut pending)) => {
+                observe_establishment_finished(
+                    self.observer.as_ref(),
+                    self.role,
+                    EstablishmentPhase::ServiceLaneOpen,
+                    Some(conn_id),
+                    EstablishmentOutcome::Rejected,
+                    pending.establishment_started_at,
+                );
                 if let Some(tx) = pending.result_tx.take() {
                     let rejection = LaneRejection::from_metadata(reject.metadata.clone());
                     let _ = tx.send(Err(ConnectionError::Rejected(rejection)));
@@ -1861,6 +1992,12 @@ impl Connection {
         }
 
         let conn_id = self.conn_ids.alloc();
+        let establishment_started_at = observe_establishment_started(
+            self.observer.as_ref(),
+            self.role,
+            EstablishmentPhase::ServiceLaneOpen,
+            Some(conn_id),
+        );
 
         // Send LaneOpen to the peer.
         let send_result = self
@@ -1879,6 +2016,14 @@ impl Connection {
             .await;
 
         if send_result.is_err() {
+            observe_establishment_finished(
+                self.observer.as_ref(),
+                self.role,
+                EstablishmentPhase::ServiceLaneOpen,
+                Some(conn_id),
+                EstablishmentOutcome::Error,
+                establishment_started_at,
+            );
             let _ = req.result_tx.send(Err(ConnectionError::Protocol(
                 "failed to send LaneOpen".into(),
             )));
@@ -1891,6 +2036,7 @@ impl Connection {
             conn_id,
             ConnectionSlot::PendingOutbound(PendingOutboundData {
                 local_settings: req.settings,
+                establishment_started_at,
                 result_tx: Some(req.result_tx),
             }),
         );
@@ -3526,6 +3672,7 @@ mod tests {
                     max_concurrent_requests: 64,
                     initial_channel_credit: 16,
                 },
+                establishment_started_at: Instant::now(),
                 result_tx: Some(result_tx),
             }),
         );
@@ -3561,6 +3708,7 @@ mod tests {
                     max_concurrent_requests: 64,
                     initial_channel_credit: 16,
                 },
+                establishment_started_at: Instant::now(),
                 result_tx: Some(result_tx),
             }),
         );
@@ -3596,6 +3744,7 @@ mod tests {
                     max_concurrent_requests: 64,
                     initial_channel_credit: 16,
                 },
+                establishment_started_at: Instant::now(),
                 result_tx: Some(result_tx),
             }),
         );
@@ -3648,6 +3797,7 @@ mod tests {
                     max_concurrent_requests: 64,
                     initial_channel_credit: 16,
                 },
+                establishment_started_at: Instant::now(),
                 result_tx: Some(open_result_tx),
             }),
         );

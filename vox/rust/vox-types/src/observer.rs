@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::{ChannelDirection, ChannelId, LaneId, MethodId, RequestId};
+use crate::{ChannelDirection, ChannelId, ConnectionRole, LaneId, MethodId, RequestId};
 
 pub type VoxObserverHandle = Arc<dyn VoxObserver>;
 
@@ -10,6 +10,7 @@ pub trait VoxObserver: Send + Sync + 'static {
     fn rpc_event(&self, _event: RpcEvent) {}
     fn channel_event(&self, _event: ChannelEvent) {}
     fn transport_event(&self, _event: TransportEvent) {}
+    fn establishment_event(&self, _event: EstablishmentEvent) {}
     fn driver_event(&self, _event: DriverEvent) {}
 }
 
@@ -28,6 +29,49 @@ pub enum RpcOutcome {
     Closed,
     SendFailed,
     Indeterminate,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EstablishmentPhase {
+    EndpointResolution,
+    LinkCreation,
+    TcpConnection,
+    UnixSocketConnection,
+    NamedPipeConnection,
+    InProcessLink,
+    TlsHandshake,
+    PlatformSecurityHandshake,
+    WebSocketUpgrade,
+    VoxTransportPrologue,
+    ConnectionHandshake,
+    SchemaDecodePlan,
+    ServiceLaneOpen,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EstablishmentOutcome {
+    Ok,
+    Error,
+    Rejected,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EstablishmentContext {
+    pub role: ConnectionRole,
+    pub phase: EstablishmentPhase,
+    pub lane_id: Option<LaneId>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EstablishmentEvent {
+    Started {
+        context: EstablishmentContext,
+    },
+    Finished {
+        context: EstablishmentContext,
+        outcome: EstablishmentOutcome,
+        elapsed: Duration,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -307,6 +351,8 @@ pub enum ObserverMetricKind {
     TransportFrameRead,
     TransportFrameWritten,
     TransportClosed,
+    EstablishmentStarted,
+    EstablishmentFinished,
 }
 
 // r[impl rpc.observability.low-cardinality]
@@ -319,6 +365,7 @@ pub struct ObserverMetricLabels {
     pub outcome: Option<&'static str>,
     pub error_kind: Option<&'static str>,
     pub channel_direction: Option<ChannelDirection>,
+    pub establishment_phase: Option<&'static str>,
 }
 
 impl ObserverMetricLabels {
@@ -331,6 +378,7 @@ impl ObserverMetricLabels {
             outcome: None,
             error_kind: None,
             channel_direction: None,
+            establishment_phase: None,
         }
     }
 
@@ -542,6 +590,32 @@ impl TransportEvent {
     }
 }
 
+impl EstablishmentEvent {
+    // r[impl rpc.observability.establishment]
+    // r[impl rpc.observability.low-cardinality]
+    pub fn metric_labels(&self) -> ObserverMetricLabels {
+        match *self {
+            Self::Started { context } => {
+                let mut labels =
+                    ObserverMetricLabels::new(ObserverMetricKind::EstablishmentStarted);
+                labels.establishment_phase = Some(establishment_phase_label(context.phase));
+                labels
+            }
+            Self::Finished {
+                context,
+                outcome,
+                elapsed: _,
+            } => {
+                let mut labels =
+                    ObserverMetricLabels::new(ObserverMetricKind::EstablishmentFinished);
+                labels.establishment_phase = Some(establishment_phase_label(context.phase));
+                labels.outcome = Some(establishment_outcome_label(outcome));
+                labels
+            }
+        }
+    }
+}
+
 const fn rpc_outcome_label(outcome: RpcOutcome) -> &'static str {
     match outcome {
         RpcOutcome::Ok => "ok",
@@ -551,6 +625,32 @@ const fn rpc_outcome_label(outcome: RpcOutcome) -> &'static str {
         RpcOutcome::Closed => "closed",
         RpcOutcome::SendFailed => "send-failed",
         RpcOutcome::Indeterminate => "indeterminate",
+    }
+}
+
+const fn establishment_phase_label(phase: EstablishmentPhase) -> &'static str {
+    match phase {
+        EstablishmentPhase::EndpointResolution => "endpoint-resolution",
+        EstablishmentPhase::LinkCreation => "link-creation",
+        EstablishmentPhase::TcpConnection => "tcp-connection",
+        EstablishmentPhase::UnixSocketConnection => "unix-socket-connection",
+        EstablishmentPhase::NamedPipeConnection => "named-pipe-connection",
+        EstablishmentPhase::InProcessLink => "in-process-link",
+        EstablishmentPhase::TlsHandshake => "tls-handshake",
+        EstablishmentPhase::PlatformSecurityHandshake => "platform-security-handshake",
+        EstablishmentPhase::WebSocketUpgrade => "websocket-upgrade",
+        EstablishmentPhase::VoxTransportPrologue => "vox-transport-prologue",
+        EstablishmentPhase::ConnectionHandshake => "connection-handshake",
+        EstablishmentPhase::SchemaDecodePlan => "schema-decode-plan",
+        EstablishmentPhase::ServiceLaneOpen => "service-lane-open",
+    }
+}
+
+const fn establishment_outcome_label(outcome: EstablishmentOutcome) -> &'static str {
+    match outcome {
+        EstablishmentOutcome::Ok => "ok",
+        EstablishmentOutcome::Error => "error",
+        EstablishmentOutcome::Rejected => "rejected",
     }
 }
 
@@ -669,6 +769,13 @@ mod tests {
                 .push("transport");
         }
 
+        fn establishment_event(&self, _event: EstablishmentEvent) {
+            self.events
+                .lock()
+                .expect("observer events mutex poisoned")
+                .push("establishment");
+        }
+
         fn driver_event(&self, _event: DriverEvent) {
             self.events
                 .lock()
@@ -726,6 +833,13 @@ mod tests {
             connection_id: Some(LaneId(1)),
             bytes: 64,
         });
+        observer.establishment_event(EstablishmentEvent::Started {
+            context: EstablishmentContext {
+                role: ConnectionRole::Initiator,
+                phase: EstablishmentPhase::ConnectionHandshake,
+                lane_id: None,
+            },
+        });
         observer.driver_event(DriverEvent::ConnectionOpened {
             connection_id: LaneId(1),
         });
@@ -735,7 +849,7 @@ mod tests {
                 .events
                 .lock()
                 .expect("observer events mutex poisoned"),
-            ["rpc", "channel", "transport", "driver"]
+            ["rpc", "channel", "transport", "establishment", "driver"]
         );
     }
 
@@ -994,5 +1108,53 @@ mod tests {
         assert_eq!(transport_labels.outcome, Some("transport"));
         assert!(!format!("{driver_labels:?}").contains("77"));
         assert!(!format!("{transport_labels:?}").contains("88"));
+    }
+
+    // r[verify rpc.observability.establishment]
+    // r[verify rpc.observability.low-cardinality]
+    #[test]
+    fn establishment_events_keep_phase_and_hide_lane_ids_in_metric_labels() {
+        let started = EstablishmentEvent::Started {
+            context: EstablishmentContext {
+                role: ConnectionRole::Initiator,
+                phase: EstablishmentPhase::VoxTransportPrologue,
+                lane_id: None,
+            },
+        };
+        let finished = EstablishmentEvent::Finished {
+            context: EstablishmentContext {
+                role: ConnectionRole::Acceptor,
+                phase: EstablishmentPhase::ServiceLaneOpen,
+                lane_id: Some(LaneId(99)),
+            },
+            outcome: EstablishmentOutcome::Rejected,
+            elapsed: Duration::from_millis(4),
+        };
+
+        let started_labels = started.metric_labels();
+        assert_eq!(
+            started_labels.kind,
+            ObserverMetricKind::EstablishmentStarted
+        );
+        assert_eq!(
+            started_labels.establishment_phase,
+            Some("vox-transport-prologue")
+        );
+
+        let finished_labels = finished.metric_labels();
+        assert_eq!(
+            finished_labels.kind,
+            ObserverMetricKind::EstablishmentFinished
+        );
+        assert_eq!(
+            finished_labels.establishment_phase,
+            Some("service-lane-open")
+        );
+        assert_eq!(finished_labels.outcome, Some("rejected"));
+        assert!(
+            format!("{finished:?}").contains("LaneId(99)"),
+            "establishment events should retain local IDs for logs/debug"
+        );
+        assert!(!format!("{finished_labels:?}").contains("99"));
     }
 }

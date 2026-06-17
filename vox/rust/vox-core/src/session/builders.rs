@@ -2,7 +2,8 @@ use std::{future::Future, pin::Pin, sync::Arc};
 
 use vox_rt::sync::mpsc;
 use vox_types::{
-    Conduit, ConnectionSettings, DEFAULT_INITIAL_CHANNEL_CREDIT, HandshakeResult, Link, MaybeSend,
+    Conduit, ConnectionRole, ConnectionSettings, DEFAULT_INITIAL_CHANNEL_CREDIT,
+    EstablishmentOutcome, EstablishmentPhase, HandshakeResult, Link, LinkRx, LinkTx, MaybeSend,
     MaybeSync, MessageFamily, Metadata, Parity, SplitLink, VoxObserver, VoxObserverHandle,
     metadata_into_owned,
 };
@@ -15,7 +16,7 @@ use crate::{
 
 use super::{
     CloseRequest, Connection, ConnectionError, ConnectionHandle, ConnectionKeepaliveConfig,
-    LaneAcceptor, OpenRequest,
+    LaneAcceptor, OpenRequest, observe_establishment_finished, observe_establishment_started,
 };
 
 /// Well-known metadata key for service name routing.
@@ -91,7 +92,7 @@ where
             .await
             .map_err(session_error_from_handshake)?;
     let message_plan =
-        crate::MessagePlan::from_handshake(&handshake_result).map_err(ConnectionError::Protocol)?;
+        message_plan_from_handshake_observed(&handshake_result, None, ConnectionRole::Initiator)?;
     Ok(ConnectionInitiatorBuilder::new(
         BareConduit::with_message_plan(SplitLink { tx, rx }, message_plan),
         handshake_result,
@@ -117,7 +118,7 @@ where
             .await
             .map_err(session_error_from_handshake)?;
     let message_plan =
-        crate::MessagePlan::from_handshake(&handshake_result).map_err(ConnectionError::Protocol)?;
+        message_plan_from_handshake_observed(&handshake_result, None, ConnectionRole::Acceptor)?;
     Ok(ConnectionAcceptorBuilder::new(
         BareConduit::with_message_plan(SplitLink { tx, rx }, message_plan),
         handshake_result,
@@ -172,6 +173,194 @@ impl Default for ConnectionConfig {
             max_concurrent_requests: 64,
             initial_channel_credit: DEFAULT_INITIAL_CHANNEL_CREDIT,
         })
+    }
+}
+
+// r[impl rpc.observability.establishment]
+fn message_plan_from_handshake_observed(
+    handshake_result: &HandshakeResult,
+    observer: Option<&VoxObserverHandle>,
+    role: ConnectionRole,
+) -> Result<crate::MessagePlan, ConnectionError> {
+    let started_at =
+        observe_establishment_started(observer, role, EstablishmentPhase::SchemaDecodePlan, None);
+    match crate::MessagePlan::from_handshake(handshake_result) {
+        Ok(plan) => {
+            observe_establishment_finished(
+                observer,
+                role,
+                EstablishmentPhase::SchemaDecodePlan,
+                None,
+                EstablishmentOutcome::Ok,
+                started_at,
+            );
+            Ok(plan)
+        }
+        Err(error) => {
+            observe_establishment_finished(
+                observer,
+                role,
+                EstablishmentPhase::SchemaDecodePlan,
+                None,
+                EstablishmentOutcome::Error,
+                started_at,
+            );
+            Err(ConnectionError::Protocol(error))
+        }
+    }
+}
+
+// r[impl rpc.observability.establishment]
+async fn initiate_transport_observed<L: Link>(
+    link: L,
+    observer: Option<&VoxObserverHandle>,
+) -> Result<SplitLink<L::Tx, L::Rx>, ConnectionError> {
+    let started_at = observe_establishment_started(
+        observer,
+        ConnectionRole::Initiator,
+        EstablishmentPhase::VoxTransportPrologue,
+        None,
+    );
+    match initiate_transport(link).await {
+        Ok(link) => {
+            observe_establishment_finished(
+                observer,
+                ConnectionRole::Initiator,
+                EstablishmentPhase::VoxTransportPrologue,
+                None,
+                EstablishmentOutcome::Ok,
+                started_at,
+            );
+            Ok(link)
+        }
+        Err(error) => {
+            observe_establishment_finished(
+                observer,
+                ConnectionRole::Initiator,
+                EstablishmentPhase::VoxTransportPrologue,
+                None,
+                EstablishmentOutcome::Error,
+                started_at,
+            );
+            Err(session_error_from_transport(error))
+        }
+    }
+}
+
+// r[impl rpc.observability.establishment]
+async fn accept_transport_observed<L: Link>(
+    link: L,
+    observer: Option<&VoxObserverHandle>,
+) -> Result<SplitLink<L::Tx, L::Rx>, ConnectionError> {
+    let started_at = observe_establishment_started(
+        observer,
+        ConnectionRole::Acceptor,
+        EstablishmentPhase::VoxTransportPrologue,
+        None,
+    );
+    match accept_transport(link).await {
+        Ok(link) => {
+            observe_establishment_finished(
+                observer,
+                ConnectionRole::Acceptor,
+                EstablishmentPhase::VoxTransportPrologue,
+                None,
+                EstablishmentOutcome::Ok,
+                started_at,
+            );
+            Ok(link)
+        }
+        Err(error) => {
+            observe_establishment_finished(
+                observer,
+                ConnectionRole::Acceptor,
+                EstablishmentPhase::VoxTransportPrologue,
+                None,
+                EstablishmentOutcome::Error,
+                started_at,
+            );
+            Err(session_error_from_transport(error))
+        }
+    }
+}
+
+// r[impl rpc.observability.establishment]
+async fn handshake_as_initiator_observed<Tx: LinkTx, Rx: LinkRx>(
+    tx: &Tx,
+    rx: &mut Rx,
+    settings: ConnectionSettings,
+    metadata: Metadata,
+    observer: Option<&VoxObserverHandle>,
+) -> Result<HandshakeResult, ConnectionError> {
+    let started_at = observe_establishment_started(
+        observer,
+        ConnectionRole::Initiator,
+        EstablishmentPhase::ConnectionHandshake,
+        None,
+    );
+    match handshake_as_initiator(tx, rx, settings, metadata).await {
+        Ok(handshake_result) => {
+            observe_establishment_finished(
+                observer,
+                ConnectionRole::Initiator,
+                EstablishmentPhase::ConnectionHandshake,
+                None,
+                EstablishmentOutcome::Ok,
+                started_at,
+            );
+            Ok(handshake_result)
+        }
+        Err(error) => {
+            observe_establishment_finished(
+                observer,
+                ConnectionRole::Initiator,
+                EstablishmentPhase::ConnectionHandshake,
+                None,
+                EstablishmentOutcome::Error,
+                started_at,
+            );
+            Err(session_error_from_handshake(error))
+        }
+    }
+}
+
+// r[impl rpc.observability.establishment]
+async fn handshake_as_acceptor_observed<Tx: LinkTx, Rx: LinkRx>(
+    tx: &Tx,
+    rx: &mut Rx,
+    settings: ConnectionSettings,
+    metadata: Metadata,
+    observer: Option<&VoxObserverHandle>,
+) -> Result<HandshakeResult, ConnectionError> {
+    let started_at = observe_establishment_started(
+        observer,
+        ConnectionRole::Acceptor,
+        EstablishmentPhase::ConnectionHandshake,
+        None,
+    );
+    match handshake_as_acceptor(tx, rx, settings, metadata).await {
+        Ok(handshake_result) => {
+            observe_establishment_finished(
+                observer,
+                ConnectionRole::Acceptor,
+                EstablishmentPhase::ConnectionHandshake,
+                None,
+                EstablishmentOutcome::Ok,
+                started_at,
+            );
+            Ok(handshake_result)
+        }
+        Err(error) => {
+            observe_establishment_finished(
+                observer,
+                ConnectionRole::Acceptor,
+                EstablishmentPhase::ConnectionHandshake,
+                None,
+                EstablishmentOutcome::Error,
+                started_at,
+            );
+            Err(session_error_from_handshake(error))
+        }
     }
 }
 
@@ -422,25 +611,10 @@ impl<S> ConnectionSourceInitiatorBuilder<S> {
         {
             {
                 let attachment = source.next_link().await.map_err(ConnectionError::Io)?;
-                let mut link = initiate_transport(attachment.into_link())
-                    .await
-                    .map_err(session_error_from_transport)?;
-                let handshake_result = handshake_as_initiator(
-                    &link.tx,
-                    &mut link.rx,
-                    config.root_settings.clone(),
-                    metadata_into_owned(config.metadata.clone()),
-                )
-                .await
-                .map_err(session_error_from_handshake)?;
-                let message_plan = crate::MessagePlan::from_handshake(&handshake_result)
-                    .map_err(ConnectionError::Protocol)?;
-                let builder = ConnectionInitiatorBuilder::new(
-                    BareConduit::with_message_plan(link, message_plan),
-                    handshake_result,
-                );
-                ConnectionTransportInitiatorBuilder::<S::Link>::apply_common_parts(builder, config)
-                    .establish_connection()
+                let link =
+                    initiate_transport_observed(attachment.into_link(), config.observer.as_ref())
+                        .await?;
+                ConnectionTransportInitiatorBuilder::<S::Link>::finish_with_bare_parts(link, config)
                     .await
             }
         }
@@ -562,9 +736,7 @@ impl<L> ConnectionTransportInitiatorBuilder<L> {
         L::Rx: MaybeSend + 'static,
     {
         let Self { link, config } = self;
-        let link = initiate_transport(link)
-            .await
-            .map_err(session_error_from_transport)?;
+        let link = initiate_transport_observed(link, config.observer.as_ref()).await?;
         Self::finish_with_bare_parts(link, config).await
     }
 
@@ -578,9 +750,7 @@ impl<L> ConnectionTransportInitiatorBuilder<L> {
         L::Rx: MaybeSend + 'static,
     {
         let Self { link, config } = self;
-        let link = initiate_transport(link)
-            .await
-            .map_err(session_error_from_transport)?;
+        let link = initiate_transport_observed(link, config.observer.as_ref()).await?;
         Self::finish_with_bare_parts(link, config).await
     }
 
@@ -606,16 +776,19 @@ impl<L> ConnectionTransportInitiatorBuilder<L> {
         L::Tx: MaybeSend + MaybeSync + 'static,
         L::Rx: MaybeSend + 'static,
     {
-        let handshake_result = handshake_as_initiator(
+        let handshake_result = handshake_as_initiator_observed(
             &link.tx,
             &mut link.rx,
             config.root_settings.clone(),
             metadata_into_owned(config.metadata.clone()),
+            config.observer.as_ref(),
         )
-        .await
-        .map_err(session_error_from_handshake)?;
-        let message_plan = crate::MessagePlan::from_handshake(&handshake_result)
-            .map_err(ConnectionError::Protocol)?;
+        .await?;
+        let message_plan = message_plan_from_handshake_observed(
+            &handshake_result,
+            config.observer.as_ref(),
+            ConnectionRole::Initiator,
+        )?;
         let builder = ConnectionInitiatorBuilder::new(
             BareConduit::with_message_plan(link, message_plan),
             handshake_result,
@@ -843,19 +1016,20 @@ impl<L: Link> ConnectionTransportAcceptorBuilder<L> {
         L::Rx: MaybeSend + 'static,
     {
         let Self { link, config } = self;
-        let mut link = accept_transport(link)
-            .await
-            .map_err(session_error_from_transport)?;
-        let handshake_result = handshake_as_acceptor(
+        let mut link = accept_transport_observed(link, config.observer.as_ref()).await?;
+        let handshake_result = handshake_as_acceptor_observed(
             &link.tx,
             &mut link.rx,
             config.root_settings.clone(),
             metadata_into_owned(config.metadata.clone()),
+            config.observer.as_ref(),
         )
-        .await
-        .map_err(session_error_from_handshake)?;
-        let message_plan = crate::MessagePlan::from_handshake(&handshake_result)
-            .map_err(ConnectionError::Protocol)?;
+        .await?;
+        let message_plan = message_plan_from_handshake_observed(
+            &handshake_result,
+            config.observer.as_ref(),
+            ConnectionRole::Acceptor,
+        )?;
         let builder = ConnectionAcceptorBuilder::new(
             BareConduit::with_message_plan(link, message_plan),
             handshake_result,
@@ -932,12 +1106,155 @@ fn session_error_from_transport(error: crate::TransportPrologueError) -> Connect
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use vox_types::{EstablishmentContext, EstablishmentEvent, LaneId};
+
     use super::*;
+
+    #[derive(Default)]
+    struct RecordingEstablishmentObserver {
+        events: Arc<Mutex<Vec<EstablishmentEvent>>>,
+    }
+
+    impl VoxObserver for RecordingEstablishmentObserver {
+        fn establishment_event(&self, event: EstablishmentEvent) {
+            self.events
+                .lock()
+                .expect("establishment events mutex poisoned")
+                .push(event);
+        }
+    }
 
     // r[verify rpc.flow-control.max-concurrent-requests.default]
     #[test]
     fn session_config_default_advertises_request_limit() {
         let config = ConnectionConfig::default();
         assert_eq!(config.root_settings.max_concurrent_requests, 64);
+    }
+
+    // r[verify rpc.observability.establishment]
+    #[tokio::test]
+    async fn memory_transport_reports_vox_establishment_phases_only() {
+        let (client_link, server_link) = crate::memory_link_pair(16);
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let observer: VoxObserverHandle = Arc::new(RecordingEstablishmentObserver {
+            events: Arc::clone(&events),
+        });
+
+        let server_observer = Arc::clone(&observer);
+        let server = tokio::spawn(async move {
+            acceptor_on(server_link)
+                .observer_handle(server_observer)
+                .on_connection(crate::lane_acceptor_fn(
+                    |request: &crate::LaneRequest, lane: crate::PendingLane| {
+                        if request.service() == "Noop" {
+                            lane.handle_with(());
+                            Ok(())
+                        } else {
+                            Err(crate::LaneRejection::new(
+                                crate::LaneRejectReason::UnknownService,
+                            ))
+                        }
+                    },
+                ))
+                .establish_connection()
+                .await
+                .expect("server establish")
+        });
+
+        let client = initiator_on(client_link)
+            .observer_handle(Arc::clone(&observer))
+            .establish_connection()
+            .await
+            .expect("client establish");
+        let server = server.await.expect("server task");
+
+        let accepted = client
+            .open_lane_handle(
+                ConnectionSettings {
+                    parity: Parity::Odd,
+                    max_concurrent_requests: 64,
+                    initial_channel_credit: DEFAULT_INITIAL_CHANNEL_CREDIT,
+                },
+                vox_types::metadata().str("vox-service", "Noop").build(),
+            )
+            .await
+            .expect("accepted service lane");
+        client
+            .close_lane(accepted.connection_id(), Metadata::default())
+            .await
+            .expect("close accepted service lane");
+
+        let rejected = client
+            .open_lane_handle(
+                ConnectionSettings {
+                    parity: Parity::Odd,
+                    max_concurrent_requests: 64,
+                    initial_channel_credit: DEFAULT_INITIAL_CHANNEL_CREDIT,
+                },
+                vox_types::metadata().str("vox-service", "Missing").build(),
+            )
+            .await;
+        assert!(
+            matches!(rejected, Err(ConnectionError::Rejected(_))),
+            "expected rejected service lane, got: {rejected:?}"
+        );
+
+        let _ = client.shutdown();
+        let _ = server.shutdown();
+
+        let events = events
+            .lock()
+            .expect("establishment events mutex poisoned")
+            .clone();
+        let contexts: Vec<EstablishmentContext> = events
+            .iter()
+            .map(|event| match *event {
+                EstablishmentEvent::Started { context }
+                | EstablishmentEvent::Finished { context, .. } => context,
+            })
+            .collect();
+
+        for phase in [
+            EstablishmentPhase::VoxTransportPrologue,
+            EstablishmentPhase::ConnectionHandshake,
+            EstablishmentPhase::SchemaDecodePlan,
+            EstablishmentPhase::ServiceLaneOpen,
+        ] {
+            assert!(
+                contexts.iter().any(|context| context.phase == phase),
+                "missing establishment phase {phase:?}; events: {events:?}"
+            );
+        }
+
+        for absent_phase in [
+            EstablishmentPhase::TcpConnection,
+            EstablishmentPhase::TlsHandshake,
+            EstablishmentPhase::WebSocketUpgrade,
+        ] {
+            assert!(
+                contexts.iter().all(|context| context.phase != absent_phase),
+                "memory transport must not invent {absent_phase:?}; events: {events:?}"
+            );
+        }
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            EstablishmentEvent::Finished {
+                context,
+                outcome: EstablishmentOutcome::Ok,
+                ..
+            } if context.phase == EstablishmentPhase::ServiceLaneOpen
+                && context.lane_id == Some(LaneId(1))
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            EstablishmentEvent::Finished {
+                context,
+                outcome: EstablishmentOutcome::Rejected,
+                ..
+            } if context.phase == EstablishmentPhase::ServiceLaneOpen
+        )));
     }
 }
