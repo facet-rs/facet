@@ -177,13 +177,20 @@ export type LaneAcceptor =
 // r[impl lane.accept.api]
 // r[impl lane.authorization.context]
 export class PendingLane {
+  readonly id: bigint;
   private handled = false;
+  private readonly acceptFn: (grant: LaneGrant) => Promise<Lane>;
+  private readonly rejectFn: (rejection: LaneRejection) => Promise<void>;
 
   constructor(
-    readonly id: bigint,
-    private readonly acceptFn: (grant: LaneGrant) => Promise<Lane>,
-    private readonly rejectFn: (rejection: LaneRejection) => Promise<void>,
-  ) {}
+    id: bigint,
+    acceptFn: (grant: LaneGrant) => Promise<Lane>,
+    rejectFn: (rejection: LaneRejection) => Promise<void>,
+  ) {
+    this.id = id;
+    this.acceptFn = acceptFn;
+    this.rejectFn = rejectFn;
+  }
 
   isHandled(): boolean {
     return this.handled;
