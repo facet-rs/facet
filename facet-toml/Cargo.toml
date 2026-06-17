@@ -33,7 +33,7 @@ http-body-util = { version = "0.1", default-features = false, optional = true }
 
 [dev-dependencies]
 divan = { workspace = true }
-facet = { workspace = true, features = ["std", "doc", "net", "iddqd"] }
+facet = { path = "../facet", features = ["std", "doc", "net", "iddqd"] }
 facet-format = { path = "../facet-format", features = ["net", "tracing"] }
 facet-format-suite = { path = "../facet-format-suite", features = [
   "third-party",
@@ -41,8 +41,8 @@ facet-format-suite = { path = "../facet-format-suite", features = [
 ] }
 facet-json-classics = { path = "../facet-json-classics" }
 facet-value = { path = "../facet-value" }
-facet-testhelpers = { workspace = true }
-facet-reflect = { workspace = true, features = ["tracing"] }
+facet-testhelpers = { path = "../facet-testhelpers" }
+facet-reflect = { path = "../facet-reflect", features = ["tracing"] }
 libtest-mimic = "0.8.1"
 indoc = { workspace = true }
 serde = { workspace = true }

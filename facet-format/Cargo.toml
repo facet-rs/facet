@@ -25,8 +25,6 @@ facet-path = { workspace = true }
 facet-reflect = { workspace = true }
 facet-solver = { workspace = true }
 
-parking_lot = { version = "0.12", optional = true }
-
 # Pretty error rendering (optional)
 ariadne = { version = "0.6", optional = true }
 

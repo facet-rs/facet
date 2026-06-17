@@ -309,11 +309,7 @@ impl<'de> TomlParser<'de> {
     fn parse_dotted_key(&mut self) -> Vec<Cow<'de, str>> {
         let mut parts = Vec::new();
 
-        loop {
-            let Some(event) = self.peek_raw() else {
-                break;
-            };
-
+        while let Some(event) = self.peek_raw() {
             match event.kind() {
                 EventKind::SimpleKey => {
                     let key = self.decode_key(event);

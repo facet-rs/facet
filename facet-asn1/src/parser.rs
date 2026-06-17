@@ -350,10 +350,8 @@ impl<'de> Asn1Parser<'de> {
     /// Produce the next parse event.
     fn produce_event(&mut self) -> Result<Option<ParseEvent<'de>>, ParseError> {
         // Check if we need to emit container end events
-        if let Some(state) = self.stack.last()
-            && self.pos >= state.end
-        {
-            let state = self.stack.pop().unwrap();
+        let pos = self.pos;
+        if let Some(state) = self.stack.pop_if(|state| pos >= state.end) {
             self.field_indices.pop();
             if state.is_sequence {
                 return Ok(Some(self.event(ParseEventKind::StructEnd)));

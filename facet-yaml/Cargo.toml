@@ -33,8 +33,8 @@ http-body-util = { version = "0.1", default-features = false, optional = true }
 [dev-dependencies]
 datatest-stable = "0.3"
 divan = { workspace = true }
-facet = { workspace = true, features = ["std", "doc", "net", "iddqd"] }
-facet-default = { workspace = true }
+facet = { path = "../facet", features = ["std", "doc", "net", "iddqd"] }
+facet-default = { path = "../facet-default" }
 facet-format = { path = "../facet-format", features = ["net"] }
 facet-format-suite = { path = "../facet-format-suite", features = [
   "third-party",
