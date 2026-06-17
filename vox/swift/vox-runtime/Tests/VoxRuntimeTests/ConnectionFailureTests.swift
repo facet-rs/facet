@@ -279,6 +279,7 @@ private struct ScriptedConnector: ConnectionConnector {
 private final class RecordingRuntimeObserver: VoxRuntimeObserver, @unchecked Sendable {
     private let lock = NSLock()
     private var events: [VoxDriverObserverEvent] = []
+    private var establishmentEvents: [VoxEstablishmentObserverEvent] = []
 
     func driverEvent(_ event: VoxDriverObserverEvent) {
         lock.lock()
@@ -286,10 +287,37 @@ private final class RecordingRuntimeObserver: VoxRuntimeObserver, @unchecked Sen
         lock.unlock()
     }
 
+    func establishmentEvent(_ event: VoxEstablishmentObserverEvent) {
+        lock.lock()
+        establishmentEvents.append(event)
+        lock.unlock()
+    }
+
     func snapshot() -> [VoxDriverObserverEvent] {
         lock.lock()
         defer { lock.unlock() }
         return events
+    }
+
+    func establishmentSnapshot() -> [VoxEstablishmentObserverEvent] {
+        lock.lock()
+        defer { lock.unlock() }
+        return establishmentEvents
+    }
+}
+
+private func establishmentLabels(_ events: [VoxEstablishmentObserverEvent]) -> [String] {
+    events.map { event in
+        switch event {
+        case .started(let context):
+            return
+                "started:\(context.role.rawValue):\(context.phase.rawValue):"
+                + "\(context.laneId.map(String.init) ?? "-"):-"
+        case .finished(let context, let outcome, _, _):
+            return
+                "finished:\(context.role.rawValue):\(context.phase.rawValue):"
+                + "\(context.laneId.map(String.init) ?? "-"):\(outcome.rawValue)"
+        }
     }
 }
 
@@ -592,6 +620,25 @@ private func awaitConnectionOpenId(
     return nil
 }
 
+private func awaitConnectionOpenId(
+    _ transport: ScriptedTransport,
+    excluding excluded: Set<UInt64>,
+    timeoutMs: UInt64 = 1_000
+) async -> UInt64? {
+    let start = ContinuousClock.now
+    let timeout = Duration.milliseconds(Int64(timeoutMs))
+    while ContinuousClock.now - start < timeout {
+        let sent = await transport.sent()
+        for message in sent {
+            if case .laneOpen = message.payload, !excluded.contains(message.connectionId) {
+                return message.connectionId
+            }
+        }
+        try? await Task.sleep(nanoseconds: 5_000_000)
+    }
+    return nil
+}
+
 private func awaitConnectionAccept(
     _ transport: ScriptedTransport,
     connectionId: UInt64,
@@ -806,32 +853,172 @@ struct ConnectionFailureTests {
     // r[verify rpc.observability.driver]
     @Test func runtimeObserverReceivesDriverLifecycleEventsWithoutTelemetryBackend() async throws {
         let observer = RecordingRuntimeObserver()
-        setVoxRuntimeObserver(observer)
-        defer {
-            setVoxRuntimeObserver(nil)
+        try await withVoxRuntimeObserverForTest(observer) {
+            let transport = ScriptedTransport()
+            let (_, driver, _, _) = try await establishInitiator(
+                conduit: transport,
+                dispatcher: EmptyServiceDispatcher()
+            )
+            #expect(voxRuntimeObserver() != nil)
+
+            let driverTask: Task<Void, Error> = Task {
+                try await driver.run()
+            }
+            try await withAsyncCleanup({
+                try? await transport.close()
+                await cancelAndDrain(driverTask)
+            }) {
+                try? await transport.close()
+                try await awaitTaskResult(driverTask)
+
+                let events = observer.snapshot()
+                #expect(events.contains(.runStarted))
+                #expect(events.contains(.readerClosed))
+                #expect(events.contains(.runExited))
+            }
         }
+    }
 
-        let transport = ScriptedTransport()
-        let (_, driver, _, _) = try await establishInitiator(
-            conduit: transport,
-            dispatcher: EmptyServiceDispatcher()
-        )
-        #expect(voxRuntimeObserver() != nil)
+    // r[verify rpc.observability.establishment]
+    @Test func establishmentObserverReceivesDirectLinkHandshakeAndSchemaPhases() async throws {
+        let observer = RecordingRuntimeObserver()
+        try await withVoxRuntimeObserverForTest(observer) {
+            let transport = ScriptedTransport()
+            _ = try await establishInitiator(
+                conduit: transport,
+                dispatcher: EmptyServiceDispatcher()
+            )
 
-        let driverTask: Task<Void, Error> = Task {
-            try await driver.run()
+            #expect(establishmentLabels(observer.establishmentSnapshot()) == [
+                "started:initiator:connection-handshake:-:-",
+                "finished:initiator:connection-handshake:-:ok",
+                "started:initiator:schema-decode-plan:-:-",
+                "finished:initiator:schema-decode-plan:-:ok",
+            ])
         }
-        try await withAsyncCleanup({
-            try? await transport.close()
-            await cancelAndDrain(driverTask)
-        }) {
-            try? await transport.close()
-            try await awaitTaskResult(driverTask)
+    }
 
-            let events = observer.snapshot()
-            #expect(events.contains(.runStarted))
-            #expect(events.contains(.readerClosed))
-            #expect(events.contains(.runExited))
+    // r[verify rpc.observability.establishment]
+    @Test func establishmentObserverReceivesAcceptorTransportPrologue() async throws {
+        let observer = RecordingRuntimeObserver()
+        try await withVoxRuntimeObserverForTest(observer) {
+            let transport = ScriptedTransport(
+                initialHandshake: .hello(
+                    Hello(
+                        parity: .odd,
+                        connectionSettings: ConnectionSettings(
+                            parity: .odd,
+                            maxConcurrentRequests: 64,
+                            initialChannelCredit: 16
+                        ),
+                        messagePayloadSchema: Data(MessageSchemaClosure),
+                        metadata: .null
+                    ))
+            )
+            _ = try await Connection.accept(
+                freshLink: transport,
+                controlDispatcher: EmptyServiceDispatcher()
+            )
+
+            #expect(establishmentLabels(observer.establishmentSnapshot()) == [
+                "started:acceptor:transport-prologue:-:-",
+                "finished:acceptor:transport-prologue:-:ok",
+                "started:acceptor:connection-handshake:-:-",
+                "finished:acceptor:connection-handshake:-:ok",
+                "started:acceptor:schema-decode-plan:-:-",
+                "finished:acceptor:schema-decode-plan:-:ok",
+            ])
+        }
+    }
+
+    // r[verify rpc.observability.establishment]
+    @Test func establishmentObserverReceivesServiceLaneOpenOutcomes() async throws {
+        let observer = RecordingRuntimeObserver()
+        try await withVoxRuntimeObserverForTest(observer) {
+            let transport = ScriptedTransport()
+            let (_, driver, connectionHandle, _) = try await establishInitiator(
+                conduit: transport,
+                dispatcher: EmptyServiceDispatcher()
+            )
+            let driverTask: Task<Void, Error> = Task {
+                try await driver.run()
+            }
+            try await withAsyncCleanup({
+                try? await transport.close()
+                await cancelAndDrain(driverTask)
+            }) {
+                let localSettings = ConnectionSettings(
+                    parity: .even,
+                    maxConcurrentRequests: 8,
+                    initialChannelCredit: 16
+                )
+                let acceptedTask: Task<Lane, Error> = Task {
+                    try await connectionHandle.openLane(
+                        settings: localSettings,
+                        metadata: meta([("vox-service", "Noop")])
+                    )
+                }
+                guard let acceptedId = await awaitConnectionOpenId(transport) else {
+                    Issue.record("expected accepted LaneOpen")
+                    return
+                }
+                await transport.enqueueMessage(
+                    messageAccept(
+                        connectionId: acceptedId,
+                        settings: ConnectionSettings(
+                            parity: .odd,
+                            maxConcurrentRequests: 8,
+                            initialChannelCredit: 16
+                        ),
+                        metadata: .null
+                    )
+                )
+                _ = try await awaitTaskResult(acceptedTask)
+
+                let rejectedTask: Task<Lane, Error> = Task {
+                    try await connectionHandle.openLane(
+                        settings: localSettings,
+                        metadata: meta([("vox-service", "Noop")])
+                    )
+                }
+                guard
+                    let rejectedId = await awaitConnectionOpenId(
+                        transport,
+                        excluding: [acceptedId]
+                    )
+                else {
+                    Issue.record("expected rejected LaneOpen")
+                    return
+                }
+                await transport.enqueueMessage(
+                    messageReject(
+                        connectionId: rejectedId,
+                        metadata: LaneRejection.withMessage(.unknownService, "missing")
+                            .toMetadata()
+                    )
+                )
+                do {
+                    _ = try await awaitTaskResult(rejectedTask)
+                    Issue.record("expected service lane rejection")
+                } catch {}
+
+                let labels = establishmentLabels(
+                    observer.establishmentSnapshot().filter { event in
+                        switch event {
+                        case .started(let context):
+                            return context.phase == .serviceLaneOpen
+                        case .finished(let context, _, _, _):
+                            return context.phase == .serviceLaneOpen
+                        }
+                    }
+                )
+                #expect(labels == [
+                    "started:initiator:service-lane-open:1:-",
+                    "finished:initiator:service-lane-open:1:ok",
+                    "started:initiator:service-lane-open:3:-",
+                    "finished:initiator:service-lane-open:3:rejected",
+                ])
+            }
         }
     }
 

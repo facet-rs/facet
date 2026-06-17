@@ -8,7 +8,7 @@ public typealias ChannelId = UInt64
 // MARK: - Role
 
 /// Connection role - determines channel ID parity.
-public enum Role: Sendable {
+public enum Role: Equatable, Sendable {
     case initiator  // Uses odd IDs (1, 3, 5, ...)
     case acceptor  // Uses even IDs (2, 4, 6, ...)
 }
@@ -124,6 +124,10 @@ actor ChannelCreditController {
         return .consumed
     }
 
+    func debugSnapshot() -> (available: UInt32, waiterCount: Int, closed: Bool) {
+        (available: available, waiterCount: waiters.count, closed: closed)
+    }
+
     // r[impl rpc.flow-control.credit.grant.additive]
     func grant(_ additional: UInt32) {
         guard additional > 0 else {
@@ -167,14 +171,17 @@ public final class ChannelReceiver: @unchecked Sendable {
     private var waiter: CheckedContinuation<[UInt8]?, Error>?
     private let replenishmentThreshold: UInt32
     private let onConsumed: (@Sendable (UInt32) -> Void)?
+    private let onObservedConsume: (@Sendable () -> Void)?
     private var consumedSinceGrant: UInt32 = 0
 
     public init(
         replenishmentThreshold: UInt32 = 0,
-        onConsumed: (@Sendable (UInt32) -> Void)? = nil
+        onConsumed: (@Sendable (UInt32) -> Void)? = nil,
+        onObservedConsume: (@Sendable () -> Void)? = nil
     ) {
         self.replenishmentThreshold = replenishmentThreshold
         self.onConsumed = onConsumed
+        self.onObservedConsume = onObservedConsume
     }
 
     public func deliver(_ data: [UInt8]) {
@@ -271,6 +278,8 @@ public final class ChannelReceiver: @unchecked Sendable {
     }
 
     private func noteConsumptionIfNeeded() {
+        onObservedConsume?()
+
         guard replenishmentThreshold > 0, let onConsumed else {
             return
         }
@@ -287,6 +296,16 @@ public final class ChannelReceiver: @unchecked Sendable {
 
         if let additional {
             onConsumed(additional)
+        }
+    }
+
+    func debugSnapshot() -> (bufferedItemCount: Int, closed: Bool, terminalError: ChannelError?) {
+        lock.withLock {
+            (
+                bufferedItemCount: buffer.count,
+                closed: closed,
+                terminalError: terminalError
+            )
         }
     }
 }
@@ -348,11 +367,25 @@ public final class Tx<T: Sendable>: @unchecked Sendable {
     }
 
     // r[impl rpc.flow-control.credit.try-send]
+    // r[impl rpc.observability.channel.try-send-detail]
     public func trySend(_ value: T) async throws -> TrySendResult<T> {
         guard let taskTx = taskTx, let credit else {
+            observeChannel(
+                VoxChannelObserverEvent(
+                    kind: .trySend,
+                    direction: .outgoing,
+                    trySendDetail: .unbound
+                ))
             return .full(value)
         }
         if lock.withLock({ closed }) {
+            observeChannel(
+                VoxChannelObserverEvent(
+                    kind: .trySend,
+                    channelId: channelId,
+                    direction: .outgoing,
+                    trySendDetail: .closed
+                ))
             return .closed(value)
         }
         switch await credit.tryConsume() {
@@ -361,10 +394,32 @@ public final class Tx<T: Sendable>: @unchecked Sendable {
             serialize(value, &buf)
             let bytes = buf.readBytes(length: buf.readableBytes) ?? []
             taskTx(.data(channelId: channelId, payload: bytes))
+            observeChannel(
+                VoxChannelObserverEvent(
+                    kind: .trySend,
+                    channelId: channelId,
+                    direction: .outgoing,
+                    bytes: bytes.count,
+                    trySendDetail: .sent
+                ))
             return .sent
         case .full:
+            observeChannel(
+                VoxChannelObserverEvent(
+                    kind: .trySend,
+                    channelId: channelId,
+                    direction: .outgoing,
+                    trySendDetail: .creditExhausted
+                ))
             return .full(value)
         case .closed:
+            observeChannel(
+                VoxChannelObserverEvent(
+                    kind: .trySend,
+                    channelId: channelId,
+                    direction: .outgoing,
+                    trySendDetail: .closed
+                ))
             return .closed(value)
         }
     }
@@ -471,6 +526,7 @@ public actor ChannelRegistry {
     private var pendingTerminal: [ChannelId: ChannelTerminal] = [:]
     private var knownChannels: Set<ChannelId> = []
     private var outgoingCredits: [ChannelId: ChannelCreditController] = [:]
+    private var contexts: [ChannelId: VoxChannelDebugContext] = [:]
 
     public init() {}
 
@@ -479,12 +535,29 @@ public actor ChannelRegistry {
         knownChannels.insert(channelId)
     }
 
+    // r[impl rpc.observability.channel.context]
+    public func rememberContext(
+        _ channelId: ChannelId,
+        _ context: VoxChannelDebugContext
+    ) {
+        if let existing = contexts[channelId] {
+            contexts[channelId] = existing.merged(with: context)
+        } else {
+            contexts[channelId] = context
+        }
+    }
+
+    public func context(for channelId: ChannelId) -> VoxChannelDebugContext? {
+        contexts[channelId]
+    }
+
     /// Register a channel and return its receiver.
     /// This is async to ensure pending data/close are delivered synchronously
     /// before returning, avoiding race conditions with the handler.
     /// r[impl rpc.channel.binding.callee-args]
     /// r[impl rpc.channel.binding.callee-args.rx]
     /// r[impl rpc.flow-control.credit.initial]
+    /// r[impl rpc.observability.channel]
     public func register(
         _ channelId: ChannelId,
         initialCredit: UInt32,
@@ -492,10 +565,20 @@ public actor ChannelRegistry {
     ) async -> ChannelReceiver {
         let receiver = ChannelReceiver(
             replenishmentThreshold: Swift.max(UInt32(1), initialCredit / 2),
-            onConsumed: onConsumed
+            onConsumed: onConsumed,
+            onObservedConsume: { [weak self] in
+                Task {
+                    await self?.observe(
+                        kind: .consume,
+                        channelId: channelId,
+                        direction: .incoming
+                    )
+                }
+            }
         )
         receivers[channelId] = receiver
         knownChannels.insert(channelId)
+        observe(kind: .open, channelId: channelId, direction: .incoming)
 
         // Deliver pending data synchronously - no Task spawning!
         if let pending = pendingData.removeValue(forKey: channelId) {
@@ -519,31 +602,47 @@ public actor ChannelRegistry {
         // r[impl rpc.channel.binding.callee-args]
         // r[impl rpc.channel.binding.callee-args.tx]
         // r[impl rpc.flow-control.credit.initial]
+        // r[impl rpc.observability.channel]
         let controller = ChannelCreditController(initialCredit: initialCredit)
         outgoingCredits[channelId] = controller
         knownChannels.insert(channelId)
+        observe(kind: .open, channelId: channelId, direction: .outgoing)
         return controller
     }
 
     /// Deliver data to a channel. Returns true if known.
     ///
     /// r[impl rpc.channel.close] - Data after close is rejected.
+    /// r[impl rpc.observability.channel]
     public func deliverData(channelId: ChannelId, payload: [UInt8]) async -> Bool {
         if pendingTerminal[channelId] != nil {
             return false
         }
         if let receiver = receivers[channelId] {
             receiver.deliver(payload)
+            observe(
+                kind: .receive,
+                channelId: channelId,
+                direction: .incoming,
+                bytes: payload.count
+            )
             return true
         }
         if knownChannels.contains(channelId) {
             pendingData[channelId, default: []].append(payload)
+            observe(
+                kind: .receive,
+                channelId: channelId,
+                direction: .incoming,
+                bytes: payload.count
+            )
             return true
         }
         return false
     }
 
     /// Deliver close to a channel. Returns true if known.
+    /// r[impl rpc.observability.channel]
     public func deliverClose(channelId: ChannelId) async -> Bool {
         if let receiver = receivers[channelId] {
             receiver.deliverClose()
@@ -553,6 +652,7 @@ public actor ChannelRegistry {
                 await credit.close()
             }
             outgoingCredits.removeValue(forKey: channelId)
+            observe(kind: .close, channelId: channelId, direction: .incoming)
             return true
         }
         if knownChannels.contains(channelId) {
@@ -561,6 +661,7 @@ public actor ChannelRegistry {
                 await credit.close()
             }
             outgoingCredits.removeValue(forKey: channelId)
+            observe(kind: .close, channelId: channelId, direction: .incoming)
             return true
         }
         return false
@@ -575,6 +676,7 @@ public actor ChannelRegistry {
     /// Deliver reset to a channel.
     ///
     /// r[impl rpc.channel.reset] - Reset abruptly terminates channel.
+    /// r[impl rpc.observability.channel]
     public func deliverReset(channelId: ChannelId, error: ChannelError = .reset) async {
         if let receiver = receivers[channelId] {
             receiver.deliverReset(error)
@@ -586,14 +688,27 @@ public actor ChannelRegistry {
             await credit.close()
         }
         outgoingCredits.removeValue(forKey: channelId)
+        observe(
+            kind: .reset,
+            channelId: channelId,
+            direction: .incoming,
+            error: String(describing: error)
+        )
     }
 
     /// Deliver credit to a channel.
     ///
     /// r[impl rpc.flow-control.credit.grant] - Credit message grants permission.
+    /// r[impl rpc.observability.channel]
     public func deliverCredit(channelId: ChannelId, bytes: UInt32) async {
         if let credit = outgoingCredits[channelId] {
             await credit.grant(bytes)
+            observe(
+                kind: .credit,
+                channelId: channelId,
+                direction: .incoming,
+                additionalCredit: bytes
+            )
         }
     }
 
@@ -611,6 +726,83 @@ public actor ChannelRegistry {
         knownChannels.removeAll()
         pendingData.removeAll()
         pendingTerminal.removeAll()
+        contexts.removeAll()
+    }
+
+    // r[impl rpc.debug.snapshot]
+    // r[impl rpc.observability.channel.context]
+    public func debugSnapshot(laneId: UInt64? = nil) async -> VoxChannelRegistrySnapshot {
+        var ids = knownChannels
+        ids.formUnion(receivers.keys)
+        ids.formUnion(pendingData.keys)
+        ids.formUnion(pendingTerminal.keys)
+        ids.formUnion(outgoingCredits.keys)
+        ids.formUnion(contexts.keys)
+
+        var snapshots: [VoxChannelSnapshot] = []
+        for channelId in ids.sorted() {
+            let receiverSnapshot = receivers[channelId]?.debugSnapshot()
+            let creditSnapshot = await outgoingCredits[channelId]?.debugSnapshot()
+            let state: VoxChannelSnapshotState
+            if let terminal = pendingTerminal[channelId] {
+                switch terminal {
+                case .close:
+                    state = .closed
+                case .error:
+                    state = .reset
+                }
+            } else if receiverSnapshot != nil, creditSnapshot != nil {
+                state = .bidirectional
+            } else if receiverSnapshot != nil {
+                state = .incoming
+            } else if creditSnapshot != nil {
+                state = .outgoing
+            } else {
+                state = .known
+            }
+
+            let context = contexts[channelId].map { existing in
+                guard let laneId else {
+                    return existing
+                }
+                return existing.merged(with: VoxChannelDebugContext(laneId: laneId))
+            } ?? laneId.map { VoxChannelDebugContext(laneId: $0) }
+
+            snapshots.append(
+                VoxChannelSnapshot(
+                    channelId: channelId,
+                    state: state,
+                    context: context,
+                    bufferedItemCount: receiverSnapshot?.bufferedItemCount
+                        ?? pendingData[channelId]?.count
+                        ?? 0,
+                    outgoingCreditAvailable: creditSnapshot?.available,
+                    outgoingCreditWaiterCount: creditSnapshot?.waiterCount
+                ))
+        }
+        return VoxChannelRegistrySnapshot(channels: snapshots)
+    }
+
+    private func observe(
+        kind: VoxChannelObserverKind,
+        channelId: ChannelId,
+        direction: VoxChannelDirection? = nil,
+        bytes: Int? = nil,
+        additionalCredit: UInt32? = nil,
+        trySendDetail: VoxChannelTrySendDetail? = nil,
+        error: String? = nil
+    ) {
+        observeChannel(
+            VoxChannelObserverEvent(
+                kind: kind,
+                channelId: channelId,
+                direction: direction,
+                bytes: bytes,
+                additionalCredit: additionalCredit,
+                trySendDetail: trySendDetail,
+                context: contexts[channelId],
+                error: error
+            ))
     }
 }
 

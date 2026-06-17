@@ -223,8 +223,13 @@ func buildEstablishedConduit(
     attachment: LinkAttachment,
     peerMessageSchema: [UInt8]
 ) async throws -> any Conduit {
-    let _ = role
-    return BareConduit(link: attachment.link, peerMessageSchema: peerMessageSchema)
+    let context = VoxEstablishmentContext(
+        role: voxEstablishmentRole(role),
+        phase: .schemaDecodePlan
+    )
+    return try await withObservedEstablishment(context) {
+        BareConduit(link: attachment.link, peerMessageSchema: peerMessageSchema)
+    }
 }
 
 // r[impl rpc.session-setup]
@@ -240,13 +245,17 @@ func establishInitiator(
 ) async throws -> (Lane, Driver, ConnectionHandle, Metadata) {
     warnLog("[vox-establish] initiator: starting handshake")
     let ourMaxPayload = maxPayloadSize ?? (1024 * 1024)
-    let handshake = try await performInitiatorHandshake(
-        link: attachment.link,
-        maxPayloadSize: ourMaxPayload,
-        maxConcurrentRequests: maxConcurrentRequests,
-        initialChannelCredit: initialChannelCredit,
-        metadata: metadata
-    )
+    let handshake = try await withObservedEstablishment(
+        VoxEstablishmentContext(role: .initiator, phase: .connectionHandshake)
+    ) {
+        try await performInitiatorHandshake(
+            link: attachment.link,
+            maxPayloadSize: ourMaxPayload,
+            maxConcurrentRequests: maxConcurrentRequests,
+            initialChannelCredit: initialChannelCredit,
+            metadata: metadata
+        )
+    }
     warnLog("[vox-establish] initiator: handshake done")
 
     let conduit = try await buildEstablishedConduit(
@@ -338,13 +347,17 @@ func establishAcceptor(
 
     let ourMaxPayload = maxPayloadSize ?? (1024 * 1024)
     warnLog("[vox-establish] acceptor: starting handshake")
-    let handshake = try await performAcceptorHandshake(
-        link: attachment.link,
-        maxPayloadSize: ourMaxPayload,
-        maxConcurrentRequests: maxConcurrentRequests,
-        initialChannelCredit: initialChannelCredit,
-        metadata: metadata
-    )
+    let handshake = try await withObservedEstablishment(
+        VoxEstablishmentContext(role: .acceptor, phase: .connectionHandshake)
+    ) {
+        try await performAcceptorHandshake(
+            link: attachment.link,
+            maxPayloadSize: ourMaxPayload,
+            maxConcurrentRequests: maxConcurrentRequests,
+            initialChannelCredit: initialChannelCredit,
+            metadata: metadata
+        )
+    }
 
     let conduit = try await buildEstablishedConduit(
         role: .acceptor,

@@ -86,16 +86,22 @@ func validateTransportAccept(_ bytes: [UInt8]) throws {
 public func performInitiatorLinkPrologue(
     link: some Link
 ) async throws {
-    warnLog("[vox-prologue] initiator: sending TransportHello")
-    try await link.sendRawPrologue(encodeTransportHello())
-    warnLog("[vox-prologue] initiator: waiting for TransportAccept")
-    guard let response = try await link.recvRawPrologue() else {
-        warnLog("[vox-prologue] initiator: recvRawPrologue returned nil (connection closed)")
-        throw TransportError.connectionClosed
+    let context = VoxEstablishmentContext(
+        role: .initiator,
+        phase: .transportPrologue
+    )
+    try await withObservedEstablishment(context) {
+        warnLog("[vox-prologue] initiator: sending TransportHello")
+        try await link.sendRawPrologue(encodeTransportHello())
+        warnLog("[vox-prologue] initiator: waiting for TransportAccept")
+        guard let response = try await link.recvRawPrologue() else {
+            warnLog("[vox-prologue] initiator: recvRawPrologue returned nil (connection closed)")
+            throw TransportError.connectionClosed
+        }
+        warnLog("[vox-prologue] initiator: got response (\(response.count) bytes)")
+        try validateTransportAccept(response)
+        warnLog("[vox-prologue] initiator: transport accepted")
     }
-    warnLog("[vox-prologue] initiator: got response (\(response.count) bytes)")
-    try validateTransportAccept(response)
-    warnLog("[vox-prologue] initiator: transport accepted")
 }
 
 // r[impl transport.prologue]
@@ -106,18 +112,24 @@ public func performInitiatorLinkPrologue(
 public func performAcceptorLinkPrologue(
     link: some Link
 ) async throws {
-    warnLog("[vox-prologue] acceptor: waiting for TransportHello")
-    guard let request = try await link.recvRawPrologue() else {
-        warnLog("[vox-prologue] acceptor: recvRawPrologue returned nil (connection closed)")
-        throw TransportError.connectionClosed
+    let context = VoxEstablishmentContext(
+        role: .acceptor,
+        phase: .transportPrologue
+    )
+    try await withObservedEstablishment(context) {
+        warnLog("[vox-prologue] acceptor: waiting for TransportHello")
+        guard let request = try await link.recvRawPrologue() else {
+            warnLog("[vox-prologue] acceptor: recvRawPrologue returned nil (connection closed)")
+            throw TransportError.connectionClosed
+        }
+        warnLog("[vox-prologue] acceptor: got request (\(request.count) bytes)")
+        do {
+            try validateTransportHello(request)
+        } catch {
+            try await link.sendRawPrologue(encodeTransportRejectUnsupported())
+            throw error
+        }
+        try await link.sendRawPrologue(encodeTransportAccept())
+        warnLog("[vox-prologue] acceptor: transport accepted")
     }
-    warnLog("[vox-prologue] acceptor: got request (\(request.count) bytes)")
-    do {
-        try validateTransportHello(request)
-    } catch {
-        try await link.sendRawPrologue(encodeTransportRejectUnsupported())
-        throw error
-    }
-    try await link.sendRawPrologue(encodeTransportAccept())
-    warnLog("[vox-prologue] acceptor: transport accepted")
 }

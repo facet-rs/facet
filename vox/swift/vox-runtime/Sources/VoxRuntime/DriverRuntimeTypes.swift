@@ -23,6 +23,8 @@ struct DriverQueuedCall: Sendable {
 struct PendingOutboundLane: Sendable {
     let localSettings: ConnectionSettings
     let dispatcher: (any ServiceDispatcher)?
+    let establishmentContext: VoxEstablishmentContext
+    let establishmentStartedAt: UInt64
     let responseTx: @Sendable (Result<Lane, ConnectionError>) -> Void
 }
 

@@ -110,4 +110,17 @@ public final class Driver: @unchecked Sendable {
         self.peerControlSettings = peerControlSettings
         self.peerMessageSchema = peerMessageSchema
     }
+
+    // r[impl rpc.debug.snapshot]
+    func debugSnapshot() async -> VoxConnectionDebugSnapshot {
+        VoxConnectionDebugSnapshot(
+            role: role,
+            driverState: await state.debugSnapshot(),
+            controlLaneChannels: await handle.channelRegistry.debugSnapshot(laneId: 0),
+            serverChannels: await serverRegistry.debugSnapshot(laneId: 0),
+            lanes: await laneState.debugSnapshot(),
+            pendingCallCount: pendingCalls.count,
+            pendingTaskMessageCount: pendingTaskMessages.count
+        )
+    }
 }

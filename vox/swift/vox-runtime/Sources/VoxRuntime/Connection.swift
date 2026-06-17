@@ -54,6 +54,11 @@ public final class Connection: @unchecked Sendable {
         handle.shutdown()
     }
 
+    public func debugSnapshot() async -> VoxConnectionDebugSnapshot {
+        // r[impl rpc.debug.snapshot]
+        await driver.debugSnapshot()
+    }
+
     public static func connect(
         _ connector: some ConnectionConnector,
         onLane: (any LaneAcceptor)? = nil,

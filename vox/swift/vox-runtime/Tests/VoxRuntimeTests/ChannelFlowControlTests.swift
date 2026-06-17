@@ -68,6 +68,25 @@ private final class TaskMessageInbox: @unchecked Sendable {
     }
 }
 
+private final class RecordingChannelObserver: VoxRuntimeObserver, @unchecked Sendable {
+    private let lock = NSLock()
+    private var channelEvents: [VoxChannelObserverEvent] = []
+
+    func driverEvent(_: VoxDriverObserverEvent) {}
+
+    func channelEvent(_ event: VoxChannelObserverEvent) {
+        lock.lock()
+        channelEvents.append(event)
+        lock.unlock()
+    }
+
+    func snapshot() -> [VoxChannelObserverEvent] {
+        lock.lock()
+        defer { lock.unlock() }
+        return channelEvents
+    }
+}
+
 private func testLane(taskInbox: TaskMessageInbox = TaskMessageInbox()) -> (Lane, TaskMessageInbox) {
     let handle = LaneHandle(
         commandTx: { _ in false },
@@ -82,6 +101,30 @@ private func testLane(taskInbox: TaskMessageInbox = TaskMessageInbox()) -> (Lane
 
 @Suite(.serialized)
 struct ChannelFlowControlTests {
+    // r[verify rpc.observability.low-cardinality]
+    @Test func observerMetricLabelsKeepOnlyLowCardinalityKeys() {
+        let labels = voxObserverMetricLabels([
+            "service": "Echo",
+            "method": "echo",
+            "side": "client",
+            "outcome": "ok",
+            "error_kind": "",
+            "channel_direction": "tx",
+            "request_id": "123",
+            "lane_id": "1",
+            "channel_id": "7",
+            "metadata": "tenant",
+        ])
+
+        #expect(labels == [
+            "service": "Echo",
+            "method": "echo",
+            "side": "client",
+            "outcome": "ok",
+            "channel_direction": "tx",
+        ])
+    }
+
     // r[verify rpc.channel]
     // r[verify rpc.channel.allocation]
     // r[verify rpc.channel.binding]
@@ -237,41 +280,146 @@ struct ChannelFlowControlTests {
     }
 
     // r[verify rpc.flow-control.credit.try-send]
+    // r[verify rpc.observability.channel.try-send-detail]
     @Test func trySendReturnsFullOrClosedWithOriginalValue() async throws {
+        let observer = RecordingChannelObserver()
+        try await withVoxRuntimeObserverForTest(observer) {
+            let unbound = Tx<Int32>(serialize: { val, buf in encI32(val, into: &buf) })
+            guard case .full(let unboundValue) = try await unbound.trySend(0) else {
+                Issue.record("unbound trySend did not report full")
+                return
+            }
+            #expect(unboundValue == 0)
+
+            let registry = ChannelRegistry()
+            let payloads = PayloadInbox()
+            let credit = await registry.registerOutgoing(31, initialCredit: 1)
+            let tx = Tx<Int32>(serialize: { val, buf in encI32(val, into: &buf) })
+            tx.bind(
+                channelId: 31,
+                taskTx: { message in
+                    guard case .data(_, let payload) = message else {
+                        return
+                    }
+                    payloads.append(payload)
+                }, credit: credit)
+
+            guard case .sent = try await tx.trySend(1) else {
+                Issue.record("first trySend did not send")
+                return
+            }
+            guard case .full(let value) = try await tx.trySend(2) else {
+                Issue.record("second trySend did not report full")
+                return
+            }
+            #expect(value == 2)
+
+            let sent = payloads.snapshot()
+            #expect(sent.count == 1)
+            var sentBuf = ByteBufferAllocator().buffer(bytes: sent[0])
+            #expect(try decI32(from: &sentBuf) == 1)
+
+            tx.close()
+            guard case .closed(let closedValue) = try await tx.trySend(3) else {
+                Issue.record("trySend after close did not report closed")
+                return
+            }
+            #expect(closedValue == 3)
+
+            let events = observer.snapshot()
+            #expect(events.contains {
+                $0.kind == .trySend && $0.trySendDetail == .unbound
+            })
+            #expect(events.contains {
+                $0.kind == .trySend && $0.channelId == 31 && $0.trySendDetail == .sent
+            })
+            #expect(events.contains {
+                $0.kind == .trySend && $0.channelId == 31 && $0.trySendDetail == .creditExhausted
+            })
+            #expect(events.contains {
+                $0.kind == .trySend && $0.channelId == 31 && $0.trySendDetail == .closed
+            })
+        }
+    }
+
+    // r[verify rpc.debug.snapshot]
+    // r[verify rpc.observability.channel.context]
+    @Test func channelDebugSnapshotPreservesContextAfterTerminalState() async throws {
         let registry = ChannelRegistry()
-        let payloads = PayloadInbox()
-        let credit = await registry.registerOutgoing(31, initialCredit: 1)
-        let tx = Tx<Int32>(serialize: { val, buf in encI32(val, into: &buf) })
-        tx.bind(
-            channelId: 31,
-            taskTx: { message in
-                guard case .data(_, let payload) = message else {
-                    return
-                }
-                payloads.append(payload)
-            }, credit: credit)
+        let context = VoxChannelDebugContext(
+            laneId: 0,
+            requestId: 5,
+            methodId: 9,
+            service: "Echo",
+            method: "stream",
+            channelDirection: "tx",
+            side: "client"
+        )
+        await registry.rememberContext(41, context)
+        _ = await registry.registerOutgoing(41, initialCredit: 3)
 
-        guard case .sent = try await tx.trySend(1) else {
-            Issue.record("first trySend did not send")
-            return
-        }
-        guard case .full(let value) = try await tx.trySend(2) else {
-            Issue.record("second trySend did not report full")
-            return
-        }
-        #expect(value == 2)
+        let openSnapshot = await registry.debugSnapshot(laneId: 0)
+        #expect(openSnapshot.channels == [
+            VoxChannelSnapshot(
+                channelId: 41,
+                state: .outgoing,
+                context: context,
+                outgoingCreditAvailable: 3,
+                outgoingCreditWaiterCount: 0
+            )
+        ])
 
-        let sent = payloads.snapshot()
-        #expect(sent.count == 1)
-        var sentBuf = ByteBufferAllocator().buffer(bytes: sent[0])
-        #expect(try decI32(from: &sentBuf) == 1)
+        #expect(await registry.deliverClose(channelId: 41))
+        let closedSnapshot = await registry.debugSnapshot(laneId: 0)
+        #expect(closedSnapshot.channels.first?.state == .closed)
+        #expect(closedSnapshot.channels.first?.context == context)
+    }
 
-        tx.close()
-        guard case .closed(let closedValue) = try await tx.trySend(3) else {
-            Issue.record("trySend after close did not report closed")
-            return
+    // r[verify rpc.observability.channel]
+    // r[verify rpc.observability.channel.context]
+    @Test func channelRegistryEmitsObserverEvents() async throws {
+        let observer = RecordingChannelObserver()
+        try await withVoxRuntimeObserverForTest(observer) {
+            let registry = ChannelRegistry()
+            let context = VoxChannelDebugContext(
+                laneId: 0,
+                requestId: 7,
+                methodId: 11,
+                side: "server"
+            )
+            await registry.rememberContext(51, context)
+            let receiver = await registry.register(51, initialCredit: 2)
+            #expect(await registry.deliverData(channelId: 51, payload: [1, 2]))
+            let received = try await receiver.recv()
+            #expect(received == [1, 2])
+
+            _ = await registry.registerOutgoing(53, initialCredit: 1)
+            await registry.deliverCredit(channelId: 53, bytes: 4)
+            #expect(await registry.deliverClose(channelId: 51))
+
+            for _ in 0..<10 {
+                await Task.yield()
+            }
+
+            let events = observer.snapshot()
+            #expect(events.contains {
+                $0.kind == .open && $0.channelId == 51 && $0.direction == .incoming
+                    && $0.context == context
+            })
+            #expect(events.contains {
+                $0.kind == .receive && $0.channelId == 51 && $0.bytes == 2
+            })
+            #expect(events.contains {
+                $0.kind == .consume && $0.channelId == 51
+            })
+            #expect(events.contains {
+                $0.kind == .credit && $0.channelId == 53 && $0.direction == .incoming
+                    && $0.additionalCredit == 4
+            })
+            #expect(events.contains {
+                $0.kind == .close && $0.channelId == 51 && $0.direction == .incoming
+            })
         }
-        #expect(closedValue == 3)
     }
 
     // r[verify rpc.channel.binding.callee-args]

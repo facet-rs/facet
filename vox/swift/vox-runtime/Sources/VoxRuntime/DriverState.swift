@@ -18,6 +18,8 @@ actor DriverState {
     private struct FinalizedRequest: Sendable {
         let reason: String
         let atUptimeNs: UInt64
+        let connectionId: UInt64?
+        let channels: [UInt64]
     }
 
     struct PendingCall: Sendable {
@@ -53,7 +55,12 @@ actor DriverState {
         guard let pending = pendingResponses.removeValue(forKey: requestId) else {
             return nil
         }
-        markFinalizedRequest(requestId, reason: reason)
+        markFinalizedRequest(
+            requestId,
+            reason: reason,
+            connectionId: pending.request.connectionId,
+            channels: pending.request.channels
+        )
         return pending
     }
 
@@ -67,17 +74,32 @@ actor DriverState {
                 continue
             }
             claimed[requestId] = pending
-            markFinalizedRequest(requestId, reason: reason)
+            markFinalizedRequest(
+                requestId,
+                reason: reason,
+                connectionId: pending.request.connectionId,
+                channels: pending.request.channels
+            )
         }
         return claimed
     }
 
-    func markFinalizedRequest(_ requestId: UInt64, reason: String) {
+    func markFinalizedRequest(
+        _ requestId: UInt64,
+        reason: String,
+        connectionId: UInt64? = nil,
+        channels: [UInt64] = []
+    ) {
         guard retainFinalizedRequests else {
             return
         }
         let now = DispatchTime.now().uptimeNanoseconds
-        finalizedRequests[requestId] = FinalizedRequest(reason: reason, atUptimeNs: now)
+        finalizedRequests[requestId] = FinalizedRequest(
+            reason: reason,
+            atUptimeNs: now,
+            connectionId: connectionId,
+            channels: channels
+        )
         pruneFinalizedRequests(now: now)
     }
 
@@ -211,13 +233,68 @@ actor DriverState {
         inFlightRequests.removeAll()
         inFlightResponseContext.removeAll()
         for requestId in responses.keys {
-            markFinalizedRequest(requestId, reason: reason)
+            guard let pending = responses[requestId] else {
+                continue
+            }
+            markFinalizedRequest(
+                requestId,
+                reason: reason,
+                connectionId: pending.request.connectionId,
+                channels: pending.request.channels
+            )
         }
         return responses
     }
 
     func isConnectionClosed() -> Bool {
         isClosed
+    }
+
+    // r[impl rpc.debug.snapshot]
+    func debugSnapshot() -> VoxDriverStateDebugSnapshot {
+        let pending = pendingResponses.map { requestId, pending in
+            VoxRequestScopeDebugSnapshot(
+                requestId: requestId,
+                laneId: pending.request.connectionId,
+                state: .waitingForResponse,
+                channelIds: pending.request.channels
+            )
+        }
+        let inFlight = inFlightResponseContext.map { requestId, context in
+            VoxRequestScopeDebugSnapshot(
+                requestId: requestId,
+                laneId: context.connectionId,
+                state: .handlerRunning,
+                channelIds: context.channels
+            )
+        }
+        let finalized = finalizedRequests.map { requestId, finalized in
+            VoxRequestScopeDebugSnapshot(
+                requestId: requestId,
+                laneId: finalized.connectionId,
+                state: Self.debugState(forFinalizedReason: finalized.reason),
+                channelIds: finalized.channels
+            )
+        }
+        return VoxDriverStateDebugSnapshot(
+            isClosed: isClosed,
+            requestScopes: (pending + inFlight + finalized).sorted { $0.requestId < $1.requestId }
+        )
+    }
+
+    private static func debugState(forFinalizedReason reason: String) -> VoxRequestScopeDebugState {
+        switch reason {
+        case "response":
+            return .succeeded
+        case "timeout":
+            return .timedOut
+        case "connection-closed":
+            return .connectionLost
+        case "conduit-send-failed":
+            return .failed
+        default:
+            return .failed
+        }
     }
 }
 
@@ -281,5 +358,36 @@ actor LaneState {
 
     func takePendingOutbound(_ connId: UInt64) -> PendingOutboundLane? {
         pendingOutbound.removeValue(forKey: connId)
+    }
+
+    // r[impl rpc.debug.snapshot]
+    func debugSnapshot() async -> [VoxLaneDebugSnapshot] {
+        let open = await lanes.sorted { $0.key < $1.key }.asyncMap { laneId, record in
+            VoxLaneDebugSnapshot(
+                laneId: laneId,
+                isPendingOpen: false,
+                channels: await record.channelRegistry.debugSnapshot(laneId: laneId)
+            )
+        }
+        let pending = pendingOutbound.keys.sorted().map { laneId in
+            VoxLaneDebugSnapshot(
+                laneId: laneId,
+                isPendingOpen: true
+            )
+        }
+        return open + pending
+    }
+}
+
+private extension Array {
+    func asyncMap<T>(
+        _ transform: (Element) async -> T
+    ) async -> [T] {
+        var result: [T] = []
+        result.reserveCapacity(count)
+        for element in self {
+            result.append(await transform(element))
+        }
+        return result
     }
 }

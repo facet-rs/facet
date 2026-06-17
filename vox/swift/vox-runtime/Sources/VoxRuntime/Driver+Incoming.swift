@@ -76,12 +76,28 @@ extension Driver {
             // r[impl connection.parity]
             // r[impl lane.open]
             // r[impl lane.wire.compat]
+            let establishmentContext = VoxEstablishmentContext(
+                role: voxEstablishmentRole(role),
+                phase: .serviceLaneOpen,
+                laneId: msg.connectionId
+            )
+            let establishmentStartedAt = observeEstablishmentStarted(establishmentContext)
             let peerRole = oppositeRole(role)
             guard idMatchesRole(msg.connectionId, peerRole) else {
+                observeEstablishmentFinished(
+                    establishmentContext,
+                    startedAt: establishmentStartedAt,
+                    outcome: .error
+                )
                 try await sendProtocolError("connection.open")
                 throw ConnectionError.protocolViolation(rule: "connection.open")
             }
             guard !(await laneState.contains(msg.connectionId)) else {
+                observeEstablishmentFinished(
+                    establishmentContext,
+                    startedAt: establishmentStartedAt,
+                    outcome: .error
+                )
                 try await sendProtocolError("connection.open")
                 throw ConnectionError.protocolViolation(rule: "connection.open")
             }
@@ -97,6 +113,11 @@ extension Driver {
                             connectionId: msg.connectionId,
                             metadata: rejection.toMetadata()
                         ))
+                    observeEstablishmentFinished(
+                        establishmentContext,
+                        startedAt: establishmentStartedAt,
+                        outcome: .rejected
+                    )
                     return
                 }
                 guard open.connectionSettings.initialChannelCredit > 0 else {
@@ -109,13 +130,29 @@ extension Driver {
                             connectionId: msg.connectionId,
                             metadata: rejection.toMetadata()
                         ))
+                    observeEstablishmentFinished(
+                        establishmentContext,
+                        startedAt: establishmentStartedAt,
+                        outcome: .rejected
+                    )
                     return
                 }
-                let localSettings = try makeConnectionSettings(
-                    parity: oppositeParity(open.connectionSettings.parity),
-                    maxConcurrentRequests: open.connectionSettings.maxConcurrentRequests,
-                    initialChannelCredit: open.connectionSettings.initialChannelCredit
-                )
+                let localSettings: ConnectionSettings
+                do {
+                    localSettings = try makeConnectionSettings(
+                        parity: oppositeParity(open.connectionSettings.parity),
+                        maxConcurrentRequests: open.connectionSettings.maxConcurrentRequests,
+                        initialChannelCredit: open.connectionSettings.initialChannelCredit
+                    )
+                } catch {
+                    observeEstablishmentFinished(
+                        establishmentContext,
+                        startedAt: establishmentStartedAt,
+                        outcome: .error,
+                        error: error
+                    )
+                    throw error
+                }
                 let request = LaneRequest(metadata: metadata, service: service)
                 let connId = msg.connectionId
                 let pending = PendingLane(
@@ -133,6 +170,11 @@ extension Driver {
                                     settings: localSettings,
                                     metadata: .null
                                 ))
+                            observeEstablishmentFinished(
+                                establishmentContext,
+                                startedAt: establishmentStartedAt,
+                                outcome: .ok
+                            )
                         }
                     },
                     reject: { [weak self] rejection in
@@ -143,6 +185,11 @@ extension Driver {
                                     connectionId: connId,
                                     metadata: rejection.toMetadata()
                                 ))
+                            observeEstablishmentFinished(
+                                establishmentContext,
+                                startedAt: establishmentStartedAt,
+                                outcome: .rejected
+                            )
                         }
                     }
                 )
@@ -157,6 +204,11 @@ extension Driver {
                         connectionId: msg.connectionId,
                         metadata: rejection.toMetadata()
                     ))
+                observeEstablishmentFinished(
+                    establishmentContext,
+                    startedAt: establishmentStartedAt,
+                    outcome: .rejected
+                )
             }
         case .laneAccept(let accept):
             // r[impl connection.open]
@@ -169,6 +221,12 @@ extension Driver {
             do {
                 try validateInitialChannelCredit(accept.connectionSettings.initialChannelCredit)
             } catch {
+                observeEstablishmentFinished(
+                    pending.establishmentContext,
+                    startedAt: pending.establishmentStartedAt,
+                    outcome: .error,
+                    error: error
+                )
                 pending.responseTx(.failure(.protocolViolation(rule: "connection.open")))
                 try await sendProtocolError("connection.open")
                 throw ConnectionError.protocolViolation(rule: "connection.open")
@@ -184,6 +242,11 @@ extension Driver {
                 localSettings: pending.localSettings,
                 channelRegistry: lane.incomingChannelRegistry
             )
+            observeEstablishmentFinished(
+                pending.establishmentContext,
+                startedAt: pending.establishmentStartedAt,
+                outcome: .ok
+            )
             pending.responseTx(.success(lane))
         case .laneReject(let reject):
             // r[impl connection.open.rejection]
@@ -192,6 +255,11 @@ extension Driver {
             guard let pending = await laneState.takePendingOutbound(msg.connectionId) else {
                 break
             }
+            observeEstablishmentFinished(
+                pending.establishmentContext,
+                startedAt: pending.establishmentStartedAt,
+                outcome: .rejected
+            )
             pending.responseTx(.failure(.rejected(LaneRejection.fromMetadata(reject.metadata))))
         case .laneClose:
             // r[impl connection.close]
@@ -366,6 +434,15 @@ extension Driver {
             try await sendProtocolError("rpc.flow-control.credit.exhaustion")
             throw ConnectionError.protocolViolation(rule: "rpc.flow-control.credit.exhaustion")
         }
+
+        await rememberChannelContexts(
+            registry: channelRegistry,
+            laneId: connId,
+            requestId: requestId,
+            methodId: methodId,
+            channels: channels,
+            side: "server"
+        )
 
         let taskTx = taskSender(connectionId: connId)
         traceLog(.driver, "handleRequest method=\(methodId) req=\(requestId) channels=\(channels)")

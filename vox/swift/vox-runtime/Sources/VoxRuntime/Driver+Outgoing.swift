@@ -72,6 +72,110 @@ extension Driver {
         }
     }
 
+    // r[impl rpc.observability.channel.context]
+    func rememberChannelContexts(
+        registry: ChannelRegistry,
+        laneId: UInt64,
+        requestId: UInt64,
+        methodId: UInt64,
+        channels: [UInt64],
+        side: String
+    ) async {
+        let context = VoxChannelDebugContext(
+            laneId: laneId,
+            requestId: requestId,
+            methodId: methodId,
+            side: side
+        )
+        for channelId in channels {
+            await registry.rememberContext(channelId, context)
+        }
+    }
+
+    // r[impl rpc.observability.channel.context]
+    func rememberOutboundChannelContexts(
+        connectionId: UInt64,
+        requestId: UInt64,
+        methodId: UInt64,
+        channels: [UInt64]
+    ) async {
+        guard !channels.isEmpty else {
+            return
+        }
+        if connectionId == 0 {
+            await rememberChannelContexts(
+                registry: handle.channelRegistry,
+                laneId: connectionId,
+                requestId: requestId,
+                methodId: methodId,
+                channels: channels,
+                side: "client"
+            )
+            return
+        }
+        guard let lane = await laneState.lane(for: connectionId) else {
+            return
+        }
+        await rememberChannelContexts(
+            registry: lane.channelRegistry,
+            laneId: connectionId,
+            requestId: requestId,
+            methodId: methodId,
+            channels: channels,
+            side: "client"
+        )
+    }
+
+    func channelContext(
+        connectionId: UInt64,
+        channelId: UInt64
+    ) async -> VoxChannelDebugContext? {
+        if connectionId == 0 {
+            if let context = await handle.channelRegistry.context(for: channelId) {
+                return context
+            }
+            return await serverRegistry.context(for: channelId)
+        }
+        guard let lane = await laneState.lane(for: connectionId) else {
+            return nil
+        }
+        return await lane.channelRegistry.context(for: channelId)
+    }
+
+    // r[impl rpc.observability.channel]
+    private func observeOutgoingChannelMessage(_ msg: TaskMessage, connectionId: UInt64) async {
+        switch msg {
+        case .data(let channelId, let payload):
+            observeChannel(
+                VoxChannelObserverEvent(
+                    kind: .send,
+                    channelId: channelId,
+                    direction: .outgoing,
+                    bytes: payload.count,
+                    context: await channelContext(connectionId: connectionId, channelId: channelId)
+                ))
+        case .close(let channelId):
+            observeChannel(
+                VoxChannelObserverEvent(
+                    kind: .close,
+                    channelId: channelId,
+                    direction: .outgoing,
+                    context: await channelContext(connectionId: connectionId, channelId: channelId)
+                ))
+        case .grantCredit(let channelId, let bytes):
+            observeChannel(
+                VoxChannelObserverEvent(
+                    kind: .credit,
+                    channelId: channelId,
+                    direction: .outgoing,
+                    additionalCredit: bytes,
+                    context: await channelContext(connectionId: connectionId, channelId: channelId)
+                ))
+        case .schema, .response:
+            break
+        }
+    }
+
     func makeLane(
         connectionId: UInt64,
         localSettings: ConnectionSettings,
@@ -168,6 +272,7 @@ extension Driver {
             progressChannelId = nil
         }
         try await sendOrEnqueue(wireMsg)
+        await observeOutgoingChannelMessage(msg, connectionId: connectionId)
         if let progressChannelId {
             await markChannelRequestProgress(
                 connectionId: connectionId,
@@ -219,6 +324,12 @@ extension Driver {
                 responseTx(.failure(.connectionClosed))
                 return
             }
+            await rememberOutboundChannelContexts(
+                connectionId: connectionId,
+                requestId: requestId,
+                methodId: methodId,
+                channels: channels
+            )
 
             // Advertise the args schema closure (at most once per method, deduped).
             // r[impl schema.exchange.caller]
@@ -279,11 +390,19 @@ extension Driver {
             }
 
             let connId = await laneState.allocateLaneId()
+            let establishmentContext = VoxEstablishmentContext(
+                role: voxEstablishmentRole(role),
+                phase: .serviceLaneOpen,
+                laneId: connId
+            )
+            let establishmentStartedAt = observeEstablishmentStarted(establishmentContext)
             await laneState.addPendingOutbound(
                 connId,
                 pending: PendingOutboundLane(
                     localSettings: settings,
                     dispatcher: dispatcher,
+                    establishmentContext: establishmentContext,
+                    establishmentStartedAt: establishmentStartedAt,
                     responseTx: responseTx
                 )
             )
@@ -294,6 +413,14 @@ extension Driver {
                 )
             } catch {
                 let pending = await laneState.takePendingOutbound(connId)
+                if let pending {
+                    observeEstablishmentFinished(
+                        pending.establishmentContext,
+                        startedAt: pending.establishmentStartedAt,
+                        outcome: .error,
+                        error: error
+                    )
+                }
                 pending?.responseTx(.failure(.transportError(String(describing: error))))
             }
         case .closeLane(let laneId, let metadata, let responseTx):
