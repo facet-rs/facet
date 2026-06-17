@@ -3,6 +3,7 @@
 //!
 //!   [`strid`]: https://docs.rs/strid/*/strid/
 
+#![allow(clippy::result_large_err)]
 #![warn(
     missing_docs,
     unused_import_braces,
