@@ -1,7 +1,5 @@
 import type { Link, LinkSource } from "@bearcove/vox-core";
 
-// r[impl transport.websocket]
-// r[impl transport.websocket.platforms]
 // r[impl link]
 // r[impl link.message]
 // r[impl link.message.empty]
@@ -84,8 +82,6 @@ export class WsLink implements Link {
   }
 }
 
-// r[impl transport.websocket]
-// r[impl transport.websocket.platforms]
 export class WsLinkSource implements LinkSource<WsLink> {
   private readonly url: string;
 

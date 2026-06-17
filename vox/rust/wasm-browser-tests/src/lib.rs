@@ -67,8 +67,6 @@ impl TestResults {
 }
 
 /// Run all tests against a WebSocket server at the given URL.
-// r[verify transport.websocket]
-// r[verify transport.websocket.platforms]
 #[wasm_bindgen]
 pub async fn run_tests(ws_url: &str) -> TestResults {
     let mut results = Vec::new();

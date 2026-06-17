@@ -16,9 +16,6 @@ function inProcessPair(): [InProcessLink, InProcessLink] {
 }
 
 describe("InProcessLink", () => {
-  // r[verify transport.memory]
-  // r[verify transport.inprocess]
-  // r[verify transport.inprocess.platforms]
   // r[verify link]
   // r[verify link.message]
   // r[verify link.message.empty]

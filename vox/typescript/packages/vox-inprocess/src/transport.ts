@@ -1,8 +1,5 @@
 import type { Link } from "@bearcove/vox-core";
 
-// r[impl transport.memory]
-// r[impl transport.inprocess]
-// r[impl transport.inprocess.platforms]
 // r[impl link]
 // r[impl link.message]
 // r[impl link.message.empty]

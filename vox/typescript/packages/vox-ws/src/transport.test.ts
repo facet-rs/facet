@@ -60,8 +60,6 @@ describe("WsLinkSource", () => {
     vi.restoreAllMocks();
   });
 
-  // r[verify transport.websocket]
-  // r[verify transport.websocket.platforms]
   it("opens a link and forwards send/recv", async () => {
     globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
 

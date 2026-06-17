@@ -14,10 +14,12 @@ weight = 11
 > A kind of link is called a "transport". If you use the TCP transport, then you
 > establish TCP links between your peers.
 
-> r[transport.memory]
->
-> Vox provides an in-memory transport via `MemoryLink`, based on tokio MPSC
-> channels.
+Vox implementations may provide package-specific transports beyond the core
+link contract. Rust exposes an in-memory `MemoryLink` for tests and local
+wiring. Rust and TypeScript expose WebSocket links. Rust and TypeScript also
+expose an in-process browser transport for WASM ↔ JS communication within the
+same tab. These package surfaces are useful, but they are not part of the core
+Connection/Lane/RequestScope runtime contract.
 
 > r[transport.stream]
 >
@@ -47,26 +49,6 @@ weight = 11
 > carry descriptors MUST reject descriptor-bearing frames with a diagnostic
 > error. Generated non-Rust bindings MUST reject service surfaces containing
 > `vox::Fd` instead of lowering them to generic bytes or unknown values.
-
-> r[transport.websocket]
->
-> Vox provides a WebSocket link, which sends payloads via WebSocket binary
-> frames.
-
-> r[transport.websocket.platforms]
->
-> The WebSocket link MUST work on platforms where tokio works
-> (e.g. `x86_64-unknown-linux-gnu`) and on `wasm32-unknown-unknown`.
-
-> r[transport.inprocess]
->
-> Vox provides an in-process link for WASM ↔ JS communication within the
-> same browser tab. The Rust side sends via a `js_sys::Function` callback and
-> receives via an MPSC channel fed by JS. No network is involved.
-
-> r[transport.inprocess.platforms]
->
-> The in-process link is available only on `wasm32-unknown-unknown`.
 
 # Hosted compliance subjects
 

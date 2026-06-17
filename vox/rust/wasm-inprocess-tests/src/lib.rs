@@ -816,8 +816,6 @@ impl Testbed for TestbedService {
 ///
 /// Returns a `JsInProcessLink` that JS should wire to an `InProcessTransport`.
 /// The acceptor runs in the background via `wasm_bindgen_futures::spawn_local`.
-// r[verify transport.inprocess]
-// r[verify transport.inprocess.platforms]
 #[wasm_bindgen]
 pub fn start_acceptor(on_message: js_sys::Function) -> JsInProcessLink {
     let mut js_link = JsInProcessLink::new(on_message);

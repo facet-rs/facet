@@ -19,7 +19,6 @@
  * Both cases share the same protocol logic in Connection.
  *
  * r[impl transport.stream]
- * r[impl transport.websocket]
  */
 export interface MessageTransport {
   /**

@@ -16,8 +16,6 @@ use vox_types::{Backing, Link, LinkRx, LinkTx};
 /// Wraps a [`WebSocketStream`] and sends each vox payload as a single
 /// binary WebSocket frame. The WebSocket protocol preserves message
 /// boundaries natively, so no length-prefix framing is needed.
-// r[impl transport.websocket]
-// r[impl transport.websocket.platforms]
 pub struct WsLink<S> {
     stream: WebSocketStream<S>,
 }
@@ -289,8 +287,6 @@ mod tests {
         }
     }
 
-    // r[verify transport.websocket]
-    // r[verify transport.websocket.platforms]
     #[tokio::test]
     async fn round_trip_single() {
         let (a, b) = ws_pair().await;

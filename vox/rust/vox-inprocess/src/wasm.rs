@@ -111,8 +111,6 @@ impl JsInProcessLink {
 // ---------------------------------------------------------------------------
 
 /// An in-process [`Link`] for WASM ↔ JS communication.
-// r[impl transport.inprocess]
-// r[impl transport.inprocess.platforms]
 pub struct InProcessLink(InProcessLinkTx, InProcessLinkRx);
 
 impl Link for InProcessLink {

@@ -65,8 +65,6 @@ impl Drop for ScratchBuffer {
 }
 
 /// A [`Link`] over a browser WebSocket.
-// r[impl transport.websocket]
-// r[impl transport.websocket.platforms]
 pub struct WsLink(WsLinkTx, WsLinkRx);
 
 impl WsLink {

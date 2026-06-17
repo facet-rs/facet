@@ -17,7 +17,6 @@ type MemItem = Vec<u8>;
 /// any `Fd`s travelling with them) — no serialization, no IO. Useful for
 /// testing Conduits, Connection, and anything above the transport layer
 /// without real networking.
-// r[impl transport.memory]
 pub struct MemoryLink {
     tx: mpsc::Sender<MemItem>,
     rx: mpsc::Receiver<MemItem>,
@@ -162,7 +161,6 @@ mod tests {
         }
     }
 
-    // r[verify transport.memory]
     #[tokio::test]
     async fn memory_link_preserves_boundaries_order_and_close() {
         let (a, b) = memory_link_pair(4);
