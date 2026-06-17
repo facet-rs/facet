@@ -371,12 +371,6 @@ pub enum ChannelBinding {
     Receiver(BoundChannelReceiver),
 }
 
-pub trait ChannelLiveness: crate::MaybeSend + crate::MaybeSync + 'static {}
-
-impl<T: crate::MaybeSend + crate::MaybeSync + 'static> ChannelLiveness for T {}
-
-pub type ChannelLivenessHandle = Arc<dyn ChannelLiveness>;
-
 pub trait ChannelCreditReplenisher: crate::MaybeSend + crate::MaybeSync + 'static {
     fn on_item_consumed(&self);
 
@@ -404,7 +398,6 @@ pub type ChannelCreditReplenisherHandle = Arc<dyn ChannelCreditReplenisher>;
 #[derive(Clone)]
 pub struct BoundChannelSink {
     pub sink: Arc<dyn ChannelSink>,
-    pub liveness: Option<ChannelLivenessHandle>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -615,14 +608,12 @@ impl<T> ChannelMailboxState<T> {
 
 pub struct BoundChannelReceiver {
     pub receiver: ChannelMailboxReceiver<IncomingChannelMessage>,
-    pub liveness: Option<ChannelLivenessHandle>,
     pub replenisher: Option<ChannelCreditReplenisherHandle>,
     pub writer_schema: Option<Arc<vox_phon::SchemaBundle>>,
 }
 
 struct LogicalReceiverState {
     generation: u64,
-    liveness: Option<ChannelLivenessHandle>,
     replenisher: Option<ChannelCreditReplenisherHandle>,
     writer_schema: Option<Arc<vox_phon::SchemaBundle>>,
     sender: Option<ChannelMailboxSender<LogicalIncomingChannelMessage>>,
@@ -631,7 +622,6 @@ struct LogicalReceiverState {
 
 type TakenLogicalReceiver = (
     ChannelMailboxReceiver<LogicalIncomingChannelMessage>,
-    Option<ChannelLivenessHandle>,
     Option<ChannelCreditReplenisherHandle>,
     Option<Arc<vox_phon::SchemaBundle>>,
 );
@@ -706,7 +696,6 @@ impl ChannelCore {
             let (tx, rx) = channel_mailbox("vox_types.channel.logical_receiver", 64);
             LogicalReceiverState {
                 generation: 0,
-                liveness: None,
                 replenisher: None,
                 writer_schema: None,
                 sender: Some(tx),
@@ -714,7 +703,6 @@ impl ChannelCore {
             }
         });
         state.generation = state.generation.wrapping_add(1);
-        state.liveness = bound.liveness.clone();
         state.replenisher = bound.replenisher.clone();
         state.writer_schema = bound.writer_schema.clone();
         let generation = state.generation;
@@ -765,7 +753,6 @@ impl ChannelCore {
                 state.receiver.take().map(|receiver| {
                     (
                         receiver,
-                        state.liveness.clone(),
                         state.replenisher.clone(),
                         state.writer_schema.clone(),
                     )
@@ -1270,19 +1257,6 @@ impl SinkSlot {
     }
 }
 
-/// Opaque liveness retention slot for bound channel handles.
-#[derive(Facet)]
-#[facet(opaque)]
-pub(crate) struct LivenessSlot {
-    pub(crate) inner: Option<ChannelLivenessHandle>,
-}
-
-impl LivenessSlot {
-    pub(crate) fn empty() -> Self {
-        Self { inner: None }
-    }
-}
-
 /// Receiver-side runtime slot.
 #[derive(Facet)]
 #[facet(opaque)]
@@ -1352,7 +1326,6 @@ pub struct Tx<T> {
     pub(crate) channel_id: ChannelId,
     pub(crate) sink: SinkSlot,
     pub(crate) core: CoreSlot,
-    pub(crate) liveness: LivenessSlot,
     debug_context: ChannelDebugContext,
     closed: AtomicBool,
     /// Scratch the adapter points `OpaqueSerialize` at: the index assigned by the
@@ -1382,7 +1355,6 @@ impl<T> Tx<T> {
             channel_id: ChannelId::RESERVED,
             sink: SinkSlot::empty(),
             core: CoreSlot::empty(),
-            liveness: LivenessSlot::empty(),
             debug_context,
             closed: AtomicBool::new(false),
             wire_index: AtomicU32::new(CHANNEL_NOT_COLLECTED),
@@ -1397,7 +1369,6 @@ impl<T> Tx<T> {
             channel_id: ChannelId::RESERVED,
             sink: SinkSlot::empty(),
             core: CoreSlot { inner: Some(core) },
-            liveness: LivenessSlot::empty(),
             debug_context,
             closed: AtomicBool::new(false),
             wire_index: AtomicU32::new(CHANNEL_NOT_COLLECTED),
@@ -1576,17 +1547,7 @@ impl<T> Tx<T> {
 
     #[doc(hidden)]
     pub fn bind(&mut self, sink: Arc<dyn ChannelSink>) {
-        self.bind_with_liveness(sink, None);
-    }
-
-    #[doc(hidden)]
-    pub fn bind_with_liveness(
-        &mut self,
-        sink: Arc<dyn ChannelSink>,
-        liveness: Option<ChannelLivenessHandle>,
-    ) {
         self.sink.inner = Some(sink);
-        self.liveness.inner = liveness;
     }
 
     #[doc(hidden)]
@@ -1676,8 +1637,7 @@ impl<T> Tx<T> {
                 Some(debug_context),
                 writer_schema_send,
             );
-            let liveness = binder.channel_liveness();
-            tx.bind_with_liveness(sink, liveness);
+            tx.bind(sink);
             Ok(())
         })?;
 
@@ -1802,7 +1762,6 @@ pub struct Rx<T> {
     pub(crate) receiver: ReceiverSlot,
     pub(crate) logical_receiver: LogicalReceiverSlot,
     pub(crate) core: CoreSlot,
-    pub(crate) liveness: LivenessSlot,
     pub(crate) replenisher: ReplenisherSlot,
     pub(crate) decoder: ChannelElementDecoderSlot,
     debug_context: ChannelDebugContext,
@@ -1835,7 +1794,6 @@ impl<T> Rx<T> {
             receiver: ReceiverSlot::empty(),
             logical_receiver: LogicalReceiverSlot::empty(),
             core: CoreSlot::empty(),
-            liveness: LivenessSlot::empty(),
             replenisher: ReplenisherSlot::empty(),
             decoder: ChannelElementDecoderSlot::empty(),
             debug_context,
@@ -1853,7 +1811,6 @@ impl<T> Rx<T> {
             receiver: ReceiverSlot::empty(),
             logical_receiver: LogicalReceiverSlot::empty(),
             core: CoreSlot { inner: Some(core) },
-            liveness: LivenessSlot::empty(),
             replenisher: ReplenisherSlot::empty(),
             decoder: ChannelElementDecoderSlot::empty(),
             debug_context,
@@ -1884,11 +1841,9 @@ impl<T> Rx<T> {
         loop {
             if self.logical_receiver.inner.is_none()
                 && let Some(core) = &self.core.inner
-                && let Some((receiver, liveness, replenisher, writer_schema)) =
-                    core.take_logical_receiver()
+                && let Some((receiver, replenisher, writer_schema)) = core.take_logical_receiver()
             {
                 self.logical_receiver.inner = Some(receiver);
-                self.liveness.inner = liveness;
                 self.replenisher.inner = replenisher;
                 self.decoder.writer = writer_schema;
                 self.decoder.program = None;
@@ -1930,7 +1885,6 @@ impl<T> Rx<T> {
                 && let Some(bound) = core.take_receiver()
             {
                 self.receiver.inner = Some(bound.receiver);
-                self.liveness.inner = bound.liveness;
                 self.replenisher.inner = bound.replenisher;
                 self.decoder.writer = bound.writer_schema;
                 self.decoder.program = None;
@@ -1960,18 +1914,8 @@ impl<T> Rx<T> {
     }
     #[doc(hidden)]
     pub fn bind(&mut self, receiver: ChannelMailboxReceiver<IncomingChannelMessage>) {
-        self.bind_with_liveness(receiver, None);
-    }
-
-    #[doc(hidden)]
-    pub fn bind_with_liveness(
-        &mut self,
-        receiver: ChannelMailboxReceiver<IncomingChannelMessage>,
-        liveness: Option<ChannelLivenessHandle>,
-    ) {
         self.receiver.inner = Some(receiver);
         self.logical_receiver.inner = None;
-        self.liveness.inner = liveness;
         self.replenisher.inner = None;
         self.closed.store(false, Ordering::Release);
     }
@@ -1987,9 +1931,7 @@ impl<T> Drop for Rx<T> {
         if self.replenisher.inner.is_none()
             && let Some(core) = &self.core.inner
         {
-            if let Some((_receiver, _liveness, replenisher, _writer_schema)) =
-                core.take_logical_receiver()
-            {
+            if let Some((_receiver, replenisher, _writer_schema)) = core.take_logical_receiver() {
                 self.replenisher.inner = replenisher;
             } else if let Some(bound) = core.take_receiver() {
                 self.replenisher.inner = bound.replenisher;
@@ -2024,9 +1966,8 @@ impl<T> TryFrom<&Rx<T>> for ChannelId {
                 return Err("serializing Rx requires an active ChannelBinder".to_string());
             };
             let (channel_id, sink) = binder.create_tx_with_context(Some(value.debug_context));
-            let liveness = binder.channel_liveness();
             if let Some(core) = &value.core.inner {
-                core.set_binding(ChannelBinding::Sink(BoundChannelSink { sink, liveness }));
+                core.set_binding(ChannelBinding::Sink(BoundChannelSink { sink }));
             }
             Ok(channel_id)
         })
@@ -2061,7 +2002,6 @@ impl<T> Rx<T> {
             };
             let bound = binder.register_rx_with_context(channel_id, Some(debug_context));
             rx.receiver.inner = Some(bound.receiver);
-            rx.liveness.inner = bound.liveness;
             rx.replenisher.inner = bound.replenisher;
             rx.decoder.writer = writer_schema.or(bound.writer_schema);
             rx.decoder.program = None;
@@ -2227,12 +2167,6 @@ pub trait ChannelBinder: crate::MaybeSend + crate::MaybeSync {
         self.register_rx(channel_id)
     }
 
-    /// Optional opaque handle that keeps the underlying session/connection alive
-    /// for the lifetime of any bound channel handle.
-    fn channel_liveness(&self) -> Option<ChannelLivenessHandle> {
-        None
-    }
-
     fn note_channel_schema_role(
         &self,
         channel_id: ChannelId,
@@ -2347,10 +2281,7 @@ mod tests {
 
         let (tx, _rx) = channel::<u32>();
         let core = tx.core.inner.as_ref().expect("paired tx should have core");
-        core.set_binding(ChannelBinding::Sink(BoundChannelSink {
-            sink,
-            liveness: None,
-        }));
+        core.set_binding(ChannelBinding::Sink(BoundChannelSink { sink }));
         drop(tx);
 
         assert_eq!(sink_impl.close_on_drop_calls.load(Ordering::Acquire), 1);
@@ -2551,7 +2482,6 @@ mod tests {
         let core = Arc::new(ChannelCore::new(ChannelDebugContext::default()));
         core.bind_logical_receiver(BoundChannelReceiver {
             receiver: rx_inner,
-            liveness: None,
             replenisher: Some(replenisher.clone()),
             writer_schema: None,
         });
@@ -2569,7 +2499,6 @@ mod tests {
         let core = Arc::new(ChannelCore::new(ChannelDebugContext::default()));
         core.bind_logical_receiver(BoundChannelReceiver {
             receiver: rx_inner,
-            liveness: None,
             replenisher: Some(replenisher.clone()),
             writer_schema: None,
         });
@@ -2633,7 +2562,6 @@ mod tests {
                 self.alloc_id(),
                 BoundChannelReceiver {
                     receiver: rx,
-                    liveness: None,
                     replenisher: None,
                     writer_schema: None,
                 },
@@ -2649,7 +2577,6 @@ mod tests {
             std::mem::forget(tx);
             BoundChannelReceiver {
                 receiver: rx,
-                liveness: None,
                 replenisher: None,
                 writer_schema: None,
             }
@@ -2901,7 +2828,6 @@ mod tests {
                     ChannelId(902),
                     BoundChannelReceiver {
                         receiver,
-                        liveness: None,
                         replenisher: None,
                         writer_schema: None,
                     },
@@ -2918,7 +2844,6 @@ mod tests {
                 *self.sender.lock().expect("sender mutex poisoned") = Some(sender);
                 BoundChannelReceiver {
                     receiver,
-                    liveness: None,
                     replenisher: None,
                     writer_schema: None,
                 }

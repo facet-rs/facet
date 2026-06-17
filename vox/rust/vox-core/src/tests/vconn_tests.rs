@@ -625,7 +625,7 @@ async fn dropping_root_and_virtual_callers_does_not_shutdown_session() {
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     assert!(
         !client_session.is_finished(),
-        "session should remain alive while a virtual connection is still caller-live"
+        "dropping the root caller must not close the driven connection"
     );
 
     let response = vconn_caller

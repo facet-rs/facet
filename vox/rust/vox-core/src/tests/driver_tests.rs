@@ -300,7 +300,7 @@ async fn dropping_root_callers_does_not_shutdown_connection() {
 // r[verify rpc.channel.lifecycle]
 // r[verify rpc.channel.binding.caller-args.tx]
 #[tokio::test]
-async fn dropping_root_caller_keeps_session_alive_while_bound_stream_rx_exists() {
+async fn bound_stream_rx_works_after_public_caller_drop_when_connection_is_driven() {
     let (client_conduit, server_conduit) = message_conduit_pair();
 
     let (client_session_tx, client_session_rx) =
@@ -352,7 +352,7 @@ async fn dropping_root_caller_keeps_session_alive_while_bound_stream_rx_exists()
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     assert!(
         !client_session.is_finished(),
-        "session should remain alive while a bound stream handle still exists"
+        "dropping the public caller must not close the driven connection"
     );
 
     let value = 123_u32;

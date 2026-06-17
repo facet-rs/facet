@@ -16,10 +16,10 @@ use vox_rt::task::FutureExt as _;
 use vox_types::{
     BoxFut, CallResult, ChannelBinder, ChannelBody, ChannelClose, ChannelCreditReplenisher,
     ChannelCreditReplenisherHandle, ChannelEventContext, ChannelId, ChannelItem,
-    ChannelLivenessHandle, ChannelMailboxReceiver, ChannelMailboxSender, ChannelMessage,
-    ChannelSink, CreditSink, Handler, IdAllocator, IncomingChannelMessage, LaneId, MaybeSend,
-    MaybeSendFuture, MaybeSync, Parity, Payload, ReplySink, RequestBody, RequestCall, RequestId,
-    RequestMessage, RequestResponse, SelfRef, TrySendError, TxError, VoxError, channel_mailbox,
+    ChannelMailboxReceiver, ChannelMailboxSender, ChannelMessage, ChannelSink, CreditSink, Handler,
+    IdAllocator, IncomingChannelMessage, LaneId, MaybeSend, MaybeSendFuture, MaybeSync, Parity,
+    Payload, ReplySink, RequestBody, RequestCall, RequestId, RequestMessage, RequestResponse,
+    SelfRef, TrySendError, TxError, VoxError, channel_mailbox,
 };
 use vox_types::{
     ChannelCloseReason, ChannelDebugContext, ChannelDirection, ChannelEvent, ChannelResetReason,
@@ -772,8 +772,6 @@ impl DriverShared {
     }
 }
 
-struct CallerLiveness;
-
 #[cfg(test)]
 mod tests {
     use super::{DriverChannelCreditReplenisher, DriverLocalControl};
@@ -1163,6 +1161,10 @@ impl Handler<DriverReplySink> for Box<dyn ErasedHandler> {
 /// This is the primary type for making outbound RPC calls. Generated `*Client`
 /// types store a `Caller` as a public field. Use `with_middleware()` to add
 /// client middleware to the call chain.
+// r[impl rpc.caller.liveness.refcounted]
+// r[impl rpc.caller.liveness.last-drop-closes-connection]
+// r[impl rpc.caller.liveness.root-internal-close]
+// r[impl rpc.caller.liveness.root-teardown-condition]
 #[must_use = "Dropping this caller does not close the connection; shut down explicitly with ConnectionHandle when needed."]
 #[derive(Clone)]
 pub struct Caller {
@@ -1309,7 +1311,6 @@ struct DriverChannelBinder {
     sender: ConnectionSender,
     shared: Arc<DriverShared>,
     local_control_tx: mpsc::UnboundedSender<DriverLocalControl>,
-    liveness: Arc<CallerLiveness>,
 }
 
 fn register_rx_channel_impl(
@@ -1317,7 +1318,6 @@ fn register_rx_channel_impl(
     channel_id: ChannelId,
     initial_channel_credit: u32,
     debug_context: Option<ChannelDebugContext>,
-    liveness: Option<ChannelLivenessHandle>,
     local_control_tx: mpsc::UnboundedSender<DriverLocalControl>,
 ) -> vox_types::BoundChannelReceiver {
     observe_channel_opened(
@@ -1333,7 +1333,6 @@ fn register_rx_channel_impl(
         shared.channel_credits.lock().remove(&channel_id);
         return vox_types::BoundChannelReceiver {
             receiver: rx,
-            liveness,
             replenisher: None,
             writer_schema: None,
         };
@@ -1341,7 +1340,6 @@ fn register_rx_channel_impl(
 
     vox_types::BoundChannelReceiver {
         receiver: rx,
-        liveness,
         replenisher: Some(Arc::new(DriverChannelCreditReplenisher::new(
             shared.connection_id,
             channel_id,
@@ -1406,7 +1404,6 @@ trait DriverChannelEndpoint {
     fn endpoint_sender(&self) -> &ConnectionSender;
     fn endpoint_shared(&self) -> &Arc<DriverShared>;
     fn endpoint_local_control_tx(&self) -> &mpsc::UnboundedSender<DriverLocalControl>;
-    fn endpoint_liveness(&self) -> Option<ChannelLivenessHandle>;
 
     fn create_tx_credit_sink(
         &self,
@@ -1480,7 +1477,6 @@ trait DriverChannelEndpoint {
             channel_id,
             shared.local_initial_channel_credit,
             debug_context,
-            self.endpoint_liveness(),
             self.endpoint_local_control_tx().clone(),
         )
     }
@@ -1497,10 +1493,6 @@ impl DriverChannelEndpoint for DriverChannelBinder {
 
     fn endpoint_local_control_tx(&self) -> &mpsc::UnboundedSender<DriverLocalControl> {
         &self.local_control_tx
-    }
-
-    fn endpoint_liveness(&self) -> Option<ChannelLivenessHandle> {
-        Some(self.liveness.clone() as ChannelLivenessHandle)
     }
 }
 
@@ -1560,10 +1552,6 @@ impl ChannelBinder for DriverChannelBinder {
         self.register_rx_bound(channel_id, debug_context)
     }
 
-    fn channel_liveness(&self) -> Option<ChannelLivenessHandle> {
-        self.endpoint_liveness()
-    }
-
     fn note_channel_schema_role(
         &self,
         channel_id: ChannelId,
@@ -1585,7 +1573,6 @@ pub struct DriverCaller {
     shared: Arc<DriverShared>,
     local_control_tx: mpsc::UnboundedSender<DriverLocalControl>,
     closed_rx: watch::Receiver<Option<ConnectionCloseReason>>,
-    liveness: Arc<CallerLiveness>,
 }
 
 impl DriverCaller {
@@ -1626,10 +1613,6 @@ impl DriverChannelEndpoint for DriverCaller {
 
     fn endpoint_local_control_tx(&self) -> &mpsc::UnboundedSender<DriverLocalControl> {
         &self.local_control_tx
-    }
-
-    fn endpoint_liveness(&self) -> Option<ChannelLivenessHandle> {
-        Some(self.liveness.clone() as ChannelLivenessHandle)
     }
 }
 
@@ -1687,10 +1670,6 @@ impl ChannelBinder for DriverCaller {
         debug_context: Option<ChannelDebugContext>,
     ) -> vox_types::BoundChannelReceiver {
         self.register_rx_bound(channel_id, debug_context)
-    }
-
-    fn channel_liveness(&self) -> Option<ChannelLivenessHandle> {
-        self.endpoint_liveness()
     }
 
     fn note_channel_schema_role(
@@ -1935,7 +1914,6 @@ pub struct Driver<H: Handler<DriverReplySink>> {
     handler_futs: FuturesUnordered<HandlerFut>,
     local_control_tx: mpsc::UnboundedSender<DriverLocalControl>,
     drop_control_seed: Option<mpsc::UnboundedSender<DropControlRequest>>,
-    caller_liveness: SyncMutex<Option<Weak<CallerLiveness>>>,
 }
 
 enum DriverLocalControl {
@@ -2135,42 +2113,16 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             handler_futs: FuturesUnordered::new(),
             local_control_tx,
             drop_control_seed: control_tx,
-            caller_liveness: SyncMutex::new("driver.caller_liveness", None),
         }
     }
 
     /// Get a cloneable caller handle for making outgoing calls.
-    // r[impl rpc.caller.liveness.refcounted]
-    // r[impl rpc.caller.liveness.last-drop-closes-connection]
-    // r[impl rpc.caller.liveness.root-internal-close]
-    // r[impl rpc.caller.liveness.root-teardown-condition]
-    fn existing_caller_liveness(&self) -> Option<Arc<CallerLiveness>> {
-        self.caller_liveness.lock().as_ref().and_then(Weak::upgrade)
-    }
-
-    fn caller_liveness(&self) -> Arc<CallerLiveness> {
-        if let Some(existing) = self.existing_caller_liveness() {
-            existing
-        } else {
-            let mut liveness = self.caller_liveness.lock();
-            if let Some(existing) = liveness.as_ref().and_then(Weak::upgrade) {
-                existing
-            } else {
-                let arc = Arc::new(CallerLiveness);
-                *liveness = Some(Arc::downgrade(&arc));
-                arc
-            }
-        }
-    }
-
     pub fn caller(&self) -> DriverCaller {
-        let liveness = self.caller_liveness();
         DriverCaller {
             sender: self.sender.clone(),
             shared: Arc::clone(&self.shared),
             local_control_tx: self.local_control_tx.clone(),
             closed_rx: self.closed_rx.clone(),
-            liveness,
         }
     }
 
@@ -2195,7 +2147,6 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             sender: self.sender.clone(),
             shared: Arc::clone(&self.shared),
             local_control_tx: self.local_control_tx.clone(),
-            liveness: self.caller_liveness(),
         }
     }
 
