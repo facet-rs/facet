@@ -212,8 +212,8 @@ Connection/Lane/RequestScope runtime contract.
 >
 > Lane ID 0 is reserved for connection-control traffic such as protocol errors,
 > keepalive, and connection-level lifecycle messages. Lane ID 0 MUST NOT be
-> exposed by public APIs as an application service lane, root service, generated
-> caller, or liveness-only `Noop` client.
+> exposed by public APIs as an application service lane, generated caller, or
+> liveness-only `Noop` client.
 
 > r[lane.open]
 >
@@ -237,7 +237,7 @@ Connection/Lane/RequestScope runtime contract.
 > open/accept/reject/close using the historical `OpenConnection`,
 > `AcceptConnection`, `RejectConnection`, and `CloseConnection` message
 > variants. When used this way, those messages have lane semantics, not public
-> root-service semantics, and ID 0 remains the private control lane.
+> service-anchor semantics, and ID 0 remains the private control lane.
 
 > r[connection.lifecycle.driven]
 >

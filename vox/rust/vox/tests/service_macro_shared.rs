@@ -700,7 +700,7 @@ pub async fn run_borrowed_return_survives_teardown_over_generated_client<L>(
     .establish::<BorrowedPayloadProbeClient>()
     .await
     .expect("client handshake failed");
-    let client_session_handle = client.connection.clone().unwrap();
+    let client_connection_task_handle = client.connection.clone().unwrap();
 
     server_ready_rx.await.expect("server setup failed");
 
@@ -710,7 +710,7 @@ pub async fn run_borrowed_return_survives_teardown_over_generated_client<L>(
         .expect("borrowed payload call should succeed");
 
     drop(client);
-    drop(client_session_handle);
+    drop(client_connection_task_handle);
     server_task.abort();
     let _ = server_task.await;
 

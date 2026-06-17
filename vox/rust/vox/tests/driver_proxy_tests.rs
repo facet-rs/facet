@@ -1,4 +1,4 @@
-//! Tests for proxy_lanes — transparent call forwarding between sessions.
+//! Tests for proxy_lanes — transparent call forwarding between lanes.
 
 use vox::{ConnectionHandle, ConnectionSettings, Driver, LaneRejection, Parity, memory_link_pair};
 
@@ -17,7 +17,7 @@ impl Echo for EchoService {
 }
 
 struct ProxyAcceptor {
-    upstream_session: ConnectionHandle,
+    upstream_connection: ConnectionHandle,
 }
 
 impl vox::LaneAcceptor for ProxyAcceptor {
@@ -30,10 +30,10 @@ impl vox::LaneAcceptor for ProxyAcceptor {
             connection.handle_with(());
             return Ok(());
         }
-        let upstream_session = self.upstream_session.clone();
+        let upstream_connection = self.upstream_connection.clone();
         let incoming = connection.into_handle();
         tokio::spawn(async move {
-            let upstream = upstream_session
+            let upstream = upstream_connection
                 .open_lane_handle(
                     ConnectionSettings {
                         parity: Parity::Odd,
@@ -53,11 +53,11 @@ impl vox::LaneAcceptor for ProxyAcceptor {
 #[tokio::test]
 async fn proxy_lanes_forwards_calls() {
     // guest-a <-> host <-> guest-b
-    // guest-a opens a vconn through host, which proxies to guest-b.
+    // guest-a opens a service lane through host, which proxies to guest-b.
     let (host_b_link, guest_b_link) = memory_link_pair(16);
     let (host_a_link, guest_a_link) = memory_link_pair(16);
 
-    // guest-b: accepts virtual connections with EchoService
+    // guest-b: accepts service lanes with EchoService
     let guest_b_task = tokio::spawn(async move {
         let guard = vox::acceptor_on(guest_b_link)
             .on_connection(EchoDispatcher::new(EchoService))
@@ -68,18 +68,18 @@ async fn proxy_lanes_forwards_calls() {
         std::future::pending::<()>().await
     });
 
-    // host <-> guest-b root session
+    // host <-> guest-b control lane
     let _host_to_b = vox::initiator_on(host_b_link)
         .establish_connection()
         .await
         .expect("host<->guest-b establish");
-    let host_to_b_session = _host_to_b.clone();
+    let host_to_b_connection = _host_to_b.clone();
 
     // host: accepts connections from guest-a and proxies to guest-b
     let host_for_a_task = tokio::spawn(async move {
         let guard = vox::acceptor_on(host_a_link)
             .on_connection(ProxyAcceptor {
-                upstream_session: host_to_b_session,
+                upstream_connection: host_to_b_connection,
             })
             .establish_connection()
             .await
@@ -88,15 +88,15 @@ async fn proxy_lanes_forwards_calls() {
         std::future::pending::<()>().await
     });
 
-    // guest-a <-> host root session
-    let _guest_a_root = vox::initiator_on(guest_a_link)
+    // guest-a <-> host control lane
+    let _guest_a_connection = vox::initiator_on(guest_a_link)
         .establish_connection()
         .await
         .expect("guest-a establish");
-    let guest_a_session = _guest_a_root.clone();
+    let guest_a_connection = _guest_a_connection.clone();
 
-    // Open a proxied vconn from guest-a through host to guest-b.
-    let proxy_conn = guest_a_session
+    // Open a proxied service lane from guest-a through host to guest-b.
+    let proxy_conn = guest_a_connection
         .open_lane_handle(
             ConnectionSettings {
                 parity: Parity::Odd,
@@ -117,7 +117,7 @@ async fn proxy_lanes_forwards_calls() {
     let result = client.echo(777).await.expect("proxied echo");
     assert_eq!(result, 777);
 
-    guest_a_session
+    guest_a_connection
         .close_lane(proxy_conn_id, Default::default())
         .await
         .expect("close proxy connection");

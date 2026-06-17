@@ -1639,8 +1639,8 @@ describe("connection", () => {
 
   // r[verify connection.shutdown.explicit]
   // r[verify lane.control]
-  // r[verify rpc.caller.liveness.root-internal-close]
-  // r[verify rpc.caller.liveness.root-teardown-condition]
+  // r[verify rpc.caller.liveness.public-handle-drop]
+  // r[verify rpc.caller.liveness.explicit-shutdown-required]
   it("does not expose the internal control lane as a public service lane", async () => {
     const settings: ConnectionSettings = {
       parity: { tag: "Odd" },

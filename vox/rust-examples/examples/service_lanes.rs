@@ -5,7 +5,7 @@ use std::sync::{
 
 use eyre::{Result, WrapErr, eyre};
 use vox::transport::tcp::StreamLink;
-use vox::{ConnectionSettings, Metadata, Parity};
+use vox::{ConnectionSettings, LaneRejectReason, LaneRejection, Parity};
 
 #[vox::service]
 trait CounterLab {
@@ -50,7 +50,10 @@ impl StringLab for StringLabService {
     }
 }
 
-fn lab_acceptor(request: &vox::LaneRequest, connection: vox::PendingLane) -> Result<(), Metadata> {
+fn lab_acceptor(
+    request: &vox::LaneRequest,
+    connection: vox::PendingLane,
+) -> std::result::Result<(), LaneRejection> {
     match request.service() {
         "CounterLab" => {
             connection.handle_with(CounterLabDispatcher::new(CounterLabService::new()));
@@ -60,7 +63,10 @@ fn lab_acceptor(request: &vox::LaneRequest, connection: vox::PendingLane) -> Res
             connection.handle_with(StringLabDispatcher::new(StringLabService));
             Ok(())
         }
-        _ => Err(vox::metadata().str("error", "unknown service").build()),
+        _ => Err(LaneRejection::with_message(
+            LaneRejectReason::UnknownService,
+            "unknown service",
+        )),
     }
 }
 
@@ -159,7 +165,7 @@ async fn main() -> Result<()> {
 
     println!("[client] closing connection");
     server_task.abort();
-    println!("[demo] virtual_connections: complete");
+    println!("[demo] service_lanes: complete");
 
     Ok(())
 }

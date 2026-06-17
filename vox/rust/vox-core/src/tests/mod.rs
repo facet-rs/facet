@@ -16,8 +16,8 @@ use crate::{
 
 mod credit_tests;
 mod driver_tests;
+mod lane_tests;
 pub(crate) mod utils;
-mod vconn_tests;
 
 struct StringFamily;
 

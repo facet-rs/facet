@@ -168,7 +168,7 @@ async fn serve_listener_builder_rejects_zero_channel_capacity() {
 
 // r[verify lane.accept.api]
 #[tokio::test]
-async fn connect_builder_can_configure_inbound_virtual_connections_before_await() {
+async fn connect_builder_can_configure_inbound_lanes_before_await() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind");
@@ -178,13 +178,13 @@ async fn connect_builder_can_configure_inbound_virtual_connections_before_await(
 
     let server = tokio::spawn(async move {
         let (socket, _) = listener.accept().await.expect("accept");
-        let root = vox::acceptor_on(vox::transport::tcp::StreamLink::tcp(socket))
+        let connection_guard = vox::acceptor_on(vox::transport::tcp::StreamLink::tcp(socket))
             .on_connection(PingDispatcher::new(PingService))
             .establish_connection()
             .await
             .expect("server establish");
-        let session = root.clone();
-        let client: EchoClient = session
+        let connection = connection_guard.clone();
+        let client: EchoClient = connection
             .open_lane_with_settings(vox::ConnectionSettings {
                 parity: vox::Parity::Odd,
                 max_concurrent_requests: 64,
@@ -195,7 +195,7 @@ async fn connect_builder_can_configure_inbound_virtual_connections_before_await(
         let echoed = client.echo(41).await.expect("echo");
         assert_eq!(echoed, 41);
         accepted_server.notify_one();
-        root
+        connection_guard
     });
 
     let client: PingClient = vox::connect_lane(format!("tcp://{addr}"))
@@ -208,9 +208,9 @@ async fn connect_builder_can_configure_inbound_virtual_connections_before_await(
 
     tokio::time::timeout(std::time::Duration::from_secs(1), accepted.notified())
         .await
-        .expect("server never used inbound virtual connection");
+        .expect("server never used inbound service lane");
 
-    let _server_root = server.await.expect("server task");
+    let _server_connection_guard = server.await.expect("server task");
 }
 
 #[cfg(unix)]

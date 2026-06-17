@@ -42,18 +42,18 @@ fn connection_settings() -> ConnectionSettings {
     }
 }
 
-async fn open_ping(session: &ConnectionHandle) -> PingClient {
-    session
+async fn open_ping(connection: &ConnectionHandle) -> PingClient {
+    connection
         .open_lane_with_settings(connection_settings())
         .await
-        .expect("open Ping virtual connection")
+        .expect("open Ping service lane")
 }
 
-async fn open_pong(session: &ConnectionHandle) -> PongClient {
-    session
+async fn open_pong(connection: &ConnectionHandle) -> PongClient {
+    connection
         .open_lane_with_settings(connection_settings())
         .await
-        .expect("open Pong virtual connection")
+        .expect("open Pong service lane")
 }
 
 // r[verify rpc.connection-setup]
@@ -64,31 +64,31 @@ async fn open_pong(session: &ConnectionHandle) -> PongClient {
 async fn ffi_transport_supports_bidirectional_calls_with_two_services_when_a_initiates() {
     let server = tokio::spawn(async move {
         let link = ffi_pair_ab_b::accept().await.expect("accept ffi link");
-        let root = vox::acceptor_on(link)
+        let connection_guard = vox::acceptor_on(link)
             .on_connection(PongDispatcher::new(PongService))
             .establish_connection()
             .await
             .expect("acceptor establish");
-        let session = root.clone();
-        let ping = open_ping(&session).await;
+        let connection = connection_guard.clone();
+        let ping = open_ping(&connection).await;
         let response = ping.ping(7).await.expect("Ping call over FFI");
-        (response, root)
+        (response, connection_guard)
     });
 
     let link = ffi_pair_ab_a::connect(ffi_pair_ab_b::vtable()).expect("connect ffi link");
-    let root = vox::initiator_on(link)
+    let connection_guard = vox::initiator_on(link)
         .on_connection(PingDispatcher::new(PingService))
         .establish_connection()
         .await
         .expect("initiator establish");
-    let session = root.clone();
-    let pong = open_pong(&session).await;
+    let connection = connection_guard.clone();
+    let pong = open_pong(&connection).await;
 
     assert_eq!(pong.pong(11).await.expect("Pong call over FFI"), 2_011);
 
-    let (server_response, _server_root) = server.await.expect("server task");
+    let (server_response, _server_connection_guard) = server.await.expect("server task");
     assert_eq!(server_response, 1_007);
-    drop(root);
+    drop(connection_guard);
 }
 
 // r[verify rpc.connection-setup]
@@ -99,29 +99,29 @@ async fn ffi_transport_supports_bidirectional_calls_with_two_services_when_a_ini
 async fn ffi_transport_supports_bidirectional_calls_with_two_services_when_b_initiates() {
     let server = tokio::spawn(async move {
         let link = ffi_pair_ba_a::accept().await.expect("accept ffi link");
-        let root = vox::acceptor_on(link)
+        let connection_guard = vox::acceptor_on(link)
             .on_connection(PingDispatcher::new(PingService))
             .establish_connection()
             .await
             .expect("acceptor establish");
-        let session = root.clone();
-        let pong = open_pong(&session).await;
+        let connection = connection_guard.clone();
+        let pong = open_pong(&connection).await;
         let response = pong.pong(13).await.expect("Pong call over FFI");
-        (response, root)
+        (response, connection_guard)
     });
 
     let link = ffi_pair_ba_b::connect(ffi_pair_ba_a::vtable()).expect("connect ffi link");
-    let root = vox::initiator_on(link)
+    let connection_guard = vox::initiator_on(link)
         .on_connection(PongDispatcher::new(PongService))
         .establish_connection()
         .await
         .expect("initiator establish");
-    let session = root.clone();
-    let ping = open_ping(&session).await;
+    let connection = connection_guard.clone();
+    let ping = open_ping(&connection).await;
 
     assert_eq!(ping.ping(5).await.expect("Ping call over FFI"), 1_005);
 
-    let (server_response, _server_root) = server.await.expect("server task");
+    let (server_response, _server_connection_guard) = server.await.expect("server task");
     assert_eq!(server_response, 2_013);
-    drop(root);
+    drop(connection_guard);
 }

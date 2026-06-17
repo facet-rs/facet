@@ -24,7 +24,7 @@ pub const VOX_SERVICE_METADATA_KEY: &str = "vox-service";
 
 use crate::FromVoxLane;
 
-/// A pinned, boxed session future. On non-WASM this is `Send + 'static`;
+/// A pinned, boxed connection future. On non-WASM this is `Send + 'static`;
 /// on WASM it's `'static` only (no `Send` requirement).
 #[cfg(not(target_arch = "wasm32"))]
 pub type BoxConnectionFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
@@ -141,7 +141,7 @@ pub fn acceptor_transport<L: Link>(link: L) -> ConnectionTransportAcceptorBuilde
     acceptor_on(link)
 }
 
-/// Shared configuration for all session builders.
+/// Shared configuration for all connection builders.
 pub struct ConnectionConfig {
     pub root_settings: ConnectionSettings,
     pub metadata: Metadata,
@@ -413,7 +413,7 @@ impl<C> ConnectionInitiatorBuilder<C> {
         self
     }
 
-    /// Override the function used to spawn the session background task.
+    /// Override the function used to spawn the connection background task.
     /// Defaults to `tokio::spawn` on non-WASM and `wasm_bindgen_futures::spawn_local` on WASM.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn spawn_fn(mut self, f: impl FnOnce(BoxConnectionFuture) + Send + 'static) -> Self {
@@ -421,7 +421,7 @@ impl<C> ConnectionInitiatorBuilder<C> {
         self
     }
 
-    /// Override the function used to spawn the session background task.
+    /// Override the function used to spawn the connection background task.
     /// Defaults to `tokio::spawn` on non-WASM and `wasm_bindgen_futures::spawn_local` on WASM.
     #[cfg(target_arch = "wasm32")]
     pub fn spawn_fn(mut self, f: impl FnOnce(BoxConnectionFuture) + 'static) -> Self {
@@ -446,9 +446,9 @@ impl<C> ConnectionInitiatorBuilder<C> {
         } = self;
         validate_negotiated_root_settings(&config.root_settings, &handshake_result)?;
         let (tx, rx) = conduit.split();
-        let (open_tx, open_rx) = mpsc::channel::<OpenRequest>("session.open", 4);
-        let (close_tx, close_rx) = mpsc::channel::<CloseRequest>("session.close", 4);
-        let (control_tx, control_rx) = mpsc::unbounded_channel("session.control");
+        let (open_tx, open_rx) = mpsc::channel::<OpenRequest>("connection.open", 4);
+        let (close_tx, close_rx) = mpsc::channel::<CloseRequest>("connection.close", 4);
+        let (control_tx, control_rx) = mpsc::unbounded_channel("connection.control");
         let mut connection = Connection::pre_handshake(
             tx,
             rx,
@@ -857,7 +857,7 @@ impl<C> ConnectionAcceptorBuilder<C> {
         self
     }
 
-    /// Override the function used to spawn the session background task.
+    /// Override the function used to spawn the connection background task.
     /// Defaults to `tokio::spawn` on non-WASM and `wasm_bindgen_futures::spawn_local` on WASM.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn spawn_fn(mut self, f: impl FnOnce(BoxConnectionFuture) + Send + 'static) -> Self {
@@ -865,7 +865,7 @@ impl<C> ConnectionAcceptorBuilder<C> {
         self
     }
 
-    /// Override the function used to spawn the session background task.
+    /// Override the function used to spawn the connection background task.
     /// Defaults to `tokio::spawn` on non-WASM and `wasm_bindgen_futures::spawn_local` on WASM.
     #[cfg(target_arch = "wasm32")]
     pub fn spawn_fn(mut self, f: impl FnOnce(BoxConnectionFuture) + 'static) -> Self {
@@ -887,9 +887,9 @@ impl<C> ConnectionAcceptorBuilder<C> {
         } = self;
         validate_negotiated_root_settings(&config.root_settings, &handshake_result)?;
         let (tx, rx) = conduit.split();
-        let (open_tx, open_rx) = mpsc::channel::<OpenRequest>("session.open", 4);
-        let (close_tx, close_rx) = mpsc::channel::<CloseRequest>("session.close", 4);
-        let (control_tx, control_rx) = mpsc::unbounded_channel("session.control");
+        let (open_tx, open_rx) = mpsc::channel::<OpenRequest>("connection.open", 4);
+        let (close_tx, close_rx) = mpsc::channel::<CloseRequest>("connection.close", 4);
+        let (control_tx, control_rx) = mpsc::unbounded_channel("connection.control");
         let mut connection = Connection::pre_handshake(
             tx,
             rx,

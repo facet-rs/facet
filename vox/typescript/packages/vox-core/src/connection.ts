@@ -549,7 +549,7 @@ class ConnectionCore {
 
   start(): void {
     // r[impl connection.lifecycle.driven]
-    // r[impl rpc.caller.liveness.root-teardown-condition]
+    // r[impl rpc.caller.liveness.explicit-shutdown-required]
     if (this.runPromise) {
       return;
     }
@@ -1857,7 +1857,7 @@ export function defaultLaneSettings(
   };
 }
 
-// r[impl rpc.caller.liveness.root-internal-close]
+// r[impl rpc.caller.liveness.public-handle-drop]
 export class Connection {
   private readonly core: ConnectionCore;
 

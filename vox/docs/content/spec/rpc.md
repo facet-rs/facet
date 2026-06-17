@@ -90,13 +90,13 @@ weight = 12
 > for that handle graph; graceful lane close requires an explicit async close,
 > retire, or drain operation.
 
-> r[rpc.caller.liveness.root-internal-close]
+> r[rpc.caller.liveness.public-handle-drop]
 >
 > Dropping public handles MUST NOT internally close ID 0. ID 0 is private
 > connection-control traffic and is closed only by explicit connection shutdown,
 > connection drain completion, protocol error, or connection failure.
 
-> r[rpc.caller.liveness.root-teardown-condition]
+> r[rpc.caller.liveness.explicit-shutdown-required]
 >
 > Connection teardown is driven by the connection driver, explicit shutdown or
 > drain policy, protocol error, or underlying transport/link failure. It MUST NOT
@@ -119,9 +119,8 @@ weight = 12
 > r[lane.open.api]
 >
 > A peer may open a service lane on an existing Vox connection, receiving a lane
-> handle when the counterpart accepts it. Historical compatibility APIs spelled
-> this as `SessionHandle::open_connection(...)` returning a `ConnectionHandle`;
-> those names referred to service-lane state in the rootless model.
+> handle when the counterpart accepts it. Compatibility shims, if any, MUST map
+> to this same service-lane state; docs and examples MUST use lane terminology.
 >
 > Inbound service lanes are accepted only when a lane acceptor is configured;
 > otherwise they are rejected.

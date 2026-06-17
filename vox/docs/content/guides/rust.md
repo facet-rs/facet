@@ -18,10 +18,10 @@ The best way to learn the Rust API is to run the examples in order, from simples
 > async fn transform(&self, prefix: &str, input: Rx<String>, output: Tx<String>) -> u32;
 > ```
 
-## 2) `virtual_connections` (multiple service lanes on one connection)
+## 2) `service_lanes` (multiple service lanes on one connection)
 
-- Source: [rust-examples/examples/virtual_connections.rs](https://github.com/bearcove/vox/blob/main/rust-examples/examples/virtual_connections.rs)
-- Run: `cargo run -p rust-examples --example virtual_connections`
+- Source: [rust-examples/examples/service_lanes.rs](https://github.com/bearcove/vox/blob/main/rust-examples/examples/service_lanes.rs)
+- Run: `cargo run -p rust-examples --example service_lanes`
 - Learn: `open_lane`, metadata-based accept, and independent per-lane drivers.
 
 > ```rust
@@ -51,7 +51,7 @@ The best way to learn the Rust API is to run the examples in order, from simples
 - Learn: host bridges one service lane to another without service-specific forwarding code.
 
 > ```rust
-> vox::proxy_connections(incoming_handle, upstream_conn).await;
+> vox::proxy_lanes(incoming_handle, upstream_lane).await;
 > ```
 
 - Learn: one host process launching two guest processes over local IPC, and serving different services from each guest.
@@ -76,13 +76,11 @@ eyre = "0.6"
 Define a service with `#[vox::service]`, implement it, and establish on each side:
 
 ```rust
-let (server_guard, _) = vox::acceptor(StreamLink::tcp(server_socket))
-    .establish::<WordLabClient>(WordLabDispatcher::new(WordLabService))
-    .await?;
+let server_task = tokio::spawn(async move {
+    vox::serve("127.0.0.1:9000", WordLabDispatcher::new(WordLabService)).await
+});
 
-let (client, _session_handle) = vox::initiator(StreamLink::tcp(client_socket))
-    .establish::<WordLabClient>(())
-    .await?;
+let client: WordLabClient = vox::connect_lane("127.0.0.1:9000").await?;
 ```
 
 For borrowed returns, implementations receive a `Call` sink:

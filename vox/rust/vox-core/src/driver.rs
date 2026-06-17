@@ -1373,8 +1373,8 @@ impl Handler<DriverReplySink> for Box<dyn ErasedHandler> {
 /// client middleware to the call chain.
 // r[impl rpc.caller.liveness.refcounted]
 // r[impl rpc.caller.liveness.last-drop-closes-connection]
-// r[impl rpc.caller.liveness.root-internal-close]
-// r[impl rpc.caller.liveness.root-teardown-condition]
+// r[impl rpc.caller.liveness.public-handle-drop]
+// r[impl rpc.caller.liveness.explicit-shutdown-required]
 #[must_use = "Dropping this caller does not close the connection; shut down explicitly with ConnectionHandle when needed."]
 #[derive(Clone)]
 pub struct Caller {

@@ -1,4 +1,4 @@
-//! Tests for virtual connections through the driver.
+//! Tests for service lanes through the driver.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
@@ -22,7 +22,7 @@ impl Echo for EchoService {
     }
 }
 
-async fn vconn_server(server_link: impl vox::Link + Send + 'static) -> vox::ConnectionHandle {
+async fn lane_server(server_link: impl vox::Link + Send + 'static) -> vox::ConnectionHandle {
     vox::acceptor_on(server_link)
         .on_connection(EchoDispatcher::new(EchoService))
         .establish_connection()
@@ -30,102 +30,103 @@ async fn vconn_server(server_link: impl vox::Link + Send + 'static) -> vox::Conn
         .expect("server establish")
 }
 
-async fn open_echo_vconn(session: &ConnectionHandle) -> EchoClient {
-    session
+async fn open_echo_lane(connection: &ConnectionHandle) -> EchoClient {
+    connection
         .open_lane_with_settings::<EchoClient>(ConnectionSettings {
             parity: Parity::Odd,
             max_concurrent_requests: 64,
             initial_channel_credit: 16,
         })
         .await
-        .expect("open virtual connection")
+        .expect("open service lane")
 }
 
 #[tokio::test]
-async fn open_virtual_connection_and_call() {
+async fn open_service_lane_and_call() {
     let (client_link, server_link) = memory_link_pair(16);
 
-    let server = tokio::spawn(async move { vconn_server(server_link).await });
+    let server = tokio::spawn(async move { lane_server(server_link).await });
 
-    let root = vox::initiator_on(client_link)
+    let connection_guard = vox::initiator_on(client_link)
         .establish_connection()
         .await
         .expect("client establish");
-    let session = root.clone();
+    let connection = connection_guard.clone();
 
     let _server_guard = server.await.expect("server task");
-    let vconn_client = open_echo_vconn(&session).await;
+    let lane_client = open_echo_lane(&connection).await;
 
-    let result = vconn_client.echo(123).await.expect("vconn echo");
+    let result = lane_client.echo(123).await.expect("service lane echo");
     assert_eq!(result, 123);
 
-    let _ = session.shutdown();
+    let _ = connection.shutdown();
     let _ = _server_guard.shutdown();
-    drop(vconn_client);
-    drop(root);
+    drop(lane_client);
+    drop(connection_guard);
 }
 
-// r[verify rpc.caller.liveness.root-internal-close]
-// r[verify rpc.caller.liveness.root-teardown-condition]
+// r[verify rpc.caller.liveness.public-handle-drop]
+// r[verify rpc.caller.liveness.explicit-shutdown-required]
 #[tokio::test]
-async fn dropping_root_and_virtual_clients_does_not_shutdown_connection() {
+async fn dropping_control_client_and_lane_clients_does_not_shutdown_connection() {
     let (client_link, server_link) = memory_link_pair(16);
 
-    let (session_tx, session_rx) = tokio::sync::oneshot::channel::<tokio::task::JoinHandle<()>>();
+    let (connection_task_tx, connection_task_rx) =
+        tokio::sync::oneshot::channel::<tokio::task::JoinHandle<()>>();
 
-    let server = tokio::spawn(async move { vconn_server(server_link).await });
+    let server = tokio::spawn(async move { lane_server(server_link).await });
 
-    let root = vox::initiator_on(client_link)
+    let connection_guard = vox::initiator_on(client_link)
         .spawn_fn(move |fut| {
             let handle = tokio::spawn(fut);
-            let _ = session_tx.send(handle);
+            let _ = connection_task_tx.send(handle);
         })
         .establish_connection()
         .await
         .expect("client establish");
-    let session = root.clone();
+    let connection = connection_guard.clone();
 
     let _server_guard = server.await.expect("server task");
-    let client_session = session_rx.await.expect("session handle");
+    let client_connection_task = connection_task_rx.await.expect("connection handle");
 
-    let session_handle = session.clone();
-    let vconn_client = open_echo_vconn(&session_handle).await;
+    let connection_handle = connection.clone();
+    let lane_client = open_echo_lane(&connection_handle).await;
 
-    // Drop root: ordinary handle drop is inert.
-    drop(root);
-    drop(session_handle);
+    // Drop the connection handle: ordinary handle drop is inert.
+    drop(connection_guard);
+    drop(connection_handle);
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert!(
-        !client_session.is_finished(),
-        "session should remain alive after dropping root handles"
+        !client_connection_task.is_finished(),
+        "connection should remain alive after dropping control-lane handles"
     );
 
-    // vconn still works.
-    let result = vconn_client
+    // service lane still works.
+    let result = lane_client
         .echo(7)
         .await
-        .expect("vconn echo after root drop");
+        .expect("service lane echo after control-lane client drop");
     assert_eq!(result, 7);
 
-    // Drop vconn too: shutdown still remains explicit.
-    drop(vconn_client);
+    // Drop service lane too: shutdown still remains explicit.
+    drop(lane_client);
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert!(
-        !client_session.is_finished(),
-        "session should remain alive after dropping all public clients"
+        !client_connection_task.is_finished(),
+        "connection should remain alive after dropping all public clients"
     );
 
     let _ = _server_guard.shutdown();
-    let _ = session.shutdown();
+    let _ = connection.shutdown();
 
-    tokio::time::timeout(Duration::from_millis(500), client_session)
+    tokio::time::timeout(Duration::from_millis(500), client_connection_task)
         .await
-        .expect("session exit timeout")
-        .expect("session failed");
+        .expect("connection exit timeout")
+        .expect("connection failed");
 }
 
 #[tokio::test]
-async fn schema_tracker_is_per_connection_not_per_session() {
+async fn schema_tracker_is_per_lane() {
     let (client_link, server_link) = memory_link_pair(16);
 
     let server = tokio::spawn(async move {
@@ -136,22 +137,22 @@ async fn schema_tracker_is_per_connection_not_per_session() {
             .expect("server establish")
     });
 
-    let root = vox::initiator_on(client_link)
+    let control_client = vox::initiator_on(client_link)
         .establish::<EchoClient>()
         .await
         .expect("client establish");
-    let session = root.connection.clone().unwrap();
+    let connection = control_client.connection.clone().unwrap();
 
     let _server_guard = server.await.expect("server task");
-    let session_handle = session;
+    let connection_handle = connection;
 
-    // Call on root connection.
-    let r1 = root.echo(100).await.expect("root echo");
+    // Call on control lane.
+    let r1 = control_client.echo(100).await.expect("control-lane echo");
     assert_eq!(r1, 100);
 
-    // Open vconn and call — schemas should not conflict with root.
-    let vconn_client = open_echo_vconn(&session_handle).await;
-    let r2 = vconn_client.echo(200).await.expect("vconn echo");
+    // Open service lane and call; schemas should not conflict with the control lane.
+    let lane_client = open_echo_lane(&connection_handle).await;
+    let r2 = lane_client.echo(200).await.expect("service lane echo");
     assert_eq!(r2, 200);
 }
 
@@ -172,7 +173,7 @@ impl Counter for CounterService {
 }
 
 #[tokio::test]
-async fn reject_virtual_connection() {
+async fn reject_service_lane() {
     let (client_link, server_link) = memory_link_pair(16);
 
     let server = tokio::spawn(async move {
@@ -191,16 +192,16 @@ async fn reject_virtual_connection() {
             .expect("server establish")
     });
 
-    let _root = vox::initiator_on(client_link)
+    let _connection_guard = vox::initiator_on(client_link)
         .establish_connection()
         .await
         .expect("client establish");
-    let session = _root.clone();
+    let connection = _connection_guard.clone();
 
     let _server_guard = server.await.expect("server task");
-    let session_handle = session;
+    let connection_handle = connection;
 
-    let result = session_handle
+    let result = connection_handle
         .open_lane_handle(
             ConnectionSettings {
                 parity: Parity::Odd,
@@ -218,10 +219,10 @@ async fn reject_virtual_connection() {
 }
 
 #[tokio::test]
-async fn open_virtual_connection_without_acceptor_is_rejected() {
+async fn open_service_lane_without_acceptor_is_rejected() {
     let (client_link, server_link) = memory_link_pair(16);
 
-    // Server with NO on_connection acceptor.
+    // Server with NO lane acceptor.
     let server = tokio::spawn(async move {
         vox::acceptor_on(server_link)
             .establish_connection()
@@ -229,16 +230,16 @@ async fn open_virtual_connection_without_acceptor_is_rejected() {
             .expect("server establish")
     });
 
-    let _root = vox::initiator_on(client_link)
+    let _connection_guard = vox::initiator_on(client_link)
         .establish_connection()
         .await
         .expect("client establish");
-    let session = _root.clone();
+    let connection = _connection_guard.clone();
 
     let _server_guard = server.await.expect("server task");
-    let session_handle = session;
+    let connection_handle = connection;
 
-    let result = session_handle
+    let result = connection_handle
         .open_lane_handle(
             ConnectionSettings {
                 parity: Parity::Odd,
@@ -256,7 +257,7 @@ async fn open_virtual_connection_without_acceptor_is_rejected() {
 }
 
 #[tokio::test]
-async fn close_virtual_connection() {
+async fn close_service_lane() {
     let (client_link, server_link) = memory_link_pair(16);
 
     let server = tokio::spawn(async move {
@@ -269,16 +270,16 @@ async fn close_virtual_connection() {
             .expect("server establish")
     });
 
-    let _root = vox::initiator_on(client_link)
+    let _connection_guard = vox::initiator_on(client_link)
         .establish_connection()
         .await
         .expect("client establish");
-    let session = _root.clone();
+    let connection = _connection_guard.clone();
 
     let _server_guard = server.await.expect("server task");
-    let session_handle = session;
+    let connection_handle = connection;
 
-    let vconn_handle = session_handle
+    let lane_handle = connection_handle
         .open_lane_handle(
             ConnectionSettings {
                 parity: Parity::Odd,
@@ -288,21 +289,21 @@ async fn close_virtual_connection() {
             vox_types::metadata().str("vox-service", "Counter").build(),
         )
         .await
-        .expect("open vconn");
+        .expect("open service lane");
 
-    let conn_id = vconn_handle.connection_id();
-    let mut vconn_driver = Driver::new(vconn_handle, ());
-    let caller = vox::Caller::new(vconn_driver.caller());
-    tokio::spawn(async move { vconn_driver.run().await });
+    let conn_id = lane_handle.connection_id();
+    let mut lane_driver = Driver::new(lane_handle, ());
+    let caller = vox::Caller::new(lane_driver.caller());
+    tokio::spawn(async move { lane_driver.run().await });
 
     let client = CounterClient::new(caller);
     let r = client.increment().await.expect("increment before close");
     assert_eq!(r, 1);
 
-    session_handle
+    connection_handle
         .close_lane(conn_id, Default::default())
         .await
-        .expect("close vconn");
+        .expect("close service lane");
 
     // Call after close should fail.
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -311,7 +312,7 @@ async fn close_virtual_connection() {
 }
 
 #[tokio::test]
-async fn close_root_connection_is_rejected() {
+async fn close_control_lane_is_rejected() {
     let (client_link, server_link) = memory_link_pair(16);
 
     let server = tokio::spawn(async move {
@@ -321,18 +322,18 @@ async fn close_root_connection_is_rejected() {
             .expect("server establish")
     });
 
-    let _root = vox::initiator_on(client_link)
+    let _connection_guard = vox::initiator_on(client_link)
         .establish_connection()
         .await
         .expect("client establish");
-    let session = _root.clone();
+    let connection = _connection_guard.clone();
 
     let _server_guard = server.await.expect("server task");
-    let session_handle = session;
+    let connection_handle = connection;
 
-    // Connection ID 0 is the root connection.
-    let result = session_handle
+    // Lane ID 0 is the control lane.
+    let result = connection_handle
         .close_lane(vox::LaneId(0), Default::default())
         .await;
-    assert!(result.is_err(), "closing root connection should fail");
+    assert!(result.is_err(), "closing control lane should fail");
 }

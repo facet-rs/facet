@@ -18,8 +18,8 @@ public final class Lane: @unchecked Sendable {
     deinit {
         // r[impl rpc.caller.liveness.refcounted]
         // r[impl rpc.caller.liveness.last-drop-closes-connection]
-        // r[impl rpc.caller.liveness.root-internal-close]
-        // r[impl rpc.caller.liveness.root-teardown-condition]
+        // r[impl rpc.caller.liveness.public-handle-drop]
+        // r[impl rpc.caller.liveness.explicit-shutdown-required]
     }
 
     public var channelAllocator: ChannelIdAllocator {

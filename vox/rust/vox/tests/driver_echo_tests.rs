@@ -57,19 +57,19 @@ async fn multiple_sequential_calls() {
 }
 
 #[tokio::test]
-async fn dropping_one_client_clone_keeps_session_alive() {
+async fn dropping_one_client_clone_keeps_connection_alive() {
     let (client_link, server_link) = memory_link_pair(16);
 
-    let (server_session_tx, server_session_rx) =
+    let (server_connection_task_tx, server_connection_task_rx) =
         tokio::sync::oneshot::channel::<tokio::task::JoinHandle<()>>();
-    let (client_session_tx, client_session_rx) =
+    let (client_connection_task_tx, client_connection_task_rx) =
         tokio::sync::oneshot::channel::<tokio::task::JoinHandle<()>>();
 
     let server_task = tokio::spawn(async move {
         vox::acceptor_on(server_link)
             .spawn_fn(move |fut| {
                 let handle = tokio::spawn(fut);
-                let _ = server_session_tx.send(handle);
+                let _ = server_connection_task_tx.send(handle);
             })
             .on_connection(EchoDispatcher::new(EchoService))
             .establish_connection()
@@ -80,17 +80,17 @@ async fn dropping_one_client_clone_keeps_session_alive() {
     let client = vox::initiator_on(client_link)
         .spawn_fn(move |fut| {
             let handle = tokio::spawn(fut);
-            let _ = client_session_tx.send(handle);
+            let _ = client_connection_task_tx.send(handle);
         })
         .establish::<EchoClient>()
         .await
         .expect("client establish");
 
     let server_guard = server_task.await.expect("server task");
-    let client_session = client_session_rx.await.expect("client session");
-    let server_session = server_session_rx.await.expect("server session");
+    let client_connection_task = client_connection_task_rx.await.expect("client connection");
+    let server_connection_task = server_connection_task_rx.await.expect("server connection");
 
-    // Clone and drop — session should survive.
+    // Clone and drop — connection should survive.
     let client_clone = client.clone();
     drop(client_clone);
 
@@ -106,30 +106,30 @@ async fn dropping_one_client_clone_keeps_session_alive() {
         .expect("client shutdown request");
     let _ = server_guard.shutdown();
 
-    tokio::time::timeout(Duration::from_millis(500), client_session)
+    tokio::time::timeout(Duration::from_millis(500), client_connection_task)
         .await
-        .expect("client session exit timeout")
-        .expect("client session failed");
-    tokio::time::timeout(Duration::from_millis(500), server_session)
+        .expect("client connection exit timeout")
+        .expect("client connection failed");
+    tokio::time::timeout(Duration::from_millis(500), server_connection_task)
         .await
-        .expect("server session exit timeout")
-        .expect("server session failed");
+        .expect("server connection exit timeout")
+        .expect("server connection failed");
 }
 
 #[tokio::test]
-async fn dropping_root_caller_does_not_shut_down_session() {
+async fn dropping_generated_client_does_not_shut_down_connection() {
     let (client_link, server_link) = memory_link_pair(16);
 
-    let (server_session_tx, server_session_rx) =
+    let (server_connection_task_tx, server_connection_task_rx) =
         tokio::sync::oneshot::channel::<tokio::task::JoinHandle<()>>();
-    let (client_session_tx, client_session_rx) =
+    let (client_connection_task_tx, client_connection_task_rx) =
         tokio::sync::oneshot::channel::<tokio::task::JoinHandle<()>>();
 
     let server_task = tokio::spawn(async move {
         vox::acceptor_on(server_link)
             .spawn_fn(move |fut| {
                 let handle = tokio::spawn(fut);
-                let _ = server_session_tx.send(handle);
+                let _ = server_connection_task_tx.send(handle);
             })
             .on_connection(EchoDispatcher::new(EchoService))
             .establish_connection()
@@ -140,27 +140,27 @@ async fn dropping_root_caller_does_not_shut_down_session() {
     let client = vox::initiator_on(client_link)
         .spawn_fn(move |fut| {
             let handle = tokio::spawn(fut);
-            let _ = client_session_tx.send(handle);
+            let _ = client_connection_task_tx.send(handle);
         })
         .establish::<EchoClient>()
         .await
         .expect("client establish");
 
     let server_guard = server_task.await.expect("server task");
-    let client_session = client_session_rx.await.expect("client session");
-    let server_session = server_session_rx.await.expect("server session");
+    let client_connection_task = client_connection_task_rx.await.expect("client connection");
+    let server_connection_task = server_connection_task_rx.await.expect("server connection");
     let client_connection = client.connection.clone().expect("client connection handle");
 
     drop(client);
 
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert!(
-        !client_session.is_finished(),
-        "dropping the root client must not shut down the client connection"
+        !client_connection_task.is_finished(),
+        "dropping the generated client must not shut down the client connection"
     );
     assert!(
-        !server_session.is_finished(),
-        "dropping the root client must not shut down the server connection"
+        !server_connection_task.is_finished(),
+        "dropping the generated client must not shut down the server connection"
     );
 
     client_connection
@@ -168,14 +168,14 @@ async fn dropping_root_caller_does_not_shut_down_session() {
         .expect("client shutdown request");
     let _ = server_guard.shutdown();
 
-    tokio::time::timeout(Duration::from_millis(500), client_session)
+    tokio::time::timeout(Duration::from_millis(500), client_connection_task)
         .await
-        .expect("client session exit timeout")
-        .expect("client session failed");
-    tokio::time::timeout(Duration::from_millis(500), server_session)
+        .expect("client connection exit timeout")
+        .expect("client connection failed");
+    tokio::time::timeout(Duration::from_millis(500), server_connection_task)
         .await
-        .expect("server session exit timeout")
-        .expect("server session failed");
+        .expect("server connection exit timeout")
+        .expect("server connection failed");
 }
 
 #[tokio::test]

@@ -8,7 +8,7 @@ Core runtime for connections, lanes, drivers, and conduits.
 
 ## What this crate provides
 
-- Connection builders (`session::initiator`, `session::acceptor`) and handles
+- Connection builders (`initiator`, `acceptor`) and handles
 - Driver runtime for dispatching inbound calls and issuing outbound calls
 - Connection lifecycle primitives and runtime glue
 

@@ -1,4 +1,4 @@
-//! Tests for transport prologue plus bare conduit session setup.
+//! Tests for transport prologue plus bare conduit connection setup.
 
 use vox::memory_link_pair;
 

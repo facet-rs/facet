@@ -1,5 +1,5 @@
 use eyre::{Result, eyre};
-use vox::{ConnectionHandle, ConnectionSettings, Metadata, Parity};
+use vox::{ConnectionHandle, ConnectionSettings, LaneRejectReason, LaneRejection, Parity};
 
 #[vox::service]
 trait MathText {
@@ -23,13 +23,16 @@ impl MathText for UpstreamMathText {
 fn upstream_acceptor(
     request: &vox::LaneRequest,
     connection: vox::PendingLane,
-) -> Result<(), Metadata> {
+) -> std::result::Result<(), LaneRejection> {
     match request.service() {
         "MathText" => {
             connection.handle_with(MathTextDispatcher::new(UpstreamMathText));
             Ok(())
         }
-        _ => Err(vox::metadata().str("error", "unknown service").build()),
+        _ => Err(LaneRejection::with_message(
+            LaneRejectReason::UnknownService,
+            "unknown service",
+        )),
     }
 }
 
@@ -43,11 +46,14 @@ impl vox::LaneAcceptor for ProxyAcceptor {
         &self,
         request: &vox::LaneRequest,
         connection: vox::PendingLane,
-    ) -> Result<(), Metadata> {
+    ) -> std::result::Result<(), LaneRejection> {
         match request.service() {
             "MathText" => {}
             _ => {
-                return Err(vox::metadata().str("error", "unknown service").build());
+                return Err(LaneRejection::with_message(
+                    LaneRejectReason::UnknownService,
+                    "unknown service",
+                ));
             }
         }
 
@@ -90,7 +96,7 @@ async fn main() -> Result<()> {
 
     println!("[guest-b] starting connection");
     let guest_b_task = tokio::spawn(async move {
-        let guest_b_root_guard = vox::acceptor_on_link(
+        let guest_b_connection_guard = vox::acceptor_on_link(
             guest_b_link,
             ConnectionSettings {
                 parity: Parity::Even,
@@ -104,7 +110,7 @@ async fn main() -> Result<()> {
         .establish_connection()
         .await
         .expect("guest-b establish");
-        let _guest_b_connection = guest_b_root_guard;
+        let _guest_b_connection = guest_b_connection_guard;
         std::future::pending::<()>().await;
     });
 
@@ -129,7 +135,7 @@ async fn main() -> Result<()> {
         upstream_connection: host_connection_to_b,
     };
     let host_for_a_task = tokio::spawn(async move {
-        let host_root_for_a_guard = vox::acceptor_on_link(
+        let host_connection_for_a_guard = vox::acceptor_on_link(
             host_a_link,
             ConnectionSettings {
                 parity: Parity::Even,
@@ -143,7 +149,7 @@ async fn main() -> Result<()> {
         .establish_connection()
         .await
         .expect("host<->guest-a establish");
-        let _host_connection_for_a = host_root_for_a_guard;
+        let _host_connection_for_a = host_connection_for_a_guard;
         std::future::pending::<()>().await;
     });
 

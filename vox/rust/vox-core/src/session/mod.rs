@@ -491,7 +491,7 @@ impl ConnectionHandle {
         settings: ConnectionSettings,
         metadata: Metadata,
     ) -> Result<LaneHandle, ConnectionError> {
-        let (result_tx, result_rx) = vox_rt::sync::oneshot::channel("session.open_result");
+        let (result_tx, result_rx) = vox_rt::sync::oneshot::channel("connection.open_result");
         self.open_tx
             .send(OpenRequest {
                 settings,
@@ -516,7 +516,7 @@ impl ConnectionHandle {
         lane_id: LaneId,
         metadata: Metadata,
     ) -> Result<(), ConnectionError> {
-        let (result_tx, result_rx) = vox_rt::sync::oneshot::channel("session.close_result");
+        let (result_tx, result_rx) = vox_rt::sync::oneshot::channel("connection.close_result");
         self.close_tx
             .send(CloseRequest {
                 conn_id: lane_id,
@@ -947,7 +947,7 @@ pub(crate) enum ConnectionMessage<'payload> {
 vox_types::impl_reborrow!(ConnectionMessage);
 
 /// A message routed to a driver, carrying the `SchemaRecvTracker` that was
-/// current when the session received it. This ensures each message uses the
+/// current when the connection runtime received it. This ensures each message uses the
 /// correct tracker even across reconnections.
 pub(crate) struct RecvMessage {
     pub schemas: Arc<vox_types::SchemaRecvTracker>,
@@ -1089,7 +1089,7 @@ pub async fn proxy_lanes(left: LaneHandle, right: LaneHandle) -> Result<(), Conn
     Ok(())
 }
 
-/// Errors that can occur during session establishment or operation.
+/// Errors that can occur during connection establishment or operation.
 #[derive(Debug)]
 pub enum ConnectionError {
     Io(std::io::Error),
@@ -1128,7 +1128,7 @@ impl std::fmt::Display for ConnectionError {
 
 impl std::error::Error for ConnectionError {}
 
-fn classify_session_recv_error(error: &std::io::Error) -> ConnectionCloseReason {
+fn classify_connection_recv_error(error: &std::io::Error) -> ConnectionCloseReason {
     let message = error.to_string();
     if message.contains("decode error") || message.contains("protocol") {
         ConnectionCloseReason::Protocol
@@ -1149,7 +1149,7 @@ fn classify_decode_error(error: &std::io::Error) -> Option<DecodeErrorKind> {
 impl Connection {
     // r[impl rpc.observability.connection-errors]
     // r[impl rpc.observability.driver]
-    fn observe_session_recv_error(&self, error: &std::io::Error) {
+    fn observe_connection_recv_error(&self, error: &std::io::Error) {
         let Some(observer) = &self.observer else {
             return;
         };
@@ -1168,7 +1168,7 @@ impl Connection {
 
         observer.transport_event(vox_types::TransportEvent::Closed {
             connection_id: None,
-            reason: classify_session_recv_error(error),
+            reason: classify_connection_recv_error(error),
         });
     }
 
@@ -1275,7 +1275,7 @@ impl Connection {
         local_settings: ConnectionSettings,
         peer_settings: ConnectionSettings,
     ) -> LaneHandle {
-        let label = format!("session.conn{}", conn_id.0);
+        let label = format!("connection.lane{}", conn_id.0);
         let (conn_tx, conn_rx) = mpsc::channel::<RecvMessage>(&label, 64);
         let (failures_tx, failures_rx) = mpsc::unbounded_channel(format!("{label}.failures"));
         let (closed_tx, closed_rx) = watch::channel(None);
@@ -1319,8 +1319,8 @@ impl Connection {
         }
     }
 
-    /// Run the session recv loop: read from the conduit, demux by connection
-    /// ID, and route to the appropriate connection's driver. Also processes
+    /// Run the connection recv loop: read from the conduit, demux by lane ID,
+    /// and route to the appropriate lane's driver. Also processes
     /// open/close requests from the ConnectionHandle.
     // r[impl connection.message]
     pub async fn run(&mut self) {
@@ -1336,7 +1336,7 @@ impl Connection {
                 biased;
 
                 msg = self.rx.recv_msg() => {
-                    vox_types::dlog!("[session {:?}] recv_msg returned", self.role);
+                    vox_types::dlog!("[connection {:?}] recv_msg returned", self.role);
                     match msg {
                         Ok(Some(msg)) => {
                             // Capture the frame's descriptors before the next
@@ -1345,20 +1345,20 @@ impl Connection {
                             self.handle_message(msg, fds, &mut keepalive_runtime).await;
                         }
                         Ok(None) => {
-                            vox_types::dlog!("[session {:?}] recv loop: conduit returned EOF", self.role);
+                            vox_types::dlog!("[connection {:?}] recv loop: conduit returned EOF", self.role);
                             self.close_all_connections(ConnectionCloseReason::Remote);
                             break;
                         }
                         Err(error) => {
-                            let close_reason = classify_session_recv_error(&error);
-                            self.observe_session_recv_error(&error);
+                            let close_reason = classify_connection_recv_error(&error);
+                            self.observe_connection_recv_error(&error);
                             warn!(
                                 role = ?self.role,
                                 %error,
                                 ?close_reason,
-                                "session receive failed; closing connections if recovery is unavailable"
+                                "connection receive failed; closing connections if recovery is unavailable"
                             );
-                            vox_types::dlog!("[session {:?}] recv loop: conduit recv error: {}", self.role, error);
+                            vox_types::dlog!("[connection {:?}] recv loop: conduit recv error: {}", self.role, error);
                             self.close_all_connections(close_reason);
                             break;
                         }
@@ -1391,7 +1391,7 @@ impl Connection {
 
         // Drop all connection slots so per-connection drivers exit immediately.
         self.close_all_connections(ConnectionCloseReason::ConnectionShutdown);
-        trace!("session recv loop exited");
+        trace!("connection recv loop exited");
     }
 
     async fn handle_message(
@@ -1460,7 +1460,7 @@ impl Connection {
             // r[impl lane.close.semantics]
             MessagePayload::LaneClose(_) => {
                 if conn_id.is_root() {
-                    warn!("received LaneClose for root connection");
+                    warn!("received LaneClose for control lane");
                 } else {
                     trace!(conn_id = conn_id.0, "received LaneClose for service lane");
                 }
@@ -1481,7 +1481,7 @@ impl Connection {
             MessagePayload::RequestMessage(r) => {
                 let r_ref = r.get();
                 vox_types::dlog!(
-                    "[session {:?}] recv request: conn={:?} req={:?} body={} method={:?}",
+                    "[connection {:?}] recv request: conn={:?} req={:?} body={} method={:?}",
                     self.role,
                     conn_id,
                     r_ref.id,
@@ -1581,7 +1581,7 @@ impl Connection {
                     fds,
                 };
                 vox_types::dlog!(
-                    "[session {:?}] dispatch request: conn={:?} req={:?} body={}",
+                    "[connection {:?}] dispatch request: conn={:?} req={:?} body={}",
                     self.role,
                     conn_id,
                     request_id,
@@ -2046,7 +2046,7 @@ impl Connection {
     async fn handle_close_request(&mut self, req: CloseRequest) {
         if req.conn_id.is_root() {
             let _ = req.result_tx.send(Err(ConnectionError::Protocol(
-                "cannot close root connection".into(),
+                "cannot close control lane".into(),
             )));
             return;
         }
@@ -2172,13 +2172,17 @@ impl Connection {
     fn close_all_connections(&mut self, reason: ConnectionCloseReason) {
         trace!(role = ?self.role, count = self.conns.len(), "close_all_connections");
         vox_types::dlog!(
-            "[session {:?}] close_all_connections: {} slots",
+            "[connection {:?}] close_all_connections: {} slots",
             self.role,
             self.conns.len()
         );
         for (conn_id, slot) in self.conns.iter() {
             if let ConnectionSlot::Active(state) = slot {
-                vox_types::dlog!("[session {:?}] closing connection {:?}", self.role, conn_id);
+                vox_types::dlog!(
+                    "[connection {:?}] closing connection {:?}",
+                    self.role,
+                    conn_id
+                );
                 let _ = state.closed_tx.send(Some(reason));
                 if let Some(observer) = &self.observer {
                     observer.driver_event(vox_types::DriverEvent::ConnectionClosed {
@@ -2263,7 +2267,7 @@ async fn run_outbound_worker(mut rx: tokio_mpsc::Receiver<OutboundBatch>) {
             request_id = ?batch.request_id,
             payload_kind = batch.payload_kind,
             schema_count = batch.schema_sends.len(),
-            "session outbound worker received batch"
+            "connection outbound worker received batch"
         );
         let mut result = Ok(());
         for schema_send in batch.schema_sends {
@@ -2272,7 +2276,7 @@ async fn run_outbound_worker(mut rx: tokio_mpsc::Receiver<OutboundBatch>) {
                 request_id = ?batch.request_id,
                 method_id = ?schema_send.method_id,
                 direction = ?schema_send.direction,
-                "session outbound worker sending schema batch"
+                "connection outbound worker sending schema batch"
             );
             let schemas = {
                 let mut conn_state = batch
@@ -2329,7 +2333,7 @@ async fn run_outbound_worker(mut rx: tokio_mpsc::Receiver<OutboundBatch>) {
                 request_id = ?batch.request_id,
                 payload_kind = batch.payload_kind,
                 ?error,
-                "session outbound worker payload send failed"
+                "connection outbound worker payload send failed"
             );
             result = Err(error);
         }
@@ -2338,7 +2342,7 @@ async fn run_outbound_worker(mut rx: tokio_mpsc::Receiver<OutboundBatch>) {
             request_id = ?batch.request_id,
             payload_kind = batch.payload_kind,
             ok = result.is_ok(),
-            "session outbound worker finished batch"
+            "connection outbound worker finished batch"
         );
         let _ = batch.result_tx.send(result);
     }
@@ -2536,17 +2540,17 @@ impl SessionCore {
             conn_id = %conn_id,
             ?request_id,
             payload_kind,
-            "session preparing outbound message"
+            "connection preparing outbound message"
         );
         let (tx, conn_state, schema_sends) = {
-            let mut inner = self.inner.lock().expect("session core mutex poisoned");
+            let mut inner = self.inner.lock().expect("connection core mutex poisoned");
             let tx = inner.tx.clone();
             let conn_state = get_or_create_send_conn_state(&mut inner, conn_id);
             drop(inner);
 
             if let MessagePayload::RequestMessage(req) = &mut msg.payload {
                 vox_types::dlog!(
-                    "[session-core] send request: conn={:?} req={:?} body={} forwarded={}",
+                    "[connection-core] send request: conn={:?} req={:?} body={} forwarded={}",
                     conn_id,
                     req.id,
                     match &req.body {
@@ -2602,7 +2606,7 @@ impl SessionCore {
             ?request_id,
             payload_kind,
             schema_count = schema_sends.len(),
-            "session preparing outbound payload"
+            "connection preparing outbound payload"
         );
 
         // Out-of-band channel allocation. If this Call's args carry `Tx`/`Rx`
@@ -2669,7 +2673,7 @@ impl SessionCore {
             conn_id = %conn_id,
             ?request_id,
             payload_kind,
-            "session prepared outbound payload"
+            "connection prepared outbound payload"
         );
 
         let (result_tx, result_rx) = tokio_oneshot::channel();
@@ -2742,12 +2746,12 @@ impl SessionCore {
             }
             return Err(());
         }
-        trace!(conn_id = %connection_id, "session queued outbound batch");
+        trace!(conn_id = %connection_id, "connection queued outbound batch");
         let result = result_rx.await.map_err(|_| ());
         trace!(
             conn_id = %connection_id,
             ok = result.as_ref().map(|inner| inner.is_ok()).unwrap_or(false),
-            "session outbound batch completed"
+            "connection outbound batch completed"
         );
         match result? {
             Ok(()) => Ok(()),
@@ -2824,7 +2828,7 @@ impl SessionCore {
         request_id: RequestId,
         method_id: vox_types::MethodId,
     ) {
-        let mut inner = self.inner.lock().expect("session core mutex poisoned");
+        let mut inner = self.inner.lock().expect("connection core mutex poisoned");
         let conn_state = get_or_create_send_conn_state(&mut inner, conn_id);
         vox_types::dlog!(
             "[schema] record_incoming_call: conn={:?} req={:?} method={:?}",
@@ -2844,7 +2848,7 @@ impl SessionCore {
         conn_id: LaneId,
         request_id: RequestId,
     ) -> Option<vox_types::MethodId> {
-        let inner = self.inner.lock().expect("session core mutex poisoned");
+        let inner = self.inner.lock().expect("connection core mutex poisoned");
         inner.conns.get(&conn_id).and_then(|conn_state| {
             conn_state
                 .lock()
@@ -2861,7 +2865,7 @@ impl SessionCore {
         method_id: vox_types::MethodId,
         response: &mut RequestResponse<'_>,
     ) {
-        let mut inner = self.inner.lock().expect("session core mutex poisoned");
+        let mut inner = self.inner.lock().expect("connection core mutex poisoned");
         let conn_state = get_or_create_send_conn_state(&mut inner, conn_id);
         let mut conn_state = conn_state.lock().expect("send conn state mutex poisoned");
         let key = (vox_types::BindingDirection::Response, method_id);
@@ -2908,7 +2912,7 @@ impl SessionCore {
         shape: &'static Shape,
         response: &mut RequestResponse<'_>,
     ) {
-        let mut inner = self.inner.lock().expect("session core mutex poisoned");
+        let mut inner = self.inner.lock().expect("connection core mutex poisoned");
         let conn_state = get_or_create_send_conn_state(&mut inner, conn_id);
         let mut conn_state = conn_state.lock().expect("send conn state mutex poisoned");
         if conn_state
@@ -3258,28 +3262,29 @@ mod tests {
         }
     }
 
-    fn make_session() -> Connection {
+    fn make_connection() -> Connection {
         let (a, b) = crate::memory_link_pair(32);
-        // Keep the peer link alive so sess_core sends don't fail with broken pipe.
+        // Keep the peer link alive so connection-core sends don't fail with broken pipe.
         std::mem::forget(b);
         let conduit = crate::BareConduit::new(a);
         let (tx, rx) = conduit.split();
-        let (_open_tx, open_rx) = mpsc::channel::<OpenRequest>("session.open.test", 4);
-        let (_close_tx, close_rx) = mpsc::channel::<CloseRequest>("session.close.test", 4);
-        let (control_tx, control_rx) = mpsc::unbounded_channel("session.control.test");
+        let (_open_tx, open_rx) = mpsc::channel::<OpenRequest>("connection.open.test", 4);
+        let (_close_tx, close_rx) = mpsc::channel::<CloseRequest>("connection.close.test", 4);
+        let (control_tx, control_rx) = mpsc::unbounded_channel("connection.control.test");
         Connection::pre_handshake(
             tx, rx, None, open_rx, close_rx, control_tx, control_rx, None, None,
         )
     }
 
-    fn make_session_with_observer(observer: VoxObserverHandle) -> Connection {
+    fn make_connection_with_observer(observer: VoxObserverHandle) -> Connection {
         let (a, b) = crate::memory_link_pair(32);
         std::mem::forget(b);
         let conduit = crate::BareConduit::new(a);
         let (tx, rx) = conduit.split();
-        let (_open_tx, open_rx) = mpsc::channel::<OpenRequest>("session.open.observed.test", 4);
-        let (_close_tx, close_rx) = mpsc::channel::<CloseRequest>("session.close.observed.test", 4);
-        let (control_tx, control_rx) = mpsc::unbounded_channel("session.control.observed.test");
+        let (_open_tx, open_rx) = mpsc::channel::<OpenRequest>("connection.open.observed.test", 4);
+        let (_close_tx, close_rx) =
+            mpsc::channel::<CloseRequest>("connection.close.observed.test", 4);
+        let (control_tx, control_rx) = mpsc::unbounded_channel("connection.control.observed.test");
         Connection::pre_handshake(
             tx,
             rx,
@@ -3293,11 +3298,14 @@ mod tests {
         )
     }
 
-    fn make_capturing_session(sent: Arc<Mutex<Vec<CapturedMessage>>>) -> (Connection, LaneHandle) {
-        let (_open_tx, open_rx) = mpsc::channel::<OpenRequest>("session.open.capture.test", 4);
-        let (_close_tx, close_rx) = mpsc::channel::<CloseRequest>("session.close.capture.test", 4);
-        let (control_tx, control_rx) = mpsc::unbounded_channel("session.control.capture.test");
-        let mut session = Connection::pre_handshake(
+    fn make_capturing_connection(
+        sent: Arc<Mutex<Vec<CapturedMessage>>>,
+    ) -> (Connection, LaneHandle) {
+        let (_open_tx, open_rx) = mpsc::channel::<OpenRequest>("connection.open.capture.test", 4);
+        let (_close_tx, close_rx) =
+            mpsc::channel::<CloseRequest>("connection.close.capture.test", 4);
+        let (control_tx, control_rx) = mpsc::unbounded_channel("connection.control.capture.test");
+        let mut connection = Connection::pre_handshake(
             CapturingTx { sent },
             PendingRx,
             None,
@@ -3308,7 +3316,7 @@ mod tests {
             None,
             None,
         );
-        let handle = session
+        let handle = connection
             .establish_from_handshake(test_handshake(
                 ConnectionSettings {
                     parity: Parity::Odd,
@@ -3321,8 +3329,8 @@ mod tests {
                     initial_channel_credit: 16,
                 },
             ))
-            .expect("establish captured session");
-        (session, handle)
+            .expect("establish captured connection");
+        (connection, handle)
     }
 
     fn test_handshake(
@@ -3378,7 +3386,7 @@ mod tests {
 
     // r[verify rpc.observability.connection-errors]
     #[test]
-    fn session_receive_errors_emit_diagnostics_and_non_graceful_close_reasons() {
+    fn connection_receive_errors_emit_diagnostics_and_non_graceful_close_reasons() {
         fn run_case(
             error: std::io::Error,
             expected_reason: ConnectionCloseReason,
@@ -3391,8 +3399,8 @@ mod tests {
                 transport_events: transport_events.clone(),
             });
 
-            let mut session = make_session_with_observer(observer);
-            let handle = session
+            let mut connection = make_connection_with_observer(observer);
+            let handle = connection
                 .establish_from_handshake(test_handshake(
                     ConnectionSettings {
                         parity: Parity::Odd,
@@ -3405,7 +3413,7 @@ mod tests {
                         initial_channel_credit: 16,
                     },
                 ))
-                .expect("establish observed session");
+                .expect("establish observed connection");
 
             driver_events
                 .lock()
@@ -3416,8 +3424,8 @@ mod tests {
                 .expect("transport events mutex poisoned")
                 .clear();
 
-            session.observe_session_recv_error(&error);
-            session.close_all_connections(classify_session_recv_error(&error));
+            connection.observe_connection_recv_error(&error);
+            connection.close_all_connections(classify_connection_recv_error(&error));
 
             assert_eq!(handle.close_reason(), Some(expected_reason));
 
@@ -3473,7 +3481,7 @@ mod tests {
         use facet::Facet;
 
         let sent = Arc::new(Mutex::new(Vec::new()));
-        let (_session, handle) = make_capturing_session(Arc::clone(&sent));
+        let (_connection, handle) = make_capturing_connection(Arc::clone(&sent));
         let method_id = vox_types::MethodId(700);
 
         let first_arg = 42_u32;
@@ -3565,7 +3573,7 @@ mod tests {
         use facet::Facet;
 
         let sent = Arc::new(Mutex::new(Vec::new()));
-        let (_session, handle) = make_capturing_session(Arc::clone(&sent));
+        let (_connection, handle) = make_capturing_connection(Arc::clone(&sent));
         let method_id = vox_types::MethodId(701);
         let request_id = RequestId(11);
         handle
@@ -3660,11 +3668,11 @@ mod tests {
 
     #[tokio::test]
     async fn duplicate_connection_accept_is_ignored_after_first() {
-        let mut session = make_session();
+        let mut connection = make_connection();
         let conn_id = LaneId(1);
-        let (result_tx, result_rx) = vox_rt::sync::oneshot::channel("session.test.open_result");
+        let (result_tx, result_rx) = vox_rt::sync::oneshot::channel("connection.test.open_result");
 
-        session.conns.insert(
+        connection.conns.insert(
             conn_id,
             ConnectionSlot::PendingOutbound(PendingOutboundData {
                 local_settings: ConnectionSettings {
@@ -3677,17 +3685,17 @@ mod tests {
             }),
         );
 
-        session.handle_inbound_accept(conn_id, accept_ref());
+        connection.handle_inbound_accept(conn_id, accept_ref());
         let handle = result_rx
             .await
             .expect("pending outbound result should resolve")
             .expect("accept should resolve as Ok");
         assert_eq!(handle.connection_id(), conn_id);
 
-        session.handle_inbound_accept(conn_id, accept_ref());
+        connection.handle_inbound_accept(conn_id, accept_ref());
         assert!(
             matches!(
-                session.conns.get(&conn_id),
+                connection.conns.get(&conn_id),
                 Some(ConnectionSlot::Active(ConnectionState { id, .. })) if *id == conn_id
             ),
             "duplicate accept should keep existing active connection state"
@@ -3696,11 +3704,11 @@ mod tests {
 
     #[tokio::test]
     async fn duplicate_connection_reject_is_ignored_after_first() {
-        let mut session = make_session();
+        let mut connection = make_connection();
         let conn_id = LaneId(1);
-        let (result_tx, result_rx) = vox_rt::sync::oneshot::channel("session.test.open_result");
+        let (result_tx, result_rx) = vox_rt::sync::oneshot::channel("connection.test.open_result");
 
-        session.conns.insert(
+        connection.conns.insert(
             conn_id,
             ConnectionSlot::PendingOutbound(PendingOutboundData {
                 local_settings: ConnectionSettings {
@@ -3713,7 +3721,7 @@ mod tests {
             }),
         );
 
-        session.handle_inbound_reject(conn_id, reject_ref());
+        connection.handle_inbound_reject(conn_id, reject_ref());
         let result = result_rx
             .await
             .expect("pending outbound result should resolve");
@@ -3722,9 +3730,9 @@ mod tests {
             "expected rejection, got: {result:?}"
         );
 
-        session.handle_inbound_reject(conn_id, reject_ref());
+        connection.handle_inbound_reject(conn_id, reject_ref());
         assert!(
-            !session.conns.contains_key(&conn_id),
+            !connection.conns.contains_key(&conn_id),
             "duplicate reject should not recreate connection state"
         );
     }
@@ -3732,11 +3740,11 @@ mod tests {
     // r[verify rpc.flow-control.credit.initial.zero]
     #[tokio::test]
     async fn inbound_accept_with_zero_initial_credit_rejects_pending_open() {
-        let mut session = make_session();
+        let mut connection = make_connection();
         let conn_id = LaneId(1);
-        let (result_tx, result_rx) = vox_rt::sync::oneshot::channel("session.test.open_result");
+        let (result_tx, result_rx) = vox_rt::sync::oneshot::channel("connection.test.open_result");
 
-        session.conns.insert(
+        connection.conns.insert(
             conn_id,
             ConnectionSlot::PendingOutbound(PendingOutboundData {
                 local_settings: ConnectionSettings {
@@ -3749,7 +3757,7 @@ mod tests {
             }),
         );
 
-        session.handle_inbound_accept(conn_id, zero_credit_accept_ref());
+        connection.handle_inbound_accept(conn_id, zero_credit_accept_ref());
         let result = result_rx
             .await
             .expect("pending outbound result should resolve");
@@ -3762,34 +3770,34 @@ mod tests {
             "expected zero-credit protocol error, got: {result:?}"
         );
         assert!(
-            !session.conns.contains_key(&conn_id),
+            !connection.conns.contains_key(&conn_id),
             "zero-credit accept should not create an active connection"
         );
     }
 
     #[test]
     fn out_of_order_accept_or_reject_without_pending_is_ignored() {
-        let mut session = make_session();
+        let mut connection = make_connection();
         let conn_id = LaneId(99);
 
-        session.handle_inbound_accept(conn_id, accept_ref());
-        session.handle_inbound_reject(conn_id, reject_ref());
+        connection.handle_inbound_accept(conn_id, accept_ref());
+        connection.handle_inbound_reject(conn_id, reject_ref());
 
         assert!(
-            session.conns.is_empty(),
+            connection.conns.is_empty(),
             "out-of-order accept/reject should not mutate empty connection table"
         );
     }
 
     #[tokio::test]
     async fn close_request_clears_pending_outbound_open() {
-        let mut session = make_session();
+        let mut connection = make_connection();
         let (open_result_tx, open_result_rx) =
-            vox_rt::sync::oneshot::channel("session.open.result");
+            vox_rt::sync::oneshot::channel("connection.open.result");
         let (close_result_tx, close_result_rx) =
-            vox_rt::sync::oneshot::channel("session.close.result");
+            vox_rt::sync::oneshot::channel("connection.close.result");
 
-        session.conns.insert(
+        connection.conns.insert(
             LaneId(1),
             ConnectionSlot::PendingOutbound(PendingOutboundData {
                 local_settings: ConnectionSettings {
@@ -3802,7 +3810,7 @@ mod tests {
             }),
         );
 
-        session
+        connection
             .handle_close_request(CloseRequest {
                 conn_id: LaneId(1),
                 metadata: vox_types::Metadata::default(),

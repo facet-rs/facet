@@ -356,7 +356,7 @@ async fn wait_for_outstanding_requests(caller: &crate::Caller, expected: usize) 
     panic!("timed out waiting for {expected} outstanding requests");
 }
 
-async fn send_raw_root_call(
+async fn send_raw_control_lane_call(
     sender: &crate::connection::ConnectionSender,
     request_id: RequestId,
     value: u32,
@@ -389,25 +389,25 @@ async fn expect_protocol_close(caller: &crate::Caller, label: &str) {
 }
 
 // r[verify rpc.caller.liveness.refcounted]
-// r[verify rpc.caller.liveness.root-internal-close]
-// r[verify rpc.caller.liveness.root-teardown-condition]
+// r[verify rpc.caller.liveness.public-handle-drop]
+// r[verify rpc.caller.liveness.explicit-shutdown-required]
 // r[verify connection.lifecycle.driven]
 // r[verify connection.shutdown.explicit]
 #[tokio::test]
-async fn dropping_root_callers_does_not_shutdown_connection() {
+async fn dropping_control_clients_does_not_shutdown_connection() {
     let (client_conduit, server_conduit) = message_conduit_pair();
 
-    let (client_session_tx, client_session_rx) =
+    let (client_connection_task_tx, client_connection_task_rx) =
         tokio::sync::oneshot::channel::<vox_rt::task::JoinHandle<()>>();
-    let (server_session_tx, server_session_rx) =
+    let (server_connection_task_tx, server_connection_task_rx) =
         tokio::sync::oneshot::channel::<vox_rt::task::JoinHandle<()>>();
 
     let server_task = vox_rt::task::spawn(
         async move {
             acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .spawn_fn(move |fut| {
-                    let handle = vox_rt::task::spawn(fut.named("server_session"));
-                    let _ = server_session_tx.send(handle);
+                    let handle = vox_rt::task::spawn(fut.named("server_connection_task"));
+                    let _ = server_connection_task_tx.send(handle);
                 })
                 .on_connection(EchoHandler)
                 .establish_connection()
@@ -419,16 +419,20 @@ async fn dropping_root_callers_does_not_shutdown_connection() {
 
     let caller = initiator_conduit(client_conduit, test_initiator_handshake())
         .spawn_fn(move |fut| {
-            let handle = vox_rt::task::spawn(fut.named("client_session"));
-            let _ = client_session_tx.send(handle);
+            let handle = vox_rt::task::spawn(fut.named("client_connection_task"));
+            let _ = client_connection_task_tx.send(handle);
         })
         .establish::<TestLaneClient>()
         .await
         .expect("client handshake failed");
 
     let server_connection = server_task.await.expect("server setup failed");
-    let client_session = client_session_rx.await.expect("client session handle sent");
-    let server_session = server_session_rx.await.expect("server session handle sent");
+    let client_connection_task = client_connection_task_rx
+        .await
+        .expect("client connection handle sent");
+    let server_connection_task = server_connection_task_rx
+        .await
+        .expect("server connection handle sent");
     let client_connection = caller.connection.clone().expect("client connection handle");
 
     let caller_clone = caller.clone();
@@ -444,7 +448,7 @@ async fn dropping_root_callers_does_not_shutdown_connection() {
             metadata: Default::default(),
         })
         .await
-        .expect("call should still succeed while one root caller remains");
+        .expect("call should still succeed while one generated caller remains");
     let response = response.get();
     let ret_bytes = match &response.ret {
         Payload::Encoded(bytes) => bytes,
@@ -456,11 +460,11 @@ async fn dropping_root_callers_does_not_shutdown_connection() {
     drop(caller);
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     assert!(
-        !client_session.is_finished(),
+        !client_connection_task.is_finished(),
         "dropping the last client caller must not shut down the client connection"
     );
     assert!(
-        !server_session.is_finished(),
+        !server_connection_task.is_finished(),
         "dropping the peer handle must not be needed to keep the server connection alive"
     );
 
@@ -469,14 +473,20 @@ async fn dropping_root_callers_does_not_shutdown_connection() {
         .expect("client shutdown request");
     let _ = server_connection.shutdown();
 
-    tokio::time::timeout(std::time::Duration::from_millis(500), client_session)
-        .await
-        .expect("timed out waiting for client session to exit")
-        .expect("client session task failed");
-    tokio::time::timeout(std::time::Duration::from_millis(500), server_session)
-        .await
-        .expect("timed out waiting for server session to exit")
-        .expect("server session task failed");
+    tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        client_connection_task,
+    )
+    .await
+    .expect("timed out waiting for client connection to exit")
+    .expect("client connection task failed");
+    tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        server_connection_task,
+    )
+    .await
+    .expect("timed out waiting for server connection to exit")
+    .expect("server connection task failed");
 }
 
 // r[verify rpc]
@@ -489,7 +499,7 @@ async fn dropping_root_callers_does_not_shutdown_connection() {
 async fn bound_stream_rx_works_after_public_caller_drop_when_connection_is_driven() {
     let (client_conduit, server_conduit) = message_conduit_pair();
 
-    let (client_session_tx, client_session_rx) =
+    let (client_connection_task_tx, client_connection_task_rx) =
         tokio::sync::oneshot::channel::<vox_rt::task::JoinHandle<()>>();
     let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel();
 
@@ -506,18 +516,20 @@ async fn bound_stream_rx_works_after_public_caller_drop_when_connection_is_drive
         .named("server_setup"),
     );
 
-    let root_caller = initiator_conduit(client_conduit, test_initiator_handshake())
+    let control_client = initiator_conduit(client_conduit, test_initiator_handshake())
         .spawn_fn(move |fut| {
-            let handle = vox_rt::task::spawn(fut.named("client_session"));
-            let _ = client_session_tx.send(handle);
+            let handle = vox_rt::task::spawn(fut.named("client_connection_task"));
+            let _ = client_connection_task_tx.send(handle);
         })
         .establish::<TestLaneClient>()
         .await
         .expect("client handshake failed");
 
     let (server_connection, server_caller) = server_task.await.expect("server setup failed");
-    let client_session = client_session_rx.await.expect("client session handle sent");
-    let client_connection = root_caller
+    let client_connection_task = client_connection_task_rx
+        .await
+        .expect("client connection handle sent");
+    let client_connection = control_client
         .connection
         .clone()
         .expect("client connection handle");
@@ -527,17 +539,17 @@ async fn bound_stream_rx_works_after_public_caller_drop_when_connection_is_drive
         updates: updates_tx,
     };
     // Serializing the args binds the Tx's paired Rx via the thread-local binder.
-    let _bytes = vox_types::channel::with_channel_binder(root_caller.caller.driver(), || {
+    let _bytes = vox_types::channel::with_channel_binder(control_client.caller.driver(), || {
         vox_phon::to_vec(&args).expect("serialize args")
     });
     // The first allocated channel ID is 1 (odd parity).
     let channel_id = ChannelId(1);
     drop(args);
-    drop(root_caller);
+    drop(control_client);
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     assert!(
-        !client_session.is_finished(),
+        !client_connection_task.is_finished(),
         "dropping the public caller must not close the driven connection"
     );
 
@@ -592,10 +604,13 @@ async fn bound_stream_rx_works_after_public_caller_drop_when_connection_is_drive
         .expect("client shutdown request");
     let _ = server_connection.shutdown();
 
-    tokio::time::timeout(std::time::Duration::from_millis(500), client_session)
-        .await
-        .expect("timed out waiting for client session to exit")
-        .expect("client session task failed");
+    tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        client_connection_task,
+    )
+    .await
+    .expect("timed out waiting for client connection to exit")
+    .expect("client connection task failed");
 }
 
 // r[verify rpc.request.scope]
@@ -1021,7 +1036,7 @@ async fn call_through_phon_handshake_reaches_handler() {
             initiator_on(client_link).establish::<TestLaneClient>(),
         ),
     )
-    .expect("session establishment timed out");
+    .expect("connection establishment timed out");
 
     let _server_caller = server_result.expect("server establish failed");
     let caller = client_result.expect("client establish failed");
@@ -1374,13 +1389,14 @@ async fn in_flight_call_returns_cancelled_when_peer_closes() {
     let was_cancelled = Arc::new(AtomicBool::new(false));
     let was_cancelled_check = was_cancelled.clone();
 
-    let (session_tx, session_rx) = tokio::sync::oneshot::channel::<vox_rt::task::JoinHandle<()>>();
+    let (server_connection_task_tx, server_connection_task_rx) =
+        tokio::sync::oneshot::channel::<vox_rt::task::JoinHandle<()>>();
     let server_task = vox_rt::task::spawn(
         async move {
             acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .spawn_fn(move |fut| {
                     let handle = vox_rt::task::spawn(fut);
-                    let _ = session_tx.send(handle);
+                    let _ = server_connection_task_tx.send(handle);
                 })
                 .on_connection(BlockingHandler { was_cancelled })
                 .establish_connection()
@@ -1396,7 +1412,9 @@ async fn in_flight_call_returns_cancelled_when_peer_closes() {
         .expect("client handshake failed");
 
     let server_caller_guard = server_task.await.expect("server setup failed");
-    let server_session_task = session_rx.await.expect("session handle sent");
+    let server_connection_task = server_connection_task_rx
+        .await
+        .expect("connection handle sent");
 
     let call_task = vox_rt::task::spawn(
         async move {
@@ -1416,7 +1434,7 @@ async fn in_flight_call_returns_cancelled_when_peer_closes() {
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     drop(server_caller_guard);
-    server_session_task.abort();
+    server_connection_task.abort();
 
     let result = tokio::time::timeout(std::time::Duration::from_millis(500), call_task)
         .await
@@ -1452,7 +1470,8 @@ async fn outbound_max_concurrent_requests_waits_for_peer_limit() {
     let (client_conduit, server_conduit) = message_conduit_pair();
 
     let was_cancelled = Arc::new(AtomicBool::new(false));
-    let (session_tx, session_rx) = tokio::sync::oneshot::channel::<vox_rt::task::JoinHandle<()>>();
+    let (server_connection_task_tx, server_connection_task_rx) =
+        tokio::sync::oneshot::channel::<vox_rt::task::JoinHandle<()>>();
     let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel();
     let server_task = vox_rt::task::spawn(
         {
@@ -1464,7 +1483,7 @@ async fn outbound_max_concurrent_requests_waits_for_peer_limit() {
                 )
                 .spawn_fn(move |fut| {
                     let handle = vox_rt::task::spawn(fut);
-                    let _ = session_tx.send(handle);
+                    let _ = server_connection_task_tx.send(handle);
                 })
                 .on_connection(CaptureClientAcceptor::new(
                     BlockingHandler { was_cancelled },
@@ -1496,7 +1515,9 @@ async fn outbound_max_concurrent_requests_waits_for_peer_limit() {
         .await
         .expect("client lane open failed");
     let (server_connection, server_guard) = server_task.await.expect("server setup failed");
-    let server_session_task = session_rx.await.expect("session handle sent");
+    let server_connection_task = server_connection_task_rx
+        .await
+        .expect("connection handle sent");
 
     let first_caller = client_guard.caller.clone();
     let first_call = tokio::spawn(async move {
@@ -1535,7 +1556,7 @@ async fn outbound_max_concurrent_requests_waits_for_peer_limit() {
 
     drop(server_guard);
     drop(server_connection);
-    server_session_task.abort();
+    server_connection_task.abort();
 
     let first_result = tokio::time::timeout(Duration::from_millis(500), first_call)
         .await
@@ -1546,7 +1567,7 @@ async fn outbound_max_concurrent_requests_waits_for_peer_limit() {
             first_result,
             Err(VoxError::ConnectionClosed) | Err(VoxError::ConnectionShutdown)
         ),
-        "expected first call to fail with connection/session closure, got {first_result:?}"
+        "expected first call to fail with connection closure, got {first_result:?}"
     );
 
     let second_result = tokio::time::timeout(Duration::from_millis(500), second_call)
@@ -1558,7 +1579,7 @@ async fn outbound_max_concurrent_requests_waits_for_peer_limit() {
             second_result,
             Err(VoxError::ConnectionClosed) | Err(VoxError::ConnectionShutdown)
         ),
-        "expected queued second call to fail with connection/session closure, got {second_result:?}"
+        "expected queued second call to fail with connection closure, got {second_result:?}"
     );
 }
 
@@ -1636,7 +1657,7 @@ async fn wrong_parity_request_id_closes_with_protocol_error() {
         captured_test_lane_pair(EchoHandler).await;
     let client_sender = client_guard.caller.driver().connection_sender().clone();
 
-    send_raw_root_call(&client_sender, RequestId(2), 1).await;
+    send_raw_control_lane_call(&client_sender, RequestId(2), 1).await;
 
     expect_protocol_close(&server_guard.caller, "server").await;
     expect_protocol_close(&client_guard.caller, "client").await;
@@ -1654,9 +1675,9 @@ async fn duplicate_inflight_request_id_closes_with_protocol_error() {
         captured_test_lane_pair(BlockingHandler { was_cancelled }).await;
     let client_sender = client_guard.caller.driver().connection_sender().clone();
 
-    send_raw_root_call(&client_sender, RequestId(1), 1).await;
+    send_raw_control_lane_call(&client_sender, RequestId(1), 1).await;
     wait_for_outstanding_requests(&server_guard.caller, 1).await;
-    send_raw_root_call(&client_sender, RequestId(1), 2).await;
+    send_raw_control_lane_call(&client_sender, RequestId(1), 2).await;
 
     expect_protocol_close(&server_guard.caller, "server").await;
     expect_protocol_close(&client_guard.caller, "client").await;
@@ -1725,23 +1746,23 @@ async fn keepalive_timeout_returns_cancelled_when_pongs_are_missing() {
     );
 }
 
-// r[verify rpc.caller.liveness.root-internal-close]
-// r[verify rpc.caller.liveness.root-teardown-condition]
+// r[verify rpc.caller.liveness.public-handle-drop]
+// r[verify rpc.caller.liveness.explicit-shutdown-required]
 #[tokio::test]
-async fn dropping_root_caller_does_not_shut_down_session() {
+async fn dropping_control_client_does_not_shut_down_connection() {
     let (client_conduit, server_conduit) = message_conduit_pair();
 
-    let (client_session_tx, client_session_rx) =
+    let (client_connection_task_tx, client_connection_task_rx) =
         tokio::sync::oneshot::channel::<vox_rt::task::JoinHandle<()>>();
-    let (server_session_tx, server_session_rx) =
+    let (server_connection_task_tx, server_connection_task_rx) =
         tokio::sync::oneshot::channel::<vox_rt::task::JoinHandle<()>>();
 
     let server_task = vox_rt::task::spawn(
         async move {
             acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .spawn_fn(move |fut| {
-                    let handle = vox_rt::task::spawn(fut.named("server_session"));
-                    let _ = server_session_tx.send(handle);
+                    let handle = vox_rt::task::spawn(fut.named("server_connection_task"));
+                    let _ = server_connection_task_tx.send(handle);
                 })
                 .on_connection(EchoHandler)
                 .establish_connection()
@@ -1753,8 +1774,8 @@ async fn dropping_root_caller_does_not_shut_down_session() {
 
     let caller = initiator_conduit(client_conduit, test_initiator_handshake())
         .spawn_fn(move |fut| {
-            let handle = vox_rt::task::spawn(fut.named("client_session"));
-            let _ = client_session_tx.send(handle);
+            let handle = vox_rt::task::spawn(fut.named("client_connection_task"));
+            let _ = client_connection_task_tx.send(handle);
         })
         .establish::<TestLaneClient>()
         .await
@@ -1762,20 +1783,24 @@ async fn dropping_root_caller_does_not_shut_down_session() {
 
     let server_connection = server_task.await.expect("server setup failed");
 
-    let client_session = client_session_rx.await.expect("client session handle sent");
-    let server_session = server_session_rx.await.expect("server session handle sent");
+    let client_connection_task = client_connection_task_rx
+        .await
+        .expect("client connection handle sent");
+    let server_connection_task = server_connection_task_rx
+        .await
+        .expect("server connection handle sent");
     let client_connection = caller.connection.clone().expect("client connection handle");
 
     drop(caller);
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     assert!(
-        !client_session.is_finished(),
-        "dropping the root caller must not shut down the client connection"
+        !client_connection_task.is_finished(),
+        "dropping the generated caller must not shut down the client connection"
     );
     assert!(
-        !server_session.is_finished(),
-        "dropping the root caller must not shut down the server connection"
+        !server_connection_task.is_finished(),
+        "dropping the generated caller must not shut down the server connection"
     );
 
     client_connection
@@ -1783,26 +1808,32 @@ async fn dropping_root_caller_does_not_shut_down_session() {
         .expect("client shutdown request");
     let _ = server_connection.shutdown();
 
-    tokio::time::timeout(std::time::Duration::from_millis(500), client_session)
-        .await
-        .expect("timed out waiting for client session to exit")
-        .expect("client session task failed");
-    tokio::time::timeout(std::time::Duration::from_millis(500), server_session)
-        .await
-        .expect("timed out waiting for server session to exit")
-        .expect("server session task failed");
+    tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        client_connection_task,
+    )
+    .await
+    .expect("timed out waiting for client connection to exit")
+    .expect("client connection task failed");
+    tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        server_connection_task,
+    )
+    .await
+    .expect("timed out waiting for server connection to exit")
+    .expect("server connection task failed");
 }
 
 // ---------------------------------------------------------------------------
-// Virtual connection tests
+// Service lane tests
 // ---------------------------------------------------------------------------
 
-/// Regression test: schema recv tracker must be per-connection.
-/// If it were per-session, the second call (on the virtual connection) would
-/// fail because the response schemas overlap with the root connection's.
+/// Regression test: schema recv tracker must be per-lane.
+/// If it were connection-global, the second call (on the service lane) would
+/// fail because the response schemas overlap with the control lane's.
 // r[verify schema.type-id.per-connection]
 #[tokio::test]
-async fn schema_tracker_is_per_connection_not_per_session() {
+async fn schema_tracker_is_per_lane() {
     let (client_conduit, server_conduit) = message_conduit_pair();
 
     let server_task = vox_rt::task::spawn(
@@ -1817,17 +1848,17 @@ async fn schema_tracker_is_per_connection_not_per_session() {
         .named("server_setup"),
     );
 
-    let root_caller = initiator_conduit(client_conduit, test_initiator_handshake())
+    let control_client = initiator_conduit(client_conduit, test_initiator_handshake())
         .establish::<TestLaneClient>()
         .await
         .expect("client handshake failed");
-    let connection_handle = root_caller.connection.clone().unwrap();
+    let connection_handle = control_client.connection.clone().unwrap();
 
     let _server_caller_guard = server_task.await.expect("server setup failed");
 
-    // Call on the root connection — this sends and receives schemas.
+    // Call on the control lane — this sends and receives schemas.
     let args_value: u32 = 100;
-    let response = root_caller
+    let response = control_client
         .caller
         .call(RequestCall {
             channels: Vec::new(),
@@ -1837,20 +1868,20 @@ async fn schema_tracker_is_per_connection_not_per_session() {
             metadata: Default::default(),
         })
         .await
-        .expect("root call should succeed");
+        .expect("control-lane call should succeed");
     let response = response.get();
     let ret_bytes = match &response.ret {
         Payload::Encoded(bytes) => bytes,
         _ => panic!("expected incoming payload"),
     };
-    let result: u32 = vox_phon::from_slice(ret_bytes).expect("deserialize root response");
+    let result: u32 = vox_phon::from_slice(ret_bytes).expect("deserialize control-lane response");
     assert_eq!(result, 100);
 
-    // Open a virtual connection and call on it.
+    // Open a service lane and call on it.
     // The same schema types (u32, Result, etc.) appear on both connections.
-    // If the recv tracker were shared, recording the virtual connection's
+    // If the recv tracker were shared, recording the service lane's
     // schemas would hit a duplicate and panic.
-    let vconn_handle = connection_handle
+    let lane_handle = connection_handle
         .open_lane_handle(
             ConnectionSettings {
                 parity: Parity::Odd,
@@ -1860,14 +1891,14 @@ async fn schema_tracker_is_per_connection_not_per_session() {
             vox_types::metadata().str("vox-service", "Echo").build(),
         )
         .await
-        .expect("open virtual connection");
+        .expect("open service lane");
 
-    let mut vconn_driver = Driver::new(vconn_handle, ());
-    let vconn_caller = crate::Caller::new(vconn_driver.caller());
-    vox_rt::task::spawn(async move { vconn_driver.run().await }.named("vconn_driver"));
+    let mut lane_driver = Driver::new(lane_handle, ());
+    let lane_caller = crate::Caller::new(lane_driver.caller());
+    vox_rt::task::spawn(async move { lane_driver.run().await }.named("lane_driver"));
 
     let args_value: u32 = 200;
-    let response = vconn_caller
+    let response = lane_caller
         .call(RequestCall {
             channels: Vec::new(),
             method_id: MethodId(1),
@@ -1876,13 +1907,13 @@ async fn schema_tracker_is_per_connection_not_per_session() {
             metadata: Default::default(),
         })
         .await
-        .expect("virtual connection call should succeed");
+        .expect("service lane call should succeed");
     let response = response.get();
     let ret_bytes = match &response.ret {
         Payload::Encoded(bytes) => bytes,
         _ => panic!("expected incoming payload"),
     };
-    let result: u32 = vox_phon::from_slice(ret_bytes).expect("deserialize vconn response");
+    let result: u32 = vox_phon::from_slice(ret_bytes).expect("deserialize service lane response");
     assert_eq!(result, 200);
 }
 
@@ -1945,7 +1976,7 @@ async fn initiator_builder_customization_controls_allocated_connection_parity() 
 
     let _server_caller_guard = server_task.await.expect("server setup failed");
 
-    let vconn_handle = connection_handle
+    let lane_handle = connection_handle
         .open_lane_handle(
             ConnectionSettings {
                 parity: Parity::Even,
@@ -1955,9 +1986,9 @@ async fn initiator_builder_customization_controls_allocated_connection_parity() 
             vox_types::metadata().str("vox-service", "Echo").build(),
         )
         .await
-        .expect("open virtual connection");
+        .expect("open service lane");
 
-    let conn_id = vconn_handle.connection_id();
+    let conn_id = lane_handle.connection_id();
     assert!(
         conn_id.has_parity(Parity::Even),
         "initiator parity should drive allocated connection ids"
@@ -1998,7 +2029,7 @@ async fn acceptor_builder_customization_supports_opening_connections() {
         .named("initiator_setup"),
     );
 
-    let acceptor_session_handle = acceptor_conduit(
+    let acceptor_connection_handle = acceptor_conduit(
         server_conduit,
         HandshakeResult {
             role: ConnectionRole::Acceptor,
@@ -2021,9 +2052,9 @@ async fn acceptor_builder_customization_supports_opening_connections() {
     .await
     .expect("acceptor handshake failed");
 
-    let _initiator_session_handle = initiator_task.await.expect("initiator setup failed");
+    let _initiator_connection_handle = initiator_task.await.expect("initiator setup failed");
 
-    let vconn_handle = acceptor_session_handle
+    let lane_handle = acceptor_connection_handle
         .open_lane_handle(
             ConnectionSettings {
                 parity: Parity::Odd,
@@ -2033,9 +2064,9 @@ async fn acceptor_builder_customization_supports_opening_connections() {
             vox_types::metadata().str("vox-service", "Echo").build(),
         )
         .await
-        .expect("acceptor opens virtual connection");
+        .expect("acceptor opens service lane");
 
-    let conn_id = vconn_handle.connection_id();
+    let conn_id = lane_handle.connection_id();
     assert!(
         conn_id.has_parity(Parity::Odd),
         "acceptor should allocate odd ids when peer initiator parity is even"
@@ -2046,7 +2077,7 @@ async fn acceptor_builder_customization_supports_opening_connections() {
 // r[verify connection.lane-id-parity]
 // r[verify lane.open.settings]
 #[tokio::test]
-async fn virtual_connection_request_ids_use_connection_parity() {
+async fn service_lane_request_ids_use_connection_parity() {
     let (client_conduit, server_conduit) = message_conduit_pair();
 
     let was_cancelled = Arc::new(AtomicBool::new(false));
@@ -2071,15 +2102,15 @@ async fn virtual_connection_request_ids_use_connection_parity() {
         .named("server_setup"),
     );
 
-    let root_caller = initiator_conduit(client_conduit, test_initiator_handshake())
+    let control_client = initiator_conduit(client_conduit, test_initiator_handshake())
         .establish::<TestLaneClient>()
         .await
         .expect("client handshake failed");
-    let connection_handle = root_caller.connection.clone().unwrap();
+    let connection_handle = control_client.connection.clone().unwrap();
 
     let _server_caller_guard = server_task.await.expect("server setup failed");
 
-    let vconn_handle = connection_handle
+    let lane_handle = connection_handle
         .open_lane_handle(
             ConnectionSettings {
                 parity: Parity::Even,
@@ -2089,18 +2120,18 @@ async fn virtual_connection_request_ids_use_connection_parity() {
             vox_types::metadata().str("vox-service", "Echo").build(),
         )
         .await
-        .expect("open virtual connection");
-    let vconn_id = vconn_handle.connection_id();
+        .expect("open service lane");
+    let lane_id = lane_handle.connection_id();
     assert!(
-        vconn_id.has_parity(Parity::Odd),
-        "session parity should allocate the virtual connection id"
+        lane_id.has_parity(Parity::Odd),
+        "connection parity should allocate the service lane id"
     );
 
-    let mut vconn_driver = Driver::new(vconn_handle, ());
-    let vconn_caller = crate::Caller::new(vconn_driver.caller());
-    vox_rt::task::spawn(async move { vconn_driver.run().await }.named("vconn_client_driver"));
+    let mut lane_driver = Driver::new(lane_handle, ());
+    let lane_caller = crate::Caller::new(lane_driver.caller());
+    vox_rt::task::spawn(async move { lane_driver.run().await }.named("lane_client_driver"));
 
-    let call_caller = vconn_caller.clone();
+    let call_caller = lane_caller.clone();
     let call_task = tokio::spawn(async move {
         call_caller
             .call(RequestCall {
@@ -2113,25 +2144,25 @@ async fn virtual_connection_request_ids_use_connection_parity() {
             .await
     });
 
-    wait_for_outstanding_requests(&vconn_caller, 1).await;
-    let snapshot = vconn_caller.debug_snapshot();
-    assert_eq!(snapshot.connections[0].connection_id, vconn_id);
+    wait_for_outstanding_requests(&lane_caller, 1).await;
+    let snapshot = lane_caller.debug_snapshot();
+    assert_eq!(snapshot.connections[0].connection_id, lane_id);
     assert_eq!(snapshot.connections[0].requests[0].request_id, RequestId(2));
 
     connection_handle
-        .close_lane(vconn_id, Default::default())
+        .close_lane(lane_id, Default::default())
         .await
-        .expect("close virtual connection");
+        .expect("close service lane");
     let result = tokio::time::timeout(Duration::from_millis(500), call_task)
         .await
-        .expect("call should finish after virtual connection closes")
+        .expect("call should finish after service lane closes")
         .expect("call task should join");
     assert!(
         matches!(
             result,
             Err(VoxError::ConnectionClosed) | Err(VoxError::ConnectionShutdown)
         ),
-        "expected virtual call to fail after close, got {result:?}"
+        "expected service-lane call to fail after close, got {result:?}"
     );
 }
 
@@ -2139,7 +2170,7 @@ async fn virtual_connection_request_ids_use_connection_parity() {
 // r[verify lane.control.compat]
 // r[verify lane.control]
 #[tokio::test]
-async fn close_root_connection_is_rejected() {
+async fn close_control_lane_is_rejected() {
     let (client_conduit, server_conduit) = message_conduit_pair();
 
     let server_task = vox_rt::task::spawn(
@@ -2165,8 +2196,8 @@ async fn close_root_connection_is_rejected() {
         .close_lane(vox_types::LaneId::ROOT, Default::default())
         .await;
     assert!(
-        matches!(result, Err(ConnectionError::Protocol(ref msg)) if msg == "cannot close root connection"),
-        "expected root-close protocol error, got: {result:?}"
+        matches!(result, Err(ConnectionError::Protocol(ref msg)) if msg == "cannot close control lane"),
+        "expected control-lane close protocol error, got: {result:?}"
     );
 }
 
@@ -2558,12 +2589,12 @@ async fn unsolicited_response_id_is_ignored_and_does_not_break_calls() {
 }
 
 #[tokio::test]
-async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() {
+async fn proxy_lanes_forwards_calls_without_service_specific_proxy_code() {
     let (host_a_conduit, guest_a_conduit) = message_conduit_pair();
     let (host_b_conduit, guest_b_conduit) = message_conduit_pair();
 
     struct ProxyHostAcceptor {
-        upstream_session: ConnectionHandle,
+        upstream_connection: ConnectionHandle,
     }
     impl LaneAcceptor for ProxyHostAcceptor {
         fn accept(
@@ -2575,12 +2606,12 @@ async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() 
                 connection.handle_with(());
                 return Ok(());
             }
-            // Virtual connections — proxy to upstream.
-            let upstream_session = self.upstream_session.clone();
+            // Service lanes — proxy to upstream.
+            let upstream_connection = self.upstream_connection.clone();
             let incoming = connection.into_handle();
             vox_rt::task::spawn(
                 async move {
-                    let upstream = upstream_session
+                    let upstream = upstream_connection
                         .open_lane_handle(
                             ConnectionSettings {
                                 parity: Parity::Odd,
@@ -2593,7 +2624,7 @@ async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() 
                         .expect("host->guest-b open_lane_handle");
                     let _ = proxy_lanes(incoming, upstream).await;
                 }
-                .named("host_proxy_vconn"),
+                .named("host_proxy_lane"),
             );
             Ok(())
         }
@@ -2609,20 +2640,20 @@ async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() 
             let _guard = guard;
             std::future::pending::<()>().await;
         }
-        .named("guest_b_root"),
+        .named("guest_b_connection"),
     );
 
     let _host_to_b_guard = initiator_conduit(host_b_conduit, test_initiator_handshake())
         .establish::<TestLaneClient>()
         .await
         .expect("host<->guest-b establish");
-    let host_to_b_session = _host_to_b_guard.connection.clone().unwrap();
+    let host_to_b_connection = _host_to_b_guard.connection.clone().unwrap();
 
     let host_for_a_task = vox_rt::task::spawn(
         async move {
             let guard = acceptor_conduit(host_a_conduit, test_acceptor_handshake())
                 .on_connection(ProxyHostAcceptor {
-                    upstream_session: host_to_b_session,
+                    upstream_connection: host_to_b_connection,
                 })
                 .establish::<TestLaneClient>()
                 .await
@@ -2630,16 +2661,16 @@ async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() 
             let _guard = guard;
             std::future::pending::<()>().await;
         }
-        .named("host_for_guest_a_root"),
+        .named("host_for_guest_a_connection"),
     );
 
-    let _guest_a_root_guard = initiator_conduit(guest_a_conduit, test_initiator_handshake())
+    let _guest_a_connection_guard = initiator_conduit(guest_a_conduit, test_initiator_handshake())
         .establish::<TestLaneClient>()
         .await
         .expect("guest-a<->host establish");
-    let guest_a_session = _guest_a_root_guard.connection.clone().unwrap();
+    let guest_a_connection = _guest_a_connection_guard.connection.clone().unwrap();
 
-    let proxy_conn = guest_a_session
+    let proxy_conn = guest_a_connection
         .open_lane_handle(
             ConnectionSettings {
                 parity: Parity::Odd,
@@ -2676,7 +2707,7 @@ async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() 
     let result: u32 = vox_phon::from_slice(ret_bytes).expect("deserialize proxied response");
     assert_eq!(result, args_value);
 
-    guest_a_session
+    guest_a_connection
         .close_lane(proxy_conn_id, Default::default())
         .await
         .expect("close proxy connection");

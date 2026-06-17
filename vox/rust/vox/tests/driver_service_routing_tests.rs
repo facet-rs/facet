@@ -31,7 +31,7 @@ impl Adder for AdderService {
 }
 
 #[tokio::test]
-async fn root_connect_sends_vox_service_and_factory_sees_it() {
+async fn control_lane_connect_sends_vox_service_and_factory_sees_it() {
     use std::sync::{Arc, Mutex};
 
     let (client_link, server_link) = memory_link_pair(16);
@@ -57,23 +57,23 @@ async fn root_connect_sends_vox_service_and_factory_sees_it() {
             .expect("server establish")
     });
 
-    let root = vox::initiator_on(client_link)
+    let connection_guard = vox::initiator_on(client_link)
         .establish_connection()
         .await
         .expect("client establish");
 
     let _server_guard = server.await.expect("server task");
-    let session = root.clone();
+    let connection = connection_guard.clone();
 
-    // Open a typed Echo vconn — this triggers the factory
-    let echo: EchoClient = session
+    // Open a typed Echo service lane — this triggers the factory
+    let echo: EchoClient = connection
         .open_lane_with_settings(ConnectionSettings {
             parity: Parity::Odd,
             max_concurrent_requests: 64,
             initial_channel_credit: 16,
         })
         .await
-        .expect("open Echo vconn");
+        .expect("open Echo service lane");
 
     // Verify the factory saw vox-service: "Echo"
     let service = seen_service.lock().unwrap().clone();
@@ -84,7 +84,7 @@ async fn root_connect_sends_vox_service_and_factory_sees_it() {
 }
 
 #[tokio::test]
-async fn service_factory_routes_virtual_connections() {
+async fn service_factory_routes_service_lanes() {
     let (client_link, server_link) = memory_link_pair(16);
 
     let factory = vox::lane_acceptor_fn(
@@ -119,36 +119,36 @@ async fn service_factory_routes_virtual_connections() {
             .expect("server establish")
     });
 
-    let root = vox::initiator_on(client_link)
+    let connection_guard = vox::initiator_on(client_link)
         .establish_connection()
         .await
         .expect("client establish");
 
     let _server_guard = server.await.expect("server task");
-    let session = root.clone();
+    let connection = connection_guard.clone();
 
-    // Open a typed Echo vconn
-    let echo: EchoClient = session
+    // Open a typed Echo service lane
+    let echo: EchoClient = connection
         .open_lane_with_settings(ConnectionSettings {
             parity: Parity::Odd,
             max_concurrent_requests: 64,
             initial_channel_credit: 16,
         })
         .await
-        .expect("open Echo vconn");
+        .expect("open Echo service lane");
 
     let result = echo.echo(42).await.expect("echo call");
     assert_eq!(result, 42);
 
-    // Open a typed Adder vconn
-    let adder: AdderClient = session
+    // Open a typed Adder service lane
+    let adder: AdderClient = connection
         .open_lane_with_settings(ConnectionSettings {
             parity: Parity::Odd,
             max_concurrent_requests: 64,
             initial_channel_credit: 16,
         })
         .await
-        .expect("open Adder vconn");
+        .expect("open Adder service lane");
 
     let result = adder.add(3, 4).await.expect("add call");
     assert_eq!(result, 7);
@@ -186,16 +186,16 @@ async fn service_factory_rejects_unknown_service() {
             .expect("server establish")
     });
 
-    let root = vox::initiator_on(client_link)
+    let connection_guard = vox::initiator_on(client_link)
         .establish_connection()
         .await
         .expect("client establish");
 
     let _server_guard = server.await.expect("server task");
-    let session = root.clone();
+    let connection = connection_guard.clone();
 
     // Adder is not in the factory — should be rejected
-    let result = session
+    let result = connection
         .open_lane_with_settings::<AdderClient>(ConnectionSettings {
             parity: Parity::Odd,
             max_concurrent_requests: 64,

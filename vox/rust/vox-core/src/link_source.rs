@@ -1,8 +1,8 @@
-//! `LinkSource` and `Attachment`: how the session machinery is given the
+//! `LinkSource` and `Attachment`: how the connection machinery is given the
 //! transport link it should use.
 //!
 //! This is a small abstraction over "give me a link once", kept as a trait
-//! so the existing session API composes with tests and production sockets.
+//! so the existing connection API composes with tests and production sockets.
 
 use std::future::Future;
 
