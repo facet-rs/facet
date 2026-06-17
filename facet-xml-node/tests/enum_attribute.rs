@@ -1,5 +1,6 @@
 use facet::Facet;
 use facet_testhelpers::test;
+use facet_xml as xml;
 
 #[derive(Facet, Debug)]
 #[facet(rename_all = "PascalCase")]
