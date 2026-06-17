@@ -41,6 +41,7 @@ members = [
   "facet-path",
   "facet-validate",
   "facet-cargo-toml",
+  "rusqlite-facet",
 
   # strongly-typed string IDs
   "strid",
@@ -79,6 +80,7 @@ facet-xml = "0.50.0-rc.0"
 facet-yaml = "0.50.0-rc.0"
 facet-urlencoded = { path = "facet-urlencoded", version = "0.50.0-rc.0" }
 facet-value = "0.50.0-rc.0"
+rusqlite-facet = { path = "rusqlite-facet", version = "2.0.0-rc.0" }
 strid = { path = "strid", version = "11.0.0-rc.0" }
 strid-macros = { path = "strid-macros", version = "11.0.0-rc.0" }
 arborium = { version = "^2.4.5", default-features = false, features = ["lang-json"] }
@@ -114,6 +116,7 @@ ulid = "^1.2.1"
 unsynn = "^0.3.0"
 uuid = "^1.19.0"
 rust_decimal = { version = "^1.38.0", default-features = false, features = ["std"] }
+rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
 smallvec = { version = "^1.15", default-features = false }
 iddqd = { version = "^0.4.0", default-features = false }
 
@@ -153,6 +156,7 @@ facet-testhelpers = { path = "facet-testhelpers" }
 facet-axum = { path = "facet-axum" }
 facet-cargo-toml = { path = "facet-cargo-toml" }
 facet-urlencoded = { path = "facet-urlencoded" }
+rusqlite-facet = { path = "rusqlite-facet" }
 strid = { path = "strid" }
 strid-macros = { path = "strid-macros" }
 strid-examples = { path = "strid-examples" }

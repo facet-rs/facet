@@ -90,6 +90,12 @@ Day-to-day ergonomics: better output, better errors, less boilerplate.
 | [`figue`](https://docs.rs/figue) | Type-safe CLI args, environment variables, and config files in one layered model. [Guide](@/guide/cli.md). | [bearcove/figue](https://github.com/bearcove/figue) |
 | [`facet-cargo-toml`](https://docs.rs/facet-cargo-toml) | A fully-typed `Cargo.toml` / `Cargo.lock` parser. [Guide](@/ecosystem/facet-cargo-toml/_index.md). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-cargo-toml) |
 
+## Database
+
+| Crate | What it does | Source |
+|-------|--------------|--------|
+| [`rusqlite-facet`](https://docs.rs/rusqlite-facet) | Bind query parameters and map SQLite rows using Facet reflection. [Guide](@/ecosystem/rusqlite-facet/_index.md). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/rusqlite-facet) |
+
 ## Web & UI
 
 | Crate | What it does | Source |
