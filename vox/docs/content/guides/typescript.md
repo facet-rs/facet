@@ -81,12 +81,18 @@ class GreeterService implements GreeterHandler {
 
 const server = net.createServer((socket) => {
   void (async () => {
-    const conn = await accept(acceptTcp(socket));
-    const driver = new Driver(
-      conn.lane(),
-      new GreeterDispatcher(new GreeterService()),
-    );
-    await driver.run();
+    const conn = await accept(acceptTcp(socket), {
+      onLane: (lane) => {
+        const driver = new Driver(
+          lane,
+          new GreeterDispatcher(new GreeterService()),
+        );
+        void driver.run().catch((error) => {
+          console.error("Vox service lane failed", error);
+        });
+      },
+    });
+    await conn.closed();
   })();
 });
 

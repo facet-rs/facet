@@ -27,15 +27,16 @@ export async function runSubjectServer(createDispatcher: () => Dispatcher, metad
       onLane: acceptLanes
         ? (lane) => {
             const driver = new Driver(lane, createDispatcher());
-            void driver.run();
+            void driver.run().catch((e: unknown) => {
+              console.error(`[harness] service lane error: ${e instanceof Error ? e.message : String(e)}`);
+            });
           }
         : undefined,
     });
-    const driver = new Driver(connection.lane(), createDispatcher());
     const handle = connection.handle();
 
     try {
-      await driver.run();
+      await connection.closed();
     } catch (e) {
       if (e instanceof ConnectionError) {
         console.error(`[harness] connection error: ${e.message}`);

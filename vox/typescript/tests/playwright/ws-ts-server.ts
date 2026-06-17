@@ -362,7 +362,6 @@ export async function startTsWsServer(port: number): Promise<TsWsServerHandle> {
       void connection.closed().finally(() => {
         activeConnections.delete(handle);
       });
-      driveLane(connection.lane());
     }).catch((error) => {
       console.error("[ts-ws-server] connection error:", error);
       link.close();

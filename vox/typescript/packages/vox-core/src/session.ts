@@ -368,6 +368,7 @@ class ConnectionCore {
   initialLane(): Lane {
     // r[impl connection]
     // r[impl connection.root]
+    // r[impl lane.control]
     if (!this.initialLaneValue) {
       this.initialLaneValue = new Lane(
         this,
@@ -387,6 +388,8 @@ class ConnectionCore {
   }
 
   start(): void {
+    // r[impl connection.lifecycle.driven]
+    // r[impl rpc.caller.liveness.root-teardown-condition]
     if (this.runPromise) {
       return;
     }
@@ -463,6 +466,7 @@ class ConnectionCore {
     // r[impl connection]
     // r[impl connection.virtual]
     // r[impl connection.open]
+    // r[impl lane.open]
     // r[impl rpc.virtual-connection.open]
     this.assertOpen();
     if (settings.initial_channel_credit <= 0) {
@@ -539,6 +543,7 @@ class ConnectionCore {
   }
 
   shutdown(): void {
+    // r[impl connection.shutdown.explicit]
     this.fail(ConnectionError.closed());
   }
 
@@ -603,18 +608,22 @@ class ConnectionCore {
         throw ConnectionError.peerProtocol(message.payload.value.description);
 
       case "LaneOpen":
+        // r[impl lane.wire.compat]
         await this.handleLaneOpen(message.lane_id, message.payload.value);
         return;
 
       case "LaneAccept":
+        // r[impl lane.wire.compat]
         this.handleLaneAccept(message.lane_id, message.payload.value.connection_settings);
         return;
 
       case "LaneReject":
+        // r[impl lane.wire.compat]
         this.handleLaneReject(message.lane_id);
         return;
 
       case "LaneClose":
+        // r[impl lane.wire.compat]
         this.handleLaneClose(message.lane_id);
         return;
 
@@ -667,6 +676,7 @@ class ConnectionCore {
     // r[impl connection]
     // r[impl connection.virtual]
     // r[impl connection.open]
+    // r[impl lane.open]
     // r[impl rpc.virtual-connection.accept]
     // r[impl connection.open.rejection]
     // r[impl session.connection-settings.open]
@@ -863,6 +873,7 @@ export class ConnectionHandle {
   }
 
   shutdown(): void {
+    // r[impl connection.shutdown.explicit]
     this.core.shutdown();
   }
 
@@ -871,6 +882,7 @@ export class ConnectionHandle {
   }
 }
 
+// r[impl lane]
 export class Lane {
   private readonly role: Role;
   private readonly channelAllocator: ChannelIdAllocator;
@@ -1029,6 +1041,7 @@ export class Lane {
     this.rememberCallerChannelContexts(requestId, request, initial.channels);
     let responsePayload: Uint8Array;
     try {
+      // r[impl rpc.request.scope]
       responsePayload = await new Promise<Uint8Array>((resolve, reject) => {
         // The args schema closure is advertised once per (method, connection).
         const computeSchemas: () => number[] = () =>
@@ -1129,6 +1142,8 @@ export class Lane {
     try {
       await this.connection.sendMessage(messageResponse(requestId, payload, metadata, this.id, schemas));
     } finally {
+      // r[impl rpc.request.scope.terminal]
+      // r[impl rpc.request.scope.channels]
       this.finishIncomingRequest(requestId);
     }
   }
@@ -1165,6 +1180,7 @@ export class Lane {
   }
 
   beginIncomingRequest(requestId: bigint, channels: bigint[] = []): void {
+    // r[impl rpc.request.scope]
     // r[impl rpc.flow-control.max-concurrent-requests]
     // r[impl rpc.flow-control.max-concurrent-requests.inbound]
     if (this.inboundLiveRequests.has(requestId)) {
@@ -1180,6 +1196,8 @@ export class Lane {
   }
 
   finishIncomingRequest(requestId: bigint, error = ChannelError.requestClosed()): void {
+    // r[impl rpc.request.scope.terminal]
+    // r[impl rpc.request.scope.channels]
     // r[impl rpc.flow-control.max-concurrent-requests.counting]
     this.inboundLiveRequests.delete(requestId);
     const channels = this.inboundRequestChannels.get(requestId) ?? [];
@@ -1212,6 +1230,7 @@ export class Lane {
       `[vox:connection] resolveResponse: req=${requestId} payload=${payload.length}`,
     );
     this.markRequestProgress(requestId);
+    // r[impl rpc.request.scope.terminal]
     this.clearPendingState(state);
     state.resolve(payload);
   }
@@ -1294,8 +1313,6 @@ export class Lane {
   private retainCaller(): () => void {
     // r[impl rpc.caller.liveness.refcounted]
     // r[impl rpc.caller.liveness.last-drop-closes-connection]
-    // r[impl rpc.caller.liveness.root-internal-close]
-    // r[impl rpc.caller.liveness.root-teardown-condition]
     this.callerRefs += 1;
     let released = false;
     return () => {
@@ -1311,6 +1328,8 @@ export class Lane {
     state: PendingResponse,
     options: { finalizeChannels?: boolean; channelError?: ChannelError } = {},
   ): void {
+    // r[impl rpc.request.scope.terminal]
+    // r[impl rpc.request.scope.channels]
     if (state.settled) {
       return;
     }
@@ -1579,6 +1598,7 @@ export function defaultLaneSettings(
   };
 }
 
+// r[impl rpc.caller.liveness.root-internal-close]
 export class Connection {
   private readonly core: ConnectionCore;
 
@@ -1591,6 +1611,8 @@ export class Connection {
     handshake: HandshakeResult,
     options: ConnectionBuilderOptions = {},
   ): Connection {
+    // r[impl connection.model]
+    // r[impl connection.lifecycle.driven]
     const core = new ConnectionCore(
       conduit,
       handshake.localSettings,
@@ -1610,10 +1632,6 @@ export class Connection {
     options: ConnectionBuilderOptions = {},
   ): Connection {
     return Connection.connectConduit(conduit, handshake, options);
-  }
-
-  lane(): Lane {
-    return this.core.initialLane();
   }
 
   handle(): ConnectionHandle {

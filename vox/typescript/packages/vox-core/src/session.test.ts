@@ -240,6 +240,39 @@ async function establishRawInitiator(
   return Connection.connectConduit(new BareConduit(clientLink), clientHandshake, options);
 }
 
+async function establishInboundServiceLane(
+  clientLink: MemoryLink,
+  serverLink: MemoryLink,
+): Promise<{ serverSession: Connection; serverLane: Lane; laneId: bigint }> {
+  const laneId = 1n;
+  const peerSettings: ConnectionSettings = {
+    parity: { tag: "Odd" },
+    max_concurrent_requests: 64,
+    initial_channel_credit: 16,
+  };
+  let acceptLane!: (lane: Lane) => void;
+  const acceptedLane = new Promise<Lane>((resolve) => {
+    acceptLane = resolve;
+  });
+  const serverSession = await withTimeout(
+    establishRawAcceptor(clientLink, serverLink, {
+      onLane: (lane) => acceptLane(lane),
+    }),
+    "raw acceptor establishment",
+  );
+
+  await clientLink.send(encodeMessage(messageLaneOpen(laneId, peerSettings, emptyMetadata())));
+  const accept = decodeMessage(
+    (await withTimeout(clientLink.recv(), "service lane accept"))!,
+  );
+  expect(accept.lane_id).toBe(laneId);
+  expect(accept.payload.tag).toBe("LaneAccept");
+  const serverLane = await withTimeout(acceptedLane, "accepted service lane");
+  expect(serverLane.id).toBe(laneId);
+
+  return { serverSession, serverLane, laneId };
+}
+
 const ECHO_METHOD: MethodDescriptor = {
   name: "echo",
   id: SESSION_ECHO_METHOD_ID,
@@ -464,6 +497,9 @@ describe("session", () => {
 
   // r[verify connection.virtual]
   // r[verify rpc.virtual-connection.accept]
+  // r[verify lane]
+  // r[verify lane.open]
+  // r[verify lane.wire.compat]
   // r[verify session.symmetry]
   // r[verify session.connection-settings.open]
   // r[verify session.message]
@@ -589,7 +625,10 @@ describe("session", () => {
   // r[verify conduit.bare]
   // r[verify conduit.typeplan]
   // r[verify connection]
+  // r[verify connection.model]
+  // r[verify connection.lifecycle.driven]
   // r[verify connection.root]
+  // r[verify lane.control]
   it("establishes over transport prologue before BareConduit traffic", async () => {
     const [clientLink, serverLink] = memoryLinkPair();
     const [clientSession, serverSession] = await withTimeout(
@@ -599,7 +638,7 @@ describe("session", () => {
       ]),
       "transport session establishment",
     );
-    const serverRoot = serverSession.lane();
+    expect("lane" in serverSession).toBe(false);
     await expect(serverSession.handle().closeLane(0n)).rejects.toThrow(
       /cannot close the initial lane/,
     );
@@ -611,7 +650,6 @@ describe("session", () => {
     );
 
     await withTimeout(serverSession.closed(), "server protocol-error close");
-    expect(serverRoot.isClosed()).toBe(true);
 
     clientLink.close();
     serverLink.close();
@@ -1028,7 +1066,9 @@ describe("session", () => {
     await expect(call).rejects.toBeInstanceOf(ConnectionError);
   });
 
+  // r[verify rpc.request.scope]
   // r[verify rpc.request.scope.channels]
+  // r[verify rpc.request.scope.terminal]
   it("terminalizes caller receive channels when a response is delivered", async () => {
     const localSettings: ConnectionSettings = {
       parity: { tag: "Odd" },
@@ -1074,13 +1114,13 @@ describe("session", () => {
 
   // r[verify rpc.cancel]
   // r[verify rpc.cancel.channels]
+  // r[verify rpc.request.scope.terminal]
   it("queues inbound cancel and terminalizes request channels", async () => {
     const [clientLink, serverLink] = memoryLinkPair();
-    const serverSession = await withTimeout(
-      establishRawAcceptor(clientLink, serverLink),
-      "raw acceptor establishment",
+    const { serverSession, serverLane, laneId } = await establishInboundServiceLane(
+      clientLink,
+      serverLink,
     );
-    const serverRoot = serverSession.lane();
     const schemas = Array.from(hexToBytes(ECHO_METHOD_SCHEMAS.argsSchemaClosure));
 
     await clientLink.send(
@@ -1091,19 +1131,19 @@ describe("session", () => {
           new Uint8Array(),
           emptyMetadata(),
           [11n],
-          0n,
+          laneId,
           schemas,
         ),
       ),
     );
-    const incoming = await withTimeout(serverRoot.nextIncomingCall(), "incoming cancellable call");
+    const incoming = await withTimeout(serverLane.nextIncomingCall(), "incoming cancellable call");
     expect(incoming?.requestId).toBe(1n);
     expect(incoming?.channels).toEqual([11n]);
 
-    const receiver = serverRoot.getChannelRegistry().registerIncoming(11n, 4);
-    await clientLink.send(encodeMessage(messageCancel(1n)));
-    expect(await withTimeout(serverRoot.nextIncomingCancel(), "incoming cancel")).toBe(1n);
-    expect(serverRoot.debugSnapshot()).toMatchObject({
+    const receiver = serverLane.getChannelRegistry().registerIncoming(11n, 4);
+    await clientLink.send(encodeMessage(messageCancel(1n, laneId)));
+    expect(await withTimeout(serverLane.nextIncomingCancel(), "incoming cancel")).toBe(1n);
+    expect(serverLane.debugSnapshot()).toMatchObject({
       closed: false,
       inboundLiveRequestCount: 0,
     });
@@ -1111,11 +1151,11 @@ describe("session", () => {
     await expect(withTimeout(receiver.recv(), "post-cancel channel terminal"))
       .rejects.toMatchObject({ kind: "cancelled" });
 
-    await serverRoot.sendResponse(1n, Uint8Array.of(9));
+    await serverLane.sendResponse(1n, Uint8Array.of(9));
     const lateResponse = decodeMessage(
       (await withTimeout(clientLink.recv(), "post-cancel response"))!,
     );
-    expect(lateResponse.lane_id).toBe(0n);
+    expect(lateResponse.lane_id).toBe(laneId);
     expect(lateResponse.payload.tag).toBe("RequestMessage");
     if (lateResponse.payload.tag === "RequestMessage") {
       expect(lateResponse.payload.value.id).toBe(1n);
@@ -1324,6 +1364,7 @@ describe("session", () => {
     await Promise.allSettled([initiatorSession.closed()]);
   });
 
+  // r[verify connection.close]
   // r[verify connection.close.semantics]
   it("tears down a service lane after receiving close", async () => {
     const settings: ConnectionSettings = {
@@ -1382,9 +1423,11 @@ describe("session", () => {
     rawServerLink.close();
   });
 
+  // r[verify connection.shutdown.explicit]
+  // r[verify lane.control]
   // r[verify rpc.caller.liveness.root-internal-close]
   // r[verify rpc.caller.liveness.root-teardown-condition]
-  it("does not tear down after root and service caller disposal", async () => {
+  it("does not expose the internal control lane as a public service lane", async () => {
     const settings: ConnectionSettings = {
       parity: { tag: "Odd" },
       max_concurrent_requests: 64,
@@ -1408,12 +1451,9 @@ describe("session", () => {
     await rawServerLink.send(encodeMessage(messageLaneAccept(open.lane_id, peerSettings)));
     const connection = await withTimeout(opened, "service lane accept");
 
-    const rootCaller = initiatorSession.lane().caller();
     const virtualCaller = connection.caller();
 
-    rootCaller.dispose();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(initiatorLink.isClosed()).toBe(false);
+    expect("lane" in initiatorSession).toBe(false);
 
     virtualCaller.dispose();
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -1430,38 +1470,51 @@ describe("session", () => {
   // r[verify schema.exchange.required]
   it("tears down when a call arrives without an args schema binding", async () => {
     const [clientLink, serverLink] = memoryLinkPair();
-    const [clientSession, serverSession] = await withTimeout(
-      establishPair(clientLink, serverLink),
-      "session establishment",
+    const { serverSession, serverLane, laneId } = await establishInboundServiceLane(
+      clientLink,
+      serverLink,
     );
-    const serverRoot = serverSession.lane();
 
     await clientLink.send(
       encodeMessage(
-        messageRequest(1n, ECHO_METHOD.id, new Uint8Array(), emptyMetadata(), [], 0n, []),
+        messageRequest(1n, ECHO_METHOD.id, new Uint8Array(), emptyMetadata(), [], laneId, []),
       ),
     );
 
     await withTimeout(serverSession.closed(), "server protocol-error close");
-    expect(serverRoot.isClosed()).toBe(true);
+    expect(serverLane.isClosed()).toBe(true);
 
     clientLink.close();
     serverLink.close();
-    clientSession.handle().shutdown();
     serverSession.handle().shutdown();
-    await Promise.allSettled([clientSession.closed(), serverSession.closed()]);
+    await Promise.allSettled([serverSession.closed()]);
   });
 
   // r[verify schema.exchange.required]
   it("tears down when a response arrives without a response schema binding", async () => {
-    const [clientLink, serverLink] = memoryLinkPair();
-    const [clientSession, serverSession] = await withTimeout(
-      establishPair(clientLink, serverLink),
-      "session establishment",
+    const [clientLink, rawServerLink] = memoryLinkPair();
+    const clientSession = await withTimeout(
+      establishRawInitiator(clientLink, rawServerLink),
+      "raw initiator establishment",
     );
-    const clientRoot = clientSession.lane();
+    const settings: ConnectionSettings = {
+      parity: { tag: "Odd" },
+      max_concurrent_requests: 64,
+      initial_channel_credit: 16,
+    };
+    const peerSettings: ConnectionSettings = {
+      parity: { tag: "Even" },
+      max_concurrent_requests: 64,
+      initial_channel_credit: 16,
+    };
+    const opened = clientSession.handle().openLane(settings);
+    const open = decodeMessage(
+      (await withTimeout(rawServerLink.recv(), "service lane open"))!,
+    );
+    await rawServerLink.send(encodeMessage(messageLaneAccept(open.lane_id, peerSettings)));
+    const clientLane = await withTimeout(opened, "service lane accept");
 
-    const call = clientRoot.caller().call({
+    const call = clientLane.caller().call({
       method: "Test.echo",
       args: { value: 55 },
       descriptor: ECHO_METHOD,
@@ -1470,19 +1523,18 @@ describe("session", () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    await serverLink.send(
-      encodeMessage(messageResponse(1n, new Uint8Array(), emptyMetadata(), 0n, [])),
+    await rawServerLink.send(
+      encodeMessage(messageResponse(1n, new Uint8Array(), emptyMetadata(), open.lane_id, [])),
     );
 
     await withTimeout(clientSession.closed(), "client protocol-error close");
     await expect(call).rejects.toBeInstanceOf(ConnectionError);
-    expect(clientRoot.isClosed()).toBe(true);
+    expect(clientLane.isClosed()).toBe(true);
 
     clientLink.close();
-    serverLink.close();
+    rawServerLink.close();
     clientSession.handle().shutdown();
-    serverSession.handle().shutdown();
-    await Promise.allSettled([clientSession.closed(), serverSession.closed()]);
+    await Promise.allSettled([clientSession.closed()]);
   });
 
   // r[verify schema.errors.call-level]

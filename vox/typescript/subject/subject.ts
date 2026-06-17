@@ -5033,15 +5033,16 @@ async function runServer() {
             lane,
             new TestbedDispatcher(new TestbedService()),
           );
-          void driver.run();
+          void driver.run().catch((e: unknown) => {
+            console.error(`[subject] service lane error: ${e instanceof Error ? e.message : String(e)}`);
+          });
         }
       : undefined,
   });
-  const driver = new Driver(connection.lane(), new TestbedDispatcher(new TestbedService()));
   const handle = connection.handle();
 
   try {
-    await driver.run();
+    await connection.closed();
   } catch (e) {
     if (e instanceof ConnectionError) {
       // Clean shutdown
@@ -6321,17 +6322,15 @@ async function runServerListen() {
         lane,
         new TestbedDispatcher(new TestbedService()),
       );
-      void driver.run();
+      void driver.run().catch((e: unknown) => {
+        console.error(`[subject] service lane error: ${e instanceof Error ? e.message : String(e)}`);
+      });
     },
   });
-  const driver = new Driver(
-    connection.lane(),
-    new TestbedDispatcher(new TestbedService()),
-  );
   const handle = connection.handle();
 
   try {
-    await driver.run();
+    await connection.closed();
   } catch (e) {
     if (e instanceof ConnectionError) return;
     throw e;
