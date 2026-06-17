@@ -1,6 +1,6 @@
 //! Tests for proxy_lanes — transparent call forwarding between sessions.
 
-use vox::{ConnectionHandle, ConnectionSettings, Driver, Metadata, Parity, memory_link_pair};
+use vox::{ConnectionHandle, ConnectionSettings, Driver, LaneRejection, Parity, memory_link_pair};
 
 #[vox::service]
 trait Echo {
@@ -25,7 +25,7 @@ impl vox::LaneAcceptor for ProxyAcceptor {
         &self,
         request: &vox::LaneRequest,
         connection: vox::PendingLane,
-    ) -> Result<(), Metadata> {
+    ) -> Result<(), LaneRejection> {
         if request.service() == "Noop" {
             connection.handle_with(());
             return Ok(());

@@ -42,7 +42,7 @@ async fn root_connect_sends_vox_service_and_factory_sees_it() {
         let seen_service = seen_service.clone();
         move |request: &vox::LaneRequest,
               connection: vox::PendingLane|
-              -> Result<(), vox::Metadata> {
+              -> Result<(), vox::LaneRejection> {
             *seen_service.lock().unwrap() = Some(request.service().to_string());
             connection.handle_with(EchoDispatcher::new(EchoService));
             Ok(())
@@ -88,7 +88,9 @@ async fn service_factory_routes_virtual_connections() {
     let (client_link, server_link) = memory_link_pair(16);
 
     let factory = vox::lane_acceptor_fn(
-        |request: &vox::LaneRequest, connection: vox::PendingLane| -> Result<(), vox::Metadata> {
+        |request: &vox::LaneRequest,
+         connection: vox::PendingLane|
+         -> Result<(), vox::LaneRejection> {
             match request.service() {
                 "Echo" => {
                     connection.handle_with(EchoDispatcher::new(EchoService));
@@ -102,7 +104,9 @@ async fn service_factory_routes_virtual_connections() {
                     connection.handle_with(());
                     Ok(())
                 }
-                _ => Err(Default::default()),
+                _ => Err(vox::LaneRejection::new(
+                    vox::LaneRejectReason::UnknownService,
+                )),
             }
         },
     );
@@ -155,7 +159,9 @@ async fn service_factory_rejects_unknown_service() {
     let (client_link, server_link) = memory_link_pair(16);
 
     let factory = vox::lane_acceptor_fn(
-        |request: &vox::LaneRequest, connection: vox::PendingLane| -> Result<(), vox::Metadata> {
+        |request: &vox::LaneRequest,
+         connection: vox::PendingLane|
+         -> Result<(), vox::LaneRejection> {
             match request.service() {
                 "Echo" => {
                     connection.handle_with(EchoDispatcher::new(EchoService));
@@ -165,7 +171,9 @@ async fn service_factory_rejects_unknown_service() {
                     connection.handle_with(());
                     Ok(())
                 }
-                _ => Err(Default::default()),
+                _ => Err(vox::LaneRejection::new(
+                    vox::LaneRejectReason::UnknownService,
+                )),
             }
         },
     );
@@ -195,5 +203,10 @@ async fn service_factory_rejects_unknown_service() {
         })
         .await;
 
-    assert!(result.is_err(), "unknown service should be rejected");
+    let rejection = match result {
+        Err(vox::ConnectionError::Rejected(rejection)) => rejection,
+        Err(error) => panic!("expected structured rejection, got error: {error:?}"),
+        Ok(_) => panic!("expected structured rejection, got client"),
+    };
+    assert_eq!(rejection.reason(), vox::LaneRejectReason::UnknownService);
 }

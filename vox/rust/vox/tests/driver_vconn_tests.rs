@@ -4,7 +4,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use vox::{
-    ConnectionError, ConnectionHandle, ConnectionSettings, Driver, Parity, memory_link_pair,
+    ConnectionError, ConnectionHandle, ConnectionSettings, Driver, LaneRejectReason, LaneRejection,
+    Parity, memory_link_pair,
 };
 
 #[vox::service]
@@ -182,7 +183,7 @@ async fn reject_virtual_connection() {
                         conn.handle_with(());
                         Ok(())
                     }
-                    _ => Err(Default::default()),
+                    _ => Err(LaneRejection::new(LaneRejectReason::UnknownService)),
                 },
             ))
             .establish_connection()
@@ -210,7 +211,10 @@ async fn reject_virtual_connection() {
         )
         .await;
 
-    assert!(result.is_err(), "connection should be rejected");
+    let Err(ConnectionError::Rejected(rejection)) = result else {
+        panic!("expected structured rejection, got: {result:?}");
+    };
+    assert_eq!(rejection.reason(), LaneRejectReason::UnknownService);
 }
 
 #[tokio::test]
@@ -245,10 +249,10 @@ async fn open_virtual_connection_without_acceptor_is_rejected() {
         )
         .await;
 
-    assert!(
-        matches!(result, Err(ConnectionError::Rejected(_))),
-        "expected Rejected, got: {result:?}"
-    );
+    let Err(ConnectionError::Rejected(rejection)) = result else {
+        panic!("expected structured rejection, got: {result:?}");
+    };
+    assert_eq!(rejection.reason(), LaneRejectReason::NotReady);
 }
 
 #[tokio::test]

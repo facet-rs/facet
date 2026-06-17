@@ -246,7 +246,8 @@ pub use vox_core::{acceptor_on_link, initiator_on_link};
 #[cfg(feature = "runtime")]
 pub use vox_core::{
     Connection, ConnectionConfig, ConnectionError, ConnectionHandle, ConnectionKeepaliveConfig,
-    ConnectionState, LaneHandle, LaneRequest, PendingLane,
+    ConnectionState, LaneHandle, LaneRejectReason, LaneRejection, LaneRequest, PendingLane,
+    VOX_LANE_REJECT_MESSAGE_METADATA_KEY, VOX_LANE_REJECT_REASON_METADATA_KEY,
 };
 
 // Connection acceptor

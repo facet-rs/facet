@@ -195,16 +195,12 @@ impl Handler<DriverReplySink> for BlockingHandler {
     }
 }
 
-use crate::connection::{LaneAcceptor, LaneRequest, PendingLane};
+use crate::connection::{LaneAcceptor, LaneRejection, LaneRequest, PendingLane};
 
 pub(crate) struct EchoAcceptor;
 
 impl LaneAcceptor for EchoAcceptor {
-    fn accept(
-        &self,
-        _request: &LaneRequest,
-        connection: PendingLane,
-    ) -> Result<(), vox_types::Metadata> {
+    fn accept(&self, _request: &LaneRequest, connection: PendingLane) -> Result<(), LaneRejection> {
         connection.handle_with(EchoHandler);
         Ok(())
     }

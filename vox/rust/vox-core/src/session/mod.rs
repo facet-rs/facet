@@ -32,6 +32,120 @@ pub struct ConnectionKeepaliveConfig {
     pub pong_timeout: Duration,
 }
 
+pub const VOX_LANE_REJECT_REASON_METADATA_KEY: &str = "vox-lane-reject-reason";
+pub const VOX_LANE_REJECT_MESSAGE_METADATA_KEY: &str = "vox-lane-reject-message";
+
+// r[impl lane.open.result]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaneRejectReason {
+    UnknownService,
+    Forbidden,
+    NotReady,
+    Draining,
+    SchemaIncompatible,
+    PolicyRejected,
+}
+
+impl LaneRejectReason {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::UnknownService => "unknown-service",
+            Self::Forbidden => "forbidden",
+            Self::NotReady => "not-ready",
+            Self::Draining => "draining",
+            Self::SchemaIncompatible => "schema-incompatible",
+            Self::PolicyRejected => "policy-rejected",
+        }
+    }
+
+    #[must_use]
+    pub fn from_metadata_value(value: &str) -> Option<Self> {
+        match value {
+            "unknown-service" => Some(Self::UnknownService),
+            "forbidden" => Some(Self::Forbidden),
+            "not-ready" => Some(Self::NotReady),
+            "draining" => Some(Self::Draining),
+            "schema-incompatible" => Some(Self::SchemaIncompatible),
+            "policy-rejected" => Some(Self::PolicyRejected),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for LaneRejectReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+// r[impl lane.open.result]
+#[derive(Debug, Clone)]
+pub struct LaneRejection {
+    reason: LaneRejectReason,
+    metadata: Metadata,
+}
+
+impl LaneRejection {
+    #[must_use]
+    pub fn new(reason: LaneRejectReason) -> Self {
+        Self::with_metadata(reason, Metadata::default())
+    }
+
+    #[must_use]
+    pub fn with_message(reason: LaneRejectReason, message: impl Into<String>) -> Self {
+        let metadata = vox_types::metadata()
+            .str(VOX_LANE_REJECT_MESSAGE_METADATA_KEY, message.into())
+            .build();
+        Self::with_metadata(reason, metadata)
+    }
+
+    #[must_use]
+    pub fn with_metadata(reason: LaneRejectReason, mut metadata: Metadata) -> Self {
+        vox_types::meta_set(
+            &mut metadata,
+            VOX_LANE_REJECT_REASON_METADATA_KEY,
+            reason.as_str(),
+        );
+        Self { reason, metadata }
+    }
+
+    #[must_use]
+    pub fn from_metadata(metadata: Metadata) -> Self {
+        let reason = vox_types::metadata_get_str(&metadata, VOX_LANE_REJECT_REASON_METADATA_KEY)
+            .and_then(LaneRejectReason::from_metadata_value)
+            .unwrap_or(LaneRejectReason::PolicyRejected);
+        Self::with_metadata(reason, metadata)
+    }
+
+    #[must_use]
+    pub fn reason(&self) -> LaneRejectReason {
+        self.reason
+    }
+
+    #[must_use]
+    pub fn message(&self) -> Option<&str> {
+        vox_types::metadata_get_str(&self.metadata, VOX_LANE_REJECT_MESSAGE_METADATA_KEY)
+            .or_else(|| vox_types::metadata_get_str(&self.metadata, "error"))
+    }
+
+    #[must_use]
+    pub fn metadata(&self) -> &Metadata {
+        &self.metadata
+    }
+
+    #[must_use]
+    pub fn into_metadata(self) -> Metadata {
+        self.metadata
+    }
+}
+
+impl Default for LaneRejection {
+    fn default() -> Self {
+        Self::new(LaneRejectReason::PolicyRejected)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Connection acceptor trait
 // ---------------------------------------------------------------------------
@@ -174,7 +288,7 @@ impl Drop for PendingLane {
 // r[impl rpc.virtual-connection.accept]
 // r[impl lane.open]
 pub trait LaneAcceptor: MaybeSend + MaybeSync + 'static {
-    fn accept(&self, request: &LaneRequest, connection: PendingLane) -> Result<(), Metadata>;
+    fn accept(&self, request: &LaneRequest, connection: PendingLane) -> Result<(), LaneRejection>;
 }
 
 /// Any `Handler<DriverReplySink>` is automatically a `LaneAcceptor`.
@@ -182,7 +296,7 @@ impl<H> LaneAcceptor for H
 where
     H: Handler<crate::DriverReplySink> + Clone + MaybeSend + MaybeSync + 'static,
 {
-    fn accept(&self, _request: &LaneRequest, connection: PendingLane) -> Result<(), Metadata> {
+    fn accept(&self, _request: &LaneRequest, connection: PendingLane) -> Result<(), LaneRejection> {
         connection.handle_with(self.clone());
         Ok(())
     }
@@ -193,9 +307,9 @@ pub struct LaneAcceptorFn<F>(pub F);
 
 impl<F> LaneAcceptor for LaneAcceptorFn<F>
 where
-    F: Fn(&LaneRequest, PendingLane) -> Result<(), Metadata> + MaybeSend + MaybeSync + 'static,
+    F: Fn(&LaneRequest, PendingLane) -> Result<(), LaneRejection> + MaybeSend + MaybeSync + 'static,
 {
-    fn accept(&self, request: &LaneRequest, connection: PendingLane) -> Result<(), Metadata> {
+    fn accept(&self, request: &LaneRequest, connection: PendingLane) -> Result<(), LaneRejection> {
         (self.0)(request, connection)
     }
 }
@@ -203,7 +317,7 @@ where
 /// Create a `LaneAcceptor` from a closure.
 pub fn lane_acceptor_fn<F>(f: F) -> LaneAcceptorFn<F>
 where
-    F: Fn(&LaneRequest, PendingLane) -> Result<(), Metadata> + MaybeSend + MaybeSync + 'static,
+    F: Fn(&LaneRequest, PendingLane) -> Result<(), LaneRejection> + MaybeSend + MaybeSync + 'static,
 {
     LaneAcceptorFn(f)
 }
@@ -936,7 +1050,7 @@ pub async fn proxy_lanes(left: LaneHandle, right: LaneHandle) -> Result<(), Conn
 pub enum ConnectionError {
     Io(std::io::Error),
     Protocol(String),
-    Rejected(Metadata),
+    Rejected(LaneRejection),
     ConnectTimeout,
 }
 
@@ -956,7 +1070,13 @@ impl std::fmt::Display for ConnectionError {
         match self {
             Self::Io(e) => write!(f, "io error: {e}"),
             Self::Protocol(msg) => write!(f, "protocol error: {msg}"),
-            Self::Rejected(_) => write!(f, "connection rejected"),
+            Self::Rejected(rejection) => {
+                if let Some(message) = rejection.message() {
+                    write!(f, "lane open rejected: {}: {message}", rejection.reason())
+                } else {
+                    write!(f, "lane open rejected: {}", rejection.reason())
+                }
+            }
             Self::ConnectTimeout => write!(f, "connect timeout"),
         }
     }
@@ -1531,85 +1651,86 @@ impl Connection {
         true
     }
 
+    // r[impl lane.open.result]
+    async fn send_lane_reject(
+        sess_core: Arc<SessionCore>,
+        conn_id: LaneId,
+        rejection: LaneRejection,
+    ) {
+        let _ = sess_core
+            .send(
+                Message {
+                    lane_id: conn_id,
+                    payload: MessagePayload::LaneReject(vox_types::LaneReject {
+                        metadata: rejection.into_metadata(),
+                    }),
+                },
+                None,
+                None,
+            )
+            .await;
+    }
+
     // r[impl lane.open]
     // r[impl lane.wire.compat]
+    // r[impl lane.open.result]
     async fn handle_inbound_open(&mut self, conn_id: LaneId, open: SelfRef<LaneOpen>) {
         // Validate: connection ID must match peer's parity (opposite of ours).
         let peer_parity = self.parity.other();
         if !conn_id.has_parity(peer_parity) {
-            // Protocol error: wrong parity. For now, just reject.
-            let _ = self
-                .sess_core
-                .send(
-                    Message {
-                        lane_id: conn_id,
-                        payload: MessagePayload::LaneReject(vox_types::LaneReject {
-                            metadata: vox_types::Metadata::default(),
-                        }),
-                    },
-                    None,
-                    None,
-                )
-                .await;
+            Self::send_lane_reject(
+                Arc::clone(&self.sess_core),
+                conn_id,
+                LaneRejection::with_message(
+                    LaneRejectReason::PolicyRejected,
+                    "lane id parity does not match peer",
+                ),
+            )
+            .await;
             return;
         }
 
         // Validate: connection ID must not already be in use.
         if self.conns.contains_key(&conn_id) {
-            // Protocol error: duplicate connection ID.
-            let _ = self
-                .sess_core
-                .send(
-                    Message {
-                        lane_id: conn_id,
-                        payload: MessagePayload::LaneReject(vox_types::LaneReject {
-                            metadata: vox_types::Metadata::default(),
-                        }),
-                    },
-                    None,
-                    None,
-                )
-                .await;
+            Self::send_lane_reject(
+                Arc::clone(&self.sess_core),
+                conn_id,
+                LaneRejection::with_message(
+                    LaneRejectReason::PolicyRejected,
+                    "lane id is already in use",
+                ),
+            )
+            .await;
             return;
         }
 
         // r[impl connection.open.rejection]
         // Call the acceptor callback. If none is registered, reject.
         if self.on_connection.is_none() {
-            let _ = self
-                .sess_core
-                .send(
-                    Message {
-                        lane_id: conn_id,
-                        payload: MessagePayload::LaneReject(vox_types::LaneReject {
-                            metadata: vox_types::Metadata::default(),
-                        }),
-                    },
-                    None,
-                    None,
-                )
-                .await;
+            Self::send_lane_reject(
+                Arc::clone(&self.sess_core),
+                conn_id,
+                LaneRejection::with_message(
+                    LaneRejectReason::NotReady,
+                    "no lane acceptor configured",
+                ),
+            )
+            .await;
             return;
         }
 
         // Derive settings: opposite parity, same limits for now.
         let open = open.get();
         if open.connection_settings.initial_channel_credit == 0 {
-            let _ = self
-                .sess_core
-                .send(
-                    Message {
-                        lane_id: conn_id,
-                        payload: MessagePayload::LaneReject(vox_types::LaneReject {
-                            metadata: vox_types::metadata()
-                                .str("error", "initial_channel_credit must be greater than zero")
-                                .build(),
-                        }),
-                    },
-                    None,
-                    None,
-                )
-                .await;
+            Self::send_lane_reject(
+                Arc::clone(&self.sess_core),
+                conn_id,
+                LaneRejection::with_message(
+                    LaneRejectReason::PolicyRejected,
+                    "initial_channel_credit must be greater than zero",
+                ),
+            )
+            .await;
             return;
         }
 
@@ -1633,19 +1754,12 @@ impl Connection {
             Err(e) => {
                 trace!(%conn_id, %e, "rejecting service lane");
                 self.conns.remove(&conn_id);
-                let _ = self
-                    .sess_core
-                    .send(
-                        Message {
-                            lane_id: conn_id,
-                            payload: MessagePayload::LaneReject(vox_types::LaneReject {
-                                metadata: vox_types::metadata().str("error", e.to_string()).build(),
-                            }),
-                        },
-                        None,
-                        None,
-                    )
-                    .await;
+                Self::send_lane_reject(
+                    Arc::clone(&self.sess_core),
+                    conn_id,
+                    LaneRejection::with_message(LaneRejectReason::UnknownService, e.to_string()),
+                )
+                .await;
                 return;
             }
         };
@@ -1670,23 +1784,11 @@ impl Connection {
                     )
                     .await;
             }
-            Err(reject_metadata) => {
+            Err(rejection) => {
                 // Clean up the connection slot we created.
                 trace!(%conn_id, "acceptor rejected, removing conn slot");
                 self.conns.remove(&conn_id);
-                let _ = self
-                    .sess_core
-                    .send(
-                        Message {
-                            lane_id: conn_id,
-                            payload: MessagePayload::LaneReject(vox_types::LaneReject {
-                                metadata: reject_metadata,
-                            }),
-                        },
-                        None,
-                        None,
-                    )
-                    .await;
+                Self::send_lane_reject(Arc::clone(&self.sess_core), conn_id, rejection).await;
             }
         }
     }
@@ -1729,13 +1831,15 @@ impl Connection {
 
     // r[impl lane.open]
     // r[impl lane.wire.compat]
+    // r[impl lane.open.result]
     fn handle_inbound_reject(&mut self, conn_id: LaneId, reject: SelfRef<LaneReject>) {
         let reject = reject.get();
         let slot = self.remove_connection(&conn_id);
         match slot {
             Some(ConnectionSlot::PendingOutbound(mut pending)) => {
                 if let Some(tx) = pending.result_tx.take() {
-                    let _ = tx.send(Err(ConnectionError::Rejected(reject.metadata.clone())));
+                    let rejection = LaneRejection::from_metadata(reject.metadata.clone());
+                    let _ = tx.send(Err(ConnectionError::Rejected(rejection)));
                 }
             }
             Some(other) => {

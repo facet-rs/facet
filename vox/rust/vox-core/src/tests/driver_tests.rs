@@ -15,8 +15,8 @@ use vox_types::{
 use super::utils::*;
 use crate::connection::{
     ConnectionError, ConnectionHandle, ConnectionKeepaliveConfig, ConnectionMessage, LaneAcceptor,
-    LaneRequest, PendingLane, acceptor_conduit, acceptor_on, initiator_conduit, initiator_on,
-    proxy_lanes,
+    LaneRejection, LaneRequest, PendingLane, acceptor_conduit, acceptor_on, initiator_conduit,
+    initiator_on, proxy_lanes,
 };
 use crate::{BareConduit, Driver, memory_link_pair};
 
@@ -52,7 +52,7 @@ impl<H> LaneAcceptor for CaptureClientAcceptor<H>
 where
     H: Handler<crate::DriverReplySink> + Clone + Send + Sync + 'static,
 {
-    fn accept(&self, _request: &LaneRequest, lane: PendingLane) -> Result<(), Metadata> {
+    fn accept(&self, _request: &LaneRequest, lane: PendingLane) -> Result<(), LaneRejection> {
         let client = lane.handle_with_client::<TestLaneClient>(self.handler.clone());
         if let Some(accepted) = self
             .accepted
@@ -2377,7 +2377,11 @@ async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() 
         upstream_session: ConnectionHandle,
     }
     impl LaneAcceptor for ProxyHostAcceptor {
-        fn accept(&self, request: &LaneRequest, connection: PendingLane) -> Result<(), Metadata> {
+        fn accept(
+            &self,
+            request: &LaneRequest,
+            connection: PendingLane,
+        ) -> Result<(), LaneRejection> {
             if request.service() == "Noop" {
                 connection.handle_with(());
                 return Ok(());

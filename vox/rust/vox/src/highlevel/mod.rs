@@ -743,7 +743,11 @@ where
 struct AcceptorRef(Arc<dyn LaneAcceptor>);
 
 impl LaneAcceptor for AcceptorRef {
-    fn accept(&self, request: &LaneRequest, connection: PendingLane) -> Result<(), Metadata> {
+    fn accept(
+        &self,
+        request: &LaneRequest,
+        connection: PendingLane,
+    ) -> Result<(), vox_core::LaneRejection> {
         self.0.accept(request, connection)
     }
 }

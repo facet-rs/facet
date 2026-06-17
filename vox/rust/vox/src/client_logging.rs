@@ -151,8 +151,8 @@ mod tests {
 
     use super::{ClientLogging, ClientLoggingOptions, RedactedMetadata};
     use crate::{
-        LaneAcceptor, LaneRequest, Metadata, MethodDescriptor, MethodId, PendingLane, meta_set,
-        metadata,
+        LaneAcceptor, LaneRejection, LaneRequest, MethodDescriptor, MethodId, PendingLane,
+        meta_set, metadata,
     };
 
     #[derive(Clone)]
@@ -174,7 +174,7 @@ mod tests {
     struct AuditLaneAcceptor;
 
     impl LaneAcceptor for AuditLaneAcceptor {
-        fn accept(&self, request: &LaneRequest, lane: PendingLane) -> Result<(), Metadata> {
+        fn accept(&self, request: &LaneRequest, lane: PendingLane) -> Result<(), LaneRejection> {
             assert_eq!(request.service(), "Audit");
             lane.handle_with(());
             Ok(())

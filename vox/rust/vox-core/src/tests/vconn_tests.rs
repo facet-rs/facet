@@ -3,14 +3,15 @@ use std::sync::{Arc, Mutex};
 use vox_rt::task::FutureExt;
 use vox_types::{
     ChannelBinder, ConnectionCloseReason, ConnectionSettings, DriverEvent, IncomingChannelMessage,
-    LaneId, Metadata, MethodId, Parity, Payload, ReplySink, RequestCall, RequestResponse, SelfRef,
+    LaneId, MethodId, Parity, Payload, ReplySink, RequestCall, RequestResponse, SelfRef,
     VoxObserver, VoxObserverHandle,
 };
 
 use super::utils::*;
 use crate::Driver;
 use crate::connection::{
-    ConnectionError, LaneAcceptor, LaneRequest, PendingLane, acceptor_conduit, initiator_conduit,
+    ConnectionError, LaneAcceptor, LaneRejectReason, LaneRejection, LaneRequest, PendingLane,
+    VOX_LANE_REJECT_REASON_METADATA_KEY, acceptor_conduit, initiator_conduit,
 };
 
 #[derive(Clone, Copy)]
@@ -170,11 +171,15 @@ async fn root_and_virtual_connections_bind_separate_services() {
     struct ServiceAcceptor;
 
     impl LaneAcceptor for ServiceAcceptor {
-        fn accept(&self, request: &LaneRequest, connection: PendingLane) -> Result<(), Metadata> {
+        fn accept(
+            &self,
+            request: &LaneRequest,
+            connection: PendingLane,
+        ) -> Result<(), LaneRejection> {
             match request.service() {
                 "Noop" => connection.handle_with(ConstHandler(10)),
                 "Echo" => connection.handle_with(ConstHandler(20)),
-                _ => return Err(Metadata::default()),
+                _ => return Err(LaneRejection::new(LaneRejectReason::UnknownService)),
             }
             Ok(())
         }
@@ -222,6 +227,7 @@ async fn root_and_virtual_connections_bind_separate_services() {
 
 // r[verify connection.open.rejection]
 // r[verify lane.open]
+// r[verify lane.open.result]
 // r[verify lane.wire.compat]
 #[tokio::test]
 async fn reject_virtual_connection() {
@@ -236,7 +242,7 @@ async fn reject_virtual_connection() {
                             connection.handle_with(EchoHandler);
                             Ok(())
                         }
-                        _ => Err(Default::default()),
+                        _ => Err(LaneRejection::new(LaneRejectReason::UnknownService)),
                     },
                 ))
                 .establish_connection()
@@ -266,14 +272,19 @@ async fn reject_virtual_connection() {
         )
         .await;
 
-    assert!(
-        matches!(result, Err(ConnectionError::Rejected(_))),
-        "expected Rejected, got: {result:?}"
+    let Err(ConnectionError::Rejected(rejection)) = result else {
+        panic!("expected structured rejection, got: {result:?}");
+    };
+    assert_eq!(rejection.reason(), LaneRejectReason::UnknownService);
+    assert_eq!(
+        vox_types::metadata_get_str(rejection.metadata(), VOX_LANE_REJECT_REASON_METADATA_KEY,),
+        Some("unknown-service")
     );
 }
 
 // r[verify connection.open.rejection]
 // r[verify lane.open]
+// r[verify lane.open.result]
 // r[verify lane.wire.compat]
 #[tokio::test]
 async fn open_virtual_connection_without_acceptor_is_rejected() {
@@ -308,10 +319,10 @@ async fn open_virtual_connection_without_acceptor_is_rejected() {
         )
         .await;
 
-    assert!(
-        matches!(result, Err(ConnectionError::Rejected(_))),
-        "expected Rejected, got: {result:?}"
-    );
+    let Err(ConnectionError::Rejected(rejection)) = result else {
+        panic!("expected structured rejection, got: {result:?}");
+    };
+    assert_eq!(rejection.reason(), LaneRejectReason::NotReady);
 }
 
 // r[verify connection.close]
@@ -594,7 +605,11 @@ async fn dropping_root_and_virtual_callers_does_not_shutdown_session() {
     struct LocalEchoAcceptor;
 
     impl LaneAcceptor for LocalEchoAcceptor {
-        fn accept(&self, _request: &LaneRequest, connection: PendingLane) -> Result<(), Metadata> {
+        fn accept(
+            &self,
+            _request: &LaneRequest,
+            connection: PendingLane,
+        ) -> Result<(), LaneRejection> {
             connection.handle_with(EchoHandler);
             Ok(())
         }
