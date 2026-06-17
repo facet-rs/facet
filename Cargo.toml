@@ -80,7 +80,6 @@ facet-xml = "0.50.0-rc.0"
 facet-yaml = "0.50.0-rc.0"
 facet-urlencoded = { path = "facet-urlencoded", version = "0.50.0-rc.0" }
 facet-value = "0.50.0-rc.0"
-rusqlite-facet = { path = "rusqlite-facet", version = "2.0.0-rc.0" }
 strid = { path = "strid", version = "11.0.0-rc.0" }
 strid-macros = { path = "strid-macros", version = "11.0.0-rc.0" }
 arborium = { version = "^2.4.5", default-features = false, features = ["lang-json"] }
