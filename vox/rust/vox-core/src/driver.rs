@@ -84,7 +84,8 @@ enum HandlerCompletion {
 type HandlerFut = Abortable<Pin<Box<dyn MaybeSendFuture<Output = HandlerCompletion> + 'static>>>;
 
 #[derive(Clone)]
-struct RequestRuntimeDebug {
+// r[impl rpc.request.scope]
+struct RequestScope {
     method_id: vox_types::MethodId,
     service: Option<&'static str>,
     method: Option<&'static str>,
@@ -94,7 +95,25 @@ struct RequestRuntimeDebug {
     associated_channels: Vec<ChannelId>,
 }
 
-impl RequestRuntimeDebug {
+impl RequestScope {
+    fn new(
+        method_id: vox_types::MethodId,
+        service: Option<&'static str>,
+        method: Option<&'static str>,
+        state: RequestDebugState,
+        associated_channels: Vec<ChannelId>,
+    ) -> Self {
+        Self {
+            method_id,
+            service,
+            method,
+            started_at: Instant::now(),
+            state,
+            response_sender_blocked: Some(false),
+            associated_channels,
+        }
+    }
+
     fn snapshot(&self, request_id: RequestId, now: Instant) -> RequestDebugSnapshot {
         RequestDebugSnapshot {
             request_id,
@@ -106,6 +125,21 @@ impl RequestRuntimeDebug {
             response_sender_blocked: self.response_sender_blocked,
             associated_channels: self.associated_channels.clone(),
         }
+    }
+
+    // r[impl rpc.request.scope.channels]
+    fn associate_channels(&mut self, channels: &[ChannelId]) {
+        for channel_id in channels {
+            if !self.associated_channels.contains(channel_id) {
+                self.associated_channels.push(*channel_id);
+            }
+        }
+    }
+
+    // r[impl rpc.request.scope.terminal]
+    fn finish(mut self, state: RequestDebugState) -> Vec<ChannelId> {
+        self.state = state;
+        self.associated_channels
     }
 }
 
@@ -353,7 +387,7 @@ struct DriverShared {
     // r[impl rpc.observability.channel.context]
     channel_contexts: SyncMutex<BTreeMap<ChannelId, ChannelDebugContext>>,
     // r[impl rpc.debug.snapshot]
-    request_debug: SyncMutex<BTreeMap<RequestId, RequestRuntimeDebug>>,
+    request_scopes: SyncMutex<BTreeMap<RequestId, RequestScope>>,
     // r[impl rpc.debug.snapshot]
     channel_debug: SyncMutex<BTreeMap<ChannelId, ChannelRuntimeDebug>>,
     last_inbound_message_at: SyncMutex<Option<Instant>>,
@@ -557,17 +591,9 @@ impl DriverShared {
         state: RequestDebugState,
         associated_channels: Vec<ChannelId>,
     ) {
-        self.request_debug.lock().insert(
+        self.request_scopes.lock().insert(
             request_id,
-            RequestRuntimeDebug {
-                method_id,
-                service,
-                method,
-                started_at: Instant::now(),
-                state,
-                response_sender_blocked: Some(false),
-                associated_channels,
-            },
+            RequestScope::new(method_id, service, method, state, associated_channels),
         );
     }
 
@@ -577,15 +603,12 @@ impl DriverShared {
         if channels.is_empty() {
             return;
         }
-        if let Some(request) = self.request_debug.lock().get_mut(&request_id) {
-            for channel_id in channels {
-                if !request.associated_channels.contains(channel_id) {
-                    request.associated_channels.push(*channel_id);
-                }
-            }
+        if let Some(scope) = self.request_scopes.lock().get_mut(&request_id) {
+            scope.associate_channels(channels);
         }
     }
 
+    // r[impl rpc.request.scope.terminal]
     // r[impl rpc.request.scope.channels]
     // r[impl rpc.channel.lifecycle]
     fn finish_request(
@@ -595,12 +618,11 @@ impl DriverShared {
         termination: RequestTerminationReason,
     ) {
         let associated_channels = {
-            let mut requests = self.request_debug.lock();
-            let Some(mut request) = requests.remove(&request_id) else {
+            let mut scopes = self.request_scopes.lock();
+            let Some(scope) = scopes.remove(&request_id) else {
                 return;
             };
-            request.state = state;
-            request.associated_channels
+            scope.finish(state)
         };
         self.terminate_request_channels(associated_channels, termination);
     }
@@ -756,7 +778,7 @@ impl DriverShared {
     ) -> VoxDebugSnapshot {
         let now = Instant::now();
         let requests: Vec<_> = self
-            .request_debug
+            .request_scopes
             .lock()
             .iter()
             .map(|(request_id, request)| request.snapshot(*request_id, now))
@@ -2157,7 +2179,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 channel_receivers: SyncMutex::new("driver.channel_receivers", BTreeMap::new()),
                 channel_credits: SyncMutex::new("driver.channel_credits", BTreeMap::new()),
                 channel_contexts: SyncMutex::new("driver.channel_contexts", BTreeMap::new()),
-                request_debug: SyncMutex::new("driver.request_debug", BTreeMap::new()),
+                request_scopes: SyncMutex::new("driver.request_scopes", BTreeMap::new()),
                 channel_debug: SyncMutex::new("driver.channel_debug", BTreeMap::new()),
                 last_inbound_message_at: SyncMutex::new("driver.last_inbound_message_at", None),
                 last_outbound_message_at: SyncMutex::new("driver.last_outbound_message_at", None),
@@ -2358,7 +2380,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
         // r[impl rpc.flow-control.max-concurrent-requests.session-failure]
         self.shared.outbound_request_limit.close();
         self.shared.pending_responses.lock().clear();
-        self.shared.request_debug.lock().clear();
+        self.shared.request_scopes.lock().clear();
         let close_reason =
             (*self.closed_rx.borrow()).unwrap_or(ConnectionCloseReason::SessionShutdown);
         self.shared.set_connection_closed(close_reason);

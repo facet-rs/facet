@@ -500,6 +500,8 @@ async fn bound_stream_rx_works_after_public_caller_drop_when_connection_is_drive
         .expect("client session task failed");
 }
 
+// r[verify rpc.request.scope]
+// r[verify rpc.request.scope.terminal]
 // r[verify rpc.request.scope.channels]
 // r[verify rpc.channel.lifecycle]
 #[tokio::test]
@@ -639,6 +641,8 @@ async fn cancel_aborts_in_flight_handler() {
     );
 }
 
+// r[verify rpc.request.scope]
+// r[verify rpc.request.scope.terminal]
 // r[verify rpc.request.scope.channels]
 // r[verify rpc.cancel.channels]
 #[tokio::test]
