@@ -673,9 +673,9 @@ async fn missing_required_field_is_same_peer_terminal() {
         "expected InvalidPayload with a schema-incompatibility failure, got: {err:?}"
     );
 
-    // And it must not be classified as a session interruption.
+    // And it must not be classified as a connection interruption.
     assert!(
-        !err.is_session_interruption(),
+        !err.is_connection_interruption(),
         "schema incompatibility must be terminal for the current peer schema"
     );
 

@@ -408,11 +408,14 @@ impl WordLabClient {
                     ::vox::VoxError::ConnectionClosed => {
                         ::vox::VoxError::<::core::convert::Infallible>::ConnectionClosed
                     }
-                    ::vox::VoxError::SessionShutdown => {
-                        ::vox::VoxError::<::core::convert::Infallible>::SessionShutdown
+                    ::vox::VoxError::ConnectionShutdown => {
+                        ::vox::VoxError::<::core::convert::Infallible>::ConnectionShutdown
                     }
                     ::vox::VoxError::SendFailed => {
                         ::vox::VoxError::<::core::convert::Infallible>::SendFailed
+                    }
+                    ::vox::VoxError::TimedOut => {
+                        ::vox::VoxError::<::core::convert::Infallible>::TimedOut
                     }
                     ::vox::VoxError::Indeterminate => {
                         ::vox::VoxError::<::core::convert::Infallible>::Indeterminate
@@ -481,11 +484,14 @@ impl WordLabClient {
                     ::vox::VoxError::ConnectionClosed => {
                         ::vox::VoxError::<::core::convert::Infallible>::ConnectionClosed
                     }
-                    ::vox::VoxError::SessionShutdown => {
-                        ::vox::VoxError::<::core::convert::Infallible>::SessionShutdown
+                    ::vox::VoxError::ConnectionShutdown => {
+                        ::vox::VoxError::<::core::convert::Infallible>::ConnectionShutdown
                     }
                     ::vox::VoxError::SendFailed => {
                         ::vox::VoxError::<::core::convert::Infallible>::SendFailed
+                    }
+                    ::vox::VoxError::TimedOut => {
+                        ::vox::VoxError::<::core::convert::Infallible>::TimedOut
                     }
                     ::vox::VoxError::Indeterminate => {
                         ::vox::VoxError::<::core::convert::Infallible>::Indeterminate
@@ -560,11 +566,14 @@ impl WordLabClient {
                     ::vox::VoxError::ConnectionClosed => {
                         ::vox::VoxError::<::core::convert::Infallible>::ConnectionClosed
                     }
-                    ::vox::VoxError::SessionShutdown => {
-                        ::vox::VoxError::<::core::convert::Infallible>::SessionShutdown
+                    ::vox::VoxError::ConnectionShutdown => {
+                        ::vox::VoxError::<::core::convert::Infallible>::ConnectionShutdown
                     }
                     ::vox::VoxError::SendFailed => {
                         ::vox::VoxError::<::core::convert::Infallible>::SendFailed
+                    }
+                    ::vox::VoxError::TimedOut => {
+                        ::vox::VoxError::<::core::convert::Infallible>::TimedOut
                     }
                     ::vox::VoxError::Indeterminate => {
                         ::vox::VoxError::<::core::convert::Infallible>::Indeterminate

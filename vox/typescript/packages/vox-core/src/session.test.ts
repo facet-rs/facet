@@ -1832,7 +1832,7 @@ describe("session", () => {
         user: false,
       },
       {
-        wireError: { tag: "SessionShutdown" },
+        wireError: { tag: "ConnectionShutdown" },
         code: RpcErrorCode.INDETERMINATE,
         user: false,
       },

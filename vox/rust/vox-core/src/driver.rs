@@ -2077,7 +2077,7 @@ impl DriverCaller {
                             let outcome = match &error {
                                 VoxError::Cancelled => RpcOutcome::Cancelled,
                                 VoxError::TimedOut => RpcOutcome::TimedOut,
-                                VoxError::ConnectionClosed | VoxError::SessionShutdown => RpcOutcome::Closed,
+                                VoxError::ConnectionClosed | VoxError::ConnectionShutdown => RpcOutcome::Closed,
                                 VoxError::SendFailed => RpcOutcome::SendFailed,
                                 VoxError::Indeterminate => RpcOutcome::Indeterminate,
                                 VoxError::User(_) | VoxError::UnknownMethod | VoxError::InvalidPayload(_) => {
@@ -2594,7 +2594,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
         self.shared.pending_responses.lock().clear();
         self.shared.request_scopes.lock().clear();
         let close_reason =
-            (*self.closed_rx.borrow()).unwrap_or(ConnectionCloseReason::SessionShutdown);
+            (*self.closed_rx.borrow()).unwrap_or(ConnectionCloseReason::ConnectionShutdown);
         self.shared.set_connection_closed(close_reason);
 
         // Connection is gone: drop channel runtime state so any registered Rx

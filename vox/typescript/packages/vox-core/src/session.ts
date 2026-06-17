@@ -1382,7 +1382,7 @@ export class Lane {
       case "TimedOut":
         throw new RpcError(RpcErrorCode.TIMED_OUT);
       case "ConnectionClosed":
-      case "SessionShutdown":
+      case "ConnectionShutdown":
       case "SendFailed":
       case "Indeterminate":
         throw new RpcError(RpcErrorCode.INDETERMINATE);

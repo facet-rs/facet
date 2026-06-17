@@ -270,7 +270,7 @@ weight = 12
 >     `Cancelled`
 >   * **Connection interruption** — the connection ended before this call
 >     received a terminal response. Current APIs may spell this as
->     `ConnectionClosed`, `SessionShutdown`, or `SendFailed` while migration is
+>     `ConnectionClosed`, `ConnectionShutdown`, or `SendFailed` while migration is
 >     in progress.
 >   * **Indeterminate** — the runtime cannot safely determine whether the
 >     request attempt reached a terminal outcome

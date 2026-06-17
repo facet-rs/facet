@@ -227,7 +227,7 @@ pub enum ConnectionCloseReason {
     Remote,
     Protocol,
     Transport,
-    SessionShutdown,
+    ConnectionShutdown,
     CallerDropped,
     Unknown,
 }
@@ -703,7 +703,7 @@ const fn connection_close_reason_label(reason: ConnectionCloseReason) -> &'stati
         ConnectionCloseReason::Remote => "remote",
         ConnectionCloseReason::Protocol => "protocol",
         ConnectionCloseReason::Transport => "transport",
-        ConnectionCloseReason::SessionShutdown => "connection-shutdown",
+        ConnectionCloseReason::ConnectionShutdown => "connection-shutdown",
         ConnectionCloseReason::CallerDropped => "caller-dropped",
         ConnectionCloseReason::Unknown => "unknown",
     }

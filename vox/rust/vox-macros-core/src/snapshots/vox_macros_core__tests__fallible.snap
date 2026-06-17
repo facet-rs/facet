@@ -234,10 +234,11 @@ impl CalcClient {
                     ::vox::VoxError::ConnectionClosed => {
                         ::vox::VoxError::<DivError>::ConnectionClosed
                     }
-                    ::vox::VoxError::SessionShutdown => {
-                        ::vox::VoxError::<DivError>::SessionShutdown
+                    ::vox::VoxError::ConnectionShutdown => {
+                        ::vox::VoxError::<DivError>::ConnectionShutdown
                     }
                     ::vox::VoxError::SendFailed => ::vox::VoxError::<DivError>::SendFailed,
+                    ::vox::VoxError::TimedOut => ::vox::VoxError::<DivError>::TimedOut,
                     ::vox::VoxError::Indeterminate => ::vox::VoxError::<DivError>::Indeterminate,
                     ::vox::VoxError::User(never) => match *never {},
                 });

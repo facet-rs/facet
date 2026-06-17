@@ -1390,7 +1390,7 @@ impl Connection {
         }
 
         // Drop all connection slots so per-connection drivers exit immediately.
-        self.close_all_connections(ConnectionCloseReason::SessionShutdown);
+        self.close_all_connections(ConnectionCloseReason::ConnectionShutdown);
         trace!("session recv loop exited");
     }
 
@@ -2091,7 +2091,7 @@ impl Connection {
     async fn handle_drop_control_request(&mut self, req: DropControlRequest) -> bool {
         match req {
             DropControlRequest::Shutdown => {
-                trace!("session shutdown requested");
+                trace!("connection shutdown requested");
                 false
             }
             DropControlRequest::Close(conn_id) => {

@@ -1425,9 +1425,9 @@ async fn in_flight_call_returns_cancelled_when_peer_closes() {
     assert!(
         matches!(
             result,
-            Err(VoxError::ConnectionClosed) | Err(VoxError::SessionShutdown)
+            Err(VoxError::ConnectionClosed) | Err(VoxError::ConnectionShutdown)
         ),
-        "expected ConnectionClosed or SessionShutdown after peer close, got: {result:?}"
+        "expected ConnectionClosed or ConnectionShutdown after peer close, got: {result:?}"
     );
 
     for _ in 0..20 {
@@ -1544,7 +1544,7 @@ async fn outbound_max_concurrent_requests_waits_for_peer_limit() {
     assert!(
         matches!(
             first_result,
-            Err(VoxError::ConnectionClosed) | Err(VoxError::SessionShutdown)
+            Err(VoxError::ConnectionClosed) | Err(VoxError::ConnectionShutdown)
         ),
         "expected first call to fail with connection/session closure, got {first_result:?}"
     );
@@ -1556,7 +1556,7 @@ async fn outbound_max_concurrent_requests_waits_for_peer_limit() {
     assert!(
         matches!(
             second_result,
-            Err(VoxError::ConnectionClosed) | Err(VoxError::SessionShutdown)
+            Err(VoxError::ConnectionClosed) | Err(VoxError::ConnectionShutdown)
         ),
         "expected queued second call to fail with connection/session closure, got {second_result:?}"
     );
@@ -1719,9 +1719,9 @@ async fn keepalive_timeout_returns_cancelled_when_pongs_are_missing() {
     assert!(
         matches!(
             result,
-            Err(VoxError::ConnectionClosed) | Err(VoxError::SessionShutdown)
+            Err(VoxError::ConnectionClosed) | Err(VoxError::ConnectionShutdown)
         ),
-        "expected ConnectionClosed or SessionShutdown after keepalive timeout, got: {result:?}"
+        "expected ConnectionClosed or ConnectionShutdown after keepalive timeout, got: {result:?}"
     );
 }
 
@@ -2129,7 +2129,7 @@ async fn virtual_connection_request_ids_use_connection_parity() {
     assert!(
         matches!(
             result,
-            Err(VoxError::ConnectionClosed) | Err(VoxError::SessionShutdown)
+            Err(VoxError::ConnectionClosed) | Err(VoxError::ConnectionShutdown)
         ),
         "expected virtual call to fail after close, got {result:?}"
     );

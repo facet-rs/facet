@@ -26,7 +26,7 @@ pub enum VoxError<E = ::core::convert::Infallible> {
     ConnectionClosed,
 
     /// The connection driver shut down while the call was in flight.
-    SessionShutdown,
+    ConnectionShutdown,
 
     /// The call could not be sent because the transport is dead.
     SendFailed,
@@ -46,10 +46,10 @@ impl<E> VoxError<E> {
     /// `InvalidPayload`, `UnknownMethod`, `User`, and `Cancelled` are terminal
     /// call outcomes. `Indeterminate` is separate: the runtime explicitly does
     /// not know whether the call reached a terminal outcome.
-    pub fn is_session_interruption(&self) -> bool {
+    pub fn is_connection_interruption(&self) -> bool {
         matches!(
             self,
-            Self::ConnectionClosed | Self::SessionShutdown | Self::SendFailed
+            Self::ConnectionClosed | Self::ConnectionShutdown | Self::SendFailed
         )
     }
 }
@@ -62,7 +62,7 @@ impl<E: fmt::Display> fmt::Display for VoxError<E> {
             Self::InvalidPayload(message) => write!(f, "invalid vox payload: {message}"),
             Self::Cancelled => f.write_str("vox request cancelled"),
             Self::ConnectionClosed => f.write_str("vox connection closed"),
-            Self::SessionShutdown => f.write_str("vox connection shutdown"),
+            Self::ConnectionShutdown => f.write_str("vox connection shutdown"),
             Self::SendFailed => f.write_str("vox send failed"),
             Self::TimedOut => f.write_str("vox request timed out"),
             Self::Indeterminate => f.write_str("indeterminate vox error"),
