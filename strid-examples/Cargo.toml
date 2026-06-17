@@ -4,9 +4,10 @@ description = "Examples demonstrating usage of the `strid` crate"
 keywords = [ "string", "newtype", "validation", "normalization" ]
 categories = [ "data-structures", "rust-patterns" ]
 version = "11.0.0-rc.0"
-authors.workspace = true
+authors = ["Marcus Griep <marcus@griep.us>"]
 edition.workspace = true
-readme = "../../README.md"
+rust-version.workspace = true
+readme = "../strid/README.md"
 license.workspace = true
 repository.workspace = true
 publish = true
@@ -17,7 +18,7 @@ compact_str-facet = ["facet/compact_str"]
 smartstring-facet = ["facet/smartstring"]
 
 [dependencies]
-strid = { version = "11.0.0-rc.0", path = "../strid" }
+strid.workspace = true
 facet.workspace = true
 bytes = "1"
 bytestring = { version = "1.5", features = [ "serde" ] }

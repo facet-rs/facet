@@ -106,6 +106,7 @@ Lower-level pieces you'll meet when writing your own format crate or tooling.
 | [`facet-value`](https://docs.rs/facet-value) | A memory-efficient dynamic value type — JSON-like data plus bytes. | [facet-rs/facet-format](https://github.com/facet-rs/facet-format) |
 | [`facet-solver`](https://docs.rs/facet-solver) | Constraint solver that resolves type shapes from field names. | [facet-rs/facet](https://github.com/facet-rs/facet) |
 | [`facet-path`](https://docs.rs/facet-path) | Path tracking for navigating nested `Facet` structures. | [facet-rs/facet](https://github.com/facet-rs/facet) |
+| [`strid`](https://docs.rs/strid) | Strongly-typed string identifiers with Facet integration. [Guide](@/ecosystem/strid/_index.md). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/strid) |
 
 Writing a new format crate? The [Extend](@/extend/_index.md) section walks
 through `Peek`, `Partial`, and the format-crate architecture.

@@ -100,6 +100,25 @@ version_group = "facet"
 changelog_path = "CHANGELOG.md"
 
 # ============================================================================
+# Strid packages - coordinated from this monorepo, preserving their major line
+# ============================================================================
+
+[[package]]
+name = "strid"
+version_group = "strid"
+changelog_path = "strid/CHANGELOG.md"
+
+[[package]]
+name = "strid-macros"
+version_group = "strid"
+changelog_path = "strid/CHANGELOG.md"
+
+[[package]]
+name = "strid-examples"
+version_group = "strid"
+changelog_path = "strid/CHANGELOG.md"
+
+# ============================================================================
 # Dev-only packages - excluded from releases
 # ============================================================================
 
