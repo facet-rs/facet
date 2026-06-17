@@ -114,7 +114,7 @@ where
     let server_task = vox_rt::task::spawn(
         async move {
             let server_connection = acceptor_conduit(server_conduit, server_handshake)
-                .on_connection(CaptureClientAcceptor::new(handler, accepted_tx))
+                .on_lane(CaptureClientAcceptor::new(handler, accepted_tx))
                 .establish_connection()
                 .await
                 .expect("server handshake failed");
@@ -158,7 +158,7 @@ where
     let server_task = vox_rt::task::spawn(
         async move {
             let server_connection = acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .on_connection(CaptureClientAcceptor::new(handler, accepted_tx))
+                .on_lane(CaptureClientAcceptor::new(handler, accepted_tx))
                 .establish_connection()
                 .await
                 .expect("server handshake failed");
@@ -409,7 +409,7 @@ async fn dropping_control_clients_does_not_shutdown_connection() {
                     let handle = vox_rt::task::spawn(fut.named("server_connection_task"));
                     let _ = server_connection_task_tx.send(handle);
                 })
-                .on_connection(EchoHandler)
+                .on_lane(EchoHandler)
                 .establish_connection()
                 .await
                 .expect("server handshake failed")
@@ -506,7 +506,7 @@ async fn bound_stream_rx_works_after_public_caller_drop_when_connection_is_drive
     let server_task = vox_rt::task::spawn(
         async move {
             let server_connection = acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .on_connection(CaptureClientAcceptor::new((), accepted_tx))
+                .on_lane(CaptureClientAcceptor::new((), accepted_tx))
                 .establish_connection()
                 .await
                 .expect("server handshake failed");
@@ -765,7 +765,7 @@ async fn cancel_aborts_in_flight_handler() {
     let server_task = vox_rt::task::spawn(
         async move {
             acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .on_connection(BlockingHandler { was_cancelled })
+                .on_lane(BlockingHandler { was_cancelled })
                 .establish_connection()
                 .await
                 .expect("server handshake failed")
@@ -864,7 +864,7 @@ async fn cancel_terminalizes_request_channels_as_cancelled() {
             let captured_rx = captured_rx.clone();
             async move {
                 acceptor_conduit(server_conduit, test_acceptor_handshake())
-                    .on_connection(CaptureRxBlockingHandler {
+                    .on_lane(CaptureRxBlockingHandler {
                         captured_rx,
                         was_cancelled,
                     })
@@ -1028,7 +1028,7 @@ async fn call_through_phon_handshake_reaches_handler() {
         tokio::time::timeout(
             Duration::from_secs(1),
             acceptor_on(server_link)
-                .on_connection(EchoHandler)
+                .on_lane(EchoHandler)
                 .establish_connection(),
         ),
         tokio::time::timeout(
@@ -1152,7 +1152,7 @@ async fn slow_incoming_request_does_not_block_later_request() {
     let server_task = vox_rt::task::spawn(
         async move {
             acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .on_connection(PipeliningHandler)
+                .on_lane(PipeliningHandler)
                 .establish_connection()
                 .await
                 .expect("server handshake failed")
@@ -1233,7 +1233,7 @@ async fn call_error_does_not_close_connection_or_cancel_other_requests() {
     let server_task = vox_rt::task::spawn(
         async move {
             acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .on_connection(ScopedErrorHandler)
+                .on_lane(ScopedErrorHandler)
                 .establish_connection()
                 .await
                 .expect("server handshake failed")
@@ -1340,7 +1340,7 @@ async fn handler_panic_returns_error_response_instead_of_hanging() {
     let server_task = vox_rt::task::spawn(
         async move {
             acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .on_connection(PanicHandler)
+                .on_lane(PanicHandler)
                 .establish_connection()
                 .await
                 .expect("server handshake failed")
@@ -1398,7 +1398,7 @@ async fn in_flight_call_returns_cancelled_when_peer_closes() {
                     let handle = vox_rt::task::spawn(fut);
                     let _ = server_connection_task_tx.send(handle);
                 })
-                .on_connection(BlockingHandler { was_cancelled })
+                .on_lane(BlockingHandler { was_cancelled })
                 .establish_connection()
                 .await
                 .expect("server handshake failed")
@@ -1485,7 +1485,7 @@ async fn outbound_max_concurrent_requests_waits_for_peer_limit() {
                     let handle = vox_rt::task::spawn(fut);
                     let _ = server_connection_task_tx.send(handle);
                 })
-                .on_connection(CaptureClientAcceptor::new(
+                .on_lane(CaptureClientAcceptor::new(
                     BlockingHandler { was_cancelled },
                     accepted_tx,
                 ))
@@ -1696,7 +1696,7 @@ async fn keepalive_timeout_returns_cancelled_when_pongs_are_missing() {
     let server_task = vox_rt::task::spawn(
         async move {
             acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .on_connection(BlockingHandler {
+                .on_lane(BlockingHandler {
                     was_cancelled: Arc::new(AtomicBool::new(false)),
                 })
                 .establish_connection()
@@ -1764,7 +1764,7 @@ async fn dropping_control_client_does_not_shut_down_connection() {
                     let handle = vox_rt::task::spawn(fut.named("server_connection_task"));
                     let _ = server_connection_task_tx.send(handle);
                 })
-                .on_connection(EchoHandler)
+                .on_lane(EchoHandler)
                 .establish_connection()
                 .await
                 .expect("server handshake failed")
@@ -1839,8 +1839,8 @@ async fn schema_tracker_is_per_lane() {
     let server_task = vox_rt::task::spawn(
         async move {
             acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .on_connection(EchoAcceptor)
-                .on_connection(EchoHandler)
+                .on_lane(EchoAcceptor)
+                .on_lane(EchoHandler)
                 .establish_connection()
                 .await
                 .expect("server handshake failed")
@@ -1942,7 +1942,7 @@ async fn initiator_builder_customization_controls_allocated_connection_parity() 
                     peer_metadata: vox_types::metadata().str("vox-service", "Noop").build(),
                 },
             )
-            .on_connection(EchoAcceptor)
+            .on_lane(EchoAcceptor)
             .establish_connection()
             .await
             .expect("server handshake failed")
@@ -2021,7 +2021,7 @@ async fn acceptor_builder_customization_supports_opening_connections() {
                     peer_metadata: vox_types::metadata().str("vox-service", "Noop").build(),
                 },
             )
-            .on_connection(EchoAcceptor)
+            .on_lane(EchoAcceptor)
             .establish_connection()
             .await
             .expect("initiator handshake failed")
@@ -2086,7 +2086,7 @@ async fn service_lane_request_ids_use_connection_parity() {
             let was_cancelled = Arc::clone(&was_cancelled);
             async move {
                 acceptor_conduit(server_conduit, test_acceptor_handshake())
-                    .on_connection(crate::connection::lane_acceptor_fn(
+                    .on_lane(crate::connection::lane_acceptor_fn(
                         move |_request: &LaneRequest, connection: PendingLane| {
                             connection.handle_with(BlockingHandler {
                                 was_cancelled: Arc::clone(&was_cancelled),
@@ -2176,7 +2176,7 @@ async fn close_control_lane_is_rejected() {
     let server_task = vox_rt::task::spawn(
         async move {
             acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .on_connection(EchoHandler)
+                .on_lane(EchoHandler)
                 .establish_connection()
                 .await
                 .expect("server handshake failed")
@@ -2210,7 +2210,7 @@ async fn echo_call_across_memory_link() {
     let server_task = vox_rt::task::spawn(
         async move {
             acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .on_connection(EchoHandler)
+                .on_lane(EchoHandler)
                 .establish_connection()
                 .await
                 .expect("server handshake failed")
@@ -2633,7 +2633,7 @@ async fn proxy_lanes_forwards_calls_without_service_specific_proxy_code() {
     let guest_b_task = vox_rt::task::spawn(
         async move {
             let guard = acceptor_conduit(guest_b_conduit, test_acceptor_handshake())
-                .on_connection(EchoAcceptor)
+                .on_lane(EchoAcceptor)
                 .establish::<TestLaneClient>()
                 .await
                 .expect("guest-b establish");
@@ -2652,7 +2652,7 @@ async fn proxy_lanes_forwards_calls_without_service_specific_proxy_code() {
     let host_for_a_task = vox_rt::task::spawn(
         async move {
             let guard = acceptor_conduit(host_a_conduit, test_acceptor_handshake())
-                .on_connection(ProxyHostAcceptor {
+                .on_lane(ProxyHostAcceptor {
                     upstream_connection: host_to_b_connection,
                 })
                 .establish::<TestLaneClient>()

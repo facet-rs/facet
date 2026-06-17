@@ -55,7 +55,7 @@ async fn run() -> Result<(), String> {
             };
 
             let connection = match acceptor_transport(ws_link)
-                .on_connection(TestbedDispatcher::new(TestbedService))
+                .on_lane(TestbedDispatcher::new(TestbedService))
                 .establish_connection()
                 .await
             {

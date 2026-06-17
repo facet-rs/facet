@@ -102,7 +102,7 @@ async fn open_service_lane_and_call() {
     let server_task = vox_rt::task::spawn(
         async move {
             acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .on_connection(EchoAcceptor)
+                .on_lane(EchoAcceptor)
                 .establish_connection()
                 .await
                 .expect("server handshake failed")
@@ -188,7 +188,7 @@ async fn control_and_service_lanes_bind_separate_services() {
     let server_task = vox_rt::task::spawn(
         async move {
             acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .on_connection(ServiceAcceptor)
+                .on_lane(ServiceAcceptor)
                 .establish_connection()
                 .await
                 .expect("server handshake failed")
@@ -236,7 +236,7 @@ async fn reject_service_lane() {
     let server_task = vox_rt::task::spawn(
         async move {
             acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .on_connection(crate::connection::lane_acceptor_fn(
+                .on_lane(crate::connection::lane_acceptor_fn(
                     |request: &LaneRequest, connection: PendingLane| match request.service() {
                         "Noop" => {
                             connection.handle_with(EchoHandler);
@@ -368,7 +368,7 @@ async fn close_service_lane() {
     let server_task = vox_rt::task::spawn(
         async move {
             acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .on_connection(EchoAcceptor)
+                .on_lane(EchoAcceptor)
                 .establish_connection()
                 .await
                 .expect("server handshake failed")
@@ -457,7 +457,7 @@ async fn dropping_last_lane_caller_does_not_close_service_lane() {
     let server_task = vox_rt::task::spawn(
         async move {
             acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .on_connection(EchoAcceptor)
+                .on_lane(EchoAcceptor)
                 .establish_connection()
                 .await
                 .expect("server handshake failed")
@@ -536,7 +536,7 @@ async fn close_service_lane_closes_registered_rx_channels() {
     let server_task = vox_rt::task::spawn(
         async move {
             acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .on_connection(EchoAcceptor)
+                .on_lane(EchoAcceptor)
                 .establish_connection()
                 .await
                 .expect("server handshake failed")
@@ -618,7 +618,7 @@ async fn dropping_control_and_lane_callers_does_not_shutdown_connection() {
     let server_task = vox_rt::task::spawn(
         async move {
             acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .on_connection(LocalEchoAcceptor)
+                .on_lane(LocalEchoAcceptor)
                 .establish_connection()
                 .await
                 .expect("server handshake failed")

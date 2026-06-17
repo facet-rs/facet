@@ -157,7 +157,7 @@ async fn listen_and_serve() -> Result<(), String> {
     stream.set_nodelay(true).ok();
 
     let connection = acceptor_on(vox_stream::StreamLink::tcp(stream))
-        .on_connection(TestbedDispatcher::new(TestbedService))
+        .on_lane(TestbedDispatcher::new(TestbedService))
         .establish_connection()
         .await
         .map_err(|e| format!("handshake: {e}"))?;
@@ -179,12 +179,12 @@ async fn connect_and_serve() -> Result<(), String> {
 
     let connection = match scheme {
         "tcp" => initiator(tcp_link_source(host))
-            .on_connection(dispatcher.clone())
+            .on_lane(dispatcher.clone())
             .establish_connection()
             .await
             .map_err(|e| format!("handshake failed: {e}"))?,
         "local" => initiator(local_link_source(host))
-            .on_connection(dispatcher.clone())
+            .on_lane(dispatcher.clone())
             .establish_connection()
             .await
             .map_err(|e| format!("handshake failed: {e}"))?,
@@ -203,7 +203,7 @@ async fn run_client() -> Result<(), String> {
     info!("client mode: connecting to {addr}, scenario={scenario}");
 
     let client = initiator(tcp_link_source(addr))
-        .on_connection(TestbedDispatcher::new(TestbedService))
+        .on_lane(TestbedDispatcher::new(TestbedService))
         .establish::<TestbedClient>()
         .await
         .map_err(|e| format!("handshake failed: {e}"))?;

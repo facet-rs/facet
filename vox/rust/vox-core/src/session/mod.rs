@@ -571,7 +571,7 @@ pub struct Connection {
     conn_ids: IdAllocator<LaneId>,
 
     /// Callback for accepting inbound service lanes.
-    on_connection: Option<Arc<dyn LaneAcceptor>>,
+    lane_acceptor: Option<Arc<dyn LaneAcceptor>>,
 
     /// Receiver for open requests from ConnectionHandle.
     open_rx: mpsc::Receiver<OpenRequest>,
@@ -1201,7 +1201,7 @@ impl Connection {
     fn pre_handshake<Tx, Rx>(
         tx: Tx,
         rx: Rx,
-        on_connection: Option<Arc<dyn LaneAcceptor>>,
+        lane_acceptor: Option<Arc<dyn LaneAcceptor>>,
         open_rx: mpsc::Receiver<OpenRequest>,
         close_rx: mpsc::Receiver<CloseRequest>,
         control_tx: mpsc::UnboundedSender<DropControlRequest>,
@@ -1237,7 +1237,7 @@ impl Connection {
             peer_root_settings: None,
             conns: BTreeMap::new(),
             conn_ids: IdAllocator::new(Parity::Odd), // overwritten in establish_as_*
-            on_connection,
+            lane_acceptor,
             open_rx,
             close_rx,
             control_tx,
@@ -1773,7 +1773,7 @@ impl Connection {
 
         // r[impl lane.open.wire.rejection]
         // Call the acceptor callback. If none is registered, reject.
-        if self.on_connection.is_none() {
+        if self.lane_acceptor.is_none() {
             Self::send_lane_reject(
                 Arc::clone(&self.sess_core),
                 conn_id,
@@ -1855,7 +1855,7 @@ impl Connection {
             }
         };
         let pending = PendingLane::new(handle);
-        let acceptor = self.on_connection.as_ref().unwrap();
+        let acceptor = self.lane_acceptor.as_ref().unwrap();
         trace!(%conn_id, "calling acceptor for service lane");
         match acceptor.accept(&request, pending) {
             Ok(()) => {

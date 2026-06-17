@@ -25,7 +25,7 @@ async fn echo_pair() -> (EchoClient, vox::ConnectionHandle) {
 
     let server = tokio::spawn(async move {
         vox::acceptor_on(server_link)
-            .on_connection(EchoDispatcher::new(EchoService))
+            .on_lane(EchoDispatcher::new(EchoService))
             .establish_connection()
             .await
             .expect("server establish")
@@ -71,7 +71,7 @@ async fn dropping_one_client_clone_keeps_connection_alive() {
                 let handle = tokio::spawn(fut);
                 let _ = server_connection_task_tx.send(handle);
             })
-            .on_connection(EchoDispatcher::new(EchoService))
+            .on_lane(EchoDispatcher::new(EchoService))
             .establish_connection()
             .await
             .expect("server establish")
@@ -131,7 +131,7 @@ async fn dropping_generated_client_does_not_shut_down_connection() {
                 let handle = tokio::spawn(fut);
                 let _ = server_connection_task_tx.send(handle);
             })
-            .on_connection(EchoDispatcher::new(EchoService))
+            .on_lane(EchoDispatcher::new(EchoService))
             .establish_connection()
             .await
             .expect("server establish")
@@ -192,7 +192,7 @@ async fn in_flight_call_returns_error_when_peer_closes() {
     // Server: establish then shut down the whole connection.
     let server = tokio::spawn(async move {
         let server = vox::acceptor_on(server_link)
-            .on_connection(EchoDispatcher::new(EchoService))
+            .on_lane(EchoDispatcher::new(EchoService))
             .establish_connection()
             .await
             .expect("server establish");

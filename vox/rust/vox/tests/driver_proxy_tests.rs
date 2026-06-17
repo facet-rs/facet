@@ -60,7 +60,7 @@ async fn proxy_lanes_forwards_calls() {
     // guest-b: accepts service lanes with EchoService
     let guest_b_task = tokio::spawn(async move {
         let guard = vox::acceptor_on(guest_b_link)
-            .on_connection(EchoDispatcher::new(EchoService))
+            .on_lane(EchoDispatcher::new(EchoService))
             .establish_connection()
             .await
             .expect("guest-b establish");
@@ -78,7 +78,7 @@ async fn proxy_lanes_forwards_calls() {
     // host: accepts connections from guest-a and proxies to guest-b
     let host_for_a_task = tokio::spawn(async move {
         let guard = vox::acceptor_on(host_a_link)
-            .on_connection(ProxyAcceptor {
+            .on_lane(ProxyAcceptor {
                 upstream_connection: host_to_b_connection,
             })
             .establish_connection()

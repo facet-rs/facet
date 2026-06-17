@@ -216,7 +216,7 @@ mod tests {
 
         let server = tokio::spawn(async move {
             let connection = crate::acceptor_on(link_b)
-                .on_connection(AuditLaneAcceptor)
+                .on_lane(AuditLaneAcceptor)
                 .establish_connection()
                 .await
                 .expect("server establish");

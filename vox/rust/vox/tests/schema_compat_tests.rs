@@ -123,7 +123,7 @@ async fn v1_client_v2_server_fills_default() {
 
     let server_task = tokio::task::spawn(async move {
         let _server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake("Geometry"))
-            .on_connection(point_v2::GeometryDispatcher::new(V2GeometryService))
+            .on_lane(point_v2::GeometryDispatcher::new(V2GeometryService))
             .establish::<point_v2::GeometryClient>()
             .await
             .expect("server handshake failed");
@@ -155,7 +155,7 @@ async fn v2_client_v1_server_skips_unknown_field() {
 
     let server_task = tokio::task::spawn(async move {
         let _server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake("Geometry"))
-            .on_connection(point_v1::GeometryDispatcher::new(V1GeometryService))
+            .on_lane(point_v1::GeometryDispatcher::new(V1GeometryService))
             .establish::<point_v1::GeometryClient>()
             .await
             .expect("server handshake failed");
@@ -245,7 +245,7 @@ async fn rx_channel_items_use_caller_writer_schema() {
 
     let server_task = tokio::task::spawn(async move {
         let _server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake("EventSink"))
-            .on_connection(channel_rx_v2::EventSinkDispatcher::new(ChannelRxV2Service))
+            .on_lane(channel_rx_v2::EventSinkDispatcher::new(ChannelRxV2Service))
             .establish::<channel_rx_v2::EventSinkClient>()
             .await
             .expect("server handshake failed");
@@ -330,7 +330,7 @@ async fn tx_channel_items_use_callee_writer_schema() {
     let server_task = tokio::task::spawn(async move {
         let _server_caller =
             acceptor_conduit(server_conduit, test_acceptor_handshake("EventSource"))
-                .on_connection(channel_tx_v2::EventSourceDispatcher::new(
+                .on_lane(channel_tx_v2::EventSourceDispatcher::new(
                     ChannelTxV2Service,
                 ))
                 .establish::<channel_tx_v2::EventSourceClient>()
@@ -404,7 +404,7 @@ async fn reordered_fields_are_matched_by_name() {
     let server_task = tokio::task::spawn(async move {
         let _server_caller =
             acceptor_conduit(server_conduit, test_acceptor_handshake("PairService"))
-                .on_connection(reordered_v1::PairServiceDispatcher::new(PairEchoV1))
+                .on_lane(reordered_v1::PairServiceDispatcher::new(PairEchoV1))
                 .establish::<reordered_v1::PairServiceClient>()
                 .await
                 .expect("server handshake failed");
@@ -485,7 +485,7 @@ async fn evolved_schema_combined_changes() {
     let server_task = tokio::task::spawn(async move {
         let _server_caller =
             acceptor_conduit(server_conduit, test_acceptor_handshake("ConfigService"))
-                .on_connection(evolved_v1::ConfigServiceDispatcher::new(ConfigServiceV1))
+                .on_lane(evolved_v1::ConfigServiceDispatcher::new(ConfigServiceV1))
                 .establish::<evolved_v1::ConfigServiceClient>()
                 .await
                 .expect("server handshake failed");
@@ -609,7 +609,7 @@ async fn callee_args_schema_error_is_call_level() {
 
     let server_task = tokio::task::spawn(async move {
         let _server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake("Control"))
-            .on_connection(command_new::ControlDispatcher::new(NewControlService))
+            .on_lane(command_new::ControlDispatcher::new(NewControlService))
             .establish::<command_new::ControlClient>()
             .await
             .expect("server handshake failed");
@@ -649,7 +649,7 @@ async fn missing_required_field_is_same_peer_terminal() {
 
     let server_task = tokio::task::spawn(async move {
         let _server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake("Daemon"))
-            .on_connection(status_old::DaemonDispatcher::new(OldDaemonService))
+            .on_lane(status_old::DaemonDispatcher::new(OldDaemonService))
             .establish::<status_old::DaemonClient>()
             .await
             .expect("server handshake failed");

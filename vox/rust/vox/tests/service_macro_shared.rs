@@ -365,7 +365,7 @@ pub async fn run_adder_end_to_end<L>(
     let server_task = tokio::task::spawn(async move {
         let server_caller_guard =
             acceptor_conduit(server_conduit, test_acceptor_handshake("Adder"))
-                .on_connection(AdderDispatcher::new(MyAdder))
+                .on_lane(AdderDispatcher::new(MyAdder))
                 .establish_connection()
                 .await
                 .expect("server handshake failed");
@@ -401,7 +401,7 @@ pub async fn run_request_context_end_to_end<L>(
     let server_task = tokio::task::spawn(async move {
         let server_caller_guard =
             acceptor_conduit(server_conduit, test_acceptor_handshake("ContextProbe"))
-                .on_connection(ContextProbeDispatcher::new(ContextProbeService))
+                .on_lane(ContextProbeDispatcher::new(ContextProbeService))
                 .establish_connection()
                 .await
                 .expect("server handshake failed");
@@ -458,7 +458,7 @@ pub async fn run_server_middleware_end_to_end<L>(
             .with_middleware(second);
         let server_caller_guard =
             acceptor_conduit(server_conduit, test_acceptor_handshake("MiddlewareProbe"))
-                .on_connection(dispatcher)
+                .on_lane(dispatcher)
                 .establish_connection()
                 .await
                 .expect("server handshake failed");
@@ -516,7 +516,7 @@ pub async fn run_server_request_peek_end_to_end<L>(
         });
         let server_caller_guard =
             acceptor_conduit(server_conduit, test_acceptor_handshake("Adder"))
-                .on_connection(dispatcher)
+                .on_lane(dispatcher)
                 .establish_connection()
                 .await
                 .expect("server handshake failed");
@@ -567,7 +567,7 @@ pub async fn run_server_response_peek_end_to_end<L>(
             });
         let server_caller_guard =
             acceptor_conduit(server_conduit, test_acceptor_handshake("Adder"))
-                .on_connection(dispatcher)
+                .on_lane(dispatcher)
                 .establish_connection()
                 .await
                 .expect("server handshake failed");
@@ -615,7 +615,7 @@ pub async fn run_client_middleware_end_to_end<L>(
             server_conduit,
             test_acceptor_handshake("ClientMiddlewareProbe"),
         )
-        .on_connection(ClientMiddlewareProbeDispatcher::new(
+        .on_lane(ClientMiddlewareProbeDispatcher::new(
             ClientMiddlewareProbeService,
         ))
         .establish_connection()
@@ -682,7 +682,7 @@ pub async fn run_borrowed_return_survives_teardown_over_generated_client<L>(
             server_conduit,
             test_acceptor_handshake("BorrowedPayloadProbe"),
         )
-        .on_connection(BorrowedPayloadProbeDispatcher::new(
+        .on_lane(BorrowedPayloadProbeDispatcher::new(
             BorrowedPayloadProbeService::new(),
         ))
         .establish_connection()

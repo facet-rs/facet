@@ -179,7 +179,7 @@ async fn connect_builder_can_configure_inbound_lanes_before_await() {
     let server = tokio::spawn(async move {
         let (socket, _) = listener.accept().await.expect("accept");
         let connection_guard = vox::acceptor_on(vox::transport::tcp::StreamLink::tcp(socket))
-            .on_connection(PingDispatcher::new(PingService))
+            .on_lane(PingDispatcher::new(PingService))
             .establish_connection()
             .await
             .expect("server establish");
@@ -199,7 +199,7 @@ async fn connect_builder_can_configure_inbound_lanes_before_await() {
     });
 
     let client: PingClient = vox::connect_lane(format!("tcp://{addr}"))
-        .on_connection(EchoDispatcher::new(EchoService))
+        .on_lane(EchoDispatcher::new(EchoService))
         .await
         .expect("connect");
 

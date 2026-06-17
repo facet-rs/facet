@@ -106,7 +106,7 @@ async fn main() -> Result<()> {
         )
         .await
         .expect("guest-b acceptor_on_link")
-        .on_connection(vox::lane_acceptor_fn(upstream_acceptor))
+        .on_lane(vox::lane_acceptor_fn(upstream_acceptor))
         .establish_connection()
         .await
         .expect("guest-b establish");
@@ -145,7 +145,7 @@ async fn main() -> Result<()> {
         )
         .await
         .expect("host<->guest-a acceptor_on_link")
-        .on_connection(proxy_acceptor)
+        .on_lane(proxy_acceptor)
         .establish_connection()
         .await
         .expect("host<->guest-a establish");

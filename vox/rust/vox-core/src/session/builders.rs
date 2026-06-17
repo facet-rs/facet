@@ -145,7 +145,7 @@ pub fn acceptor_transport<L: Link>(link: L) -> ConnectionTransportAcceptorBuilde
 pub struct ConnectionConfig {
     pub root_settings: ConnectionSettings,
     pub metadata: Metadata,
-    pub on_connection: Option<Arc<dyn LaneAcceptor>>,
+    pub lane_acceptor: Option<Arc<dyn LaneAcceptor>>,
     pub keepalive: Option<ConnectionKeepaliveConfig>,
     pub spawn_fn: SpawnFn,
     pub connect_timeout: Option<std::time::Duration>,
@@ -157,7 +157,7 @@ impl ConnectionConfig {
         Self {
             root_settings,
             metadata: vox_types::Metadata::default(),
-            on_connection: None,
+            lane_acceptor: None,
             keepalive: None,
             spawn_fn: default_spawn_fn(),
             connect_timeout: None,
@@ -381,8 +381,8 @@ impl<C> ConnectionInitiatorBuilder<C> {
         }
     }
 
-    pub fn on_connection(mut self, acceptor: impl LaneAcceptor) -> Self {
-        self.config.on_connection = Some(Arc::new(acceptor));
+    pub fn on_lane(mut self, acceptor: impl LaneAcceptor) -> Self {
+        self.config.lane_acceptor = Some(Arc::new(acceptor));
         self
     }
 
@@ -452,7 +452,7 @@ impl<C> ConnectionInitiatorBuilder<C> {
         let mut connection = Connection::pre_handshake(
             tx,
             rx,
-            config.on_connection,
+            config.lane_acceptor,
             open_rx,
             close_rx,
             control_tx.clone(),
@@ -540,8 +540,8 @@ impl<S> ConnectionSourceInitiatorBuilder<S> {
         self
     }
 
-    pub fn on_connection(mut self, acceptor: impl LaneAcceptor) -> Self {
-        self.config.on_connection = Some(Arc::new(acceptor));
+    pub fn on_lane(mut self, acceptor: impl LaneAcceptor) -> Self {
+        self.config.lane_acceptor = Some(Arc::new(acceptor));
         self
     }
 
@@ -669,8 +669,8 @@ impl<L> ConnectionTransportInitiatorBuilder<L> {
         self
     }
 
-    pub fn on_connection(mut self, acceptor: impl LaneAcceptor) -> Self {
-        self.config.on_connection = Some(Arc::new(acceptor));
+    pub fn on_lane(mut self, acceptor: impl LaneAcceptor) -> Self {
+        self.config.lane_acceptor = Some(Arc::new(acceptor));
         self
     }
 
@@ -825,8 +825,8 @@ impl<C> ConnectionAcceptorBuilder<C> {
         }
     }
 
-    pub fn on_connection(mut self, acceptor: impl LaneAcceptor) -> Self {
-        self.config.on_connection = Some(Arc::new(acceptor));
+    pub fn on_lane(mut self, acceptor: impl LaneAcceptor) -> Self {
+        self.config.lane_acceptor = Some(Arc::new(acceptor));
         self
     }
 
@@ -893,7 +893,7 @@ impl<C> ConnectionAcceptorBuilder<C> {
         let mut connection = Connection::pre_handshake(
             tx,
             rx,
-            config.on_connection,
+            config.lane_acceptor,
             open_rx,
             close_rx,
             control_tx.clone(),
@@ -981,8 +981,8 @@ impl<L: Link> ConnectionTransportAcceptorBuilder<L> {
         self
     }
 
-    pub fn on_connection(mut self, acceptor: impl LaneAcceptor) -> Self {
-        self.config.on_connection = Some(Arc::new(acceptor));
+    pub fn on_lane(mut self, acceptor: impl LaneAcceptor) -> Self {
+        self.config.lane_acceptor = Some(Arc::new(acceptor));
         self
     }
 
@@ -1146,7 +1146,7 @@ mod tests {
         let server = tokio::spawn(async move {
             acceptor_on(server_link)
                 .observer_handle(server_observer)
-                .on_connection(crate::lane_acceptor_fn(
+                .on_lane(crate::lane_acceptor_fn(
                     |request: &crate::LaneRequest, lane: crate::PendingLane| {
                         if request.service() == "Noop" {
                             lane.handle_with(());

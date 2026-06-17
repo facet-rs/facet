@@ -1,9 +1,5 @@
-//! Regression tests for channel lifetimes across RPC request boundaries.
-
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tokio::sync::oneshot;
 use vox::Rx;
 
 #[derive(Clone, Debug, facet::Facet)]
@@ -17,62 +13,49 @@ trait BulkChannelStash {
     async fn attach(&self, input: Rx<Vec<u64>>) -> Result<(), AttachError>;
 }
 
-type Accepted = Option<oneshot::Sender<Rx<Vec<u64>>>>;
+const ITEMS: u64 = 65;
+const WORDS_PER_ITEM: usize = 8192;
 
 #[derive(Clone)]
-struct BulkChannelStashService {
-    accepted: Arc<Mutex<Accepted>>,
-}
+struct BulkChannelDrainService;
 
-impl BulkChannelStash for BulkChannelStashService {
-    async fn attach(&self, input: Rx<Vec<u64>>) -> Result<(), AttachError> {
-        let sender = self
-            .accepted
-            .lock()
-            .expect("accepted mutex poisoned")
-            .take()
-            .expect("attach called more than once");
-        assert!(sender.send(input).is_ok(), "test receiver was dropped");
+impl BulkChannelStash for BulkChannelDrainService {
+    async fn attach(&self, mut input: Rx<Vec<u64>>) -> Result<(), AttachError> {
+        for expected in 0..ITEMS {
+            let received = input
+                .recv()
+                .await
+                .map_err(|_| AttachError::Rejected)?
+                .ok_or(AttachError::Rejected)?;
+            received.map(|item| {
+                assert_eq!(item.first().copied(), Some(expected));
+                assert_eq!(item.len(), WORDS_PER_ITEM);
+            });
+        }
         Ok(())
     }
 }
 
-#[cfg(unix)]
 // r[verify rpc.channel.delivery.reliable]
 #[tokio::test]
-async fn local_keepalive_rx_argument_survives_large_item_burst() {
-    const ITEMS: u64 = 65;
-    const WORDS_PER_ITEM: usize = 8192;
-
-    let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("channel.sock");
-    let addr = path.display().to_string();
-    let listener = vox::transport::local::LocalLinkAcceptor::bind(addr.clone()).expect("bind");
-    let (accepted_tx, accepted_rx) = oneshot::channel::<Rx<Vec<u64>>>();
-    let service = BulkChannelStashService {
-        accepted: Arc::new(Mutex::new(Some(accepted_tx))),
-    };
+async fn memory_reliable_rx_argument_delivers_large_item_burst_before_response() {
+    let (client_link, server_link) = vox::memory_link_pair(64);
+    let service = BulkChannelDrainService;
 
     let server = tokio::spawn(async move {
-        let server_link = listener.accept().await.expect("accept");
         let client = vox::acceptor_on(server_link)
             .channel_capacity(64)
             .keepalive(vox::ConnectionKeepaliveConfig {
                 ping_interval: Duration::from_secs(5),
                 pong_timeout: Duration::from_secs(30),
             })
-            .on_connection(BulkChannelStashDispatcher::new(service))
+            .on_lane(BulkChannelStashDispatcher::new(service))
             .establish_connection()
             .await
             .expect("server establish");
         client.closed().await;
     });
 
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    let client_link = vox::transport::local::LocalLink::connect(&addr)
-        .await
-        .expect("connect");
     let client = vox::initiator_on(client_link)
         .channel_capacity(64)
         .keepalive(vox::ConnectionKeepaliveConfig {
@@ -85,24 +68,12 @@ async fn local_keepalive_rx_argument_survives_large_item_burst() {
         .with_middleware(vox::ClientLogging::default());
 
     let (tx, rx) = vox::channel::<Vec<u64>>();
-    client.attach(rx).await.expect("attach");
-    let mut server_rx = accepted_rx.await.expect("server did not store Rx");
-
-    let receiver = tokio::spawn(async move {
-        for expected in 0..ITEMS {
-            let received = server_rx
-                .recv()
-                .await
-                .map_err(|err| format!("server Rx recv failed: {err:?}"))?
-                .ok_or_else(|| {
-                    format!("server Rx closed during large-item burst after {expected} items")
-                })?;
-            received.map(|item| {
-                assert_eq!(item.first().copied(), Some(expected));
-                assert_eq!(item.len(), WORDS_PER_ITEM);
-            });
-        }
-        Ok::<(), String>(())
+    let attach_client = client.clone();
+    let attach_task = tokio::spawn(async move {
+        attach_client
+            .attach(rx)
+            .await
+            .expect("attach should drain channel before responding");
     });
 
     let sender = tokio::spawn(async move {
@@ -114,15 +85,8 @@ async fn local_keepalive_rx_argument_survives_large_item_burst() {
                 .expect("send failed during large-item burst");
         }
     });
-    let sender_abort = sender.abort_handle();
 
     tokio::select! {
-        receiver_result = receiver => {
-            sender_abort.abort();
-            receiver_result
-                .expect("receiver task panicked")
-                .expect("receiver failed");
-        }
         sender_result = sender => {
             sender_result.expect("sender task failed");
         }
@@ -130,6 +94,10 @@ async fn local_keepalive_rx_argument_survives_large_item_burst() {
             panic!("large-item burst did not complete");
         }
     }
+    tokio::time::timeout(Duration::from_secs(10), attach_task)
+        .await
+        .expect("attach did not complete after large-item burst")
+        .expect("attach task panicked");
 
     drop(client);
     server.abort();

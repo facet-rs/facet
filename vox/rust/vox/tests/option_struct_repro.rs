@@ -95,7 +95,7 @@ async fn pair() -> (OptionReproClient, vox::ConnectionHandle) {
 
     let server = tokio::spawn(async move {
         vox::acceptor_on(server_link)
-            .on_connection(OptionReproDispatcher::new(ReproService))
+            .on_lane(OptionReproDispatcher::new(ReproService))
             .establish_connection()
             .await
             .expect("server establish")
@@ -159,7 +159,7 @@ async fn bare_pair() -> (BareClient, vox::ConnectionHandle) {
     let (client_link, server_link) = memory_link_pair(16);
     let server = tokio::spawn(async move {
         vox::acceptor_on(server_link)
-            .on_connection(BareDispatcher::new(BareService))
+            .on_lane(BareDispatcher::new(BareService))
             .establish_connection()
             .await
             .expect("server establish")
@@ -216,7 +216,7 @@ async fn option_of_enum_with_data_variant_roundtrips_some() {
     let (client_link, server_link) = memory_link_pair(16);
     let server = tokio::spawn(async move {
         vox::acceptor_on(server_link)
-            .on_connection(OptionEnumDispatcher::new(OptionEnumService))
+            .on_lane(OptionEnumDispatcher::new(OptionEnumService))
             .establish_connection()
             .await
             .expect("server establish")

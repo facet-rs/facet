@@ -132,7 +132,7 @@ fn parse_connect_address(addr: String) -> Result<ConnectAddress, ConnectionError
 pub struct ConnectBuilder {
     addr: String,
     metadata: Metadata,
-    on_connection: Option<Arc<dyn LaneAcceptor>>,
+    lane_acceptor: Option<Arc<dyn LaneAcceptor>>,
     connect_timeout: Option<Duration>,
     channel_capacity: u32,
     observer: Option<VoxObserverHandle>,
@@ -144,7 +144,7 @@ impl ConnectBuilder {
         Self {
             addr,
             metadata: vox_types::Metadata::default(),
-            on_connection: None,
+            lane_acceptor: None,
             connect_timeout: Some(Duration::from_secs(5)),
             channel_capacity: DEFAULT_INITIAL_CHANNEL_CREDIT,
             observer: None,
@@ -154,8 +154,8 @@ impl ConnectBuilder {
 
     // r[impl lane.accept.api]
     // r[impl lane.open]
-    pub fn on_connection(mut self, acceptor: impl LaneAcceptor) -> Self {
-        self.on_connection = Some(Arc::new(acceptor));
+    pub fn on_lane(mut self, acceptor: impl LaneAcceptor) -> Self {
+        self.lane_acceptor = Some(Arc::new(acceptor));
         self
     }
 
@@ -217,7 +217,7 @@ impl ConnectBuilder {
         let ConnectBuilder {
             addr,
             metadata,
-            on_connection,
+            lane_acceptor,
             connect_timeout,
             channel_capacity,
             observer,
@@ -251,7 +251,7 @@ impl ConnectBuilder {
                     let attempt = Self::establish_once(
                         &parsed,
                         metadata.clone(),
-                        on_connection.clone(),
+                        lane_acceptor.clone(),
                         connect_timeout,
                         channel_capacity,
                         observer.clone(),
@@ -296,7 +296,7 @@ impl ConnectBuilder {
                 let result = Self::establish_once(
                     &parsed,
                     metadata,
-                    on_connection,
+                    lane_acceptor,
                     connect_timeout,
                     channel_capacity,
                     observer,
@@ -314,7 +314,7 @@ impl ConnectBuilder {
     async fn establish_once(
         parsed: &ConnectAddress,
         metadata: vox_types::Metadata,
-        on_connection: Option<Arc<dyn LaneAcceptor>>,
+        lane_acceptor: Option<Arc<dyn LaneAcceptor>>,
         connect_timeout: Option<Duration>,
         channel_capacity: u32,
         observer: Option<VoxObserverHandle>,
@@ -326,7 +326,7 @@ impl ConnectBuilder {
         )))]
         let _ = (
             &metadata,
-            &on_connection,
+            &lane_acceptor,
             &connect_timeout,
             channel_capacity,
             &observer,
@@ -341,8 +341,8 @@ impl ConnectBuilder {
                     "vox high-level connect attempt"
                 );
                 let mut builder = initiator(vox_stream::tcp_link_source(host.clone()));
-                if let Some(acceptor) = on_connection.clone() {
-                    builder = builder.on_connection(AcceptorRef(acceptor));
+                if let Some(acceptor) = lane_acceptor.clone() {
+                    builder = builder.on_lane(AcceptorRef(acceptor));
                 }
                 if let Some(timeout) = connect_timeout {
                     builder = builder.connect_timeout(timeout);
@@ -361,8 +361,8 @@ impl ConnectBuilder {
                     "vox high-level connect attempt"
                 );
                 let mut builder = initiator(vox_stream::local_link_source(host.clone()));
-                if let Some(acceptor) = on_connection.clone() {
-                    builder = builder.on_connection(AcceptorRef(acceptor));
+                if let Some(acceptor) = lane_acceptor.clone() {
+                    builder = builder.on_lane(AcceptorRef(acceptor));
                 }
                 if let Some(timeout) = connect_timeout {
                     builder = builder.connect_timeout(timeout);
@@ -384,8 +384,8 @@ impl ConnectBuilder {
                     "vox high-level connect attempt"
                 );
                 let mut builder = initiator(vox_websocket::ws_link_source(url.clone()));
-                if let Some(acceptor) = on_connection {
-                    builder = builder.on_connection(AcceptorRef(acceptor));
+                if let Some(acceptor) = lane_acceptor {
+                    builder = builder.on_lane(AcceptorRef(acceptor));
                 }
                 if let Some(timeout) = connect_timeout {
                     builder = builder.connect_timeout(timeout);
@@ -419,8 +419,8 @@ pub struct ConnectLaneBuilder<Client> {
 }
 
 impl<Client> ConnectLaneBuilder<Client> {
-    pub fn on_connection(mut self, acceptor: impl LaneAcceptor) -> Self {
-        self.inner = self.inner.on_connection(acceptor);
+    pub fn on_lane(mut self, acceptor: impl LaneAcceptor) -> Self {
+        self.inner = self.inner.on_lane(acceptor);
         self
     }
 
@@ -703,7 +703,7 @@ where
             vox_rt::spawn(async move {
                 tracing::trace!("vox high-level listener establishing connection");
                 let mut builder = vox_core::acceptor_on(link)
-                    .on_connection(AcceptorRef(acceptor))
+                    .on_lane(AcceptorRef(acceptor))
                     .channel_capacity(channel_capacity);
                 if let Some(observer) = observer {
                     builder = builder.observer_handle(observer);

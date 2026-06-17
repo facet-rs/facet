@@ -65,7 +65,7 @@ async fn ffi_transport_supports_bidirectional_calls_with_two_services_when_a_ini
     let server = tokio::spawn(async move {
         let link = ffi_pair_ab_b::accept().await.expect("accept ffi link");
         let connection_guard = vox::acceptor_on(link)
-            .on_connection(PongDispatcher::new(PongService))
+            .on_lane(PongDispatcher::new(PongService))
             .establish_connection()
             .await
             .expect("acceptor establish");
@@ -77,7 +77,7 @@ async fn ffi_transport_supports_bidirectional_calls_with_two_services_when_a_ini
 
     let link = ffi_pair_ab_a::connect(ffi_pair_ab_b::vtable()).expect("connect ffi link");
     let connection_guard = vox::initiator_on(link)
-        .on_connection(PingDispatcher::new(PingService))
+        .on_lane(PingDispatcher::new(PingService))
         .establish_connection()
         .await
         .expect("initiator establish");
@@ -100,7 +100,7 @@ async fn ffi_transport_supports_bidirectional_calls_with_two_services_when_b_ini
     let server = tokio::spawn(async move {
         let link = ffi_pair_ba_a::accept().await.expect("accept ffi link");
         let connection_guard = vox::acceptor_on(link)
-            .on_connection(PingDispatcher::new(PingService))
+            .on_lane(PingDispatcher::new(PingService))
             .establish_connection()
             .await
             .expect("acceptor establish");
@@ -112,7 +112,7 @@ async fn ffi_transport_supports_bidirectional_calls_with_two_services_when_b_ini
 
     let link = ffi_pair_ba_b::connect(ffi_pair_ba_a::vtable()).expect("connect ffi link");
     let connection_guard = vox::initiator_on(link)
-        .on_connection(PongDispatcher::new(PongService))
+        .on_lane(PongDispatcher::new(PongService))
         .establish_connection()
         .await
         .expect("initiator establish");

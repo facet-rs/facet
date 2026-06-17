@@ -24,7 +24,7 @@ impl Echo for EchoService {
 
 async fn lane_server(server_link: impl vox::Link + Send + 'static) -> vox::ConnectionHandle {
     vox::acceptor_on(server_link)
-        .on_connection(EchoDispatcher::new(EchoService))
+        .on_lane(EchoDispatcher::new(EchoService))
         .establish_connection()
         .await
         .expect("server establish")
@@ -131,7 +131,7 @@ async fn schema_tracker_is_per_lane() {
 
     let server = tokio::spawn(async move {
         vox::acceptor_on(server_link)
-            .on_connection(EchoDispatcher::new(EchoService))
+            .on_lane(EchoDispatcher::new(EchoService))
             .establish_connection()
             .await
             .expect("server establish")
@@ -178,7 +178,7 @@ async fn reject_service_lane() {
 
     let server = tokio::spawn(async move {
         vox::acceptor_on(server_link)
-            .on_connection(vox::lane_acceptor_fn(
+            .on_lane(vox::lane_acceptor_fn(
                 |req: &vox::LaneRequest, conn: vox::PendingLane| match req.service() {
                     "Noop" => {
                         conn.handle_with(());
@@ -262,7 +262,7 @@ async fn close_service_lane() {
 
     let server = tokio::spawn(async move {
         vox::acceptor_on(server_link)
-            .on_connection(CounterDispatcher::new(CounterService {
+            .on_lane(CounterDispatcher::new(CounterService {
                 count: std::sync::Arc::new(AtomicU32::new(0)),
             }))
             .establish_connection()

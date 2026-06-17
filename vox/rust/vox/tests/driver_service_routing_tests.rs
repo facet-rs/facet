@@ -51,7 +51,7 @@ async fn control_lane_connect_sends_vox_service_and_factory_sees_it() {
 
     let server = tokio::spawn(async move {
         vox::acceptor_on(server_link)
-            .on_connection(factory)
+            .on_lane(factory)
             .establish_connection()
             .await
             .expect("server establish")
@@ -113,7 +113,7 @@ async fn service_factory_routes_service_lanes() {
 
     let server = tokio::spawn(async move {
         vox::acceptor_on(server_link)
-            .on_connection(factory)
+            .on_lane(factory)
             .establish_connection()
             .await
             .expect("server establish")
@@ -180,7 +180,7 @@ async fn service_factory_rejects_unknown_service() {
 
     let server = tokio::spawn(async move {
         vox::acceptor_on(server_link)
-            .on_connection(factory)
+            .on_lane(factory)
             .establish_connection()
             .await
             .expect("server establish")

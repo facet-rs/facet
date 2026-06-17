@@ -121,7 +121,7 @@ fn bootstrap_service_once(peer: *const vox_link_vtable) {
             ffi_log("[subject-rust ffi] runtime thread: ENDPOINT.connect succeeded");
 
             let establish = acceptor_on(link)
-                .on_connection(TestbedDispatcher::new(TestbedService))
+                .on_lane(TestbedDispatcher::new(TestbedService))
                 .establish_connection()
                 .await;
             match establish {

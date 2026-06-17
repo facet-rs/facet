@@ -182,7 +182,7 @@ async fn stax_pair() -> (StaxdLinuxFixtureClient, vox::ConnectionHandle) {
     let (client_link, server_link) = FdStreamLink::pair().unwrap();
     let server = tokio::spawn(async move {
         vox::acceptor_on(server_link)
-            .on_connection(StaxdLinuxFixtureDispatcher::new(StaxdFixture))
+            .on_lane(StaxdLinuxFixtureDispatcher::new(StaxdFixture))
             .establish_connection()
             .await
             .expect("server establish")
@@ -258,7 +258,7 @@ async fn stax_fd_broker_bundle_is_refused_by_non_fd_transport() {
     let server = tokio::spawn(async move {
         let (sock, _) = listener.accept().await.unwrap();
         vox::acceptor_on(StreamLink::tcp(sock))
-            .on_connection(StaxdLinuxFixtureDispatcher::new(StaxdFixture))
+            .on_lane(StaxdLinuxFixtureDispatcher::new(StaxdFixture))
             .establish_connection()
             .await
             .expect("server establish")

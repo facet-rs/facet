@@ -24,7 +24,7 @@ async fn call_through_phon_handshake_reaches_handler() {
 
     let server = tokio::spawn(async move {
         vox::acceptor_on(server_link)
-            .on_connection(EchoDispatcher::new(EchoService))
+            .on_lane(EchoDispatcher::new(EchoService))
             .establish_connection()
             .await
             .expect("server establish")

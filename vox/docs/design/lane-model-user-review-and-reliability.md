@@ -91,7 +91,7 @@ Current tutorial shape:
 
 ```rust
 vox::acceptor_on(link)
-    .on_connection(HelloDispatcher::new(HelloService))
+    .on_lane(HelloDispatcher::new(HelloService))
     .establish::<vox::NoopClient>()
     .await?
     .caller

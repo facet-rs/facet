@@ -54,7 +54,7 @@ async fn main() -> Result<()> {
     let server_task = tokio::spawn(async move {
         let (socket, _) = listener.accept().await.expect("accept");
         let server_connection = vox::acceptor_on(StreamLink::tcp(socket))
-            .on_connection(NumberLabDispatcher::new(NumberLabService))
+            .on_lane(NumberLabDispatcher::new(NumberLabService))
             .establish_connection()
             .await
             .expect("server establish");
