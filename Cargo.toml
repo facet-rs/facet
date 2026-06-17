@@ -71,6 +71,8 @@ members = [
   "facet-cargo-toml",
   "rusqlite-facet",
   "rediff",
+  "figue",
+  "figue-attrs",
 
   # strongly-typed string IDs
   "strid",
@@ -122,11 +124,13 @@ facet-xml = { path = "facet-xml", version = "0.50.0-rc.0" }
 facet-urlencoded = { path = "facet-urlencoded", version = "0.50.0-rc.0" }
 facet-value = { path = "facet-value", version = "0.50.0-rc.0" }
 facet-yaml = { path = "facet-yaml", version = "0.50.0-rc.0" }
+figue-attrs = { path = "figue-attrs", version = "5.0.0-rc.0" }
 strid = { path = "strid", version = "11.0.0-rc.0" }
 strid-macros = { path = "strid-macros", version = "11.0.0-rc.0" }
 arborium = { version = "^2.4.5", default-features = false, features = ["lang-json"] }
 autocfg = "^1.5.0"
 axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio", "json"] }
+ariadne = "^0.6"
 bolero = "^0.13.4"
 brotli = "8"
 bytes = { version = "^1.11.0", default-features = false }
@@ -138,6 +142,7 @@ datatest-stable = "0.3"
 divan = "^0.1.21"
 eyre = "^0.6.12"
 http = "^1.4.0"
+heck = "^0.5.0"
 indexmap = { version = "^2.12.1", default-features = false }
 insta = "^1.44.3"
 jiff = "^0.2.16"
@@ -149,12 +154,15 @@ smartstring = { version = "^1.0.1", default-features = false }
 smol_str = { version = "^0.3.4", default-features = false }
 static_assertions = "^1.1.0"
 strsim = "0.11"
+strip-ansi-escapes = "^0.2.1"
+supports-color = "^3"
 tempfile = "^3.23.0"
 time = { version = "^0.3.44", features = ["formatting", "macros", "parsing"] }
 tokio = { version = "1", features = ["io-util", "rt", "rt-multi-thread"] }
 tower = { version = "0.5", default-features = false, features = ["util"] }
 tracing = { version = "^0.1.43", default-features = false, features = ["std"] }
 tracing-subscriber = { version = "^0.3.22", default-features = false, features = ["fmt", "std"] }
+unicode-width = "^0.2.2"
 ulid = "^1.2.1"
 unsynn = "^0.3.0"
 uuid = "^1.19.0"
@@ -170,7 +178,6 @@ palette = { version = "^0.7", default-features = false, features = ["std"] }
 serde = { version = "^1.0.228", default-features = false, features = ["alloc", "derive"] }
 serde_json = { version = "^1.0.145", features = ["alloc"] }
 terminal-colorsaurus = "^1"
-unicode-width = "^0.2"
 
 # Allow the facet_no_doc cfg in generated code
 # See: https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html
@@ -232,6 +239,8 @@ facet-xml-node = { path = "facet-xml-node" }
 facet-xdr = { path = "facet-xdr" }
 facet-yaml = { path = "facet-yaml" }
 facet-zod = { path = "facet-zod" }
+figue = { path = "figue" }
+figue-attrs = { path = "figue-attrs" }
 rusqlite-facet = { path = "rusqlite-facet" }
 rediff = { path = "rediff" }
 strid = { path = "strid" }

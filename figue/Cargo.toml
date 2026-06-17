@@ -1,18 +1,19 @@
 [package]
 name = "figue"
-version.workspace = true
+version = "5.0.0-rc.0"
 edition.workspace = true
 rust-version.workspace = true
-authors.workspace = true
+authors = ["Amos Wenger <amos@bearcove.eu>"]
 license.workspace = true
 repository.workspace = true
-homepage.workspace = true
-keywords.workspace = true
-categories.workspace = true
+homepage = "https://facet.rs"
+keywords = ["cli", "args", "parser", "facet", "command-line"]
+categories = ["command-line-interface"]
 description = "Type-safe CLI arguments, config files, and environment variables powered by Facet reflection"
 documentation = "https://docs.rs/figue"
 
-[package.metadata]
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
@@ -28,7 +29,7 @@ facet-reflect.workspace = true
 facet-pretty.workspace = true
 facet-error.workspace = true
 heck.workspace = true
-indexmap.workspace = true
+indexmap = { workspace = true, features = ["std"] }
 owo-colors.workspace = true
 tracing.workspace = true
 ariadne.workspace = true
@@ -40,10 +41,10 @@ supports-color.workspace = true
 [dev-dependencies]
 facet-format = { workspace = true, features = ["tracing"] }
 facet-json = { workspace = true, features = ["tracing"] }
-facet-reflect = { workspace = true, features = ["tracing"] }
-facet = { workspace = true, features = ["all-impls"] }
-facet-solver.workspace = true
-facet-testhelpers.workspace = true
+facet-reflect = { path = "../facet-reflect", features = ["tracing"] }
+facet = { path = "../facet", features = ["all-impls"] }
+facet-solver = { path = "../facet-solver" }
+facet-testhelpers = { path = "../facet-testhelpers" }
 insta.workspace = true
 tempfile.workspace = true
 
@@ -52,3 +53,6 @@ default = ["rich-diagnostics"]
 rich-diagnostics = []
 doc = ["facet/doc"]
 tracing = ["facet-reflect/tracing", "facet-json/tracing", "facet-format/tracing"]
+
+[lints]
+workspace = true

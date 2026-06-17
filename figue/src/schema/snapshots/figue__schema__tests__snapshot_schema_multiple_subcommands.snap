@@ -1,5 +1,5 @@
 ---
-source: crates/figue/src/schema/tests.rs
+source: figue/src/schema/tests.rs
 expression: stripped
 ---
 Error: only one field may be marked with #[facet(args::subcommand)] at this level
@@ -7,7 +7,7 @@ Error: only one field may be marked with #[facet(args::subcommand)] at this leve
    │
  2 │ struct MultipleSubcommands {
    │        ─────────┬─────────  
-   │                 ╰─────────── defined at crates/figue/src/schema/tests.rs:82
+   │                 ╰─────────── defined at figue/src/schema/tests.rs:82
    │ 
  4 │     a: SubA,
    │     ───┬───  

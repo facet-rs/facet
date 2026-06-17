@@ -1,22 +1,26 @@
 [package]
 name = "figue-attrs"
-version.workspace = true
+version = "5.0.0-rc.0"
 edition.workspace = true
 rust-version.workspace = true
-authors.workspace = true
+authors = ["Amos Wenger <amos@bearcove.eu>"]
 license.workspace = true
 repository.workspace = true
-homepage.workspace = true
-keywords.workspace = true
-categories.workspace = true
+homepage = "https://facet.rs"
+keywords = ["cli", "args", "parser", "facet", "command-line"]
+categories = ["command-line-interface"]
 description = "Attribute macros for figue CLI argument parsing"
 documentation = "https://docs.rs/figue-attrs"
 readme = "README.md"
 
-[package.metadata]
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 facet.workspace = true
+
+[lints]
+workspace = true

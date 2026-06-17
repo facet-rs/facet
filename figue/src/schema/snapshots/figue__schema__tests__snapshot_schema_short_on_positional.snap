@@ -1,5 +1,5 @@
 ---
-source: crates/figue/src/schema/tests.rs
+source: figue/src/schema/tests.rs
 expression: stripped
 ---
 Error: #[facet(args::positional)] is not compatible with #[facet(args::short)]
@@ -7,7 +7,7 @@ Error: #[facet(args::positional)] is not compatible with #[facet(args::short)]
    │
  2 │ struct ShortOnPositional {
    │        ────────┬────────  
-   │                ╰────────── defined at crates/figue/src/schema/tests.rs:102
+   │                ╰────────── defined at figue/src/schema/tests.rs:102
    │ 
  4 │     value: String,
    │     ──────┬──────  

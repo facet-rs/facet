@@ -255,6 +255,20 @@ version_group = "rusqlite-facet"
 changelog_path = "rusqlite-facet/CHANGELOG.md"
 
 # ============================================================================
+# Figue packages - coordinated from this monorepo, preserving their major line
+# ============================================================================
+
+[[package]]
+name = "figue"
+version_group = "figue"
+changelog_path = "figue/CHANGELOG.md"
+
+[[package]]
+name = "figue-attrs"
+version_group = "figue"
+changelog_path = "figue/CHANGELOG.md"
+
+# ============================================================================
 # Dev-only packages - excluded from releases
 # ============================================================================
 
