@@ -277,7 +277,7 @@ mod tests {
     // r[verify connection.handshake.lane-settings]
     // r[verify connection.peer]
     #[tokio::test]
-    async fn hello_and_hello_yourself_carry_root_connection_settings() {
+    async fn hello_and_hello_yourself_carry_connection_settings() {
         let (client_link, server_link) = crate::memory_link_pair(4);
         let (client_tx, mut client_rx) = client_link.split();
         let (server_tx, mut server_rx) = server_link.split();

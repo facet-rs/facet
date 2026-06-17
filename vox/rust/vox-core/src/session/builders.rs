@@ -90,7 +90,7 @@ where
     let handshake_result =
         handshake_as_initiator(&tx, &mut rx, settings, vox_types::Metadata::default())
             .await
-            .map_err(session_error_from_handshake)?;
+            .map_err(connection_error_from_handshake)?;
     let message_plan =
         message_plan_from_handshake_observed(&handshake_result, None, ConnectionRole::Initiator)?;
     Ok(ConnectionInitiatorBuilder::new(
@@ -116,7 +116,7 @@ where
     let handshake_result =
         handshake_as_acceptor(&tx, &mut rx, settings, vox_types::Metadata::default())
             .await
-            .map_err(session_error_from_handshake)?;
+            .map_err(connection_error_from_handshake)?;
     let message_plan =
         message_plan_from_handshake_observed(&handshake_result, None, ConnectionRole::Acceptor)?;
     Ok(ConnectionAcceptorBuilder::new(
@@ -143,7 +143,7 @@ pub fn acceptor_transport<L: Link>(link: L) -> ConnectionTransportAcceptorBuilde
 
 /// Shared configuration for all connection builders.
 pub struct ConnectionConfig {
-    pub root_settings: ConnectionSettings,
+    pub connection_settings: ConnectionSettings,
     pub metadata: Metadata,
     pub lane_acceptor: Option<Arc<dyn LaneAcceptor>>,
     pub keepalive: Option<ConnectionKeepaliveConfig>,
@@ -153,9 +153,9 @@ pub struct ConnectionConfig {
 }
 
 impl ConnectionConfig {
-    fn with_settings(root_settings: ConnectionSettings) -> Self {
+    fn with_settings(connection_settings: ConnectionSettings) -> Self {
         Self {
-            root_settings,
+            connection_settings,
             metadata: vox_types::Metadata::default(),
             lane_acceptor: None,
             keepalive: None,
@@ -242,7 +242,7 @@ async fn initiate_transport_observed<L: Link>(
                 EstablishmentOutcome::Error,
                 started_at,
             );
-            Err(session_error_from_transport(error))
+            Err(connection_error_from_transport(error))
         }
     }
 }
@@ -279,7 +279,7 @@ async fn accept_transport_observed<L: Link>(
                 EstablishmentOutcome::Error,
                 started_at,
             );
-            Err(session_error_from_transport(error))
+            Err(connection_error_from_transport(error))
         }
     }
 }
@@ -319,7 +319,7 @@ async fn handshake_as_initiator_observed<Tx: LinkTx, Rx: LinkRx>(
                 EstablishmentOutcome::Error,
                 started_at,
             );
-            Err(session_error_from_handshake(error))
+            Err(connection_error_from_handshake(error))
         }
     }
 }
@@ -359,7 +359,7 @@ async fn handshake_as_acceptor_observed<Tx: LinkTx, Rx: LinkRx>(
                 EstablishmentOutcome::Error,
                 started_at,
             );
-            Err(session_error_from_handshake(error))
+            Err(connection_error_from_handshake(error))
         }
     }
 }
@@ -372,8 +372,8 @@ pub struct ConnectionInitiatorBuilder<C> {
 
 impl<C> ConnectionInitiatorBuilder<C> {
     fn new(conduit: C, handshake_result: HandshakeResult) -> Self {
-        let root_settings = handshake_result.our_settings.clone();
-        let config = ConnectionConfig::with_settings(root_settings);
+        let connection_settings = handshake_result.our_settings.clone();
+        let config = ConnectionConfig::with_settings(connection_settings);
         Self {
             conduit,
             handshake_result,
@@ -392,7 +392,7 @@ impl<C> ConnectionInitiatorBuilder<C> {
     }
 
     pub fn channel_capacity(mut self, channel_capacity: u32) -> Self {
-        self.config.root_settings.initial_channel_credit = channel_capacity;
+        self.config.connection_settings.initial_channel_credit = channel_capacity;
         self
     }
 
@@ -444,7 +444,7 @@ impl<C> ConnectionInitiatorBuilder<C> {
             handshake_result,
             config,
         } = self;
-        validate_negotiated_root_settings(&config.root_settings, &handshake_result)?;
+        validate_negotiated_connection_settings(&config.connection_settings, &handshake_result)?;
         let (tx, rx) = conduit.split();
         let (open_tx, open_rx) = mpsc::channel::<OpenRequest>("connection.open", 4);
         let (close_tx, close_rx) = mpsc::channel::<CloseRequest>("connection.close", 4);
@@ -460,13 +460,13 @@ impl<C> ConnectionInitiatorBuilder<C> {
             config.keepalive,
             config.observer.clone(),
         );
-        let root_lane = connection.establish_from_handshake(handshake_result)?;
-        let mut root_driver = crate::Driver::new(root_lane, ());
-        let control_caller = crate::Caller::new(root_driver.caller());
+        let control_lane = connection.establish_from_handshake(handshake_result)?;
+        let mut control_driver = crate::Driver::new(control_lane, ());
+        let control_caller = crate::Caller::new(control_driver.caller());
         #[cfg(not(target_arch = "wasm32"))]
-        tokio::spawn(async move { root_driver.run().await });
+        tokio::spawn(async move { control_driver.run().await });
         #[cfg(target_arch = "wasm32")]
-        wasm_bindgen_futures::spawn_local(async move { root_driver.run().await });
+        wasm_bindgen_futures::spawn_local(async move { control_driver.run().await });
 
         let connection_handle = ConnectionHandle {
             open_tx,
@@ -504,22 +504,22 @@ impl<S> ConnectionSourceInitiatorBuilder<S> {
     }
 
     pub fn parity(mut self, parity: Parity) -> Self {
-        self.config.root_settings.parity = parity;
+        self.config.connection_settings.parity = parity;
         self
     }
 
-    pub fn root_settings(mut self, settings: ConnectionSettings) -> Self {
-        self.config.root_settings = settings;
+    pub fn connection_settings(mut self, settings: ConnectionSettings) -> Self {
+        self.config.connection_settings = settings;
         self
     }
 
     pub fn max_concurrent_requests(mut self, max_concurrent_requests: u32) -> Self {
-        self.config.root_settings.max_concurrent_requests = max_concurrent_requests;
+        self.config.connection_settings.max_concurrent_requests = max_concurrent_requests;
         self
     }
 
     pub fn channel_capacity(mut self, channel_capacity: u32) -> Self {
-        self.config.root_settings.initial_channel_credit = channel_capacity;
+        self.config.connection_settings.initial_channel_credit = channel_capacity;
         self
     }
 
@@ -633,22 +633,22 @@ impl<L> ConnectionTransportInitiatorBuilder<L> {
     }
 
     pub fn parity(mut self, parity: Parity) -> Self {
-        self.config.root_settings.parity = parity;
+        self.config.connection_settings.parity = parity;
         self
     }
 
-    pub fn root_settings(mut self, settings: ConnectionSettings) -> Self {
-        self.config.root_settings = settings;
+    pub fn connection_settings(mut self, settings: ConnectionSettings) -> Self {
+        self.config.connection_settings = settings;
         self
     }
 
     pub fn max_concurrent_requests(mut self, max_concurrent_requests: u32) -> Self {
-        self.config.root_settings.max_concurrent_requests = max_concurrent_requests;
+        self.config.connection_settings.max_concurrent_requests = max_concurrent_requests;
         self
     }
 
     pub fn channel_capacity(mut self, channel_capacity: u32) -> Self {
-        self.config.root_settings.initial_channel_credit = channel_capacity;
+        self.config.connection_settings.initial_channel_credit = channel_capacity;
         self
     }
 
@@ -779,7 +779,7 @@ impl<L> ConnectionTransportInitiatorBuilder<L> {
         let handshake_result = handshake_as_initiator_observed(
             &link.tx,
             &mut link.rx,
-            config.root_settings.clone(),
+            config.connection_settings.clone(),
             metadata_into_owned(config.metadata.clone()),
             config.observer.as_ref(),
         )
@@ -816,8 +816,8 @@ pub struct ConnectionAcceptorBuilder<C> {
 
 impl<C> ConnectionAcceptorBuilder<C> {
     fn new(conduit: C, handshake_result: HandshakeResult) -> Self {
-        let root_settings = handshake_result.our_settings.clone();
-        let config = ConnectionConfig::with_settings(root_settings);
+        let connection_settings = handshake_result.our_settings.clone();
+        let config = ConnectionConfig::with_settings(connection_settings);
         Self {
             conduit,
             handshake_result,
@@ -836,7 +836,7 @@ impl<C> ConnectionAcceptorBuilder<C> {
     }
 
     pub fn channel_capacity(mut self, channel_capacity: u32) -> Self {
-        self.config.root_settings.initial_channel_credit = channel_capacity;
+        self.config.connection_settings.initial_channel_credit = channel_capacity;
         self
     }
 
@@ -885,7 +885,7 @@ impl<C> ConnectionAcceptorBuilder<C> {
             handshake_result,
             config,
         } = self;
-        validate_negotiated_root_settings(&config.root_settings, &handshake_result)?;
+        validate_negotiated_connection_settings(&config.connection_settings, &handshake_result)?;
         let (tx, rx) = conduit.split();
         let (open_tx, open_rx) = mpsc::channel::<OpenRequest>("connection.open", 4);
         let (close_tx, close_rx) = mpsc::channel::<CloseRequest>("connection.close", 4);
@@ -901,13 +901,13 @@ impl<C> ConnectionAcceptorBuilder<C> {
             config.keepalive,
             config.observer.clone(),
         );
-        let root_lane = connection.establish_from_handshake(handshake_result)?;
-        let mut root_driver = crate::Driver::new(root_lane, ());
-        let control_caller = crate::Caller::new(root_driver.caller());
+        let control_lane = connection.establish_from_handshake(handshake_result)?;
+        let mut control_driver = crate::Driver::new(control_lane, ());
+        let control_caller = crate::Caller::new(control_driver.caller());
         #[cfg(not(target_arch = "wasm32"))]
-        tokio::spawn(async move { root_driver.run().await });
+        tokio::spawn(async move { control_driver.run().await });
         #[cfg(target_arch = "wasm32")]
-        wasm_bindgen_futures::spawn_local(async move { root_driver.run().await });
+        wasm_bindgen_futures::spawn_local(async move { control_driver.run().await });
 
         let connection_handle = ConnectionHandle {
             open_tx,
@@ -949,18 +949,18 @@ impl<L: Link> ConnectionTransportAcceptorBuilder<L> {
         }
     }
 
-    pub fn root_settings(mut self, settings: ConnectionSettings) -> Self {
-        self.config.root_settings = settings;
+    pub fn connection_settings(mut self, settings: ConnectionSettings) -> Self {
+        self.config.connection_settings = settings;
         self
     }
 
     pub fn max_concurrent_requests(mut self, max_concurrent_requests: u32) -> Self {
-        self.config.root_settings.max_concurrent_requests = max_concurrent_requests;
+        self.config.connection_settings.max_concurrent_requests = max_concurrent_requests;
         self
     }
 
     pub fn channel_capacity(mut self, channel_capacity: u32) -> Self {
-        self.config.root_settings.initial_channel_credit = channel_capacity;
+        self.config.connection_settings.initial_channel_credit = channel_capacity;
         self
     }
 
@@ -1020,7 +1020,7 @@ impl<L: Link> ConnectionTransportAcceptorBuilder<L> {
         let handshake_result = handshake_as_acceptor_observed(
             &link.tx,
             &mut link.rx,
-            config.root_settings.clone(),
+            config.connection_settings.clone(),
             metadata_into_owned(config.metadata.clone()),
             config.observer.as_ref(),
         )
@@ -1061,11 +1061,11 @@ impl<L: Link> ConnectionTransportAcceptorBuilder<L> {
     }
 }
 
-fn validate_negotiated_root_settings(
-    expected_root_settings: &ConnectionSettings,
+fn validate_negotiated_connection_settings(
+    expected_connection_settings: &ConnectionSettings,
     handshake_result: &HandshakeResult,
 ) -> Result<(), ConnectionError> {
-    if expected_root_settings.initial_channel_credit == 0
+    if expected_connection_settings.initial_channel_credit == 0
         || handshake_result.peer_settings.initial_channel_credit == 0
     {
         return Err(ConnectionError::Protocol(
@@ -1073,15 +1073,15 @@ fn validate_negotiated_root_settings(
         ));
     }
 
-    if handshake_result.our_settings != *expected_root_settings {
+    if handshake_result.our_settings != *expected_connection_settings {
         return Err(ConnectionError::Protocol(
-            "negotiated root settings do not match builder settings".into(),
+            "negotiated connection settings do not match builder settings".into(),
         ));
     }
     Ok(())
 }
 
-fn session_error_from_handshake(error: crate::HandshakeError) -> ConnectionError {
+fn connection_error_from_handshake(error: crate::HandshakeError) -> ConnectionError {
     match error {
         crate::HandshakeError::Io(io) => ConnectionError::Io(io),
         crate::HandshakeError::PeerClosed => {
@@ -1091,7 +1091,7 @@ fn session_error_from_handshake(error: crate::HandshakeError) -> ConnectionError
     }
 }
 
-fn session_error_from_transport(error: crate::TransportPrologueError) -> ConnectionError {
+fn connection_error_from_transport(error: crate::TransportPrologueError) -> ConnectionError {
     match error {
         crate::TransportPrologueError::Io(io) => ConnectionError::Io(io),
         crate::TransportPrologueError::LinkDead => {
@@ -1128,9 +1128,9 @@ mod tests {
 
     // r[verify rpc.flow-control.max-concurrent-requests.default]
     #[test]
-    fn session_config_default_advertises_request_limit() {
+    fn connection_config_default_advertises_request_limit() {
         let config = ConnectionConfig::default();
-        assert_eq!(config.root_settings.max_concurrent_requests, 64);
+        assert_eq!(config.connection_settings.max_concurrent_requests, 64);
     }
 
     // r[verify rpc.observability.establishment]

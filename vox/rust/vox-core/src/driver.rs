@@ -931,7 +931,7 @@ impl DriverShared {
             (None, None) => None,
         };
         let (outbound_queue_depth, outbound_queue_capacity) =
-            sender.sess_core.outbound_queue_stats();
+            sender.connection_core.outbound_queue_stats();
         VoxDebugSnapshot {
             connections: vec![ConnectionDebugSnapshot {
                 connection_id: self.connection_id,
@@ -1629,7 +1629,7 @@ trait DriverChannelEndpoint {
             // declaring Call is enqueued — the Call must reach the wire before any
             // item on the channel it opens.
             self.endpoint_sender()
-                .sess_core
+                .connection_core
                 .register_channel_gate(channel_id);
         }
         let sink = make_tx_channel_sink(
@@ -1994,7 +1994,7 @@ impl DriverCaller {
         // r[depends schema.exchange.channels]
         // Generated clients attach their service descriptor to the caller so
         // channel element roots can be advertised before middleware observes
-        // the call. SessionCore::send() still decides whether this peer has
+        // the call. ConnectionCore::send() still decides whether this peer has
         // already seen the per-method binding.
         //
         // Channel binding happens during serialization via the thread-local
@@ -2018,8 +2018,8 @@ impl DriverCaller {
                     id: req_id,
                     body: RequestBody::Call(RequestCall {
                         method_id: call.method_id,
-                        // Populated by the session's outbound pre-encode when args
-                        // carry channels (r[rpc.request]).
+                        // Populated by outbound pre-encode when args carry
+                        // channels (r[rpc.request]).
                         channels: call.channels.clone(),
                         args: call.args.reborrow(),
                         metadata: call.metadata.clone(),
@@ -2453,7 +2453,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
     }
 
     // r[impl rpc.pipelining]
-    /// Main loop: receive messages from the session and dispatch them.
+    /// Main loop: receive connection messages and dispatch them.
     /// Handler calls run as spawned tasks — we don't block the driver
     /// loop waiting for a handler to finish.
     pub async fn run(&mut self) {

@@ -94,12 +94,12 @@ impl<'payload> Schematic for RequestResponse<'payload> {
 impl std::error::Error for SchemaExtractError {}
 
 // ============================================================================
-// SchemaSendTracker — outbound dedup, owned by SessionCore (no Arc, no Mutex)
+// SchemaSendTracker — outbound dedup, owned by ConnectionCore (no Arc, no Mutex)
 // ============================================================================
 
 /// Tracks which schema bindings have been sent on the current connection.
 ///
-/// Plain struct — owned by `SessionCore` behind the same Mutex as the
+/// Plain struct — owned by `ConnectionCore` behind the same Mutex as the
 /// conduit tx. Reset on reconnection.
 // r[impl schema.tracking.sent]
 // r[impl schema.tracking.bindings]

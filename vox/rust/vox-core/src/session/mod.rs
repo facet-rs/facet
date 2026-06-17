@@ -561,9 +561,9 @@ pub struct Connection {
     parity: Parity,
 
     /// Shared core (for sending) — also held by all ConnectionSenders.
-    sess_core: Arc<SessionCore>,
-    local_root_settings: ConnectionSettings,
-    peer_root_settings: Option<ConnectionSettings>,
+    connection_core: Arc<ConnectionCore>,
+    local_connection_settings: ConnectionSettings,
+    peer_connection_settings: Option<ConnectionSettings>,
 
     /// Service lane state (active, pending inbound, pending outbound).
     conns: BTreeMap<LaneId, ConnectionSlot>,
@@ -644,7 +644,7 @@ impl std::fmt::Debug for PendingOutboundData {
 #[derive(Clone)]
 pub(crate) struct ConnectionSender {
     lane_id: LaneId,
-    pub(crate) sess_core: Arc<SessionCore>,
+    pub(crate) connection_core: Arc<ConnectionCore>,
     failures: Arc<mpsc::UnboundedSender<(RequestId, FailureDisposition)>>,
 }
 
@@ -752,7 +752,7 @@ impl ConnectionSender {
             lane_id: self.lane_id,
             payload,
         };
-        self.sess_core
+        self.connection_core
             .send_with_options(
                 message,
                 binder,
@@ -774,7 +774,7 @@ impl ConnectionSender {
             .map(PendingSchemaSend::from)
             .into_iter()
             .collect();
-        self.sess_core
+        self.connection_core
             .send_with_options(
                 Message {
                     lane_id: self.lane_id,
@@ -804,7 +804,7 @@ impl ConnectionSender {
             .map(PendingSchemaSend::from)
             .into_iter()
             .collect();
-        self.sess_core.try_send_with_options(
+        self.connection_core.try_send_with_options(
             Message {
                 lane_id: self.lane_id,
                 payload: MessagePayload::ChannelMessage(channel),
@@ -839,7 +839,7 @@ impl ConnectionSender {
             }),
         };
 
-        self.sess_core
+        self.connection_core
             .send(
                 Message {
                     lane_id: self.lane_id,
@@ -887,8 +887,12 @@ impl ConnectionSender {
         method_id: vox_types::MethodId,
         response: &mut RequestResponse<'_>,
     ) {
-        self.sess_core
-            .prepare_response_for_method(self.lane_id, request_id, method_id, response);
+        self.connection_core.prepare_response_for_method(
+            self.lane_id,
+            request_id,
+            method_id,
+            response,
+        );
     }
 
     /// Attach the method's response schema for an explicit wire `shape`. Used when the
@@ -901,7 +905,7 @@ impl ConnectionSender {
         shape: &'static Shape,
         response: &mut RequestResponse<'_>,
     ) {
-        self.sess_core.prepare_response_for_shape(
+        self.connection_core.prepare_response_for_shape(
             self.lane_id,
             request_id,
             method_id,
@@ -988,7 +992,7 @@ impl LaneHandle {
     // r[impl rpc.debug.snapshot]
     pub fn debug_snapshot(&self) -> VoxDebugSnapshot {
         let (outbound_queue_depth, outbound_queue_capacity) =
-            self.sender.sess_core.outbound_queue_stats();
+            self.sender.connection_core.outbound_queue_stats();
         VoxDebugSnapshot {
             connections: vec![ConnectionDebugSnapshot {
                 connection_id: self.connection_id(),
@@ -1214,8 +1218,8 @@ impl Connection {
         Rx: ConduitRx<Msg = MessageFamily> + MaybeSend + 'static,
     {
         let (outbound_tx, outbound_rx) = tokio_mpsc::channel(256);
-        let sess_core = Arc::new(SessionCore {
-            inner: std::sync::Mutex::new(SessionCoreInner {
+        let connection_core = Arc::new(ConnectionCore {
+            inner: std::sync::Mutex::new(ConnectionCoreInner {
                 tx: Arc::new(tx) as Arc<dyn DynConduitTx>,
                 conns: HashMap::new(),
             }),
@@ -1228,13 +1232,13 @@ impl Connection {
             rx: Box::new(rx),
             role: ConnectionRole::Initiator, // overwritten in establish_as_*
             parity: Parity::Odd,             // overwritten in establish_as_*
-            sess_core,
-            local_root_settings: ConnectionSettings {
+            connection_core,
+            local_connection_settings: ConnectionSettings {
                 parity: Parity::Odd,
                 max_concurrent_requests: 64,
                 initial_channel_credit: 16,
             },
-            peer_root_settings: None,
+            peer_connection_settings: None,
             conns: BTreeMap::new(),
             conn_ids: IdAllocator::new(Parity::Odd), // overwritten in establish_as_*
             lane_acceptor,
@@ -1255,13 +1259,13 @@ impl Connection {
         self.role = result.role;
         self.parity = result.our_settings.parity;
         self.conn_ids = IdAllocator::new(result.our_settings.parity);
-        self.local_root_settings = result.our_settings.clone();
-        self.peer_root_settings = Some(result.peer_settings.clone());
+        self.local_connection_settings = result.our_settings.clone();
+        self.peer_connection_settings = Some(result.peer_settings.clone());
 
-        Ok(self.make_root_handle(result.our_settings, result.peer_settings))
+        Ok(self.make_control_lane_handle(result.our_settings, result.peer_settings))
     }
 
-    fn make_root_handle(
+    fn make_control_lane_handle(
         &mut self,
         local_settings: ConnectionSettings,
         peer_settings: ConnectionSettings,
@@ -1281,7 +1285,7 @@ impl Connection {
         let (closed_tx, closed_rx) = watch::channel(None);
         let sender = ConnectionSender {
             lane_id: conn_id,
-            sess_core: Arc::clone(&self.sess_core),
+            connection_core: Arc::clone(&self.connection_core),
             failures: Arc::new(failures_tx),
         };
 
@@ -1406,7 +1410,7 @@ impl Connection {
             MessagePayload::Ping(ping) => {
                 // r[impl connection.keepalive]
                 let _ = self
-                    .sess_core
+                    .connection_core
                     .send(
                         Message {
                             lane_id: conn_id,
@@ -1529,7 +1533,7 @@ impl Connection {
                             }
                             RequestBody::Response(_) => {
                                 let Some(method_id) =
-                                    self.sess_core.take_outgoing_call_method(conn_id, r_ref.id)
+                                    self.connection_core.take_outgoing_call_method(conn_id, r_ref.id)
                                 else {
                                     self.close_connection_for_protocol_error(
                                         conn_id,
@@ -1557,12 +1561,12 @@ impl Connection {
                     }
                 }
                 if matches!(&r_ref.body, RequestBody::Response(_)) && !response_had_schema_payload {
-                    let _ = self.sess_core.take_outgoing_call_method(conn_id, r_ref.id);
+                    let _ = self.connection_core.take_outgoing_call_method(conn_id, r_ref.id);
                 }
-                // Record incoming calls so SessionCore::send() can look up
+                // Record incoming calls so ConnectionCore::send() can look up
                 // the method_id when sending the response.
                 if let RequestBody::Call(call) = &r_ref.body {
-                    self.sess_core.record_incoming_call(conn_id, r_ref.id, call.method_id);
+                    self.connection_core.record_incoming_call(conn_id, r_ref.id, call.method_id);
                 }
                 let state = match self.conns.get(&conn_id) {
                     Some(ConnectionSlot::Active(state)) => state,
@@ -1672,7 +1676,7 @@ impl Connection {
 
         let nonce = runtime.next_ping_nonce;
         if self
-            .sess_core
+            .connection_core
             .send(
                 Message {
                     lane_id: LaneId::ROOT,
@@ -1697,11 +1701,11 @@ impl Connection {
 
     // r[impl lane.open.result]
     async fn send_lane_reject(
-        sess_core: Arc<SessionCore>,
+        connection_core: Arc<ConnectionCore>,
         conn_id: LaneId,
         rejection: LaneRejection,
     ) {
-        let _ = sess_core
+        let _ = connection_core
             .send(
                 Message {
                     lane_id: conn_id,
@@ -1730,7 +1734,7 @@ impl Connection {
         let peer_parity = self.parity.other();
         if !conn_id.has_parity(peer_parity) {
             Self::send_lane_reject(
-                Arc::clone(&self.sess_core),
+                Arc::clone(&self.connection_core),
                 conn_id,
                 LaneRejection::with_message(
                     LaneRejectReason::PolicyRejected,
@@ -1752,7 +1756,7 @@ impl Connection {
         // Validate: connection ID must not already be in use.
         if self.conns.contains_key(&conn_id) {
             Self::send_lane_reject(
-                Arc::clone(&self.sess_core),
+                Arc::clone(&self.connection_core),
                 conn_id,
                 LaneRejection::with_message(
                     LaneRejectReason::PolicyRejected,
@@ -1775,7 +1779,7 @@ impl Connection {
         // Call the acceptor callback. If none is registered, reject.
         if self.lane_acceptor.is_none() {
             Self::send_lane_reject(
-                Arc::clone(&self.sess_core),
+                Arc::clone(&self.connection_core),
                 conn_id,
                 LaneRejection::with_message(
                     LaneRejectReason::NotReady,
@@ -1798,7 +1802,7 @@ impl Connection {
         let open = open.get();
         if open.connection_settings.initial_channel_credit == 0 {
             Self::send_lane_reject(
-                Arc::clone(&self.sess_core),
+                Arc::clone(&self.connection_core),
                 conn_id,
                 LaneRejection::with_message(
                     LaneRejectReason::PolicyRejected,
@@ -1838,7 +1842,7 @@ impl Connection {
                 trace!(%conn_id, %e, "rejecting service lane");
                 self.conns.remove(&conn_id);
                 Self::send_lane_reject(
-                    Arc::clone(&self.sess_core),
+                    Arc::clone(&self.connection_core),
                     conn_id,
                     LaneRejection::with_message(LaneRejectReason::UnknownService, e.to_string()),
                 )
@@ -1861,7 +1865,7 @@ impl Connection {
             Ok(()) => {
                 trace!(%conn_id, "acceptor accepted service lane, sending LaneAccept");
                 let _ = self
-                    .sess_core
+                    .connection_core
                     .send(
                         Message {
                             lane_id: conn_id,
@@ -1887,7 +1891,7 @@ impl Connection {
                 // Clean up the connection slot we created.
                 trace!(%conn_id, "acceptor rejected, removing conn slot");
                 self.conns.remove(&conn_id);
-                Self::send_lane_reject(Arc::clone(&self.sess_core), conn_id, rejection).await;
+                Self::send_lane_reject(Arc::clone(&self.connection_core), conn_id, rejection).await;
                 observe_establishment_finished(
                     self.observer.as_ref(),
                     self.role,
@@ -2001,7 +2005,7 @@ impl Connection {
 
         // Send LaneOpen to the peer.
         let send_result = self
-            .sess_core
+            .connection_core
             .send(
                 Message {
                     lane_id: conn_id,
@@ -2065,7 +2069,7 @@ impl Connection {
 
         // Send LaneClose to the peer.
         let send_result = self
-            .sess_core
+            .connection_core
             .send(
                 Message {
                     lane_id: req.conn_id,
@@ -2105,7 +2109,7 @@ impl Connection {
                     .is_some()
                 {
                     let _ = self
-                        .sess_core
+                        .connection_core
                         .send(
                             Message {
                                 lane_id: conn_id,
@@ -2127,7 +2131,7 @@ impl Connection {
             } => {
                 trace!(%conn_id, %description, "protocol close requested");
                 let _ = self
-                    .sess_core
+                    .connection_core
                     .send(
                         Message {
                             lane_id: LaneId::ROOT,
@@ -2207,8 +2211,8 @@ struct ChannelGate {
     notify: tokio::sync::Notify,
 }
 
-pub(crate) struct SessionCore {
-    inner: std::sync::Mutex<SessionCoreInner>,
+pub(crate) struct ConnectionCore {
+    inner: std::sync::Mutex<ConnectionCoreInner>,
     outbound_tx: tokio_mpsc::Sender<OutboundBatch>,
     observer: Option<VoxObserverHandle>,
     /// Open gates for channels the local side opened but whose declaring Call has not
@@ -2397,7 +2401,7 @@ impl SendConnState {
     }
 }
 
-struct SessionCoreInner {
+struct ConnectionCoreInner {
     /// Underlying conduit (tx end)
     tx: Arc<dyn DynConduitTx>,
 
@@ -2406,7 +2410,7 @@ struct SessionCoreInner {
 }
 
 fn get_or_create_send_conn_state(
-    inner: &mut SessionCoreInner,
+    inner: &mut ConnectionCoreInner,
     conn_id: LaneId,
 ) -> Arc<std::sync::Mutex<SendConnState>> {
     inner
@@ -2429,7 +2433,7 @@ fn gated_channel_id(msg: &Message<'_>) -> Option<vox_types::ChannelId> {
     }
 }
 
-impl SessionCore {
+impl ConnectionCore {
     pub(crate) fn outbound_queue_stats(&self) -> (usize, usize) {
         let capacity = self.outbound_tx.max_capacity();
         let available = self.outbound_tx.capacity();
@@ -3578,7 +3582,7 @@ mod tests {
         let request_id = RequestId(11);
         handle
             .sender
-            .sess_core
+            .connection_core
             .record_incoming_call(LaneId::ROOT, request_id, method_id);
 
         let first_response: Result<u32, vox_types::VoxError<core::convert::Infallible>> = Ok(99);
@@ -3634,10 +3638,11 @@ mod tests {
         }
 
         let second_request_id = RequestId(13);
-        handle
-            .sender
-            .sess_core
-            .record_incoming_call(LaneId::ROOT, second_request_id, method_id);
+        handle.sender.connection_core.record_incoming_call(
+            LaneId::ROOT,
+            second_request_id,
+            method_id,
+        );
         let second_response: Result<u32, vox_types::VoxError<core::convert::Infallible>> = Ok(100);
         handle
             .sender
