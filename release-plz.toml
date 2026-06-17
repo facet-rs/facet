@@ -109,6 +109,11 @@ name = "facet-testhelpers-macros"
 version_group = "facet"
 changelog_path = "CHANGELOG.md"
 
+[[package]]
+name = "rediff"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
 # ============================================================================
 # Strid packages - coordinated from this monorepo, preserving their major line
 # ============================================================================
