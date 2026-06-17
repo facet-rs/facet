@@ -4,7 +4,9 @@ export type ObserverMetricLabelKey =
   | "side"
   | "outcome"
   | "error_kind"
-  | "channel_direction";
+  | "channel_direction"
+  | "rejection_reason"
+  | "identity_form";
 
 export type ObserverMetricLabelInput = Partial<Record<ObserverMetricLabelKey, string>>;
 
@@ -58,6 +60,8 @@ const OBSERVER_METRIC_LABEL_KEYS: ObserverMetricLabelKey[] = [
   "outcome",
   "error_kind",
   "channel_direction",
+  "rejection_reason",
+  "identity_form",
 ];
 
 // r[impl rpc.observability.low-cardinality]

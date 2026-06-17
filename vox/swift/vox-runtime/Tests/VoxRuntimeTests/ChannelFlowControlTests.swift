@@ -110,6 +110,8 @@ struct ChannelFlowControlTests {
             "outcome": "ok",
             "error_kind": "",
             "channel_direction": "tx",
+            "rejection_reason": "forbidden",
+            "identity_form": "application-user",
             "request_id": "123",
             "lane_id": "1",
             "channel_id": "7",
@@ -122,6 +124,8 @@ struct ChannelFlowControlTests {
             "side": "client",
             "outcome": "ok",
             "channel_direction": "tx",
+            "rejection_reason": "forbidden",
+            "identity_form": "application-user",
         ])
     }
 

@@ -286,6 +286,8 @@ public func voxObserverMetricLabels(_ input: [String: String]) -> [String: Strin
         "outcome",
         "error_kind",
         "channel_direction",
+        "rejection_reason",
+        "identity_form",
     ])
     return input.filter { key, value in
         allowed.contains(key) && !value.isEmpty

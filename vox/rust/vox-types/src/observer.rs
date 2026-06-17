@@ -371,6 +371,8 @@ pub struct ObserverMetricLabels {
     pub outcome: Option<&'static str>,
     pub error_kind: Option<&'static str>,
     pub channel_direction: Option<ChannelDirection>,
+    pub rejection_reason: Option<&'static str>,
+    pub identity_form: Option<&'static str>,
     pub establishment_phase: Option<&'static str>,
 }
 
@@ -384,6 +386,8 @@ impl ObserverMetricLabels {
             outcome: None,
             error_kind: None,
             channel_direction: None,
+            rejection_reason: None,
+            identity_form: None,
             establishment_phase: None,
         }
     }
@@ -1139,6 +1143,8 @@ mod tests {
             Some("service-lane-open")
         );
         assert_eq!(finished_labels.outcome, Some("rejected"));
+        assert_eq!(finished_labels.rejection_reason, None);
+        assert_eq!(finished_labels.identity_form, None);
         assert!(
             format!("{finished:?}").contains("LaneId(99)"),
             "establishment events should retain local IDs for logs/debug"

@@ -16,6 +16,8 @@ describe("observerMetricLabels", () => {
       outcome: "ok",
       error_kind: "",
       channel_direction: "tx",
+      rejection_reason: "forbidden",
+      identity_form: "application-user",
       connection_id: "13",
       request_id: "21",
       channel_id: "34",
@@ -29,6 +31,8 @@ describe("observerMetricLabels", () => {
       side: "client",
       outcome: "ok",
       channel_direction: "tx",
+      rejection_reason: "forbidden",
+      identity_form: "application-user",
     });
     expect(Object.keys(labels)).not.toContain("connection_id");
     expect(Object.keys(labels)).not.toContain("request_id");
