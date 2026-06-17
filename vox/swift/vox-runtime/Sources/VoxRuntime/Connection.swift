@@ -1,7 +1,7 @@
 import Foundation
 import PhonSchema
 
-// r[impl session]
+// r[impl connection.protocol]
 // r[impl connection.model]
 // r[impl connection.lifecycle.driven]
 public final class Connection: @unchecked Sendable {
@@ -81,7 +81,7 @@ public final class Connection: @unchecked Sendable {
         keepalive: ConnectionKeepaliveConfig? = nil,
         metadata: Metadata = .null
     ) async throws -> Connection {
-        // r[impl rpc.session-setup]
+        // r[impl rpc.connection-setup]
         let attachment = try await connector.openAttachment()
         let (controlLane, driver, handle, peerMetadata) =
             try await establishInitiator(
@@ -122,7 +122,7 @@ public final class Connection: @unchecked Sendable {
         keepalive: ConnectionKeepaliveConfig? = nil,
         metadata: Metadata = .null
     ) async throws -> Connection {
-        // r[impl rpc.session-setup]
+        // r[impl rpc.connection-setup]
         let attachment = try await connector.openAttachment()
         return try await accept(
             attachment,
@@ -155,7 +155,7 @@ public final class Connection: @unchecked Sendable {
         keepalive: ConnectionKeepaliveConfig? = nil,
         metadata: Metadata = .null
     ) async throws -> Connection {
-        // r[impl rpc.session-setup]
+        // r[impl rpc.connection-setup]
         let (controlLane, driver, handle, peerMetadata) =
             try await establishInitiator(
                 attachment: .fresh(link),
@@ -195,7 +195,7 @@ public final class Connection: @unchecked Sendable {
         keepalive: ConnectionKeepaliveConfig? = nil,
         metadata: Metadata = .null
     ) async throws -> Connection {
-        // r[impl rpc.session-setup]
+        // r[impl rpc.connection-setup]
         let (controlLane, driver, handle, peerMetadata) =
             try await establishAcceptor(
                 attachment: attachment,

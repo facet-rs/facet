@@ -50,8 +50,8 @@ fn default_spawn_fn() -> SpawnFn {
     })
 }
 
-// r[impl rpc.session-setup]
-// r[impl session.role]
+// r[impl rpc.connection-setup]
+// r[impl connection.role]
 pub fn initiator_conduit<I: IntoConduit>(
     into_conduit: I,
     handshake_result: HandshakeResult,

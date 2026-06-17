@@ -2589,7 +2589,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
         for (_, in_flight) in std::mem::take(&mut self.in_flight_handlers) {
             in_flight.abort.abort();
         }
-        // r[impl rpc.flow-control.max-concurrent-requests.session-failure]
+        // r[impl rpc.flow-control.max-concurrent-requests.connection-failure]
         self.shared.outbound_request_limit.close();
         self.shared.pending_responses.lock().clear();
         self.shared.request_scopes.lock().clear();

@@ -437,8 +437,8 @@ extension Driver {
         metadata: Metadata,
         responseTx: @Sendable (Result<Void, ConnectionError>) -> Void
     ) async {
-        // r[impl connection.close]
-        // r[impl connection.close.semantics]
+        // r[impl lane.close]
+        // r[impl lane.close.semantics]
         let isClosed = await state.isConnectionClosed()
         guard !isClosed else {
             responseTx(.failure(.connectionClosed))
@@ -446,7 +446,7 @@ extension Driver {
         }
 
         if connectionId == 0 {
-            // r[impl connection.root]
+            // r[impl lane.control.compat]
             // r[impl lane.control]
             responseTx(.failure(.protocolViolation(rule: "connection.close")))
             return

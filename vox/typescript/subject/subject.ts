@@ -5021,7 +5021,7 @@ async function runServer() {
     throw new Error("PEER_ADDR env var not set");
   }
 
-  // r[impl rpc.virtual-connection.accept] - Check if we should accept incoming service lanes.
+  // r[impl lane.accept.api] - Check if we should accept incoming service lanes.
   const acceptLanes = process.env.ACCEPT_CONNECTIONS !== "0";
 
   console.error(`server mode: connecting to ${addr}, acceptLanes=${acceptLanes}`);

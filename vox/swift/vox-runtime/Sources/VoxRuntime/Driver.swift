@@ -5,7 +5,7 @@ import Foundation
 /// Bidirectional connection driver.
 ///
 /// r[impl rpc.pipelining] - Handle requests as they arrive, each independently.
-/// r[impl rpc.request] - connection_id field provides multiplexing.
+/// r[impl rpc.request] - compatibility lane-id field provides multiplexing.
 ///
 /// Uses AsyncStream to multiplex between:
 /// - Incoming messages from transport

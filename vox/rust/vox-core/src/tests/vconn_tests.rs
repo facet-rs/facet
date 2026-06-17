@@ -83,17 +83,17 @@ impl VoxObserver for RecordingDriverObserver {
     }
 }
 
-// r[verify rpc.virtual-connection.open]
-// r[verify rpc.virtual-connection.accept]
-// r[verify connection.open]
-// r[verify connection.virtual]
+// r[verify lane.open.api]
+// r[verify lane.accept.api]
+// r[verify lane.open.wire]
+// r[verify lane.service.compat]
 // r[verify lane]
 // r[verify lane.control]
 // r[verify lane.open]
 // r[verify lane.wire.compat]
-// r[verify session.connection-settings.open]
-// r[verify session.message]
-// r[verify session.message.connection-id]
+// r[verify lane.open.settings]
+// r[verify connection.message]
+// r[verify connection.message.lane-id]
 #[tokio::test]
 async fn open_virtual_connection_and_call() {
     let _ = tracing_subscriber::fmt::try_init();
@@ -225,7 +225,7 @@ async fn root_and_virtual_connections_bind_separate_services() {
     assert_eq!(call_u32(&root_caller_guard.caller, 3).await, 10);
 }
 
-// r[verify connection.open.rejection]
+// r[verify lane.open.wire.rejection]
 // r[verify lane.open]
 // r[verify lane.open.result]
 // r[verify lane.wire.compat]
@@ -282,7 +282,7 @@ async fn reject_virtual_connection() {
     );
 }
 
-// r[verify connection.open.rejection]
+// r[verify lane.open.wire.rejection]
 // r[verify lane.open]
 // r[verify lane.open.result]
 // r[verify lane.wire.compat]
@@ -325,7 +325,7 @@ async fn open_virtual_connection_without_acceptor_is_rejected() {
     assert_eq!(rejection.reason(), LaneRejectReason::NotReady);
 }
 
-// r[verify connection.close]
+// r[verify lane.close]
 // r[verify lane.wire.compat]
 #[tokio::test]
 async fn close_unknown_virtual_connection_is_rejected() {
@@ -358,8 +358,8 @@ async fn close_unknown_virtual_connection_is_rejected() {
     );
 }
 
-// r[verify connection.close]
-// r[verify connection.close.semantics]
+// r[verify lane.close]
+// r[verify lane.close.semantics]
 // r[verify lane.wire.compat]
 #[tokio::test]
 async fn close_virtual_connection() {
@@ -526,7 +526,7 @@ async fn dropping_last_virtual_caller_does_not_close_virtual_connection() {
     );
 }
 
-// r[verify connection.close.semantics]
+// r[verify lane.close.semantics]
 // r[verify rpc.channel.close]
 // r[verify lane.wire.compat]
 #[tokio::test]

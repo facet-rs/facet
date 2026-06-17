@@ -92,10 +92,9 @@ weight = 12
 
 > r[rpc.caller.liveness.root-internal-close]
 >
-> There is no public root caller in the rootless model. Dropping public handles
-> MUST NOT internally close ID 0. ID 0 is connection-control traffic and is
-> closed only by explicit connection shutdown, connection drain completion,
-> protocol error, or connection failure.
+> Dropping public handles MUST NOT internally close ID 0. ID 0 is private
+> connection-control traffic and is closed only by explicit connection shutdown,
+> connection drain completion, protocol error, or connection failure.
 
 > r[rpc.caller.liveness.root-teardown-condition]
 >
@@ -103,21 +102,21 @@ weight = 12
 > drain policy, protocol error, or underlying transport/link failure. It MUST NOT
 > be driven by generated caller liveness.
 
-> r[rpc.session-setup]
+> r[rpc.connection-setup]
 >
 > When establishing a Vox connection, the runtime MUST make the connection
 > driver explicit enough that user code can keep it running and observe its
 > terminal outcome. Service handlers and generated clients attach to service
-> lanes, not to a public root caller on ID 0.
+> lanes.
 
-> r[rpc.virtual-connection.accept]
+> r[lane.accept.api]
 >
 > When a counterpart requests a service lane, the accepting peer receives the
 > lane metadata, decides whether to accept it, and receives a lane handle in its
 > acceptance callback. A generated client for that lane is created from that
 > lane's caller context.
 
-> r[rpc.virtual-connection.open]
+> r[lane.open.api]
 >
 > A peer may open a service lane on an existing Vox connection, receiving a lane
 > handle when the counterpart accepts it. Historical compatibility APIs spelled
@@ -429,7 +428,7 @@ weight = 12
 > after an earlier request attempt failed consumes its own unit of request
 > concurrency while the later request attempt is live.
 
-> r[rpc.flow-control.max-concurrent-requests.session-failure]
+> r[rpc.flow-control.max-concurrent-requests.connection-failure]
 >
 > Request-attempt accounting is lane-local. When the conduit, link, or Vox
 > connection fails, in-flight request attempts on every lane of that connection
@@ -441,9 +440,9 @@ weight = 12
 > r[rpc.flow-control.max-concurrent-requests.default]
 >
 > The default limit is carried in `ConnectionSettings`, which is embedded
-> in `Hello` (for connection defaults and compatibility control/root lane
-> settings) and `OpenConnection` (for service lanes). See
-> `r[session.connection-settings]`.
+> in `Hello` (for connection defaults and control lane ID 0 settings) and
+> `OpenConnection` (for service lanes). See
+> `r[lane.settings]`.
 
 ## Channel credit
 
@@ -568,7 +567,7 @@ weight = 12
 > and protocol violations. Lane IDs, connection IDs, and request IDs are
 > suitable for local debugging but MUST NOT be used as default metric labels.
 
-> r[rpc.observability.session-errors]
+> r[rpc.observability.connection-errors]
 >
 > Connection receive errors from the conduit or transport MUST be surfaced as
 > runtime diagnostics and connection close reasons. Implementations MUST NOT

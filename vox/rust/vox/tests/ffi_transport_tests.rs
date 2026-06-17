@@ -56,8 +56,8 @@ async fn open_pong(session: &ConnectionHandle) -> PongClient {
         .expect("open Pong virtual connection")
 }
 
-// r[verify rpc.session-setup]
-// r[verify rpc.virtual-connection.accept]
+// r[verify rpc.connection-setup]
+// r[verify lane.accept.api]
 // r[verify rpc.request]
 // r[verify rpc.response]
 #[tokio::test]
@@ -91,8 +91,8 @@ async fn ffi_transport_supports_bidirectional_calls_with_two_services_when_a_ini
     drop(root);
 }
 
-// r[verify rpc.session-setup]
-// r[verify rpc.virtual-connection.accept]
+// r[verify rpc.connection-setup]
+// r[verify lane.accept.api]
 // r[verify rpc.request]
 // r[verify rpc.response]
 #[tokio::test]

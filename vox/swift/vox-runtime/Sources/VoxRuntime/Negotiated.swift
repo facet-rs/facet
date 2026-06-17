@@ -2,7 +2,7 @@ import Foundation
 
 /// Parameters negotiated during handshake.
 ///
-/// r[impl session.handshake] - Effective limit is min of both peers.
+/// r[impl connection.handshake] - Effective limit is min of both peers.
 /// r[impl rpc.flow-control.credit.initial] - Negotiated during handshake.
 public struct Negotiated: Sendable {
     public let maxPayloadSize: UInt32

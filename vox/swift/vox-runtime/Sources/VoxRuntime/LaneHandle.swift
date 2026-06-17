@@ -89,7 +89,7 @@ final class LaneHandle: @unchecked Sendable {
         await requestSemaphore?.close()
     }
 
-    // The session has been started fresh on a new conduit. Reset request IDs so
+    // The connection has been started fresh on a new conduit. Reset request IDs so
     // future calls use the new connection's identifier space.
     func onConduitReset() {
         self.requestIdAllocator = RequestIdAllocator(role: role)

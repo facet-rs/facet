@@ -15,7 +15,7 @@ extension Driver {
     }
 
     /// Spawn a reader task that reads from the conduit and yields events.
-    /// r[impl rpc.observability.session-errors]
+    /// r[impl rpc.observability.connection-errors]
     private func spawnReaderTask(
         for conduit: any Conduit,
         continuation: AsyncStream<DriverEvent>.Continuation
@@ -51,7 +51,7 @@ extension Driver {
     /// r[impl rpc.pipelining]
     /// r[impl rpc.observability.runtime]
     /// r[impl rpc.observability.driver]
-    /// r[impl rpc.observability.session-errors]
+    /// r[impl rpc.observability.connection-errors]
     public func run() async throws {
         var keepaliveRuntime = makeKeepaliveRuntime()
         traceLog(.driver, "run start")

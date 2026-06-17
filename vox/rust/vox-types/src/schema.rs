@@ -312,7 +312,7 @@ impl std::fmt::Debug for SchemaSendTracker {
 /// Tracks schemas received from the remote peer on the current connection.
 ///
 /// Uses interior mutability (Mutex) so it can be shared via `Arc` between the
-/// session recv loop and in-flight handler tasks. Created fresh on each
+/// connection recv loop and in-flight handler tasks. Created fresh on each
 /// connection — NOT reused across reconnections.
 // r[impl schema.tracking.received]
 // r[impl schema.tracking.bindings]

@@ -6,7 +6,7 @@ actor RequestIdAllocator {
     }
 
     // r[impl rpc.request.id-allocation]
-    // r[impl connection.parity]
+    // r[impl lane.request-channel-parity]
     func allocate() -> UInt64 {
         let id = nextId
         nextId += 2

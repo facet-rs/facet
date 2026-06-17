@@ -199,7 +199,7 @@ export class Driver {
     // r[impl rpc.handler]
     // r[impl lane.service]
     // r[impl rpc.pipelining]
-    // r[impl rpc.session-setup]
+    // r[impl rpc.connection-setup]
     let pendingIncoming: Promise<IncomingCall | null> | null = null;
     let pendingCancel: Promise<bigint | null> | null = null;
 

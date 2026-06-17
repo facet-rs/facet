@@ -17,7 +17,7 @@ High-level Rust API for defining, implementing, and consuming Vox services.
 
 ## Fits with
 
-- `vox-core` for session/driver/runtime internals
+- `vox-core` for connection/driver/runtime internals
 - `vox-types` for protocol data model
 - `vox-service-macros` for code generation from service traits
 

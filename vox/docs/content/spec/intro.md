@@ -97,8 +97,7 @@ The layers have distinct failure boundaries:
 - A **Conduit** is a `BareConduit` bound to one link. It does not hide link
   failure, reconnect, replay, or preserve in-flight request attempts.
 - A **Connection** runs above one `BareConduit` and ends when that conduit
-  fails. The historical implementation term for this protocol envelope is
-  "session".
+  fails.
 - A **Lane** is a service-local request/channel namespace inside one
   connection.
 

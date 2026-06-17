@@ -235,7 +235,7 @@ Each peer maintains, per lane:
 Schema exchange operates at two levels:
 
 1. **Protocol level (per-connection):** The `Message` envelope schema is
-   exchanged during the connection handshake (see `r[session.handshake]`). This
+   exchanged during the connection handshake (see `r[connection.handshake]`). This
    lets the protocol framing itself evolve without breaking changes.
 
 2. **Application level (per-lane):** Method argument and response schemas
@@ -331,7 +331,7 @@ for the entire service interface up front.
 
 # Method identity without signatures
 
-Schema exchange is mandatory (see `r[session.handshake]`). Since peers always
+Schema exchange is mandatory (see `r[connection.handshake]`). Since peers always
 have each other's protocol and application type metadata before decoding data,
 method identity no longer needs
 to encode the full type signature. Two versions of a service may have

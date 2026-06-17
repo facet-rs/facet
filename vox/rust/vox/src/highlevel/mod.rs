@@ -80,7 +80,7 @@ type BoxHighLevelFuture<T> = Pin<Box<dyn Future<Output = T>>>;
 /// # Ok(())
 /// # }
 /// ```
-// r[impl rpc.session-setup]
+// r[impl rpc.connection-setup]
 pub fn connect(addr: impl std::fmt::Display) -> ConnectBuilder {
     ConnectBuilder::new(addr.to_string())
 }
@@ -152,7 +152,7 @@ impl ConnectBuilder {
         }
     }
 
-    // r[impl rpc.virtual-connection.accept]
+    // r[impl lane.accept.api]
     // r[impl lane.open]
     pub fn on_connection(mut self, acceptor: impl LaneAcceptor) -> Self {
         self.on_connection = Some(Arc::new(acceptor));

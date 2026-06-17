@@ -87,7 +87,7 @@ pub trait ConduitRx {
     /// Take the file descriptors that arrived with the frame returned by the
     /// most recent [`recv`](Self::recv).
     ///
-    /// The session threads these alongside the message (the same rail as the
+    /// The connection runtime threads these alongside the message (the same rail as the
     /// schema tracker) to the typed-payload decode site, where they are
     /// installed as the [`provide_fds`](crate::provide_fds) source. The
     /// default is none; off-Unix [`FrameFds`](crate::FrameFds) is `()`.
@@ -103,7 +103,7 @@ pub trait ConduitAcceptor {
     async fn accept(&mut self) -> std::io::Result<Self::Conduit>;
 }
 
-/// Whether the session is acting as initiator or acceptor.
+/// Whether the connection is acting as initiator or acceptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionRole {
     Initiator,

@@ -5,7 +5,7 @@ import { type ChannelId, Role } from "./types.ts";
 /**
  * Allocates unique channel IDs with correct parity.
  *
- * r[impl connection.parity]
+ * r[impl lane.request-channel-parity]
  * r[impl rpc.channel.allocation]
  */
 export class ChannelIdAllocator {

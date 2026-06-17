@@ -34,7 +34,7 @@ export function serverLoggingMiddleware(
 ): ServerMiddleware {
   // r[impl rpc.observability.runtime]
   // r[impl rpc.observability.driver]
-  // r[impl rpc.observability.session-errors]
+  // r[impl rpc.observability.connection-errors]
   const logger = options.logger ?? console;
   const logMetadata = options.logMetadata ?? false;
 

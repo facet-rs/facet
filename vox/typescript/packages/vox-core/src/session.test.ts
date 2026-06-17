@@ -305,17 +305,17 @@ const ECHO_METHOD: MethodDescriptor = {
 };
 
 describe("session", () => {
-  // r[verify session]
-  // r[verify session.handshake]
-  // r[verify session.handshake.phon]
-  // r[verify session.handshake.protocol-schema]
-  // r[verify session.handshake.protocol-schema.session-scoped]
-  // r[verify session.handshake.unversioned]
-  // r[verify session.connection-settings]
-  // r[verify session.connection-settings.hello]
-  // r[verify session.peer]
-  // r[verify session.role]
-  // r[verify session.symmetry]
+  // r[verify connection.protocol]
+  // r[verify connection.handshake]
+  // r[verify connection.handshake.phon]
+  // r[verify connection.handshake.protocol-schema]
+  // r[verify connection.handshake.protocol-schema.connection-scoped]
+  // r[verify connection.handshake.unversioned]
+  // r[verify lane.settings]
+  // r[verify connection.handshake.lane-settings]
+  // r[verify connection.peer]
+  // r[verify connection.role]
+  // r[verify connection.symmetry]
   it("exchanges phon handshake schemas, settings, roles, and metadata", async () => {
     const [clientLink, serverLink] = memoryLinkPair();
     const clientSettings: ConnectionSettings = {
@@ -358,8 +358,8 @@ describe("session", () => {
     serverLink.close();
   });
 
-  // r[verify session.handshake.sorry]
-  // r[verify session.handshake.protocol-schema]
+  // r[verify connection.handshake.sorry]
+  // r[verify connection.handshake.protocol-schema]
   it("acceptor sends Sorry when peer Message schema is invalid", async () => {
     const [clientLink, serverLink] = memoryLinkPair();
     const serverSettings: ConnectionSettings = {
@@ -401,8 +401,8 @@ describe("session", () => {
     serverLink.close();
   });
 
-  // r[verify session.handshake.sorry]
-  // r[verify session.handshake.protocol-schema]
+  // r[verify connection.handshake.sorry]
+  // r[verify connection.handshake.protocol-schema]
   it("initiator sends Sorry when peer Message schema is invalid", async () => {
     const [clientLink, serverLink] = memoryLinkPair();
     const clientSettings: ConnectionSettings = {
@@ -518,10 +518,10 @@ describe("session", () => {
     await Promise.allSettled([clientSession.closed(), serverSession.closed()]);
   });
 
-  // r[verify session.parity]
-  // r[verify connection.virtual]
-  // r[verify connection.open]
-  // r[verify rpc.virtual-connection.open]
+  // r[verify connection.lane-id-parity]
+  // r[verify lane.service.compat]
+  // r[verify lane.open.wire]
+  // r[verify lane.open.api]
   it("allocates service lane ids from local session parity", async () => {
     const requestedSettings: ConnectionSettings = {
       parity: { tag: "Odd" },
@@ -591,16 +591,16 @@ describe("session", () => {
     await Promise.allSettled([acceptorSession.closed()]);
   });
 
-  // r[verify connection.virtual]
-  // r[verify rpc.virtual-connection.accept]
+  // r[verify lane.service.compat]
+  // r[verify lane.accept.api]
   // r[verify lane]
   // r[verify lane.open]
   // r[verify lane.wire.compat]
-  // r[verify session.symmetry]
-  // r[verify session.connection-settings.open]
-  // r[verify session.message]
-  // r[verify session.message.connection-id]
-  // r[verify session.message.payloads]
+  // r[verify connection.symmetry]
+  // r[verify lane.open.settings]
+  // r[verify connection.message]
+  // r[verify connection.message.lane-id]
+  // r[verify connection.message.payloads]
   // r[verify rpc.request]
   // r[verify rpc.response]
   it("accepts inbound service lanes and routes calls on them", async () => {
@@ -668,7 +668,7 @@ describe("session", () => {
     await Promise.allSettled([initiatorSession.closed()]);
   });
 
-  // r[verify connection.open.rejection]
+  // r[verify lane.open.wire.rejection]
   // r[verify lane.open.result]
   it("rejects inbound service lanes when no acceptor is configured", async () => {
     const peerSettings: ConnectionSettings = {
@@ -818,7 +818,7 @@ describe("session", () => {
   // r[verify rpc.flow-control.credit.initial]
   // r[verify rpc.flow-control.credit.initial.zero]
   // r[verify rpc.flow-control.max-concurrent-requests.default]
-  // r[verify connection.root]
+  // r[verify lane.control.compat]
   it("applies and rejects initial lane capacity settings", () => {
     expect(defaultLaneSettings(Role.Acceptor)).toMatchObject({
       parity: { tag: "Even" },
@@ -838,10 +838,10 @@ describe("session", () => {
   // r[verify conduit]
   // r[verify conduit.bare]
   // r[verify conduit.typeplan]
-  // r[verify connection]
+  // r[verify lane.id.compat]
   // r[verify connection.model]
   // r[verify connection.lifecycle.driven]
-  // r[verify connection.root]
+  // r[verify lane.control.compat]
   // r[verify lane.control]
   it("establishes over transport prologue before BareConduit traffic", async () => {
     const [clientLink, serverLink] = memoryLinkPair();
@@ -872,7 +872,7 @@ describe("session", () => {
     await Promise.allSettled([clientSession.closed(), serverSession.closed()]);
   });
 
-  // r[verify session.keepalive]
+  // r[verify connection.keepalive]
   it("answers keepalive pings with matching pongs", async () => {
     const [clientLink, serverLink] = memoryLinkPair();
     const serverSession = await withTimeout(
@@ -895,7 +895,7 @@ describe("session", () => {
     await Promise.allSettled([serverSession.closed()]);
   });
 
-  // r[verify session.keepalive]
+  // r[verify connection.keepalive]
   it("tears down when keepalive pong is missing", async () => {
     const [clientLink, serverLink] = memoryLinkPair();
     const serverSession = await withTimeout(
@@ -918,8 +918,8 @@ describe("session", () => {
     serverLink.close();
   });
 
-  // r[verify session.protocol-error]
-  // r[verify rpc.observability.session-errors]
+  // r[verify connection.protocol-error]
+  // r[verify rpc.observability.connection-errors]
   it("sends protocol error before tearing down on local protocol violation", async () => {
     const [clientLink, serverLink] = memoryLinkPair();
     const serverSession = await withTimeout(
@@ -1107,10 +1107,10 @@ describe("session", () => {
     }
   });
 
-  // r[verify connection.parity]
-  // r[verify session.message]
-  // r[verify session.message.connection-id]
-  // r[verify session.message.payloads]
+  // r[verify lane.request-channel-parity]
+  // r[verify connection.message]
+  // r[verify connection.message.lane-id]
+  // r[verify connection.message.payloads]
   // r[verify rpc.request]
   // r[verify rpc.request.id-allocation]
   it("allocates request ids from service lane parity", async () => {
@@ -1382,7 +1382,7 @@ describe("session", () => {
     await Promise.allSettled([serverSession.closed()]);
   });
 
-  // r[verify rpc.flow-control.max-concurrent-requests.session-failure]
+  // r[verify rpc.flow-control.max-concurrent-requests.connection-failure]
   it("fails calls waiting for request capacity when the connection closes", async () => {
     const localSettings: ConnectionSettings = {
       parity: { tag: "Odd" },
@@ -1578,8 +1578,8 @@ describe("session", () => {
     await Promise.allSettled([initiatorSession.closed()]);
   });
 
-  // r[verify connection.close]
-  // r[verify connection.close.semantics]
+  // r[verify lane.close]
+  // r[verify lane.close.semantics]
   it("tears down a service lane after receiving close", async () => {
     const settings: ConnectionSettings = {
       parity: { tag: "Odd" },

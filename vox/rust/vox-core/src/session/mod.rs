@@ -328,7 +328,7 @@ impl Drop for PendingLane {
     }
 }
 
-// r[impl rpc.virtual-connection.accept]
+// r[impl lane.accept.api]
 // r[impl lane.open]
 pub trait LaneAcceptor: MaybeSend + MaybeSync + 'static {
     fn accept(&self, request: &LaneRequest, connection: PendingLane) -> Result<(), LaneRejection>;
@@ -423,7 +423,7 @@ fn send_drop_control(
 /// requests and RPC traffic to be processed.
 // r[impl connection.model]
 // r[impl connection.lifecycle.driven]
-// r[impl rpc.virtual-connection.open]
+// r[impl lane.open.api]
 #[derive(Clone)]
 pub struct ConnectionHandle {
     open_tx: mpsc::Sender<OpenRequest>,
@@ -483,7 +483,7 @@ impl ConnectionHandle {
     /// Allocates a lane ID, sends `LaneOpen` to the peer, and waits for
     /// `LaneAccept` or `LaneReject`. The connection's `run()` loop processes
     /// the response and completes the returned future.
-    // r[impl connection.open]
+    // r[impl lane.open.wire]
     // r[impl lane.open]
     // r[impl lane.wire.compat]
     pub async fn open_lane_handle(
@@ -509,7 +509,7 @@ impl ConnectionHandle {
     ///
     /// Sends `LaneClose` to the peer and removes the lane slot. After this
     /// returns, no further messages will be routed to the lane's driver.
-    // r[impl connection.close]
+    // r[impl lane.close]
     // r[impl lane.wire.compat]
     pub async fn close_lane(
         &self,
@@ -545,7 +545,7 @@ impl ConnectionHandle {
 /// Connection state machine.
 // r[impl connection.model]
 // r[impl connection.lifecycle.driven]
-// r[impl session]
+// r[impl connection.protocol]
 // r[impl lane]
 // r[impl lane.control]
 // r[impl lane.service]
@@ -553,11 +553,11 @@ pub struct Connection {
     /// Conduit receiver
     rx: Box<dyn DynConduitRx>,
 
-    // r[impl session.role]
+    // r[impl connection.role]
     role: ConnectionRole,
 
     /// Our local parity — determines which service lane IDs we allocate.
-    // r[impl session.parity]
+    // r[impl connection.lane-id-parity]
     parity: Parity,
 
     /// Shared core (for sending) — also held by all ConnectionSenders.
@@ -599,7 +599,7 @@ struct KeepaliveRuntime {
     next_ping_nonce: u64,
 }
 
-// r[impl connection]
+// r[impl lane.id.compat]
 /// Static data for one active connection.
 #[derive(Debug)]
 pub struct ConnectionState {
@@ -1147,7 +1147,7 @@ fn classify_decode_error(error: &std::io::Error) -> Option<DecodeErrorKind> {
 }
 
 impl Connection {
-    // r[impl rpc.observability.session-errors]
+    // r[impl rpc.observability.connection-errors]
     // r[impl rpc.observability.driver]
     fn observe_session_recv_error(&self, error: &std::io::Error) {
         let Some(observer) = &self.observer else {
@@ -1247,7 +1247,7 @@ impl Connection {
         }
     }
 
-    // r[impl session.handshake]
+    // r[impl connection.handshake]
     fn establish_from_handshake(
         &mut self,
         result: HandshakeResult,
@@ -1322,7 +1322,7 @@ impl Connection {
     /// Run the session recv loop: read from the conduit, demux by connection
     /// ID, and route to the appropriate connection's driver. Also processes
     /// open/close requests from the ConnectionHandle.
-    // r[impl session.message]
+    // r[impl connection.message]
     pub async fn run(&mut self) {
         let mut keepalive_runtime = self.make_keepalive_runtime();
         let mut keepalive_tick = keepalive_runtime.as_ref().map(|_| {
@@ -1404,7 +1404,7 @@ impl Connection {
         let conn_id = msg_ref.lane_id;
         match &msg_ref.payload {
             MessagePayload::Ping(ping) => {
-                // r[impl session.keepalive]
+                // r[impl connection.keepalive]
                 let _ = self
                     .sess_core
                     .send(
@@ -1420,7 +1420,7 @@ impl Connection {
             }
             MessagePayload::Pong(pong) => {
                 if conn_id.is_root() {
-                    // r[impl session.keepalive]
+                    // r[impl connection.keepalive]
                     self.handle_keepalive_pong(pong.nonce, keepalive_runtime);
                 }
                 return;
@@ -1457,7 +1457,7 @@ impl Connection {
             _ => {}
         }
         vox_types::selfref_match!(msg, payload {
-            // r[impl connection.close.semantics]
+            // r[impl lane.close.semantics]
             MessagePayload::LaneClose(_) => {
                 if conn_id.is_root() {
                     warn!("received LaneClose for root connection");
@@ -1614,7 +1614,7 @@ impl Connection {
         })
     }
 
-    // r[impl session.keepalive]
+    // r[impl connection.keepalive]
     fn make_keepalive_runtime(&self) -> Option<KeepaliveRuntime> {
         let config = self.keepalive?;
         if config.ping_interval.is_zero() || config.pong_timeout.is_zero() {
@@ -1632,7 +1632,7 @@ impl Connection {
         })
     }
 
-    // r[impl session.keepalive]
+    // r[impl connection.keepalive]
     fn handle_keepalive_pong(&self, nonce: u64, keepalive_runtime: &mut Option<KeepaliveRuntime>) {
         let Some(runtime) = keepalive_runtime.as_mut() else {
             return;
@@ -1644,7 +1644,7 @@ impl Connection {
         runtime.next_ping_at = vox_types::time::tokio::Instant::now() + runtime.ping_interval;
     }
 
-    // r[impl session.keepalive]
+    // r[impl connection.keepalive]
     async fn handle_keepalive_tick(
         &mut self,
         keepalive_runtime: &mut Option<KeepaliveRuntime>,
@@ -1771,7 +1771,7 @@ impl Connection {
             return;
         }
 
-        // r[impl connection.open.rejection]
+        // r[impl lane.open.wire.rejection]
         // Call the acceptor callback. If none is registered, reject.
         if self.on_connection.is_none() {
             Self::send_lane_reject(
@@ -1980,7 +1980,7 @@ impl Connection {
         }
     }
 
-    // r[impl connection.open]
+    // r[impl lane.open.wire]
     // r[impl lane.open]
     // r[impl lane.wire.compat]
     async fn handle_open_request(&mut self, req: OpenRequest) {
@@ -2042,7 +2042,7 @@ impl Connection {
         );
     }
 
-    // r[impl connection.close]
+    // r[impl lane.close]
     async fn handle_close_request(&mut self, req: CloseRequest) {
         if req.conn_id.is_root() {
             let _ = req.result_tx.send(Err(ConnectionError::Protocol(
@@ -2168,7 +2168,7 @@ impl Connection {
         slot
     }
 
-    // r[impl rpc.observability.session-errors]
+    // r[impl rpc.observability.connection-errors]
     fn close_all_connections(&mut self, reason: ConnectionCloseReason) {
         trace!(role = ?self.role, count = self.conns.len(), "close_all_connections");
         vox_types::dlog!(
@@ -3096,7 +3096,7 @@ pub trait DynConduitRx: MaybeSend {
     fn take_frame_fds(&mut self) -> vox_types::FrameFds;
 }
 
-// r[impl session.message]
+// r[impl connection.message]
 impl<T> DynConduitTx for T
 where
     T: ConduitTx<Msg = MessageFamily> + MaybeSend + MaybeSync + 'static,
@@ -3376,7 +3376,7 @@ mod tests {
         )
     }
 
-    // r[verify rpc.observability.session-errors]
+    // r[verify rpc.observability.connection-errors]
     #[test]
     fn session_receive_errors_emit_diagnostics_and_non_graceful_close_reasons() {
         fn run_case(

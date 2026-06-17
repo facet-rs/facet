@@ -775,7 +775,7 @@ mod tests {
     // r[verify rpc.service.methods]
     // r[verify rpc.handler]
     // r[verify lane.service]
-    // r[verify rpc.session-setup]
+    // r[verify rpc.connection-setup]
     fn generated_typescript_emits_rpc_caller_handler_and_lane_shapes() {
         let echo = method_descriptor::<(String,), String>(
             "TestSvc",

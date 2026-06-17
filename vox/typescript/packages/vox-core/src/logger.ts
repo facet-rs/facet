@@ -13,7 +13,7 @@ let currentLogger: VoxLogger | null = null;
 // r[impl rpc.observability.runtime]
 // r[impl rpc.observability.driver]
 // r[impl rpc.observability.channel]
-// r[impl rpc.observability.session-errors]
+// r[impl rpc.observability.connection-errors]
 export function setVoxLogger(logger: VoxLogger | null): void {
   currentLogger = logger;
 }

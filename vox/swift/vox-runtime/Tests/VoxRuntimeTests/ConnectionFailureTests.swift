@@ -322,13 +322,13 @@ private func establishmentLabels(_ events: [VoxEstablishmentObserverEvent]) -> [
 }
 
 @Test
-// r[verify session]
+// r[verify connection.protocol]
 // r[verify connection.model]
-// r[verify connection.root]
+// r[verify lane.control.compat]
 // r[verify lane.control]
-// r[verify rpc.session-setup]
-// r[verify session.peer]
-// r[verify session.role]
+// r[verify rpc.connection-setup]
+// r[verify connection.peer]
+// r[verify connection.role]
 // r[verify schema.interaction.metadata]
 func acceptorConnectionExposesPeerHandshakeMetadata() async throws {
     let metadata = meta([("vixenfs-sid", "abc123")])
@@ -356,7 +356,7 @@ func acceptorConnectionExposesPeerHandshakeMetadata() async throws {
 }
 
 @Test
-// r[verify session.handshake.sorry]
+// r[verify connection.handshake.sorry]
 func acceptorSendsSorryForInvalidPeerMessageSchema() async throws {
     let link = ScriptedTransport(
         initialHandshake: .hello(
@@ -1022,14 +1022,14 @@ struct ConnectionFailureTests {
         }
     }
 
-    // r[verify session.handshake]
-    // r[verify session.handshake.phon]
-    // r[verify session.handshake.protocol-schema]
-    // r[verify session.handshake.protocol-schema.session-scoped]
-    // r[verify session.handshake.unversioned]
-    // r[verify session.connection-settings]
-    // r[verify session.connection-settings.hello]
-    // r[verify session.parity]
+    // r[verify connection.handshake]
+    // r[verify connection.handshake.phon]
+    // r[verify connection.handshake.protocol-schema]
+    // r[verify connection.handshake.protocol-schema.connection-scoped]
+    // r[verify connection.handshake.unversioned]
+    // r[verify lane.settings]
+    // r[verify connection.handshake.lane-settings]
+    // r[verify connection.lane-id-parity]
     // r[verify rpc.flow-control.max-concurrent-requests.default]
     @Test func initiatorHelloCarriesMessagePayloadSchema() async throws {
         let transport = ScriptedTransport()
@@ -1054,7 +1054,7 @@ struct ConnectionFailureTests {
         #expect(Array(hello.messagePayloadSchema) == MessageSchemaClosure)
     }
 
-    // r[verify rpc.session-setup]
+    // r[verify rpc.connection-setup]
     @Test func connectDoesNotInjectServiceMetadataIntoHandshake() async throws {
         let transport = ScriptedTransport()
         let connection = try await Connection.connect(
@@ -1071,7 +1071,7 @@ struct ConnectionFailureTests {
         #expect(hello.metadata.metaStr("vox-service") == nil)
     }
 
-    // r[verify rpc.session-setup]
+    // r[verify rpc.connection-setup]
     @Test func connectPreservesExplicitHandshakeMetadata() async throws {
         let transport = ScriptedTransport()
         let metadata = meta([("prefix", "app")])
@@ -1091,7 +1091,7 @@ struct ConnectionFailureTests {
         #expect(hello.metadata.metaStr("prefix") == "app")
     }
 
-    // r[verify rpc.session-setup]
+    // r[verify rpc.connection-setup]
     @Test func freshLinkConnectDoesNotInjectServiceMetadataIntoHandshake() async throws {
         let transport = ScriptedTransport()
         let connection = try await Connection.connect(
@@ -1108,7 +1108,7 @@ struct ConnectionFailureTests {
         #expect(hello.metadata.metaStr("vox-service") == nil)
     }
 
-    // r[verify rpc.session-setup]
+    // r[verify rpc.connection-setup]
     @Test func freshLinkConnectPreservesExplicitHandshakeMetadata() async throws {
         let transport = ScriptedTransport()
         let metadata = meta([("prefix", "app")])
@@ -1131,9 +1131,9 @@ struct ConnectionFailureTests {
     // r[verify conduit]
     // r[verify conduit.bare]
     // r[verify conduit.typeplan]
-    // r[verify session.message]
-    // r[verify session.message.connection-id]
-    // r[verify session.message.payloads]
+    // r[verify connection.message]
+    // r[verify connection.message.lane-id]
+    // r[verify connection.message.payloads]
     // r[verify rpc.request]
     // r[verify rpc.response]
     @Test func serverResponsePreservesPeepsRequestMetadata() async throws {
@@ -1205,8 +1205,8 @@ struct ConnectionFailureTests {
         }
     }
 
-    // r[verify connection]
-    // r[verify connection.root]
+    // r[verify lane.id.compat]
+    // r[verify lane.control.compat]
     // r[verify rpc.request]
     // r[verify rpc.response]
     @Test func immediateResponseAfterSendStillCompletesCall() async throws {
@@ -1232,7 +1232,7 @@ struct ConnectionFailureTests {
     // r[verify rpc.flow-control.max-concurrent-requests]
     // r[verify rpc.flow-control.max-concurrent-requests.outbound]
     // r[verify rpc.flow-control.max-concurrent-requests.counting]
-    // r[verify session.parity]
+    // r[verify connection.lane-id-parity]
     // r[verify rpc.request.id-allocation]
     @Test func outboundMaxConcurrentRequestsWaitsForPeerLimit() async throws {
         let transport = ScriptedTransport(
@@ -1378,7 +1378,7 @@ struct ConnectionFailureTests {
         }
     }
 
-    // r[verify rpc.flow-control.max-concurrent-requests.session-failure]
+    // r[verify rpc.flow-control.max-concurrent-requests.connection-failure]
     @Test func queuedOutboundRequestFailsWhenLimitedConnectionCloses() async throws {
         let transport = ScriptedTransport(
             initialHandshake: .helloYourself(
@@ -1707,8 +1707,8 @@ struct ConnectionFailureTests {
         _ = try? await driverTask.value
     }
 
-    // r[verify session.protocol-error]
-    // r[verify rpc.observability.session-errors]
+    // r[verify connection.protocol-error]
+    // r[verify rpc.observability.connection-errors]
     @Test func unknownResponseRequestIdClosesConnectionAndFailsPendingCalls() async throws {
         let transport = ScriptedTransport()
         let (handle, driver, _, _) = try await establishInitiator(
@@ -2041,7 +2041,7 @@ struct ConnectionFailureTests {
         }
     }
 
-    // r[verify session.keepalive]
+    // r[verify connection.keepalive]
     @Test func keepalivePingPongHealthyPath() async throws {
         let transport = ScriptedTransport(autoRespondPing: true)
         let (handle, driver, _, _) = try await establishInitiator(
@@ -2075,7 +2075,7 @@ struct ConnectionFailureTests {
         }
     }
 
-    // r[verify session.keepalive]
+    // r[verify connection.keepalive]
     @Test func keepaliveMissingPongClosesDriver() async throws {
         let transport = ScriptedTransport()
         let (controlLane, driver, _, _) = try await establishInitiator(
@@ -2103,7 +2103,7 @@ struct ConnectionFailureTests {
         }
     }
 
-    // r[verify session.keepalive]
+    // r[verify connection.keepalive]
     @Test func keepaliveFailureFailsPendingCall() async throws {
         let transport = ScriptedTransport()
         let (handle, driver, _, _) = try await establishInitiator(
@@ -2140,11 +2140,11 @@ struct ConnectionFailureTests {
 
     // r[verify lane]
     // r[verify lane.open]
-    // r[verify connection.open]
-    // r[verify connection.parity]
-    // r[verify rpc.virtual-connection.open]
-    // r[verify session.connection-settings.open]
-    // r[verify session.message.connection-id]
+    // r[verify lane.open.wire]
+    // r[verify lane.request-channel-parity]
+    // r[verify lane.open.api]
+    // r[verify lane.open.settings]
+    // r[verify connection.message.lane-id]
     // r[verify rpc.request]
     // r[verify rpc.request.id-allocation]
     // r[verify rpc.response]
@@ -2219,8 +2219,8 @@ struct ConnectionFailureTests {
         }
     }
 
-    // r[verify connection.close]
-    // r[verify connection.close.semantics]
+    // r[verify lane.close]
+    // r[verify lane.close.semantics]
     @Test func incomingServiceLaneCloseTearsDownLocalHandle() async throws {
         let transport = ScriptedTransport()
         let (controlLane, driver, connectionHandle, _) = try await establishInitiator(
@@ -2501,9 +2501,9 @@ struct ConnectionFailureTests {
         }
     }
 
-    // r[verify rpc.virtual-connection.accept]
-    // r[verify connection.virtual]
-    // r[verify session.symmetry]
+    // r[verify lane.accept.api]
+    // r[verify lane.service.compat]
+    // r[verify connection.symmetry]
     // r[verify lane.service]
     @Test func inboundOpenLaneAcceptsAndDispatchesOnServiceLane() async throws {
         let transport = ScriptedTransport()
@@ -2559,7 +2559,7 @@ struct ConnectionFailureTests {
         }
     }
 
-    // r[verify connection.open.rejection]
+    // r[verify lane.open.wire.rejection]
     // r[verify lane.open.result]
     // r[verify lane.wire.compat]
     @Test func inboundOpenLaneRejectsWithStructuredReasonWhenNoAcceptor() async throws {
@@ -2599,7 +2599,7 @@ struct ConnectionFailureTests {
         }
     }
 
-    // r[verify connection.open.rejection]
+    // r[verify lane.open.wire.rejection]
     // r[verify lane.open.result]
     // r[verify lane.wire.compat]
     @Test func connectionHandleOpenLaneFailsOnReject() async throws {

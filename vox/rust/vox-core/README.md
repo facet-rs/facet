@@ -1,14 +1,14 @@
 # vox-core
 
-Core runtime for sessions, drivers, conduits, and connection orchestration.
+Core runtime for connections, lanes, drivers, and conduits.
 
 ## Role in the Vox stack
 
-`vox-core` primarily implements the `Session`, `Connections`, and `Conduit` layers.
+`vox-core` primarily implements the `Connection`, `Lane`, and `Conduit` layers.
 
 ## What this crate provides
 
-- Session builders (`session::initiator`, `session::acceptor`) and handles
+- Connection builders (`session::initiator`, `session::acceptor`) and handles
 - Driver runtime for dispatching inbound calls and issuing outbound calls
 - Connection lifecycle primitives and runtime glue
 

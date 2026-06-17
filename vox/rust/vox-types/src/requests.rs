@@ -1,7 +1,7 @@
 use facet::Facet;
 
-// r[impl connection]
-// r[impl connection.root]
+// r[impl lane.id.compat]
+// r[impl lane.control.compat]
 declare_id!(
     /// Lane ID identifying a service lane on a Vox connection.
     ///

@@ -41,7 +41,7 @@ fn validate_initial_channel_credit(settings: &ConnectionSettings) -> Result<(), 
 
 /// The `Message` envelope schema as phon self-describing bytes — exchanged in the
 /// handshake so each peer can build a compatibility decode program for the other's
-/// `Message` (`r[session.handshake.protocol-schema]`).
+/// `Message` (`r[connection.handshake.protocol-schema]`).
 fn message_schema() -> Vec<u8> {
     vox_phon::schema_bytes::<vox_types::Message<'static>>()
         .expect("derive phon schema for Message envelope")
@@ -88,11 +88,11 @@ fn handshake_tag(msg: &HandshakeMessage) -> &'static str {
     }
 }
 
-// r[impl session.handshake]
-// r[impl session.handshake.phon]
-// r[impl session.connection-settings.hello]
-// r[impl session.handshake.protocol-schema.session-scoped]
-// r[impl session.handshake.unversioned]
+// r[impl connection.handshake]
+// r[impl connection.handshake.phon]
+// r[impl connection.handshake.lane-settings]
+// r[impl connection.handshake.protocol-schema.connection-scoped]
+// r[impl connection.handshake.unversioned]
 /// Perform the phon handshake as the initiator.
 ///
 /// Three-step exchange:
@@ -165,11 +165,11 @@ pub async fn handshake_as_initiator<Tx: LinkTx, Rx: LinkRx>(
     })
 }
 
-// r[impl session.handshake]
-// r[impl session.handshake.phon]
-// r[impl session.connection-settings.hello]
-// r[impl session.handshake.protocol-schema.session-scoped]
-// r[impl session.handshake.unversioned]
+// r[impl connection.handshake]
+// r[impl connection.handshake.phon]
+// r[impl connection.handshake.lane-settings]
+// r[impl connection.handshake.protocol-schema.connection-scoped]
+// r[impl connection.handshake.unversioned]
 /// Perform the phon handshake as the acceptor.
 ///
 /// Three-step exchange:
@@ -271,11 +271,11 @@ mod tests {
         }
     }
 
-    // r[verify session.handshake]
-    // r[verify session.handshake.phon]
-    // r[verify session.handshake.protocol-schema]
-    // r[verify session.connection-settings.hello]
-    // r[verify session.peer]
+    // r[verify connection.handshake]
+    // r[verify connection.handshake.phon]
+    // r[verify connection.handshake.protocol-schema]
+    // r[verify connection.handshake.lane-settings]
+    // r[verify connection.peer]
     #[tokio::test]
     async fn hello_and_hello_yourself_carry_root_connection_settings() {
         let (client_link, server_link) = crate::memory_link_pair(4);
@@ -331,9 +331,9 @@ mod tests {
         assert_eq!(result.peer_metadata, acceptor_metadata);
     }
 
-    // r[verify session.handshake.sorry]
-    // r[verify session.handshake.unversioned]
-    // r[verify session.handshake.protocol-schema.session-scoped]
+    // r[verify connection.handshake.sorry]
+    // r[verify connection.handshake.unversioned]
+    // r[verify connection.handshake.protocol-schema.connection-scoped]
     #[tokio::test]
     async fn acceptor_rejects_incompatible_peer_message_schema_with_sorry() {
         let (client_link, server_link) = crate::memory_link_pair(4);

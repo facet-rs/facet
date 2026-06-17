@@ -14,8 +14,8 @@ public final class ConnectionHandle: @unchecked Sendable {
 
     /// Open a service lane on the existing connection.
     ///
-    /// r[impl rpc.virtual-connection.open]
-    /// r[impl connection.open]
+    /// r[impl lane.open.api]
+    /// r[impl lane.open.wire]
     /// r[impl lane.open]
     public func openLane(
         settings: ConnectionSettings,
@@ -42,10 +42,10 @@ public final class ConnectionHandle: @unchecked Sendable {
 
     /// Close an open service lane.
     ///
-    /// r[impl connection]
-    /// r[impl connection.virtual]
-    /// r[impl connection.close]
-    /// r[impl connection.close.semantics]
+    /// r[impl lane.id.compat]
+    /// r[impl lane.service.compat]
+    /// r[impl lane.close]
+    /// r[impl lane.close.semantics]
     public func closeLane(
         _ laneId: UInt64,
         metadata: Metadata = emptyMetadata()

@@ -129,7 +129,7 @@ function matchPattern(namespace: string, pattern: string): boolean {
  */
 // r[impl rpc.metadata.sigils]
 // r[impl rpc.observability.runtime]
-// r[impl rpc.observability.session-errors]
+// r[impl rpc.observability.connection-errors]
 export function loggingMiddleware(options: LoggingOptions = {}): ClientMiddleware {
   const namespace = options.namespace ?? "vox:rpc";
   const logArgs = options.logArgs ?? true;

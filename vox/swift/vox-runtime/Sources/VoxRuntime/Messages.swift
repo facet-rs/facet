@@ -21,9 +21,9 @@ func messageRequest(
     schemas: [UInt8] = []
 ) -> Message {
     // r[impl rpc.request]
-    // r[impl session.message]
-    // r[impl session.message.connection-id]
-    // r[impl session.message.payloads]
+    // r[impl connection.message]
+    // r[impl connection.message.lane-id]
+    // r[impl connection.message.payloads]
     Message(
         connectionId: connectionId,
         payload: .requestMessage(RequestMessage(
@@ -44,9 +44,9 @@ func messageResponse(
     schemas: [UInt8] = []
 ) -> Message {
     // r[impl rpc.response]
-    // r[impl session.message]
-    // r[impl session.message.connection-id]
-    // r[impl session.message.payloads]
+    // r[impl connection.message]
+    // r[impl connection.message.lane-id]
+    // r[impl connection.message.payloads]
     Message(
         connectionId: connectionId,
         payload: .requestMessage(RequestMessage(
@@ -94,7 +94,7 @@ func messageConnect(
     settings: ConnectionSettings,
     metadata: Metadata = .null
 ) -> Message {
-    // r[impl session.connection-settings.open]
+    // r[impl lane.open.settings]
     Message(
         connectionId: connectionId,
         payload: .laneOpen(LaneOpen(connectionSettings: settings, metadata: metadata)))
@@ -105,14 +105,14 @@ func messageAccept(
     settings: ConnectionSettings,
     metadata: Metadata = .null
 ) -> Message {
-    // r[impl session.connection-settings.open]
+    // r[impl lane.open.settings]
     Message(
         connectionId: connectionId,
         payload: .laneAccept(LaneAccept(connectionSettings: settings, metadata: metadata)))
 }
 
 func messageReject(connectionId: UInt64, metadata: Metadata = .null) -> Message {
-    // r[impl connection.open.rejection]
+    // r[impl lane.open.wire.rejection]
     Message(connectionId: connectionId, payload: .laneReject(LaneReject(metadata: metadata)))
 }
 

@@ -3,7 +3,7 @@
 //! This crate intentionally keeps only the named Tokio-shaped primitives Vox
 //! uses. Names are accepted at construction sites so existing runtime code can
 //! stay descriptive, but this crate does not provide async debugger plumbing.
-// r[impl session] r[impl rpc.channel]
+// r[impl connection.protocol] r[impl rpc.channel]
 
 pub mod sync;
 pub mod task;

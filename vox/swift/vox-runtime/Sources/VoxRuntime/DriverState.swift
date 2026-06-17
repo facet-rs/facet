@@ -314,8 +314,8 @@ actor LaneState {
         nextConnId = firstId(for: role)
     }
 
-    // r[impl connection.open]
-    // r[impl connection.parity]
+    // r[impl lane.open.wire]
+    // r[impl lane.request-channel-parity]
     func allocateLaneId() -> UInt64 {
         let id = nextConnId
         nextConnId += 2

@@ -48,7 +48,7 @@ func idMatchesRole(_ id: UInt64, _ role: Role) -> Bool {
 
 /// Allocates unique channel IDs with correct parity.
 ///
-/// r[impl session.parity] - Initiator uses odd, Acceptor uses even.
+/// r[impl connection.lane-id-parity] - Initiator uses odd, Acceptor uses even.
 /// r[impl rpc.channel.allocation] - Caller allocates ALL channel IDs.
 public final class ChannelIdAllocator: @unchecked Sendable {
     private var next: UInt64

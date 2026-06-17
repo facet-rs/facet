@@ -1,8 +1,8 @@
 import Foundation
 
 extension Driver {
-    // r[impl rpc.virtual-connection.accept]
-    // r[impl connection.virtual]
+    // r[impl lane.accept.api]
+    // r[impl lane.service.compat]
     func addLane(
         _ connId: UInt64,
         dispatcher: any ServiceDispatcher,
@@ -17,20 +17,20 @@ extension Driver {
         )
     }
 
-    // r[impl connection.close]
-    // r[impl connection.virtual]
+    // r[impl lane.close]
+    // r[impl lane.service.compat]
     func removeLane(_ connId: UInt64) async {
         await laneState.removeLane(connId)
     }
 
     /// Handle an incoming message.
     ///
-    /// r[impl connection.close.semantics] - Stop sending, close connection, fail in-flight.
+    /// r[impl lane.close.semantics] - Stop sending, close connection, fail in-flight.
     /// r[impl rpc.request] - Request before Response in message sequence.
-    /// r[impl session.protocol-error] - Unknown message variant triggers Goodbye.
-    /// r[impl session.message]
-    /// r[impl session.message.connection-id]
-    /// r[impl session.message.payloads]
+    /// r[impl connection.protocol-error] - Unknown message variant triggers Goodbye.
+    /// r[impl connection.message]
+    /// r[impl connection.message.lane-id]
+    /// r[impl connection.message.payloads]
     /// r[impl rpc.cancel.channels]
     /// r[impl rpc.channel.connection-closure]
     func handleMessage(
@@ -41,7 +41,7 @@ extension Driver {
         case .schemaMessage(let schema):
             // The peer advertises a binding's (writer) schema closure out-of-band, as a
             // standalone message sent before the payload it describes (mirrors the Rust
-            // session: rust/vox-core/src/session/mod.rs SchemaMessage send/recv). Record it
+            // connection runtime: rust/vox-core/src/session/mod.rs SchemaMessage send/recv). Record it
             // into the same receive tracker the dispatcher uses for compatibility decode. Messages are
             // delivered in order, so the schema is recorded before the Call/Response that
             // needs it is handled.
@@ -70,10 +70,10 @@ extension Driver {
             await failAllPending()
             throw ConnectionError.protocolViolation(rule: error.description)
         case .laneOpen(let open):
-            // r[impl rpc.virtual-connection.accept]
-            // r[impl connection.open.rejection]
-            // r[impl connection.open]
-            // r[impl connection.parity]
+            // r[impl lane.accept.api]
+            // r[impl lane.open.wire.rejection]
+            // r[impl lane.open.wire]
+            // r[impl lane.request-channel-parity]
             // r[impl lane.open]
             // r[impl lane.wire.compat]
             let establishmentContext = VoxEstablishmentContext(
@@ -211,8 +211,8 @@ extension Driver {
                 )
             }
         case .laneAccept(let accept):
-            // r[impl connection.open]
-            // r[impl rpc.virtual-connection.open]
+            // r[impl lane.open.wire]
+            // r[impl lane.open.api]
             // r[impl lane.open.result]
             // r[impl lane.wire.compat]
             guard let pending = await laneState.takePendingOutbound(msg.connectionId) else {
@@ -249,7 +249,7 @@ extension Driver {
             )
             pending.responseTx(.success(lane))
         case .laneReject(let reject):
-            // r[impl connection.open.rejection]
+            // r[impl lane.open.wire.rejection]
             // r[impl lane.open.result]
             // r[impl lane.wire.compat]
             guard let pending = await laneState.takePendingOutbound(msg.connectionId) else {
@@ -262,8 +262,8 @@ extension Driver {
             )
             pending.responseTx(.failure(.rejected(LaneRejection.fromMetadata(reject.metadata))))
         case .laneClose:
-            // r[impl connection.close]
-            warnLog("received LaneClose conn_id=\(msg.connectionId)")
+            // r[impl lane.close]
+            warnLog("received LaneClose lane_id=\(msg.connectionId)")
             if msg.connectionId == 0 {
                 warnLog("received LaneClose for control lane; shutting down driver")
                 await failAllPending()
@@ -374,7 +374,7 @@ extension Driver {
         }
     }
 
-    /// r[impl session.connection-settings.hello] - Exceeding limit requires Goodbye.
+    /// r[impl connection.handshake.lane-settings] - Exceeding limit requires Goodbye.
     /// r[impl rpc.request.id-allocation] - Each request uses a unique ID.
     /// r[impl rpc]
     /// r[impl rpc.service]
@@ -399,10 +399,10 @@ extension Driver {
             localMaxConcurrentRequests =
                 localControlSettings?.maxConcurrentRequests ?? negotiated.maxConcurrentRequests
             channelRegistry = serverRegistry
-        } else if let vconn = await laneState.lane(for: connId) {
-            effectiveDispatcher = vconn.dispatcher
-            localMaxConcurrentRequests = vconn.localSettings.maxConcurrentRequests
-            channelRegistry = vconn.channelRegistry
+        } else if let laneRecord = await laneState.lane(for: connId) {
+            effectiveDispatcher = laneRecord.dispatcher
+            localMaxConcurrentRequests = laneRecord.localSettings.maxConcurrentRequests
+            channelRegistry = laneRecord.channelRegistry
         } else {
             try await sendProtocolError("call.lifecycle.unknown-connection-id")
             throw ConnectionError.protocolViolation(
@@ -591,14 +591,14 @@ extension Driver {
         await lane.channelRegistry.deliverCredit(channelId: channelId, bytes: bytes)
     }
 
-    /// r[impl connection.close.semantics] - Send Goodbye with rule ID before closing.
-    /// r[impl session.protocol-error] - Reason contains violated rule ID.
+    /// r[impl lane.close.semantics] - Send Goodbye with rule ID before closing.
+    /// r[impl connection.protocol-error] - Reason contains violated rule ID.
     func sendProtocolError(_ reason: String) async throws {
         try await conduit.send(messageProtocolError(description: reason))
     }
 
     func failAllPending() async {
-        // r[impl rpc.flow-control.max-concurrent-requests.session-failure]
+        // r[impl rpc.flow-control.max-concurrent-requests.connection-failure]
         // r[impl rpc.channel.connection-closure]
         await handle.closeRequestSemaphore()
 

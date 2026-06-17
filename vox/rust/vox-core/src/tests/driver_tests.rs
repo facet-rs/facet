@@ -946,7 +946,7 @@ async fn cancel_terminalizes_request_channels_as_cancelled() {
 
 /// Verify that a `MessagePlan` built from identical schemas (the schema-identical
 /// degenerate of the envelope compat path) can round-trip a message.
-// r[verify session.handshake.protocol-schema.session-scoped]
+// r[verify connection.handshake.protocol-schema.connection-scoped]
 #[test]
 fn message_plan_from_identical_schemas_round_trips() {
     // The handshake carries the peer's Message schema as phon bytes; here it is
@@ -997,14 +997,14 @@ fn message_plan_from_identical_schemas_round_trips() {
 
 /// Minimal test: establish via real phon handshake, send one call, verify handler runs.
 // r[verify rpc]
-// r[verify session]
-// r[verify session.role]
-// r[verify session.connection-settings]
-// r[verify session.message]
-// r[verify session.message.connection-id]
-// r[verify connection]
+// r[verify connection.protocol]
+// r[verify connection.role]
+// r[verify lane.settings]
+// r[verify connection.message]
+// r[verify connection.message.lane-id]
+// r[verify lane.id.compat]
 // r[verify connection.model]
-// r[verify connection.root]
+// r[verify lane.control.compat]
 #[tokio::test]
 async fn call_through_phon_handshake_reaches_handler() {
     let (client_link, server_link) = memory_link_pair(64);
@@ -1445,7 +1445,7 @@ async fn in_flight_call_returns_cancelled_when_peer_closes() {
 // r[verify rpc.flow-control.max-concurrent-requests]
 // r[verify rpc.flow-control.max-concurrent-requests.outbound]
 // r[verify rpc.flow-control.max-concurrent-requests.counting]
-// r[verify rpc.flow-control.max-concurrent-requests.session-failure]
+// r[verify rpc.flow-control.max-concurrent-requests.connection-failure]
 // r[verify rpc.flow-control]
 #[tokio::test]
 async fn outbound_max_concurrent_requests_waits_for_peer_limit() {
@@ -1629,7 +1629,7 @@ async fn inbound_max_concurrent_requests_violation_closes_connection() {
 }
 
 // r[verify rpc.request.id-allocation]
-// r[verify session.protocol-error]
+// r[verify connection.protocol-error]
 #[tokio::test]
 async fn wrong_parity_request_id_closes_with_protocol_error() {
     let (client_guard, server_guard, _server_connection) =
@@ -1646,7 +1646,7 @@ async fn wrong_parity_request_id_closes_with_protocol_error() {
 }
 
 // r[verify rpc.request.id-allocation]
-// r[verify session.protocol-error]
+// r[verify connection.protocol-error]
 #[tokio::test]
 async fn duplicate_inflight_request_id_closes_with_protocol_error() {
     let was_cancelled = Arc::new(AtomicBool::new(false));
@@ -1665,7 +1665,7 @@ async fn duplicate_inflight_request_id_closes_with_protocol_error() {
     drop(client_guard);
 }
 
-// r[verify session.keepalive]
+// r[verify connection.keepalive]
 #[tokio::test]
 async fn keepalive_timeout_returns_cancelled_when_pongs_are_missing() {
     let (client_link, server_link) = memory_link_pair(64);
@@ -1964,7 +1964,7 @@ async fn initiator_builder_customization_controls_allocated_connection_parity() 
     );
 }
 
-// r[verify session.symmetry]
+// r[verify connection.symmetry]
 #[tokio::test]
 async fn acceptor_builder_customization_supports_opening_connections() {
     let (client_conduit, server_conduit) = message_conduit_pair();
@@ -2042,9 +2042,9 @@ async fn acceptor_builder_customization_supports_opening_connections() {
     );
 }
 
-// r[verify connection.parity]
-// r[verify session.parity]
-// r[verify session.connection-settings.open]
+// r[verify lane.request-channel-parity]
+// r[verify connection.lane-id-parity]
+// r[verify lane.open.settings]
 #[tokio::test]
 async fn virtual_connection_request_ids_use_connection_parity() {
     let (client_conduit, server_conduit) = message_conduit_pair();
@@ -2135,8 +2135,8 @@ async fn virtual_connection_request_ids_use_connection_parity() {
     );
 }
 
-// r[verify connection.close]
-// r[verify connection.root]
+// r[verify lane.close]
+// r[verify lane.control.compat]
 // r[verify lane.control]
 #[tokio::test]
 async fn close_root_connection_is_rejected() {

@@ -120,7 +120,7 @@ where
 
 /// Sink for sending the terminal response for one request attempt.
 ///
-/// Implemented by the session driver. Provides backpressure: `send_reply`
+/// Implemented by the connection driver. Provides backpressure: `send_reply`
 /// awaits until the transport can accept the response before serializing it.
 ///
 /// # Cancellation
@@ -205,7 +205,7 @@ pub trait ReplySink: MaybeSend + MaybeSync + 'static {
         None
     }
 
-    /// Return the virtual connection identifier for this reply sink when available.
+    /// Return the lane identifier for this reply sink when available.
     fn connection_id(&self) -> Option<LaneId> {
         None
     }

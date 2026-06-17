@@ -190,9 +190,9 @@ Connection/Lane/RequestScope runtime contract.
 > transport evidence, keepalive, observability state, and the lifecycle of
 > service lanes carried by that link.
 >
-> The historical implementation term `Session` refers to this same protocol
-> envelope. Public APIs SHOULD use `Connection` for this object. Compatibility
-> layers MAY keep internal `Session` names while migrating existing code.
+> Public APIs and normative specification text use `Connection` for this
+> object. Compatibility module names that still contain older vocabulary are not
+> part of the public protocol model.
 
 > r[lane]
 >
@@ -257,50 +257,46 @@ Connection/Lane/RequestScope runtime contract.
 
 # Connection handshake and compatibility wire terms
 
-> r[session]
+> r[connection.protocol]
 >
 > A Vox connection is established between two peers on top of a conduit. The
-> historical implementation and wire-spec term for this protocol envelope is
-> "session". When a requirement in this section says "session", it refers to
-> the same protocol object that public rootless APIs call a connection.
->
-> A connection keeps track of service lanes, on which calls (requests) can be
-> made and data can be exchanged over channels.
+> connection keeps track of service lanes, on which calls (requests) can be made
+> and data can be exchanged over channels.
 
 The transport prologue completes first. Connection establishment exchanges phon
 self-describing handshake messages on the accepted link. After the handshake
 succeeds, the `BareConduit` carries connection `Message` traffic.
 
-> r[session.peer]
+> r[connection.peer]
 >
 > When talking about peers, the local peer is simply called "peer" and the remote
 > peer is called "counterpart".
 
-> r[session.role]
+> r[connection.role]
 >
 > Even though a Vox connection is established over an existing conduit, each peer
 > still plays a connection-establishment role: initiator or acceptor.
 
-> r[session.symmetry]
+> r[connection.symmetry]
 >
 > The role a peer plays during connection establishment does not dictate whether
 > they make or
 > handle requests, or whether they send or receive items over channels.
 > Vox connections are fully bidirectional.
 
-> r[session.message]
+> r[connection.message]
 >
 > Every connection-level protocol action is done by sending and receiving
 > `Message` values.
 
-> r[session.message.connection-id]
+> r[connection.message.lane-id]
 >
 > Every message is composed of a lane identifier and a payload. The historical
 > wire field name is `connection_id`; in the rootless model it identifies a
 > service lane, except for `ProtocolError` and keepalive (`Ping`/`Pong`), which
 > MUST use control lane ID 0.
 
-> r[session.message.payloads]
+> r[connection.message.payloads]
 >
 > Here are all the kinds of message payloads:
 >
@@ -324,9 +320,9 @@ succeeds, the `BareConduit` carries connection `Message` traffic.
 >
 > `Hello`, `HelloYourself`, `LetsGo`, and `Sorry` are NOT message payloads.
 > They are phon self-describing handshake messages exchanged before the
-> phon-encoded `MessagePayload` enum is used (see `r[session.handshake]`).
+> phon-encoded `MessagePayload` enum is used (see `r[connection.handshake]`).
 
-> r[session.handshake]
+> r[connection.handshake]
 >
 > To establish a Vox connection on an accepted link, a three-step phon
 > self-describing handshake MUST be performed. The handshake messages are phon
@@ -337,9 +333,9 @@ succeeds, the `BareConduit` carries connection `Message` traffic.
 >
 > 1. The initiator sends a **`Hello`** containing:
 >    - `parity`: the identifier partition desired by the initiator
->    - `connection_settings`: default lane limits; during compatibility with
->      the historical root connection, these are also the limits for the
->      internal control/root lane
+>    - `connection_settings`: default lane limits; while the compatibility wire
+>      format carries control-lane limits here, these also apply to control lane
+>      ID 0
 >    - `message_payload_schema`: the phon schema-closure bytes describing the
 >      initiator's `Message` envelope and all types it references (the enum used
 >      for all subsequent communication)
@@ -347,19 +343,19 @@ succeeds, the `BareConduit` carries connection `Message` traffic.
 > 2. The acceptor adopts the opposite parity, builds a phon decode plan for the
 >    initiator's `Message` schema, and replies with one of:
 >    - **`HelloYourself`** containing:
->      - `connection_settings`: default lane limits; during compatibility with
->        the historical root connection, these are also the limits for the
->        internal control/root lane
+>      - `connection_settings`: default lane limits; while the compatibility
+>        wire format carries control-lane limits here, these also apply to
+>        control lane ID 0
 >      - `message_payload_schema`: the phon schema-closure bytes describing the
 >        acceptor's `Message` envelope and all types it references
->    - **`Sorry`** if the schemas are incompatible (see `r[session.handshake.sorry]`)
+>    - **`Sorry`** if the schemas are incompatible (see `r[connection.handshake.sorry]`)
 >
 > 3. The initiator builds a phon decode plan for the acceptor's `Message` schema
 >    and replies with one of:
 >    - **`LetsGo`**: confirms compatibility; the connection is established
 >    - **`Sorry`**: rejects the connection
 
-> r[session.handshake.phon]
+> r[connection.handshake.phon]
 >
 > All handshake messages (`Hello`, `HelloYourself`, `LetsGo`, `Sorry`) MUST
 > be phon self-describing values. phon's self-describing mode is tag-led and
@@ -369,14 +365,14 @@ succeeds, the `BareConduit` carries connection `Message` traffic.
 > values, decoded using phon decode plans built from the `message_payload_schema`
 > closures exchanged in the handshake.
 
-> r[session.handshake.sorry]
+> r[connection.handshake.sorry]
 >
 > `Sorry` MUST contain a structured description of the incompatibility:
 > which variants or fields the rejecting peer requires that the other peer's
 > schema does not provide. After sending or receiving `Sorry`, the connection
 > MUST NOT proceed and the conduit SHOULD be closed.
 
-> r[session.handshake.protocol-schema]
+> r[connection.handshake.protocol-schema]
 >
 > The `message_payload_schema` exchanged during the handshake is the phon
 > schema closure for the `Message` envelope and all types it references — the
@@ -389,19 +385,19 @@ succeeds, the `BareConduit` carries connection `Message` traffic.
 > schema does not include. If a peer's schema is missing a variant the other
 > peer requires, the handshake MUST fail with `Sorry`.
 
-> r[session.handshake.protocol-schema.session-scoped]
+> r[connection.handshake.protocol-schema.connection-scoped]
 >
 > Protocol schemas are exchanged once per connection during the handshake. They
 > are immutable for the connection lifetime.
 
-> r[session.handshake.unversioned]
+> r[connection.handshake.unversioned]
 >
 > There is no version field in `Hello`. Protocol evolution is handled entirely
 > through schema exchange: each peer describes its `Message` envelope and peers
 > build phon decode plans from the schema closures. If a peer's schema is
 > missing a variant the other peer requires, the handshake fails with `Sorry`.
 
-> r[session.parity]
+> r[connection.lane-id-parity]
 >
 > Parity plays a role on two different levels:
 >
@@ -415,11 +411,11 @@ succeeds, the `BareConduit` carries connection `Message` traffic.
 > Alice may later open service lanes with ID 1, 3, 5, 7, etc. whereas Bob may
 > open service lanes with ID 2, 4, 6, 8, etc.
 
-> r[session.connection-settings]
+> r[lane.settings]
 >
 > `ConnectionSettings` is a compatibility wire struct embedded in `Hello` (for
-> connection defaults and the historical root/control lane) and `OpenConnection`
-> (for service lanes). It carries per-lane limits advertised by the peer:
+> connection defaults and control lane ID 0) and `OpenConnection` (for service
+> lanes). It carries per-lane limits advertised by the peer:
 >
 >   * `max_concurrent_requests` — the maximum number of in-flight requests
 >     the peer is willing to accept on this lane (u32).
@@ -427,20 +423,19 @@ succeeds, the `BareConduit` carries connection `Message` traffic.
 >     front for each newly created channel it receives on this lane
 >     (u32). This value also bounds the peer's inbound per-channel queue.
 
-> r[session.connection-settings.hello]
+> r[connection.handshake.lane-settings]
 >
 > `Hello` and `HelloYourself` each carry a `ConnectionSettings` that
-> supplies connection-default lane limits and, during compatibility with the
-> historical root connection, the internal control/root lane limits. Each peer
-> advertises its own limits.
+> supplies connection-default lane limits and control lane ID 0 limits. Each
+> peer advertises its own limits.
 
-> r[session.connection-settings.open]
+> r[lane.open.settings]
 >
 > `OpenConnection` carries a `ConnectionSettings` from the lane opener.
 > `AcceptConnection` carries a `ConnectionSettings` from the accepter. Together,
 > they establish the limits for the service lane.
 
-> r[session.protocol-error]
+> r[connection.protocol-error]
 >
 > When their counterpart does something that violates the vox spec, a peer MUST
 > send a `ProtocolError` message describing the violation, and MUST tear down
@@ -453,7 +448,7 @@ succeeds, the `BareConduit` carries connection `Message` traffic.
 > error. Any live channel MUST be put in a state where any attempt to
 > send or receive returns an error indicating a protocol error.
 
-> r[session.keepalive]
+> r[connection.keepalive]
 >
 > Peers MAY use protocol keepalive on control lane ID 0 to detect half-open or
 > otherwise dead peers. Keepalive uses:
@@ -466,28 +461,25 @@ succeeds, the `BareConduit` carries connection `Message` traffic.
 > connection failure, in which case they MUST tear down the connection and fail
 > all pending request scopes with a connection-closed style error.
 
-# Lanes and compatibility connection IDs
+# Lanes and compatibility wire IDs
 
-> r[connection]
+> r[lane.id.compat]
 >
-> The historical `ConnectionId` namespace is the service-lane namespace in the
-> rootless model. Each nonzero ID identifies a lane with its own request and
-> channel namespaces. Compatibility code and wire types MAY still call this a
-> connection ID.
+> `ConnectionId` is a compatibility wire name for the lane ID namespace. Each
+> nonzero ID identifies a lane with its own request and channel namespaces.
+> Compatibility code and wire types MAY still call this a connection ID.
 
-> r[connection.root]
+> r[lane.control.compat]
 >
 > ID 0 is reserved for connection-control traffic. Trying to close ID 0 as an
 > application lane is a protocol error. ID 0 MUST NOT be exposed as a public
-> service-bearing root connection or generated caller.
+> service-bearing lane or generated caller.
 
-> r[connection.virtual]
+> r[lane.service.compat]
 >
-> IDs strictly greater than 0 identify service lanes. The historical
-> implementation term for these dynamically opened lanes is "virtual
-> connections".
+> IDs strictly greater than 0 identify service lanes.
 
-> r[connection.open]
+> r[lane.open.wire]
 >
 > Either peer may allocate a new nonzero lane ID using its connection parity and
 > send an `OpenConnection` compatibility message on the desired lane ID, then
@@ -499,7 +491,7 @@ succeeds, the `BareConduit` carries connection `Message` traffic.
 > connection parity is a protocol error. Sending `OpenConnection` with an ID
 > that is already in use is a protocol error.
 
-> r[connection.open.rejection]
+> r[lane.open.wire.rejection]
 >
 > There is no negotiated protocol-level limit on the maximum number of service
 > lanes a connection may hold. Instead, peers MUST protect their own resources by
@@ -508,7 +500,7 @@ succeeds, the `BareConduit` carries connection `Message` traffic.
 > resources to handle a new lane, the peer MUST reply with a `RejectConnection`
 > compatibility message.
 
-> r[connection.parity]
+> r[lane.request-channel-parity]
 >
 > When opening a service lane, a peer requests a request/channel parity for that
 > lane. Request IDs and channel IDs have separate namespaces within a lane.
@@ -520,14 +512,14 @@ succeeds, the `BareConduit` carries connection `Message` traffic.
 > requests with ID 2, 4, 6 and channels with ID 2, 4, 6 (in their respective
 > namespaces), etc.
 
-> r[connection.close]
+> r[lane.close]
 >
 > Either peer may gracefully terminate a nonzero service lane by sending a
 > `CloseConnection` compatibility message. After sending `CloseConnection`, a
 > peer MUST NOT send any further requests, responses, or channel messages on
 > that lane ID.
 
-> r[connection.close.semantics]
+> r[lane.close.semantics]
 >
 > Upon receiving a `CloseConnection` message, a peer MUST treat the lane as
 > immediately terminated and release its associated resources. The receiving peer
@@ -537,10 +529,9 @@ succeeds, the `BareConduit` carries connection `Message` traffic.
 > receiving `CloseConnection` for it is a protocol error.
 
 The design objective is to allow lane-aware proxies to route service-lane
-traffic without having to translate request IDs or channel IDs. Historical
-implementations exposed this as "virtual connections"; the rootless model keeps
-the useful namespace separation while treating lanes as scoped service contexts
-inside one Vox connection.
+traffic without having to translate request IDs or channel IDs. The rootless
+model keeps the useful namespace separation while treating lanes as scoped
+service contexts inside one Vox connection.
 
 Case study: [dodeca](https://github.com/bearcove/dodeca) is a static site
 generator. It uses vox RPC to communicate the host (main binary) and cells,
@@ -561,30 +552,29 @@ has to forward calls somehow:
 '----------------'              '----------------'                    '----------------'
 ```
 
-Historically, this is where Vox virtual connections mattered: the HTTP server
-cell could ask the host-side connection to create another request/channel
+This is the forwarding requirement that service lanes preserve: the HTTP server
+cell can ask the host-side connection to create another request/channel
 namespace, then route browser traffic through that namespace without translating
 request IDs or channel IDs.
 
 In the rootless model, that topology should be described in terms of service
 lanes or in terms of a lower-level transport/topology that creates another Vox
-connection. Vox core does not need a public root caller to make the forwarding
-case work: ID 0 remains connection control, and every public service endpoint
-lives on an explicit lane.
+connection. Vox core represents service traffic with explicit lanes: ID 0
+remains connection control, and every public service endpoint lives on an
+explicit lane.
 
 ## Current Rust runtime API
 
 1. Establish a `Connection` and keep its driver future running.
 2. Open outbound service lanes via `ConnectionHandle::open_lane(...)` or
    `ConnectionHandle::open_lane_handle(...)`.
-3. Accept inbound service lanes by registering `.on_connection(...)` on the
+3. Accept inbound service lanes by registering an inbound lane acceptor on the
    connection builder.
 
 Each `LaneHandle` is a service-lane handle: it gets its own driver state,
 request/channel ID allocators, dispatcher, and caller context.
-The rootless public API should teach this as "open or accept a service lane on
-an explicitly driven Vox connection", not as "keep a root connection caller
-alive".
+The rootless public API teaches this as "open or accept a service lane on an
+explicitly driven Vox connection".
 
-If `.on_connection(...)` is not configured during the compatibility period,
+If no inbound lane acceptor is configured during the compatibility period,
 inbound `OpenConnection` messages are rejected.

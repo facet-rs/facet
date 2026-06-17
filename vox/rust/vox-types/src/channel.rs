@@ -818,7 +818,7 @@ impl CoreSlot {
 ///
 /// A channel is one-directional streaming, not a reply path: to hand a value *back*
 /// from the handler, take a `Tx<T>` (the handler holds it and sends → caller). For
-/// request/response over the same link, open a **virtual connection** on the session
+/// request/response over the same link, open a service lane on the connection
 /// — do not simulate it by pairing two channels.
 #[track_caller]
 pub fn channel<T>() -> (Tx<T>, Rx<T>) {
@@ -1045,7 +1045,7 @@ where
     }
 }
 
-/// Runtime sink implemented by the session driver.
+/// Runtime sink implemented by the connection driver.
 ///
 /// The contract is strict: successful completion means the item has gone
 /// through the conduit to the link commit boundary.

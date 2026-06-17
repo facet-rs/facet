@@ -13,9 +13,9 @@ use vox_phon::raw_opaque_bytes;
 pub const DEFAULT_INITIAL_CHANNEL_CREDIT: u32 = 16;
 
 /// Per-lane limits advertised by a peer.
-// r[impl session.connection-settings]
-// r[impl session.parity]
-// r[impl connection.parity]
+// r[impl lane.settings]
+// r[impl connection.lane-id-parity]
+// r[impl lane.request-channel-parity]
 // r[impl rpc.flow-control]
 // r[impl rpc.flow-control.max-concurrent-requests]
 // r[impl rpc.flow-control.max-concurrent-requests.default]
@@ -37,9 +37,9 @@ impl<'payload> Message<'payload> {
 }
 
 /// Whether a peer will use odd or even IDs for requests and channels on a lane.
-// r[impl session.parity]
-// r[impl session.role]
-// r[impl connection.parity]
+// r[impl connection.lane-id-parity]
+// r[impl connection.role]
+// r[impl lane.request-channel-parity]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Facet)]
 #[repr(u8)]
 pub enum Parity {
@@ -59,11 +59,11 @@ impl Parity {
 
 structstruck::strike! {
     /// Protocol message.
-    // r[impl session]
-    // r[impl session.message]
-    // r[impl session.message.connection-id]
-    // r[impl session.peer]
-    // r[impl session.symmetry]
+    // r[impl connection.protocol]
+    // r[impl connection.message]
+    // r[impl connection.message.lane-id]
+    // r[impl connection.peer]
+    // r[impl connection.symmetry]
     #[structstruck::each[derive(Debug, Facet)]]
     pub struct Message<'payload> {
         /// Lane ID. ID 0 is reserved for connection-control messages.
@@ -72,7 +72,7 @@ structstruck::strike! {
         /// Message payload
         pub payload:
             #[repr(u8)]
-            // r[impl session.message.payloads]
+            // r[impl connection.message.payloads]
             pub enum MessagePayload<'payload> {
                 // ========================================================================
                 // Control (conn 0 only)
@@ -81,7 +81,7 @@ structstruck::strike! {
                 /// Sent by either peer when the counterpart has violated the protocol.
                 /// The sender closes the transport immediately after sending this message.
                 /// No reply is expected or valid.
-                // r[impl session.protocol-error]
+                // r[impl connection.protocol-error]
                 ProtocolError(pub struct ProtocolError<'payload> {
                     /// Human-readable description of the protocol violation.
                     pub description: &'payload str,
@@ -93,9 +93,9 @@ structstruck::strike! {
 
                 /// Request a new service lane. This is sent on the desired lane ID,
                 /// even though it does not exist yet.
-                // r[impl connection.open]
-                // r[impl connection.virtual]
-                // r[impl session.connection-settings.open]
+                // r[impl lane.open.wire]
+                // r[impl lane.service.compat]
+                // r[impl lane.open.settings]
                 LaneOpen(pub struct LaneOpen {
                     /// Lane limits advertised by the opener.
                     /// Parity is included in ConnectionSettings.
@@ -106,7 +106,7 @@ structstruck::strike! {
                 }),
 
                 /// Accept a lane request, sent on the requested lane ID.
-                // r[impl session.connection-settings.open]
+                // r[impl lane.open.settings]
                 LaneAccept(pub struct LaneAccept {
                     /// Lane limits advertised by the accepter.
                     pub connection_settings: ConnectionSettings,
@@ -252,14 +252,14 @@ structstruck::strike! {
                 // ========================================================================
 
                 /// Liveness probe for dead-peer detection.
-                // r[impl session.keepalive]
+                // r[impl connection.keepalive]
                 Ping(pub struct Ping {
                     /// Opaque nonce echoed by the Pong response.
                     pub nonce: u64,
                 }),
 
                 /// Reply to a keepalive Ping.
-                // r[impl session.keepalive]
+                // r[impl connection.keepalive]
                 Pong(pub struct Pong {
                     /// Echo of the received ping nonce.
                     pub nonce: u64,
@@ -381,7 +381,7 @@ crate::impl_reborrow!(
 
 // These payloads carry only owned data now (metadata is a self-describing `Value`,
 // settings are `Copy`), so they have no lifetime parameter — their `Reborrow` is the
-// identity. They are still projected out of a `SelfRef` (the session pattern-matches
+// identity. They are still projected out of a `SelfRef` (the connection runtime pattern-matches
 // them), which requires the impl.
 // SAFETY: owned types with no lifetime parameter; `Ref<'a> = Self` is trivially sound.
 macro_rules! impl_reborrow_owned {
@@ -420,7 +420,7 @@ mod tests {
         }
     }
 
-    // r[verify session.message.payloads]
+    // r[verify connection.message.payloads]
     #[test]
     fn message_payload_shape_lists_compact_session_payloads() {
         let payloads = enum_variant_names::<MessagePayload<'static>>();

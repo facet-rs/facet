@@ -55,7 +55,7 @@ async fn serve_and_connect() {
     server.abort();
 }
 
-// r[verify rpc.session-setup]
+// r[verify rpc.connection-setup]
 #[tokio::test]
 async fn connect_builder_establish_matches_await() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -166,7 +166,7 @@ async fn serve_listener_builder_rejects_zero_channel_capacity() {
     }
 }
 
-// r[verify rpc.virtual-connection.accept]
+// r[verify lane.accept.api]
 #[tokio::test]
 async fn connect_builder_can_configure_inbound_virtual_connections_before_await() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

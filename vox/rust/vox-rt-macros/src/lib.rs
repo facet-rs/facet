@@ -1,4 +1,4 @@
-// r[impl session] r[impl rpc.observability.runtime]
+// r[impl connection.protocol] r[impl rpc.observability.runtime]
 
 use proc_macro::TokenStream;
 

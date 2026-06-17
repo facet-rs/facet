@@ -286,17 +286,17 @@ function roleName(role: Role): EstablishmentRole {
   return role === Role.Initiator ? "initiator" : "acceptor";
 }
 
-// r[impl session]
-// r[impl session.handshake]
-// r[impl session.handshake.phon]
-// r[impl session.handshake.protocol-schema]
-// r[impl session.handshake.protocol-schema.session-scoped]
-// r[impl session.handshake.unversioned]
-// r[impl session.connection-settings]
-// r[impl session.connection-settings.hello]
-// r[impl session.peer]
-// r[impl session.role]
-// r[impl session.symmetry]
+// r[impl connection.protocol]
+// r[impl connection.handshake]
+// r[impl connection.handshake.phon]
+// r[impl connection.handshake.protocol-schema]
+// r[impl connection.handshake.protocol-schema.connection-scoped]
+// r[impl connection.handshake.unversioned]
+// r[impl lane.settings]
+// r[impl connection.handshake.lane-settings]
+// r[impl connection.peer]
+// r[impl connection.role]
+// r[impl connection.symmetry]
 // r[impl transport.prologue.first-payload]
 // r[impl transport.prologue.post-accept]
 async function makeInitiatorEstablishedTransport(
@@ -365,18 +365,18 @@ async function makeInitiatorEstablishedTransport(
   };
 }
 
-// r[impl session]
-// r[impl session.handshake]
-// r[impl session.handshake.phon]
-// r[impl session.handshake.protocol-schema]
-// r[impl session.handshake.protocol-schema.session-scoped]
-// r[impl session.handshake.sorry]
-// r[impl session.handshake.unversioned]
-// r[impl session.connection-settings]
-// r[impl session.connection-settings.hello]
-// r[impl session.peer]
-// r[impl session.role]
-// r[impl session.symmetry]
+// r[impl connection.protocol]
+// r[impl connection.handshake]
+// r[impl connection.handshake.phon]
+// r[impl connection.handshake.protocol-schema]
+// r[impl connection.handshake.protocol-schema.connection-scoped]
+// r[impl connection.handshake.sorry]
+// r[impl connection.handshake.unversioned]
+// r[impl lane.settings]
+// r[impl connection.handshake.lane-settings]
+// r[impl connection.peer]
+// r[impl connection.role]
+// r[impl connection.symmetry]
 // r[impl transport.prologue.first-payload]
 // r[impl transport.prologue.post-accept]
 async function makeAcceptorEstablishedTransport(
@@ -503,7 +503,7 @@ class ConnectionCore {
     this.conduit = conduit;
     this.localInitialLaneSettings = localInitialLaneSettings;
     this.peerInitialLaneSettings = peerInitialLaneSettings;
-    // r[impl session.parity]
+    // r[impl connection.lane-id-parity]
     this.nextLaneId = firstIdForParity(localInitialLaneSettings.parity);
     this.connectionHandle = new ConnectionHandle(this);
     this.onLane = onLane;
@@ -526,8 +526,8 @@ class ConnectionCore {
   }
 
   initialLane(): Lane {
-    // r[impl connection]
-    // r[impl connection.root]
+    // r[impl lane.id.compat]
+    // r[impl lane.control.compat]
     // r[impl lane.control]
     if (!this.initialLaneValue) {
       this.initialLaneValue = new Lane(
@@ -567,13 +567,13 @@ class ConnectionCore {
       }
       this.fail(connectionError);
     });
-    // r[impl session.keepalive]
+    // r[impl connection.keepalive]
     if (this.keepaliveIntervalMs > 0) {
       this.scheduleKeepalive();
     }
   }
 
-  // r[impl session.keepalive]
+  // r[impl connection.keepalive]
   private scheduleKeepalive(): void {
     if (this.closed || this.keepaliveIntervalMs <= 0) return;
     this.keepaliveTimer = setTimeout(() => {
@@ -581,7 +581,7 @@ class ConnectionCore {
     }, this.keepaliveIntervalMs);
   }
 
-  // r[impl session.keepalive]
+  // r[impl connection.keepalive]
   private sendKeepalivePing(): void {
     if (this.closed) {
       this.scheduleKeepalive();
@@ -623,11 +623,11 @@ class ConnectionCore {
     settings: ConnectionSettings,
     metadata: Metadata = emptyMetadata(),
   ): Promise<Lane> {
-    // r[impl connection]
-    // r[impl connection.virtual]
-    // r[impl connection.open]
+    // r[impl lane.id.compat]
+    // r[impl lane.service.compat]
+    // r[impl lane.open.wire]
     // r[impl lane.open]
-    // r[impl rpc.virtual-connection.open]
+    // r[impl lane.open.api]
     this.assertOpen();
     if (settings.initial_channel_credit <= 0) {
       throw ConnectionError.protocol("initial_channel_credit must be greater than zero");
@@ -669,10 +669,10 @@ class ConnectionCore {
   }
 
   async closeLane(laneId: bigint, metadata: Metadata = emptyMetadata()): Promise<void> {
-    // r[impl connection]
-    // r[impl connection.virtual]
-    // r[impl connection.close]
-    // r[impl connection.close.semantics]
+    // r[impl lane.id.compat]
+    // r[impl lane.service.compat]
+    // r[impl lane.close]
+    // r[impl lane.close.semantics]
     this.assertOpen();
     if (laneId === 0n) {
       throw new ConnectionError("cannot close the initial lane through closeLane");
@@ -739,7 +739,7 @@ class ConnectionCore {
   }
 
   private allocateLaneId(): bigint {
-    // r[impl session.parity]
+    // r[impl connection.lane-id-parity]
     const id = this.nextLaneId;
     this.nextLaneId += 2n;
     return id;
@@ -754,9 +754,9 @@ class ConnectionCore {
   }
 
   private async run(): Promise<void> {
-    // r[impl session.message]
-    // r[impl session.message.connection-id]
-    // r[impl session.message.payloads]
+    // r[impl connection.message]
+    // r[impl connection.message.lane-id]
+    // r[impl connection.message.payloads]
     while (!this.closed) {
       const message = await this.conduit.recv();
       if (!message) {
@@ -772,7 +772,7 @@ class ConnectionCore {
     voxLogger()?.debug(`[vox:connection] handleMessage: tag=${message.payload.tag} lane=${message.lane_id}`);
     switch (message.payload.tag) {
       case "Ping":
-        // r[impl session.keepalive]
+        // r[impl connection.keepalive]
         void this.sendMessage({
           lane_id: 0n,
           payload: { tag: "Pong", value: { nonce: message.payload.value.nonce } },
@@ -780,7 +780,7 @@ class ConnectionCore {
         return;
 
       case "Pong":
-        // r[impl session.keepalive]
+        // r[impl connection.keepalive]
         if (this.keepalivePendingNonce === message.payload.value.nonce) {
           clearTimeout(this.keepalivePongTimer!);
           this.keepalivePongTimer = null;
@@ -845,7 +845,7 @@ class ConnectionCore {
     }
   }
 
-  // r[impl session.protocol-error]
+  // r[impl connection.protocol-error]
   private async sendProtocolError(description: string): Promise<void> {
     try {
       await this.conduit.send(messageProtocolError(description));
@@ -858,13 +858,13 @@ class ConnectionCore {
     laneId: bigint,
     value: { connection_settings: ConnectionSettings; metadata: unknown },
   ): Promise<void> {
-    // r[impl connection]
-    // r[impl connection.virtual]
-    // r[impl connection.open]
+    // r[impl lane.id.compat]
+    // r[impl lane.service.compat]
+    // r[impl lane.open.wire]
     // r[impl lane.open]
-    // r[impl rpc.virtual-connection.accept]
-    // r[impl connection.open.rejection]
-    // r[impl session.connection-settings.open]
+    // r[impl lane.accept.api]
+    // r[impl lane.open.wire.rejection]
+    // r[impl lane.open.settings]
     const establishmentContext: EstablishmentContext = {
       role: roleName(roleFromParity(this.localInitialLaneSettings.parity)),
       phase: "service-lane-open",
@@ -908,7 +908,7 @@ class ConnectionCore {
     }
 
     const localSettings: ConnectionSettings = {
-      // r[impl connection.parity]
+      // r[impl lane.request-channel-parity]
       parity: oppositeParity(value.connection_settings.parity),
       max_concurrent_requests: value.connection_settings.max_concurrent_requests,
       initial_channel_credit: value.connection_settings.initial_channel_credit,
@@ -1179,13 +1179,13 @@ export class Lane {
     // r[impl rpc.flow-control.max-concurrent-requests]
     // r[impl rpc.flow-control.max-concurrent-requests.outbound]
     this.outboundRequestLimit = new AsyncSemaphore(peerSettings.max_concurrent_requests);
-    // r[impl connection.parity]
+    // r[impl lane.request-channel-parity]
     this.role = roleFromParity(localSettings.parity);
     this.channelAllocator = new ChannelIdAllocator(this.role);
     this.channelRegistry = new ChannelRegistry(undefined, () => {
       void this.flushOutgoing();
     });
-    // r[impl connection.parity]
+    // r[impl lane.request-channel-parity]
     this.nextRequestId = firstIdForParity(localSettings.parity);
   }
 
@@ -1536,7 +1536,7 @@ export class Lane {
     this.channelRegistry.closeAll(ChannelError.connectionClosed());
     this.inboundLiveRequests.clear();
     this.inboundRequestChannels.clear();
-    // r[impl rpc.flow-control.max-concurrent-requests.session-failure]
+    // r[impl rpc.flow-control.max-concurrent-requests.connection-failure]
     this.outboundRequestLimit.close(error);
     const pendingStates = new Set(this.pendingResponses.values());
     this.pendingResponses.clear();
@@ -1705,7 +1705,7 @@ export class Lane {
   }
 
   private allocateRequestId(): bigint {
-    // r[impl connection.parity]
+    // r[impl lane.request-channel-parity]
     const requestId = this.nextRequestId;
     this.nextRequestId += 2n;
     return requestId;
@@ -1849,7 +1849,7 @@ export function defaultLaneSettings(
   }
 
   return {
-    // r[impl session.parity]
+    // r[impl connection.lane-id-parity]
     parity: parityFromRole(role),
     // r[impl rpc.flow-control.max-concurrent-requests.default]
     max_concurrent_requests: maxConcurrentRequests,

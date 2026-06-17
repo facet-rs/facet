@@ -10,8 +10,8 @@ struct ConnectionHandshakeResult {
     let peerMessageSchema: [UInt8]
 }
 
-// r[impl session.role]
-// r[impl session.parity]
+// r[impl connection.role]
+// r[impl connection.lane-id-parity]
 func oppositeParity(_ parity: Parity) -> Parity {
     switch parity {
     case .odd:
@@ -21,13 +21,13 @@ func oppositeParity(_ parity: Parity) -> Parity {
     }
 }
 
-// r[impl session.handshake.sorry]
+// r[impl connection.handshake.sorry]
 func sendHandshakeSorry(_ link: any Link, reason: String) async {
     try? await sendHandshake(link, .sorry(Sorry(reason: reason)))
 }
 
-// r[impl session.handshake.protocol-schema]
-// r[impl session.handshake.protocol-schema.session-scoped]
+// r[impl connection.handshake.protocol-schema]
+// r[impl connection.handshake.protocol-schema.connection-scoped]
 func requireIdentityMessageSchema(
     _ peerMessageSchema: [UInt8],
     on link: any Link
@@ -40,7 +40,7 @@ func requireIdentityMessageSchema(
 }
 
 /// The local Message schema closure, advertised in the handshake.
-/// r[impl session.handshake.protocol-schema]
+/// r[impl connection.handshake.protocol-schema]
 private var localMessagePayloadSchema: [UInt8] { MessageSchemaClosure }
 
 func validateInitialChannelCredit(_ initialChannelCredit: UInt32) throws {
@@ -55,7 +55,7 @@ func makeConnectionSettings(
     maxConcurrentRequests: UInt32,
     initialChannelCredit: UInt32
 ) throws -> ConnectionSettings {
-    // r[impl session.connection-settings]
+    // r[impl lane.settings]
     // r[impl rpc.flow-control.max-concurrent-requests.default]
     // r[impl rpc.flow-control.credit.initial.high-level]
     try validateInitialChannelCredit(initialChannelCredit)
@@ -66,16 +66,16 @@ func makeConnectionSettings(
     )
 }
 
-// r[impl session]
-// r[impl session.handshake]
-// r[impl session.handshake.phon]
-// r[impl session.handshake.protocol-schema]
-// r[impl session.handshake.protocol-schema.session-scoped]
-// r[impl session.handshake.unversioned]
-// r[impl session.connection-settings]
-// r[impl session.peer]
-// r[impl session.role]
-// r[impl session.symmetry]
+// r[impl connection.protocol]
+// r[impl connection.handshake]
+// r[impl connection.handshake.phon]
+// r[impl connection.handshake.protocol-schema]
+// r[impl connection.handshake.protocol-schema.connection-scoped]
+// r[impl connection.handshake.unversioned]
+// r[impl lane.settings]
+// r[impl connection.peer]
+// r[impl connection.role]
+// r[impl connection.symmetry]
 func performInitiatorHandshake(
     link: any Link,
     maxPayloadSize: UInt32,
@@ -140,16 +140,16 @@ func performInitiatorHandshake(
     )
 }
 
-// r[impl session]
-// r[impl session.handshake]
-// r[impl session.handshake.phon]
-// r[impl session.handshake.protocol-schema]
-// r[impl session.handshake.protocol-schema.session-scoped]
-// r[impl session.handshake.unversioned]
-// r[impl session.connection-settings]
-// r[impl session.peer]
-// r[impl session.role]
-// r[impl session.symmetry]
+// r[impl connection.protocol]
+// r[impl connection.handshake]
+// r[impl connection.handshake.phon]
+// r[impl connection.handshake.protocol-schema]
+// r[impl connection.handshake.protocol-schema.connection-scoped]
+// r[impl connection.handshake.unversioned]
+// r[impl lane.settings]
+// r[impl connection.peer]
+// r[impl connection.role]
+// r[impl connection.symmetry]
 func performAcceptorHandshake(
     link: any Link,
     maxPayloadSize: UInt32,
@@ -217,7 +217,7 @@ func performAcceptorHandshake(
 }
 
 // r[impl transport.prologue.post-accept]
-// r[impl session.message.payloads]
+// r[impl connection.message.payloads]
 func buildEstablishedConduit(
     role: Role,
     attachment: LinkAttachment,
@@ -232,7 +232,7 @@ func buildEstablishedConduit(
     }
 }
 
-// r[impl rpc.session-setup]
+// r[impl rpc.connection-setup]
 func establishInitiator(
     attachment: LinkAttachment,
     dispatcher: any ServiceDispatcher,
@@ -279,7 +279,7 @@ func establishInitiator(
     return (connection, driver, handle, handshake.peerMetadata)
 }
 
-// r[impl rpc.session-setup]
+// r[impl rpc.connection-setup]
 func establishInitiator(
     link: any Link,
     dispatcher: any ServiceDispatcher,
@@ -302,7 +302,7 @@ func establishInitiator(
     )
 }
 
-// r[impl rpc.session-setup]
+// r[impl rpc.connection-setup]
 func establishInitiator(
     conduit: any Link,
     dispatcher: any ServiceDispatcher,
@@ -327,7 +327,7 @@ func establishInitiator(
 
 // r[impl transport.prologue.first-payload]
 // r[impl transport.prologue.post-accept]
-// r[impl rpc.session-setup]
+// r[impl rpc.connection-setup]
 func establishAcceptor(
     attachment: LinkAttachment,
     dispatcher: any ServiceDispatcher,
@@ -380,7 +380,7 @@ func establishAcceptor(
     return (connection, driver, handle, handshake.peerMetadata)
 }
 
-// r[impl rpc.session-setup]
+// r[impl rpc.connection-setup]
 func establishAcceptor(
     link: any Link,
     dispatcher: any ServiceDispatcher,
@@ -403,7 +403,7 @@ func establishAcceptor(
     )
 }
 
-// r[impl rpc.session-setup]
+// r[impl rpc.connection-setup]
 func establishAcceptor(
     conduit: any Link,
     dispatcher: any ServiceDispatcher,

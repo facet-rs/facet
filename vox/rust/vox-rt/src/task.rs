@@ -1,4 +1,4 @@
-// r[impl session] r[impl rpc.session-setup]
+// r[impl connection.protocol] r[impl rpc.connection-setup]
 
 use std::future::{Future, IntoFuture};
 use std::pin::Pin;

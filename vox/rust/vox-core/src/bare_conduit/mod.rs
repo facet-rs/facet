@@ -20,7 +20,7 @@ use crate::MessagePlan;
 /// and reuses it for every frame. There is no same-version envelope shortcut.
 // r[impl conduit.bare]
 // r[impl conduit.typeplan]
-// r[impl session.handshake.protocol-schema.session-scoped]
+// r[impl connection.handshake.protocol-schema.connection-scoped]
 pub struct BareConduit<F: MsgFamily, L: Link> {
     link: L,
     /// The peer's `Message` envelope schema (phon bytes) from the handshake, or
@@ -47,7 +47,7 @@ impl<F: MsgFamily, L: Link> BareConduit<F, L> {
     /// Create a BareConduit carrying the peer's envelope schema from the
     /// handshake. The Rx half builds the compat decode program against its own
     /// `Message` descriptor.
-    // r[impl session.handshake.protocol-schema.session-scoped]
+    // r[impl connection.handshake.protocol-schema.connection-scoped]
     pub fn with_message_plan(link: L, message_plan: MessagePlan) -> Self {
         Self {
             link,
@@ -162,7 +162,7 @@ impl<F: MsgFamily, LRx> BareConduitRx<F, LRx> {
     /// schema-identical degenerate of the one compat path) — against `F::Msg`'s
     /// descriptor via phon's `lower_decode`.
     // r[impl conduit.typeplan]
-    // r[impl session.handshake.protocol-schema.session-scoped]
+    // r[impl connection.handshake.protocol-schema.connection-scoped]
     fn ensure_program(&mut self) -> Result<&vox_phon::DecodeProgram, BareConduitError> {
         if self.program.is_none() {
             let writer_bytes = match &self.writer_schema {
