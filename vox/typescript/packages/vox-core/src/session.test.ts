@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { decodeTyped, encodeTyped } from "@bearcove/phon-engine";
 import {
   type ConnectionSettings,
@@ -10,7 +10,6 @@ import {
   messageRequest,
   messageResponse,
   messageCancel,
-  messageData,
   messageLaneAccept,
   messageLaneOpen,
   messageLaneClose,
@@ -729,19 +728,131 @@ describe("session", () => {
 
     await Promise.allSettled([request(), request()]);
 
-    const schemas = sent.map((message) => {
+    const callBodies = sent.flatMap((message) => {
       expect(message.payload.tag).toBe("RequestMessage");
       const body = message.payload.tag === "RequestMessage"
         ? message.payload.value.body
         : undefined;
-      expect(body?.tag).toBe("Call");
-      return body?.tag === "Call" ? body.value.schemas : [];
+      return body?.tag === "Call" ? [body] : [];
+    });
+    const schemas = callBodies.map((body) => {
+      expect(body.tag).toBe("Call");
+      return body.value.schemas;
     });
 
     expect(schemas).toEqual([
       Array.from(hexToBytes(ECHO_METHOD_SCHEMAS.argsSchemaClosure)),
       [],
     ]);
+  });
+
+  // r[verify rpc.timeout.idle-progress]
+  it("rejects request-idle calls with RpcError and sends cancel", async () => {
+    vi.useFakeTimers();
+    try {
+      const settings: ConnectionSettings = {
+        parity: { tag: "Odd" },
+        max_concurrent_requests: 64,
+        initial_channel_credit: 16,
+      };
+      const sent: Message[] = [];
+      const fakeSession = {
+        sendMessage: async (message: Message) => {
+          sent.push(message);
+        },
+      };
+      const connection = new Lane(
+        fakeSession as never,
+        0n,
+        settings,
+        settings,
+      );
+
+      const call = connection.caller().call({
+        method: "Test.echo",
+        args: { value: 55 },
+        descriptor: ECHO_METHOD,
+        methodSchemas: ECHO_METHOD_SCHEMAS,
+        registry: sessionEchoRegistry,
+        timeoutMs: 10,
+      });
+      const observedCall = call.catch((error: unknown) => error);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      await vi.advanceTimersByTimeAsync(10);
+
+      const thrown = await observedCall;
+      expect(thrown).toBeInstanceOf(RpcError);
+      expect((thrown as RpcError).code).toBe(RpcErrorCode.TIMED_OUT);
+      const requests = sent
+        .filter((message) => message.payload.tag === "RequestMessage")
+        .map((message) => message.payload.tag === "RequestMessage" ? message.payload.value : null);
+      expect(requests.map((request) => request?.id)).toEqual([1n, 1n]);
+      expect(requests.map((request) => request?.body.tag)).toEqual(["Call", "Cancel"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // r[verify rpc.timeout.idle-progress]
+  it("extends request idle timeout on request-associated channel activity", async () => {
+    vi.useFakeTimers();
+    try {
+      const settings: ConnectionSettings = {
+        parity: { tag: "Odd" },
+        max_concurrent_requests: 64,
+        initial_channel_credit: 16,
+      };
+      const sent: Message[] = [];
+      const fakeSession = {
+        sendMessage: async (message: Message) => {
+          sent.push(message);
+        },
+      };
+      const connection = new Lane(
+        fakeSession as never,
+        0n,
+        settings,
+        settings,
+      );
+      connection.getSchemaTracker().recordReceived(
+        ECHO_METHOD.id,
+        "response",
+        hexToBytes(ECHO_METHOD_SCHEMAS.responseSchemaClosure),
+      );
+
+      const call = connection.caller().call({
+        method: "Test.echo",
+        args: { value: 55 },
+        descriptor: ECHO_METHOD,
+        methodSchemas: ECHO_METHOD_SCHEMAS,
+        registry: sessionEchoRegistry,
+        timeoutMs: 80,
+        channels: [7n],
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      await vi.advanceTimersByTimeAsync(50);
+      connection.routeChannelData(7n, Uint8Array.of(1));
+      await vi.advanceTimersByTimeAsync(31);
+
+      const payload = encodeTyped(
+        { tag: "Ok", value: 55 } as never,
+        ECHO_METHOD_SCHEMAS.responseRoot,
+        sessionEchoRegistry,
+      );
+      connection.resolveResponse(1n, payload);
+
+      await expect(call).resolves.toBe(55);
+      const requests = sent
+        .filter((message) => message.payload.tag === "RequestMessage")
+        .map((message) => message.payload.tag === "RequestMessage" ? message.payload.value : null);
+      expect(requests.map((request) => request?.body.tag)).toEqual(["Call"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   // r[verify connection.parity]
@@ -781,14 +892,13 @@ describe("session", () => {
 
     await Promise.allSettled([request(), request()]);
 
-    const calls = sent.map((message) => {
+    const calls = sent.flatMap((message) => {
       expect(message.lane_id).toBe(13n);
       expect(message.payload.tag).toBe("RequestMessage");
       const requestMessage = message.payload.tag === "RequestMessage"
         ? message.payload.value
         : undefined;
-      expect(requestMessage?.body.tag).toBe("Call");
-      return requestMessage?.id;
+      return requestMessage?.body.tag === "Call" ? [requestMessage.id] : [];
     });
 
     expect(calls).toEqual([2n, 4n]);
@@ -1448,11 +1558,6 @@ describe("session", () => {
       {
         wireError: { tag: "Cancelled" },
         code: RpcErrorCode.CANCELLED,
-        user: false,
-      },
-      {
-        wireError: { tag: "TimedOut" },
-        code: RpcErrorCode.TIMED_OUT,
         user: false,
       },
       {

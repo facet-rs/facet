@@ -69,6 +69,8 @@ interface PendingResponse {
   resolve: (payload: Uint8Array) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
+  idleTimeoutMs: number;
+  lastProgressAt: number;
   methodId: bigint;
   payload: Uint8Array;
   metadata: Metadata;
@@ -1035,14 +1037,18 @@ export class Lane {
             "args",
             methodSchemas.argsSchemaClosure,
           );
+        const idleTimeoutMs = request.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+        const startedAt = Date.now();
 
-        const state: PendingResponse = {
+        let state!: PendingResponse;
+        state = {
           resolve,
           reject,
           timer: setTimeout(() => {
-            this.clearPendingState(state);
-            reject(new ConnectionError("timeout waiting for response"));
-          }, request.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+            this.timeoutPendingResponse(state);
+          }, idleTimeoutMs),
+          idleTimeoutMs,
+          lastProgressAt: startedAt,
           methodId: request.descriptor.id,
           payload: initial.payload.slice(),
           metadata: cloneMetadata(metadata),
@@ -1133,14 +1139,17 @@ export class Lane {
 
   async sendChannelData(channelId: bigint, payload: Uint8Array): Promise<void> {
     await this.connection.sendMessage(messageData(channelId, payload, this.id));
+    this.markChannelRequestProgress(channelId);
   }
 
   async sendChannelClose(channelId: bigint, metadata: Metadata = emptyMetadata()): Promise<void> {
     await this.connection.sendMessage(messageClose(channelId, this.id, metadata));
+    this.markChannelRequestProgress(channelId);
   }
 
   async sendChannelCredit(channelId: bigint, additional: number): Promise<void> {
     await this.connection.sendMessage(messageCredit(channelId, additional, this.id));
+    this.markChannelRequestProgress(channelId);
   }
 
   async sendSchemas(
@@ -1185,6 +1194,7 @@ export class Lane {
   }
 
   enqueueIncomingCancel(requestId: bigint): void {
+    this.markRequestProgress(requestId);
     this.finishIncomingRequest(requestId, ChannelError.cancelled());
     this.incomingCancels.push(requestId);
   }
@@ -1201,6 +1211,7 @@ export class Lane {
     voxLogger()?.debug(
       `[vox:connection] resolveResponse: req=${requestId} payload=${payload.length}`,
     );
+    this.markRequestProgress(requestId);
     this.clearPendingState(state);
     state.resolve(payload);
   }
@@ -1212,6 +1223,7 @@ export class Lane {
   routeChannelData(channelId: bigint, payload: Uint8Array): void {
     try {
       this.channelRegistry.routeData(channelId, payload);
+      this.markChannelRequestProgress(channelId);
     } catch (error) {
       if (error instanceof ChannelError) {
         this.close(new ConnectionError(error.message));
@@ -1223,14 +1235,17 @@ export class Lane {
 
   closeChannel(channelId: bigint): void {
     this.channelRegistry.close(channelId);
+    this.markChannelRequestProgress(channelId);
   }
 
   resetChannel(channelId: bigint): void {
     this.channelRegistry.reset(channelId);
+    this.markChannelRequestProgress(channelId);
   }
 
   grantChannelCredit(channelId: bigint, additional: number): void {
     this.channelRegistry.grantCredit(channelId, additional);
+    this.markChannelRequestProgress(channelId);
   }
 
   close(error: Error): void {
@@ -1314,6 +1329,62 @@ export class Lane {
     }
   }
 
+  // r[impl rpc.timeout.idle-progress]
+  private markRequestProgress(requestId: bigint): void {
+    const state = this.pendingResponses.get(requestId);
+    if (!state) {
+      return;
+    }
+    this.resetPendingResponseIdle(state);
+  }
+
+  // r[impl rpc.timeout.idle-progress]
+  private markChannelRequestProgress(channelId: bigint): void {
+    const seen = new Set<PendingResponse>();
+    for (const state of this.pendingResponses.values()) {
+      if (seen.has(state) || !state.channels.includes(channelId)) {
+        continue;
+      }
+      seen.add(state);
+      this.resetPendingResponseIdle(state);
+    }
+  }
+
+  private resetPendingResponseIdle(state: PendingResponse): void {
+    if (state.settled) {
+      return;
+    }
+    state.lastProgressAt = Date.now();
+    clearTimeout(state.timer);
+    state.timer = setTimeout(() => {
+      this.timeoutPendingResponse(state);
+    }, state.idleTimeoutMs);
+  }
+
+  // r[impl rpc.timeout.idle-progress]
+  private timeoutPendingResponse(state: PendingResponse): void {
+    if (state.settled) {
+      return;
+    }
+
+    const remainingMs = state.idleTimeoutMs - (Date.now() - state.lastProgressAt);
+    if (remainingMs > 0) {
+      state.timer = setTimeout(() => {
+        this.timeoutPendingResponse(state);
+      }, remainingMs);
+      return;
+    }
+
+    const requestIds = [...state.requestIds];
+    this.clearPendingState(state, { channelError: ChannelError.timedOut() });
+    for (const requestId of requestIds) {
+      void this.sendCancel(requestId).catch((error) => {
+        voxLogger()?.debug("[vox:connection] failed to send cancel after request idle timeout", error);
+      });
+    }
+    state.reject(new RpcError(RpcErrorCode.TIMED_OUT));
+  }
+
   private async sendPendingRequest(
     state: PendingResponse,
     requestId = this.allocateRequestId(),
@@ -1342,6 +1413,7 @@ export class Lane {
           schemas,
         ),
       );
+      this.markRequestProgress(requestId);
       await this.flushOutgoing();
     } catch (error) {
       state.requestIds.delete(requestId);

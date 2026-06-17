@@ -14,7 +14,7 @@ export const RpcErrorCode = {
   INVALID_PAYLOAD: 2,
   /** r[impl rpc.fallible.vox-error] Call was cancelled */
   CANCELLED: 3,
-  /** r[impl rpc.timeout.idle-progress] Call made no request-scoped progress before its idle timeout */
+  /** Call made no request-scoped progress before its idle timeout */
   TIMED_OUT: 4,
   /** r[impl rpc.fallible.vox-error.outcome] Runtime could not determine the call outcome */
   INDETERMINATE: 5,

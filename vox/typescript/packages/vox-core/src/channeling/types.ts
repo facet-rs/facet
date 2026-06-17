@@ -25,6 +25,7 @@ export class ChannelError extends Error {
     | "reset"
     | "requestClosed"
     | "cancelled"
+    | "timedOut"
     | "connectionClosed"
     | "serialize"
     | "deserialize"
@@ -39,6 +40,7 @@ export class ChannelError extends Error {
       | "reset"
       | "requestClosed"
       | "cancelled"
+      | "timedOut"
       | "connectionClosed"
       | "serialize"
       | "deserialize"
@@ -76,6 +78,10 @@ export class ChannelError extends Error {
 
   static cancelled(): ChannelError {
     return new ChannelError("cancelled", "request cancelled before channel close");
+  }
+
+  static timedOut(): ChannelError {
+    return new ChannelError("timedOut", "request timed out before channel close");
   }
 
   static connectionClosed(): ChannelError {
