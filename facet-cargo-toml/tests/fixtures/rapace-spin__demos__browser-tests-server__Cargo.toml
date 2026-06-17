@@ -1,0 +1,20 @@
+[package]
+name = "rapace-browser-tests-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "WebSocket harness that drives the rapace browser integration tests"
+
+[[bin]]
+name = "rapace-browser-tests-server"
+path = "src/main.rs"
+
+[dependencies]
+rapace = { path = "../../crates/rapace", default-features = false, features = ["websocket"] }
+rapace-browser-tests-proto = { path = "../browser-tests-proto" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
+tokio-stream = "0.1"
+tokio-tungstenite = "0.26"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

@@ -1,0 +1,14 @@
+[package]
+name = "find_wasm_import"
+version = "0.1.0"
+authors = ["Liam Murphy <liampm32@gmail.com>"]
+edition = "2021"
+description = "Looks through your `deps` folder to find which crate caused a WebAssembly import"
+repository = "https://github.com/Liamolucko/find_wasm_import"
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0.71"
+ar = "0.9.0"
+clap = { version = "4.3.10", features = ["derive"] }
+wasmparser = "0.107.0"

@@ -1,0 +1,15 @@
+[package]
+name = "libmedia"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+conflux = { version = "0.1.0", path = "../conflux" }
+html-escape = { version = "0.2.13" }
+config-types = { version = "0.1.0", path = "../config-types" }
+image-types = { version = "0.1.0", path = "../image-types" }
+autotrait = "0.2.1"
+eyre.workspace = true

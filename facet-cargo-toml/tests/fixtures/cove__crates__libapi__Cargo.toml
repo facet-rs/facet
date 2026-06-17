@@ -1,0 +1,21 @@
+[package]
+name = "libapi"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+url = { version = "2.5.7" }
+libreddit = { version = "0.1.0", path = "../libreddit" }
+
+# core dependencies
+hattip = { version = "0.1.0", path = "../hattip" }
+cub-types = { version = "0.1.0", path = "../cub-types" }
+autotrait = "0.2.1"
+log = "0.4.27"
+
+[features]
+default = ["impl"]
+impl = []

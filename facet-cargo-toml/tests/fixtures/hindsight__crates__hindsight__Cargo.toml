@@ -1,0 +1,21 @@
+[package]
+name = "hindsight"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Client library for sending spans to Hindsight tracing server"
+
+[dependencies]
+hindsight-protocol = { path = "../hindsight-protocol" }
+rapace.workspace = true
+
+tokio.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+hindsight-server = { path = "../hindsight-server" }
+
+[features]
+default = []

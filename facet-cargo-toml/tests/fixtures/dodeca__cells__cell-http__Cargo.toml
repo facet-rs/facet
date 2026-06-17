@@ -1,0 +1,31 @@
+[package]
+name = "cell-http"
+version = "0.6.1"
+edition = "2024"
+rust-version = "1.91"
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[[bin]]
+name = "ddc-cell-http"
+path = "src/main.rs"
+
+[dependencies]
+# HTTP server (internal only - not exposed to network)
+axum = { version = "0.8", features = ["ws"] }
+cell-http-proto = { path = "../cell-http-proto" }
+
+# WebSocket
+futures-util = "0.3"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+
+# RPC framework - using SHM for zero-copy communication
+rapace = { workspace = true, features = ["stream"] }
+rapace-cell.workspace = true
+tokio = { workspace = true, features = ["macros", "process", "rt", "rt-multi-thread", "sync", "time"] } #unified
+tracing = { workspace = true } #unified

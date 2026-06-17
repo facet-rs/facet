@@ -1,0 +1,28 @@
+[package]
+name = "rich-e2e"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "End-to-end test harness for Lexi editor using Orka browser automation"
+
+[dev-dependencies]
+anyhow = "1.0"
+orka = { path = "../orka" }
+lexi = { path = "../lexi" }
+serde_json = "1.0"
+tokio = { version = "1.48", features = ["macros", "rt-multi-thread", "time"] }
+serde = { version = "1.0", features = ["derive"] }
+ctor = "0.2"
+futures = "0.3"
+
+[dependencies]
+pretty_assertions = "1.4.1"
+tracing-subscriber = "0.3.20"
+
+[features]
+default = []
+# Enable standalone mode: run individual tests with #[tokio::test] instead of the shared harness
+standalone = []
+
+[lints]
+workspace = true

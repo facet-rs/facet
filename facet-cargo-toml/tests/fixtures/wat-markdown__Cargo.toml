@@ -1,0 +1,124 @@
+[package]
+name = "wat"
+version = "0.1.0"
+authors = ["Amos Wenger <amos@bearcove.eu>"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+aliri_braid = "0.4.0"
+base64 = { version = "0.22.1", optional = true }
+camino = { version = "1.2.1", features = ["serde1"] }
+censor = "0.3.0"
+dashmap = { version = "6.1.0", optional = true }
+strsim = { version = "0.11", optional = true }
+dioxus = { version = "0.7.0-rc.3", features = ["router", "fullstack"] }
+dioxus-motion = { git = "https://github.com/fasterthanlime/dioxus-motion.git", branch = "rc" }
+flume = { version = "0.11.1", features = ["async"] }
+futures = "0.3.31"
+html-escape = { version = "0.2.13", optional = true }
+indoc = "2.0.6"
+pulldown-cmark = { version = "0.13.0", optional = true }
+ammonia = { version = "4.1", optional = true }
+qrcode-generator = { version = "5.0.0", optional = true }
+rand = { version = "0.9.2", optional = true }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_yaml_bw = { version = "2.4.0", optional = true }
+test-log = { version = "0.2.18", features = ["trace"] }
+tokio = { version = "1.47.1", features = ["full"], optional = true }
+tracing = "0.1.41"
+tree-sitter-asm = { version = "0.24.0", optional = true }
+tree-sitter-highlight = { version = "0.25.10", optional = true }
+tree-sitter-rust = { version = "0.24.0", optional = true }
+wasm-bindgen = { version = "0.2.104", optional = true }
+wasmtimer = { version = "0.4.3", optional = true }
+web-sys = { version = "0.3.81", optional = true, features = ["Performance", "Window", "Storage", "Navigator", "Clipboard", "Document", "HtmlDocument", "Crypto", "CryptoKey", "HtmlAnchorElement", "HtmlElement", "Element", "CredentialsContainer", "Credential", "CredentialCreationOptions", "CredentialRequestOptions", "PublicKeyCredential", "PublicKeyCredentialCreationOptions", "PublicKeyCredentialRequestOptions", "AuthenticatorAttestationResponse", "AuthenticatorAssertionResponse"] }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+serde-wasm-bindgen = { version = "0.6", optional = true }
+js-sys = { version = "0.3.81", optional = true }
+gloo-net = { version = "0.6.0", optional = true }
+reqwest = { version = "0.12.23", default-features = false, features = ["json", "rustls-tls"], optional = true }
+async-openai = { version = "0.28", optional = true }
+maxminddb = { version = "0.24", optional = true }
+once_cell = { version = "1.20", optional = true }
+axum = { version = "0.8.6", optional = true }
+axum-extra = { version = "0.10.0", optional = true, features = ["typed-header"] }
+headers = { version = "0.4.0", optional = true }
+serde_json = { version = "1.0.145", optional = true }
+urlencoding = "2.1.3"
+dotenvy = { version = "0.15.7", optional = true }
+notify = { version = "8.2.0", optional = true }
+anyhow = "1.0.100"
+cfg-if = "1.0.4"
+jsonwebtoken = { version = "10.0.0", features = ["rust_crypto"], optional = true }
+tower-cookies = { version = "0.11.0", optional = true }
+chrono = { version = "0.4.42", features = ["serde"], optional = true }
+identicon-rs = { version = "7.0.1", optional = true }
+sqlx = { version = "0.8.6", features = ["runtime-tokio-rustls", "postgres", "migrate", "chrono", "json"], optional = true }
+sha2 = { version = "0.10.9", optional = true }
+woothee = { version = "0.13.0", optional = true }
+easer = "0.3.0"
+uuid = { version = "1.18.1", features = ["js", "v4"] }
+lettre = { version = "0.11", default-features = false, features = ["builder", "tokio1-rustls-tls", "smtp-transport", "hostname"], optional = true }
+bcrypt = { version = "0.15", optional = true }
+totp-rs = { version = "5.5", features = ["qr"], optional = true }
+webauthn-rs = { version = "0.5", optional = true, features = ["conditional-ui"] }
+webauthn-rs-proto = { version = "0.5", optional = true, features = ["wasm"] }
+hex = { version = "0.4", optional = true }
+chacha20poly1305 = { version = "0.10", optional = true }
+tower-http = { version = "0.6.6", features = ["full"], optional = true }
+axum-prometheus = { version = "0.9.0", optional = true }
+metrics = { version = "0.24.2", optional = true }
+tower = { version = "0.5.2", optional = true }
+opentelemetry = { version = "0.27", optional = true }
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio", "logs"], optional = true }
+opentelemetry-otlp = { version = "0.27", features = ["grpc-tonic", "logs"], optional = true }
+opentelemetry-appender-tracing = { version = "0.27", optional = true }
+tracing-opentelemetry = { version = "0.28", optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"], optional = true }
+tonic = { version = "0.12", optional = true }
+apalis = { version = "0.7", features = ["retry"], optional = true }
+apalis-core = { version = "0.7", optional = true }
+apalis-sql = { version = "0.7", features = ["postgres", "migrate"], optional = true }
+object_store = { version = "0.12", optional = true, features = ["aws", "http"] }
+bytes = { version = "1.10", optional = true }
+image = { version = "0.25", optional = true, default-features = false, features = ["png", "jpeg", "webp"] }
+mime = { version = "0.3", optional = true }
+iconify = "0.3"
+
+[features]
+default = ["server"]
+server = ["dioxus/server", "dep:tokio", "dep:dashmap", "dep:rand", "dep:pulldown-cmark", "dep:ammonia", "dep:tree-sitter-highlight", "dep:tree-sitter-rust", "dep:html-escape", "dep:tree-sitter-asm", "dep:serde_yaml_bw", "dep:reqwest", "dep:async-openai", "dep:axum", "dep:axum-extra", "dep:headers", "dep:serde_json", "dep:dotenvy", "dep:notify", "dep:jsonwebtoken", "dep:tower-cookies", "dep:chrono", "dep:identicon-rs", "dep:base64", "dep:sqlx", "dep:sha2", "dep:woothee", "dep:maxminddb", "dep:once_cell", "dep:lettre", "dep:bcrypt", "dep:totp-rs", "dep:webauthn-rs", "dep:webauthn-rs-proto", "dep:hex", "dep:chacha20poly1305", "dep:tower-http", "dep:axum-prometheus", "dep:metrics", "dep:tower", "dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:opentelemetry-appender-tracing", "dep:tracing-opentelemetry", "dep:tracing-subscriber", "dep:tonic", "dep:apalis", "dep:apalis-core", "dep:apalis-sql", "dep:object_store", "dep:bytes", "dep:image", "dep:mime", "dep:strsim"]
+web = ["dioxus/web", "dep:web-sys", "dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:serde-wasm-bindgen", "dep:qrcode-generator", "dep:base64", "dep:js-sys", "dep:identicon-rs", "dep:serde_json", "dep:sha2", "dep:gloo-net", "dep:chrono", "dep:webauthn-rs-proto", "dep:wasmtimer"]
+desktop = ["dioxus/desktop"]
+mobile = ["dioxus/mobile"]
+jsonwebtoken = ["dep:jsonwebtoken"]
+tower-cookies = ["dep:tower-cookies"]
+chrono = ["dep:chrono"]
+sqlx = ["dep:sqlx"]
+sha2 = ["dep:sha2"]
+
+[profile]
+
+[profile.wasm-dev]
+inherits = "dev"
+opt-level = 1
+
+[profile.server-dev]
+inherits = "dev"
+
+[profile.android-dev]
+inherits = "dev"
+
+[dev-dependencies]
+serial_test = "3.2.0"
+thirtyfour = { version = "0.36.1", features = ["rustls-tls"] }
+testcontainers = "0.25.0"
+testcontainers-modules = { version = "0.13.0", features = ["postgres"] }
+reqwest = { version = "0.12.24", features = ["json"] }
+serde_json = "1.0.145"
+tokio = { version = "1.48.0", features = ["full"] }
+sqlx = { version = "0.8.6", features = [ "runtime-tokio-rustls", "postgres", "uuid", "chrono" ] }
+url = "2.5.7"
+chromedriver-manager = "0.4.0"

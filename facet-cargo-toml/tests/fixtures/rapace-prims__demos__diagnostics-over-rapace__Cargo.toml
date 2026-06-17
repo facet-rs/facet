@@ -1,0 +1,40 @@
+[package]
+name = "rapace-diagnostics-over-rapace"
+version = "0.4.0"
+edition = "2024"
+publish = false
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "diagnostics-over-rapace"
+path = "src/main.rs"
+
+# Helper binary for cross-process tests (acts as plugin)
+[[bin]]
+name = "diagnostics-plugin-helper"
+path = "src/helper.rs"
+
+[dependencies]
+# Rapace crates
+rapace = { path = "../../crates/rapace", features = ["mem", "shm"] }
+
+# facet for shapes (required by macro-generated code)
+facet = "0.32.1"
+
+# Async runtime
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "net", "process", "time"] }
+tokio-stream = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+async-send-fd.workspace = true
+
+[dev-dependencies]
+futures = "0.3"
+libc.workspace = true

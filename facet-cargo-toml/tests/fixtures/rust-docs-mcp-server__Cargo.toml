@@ -1,0 +1,45 @@
+[package]
+name = "rustdocs_mcp_server"
+version = "1.3.1"
+edition = "2024"
+
+[dependencies]
+rmcp = { version = "0.1.5", features = ["tower", "transport-io", "transport-sse-server", "macros", "server"] } # Add macros, server, schemars
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+dotenvy = "0.15"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2.0.12"
+walkdir = "2.5.0"
+scraper = "0.23.1"
+ndarray = { version = "0.16.1", features = ["serde"] } # Enable serde feature
+async-openai = "0.28.0"
+# async-trait = "0.1.88" # Removed, likely no longer needed
+futures = "0.3"
+bincode = { version = "2.0.1", features = ["serde"] } # Enable serde integration
+tiktoken-rs = "0.6.0"
+# Configure cargo crate to vendor openssl to avoid system mismatches
+cargo = { version = "0.87.1", default-features = false, features = ["vendored-openssl"] }
+tempfile = "3.19.1"
+anyhow = "1.0.97"
+schemars = "0.8.22"
+clap = { version = "4.5.34", features = ["cargo", "derive", "env"] }
+
+
+# --- Platform Specific Dependencies ---
+
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+xdg = { version = "2.5.2", features = ["serde"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+dirs = "6.0.0"
+
+
+# Optimize release builds for size
+[profile.release]
+opt-level = "z"  # Optimize for size
+lto = true         # Enable Link Time Optimization
+codegen-units = 1  # Maximize size reduction opportunities
+panic = "abort"    # Abort on panic to remove unwinding code
+strip = true       # Strip symbols from binary
+

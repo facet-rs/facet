@@ -1,0 +1,34 @@
+[package]
+name = "libmarkdown"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+conflux = { path = "../conflux" }
+
+# impl dependencies
+html-escape = { version = "0.2.13" }
+pulldown-cmark = { version = "0.13.0", features = ["simd"] }
+saphyr = { version = "0.0.4", default-features = false }
+slug = { version = "0.1.6" }
+template-types = { path = "../template-types" }
+libhighlight = { path = "../libhighlight" }
+libmath = { path = "../libmath" }
+libmedia = { version = "0.1.0", path = "../libmedia" }
+autotrait = "0.2.1"
+eyre.workspace = true
+highlight-types = { version = "0.1.0", path = "../highlight-types" }
+markdown-types = { version = "0.1.0", path = "../markdown-types" }
+
+[dev-dependencies]
+config-types = { version = "0.1.0", path = "../config-types" }
+indoc = "2.0.6"
+insta = "1.43.1"
+camino = "1.1.11"
+
+[features]
+default = ["impl"]
+impl = []

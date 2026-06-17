@@ -1,0 +1,25 @@
+[package]
+name = "cell-code-execution"
+version = "0.6.1"
+edition = "2024"
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[[bin]]
+name = "ddc-cell-code-execution"
+path = "src/main.rs"
+
+[dependencies]
+
+# Local protocol definitions
+cell-code-execution-proto = { path = "../cell-code-execution-proto" }
+
+# Markdown parsing
+pulldown-cmark = "0.13"
+rapace-cell.workspace = true
+tempfile = { workspace = true } #unified
+tokio = { workspace = true, features = ["full", "macros", "sync"] } #unified
+tracing = { workspace = true } #unified

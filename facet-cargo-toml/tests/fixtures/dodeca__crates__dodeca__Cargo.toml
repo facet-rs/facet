@@ -1,0 +1,150 @@
+[package]
+name = "dodeca"
+version = "0.6.1"
+edition = "2024"
+rust-version = "1.91"
+authors = ["Amos Wenger <amos@bearcove.eu>"]
+license = "MIT OR Apache-2.0"
+description = "A fully incremental static site generator"
+repository = "https://github.com/bearcove/dodeca"
+homepage = "https://dodeca.bearcove.eu/"
+keywords = ["static-site", "ssg", "incremental"]
+categories = ["command-line-utilities", "web-programming"]
+default-run = "ddc"
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[package.metadata.wix]
+upgrade-guid = "F32CA0D7-4DDE-4333-A5EA-374211B0C136"
+path-guid = "68C82E46-C932-4CA9-BEE0-216F988EADF9"
+license = false
+eula = false
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[[bin]]
+name = "ddc"
+path = "src/main.rs"
+
+[dependencies]
+camino = { workspace = true } #unified
+passfd = "0.1" # For Unix socket FD passing (tests)
+
+# Syntax highlight service protocol
+cell-arborium-proto = { path = "../../cells/cell-arborium-proto" }
+
+# All plugin protocol definitions
+cell-code-execution-proto = { path = "../../cells/cell-code-execution-proto" }
+cell-css-proto = { path = "../../cells/cell-css-proto" }
+cell-fonts-proto = { path = "../../cells/cell-fonts-proto" }
+cell-html-diff-proto = { path = "../../cells/cell-html-diff-proto" }
+cell-html-proto = { path = "../../cells/cell-html-proto" }
+
+# RPC protocol for dev server plugin
+cell-http-proto = { path = "../../cells/cell-http-proto" }
+cell-image-proto = { path = "../../cells/cell-image-proto" }
+cell-js-proto = { path = "../../cells/cell-js-proto" }
+cell-jxl-proto = { path = "../../cells/cell-jxl-proto" }
+cell-linkcheck-proto = { path = "../../cells/cell-linkcheck-proto" }
+cell-markdown-proto = { path = "../../cells/cell-markdown-proto" }
+cell-minify-proto = { path = "../../cells/cell-minify-proto" }
+cell-pagefind-proto = { path = "../../cells/cell-pagefind-proto" }
+cell-sass-proto = { path = "../../cells/cell-sass-proto" }
+cell-svgo-proto = { path = "../../cells/cell-svgo-proto" }
+cell-tui-proto = { path = "../../cells/cell-tui-proto" }
+cell-webp-proto = { path = "../../cells/cell-webp-proto" }
+
+# Date handling
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+dashmap = "6"
+
+# Code execution plugin types (lightweight - no plugin implementation)
+dodeca-code-execution-types = { path = "../dodeca-code-execution-types" }
+
+# Debug utilities (SIGUSR1 stack trace handler)
+dodeca-debug = { path = "../dodeca-debug" }
+
+# Devtools protocol (shared types between server and WASM client)
+dodeca-protocol = { path = "../dodeca-protocol" }
+
+# Error handling & diagnostics
+eyre = "0.6"
+# Facet (dogfooding!)
+facet.workspace = true
+
+# TUI is now in the mod-tui plugin
+
+# CLI (using facet-args instead of clap)
+facet-args.workspace = true
+facet-json.workspace = true
+facet-kdl.workspace = true
+facet-postcard.workspace = true
+facet-toml.workspace = true
+facet-value.workspace = true
+futures = "0.3"
+
+# HTML parsing and rewriting is now handled via the mod-html plugin
+
+# Font subsetting is now handled via the dodeca-fonts plugin
+
+# Image processing is now handled entirely via plugins (dodeca-image, dodeca-webp, dodeca-jxl)
+
+# Code execution is handled via the dodeca-code-execution plugin
+
+# Plugin system has been replaced with Rapace
+# All plugins are now in the mods/ directory
+
+# Template engine
+gingembre = { path = "../gingembre" }
+
+# Network interfaces
+if-addrs = "0.14"
+
+# Markdown parsing is now handled via the mod-markdown plugin
+
+# File system
+ignore = "0.4"
+miette = { workspace = true, features = ["fancy"] } #unified
+notify = "8"
+
+# Open in browser
+open = "5"
+owo-colors = "4"
+
+# Incremental computation
+picante = { git = "https://github.com/bearcove/picante" }
+postcard = { version = "1", features = ["alloc"] }  # Fast, compact binary serialization with serde
+
+# RPC framework for plugin communication
+rapace = { workspace = true, features = ["stream"] }
+rapace-cell.workspace = true
+rapace-tracing.workspace = true
+
+# Content-addressed storage
+rapidhash = "4"
+regex = "1"  # For HTML heading extraction and inline CSS/JS extraction
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+
+# YAML parsing (for data files - facet-yaml doesn't support dynamic values)
+serde_yaml = "0.9"
+socket2 = "0.6"  # SO_LINGER inspection for connection debugging
+strid = "2.1"  # Strongly-typed string wrappers (like aliri_braid but without syn)
+tokio = { workspace = true, features = ["macros", "process", "rt", "rt-multi-thread", "sync", "time"] } #unified
+tokio-stream = { version = "0.1", features = ["net", "sync"] }
+tracing = { workspace = true } #unified
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+ur-taking-me-with-you.workspace = true
+
+[dev-dependencies]
+divan = "0.1"
+futures = { workspace = true } #unified
+minijinja = "2"  # For template engine benchmarks
+regex = { workspace = true } #unified
+
+[[bench]]
+name = "template"
+harness = false

@@ -1,0 +1,14 @@
+[package]
+name = "cell-html-diff-proto"
+version = "0.6.1"
+edition = "2024"
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+facet.workspace = true
+rapace.workspace = true
+dodeca-protocol = { path = "../../crates/dodeca-protocol" }

@@ -1,0 +1,38 @@
+[package]
+name = "proof"
+version = "0.1.0"
+edition = "2024"
+description = "Multi-language file formatter and validator supporting Rust, JavaScript, TypeScript, TOML, JSON, and SCSS"
+
+[dependencies]
+anyhow = "1.0"
+camino = { version = "1", features = ["serde1"] }
+tracing = "0.1"
+strip-ansi-escapes = "0.2"
+
+# Rust validation
+syn = { version = "2.0", features = ["full", "parsing"] }
+prettyplease = "0.2"
+
+# TOML validation
+taplo = "0.13"
+
+# JavaScript/TypeScript validation
+oxc_allocator = "0.97"
+oxc_parser = "0.97"
+oxc_span = "0.97"
+
+# JSON validation
+serde_json = "1.0"
+
+# SCSS validation
+grass = "0.13"
+
+# File operations with better error messages
+fs-err = "2.11"
+
+# Finding external tools
+sysbin = { version = "0.1.0", path = "../sysbin" }
+
+[lints]
+workspace = true

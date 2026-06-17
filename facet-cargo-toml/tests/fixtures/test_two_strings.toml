@@ -1,0 +1,4 @@
+[package]
+name = "test"
+version.workspace = true
+description.workspace = true

@@ -1,0 +1,37 @@
+[package]
+name = "shade"
+version = "0.1.0"
+edition = "2024"
+description = "Shared syntax highlighting using arborium"
+
+[dependencies]
+arborium = { version = "2.3.2", features = [
+    "lang-asm",
+    "lang-bash",
+    "lang-css",
+    "lang-go",
+    "lang-html",
+    "lang-javascript",
+    "lang-json",
+    "lang-markdown",
+    "lang-python",
+    "lang-rust",
+    "lang-scss",
+    "lang-toml",
+    "lang-typescript",
+    "lang-yaml",
+] }
+html-escape = "0.2"
+tracing = { version = "0.1", optional = true }
+
+[features]
+default = ["highlighting"]
+highlighting = []
+server = ["highlighting", "tracing"]
+web = ["highlighting"]
+
+[dev-dependencies]
+test-log = { version = "0.2.18", features = ["trace"] }
+
+[lints]
+workspace = true

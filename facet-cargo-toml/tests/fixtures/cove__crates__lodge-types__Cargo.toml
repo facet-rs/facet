@@ -1,0 +1,28 @@
+[package]
+name = "lodge-types"
+version = "0.1.0"
+edition = "2024"
+description = "Core API surface defining tool interfaces, MCP schemas, and service abstractions for the Lodge tool framework"
+
+[dependencies]
+aliri_braid = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+camino = { workspace = true }
+chrono = { workspace = true }
+dashmap = { workspace = true }
+futures = { workspace = true }
+inventory = { workspace = true }
+rust-mcp-schema = { workspace = true }
+serde = { workspace = true }
+uuid = { workspace = true, features = ["v7", "serde"] }
+grove-types = { version = "0.1.0", path = "../grove-types" }
+grove-server-types = { version = "0.1.0", path = "../grove-server-types" }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+remoc = { version = "0.18" }
+tracing = { workspace = true }
+parking_lot.workspace = true
+
+[lints]
+workspace = true

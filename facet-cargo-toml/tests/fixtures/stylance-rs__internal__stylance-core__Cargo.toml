@@ -1,0 +1,17 @@
+[package]
+name = "stylance-core"
+edition = "2021"
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Internal crate used by stylance"
+
+[dependencies]
+anyhow = "1.0.79"
+winnow = "0.5.31"
+toml = "0.8.8"
+serde = { version = "1.0.194", features = ["derive"] }
+siphasher = "1.0.0"
+
+[dev-dependencies]
+serde_json = "1.0.111"

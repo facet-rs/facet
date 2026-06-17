@@ -1,0 +1,64 @@
+[package]
+name = "fabric-dashboard"
+version = "0.1.0"
+edition = "2024"
+description = "Fabric build system dashboard - real-time monitoring UI"
+
+[[bin]]
+name = "fabric-dashboard"
+path = "src/main.rs"
+
+[dependencies]
+dioxus = { workspace = true, features = ["router", "fullstack"] }
+glade-dioxus = { path = "../glade-dioxus" }
+fabric-dashboard-types = { path = "../fabric-dashboard-types" }
+
+# Server-only: telemetry
+fabric-common = { path = "../fabric-common", optional = true }
+remoc = { version = "0.18" }
+serde = { workspace = true }
+tracing = { workspace = true }
+chrono = "0.4"
+
+# Client-only
+remoc-ws-web = { path = "../remoc-ws-web", features = ["web"], optional = true }
+web-sys = { version = "0.3", features = ["Window", "Location"], optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
+
+# Server-only (for OIDC)
+axum = { version = "0.8", optional = true }
+axum-oidc = { version = "0.6", optional = true }
+tower = { version = "0.5", optional = true }
+tower-sessions = { version = "0.14", optional = true }
+tokio = { version = "1", features = ["full"], optional = true }
+tokio-tungstenite = { version = "0.26", optional = true }
+futures-util = { version = "0.3", optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+dotenvy.workspace = true
+
+[features]
+default = ["server"]
+server = [
+    "dioxus/server",
+    "dep:fabric-common",
+    "fabric-common/telemetry",
+    "dep:axum",
+    "dep:axum-oidc",
+    "dep:tower",
+    "dep:tower-sessions",
+    "dep:tokio",
+    "dep:tokio-tungstenite",
+    "dep:futures-util",
+    "dep:tracing-subscriber",
+]
+web = [
+  "dioxus/web",
+  "glade-dioxus/web",
+  "dep:remoc-ws-web",
+  "remoc/js",
+  "dep:web-sys",
+  "dep:wasm-bindgen",
+]
+
+[lints]
+workspace = true

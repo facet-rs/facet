@@ -1,0 +1,10 @@
+[package]
+name = "vx-exec-proto"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+facet = { workspace = true }
+rapace = { workspace = true }
+
+vx-cas-proto = { workspace = true }

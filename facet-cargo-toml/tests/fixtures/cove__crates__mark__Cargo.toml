@@ -1,0 +1,24 @@
+[package]
+name = "mark"
+version = "0.1.0"
+edition = "2024"
+description = "Common markdown rendering utilities providing safe HTML generation with optional syntax highlighting"
+
+[dependencies]
+pulldown-cmark = "0.13.0"
+ammonia = "4.1"
+html-escape = "0.2"
+shade = { path = "../shade" }
+html2md = "0.2"
+varnish = { path = "../varnish" }
+
+[features]
+default = []
+
+[dev-dependencies]
+test-log = { version = "0.2.18", features = ["trace"] }
+insta = { version = "1.41", features = ["yaml"] }
+tracing-subscriber = "0.3"
+
+[lints]
+workspace = true

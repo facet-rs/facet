@@ -1,0 +1,22 @@
+[package]
+name = "cell-pagefind"
+version = "0.6.1"
+edition = "2024"
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[[bin]]
+name = "ddc-cell-pagefind"
+path = "src/main.rs"
+
+[dependencies]
+
+# Local protocol definitions
+cell-pagefind-proto = { path = "../cell-pagefind-proto" }
+# Search indexing
+pagefind = "1.4"
+rapace-cell.workspace = true
+tokio = { workspace = true, features = ["full", "macros", "process", "sync"] } #unified

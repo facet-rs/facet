@@ -1,0 +1,12 @@
+[package]
+name = "dodeca-code-sample"
+version = "0.1.0"
+edition = "2021"
+
+# Prevent this from being part of any parent workspace
+[workspace]
+
+[dependencies]
+facet = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-json = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-kdl = { git = "https://github.com/facet-rs/facet", branch = "main" }

@@ -1,0 +1,52 @@
+[package]
+name = "grove-runner"
+version = "0.1.0"
+edition = "2024"
+description = "MCP and agent host that runs locally on the user's machine, managing tool execution and agent communication"
+
+[[bin]]
+name = "grove-runner"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true, features = ["derive", "env"] }
+once_cell = { workspace = true }
+tracing-subscriber = { workspace = true }
+remoc = { version = "0.18" }
+agent-client-protocol = { workspace = true, features = ["unstable"] }
+agent-client-protocol-schema = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+axum = { workspace = true }
+dashmap = { workspace = true }
+postcard = { workspace = true, features = ["alloc"] }
+grove-agents = { version = "0.1.0", path = "../grove-agents" }
+grove-types = { version = "0.1.0", path = "../grove-types" }
+grove-server-types = { version = "0.1.0", path = "../grove-server-types" }
+lodge-types = { version = "0.1.0", path = "../lodge-types" }
+parking_lot = { workspace = true }
+rust-mcp-schema = { workspace = true }
+# Disable ssl default to avoid aws-lc-rs
+rust-mcp-sdk = { git = "https://github.com/fasterthanlime/rust-mcp-sdk", branch = "feat/expose-request-id", default-features = false, features = ["http", "sse", "streamable-http", "2025_06_18"] }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+tokio-util = { workspace = true, features = ["compat"] }
+tracing = { workspace = true }
+which = { workspace = true }
+camino = { workspace = true, features = ["serde1"] }
+chrono = { workspace = true, features = ["serde"] }
+piper = { workspace = true }
+nix = { workspace = true, features = ["signal"] }
+futures-util = { workspace = true }
+dioxus = { workspace = true, features = ["fullstack"] }
+futures = { workspace = true }
+uuid = { workspace = true, features = ["v7", "serde"] }
+serde = { workspace = true, features = ["derive"] }
+mcp-stdio-http-proxy = { version = "0.1.0", path = "../mcp-stdio-http-proxy" }
+bash-to-mcp = { version = "0.1.0", path = "../bash-to-mcp" }
+tempfile.workspace = true
+dotenvy.workspace = true
+indoc = "2.0"
+
+[lints]
+workspace = true

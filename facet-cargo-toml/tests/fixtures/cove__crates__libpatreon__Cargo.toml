@@ -1,0 +1,23 @@
+[package]
+name = "libpatreon"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+eyre = { version = "0.6.12", default-features = false }
+credentials = { path = "../credentials" }
+jsonapi = { version = "0.7.0" }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = { version = "1.0.143" }
+time = { version = "0.3.41" }
+url = { version = "2.5.7" }
+futures-core = "0.3.31"
+libhttpclient = { version = "0.1.0", path = "../libhttpclient" }
+autotrait = "0.2.1"
+config-types = { version = "0.1.0", path = "../config-types" }
+facet.workspace = true
+log = "0.4.27"
+facet-json.workspace = true

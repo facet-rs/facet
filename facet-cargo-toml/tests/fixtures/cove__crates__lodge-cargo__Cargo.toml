@@ -1,0 +1,26 @@
+[package]
+name = "lodge-cargo"
+version = "0.1.0"
+edition = "2024"
+description = "Cargo project tools including build, check, and SCSS compilation with rsxlint integration"
+
+[dependencies]
+anyhow = "1.0"
+camino = "1.1"
+fs-err = { version = "3.2.0", features = ["tokio"] }
+futures = "0.3"
+grass = "0.13"
+grove-types = { version = "0.1.0", path = "../grove-types" }
+lodge-types = { version = "0.1.0", path = "../lodge-types" }
+parking_lot = "0.12"
+rsxlint = { version = "0.1.0", path = "../rsxlint" }
+rust-mcp-schema = "0.7.5"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+strip-ansi-escapes = "0.2.1"
+sysbin = { version = "0.1.0", path = "../sysbin" }
+tokio = { version = "1.48.0", features = ["full"] }
+tracing = "0.1"
+
+[lints]
+workspace = true

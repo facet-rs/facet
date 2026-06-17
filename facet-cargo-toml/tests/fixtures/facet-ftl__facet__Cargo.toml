@@ -1,0 +1,62 @@
+[package]
+name = "facet"
+version = "0.27.9"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Re-exports the Facet trait and derive macros, along with Shape and all related types"
+keywords = ["facet", "introspection", "reflection"]
+categories = ["development-tools"]
+
+[package.metadata.docs.rs]
+features = ["std", "reflect", "camino", "ordered-float"]
+
+[features]
+default = ["std"]
+reflect = ["dep:facet-reflect"] # Enable reflection via Peek and Poke types
+testfeat = [] # Does nothing, only used for tests
+std = ["facet-core/std", "alloc"] # Enable standard library support
+alloc = ["facet-core/alloc"] # Enable allocation support for no_std environments
+bytes = [
+    "facet-core/bytes",
+] # Provide Facet trait implementations for bytes::Bytes and bytes::BytesMut
+camino = [
+    "facet-core/camino",
+] # Provide Facet trait implementations for camino::Utf8Path and camino::Utf8PathBuf
+uuid = ["facet-core/uuid"] # Provide Facet trait implementations for uuid::Uuid
+ulid = ["facet-core/ulid"] # Provide Facet trait implementations for ulid::Ulid
+ordered-float = ["facet-core/ordered-float"] # Provide Facet trait implementations for ordered_float types
+jiff02 = [
+    "facet-core/jiff02",
+] # Provide Facet trait implementations for jiff crate types
+time = [
+    "facet-core/time",
+] # Provide Facet trait implementations for time crate types
+chrono = [
+    "facet-core/chrono",
+] # Provide Facet trait implementations for chrono crate types
+url = ["facet-core/url"] # Provide Facet trait implementations for url::Url
+
+# Provide Facet trait implementations for tuples up to size 12. Without it,
+# Facet is only implemented for tuples up to size 4.
+tuples-12 = ["facet-core/tuples-12"]
+
+# Provide Facet trait implementations for function pointers.
+fn-ptr = ["facet-core/fn-ptr"]
+
+[dependencies]
+facet-core = { path = "../facet-core", version = "0.27.9", default-features = false }
+facet-derive = { path = "../facet-derive", version = "0.27.9" }
+facet-reflect = { path = "../facet-reflect", version = "0.27.9", optional = true }
+static_assertions = "1.1.0"
+
+[dev-dependencies]
+cargo-husky = { version = "1.5.0", default-features = false, features = [
+    "user-hooks",
+] }
+eyre = { version = "0.6.12", default-features = false }
+facet-reflect = { path = "../facet-reflect" }
+facet-testhelpers = { path = "../facet-testhelpers" }
+ordered-float = { version = "5.0.0", default-features = false }
+owo-colors = "4.2.1"

@@ -1,0 +1,12 @@
+[package]
+name = "tar-layer"
+version = "0.1.0"
+edition = "2024"
+description = "Fast parallel tar+gzip for OCI layers"
+
+[dependencies]
+camino = "1"
+clap = { version = "4", features = ["derive"] }
+color-eyre = "0.6"
+gzp = { version = "2", default-features = false, features = ["deflate_rust"] }
+tar = "0.4"

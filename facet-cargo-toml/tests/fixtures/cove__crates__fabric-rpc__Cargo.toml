@@ -1,0 +1,11 @@
+[package]
+name = "fabric-rpc"
+version = "0.1.0"
+edition = "2024"
+description = "Remoc RPC types for fabric scheduler/worker communication"
+
+[dependencies]
+bytes = { version = "1", features = ["serde"] }
+fabric-common = { path = "../fabric-common" }
+remoc = "0.18"
+serde = { version = "1", features = ["derive"] }

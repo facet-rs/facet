@@ -1,0 +1,64 @@
+[package]
+name = "rapace-http-tunnel"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "http-tunnel"
+path = "src/main.rs"
+
+# Helper binary for cross-process tests (acts as plugin)
+[[bin]]
+name = "http-tunnel-plugin"
+path = "src/plugin_bin.rs"
+
+# Baseline HTTP server for benchmarking (no rapace overhead)
+[[bin]]
+name = "http_baseline"
+path = "src/baseline.rs"
+
+# Host binary for benchmarking (cross-process)
+[[bin]]
+name = "http-tunnel-host"
+path = "src/host_bin.rs"
+
+[dependencies]
+# Rapace crates
+rapace = { path = "../../crates/rapace" }
+
+# Async runtime
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "net", "process", "time"] }
+tokio-stream = "0.1"
+futures = "0.3"
+
+# facet for shapes (required by macro-generated code)
+facet = { git = "https://github.com/facet-rs/facet" }
+facet-core = { git = "https://github.com/facet-rs/facet" }
+facet-postcard = { git = "https://github.com/facet-rs/facet" }
+
+# Plugin side: axum for HTTP routing
+axum = "0.8"
+tower = "0.5"
+tower-service = "0.3"
+http = "1.0"
+http-body-util = "0.1"
+bytes = "1"
+
+# Allocator API for SHM zero-copy
+allocator-api2 = "0.2"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+color-eyre = "0.6"
+eyre = "0.6"
+
+[dev-dependencies]
+# HTTP client for testing
+reqwest = { version = "0.12", features = ["rustls-tls"], default-features = false }

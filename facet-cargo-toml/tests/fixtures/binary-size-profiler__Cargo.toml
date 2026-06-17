@@ -1,0 +1,23 @@
+[package]
+name = "binary-size-profiler"
+version = "0.1.0"
+authors = ["Jeff Muizelaar <jrmuizel@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+object = "0.36"
+wholesym = { git = "https://github.com/mstange/samply", rev = "a1a651ef087d9652cc8b9e1fcd32d91722f81f92" }
+# wholesym = "0.8.0"
+uuid = "1.12"
+futures = "0.3.31"
+fxprof-processed-profile = { git = "https://github.com/mstange/samply", rev = "a1a651ef087d9652cc8b9e1fcd32d91722f81f92" }
+# fxprof-processed-profile = { version = "0.8.0", path = "../samply/fxprof-processed-profile" }
+serde_json = "1.0.138"
+tokio = { version = "1.38", features = ["rt", "rt-multi-thread", "macros"] }
+mimalloc = { version = "*" }
+indicatif = "0.17"
+
+[profile.release]
+debug = true

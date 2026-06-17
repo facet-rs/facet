@@ -1,0 +1,27 @@
+[package]
+name = "stylance"
+edition = "2021"
+authors.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Scoped CSS for rust projects"
+documentation = "https://docs.rs/stylance"
+rust-version = "1.88"
+
+[lib]
+doctest = false
+
+[dependencies]
+stylance-macros = { workspace = true }
+
+[package.metadata.stylance]
+folders = ["examples"]
+output_dir = "../styles/"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

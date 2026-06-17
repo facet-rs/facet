@@ -1,0 +1,24 @@
+[package]
+name = "rc-zip-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[profile.release]
+debug = true # more helpful backtraces into rust code
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.rc-zip-sync]
+path = "../rc-zip-sync"
+
+[[bin]]
+name = "no_panic"
+path = "fuzz_targets/no_panic.rs"
+test = false
+doc = false
+bench = false

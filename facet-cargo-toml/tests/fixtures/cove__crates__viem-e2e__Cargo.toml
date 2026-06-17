@@ -1,0 +1,14 @@
+[package]
+name = "viem-e2e"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "End-to-end test suite for Viem using Orka for browser automation"
+
+[dependencies]
+anyhow = "1.0"
+orka = { path = "../orka" }
+tokio = { version = "1.48", features = ["macros", "rt-multi-thread", "time"] }
+
+[lints]
+workspace = true

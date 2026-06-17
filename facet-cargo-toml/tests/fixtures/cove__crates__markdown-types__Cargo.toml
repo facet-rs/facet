@@ -1,0 +1,17 @@
+[package]
+name = "markdown-types"
+edition.workspace = true
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+description.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+config-types = { version = "0.1.0", path = "../config-types" }
+conflux = { version = "0.1.0", path = "../conflux" }
+template-types = { version = "0.1.0", path = "../template-types" }

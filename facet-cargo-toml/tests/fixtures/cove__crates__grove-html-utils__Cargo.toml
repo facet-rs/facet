@@ -1,0 +1,10 @@
+[package]
+name = "grove-html-utils"
+version = "0.1.0"
+edition = "2024"
+description = "HTML processing utilities shared across Grove components"
+
+[dependencies]
+
+[lints]
+workspace = true

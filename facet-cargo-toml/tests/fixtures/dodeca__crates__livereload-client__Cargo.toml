@@ -1,0 +1,23 @@
+[package]
+name = "livereload-client"
+version = "0.6.1"
+edition = "2024"
+rust-version = "1.91"
+description = "WASM client for dodeca live reload - applies DOM patches"
+publish = false
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+dodeca-protocol = { path = "../dodeca-protocol" }
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = ["BinaryType", "CloseEvent", "Document", "Element", "ErrorEvent", "HtmlElement", "HtmlLinkElement", "Location", "MessageEvent", "Node", "NodeList", "Text", "WebSocket", "Window", "console"] }
+
+[dev-dependencies]

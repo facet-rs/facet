@@ -1,0 +1,36 @@
+[package]
+name = "facet-pretty"
+version = "0.23.16"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Pretty-printing for types implementing the Facet trait"
+keywords = [
+    "pretty-print",
+    "formatting",
+    "reflection",
+    "serialization",
+    "visualization",
+]
+categories = ["development-tools", "visualization", "command-line-utilities"]
+
+[features]
+alloc = ["facet-core/alloc", "facet-reflect/alloc"] # Enables alloc support
+camino = ["alloc", "facet-core/camino"]
+
+[dependencies]
+facet-core = { version = "0.27.9", path = "../facet-core" }
+facet-reflect = { version = "0.27.9", path = "../facet-reflect" }
+
+[dev-dependencies]
+camino = "1.1.9"
+facet = { path = "../facet" }
+divan = { version = "2.10.1", package = "codspeed-divan-compat" }
+facet-testhelpers = { version = "0.17.4", path = "../facet-testhelpers" }
+insta = "1.43.1"
+
+[[bench]]
+path = "benches/compare_derive_more.rs"
+name = "compare_derive_more"
+harness = false

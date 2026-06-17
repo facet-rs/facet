@@ -1,0 +1,15 @@
+[package]
+name = "vx-casd"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+facet = { workspace = true }
+facet-json = { workspace = true }
+rapace = { workspace = true }
+tokio = { workspace = true }
+blake3 = { workspace = true }
+camino = { workspace = true }
+eyre = { workspace = true }
+
+vx-cas-proto = { workspace = true }
