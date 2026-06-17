@@ -95,7 +95,6 @@ repository = "https://github.com/facet-rs/facet"
 
 [workspace.dependencies]
 facet = { path = "facet", version = "0.50.0-rc.0" }
-facet-atom = { path = "facet-atom", version = "0.50.0-rc.0" }
 facet-axum = { path = "facet-axum", version = "0.50.0-rc.0" }
 facet-core = { path = "facet-core" }
 facet-cargo-toml = { path = "facet-cargo-toml", version = "0.50.0-rc.0" }
@@ -115,15 +114,12 @@ facet-pretty = { path = "facet-pretty" }
 facet-reflect = { path = "facet-reflect", version = "0.50.0-rc.0" }
 facet-singularize = { path = "facet-singularize", version = "0.50.0-rc.0" }
 facet-solver = { path = "facet-solver", version = "0.50.0-rc.0" }
-facet-svg = { path = "facet-svg", version = "0.50.0-rc.0" }
 facet-testhelpers = { path = "facet-testhelpers", version = "0.50.0-rc.0" }
 facet-toml = { path = "facet-toml", version = "0.50.0-rc.0" }
 facet-xml = { path = "facet-xml", version = "0.50.0-rc.0" }
-facet-xml-node = { path = "facet-xml-node", version = "0.50.0-rc.0" }
 facet-urlencoded = { path = "facet-urlencoded", version = "0.50.0-rc.0" }
 facet-value = { path = "facet-value", version = "0.50.0-rc.0" }
 facet-yaml = { path = "facet-yaml", version = "0.50.0-rc.0" }
-rediff = { path = "rediff", version = "0.50.0-rc.0" }
 strid = { path = "strid", version = "11.0.0-rc.0" }
 strid-macros = { path = "strid-macros", version = "11.0.0-rc.0" }
 arborium = { version = "^2.4.5", default-features = false, features = ["lang-json"] }
