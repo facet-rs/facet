@@ -3,9 +3,10 @@ use std::{future::Future, pin::Pin, sync::Arc};
 use vox_rt::sync::mpsc;
 use vox_types::{
     Conduit, ConnectionRole, ConnectionSettings, DEFAULT_INITIAL_CHANNEL_CREDIT, Decline,
-    EstablishmentOutcome, EstablishmentPhase, HandshakeResult, IdentityResolutionContext, Link,
-    LinkRx, LinkTx, MaybeSend, MaybeSync, MessageFamily, Metadata, Parity, PeerEvidence,
-    PeerIdentity, SplitLink, VoxObserver, VoxObserverHandle, metadata_into_owned,
+    EstablishmentDetails, EstablishmentOutcome, EstablishmentPhase, HandshakeResult,
+    IdentityResolutionContext, Link, LinkRx, LinkTx, MaybeSend, MaybeSync, MessageFamily, Metadata,
+    Parity, PeerEvidence, PeerIdentity, SplitLink, VoxObserver, VoxObserverHandle,
+    metadata_into_owned,
 };
 
 use crate::{Attachment, LinkSource};
@@ -18,7 +19,8 @@ use crate::{
 use super::{
     AnonymousIdentityResolver, CloseRequest, Connection, ConnectionError, ConnectionHandle,
     ConnectionKeepaliveConfig, IdentityResolver, LaneAcceptor, OpenRequest,
-    observe_establishment_finished, observe_establishment_started,
+    observe_establishment_finished, observe_establishment_finished_with_details,
+    observe_establishment_started,
 };
 
 /// Well-known metadata key for service name routing.
@@ -242,27 +244,34 @@ impl IdentityResolver for ObservedIdentityResolver {
         );
 
         let result = self.resolver.resolve(context);
-        let outcome = if result.is_ok() {
-            EstablishmentOutcome::Ok
-        } else {
-            EstablishmentOutcome::Rejected
+        let (outcome, details) = match result.as_ref() {
+            Ok(identity) => (
+                EstablishmentOutcome::Ok,
+                EstablishmentDetails::identity_form(identity.form()),
+            ),
+            Err(decline) => (
+                EstablishmentOutcome::Rejected,
+                EstablishmentDetails::rejection_reason(decline.reason.as_str()),
+            ),
         };
 
-        observe_establishment_finished(
+        observe_establishment_finished_with_details(
             self.observer.as_ref(),
             self.role,
             EstablishmentPhase::IdentityResolution,
             None,
             outcome,
             identity_started_at,
+            details,
         );
-        observe_establishment_finished(
+        observe_establishment_finished_with_details(
             self.observer.as_ref(),
             self.role,
             EstablishmentPhase::ConnectionPolicy,
             None,
             outcome,
             policy_started_at,
+            details,
         );
 
         result
@@ -279,6 +288,15 @@ fn handshake_outcome_from_error(error: &crate::HandshakeError) -> EstablishmentO
         | crate::HandshakeError::Decode(_)
         | crate::HandshakeError::PeerClosed
         | crate::HandshakeError::Protocol(_) => EstablishmentOutcome::Error,
+    }
+}
+
+fn handshake_details_from_error(error: &crate::HandshakeError) -> EstablishmentDetails {
+    match error {
+        crate::HandshakeError::Declined(decline) => {
+            EstablishmentDetails::rejection_reason(decline.reason.as_str())
+        }
+        _ => EstablishmentDetails::EMPTY,
     }
 }
 
@@ -399,13 +417,14 @@ async fn handshake_as_initiator_observed<Tx: LinkTx, Rx: LinkRx>(
             Ok(handshake_result)
         }
         Err(error) => {
-            observe_establishment_finished(
+            observe_establishment_finished_with_details(
                 observer,
                 ConnectionRole::Initiator,
                 EstablishmentPhase::ConnectionHandshake,
                 None,
                 handshake_outcome_from_error(&error),
                 started_at,
+                handshake_details_from_error(&error),
             );
             Err(connection_error_from_handshake(error))
         }
@@ -455,13 +474,14 @@ async fn handshake_as_acceptor_observed<Tx: LinkTx, Rx: LinkRx>(
             Ok(handshake_result)
         }
         Err(error) => {
-            observe_establishment_finished(
+            observe_establishment_finished_with_details(
                 observer,
                 ConnectionRole::Acceptor,
                 EstablishmentPhase::ConnectionHandshake,
                 None,
                 handshake_outcome_from_error(&error),
                 started_at,
+                handshake_details_from_error(&error),
             );
             Err(connection_error_from_handshake(error))
         }
@@ -1420,8 +1440,20 @@ mod tests {
             EstablishmentEvent::Finished {
                 context,
                 outcome: EstablishmentOutcome::Rejected,
+                details,
                 ..
             } if context.phase == EstablishmentPhase::ServiceLaneOpen
+                && details.rejection_reason == Some("unknown-service")
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            EstablishmentEvent::Finished {
+                context,
+                outcome: EstablishmentOutcome::Ok,
+                details,
+                ..
+            } if context.phase == EstablishmentPhase::IdentityResolution
+                && details.identity_form == Some(vox_types::PeerIdentityForm::Anonymous)
         )));
     }
 }

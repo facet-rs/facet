@@ -369,22 +369,30 @@ async function resolvePeerIdentity(
       identityContext,
       identityStartedAt,
       "ok",
+      undefined,
+      { identityForm: identity.form },
     );
     observeEstablishmentFinished(
       options.observer,
       policyContext,
       policyStartedAt,
       "ok",
+      undefined,
+      { identityForm: identity.form },
     );
     return identity;
   } catch (error) {
     const outcome = error instanceof ConnectionDeclinedError ? "rejected" : "error";
+    const details = error instanceof ConnectionDeclinedError
+      ? { rejectionReason: error.reason }
+      : undefined;
     observeEstablishmentFinished(
       options.observer,
       identityContext,
       identityStartedAt,
       outcome,
       error,
+      details,
     );
     observeEstablishmentFinished(
       options.observer,
@@ -392,6 +400,7 @@ async function resolvePeerIdentity(
       policyStartedAt,
       outcome,
       error,
+      details,
     );
     throw error;
   }

@@ -315,7 +315,7 @@ private func establishmentLabels(_ events: [VoxEstablishmentObserverEvent]) -> [
             return
                 "started:\(context.role.rawValue):\(context.phase.rawValue):"
                 + "\(context.laneId.map(String.init) ?? "-"):-"
-        case .finished(let context, let outcome, _, _):
+        case .finished(let context, let outcome, _, _, _):
             return
                 "finished:\(context.role.rawValue):\(context.phase.rawValue):"
                 + "\(context.laneId.map(String.init) ?? "-"):\(outcome.rawValue)"
@@ -1141,12 +1141,21 @@ struct ConnectionFailureTests {
                 "started:acceptor:connection-handshake:-:-",
                 "started:acceptor:identity-resolution:-:-",
                 "started:acceptor:connection-policy:-:-",
-                "finished:acceptor:connection-policy:-:ok",
                 "finished:acceptor:identity-resolution:-:ok",
+                "finished:acceptor:connection-policy:-:ok",
                 "finished:acceptor:connection-handshake:-:ok",
                 "started:acceptor:schema-decode-plan:-:-",
                 "finished:acceptor:schema-decode-plan:-:ok",
             ])
+            let identityDetails = observer.establishmentSnapshot().compactMap { event in
+                if case .finished(let context, .ok, _, _, let details) = event,
+                    context.phase == .identityResolution
+                {
+                    return details
+                }
+                return nil
+            }
+            #expect(identityDetails.first?.identityForm == "anonymous")
         }
     }
 
@@ -1231,7 +1240,7 @@ struct ConnectionFailureTests {
                         switch event {
                         case .started(let context):
                             return context.phase == .serviceLaneOpen
-                        case .finished(let context, _, _, _):
+                        case .finished(let context, _, _, _, _):
                             return context.phase == .serviceLaneOpen
                         }
                     }
@@ -1242,6 +1251,16 @@ struct ConnectionFailureTests {
                     "started:initiator:service-lane-open:3:-",
                     "finished:initiator:service-lane-open:3:rejected",
                 ])
+                let rejectionDetails = observer.establishmentSnapshot().compactMap { event in
+                    if case .finished(let context, .rejected, _, _, let details) = event,
+                        context.phase == .serviceLaneOpen,
+                        context.laneId == rejectedId
+                    {
+                        return details
+                    }
+                    return nil
+                }
+                #expect(rejectionDetails.first?.rejectionReason == "unknown-service")
 
                 let grantLabels = establishmentLabels(
                     observer.establishmentSnapshot().filter { event in
@@ -1249,7 +1268,7 @@ struct ConnectionFailureTests {
                         case .started(let context):
                             return context.phase == .laneGrant
                                 || context.phase == .laneGrantRevocation
-                        case .finished(let context, _, _, _):
+                        case .finished(let context, _, _, _, _):
                             return context.phase == .laneGrant
                                 || context.phase == .laneGrantRevocation
                         }

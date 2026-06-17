@@ -702,6 +702,16 @@ describe("connection", () => {
       "started:acceptor:schema-decode-plan:-:-",
       "finished:acceptor:schema-decode-plan:-:ok",
     ]);
+    expect(
+      clientEvents.find((event) =>
+        event.kind === "finished" && event.context.phase === "identity-resolution"
+      )?.details?.identityForm,
+    ).toBe("anonymous");
+    expect(
+      serverEvents.find((event) =>
+        event.kind === "finished" && event.context.phase === "identity-resolution"
+      )?.details?.identityForm,
+    ).toBe("anonymous");
 
     clientLink.close();
     serverLink.close();
@@ -1104,6 +1114,13 @@ describe("connection", () => {
       "started:initiator:service-lane-open:3:-",
       "finished:initiator:service-lane-open:3:rejected",
     ]);
+    expect(
+      events.find((event) =>
+        event.kind === "finished" &&
+        event.context.phase === "service-lane-open" &&
+        event.context.laneId === rejectedOpen.lane_id
+      )?.details?.rejectionReason,
+    ).toBe("unknown-service");
     const grantLabels = establishmentLabels(
       events.filter((event) =>
         event.context.phase === "lane-grant" ||

@@ -30,6 +30,11 @@ export type EstablishmentOutcome =
   | "rejected"
   | "error";
 
+export interface EstablishmentDetails {
+  rejectionReason?: string;
+  identityForm?: string;
+}
+
 export interface EstablishmentContext {
   role: EstablishmentRole;
   phase: EstablishmentPhase;
@@ -47,6 +52,7 @@ export type EstablishmentEvent =
       outcome: EstablishmentOutcome;
       elapsedMs: number;
       error?: string;
+      details?: EstablishmentDetails;
     };
 
 export interface VoxObserver {
@@ -107,6 +113,7 @@ export function observeEstablishmentFinished(
   startedAt: number,
   outcome: EstablishmentOutcome,
   error?: unknown,
+  details?: EstablishmentDetails,
 ): void {
   const message = error instanceof Error
     ? error.message
@@ -119,5 +126,6 @@ export function observeEstablishmentFinished(
     outcome,
     elapsedMs: Math.max(0, Date.now() - startedAt),
     ...(message ? { error: message } : {}),
+    ...(details ? { details } : {}),
   });
 }

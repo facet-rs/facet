@@ -345,12 +345,16 @@ async function observeEstablishment<T>(
     observeEstablishmentFinished(observer, context, startedAt, "ok");
     return result;
   } catch (error) {
+    const details = error instanceof ConnectionDeclinedError
+      ? { rejectionReason: error.reason }
+      : undefined;
     observeEstablishmentFinished(
       observer,
       context,
       startedAt,
       error instanceof ConnectionDeclinedError ? "rejected" : "error",
       error,
+      details,
     );
     throw error;
   }
@@ -991,20 +995,20 @@ class ConnectionCore {
     );
 
     if (value.connection_settings.initial_channel_credit <= 0) {
+      const rejection = LaneRejection.withMessage(
+        "policy-rejected",
+        "initial_channel_credit must be greater than zero",
+      );
+      const details = { rejectionReason: rejection.reason };
       observeEstablishmentFinished(
         this.observer,
         establishmentContext,
         establishmentStartedAt,
         "error",
         "initial_channel_credit must be greater than zero",
+        details,
       );
-      await this.sendLaneReject(
-        laneId,
-        LaneRejection.withMessage(
-          "policy-rejected",
-          "initial_channel_credit must be greater than zero",
-        ),
-      );
+      await this.sendLaneReject(laneId, rejection);
       return;
     }
 
@@ -1019,22 +1023,25 @@ class ConnectionCore {
     );
 
     if (!this.onLane) {
+      const rejection = LaneRejection.withMessage("not-ready", "no lane acceptor configured");
+      const details = { rejectionReason: rejection.reason };
       observeEstablishmentFinished(
         this.observer,
         authorizationContext,
         authorizationStartedAt,
         "rejected",
+        undefined,
+        details,
       );
       observeEstablishmentFinished(
         this.observer,
         establishmentContext,
         establishmentStartedAt,
         "rejected",
+        undefined,
+        details,
       );
-      await this.sendLaneReject(
-        laneId,
-        LaneRejection.withMessage("not-ready", "no lane acceptor configured"),
-      );
+      await this.sendLaneReject(laneId, rejection);
       return;
     }
 
@@ -1048,21 +1055,27 @@ class ConnectionCore {
     const metadata = coerceMetadata(value.metadata);
     const service = metadataString(metadata, "vox-service");
     if (!service) {
+      const rejection = LaneRejection.withMessage(
+        "unknown-service",
+        "missing required vox-service metadata",
+      );
+      const details = { rejectionReason: rejection.reason };
       observeEstablishmentFinished(
         this.observer,
         authorizationContext,
         authorizationStartedAt,
         "rejected",
+        undefined,
+        details,
       );
-      await this.sendLaneReject(
-        laneId,
-        LaneRejection.withMessage("unknown-service", "missing required vox-service metadata"),
-      );
+      await this.sendLaneReject(laneId, rejection);
       observeEstablishmentFinished(
         this.observer,
         establishmentContext,
         establishmentStartedAt,
         "rejected",
+        undefined,
+        details,
       );
       return;
     }
@@ -1135,11 +1148,14 @@ class ConnectionCore {
         return lane;
       },
       async (rejection) => {
+        const details = { rejectionReason: rejection.reason };
         observeEstablishmentFinished(
           this.observer,
           authorizationContext,
           authorizationStartedAt,
           "rejected",
+          undefined,
+          details,
         );
         try {
           await this.sendLaneReject(laneId, rejection);
@@ -1148,6 +1164,8 @@ class ConnectionCore {
             establishmentContext,
             establishmentStartedAt,
             "rejected",
+            undefined,
+            details,
           );
         } catch (error) {
           observeEstablishmentFinished(
@@ -1231,12 +1249,14 @@ class ConnectionCore {
     }
     this.pendingLanes.delete(laneId);
     const rejection = LaneRejection.fromMetadata(coerceMetadata(reject.metadata));
+    const details = { rejectionReason: rejection.reason };
     observeEstablishmentFinished(
       this.observer,
       pending.establishmentContext,
       pending.establishmentStartedAt,
       "rejected",
       rejection.message(),
+      details,
     );
     pending.result.reject(ConnectionError.rejected(rejection));
   }

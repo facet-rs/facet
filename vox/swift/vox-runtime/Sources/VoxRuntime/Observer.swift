@@ -144,13 +144,29 @@ public struct VoxEstablishmentContext: Equatable, Sendable {
     }
 }
 
+public struct VoxEstablishmentDetails: Equatable, Sendable {
+    public let rejectionReason: String?
+    public let identityForm: String?
+
+    public static let empty = VoxEstablishmentDetails()
+
+    public init(
+        rejectionReason: String? = nil,
+        identityForm: String? = nil
+    ) {
+        self.rejectionReason = rejectionReason
+        self.identityForm = identityForm
+    }
+}
+
 public enum VoxEstablishmentObserverEvent: Equatable, Sendable {
     case started(VoxEstablishmentContext)
     case finished(
         context: VoxEstablishmentContext,
         outcome: VoxEstablishmentOutcome,
         elapsedMs: UInt64,
-        error: String?
+        error: String?,
+        details: VoxEstablishmentDetails
     )
 }
 
@@ -233,7 +249,8 @@ func observeEstablishmentFinished(
     _ context: VoxEstablishmentContext,
     startedAt: UInt64,
     outcome: VoxEstablishmentOutcome,
-    error: Error? = nil
+    error: Error? = nil,
+    details: VoxEstablishmentDetails = .empty
 ) {
     let now = DispatchTime.now().uptimeNanoseconds
     let elapsedMs = now >= startedAt ? (now - startedAt) / 1_000_000 : 0
@@ -242,7 +259,8 @@ func observeEstablishmentFinished(
             context: context,
             outcome: outcome,
             elapsedMs: elapsedMs,
-            error: error.map { String(describing: $0) }
+            error: error.map { String(describing: $0) },
+            details: details
         ))
 }
 
@@ -267,13 +285,56 @@ func withObservedEstablishment<T>(
     } catch {
         let outcome: VoxEstablishmentOutcome =
             error is ConnectionDeclinedError ? .rejected : .error
+        let details: VoxEstablishmentDetails
+        if let declined = error as? ConnectionDeclinedError {
+            details = VoxEstablishmentDetails(
+                rejectionReason: voxEstablishmentRejectReasonLabel(declined.decline.reason)
+            )
+        } else {
+            details = .empty
+        }
         observeEstablishmentFinished(
             context,
             startedAt: startedAt,
             outcome: outcome,
-            error: error
+            error: error,
+            details: details
         )
         throw error
+    }
+}
+
+func voxEstablishmentRejectReasonLabel(_ reason: EstablishmentRejectReason) -> String {
+    switch reason {
+    case .unauthenticated:
+        return "unauthenticated"
+    case .forbidden:
+        return "forbidden"
+    case .notReady:
+        return "not-ready"
+    case .draining:
+        return "draining"
+    case .unsupported:
+        return "unsupported"
+    case .policyRejected:
+        return "policy-rejected"
+    }
+}
+
+func voxPeerIdentityFormLabel(_ form: PeerIdentityForm) -> String {
+    switch form {
+    case .anonymous:
+        return "anonymous"
+    case .synthetic:
+        return "synthetic"
+    case .localProcess:
+        return "local-process"
+    case .certificateBacked:
+        return "certificate-backed"
+    case .applicationUser:
+        return "application-user"
+    case .composite:
+        return "composite"
     }
 }
 

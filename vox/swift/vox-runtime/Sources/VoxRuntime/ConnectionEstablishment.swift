@@ -47,19 +47,62 @@ func resolvePeerIdentity(
 ) async throws -> PeerIdentity {
     let resolver = identityResolver ?? { _ in PeerIdentity.anonymous }
     let context = IdentityResolutionContext(role: role, evidence: evidence, claims: claims)
+    let identityContext = VoxEstablishmentContext(role: role, phase: .identityResolution)
+    let policyContext = VoxEstablishmentContext(role: role, phase: .connectionPolicy)
+    let identityStartedAt = observeEstablishmentStarted(identityContext)
+    let policyStartedAt = observeEstablishmentStarted(policyContext)
     do {
-        return try await withObservedEstablishment(
-            VoxEstablishmentContext(role: role, phase: .identityResolution)
-        ) {
-            try await withObservedEstablishment(
-                VoxEstablishmentContext(role: role, phase: .connectionPolicy)
-            ) {
-                try await resolver(context)
-            }
-        }
+        let identity = try await resolver(context)
+        let details = VoxEstablishmentDetails(
+            identityForm: voxPeerIdentityFormLabel(identity.form)
+        )
+        observeEstablishmentFinished(
+            identityContext,
+            startedAt: identityStartedAt,
+            outcome: .ok,
+            details: details
+        )
+        observeEstablishmentFinished(
+            policyContext,
+            startedAt: policyStartedAt,
+            outcome: .ok,
+            details: details
+        )
+        return identity
     } catch let decline as ConnectionDeclinedError {
         await sendHandshakeDecline(link, decline: decline.decline)
+        let details = VoxEstablishmentDetails(
+            rejectionReason: voxEstablishmentRejectReasonLabel(decline.decline.reason)
+        )
+        observeEstablishmentFinished(
+            identityContext,
+            startedAt: identityStartedAt,
+            outcome: .rejected,
+            error: decline,
+            details: details
+        )
+        observeEstablishmentFinished(
+            policyContext,
+            startedAt: policyStartedAt,
+            outcome: .rejected,
+            error: decline,
+            details: details
+        )
         throw decline
+    } catch {
+        observeEstablishmentFinished(
+            identityContext,
+            startedAt: identityStartedAt,
+            outcome: .error,
+            error: error
+        )
+        observeEstablishmentFinished(
+            policyContext,
+            startedAt: policyStartedAt,
+            outcome: .error,
+            error: error
+        )
+        throw error
     }
 }
 

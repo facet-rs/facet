@@ -1,7 +1,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::{ChannelDirection, ChannelId, ConnectionRole, LaneId, MethodId, RequestId};
+use crate::{
+    ChannelDirection, ChannelId, ConnectionRole, LaneId, MethodId, PeerIdentityForm, RequestId,
+};
 
 pub type VoxObserverHandle = Arc<dyn VoxObserver>;
 
@@ -68,6 +70,33 @@ pub struct EstablishmentContext {
     pub lane_id: Option<LaneId>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EstablishmentDetails {
+    pub rejection_reason: Option<&'static str>,
+    pub identity_form: Option<PeerIdentityForm>,
+}
+
+impl EstablishmentDetails {
+    pub const EMPTY: Self = Self {
+        rejection_reason: None,
+        identity_form: None,
+    };
+
+    pub const fn rejection_reason(reason: &'static str) -> Self {
+        Self {
+            rejection_reason: Some(reason),
+            identity_form: None,
+        }
+    }
+
+    pub const fn identity_form(form: PeerIdentityForm) -> Self {
+        Self {
+            rejection_reason: None,
+            identity_form: Some(form),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EstablishmentEvent {
     Started {
@@ -77,6 +106,7 @@ pub enum EstablishmentEvent {
         context: EstablishmentContext,
         outcome: EstablishmentOutcome,
         elapsed: Duration,
+        details: EstablishmentDetails,
     },
 }
 
@@ -599,11 +629,14 @@ impl EstablishmentEvent {
                 context,
                 outcome,
                 elapsed: _,
+                details,
             } => {
                 let mut labels =
                     ObserverMetricLabels::new(ObserverMetricKind::EstablishmentFinished);
                 labels.establishment_phase = Some(establishment_phase_label(context.phase));
                 labels.outcome = Some(establishment_outcome_label(outcome));
+                labels.rejection_reason = details.rejection_reason;
+                labels.identity_form = details.identity_form.map(peer_identity_form_label);
                 labels
             }
         }
@@ -651,6 +684,17 @@ const fn establishment_outcome_label(outcome: EstablishmentOutcome) -> &'static 
         EstablishmentOutcome::Ok => "ok",
         EstablishmentOutcome::Error => "error",
         EstablishmentOutcome::Rejected => "rejected",
+    }
+}
+
+const fn peer_identity_form_label(form: PeerIdentityForm) -> &'static str {
+    match form {
+        PeerIdentityForm::Anonymous => "anonymous",
+        PeerIdentityForm::Synthetic => "synthetic",
+        PeerIdentityForm::LocalProcess => "local-process",
+        PeerIdentityForm::CertificateBacked => "certificate-backed",
+        PeerIdentityForm::ApplicationUser => "application-user",
+        PeerIdentityForm::Composite => "composite",
     }
 }
 
@@ -1121,6 +1165,7 @@ mod tests {
             },
             outcome: EstablishmentOutcome::Rejected,
             elapsed: Duration::from_millis(4),
+            details: EstablishmentDetails::rejection_reason("forbidden"),
         };
 
         let started_labels = started.metric_labels();
@@ -1143,7 +1188,7 @@ mod tests {
             Some("service-lane-open")
         );
         assert_eq!(finished_labels.outcome, Some("rejected"));
-        assert_eq!(finished_labels.rejection_reason, None);
+        assert_eq!(finished_labels.rejection_reason, Some("forbidden"));
         assert_eq!(finished_labels.identity_form, None);
         assert!(
             format!("{finished:?}").contains("LaneId(99)"),

@@ -140,6 +140,9 @@ extension Driver {
                         .unknownService,
                         "missing vox-service metadata"
                     )
+                    let details = VoxEstablishmentDetails(
+                        rejectionReason: rejection.reason.rawValue
+                    )
                     try await conduit.send(
                         messageLaneReject(
                             laneId: msg.laneId,
@@ -148,12 +151,14 @@ extension Driver {
                     observeEstablishmentFinished(
                         authorizationContext,
                         startedAt: authorizationStartedAt,
-                        outcome: .rejected
+                        outcome: .rejected,
+                        details: details
                     )
                     observeEstablishmentFinished(
                         establishmentContext,
                         startedAt: establishmentStartedAt,
-                        outcome: .rejected
+                        outcome: .rejected,
+                        details: details
                     )
                     return
                 }
@@ -161,6 +166,9 @@ extension Driver {
                     let rejection = LaneRejection.withMessage(
                         .policyRejected,
                         "initial_channel_credit must be greater than zero"
+                    )
+                    let details = VoxEstablishmentDetails(
+                        rejectionReason: rejection.reason.rawValue
                     )
                     try await conduit.send(
                         messageLaneReject(
@@ -170,7 +178,8 @@ extension Driver {
                     observeEstablishmentFinished(
                         establishmentContext,
                         startedAt: establishmentStartedAt,
-                        outcome: .rejected
+                        outcome: .rejected,
+                        details: details
                     )
                     return
                 }
@@ -254,10 +263,14 @@ extension Driver {
                     reject: { [weak self] rejection in
                         guard let self else { return }
                         Task {
+                            let details = VoxEstablishmentDetails(
+                                rejectionReason: rejection.reason.rawValue
+                            )
                             observeEstablishmentFinished(
                                 authorizationContext,
                                 startedAt: authorizationStartedAt,
-                                outcome: .rejected
+                                outcome: .rejected,
+                                details: details
                             )
                             try? await self.conduit.send(
                                 messageLaneReject(
@@ -267,7 +280,8 @@ extension Driver {
                             observeEstablishmentFinished(
                                 establishmentContext,
                                 startedAt: establishmentStartedAt,
-                                outcome: .rejected
+                                outcome: .rejected,
+                                details: details
                             )
                         }
                     }
@@ -284,6 +298,9 @@ extension Driver {
                     .notReady,
                     "no lane acceptor configured"
                 )
+                let details = VoxEstablishmentDetails(
+                    rejectionReason: rejection.reason.rawValue
+                )
                 try await conduit.send(
                     messageLaneReject(
                         laneId: msg.laneId,
@@ -292,12 +309,14 @@ extension Driver {
                 observeEstablishmentFinished(
                     authorizationContext,
                     startedAt: authorizationStartedAt,
-                    outcome: .rejected
+                    outcome: .rejected,
+                    details: details
                 )
                 observeEstablishmentFinished(
                     establishmentContext,
                     startedAt: establishmentStartedAt,
-                    outcome: .rejected
+                    outcome: .rejected,
+                    details: details
                 )
             }
         case .laneAccept(let accept):
@@ -348,12 +367,17 @@ extension Driver {
             guard let pending = await laneState.takePendingOutbound(msg.laneId) else {
                 break
             }
+            let rejection = LaneRejection.fromMetadata(reject.metadata)
+            let details = VoxEstablishmentDetails(
+                rejectionReason: rejection.reason.rawValue
+            )
             observeEstablishmentFinished(
                 pending.establishmentContext,
                 startedAt: pending.establishmentStartedAt,
-                outcome: .rejected
+                outcome: .rejected,
+                details: details
             )
-            pending.responseTx(.failure(.rejected(LaneRejection.fromMetadata(reject.metadata))))
+            pending.responseTx(.failure(.rejected(rejection)))
         case .laneClose:
             // r[impl lane.close]
             warnLog("received LaneClose lane_id=\(msg.laneId)")

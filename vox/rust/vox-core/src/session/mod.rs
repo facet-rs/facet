@@ -12,11 +12,12 @@ use tracing::{trace, warn};
 use vox_rt::sync::mpsc;
 use vox_types::{
     BoxFut, ChannelMessage, ConduitRx, ConduitTx, ConnectionRole, ConnectionSettings, Decline,
-    EstablishmentContext, EstablishmentEvent, EstablishmentOutcome, EstablishmentPhase, Handler,
-    HandshakeResult, IdAllocator, IdentityResolutionContext, LaneAccept, LaneClose, LaneGrant,
-    LaneId, LaneOpen, LaneReject, MaybeSend, MaybeSync, Message, MessageFamily, MessagePayload,
-    Metadata, Parity, PeerEvidence, PeerIdentity, RequestBody, RequestId, RequestMessage,
-    RequestResponse, SchemaMessage, SelfRef, TrySendError, VoxDebugSnapshot, VoxObserverHandle,
+    EstablishmentContext, EstablishmentDetails, EstablishmentEvent, EstablishmentOutcome,
+    EstablishmentPhase, Handler, HandshakeResult, IdAllocator, IdentityResolutionContext,
+    LaneAccept, LaneClose, LaneGrant, LaneId, LaneOpen, LaneReject, MaybeSend, MaybeSync, Message,
+    MessageFamily, MessagePayload, Metadata, Parity, PeerEvidence, PeerIdentity, RequestBody,
+    RequestId, RequestMessage, RequestResponse, SchemaMessage, SelfRef, TrySendError,
+    VoxDebugSnapshot, VoxObserverHandle,
 };
 use vox_types::{
     ConnectionCloseReason, DecodeErrorKind, DriverTaskStatus, LaneDebugSnapshot, LaneDebugState,
@@ -151,6 +152,10 @@ impl Default for LaneRejection {
     }
 }
 
+fn lane_rejection_details(rejection: &LaneRejection) -> EstablishmentDetails {
+    EstablishmentDetails::rejection_reason(rejection.reason().as_str())
+}
+
 // r[impl rpc.observability.establishment]
 pub(crate) fn observe_establishment_started(
     observer: Option<&VoxObserverHandle>,
@@ -180,6 +185,26 @@ pub(crate) fn observe_establishment_finished(
     outcome: EstablishmentOutcome,
     started_at: Instant,
 ) {
+    observe_establishment_finished_with_details(
+        observer,
+        role,
+        phase,
+        lane_id,
+        outcome,
+        started_at,
+        EstablishmentDetails::EMPTY,
+    );
+}
+
+pub(crate) fn observe_establishment_finished_with_details(
+    observer: Option<&VoxObserverHandle>,
+    role: ConnectionRole,
+    phase: EstablishmentPhase,
+    lane_id: Option<LaneId>,
+    outcome: EstablishmentOutcome,
+    started_at: Instant,
+    details: EstablishmentDetails,
+) {
     if let Some(observer) = observer {
         observer.establishment_event(EstablishmentEvent::Finished {
             context: EstablishmentContext {
@@ -189,6 +214,7 @@ pub(crate) fn observe_establishment_finished(
             },
             outcome,
             elapsed: started_at.elapsed(),
+            details,
         });
     }
 }
@@ -1888,44 +1914,40 @@ impl Connection {
         // Validate: connection ID must match peer's parity (opposite of ours).
         let peer_parity = self.parity.other();
         if !conn_id.has_parity(peer_parity) {
-            Self::send_lane_reject(
-                Arc::clone(&self.connection_core),
-                conn_id,
-                LaneRejection::with_message(
-                    LaneRejectReason::PolicyRejected,
-                    "lane id parity does not match peer",
-                ),
-            )
-            .await;
-            observe_establishment_finished(
+            let rejection = LaneRejection::with_message(
+                LaneRejectReason::PolicyRejected,
+                "lane id parity does not match peer",
+            );
+            let details = lane_rejection_details(&rejection);
+            Self::send_lane_reject(Arc::clone(&self.connection_core), conn_id, rejection).await;
+            observe_establishment_finished_with_details(
                 self.observer.as_ref(),
                 self.role,
                 EstablishmentPhase::ServiceLaneOpen,
                 Some(conn_id),
                 EstablishmentOutcome::Error,
                 establishment_started_at,
+                details,
             );
             return;
         }
 
         // Validate: connection ID must not already be in use.
         if self.conns.contains_key(&conn_id) {
-            Self::send_lane_reject(
-                Arc::clone(&self.connection_core),
-                conn_id,
-                LaneRejection::with_message(
-                    LaneRejectReason::PolicyRejected,
-                    "lane id is already in use",
-                ),
-            )
-            .await;
-            observe_establishment_finished(
+            let rejection = LaneRejection::with_message(
+                LaneRejectReason::PolicyRejected,
+                "lane id is already in use",
+            );
+            let details = lane_rejection_details(&rejection);
+            Self::send_lane_reject(Arc::clone(&self.connection_core), conn_id, rejection).await;
+            observe_establishment_finished_with_details(
                 self.observer.as_ref(),
                 self.role,
                 EstablishmentPhase::ServiceLaneOpen,
                 Some(conn_id),
                 EstablishmentOutcome::Error,
                 establishment_started_at,
+                details,
             );
             return;
         }
@@ -1939,30 +1961,29 @@ impl Connection {
                 EstablishmentPhase::LaneAuthorization,
                 Some(conn_id),
             );
-            Self::send_lane_reject(
-                Arc::clone(&self.connection_core),
-                conn_id,
-                LaneRejection::with_message(
-                    LaneRejectReason::NotReady,
-                    "no lane acceptor configured",
-                ),
-            )
-            .await;
-            observe_establishment_finished(
+            let rejection = LaneRejection::with_message(
+                LaneRejectReason::NotReady,
+                "no lane acceptor configured",
+            );
+            let details = lane_rejection_details(&rejection);
+            Self::send_lane_reject(Arc::clone(&self.connection_core), conn_id, rejection).await;
+            observe_establishment_finished_with_details(
                 self.observer.as_ref(),
                 self.role,
                 EstablishmentPhase::LaneAuthorization,
                 Some(conn_id),
                 EstablishmentOutcome::Rejected,
                 authorization_started_at,
+                details,
             );
-            observe_establishment_finished(
+            observe_establishment_finished_with_details(
                 self.observer.as_ref(),
                 self.role,
                 EstablishmentPhase::ServiceLaneOpen,
                 Some(conn_id),
                 EstablishmentOutcome::Rejected,
                 establishment_started_at,
+                details,
             );
             return;
         }
@@ -1970,22 +1991,20 @@ impl Connection {
         // Derive settings: opposite parity, same limits for now.
         let open = open.get();
         if open.connection_settings.initial_channel_credit == 0 {
-            Self::send_lane_reject(
-                Arc::clone(&self.connection_core),
-                conn_id,
-                LaneRejection::with_message(
-                    LaneRejectReason::PolicyRejected,
-                    "initial_channel_credit must be greater than zero",
-                ),
-            )
-            .await;
-            observe_establishment_finished(
+            let rejection = LaneRejection::with_message(
+                LaneRejectReason::PolicyRejected,
+                "initial_channel_credit must be greater than zero",
+            );
+            let details = lane_rejection_details(&rejection);
+            Self::send_lane_reject(Arc::clone(&self.connection_core), conn_id, rejection).await;
+            observe_establishment_finished_with_details(
                 self.observer.as_ref(),
                 self.role,
                 EstablishmentPhase::ServiceLaneOpen,
                 Some(conn_id),
                 EstablishmentOutcome::Error,
                 establishment_started_at,
+                details,
             );
             return;
         }
@@ -2016,27 +2035,27 @@ impl Connection {
                     Some(conn_id),
                 );
                 self.conns.remove(&conn_id);
-                Self::send_lane_reject(
-                    Arc::clone(&self.connection_core),
-                    conn_id,
-                    LaneRejection::with_message(LaneRejectReason::UnknownService, e.to_string()),
-                )
-                .await;
-                observe_establishment_finished(
+                let rejection =
+                    LaneRejection::with_message(LaneRejectReason::UnknownService, e.to_string());
+                let details = lane_rejection_details(&rejection);
+                Self::send_lane_reject(Arc::clone(&self.connection_core), conn_id, rejection).await;
+                observe_establishment_finished_with_details(
                     self.observer.as_ref(),
                     self.role,
                     EstablishmentPhase::LaneAuthorization,
                     Some(conn_id),
                     EstablishmentOutcome::Rejected,
                     authorization_started_at,
+                    details,
                 );
-                observe_establishment_finished(
+                observe_establishment_finished_with_details(
                     self.observer.as_ref(),
                     self.role,
                     EstablishmentPhase::ServiceLaneOpen,
                     Some(conn_id),
                     EstablishmentOutcome::Rejected,
                     establishment_started_at,
+                    details,
                 );
                 return;
             }
@@ -2099,25 +2118,28 @@ impl Connection {
                 );
             }
             Err(rejection) => {
-                observe_establishment_finished(
+                let details = lane_rejection_details(&rejection);
+                observe_establishment_finished_with_details(
                     self.observer.as_ref(),
                     self.role,
                     EstablishmentPhase::LaneAuthorization,
                     Some(conn_id),
                     EstablishmentOutcome::Rejected,
                     authorization_started_at,
+                    details,
                 );
                 // Clean up the connection slot we created.
                 trace!(%conn_id, "acceptor rejected, removing conn slot");
                 self.conns.remove(&conn_id);
                 Self::send_lane_reject(Arc::clone(&self.connection_core), conn_id, rejection).await;
-                observe_establishment_finished(
+                observe_establishment_finished_with_details(
                     self.observer.as_ref(),
                     self.role,
                     EstablishmentPhase::ServiceLaneOpen,
                     Some(conn_id),
                     EstablishmentOutcome::Rejected,
                     establishment_started_at,
+                    details,
                 );
             }
         }
@@ -2186,16 +2208,18 @@ impl Connection {
         let slot = self.remove_connection(&conn_id);
         match slot {
             Some(ConnectionSlot::PendingOutbound(mut pending)) => {
-                observe_establishment_finished(
+                let rejection = LaneRejection::from_metadata(reject.metadata.clone());
+                let details = lane_rejection_details(&rejection);
+                observe_establishment_finished_with_details(
                     self.observer.as_ref(),
                     self.role,
                     EstablishmentPhase::ServiceLaneOpen,
                     Some(conn_id),
                     EstablishmentOutcome::Rejected,
                     pending.establishment_started_at,
+                    details,
                 );
                 if let Some(tx) = pending.result_tx.take() {
-                    let rejection = LaneRejection::from_metadata(reject.metadata.clone());
                     let _ = tx.send(Err(ConnectionError::Rejected(rejection)));
                 }
             }
