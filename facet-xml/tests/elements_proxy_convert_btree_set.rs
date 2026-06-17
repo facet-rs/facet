@@ -36,7 +36,7 @@ where
 struct Property {
     #[facet(xml::attribute)]
     name: String,
-    #[facet(xml::element)]
+    #[facet(xml::text)]
     value: String,
 }
 
