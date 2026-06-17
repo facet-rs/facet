@@ -1,7 +1,5 @@
 # strid
 
-[![Build Status](https://github.com/bearcove/strid/actions/workflows/rust.yml/badge.svg?branch=main&event=push)](https://github.com/bearcove/strid)
-
 **strid** (string id) is a fork of [aliri_braid](https://github.com/neoeinstein/aliri_braid) brought up to speed with Rust edition 2024 and adding support for [facet](https://crates.io/crates/facet).
 
 Improve and strengthen your strings
@@ -62,7 +60,8 @@ borrow_raw_str(owned.as_str());
 take_raw_string(owned.take());
 ```
 
-For more information, see the [documentation on docs.rs](https://docs.rs/strid).
+For more information, see the [documentation on docs.rs](https://docs.rs/strid)
+and the [Facet website](https://facet.rs/ecosystem/strid/).
 
 ## Acknowledgments
 
