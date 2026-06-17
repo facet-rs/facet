@@ -50,8 +50,6 @@ members = [
 
 ]
 exclude = [
-  # proto-attr experiment uses nightly features
-  "proto-attr",
   # tools/ has its own workspace
   "tools",
 ]
