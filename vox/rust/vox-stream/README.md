@@ -10,11 +10,11 @@ Byte-stream transport binding for Vox over `AsyncRead`/`AsyncWrite`.
 
 - Framing and link adapters for TCP/Unix/stdio style byte streams
 - Local IPC transport support (Unix sockets on Unix, named pipes on Windows)
-- Runtime-compatible transport glue for session establishment
+- Runtime-compatible transport glue for connection establishment
 
 ## Fits with
 
-- `vox-core` session and driver runtime
+- `vox-core` connection and driver runtime
 - `vox-local` as a compatibility shim re-export
 - `vox-types` for transport message payloads
 

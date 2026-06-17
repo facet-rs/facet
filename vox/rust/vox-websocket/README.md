@@ -13,7 +13,7 @@ WebSocket transport binding for Vox links.
 
 ## Fits with
 
-- `vox-core` for connection/session orchestration
+- `vox-core` for connection and lane orchestration
 - `vox-types` for protocol payloads and control messages
 - `vox` for generated clients and service dispatchers
 

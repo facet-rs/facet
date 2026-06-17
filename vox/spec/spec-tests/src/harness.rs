@@ -4381,7 +4381,7 @@ pub async fn accept_subject_ws(
     };
 
     let client = match acceptor_on(ws)
-        .on_connection(TestbedDispatcher::new(TestbedService::new()))
+        .on_lane(TestbedDispatcher::new(TestbedService::new()))
         .establish::<TestbedClient>()
         .await
     {
@@ -4708,7 +4708,7 @@ async fn run_subject_client_scenario_tcp(
         };
         stream.set_nodelay(true).ok();
         match acceptor_on(StreamLink::tcp(stream))
-            .on_connection(TestbedDispatcher::new(TestbedService::new()))
+            .on_lane(TestbedDispatcher::new(TestbedService::new()))
             .establish_connection()
             .await
         {
@@ -4783,7 +4783,7 @@ async fn run_subject_client_scenario_ws(
             }
         };
         match acceptor_on(ws)
-            .on_connection(TestbedDispatcher::new(TestbedService::new()))
+            .on_lane(TestbedDispatcher::new(TestbedService::new()))
             .establish_connection()
             .await
         {
@@ -4900,7 +4900,7 @@ where
                 rx,
             });
         let setup = acceptor_conduit(server_conduit, handshake_result)
-            .on_connection(TestbedDispatcher::new(TestbedService::new()))
+            .on_lane(TestbedDispatcher::new(TestbedService::new()))
             .establish_connection()
             .await
             .map_err(|e| format!("server handshake: {e}"));

@@ -4,7 +4,7 @@ Protocol and runtime data model shared across Vox implementations.
 
 ## Role in the Vox stack
 
-`vox-types` spans the `Requests / Channels`, `Connections`, and `Session` layers by defining shared message and control types.
+`vox-types` spans the `RequestScope`, `Lane`, and `Connection` layers by defining shared message and control types.
 
 ## What this crate provides
 

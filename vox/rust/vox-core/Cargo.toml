@@ -10,7 +10,7 @@ homepage.workspace = true
 documentation.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Core implementations: ReliableLink, ReliableAcceptor, Session"
+description = "Core implementations for Vox connections, lanes, drivers, and links"
 
 [package.metadata]
 

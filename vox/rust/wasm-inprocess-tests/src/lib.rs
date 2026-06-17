@@ -832,11 +832,14 @@ pub fn start_acceptor(on_message: js_sys::Function) -> JsInProcessLink {
             .await
         {
             Ok(connection) => {
-                console_log!("In-process acceptor: session established");
+                console_log!("In-process acceptor: connection established");
                 connection.closed().await;
             }
             Err(e) => {
-                console_error!("In-process acceptor: session failed: {:?}", e);
+                console_error!(
+                    "In-process acceptor: connection establishment failed: {:?}",
+                    e
+                );
             }
         }
     });

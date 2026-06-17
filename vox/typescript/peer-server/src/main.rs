@@ -61,7 +61,7 @@ async fn run() -> Result<(), String> {
             {
                 Ok(v) => v,
                 Err(e) => {
-                    eprintln!("Session handshake failed: {:?}", e);
+                    eprintln!("Connection establishment failed: {:?}", e);
                     return;
                 }
             };
