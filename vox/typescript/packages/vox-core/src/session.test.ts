@@ -29,9 +29,12 @@ import {
   ConnectionError,
   LaneRejection,
   accept,
+  acceptOnLink,
   connect,
+  connectOnLink,
   defaultLaneSettings,
 } from "./session.ts";
+import type { EstablishmentEvent } from "./observer.ts";
 import { Role, channel, type MethodDescriptor } from "./channeling/index.ts";
 import {
   sessionEchoRegistry,
@@ -172,6 +175,26 @@ async function withTimeout<T>(
     setTimeout(() => reject(new Error(`timed out waiting for ${label}`)), timeoutMs);
   });
   return Promise.race([promise, timeout]);
+}
+
+function establishmentObserver(events: EstablishmentEvent[]): {
+  establishment: (event: EstablishmentEvent) => void;
+} {
+  return {
+    establishment: (event) => events.push(event),
+  };
+}
+
+function establishmentLabels(events: EstablishmentEvent[]): string[] {
+  return events.map((event) => ({
+    kind: event.kind,
+    role: event.context.role,
+    phase: event.context.phase,
+    laneId: event.context.laneId?.toString() ?? "-",
+    outcome: event.kind === "finished" ? event.outcome : "-",
+  })).map(({ kind, role, phase, laneId, outcome }) =>
+    `${kind}:${role}:${phase}:${laneId}:${outcome}`
+  );
 }
 
 async function establishPair(
@@ -425,6 +448,76 @@ describe("session", () => {
     serverLink.close();
   });
 
+  // r[verify rpc.observability.establishment]
+  it("reports connection establishment phases over transport prologue", async () => {
+    const [clientLink, serverLink] = memoryLinkPair();
+    const clientEvents: EstablishmentEvent[] = [];
+    const serverEvents: EstablishmentEvent[] = [];
+    const [clientSession, serverSession] = await withTimeout(
+      Promise.all([
+        connect(clientLink, { observer: establishmentObserver(clientEvents) }),
+        accept(serverLink, { observer: establishmentObserver(serverEvents) }),
+      ]),
+      "observed transport establishment",
+    );
+
+    expect(establishmentLabels(clientEvents)).toEqual([
+      "started:initiator:transport-prologue:-:-",
+      "finished:initiator:transport-prologue:-:ok",
+      "started:initiator:connection-handshake:-:-",
+      "finished:initiator:connection-handshake:-:ok",
+      "started:initiator:schema-decode-plan:-:-",
+      "finished:initiator:schema-decode-plan:-:ok",
+    ]);
+    expect(establishmentLabels(serverEvents)).toEqual([
+      "started:acceptor:transport-prologue:-:-",
+      "finished:acceptor:transport-prologue:-:ok",
+      "started:acceptor:connection-handshake:-:-",
+      "finished:acceptor:connection-handshake:-:ok",
+      "started:acceptor:schema-decode-plan:-:-",
+      "finished:acceptor:schema-decode-plan:-:ok",
+    ]);
+
+    clientLink.close();
+    serverLink.close();
+    clientSession.handle().shutdown();
+    serverSession.handle().shutdown();
+    await Promise.allSettled([clientSession.closed(), serverSession.closed()]);
+  });
+
+  // r[verify rpc.observability.establishment]
+  it("does not invent transport prologue phases for already-open links", async () => {
+    const [clientLink, serverLink] = memoryLinkPair();
+    const clientEvents: EstablishmentEvent[] = [];
+    const serverEvents: EstablishmentEvent[] = [];
+    const [clientSession, serverSession] = await withTimeout(
+      Promise.all([
+        connectOnLink(clientLink, { observer: establishmentObserver(clientEvents) }),
+        acceptOnLink(serverLink, { observer: establishmentObserver(serverEvents) }),
+      ]),
+      "observed direct-link establishment",
+    );
+
+    expect(establishmentLabels(clientEvents)).toEqual([
+      "started:initiator:connection-handshake:-:-",
+      "finished:initiator:connection-handshake:-:ok",
+      "started:initiator:schema-decode-plan:-:-",
+      "finished:initiator:schema-decode-plan:-:ok",
+    ]);
+    expect(establishmentLabels(serverEvents)).toEqual([
+      "started:acceptor:connection-handshake:-:-",
+      "finished:acceptor:connection-handshake:-:ok",
+      "started:acceptor:schema-decode-plan:-:-",
+      "finished:acceptor:schema-decode-plan:-:ok",
+    ]);
+
+    clientLink.close();
+    serverLink.close();
+    clientSession.handle().shutdown();
+    serverSession.handle().shutdown();
+    await Promise.allSettled([clientSession.closed(), serverSession.closed()]);
+  });
+
   // r[verify session.parity]
   // r[verify connection.virtual]
   // r[verify connection.open]
@@ -649,6 +742,71 @@ describe("session", () => {
     );
     expect(connectionError.rejection?.reason).toBe("unknown-service");
     expect(connectionError.rejection?.message()).toBe("service is hidden");
+
+    initiatorLink.close();
+    rawServerLink.close();
+    initiatorSession.handle().shutdown();
+    await Promise.allSettled([initiatorSession.closed()]);
+  });
+
+  // r[verify rpc.observability.establishment]
+  it("reports service lane open accept and reject outcomes", async () => {
+    const requestedSettings: ConnectionSettings = {
+      parity: { tag: "Odd" },
+      max_concurrent_requests: 64,
+      initial_channel_credit: 16,
+    };
+    const acceptedSettings: ConnectionSettings = {
+      parity: { tag: "Even" },
+      max_concurrent_requests: 64,
+      initial_channel_credit: 16,
+    };
+    const events: EstablishmentEvent[] = [];
+    const [initiatorLink, rawServerLink] = memoryLinkPair();
+    const initiatorSession = await withTimeout(
+      establishRawInitiator(initiatorLink, rawServerLink, {
+        observer: establishmentObserver(events),
+      }),
+      "raw observed initiator establishment",
+    );
+
+    const accepted = initiatorSession.handle().openLane(requestedSettings);
+    const acceptedOpen = decodeMessage(
+      (await withTimeout(rawServerLink.recv(), "observed service lane open"))!,
+    );
+    expect(acceptedOpen.payload.tag).toBe("LaneOpen");
+    await rawServerLink.send(
+      encodeMessage(messageLaneAccept(acceptedOpen.lane_id, acceptedSettings)),
+    );
+    await withTimeout(accepted, "observed service lane accept");
+
+    const rejected = initiatorSession.handle()
+      .openLane(requestedSettings)
+      .catch((error: unknown) => error);
+    const rejectedOpen = decodeMessage(
+      (await withTimeout(rawServerLink.recv(), "observed service lane rejected open"))!,
+    );
+    expect(rejectedOpen.payload.tag).toBe("LaneOpen");
+    await rawServerLink.send(
+      encodeMessage(
+        messageLaneReject(
+          rejectedOpen.lane_id,
+          LaneRejection.withMessage("unknown-service", "missing").toMetadata(),
+        ),
+      ),
+    );
+    await expect(withTimeout(rejected, "observed service lane reject")).resolves
+      .toBeInstanceOf(ConnectionError);
+
+    const serviceLaneLabels = establishmentLabels(
+      events.filter((event) => event.context.phase === "service-lane-open"),
+    );
+    expect(serviceLaneLabels).toEqual([
+      "started:initiator:service-lane-open:1:-",
+      "finished:initiator:service-lane-open:1:ok",
+      "started:initiator:service-lane-open:3:-",
+      "finished:initiator:service-lane-open:3:rejected",
+    ]);
 
     initiatorLink.close();
     rawServerLink.close();

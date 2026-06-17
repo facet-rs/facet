@@ -80,11 +80,19 @@ export {
 } from "./server_logging.ts";
 
 export {
+  observeEstablishmentFinished,
+  observeEstablishmentStarted,
   observerMetricLabels,
   splitQualifiedMethodName,
+  type EstablishmentContext,
+  type EstablishmentEvent,
+  type EstablishmentOutcome,
+  type EstablishmentPhase,
+  type EstablishmentRole,
   type ObserverMetricLabelInput,
   type ObserverMetricLabelKey,
   type ObserverMetricLabels,
+  type VoxObserver,
 } from "./observer.ts";
 
 export {

@@ -62,7 +62,14 @@ import {
   type HandshakeResult,
   voxServiceMetadata,
 } from "./handshake.ts";
-import { splitQualifiedMethodName } from "./observer.ts";
+import {
+  observeEstablishmentFinished,
+  observeEstablishmentStarted,
+  splitQualifiedMethodName,
+  type EstablishmentContext,
+  type EstablishmentRole,
+  type VoxObserver,
+} from "./observer.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 export const VOX_LANE_REJECT_REASON_METADATA_KEY = "vox-lane-reject-reason";
@@ -195,6 +202,7 @@ export interface ConnectionBuilderOptions {
   channelCapacity?: number;
   metadata?: Metadata;
   onLane?: (lane: Lane) => void | Promise<void>;
+  observer?: VoxObserver;
   /**
    * If set, the connection sends a Ping every `keepaliveIntervalMs` milliseconds
    * and expects a Pong back within `keepaliveTimeoutMs` (default: half the
@@ -258,6 +266,26 @@ interface EstablishedTransport {
   handshake: HandshakeResult;
 }
 
+async function observeEstablishment<T>(
+  observer: VoxObserver | undefined,
+  context: EstablishmentContext,
+  body: () => Promise<T> | T,
+): Promise<T> {
+  const startedAt = observeEstablishmentStarted(observer, context);
+  try {
+    const result = await body();
+    observeEstablishmentFinished(observer, context, startedAt, "ok");
+    return result;
+  } catch (error) {
+    observeEstablishmentFinished(observer, context, startedAt, "error", error);
+    throw error;
+  }
+}
+
+function roleName(role: Role): EstablishmentRole {
+  return role === Role.Initiator ? "initiator" : "acceptor";
+}
+
 // r[impl session]
 // r[impl session.handshake]
 // r[impl session.handshake.phon]
@@ -275,6 +303,7 @@ async function makeInitiatorEstablishedTransport(
   transport: ConnectionTransport,
   options: ConnectionTransportOptions,
 ): Promise<EstablishedTransport> {
+  const observer = options.observer;
   const localSettings: ConnectionSettings = {
     parity: { tag: "Odd" },
     // r[impl rpc.flow-control.max-concurrent-requests.default]
@@ -284,13 +313,25 @@ async function makeInitiatorEstablishedTransport(
 
   if (isLinkSource(transport)) {
     const attachment = await transport.nextLink();
-    await performInitiatorTransportPrologue(attachment.link);
-    const handshake = await handshakeAsInitiator(
-      attachment.link,
-      localSettings,
-      options.metadata ?? emptyMetadata(),
+    await observeEstablishment(
+      observer,
+      { role: "initiator", phase: "transport-prologue" },
+      () => performInitiatorTransportPrologue(attachment.link),
     );
-    const messagePlan = buildMessageDecodePlan(handshake.peerMessageSchema);
+    const handshake = await observeEstablishment(
+      observer,
+      { role: "initiator", phase: "connection-handshake" },
+      () => handshakeAsInitiator(
+        attachment.link,
+        localSettings,
+        options.metadata ?? emptyMetadata(),
+      ),
+    );
+    const messagePlan = await observeEstablishment(
+      observer,
+      { role: "initiator", phase: "schema-decode-plan" },
+      () => buildMessageDecodePlan(handshake.peerMessageSchema),
+    );
 
     return {
       conduit: new BareConduit(attachment.link, messagePlan),
@@ -298,13 +339,25 @@ async function makeInitiatorEstablishedTransport(
     };
   }
 
-  await performInitiatorTransportPrologue(transport);
-  const handshake = await handshakeAsInitiator(
-    transport,
-    localSettings,
-    options.metadata ?? emptyMetadata(),
+  await observeEstablishment(
+    observer,
+    { role: "initiator", phase: "transport-prologue" },
+    () => performInitiatorTransportPrologue(transport),
   );
-  const messagePlan = buildMessageDecodePlan(handshake.peerMessageSchema);
+  const handshake = await observeEstablishment(
+    observer,
+    { role: "initiator", phase: "connection-handshake" },
+    () => handshakeAsInitiator(
+      transport,
+      localSettings,
+      options.metadata ?? emptyMetadata(),
+    ),
+  );
+  const messagePlan = await observeEstablishment(
+    observer,
+    { role: "initiator", phase: "schema-decode-plan" },
+    () => buildMessageDecodePlan(handshake.peerMessageSchema),
+  );
 
   return {
     conduit: new BareConduit(transport, messagePlan),
@@ -330,10 +383,15 @@ async function makeAcceptorEstablishedTransport(
   transport: ConnectionTransport,
   options: ConnectionTransportOptions,
 ): Promise<EstablishedTransport> {
+  const observer = options.observer;
   const attachment = isLinkSource(transport)
     ? await transport.nextLink()
     : { link: transport };
-  await performAcceptorTransportPrologue(attachment.link);
+  await observeEstablishment(
+    observer,
+    { role: "acceptor", phase: "transport-prologue" },
+    () => performAcceptorTransportPrologue(attachment.link),
+  );
 
   const localSettings: ConnectionSettings = {
     parity: { tag: "Even" },
@@ -342,12 +400,20 @@ async function makeAcceptorEstablishedTransport(
     initial_channel_credit: channelCapacityFromOptions(options),
   };
 
-  const handshake = await handshakeAsAcceptor(
-    attachment.link,
-    localSettings,
-    options.metadata ?? emptyMetadata(),
+  const handshake = await observeEstablishment(
+    observer,
+    { role: "acceptor", phase: "connection-handshake" },
+    () => handshakeAsAcceptor(
+      attachment.link,
+      localSettings,
+      options.metadata ?? emptyMetadata(),
+    ),
   );
-  const messagePlan = buildMessageDecodePlan(handshake.peerMessageSchema);
+  const messagePlan = await observeEstablishment(
+    observer,
+    { role: "acceptor", phase: "schema-decode-plan" },
+    () => buildMessageDecodePlan(handshake.peerMessageSchema),
+  );
 
   return {
     conduit: new BareConduit(attachment.link, messagePlan),
@@ -403,6 +469,8 @@ class ConnectionCore {
     {
       localSettings: ConnectionSettings;
       result: Deferred<Lane>;
+      establishmentContext: EstablishmentContext;
+      establishmentStartedAt: number;
     }
   >();
   private readonly connectionHandle: ConnectionHandle;
@@ -421,6 +489,7 @@ class ConnectionCore {
   private readonly localInitialLaneSettings: ConnectionSettings;
   private readonly peerInitialLaneSettings: ConnectionSettings;
   private readonly onLane?: (lane: Lane) => void | Promise<void>;
+  private readonly observer?: VoxObserver;
 
   constructor(
     conduit: Conduit<Message>,
@@ -429,6 +498,7 @@ class ConnectionCore {
     onLane?: (lane: Lane) => void | Promise<void>,
     keepaliveIntervalMs = 0,
     keepaliveTimeoutMs = 0,
+    observer?: VoxObserver,
   ) {
     this.conduit = conduit;
     this.localInitialLaneSettings = localInitialLaneSettings;
@@ -437,6 +507,7 @@ class ConnectionCore {
     this.nextLaneId = firstIdForParity(localInitialLaneSettings.parity);
     this.connectionHandle = new ConnectionHandle(this);
     this.onLane = onLane;
+    this.observer = observer;
     this.keepaliveIntervalMs = keepaliveIntervalMs;
     this.keepaliveTimeoutMs =
       keepaliveTimeoutMs > 0 ? keepaliveTimeoutMs : Math.floor(keepaliveIntervalMs / 2);
@@ -564,15 +635,33 @@ class ConnectionCore {
 
     const laneId = this.allocateLaneId();
     const result = deferred<Lane>();
+    const establishmentContext: EstablishmentContext = {
+      role: roleName(roleFromParity(this.localInitialLaneSettings.parity)),
+      phase: "service-lane-open",
+      laneId,
+    };
+    const establishmentStartedAt = observeEstablishmentStarted(
+      this.observer,
+      establishmentContext,
+    );
     this.pendingLanes.set(laneId, {
       localSettings: settings,
       result,
+      establishmentContext,
+      establishmentStartedAt,
     });
 
     try {
       await this.sendMessage(messageLaneOpen(laneId, settings, metadata));
     } catch (error) {
       this.pendingLanes.delete(laneId);
+      observeEstablishmentFinished(
+        this.observer,
+        establishmentContext,
+        establishmentStartedAt,
+        "error",
+        error,
+      );
       throw error;
     }
 
@@ -621,6 +710,13 @@ class ConnectionCore {
     this.conduit.close();
 
     for (const pending of this.pendingLanes.values()) {
+      observeEstablishmentFinished(
+        this.observer,
+        pending.establishmentContext,
+        pending.establishmentStartedAt,
+        "error",
+        error,
+      );
       pending.result.reject(error);
     }
     this.pendingLanes.clear();
@@ -769,7 +865,23 @@ class ConnectionCore {
     // r[impl rpc.virtual-connection.accept]
     // r[impl connection.open.rejection]
     // r[impl session.connection-settings.open]
+    const establishmentContext: EstablishmentContext = {
+      role: roleName(roleFromParity(this.localInitialLaneSettings.parity)),
+      phase: "service-lane-open",
+      laneId,
+    };
+    const establishmentStartedAt = observeEstablishmentStarted(
+      this.observer,
+      establishmentContext,
+    );
+
     if (!this.onLane) {
+      observeEstablishmentFinished(
+        this.observer,
+        establishmentContext,
+        establishmentStartedAt,
+        "rejected",
+      );
       await this.sendLaneReject(
         laneId,
         LaneRejection.withMessage("not-ready", "no lane acceptor configured"),
@@ -778,6 +890,13 @@ class ConnectionCore {
     }
 
     if (value.connection_settings.initial_channel_credit <= 0) {
+      observeEstablishmentFinished(
+        this.observer,
+        establishmentContext,
+        establishmentStartedAt,
+        "error",
+        "initial_channel_credit must be greater than zero",
+      );
       await this.sendLaneReject(
         laneId,
         LaneRejection.withMessage(
@@ -801,7 +920,26 @@ class ConnectionCore {
       value.connection_settings,
     );
     this.lanes.set(laneId, lane);
-    await this.sendMessage(messageLaneAccept(laneId, localSettings, emptyMetadata()));
+    try {
+      await this.sendMessage(messageLaneAccept(laneId, localSettings, emptyMetadata()));
+    } catch (error) {
+      this.lanes.delete(laneId);
+      lane.close(error instanceof Error ? error : new ConnectionError(String(error)));
+      observeEstablishmentFinished(
+        this.observer,
+        establishmentContext,
+        establishmentStartedAt,
+        "error",
+        error,
+      );
+      throw error;
+    }
+    observeEstablishmentFinished(
+      this.observer,
+      establishmentContext,
+      establishmentStartedAt,
+      "ok",
+    );
     void this.onLane(lane);
   }
 
@@ -829,6 +967,12 @@ class ConnectionCore {
       peerSettings,
     );
     this.lanes.set(laneId, lane);
+    observeEstablishmentFinished(
+      this.observer,
+      pending.establishmentContext,
+      pending.establishmentStartedAt,
+      "ok",
+    );
     pending.result.resolve(lane);
   }
 
@@ -840,6 +984,13 @@ class ConnectionCore {
     }
     this.pendingLanes.delete(laneId);
     const rejection = LaneRejection.fromMetadata(coerceMetadata(reject.metadata));
+    observeEstablishmentFinished(
+      this.observer,
+      pending.establishmentContext,
+      pending.establishmentStartedAt,
+      "rejected",
+      rejection.message(),
+    );
     pending.result.reject(ConnectionError.rejected(rejection));
   }
 
@@ -1728,6 +1879,7 @@ export class Connection {
       options.onLane,
       options.keepaliveIntervalMs ?? 0,
       options.keepaliveTimeoutMs ?? 0,
+      options.observer,
     );
     core.initialLane();
     core.start();
@@ -1802,13 +1954,22 @@ export async function connectOnLink(
     max_concurrent_requests: options.maxConcurrentRequests ?? 64,
     initial_channel_credit: channelCapacityFromOptions(options),
   };
-  const handshake = await handshakeAsInitiator(
-    link,
-    localSettings,
-    options.metadata ?? emptyMetadata(),
+  const handshake = await observeEstablishment(
+    options.observer,
+    { role: "initiator", phase: "connection-handshake" },
+    () => handshakeAsInitiator(
+      link,
+      localSettings,
+      options.metadata ?? emptyMetadata(),
+    ),
+  );
+  const messagePlan = await observeEstablishment(
+    options.observer,
+    { role: "initiator", phase: "schema-decode-plan" },
+    () => buildMessageDecodePlan(handshake.peerMessageSchema),
   );
   return Connection.connectConduit(
-    new BareConduit(link, buildMessageDecodePlan(handshake.peerMessageSchema)),
+    new BareConduit(link, messagePlan),
     handshake,
     options,
   );
@@ -1823,13 +1984,22 @@ export async function acceptOnLink(
     max_concurrent_requests: options.maxConcurrentRequests ?? 64,
     initial_channel_credit: channelCapacityFromOptions(options),
   };
-  const handshake = await handshakeAsAcceptor(
-    link,
-    localSettings,
-    options.metadata ?? emptyMetadata(),
+  const handshake = await observeEstablishment(
+    options.observer,
+    { role: "acceptor", phase: "connection-handshake" },
+    () => handshakeAsAcceptor(
+      link,
+      localSettings,
+      options.metadata ?? emptyMetadata(),
+    ),
+  );
+  const messagePlan = await observeEstablishment(
+    options.observer,
+    { role: "acceptor", phase: "schema-decode-plan" },
+    () => buildMessageDecodePlan(handshake.peerMessageSchema),
   );
   return Connection.acceptConduit(
-    new BareConduit(link, buildMessageDecodePlan(handshake.peerMessageSchema)),
+    new BareConduit(link, messagePlan),
     handshake,
     options,
   );
