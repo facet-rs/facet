@@ -35,14 +35,14 @@ call `to_string` / `from_str`.
 
 | Crate | What it does | Source |
 |-------|--------------|--------|
-| [`facet-json`](https://docs.rs/facet-json) | JSON, with a tiered JIT deserializer. The flagship — [start here](@/guide/json.md). | [facet-rs/facet-format](https://github.com/facet-rs/facet-format) |
-| [`facet-toml`](https://docs.rs/facet-toml) | TOML serialization and deserialization. | [facet-rs/facet-format](https://github.com/facet-rs/facet-format) |
-| [`facet-yaml`](https://docs.rs/facet-yaml) | YAML serialization and deserialization. | [facet-rs/facet-format](https://github.com/facet-rs/facet-format) |
-| [`facet-msgpack`](https://docs.rs/facet-msgpack) | MessagePack binary format. | [facet-rs/facet-format](https://github.com/facet-rs/facet-format) |
-| [`facet-postcard`](https://docs.rs/facet-postcard) | Postcard binary format, with tiered JIT deserialization. | [facet-rs/facet-format](https://github.com/facet-rs/facet-format) |
-| [`facet-csv`](https://docs.rs/facet-csv) | CSV serialization. | [facet-rs/facet-format](https://github.com/facet-rs/facet-format) |
-| [`facet-asn1`](https://docs.rs/facet-asn1) | ASN.1 DER/BER serialization and deserialization. | [facet-rs/facet-format](https://github.com/facet-rs/facet-format) |
-| [`facet-xdr`](https://docs.rs/facet-xdr) | XDR binary format serialization. | [facet-rs/facet-format](https://github.com/facet-rs/facet-format) |
+| [`facet-json`](https://docs.rs/facet-json) | JSON, with a tiered JIT deserializer. The flagship — [start here](@/guide/json.md). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-json) |
+| [`facet-toml`](https://docs.rs/facet-toml) | TOML serialization and deserialization. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-toml) |
+| [`facet-yaml`](https://docs.rs/facet-yaml) | YAML serialization and deserialization. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-yaml) |
+| [`facet-msgpack`](https://docs.rs/facet-msgpack) | MessagePack binary format. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-msgpack) |
+| [`facet-postcard`](https://docs.rs/facet-postcard) | Postcard binary format, with tiered JIT deserialization. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-postcard) |
+| [`facet-csv`](https://docs.rs/facet-csv) | CSV serialization. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-csv) |
+| [`facet-asn1`](https://docs.rs/facet-asn1) | ASN.1 DER/BER serialization and deserialization. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-asn1) |
+| [`facet-xdr`](https://docs.rs/facet-xdr) | XDR binary format serialization. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-xdr) |
 | [`facet-urlencoded`](https://docs.rs/facet-urlencoded) | `application/x-www-form-urlencoded` form data. | [facet-rs/facet](https://github.com/facet-rs/facet) |
 
 ### The XML family
@@ -64,10 +64,10 @@ contract, or another language in sync from one source of truth.
 
 | Crate | What it does | Source |
 |-------|--------------|--------|
-| [`facet-typescript`](https://docs.rs/facet-typescript) | Generate TypeScript type definitions. | [facet-rs/facet-format](https://github.com/facet-rs/facet-format) |
-| [`facet-zod`](https://github.com/facet-rs/facet-format/tree/main/facet-zod) | Generate [Zod](https://zod.dev) schemas (runtime validation + inferred TS types). *Unreleased — landing on crates.io soon.* | [facet-rs/facet-format](https://github.com/facet-rs/facet-format) |
-| [`facet-json-schema`](https://docs.rs/facet-json-schema) | Generate JSON Schema documents. | [facet-rs/facet-format](https://github.com/facet-rs/facet-format) |
-| [`facet-python`](https://docs.rs/facet-python) | Generate Python type definitions. | [facet-rs/facet-format](https://github.com/facet-rs/facet-format) |
+| [`facet-typescript`](https://docs.rs/facet-typescript) | Generate TypeScript type definitions. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-typescript) |
+| [`facet-zod`](https://github.com/facet-rs/facet/tree/main/facet-zod) | Generate [Zod](https://zod.dev) schemas (runtime validation + inferred TS types). *Unreleased — landing on crates.io soon.* | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-zod) |
+| [`facet-json-schema`](https://docs.rs/facet-json-schema) | Generate JSON Schema documents. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-json-schema) |
+| [`facet-python`](https://docs.rs/facet-python) | Generate Python type definitions. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-python) |
 
 See the [Schema codegen guide](@/guide/schema-codegen.md) for a full-stack workflow.
 
@@ -110,7 +110,7 @@ Lower-level pieces you'll meet when writing your own format crate or tooling.
 
 | Crate | What it does | Source |
 |-------|--------------|--------|
-| [`facet-value`](https://docs.rs/facet-value) | A memory-efficient dynamic value type — JSON-like data plus bytes. | [facet-rs/facet-format](https://github.com/facet-rs/facet-format) |
+| [`facet-value`](https://docs.rs/facet-value) | A memory-efficient dynamic value type — JSON-like data plus bytes. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-value) |
 | [`facet-solver`](https://docs.rs/facet-solver) | Constraint solver that resolves type shapes from field names. | [facet-rs/facet](https://github.com/facet-rs/facet) |
 | [`facet-path`](https://docs.rs/facet-path) | Path tracking for navigating nested `Facet` structures. | [facet-rs/facet](https://github.com/facet-rs/facet) |
 | [`strid`](https://docs.rs/strid) | Strongly-typed string identifiers with Facet integration. [Guide](@/ecosystem/strid/_index.md). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/strid) |
