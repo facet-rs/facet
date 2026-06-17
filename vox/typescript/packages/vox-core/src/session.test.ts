@@ -1451,6 +1451,11 @@ describe("session", () => {
         user: false,
       },
       {
+        wireError: { tag: "TimedOut" },
+        code: RpcErrorCode.TIMED_OUT,
+        user: false,
+      },
+      {
         wireError: { tag: "ConnectionClosed" },
         code: RpcErrorCode.INDETERMINATE,
         user: false,

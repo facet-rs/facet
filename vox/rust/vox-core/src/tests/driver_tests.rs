@@ -18,7 +18,7 @@ use crate::connection::{
     LaneRejection, LaneRequest, PendingLane, acceptor_conduit, acceptor_on, initiator_conduit,
     initiator_on, proxy_lanes,
 };
-use crate::{BareConduit, Driver, memory_link_pair};
+use crate::{BareConduit, Driver, RequestTimeoutPolicy, memory_link_pair};
 
 fn acceptor_handshake_with_request_limits(our_max: u32, peer_max: u32) -> HandshakeResult {
     let mut handshake = test_acceptor_handshake();
@@ -136,6 +136,64 @@ where
     (client, server_client, server_connection)
 }
 
+async fn captured_test_lane_pair_with_client_timeout<H>(
+    idle_timeout: Duration,
+    handler: H,
+) -> (
+    TestLaneClient,
+    TestLaneClient,
+    crate::connection::ConnectionHandle,
+)
+where
+    H: Handler<crate::DriverReplySink> + Clone + Send + Sync + 'static,
+{
+    let (client_conduit, server_conduit) = message_conduit_pair();
+    let lane_settings = ConnectionSettings {
+        parity: Parity::Odd,
+        max_concurrent_requests: 64,
+        initial_channel_credit: vox_types::DEFAULT_INITIAL_CHANNEL_CREDIT,
+    };
+
+    let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel();
+    let server_task = vox_rt::task::spawn(
+        async move {
+            let server_connection = acceptor_conduit(server_conduit, test_acceptor_handshake())
+                .on_connection(CaptureClientAcceptor::new(handler, accepted_tx))
+                .establish_connection()
+                .await
+                .expect("server handshake failed");
+            let server_client = accepted_rx.await.expect("server lane accepted");
+            (server_connection, server_client)
+        }
+        .named("server_setup"),
+    );
+
+    let client_connection = initiator_conduit(client_conduit, test_initiator_handshake())
+        .establish_connection()
+        .await
+        .expect("client handshake failed");
+    let metadata = vox_types::metadata()
+        .str(
+            crate::VOX_SERVICE_METADATA_KEY,
+            <TestLaneClient as crate::FromVoxLane>::SERVICE_NAME,
+        )
+        .build();
+    let handle = client_connection
+        .open_lane_handle(lane_settings, metadata)
+        .await
+        .expect("client lane open failed");
+    let mut driver =
+        Driver::with_request_timeout_policy(handle, (), RequestTimeoutPolicy::idle(idle_timeout));
+    let client_caller = crate::Caller::new(driver.caller());
+    tokio::spawn(async move { driver.run().await });
+    let client = <TestLaneClient as crate::FromVoxLane>::from_vox_lane(
+        client_caller,
+        Some(client_connection),
+    );
+    let (server_connection, server_client) = server_task.await.expect("server setup failed");
+    (client, server_client, server_connection)
+}
+
 #[derive(Clone, Copy)]
 struct ImmediateReplyHandler;
 
@@ -220,6 +278,44 @@ impl Handler<crate::DriverReplySink> for CaptureRxBlockingHandler {
         }
         let _guard = DropGuard(was_cancelled);
         std::future::pending::<()>().await;
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ChannelProgressReplyHandler;
+
+impl Handler<crate::DriverReplySink> for ChannelProgressReplyHandler {
+    async fn handle(
+        &self,
+        call: SelfRef<RequestCall<'static>>,
+        reply: crate::DriverReplySink,
+        _schemas: std::sync::Arc<vox_types::SchemaRecvTracker>,
+    ) {
+        let mut input = {
+            let (channels, bytes) = request_arg_bytes(call.get());
+            let binder = reply
+                .channel_binder()
+                .expect("reply sink should expose channel binder");
+            decode_request_args::<ReceiveArgs>(channels, &bytes, binder).input
+        };
+
+        let mut total = 0_u32;
+        for _ in 0..3 {
+            let item = input
+                .recv()
+                .await
+                .expect("progress channel should stay open")
+                .expect("progress channel should yield an item");
+            total += *item.get();
+        }
+
+        reply
+            .send_reply(RequestResponse {
+                ret: Payload::outgoing(&total),
+                schemas: Default::default(),
+                metadata: Default::default(),
+            })
+            .await;
     }
 }
 
@@ -546,6 +642,99 @@ async fn response_delivery_terminalizes_request_channels() {
         ),
         "expected response-delivered request termination, got {err:?}"
     );
+}
+
+// r[verify rpc.timeout.idle-progress]
+#[tokio::test]
+async fn request_idle_timeout_wakes_caller_with_timeout() {
+    let was_cancelled = Arc::new(AtomicBool::new(false));
+    let was_cancelled_check = was_cancelled.clone();
+    let (client_caller, _server_caller, _server_connection) =
+        captured_test_lane_pair_with_client_timeout(
+            Duration::from_millis(40),
+            BlockingHandler { was_cancelled },
+        )
+        .await;
+
+    let result = tokio::time::timeout(
+        Duration::from_millis(500),
+        client_caller.caller.call(RequestCall {
+            channels: Vec::new(),
+            method_id: MethodId(1),
+            args: Payload::outgoing(&123_u32),
+            schemas: Default::default(),
+            metadata: Default::default(),
+        }),
+    )
+    .await
+    .expect("call should resolve via request idle timeout");
+
+    assert!(
+        matches!(result, Err(VoxError::TimedOut)),
+        "expected TimedOut call error, got {result:?}"
+    );
+
+    for _ in 0..20 {
+        if was_cancelled_check.load(Ordering::SeqCst) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(
+        was_cancelled_check.load(Ordering::SeqCst),
+        "request idle timeout should cancel the peer handler"
+    );
+}
+
+// r[verify rpc.timeout.idle-progress]
+#[tokio::test]
+async fn request_associated_channel_items_reset_idle_timeout() {
+    let (client_caller, _server_caller, _server_connection) =
+        captured_test_lane_pair_with_client_timeout(
+            Duration::from_millis(50),
+            ChannelProgressReplyHandler,
+        )
+        .await;
+
+    let (updates_tx, updates_rx) = channel::<u32>();
+    let call_task = {
+        let caller = client_caller.caller.clone();
+        vox_rt::task::spawn(
+            async move {
+                let args = ReceiveArgs { input: updates_rx };
+                caller
+                    .call(RequestCall {
+                        channels: Vec::new(),
+                        method_id: MethodId(1),
+                        args: Payload::outgoing(&args),
+                        schemas: Default::default(),
+                        metadata: Default::default(),
+                    })
+                    .await
+            }
+            .named("progress_reset_call"),
+        )
+    };
+
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    updates_tx.send(1).await.expect("send first progress item");
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    updates_tx.send(2).await.expect("send second progress item");
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    updates_tx.send(3).await.expect("send third progress item");
+
+    let response = tokio::time::timeout(Duration::from_millis(500), call_task)
+        .await
+        .expect("call should not idle-timeout while channel items flow")
+        .expect("call task join")
+        .expect("call should receive response");
+    let response = response.get();
+    let ret_bytes = match &response.ret {
+        Payload::Encoded(bytes) => bytes,
+        _ => panic!("expected incoming payload in response"),
+    };
+    let total: u32 = vox_phon::from_slice(ret_bytes).expect("deserialize response");
+    assert_eq!(total, 6);
 }
 
 // r[verify rpc.cancel]

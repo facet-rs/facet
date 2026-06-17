@@ -1002,6 +1002,7 @@ fn generate_client_method(
                             #vox::VoxError::ConnectionClosed => #vox::VoxError::<#err_ty>::ConnectionClosed,
                             #vox::VoxError::SessionShutdown => #vox::VoxError::<#err_ty>::SessionShutdown,
                             #vox::VoxError::SendFailed => #vox::VoxError::<#err_ty>::SendFailed,
+                            #vox::VoxError::TimedOut => #vox::VoxError::<#err_ty>::TimedOut,
                             #vox::VoxError::Indeterminate => #vox::VoxError::<#err_ty>::Indeterminate,
                             #vox::VoxError::User(never) => match *never {},
                         });
@@ -1059,6 +1060,7 @@ fn generate_client_method(
                             #vox::VoxError::ConnectionClosed => #vox::VoxError::<#err_ty>::ConnectionClosed,
                             #vox::VoxError::SessionShutdown => #vox::VoxError::<#err_ty>::SessionShutdown,
                             #vox::VoxError::SendFailed => #vox::VoxError::<#err_ty>::SendFailed,
+                            #vox::VoxError::TimedOut => #vox::VoxError::<#err_ty>::TimedOut,
                             #vox::VoxError::Indeterminate => #vox::VoxError::<#err_ty>::Indeterminate,
                             #vox::VoxError::User(never) => match *never {},
                         });

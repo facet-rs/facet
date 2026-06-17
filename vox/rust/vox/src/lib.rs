@@ -270,6 +270,7 @@ pub use vox_core::{
 #[cfg(feature = "runtime")]
 pub use vox_core::{
     Caller, Driver, DriverCaller, DriverChannelSink, DriverReplySink, ErasedHandler, FromVoxLane,
+    RequestTimeoutPolicy,
 };
 
 // Conduit types

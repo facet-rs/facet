@@ -111,7 +111,7 @@ pub fn generate_phon_server(service: &ServiceDescriptor) -> String {
                 _ => "VoxError<Infallible>".to_string(),
             };
             out.push_str(&format!(
-                "    public func encodeVoxError(_ error: VoxRuntimeError) -> [UInt8] {{\n        let wire: {wire0}\n        switch error {{\n        case .unknownMethod, .notImplemented: wire = .unknownMethod\n        case .invalidPayload(let s), .decodeError(let s), .encodeError(let s): wire = .invalidPayload(s)\n        case .cancelled: wire = .cancelled\n        case .connectionClosed: wire = .connectionClosed\n        case .timeout, .indeterminate: wire = .indeterminate\n        }}\n        let r: {resp0} = .failure(wire)\n        return encodeVoxTyped(r, {prefix0}_ResponseEncoder)\n    }}\n\n"
+                "    public func encodeVoxError(_ error: VoxRuntimeError) -> [UInt8] {{\n        let wire: {wire0}\n        switch error {{\n        case .unknownMethod, .notImplemented: wire = .unknownMethod\n        case .invalidPayload(let s), .decodeError(let s), .encodeError(let s): wire = .invalidPayload(s)\n        case .cancelled: wire = .cancelled\n        case .connectionClosed: wire = .connectionClosed\n        case .timeout: wire = .timedOut\n        case .indeterminate: wire = .indeterminate\n        }}\n        let r: {resp0} = .failure(wire)\n        return encodeVoxTyped(r, {prefix0}_ResponseEncoder)\n    }}\n\n"
             ));
         }
     }

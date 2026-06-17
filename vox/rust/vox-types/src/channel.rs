@@ -1255,6 +1255,7 @@ pub enum RequestTerminationReason {
     ResponseDelivered,
     Cancelled,
     Failed,
+    TimedOut,
 }
 
 pub struct LogicalIncomingChannelMessage {

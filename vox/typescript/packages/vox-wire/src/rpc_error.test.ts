@@ -11,7 +11,8 @@ describe("RpcErrorCode", () => {
     expect(RpcErrorCode.UNKNOWN_METHOD).toBe(1);
     expect(RpcErrorCode.INVALID_PAYLOAD).toBe(2);
     expect(RpcErrorCode.CANCELLED).toBe(3);
-    expect(RpcErrorCode.INDETERMINATE).toBe(4);
+    expect(RpcErrorCode.TIMED_OUT).toBe(4);
+    expect(RpcErrorCode.INDETERMINATE).toBe(5);
   });
 });
 
@@ -65,6 +66,18 @@ describe("RpcError", () => {
     expect(error.isUserError()).toBe(false);
     expect(error.isProtocolError()).toBe(true);
     expect(error.message).toBe("Cancelled");
+  });
+
+  // r[verify rpc.fallible.vox-error]
+  // r[verify rpc.fallible.vox-error.outcome]
+  it("creates timed out error", () => {
+    const error = new RpcError(RpcErrorCode.TIMED_OUT);
+
+    expect(error.code).toBe(RpcErrorCode.TIMED_OUT);
+    expect(error.payload).toBeNull();
+    expect(error.isUserError()).toBe(false);
+    expect(error.isProtocolError()).toBe(true);
+    expect(error.message).toBe("Timed out");
   });
 
   // r[verify rpc.fallible.vox-error]

@@ -28,6 +28,7 @@ pub enum RpcOutcome {
     Dropped,
     Closed,
     SendFailed,
+    TimedOut,
     Indeterminate,
 }
 
@@ -624,6 +625,7 @@ const fn rpc_outcome_label(outcome: RpcOutcome) -> &'static str {
         RpcOutcome::Dropped => "dropped",
         RpcOutcome::Closed => "closed",
         RpcOutcome::SendFailed => "send-failed",
+        RpcOutcome::TimedOut => "timed-out",
         RpcOutcome::Indeterminate => "indeterminate",
     }
 }

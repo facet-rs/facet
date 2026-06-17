@@ -1101,6 +1101,8 @@ export class Lane {
         throw new RpcError(RpcErrorCode.INVALID_PAYLOAD);
       case "Cancelled":
         throw new RpcError(RpcErrorCode.CANCELLED);
+      case "TimedOut":
+        throw new RpcError(RpcErrorCode.TIMED_OUT);
       case "ConnectionClosed":
       case "SessionShutdown":
       case "SendFailed":

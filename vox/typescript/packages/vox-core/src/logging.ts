@@ -248,6 +248,8 @@ function rpcErrorCodeToString(code: number): string {
       return "invalid_payload";
     case RpcErrorCode.CANCELLED:
       return "cancelled";
+    case RpcErrorCode.TIMED_OUT:
+      return "timed_out";
     case RpcErrorCode.INDETERMINATE:
       return "indeterminate";
     default:

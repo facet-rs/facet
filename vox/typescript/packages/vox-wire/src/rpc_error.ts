@@ -14,8 +14,10 @@ export const RpcErrorCode = {
   INVALID_PAYLOAD: 2,
   /** r[impl rpc.fallible.vox-error] Call was cancelled */
   CANCELLED: 3,
+  /** r[impl rpc.timeout.idle-progress] Call made no request-scoped progress before its idle timeout */
+  TIMED_OUT: 4,
   /** r[impl rpc.fallible.vox-error.outcome] Runtime could not determine the call outcome */
-  INDETERMINATE: 4,
+  INDETERMINATE: 5,
 } as const;
 
 export type RpcErrorCode = (typeof RpcErrorCode)[keyof typeof RpcErrorCode];
@@ -65,6 +67,8 @@ export class RpcError extends Error {
         return "Invalid payload";
       case RpcErrorCode.CANCELLED:
         return "Cancelled";
+      case RpcErrorCode.TIMED_OUT:
+        return "Timed out";
       case RpcErrorCode.INDETERMINATE:
         return "Indeterminate";
       default:

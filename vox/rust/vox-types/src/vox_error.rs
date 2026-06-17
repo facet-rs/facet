@@ -31,6 +31,9 @@ pub enum VoxError<E = ::core::convert::Infallible> {
     /// The call could not be sent because the transport is dead.
     SendFailed,
 
+    /// The call made no request-scoped progress within its idle timeout.
+    TimedOut,
+
     /// The runtime refused to guess after recovery.
     Indeterminate,
 }
@@ -61,6 +64,7 @@ impl<E: fmt::Display> fmt::Display for VoxError<E> {
             Self::ConnectionClosed => f.write_str("vox connection closed"),
             Self::SessionShutdown => f.write_str("vox session shutdown"),
             Self::SendFailed => f.write_str("vox send failed"),
+            Self::TimedOut => f.write_str("vox request timed out"),
             Self::Indeterminate => f.write_str("indeterminate vox error"),
         }
     }

@@ -3,6 +3,7 @@ use std::{
     panic::AssertUnwindSafe,
     pin::Pin,
     sync::{Arc, Weak},
+    time::Duration,
 };
 
 use vox_types::time::Instant;
@@ -18,8 +19,9 @@ use vox_types::{
     ChannelCreditReplenisherHandle, ChannelEventContext, ChannelId, ChannelItem,
     ChannelMailboxReceiver, ChannelMailboxSender, ChannelMessage, ChannelSink, CreditSink, Handler,
     IdAllocator, IncomingChannelMessage, LaneId, MaybeSend, MaybeSendFuture, MaybeSync, Parity,
-    Payload, ReplySink, RequestBody, RequestCall, RequestId, RequestMessage, RequestResponse,
-    RequestTerminationReason, SelfRef, TrySendError, TxError, VoxError, channel_mailbox,
+    Payload, ReplySink, RequestBody, RequestCall, RequestCancel, RequestId, RequestMessage,
+    RequestResponse, RequestTerminationReason, SelfRef, TrySendError, TxError, VoxError,
+    channel_mailbox,
 };
 use vox_types::{
     ChannelCloseReason, ChannelDebugContext, ChannelDirection, ChannelEvent, ChannelResetReason,
@@ -50,7 +52,59 @@ struct PendingResponse {
     fds: vox_types::FrameFds,
 }
 
-type ResponseSlot = vox_rt::sync::oneshot::Sender<PendingResponse>;
+type ResponseSlot = vox_rt::sync::oneshot::Sender<Result<PendingResponse, VoxError>>;
+
+async fn send_vox_error_response(
+    sender: ConnectionSender,
+    req_id: RequestId,
+    response_shape: Option<(vox_types::MethodId, &'static facet::Shape)>,
+    vox_error: VoxError<core::convert::Infallible>,
+) {
+    if let Some((method_id, response_shape)) = response_shape {
+        let error: Result<(), VoxError<core::convert::Infallible>> = Err(vox_error);
+        let mut response = RequestResponse {
+            ret: Payload::outgoing(&error),
+            metadata: Default::default(),
+            schemas: Default::default(),
+        };
+        sender.prepare_response_for_shape(req_id, method_id, response_shape, &mut response);
+        let _ = sender.send_response(req_id, response).await;
+    } else {
+        let error: Result<(), VoxError<core::convert::Infallible>> = Err(vox_error);
+        let _ = sender
+            .send_response(
+                req_id,
+                RequestResponse {
+                    ret: Payload::outgoing(&error),
+                    metadata: Default::default(),
+                    schemas: Default::default(),
+                },
+            )
+            .await;
+    }
+}
+
+// r[impl rpc.timeout.idle-progress]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RequestTimeoutPolicy {
+    idle_timeout: Option<Duration>,
+}
+
+impl RequestTimeoutPolicy {
+    pub const fn disabled() -> Self {
+        Self { idle_timeout: None }
+    }
+
+    pub const fn idle(timeout: Duration) -> Self {
+        Self {
+            idle_timeout: Some(timeout),
+        }
+    }
+
+    pub const fn idle_timeout(self) -> Option<Duration> {
+        self.idle_timeout
+    }
+}
 
 struct InFlightHandler {
     /// Aborts the handler future hosted on `Driver::handler_futs`. Triggered
@@ -90,6 +144,7 @@ struct RequestScope {
     service: Option<&'static str>,
     method: Option<&'static str>,
     started_at: Instant,
+    last_progress_at: Instant,
     state: RequestDebugState,
     response_sender_blocked: Option<bool>,
     associated_channels: Vec<ChannelId>,
@@ -103,11 +158,13 @@ impl RequestScope {
         state: RequestDebugState,
         associated_channels: Vec<ChannelId>,
     ) -> Self {
+        let now = Instant::now();
         Self {
             method_id,
             service,
             method,
-            started_at: Instant::now(),
+            started_at: now,
+            last_progress_at: now,
             state,
             response_sender_blocked: Some(false),
             associated_channels,
@@ -121,10 +178,16 @@ impl RequestScope {
             method: self.method,
             method_id: self.method_id,
             age: now.saturating_duration_since(self.started_at),
+            idle_for: now.saturating_duration_since(self.last_progress_at),
+            last_progress_at: self.last_progress_at,
             state: self.state,
             response_sender_blocked: self.response_sender_blocked,
             associated_channels: self.associated_channels.clone(),
         }
+    }
+
+    fn mark_progress(&mut self, now: Instant) {
+        self.last_progress_at = now;
     }
 
     // r[impl rpc.request.scope.channels]
@@ -388,6 +451,7 @@ struct DriverShared {
     channel_contexts: SyncMutex<BTreeMap<ChannelId, ChannelDebugContext>>,
     // r[impl rpc.debug.snapshot]
     request_scopes: SyncMutex<BTreeMap<RequestId, RequestScope>>,
+    request_timeout: RequestTimeoutPolicy,
     // r[impl rpc.debug.snapshot]
     channel_debug: SyncMutex<BTreeMap<ChannelId, ChannelRuntimeDebug>>,
     last_inbound_message_at: SyncMutex<Option<Instant>>,
@@ -537,22 +601,29 @@ impl DriverShared {
                 );
             }
             ChannelEvent::ItemReceived { channel } => {
+                let channel_id = channel.channel_id;
                 self.update_channel_debug(channel, ChannelDirection::Rx, 0, |entry| {
                     entry.mark_item_received(now);
                 });
+                self.mark_channel_request_progress(channel_id);
             }
             ChannelEvent::Closed { channel, reason } => {
+                let channel_id = channel.channel_id;
                 self.update_channel_debug(channel, ChannelDirection::Rx, 0, |entry| {
                     entry.mark_closed(reason);
                 });
+                self.mark_channel_request_progress(channel_id);
             }
             ChannelEvent::Reset { channel, reason } => {
+                let channel_id = channel.channel_id;
                 self.update_channel_debug(channel, ChannelDirection::Rx, 0, |entry| {
                     entry.mark_reset(reason);
                 });
+                self.mark_channel_request_progress(channel_id);
             }
             ChannelEvent::CreditGranted { channel, amount } => {
                 self.record_credit_granted_at(channel.channel_id, amount, now);
+                self.mark_channel_request_progress(channel.channel_id);
             }
             ChannelEvent::SendStarted { channel } => {
                 self.record_send_started(channel.channel_id);
@@ -582,6 +653,52 @@ impl DriverShared {
         *self.last_outbound_message_at.lock() = Some(Instant::now());
     }
 
+    // r[impl rpc.timeout.idle-progress]
+    fn mark_request_progress(&self, request_id: RequestId) {
+        if let Some(scope) = self.request_scopes.lock().get_mut(&request_id) {
+            scope.mark_progress(Instant::now());
+        }
+    }
+
+    // r[impl rpc.timeout.idle-progress]
+    fn mark_channel_request_progress(&self, channel_id: ChannelId) {
+        let now = Instant::now();
+        for scope in self.request_scopes.lock().values_mut() {
+            if scope.associated_channels.contains(&channel_id) {
+                scope.mark_progress(now);
+            }
+        }
+    }
+
+    // r[impl rpc.timeout.idle-progress]
+    fn next_request_idle_sleep_duration(&self) -> Option<Duration> {
+        let timeout = self.request_timeout.idle_timeout()?;
+        let now = Instant::now();
+        self.request_scopes
+            .lock()
+            .values()
+            .map(|scope| {
+                timeout.saturating_sub(now.saturating_duration_since(scope.last_progress_at))
+            })
+            .min()
+    }
+
+    // r[impl rpc.timeout.idle-progress]
+    fn expired_idle_request_ids(&self) -> Vec<RequestId> {
+        let Some(timeout) = self.request_timeout.idle_timeout() else {
+            return Vec::new();
+        };
+        let now = Instant::now();
+        self.request_scopes
+            .lock()
+            .iter()
+            .filter_map(|(request_id, scope)| {
+                (now.saturating_duration_since(scope.last_progress_at) >= timeout)
+                    .then_some(*request_id)
+            })
+            .collect()
+    }
+
     fn start_request(
         &self,
         request_id: RequestId,
@@ -605,6 +722,7 @@ impl DriverShared {
         }
         if let Some(scope) = self.request_scopes.lock().get_mut(&request_id) {
             scope.associate_channels(channels);
+            scope.mark_progress(Instant::now());
         }
     }
 
@@ -676,6 +794,9 @@ impl DriverShared {
         self.update_existing_channel_debug(channel_id, |channel| {
             channel.mark_send_finished(outcome, now);
         });
+        if outcome == ChannelSendOutcome::Sent {
+            self.mark_channel_request_progress(channel_id);
+        }
     }
 
     fn record_try_send_outcome(&self, channel_id: ChannelId, outcome: ChannelTrySendOutcome) {
@@ -683,6 +804,9 @@ impl DriverShared {
         self.update_existing_channel_debug(channel_id, |channel| {
             channel.mark_try_send_outcome(outcome, now);
         });
+        if outcome == ChannelTrySendOutcome::Sent {
+            self.mark_channel_request_progress(channel_id);
+        }
     }
 
     fn record_item_consumed(&self, channel_id: ChannelId) {
@@ -690,6 +814,7 @@ impl DriverShared {
         self.update_existing_channel_debug(channel_id, |channel| {
             channel.mark_item_consumed(now);
         });
+        self.mark_channel_request_progress(channel_id);
     }
 
     fn record_inbound_item_not_enqueued(&self, channel_id: ChannelId) {
@@ -716,6 +841,7 @@ impl DriverShared {
         self.update_existing_channel_debug(channel_id, |channel| {
             channel.mark_credit_received(amount, now);
         });
+        self.mark_channel_request_progress(channel_id);
     }
 
     fn record_receiver_dropped(&self, channel_id: ChannelId) {
@@ -961,6 +1087,7 @@ impl ReplySink for DriverReplySink {
             "vox driver sending reply"
         );
         self.binder.shared.mark_outbound_progress();
+        self.binder.shared.mark_request_progress(self.request_id);
 
         if let Payload::Value { shape, .. } = &response.ret
             && let Ok(extracted) = vox_types::extract_schemas(shape)
@@ -1825,13 +1952,20 @@ impl DriverCaller {
             });
         }
         let finish_request = |outcome: RpcOutcome| {
-            let (state, termination) = if outcome == RpcOutcome::Ok {
-                (
+            let (state, termination) = match outcome {
+                RpcOutcome::Ok => (
                     RequestDebugState::Finished,
                     RequestTerminationReason::ResponseDelivered,
-                )
-            } else {
-                (RequestDebugState::Failed, RequestTerminationReason::Failed)
+                ),
+                RpcOutcome::Cancelled => (
+                    RequestDebugState::Failed,
+                    RequestTerminationReason::Cancelled,
+                ),
+                RpcOutcome::TimedOut => (
+                    RequestDebugState::TimedOut,
+                    RequestTerminationReason::TimedOut,
+                ),
+                _ => (RequestDebugState::Failed, RequestTerminationReason::Failed),
             };
             self.shared.finish_request(req_id, state, termination);
             if let Some(observer) = &self.shared.observer {
@@ -1911,6 +2045,7 @@ impl DriverCaller {
             finish_request(RpcOutcome::SendFailed);
             return Err(VoxError::SendFailed);
         }
+        self.shared.mark_request_progress(req_id);
         tracing::debug!(
             conn_id = ?self.sender.connection_id(),
             ?req_id,
@@ -1927,7 +2062,7 @@ impl DriverCaller {
             tokio::select! {
                 result = &mut response => {
                     match result {
-                        Ok(pending) => {
+                        Ok(Ok(pending)) => {
                             tracing::debug!(
                                 conn_id = ?self.sender.connection_id(),
                                 ?req_id,
@@ -1937,6 +2072,20 @@ impl DriverCaller {
                                 "vox caller received response"
                             );
                             break pending;
+                        }
+                        Ok(Err(error)) => {
+                            let outcome = match &error {
+                                VoxError::Cancelled => RpcOutcome::Cancelled,
+                                VoxError::TimedOut => RpcOutcome::TimedOut,
+                                VoxError::ConnectionClosed | VoxError::SessionShutdown => RpcOutcome::Closed,
+                                VoxError::SendFailed => RpcOutcome::SendFailed,
+                                VoxError::Indeterminate => RpcOutcome::Indeterminate,
+                                VoxError::User(_) | VoxError::UnknownMethod | VoxError::InvalidPayload(_) => {
+                                    RpcOutcome::Error
+                                }
+                            };
+                            finish_request(outcome);
+                            return Err(error);
                         }
                         Err(_) => {
                             finish_request(RpcOutcome::Closed);
@@ -2001,6 +2150,7 @@ pub struct Driver<H: Handler<DriverReplySink>> {
     handler_futs: FuturesUnordered<HandlerFut>,
     local_control_tx: mpsc::UnboundedSender<DriverLocalControl>,
     drop_control_seed: Option<mpsc::UnboundedSender<DropControlRequest>>,
+    suppressed_failures: HashSet<RequestId>,
 }
 
 enum DriverLocalControl {
@@ -2150,6 +2300,15 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
     }
 
     pub fn new(handle: LaneHandle, handler: H) -> Self {
+        Self::with_request_timeout_policy(handle, handler, RequestTimeoutPolicy::disabled())
+    }
+
+    // r[impl rpc.timeout.idle-progress]
+    pub fn with_request_timeout_policy(
+        handle: LaneHandle,
+        handler: H,
+        request_timeout: RequestTimeoutPolicy,
+    ) -> Self {
         let conn_id = handle.connection_id();
         let LaneHandle {
             sender,
@@ -2180,6 +2339,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 channel_credits: SyncMutex::new("driver.channel_credits", BTreeMap::new()),
                 channel_contexts: SyncMutex::new("driver.channel_contexts", BTreeMap::new()),
                 request_scopes: SyncMutex::new("driver.request_scopes", BTreeMap::new()),
+                request_timeout,
                 channel_debug: SyncMutex::new("driver.channel_debug", BTreeMap::new()),
                 last_inbound_message_at: SyncMutex::new("driver.last_inbound_message_at", None),
                 last_outbound_message_at: SyncMutex::new("driver.last_outbound_message_at", None),
@@ -2200,6 +2360,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             handler_futs: FuturesUnordered::new(),
             local_control_tx,
             drop_control_seed: control_tx,
+            suppressed_failures: HashSet::new(),
         }
     }
 
@@ -2237,6 +2398,60 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
         }
     }
 
+    // r[impl rpc.timeout.idle-progress]
+    async fn expire_idle_requests(&mut self) {
+        let expired = self.shared.expired_idle_request_ids();
+        for req_id in expired {
+            let pending_response = { self.shared.pending_responses.lock().remove(&req_id) };
+            if let Some(tx) = pending_response {
+                self.shared.finish_request(
+                    req_id,
+                    RequestDebugState::TimedOut,
+                    RequestTerminationReason::TimedOut,
+                );
+                let _ = self
+                    .sender
+                    .send(ConnectionMessage::Request(RequestMessage {
+                        id: req_id,
+                        body: RequestBody::Cancel(RequestCancel {
+                            metadata: Default::default(),
+                        }),
+                    }))
+                    .await;
+                let _ = tx.send(Err(VoxError::TimedOut));
+                continue;
+            }
+
+            let Some(in_flight) = self.in_flight_handlers.remove(&req_id) else {
+                self.shared.finish_request(
+                    req_id,
+                    RequestDebugState::TimedOut,
+                    RequestTerminationReason::TimedOut,
+                );
+                continue;
+            };
+
+            self.suppressed_failures.insert(req_id);
+            in_flight.abort.abort();
+            self.shared.finish_request(
+                req_id,
+                RequestDebugState::TimedOut,
+                RequestTerminationReason::TimedOut,
+            );
+            let response_shape = self
+                .handler
+                .response_wire_shape(in_flight.method_id)
+                .map(|shape| (in_flight.method_id, shape));
+            send_vox_error_response(
+                self.sender.clone(),
+                req_id,
+                response_shape,
+                VoxError::TimedOut,
+            )
+            .await;
+        }
+    }
+
     // r[impl rpc.pipelining]
     /// Main loop: receive messages from the session and dispatch them.
     /// Handler calls run as spawned tasks — we don't block the driver
@@ -2244,13 +2459,26 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
     pub async fn run(&mut self) {
         loop {
             tracing::trace!("driver select loop top");
+            let idle_sleep_duration = self.shared.next_request_idle_sleep_duration();
+            let has_idle_sleep = idle_sleep_duration.is_some();
             tokio::select! {
                 biased;
                 Some(ctrl) = self.local_control_rx.recv() => {
                     self.handle_local_control(ctrl).await;
                 }
+                _ = async {
+                    if let Some(duration) = idle_sleep_duration {
+                        vox_types::time::tokio::sleep(duration).await;
+                    }
+                }, if has_idle_sleep => {
+                    self.expire_idle_requests().await;
+                }
                 Some((req_id, disposition)) = self.failures_rx.recv() => {
                     tracing::trace!(%req_id, ?disposition, "failures_rx fired");
+                    if self.suppressed_failures.remove(&req_id) {
+                        tracing::trace!(%req_id, "suppressing post-timeout reply-sink failure");
+                        continue;
+                    }
                     let in_flight_found = self.in_flight_handlers.contains_key(&req_id);
                     let in_flight_method_id =
                         self.in_flight_handlers.get(&req_id).map(|in_flight| in_flight.method_id);
@@ -2280,51 +2508,35 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                         termination,
                     );
                     tracing::trace!(%req_id, in_flight = self.in_flight_handlers.len(), "handler removed on failure");
-                    let had_pending = self.shared.pending_responses.lock().remove(&req_id).is_some();
+                    let pending = self.shared.pending_responses.lock().remove(&req_id);
+                    let had_pending = pending.is_some();
                     tracing::trace!(%req_id, had_pending, "failures_rx checked pending_responses");
-                    if !had_pending {
-                        let Some(reply_disposition) = reply_disposition else {
-                            tracing::trace!(%req_id, "failures_rx: no reply_disposition, skipping");
-                            continue;
-                        };
-                        tracing::trace!(%req_id, ?reply_disposition, "failures_rx: sending error response");
-                        let vox_error = match reply_disposition {
-                            FailureDisposition::Cancelled => VoxError::Cancelled,
-                            FailureDisposition::Indeterminate => VoxError::Indeterminate,
-                        };
-                        if let Some(method_id) = in_flight_method_id
-                            && let Some(response_shape) = self.handler.response_wire_shape(method_id)
-                        {
-                            // The Err arm of `Result<T, VoxError<E>>` is independent of
-                            // T/E for non-`User` errors, so we can encode an erased
-                            // `Result<(), VoxError<Infallible>>` inline while advertising
-                            // the method's REAL response schema (so the caller decodes
-                            // against its own `Result<T, VoxError<E>>`).
-                            let error: Result<(), VoxError<core::convert::Infallible>> =
-                                Err(vox_error);
-                            let mut response = RequestResponse {
-                                ret: Payload::outgoing(&error),
-                                metadata: Default::default(),
-                                schemas: Default::default(),
-                            };
-                            self.sender.prepare_response_for_shape(
-                                req_id,
-                                method_id,
-                                response_shape,
-                                &mut response,
-                            );
-                            let _ = self.sender.send_response(req_id, response).await;
-                        } else {
-                            let error: Result<(), VoxError<core::convert::Infallible>> =
-                                Err(vox_error);
-                            let _ = self.sender.send_response(req_id, RequestResponse {
-                                ret: Payload::outgoing(&error),
-                                metadata: Default::default(),
-                                schemas: Default::default(),
-                            }).await;
-                        }
-                        tracing::trace!(%req_id, "failures_rx: error response sent");
+                    let Some(reply_disposition) = reply_disposition else {
+                        tracing::trace!(%req_id, "failures_rx: no reply_disposition, skipping");
+                        continue;
+                    };
+                    tracing::trace!(%req_id, ?reply_disposition, "failures_rx: sending error response");
+                    let vox_error = match reply_disposition {
+                        FailureDisposition::Cancelled => VoxError::Cancelled,
+                        FailureDisposition::Indeterminate => VoxError::Indeterminate,
+                    };
+                    if let Some(tx) = pending {
+                        let _ = tx.send(Err(vox_error));
+                    } else {
+                        let response_shape = in_flight_method_id.and_then(|method_id| {
+                            self.handler
+                                .response_wire_shape(method_id)
+                                .map(|shape| (method_id, shape))
+                        });
+                        send_vox_error_response(
+                            self.sender.clone(),
+                            req_id,
+                            response_shape,
+                            vox_error,
+                        )
+                        .await;
                     }
+                    tracing::trace!(%req_id, "failures_rx: error response sent");
                 }
                 recv = self.rx.recv() => {
                     match recv {
@@ -2669,7 +2881,8 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             if let Some(tx) = self.shared.pending_responses.lock().remove(&req_id) {
                 vox_types::dlog!("[driver] routing response to waiter: req={:?}", req_id);
                 tracing::trace!(%req_id, "routing response to pending oneshot");
-                let _: Result<(), _> = tx.send(PendingResponse { msg, schemas, fds });
+                self.shared.mark_request_progress(req_id);
+                let _: Result<(), _> = tx.send(Ok(PendingResponse { msg, schemas, fds }));
             } else {
                 vox_types::dlog!("[driver] dropped unmatched response: req={:?}", req_id);
                 tracing::trace!(%req_id, "no pending response slot for this req_id");
@@ -2686,6 +2899,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             // A cancel aborts the in-flight handler for this request, if any.
             if let Some(in_flight) = self.in_flight_handlers.remove(&req_id) {
                 tracing::trace!(%req_id, "aborting handler");
+                self.shared.mark_request_progress(req_id);
                 in_flight.abort.abort();
                 self.shared.finish_request(
                     req_id,

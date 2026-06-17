@@ -54,6 +54,7 @@ pub enum RequestDebugState {
     WaitingForResponse,
     Finished,
     Failed,
+    TimedOut,
 }
 
 #[derive(Clone, Debug)]
@@ -63,6 +64,8 @@ pub struct RequestDebugSnapshot {
     pub method: Option<&'static str>,
     pub method_id: MethodId,
     pub age: Duration,
+    pub idle_for: Duration,
+    pub last_progress_at: Instant,
     pub state: RequestDebugState,
     pub response_sender_blocked: Option<bool>,
     pub associated_channels: Vec<ChannelId>,

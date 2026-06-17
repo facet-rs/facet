@@ -89,7 +89,7 @@ pub fn generate_wire_error_types() -> String {
     // method's `User(E)` arm is never constructed.
     out.push_str("public enum Infallible: Sendable {}\n\n");
     out.push_str("/// The wire error of `Result<T, VoxError<E>>`. Variant order matches the\n");
-    out.push_str("/// Rust `VoxError<E>` (User=0 … Indeterminate=7) so wire indices align.\n");
+    out.push_str("/// Rust `VoxError<E>` (User=0 … Indeterminate=8) so wire indices align.\n");
     out.push_str("public enum VoxError<E: Sendable>: Error, Sendable {\n");
     out.push_str("    case user(E)\n");
     out.push_str("    case unknownMethod\n");
@@ -98,6 +98,7 @@ pub fn generate_wire_error_types() -> String {
     out.push_str("    case connectionClosed\n");
     out.push_str("    case sessionShutdown\n");
     out.push_str("    case sendFailed\n");
+    out.push_str("    case timedOut\n");
     out.push_str("    case indeterminate\n");
     out.push_str("}\n\n");
     out
