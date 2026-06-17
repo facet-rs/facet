@@ -2855,6 +2855,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rand_xoshiro"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f703f4665700daf5512dcca5f43afa6af89f09db47fb56be587f80636bda2d41"
+dependencies = [
+ "rand_core 0.9.5",
+]
+
+[[package]]
 name = "rediff"
 version = "0.50.0-rc.0"
 dependencies = [
@@ -2869,15 +2878,6 @@ dependencies = [
  "terminal-colorsaurus",
  "tracing",
  "unicode-width",
-]
-
-[[package]]
-name = "rand_xoshiro"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f703f4665700daf5512dcca5f43afa6af89f09db47fb56be587f80636bda2d41"
-dependencies = [
- "rand_core 0.9.5",
 ]
 
 [[package]]
@@ -4318,12 +4318,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "xterm-color"
-version = "1.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7008a9d8ba97a7e47d9b2df63fcdb8dade303010c5a7cd5bf2469d4da6eba673"
-
-[[package]]
 name = "xdr-codec"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4332,6 +4326,12 @@ dependencies = [
  "byteorder",
  "error-chain",
 ]
+
+[[package]]
+name = "xterm-color"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7008a9d8ba97a7e47d9b2df63fcdb8dade303010c5a7cd5bf2469d4da6eba673"
 
 [[package]]
 name = "xterm-query"
