@@ -20,7 +20,6 @@ smartstring-facet = ["facet/smartstring"]
 [dependencies]
 strid.workspace = true
 facet.workspace = true
-bytes = "1"
 bytestring = { version = "1.5", features = [ "serde" ] }
 serde = { version = "1", features = [ "derive" ] }
 smartstring = { version = "1", features = [ "serde" ] }

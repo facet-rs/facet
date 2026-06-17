@@ -20,7 +20,6 @@ strid-macros.workspace = true
 facet = { workspace = true, features = ["bytes"] }
 
 [dev-dependencies]
-bytes = "1"
 bytestring = "1.5"
 compact_str = "0.9"
 quickcheck = "1"
@@ -35,3 +34,6 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[package.metadata.cargo-shear]
+ignored = ["serde"]
