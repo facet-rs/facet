@@ -7,7 +7,7 @@
 
 use ::quote::{format_ident, quote};
 use heck::ToSnakeCase;
-use proc_macro2::TokenStream as TokenStream2;
+use proc_macro2::{TokenStream as TokenStream2, TokenTree};
 
 pub use vox_macros_parse::*;
 
@@ -42,6 +42,100 @@ impl From<ParseError> for Error {
 /// Parse a trait definition from a token stream, returning a codegen-friendly error.
 pub fn parse(tokens: &TokenStream2) -> Result<ServiceTrait, Error> {
     parse_trait(tokens).map_err(Error::from)
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ServiceOptions {
+    pub runtime_feature: Option<String>,
+}
+
+pub fn parse_service_options(tokens: &TokenStream2) -> Result<ServiceOptions, Error> {
+    let mut options = ServiceOptions::default();
+    let mut iter = tokens.clone().into_iter().peekable();
+
+    while let Some(tt) = iter.next() {
+        let key = match tt {
+            TokenTree::Ident(ident) => ident,
+            other => {
+                return Err(Error::new(
+                    other.span(),
+                    "expected #[vox::service(runtime_feature = \"feature-name\")]",
+                ));
+            }
+        };
+
+        if key.to_string() != "runtime_feature" {
+            return Err(Error::new(
+                key.span(),
+                format!("unsupported #[vox::service] option `{key}`; expected `runtime_feature`"),
+            ));
+        }
+
+        match iter.next() {
+            Some(TokenTree::Punct(punct)) if punct.as_char() == '=' => {}
+            Some(other) => {
+                return Err(Error::new(
+                    other.span(),
+                    "expected `=` after `runtime_feature`",
+                ));
+            }
+            None => {
+                return Err(Error::new(
+                    key.span(),
+                    "expected `= \"feature-name\"` after `runtime_feature`",
+                ));
+            }
+        }
+
+        let feature = match iter.next() {
+            Some(TokenTree::Literal(lit)) => parse_string_literal(&lit).ok_or_else(|| {
+                Error::new(
+                    lit.span(),
+                    "`runtime_feature` value must be a string literal",
+                )
+            })?,
+            Some(other) => {
+                return Err(Error::new(
+                    other.span(),
+                    "`runtime_feature` value must be a string literal",
+                ));
+            }
+            None => {
+                return Err(Error::new(
+                    key.span(),
+                    "expected a string literal after `runtime_feature =`",
+                ));
+            }
+        };
+
+        if options.runtime_feature.replace(feature).is_some() {
+            return Err(Error::new(
+                key.span(),
+                "`runtime_feature` specified more than once",
+            ));
+        }
+
+        match iter.peek() {
+            Some(TokenTree::Punct(punct)) if punct.as_char() == ',' => {
+                iter.next();
+            }
+            Some(other) => {
+                return Err(Error::new(
+                    other.span(),
+                    "expected `,` between #[vox::service] options",
+                ));
+            }
+            None => {}
+        }
+    }
+
+    Ok(options)
+}
+
+fn parse_string_literal(lit: &proc_macro2::Literal) -> Option<String> {
+    let text = lit.to_string();
+    let body = text.strip_prefix('"')?.strip_suffix('"')?;
+    Some(body.replace("\\\"", "\"").replace("\\\\", "\\"))
 }
 
 /// Returns the token stream for accessing the `vox` crate.
@@ -141,6 +235,14 @@ fn channel_element_type(ty: &Type) -> Option<&Type> {
 /// Takes a `vox` token stream (the path to the vox crate) so that this function
 /// can be called from tests with a fixed path like `::vox`.
 pub fn generate_service(parsed: &ServiceTrait, vox: &TokenStream2) -> Result<TokenStream2, Error> {
+    generate_service_with_options(parsed, vox, &ServiceOptions::default())
+}
+
+pub fn generate_service_with_options(
+    parsed: &ServiceTrait,
+    vox: &TokenStream2,
+    options: &ServiceOptions,
+) -> Result<TokenStream2, Error> {
     // r[impl rpc.channel.placement]
     // Validate: channels are only allowed in method args.
     for method in parsed.methods() {
@@ -300,14 +402,19 @@ pub fn generate_service(parsed: &ServiceTrait, vox: &TokenStream2) -> Result<Tok
 
     let service_descriptor_fn = generate_service_descriptor_fn(parsed, vox);
     let service_trait = generate_service_trait(parsed, vox);
-    let dispatcher = generate_dispatcher(parsed, vox);
-    let client = generate_client(parsed, vox);
+    let runtime_feature = options.runtime_feature.as_deref();
+    let dispatcher = generate_dispatcher(parsed, vox, runtime_feature);
+    let client = generate_client(parsed, vox, runtime_feature);
     Ok(quote! {
         #service_descriptor_fn
         #service_trait
         #dispatcher
         #client
     })
+}
+
+fn cfg_feature_attr(feature: Option<&str>) -> Option<TokenStream2> {
+    feature.map(|feature| quote! { #[cfg(feature = #feature)] })
 }
 
 // ============================================================================
@@ -498,10 +605,15 @@ fn generate_trait_method(method: &ServiceMethod, vox: &TokenStream2) -> TokenStr
 // Dispatcher Generation
 // ============================================================================
 
-fn generate_dispatcher(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream2 {
+fn generate_dispatcher(
+    parsed: &ServiceTrait,
+    vox: &TokenStream2,
+    runtime_feature: Option<&str>,
+) -> TokenStream2 {
     let trait_name = parsed.name.clone();
     let dispatcher_name = format_ident!("{}Dispatcher", parsed.name());
     let descriptor_fn_name = format_ident!("{}_service_descriptor", parsed.name().to_snake_case());
+    let runtime_cfg = cfg_feature_attr(runtime_feature);
 
     // Generate the if-else dispatch arms inside handle()
     let dispatch_arms: Vec<TokenStream2> = parsed
@@ -568,12 +680,14 @@ fn generate_dispatcher(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream
         ///
         /// Wraps a handler and implements [`#vox::Handler`] by routing incoming
         /// calls to the appropriate trait method by method ID.
+        #runtime_cfg
         #[derive(Clone)]
         pub struct #dispatcher_name<H> {
             handler: H,
             middlewares: Vec<::std::sync::Arc<dyn #vox::ServerMiddleware>>,
         }
 
+        #runtime_cfg
         impl<H> #dispatcher_name<H>
         where
             H: #trait_name,
@@ -603,6 +717,7 @@ fn generate_dispatcher(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream
             }
         }
 
+        #runtime_cfg
         impl<H, R> #vox::Handler<R> for #dispatcher_name<H>
         where
             H: #trait_name,
@@ -824,11 +939,16 @@ fn generate_dispatch_arm(
 // ============================================================================
 
 // r[impl rpc.caller]
-fn generate_client(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream2 {
+fn generate_client(
+    parsed: &ServiceTrait,
+    vox: &TokenStream2,
+    runtime_feature: Option<&str>,
+) -> TokenStream2 {
     let client_name = format_ident!("{}Client", parsed.name());
     let descriptor_fn_name = format_ident!("{}_service_descriptor", parsed.name().to_snake_case());
     let service_name = parsed.name();
     let service_name_str = service_name.to_string();
+    let runtime_cfg = cfg_feature_attr(runtime_feature);
 
     let client_doc = format!(
         "Client for the `{service_name}` service.\n\n\
@@ -844,6 +964,7 @@ fn generate_client(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream2 {
     quote! {
         #[doc = #client_doc]
         #[must_use = "Dropping this client does not close the connection; shut down explicitly with ConnectionHandle when needed."]
+        #runtime_cfg
         #[derive(Clone)]
         pub struct #client_name {
             /// The underlying caller for making RPC calls.
@@ -852,6 +973,7 @@ fn generate_client(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream2 {
             pub connection: Option<#vox::ConnectionHandle>,
         }
 
+        #runtime_cfg
         impl #client_name {
             /// Create a new client wrapping the given caller.
             pub fn new(caller: #vox::Caller) -> Self {
@@ -874,6 +996,7 @@ fn generate_client(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream2 {
             #(#client_methods)*
         }
 
+        #runtime_cfg
         impl #vox::FromVoxLane for #client_name {
             const SERVICE_NAME: &'static str = #service_name_str;
 
@@ -1140,6 +1263,46 @@ mod tests {
         let vox = quote! { ::vox };
         let ts = crate::generate_service(&parsed, &vox).unwrap();
         prettyprint(ts)
+    }
+
+    fn generate_with_options(
+        input: proc_macro2::TokenStream,
+        options: crate::ServiceOptions,
+    ) -> String {
+        let parsed = vox_macros_parse::parse_trait(&input).unwrap();
+        let vox = quote! { ::vox };
+        let ts = crate::generate_service_with_options(&parsed, &vox, &options).unwrap();
+        prettyprint(ts)
+    }
+
+    #[test]
+    fn parses_runtime_feature_option() {
+        let options = crate::parse_service_options(&quote! { runtime_feature = "runtime", })
+            .expect("parse service options");
+        assert_eq!(
+            options,
+            crate::ServiceOptions {
+                runtime_feature: Some("runtime".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn runtime_feature_gates_runtime_items_only() {
+        let output = generate_with_options(
+            quote! {
+                pub trait Ping { async fn ping(&self) -> u64; }
+            },
+            crate::ServiceOptions {
+                runtime_feature: Some("runtime".to_string()),
+            },
+        );
+
+        assert!(output.contains("pub fn ping_service_descriptor()"));
+        assert!(output.contains("pub trait Ping"));
+        assert!(output.contains("pub struct PingDispatcher"));
+        assert!(output.contains("pub struct PingClient"));
+        assert_eq!(output.matches("#[cfg(feature = \"runtime\")]").count(), 6);
     }
 
     #[test]

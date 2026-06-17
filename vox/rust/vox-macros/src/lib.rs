@@ -28,15 +28,25 @@ use proc_macro2::TokenStream as TokenStream2;
 /// }
 /// ```
 #[proc_macro_attribute]
-pub fn service(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn service(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let attr = TokenStream2::from(attr);
     let input = TokenStream2::from(item);
+
+    let options = match vox_macros_core::parse_service_options(&attr) {
+        Ok(options) => options,
+        Err(e) => return e.to_compile_error().into(),
+    };
 
     let parsed = match vox_macros_core::parse(&input) {
         Ok(p) => p,
         Err(e) => return e.to_compile_error().into(),
     };
 
-    match vox_macros_core::generate_service(&parsed, &vox_macros_core::vox_crate()) {
+    match vox_macros_core::generate_service_with_options(
+        &parsed,
+        &vox_macros_core::vox_crate(),
+        &options,
+    ) {
         Ok(tokens) => tokens.into(),
         Err(e) => e.to_compile_error().into(),
     }
