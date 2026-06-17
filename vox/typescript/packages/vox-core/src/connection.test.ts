@@ -217,9 +217,9 @@ async function establishPair(
   ]);
   const clientConduit = new BareConduit(clientLink);
   const serverConduit = new BareConduit(serverLink);
-  const clientSession = Connection.connectConduit(clientConduit, clientHandshake);
-  const serverSession = Connection.acceptConduit(serverConduit, serverHandshake);
-  return [clientSession, serverSession];
+  const clientConnection = Connection.connectConduit(clientConduit, clientHandshake);
+  const serverConnection = Connection.acceptConduit(serverConduit, serverHandshake);
+  return [clientConnection, serverConnection];
 }
 
 async function establishRawAcceptor(
@@ -269,7 +269,7 @@ async function establishRawInitiator(
 async function establishInboundServiceLane(
   clientLink: MemoryLink,
   serverLink: MemoryLink,
-): Promise<{ serverSession: Connection; serverLane: Lane; laneId: bigint }> {
+): Promise<{ serverConnection: Connection; serverLane: Lane; laneId: bigint }> {
   const laneId = 1n;
   const peerSettings: ConnectionSettings = {
     parity: { tag: "Odd" },
@@ -280,7 +280,7 @@ async function establishInboundServiceLane(
   const acceptedLane = new Promise<Lane>((resolve) => {
     acceptLane = resolve;
   });
-  const serverSession = await withTimeout(
+  const serverConnection = await withTimeout(
     establishRawAcceptor(clientLink, serverLink, {
       onLane: (lane) => acceptLane(lane),
     }),
@@ -296,7 +296,7 @@ async function establishInboundServiceLane(
   const serverLane = await withTimeout(acceptedLane, "accepted service lane");
   expect(serverLane.id).toBe(laneId);
 
-  return { serverSession, serverLane, laneId };
+  return { serverConnection, serverLane, laneId };
 }
 
 const ECHO_METHOD: MethodDescriptor = {
@@ -453,7 +453,7 @@ describe("connection", () => {
     const [clientLink, serverLink] = memoryLinkPair();
     const clientEvents: EstablishmentEvent[] = [];
     const serverEvents: EstablishmentEvent[] = [];
-    const [clientSession, serverSession] = await withTimeout(
+    const [clientConnection, serverConnection] = await withTimeout(
       Promise.all([
         connect(clientLink, { observer: establishmentObserver(clientEvents) }),
         accept(serverLink, { observer: establishmentObserver(serverEvents) }),
@@ -480,9 +480,9 @@ describe("connection", () => {
 
     clientLink.close();
     serverLink.close();
-    clientSession.handle().shutdown();
-    serverSession.handle().shutdown();
-    await Promise.allSettled([clientSession.closed(), serverSession.closed()]);
+    clientConnection.handle().shutdown();
+    serverConnection.handle().shutdown();
+    await Promise.allSettled([clientConnection.closed(), serverConnection.closed()]);
   });
 
   // r[verify rpc.observability.establishment]
@@ -490,7 +490,7 @@ describe("connection", () => {
     const [clientLink, serverLink] = memoryLinkPair();
     const clientEvents: EstablishmentEvent[] = [];
     const serverEvents: EstablishmentEvent[] = [];
-    const [clientSession, serverSession] = await withTimeout(
+    const [clientConnection, serverConnection] = await withTimeout(
       Promise.all([
         connectOnLink(clientLink, { observer: establishmentObserver(clientEvents) }),
         acceptOnLink(serverLink, { observer: establishmentObserver(serverEvents) }),
@@ -513,9 +513,9 @@ describe("connection", () => {
 
     clientLink.close();
     serverLink.close();
-    clientSession.handle().shutdown();
-    serverSession.handle().shutdown();
-    await Promise.allSettled([clientSession.closed(), serverSession.closed()]);
+    clientConnection.handle().shutdown();
+    serverConnection.handle().shutdown();
+    await Promise.allSettled([clientConnection.closed(), serverConnection.closed()]);
   });
 
   // r[verify connection.lane-id-parity]
@@ -535,11 +535,11 @@ describe("connection", () => {
     };
 
     const [initiatorLink, rawServerLink] = memoryLinkPair();
-    const initiatorSession = await withTimeout(
+    const initiatorConnection = await withTimeout(
       establishRawInitiator(initiatorLink, rawServerLink),
       "raw initiator establishment",
     );
-    const initiatorFirst = initiatorSession.handle().openLane(requestedSettings);
+    const initiatorFirst = initiatorConnection.handle().openLane(requestedSettings);
     const initiatorFirstOpen = decodeMessage(
       (await withTimeout(rawServerLink.recv(), "initiator first connection open"))!,
     );
@@ -548,7 +548,7 @@ describe("connection", () => {
     await rawServerLink.send(encodeMessage(messageLaneAccept(1n, acceptedSettings)));
     await withTimeout(initiatorFirst, "initiator first connection accept");
 
-    const initiatorSecond = initiatorSession.handle().openLane(requestedSettings);
+    const initiatorSecond = initiatorConnection.handle().openLane(requestedSettings);
     const initiatorSecondOpen = decodeMessage(
       (await withTimeout(rawServerLink.recv(), "initiator second connection open"))!,
     );
@@ -559,15 +559,15 @@ describe("connection", () => {
 
     initiatorLink.close();
     rawServerLink.close();
-    initiatorSession.handle().shutdown();
-    await Promise.allSettled([initiatorSession.closed()]);
+    initiatorConnection.handle().shutdown();
+    await Promise.allSettled([initiatorConnection.closed()]);
 
     const [rawClientLink, acceptorLink] = memoryLinkPair();
-    const acceptorSession = await withTimeout(
+    const acceptorConnection = await withTimeout(
       establishRawAcceptor(rawClientLink, acceptorLink),
       "raw acceptor establishment",
     );
-    const acceptorFirst = acceptorSession.handle().openLane(requestedSettings);
+    const acceptorFirst = acceptorConnection.handle().openLane(requestedSettings);
     const acceptorFirstOpen = decodeMessage(
       (await withTimeout(rawClientLink.recv(), "acceptor first connection open"))!,
     );
@@ -576,7 +576,7 @@ describe("connection", () => {
     await rawClientLink.send(encodeMessage(messageLaneAccept(2n, acceptedSettings)));
     await withTimeout(acceptorFirst, "acceptor first connection accept");
 
-    const acceptorSecond = acceptorSession.handle().openLane(requestedSettings);
+    const acceptorSecond = acceptorConnection.handle().openLane(requestedSettings);
     const acceptorSecondOpen = decodeMessage(
       (await withTimeout(rawClientLink.recv(), "acceptor second connection open"))!,
     );
@@ -587,8 +587,8 @@ describe("connection", () => {
 
     rawClientLink.close();
     acceptorLink.close();
-    acceptorSession.handle().shutdown();
-    await Promise.allSettled([acceptorSession.closed()]);
+    acceptorConnection.handle().shutdown();
+    await Promise.allSettled([acceptorConnection.closed()]);
   });
 
   // r[verify lane.service.compat]
@@ -614,7 +614,7 @@ describe("connection", () => {
     const acceptedConnection = new Promise<Lane>((resolve) => {
       acceptConnection = resolve;
     });
-    const initiatorSession = await withTimeout(
+    const initiatorConnection = await withTimeout(
       establishRawInitiator(clientLink, rawServerLink, {
         onLane: (connection) => acceptConnection(connection),
       }),
@@ -664,8 +664,8 @@ describe("connection", () => {
 
     clientLink.close();
     rawServerLink.close();
-    initiatorSession.handle().shutdown();
-    await Promise.allSettled([initiatorSession.closed()]);
+    initiatorConnection.handle().shutdown();
+    await Promise.allSettled([initiatorConnection.closed()]);
   });
 
   // r[verify lane.open.wire.rejection]
@@ -677,7 +677,7 @@ describe("connection", () => {
       initial_channel_credit: 16,
     };
     const [clientLink, rawServerLink] = memoryLinkPair();
-    const initiatorSession = await withTimeout(
+    const initiatorConnection = await withTimeout(
       establishRawInitiator(clientLink, rawServerLink),
       "raw initiator establishment",
     );
@@ -700,8 +700,8 @@ describe("connection", () => {
 
     clientLink.close();
     rawServerLink.close();
-    initiatorSession.handle().shutdown();
-    await Promise.allSettled([initiatorSession.closed()]);
+    initiatorConnection.handle().shutdown();
+    await Promise.allSettled([initiatorConnection.closed()]);
   });
 
   // r[verify lane.open.result]
@@ -712,12 +712,12 @@ describe("connection", () => {
       initial_channel_credit: 16,
     };
     const [initiatorLink, rawServerLink] = memoryLinkPair();
-    const initiatorSession = await withTimeout(
+    const initiatorConnection = await withTimeout(
       establishRawInitiator(initiatorLink, rawServerLink),
       "raw initiator establishment",
     );
 
-    const opened = initiatorSession.handle()
+    const opened = initiatorConnection.handle()
       .openLane(requestedSettings)
       .catch((error: unknown) => error);
     const open = decodeMessage(
@@ -745,8 +745,8 @@ describe("connection", () => {
 
     initiatorLink.close();
     rawServerLink.close();
-    initiatorSession.handle().shutdown();
-    await Promise.allSettled([initiatorSession.closed()]);
+    initiatorConnection.handle().shutdown();
+    await Promise.allSettled([initiatorConnection.closed()]);
   });
 
   // r[verify rpc.observability.establishment]
@@ -763,14 +763,14 @@ describe("connection", () => {
     };
     const events: EstablishmentEvent[] = [];
     const [initiatorLink, rawServerLink] = memoryLinkPair();
-    const initiatorSession = await withTimeout(
+    const initiatorConnection = await withTimeout(
       establishRawInitiator(initiatorLink, rawServerLink, {
         observer: establishmentObserver(events),
       }),
       "raw observed initiator establishment",
     );
 
-    const accepted = initiatorSession.handle().openLane(requestedSettings);
+    const accepted = initiatorConnection.handle().openLane(requestedSettings);
     const acceptedOpen = decodeMessage(
       (await withTimeout(rawServerLink.recv(), "observed service lane open"))!,
     );
@@ -780,7 +780,7 @@ describe("connection", () => {
     );
     await withTimeout(accepted, "observed service lane accept");
 
-    const rejected = initiatorSession.handle()
+    const rejected = initiatorConnection.handle()
       .openLane(requestedSettings)
       .catch((error: unknown) => error);
     const rejectedOpen = decodeMessage(
@@ -810,8 +810,8 @@ describe("connection", () => {
 
     initiatorLink.close();
     rawServerLink.close();
-    initiatorSession.handle().shutdown();
-    await Promise.allSettled([initiatorSession.closed()]);
+    initiatorConnection.handle().shutdown();
+    await Promise.allSettled([initiatorConnection.closed()]);
   });
 
   // r[verify rpc.flow-control.credit.initial.high-level]
@@ -845,15 +845,15 @@ describe("connection", () => {
   // r[verify lane.control]
   it("establishes over transport prologue before BareConduit traffic", async () => {
     const [clientLink, serverLink] = memoryLinkPair();
-    const [clientSession, serverSession] = await withTimeout(
+    const [clientConnection, serverConnection] = await withTimeout(
       Promise.all([
         connect(clientLink),
         accept(serverLink),
       ]),
       "transport connection establishment",
     );
-    expect("lane" in serverSession).toBe(false);
-    await expect(serverSession.handle().closeLane(0n)).rejects.toThrow(
+    expect("lane" in serverConnection).toBe(false);
+    await expect(serverConnection.handle().closeLane(0n)).rejects.toThrow(
       /cannot close the initial lane/,
     );
 
@@ -863,19 +863,19 @@ describe("connection", () => {
       ),
     );
 
-    await withTimeout(serverSession.closed(), "server protocol-error close");
+    await withTimeout(serverConnection.closed(), "server protocol-error close");
 
     clientLink.close();
     serverLink.close();
-    clientSession.handle().shutdown();
-    serverSession.handle().shutdown();
-    await Promise.allSettled([clientSession.closed(), serverSession.closed()]);
+    clientConnection.handle().shutdown();
+    serverConnection.handle().shutdown();
+    await Promise.allSettled([clientConnection.closed(), serverConnection.closed()]);
   });
 
   // r[verify connection.keepalive]
   it("answers keepalive pings with matching pongs", async () => {
     const [clientLink, serverLink] = memoryLinkPair();
-    const serverSession = await withTimeout(
+    const serverConnection = await withTimeout(
       establishRawAcceptor(clientLink, serverLink),
       "raw acceptor establishment",
     );
@@ -891,14 +891,14 @@ describe("connection", () => {
 
     clientLink.close();
     serverLink.close();
-    serverSession.handle().shutdown();
-    await Promise.allSettled([serverSession.closed()]);
+    serverConnection.handle().shutdown();
+    await Promise.allSettled([serverConnection.closed()]);
   });
 
   // r[verify connection.keepalive]
   it("tears down when keepalive pong is missing", async () => {
     const [clientLink, serverLink] = memoryLinkPair();
-    const serverSession = await withTimeout(
+    const serverConnection = await withTimeout(
       establishRawAcceptor(clientLink, serverLink, {
         keepaliveIntervalMs: 10,
         keepaliveTimeoutMs: 20,
@@ -911,7 +911,7 @@ describe("connection", () => {
     const message = decodeMessage(payload!);
     expect(message.payload).toEqual({ tag: "Ping", value: { nonce: 1n } });
 
-    await withTimeout(serverSession.closed(), "keepalive timeout teardown");
+    await withTimeout(serverConnection.closed(), "keepalive timeout teardown");
     expect(serverLink.isClosed()).toBe(true);
 
     clientLink.close();
@@ -922,7 +922,7 @@ describe("connection", () => {
   // r[verify rpc.observability.connection-errors]
   it("sends protocol error before tearing down on local protocol violation", async () => {
     const [clientLink, serverLink] = memoryLinkPair();
-    const serverSession = await withTimeout(
+    const serverConnection = await withTimeout(
       establishRawAcceptor(clientLink, serverLink),
       "raw protocol-error acceptor establishment",
     );
@@ -942,7 +942,7 @@ describe("connection", () => {
       expect(message.payload.value.description).toContain("missing args schema binding");
     }
 
-    await withTimeout(serverSession.closed(), "protocol-error teardown");
+    await withTimeout(serverConnection.closed(), "protocol-error teardown");
 
     clientLink.close();
     serverLink.close();
@@ -956,13 +956,13 @@ describe("connection", () => {
       initial_channel_credit: 16,
     };
     const sent: Message[] = [];
-    const fakeSession = {
+    const fakeConnection = {
       sendMessage: async (message: Message) => {
         sent.push(message);
       },
     };
     const connection = new Lane(
-      fakeSession as never,
+      fakeConnection as never,
       0n,
       settings,
       settings,
@@ -1008,13 +1008,13 @@ describe("connection", () => {
         initial_channel_credit: 16,
       };
       const sent: Message[] = [];
-      const fakeSession = {
+      const fakeConnection = {
         sendMessage: async (message: Message) => {
           sent.push(message);
         },
       };
       const connection = new Lane(
-        fakeSession as never,
+        fakeConnection as never,
         0n,
         settings,
         settings,
@@ -1057,13 +1057,13 @@ describe("connection", () => {
         initial_channel_credit: 16,
       };
       const sent: Message[] = [];
-      const fakeSession = {
+      const fakeConnection = {
         sendMessage: async (message: Message) => {
           sent.push(message);
         },
       };
       const connection = new Lane(
-        fakeSession as never,
+        fakeConnection as never,
         0n,
         settings,
         settings,
@@ -1120,13 +1120,13 @@ describe("connection", () => {
       initial_channel_credit: 16,
     };
     const sent: Message[] = [];
-    const fakeSession = {
+    const fakeConnection = {
       sendMessage: async (message: Message) => {
         sent.push(message);
       },
     };
     const connection = new Lane(
-      fakeSession as never,
+      fakeConnection as never,
       13n,
       settings,
       settings,
@@ -1173,13 +1173,13 @@ describe("connection", () => {
       initial_channel_credit: 16,
     };
     const sent: Message[] = [];
-    const fakeSession = {
+    const fakeConnection = {
       sendMessage: async (message: Message) => {
         sent.push(message);
       },
     };
     const connection = new Lane(
-      fakeSession as never,
+      fakeConnection as never,
       0n,
       localSettings,
       peerSettings,
@@ -1242,13 +1242,13 @@ describe("connection", () => {
       initial_channel_credit: 16,
     };
     const sent: Message[] = [];
-    const fakeSession = {
+    const fakeConnection = {
       sendMessage: async (message: Message) => {
         sent.push(message);
       },
     };
     const connection = new Lane(
-      fakeSession as never,
+      fakeConnection as never,
       0n,
       localSettings,
       peerSettings,
@@ -1294,11 +1294,11 @@ describe("connection", () => {
       max_concurrent_requests: 64,
       initial_channel_credit: 16,
     };
-    const fakeSession = {
+    const fakeConnection = {
       sendMessage: async () => {},
     };
     const connection = new Lane(
-      fakeSession as never,
+      fakeConnection as never,
       0n,
       localSettings,
       peerSettings,
@@ -1331,7 +1331,7 @@ describe("connection", () => {
   // r[verify rpc.request.scope.terminal]
   it("queues inbound cancel and terminalizes request channels", async () => {
     const [clientLink, serverLink] = memoryLinkPair();
-    const { serverSession, serverLane, laneId } = await establishInboundServiceLane(
+    const { serverConnection, serverLane, laneId } = await establishInboundServiceLane(
       clientLink,
       serverLink,
     );
@@ -1378,8 +1378,8 @@ describe("connection", () => {
 
     clientLink.close();
     serverLink.close();
-    serverSession.handle().shutdown();
-    await Promise.allSettled([serverSession.closed()]);
+    serverConnection.handle().shutdown();
+    await Promise.allSettled([serverConnection.closed()]);
   });
 
   // r[verify rpc.flow-control.max-concurrent-requests.connection-failure]
@@ -1395,13 +1395,13 @@ describe("connection", () => {
       initial_channel_credit: 16,
     };
     const sent: Message[] = [];
-    const fakeSession = {
+    const fakeConnection = {
       sendMessage: async (message: Message) => {
         sent.push(message);
       },
     };
     const connection = new Lane(
-      fakeSession as never,
+      fakeConnection as never,
       0n,
       localSettings,
       peerSettings,
@@ -1433,7 +1433,7 @@ describe("connection", () => {
   // r[verify rpc.flow-control.max-concurrent-requests.inbound]
   it("treats inbound request attempts beyond the local limit as protocol errors", async () => {
     const [clientLink, serverLink] = memoryLinkPair();
-    const serverSession = await withTimeout(
+    const serverConnection = await withTimeout(
       establishRawAcceptor(clientLink, serverLink, { maxConcurrentRequests: 1 }),
       "raw limited acceptor establishment",
     );
@@ -1474,7 +1474,7 @@ describe("connection", () => {
     if (message.payload.tag === "ProtocolError") {
       expect(message.payload.value.description).toContain("max_concurrent_requests");
     }
-    await withTimeout(serverSession.closed(), "max-concurrent teardown");
+    await withTimeout(serverConnection.closed(), "max-concurrent teardown");
 
     clientLink.close();
     serverLink.close();
@@ -1493,12 +1493,12 @@ describe("connection", () => {
       initial_channel_credit: 16,
     };
     const [initiatorLink, rawServerLink] = memoryLinkPair();
-    const initiatorSession = await withTimeout(
+    const initiatorConnection = await withTimeout(
       establishRawInitiator(initiatorLink, rawServerLink),
       "raw initiator establishment",
     );
 
-    const opened = initiatorSession.handle().openLane(settings);
+    const opened = initiatorConnection.handle().openLane(settings);
     const open = decodeMessage(
       (await withTimeout(rawServerLink.recv(), "service lane open"))!,
     );
@@ -1513,7 +1513,7 @@ describe("connection", () => {
     expect(rawServerLink.queuedPayloadCount()).toBe(0);
     expect(connection.isClosed()).toBe(false);
 
-    await initiatorSession.handle().closeLane(open.lane_id);
+    await initiatorConnection.handle().closeLane(open.lane_id);
     const close = decodeMessage(
       (await withTimeout(rawServerLink.recv(), "explicit service lane close"))!,
     );
@@ -1522,8 +1522,8 @@ describe("connection", () => {
 
     initiatorLink.close();
     rawServerLink.close();
-    initiatorSession.handle().shutdown();
-    await Promise.allSettled([initiatorSession.closed()]);
+    initiatorConnection.handle().shutdown();
+    await Promise.allSettled([initiatorConnection.closed()]);
   });
 
   // r[verify rpc.caller.liveness.refcounted]
@@ -1539,12 +1539,12 @@ describe("connection", () => {
       initial_channel_credit: 16,
     };
     const [initiatorLink, rawServerLink] = memoryLinkPair();
-    const initiatorSession = await withTimeout(
+    const initiatorConnection = await withTimeout(
       establishRawInitiator(initiatorLink, rawServerLink),
       "raw initiator establishment",
     );
 
-    const opened = initiatorSession.handle().openLane(settings);
+    const opened = initiatorConnection.handle().openLane(settings);
     const open = decodeMessage(
       (await withTimeout(rawServerLink.recv(), "service lane open"))!,
     );
@@ -1564,7 +1564,7 @@ describe("connection", () => {
     expect(rawServerLink.queuedPayloadCount()).toBe(0);
     expect(connection.isClosed()).toBe(false);
 
-    await initiatorSession.handle().closeLane(open.lane_id);
+    await initiatorConnection.handle().closeLane(open.lane_id);
     const close = decodeMessage(
       (await withTimeout(rawServerLink.recv(), "explicit service lane close"))!,
     );
@@ -1574,8 +1574,8 @@ describe("connection", () => {
 
     initiatorLink.close();
     rawServerLink.close();
-    initiatorSession.handle().shutdown();
-    await Promise.allSettled([initiatorSession.closed()]);
+    initiatorConnection.handle().shutdown();
+    await Promise.allSettled([initiatorConnection.closed()]);
   });
 
   // r[verify lane.close]
@@ -1592,12 +1592,12 @@ describe("connection", () => {
       initial_channel_credit: 16,
     };
     const [initiatorLink, rawServerLink] = memoryLinkPair();
-    const initiatorSession = await withTimeout(
+    const initiatorConnection = await withTimeout(
       establishRawInitiator(initiatorLink, rawServerLink),
       "raw initiator establishment",
     );
 
-    const opened = initiatorSession.handle().openLane(settings);
+    const opened = initiatorConnection.handle().openLane(settings);
     const open = decodeMessage(
       (await withTimeout(rawServerLink.recv(), "service lane open"))!,
     );
@@ -1633,7 +1633,7 @@ describe("connection", () => {
       );
     }
 
-    await withTimeout(initiatorSession.closed(), "post-close protocol teardown");
+    await withTimeout(initiatorConnection.closed(), "post-close protocol teardown");
     rawServerLink.close();
   });
 
@@ -1653,12 +1653,12 @@ describe("connection", () => {
       initial_channel_credit: 16,
     };
     const [initiatorLink, rawServerLink] = memoryLinkPair();
-    const initiatorSession = await withTimeout(
+    const initiatorConnection = await withTimeout(
       establishRawInitiator(initiatorLink, rawServerLink),
       "raw initiator establishment",
     );
 
-    const opened = initiatorSession.handle().openLane(settings);
+    const opened = initiatorConnection.handle().openLane(settings);
     const open = decodeMessage(
       (await withTimeout(rawServerLink.recv(), "service lane open"))!,
     );
@@ -1667,15 +1667,15 @@ describe("connection", () => {
 
     const virtualCaller = connection.caller();
 
-    expect("lane" in initiatorSession).toBe(false);
+    expect("lane" in initiatorConnection).toBe(false);
 
     virtualCaller.dispose();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(rawServerLink.queuedPayloadCount()).toBe(0);
     expect(initiatorLink.isClosed()).toBe(false);
 
-    initiatorSession.handle().shutdown();
-    await withTimeout(initiatorSession.closed(), "explicit shutdown teardown");
+    initiatorConnection.handle().shutdown();
+    await withTimeout(initiatorConnection.closed(), "explicit shutdown teardown");
     expect(initiatorLink.isClosed()).toBe(true);
 
     rawServerLink.close();
@@ -1684,7 +1684,7 @@ describe("connection", () => {
   // r[verify schema.exchange.required]
   it("tears down when a call arrives without an args schema binding", async () => {
     const [clientLink, serverLink] = memoryLinkPair();
-    const { serverSession, serverLane, laneId } = await establishInboundServiceLane(
+    const { serverConnection, serverLane, laneId } = await establishInboundServiceLane(
       clientLink,
       serverLink,
     );
@@ -1695,19 +1695,19 @@ describe("connection", () => {
       ),
     );
 
-    await withTimeout(serverSession.closed(), "server protocol-error close");
+    await withTimeout(serverConnection.closed(), "server protocol-error close");
     expect(serverLane.isClosed()).toBe(true);
 
     clientLink.close();
     serverLink.close();
-    serverSession.handle().shutdown();
-    await Promise.allSettled([serverSession.closed()]);
+    serverConnection.handle().shutdown();
+    await Promise.allSettled([serverConnection.closed()]);
   });
 
   // r[verify schema.exchange.required]
   it("tears down when a response arrives without a response schema binding", async () => {
     const [clientLink, rawServerLink] = memoryLinkPair();
-    const clientSession = await withTimeout(
+    const clientConnection = await withTimeout(
       establishRawInitiator(clientLink, rawServerLink),
       "raw initiator establishment",
     );
@@ -1721,7 +1721,7 @@ describe("connection", () => {
       max_concurrent_requests: 64,
       initial_channel_credit: 16,
     };
-    const opened = clientSession.handle().openLane(settings);
+    const opened = clientConnection.handle().openLane(settings);
     const open = decodeMessage(
       (await withTimeout(rawServerLink.recv(), "service lane open"))!,
     );
@@ -1741,14 +1741,14 @@ describe("connection", () => {
       encodeMessage(messageResponse(1n, new Uint8Array(), emptyMetadata(), open.lane_id, [])),
     );
 
-    await withTimeout(clientSession.closed(), "client protocol-error close");
+    await withTimeout(clientConnection.closed(), "client protocol-error close");
     await expect(call).rejects.toBeInstanceOf(ConnectionError);
     expect(clientLane.isClosed()).toBe(true);
 
     clientLink.close();
     rawServerLink.close();
-    clientSession.handle().shutdown();
-    await Promise.allSettled([clientSession.closed()]);
+    clientConnection.handle().shutdown();
+    await Promise.allSettled([clientConnection.closed()]);
   });
 
   // r[verify schema.errors.call-level]
@@ -1761,13 +1761,13 @@ describe("connection", () => {
       initial_channel_credit: 16,
     };
     const sent: Message[] = [];
-    const fakeSession = {
+    const fakeConnection = {
       sendMessage: async (message: Message) => {
         sent.push(message);
       },
     };
     const connection = new Lane(
-      fakeSession as never,
+      fakeConnection as never,
       0n,
       settings,
       settings,
@@ -1859,13 +1859,13 @@ describe("connection", () => {
         initial_channel_credit: 16,
       };
       const sent: Message[] = [];
-      const fakeSession = {
+      const fakeConnection = {
         sendMessage: async (message: Message) => {
           sent.push(message);
         },
       };
       const connection = new Lane(
-        fakeSession as never,
+        fakeConnection as never,
         0n,
         settings,
         settings,
@@ -1920,13 +1920,13 @@ describe("connection", () => {
       initial_channel_credit: 16,
     };
     const sent: Message[] = [];
-    const fakeSession = {
+    const fakeConnection = {
       sendMessage: async (message: Message) => {
         sent.push(message);
       },
     };
     const connection = new Lane(
-      fakeSession as never,
+      fakeConnection as never,
       0n,
       settings,
       settings,

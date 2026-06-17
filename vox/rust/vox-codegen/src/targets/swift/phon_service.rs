@@ -96,7 +96,7 @@ pub fn generate_wire_error_types() -> String {
     out.push_str("    case invalidPayload(String)\n");
     out.push_str("    case cancelled\n");
     out.push_str("    case connectionClosed\n");
-    out.push_str("    case sessionShutdown\n");
+    out.push_str("    case connectionShutdown\n");
     out.push_str("    case sendFailed\n");
     out.push_str("    case timedOut\n");
     out.push_str("    case indeterminate\n");

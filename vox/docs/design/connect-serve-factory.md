@@ -1,5 +1,14 @@
 # Connect/Serve API Simplification With Per-Connection Factory
 
+Status: superseded design archive, not spec.
+
+This note predates the rootless runtime cleanup. It is kept as design history
+for the factory/API pressure that led to the current `Connection` + `Lane`
+direction, but its `SessionHandle`, root-caller, and virtual-connection
+terminology is not the target API. Current normative wording belongs in
+`docs/content/spec/conn.md` and `docs/content/spec/rpc.md`; the active design
+sketch is `docs/design/rootless-connections-and-lanes.md`.
+
 Design notes for simplifying the public Rust API while preserving advanced
 connection features (service lanes, middleware, etc).
 

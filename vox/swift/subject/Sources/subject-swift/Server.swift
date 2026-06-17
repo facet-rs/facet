@@ -27,7 +27,7 @@ public struct Server {
             FileHandle.standardError.write(
                 Data("[subject-server] connector=unix path=\(path)\n".utf8))
             let connector = UnixConnector(path: path)
-            // r[impl core.conn.accept-required] - Check if we should accept incoming virtual connections.
+            // r[impl core.conn.accept-required] - Check if we should accept incoming lanes.
             let acceptConnections = ProcessInfo.processInfo.environment["ACCEPT_CONNECTIONS"] != "0"
             FileHandle.standardError.write(
                 Data("[subject-server] acceptConnections=\(acceptConnections)\n".utf8))
@@ -52,7 +52,7 @@ public struct Server {
             FileHandle.standardError.write(
                 Data("[subject-server] connector=tcp host=\(host) port=\(port)\n".utf8))
             let connector = TcpConnector(host: host, port: port)
-            // r[impl core.conn.accept-required] - Check if we should accept incoming virtual connections.
+            // r[impl core.conn.accept-required] - Check if we should accept incoming lanes.
             let acceptConnections = ProcessInfo.processInfo.environment["ACCEPT_CONNECTIONS"] != "0"
             FileHandle.standardError.write(
                 Data("[subject-server] acceptConnections=\(acceptConnections)\n".utf8))

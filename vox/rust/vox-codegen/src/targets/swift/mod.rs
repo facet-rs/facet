@@ -396,6 +396,11 @@ mod tests {
             "generated Swift client must delegate request serialization and response handling to VoxLane:\n{generated}"
         );
         assert!(
+            generated.contains("    case connectionShutdown")
+                && !generated.contains("    case sessionShutdown"),
+            "generated Swift wire errors must use connection-era vocabulary:\n{generated}"
+        );
+        assert!(
             generated.contains("public protocol TestSvcHandler: Sendable {")
                 && generated.contains("    func echo(message: String) async throws -> String")
                 && generated.contains(
