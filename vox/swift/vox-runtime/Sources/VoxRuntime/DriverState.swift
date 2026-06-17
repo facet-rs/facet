@@ -1,5 +1,10 @@
 import Foundation
 
+struct PendingTimeoutContext: Sendable {
+    let requestId: UInt64
+    let timeout: TimeInterval
+}
+
 /// Actor that holds mutable driver state to avoid NSLock in async contexts.
 actor DriverState {
     private let retainFinalizedRequests = true
@@ -106,15 +111,52 @@ actor DriverState {
         }
     }
 
-    func setPendingTimeoutTask(_ requestId: UInt64, timeoutTask: Task<Void, Never>) -> Bool {
+    func replacePendingTimeoutTask(
+        _ requestId: UInt64,
+        timeoutTask: Task<Void, Never>
+    ) -> (installed: Bool, previous: Task<Void, Never>?) {
         guard var pending = pendingResponses[requestId] else {
-            return false
+            return (false, nil)
         }
+        let previous = pending.timeoutTask
         pending.timeoutTask = timeoutTask
         pendingResponses[requestId] = pending
-        return true
+        return (true, previous)
     }
 
+    // r[impl rpc.timeout.idle-progress]
+    func pendingTimeoutContext(_ requestId: UInt64) -> PendingTimeoutContext? {
+        guard let pending = pendingResponses[requestId],
+            let timeout = pending.request.timeout
+        else {
+            return nil
+        }
+        return PendingTimeoutContext(
+            requestId: requestId,
+            timeout: timeout
+        )
+    }
+
+    // r[impl rpc.timeout.idle-progress]
+    func pendingTimeoutContexts(
+        connectionId: UInt64,
+        channelId: UInt64
+    ) -> [PendingTimeoutContext] {
+        pendingResponses.compactMap { requestId, pending in
+            guard pending.request.connectionId == connectionId,
+                pending.request.channels.contains(channelId),
+                let timeout = pending.request.timeout
+            else {
+                return nil
+            }
+            return PendingTimeoutContext(
+                requestId: requestId,
+                timeout: timeout
+            )
+        }
+    }
+
+    // r[impl rpc.request.scope]
     func addInFlight(
         _ requestId: UInt64,
         connectionId: UInt64,
@@ -145,6 +187,7 @@ actor DriverState {
         return .inserted
     }
 
+    // r[impl rpc.request.scope.terminal]
     func removeInFlight(_ requestId: UInt64) -> (
         removed: Bool,
         connectionId: UInt64,

@@ -1299,6 +1299,108 @@ struct ConnectionFailureTests {
         }
     }
 
+    // r[verify rpc.timeout.idle-progress]
+    @Test func requestAssociatedChannelActivityExtendsIdleTimeout() async throws {
+        let channelId: UInt64 = 1
+        let transport = ScriptedTransport()
+        let (handle, driver, _, _) = try await establishInitiator(
+            conduit: transport,
+            dispatcher: EmptyServiceDispatcher()
+        )
+        let receiver = await handle.incomingChannelRegistry.register(
+            channelId,
+            initialCredit: defaultInitialChannelCredit
+        )
+        let driverTask = Task {
+            try await driver.run()
+        }
+
+        try await withAsyncCleanup({
+            try? await transport.close()
+            await cancelAndDrain(driverTask)
+        }) {
+            let callTask = Task {
+                try await handle.callRaw(
+                    methodId: 1,
+                    payload: [],
+                    channels: [channelId],
+                    timeout: 0.12
+                )
+            }
+            guard let requestId = await awaitRequestId(transport, index: 0) else {
+                Issue.record("expected request to be sent")
+                return
+            }
+
+            try await Task.sleep(nanoseconds: 70_000_000)
+            await transport.enqueueMessage(
+                .data(connId: 0, channelId: channelId, payload: [0x01])
+            )
+            try await Task.sleep(nanoseconds: 80_000_000)
+            await transport.enqueueMessage(
+                .response(connId: 0, requestId: requestId, metadata: .null, payload: [0xBB])
+            )
+
+            let response = try await awaitTaskResult(callTask, timeoutMs: 1_000)
+            #expect(response == [0xBB])
+            #expect(try await receiver.recv() == [0x01])
+            #expect(await awaitProtocolReason(transport, timeoutMs: 100) == nil)
+        }
+    }
+
+    // r[verify rpc.request.scope]
+    // r[verify rpc.request.scope.channels]
+    // r[verify rpc.request.scope.terminal]
+    // r[verify rpc.timeout.idle-progress]
+    @Test func requestTimeoutTerminalizesAssociatedChannels() async throws {
+        let channelId: UInt64 = 1
+        let transport = ScriptedTransport()
+        let (handle, driver, _, _) = try await establishInitiator(
+            conduit: transport,
+            dispatcher: EmptyServiceDispatcher()
+        )
+        let receiver = await handle.incomingChannelRegistry.register(
+            channelId,
+            initialCredit: defaultInitialChannelCredit
+        )
+        let driverTask = Task {
+            try await driver.run()
+        }
+
+        await withAsyncCleanup({
+            try? await transport.close()
+            await cancelAndDrain(driverTask)
+        }) {
+            let callTask = Task {
+                try await handle.callRaw(
+                    methodId: 1,
+                    payload: [],
+                    channels: [channelId],
+                    timeout: 0.05
+                )
+            }
+            guard await awaitRequestId(transport, index: 0) != nil else {
+                Issue.record("expected request to be sent")
+                return
+            }
+
+            do {
+                _ = try await awaitTaskResult(callTask, timeoutMs: 1_000)
+                Issue.record("expected timeout")
+            } catch {
+                #expect(isTimeout(error))
+            }
+
+            do {
+                _ = try await receiver.recv()
+                Issue.record("expected channel timeout error")
+            } catch {
+                #expect(error as? ChannelError == .timedOut)
+            }
+            #expect(await awaitHasCancel(transport))
+        }
+    }
+
     // r[verify rpc.cancel.channels]
     @Test func inboundCancelTerminalizesRequestChannels() async throws {
         let channelId: UInt64 = 1

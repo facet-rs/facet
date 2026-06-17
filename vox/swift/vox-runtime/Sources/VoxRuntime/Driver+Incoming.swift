@@ -193,6 +193,8 @@ extension Driver {
                     channels: call.channels
                 )
             case .response(let response):
+                // r[impl rpc.request.scope.terminal]
+                // r[impl rpc.request.scope.channels]
                 // r[impl rpc.response]
                 let payload = [UInt8](response.ret)
                 guard let pending = await state.claimPendingResponse(request.id, reason: "response")
@@ -226,6 +228,8 @@ extension Driver {
                 pending.responseTx(.success(payload))
             case .cancel:
                 // r[impl rpc.cancel]
+                // r[impl rpc.request.scope.terminal]
+                // r[impl rpc.request.scope.channels]
                 let responseContext = await state.removeInFlight(request.id)
                 await terminateRequestChannels(
                     connectionId: responseContext.connectionId,
@@ -242,15 +246,31 @@ extension Driver {
                     channelId: channel.id,
                     payload: itemBytes
                 )
+                await markChannelRequestProgress(
+                    connectionId: msg.connectionId,
+                    channelId: channel.id
+                )
             case .close:
                 try await handleClose(connectionId: msg.connectionId, channelId: channel.id)
+                await markChannelRequestProgress(
+                    connectionId: msg.connectionId,
+                    channelId: channel.id
+                )
             case .reset:
                 await deliverChannelReset(connectionId: msg.connectionId, channelId: channel.id)
+                await markChannelRequestProgress(
+                    connectionId: msg.connectionId,
+                    channelId: channel.id
+                )
             case .grantCredit(let credit):
                 await deliverChannelCredit(
                     connectionId: msg.connectionId,
                     channelId: channel.id,
                     bytes: credit.additional
+                )
+                await markChannelRequestProgress(
+                    connectionId: msg.connectionId,
+                    channelId: channel.id
                 )
             }
         }
@@ -423,6 +443,8 @@ extension Driver {
         channelIds: [UInt64],
         error: ChannelError
     ) async {
+        // r[impl rpc.request.scope.channels]
+        // r[impl rpc.channel.lifecycle]
         for channelId in channelIds {
             await deliverChannelReset(
                 connectionId: connectionId,
@@ -477,6 +499,11 @@ extension Driver {
 
         for (_, pending) in responses {
             pending.timeoutTask?.cancel()
+            await terminateRequestChannels(
+                connectionId: pending.request.connectionId,
+                channelIds: pending.request.channels,
+                error: .connectionClosed
+            )
             pending.responseTx(.failure(.connectionClosed))
         }
     }
@@ -489,6 +516,11 @@ extension Driver {
 
         for (_, pending) in responses {
             pending.timeoutTask?.cancel()
+            await terminateRequestChannels(
+                connectionId: pending.request.connectionId,
+                channelIds: pending.request.channels,
+                error: .connectionClosed
+            )
             pending.responseTx(.failure(.connectionClosed))
         }
     }

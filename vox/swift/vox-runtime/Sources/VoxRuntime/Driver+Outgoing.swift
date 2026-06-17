@@ -102,17 +102,21 @@ extension Driver {
         let msg = queued.taskMessage
         let connectionId = queued.connectionId
         let wireMsg: Message
+        let progressChannelId: UInt64?
         switch msg {
         case .data(let channelId, let payload):
             wireMsg = messageData(channelId: channelId, item: payload, connectionId: connectionId)
+            progressChannelId = channelId
         case .close(let channelId):
             wireMsg = messageChannelClose(channelId: channelId, connectionId: connectionId)
+            progressChannelId = channelId
         case .grantCredit(let channelId, let bytes):
             wireMsg = messageCredit(
                 channelId: channelId,
                 additional: bytes,
                 connectionId: connectionId
             )
+            progressChannelId = channelId
         case .schema(let methodId, let direction, let schemas):
             wireMsg = messageSchema(
                 methodId: methodId,
@@ -120,6 +124,7 @@ extension Driver {
                 schemas: schemas,
                 connectionId: connectionId
             )
+            progressChannelId = nil
         case .response(let requestId, let payload, let methodId, let responseSchemaClosure):
             // Advertise the response schema at THIS sequential send point (not in the
             // concurrent dispatch task): under pipelining many responses for a method
@@ -160,8 +165,15 @@ extension Driver {
                 return
             }
             wireMsg = response
+            progressChannelId = nil
         }
         try await sendOrEnqueue(wireMsg)
+        if let progressChannelId {
+            await markChannelRequestProgress(
+                connectionId: connectionId,
+                channelId: progressChannelId
+            )
+        }
     }
 
     /// Handle a command from a lane or connection handle.
@@ -245,36 +257,11 @@ extension Driver {
                 return
             }
 
-            guard let timeout else {
-                return
-            }
-
-            let timeoutNs = Self.timeoutToNanoseconds(timeout)
-            let capturedState = state
-            let capturedConduit = conduit
-            let capturedConnectionId = connectionId
-            let timeoutTask = Task {
-                do {
-                    try await Task.sleep(nanoseconds: timeoutNs)
-                } catch {
-                    return
-                }
-                guard let pending = await capturedState.claimPendingResponse(
-                    requestId,
-                    reason: "timeout"
-                ) else {
-                    return
-                }
-                pending.timeoutTask?.cancel()
-                warnLog("request timed out request_id=\(requestId) timeout_s=\(timeout)")
-                pending.responseTx(.failure(.timeout))
-                try? await capturedConduit.send(
-                    messageCancel(requestId: requestId, connectionId: capturedConnectionId)
+            if let timeout {
+                await installRequestIdleTimeout(
+                    requestId: requestId,
+                    timeout: timeout
                 )
-            }
-            let installed = await state.setPendingTimeoutTask(requestId, timeoutTask: timeoutTask)
-            if !installed {
-                timeoutTask.cancel()
             }
         case .openLane(let settings, let metadata, let dispatcher, let responseTx):
             let isClosed = await state.isConnectionClosed()
@@ -396,37 +383,11 @@ extension Driver {
 
             pendingCalls.removeFirst()
 
-            guard let timeout = call.timeout else {
-                continue
-            }
-
-            let timeoutNs = Self.timeoutToNanoseconds(timeout)
-            let capturedState = state
-            let capturedConduit = conduit
-            let capturedConnectionId = call.connectionId
-            let requestId = call.requestId
-            let timeoutTask = Task {
-                do {
-                    try await Task.sleep(nanoseconds: timeoutNs)
-                } catch {
-                    return
-                }
-                guard let pending = await capturedState.claimPendingResponse(
-                    requestId,
-                    reason: "timeout"
-                ) else {
-                    return
-                }
-                pending.timeoutTask?.cancel()
-                warnLog("request timed out request_id=\(requestId) timeout_s=\(timeout)")
-                pending.responseTx(.failure(.timeout))
-                try? await capturedConduit.send(
-                    messageCancel(requestId: requestId, connectionId: capturedConnectionId)
+            if let timeout = call.timeout {
+                await installRequestIdleTimeout(
+                    requestId: call.requestId,
+                    timeout: timeout
                 )
-            }
-            let installed = await state.setPendingTimeoutTask(requestId, timeoutTask: timeoutTask)
-            if !installed {
-                timeoutTask.cancel()
             }
         }
     }
@@ -449,5 +410,64 @@ extension Driver {
 
             pendingTaskMessages.removeFirst()
         }
+    }
+
+    // r[impl rpc.timeout.idle-progress]
+    func installRequestIdleTimeout(
+        requestId: UInt64,
+        timeout: TimeInterval
+    ) async {
+        let timeoutNs = Self.timeoutToNanoseconds(timeout)
+        let timeoutTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: timeoutNs)
+            } catch {
+                return
+            }
+            await self?.expireRequestForIdleTimeout(requestId: requestId, timeout: timeout)
+        }
+        let replacement = await state.replacePendingTimeoutTask(
+            requestId,
+            timeoutTask: timeoutTask
+        )
+        guard replacement.installed else {
+            timeoutTask.cancel()
+            return
+        }
+        replacement.previous?.cancel()
+    }
+
+    // r[impl rpc.timeout.idle-progress]
+    func markChannelRequestProgress(connectionId: UInt64, channelId: UInt64) async {
+        let contexts = await state.pendingTimeoutContexts(
+            connectionId: connectionId,
+            channelId: channelId
+        )
+        for context in contexts {
+            await installRequestIdleTimeout(
+                requestId: context.requestId,
+                timeout: context.timeout
+            )
+        }
+    }
+
+    // r[impl rpc.timeout.idle-progress]
+    // r[impl rpc.request.scope.terminal]
+    // r[impl rpc.request.scope.channels]
+    func expireRequestForIdleTimeout(requestId: UInt64, timeout: TimeInterval) async {
+        guard let pending = await state.claimPendingResponse(requestId, reason: "timeout") else {
+            return
+        }
+        pending.timeoutTask?.cancel()
+        warnLog("request timed out request_id=\(requestId) timeout_s=\(timeout)")
+        await terminateRequestChannels(
+            connectionId: pending.request.connectionId,
+            channelIds: pending.request.channels,
+            error: .timedOut
+        )
+        pending.responseTx(.failure(.timeout))
+        try? await conduit.send(
+            messageCancel(requestId: requestId, connectionId: pending.request.connectionId)
+        )
     }
 }

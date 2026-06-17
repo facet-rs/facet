@@ -636,6 +636,7 @@ public enum ChannelError: Error, Equatable {
     case reset
     case requestClosed
     case cancelled
+    case timedOut
     case connectionClosed
     case unknown
 }
