@@ -144,6 +144,9 @@ where
                 }
             };
             let extensions = ::vox::Extensions::new();
+            if let Some(authorization) = reply.authorization_context() {
+                extensions.insert(authorization);
+            }
             let context = ::vox::RequestContext::with_transport(
                 notifier_service_descriptor().methods[0usize],
                 &request_call.metadata,

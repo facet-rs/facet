@@ -26,9 +26,9 @@ async fn reap_or_kill(mut child: Child, reason: &str) -> Result<(), String> {
 }
 
 // r[verify hosted.subject.lifecycle]
-fn subject_exits_when_harness_disconnects(spec: SubjectSpec) {
+fn subject_exits_when_harness_shutdowns(spec: SubjectSpec) {
     run_async(async move {
-        let (client, child, session_handle) =
+        let (client, child, connection_handle) =
             spec_tests::harness::accept_subject_spec(spec).await?;
 
         client
@@ -37,28 +37,31 @@ fn subject_exits_when_harness_disconnects(spec: SubjectSpec) {
             .map_err(|err| format!("echo before disconnect failed: {err:?}"))?;
 
         drop(client);
-        drop(session_handle);
-        reap_or_kill(child, "harness disconnect").await
+        connection_handle
+            .shutdown()
+            .map_err(|err| format!("connection shutdown failed: {err:?}"))?;
+        drop(connection_handle);
+        reap_or_kill(child, "harness shutdown").await
     })
     .unwrap();
 }
 
 #[test]
-fn rust_tcp_subject_exits_when_harness_disconnects() {
-    subject_exits_when_harness_disconnects(SubjectSpec::tcp(SubjectLanguage::Rust));
+fn rust_tcp_subject_exits_when_harness_shutdowns() {
+    subject_exits_when_harness_shutdowns(SubjectSpec::tcp(SubjectLanguage::Rust));
 }
 
 #[test]
-fn typescript_tcp_subject_exits_when_harness_disconnects() {
-    subject_exits_when_harness_disconnects(SubjectSpec::tcp(SubjectLanguage::TypeScript));
+fn typescript_tcp_subject_exits_when_harness_shutdowns() {
+    subject_exits_when_harness_shutdowns(SubjectSpec::tcp(SubjectLanguage::TypeScript));
 }
 
 #[test]
-fn typescript_websocket_subject_exits_when_harness_disconnects() {
-    subject_exits_when_harness_disconnects(SubjectSpec::ws(SubjectLanguage::TypeScript));
+fn typescript_websocket_subject_exits_when_harness_shutdowns() {
+    subject_exits_when_harness_shutdowns(SubjectSpec::ws(SubjectLanguage::TypeScript));
 }
 
 #[test]
-fn swift_tcp_subject_exits_when_harness_disconnects() {
-    subject_exits_when_harness_disconnects(SubjectSpec::tcp(SubjectLanguage::Swift));
+fn swift_tcp_subject_exits_when_harness_shutdowns() {
+    subject_exits_when_harness_shutdowns(SubjectSpec::tcp(SubjectLanguage::Swift));
 }

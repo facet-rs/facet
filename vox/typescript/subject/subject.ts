@@ -5102,18 +5102,20 @@ async function runClient() {
       break;
     }
     case "generate": {
-      // Server-to-client streaming: create channel, call, receive
       const [tx, rx] = channel<number>();
+      const callPromise = client.generate(5, tx);
+      await waitForBound(rx);
+      const receivedPromise = (async () => {
+        const received: number[] = [];
+        for await (const n of rx) {
+          console.error(`received ${n}`);
+          received.push(n);
+        }
+        return received;
+      })();
 
-      // Start the call - server will send through our Rx
-      await client.generate(5, tx);
-
-      // Receive values from Rx
-      const received: number[] = [];
-      for await (const n of rx) {
-        console.error(`received ${n}`);
-        received.push(n);
-      }
+      await callPromise;
+      const received = await receivedPromise;
       console.error(`generate received: [${received.join(", ")}]`);
       break;
     }
@@ -6248,13 +6250,18 @@ async function runClient() {
     }
     case "post_reply_generate": {
       const [tx, rx] = channel<number>();
+      const callPromise = client.postReplyGenerate(tx);
+      await waitForBound(rx);
+      const receivedPromise = (async () => {
+        const received: number[] = [];
+        for await (const n of rx) {
+          received.push(n);
+        }
+        return received;
+      })();
 
-      await client.postReplyGenerate(tx);
-
-      const received: number[] = [];
-      for await (const n of rx) {
-        received.push(n);
-      }
+      await callPromise;
+      const received = await receivedPromise;
 
       const expected = [0, 1, 2, 3, 4];
       if (received.length !== expected.length || expected.some((value, idx) => received[idx] !== value)) {

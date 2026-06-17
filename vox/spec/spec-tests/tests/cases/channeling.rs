@@ -122,17 +122,21 @@ pub fn run_channeling_post_reply_generate_server_to_client(spec: SubjectSpec) {
         let (client, mut child, _sh) = accept_subject_spec(spec).await?;
 
         let (tx, mut rx) = vox::channel::<i32>();
+        let recv = spawn_loud(async move {
+            let mut received = Vec::new();
+            while let Ok(Some(n)) = rx.recv().await {
+                let n = n.get();
+                received.push(*n);
+            }
+            received
+        });
 
         client
             .post_reply_generate(tx)
             .await
             .map_err(|e| format!("post_reply_generate: {e:?}"))?;
 
-        let mut received = Vec::new();
-        while let Ok(Some(n)) = rx.recv().await {
-            let n = n.get();
-            received.push(*n);
-        }
+        let received = recv.await.map_err(|e| format!("recv task: {e}"))?;
 
         let expected: Vec<i32> = (0..5).collect();
         if received != expected {

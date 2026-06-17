@@ -4941,14 +4941,20 @@ pub fn run_rpc_stax_subscribe_flamegraph_updates(spec: SubjectSpec) {
     run_async(async {
         let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         let (update_tx, mut update_rx) = vox::channel::<StaxFlamegraphUpdate>();
+        let recv = spec_tests::harness::spawn_loud(async move {
+            let mut updates = Vec::new();
+            while let Ok(Some(update)) = update_rx.recv().await {
+                updates.push(update.get().clone());
+            }
+            updates
+        });
         client
             .stax_subscribe_flamegraph_updates(update_tx)
             .await
             .map_err(|e| format!("stax_subscribe_flamegraph_updates: {e:?}"))?;
-        let mut updates = Vec::new();
-        while let Ok(Some(update)) = update_rx.recv().await {
-            updates.push(update.get().clone());
-        }
+        let updates = recv
+            .await
+            .map_err(|e| format!("stax flamegraph updates recv: {e}"))?;
         let expected = sample_stax_flamegraph_updates();
         if updates != expected {
             return Err(format!(
@@ -5151,14 +5157,18 @@ pub fn run_rpc_helix_subscribe_pulses(spec: SubjectSpec) {
     run_async(async {
         let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         let (pulse_tx, mut pulse_rx) = vox::channel::<HelixPulseAvailable>();
+        let recv = spec_tests::harness::spawn_loud(async move {
+            let mut pulses = Vec::new();
+            while let Ok(Some(pulse)) = pulse_rx.recv().await {
+                pulses.push(*pulse.get());
+            }
+            pulses
+        });
         client
             .helix_subscribe_pulses(pulse_tx)
             .await
             .map_err(|e| format!("helix_subscribe_pulses: {e:?}"))?;
-        let mut pulses = Vec::new();
-        while let Ok(Some(pulse)) = pulse_rx.recv().await {
-            pulses.push(*pulse.get());
-        }
+        let pulses = recv.await.map_err(|e| format!("helix pulses recv: {e}"))?;
         let expected = sample_helix_pulses();
         if pulses != expected {
             return Err(format!(
@@ -5679,14 +5689,20 @@ pub fn run_rpc_tracey_subscribe_updates(spec: SubjectSpec) {
     run_async(async {
         let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         let (update_tx, mut update_rx) = vox::channel::<TraceyDataUpdate>();
+        let recv = spec_tests::harness::spawn_loud(async move {
+            let mut updates = Vec::new();
+            while let Ok(Some(update)) = update_rx.recv().await {
+                updates.push(update.get().clone());
+            }
+            updates
+        });
         client
             .tracey_subscribe_updates(update_tx)
             .await
             .map_err(|e| format!("tracey_subscribe_updates: {e:?}"))?;
-        let mut updates = Vec::new();
-        while let Ok(Some(update)) = update_rx.recv().await {
-            updates.push(update.get().clone());
-        }
+        let updates = recv
+            .await
+            .map_err(|e| format!("tracey updates recv: {e}"))?;
         let expected = sample_tracey_updates();
         if updates != expected {
             return Err(format!(

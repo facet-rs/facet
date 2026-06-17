@@ -280,7 +280,10 @@ public final class UnboundRx<T: Sendable>: @unchecked Sendable {
             return (waiters, self.receivers)
         }
         for receiver in receivers {
-            receiver.deliverReset(.requestClosed)
+            // r[impl rpc.request.scope.channels]
+            if !receiver.debugSnapshot().closed {
+                receiver.deliverReset(.requestClosed)
+            }
         }
         for waiter in waiters {
             waiter.resume()

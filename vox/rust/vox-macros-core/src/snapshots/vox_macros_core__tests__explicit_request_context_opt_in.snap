@@ -165,6 +165,9 @@ where
                 }
             };
             let extensions = ::vox::Extensions::new();
+            if let Some(authorization) = reply.authorization_context() {
+                extensions.insert(authorization);
+            }
             let context = ::vox::RequestContext::with_transport(
                 audit_service_descriptor().methods[0usize],
                 &request_call.metadata,
@@ -225,6 +228,9 @@ where
                 }
             };
             let extensions = ::vox::Extensions::new();
+            if let Some(authorization) = reply.authorization_context() {
+                extensions.insert(authorization);
+            }
             let context = ::vox::RequestContext::with_transport(
                 audit_service_descriptor().methods[1usize],
                 &request_call.metadata,

@@ -160,6 +160,7 @@ fn generate_dispatch_method(service: &ServiceDescriptor, m: &MethodDescriptor) -
     let channels = has_channels(m);
     let mut out = String::new();
     let response_schema_closure = format!("{svc}Methods[{id}]!.responseSchemaClosure");
+    let mut server_tx_closes = Vec::new();
 
     let extra_params = if channels {
         "channels: [UInt64], registry: ChannelRegistry, "
@@ -215,6 +216,7 @@ fn generate_dispatch_method(service: &ServiceDescriptor, m: &MethodDescriptor) -
             out.push_str(&format!(
                 "        let {an} = await bindServerTx(channelId: channels[{an}WireIndex], registry: registry, taskTx: taskTx, methodId: {id}, argsSchemaClosure: {svc}Methods[{id}]!.argsSchemaClosure, schemaSendTracker: schemaSendTracker, serialize: {ser})\n"
             ));
+            server_tx_closes.push(format!("        {an}.close()\n"));
         } else {
             // Handler RECEIVES → phon element DECODE codec reconciled from the caller's
             // advertised auxiliary element root.
@@ -281,6 +283,12 @@ fn generate_dispatch_method(service: &ServiceDescriptor, m: &MethodDescriptor) -
     out.push_str(
         "        } catch {\n            voxResult = .failure(.indeterminate)\n        }\n",
     );
+    if !server_tx_closes.is_empty() {
+        out.push_str("        // r[impl rpc.request.scope.channels]\n");
+        for close in server_tx_closes {
+            out.push_str(&close);
+        }
+    }
 
     // r[impl rpc.response]
     // Encode the response and reply, carrying the method's response schema closure.

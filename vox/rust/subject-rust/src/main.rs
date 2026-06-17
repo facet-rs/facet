@@ -769,17 +769,23 @@ async fn run_client() -> Result<(), String> {
         }
         "post_reply_generate" => {
             let (tx, mut rx) = vox::channel::<i32>();
+            let recv_task = tokio::spawn(async move {
+                let mut received = Vec::new();
+                while let Ok(Some(n)) = rx.recv().await {
+                    let n = n.get();
+                    received.push(*n);
+                }
+                received
+            });
 
             client
                 .post_reply_generate(tx)
                 .await
                 .map_err(|e| format!("post_reply_generate failed: {e:?}"))?;
 
-            let mut received = Vec::new();
-            while let Ok(Some(n)) = rx.recv().await {
-                let n = n.get();
-                received.push(*n);
-            }
+            let received = recv_task
+                .await
+                .map_err(|e| format!("post_reply_generate recv task failed: {e}"))?;
 
             let expected: Vec<i32> = (0..5).collect();
             if received != expected {
@@ -1419,14 +1425,20 @@ async fn run_client() -> Result<(), String> {
         "stax_subscribe_flamegraph_updates" => {
             let (update_tx, mut update_rx) = vox::channel::<spec_proto::StaxFlamegraphUpdate>();
             let expected = sample_stax_flamegraph_updates();
+            let recv_task = tokio::spawn(async move {
+                let mut updates = Vec::new();
+                while let Ok(Some(update)) = update_rx.recv().await {
+                    updates.push(update.get().clone());
+                }
+                updates
+            });
             client
                 .stax_subscribe_flamegraph_updates(update_tx)
                 .await
                 .map_err(|e| format!("stax_subscribe_flamegraph_updates failed: {e:?}"))?;
-            let mut updates = Vec::new();
-            while let Ok(Some(update)) = update_rx.recv().await {
-                updates.push(update.get().clone());
-            }
+            let updates = recv_task
+                .await
+                .map_err(|e| format!("stax_subscribe_flamegraph_updates recv failed: {e}"))?;
             if updates != expected {
                 return Err(format!(
                     "stax_subscribe_flamegraph_updates: expected {expected:?}, got {updates:?}"

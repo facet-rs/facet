@@ -5004,13 +5004,15 @@ func runClientScenario(client: TestbedClient, scenario: String) async throws {
         log("sum_large OK")
     case "generate":
         let (tx, rx): (UnboundTx<Int32>, UnboundRx<Int32>) = channel()
-
+        async let receivedValues: [Int32] = {
+            var values: [Int32] = []
+            for try await n in rx {
+                values.append(n)
+            }
+            return values
+        }()
         try await client.generate(count: 5, output: tx)
-
-        var received: [Int32] = []
-        for try await n in rx {
-            received.append(n)
-        }
+        let received = try await receivedValues
         guard received == [0, 1, 2, 3, 4] else {
             log("generate expected [0, 1, 2, 3, 4], got \(received)")
             throw SubjectError.invalidResponse
@@ -5020,7 +5022,6 @@ func runClientScenario(client: TestbedClient, scenario: String) async throws {
         let (tx, rx): (UnboundTx<Int32>, UnboundRx<Int32>) = channel()
 
         let count: UInt32 = 100
-        async let call: Void = client.generateLarge(count: count, output: tx)
         async let received: [Int32] = {
             var values: [Int32] = []
             for try await n in rx {
@@ -5028,7 +5029,8 @@ func runClientScenario(client: TestbedClient, scenario: String) async throws {
             }
             return values
         }()
-        let (_, receivedValues) = try await (call, received)
+        try await client.generateLarge(count: count, output: tx)
+        let receivedValues = try await received
         let expected = (0..<Int32(count)).map { $0 }
         guard receivedValues == expected else {
             log("generate_large expected \(expected.count) ordered items, got \(receivedValues)")
@@ -5555,7 +5557,6 @@ func runClientScenario(client: TestbedClient, scenario: String) async throws {
     case "stax_subscribe_flamegraph_updates":
         let (updateTx, updateRx): (UnboundTx<StaxFlamegraphUpdate>, UnboundRx<StaxFlamegraphUpdate>) =
             channel()
-        async let result: Void = client.staxSubscribeFlamegraphUpdates(output: updateTx)
         async let updates: [StaxFlamegraphUpdate] = {
             var values: [StaxFlamegraphUpdate] = []
             for try await update in updateRx {
@@ -5563,7 +5564,8 @@ func runClientScenario(client: TestbedClient, scenario: String) async throws {
             }
             return values
         }()
-        let (_, receivedUpdates) = try await (result, updates)
+        try await client.staxSubscribeFlamegraphUpdates(output: updateTx)
+        let receivedUpdates = try await updates
         let expectedUpdates = sampleStaxFlamegraphUpdates()
         guard receivedUpdates.count == expectedUpdates.count
             && zip(receivedUpdates, expectedUpdates).allSatisfy({ sameStaxFlamegraphUpdate($0, $1) })
@@ -5583,10 +5585,6 @@ func runClientScenario(client: TestbedClient, scenario: String) async throws {
     case "stax_macos_record":
         let (batchTx, batchRx): (UnboundTx<StaxMacKdBufBatch>, UnboundRx<StaxMacKdBufBatch>) =
             channel()
-        async let result = client.staxMacosRecord(
-            config: sampleStaxMacosConfig(),
-            records: batchTx
-        )
         async let batches: [StaxMacKdBufBatch] = {
             var values: [StaxMacKdBufBatch] = []
             for try await batch in batchRx {
@@ -5594,7 +5592,11 @@ func runClientScenario(client: TestbedClient, scenario: String) async throws {
             }
             return values
         }()
-        let (recordResult, receivedBatches) = try await (result, batches)
+        let recordResult = try await client.staxMacosRecord(
+            config: sampleStaxMacosConfig(),
+            records: batchTx
+        )
+        let receivedBatches = try await batches
         guard case .success(let summary) = recordResult,
             sameReflecting(summary, sampleStaxMacosRecordSummary())
         else {
@@ -5650,7 +5652,6 @@ func runClientScenario(client: TestbedClient, scenario: String) async throws {
     case "helix_subscribe_pulses":
         let (pulseTx, pulseRx): (UnboundTx<HelixPulseAvailable>, UnboundRx<HelixPulseAvailable>) =
             channel()
-        async let result: Void = client.helixSubscribePulses(output: pulseTx)
         async let pulses: [HelixPulseAvailable] = {
             var values: [HelixPulseAvailable] = []
             for try await pulse in pulseRx {
@@ -5658,7 +5659,8 @@ func runClientScenario(client: TestbedClient, scenario: String) async throws {
             }
             return values
         }()
-        let (_, receivedPulses) = try await (result, pulses)
+        try await client.helixSubscribePulses(output: pulseTx)
+        let receivedPulses = try await pulses
         guard sameHelixPulses(receivedPulses, sampleHelixPulses()) else {
             log("helix_subscribe_pulses mismatch: \(receivedPulses)")
             throw SubjectError.invalidResponse
@@ -5949,7 +5951,6 @@ func runClientScenario(client: TestbedClient, scenario: String) async throws {
     case "tracey_subscribe_updates":
         let (updateTx, updateRx): (UnboundTx<TraceyDataUpdate>, UnboundRx<TraceyDataUpdate>) =
             channel()
-        async let result: Void = client.traceySubscribeUpdates(updates: updateTx)
         async let updates: [TraceyDataUpdate] = {
             var values: [TraceyDataUpdate] = []
             for try await update in updateRx {
@@ -5957,7 +5958,8 @@ func runClientScenario(client: TestbedClient, scenario: String) async throws {
             }
             return values
         }()
-        let (_, receivedUpdates) = try await (result, updates)
+        try await client.traceySubscribeUpdates(updates: updateTx)
+        let receivedUpdates = try await updates
         guard sameTraceyUpdates(receivedUpdates, sampleTraceyUpdates()) else {
             log("tracey_subscribe_updates mismatch: \(receivedUpdates)")
             throw SubjectError.invalidResponse
@@ -6026,7 +6028,6 @@ func runClientScenario(client: TestbedClient, scenario: String) async throws {
         log("dibs_migration_status OK")
     case "dibs_migrate":
         let (logTx, logRx): (UnboundTx<DibsMigrationLog>, UnboundRx<DibsMigrationLog>) = channel()
-        async let result = client.dibsMigrate(request: sampleDibsMigrateRequest(), logs: logTx)
         async let logs: [DibsMigrationLog] = {
             var values: [DibsMigrationLog] = []
             for try await logEntry in logRx {
@@ -6034,7 +6035,8 @@ func runClientScenario(client: TestbedClient, scenario: String) async throws {
             }
             return values
         }()
-        let (migrationResult, receivedLogs) = try await (result, logs)
+        let migrationResult = try await client.dibsMigrate(request: sampleDibsMigrateRequest(), logs: logTx)
+        let receivedLogs = try await logs
         guard case .success(let value) = migrationResult,
             sameDibsMigrateResult(value, sampleDibsMigrateResult())
         else {
@@ -6096,11 +6098,15 @@ func runClientScenario(client: TestbedClient, scenario: String) async throws {
         log("process_message result OK")
     case "post_reply_generate":
         let (tx, rx): (UnboundTx<Int32>, UnboundRx<Int32>) = channel()
+        async let receivedValues: [Int32] = {
+            var received: [Int32] = []
+            for try await n in rx {
+                received.append(n)
+            }
+            return received
+        }()
         try await client.postReplyGenerate(output: tx)
-        var received: [Int32] = []
-        for try await n in rx {
-            received.append(n)
-        }
+        let received = try await receivedValues
         let expected: [Int32] = [0, 1, 2, 3, 4]
         guard received == expected else {
             log("post_reply_generate expected \(expected), got \(received)")
