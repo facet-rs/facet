@@ -52,10 +52,10 @@ workspace alongside formats built on top of it.
 
 | Crate | What it does | Source |
 |-------|--------------|--------|
-| [`facet-xml`](https://docs.rs/facet-xml) | XML serialization and deserialization. | [facet-rs/facet-xml](https://github.com/facet-rs/facet-xml) |
-| [`facet-dom`](https://docs.rs/facet-dom) | Tree-based (DOM) deserializer shared by HTML and XML. | [facet-rs/facet-xml](https://github.com/facet-rs/facet-xml) |
-| [`facet-svg`](https://docs.rs/facet-svg) | Strongly-typed SVG documents on top of `facet-xml`. | [facet-rs/facet-xml](https://github.com/facet-rs/facet-xml) |
-| [`facet-atom`](https://docs.rs/facet-atom) | Atom Syndication Format (RFC 4287) types. | [facet-rs/facet-xml](https://github.com/facet-rs/facet-xml) |
+| [`facet-xml`](https://docs.rs/facet-xml) | XML serialization and deserialization. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-xml) |
+| [`facet-dom`](https://docs.rs/facet-dom) | Tree-based (DOM) deserializer shared by HTML and XML. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-dom) |
+| [`facet-svg`](https://docs.rs/facet-svg) | Strongly-typed SVG documents on top of `facet-xml`. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-svg) |
+| [`facet-atom`](https://docs.rs/facet-atom) | Atom Syndication Format (RFC 4287) types. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-atom) |
 
 ## Schema & code generation
 

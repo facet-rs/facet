@@ -794,8 +794,8 @@ fn test_enum_struct_variant_with_container_proxy_binary_roundtrip() {
 #[derive(Facet, Debug, PartialEq)]
 #[repr(C)]
 enum EnumWithNewtypeProxy {
-    Point(Point),         // Point has container-level proxy
-    Binary(BinaryU32),    // BinaryU32 has container-level proxy
+    Point(Point),      // Point has container-level proxy
+    Binary(BinaryU32), // BinaryU32 has container-level proxy
     Plain(String),
 }
 
@@ -837,17 +837,15 @@ fn test_enum_newtype_variant_plain_still_works() {
 #[derive(Facet, Debug, PartialEq)]
 #[repr(C)]
 enum EnumWithTupleProxyVariant {
-    NamedPoint(String, Point),        // Point has proxy
-    NamedBinary(String, BinaryU32),   // BinaryU32 has proxy
-    TwoPoints(Point, Point),          // Both have proxy
+    NamedPoint(String, Point),      // Point has proxy
+    NamedBinary(String, BinaryU32), // BinaryU32 has proxy
+    TwoPoints(Point, Point),        // Both have proxy
 }
 
 #[test]
 fn test_enum_tuple_variant_with_container_proxy_roundtrip() {
-    let original = EnumWithTupleProxyVariant::NamedPoint(
-        "origin".to_string(),
-        Point { x: 0, y: 0 },
-    );
+    let original =
+        EnumWithTupleProxyVariant::NamedPoint("origin".to_string(), Point { x: 0, y: 0 });
     let xml = to_string(&original).unwrap();
     eprintln!("XML: {xml}");
 
@@ -857,10 +855,8 @@ fn test_enum_tuple_variant_with_container_proxy_roundtrip() {
 
 #[test]
 fn test_enum_tuple_variant_with_binary_proxy_roundtrip() {
-    let original = EnumWithTupleProxyVariant::NamedBinary(
-        "flags".to_string(),
-        BinaryU32(0b10101010),
-    );
+    let original =
+        EnumWithTupleProxyVariant::NamedBinary("flags".to_string(), BinaryU32(0b10101010));
     let xml = to_string(&original).unwrap();
     eprintln!("XML: {xml}");
     assert!(
@@ -874,10 +870,7 @@ fn test_enum_tuple_variant_with_binary_proxy_roundtrip() {
 
 #[test]
 fn test_enum_tuple_variant_with_two_proxied_types_roundtrip() {
-    let original = EnumWithTupleProxyVariant::TwoPoints(
-        Point { x: 1, y: 2 },
-        Point { x: 3, y: 4 },
-    );
+    let original = EnumWithTupleProxyVariant::TwoPoints(Point { x: 1, y: 2 }, Point { x: 3, y: 4 });
     let xml = to_string(&original).unwrap();
     eprintln!("XML: {xml}");
 

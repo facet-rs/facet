@@ -88,10 +88,7 @@ fn rename_all_on_enum_does_not_affect_variant_fields_in_facet_derive() {
     #[repr(C)]
     #[allow(dead_code)] // Fields are accessed via reflection, not directly
     enum MyTag {
-        TagFoo {
-            name: String,
-            value: u32,
-        },
+        TagFoo { name: String, value: u32 },
     }
 
     let Type::User(UserType::Enum(enum_type)) = MyTag::SHAPE.ty else {

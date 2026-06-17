@@ -52,6 +52,7 @@ In terms of data formats, we have:
 - [facet-asn1](https://github.com/facet-rs/facet/tree/main/facet-asn1): ASN.1 format support
 - [facet-xdr](https://github.com/facet-rs/facet/tree/main/facet-xdr): XDR format support
 - [facet-csv](https://github.com/facet-rs/facet/tree/main/facet-csv): CSV format support
+- [facet-xml](https://github.com/facet-rs/facet/tree/main/facet-xml): XML format support
 
 Still adjacent to serialization/deserialization, we have:
 
@@ -71,12 +72,12 @@ And the less developed:
 
 - [facet-inspect](https://github.com/facet-rs/facet-inspect): Utilities to inspect the content of a Facet object
 
-## Extracted crates
+## Previously separate crates
 
-These crates were previously part of this monorepo but have been extracted to their own repositories:
+These crates previously lived in separate repositories and now live in this monorepo:
 
-- [facet-xml](https://github.com/facet-rs/facet-xml): XML/DOM ecosystem (includes facet-xml, facet-dom, facet-svg, facet-atom, facet-xml-node, facet-xml-diff, facet-singularize)
-- [facet-axum](https://github.com/facet-rs/facet-axum): Axum web framework integration
+- [facet-xml](https://github.com/facet-rs/facet/tree/main/facet-xml): XML/DOM ecosystem (includes facet-xml, facet-dom, facet-svg, facet-atom, facet-xml-node, facet-singularize)
+- [facet-axum](https://github.com/facet-rs/facet/tree/main/facet-axum): Axum web framework integration
 
 ## Extended cinematic universe
 
