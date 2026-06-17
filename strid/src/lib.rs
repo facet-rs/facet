@@ -636,7 +636,7 @@
 //!
 //! For some types, it may be desirable to prevent arbitrary cloning of a type. In that case,
 //! the `clone` parameter can be used to prevent automatically deriving
-//! [`Clone`][core::clone::Clone].
+//! [`Clone`].
 //!
 //! ```
 //! # use strid::braid;
@@ -651,7 +651,7 @@
 //! ## Custom `Display`, `Debug`, and `PartialOrd`/`Ord` implementations
 //!
 //! By default, the implementations of [`Display`][core::fmt::Display], [`Debug`][core::fmt::Debug]
-//! [`PartialOrd`][core::cmp::PartialOrd], and [`Ord`][core::cmp::Ord]
+//! [`PartialOrd`], and [`Ord`]
 //! provided by a braid delegate directly to the underlying [`String`][alloc::string::String]
 //! or [`str`] types. If a custom implementation is desired, the automatic derivation of these
 //! traits can be controlled by the `display`, `debug`, and `ord` parameters. Both of these
