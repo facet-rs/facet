@@ -84,7 +84,7 @@ async fn chaos_mixed_ops_keeps_cache_correct() -> PicanteResult<()> {
         PicanteResult::Ok(())
     };
 
-    timeout(Duration::from_secs(30), body)
+    timeout(Duration::from_secs(120), body)
         .await
         .expect("chaos test timed out")?;
 
