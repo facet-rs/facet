@@ -5,6 +5,10 @@
 use facet::Facet;
 use figue as args;
 
+fn snapshot_text(err: impl ToString) -> String {
+    crate::common::strip_ansi(&err.to_string())
+}
+
 #[test]
 fn test_ariadne_unknown_flag_with_suggestion() {
     #[derive(Facet, Debug)]
@@ -14,7 +18,7 @@ fn test_ariadne_unknown_flag_with_suggestion() {
     }
     let err = figue::from_slice::<Args>(&["--c0ncurrency", "4"]).unwrap_err();
 
-    let ariadne_output = strip_ansi_escapes::strip_str(err.to_string());
+    let ariadne_output = snapshot_text(err);
     insta::assert_snapshot!("ariadne_unknown_flag_with_suggestion", ariadne_output);
 }
 
@@ -27,7 +31,7 @@ fn test_ariadne_missing_argument() {
     }
     let err = figue::from_slice::<Args>(&[]).unwrap_err();
 
-    let ariadne_output = strip_ansi_escapes::strip_str(err.to_string());
+    let ariadne_output = snapshot_text(err);
     insta::assert_snapshot!("ariadne_missing_argument", ariadne_output);
 }
 
@@ -40,7 +44,7 @@ fn test_ariadne_invalid_value() {
     }
     let err = figue::from_slice::<Args>(&["--count", "not-a-number"]).unwrap_err();
 
-    let ariadne_output = strip_ansi_escapes::strip_str(err.to_string());
+    let ariadne_output = snapshot_text(err);
     insta::assert_snapshot!("ariadne_invalid_value", ariadne_output);
 }
 
@@ -63,7 +67,7 @@ fn test_ariadne_unknown_subcommand() {
 
     let err = figue::from_slice::<Args>(&["buidl"]).unwrap_err();
 
-    let ariadne_output = strip_ansi_escapes::strip_str(err.to_string());
+    let ariadne_output = snapshot_text(err);
     insta::assert_snapshot!("ariadne_unknown_subcommand", ariadne_output);
 }
 
@@ -76,7 +80,7 @@ fn test_ariadne_unexpected_positional() {
     }
     let err = figue::from_slice::<Args>(&["unexpected", "--name", "value"]).unwrap_err();
 
-    let ariadne_output = strip_ansi_escapes::strip_str(err.to_string());
+    let ariadne_output = snapshot_text(err);
     insta::assert_snapshot!("ariadne_unexpected_positional", ariadne_output);
 }
 
@@ -89,6 +93,6 @@ fn test_ariadne_expected_value_got_eof() {
     }
     let err = figue::from_slice::<Args>(&["--concurrency"]).unwrap_err();
 
-    let ariadne_output = strip_ansi_escapes::strip_str(err.to_string());
+    let ariadne_output = snapshot_text(err);
     insta::assert_snapshot!("ariadne_expected_value_got_eof", ariadne_output);
 }
