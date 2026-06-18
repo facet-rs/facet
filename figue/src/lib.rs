@@ -44,7 +44,7 @@
 //! ## Layered Configuration
 //!
 //! For applications that need config files and environment variables, use the
-//! [`builder`] API with [`Driver`]:
+//! [`builder()`] API with [`Driver`]:
 //!
 //! ```rust
 //! use facet::Facet;
@@ -145,7 +145,7 @@
 //!
 //! - [`from_std_args`] - Parse from `std::env::args()` (CLI-only)
 //! - [`from_slice`] - Parse from a string slice (CLI-only, good for testing)
-//! - [`builder`] - Start building layered configuration (CLI + env + files)
+//! - [`builder()`] - Start building layered configuration (CLI + env + files)
 //!
 //! For most CLI applications, start with [`FigueBuiltins`] flattened into your
 //! args struct to get `--help`, `--version`, and `--completions` for free.
@@ -242,7 +242,7 @@ impl core::error::Error for FromStrError {
 /// Deserialize an in-memory config string into `T` using `format`, filling
 /// missing fields from their `#[facet(default)]`s.
 ///
-/// This is the file layer of [`builder`] applied to a string you already hold
+/// This is the file layer of [`builder()`] applied to a string you already hold
 /// — e.g. an `include_str!`'d embedded config — instead of a path on disk. No
 /// CLI or environment layering is performed; layer those on top afterward by
 /// mutating the returned value. Partial inputs are fine: any field the string
@@ -286,7 +286,7 @@ pub fn from_str<T: Facet<'static>>(contents: &str) -> Result<T, FromStrError> {
 /// Parse command-line arguments from `std::env::args()`.
 ///
 /// This is a convenience function for CLI-only parsing (no env vars, no config files).
-/// For layered configuration, use [`builder`] instead.
+/// For layered configuration, use [`builder()`] instead.
 ///
 /// Returns a [`DriverOutcome`] which handles `--help`, `--version`, and errors gracefully.
 /// Use `.unwrap()` for automatic exit handling, or `.into_result()` for manual control.
@@ -318,7 +318,7 @@ pub fn from_std_args<T: Facet<'static>>() -> DriverOutcome<T> {
 /// Parse command-line arguments from a slice.
 ///
 /// This is a convenience function for CLI-only parsing (no env vars, no config files).
-/// For layered configuration, use [`builder`] instead.
+/// For layered configuration, use [`builder()`] instead.
 ///
 /// This function is particularly useful for testing, as you can provide arguments
 /// directly without modifying `std::env::args()`.

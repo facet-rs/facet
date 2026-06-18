@@ -939,7 +939,7 @@ impl ValueSchema {
         )
     }
 
-    /// Check if this is a boolean type or a Vec<bool>.
+    /// Check if this is a boolean type or a `Vec<bool>`.
     /// Used for determining if a flag can appear multiple times as a bool accumulator.
     pub fn is_bool_or_vec_of_bool(&self) -> bool {
         match self {

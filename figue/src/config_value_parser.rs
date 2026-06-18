@@ -282,7 +282,7 @@ fn fill_defaults_from_value_schema(
 /// Get a default ConfigValue based on ValueSchema.
 ///
 /// This provides implicit CLI-friendly defaults only:
-/// - Option<T> → null (implicit None)
+/// - `Option<T>` → null (implicit None)
 /// - Struct → empty object (for recursive filling)
 /// - bool → false (CLI flags default to off)
 ///
@@ -892,7 +892,7 @@ fn fill_defaults_from_shape_recursive(
 /// Get a default ConfigValue for a field.
 ///
 /// For fields with #[facet(default)], calls the default function and serializes to ConfigValue.
-/// For Option<T> types, provides None (null) as implicit default.
+/// For `Option<T>` types, provides None (null) as implicit default.
 /// For scalar fields without defaults, provides CLI-friendly defaults (false/0).
 /// For struct fields without defaults, creates an empty Object for recursive filling.
 /// For required fields without defaults, returns ConfigValue::Missing with field info.
