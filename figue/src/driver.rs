@@ -936,13 +936,11 @@ fn get_source_for_provenance(
 ///     builtins: FigueBuiltins,
 /// }
 ///
-/// fn main() {
-///     // If the user passes --help, this prints help and exits with code 0.
-///     // If the user passes invalid args, this prints an error and exits with code 1.
-///     // Otherwise, it returns the parsed Args.
-///     let args: Args = figue::from_std_args().unwrap();
-///     println!("Processing: {}", args.file);
-/// }
+/// // If the user passes --help, this prints help and exits with code 0.
+/// // If the user passes invalid args, this prints an error and exits with code 1.
+/// // Otherwise, it returns the parsed Args.
+/// let args: Args = figue::from_std_args().unwrap();
+/// println!("Processing: {}", args.file);
 /// ```
 ///
 /// For tests or custom handling, use [`.into_result()`](Self::into_result) to get a
