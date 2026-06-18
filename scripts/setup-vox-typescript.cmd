@@ -25,8 +25,10 @@ if not exist "%SUBJECT_RUST_BIN%" (
 if not exist "%SUBJECT_GENERATED_PKG%" (
     if defined PNPM (
         set "PNPM_CMD=!PNPM!"
+        set "PNPM_VIA_COREPACK="
     ) else (
         set "PNPM_CMD="
+        set "PNPM_VIA_COREPACK="
     )
 
     if not defined PNPM_CMD (
@@ -38,20 +40,25 @@ if not exist "%SUBJECT_GENERATED_PKG%" (
         where corepack >nul 2>nul
         if not errorlevel 1 (
             corepack prepare "pnpm@!PNPM_VERSION!" --activate
-            if errorlevel 1 exit /b %ERRORLEVEL%
+            if errorlevel 1 exit /b 1
             where pnpm >nul 2>nul
             if not errorlevel 1 set "PNPM_CMD=pnpm"
+            if not defined PNPM_CMD (
+                set "PNPM_CMD=corepack"
+                set "PNPM_VIA_COREPACK=1"
+            )
         )
     )
 
     if not defined PNPM_CMD (
         where npm >nul 2>nul
         if not errorlevel 1 (
-            set "LOCAL_PNPM_ROOT=!TARGET_DIR!\vox-pnpm"
-            set "PNPM_CMD=!TARGET_DIR!\vox-pnpm\node_modules\.bin\pnpm.cmd"
+            set "LOCAL_PNPM_ROOT=%TARGET_DIR%\vox-pnpm"
+            set "PNPM_CMD=%TARGET_DIR%\vox-pnpm\node_modules\.bin\pnpm.cmd"
+            set "PNPM_VIA_COREPACK="
             if not exist "!PNPM_CMD!" (
-                npm install --prefix "!LOCAL_PNPM_ROOT!" "pnpm@!PNPM_VERSION!"
-                if errorlevel 1 exit /b %ERRORLEVEL%
+                npm install --prefix "!LOCAL_PNPM_ROOT!" "pnpm@%PNPM_VERSION%"
+                if errorlevel 1 exit /b 1
             )
         )
     )
@@ -61,8 +68,17 @@ if not exist "%SUBJECT_GENERATED_PKG%" (
         exit /b 127
     )
 
-    "!PNPM_CMD!" --dir "%VOX_DIR%" install --frozen-lockfile
-    if errorlevel 1 exit /b %ERRORLEVEL%
+    if defined PNPM_VIA_COREPACK (
+        corepack pnpm --dir "%VOX_DIR%" install --frozen-lockfile
+    ) else (
+        "!PNPM_CMD!" --dir "%VOX_DIR%" install --frozen-lockfile
+    )
+    if errorlevel 1 exit /b 1
+)
+
+if not exist "%SUBJECT_GENERATED_PKG%" (
+    echo setup-vox-typescript: pnpm install did not link @bearcove/vox-generated for the TypeScript subject 1>&2
+    exit /b 1
 )
 
 if defined NEXTEST_ENV (

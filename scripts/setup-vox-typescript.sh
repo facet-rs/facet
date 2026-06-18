@@ -56,4 +56,9 @@ if [ ! -f "$subject_generated_pkg" ]; then
     "$pnpm_cmd" --dir "$vox_dir" install --frozen-lockfile
 fi
 
+if [ ! -f "$subject_generated_pkg" ]; then
+    echo "setup-vox-typescript: pnpm install did not link @bearcove/vox-generated for the TypeScript subject" >&2
+    exit 1
+fi
+
 export_nextest_node_path

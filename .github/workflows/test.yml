@@ -241,6 +241,11 @@ jobs:
         with:
           tool: cargo-nextest
 
+      - name: Build Vox Swift subject
+        shell: bash
+        run: |
+          swift build -c release --jobs 1 --product subject-swift --package-path vox/swift/subject
+
       - name: ✨ Run nextest tests (macOS)
         shell: bash
         env:
