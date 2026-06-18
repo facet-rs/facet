@@ -4303,7 +4303,7 @@ async fn spawn_subject_cmd_with_env(
 
     let mut command = if cmd.ends_with(".sh") {
         let mut c = Command::new("sh");
-        c.arg("-lc").arg(cmd);
+        c.arg("-c").arg(cmd);
         c
     } else {
         Command::new(cmd)
@@ -4519,7 +4519,7 @@ pub async fn spawn_server_subject(spec: SubjectSpec) -> Result<(String, Child), 
 
     let mut command = if cmd.ends_with(".sh") {
         let mut c = Command::new("sh");
-        c.arg("-lc").arg(cmd);
+        c.arg("-c").arg(cmd);
         c
     } else {
         Command::new(cmd)
