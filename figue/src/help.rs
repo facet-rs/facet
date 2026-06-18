@@ -2446,7 +2446,7 @@ fn write_arg_help(out: &mut String, arg: &ArgSchema, config: &HelpConfig) {
             // Append the default value or required text
             if let Some(default) = arg.default() {
                 out.push_str(&format!(" [Default: `{}`]", config_value_summary(default)));
-            } else {
+            } else if arg.required() {
                 out.push_str(" [Required]")
             }
         }
@@ -2614,6 +2614,10 @@ mod tests {
             /// A value with a default.
             #[facet(args::named, default = "standard")]
             mode: String,
+
+            /// An optional value.
+            #[facet(args::named)]
+            maybe: Option<String>,
         }
 
         let schema = Schema::from_shape(Args::SHAPE).unwrap();
@@ -2627,6 +2631,14 @@ mod tests {
         assert!(
             help.contains("--mode <STRING> [Default: `standard`]"),
             "help should show default marker: {help}"
+        );
+        assert!(
+            help.contains("--maybe <STRING>"),
+            "help should show optional argument placeholder: {help}"
+        );
+        assert!(
+            !help.contains("--maybe <STRING> [Required]"),
+            "help should not mark optional arguments as required: {help}"
         );
     }
 

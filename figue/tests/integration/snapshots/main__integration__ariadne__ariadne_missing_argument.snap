@@ -1,5 +1,5 @@
 ---
-source: crates/figue/tests/integration/ariadne.rs
+source: figue/tests/integration/ariadne.rs
 expression: ariadne_output
 ---
 main
@@ -8,7 +8,7 @@ USAGE:
     main [OPTIONS]
 
 OPTIONS:
-        --required-field <STRING>
+        --required-field <STRING> [Required]
 
 
 Error: missing required argument
