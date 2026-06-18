@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 3006a8be0a8c5e9829b16bece0ec392830fcc006436a0b6973edfdb0017e79d3 # shrinks to case = Case { writer: Struct([FieldTy { name: "alpha", ty: List(Struct([])), required: false }]), value: {"alpha": [{}]}, reader: Struct([FieldTy { name: "alpha", ty: List(Struct([])), required: false }]), expect_tag: Ok, expected_value: Some({"alpha": [{}]}) }

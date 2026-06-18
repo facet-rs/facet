@@ -1,0 +1,49 @@
+//! The optional copy-and-patch JIT.
+//!
+//! Each IR op is a stencil — a fragment of machine code compiled once at build
+//! time from a small Rust function, with holes for its patch values.
+//! "JIT-compiling" a program is memcpying its stencils into executable memory
+//! and patching the holes: no optimizer, no unwinding. The result is identical
+//! to the interpreter, only faster (`r[exec.jit-optional]`).
+//!
+//! This crate is reached only through the `jit` Cargo feature on the `phon`
+//! front door, so the baseline pays nothing for it and platforms that forbid
+//! executable memory omit it entirely (`r[crates.jit-opt-in]`). Like the engine,
+//! it is binding-free — it consumes only the IR
+//! (`r[crates.engine-is-binding-free]`).
+//!
+//! Spec: `docs/content/spec.md` — `r[ir.stencils]`, `r[ir.inlining]`,
+//! `r[ir.memory]`, and `r[crates.concern-separation]`.
+
+/// Stencils: one small function per op plus the threaded state ABI. Today they
+/// are called through a function pointer; the machine-code version extracts their
+/// bytes and patches the holes. Same functions, same immediates, same ABI.
+///
+/// Spec: `r[ir.stencils]`.
+// r[impl crates.concern-separation]
+// r[impl crates.engine-is-binding-free]
+pub mod stencil;
+
+/// Lowering: compile a linear IR program into a flat `(stencil, immediates)`
+/// table — the copy-and-patch shape. The machine-code backend will splice and
+/// patch; this stand-in threads through function pointers, identical results.
+///
+/// Spec: `r[ir.inlining]`, `r[ir.memory]`, `r[exec.jit-optional]`.
+pub mod lower;
+
+// r[impl exec.jit-optional]
+pub use lower::{CompiledDecode, CompiledEncode, compile_decode, compile_encode};
+
+/// Stencil machine code extracted from rustc's object output at build time
+/// (`build.rs`). Empty on targets without the native backend.
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+mod stencils {
+    include!(concat!(env!("OUT_DIR"), "/stencils.rs"));
+}
+
+/// The native execution substrate: run compiler-emitted machine code from
+/// `MAP_JIT` memory. The foundation the copy-and-patch backend builds on.
+///
+/// Spec: `r[ir.stencils]`.
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+pub mod native;

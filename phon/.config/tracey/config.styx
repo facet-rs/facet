@@ -1,0 +1,30 @@
+@schema {id crate:tracey-config@1, cli tracey}
+
+specs (
+    {
+        name phon
+        include (docs/content/spec.md)
+        impls (
+            {
+                name rust
+                include (rust/**/*.rs)
+            }
+            {
+                name typescript
+                include (
+                    rust/phon-codegen/src/lib.rs
+                    rust/phon-codegen/src/typescript.rs
+                    typescript/packages/phon-engine/src/**/*.ts
+                    typescript/packages/phon-schema/src/**/*.ts
+                )
+            }
+            {
+                name swift
+                include (
+                    swift/**/*.swift
+                    swift/cphon-jit-stencils/**/*.c
+                )
+            }
+        )
+    }
+)
