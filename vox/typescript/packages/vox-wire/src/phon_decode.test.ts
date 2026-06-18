@@ -11,10 +11,10 @@ describe("phon Message decode (all golden wire vectors)", () => {
     it(`decodes ${name}`, () => {
       const bytes = new Uint8Array(readFileSync(new URL(name, WIRE)));
       const msg = decodeTyped(bytes, schemaId.Message, schemaId.Message, registry) as {
-        connection_id: bigint;
+        lane_id: bigint;
         payload: { tag: string };
       };
-      expect(typeof msg.connection_id).toBe("bigint");
+      expect(typeof msg.lane_id).toBe("bigint");
       expect(typeof msg.payload.tag).toBe("string");
     });
   }
