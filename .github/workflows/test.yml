@@ -18,6 +18,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Select Rust 1.92
+        shell: bash
+        run: |
+          rustup toolchain install 1.92 --profile minimal --component rust-src --component clippy --component llvm-tools-preview
+          rustup target add thumbv8m.main-none-eabihf --toolchain 1.92
+          echo "RUSTUP_TOOLCHAIN=1.92" >> "$GITHUB_ENV"
+
       - name: Install system dependencies
         run: apt-get update && apt-get install -y zlib1g-dev
 
@@ -56,6 +63,13 @@ jobs:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
       - uses: actions/checkout@v6
+
+      - name: Select Rust 1.92
+        shell: bash
+        run: |
+          rustup toolchain install 1.92 --profile minimal --component rust-src --component clippy --component llvm-tools-preview
+          rustup target add thumbv8m.main-none-eabihf --toolchain 1.92
+          echo "RUSTUP_TOOLCHAIN=1.92" >> "$GITHUB_ENV"
 
       - uses: Swatinem/rust-cache@v2
 
@@ -106,6 +120,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Select Rust 1.92
+        shell: bash
+        run: |
+          rustup toolchain install 1.92 --profile minimal --component rust-src --component clippy --component llvm-tools-preview
+          rustup target add thumbv8m.main-none-eabihf --toolchain 1.92
+          echo "RUSTUP_TOOLCHAIN=1.92" >> "$GITHUB_ENV"
+
       - uses: Swatinem/rust-cache@v2
 
       - name: ✨ Check MSRV
@@ -120,6 +141,13 @@ jobs:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
       - uses: actions/checkout@v6
+
+      - name: Select Rust 1.92
+        shell: bash
+        run: |
+          rustup toolchain install 1.92 --profile minimal --component rust-src --component clippy --component llvm-tools-preview
+          rustup target add thumbv8m.main-none-eabihf --toolchain 1.92
+          echo "RUSTUP_TOOLCHAIN=1.92" >> "$GITHUB_ENV"
 
       - uses: Swatinem/rust-cache@v2
 
@@ -138,6 +166,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Select Rust 1.92
+        shell: bash
+        run: |
+          rustup toolchain install 1.92 --profile minimal --component rust-src --component clippy --component llvm-tools-preview
+          rustup target add thumbv8m.main-none-eabihf --toolchain 1.92
+          echo "RUSTUP_TOOLCHAIN=1.92" >> "$GITHUB_ENV"
+
       - uses: Swatinem/rust-cache@v2
 
       - name: ✨ Check lockfile is updated
@@ -152,6 +187,13 @@ jobs:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
       - uses: actions/checkout@v6
+
+      - name: Select Rust 1.92
+        shell: bash
+        run: |
+          rustup toolchain install 1.92 --profile minimal --component rust-src --component clippy --component llvm-tools-preview
+          rustup target add thumbv8m.main-none-eabihf --toolchain 1.92
+          echo "RUSTUP_TOOLCHAIN=1.92" >> "$GITHUB_ENV"
 
       - uses: Swatinem/rust-cache@v2
 
@@ -175,7 +217,7 @@ jobs:
         with:
           manifest-path: Cargo.toml
           baseline-rev: origin/main
-          exclude: facet-testattrs, facet-cargo-toml, facet-axum, rusqlite-facet, rediff, facet-dessert, facet-format, facet-json, facet-json-classics, facet-postcard, facet-msgpack, facet-toml, facet-yaml, facet-format-suite, facet-asn1, facet-csv, facet-xdr, facet-json-schema, facet-typescript, facet-python, facet-lua, facet-value, facet-zod, facet-singularize, facet-dom, facet-xml, facet-xml-node, facet-atom, facet-svg, figue, figue-attrs, picante, picante-macros
+          exclude: facet-testattrs, facet-cargo-toml, facet-axum, rusqlite-facet, rediff, facet-dessert, facet-format, facet-json, facet-json-classics, facet-postcard, facet-msgpack, facet-toml, facet-yaml, facet-format-suite, facet-asn1, facet-csv, facet-xdr, facet-json-schema, facet-typescript, facet-python, facet-lua, facet-value, facet-zod, facet-singularize, facet-dom, facet-xml, facet-xml-node, facet-atom, facet-svg, figue, figue-attrs, picante, picante-macros, facet-styx, serde_styx, styx-cli, styx-compat-tests, styx-cst, styx-embed, styx-embed-macros, styx-ffi, styx-format, styx-gen-go, styx-lsp, styx-lsp-ext, styx-lsp-test-schema, styx-parse, styx-testhelpers, styx-tokenizer, styx-tree, styx-wasm, tree-sitter-styx, xtask
           verbose: true
 
   test-aarch64-apple-darwin:
@@ -205,6 +247,13 @@ jobs:
       image: ghcr.io/facet-rs/facet-ci:latest-arm64
     steps:
       - uses: actions/checkout@v6
+
+      - name: Select Rust 1.92
+        shell: bash
+        run: |
+          rustup toolchain install 1.92 --profile minimal --component rust-src --component clippy --component llvm-tools-preview
+          rustup target add thumbv8m.main-none-eabihf --toolchain 1.92
+          echo "RUSTUP_TOOLCHAIN=1.92" >> "$GITHUB_ENV"
 
       - uses: Swatinem/rust-cache@v2
 

@@ -22,7 +22,7 @@ making it ideal for tooling like formatters, refactoring tools, and language ser
 # Example
 
 ```
-use styx_cst::{parse, ast::{AstNode, Document}};
+use styx_cst::{AstNode, Document, parse};
 
 let source = r#"
 host localhost
@@ -46,7 +46,7 @@ assert_eq!(parsed.syntax().to_string(), source);
 # Validation
 
 ```
-use styx_cst::{parse, validation::validate};
+use styx_cst::{parse, validate};
 
 let source = "{ a 1, a 2 }"; // Duplicate key
 let parsed = parse(source);

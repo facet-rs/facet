@@ -201,8 +201,8 @@ docker-build-push-linux-amd64:
     docker build \
         --push \
         --platform linux/amd64 \
-        --build-arg BASE_IMAGE=rust:1.91-slim-trixie \
-        --build-arg RUSTUP_TOOLCHAIN=1.91 \
+        --build-arg BASE_IMAGE=rust:1.92-slim-trixie \
+        --build-arg RUSTUP_TOOLCHAIN=1.92 \
         -t "${IMAGE_NAME}:${TAG}-amd64" \
         -t "${IMAGE_NAME}:latest-amd64" \
         -f Dockerfile \
@@ -235,8 +235,8 @@ docker-build-push-linux-arm64:
     docker build \
         --push \
         --platform linux/arm64 \
-        --build-arg BASE_IMAGE=rust:1.91-slim-trixie \
-        --build-arg RUSTUP_TOOLCHAIN=1.91 \
+        --build-arg BASE_IMAGE=rust:1.92-slim-trixie \
+        --build-arg RUSTUP_TOOLCHAIN=1.92 \
         -t "${IMAGE_NAME}:${TAG}-arm64" \
         -t "${IMAGE_NAME}:latest-arm64" \
         -f Dockerfile \
