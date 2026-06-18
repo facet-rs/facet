@@ -21,20 +21,16 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 default = []
 
 [dependencies]
-bitflags.workspace = true
 blake3.workspace = true
-bytes.workspace = true
 facet.workspace = true
 facet-core.workspace = true
 facet-reflect.workspace = true
 facet-value.workspace = true
 vox-phon.workspace = true
-facet-path.workspace = true
 heck.workspace = true
 indexmap.workspace = true
 vox-rt.workspace = true
 vox-schema.workspace = true
-smallvec.workspace = true
 structstruck.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

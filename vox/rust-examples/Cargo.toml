@@ -8,9 +8,9 @@ homepage.workspace = true
 documentation.workspace = true
 publish = false
 
-[dependencies]
+[dev-dependencies]
 eyre.workspace = true
-vox = { workspace = true, features = ["transport-tcp", "transport-local", "transport-websocket"] }
+vox = { path = "../rust/vox", features = ["transport-tcp", "transport-local", "transport-websocket"] }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["rt", "net", "time"] }
 tracing-subscriber.workspace = true

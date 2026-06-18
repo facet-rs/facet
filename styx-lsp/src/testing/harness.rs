@@ -141,7 +141,7 @@ impl TestHarness {
 
         // Initiate vox session (we're the initiator, like the real LSP)
         let client = vox::initiator_on(StreamLink::new(stdout, stdin))
-            .on_connection(dispatcher)
+            .on_lane(dispatcher)
             .establish::<StyxLspExtensionClient>()
             .await
             .map_err(|e| HarnessError::HandshakeFailed(e.to_string()))?;

@@ -9,7 +9,6 @@ description = "Compliance tests for the canonical vox spec in docs/content/"
 [dependencies]
 vox = { workspace = true }
 vox-core = { workspace = true }
-vox-local.workspace = true
 vox-stream = { workspace = true }
 vox-websocket = { workspace = true }
 vox-types = { workspace = true }
@@ -17,7 +16,3 @@ spec-proto.workspace = true
 facet-value.workspace = true
 vox-rt = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "time", "process"] }
-tempfile.workspace = true
-
-[dev-dependencies]
-libc.workspace = true

@@ -391,6 +391,113 @@ version_group = "phon"
 changelog_path = "phon/CHANGELOG.md"
 
 # ============================================================================
+# Vox packages - coordinated from this monorepo, preserving their major line
+# ============================================================================
+
+[[package]]
+name = "vox"
+version_group = "vox"
+changelog_path = "vox/CHANGELOG.md"
+
+[[package]]
+name = "vox-codegen"
+version_group = "vox"
+changelog_path = "vox/CHANGELOG.md"
+
+[[package]]
+name = "vox-core"
+version_group = "vox"
+changelog_path = "vox/CHANGELOG.md"
+
+[[package]]
+name = "vox-fdpass"
+version_group = "vox"
+changelog_path = "vox/CHANGELOG.md"
+
+[[package]]
+name = "vox-ffi"
+version_group = "vox"
+changelog_path = "vox/CHANGELOG.md"
+
+[[package]]
+name = "vox-inprocess"
+version_group = "vox"
+changelog_path = "vox/CHANGELOG.md"
+
+[[package]]
+name = "vox-local"
+version_group = "vox"
+changelog_path = "vox/CHANGELOG.md"
+
+[[package]]
+name = "vox-macros-core"
+version_group = "vox"
+changelog_path = "vox/CHANGELOG.md"
+
+[[package]]
+name = "vox-macros-parse"
+version_group = "vox"
+changelog_path = "vox/CHANGELOG.md"
+
+[[package]]
+name = "vox-phon"
+version_group = "vox"
+changelog_path = "vox/CHANGELOG.md"
+
+[[package]]
+name = "vox-rt"
+version_group = "vox"
+changelog_path = "vox/CHANGELOG.md"
+
+[[package]]
+name = "vox-rt-macros"
+version_group = "vox"
+changelog_path = "vox/CHANGELOG.md"
+
+[[package]]
+name = "vox-schema"
+version_group = "vox"
+changelog_path = "vox/CHANGELOG.md"
+
+[[package]]
+name = "vox-service-macros"
+version_group = "vox"
+changelog_path = "vox/CHANGELOG.md"
+
+[[package]]
+name = "vox-stream"
+version_group = "vox"
+changelog_path = "vox/CHANGELOG.md"
+
+[[package]]
+name = "vox-types"
+version_group = "vox"
+changelog_path = "vox/CHANGELOG.md"
+
+[[package]]
+name = "vox-websocket"
+version_group = "vox"
+changelog_path = "vox/CHANGELOG.md"
+
+# ============================================================================
+# ur-taking-me-with-you - coordinated from this monorepo, preserving its major line
+# ============================================================================
+
+[[package]]
+name = "ur-taking-me-with-you"
+version_group = "ur-taking-me-with-you"
+changelog_path = "vox/rust/ur-taking-me-with-you/CHANGELOG.md"
+
+# ============================================================================
+# facet-cbor - coordinated from this monorepo, preserving its version line
+# ============================================================================
+
+[[package]]
+name = "facet-cbor"
+version_group = "facet-cbor"
+changelog_path = "vox/rust/facet-cbor/CHANGELOG.md"
+
+# ============================================================================
 # Styx packages - coordinated from this monorepo, preserving their major line
 # ============================================================================
 
@@ -505,6 +612,11 @@ publish = false
 
 [[package]]
 name = "xtask"
+release = false
+publish = false
+
+[[package]]
+name = "vox-xtask"
 release = false
 publish = false
 

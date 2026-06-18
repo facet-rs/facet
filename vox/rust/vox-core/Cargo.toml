@@ -25,12 +25,9 @@ diagnostics = []
 vox-types.workspace = true
 facet.workspace = true
 facet-core.workspace = true
-facet-reflect.workspace = true
 vox-phon.workspace = true
 vox-rt.workspace = true
 tracing.workspace = true
-smallvec.workspace = true
-getrandom.workspace = true
 zerocopy.workspace = true
 futures-util.workspace = true
 
@@ -42,6 +39,5 @@ wasm-bindgen-futures.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-tempfile.workspace = true
-facet-testhelpers.workspace = true
+facet-testhelpers = { path = "../../../facet-testhelpers" }
 tracing-subscriber = { workspace = true }

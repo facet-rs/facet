@@ -104,16 +104,16 @@ async fn run_service_async(addr: SocketAddr) {
         let stream = TcpStream::connect(addr).await?;
         let link = vox_stream::StreamLink::tcp(stream);
         vox::initiator_on(link)
-            .on_connection(dispatcher)
-            .establish::<vox::NoopClient>()
+            .on_lane(dispatcher)
+            .establish_connection()
             .await
             .map_err(std::io::Error::other)
     }
     .await;
 
     match result {
-        Ok(client) => {
-            let _ = client.caller.closed().await;
+        Ok(connection) => {
+            connection.closed().await;
         }
         Err(e) => {
             eprintln!("Failed to connect to dibs CLI: {}", e);

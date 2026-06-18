@@ -19,13 +19,10 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [dependencies]
 vox = { workspace = true }
 vox-core = { workspace = true }
-vox-local.workspace = true
 vox-stream = { workspace = true }
 vox-ffi = { workspace = true }
-vox-types = { workspace = true }
 spec-proto.workspace = true
 facet-value.workspace = true
-tokio = { workspace = true, features = ["rt", "rt-multi-thread", "net"] }
-vox-rt = { workspace = true }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "net", "macros", "time"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

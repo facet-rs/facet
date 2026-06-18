@@ -129,6 +129,35 @@ members = [
   "phon/rust/phon-codegen",
   "phon/rust/phon-conformance",
 
+  # Vox RPC framework
+  "vox/rust-examples",
+  "vox/xtask",
+  "vox/spec/spec-proto",
+  "vox/spec/spec-tests",
+  "vox/rust/vox-types",
+  "vox/rust/vox-rt",
+  "vox/rust/vox-rt-macros",
+  "vox/rust/vox-schema",
+  "vox/rust/vox-core",
+  "vox/rust/vox-stream",
+  "vox/rust/vox-websocket",
+  "vox/rust/vox-inprocess",
+  "vox/rust/vox-local",
+  "vox/rust/vox-fdpass",
+  "vox/rust/vox-ffi",
+  "vox/rust/ur-taking-me-with-you",
+  "vox/rust/vox-macros-parse",
+  "vox/rust/vox-macros-core",
+  "vox/rust/vox-macros",
+  "vox/rust/vox",
+  "vox/rust/subject-rust",
+  "vox/rust/vox-codegen",
+  "vox/rust/vox-phon",
+  "vox/rust/facet-cbor",
+  "vox/rust/wasm-browser-tests",
+  "vox/rust/wasm-inprocess-tests",
+  "vox/typescript/peer-server",
+
   # strongly-typed string IDs
   "strid",
   "strid-macros",
@@ -141,14 +170,21 @@ members = [
 exclude = [
   # tools/ has its own workspace
   "tools",
+  # imported Vox directories that were not members of the original Vox workspace
+  "vox/fuzz",
 ]
 resolver = "3"
 
 [workspace.package]
+version = "0.10.0-rc.0"
 edition = "2024"
 rust-version = "1.92"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/facet-rs/facet"
+homepage = "https://facet.rs"
+documentation = "https://docs.rs/vox"
+keywords = ["rpc", "ipc", "networking", "facet"]
+categories = ["network-programming", "asynchronous"]
 
 [workspace.dependencies]
 facet = { path = "facet", version = "0.50.0-rc.0" }
@@ -195,6 +231,25 @@ phon-engine = { path = "phon/rust/phon-engine", version = "0.2.0-rc.0" }
 phon-ir = { path = "phon/rust/phon-ir", version = "0.2.0-rc.0" }
 phon-jit = { path = "phon/rust/phon-jit", version = "0.2.0-rc.0" }
 phon-schema = { path = "phon/rust/phon-schema", version = "0.2.0-rc.0" }
+phon-codegen = { path = "phon/rust/phon-codegen", version = "0.2.0-rc.0" }
+spec-proto = { path = "vox/spec/spec-proto", version = "0.2.2" }
+subject-rust = { path = "vox/rust/subject-rust", version = "0.2.2" }
+vox = { path = "vox/rust/vox", version = "0.10.0-rc.0" }
+vox-codegen = { path = "vox/rust/vox-codegen", version = "0.10.0-rc.0" }
+vox-core = { path = "vox/rust/vox-core", version = "0.10.0-rc.0" }
+vox-fdpass = { path = "vox/rust/vox-fdpass", version = "0.10.0-rc.0" }
+vox-ffi = { path = "vox/rust/vox-ffi", version = "0.10.0-rc.0" }
+vox-inprocess = { path = "vox/rust/vox-inprocess", version = "0.10.0-rc.0" }
+vox-macros-core = { path = "vox/rust/vox-macros-core", version = "0.10.0-rc.0" }
+vox-macros-parse = { path = "vox/rust/vox-macros-parse", version = "0.10.0-rc.0" }
+vox-phon = { path = "vox/rust/vox-phon", version = "0.10.0-rc.0" }
+vox-rt = { path = "vox/rust/vox-rt", version = "0.10.0-rc.0" }
+vox-rt-macros = { path = "vox/rust/vox-rt-macros", version = "0.10.0-rc.0" }
+vox-schema = { path = "vox/rust/vox-schema", version = "0.10.0-rc.0" }
+vox-service-macros = { path = "vox/rust/vox-macros", version = "0.10.0-rc.0" }
+vox-stream = { path = "vox/rust/vox-stream", version = "0.10.0-rc.0" }
+vox-types = { path = "vox/rust/vox-types", version = "0.10.0-rc.0" }
+vox-websocket = { path = "vox/rust/vox-websocket", version = "0.10.0-rc.0" }
 serde_styx = { path = "serde_styx", version = "5.0.0-rc.0" }
 strid = { path = "strid", version = "11.0.0-rc.0" }
 strid-macros = { path = "strid-macros", version = "11.0.0-rc.0" }
@@ -236,7 +291,8 @@ divan = "^0.1.21"
 dotenvy = "^0.15"
 eyre = "^0.6.12"
 futures = "^0.3"
-futures-util = { version = "^0.3.31", default-features = false, features = ["std", "async-await"] }
+futures-channel = "0.3"
+futures-util = { version = "^0.3.31", default-features = false, features = ["std", "async-await", "async-await-macro"] }
 glob = "^0.3"
 goblin = "^0.9"
 heck = "^0.5.0"
@@ -247,13 +303,17 @@ indexmap = { version = "^2.12.1", default-features = false }
 insta = "^1.44.3"
 inventory = "^0.3"
 jiff = "^0.2.16"
+js-sys = "0.3"
+libc = "0.2.180"
 log = { version = "^0.4.29", features = ["std"] }
 lz4_flex = "^0.11"
 memmap2 = "^0.9"
 owo-colors = "^4.2.3"
 object = "^0.39"
 parking_lot = "^0.12.4"
+passfd = "0.1"
 postgres-types = "^0.2"
+prettyplease = "0.2"
 proc-macro2 = "1"
 proptest = "^1"
 quote = "1"
@@ -272,12 +332,13 @@ thiserror = "^2"
 time = { version = "^0.3.44", features = ["formatting", "macros", "parsing"] }
 tokio = { version = "1", features = ["io-util", "rt", "rt-multi-thread"] }
 tokio-postgres = "^0.7"
+tokio-rustls = "0.26"
 tokio-test-lite = "^0.2"
 tokio-tungstenite = "^0.29"
 tower = { version = "0.5", default-features = false, features = ["util"] }
 tower-lsp = "^0.20"
-tracing = { version = "^0.1.43", default-features = false, features = ["std"] }
-tracing-subscriber = { version = "^0.3.22", default-features = false, features = ["fmt", "std"] }
+tracing = { version = "^0.1.43", default-features = false, features = ["std", "attributes"] }
+tracing-subscriber = { version = "^0.3.22", default-features = false, features = ["fmt", "std", "env-filter"] }
 tree-sitter = { package = "arborium-tree-sitter", version = "2.18.0" }
 unicode-width = "^0.2.2"
 trybuild = "^1.0"
@@ -285,8 +346,12 @@ ulid = "^1.2.1"
 unsynn = "^0.3.0"
 uuid = "^1.19.0"
 rust_decimal = { version = "^1.38.0", default-features = false, features = ["std"] }
+rustls = "0.23"
+rustls-pemfile = "2"
 rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
 smallvec = { version = "^1.15", default-features = false }
+structstruck = "0.5.1"
+syn = { version = "2", features = ["full"] }
 iddqd = { version = "^0.4.0", default-features = false }
 confusables = "^0.1"
 indoc = "^2.0.7"
@@ -300,11 +365,13 @@ sha2 = "^0.10"
 similar = "^2"
 terminal-colorsaurus = "^1"
 wasm-bindgen = "^0.2"
+wasm-bindgen-futures = "0.4"
+wasmtimer = { version = "0.4", default-features = false }
+web-sys = "0.3"
 which = "^7"
-vox = "^0.9.0-rc.0"
-vox-codegen = "^0.9.0-rc.0"
-vox-stream = "^0.9.0-rc.0"
-vox-websocket = "^0.9.0-rc.0"
+windows-sys = "0.61"
+xshell = "0.2"
+zerocopy = { version = "0.8", features = ["derive"] }
 
 # Allow the facet_no_doc cfg in generated code
 # See: https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html

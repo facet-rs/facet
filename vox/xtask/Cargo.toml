@@ -1,5 +1,5 @@
 [package]
-name = "xtask"
+name = "vox-xtask"
 version = "0.2.2"
 edition = "2024"
 publish = false

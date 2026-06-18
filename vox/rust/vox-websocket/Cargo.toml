@@ -20,7 +20,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 vox-types.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { workspace = true, features = ["net", "rt", "sync"] }
+tokio = { workspace = true, features = ["net", "rt", "sync", "macros"] }
 tokio-tungstenite.workspace = true
 futures-util.workspace = true
 vox-core.workspace = true
@@ -37,7 +37,6 @@ web-sys = { workspace = true, features = [
 ] }
 futures-channel.workspace = true
 futures-util = { workspace = true, features = ["sink"] }
-getrandom = { workspace = true, features = ["wasm_js"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

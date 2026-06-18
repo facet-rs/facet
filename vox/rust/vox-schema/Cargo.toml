@@ -20,4 +20,3 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 blake3.workspace = true
 facet.workspace = true
 facet-core.workspace = true
-indexmap.workspace = true

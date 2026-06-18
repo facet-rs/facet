@@ -53,14 +53,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let dispatcher = SquelServiceDispatcher::new(SquelServiceImpl::new(client));
 
                     match vox::acceptor_on(link)
-                        .on_connection(dispatcher)
-                        .establish::<vox::NoopClient>()
+                        .on_lane(dispatcher)
+                        .establish_connection()
                         .await
                     {
-                        Ok(client) => {
+                        Ok(connection) => {
                             println!("Vox handshake complete with {}", peer_addr);
 
-                            let _ = client.caller.closed().await;
+                            connection.closed().await;
                             println!("Connection closed: {}", peer_addr);
                         }
                         Err(e) => {

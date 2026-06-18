@@ -43,7 +43,7 @@ pub async fn run() {
 
     let link = vox_stream::StreamLink::stdio();
     let host_client = match styx_lsp_ext::vox::acceptor_on(link)
-        .on_connection(dispatcher)
+        .on_lane(dispatcher)
         .establish::<StyxLspHostClient>()
         .await
     {

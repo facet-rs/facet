@@ -239,7 +239,7 @@ impl ExtensionManager {
 
         // Initiate vox session (LSP is the initiator)
         let client = vox::initiator_on(StreamLink::new(stdout, stdin))
-            .on_connection(dispatcher)
+            .on_lane(dispatcher)
             .establish::<StyxLspExtensionClient>()
             .await
             .map_err(|e| {
