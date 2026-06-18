@@ -211,6 +211,9 @@ jobs:
     runs-on: bearcove-ubuntu-24.04
     permissions:
       contents: read
+    env:
+      CARGO_HTTP_MULTIPLEXING: "false"
+      CARGO_NET_RETRY: "10"
     steps:
       - uses: actions/checkout@v6
         with:
@@ -226,6 +229,8 @@ jobs:
 
   test-aarch64-apple-darwin:
     runs-on: macos-26
+    env:
+      VOX_SWIFT_BUILD_CONFIGURATION: debug
     steps:
       - uses: actions/checkout@v6
 
@@ -244,7 +249,7 @@ jobs:
       - name: Build Vox Swift subject
         shell: bash
         run: |
-          swift build -c release --jobs 1 --product subject-swift --package-path vox/swift/subject
+          swift build -c "$VOX_SWIFT_BUILD_CONFIGURATION" --jobs 1 --product subject-swift --package-path vox/swift/subject
 
       - name: ✨ Run nextest tests (macOS)
         shell: bash
