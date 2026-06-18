@@ -48,6 +48,6 @@ filter = 'test(lang_swift_transport_)'
 slow-timeout = { period = "60s", terminate-after = 8 }
 
 [[profile.default.overrides]]
-filter = 'test(swift_tcp_subject_exits_when_harness_disconnects)'
+filter = 'test(swift_tcp_subject_exits_when_harness_shutdowns)'
 # This lifecycle test also builds the release Swift subject when it is stale.
 slow-timeout = { period = "60s", terminate-after = 8 }

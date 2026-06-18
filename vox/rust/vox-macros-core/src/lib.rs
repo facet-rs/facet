@@ -64,7 +64,7 @@ pub fn parse_service_options(tokens: &TokenStream2) -> Result<ServiceOptions, Er
             }
         };
 
-        if key.to_string() != "runtime_feature" {
+        if key != "runtime_feature" {
             return Err(Error::new(
                 key.span(),
                 format!("unsupported #[vox::service] option `{key}`; expected `runtime_feature`"),

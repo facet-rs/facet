@@ -3,13 +3,14 @@ use std::{
     future::Future,
     pin::Pin,
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use facet_core::Shape;
 use futures_util::FutureExt as _;
 use tracing::{trace, warn};
 use vox_rt::sync::{Notify, mpsc, oneshot, watch};
+use vox_types::time::Instant;
 use vox_types::{
     BoxFut, ChannelMessage, ConduitRx, ConduitTx, ConnectionRole, ConnectionSettings, Decline,
     EstablishmentContext, EstablishmentDetails, EstablishmentEvent, EstablishmentOutcome,
@@ -1533,6 +1534,9 @@ impl Connection {
             interval.set_missed_tick_behavior(vox_types::time::tokio::MissedTickBehavior::Delay);
             interval
         });
+        let mut open_rx_closed = false;
+        let mut close_rx_closed = false;
+        let mut control_rx_closed = false;
 
         loop {
             enum RunEvent {
@@ -1545,9 +1549,34 @@ impl Connection {
 
             let event = {
                 let msg = self.rx.recv_msg().fuse();
-                let open = self.open_rx.recv().fuse();
-                let close = self.close_rx.recv().fuse();
-                let control = self.control_rx.recv().fuse();
+                // Dropping public handles closes these local request queues, but
+                // that is not a protocol shutdown. Once a queue reports `None`,
+                // stop polling it so a biased select cannot spin on the closed
+                // queue and starve recv/control work.
+                let open = async {
+                    if open_rx_closed {
+                        futures_util::future::pending().await
+                    } else {
+                        self.open_rx.recv().await
+                    }
+                }
+                .fuse();
+                let close = async {
+                    if close_rx_closed {
+                        futures_util::future::pending().await
+                    } else {
+                        self.close_rx.recv().await
+                    }
+                }
+                .fuse();
+                let control = async {
+                    if control_rx_closed {
+                        futures_util::future::pending().await
+                    } else {
+                        self.control_rx.recv().await
+                    }
+                }
+                .fuse();
                 let keepalive = async {
                     if let Some(interval) = keepalive_tick.as_mut() {
                         interval.tick().await;
@@ -1621,7 +1650,15 @@ impl Connection {
                         break;
                     }
                 }
-                RunEvent::Open(None) | RunEvent::Close(None) | RunEvent::Control(None) => {}
+                RunEvent::Open(None) => {
+                    open_rx_closed = true;
+                }
+                RunEvent::Close(None) => {
+                    close_rx_closed = true;
+                }
+                RunEvent::Control(None) => {
+                    control_rx_closed = true;
+                }
             }
         }
 
