@@ -93,7 +93,7 @@ macro_rules! __facet_invoke {
 
                         // Display impl - use doc comments as format strings
                         impl ::core::fmt::Display for @Self {
-                            #[allow(unused_variables)] // not all fields used in format strings
+                            #[allow(unused_assignments, unused_variables)] // not all fields used in format strings
                             fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
                                 match self {
                                     @for_variant {
