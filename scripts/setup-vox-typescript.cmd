@@ -1,5 +1,5 @@
 @echo off
-setlocal
+setlocal EnableExtensions EnableDelayedExpansion
 
 set "SCRIPT_DIR=%~dp0"
 set "REPO_ROOT=%SCRIPT_DIR%.."
@@ -24,7 +24,7 @@ if not exist "%SUBJECT_RUST_BIN%" (
 
 if not exist "%SUBJECT_GENERATED_PKG%" (
     if defined PNPM (
-        set "PNPM_CMD=%PNPM%"
+        set "PNPM_CMD=!PNPM!"
     ) else (
         set "PNPM_CMD="
     )
@@ -37,7 +37,7 @@ if not exist "%SUBJECT_GENERATED_PKG%" (
     if not defined PNPM_CMD (
         where corepack >nul 2>nul
         if not errorlevel 1 (
-            corepack prepare "pnpm@%PNPM_VERSION%" --activate
+            corepack prepare "pnpm@!PNPM_VERSION!" --activate
             if errorlevel 1 exit /b %ERRORLEVEL%
             where pnpm >nul 2>nul
             if not errorlevel 1 set "PNPM_CMD=pnpm"
@@ -47,10 +47,10 @@ if not exist "%SUBJECT_GENERATED_PKG%" (
     if not defined PNPM_CMD (
         where npm >nul 2>nul
         if not errorlevel 1 (
-            set "LOCAL_PNPM_ROOT=%TARGET_DIR%\vox-pnpm"
-            set "PNPM_CMD=%TARGET_DIR%\vox-pnpm\node_modules\.bin\pnpm.cmd"
-            if not exist "%PNPM_CMD%" (
-                npm install --prefix "%LOCAL_PNPM_ROOT%" "pnpm@%PNPM_VERSION%"
+            set "LOCAL_PNPM_ROOT=!TARGET_DIR!\vox-pnpm"
+            set "PNPM_CMD=!TARGET_DIR!\vox-pnpm\node_modules\.bin\pnpm.cmd"
+            if not exist "!PNPM_CMD!" (
+                npm install --prefix "!LOCAL_PNPM_ROOT!" "pnpm@!PNPM_VERSION!"
                 if errorlevel 1 exit /b %ERRORLEVEL%
             )
         )
@@ -61,7 +61,7 @@ if not exist "%SUBJECT_GENERATED_PKG%" (
         exit /b 127
     )
 
-    "%PNPM_CMD%" --dir "%VOX_DIR%" install --frozen-lockfile
+    "!PNPM_CMD!" --dir "%VOX_DIR%" install --frozen-lockfile
     if errorlevel 1 exit /b %ERRORLEVEL%
 )
 
@@ -70,7 +70,7 @@ if defined NEXTEST_ENV (
     for /f "delims=" %%I in ('where node 2^>nul') do (
         if not defined NODE_DIR_FOR_NEXTEST set "NODE_DIR_FOR_NEXTEST=%%~dpI"
     )
-    if defined NODE_DIR_FOR_NEXTEST echo PATH=%NODE_DIR_FOR_NEXTEST%;%PATH%>>"%NEXTEST_ENV%"
+    if defined NODE_DIR_FOR_NEXTEST >>"!NEXTEST_ENV!" echo PATH=!NODE_DIR_FOR_NEXTEST!;!PATH!
 )
 
 exit /b 0
