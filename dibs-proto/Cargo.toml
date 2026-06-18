@@ -2,6 +2,7 @@
 name = "dibs-proto"
 version = "0.2.0-rc.0"
 edition = "2024"
+rust-version.workspace = true
 authors = ["Amos Wenger <amos@bearcove.eu>"]
 description = "Protocol definitions for dibs CLI-to-service communication"
 license = "MIT OR Apache-2.0"

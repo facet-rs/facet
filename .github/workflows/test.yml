@@ -40,7 +40,7 @@ jobs:
           rustup toolchain install nightly
 
           # Run unit and integration tests with coverage
-          cargo +nightly llvm-cov --no-report nextest --features ci
+          cargo +nightly llvm-cov --no-report nextest --features ci -E 'not (binary(postgres_integration) | binary(query_integration))'
 
           # Run doc tests with coverage (requires nightly)
           cargo +nightly llvm-cov --no-report --doc --features ci
@@ -217,7 +217,7 @@ jobs:
         with:
           manifest-path: Cargo.toml
           baseline-rev: origin/main
-          exclude: facet-testattrs, facet-cargo-toml, facet-axum, rusqlite-facet, rediff, facet-dessert, facet-format, facet-json, facet-json-classics, facet-postcard, facet-msgpack, facet-toml, facet-yaml, facet-format-suite, facet-asn1, facet-csv, facet-xdr, facet-json-schema, facet-typescript, facet-python, facet-lua, facet-value, facet-zod, facet-singularize, facet-dom, facet-xml, facet-xml-node, facet-atom, facet-svg, figue, figue-attrs, picante, picante-macros, facet-styx, serde_styx, styx-cli, styx-compat-tests, styx-cst, styx-embed, styx-embed-macros, styx-ffi, styx-format, styx-gen-go, styx-lsp, styx-lsp-ext, styx-lsp-test-schema, styx-parse, styx-testhelpers, styx-tokenizer, styx-tree, styx-wasm, tree-sitter-styx, xtask
+          exclude: facet-testattrs, facet-cargo-toml, facet-axum, rusqlite-facet, rediff, facet-dessert, facet-format, facet-json, facet-json-classics, facet-postcard, facet-msgpack, facet-toml, facet-yaml, facet-format-suite, facet-asn1, facet-csv, facet-xdr, facet-json-schema, facet-typescript, facet-python, facet-lua, facet-value, facet-zod, facet-singularize, facet-dom, facet-xml, facet-xml-node, facet-atom, facet-svg, figue, figue-attrs, picante, picante-macros, facet-styx, serde_styx, styx-cli, styx-compat-tests, styx-cst, styx-embed, styx-embed-macros, styx-ffi, styx-format, styx-gen-go, styx-lsp, styx-lsp-ext, styx-lsp-test-schema, styx-parse, styx-testhelpers, styx-tokenizer, styx-tree, styx-wasm, tree-sitter-styx, facet-tokio-postgres, dibs, dibs-cli, dibs-codegen, dibs-config, dibs-db-schema, dibs-jsonb, dibs-macros, dibs-proto, dibs-qgen, dibs-query-schema, dibs-runtime, dibs-sql, dockside, my-app, my-app-db, my-app-queries, xtask
           verbose: true
 
   test-aarch64-apple-darwin:
@@ -239,7 +239,7 @@ jobs:
           # Only replay proptest regressions in CI
           PROPTEST_CASES: 0
         run: |
-          cargo nextest run --features ci
+          cargo nextest run --features ci -E 'not (binary(postgres_integration) | binary(query_integration))'
 
   test-aarch64-unknown-linux-gnu:
     runs-on: ubuntu-24.04-arm
@@ -263,7 +263,7 @@ jobs:
           # Only replay proptest regressions in CI
           PROPTEST_CASES: 0
         run: |
-          cargo nextest run --features ci
+          cargo nextest run --features ci -E 'not (binary(postgres_integration) | binary(query_integration))'
 
   test-x86_64-pc-windows-msvc:
     runs-on: windows-2025
@@ -284,4 +284,4 @@ jobs:
           # Only replay proptest regressions in CI
           PROPTEST_CASES: 0
         run: |
-          cargo nextest run --features ci
+          cargo nextest run --features ci -E 'not (binary(postgres_integration) | binary(query_integration))'

@@ -2,6 +2,7 @@
 name = "dibs-jsonb"
 version = "0.2.0-rc.0"
 edition = "2024"
+rust-version.workspace = true
 description = "JSONB column support for dibs (Jsonb<T> wrapper for Facet types)"
 license = "MIT OR Apache-2.0"
 

@@ -2,6 +2,7 @@
 name = "dibs"
 version = "0.2.0-rc.0"
 edition = "2024"
+rust-version.workspace = true
 authors = ["Amos Wenger <amos@bearcove.eu>"]
 description = "Postgres toolkit for Rust, powered by facet reflection"
 license = "MIT OR Apache-2.0"

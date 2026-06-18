@@ -2,6 +2,7 @@
 name = "dibs-runtime"
 version = "0.2.0-rc.0"
 edition = "2024"
+rust-version.workspace = true
 description = "Runtime types for dibs-generated query code"
 license = "MIT OR Apache-2.0"
 

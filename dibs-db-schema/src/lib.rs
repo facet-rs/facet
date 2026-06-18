@@ -866,7 +866,7 @@ impl TableDef {
     }
 }
 
-/// Unwrap Option<T> to get the inner type and nullability.
+/// Unwrap `Option<T>` to get the inner type and nullability.
 fn unwrap_option(lhs: &'static Shape) -> (&'static Shape, bool) {
     let rhs = Option::<()>::SHAPE;
 

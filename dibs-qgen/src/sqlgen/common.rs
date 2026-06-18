@@ -39,7 +39,7 @@ fn extract_column_name(column: &ColumnName) -> &str {
     }
 }
 
-/// Convert a Meta<String> argument to an Expr.
+/// Convert a `Meta<String>` argument to an Expr.
 ///
 /// If it starts with '$', it's a parameter reference.
 /// Otherwise, it's a string literal, integer, or boolean.
