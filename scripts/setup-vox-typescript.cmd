@@ -65,4 +65,12 @@ if not exist "%SUBJECT_GENERATED_PKG%" (
     if errorlevel 1 exit /b %ERRORLEVEL%
 )
 
+if defined NEXTEST_ENV (
+    set "NODE_DIR_FOR_NEXTEST="
+    for /f "delims=" %%I in ('where node 2^>nul') do (
+        if not defined NODE_DIR_FOR_NEXTEST set "NODE_DIR_FOR_NEXTEST=%%~dpI"
+    )
+    if defined NODE_DIR_FOR_NEXTEST echo PATH=%NODE_DIR_FOR_NEXTEST%;%PATH%>>"%NEXTEST_ENV%"
+)
+
 exit /b 0

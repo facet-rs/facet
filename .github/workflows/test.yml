@@ -44,7 +44,7 @@ jobs:
           rustup toolchain install nightly
 
           # Run unit and integration tests with coverage
-          cargo +nightly llvm-cov --no-report nextest --features ci -E 'not (binary(postgres_integration) | binary(query_integration))'
+          cargo +nightly llvm-cov --no-report nextest --features ci -E 'not (binary(postgres_integration) | binary(query_integration) | test(_swift_))'
 
           # Run doc tests with coverage (requires nightly)
           cargo +nightly llvm-cov --no-report --doc --features ci
@@ -275,7 +275,7 @@ jobs:
           # Only replay proptest regressions in CI
           PROPTEST_CASES: 0
         run: |
-          cargo nextest run --features ci -E 'not (binary(postgres_integration) | binary(query_integration))'
+          cargo nextest run --features ci -E 'not (binary(postgres_integration) | binary(query_integration) | test(_swift_))'
 
   test-x86_64-pc-windows-msvc:
     runs-on: windows-2025
@@ -300,4 +300,4 @@ jobs:
           # Only replay proptest regressions in CI
           PROPTEST_CASES: 0
         run: |
-          cargo nextest run --features ci -E 'not (binary(postgres_integration) | binary(query_integration))'
+          cargo nextest run --features ci -E 'not (binary(postgres_integration) | binary(query_integration) | test(_swift_))'

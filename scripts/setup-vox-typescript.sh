@@ -9,6 +9,20 @@ target_dir="${CARGO_TARGET_DIR:-$repo_root/target}"
 subject_rust_bin="$target_dir/debug/subject-rust"
 pnpm_version="${VOX_PNPM_VERSION:-11.7.0}"
 
+export_nextest_node_path() {
+    if [ -z "${NEXTEST_ENV:-}" ]; then
+        return
+    fi
+
+    node_path="$(type -P node || true)"
+    if [ -z "$node_path" ]; then
+        return
+    fi
+
+    node_dir="$(cd -- "$(dirname -- "$node_path")" && pwd)"
+    printf 'PATH=%s:%s\n' "$node_dir" "${PATH:-}" >> "$NEXTEST_ENV"
+}
+
 if [ ! -x "$subject_rust_bin" ]; then
     cargo build -p subject-rust
 fi
@@ -41,3 +55,5 @@ if [ ! -f "$subject_generated_pkg" ]; then
 
     "$pnpm_cmd" --dir "$vox_dir" install --frozen-lockfile
 fi
+
+export_nextest_node_path
