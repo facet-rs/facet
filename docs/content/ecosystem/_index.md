@@ -97,6 +97,12 @@ Day-to-day ergonomics: better output, better errors, less boilerplate.
 |-------|--------------|--------|
 | [`rusqlite-facet`](https://docs.rs/rusqlite-facet) | Bind query parameters and map SQLite rows using Facet reflection. [Guide](@/ecosystem/rusqlite-facet/_index.md). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/rusqlite-facet) |
 
+## Runtime & incremental computation
+
+| Crate | What it does | Source |
+|-------|--------------|--------|
+| [`picante`](https://docs.rs/picante) | Tokio-first async incremental query runtime with dependency tracking, shared cache snapshots, and persistence. [Guide](@/picante/_index.md). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/picante) |
+
 ## Web & UI
 
 | Crate | What it does | Source |

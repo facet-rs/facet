@@ -32,7 +32,7 @@ type EncodeInputRecordFn =
     fn(dyn_key: &DynKey, value: Option<&ArcAny>, changed_at: Revision) -> PicanteResult<Vec<u8>>;
 
 /// Decode a single record from bytes
-/// Takes owned Vec<u8> because facet_postcard::from_slice requires 'static
+/// Takes owned `Vec<u8>` because facet_postcard::from_slice requires 'static
 type DecodeInputRecordFn =
     fn(kind: QueryKindId, bytes: Vec<u8>) -> PicanteResult<(DynKey, ErasedInputEntry)>;
 

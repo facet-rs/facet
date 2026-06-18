@@ -28,7 +28,7 @@ pub(crate) fn expand(item: TokenStream) -> TokenStream {
 }
 
 // r[macro.input.keyed]
-/// Expand a keyed input (has exactly one #[key] field)
+/// Expand a keyed input (has exactly one `#[key]` field)
 fn expand_keyed(
     parsed: &StructItem,
     key_field: &crate::struct_item::StructField,
@@ -216,14 +216,14 @@ fn expand_keyed(
 }
 
 enum KeyFieldResult<'a> {
-    /// Has exactly one #[key] field
+    /// Has exactly one `#[key]` field
     Keyed(
         &'a crate::struct_item::StructField,
         Vec<&'a crate::struct_item::StructField>,
     ),
-    /// No #[key] field - singleton
+    /// No `#[key]` field - singleton
     Singleton(Vec<&'a crate::struct_item::StructField>),
-    /// Multiple #[key] fields - error
+    /// Multiple `#[key]` fields - error
     MultipleKeys,
 }
 
@@ -249,7 +249,7 @@ fn split_key_field(parsed: &StructItem) -> KeyFieldResult<'_> {
 }
 
 // r[macro.input.singleton]
-/// Expand a singleton input (no #[key] field)
+/// Expand a singleton input (no `#[key]` field)
 fn expand_singleton(
     parsed: &StructItem,
     fields: Vec<&crate::struct_item::StructField>,

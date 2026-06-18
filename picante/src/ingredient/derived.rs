@@ -25,7 +25,7 @@ type ComputeFn<DB, K, V> = dyn for<'db> Fn(&'db DB, K) -> ComputeFuture<'db, V> 
 // Type-erased compute infrastructure (for dyn dispatch)
 // ============================================================================
 
-/// Type-erased Arc<dyn Any> for storing values without knowing V
+/// Type-erased `Arc<dyn Any>` for storing values without knowing `V`
 type ArcAny = Arc<dyn Any + Send + Sync>;
 
 /// Type-erased compute future that returns ArcAny
@@ -57,7 +57,7 @@ type EncodeRecordFn = fn(
 ) -> PicanteResult<Vec<u8>>;
 
 /// Decode a single record from bytes (called from erased load_records)
-/// Takes owned Vec<u8> because facet_postcard::from_slice requires 'static
+/// Takes owned `Vec<u8>` because facet_postcard::from_slice requires 'static
 type DecodeRecordFn = fn(kind: QueryKindId, bytes: Vec<u8>) -> PicanteResult<ErasedRecordData>;
 
 /// Encode incremental record (key + optional value) for WAL
@@ -1534,8 +1534,8 @@ enum ErasedState {
     // r[revision.verified-at]
     // r[revision.changed-at]
     Ready {
-        /// The cached value, stored as Arc<dyn Any> where the Any is V.
-        /// Use Arc::downcast::<V>() to recover the Arc<V>.
+        /// The cached value, stored as `Arc<dyn Any>` where the `Any` is `V`.
+        /// Use `Arc::downcast::<V>()` to recover the `Arc<V>`.
         value: Arc<dyn std::any::Any + Send + Sync>,
         verified_at: Revision,
         changed_at: Revision,

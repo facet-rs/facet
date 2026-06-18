@@ -290,7 +290,7 @@ tracing_subscriber::registry()
 // Set RUST_LOG=picante=trace to see all details
 ```
 
-See the [tracing internals documentation](@/internals/tracing.md) for more information about Picante's tracing instrumentation.
+See the [tracing internals documentation](@/picante/internals/tracing.md) for more information about Picante's tracing instrumentation.
 
 ## Summary
 

@@ -74,6 +74,10 @@ members = [
   "figue",
   "figue-attrs",
 
+  # async incremental query runtime
+  "picante",
+  "picante-macros",
+
   # strongly-typed string IDs
   "strid",
   "strid-macros",
@@ -125,6 +129,7 @@ facet-urlencoded = { path = "facet-urlencoded", version = "0.50.0-rc.0" }
 facet-value = { path = "facet-value", version = "0.50.0-rc.0" }
 facet-yaml = { path = "facet-yaml", version = "0.50.0-rc.0" }
 figue-attrs = { path = "figue-attrs", version = "5.0.0-rc.0" }
+picante-macros = { path = "picante-macros", version = "3.0.0-rc.0" }
 strid = { path = "strid", version = "11.0.0-rc.0" }
 strid-macros = { path = "strid-macros", version = "11.0.0-rc.0" }
 arborium = { version = "^2.4.5", default-features = false, features = ["lang-json"] }
@@ -139,15 +144,19 @@ camino = "^1.2.1"
 compact_str = { version = "^0.9.0", default-features = false }
 chrono = { version = "^0.4.42", default-features = false, features = ["alloc"] }
 datatest-stable = "0.3"
+dashmap = "^6"
 divan = "^0.1.21"
 eyre = "^0.6.12"
-http = "^1.4.0"
+futures-util = { version = "^0.3.31", default-features = false, features = ["std", "async-await"] }
 heck = "^0.5.0"
+http = "^1.4.0"
+im = "^15.1.0"
 indexmap = { version = "^2.12.1", default-features = false }
 insta = "^1.44.3"
 jiff = "^0.2.16"
 log = { version = "^0.4.29", features = ["std"] }
 owo-colors = "^4.2.3"
+parking_lot = "^0.12.4"
 proc-macro2 = "1"
 quote = "1"
 smartstring = { version = "^1.0.1", default-features = false }
@@ -159,10 +168,12 @@ supports-color = "^3"
 tempfile = "^3.23.0"
 time = { version = "^0.3.44", features = ["formatting", "macros", "parsing"] }
 tokio = { version = "1", features = ["io-util", "rt", "rt-multi-thread"] }
+tokio-test-lite = "^0.2"
 tower = { version = "0.5", default-features = false, features = ["util"] }
 tracing = { version = "^0.1.43", default-features = false, features = ["std"] }
 tracing-subscriber = { version = "^0.3.22", default-features = false, features = ["fmt", "std"] }
 unicode-width = "^0.2.2"
+trybuild = "^1.0"
 ulid = "^1.2.1"
 unsynn = "^0.3.0"
 uuid = "^1.19.0"
@@ -243,6 +254,8 @@ figue = { path = "figue" }
 figue-attrs = { path = "figue-attrs" }
 rusqlite-facet = { path = "rusqlite-facet" }
 rediff = { path = "rediff" }
+picante = { path = "picante" }
+picante-macros = { path = "picante-macros" }
 strid = { path = "strid" }
 strid-macros = { path = "strid-macros" }
 strid-examples = { path = "strid-examples" }

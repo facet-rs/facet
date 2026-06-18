@@ -1,7 +1,6 @@
 +++
 title = "picante"
 description = "An async incremental query runtime (Tokio-first Salsa alternative)"
-template = "index.html"
 +++
 
 Add picante to your `Cargo.toml`:

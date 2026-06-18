@@ -269,6 +269,20 @@ version_group = "figue"
 changelog_path = "figue/CHANGELOG.md"
 
 # ============================================================================
+# Picante packages - coordinated from this monorepo, preserving their major line
+# ============================================================================
+
+[[package]]
+name = "picante"
+version_group = "picante"
+changelog_path = "picante/CHANGELOG.md"
+
+[[package]]
+name = "picante-macros"
+version_group = "picante"
+changelog_path = "picante/CHANGELOG.md"
+
+# ============================================================================
 # Dev-only packages - excluded from releases
 # ============================================================================
 

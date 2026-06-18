@@ -68,4 +68,4 @@ To correlate events, look for the common fields:
 
 If you’re building live reload / diagnostics tooling, consider pairing traces with the structured runtime event stream:
 
-- [Runtime Events](/internals/events/)
+- [Runtime Events](@/picante/internals/events.md)
