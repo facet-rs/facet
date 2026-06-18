@@ -229,8 +229,6 @@ jobs:
 
   test-aarch64-apple-darwin:
     runs-on: macos-26
-    env:
-      VOX_SWIFT_BUILD_CONFIGURATION: debug
     steps:
       - uses: actions/checkout@v6
 
@@ -246,18 +244,13 @@ jobs:
         with:
           tool: cargo-nextest
 
-      - name: Build Vox Swift subject
-        shell: bash
-        run: |
-          swift build -c "$VOX_SWIFT_BUILD_CONFIGURATION" --jobs 1 --product subject-swift --package-path vox/swift/subject
-
       - name: ✨ Run nextest tests (macOS)
         shell: bash
         env:
           # Only replay proptest regressions in CI
           PROPTEST_CASES: 0
         run: |
-          cargo nextest run --features ci -E 'not (binary(postgres_integration) | binary(query_integration))'
+          cargo nextest run --features ci -E 'not (binary(postgres_integration) | binary(query_integration) | test(swift))'
 
   test-aarch64-unknown-linux-gnu:
     runs-on: ubuntu-24.04-arm
