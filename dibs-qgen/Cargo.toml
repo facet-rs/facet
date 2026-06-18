@@ -22,7 +22,7 @@ indexmap.workspace = true
 
 [dev-dependencies]
 tracing.workspace = true
-facet-testhelpers.workspace = true
+facet-testhelpers = { path = "../facet-testhelpers" }
 dockside = { path = "../dockside" }
 tokio.workspace = true
 tokio-postgres.workspace = true

@@ -100,6 +100,25 @@ members = [
   "picante",
   "picante-macros",
 
+  # Dibs Postgres toolkit
+  "facet-tokio-postgres",
+  "dibs",
+  "dibs-cli",
+  "dibs-codegen",
+  "dibs-config",
+  "dibs-db-schema",
+  "dibs-jsonb",
+  "dibs-macros",
+  "dibs-proto",
+  "dibs-qgen",
+  "dibs-query-schema",
+  "dibs-runtime",
+  "dibs-sql",
+  "dockside",
+  "examples/dibs-my-app-workspace/my-app",
+  "examples/dibs-my-app-workspace/my-app-db",
+  "examples/dibs-my-app-workspace/my-app-queries",
+
   # strongly-typed string IDs
   "strid",
   "strid-macros",
@@ -140,6 +159,7 @@ facet-reflect = { path = "facet-reflect", version = "0.50.0-rc.0" }
 facet-singularize = { path = "facet-singularize", version = "0.50.0-rc.0" }
 facet-solver = { path = "facet-solver", version = "0.50.0-rc.0" }
 facet-testhelpers = { path = "facet-testhelpers", version = "0.50.0-rc.0" }
+facet-tokio-postgres = { path = "facet-tokio-postgres", version = "0.50.0-rc.0" }
 facet-toml = { path = "facet-toml", version = "0.50.0-rc.0" }
 facet-xml = { path = "facet-xml", version = "0.50.0-rc.0" }
 facet-urlencoded = { path = "facet-urlencoded", version = "0.50.0-rc.0" }
@@ -149,6 +169,16 @@ figue = { path = "figue", version = "5.0.0-rc.0" }
 figue-attrs = { path = "figue-attrs", version = "5.0.0-rc.0" }
 facet-styx = { path = "facet-styx", version = "5.0.0-rc.0" }
 picante-macros = { path = "picante-macros", version = "3.0.0-rc.0" }
+dibs = { path = "dibs", version = "0.2.0-rc.0" }
+dibs-config = { path = "dibs-config", version = "0.2.0-rc.0" }
+dibs-db-schema = { path = "dibs-db-schema", version = "0.2.0-rc.0" }
+dibs-jsonb = { path = "dibs-jsonb", version = "0.2.0-rc.0" }
+dibs-macros = { path = "dibs-macros", version = "0.2.0-rc.0" }
+dibs-proto = { path = "dibs-proto", version = "0.2.0-rc.0" }
+dibs-qgen = { path = "dibs-qgen", version = "0.2.0-rc.0" }
+dibs-query-schema = { path = "dibs-query-schema", version = "0.2.0-rc.0" }
+dibs-sql = { path = "dibs-sql", version = "0.2.0-rc.0" }
+dockside = { path = "dockside" }
 serde_styx = { path = "serde_styx", version = "5.0.0-rc.0" }
 strid = { path = "strid", version = "11.0.0-rc.0" }
 strid-macros = { path = "strid-macros", version = "11.0.0-rc.0" }
@@ -164,7 +194,9 @@ styx-parse = { path = "styx-parse", version = "5.0.0-rc.0" }
 styx-testhelpers = { path = "styx-testhelpers", version = "5.0.0-rc.0" }
 styx-tokenizer = { path = "styx-tokenizer", version = "5.0.0-rc.0" }
 styx-tree = { path = "styx-tree", version = "5.0.0-rc.0" }
-arborium = { version = "^2.4.5", default-features = false, features = ["lang-json"] }
+arborium = { version = "^2.4.5", default-features = false, features = ["lang-json", "lang-rust"] }
+arborium-highlight = "^2.4.5"
+arborium-theme = "^2.4.5"
 autocfg = "^1.5.0"
 axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio", "json"] }
 ariadne = "^0.6"
@@ -178,10 +210,14 @@ cc = "^1.0.87"
 camino = "^1.2.1"
 compact_str = { version = "^0.9.0", default-features = false }
 chrono = { version = "^0.4.42", default-features = false, features = ["alloc"] }
+codegen = "^0.3"
+crossterm = "^0.29"
 datatest-stable = "0.3"
 dashmap = "^6"
+deadpool-postgres = "^0.14"
 dirs = "^6"
 divan = "^0.1.21"
+dotenvy = "^0.15"
 eyre = "^0.6.12"
 futures = "^0.3"
 futures-util = { version = "^0.3.31", default-features = false, features = ["std", "async-await"] }
@@ -193,15 +229,18 @@ http = "^1.4.0"
 im = "^15.1.0"
 indexmap = { version = "^2.12.1", default-features = false }
 insta = "^1.44.3"
+inventory = "^0.3"
 jiff = "^0.2.16"
 log = { version = "^0.4.29", features = ["std"] }
 lz4_flex = "^0.11"
 memmap2 = "^0.9"
 owo-colors = "^4.2.3"
 parking_lot = "^0.12.4"
+postgres-types = "^0.2"
 proc-macro2 = "1"
 proptest = "^1"
 quote = "1"
+ratatui = "^0.30"
 rowan = "^0.16"
 smartstring = { version = "^1.0.1", default-features = false }
 smol_str = { version = "^0.3.4", default-features = false }
@@ -210,9 +249,14 @@ strsim = "0.11"
 strip-ansi-escapes = "^0.2.1"
 supports-color = "^3"
 tempfile = "^3.23.0"
+testcontainers = "^0.27"
+testcontainers-modules = { version = "^0.15", features = ["postgres"] }
+thiserror = "^2"
 time = { version = "^0.3.44", features = ["formatting", "macros", "parsing"] }
 tokio = { version = "1", features = ["io-util", "rt", "rt-multi-thread"] }
+tokio-postgres = "^0.7"
 tokio-test-lite = "^0.2"
+tokio-tungstenite = "^0.29"
 tower = { version = "0.5", default-features = false, features = ["util"] }
 tower-lsp = "^0.20"
 tracing = { version = "^0.1.43", default-features = false, features = ["std"] }
@@ -241,7 +285,9 @@ terminal-colorsaurus = "^1"
 wasm-bindgen = "^0.2"
 which = "^7"
 vox = "^0.9.0-rc.0"
+vox-codegen = "^0.9.0-rc.0"
 vox-stream = "^0.9.0-rc.0"
+vox-websocket = "^0.9.0-rc.0"
 
 # Allow the facet_no_doc cfg in generated code
 # See: https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html
@@ -278,6 +324,7 @@ facet-solver = { path = "facet-solver" }
 facet-testhelpers = { path = "facet-testhelpers" }
 facet-axum = { path = "facet-axum" }
 facet-cargo-toml = { path = "facet-cargo-toml" }
+facet-tokio-postgres = { path = "facet-tokio-postgres" }
 facet-urlencoded = { path = "facet-urlencoded" }
 facet-asn1 = { path = "facet-asn1" }
 facet-csv = { path = "facet-csv" }
@@ -306,6 +353,17 @@ facet-zod = { path = "facet-zod" }
 figue = { path = "figue" }
 figue-attrs = { path = "figue-attrs" }
 facet-styx = { path = "facet-styx" }
+dibs = { path = "dibs" }
+dibs-cli = { path = "dibs-cli" }
+dibs-config = { path = "dibs-config" }
+dibs-db-schema = { path = "dibs-db-schema" }
+dibs-jsonb = { path = "dibs-jsonb" }
+dibs-macros = { path = "dibs-macros" }
+dibs-proto = { path = "dibs-proto" }
+dibs-qgen = { path = "dibs-qgen" }
+dibs-query-schema = { path = "dibs-query-schema" }
+dibs-runtime = { path = "dibs-runtime" }
+dibs-sql = { path = "dibs-sql" }
 rusqlite-facet = { path = "rusqlite-facet" }
 rediff = { path = "rediff" }
 picante = { path = "picante" }

@@ -30,7 +30,7 @@ Add dependencies to `crates/my-app-db/Cargo.toml`:
 ```toml
 [dependencies]
 # dibs/facet are currently developed rapidly; for now, the recommended setup is to use git deps:
-dibs = { git = "https://github.com/bearcove/dibs", branch = "main" }
+dibs = { git = "https://github.com/facet-rs/facet", branch = "main" }
 facet = { git = "https://github.com/facet-rs/facet", branch = "main" }
 
 [[bin]]

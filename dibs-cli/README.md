@@ -9,4 +9,4 @@ and migrations, including:
 - Comparing schema definitions to database state
 - Interactive TUI for migration management
 
-Part of the [dibs](https://github.com/bearcove/dibs) project.
+Part of the [dibs](https://github.com/facet-rs/facet) project.

@@ -13,14 +13,14 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 my-app-db = { path = "../my-app-db" }
-dibs-runtime.workspace = true
+dibs-runtime = { path = "../../../dibs-runtime" }
 
 [build-dependencies]
 dibs.workspace = true
 my-app-db = { path = "../my-app-db" }
 
 [dev-dependencies]
-dockside = { path = "../../../crates/dockside" }
+dockside = { path = "../../../dockside" }
 tokio.workspace = true
 tokio-postgres.workspace = true
-dibs = { path = "../../../crates/dibs" }
+dibs = { path = "../../../dibs" }

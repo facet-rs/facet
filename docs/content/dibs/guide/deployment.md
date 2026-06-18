@@ -28,7 +28,7 @@ COPY . .
 RUN cargo build --release -p my-app-db
 
 # Install dibs CLI
-RUN cargo install --git https://github.com/bearcove/dibs dibs-cli
+RUN cargo install --git https://github.com/facet-rs/facet dibs-cli
 ```
 
 ## Running migrations

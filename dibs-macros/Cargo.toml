@@ -5,7 +5,7 @@ edition = "2024"
 authors = ["Amos Wenger <amos@bearcove.eu>"]
 description = "Proc macros for dibs"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/bearcove/dibs"
+repository = "https://github.com/facet-rs/facet"
 
 [package.metadata]
 

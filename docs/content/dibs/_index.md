@@ -12,12 +12,12 @@ From those, dibs generates migrations (also Rust), so you can do backfills and d
 
 ## Start here
 
-- [How dibs works](/internals/) (model + workspace layout + deployment)
-- [The Guide](/guide/)
-- [Reference](/reference/)
+- [How dibs works](/dibs/internals/) (model + workspace layout + deployment)
+- [The Guide](/dibs/guide/)
+- [Reference](/dibs/reference/)
 
 ## Links
 
-- [GitHub](https://github.com/bearcove/dibs)
+- [GitHub](https://github.com/facet-rs/facet)
 - [crates.io](https://crates.io/crates/dibs)
 - [docs.rs](https://docs.rs/dibs)

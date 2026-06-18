@@ -5,7 +5,7 @@ edition = "2024"
 authors = ["Amos Wenger <amos@bearcove.eu>"]
 description = "Postgres toolkit for Rust, powered by facet reflection"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/bearcove/dibs"
+repository = "https://github.com/facet-rs/facet"
 keywords = ["postgres", "database", "migrations", "facet"]
 categories = ["database"]
 

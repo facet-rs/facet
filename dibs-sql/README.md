@@ -7,4 +7,4 @@ This crate provides:
 - SQL formatting and quoting utilities
 - Helpers for building SQL statements
 
-Part of the [dibs](https://github.com/bearcove/dibs) project.
+Part of the [dibs](https://github.com/facet-rs/facet) project.

@@ -8,4 +8,4 @@ database crates via roam. Includes:
 - Request/response types
 - Error types
 
-Part of the [dibs](https://github.com/bearcove/dibs) project.
+Part of the [dibs](https://github.com/facet-rs/facet) project.

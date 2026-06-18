@@ -222,6 +222,11 @@ version_group = "facet"
 changelog_path = "CHANGELOG.md"
 
 [[package]]
+name = "facet-tokio-postgres"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
 name = "rediff"
 version_group = "facet"
 changelog_path = "CHANGELOG.md"
@@ -281,6 +286,65 @@ changelog_path = "picante/CHANGELOG.md"
 name = "picante-macros"
 version_group = "picante"
 changelog_path = "picante/CHANGELOG.md"
+
+# ============================================================================
+# Dibs packages - coordinated from this monorepo, preserving their major line
+# ============================================================================
+
+[[package]]
+name = "dibs"
+version_group = "dibs"
+changelog_path = "dibs/CHANGELOG.md"
+
+[[package]]
+name = "dibs-cli"
+version_group = "dibs"
+changelog_path = "dibs/CHANGELOG.md"
+
+[[package]]
+name = "dibs-config"
+version_group = "dibs"
+changelog_path = "dibs/CHANGELOG.md"
+
+[[package]]
+name = "dibs-db-schema"
+version_group = "dibs"
+changelog_path = "dibs/CHANGELOG.md"
+
+[[package]]
+name = "dibs-jsonb"
+version_group = "dibs"
+changelog_path = "dibs/CHANGELOG.md"
+
+[[package]]
+name = "dibs-macros"
+version_group = "dibs"
+changelog_path = "dibs/CHANGELOG.md"
+
+[[package]]
+name = "dibs-proto"
+version_group = "dibs"
+changelog_path = "dibs/CHANGELOG.md"
+
+[[package]]
+name = "dibs-qgen"
+version_group = "dibs"
+changelog_path = "dibs/CHANGELOG.md"
+
+[[package]]
+name = "dibs-query-schema"
+version_group = "dibs"
+changelog_path = "dibs/CHANGELOG.md"
+
+[[package]]
+name = "dibs-runtime"
+version_group = "dibs"
+changelog_path = "dibs/CHANGELOG.md"
+
+[[package]]
+name = "dibs-sql"
+version_group = "dibs"
+changelog_path = "dibs/CHANGELOG.md"
 
 # ============================================================================
 # Styx packages - coordinated from this monorepo, preserving their major line
@@ -402,5 +466,30 @@ publish = false
 
 [[package]]
 name = "styx-compat-tests"
+release = false
+publish = false
+
+[[package]]
+name = "dibs-codegen"
+release = false
+publish = false
+
+[[package]]
+name = "dockside"
+release = false
+publish = false
+
+[[package]]
+name = "my-app"
+release = false
+publish = false
+
+[[package]]
+name = "my-app-db"
+release = false
+publish = false
+
+[[package]]
+name = "my-app-queries"
 release = false
 publish = false

@@ -19,9 +19,7 @@ fn example_project_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
-        .parent()
-        .unwrap()
-        .join("examples/my-app-workspace/my-app-queries")
+        .join("examples/dibs-my-app-workspace/my-app-queries")
 }
 
 #[tokio::test]

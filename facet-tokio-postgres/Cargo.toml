@@ -25,8 +25,8 @@ jiff = { workspace = true, optional = true }
 dibs-jsonb.workspace = true
 
 [dev-dependencies]
-facet = { workspace = true }
-facet-json = { workspace = true }
+facet = { path = "../facet" }
+facet-json = { path = "../facet-json" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 testcontainers = { workspace = true }
 testcontainers-modules = { workspace = true }

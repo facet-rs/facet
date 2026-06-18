@@ -24,10 +24,10 @@ Add dependencies to `crates/my-app-queries/Cargo.toml`:
 [dependencies]
 my-app-db = { path = "../my-app-db" }
 # See db-crate setup for why we use git deps
-dibs-runtime = { git = "https://github.com/bearcove/dibs", branch = "main" }
+dibs-runtime = { git = "https://github.com/facet-rs/facet", branch = "main" }
 
 [build-dependencies]
-dibs = { git = "https://github.com/bearcove/dibs", branch = "main" }
+dibs = { git = "https://github.com/facet-rs/facet", branch = "main" }
 my-app-db = { path = "../my-app-db" }
 ```
 

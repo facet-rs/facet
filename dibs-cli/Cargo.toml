@@ -5,7 +5,7 @@ edition = "2024"
 authors = ["Amos Wenger <amos@bearcove.eu>"]
 description = "CLI for dibs - Postgres toolkit for Rust"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/bearcove/dibs"
+repository = "https://github.com/facet-rs/facet"
 
 [package.metadata]
 
@@ -43,7 +43,7 @@ facet-styx.workspace = true
 vox.workspace = true
 vox-stream.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 jiff.workspace = true
 owo-colors.workspace = true
 ratatui.workspace = true
@@ -55,6 +55,6 @@ ariadne.workspace = true
 notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
 
 [dev-dependencies]
-styx-lsp.workspace = true
+styx-lsp = { path = "../styx-lsp" }
 serde_json = "1"
 lsp-types = "0.97"
