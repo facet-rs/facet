@@ -21,7 +21,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [dependencies]
 camino.workspace = true
 figue-attrs.workspace = true
-facet.workspace = true
+facet = { workspace = true, features = ["camino", "indexmap"] }
 facet-core.workspace = true
 facet-format.workspace = true
 facet-json.workspace = true
@@ -39,8 +39,8 @@ strsim.workspace = true
 supports-color.workspace = true
 
 [dev-dependencies]
-facet-format = { workspace = true, features = ["tracing"] }
-facet-json = { workspace = true, features = ["tracing"] }
+facet-format = { path = "../facet-format", features = ["tracing"] }
+facet-json = { path = "../facet-json", features = ["tracing"] }
 facet-reflect = { path = "../facet-reflect", features = ["tracing"] }
 facet = { path = "../facet", features = ["all-impls"] }
 facet-solver = { path = "../facet-solver" }
