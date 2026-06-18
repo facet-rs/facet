@@ -1302,7 +1302,7 @@ dependencies = [
 
 [[package]]
 name = "rust-examples"
-version = "0.9.0-rc.0"
+version = "0.10.0-rc.0"
 dependencies = [
  "eyre",
  "tempfile",
@@ -1959,7 +1959,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vox"
-version = "0.9.0-rc.0"
+version = "0.10.0-rc.0"
 dependencies = [
  "facet",
  "facet-pretty",
@@ -1983,7 +1983,7 @@ dependencies = [
 
 [[package]]
 name = "vox-codegen"
-version = "0.9.0-rc.0"
+version = "0.10.0-rc.0"
 dependencies = [
  "base64",
  "facet",
@@ -2003,7 +2003,7 @@ dependencies = [
 
 [[package]]
 name = "vox-core"
-version = "0.9.0-rc.0"
+version = "0.10.0-rc.0"
 dependencies = [
  "facet",
  "facet-core",
@@ -2025,7 +2025,7 @@ dependencies = [
 
 [[package]]
 name = "vox-fdpass"
-version = "0.9.0-rc.0"
+version = "0.10.0-rc.0"
 dependencies = [
  "libc",
  "passfd",
@@ -2035,7 +2035,7 @@ dependencies = [
 
 [[package]]
 name = "vox-ffi"
-version = "0.9.0-rc.0"
+version = "0.10.0-rc.0"
 dependencies = [
  "tracing",
  "vox-types",
@@ -2043,7 +2043,7 @@ dependencies = [
 
 [[package]]
 name = "vox-inprocess"
-version = "0.9.0-rc.0"
+version = "0.10.0-rc.0"
 dependencies = [
  "futures-channel",
  "futures-util",
@@ -2054,7 +2054,7 @@ dependencies = [
 
 [[package]]
 name = "vox-local"
-version = "0.9.0-rc.0"
+version = "0.10.0-rc.0"
 dependencies = [
  "tokio",
  "vox-stream",
@@ -2062,7 +2062,7 @@ dependencies = [
 
 [[package]]
 name = "vox-macros-core"
-version = "0.9.0-rc.0"
+version = "0.10.0-rc.0"
 dependencies = [
  "heck",
  "insta",
@@ -2073,7 +2073,7 @@ dependencies = [
 
 [[package]]
 name = "vox-macros-parse"
-version = "0.9.0-rc.0"
+version = "0.10.0-rc.0"
 dependencies = [
  "proc-macro2",
  "unsynn",
@@ -2081,7 +2081,7 @@ dependencies = [
 
 [[package]]
 name = "vox-phon"
-version = "0.9.0-rc.0"
+version = "0.10.0-rc.0"
 dependencies = [
  "facet",
  "phon",
@@ -2096,7 +2096,7 @@ dependencies = [
 
 [[package]]
 name = "vox-rt"
-version = "0.9.0-rc.0"
+version = "0.10.0-rc.0"
 dependencies = [
  "futures-channel",
  "futures-util",
@@ -2111,11 +2111,11 @@ dependencies = [
 
 [[package]]
 name = "vox-rt-macros"
-version = "0.9.0-rc.0"
+version = "0.10.0-rc.0"
 
 [[package]]
 name = "vox-schema"
-version = "0.9.0-rc.0"
+version = "0.10.0-rc.0"
 dependencies = [
  "blake3",
  "facet",
@@ -2125,7 +2125,7 @@ dependencies = [
 
 [[package]]
 name = "vox-service-macros"
-version = "0.9.0-rc.0"
+version = "0.10.0-rc.0"
 dependencies = [
  "proc-macro2",
  "vox-macros-core",
@@ -2133,7 +2133,7 @@ dependencies = [
 
 [[package]]
 name = "vox-stream"
-version = "0.9.0-rc.0"
+version = "0.10.0-rc.0"
 dependencies = [
  "libc",
  "tempfile",
@@ -2148,7 +2148,7 @@ dependencies = [
 
 [[package]]
 name = "vox-types"
-version = "0.9.0-rc.0"
+version = "0.10.0-rc.0"
 dependencies = [
  "bitflags",
  "blake3",
@@ -2170,7 +2170,7 @@ dependencies = [
 
 [[package]]
 name = "vox-websocket"
-version = "0.9.0-rc.0"
+version = "0.10.0-rc.0"
 dependencies = [
  "futures-channel",
  "futures-util",
@@ -2274,7 +2274,7 @@ dependencies = [
 
 [[package]]
 name = "wasm-browser-tests"
-version = "0.9.0-rc.0"
+version = "0.10.0-rc.0"
 dependencies = [
  "spec-proto",
  "vox-core",
@@ -2296,7 +2296,7 @@ dependencies = [
 
 [[package]]
 name = "wasm-inprocess-tests"
-version = "0.9.0-rc.0"
+version = "0.10.0-rc.0"
 dependencies = [
  "js-sys",
  "spec-proto",

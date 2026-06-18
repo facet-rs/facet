@@ -31,7 +31,7 @@ members = [
 exclude = ["fuzz"]
 
 [workspace.package]
-version = "0.9.0-rc.0"
+version = "0.10.0-rc.0"
 edition = "2024"
 rust-version = "1.91"
 readme = "README.md"
@@ -44,25 +44,25 @@ categories = ["network-programming", "asynchronous"]
 
 [workspace.dependencies]
 # Internal crates
-vox = { path = "rust/vox", version = "0.9.0-rc.0" }
-vox-types = { path = "rust/vox-types", version = "0.9.0-rc.0" }
-vox-rt = { path = "rust/vox-rt", version = "0.9.0-rc.0" }
-vox-rt-macros = { path = "rust/vox-rt-macros", version = "0.9.0-rc.0" }
-vox-schema = { path = "rust/vox-schema", version = "0.9.0-rc.0" }
-vox-macros-parse = { path = "rust/vox-macros-parse", version = "0.9.0-rc.0" }
-vox-macros-core = { path = "rust/vox-macros-core", version = "0.9.0-rc.0" }
-vox-service-macros = { path = "rust/vox-macros", version = "0.9.0-rc.0" }
-vox-core = { path = "rust/vox-core", version = "0.9.0-rc.0" }
-vox-stream = { path = "rust/vox-stream", version = "0.9.0-rc.0" }
-vox-fdpass = { path = "rust/vox-fdpass", version = "0.9.0-rc.0" }
-vox-codegen = { path = "rust/vox-codegen", version = "0.9.0-rc.0" }
-vox-websocket = { path = "rust/vox-websocket", version = "0.9.0-rc.0" }
-vox-inprocess = { path = "rust/vox-inprocess", version = "0.9.0-rc.0" }
-vox-local = { path = "rust/vox-local", version = "0.9.0-rc.0" }
-vox-ffi = { path = "rust/vox-ffi", version = "0.9.0-rc.0" }
+vox = { path = "rust/vox", version = "0.10.0-rc.0" }
+vox-types = { path = "rust/vox-types", version = "0.10.0-rc.0" }
+vox-rt = { path = "rust/vox-rt", version = "0.10.0-rc.0" }
+vox-rt-macros = { path = "rust/vox-rt-macros", version = "0.10.0-rc.0" }
+vox-schema = { path = "rust/vox-schema", version = "0.10.0-rc.0" }
+vox-macros-parse = { path = "rust/vox-macros-parse", version = "0.10.0-rc.0" }
+vox-macros-core = { path = "rust/vox-macros-core", version = "0.10.0-rc.0" }
+vox-service-macros = { path = "rust/vox-macros", version = "0.10.0-rc.0" }
+vox-core = { path = "rust/vox-core", version = "0.10.0-rc.0" }
+vox-stream = { path = "rust/vox-stream", version = "0.10.0-rc.0" }
+vox-fdpass = { path = "rust/vox-fdpass", version = "0.10.0-rc.0" }
+vox-codegen = { path = "rust/vox-codegen", version = "0.10.0-rc.0" }
+vox-websocket = { path = "rust/vox-websocket", version = "0.10.0-rc.0" }
+vox-inprocess = { path = "rust/vox-inprocess", version = "0.10.0-rc.0" }
+vox-local = { path = "rust/vox-local", version = "0.10.0-rc.0" }
+vox-ffi = { path = "rust/vox-ffi", version = "0.10.0-rc.0" }
 subject-rust = { path = "rust/subject-rust", version = "0.2.2" }
 spec-proto = { path = "spec/spec-proto", version = "0.2.2" }
-vox-phon = { path = "rust/vox-phon", version = "0.9.0-rc.0" }
+vox-phon = { path = "rust/vox-phon", version = "0.10.0-rc.0" }
 
 phon = "0.2.0-rc.0"
 phon-engine = "0.2.0-rc.0"

@@ -4,11 +4,18 @@ All notable changes to Vox are documented here.
 
 ## [Unreleased]
 
+## [0.10.0-rc.0] - 2026-06-18
+
+### Other
+
+- Prepare release-plz metadata
+- Fix CI lifecycle and wasm timing failures
+- Rename runtime Tracey concepts
+- Remove moire from dep tree ([#379](https://github.com/bearcove/vox/pull/379))
+
 ### Changed
 
 - Remove the implicit `From<DriverCaller> for ()` conversion. Use `NoopCaller` when you need to retain root connection liveness without exposing root RPC methods.
-
-- No entries yet.
 
 ## [7.0.0] - 2026-03-02
 
