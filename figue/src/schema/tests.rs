@@ -10,7 +10,7 @@ macro_rules! assert_schema_snapshot {
             Err(err) => {
                 let rendered = err.to_string();
                 let stripped = strip_ansi_escapes::strip(rendered.as_bytes());
-                let stripped = String::from_utf8_lossy(&stripped);
+                let stripped = String::from_utf8_lossy(&stripped).replace('\\', "/");
                 insta::assert_snapshot!(stripped);
             }
         }
