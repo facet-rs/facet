@@ -23,11 +23,13 @@ pub fn normalize_program_name(path: &str) -> String {
         .and_then(|n| n.to_str())
         .unwrap_or(path);
 
+    let hash_candidate = name.strip_suffix(".exe").unwrap_or(name);
+
     // Check if the name ends with a dash followed by exactly 16 hex characters
-    if let Some(dash_pos) = name.rfind('-') {
-        let suffix = &name[dash_pos + 1..];
+    if let Some(dash_pos) = hash_candidate.rfind('-') {
+        let suffix = &hash_candidate[dash_pos + 1..];
         if suffix.len() == 16 && suffix.chars().all(|c| c.is_ascii_hexdigit()) {
-            return name[..dash_pos].to_string();
+            return hash_candidate[..dash_pos].to_string();
         }
     }
     name.to_string()
@@ -1514,6 +1516,7 @@ mod tests {
         // Test with just binary name and hash
         assert_eq!(normalize_program_name("main-138217976bbdb088"), "main");
         assert_eq!(normalize_program_name("main-b36e7ccd11ac5f87"), "main");
+        assert_eq!(normalize_program_name("main-098df84be4d6048e.exe"), "main");
 
         // Test with regular binary names (no hash)
         assert_eq!(normalize_program_name("myapp"), "myapp");
