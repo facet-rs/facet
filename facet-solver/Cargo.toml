@@ -18,15 +18,12 @@ default = ["std", "suggestions"]
 std = ["alloc"]
 alloc = ["facet-core/alloc", "facet-reflect/alloc"]
 suggestions = ["strsim", "alloc"]
-tracing = ["dep:tracing", "facet-reflect/tracing"]
+tracing = ["facet-reflect/tracing"]
 
 [dependencies]
 facet-core = { path = "../facet-core", version = "0.50.0-rc.0", default-features = false }
 facet-reflect = { path = "../facet-reflect", version = "0.50.0-rc.0", default-features = false }
 strsim = { workspace = true, optional = true }
-
-# Tracing (optional - compiles to nothing when disabled)
-tracing = { workspace = true, optional = true }
 
 [dev-dependencies]
 divan = { workspace = true }

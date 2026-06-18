@@ -95,18 +95,14 @@ repository = "https://github.com/facet-rs/facet"
 
 [workspace.dependencies]
 facet = { path = "facet", version = "0.50.0-rc.0" }
-facet-axum = { path = "facet-axum", version = "0.50.0-rc.0" }
 facet-core = { path = "facet-core" }
-facet-cargo-toml = { path = "facet-cargo-toml", version = "0.50.0-rc.0" }
 facet-default = { path = "facet-default", version = "0.50.0-rc.0" }
 facet-dessert = { path = "facet-dessert", version = "0.50.0-rc.0" }
 facet-dom = { path = "facet-dom", version = "0.50.0-rc.0" }
-facet-error = { path = "facet-error", version = "0.50.0-rc.0" }
 facet-format = { path = "facet-format", version = "0.50.0-rc.0" }
 facet-format-suite = { path = "facet-format-suite", version = "0.50.0-rc.0" }
 facet-json = { path = "facet-json", version = "0.50.0-rc.0" }
 facet-json-classics = { path = "facet-json-classics", version = "0.50.0-rc.0" }
-facet-lua = { path = "facet-lua", version = "0.50.0-rc.0" }
 facet-msgpack = { path = "facet-msgpack", version = "0.50.0-rc.0" }
 facet-path = { path = "facet-path", version = "0.50.0-rc.0" }
 facet-postcard = { path = "facet-postcard", version = "0.50.0-rc.0" }

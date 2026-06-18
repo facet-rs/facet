@@ -1145,7 +1145,6 @@ dependencies = [
  "camino",
  "datatest-stable",
  "facet",
- "facet-error",
  "facet-reflect",
  "facet-toml",
  "facet-value",
@@ -1467,7 +1466,6 @@ dependencies = [
 name = "facet-reflect"
 version = "0.50.0-rc.0"
 dependencies = [
- "camino",
  "eyre",
  "facet",
  "facet-core",
@@ -1480,8 +1478,6 @@ dependencies = [
  "smallvec 2.0.0-alpha.12",
  "tempfile",
  "tracing",
- "ulid",
- "uuid",
 ]
 
 [[package]]
