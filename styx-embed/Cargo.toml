@@ -2,6 +2,7 @@
 name = "styx-embed"
 version = "5.0.0-rc.0"
 edition.workspace = true
+rust-version.workspace = true
 description = "Embed Styx schemas in binaries for zero-execution discovery"
 license.workspace = true
 repository.workspace = true
@@ -12,8 +13,8 @@ repository.workspace = true
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-lz4_flex = "0.11"
-blake3 = "1"
-memmap2 = "0.9"
-goblin = "0.9"
-styx-embed-macros = { path = "../styx-embed-macros", version = "5.0.0-rc.0" }
+lz4_flex.workspace = true
+blake3.workspace = true
+memmap2.workspace = true
+goblin.workspace = true
+styx-embed-macros.workspace = true

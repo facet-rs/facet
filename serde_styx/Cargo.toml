@@ -2,6 +2,7 @@
 name = "serde_styx"
 version = "5.0.0-rc.0"
 edition.workspace = true
+rust-version.workspace = true
 description = "Serde support for the Styx configuration language"
 license.workspace = true
 repository.workspace = true
@@ -12,9 +13,9 @@ repository.workspace = true
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-serde = "1.0"
+serde.workspace = true
 styx-format.workspace = true
 styx-parse.workspace = true
 
 [dev-dependencies]
-serde = { version = "1.0", features = ["derive"] }
+serde = { workspace = true, features = ["derive"] }

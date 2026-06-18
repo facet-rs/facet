@@ -2,6 +2,7 @@
 name = "styx-tree"
 version = "5.0.0-rc.0"
 edition.workspace = true
+rust-version.workspace = true
 description = "High-level syntax tree for the Styx configuration language"
 license.workspace = true
 repository.workspace = true
@@ -17,13 +18,13 @@ facet = ["dep:facet", "styx-parse/facet"]
 
 [dependencies]
 styx-parse.workspace = true
-ariadne = "0.6"
+ariadne.workspace = true
 facet = { workspace = true, optional = true }
 facet-testhelpers.workspace = true
 
 [dev-dependencies]
-insta = "1.42"
+insta.workspace = true
 strip-ansi-escapes.workspace = true
-facet.workspace = true
-facet-json.workspace = true
-facet-postcard.workspace = true
+facet = { path = "../facet" }
+facet-json = { path = "../facet-json" }
+facet-postcard = { path = "../facet-postcard" }

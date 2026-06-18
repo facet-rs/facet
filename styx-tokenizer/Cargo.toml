@@ -2,6 +2,7 @@
 name = "styx-tokenizer"
 version = "5.0.0-rc.0"
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "Tokenizer for the Styx configuration language"
 repository.workspace = true
@@ -21,4 +22,4 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 tracing.workspace = true
-facet-testhelpers.workspace = true
+facet-testhelpers = { path = "../facet-testhelpers" }

@@ -2,6 +2,7 @@
 name = "styx-lsp"
 version = "5.0.0-rc.0"
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Language server for Styx configuration language"
@@ -12,34 +13,34 @@ description = "Language server for Styx configuration language"
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-tower-lsp = "0.20"
-tokio = { version = "1", features = ["full"] }
+tower-lsp.workspace = true
+tokio = { workspace = true, features = ["full"] }
 
 # Styx crates
-styx-cst = { path = "../styx-cst", version = "5.0.0-rc.0" }
-styx-tree = { path = "../styx-tree", version = "5.0.0-rc.0" }
-styx-format = { path = "../styx-format", version = "5.0.0-rc.0" }
-styx-embed = { path = "../styx-embed", version = "5.0.0-rc.0" }
-facet-styx = { path = "../facet-styx", version = "5.0.0-rc.0" }
+styx-cst.workspace = true
+styx-tree.workspace = true
+styx-format.workspace = true
+styx-embed.workspace = true
+facet-styx.workspace = true
 
 # Binary lookup
-which = "7"
+which.workspace = true
 
 # Error handling
-eyre = "0.6"
+eyre.workspace = true
 
 # Cache support
-dirs = "6"
-sha2 = "0.10"
-hex = "0.4"
+dirs.workspace = true
+sha2.workspace = true
+hex.workspace = true
 
 # Logging
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 # Schema hints
 facet.workspace = true
-glob = "0.3"
+glob.workspace = true
 serde_json.workspace = true
 
 # LSP extensions (vox RPC)
@@ -47,16 +48,16 @@ vox.workspace = true
 vox-stream.workspace = true
 
 # Extension protocol
-styx-lsp-ext = { path = "../styx-lsp-ext", version = "5.0.0-rc.0" }
+styx-lsp-ext.workspace = true
 
 # Testing
-styx-lsp-test-schema = { path = "../styx-lsp-test-schema", version = "5.0.0-rc.0" }
+styx-lsp-test-schema.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
-futures = "0.3"
+futures.workspace = true
 tower = "0.4"
 
 [build-dependencies]
 facet.workspace = true
-facet-styx = { path = "../facet-styx", version = "5.0.0-rc.0" }
+facet-styx.workspace = true

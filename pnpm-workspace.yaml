@@ -1,10 +1,10 @@
 packages:
-  - "docs"
+  - "styx-docs"
   - "editors/codemirror-styx"
   - "editors/monaco-styx"
   - "editors/vscode-styx"
   - "implementations/styx-js"
   - "tools/styx-webmd"
-  - "crates/styx-wasm"
+  - "styx-wasm"
   - "playgrounds/monaco"
   - "playgrounds/codemirror"

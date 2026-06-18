@@ -283,6 +283,100 @@ version_group = "picante"
 changelog_path = "picante/CHANGELOG.md"
 
 # ============================================================================
+# Styx packages - coordinated from this monorepo, preserving their major line
+# ============================================================================
+
+[[package]]
+name = "styx-tokenizer"
+version_group = "styx"
+changelog_path = "styx/CHANGELOG.md"
+
+[[package]]
+name = "styx-parse"
+version_group = "styx"
+changelog_path = "styx/CHANGELOG.md"
+
+[[package]]
+name = "styx-tree"
+version_group = "styx"
+changelog_path = "styx/CHANGELOG.md"
+
+[[package]]
+name = "styx-testhelpers"
+version_group = "styx"
+changelog_path = "styx/CHANGELOG.md"
+
+[[package]]
+name = "styx-cst"
+version_group = "styx"
+changelog_path = "styx/CHANGELOG.md"
+
+[[package]]
+name = "styx-format"
+version_group = "styx"
+changelog_path = "styx/CHANGELOG.md"
+
+[[package]]
+name = "styx-lsp"
+version_group = "styx"
+changelog_path = "styx/CHANGELOG.md"
+
+[[package]]
+name = "styx-lsp-ext"
+version_group = "styx"
+changelog_path = "styx/CHANGELOG.md"
+
+[[package]]
+name = "styx-lsp-test-schema"
+version_group = "styx"
+changelog_path = "styx/CHANGELOG.md"
+
+[[package]]
+name = "styx-embed"
+version_group = "styx"
+changelog_path = "styx/CHANGELOG.md"
+
+[[package]]
+name = "styx-embed-macros"
+version_group = "styx"
+changelog_path = "styx/CHANGELOG.md"
+
+[[package]]
+name = "styx-gen-go"
+version_group = "styx"
+changelog_path = "styx/CHANGELOG.md"
+
+[[package]]
+name = "facet-styx"
+version_group = "styx"
+changelog_path = "styx/CHANGELOG.md"
+
+[[package]]
+name = "serde_styx"
+version_group = "styx"
+changelog_path = "styx/CHANGELOG.md"
+
+[[package]]
+name = "styx-cli"
+version_group = "styx"
+changelog_path = "styx/CHANGELOG.md"
+
+[[package]]
+name = "styx-ffi"
+version_group = "styx"
+changelog_path = "styx/CHANGELOG.md"
+
+[[package]]
+name = "styx-wasm"
+version_group = "styx"
+changelog_path = "styx/CHANGELOG.md"
+
+[[package]]
+name = "tree-sitter-styx"
+version_group = "styx"
+changelog_path = "styx/CHANGELOG.md"
+
+# ============================================================================
 # Dev-only packages - excluded from releases
 # ============================================================================
 
@@ -298,5 +392,15 @@ publish = false
 
 [[package]]
 name = "facet-format-suite"
+release = false
+publish = false
+
+[[package]]
+name = "xtask"
+release = false
+publish = false
+
+[[package]]
+name = "styx-compat-tests"
 release = false
 publish = false

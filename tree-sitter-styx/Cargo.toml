@@ -6,8 +6,9 @@ license = "MIT"
 readme = "README.md"
 keywords = ["incremental", "parsing", "tree-sitter", "styx"]
 categories = ["parsing", "text-editors"]
-repository = "https://github.com/bearcove/styx"
+repository.workspace = true
 edition = "2024"
+rust-version.workspace = true
 autoexamples = false
 
 build = "bindings/rust/build.rs"
@@ -22,7 +23,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 path = "bindings/rust/lib.rs"
 
 [dependencies]
-tree-sitter = ">=0.22.6"
+tree-sitter.workspace = true
 
 [build-dependencies]
-cc = "1.0.87"
+cc.workspace = true

@@ -63,7 +63,7 @@ impl CstFormatter {
     fn write_indent(&mut self) {
         if self.at_line_start && self.indent_level > 0 {
             for _ in 0..self.indent_level {
-                self.out.push_str(self.options.indent);
+                self.out.push_str(&self.options.indent);
             }
         }
         self.at_line_start = false;

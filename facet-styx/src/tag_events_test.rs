@@ -1,4 +1,4 @@
-//! Tests for tag event sequences as defined in docs/007-tag-events.md
+//! Tests for tag event sequences as defined in styx-docs/007-tag-events.md
 
 use facet_format::{ContainerKind, FormatParser, ParseEvent, ParseEventKind, ScalarValue};
 use facet_testhelpers::test;

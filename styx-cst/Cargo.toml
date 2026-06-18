@@ -2,6 +2,7 @@
 name = "styx-cst"
 version = "5.0.0-rc.0"
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "Lossless Concrete Syntax Tree for the Styx configuration language"
 repository.workspace = true
@@ -13,7 +14,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 styx-tokenizer.workspace = true
-rowan = "0.16"
+rowan.workspace = true
 
 [dev-dependencies]
 styx-testhelpers = { path = "../styx-testhelpers" }

@@ -1877,11 +1877,7 @@ impl LanguageServer for StyxLanguageServer {
         };
 
         // Format the document using CST formatter (preserves comments)
-        let options = styx_format::FormatOptions::default().indent(
-            // Leak the string since FormatOptions expects &'static str
-            // This is fine since we're not going to format millions of times
-            Box::leak(indent.into_boxed_str()),
-        );
+        let options = styx_format::FormatOptions::default().indent(indent);
 
         let formatted = styx_format::format_source(&doc.content, options);
 

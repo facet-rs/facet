@@ -1,5 +1,7 @@
 //! Formatting options for Styx serialization.
 
+use std::borrow::Cow;
+
 /// Restrict formatting to a kind.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum ForceStyle {
@@ -16,7 +18,7 @@ pub enum ForceStyle {
 #[derive(Debug, Clone)]
 pub struct FormatOptions {
     /// Indentation string (default: "    " - 4 spaces)
-    pub indent: &'static str,
+    pub indent: Cow<'static, str>,
 
     /// Max line width before wrapping (default: 80)
     pub max_width: usize,
@@ -40,7 +42,7 @@ pub struct FormatOptions {
 impl Default for FormatOptions {
     fn default() -> Self {
         Self {
-            indent: "    ",
+            indent: Cow::Borrowed("    "),
             max_width: 80,
             min_inline_width: 30,
             inline_object_threshold: 4,
@@ -70,8 +72,8 @@ impl FormatOptions {
     }
 
     /// Set a custom indentation string.
-    pub fn indent(mut self, indent: &'static str) -> Self {
-        self.indent = indent;
+    pub fn indent(mut self, indent: impl Into<Cow<'static, str>>) -> Self {
+        self.indent = indent.into();
         self
     }
 

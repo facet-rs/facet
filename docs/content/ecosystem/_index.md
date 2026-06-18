@@ -88,6 +88,8 @@ Day-to-day ergonomics: better output, better errors, less boilerplate.
 | Crate | What it does | Source |
 |-------|--------------|--------|
 | [`figue`](https://docs.rs/figue) | Type-safe CLI args, environment variables, and config files in one layered model. [Guide](@/ecosystem/figue/_index.md). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/figue) |
+| [`facet-styx`](https://docs.rs/facet-styx) | Styx serialization and deserialization for Facet types. [Guide](@/styx/_index.md). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-styx) |
+| [`styx-cli`](https://docs.rs/styx-cli) | Validation, formatting, schema generation, and language server tooling for Styx. [Guide](@/styx/tools/cli.md). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/styx-cli) |
 | [`facet-cargo-toml`](https://docs.rs/facet-cargo-toml) | A fully-typed `Cargo.toml` / `Cargo.lock` parser. [Guide](@/ecosystem/facet-cargo-toml/_index.md). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-cargo-toml) |
 | [`rediff`](https://docs.rs/rediff) | Structural diffs and assertions for Facet values. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/rediff) |
 

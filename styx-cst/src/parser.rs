@@ -762,7 +762,7 @@ id> value
 
     #[test]
     fn test_showcase_file() {
-        let source = include_str!("../../../examples/showcase.styx");
+        let source = include_str!("../../examples/showcase.styx");
         let parse = parse(source);
 
         // Should parse without errors

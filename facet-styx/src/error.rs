@@ -13,7 +13,7 @@ fn ariadne_config() -> Config {
     }
 }
 
-/// Convert a facet_reflect::Span to a Range<usize>.
+/// Convert a `facet_reflect::Span` to a `Range<usize>`.
 fn reflect_span_to_range(span: &facet_reflect::Span) -> std::ops::Range<usize> {
     let start = span.offset as usize;
     let end = start + span.len as usize;

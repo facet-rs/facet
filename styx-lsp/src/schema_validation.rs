@@ -28,7 +28,7 @@ pub struct SchemaField {
 pub enum SchemaRef {
     /// External schema file path: @schema path/to/schema.styx
     External(String),
-    /// Embedded schema from binary: @schema {id ..., cli <binary>}
+    /// Embedded schema from binary: `@schema {id ..., cli <binary>}`
     Embedded {
         /// The schema ID to look for
         id: String,

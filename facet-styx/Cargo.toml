@@ -2,6 +2,7 @@
 name = "facet-styx"
 version = "5.0.0-rc.0"
 edition.workspace = true
+rust-version.workspace = true
 description = "Facet integration for the Styx configuration language"
 license.workspace = true
 repository.workspace = true
@@ -31,14 +32,14 @@ figue = { workspace = true, optional = true }
 [dev-dependencies]
 styx-testhelpers = { path = "../styx-testhelpers" }
 tracing.workspace = true
-tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
-facet-testhelpers.workspace = true
+tracing-subscriber = { workspace = true, features = ["fmt", "env-filter"] }
+facet-testhelpers = { path = "../facet-testhelpers" }
 insta.workspace = true
 strip-ansi-escapes.workspace = true
-facet-format = { workspace = true, features = ["tracing"] }
-facet-reflect = { workspace = true, features = ["tracing"] }
-figue.workspace = true
-indexmap = "2.13.0"
+facet-format = { path = "../facet-format", features = ["tracing"] }
+facet-reflect = { path = "../facet-reflect", features = ["tracing"] }
+figue = { path = "../figue" }
+indexmap.workspace = true
 similar.workspace = true
 
 [features]
