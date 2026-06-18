@@ -295,7 +295,7 @@ fn main() {
     write_fixture(
         "wire/message_protocol_error.bin",
         &encode_message(&Message {
-            lane_id: LaneId::ROOT,
+            lane_id: LaneId::CONTROL,
             payload: MessagePayload::ProtocolError(ProtocolError {
                 description: "bad frame sequence",
             }),

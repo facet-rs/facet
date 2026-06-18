@@ -1,7 +1,7 @@
 use facet::Facet;
 
-// r[impl lane.id.compat]
-// r[impl lane.control.compat]
+// r[impl lane.id]
+// r[impl lane.control]
 declare_id!(
     /// Lane ID identifying a service lane on a Vox connection.
     ///
@@ -12,11 +12,11 @@ declare_id!(
 
 impl LaneId {
     /// The reserved connection-control lane.
-    pub const ROOT: Self = Self(0);
+    pub const CONTROL: Self = Self(0);
 
     /// Check if this is the reserved connection-control lane.
-    pub const fn is_root(self) -> bool {
-        self.0 == Self::ROOT.0
+    pub const fn is_control(self) -> bool {
+        self.0 == Self::CONTROL.0
     }
 }
 

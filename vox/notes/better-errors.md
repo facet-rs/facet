@@ -2,7 +2,7 @@
 
 Vox currently flattens too many runtime failures into low-actionability enums such as `Unknown`, `Protocol`, `Transport`, `ConnectionClosed`, or `InvalidPayload(String)`. That makes failures hard to diagnose from API errors, observer events, snapshots, and logs.
 
-This note is the roadmap for a dedicated error cleanup branch. The current branch should only make the minimal changes needed to stop swallowing session receive failures and channel connection-close causes.
+This note is the roadmap for a dedicated error cleanup branch. The current branch should only make the minimal changes needed to stop swallowing connection driver receive failures and channel connection-close causes.
 
 ## Goals
 
@@ -24,9 +24,9 @@ This note is the roadmap for a dedicated error cleanup branch. The current branc
 - `DecodeErrorKind` loses type/message context, offset, payload length, and sample bytes.
 - `EncodeErrorKind` loses the message family/type and serialization failure detail.
 - `ProtocolErrorKind` says which broad bucket failed but not the bad ID, state, or invariant.
-- `VoxError::ConnectionClosed`, `SessionShutdown`, and `SendFailed` do not carry a close/send cause.
+- `VoxError::ConnectionClosed`, connection shutdown, and `SendFailed` do not carry a close/send cause.
 - `VoxError::InvalidPayload(String)` is ad hoc while observer decode errors use a separate lossy enum.
-- Session receive errors can currently become connection/channel teardown without enough structured context.
+- Connection driver receive errors can currently become connection/channel teardown without enough structured context.
 - Snapshots record close reasons but not rich terminal errors.
 
 ## Proposed Types
@@ -52,7 +52,7 @@ pub struct DecodeErrorDetail {
     pub message: String,
     pub target_type: Option<&'static str>,
     pub message_family: Option<&'static str>,
-    pub connection_id: Option<ConnectionId>,
+    pub lane_id: Option<LaneId>,
     pub payload_len: Option<usize>,
     pub offset: Option<usize>,
     pub sample: Option<PayloadSample>,
@@ -63,13 +63,13 @@ pub struct EncodeErrorDetail {
     pub message: String,
     pub source_type: Option<&'static str>,
     pub message_family: Option<&'static str>,
-    pub connection_id: Option<ConnectionId>,
+    pub lane_id: Option<LaneId>,
 }
 
 pub struct ProtocolErrorDetail {
     pub kind: ProtocolErrorKind,
     pub message: String,
-    pub connection_id: Option<ConnectionId>,
+    pub lane_id: Option<LaneId>,
     pub request_id: Option<RequestId>,
     pub channel_id: Option<ChannelId>,
 }
@@ -78,7 +78,7 @@ pub enum ConnectionCloseReason {
     Local,
     Remote,
     CallerDropped,
-    SessionShutdown,
+    ConnectionShutdown,
     Decode(DecodeErrorDetail),
     Encode(EncodeErrorDetail),
     Protocol(ProtocolErrorDetail),
@@ -127,7 +127,7 @@ Exact naming can change, but the key point is that close reasons must carry the 
 ## Migration Plan
 
 1. Add rich detail structs in `vox-types` without replacing every existing enum variant.
-2. Thread rich close reasons through session close state, driver shared state, channel teardown, and snapshots.
+2. Thread rich close reasons through connection close state, driver shared state, channel teardown, and snapshots.
 3. Change conduit decode errors to attach target type, payload len, offset, and bounded sample.
 4. Change stream transport to report partial-frame context.
 5. Update `VoxError` to carry optional runtime close/send causes.

@@ -277,7 +277,7 @@ Everything else stays crate-private or diagnostic-only.
 ## Refactor Order
 
 1. Keep specs and Tracey rule names on `Connection`, `Lane`, and `RequestScope`.
-2. Remove public root/control-lane ownership semantics.
+2. Remove public control-lane ownership semantics.
 3. Make driver/shutdown lifecycle explicit in examples and generated clients.
 4. Keep raw channels request-scoped and terminalized by request outcomes.
 5. Keep establishment, lane decisions, shutdown, and connection errors observable.

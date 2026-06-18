@@ -86,11 +86,11 @@ impl VoxObserver for RecordingDriverObserver {
 // r[verify lane.open.api]
 // r[verify lane.accept.api]
 // r[verify lane.open.wire]
-// r[verify lane.service.compat]
+// r[verify lane.service]
 // r[verify lane]
 // r[verify lane.control]
 // r[verify lane.open]
-// r[verify lane.wire.compat]
+// r[verify lane.wire]
 // r[verify lane.open.settings]
 // r[verify connection.message]
 // r[verify connection.message.lane-id]
@@ -131,7 +131,7 @@ async fn open_service_lane_and_call() {
         .await
         .expect("open service lane");
     assert!(
-        !lane_handle.lane_id().is_root(),
+        !lane_handle.lane_id().is_control(),
         "service lane id should not be the control lane"
     );
 
@@ -228,7 +228,7 @@ async fn control_and_service_lanes_bind_separate_services() {
 // r[verify lane.open.wire.rejection]
 // r[verify lane.open]
 // r[verify lane.open.result]
-// r[verify lane.wire.compat]
+// r[verify lane.wire]
 // r[verify lane.authorization.filtered]
 // r[verify rejection.reason.taxonomy]
 #[tokio::test]
@@ -287,7 +287,7 @@ async fn reject_service_lane() {
 // r[verify lane.open.wire.rejection]
 // r[verify lane.open]
 // r[verify lane.open.result]
-// r[verify lane.wire.compat]
+// r[verify lane.wire]
 #[tokio::test]
 async fn open_service_lane_without_acceptor_is_rejected() {
     let (client_conduit, server_conduit) = message_conduit_pair();
@@ -328,7 +328,7 @@ async fn open_service_lane_without_acceptor_is_rejected() {
 }
 
 // r[verify lane.close]
-// r[verify lane.wire.compat]
+// r[verify lane.wire]
 #[tokio::test]
 async fn close_unknown_service_lane_is_rejected() {
     let (client_conduit, server_conduit) = message_conduit_pair();
@@ -362,7 +362,7 @@ async fn close_unknown_service_lane_is_rejected() {
 
 // r[verify lane.close]
 // r[verify lane.close.semantics]
-// r[verify lane.wire.compat]
+// r[verify lane.wire]
 #[tokio::test]
 async fn close_service_lane() {
     let (client_conduit, server_conduit) = message_conduit_pair();
@@ -401,7 +401,7 @@ async fn close_service_lane() {
 
     let conn_id = lane_handle.lane_id();
     assert!(
-        !conn_id.is_root(),
+        !conn_id.is_control(),
         "service lane should not be the control lane"
     );
 
@@ -530,7 +530,7 @@ async fn dropping_last_lane_caller_does_not_close_service_lane() {
 
 // r[verify lane.close.semantics]
 // r[verify rpc.channel.close]
-// r[verify lane.wire.compat]
+// r[verify lane.wire]
 #[tokio::test]
 async fn close_service_lane_closes_registered_rx_channels() {
     let (client_conduit, server_conduit) = message_conduit_pair();

@@ -439,8 +439,8 @@ weight = 12
 > r[rpc.flow-control.max-concurrent-requests.default]
 >
 > The default limit is carried in `ConnectionSettings`, which is embedded
-> in `Hello` (for connection defaults and control lane ID 0 settings) and
-> `OpenConnection` (for service lanes). See
+> in `Hello` and `HelloYourself` for connection defaults and control lane ID 0
+> settings, and in `LaneOpen` and `LaneAccept` for service lanes. See
 > `r[lane.settings]`.
 
 ## Channel credit
@@ -642,10 +642,10 @@ weight = 12
 > | `Hello` | `metadata` | Early peer-authored connection-establishment claims and extensions; default-sensitive. |
 > | `HelloYourself` | `metadata` | Early peer-authored connection-establishment claims and extensions; default-sensitive. |
 > | `Decline` | `metadata` | Redactable establishment-rejection detail. |
-> | `OpenConnection` / lane open | `metadata` | Requested service, lane-scoped claims, routing hints, and lane-open options. |
-> | `AcceptConnection` / lane accept | `metadata` | Lane-accept detail, including grant-related public detail if policy exposes it. |
-> | `RejectConnection` / lane reject | `metadata` | Structured lane-rejection reason and redactable diagnostic detail. |
-> | `CloseConnection` / lane close | `metadata` | Lane-close reason and diagnostic detail. |
+> | `LaneOpen` | `metadata` | Requested service, lane-scoped claims, routing hints, and lane-open options. |
+> | `LaneAccept` | `metadata` | Lane-accept detail, including grant-related public detail if policy exposes it. |
+> | `LaneReject` | `metadata` | Structured lane-rejection reason and redactable diagnostic detail. |
+> | `LaneClose` | `metadata` | Lane-close reason and diagnostic detail. |
 > | `Request.Call` | `metadata` | Request-scoped claims, tracing context, deadlines, and call options. |
 > | `Request.Response` | `metadata` | Response metadata and diagnostic detail. |
 > | `Request.Cancel` | `metadata` | Cancellation reason and diagnostic detail. |

@@ -114,7 +114,7 @@ unsafe impl Reborrow for (u32, u8, u8) {
 /// A content hash that uniquely identifies a type's postcard-level structure.
 ///
 /// Computed via blake3, truncated to 64 bits. The same type always produces
-/// the same TypeSchemaId regardless of connection, session, process, or
+/// the same TypeSchemaId regardless of connection, process, or
 /// language.
 // r[impl schema.type-id]
 #[derive(Facet, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]

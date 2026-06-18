@@ -612,7 +612,7 @@ impl ConnectionHandle {
     /// the response and completes the returned future.
     // r[impl lane.open.wire]
     // r[impl lane.open]
-    // r[impl lane.wire.compat]
+    // r[impl lane.wire]
     pub async fn open_lane_handle(
         &self,
         settings: ConnectionSettings,
@@ -637,7 +637,7 @@ impl ConnectionHandle {
     /// Sends `LaneClose` to the peer and removes the lane slot. After this
     /// returns, no further messages will be routed to the lane's driver.
     // r[impl lane.close]
-    // r[impl lane.wire.compat]
+    // r[impl lane.wire]
     pub async fn close_lane(
         &self,
         lane_id: LaneId,
@@ -728,7 +728,7 @@ struct KeepaliveRuntime {
     next_ping_nonce: u64,
 }
 
-// r[impl lane.id.compat]
+// r[impl lane.id]
 /// Static data for one active lane.
 #[derive(Debug)]
 pub struct LaneState {
@@ -1465,7 +1465,7 @@ impl Connection {
         local_settings: ConnectionSettings,
         peer_settings: ConnectionSettings,
     ) -> LaneHandle {
-        self.make_connection_handle(LaneId::ROOT, local_settings, peer_settings)
+        self.make_connection_handle(LaneId::CONTROL, local_settings, peer_settings)
     }
 
     fn make_connection_handle(
@@ -1655,7 +1655,7 @@ impl Connection {
                 return;
             }
             MessagePayload::Pong(pong) => {
-                if conn_id.is_root() {
+                if conn_id.is_control() {
                     // r[impl connection.keepalive]
                     self.handle_keepalive_pong(pong.nonce, keepalive_runtime);
                 }
@@ -1695,7 +1695,7 @@ impl Connection {
         vox_types::selfref_match!(msg, payload {
             // r[impl lane.close.semantics]
             MessagePayload::LaneClose(_) => {
-                if conn_id.is_root() {
+                if conn_id.is_control() {
                     warn!("received LaneClose for control lane");
                 } else {
                     trace!(conn_id = conn_id.0, "received LaneClose for service lane");
@@ -1911,7 +1911,7 @@ impl Connection {
             .connection_core
             .send(
                 Message {
-                    lane_id: LaneId::ROOT,
+                    lane_id: LaneId::CONTROL,
                     payload: MessagePayload::Ping(vox_types::Ping { nonce }),
                 },
                 None,
@@ -1952,7 +1952,7 @@ impl Connection {
     }
 
     // r[impl lane.open]
-    // r[impl lane.wire.compat]
+    // r[impl lane.wire]
     // r[impl lane.open.result]
     async fn handle_inbound_open(&mut self, conn_id: LaneId, open: SelfRef<LaneOpen>) {
         let establishment_started_at = observe_establishment_started(
@@ -2197,7 +2197,7 @@ impl Connection {
     }
 
     // r[impl lane.open]
-    // r[impl lane.wire.compat]
+    // r[impl lane.wire]
     fn handle_inbound_accept(&mut self, conn_id: LaneId, accept: SelfRef<LaneAccept>) {
         let accept = accept.get();
         let slot = self.remove_connection(&conn_id);
@@ -2252,7 +2252,7 @@ impl Connection {
     }
 
     // r[impl lane.open]
-    // r[impl lane.wire.compat]
+    // r[impl lane.wire]
     // r[impl lane.open.result]
     fn handle_inbound_reject(&mut self, conn_id: LaneId, reject: SelfRef<LaneReject>) {
         let reject = reject.get();
@@ -2283,7 +2283,7 @@ impl Connection {
 
     // r[impl lane.open.wire]
     // r[impl lane.open]
-    // r[impl lane.wire.compat]
+    // r[impl lane.wire]
     async fn handle_open_request(&mut self, req: OpenRequest) {
         if req.settings.initial_channel_credit == 0 {
             let _ = req.result_tx.send(Err(ConnectionError::Protocol(
@@ -2345,7 +2345,7 @@ impl Connection {
 
     // r[impl lane.close]
     async fn handle_close_request(&mut self, req: CloseRequest) {
-        if req.conn_id.is_root() {
+        if req.conn_id.is_control() {
             let _ = req.result_tx.send(Err(ConnectionError::Protocol(
                 "cannot close control lane".into(),
             )));
@@ -2396,7 +2396,7 @@ impl Connection {
                 false
             }
             DropControlRequest::Close(conn_id) => {
-                if conn_id.is_root() {
+                if conn_id.is_control() {
                     trace!("ignoring root close control request");
                     return true;
                 }
@@ -2431,7 +2431,7 @@ impl Connection {
                     .connection_core
                     .send(
                         Message {
-                            lane_id: LaneId::ROOT,
+                            lane_id: LaneId::CONTROL,
                             payload: MessagePayload::ProtocolError(vox_types::ProtocolError {
                                 description: &description,
                             }),
@@ -3791,7 +3791,7 @@ mod tests {
             assert!(driver_events.iter().any(|event| matches!(
                 event,
                 DriverEvent::LaneClosed {
-                    lane_id: LaneId::ROOT,
+                    lane_id: LaneId::CONTROL,
                     reason
                 } if *reason == expected_reason
             )));
@@ -3799,7 +3799,7 @@ mod tests {
                 driver_events.iter().any(|event| matches!(
                     event,
                     DriverEvent::DecodeError {
-                        lane_id: LaneId::ROOT,
+                        lane_id: LaneId::CONTROL,
                         kind: DecodeErrorKind::Payload,
                     }
                 )),
@@ -3861,7 +3861,7 @@ mod tests {
         {
             let captured = sent.lock().expect("captured message mutex poisoned");
             assert_eq!(captured.len(), 2);
-            assert_eq!(captured[0].lane_id, LaneId::ROOT);
+            assert_eq!(captured[0].lane_id, LaneId::CONTROL);
             match &captured[0].payload {
                 CapturedPayload::Schema {
                     method_id: actual_method_id,
@@ -3878,7 +3878,7 @@ mod tests {
                 }
                 other => panic!("expected schema message before request, got {other:?}"),
             }
-            assert_eq!(captured[1].lane_id, LaneId::ROOT);
+            assert_eq!(captured[1].lane_id, LaneId::CONTROL);
             match &captured[1].payload {
                 CapturedPayload::Call {
                     request_id,
@@ -3937,7 +3937,7 @@ mod tests {
         handle
             .sender
             .connection_core
-            .record_incoming_call(LaneId::ROOT, request_id, method_id);
+            .record_incoming_call(LaneId::CONTROL, request_id, method_id);
 
         let first_response: Result<u32, vox_types::VoxError<core::convert::Infallible>> = Ok(99);
         handle
@@ -3956,7 +3956,7 @@ mod tests {
         {
             let captured = sent.lock().expect("captured message mutex poisoned");
             assert_eq!(captured.len(), 2);
-            assert_eq!(captured[0].lane_id, LaneId::ROOT);
+            assert_eq!(captured[0].lane_id, LaneId::CONTROL);
             match &captured[0].payload {
                 CapturedPayload::Schema {
                     method_id: actual_method_id,
@@ -3978,7 +3978,7 @@ mod tests {
                 }
                 other => panic!("expected schema message before response, got {other:?}"),
             }
-            assert_eq!(captured[1].lane_id, LaneId::ROOT);
+            assert_eq!(captured[1].lane_id, LaneId::CONTROL);
             match &captured[1].payload {
                 CapturedPayload::Response {
                     request_id: actual_request_id,
@@ -3993,7 +3993,7 @@ mod tests {
 
         let second_request_id = RequestId(13);
         handle.sender.connection_core.record_incoming_call(
-            LaneId::ROOT,
+            LaneId::CONTROL,
             second_request_id,
             method_id,
         );

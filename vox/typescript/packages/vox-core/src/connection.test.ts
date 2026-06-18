@@ -762,7 +762,7 @@ describe("connection", () => {
   });
 
   // r[verify connection.lane-id-parity]
-  // r[verify lane.service.compat]
+  // r[verify lane.service]
   // r[verify lane.open.wire]
   // r[verify lane.open.api]
   it("allocates service lane ids from local connection parity", async () => {
@@ -834,7 +834,7 @@ describe("connection", () => {
     await Promise.allSettled([acceptorConnection.closed()]);
   });
 
-  // r[verify lane.service.compat]
+  // r[verify lane.service]
   // r[verify lane.accept.api]
   // r[verify lane.authorization]
   // r[verify lane.authorization.context]
@@ -842,7 +842,7 @@ describe("connection", () => {
   // r[verify connection.identity.late-claims]
   // r[verify lane]
   // r[verify lane.open]
-  // r[verify lane.wire.compat]
+  // r[verify lane.wire]
   // r[verify connection.symmetry]
   // r[verify lane.open.settings]
   // r[verify connection.message]
@@ -1144,8 +1144,8 @@ describe("connection", () => {
   // r[verify rpc.flow-control.credit.initial]
   // r[verify rpc.flow-control.credit.initial.zero]
   // r[verify rpc.flow-control.max-concurrent-requests.default]
-  // r[verify lane.control.compat]
-  it("applies and rejects initial lane capacity settings", () => {
+  // r[verify lane.control]
+  it("applies and rejects control lane capacity settings", () => {
     expect(defaultLaneSettings(Role.Acceptor)).toMatchObject({
       parity: { tag: "Even" },
       max_concurrent_requests: 64,
@@ -1164,10 +1164,9 @@ describe("connection", () => {
   // r[verify conduit]
   // r[verify conduit.bare]
   // r[verify conduit.typeplan]
-  // r[verify lane.id.compat]
+  // r[verify lane.id]
   // r[verify connection.model]
   // r[verify connection.lifecycle.driven]
-  // r[verify lane.control.compat]
   // r[verify lane.control]
   it("establishes over transport prologue before BareConduit traffic", async () => {
     const [clientLink, serverLink] = memoryLinkPair();
@@ -1180,7 +1179,7 @@ describe("connection", () => {
     );
     expect("lane" in serverConnection).toBe(false);
     await expect(serverConnection.handle().closeLane(0n)).rejects.toThrow(
-      /cannot close the initial lane/,
+      /cannot close the control lane/,
     );
 
     await clientLink.send(

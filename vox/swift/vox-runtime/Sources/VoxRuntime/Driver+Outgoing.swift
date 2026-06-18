@@ -376,7 +376,7 @@ extension Driver {
             }
         case .openLane(let settings, let metadata, let dispatcher, let responseTx):
             // r[impl lane.open]
-            // r[impl lane.wire.compat]
+            // r[impl lane.wire]
             let isClosed = await state.isConnectionClosed()
             guard !isClosed else {
                 responseTx(.failure(.connectionClosed))
@@ -446,7 +446,6 @@ extension Driver {
         }
 
         if laneId == 0 {
-            // r[impl lane.control.compat]
             // r[impl lane.control]
             responseTx(.failure(.protocolViolation(rule: "connection.close")))
             return

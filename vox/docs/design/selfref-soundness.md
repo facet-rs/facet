@@ -86,14 +86,14 @@ lifetime is now tied to the borrow, so borrowed data can't escape.
 ```rust
 // Before (Deref leaks 'static):
 fn handle(msg: SelfRef<Message<'static>>) {
-    let id = msg.connection_id;   // implicit deref
+    let id = msg.lane_id;         // implicit deref
     msg.metadata.to_vec();        // UNSOUND: produces MetadataEntry<'static>
 }
 
 // After (get() shortens lifetime):
 fn handle(msg: SelfRef<Message<'static>>) {
     let m = msg.get();            // m: &'a Message<'a>
-    let id = m.connection_id;     // normal field access
+    let id = m.lane_id;           // normal field access
     m.metadata.to_vec();          // produces MetadataEntry<'a>, can't escape
     metadata_into_owned(m.metadata.to_vec()); // forced to own if needed
 }

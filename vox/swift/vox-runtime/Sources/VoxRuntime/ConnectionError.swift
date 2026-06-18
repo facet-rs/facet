@@ -1,4 +1,4 @@
-/// r[impl lane.id.compat] - Connection-level errors terminate the connection.
+/// r[impl lane.id] - Connection-level errors terminate the connection.
 /// r[impl connection.protocol-error] - Protocol errors are connection-fatal.
 public enum ConnectionError: Error {
     case connectionClosed

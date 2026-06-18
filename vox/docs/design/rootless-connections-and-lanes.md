@@ -4,6 +4,12 @@ Status: design background, not spec. The rootless direction has moved into
 `docs/content/spec/conn.md` and `docs/content/spec/rpc.md` as normative Tracey
 requirements.
 
+Vocabulary warning: this archive intentionally preserves pre-cleanup terms such
+as root connection, root service, `Session`, `ConnectionId`, and virtual
+connection while explaining the architectural pressure that led to the current
+Link / Connection / Lane / RequestScope model. Do not copy those terms into
+current spec, code, tests, or examples.
+
 This note captures the current direction for simplifying Vox connection
 lifecycle, removing the root-service footgun, and preserving the unusually
 flexible proxy/topology cases that motivated virtual connections in the first

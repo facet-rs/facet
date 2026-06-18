@@ -95,7 +95,7 @@ structstruck::strike! {
                 /// Request a new service lane. This is sent on the desired lane ID,
                 /// even though it does not exist yet.
                 // r[impl lane.open.wire]
-                // r[impl lane.service.compat]
+                // r[impl lane.service]
                 // r[impl lane.open.settings]
                 LaneOpen(pub struct LaneOpen {
                     /// Lane limits advertised by the opener.
@@ -427,7 +427,7 @@ mod tests {
 
     // r[verify connection.message.payloads]
     #[test]
-    fn message_payload_shape_lists_compact_session_payloads() {
+    fn message_payload_shape_lists_compact_connection_payloads() {
         let payloads = enum_variant_names::<MessagePayload<'static>>();
         assert_eq!(
             payloads,

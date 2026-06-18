@@ -326,7 +326,6 @@ private func establishmentLabels(_ events: [VoxEstablishmentObserverEvent]) -> [
 @Test
 // r[verify connection.protocol]
 // r[verify connection.model]
-// r[verify lane.control.compat]
 // r[verify lane.control]
 // r[verify rpc.connection-setup]
 // r[verify connection.peer]
@@ -1467,8 +1466,8 @@ struct ConnectionFailureTests {
         }
     }
 
-    // r[verify lane.id.compat]
-    // r[verify lane.control.compat]
+    // r[verify lane.id]
+    // r[verify lane.control]
     // r[verify rpc.request]
     // r[verify rpc.response]
     @Test func immediateResponseAfterSendStillCompletesCall() async throws {
@@ -2764,7 +2763,7 @@ struct ConnectionFailureTests {
     }
 
     // r[verify lane.accept.api]
-    // r[verify lane.service.compat]
+    // r[verify lane.service]
     // r[verify lane.authorization]
     // r[verify lane.authorization.context]
     // r[verify request.authorization]
@@ -2828,7 +2827,7 @@ struct ConnectionFailureTests {
 
     // r[verify lane.open.wire.rejection]
     // r[verify lane.open.result]
-    // r[verify lane.wire.compat]
+    // r[verify lane.wire]
     // r[verify lane.authorization.filtered]
     // r[verify rejection.reason.taxonomy]
     @Test func inboundOpenLaneRejectsWithStructuredReasonWhenNoAcceptor() async throws {
@@ -2870,7 +2869,7 @@ struct ConnectionFailureTests {
 
     // r[verify lane.open.wire.rejection]
     // r[verify lane.open.result]
-    // r[verify lane.wire.compat]
+    // r[verify lane.wire]
     @Test func connectionHandleOpenLaneFailsOnReject() async throws {
         let transport = ScriptedTransport()
         let (controlLane, driver, connectionHandle, _) = try await establishInitiator(

@@ -48,8 +48,8 @@ public final class ConnectionHandle: @unchecked Sendable {
 
     /// Close an open service lane.
     ///
-    /// r[impl lane.id.compat]
-    /// r[impl lane.service.compat]
+    /// r[impl lane.id]
+    /// r[impl lane.service]
     /// r[impl lane.close]
     /// r[impl lane.close.semantics]
     public func closeLane(

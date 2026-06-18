@@ -406,7 +406,7 @@ without pretending that all of those paths have the same security evidence.
 > | --- | --- | --- |
 > | Transport prologue | `TransportReject` | Transport-prologue reasons such as unsupported prologue. |
 > | Connection establishment | `Decline` | `Unauthenticated`, `Forbidden`, `NotReady`, `Draining`, `Unsupported`, `PolicyRejected`. |
-> | Service lane open | `RejectConnection` compatibility wire / lane reject | `UnknownService`, `Forbidden`, `NotReady`, `Draining`, `SchemaIncompatible`, `PolicyRejected`. |
+> | Service lane open | `LaneReject` | `UnknownService`, `Forbidden`, `NotReady`, `Draining`, `SchemaIncompatible`, `PolicyRejected`. |
 >
 > Implementations MAY add more specific reasons, but every reason MUST map to a
 > stable typed value and to one of the required reason categories for
@@ -501,13 +501,12 @@ without pretending that all of those paths have the same security evidence.
 > a peer MUST NOT learn every implemented service merely because it can open a
 > connection.
 
-> r[lane.wire.compat]
+> r[lane.wire]
 >
-> During the rootless-lane migration, implementations MAY encode lane
-> open/accept/reject/close using the historical `OpenConnection`,
-> `AcceptConnection`, `RejectConnection`, and `CloseConnection` message
-> variants. When used this way, those messages have lane semantics, not public
-> service-anchor semantics, and ID 0 remains the private control lane.
+> Lane open, accept, reject, and close are connection message payloads:
+> `LaneOpen`, `LaneAccept`, `LaneReject`, and `LaneClose`. These messages have
+> lane semantics, not connection-establishment semantics. ID 0 remains the
+> private control lane.
 
 > r[connection.lifecycle.driven]
 >
@@ -525,7 +524,7 @@ without pretending that all of those paths have the same security evidence.
 > best-effort cleanup, but it MUST NOT be the only way to perform graceful
 > drain, retire, close, or peer notification.
 
-# Connection handshake and compatibility wire terms
+# Connection Handshake And Lane Wire Terms
 
 > r[connection.protocol]
 >
@@ -561,32 +560,29 @@ succeeds, the `BareConduit` carries connection `Message` traffic.
 
 > r[connection.message.lane-id]
 >
-> Every message is composed of a lane identifier and a payload. The historical
-> wire field name is `connection_id`; in the rootless model it identifies a
-> service lane, except for `ProtocolError` and keepalive (`Ping`/`Pong`), which
-> MUST use control lane ID 0.
+> Every message is composed of a lane identifier and a payload. Nonzero lane IDs
+> identify service lanes. Connection-control payloads such as `ProtocolError`
+> and keepalive (`Ping`/`Pong`) MUST use control lane ID 0.
 
 > r[connection.message.payloads]
 >
-> Here are all the kinds of message payloads:
+> Here are all the kinds of connection message payloads:
 >
 >   * ProtocolError
+>   * LaneOpen
+>   * LaneAccept
+>   * LaneReject
+>   * LaneClose
+>   * RequestMessage
+>   * SchemaMessage
+>   * ChannelMessage
 >   * Ping
 >   * Pong
->   * OpenConnection, the compatibility wire name for lane open
->   * AcceptConnection, the compatibility wire name for lane accept
->   * RejectConnection, the compatibility wire name for lane reject
->   * CloseConnection, the compatibility wire name for lane close
->   * Request
->   * Response
->   * CancelRequest
->   * ChannelItem
->   * CloseChannel
->   * ResetChannel
->   * GrantCredit
 >
-> Schemas may be delivered inline with `Request` and `Response` payloads or
-> via a standalone `SchemaMessage` binding (see `r[schema.format.delivery]`).
+> `RequestMessage` contains request call, response, and cancellation bodies.
+> `ChannelMessage` contains channel item, close, reset, and credit-grant
+> bodies. Schemas may be delivered inline with request/response bodies or via a
+> standalone `SchemaMessage` binding (see `r[schema.format.delivery]`).
 >
 > `Hello`, `HelloYourself`, `LetsGo`, `Decline`, and `Sorry` are NOT message
 > payloads. They are phon self-describing handshake messages exchanged before
@@ -604,9 +600,7 @@ succeeds, the `BareConduit` carries connection `Message` traffic.
 >
 > 1. The initiator sends a **`Hello`** containing:
 >    - `parity`: the identifier partition desired by the initiator
->    - `connection_settings`: default lane limits; while the compatibility wire
->      format carries control-lane limits here, these also apply to control lane
->      ID 0
+>    - `connection_settings`: default lane limits and control lane ID 0 limits
 >    - `message_payload_schema`: the phon schema-closure bytes describing the
 >      initiator's `Message` envelope and all types it references (the enum used
 >      for all subsequent communication)
@@ -617,9 +611,8 @@ succeeds, the `BareConduit` carries connection `Message` traffic.
 > 2. The acceptor adopts the opposite parity, builds a phon decode plan for the
 >    initiator's `Message` schema, and replies with one of:
 >    - **`HelloYourself`** containing:
->      - `connection_settings`: default lane limits; while the compatibility
->        wire format carries control-lane limits here, these also apply to
->        control lane ID 0
+>      - `connection_settings`: default lane limits and control lane ID 0
+>        limits
 >      - `message_payload_schema`: the phon schema-closure bytes describing the
 >        acceptor's `Message` envelope and all types it references
 >      - `metadata`: early peer-authored metadata for connection-establishment
@@ -712,7 +705,7 @@ succeeds, the `BareConduit` carries connection `Message` traffic.
 >
 > Parity plays a role on two different levels:
 >
->   * connections (for lane IDs; historically named connection IDs on the wire)
+>   * the connection (for lane IDs)
 >   * lanes (for request IDs and channel IDs)
 >
 > The idea is to partition the identifier space so that either peer can allocate
@@ -724,9 +717,10 @@ succeeds, the `BareConduit` carries connection `Message` traffic.
 
 > r[lane.settings]
 >
-> `ConnectionSettings` is a compatibility wire struct embedded in `Hello` (for
-> connection defaults and control lane ID 0) and `OpenConnection` (for service
-> lanes). It carries per-lane limits advertised by the peer:
+> `ConnectionSettings` is embedded in `Hello` and `HelloYourself` for
+> connection-default lane limits and control lane ID 0 limits, and in
+> `LaneOpen` and `LaneAccept` for service lanes. It carries per-lane limits
+> advertised by the peer:
 >
 >   * `max_concurrent_requests` — the maximum number of in-flight requests
 >     the peer is willing to accept on this lane (u32).
@@ -742,8 +736,8 @@ succeeds, the `BareConduit` carries connection `Message` traffic.
 
 > r[lane.open.settings]
 >
-> `OpenConnection` carries a `ConnectionSettings` from the lane opener.
-> `AcceptConnection` carries a `ConnectionSettings` from the accepter. Together,
+> `LaneOpen` carries a `ConnectionSettings` from the lane opener.
+> `LaneAccept` carries a `ConnectionSettings` from the accepter. Together,
 > they establish the limits for the service lane.
 
 > r[connection.protocol-error]
@@ -772,34 +766,33 @@ succeeds, the `BareConduit` carries connection `Message` traffic.
 > connection failure, in which case they MUST tear down the connection and fail
 > all pending request scopes with a connection-closed style error.
 
-# Lanes and compatibility wire IDs
+# Lanes And Wire IDs
 
-> r[lane.id.compat]
+> r[lane.id]
 >
-> `ConnectionId` is a compatibility wire name for the lane ID namespace. Each
-> nonzero ID identifies a lane with its own request and channel namespaces.
-> Compatibility code and wire types MAY still call this a connection ID.
+> Each nonzero lane ID identifies a service lane with its own request and
+> channel namespaces. Lane ID 0 is reserved for connection-control traffic.
 
-> r[lane.control.compat]
+> r[lane.control]
 >
 > ID 0 is reserved for connection-control traffic. Trying to close ID 0 as an
 > application lane is a protocol error. ID 0 MUST NOT be exposed as a public
 > service-bearing lane or generated caller.
 
-> r[lane.service.compat]
+> r[lane.service]
 >
 > IDs strictly greater than 0 identify service lanes.
 
 > r[lane.open.wire]
 >
 > Either peer may allocate a new nonzero lane ID using its connection parity and
-> send an `OpenConnection` compatibility message on the desired lane ID, then
-> wait until the counterpart replies with either `AcceptConnection` or
-> `RejectConnection`. Only once `AcceptConnection` has been received may the
+> send a `LaneOpen` message on the desired lane ID, then wait until the
+> counterpart replies with either `LaneAccept` or `LaneReject`. Only once
+> `LaneAccept` has been received may the
 > peer send request, response, or channel messages on that lane.
 >
-> Sending `OpenConnection` with an ID that does not match the sender's
-> connection parity is a protocol error. Sending `OpenConnection` with an ID
+> Sending `LaneOpen` with an ID that does not match the sender's
+> connection parity is a protocol error. Sending `LaneOpen` with an ID
 > that is already in use is a protocol error.
 
 > r[lane.open.wire.rejection]
@@ -808,8 +801,8 @@ succeeds, the `BareConduit` carries connection `Message` traffic.
 > lanes a connection may hold. Instead, peers MUST protect their own resources by
 > enforcing local limits. If a counterpart attempts to open too many lanes, lacks
 > authorization, requests an unavailable service, or if the peer lacks the
-> resources to handle a new lane, the peer MUST reply with a `RejectConnection`
-> compatibility message.
+> resources to handle a new lane, the peer MUST reply with a `LaneReject`
+> message.
 
 > r[lane.request-channel-parity]
 >
@@ -826,23 +819,23 @@ succeeds, the `BareConduit` carries connection `Message` traffic.
 > r[lane.close]
 >
 > Either peer may gracefully terminate a nonzero service lane by sending a
-> `CloseConnection` compatibility message. After sending `CloseConnection`, a
+> `LaneClose` message. After sending `LaneClose`, a
 > peer MUST NOT send any further requests, responses, or channel messages on
 > that lane ID.
 
 > r[lane.close.semantics]
 >
-> Upon receiving a `CloseConnection` message, a peer MUST treat the lane as
+> Upon receiving a `LaneClose` message, a peer MUST treat the lane as
 > immediately terminated and release its associated resources. The receiving peer
 > SHOULD behave as if all in-flight request scopes on that lane received a
 > `CancelRequest`, and it MUST make all active raw channels bound to that lane
 > terminal with a lane-closed reason. Sending any message on a lane ID after
-> receiving `CloseConnection` for it is a protocol error.
+> receiving `LaneClose` for it is a protocol error.
 
 The design objective is to allow lane-aware proxies to route service-lane
-traffic without having to translate request IDs or channel IDs. The rootless
-model keeps the useful namespace separation while treating lanes as scoped
-service contexts inside one Vox connection.
+traffic without having to translate request IDs or channel IDs. The
+connection/lane model keeps the useful namespace separation while treating
+lanes as scoped service contexts inside one Vox connection.
 
 Case study: [dodeca](https://github.com/bearcove/dodeca) is a static site
 generator. It uses vox RPC to communicate the host (main binary) and cells,
@@ -868,11 +861,10 @@ cell can ask the host-side connection to create another request/channel
 namespace, then route browser traffic through that namespace without translating
 request IDs or channel IDs.
 
-In the rootless model, that topology should be described in terms of service
-lanes or in terms of a lower-level transport/topology that creates another Vox
-connection. Vox core represents service traffic with explicit lanes: ID 0
-remains connection control, and every public service endpoint lives on an
-explicit lane.
+That topology should be described in terms of service lanes or in terms of a
+lower-level transport/topology that creates another Vox connection. Vox core
+represents service traffic with explicit lanes: ID 0 remains connection
+control, and every public service endpoint lives on an explicit lane.
 
 ## Current Rust runtime API
 
@@ -884,8 +876,8 @@ explicit lane.
 
 Each `LaneHandle` is a service-lane handle: it gets its own driver state,
 request/channel ID allocators, dispatcher, and caller context.
-The rootless public API teaches this as "open or accept a service lane on an
+The public API teaches this as "open or accept a service lane on an
 explicitly driven Vox connection".
 
-If no inbound lane acceptor is configured during the compatibility period,
-inbound `OpenConnection` messages are rejected.
+If no inbound lane acceptor is configured, inbound `LaneOpen` messages are
+rejected.

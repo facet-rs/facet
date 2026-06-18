@@ -572,7 +572,7 @@ class ConnectionCore {
   private nextLaneId: bigint;
   private closed = false;
   private closeError: ConnectionError | null = null;
-  private initialLaneValue: Lane | null = null;
+  private controlLaneValue: Lane | null = null;
   private runPromise: Promise<void> | null = null;
   private readonly keepaliveIntervalMs: number;
   private readonly keepaliveTimeoutMs: number;
@@ -580,8 +580,8 @@ class ConnectionCore {
   private keepalivePendingNonce: bigint | null = null;
   private keepalivePongTimer: ReturnType<typeof setTimeout> | null = null;
   private nextKeepaliveNonce = 1n;
-  private readonly localInitialLaneSettings: ConnectionSettings;
-  private readonly peerInitialLaneSettings: ConnectionSettings;
+  private readonly localConnectionSettings: ConnectionSettings;
+  private readonly peerConnectionSettings: ConnectionSettings;
   private readonly peerIdentity: PeerIdentity;
   private readonly peerEvidence: PeerEvidence;
   private readonly onLane?: LaneAcceptor;
@@ -589,8 +589,8 @@ class ConnectionCore {
 
   constructor(
     conduit: Conduit<Message>,
-    localInitialLaneSettings: ConnectionSettings,
-    peerInitialLaneSettings: ConnectionSettings,
+    localConnectionSettings: ConnectionSettings,
+    peerConnectionSettings: ConnectionSettings,
     peerIdentity: PeerIdentity,
     peerEvidence: PeerEvidence,
     onLane?: LaneAcceptor,
@@ -599,12 +599,12 @@ class ConnectionCore {
     observer?: VoxObserver,
   ) {
     this.conduit = conduit;
-    this.localInitialLaneSettings = localInitialLaneSettings;
-    this.peerInitialLaneSettings = peerInitialLaneSettings;
+    this.localConnectionSettings = localConnectionSettings;
+    this.peerConnectionSettings = peerConnectionSettings;
     this.peerIdentity = peerIdentity;
     this.peerEvidence = peerEvidence;
     // r[impl connection.lane-id-parity]
-    this.nextLaneId = firstIdForParity(localInitialLaneSettings.parity);
+    this.nextLaneId = firstIdForParity(localConnectionSettings.parity);
     this.connectionHandle = new ConnectionHandle(this);
     this.onLane = onLane;
     this.observer = observer;
@@ -630,26 +630,25 @@ class ConnectionCore {
 
   defaultLaneSettings(): ConnectionSettings {
     return {
-      parity: this.localInitialLaneSettings.parity,
-      max_concurrent_requests: this.localInitialLaneSettings.max_concurrent_requests,
-      initial_channel_credit: this.localInitialLaneSettings.initial_channel_credit,
+      parity: this.localConnectionSettings.parity,
+      max_concurrent_requests: this.localConnectionSettings.max_concurrent_requests,
+      initial_channel_credit: this.localConnectionSettings.initial_channel_credit,
     };
   }
 
-  initialLane(): Lane {
-    // r[impl lane.id.compat]
-    // r[impl lane.control.compat]
+  controlLane(): Lane {
+    // r[impl lane.id]
     // r[impl lane.control]
-    if (!this.initialLaneValue) {
-      this.initialLaneValue = new Lane(
+    if (!this.controlLaneValue) {
+      this.controlLaneValue = new Lane(
         this,
         0n,
-        this.localInitialLaneSettings,
-        this.peerInitialLaneSettings,
+        this.localConnectionSettings,
+        this.peerConnectionSettings,
       );
-      this.lanes.set(0n, this.initialLaneValue);
+      this.lanes.set(0n, this.controlLaneValue);
     }
-    return this.initialLaneValue;
+    return this.controlLaneValue;
   }
 
   failPendingAttempts(error: Error): void {
@@ -734,8 +733,8 @@ class ConnectionCore {
     settings: ConnectionSettings,
     metadata: Metadata = emptyMetadata(),
   ): Promise<Lane> {
-    // r[impl lane.id.compat]
-    // r[impl lane.service.compat]
+    // r[impl lane.id]
+    // r[impl lane.service]
     // r[impl lane.open.wire]
     // r[impl lane.open]
     // r[impl lane.open.api]
@@ -747,7 +746,7 @@ class ConnectionCore {
     const laneId = this.allocateLaneId();
     const result = deferred<Lane>();
     const establishmentContext: EstablishmentContext = {
-      role: roleName(roleFromParity(this.localInitialLaneSettings.parity)),
+      role: roleName(roleFromParity(this.localConnectionSettings.parity)),
       phase: "service-lane-open",
       laneId,
     };
@@ -780,13 +779,13 @@ class ConnectionCore {
   }
 
   async closeLane(laneId: bigint, metadata: Metadata = emptyMetadata()): Promise<void> {
-    // r[impl lane.id.compat]
-    // r[impl lane.service.compat]
+    // r[impl lane.id]
+    // r[impl lane.service]
     // r[impl lane.close]
     // r[impl lane.close.semantics]
     this.assertOpen();
     if (laneId === 0n) {
-      throw new ConnectionError("cannot close the initial lane through closeLane");
+      throw new ConnectionError("cannot close the control lane through closeLane");
     }
 
     const lane = this.lanes.get(laneId);
@@ -906,12 +905,12 @@ class ConnectionCore {
         throw ConnectionError.peerProtocol(message.payload.value.description);
 
       case "LaneOpen":
-        // r[impl lane.wire.compat]
+        // r[impl lane.wire]
         await this.handleLaneOpen(message.lane_id, message.payload.value);
         return;
 
       case "LaneAccept":
-        // r[impl lane.wire.compat]
+        // r[impl lane.wire]
         this.handleLaneAccept(
           message.lane_id,
           message.payload.value.connection_settings,
@@ -920,12 +919,12 @@ class ConnectionCore {
         return;
 
       case "LaneReject":
-        // r[impl lane.wire.compat]
+        // r[impl lane.wire]
         this.handleLaneReject(message.lane_id, message.payload.value);
         return;
 
       case "LaneClose":
-        // r[impl lane.wire.compat]
+        // r[impl lane.wire]
         this.handleLaneClose(message.lane_id);
         return;
 
@@ -975,8 +974,8 @@ class ConnectionCore {
     laneId: bigint,
     value: { connection_settings: ConnectionSettings; metadata: unknown },
   ): Promise<void> {
-    // r[impl lane.id.compat]
-    // r[impl lane.service.compat]
+    // r[impl lane.id]
+    // r[impl lane.service]
     // r[impl lane.open.wire]
     // r[impl lane.open]
     // r[impl lane.accept.api]
@@ -985,7 +984,7 @@ class ConnectionCore {
     // r[impl lane.authorization]
     // r[impl lane.authorization.context]
     const establishmentContext: EstablishmentContext = {
-      role: roleName(roleFromParity(this.localInitialLaneSettings.parity)),
+      role: roleName(roleFromParity(this.localConnectionSettings.parity)),
       phase: "service-lane-open",
       laneId,
     };
@@ -1276,7 +1275,7 @@ class ConnectionCore {
       return;
     }
     const context: EstablishmentContext = {
-      role: roleName(roleFromParity(this.localInitialLaneSettings.parity)),
+      role: roleName(roleFromParity(this.localConnectionSettings.parity)),
       phase: "lane-grant-revocation",
       laneId,
     };
@@ -1289,7 +1288,7 @@ class ConnectionCore {
       return;
     }
     const context: EstablishmentContext = {
-      role: roleName(roleFromParity(this.localInitialLaneSettings.parity)),
+      role: roleName(roleFromParity(this.localConnectionSettings.parity)),
       phase: "lane-grant",
       laneId,
     };
@@ -2201,7 +2200,7 @@ export class Connection {
       options.keepaliveTimeoutMs ?? 0,
       options.observer,
     );
-    core.initialLane();
+    core.controlLane();
     core.start();
     return new Connection(core);
   }

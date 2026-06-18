@@ -18,7 +18,7 @@ describe("observerMetricLabels", () => {
       channel_direction: "tx",
       rejection_reason: "forbidden",
       identity_form: "application-user",
-      connection_id: "13",
+      lane_id: "13",
       request_id: "21",
       channel_id: "34",
       peer_address: "/tmp/vox.sock",
@@ -34,7 +34,7 @@ describe("observerMetricLabels", () => {
       rejection_reason: "forbidden",
       identity_form: "application-user",
     });
-    expect(Object.keys(labels)).not.toContain("connection_id");
+    expect(Object.keys(labels)).not.toContain("lane_id");
     expect(Object.keys(labels)).not.toContain("request_id");
     expect(Object.keys(labels)).not.toContain("channel_id");
     expect(Object.keys(labels)).not.toContain("metadata");

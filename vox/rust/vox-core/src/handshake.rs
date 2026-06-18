@@ -769,7 +769,7 @@ mod tests {
 
     // r[verify rpc.flow-control.credit.initial.zero]
     #[tokio::test]
-    async fn acceptor_rejects_peer_zero_initial_credit_before_session_starts() {
+    async fn acceptor_rejects_peer_zero_initial_credit_before_connection_starts() {
         let (client_link, server_link) = crate::memory_link_pair(4);
         let (client_tx, mut client_rx) = client_link.split();
         let (server_tx, mut server_rx) = server_link.split();

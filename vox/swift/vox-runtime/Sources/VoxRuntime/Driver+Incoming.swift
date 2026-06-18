@@ -2,7 +2,7 @@ import Foundation
 
 extension Driver {
     // r[impl lane.accept.api]
-    // r[impl lane.service.compat]
+    // r[impl lane.service]
     func addLane(
         _ laneId: UInt64,
         dispatcher: any ServiceDispatcher,
@@ -20,7 +20,7 @@ extension Driver {
     }
 
     // r[impl lane.close]
-    // r[impl lane.service.compat]
+    // r[impl lane.service]
     func removeLane(_ laneId: UInt64) async {
         if let record = await laneState.removeLane(laneId) {
             observeLaneGrantRevocation(laneId: laneId, grant: record.laneGrant)
@@ -101,7 +101,7 @@ extension Driver {
             // r[impl lane.open.wire]
             // r[impl lane.request-channel-parity]
             // r[impl lane.open]
-            // r[impl lane.wire.compat]
+            // r[impl lane.wire]
             let establishmentContext = VoxEstablishmentContext(
                 role: voxEstablishmentRole(role),
                 phase: .serviceLaneOpen,
@@ -323,7 +323,7 @@ extension Driver {
             // r[impl lane.open.wire]
             // r[impl lane.open.api]
             // r[impl lane.open.result]
-            // r[impl lane.wire.compat]
+            // r[impl lane.wire]
             guard let pending = await laneState.takePendingOutbound(msg.laneId) else {
                 break
             }
@@ -363,7 +363,7 @@ extension Driver {
         case .laneReject(let reject):
             // r[impl lane.open.wire.rejection]
             // r[impl lane.open.result]
-            // r[impl lane.wire.compat]
+            // r[impl lane.wire]
             guard let pending = await laneState.takePendingOutbound(msg.laneId) else {
                 break
             }

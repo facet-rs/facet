@@ -555,7 +555,7 @@ impl<C> ConnectionInitiatorBuilder<C> {
 
     /// Establish the Vox connection and start its driven runtime.
     ///
-    /// The root/control lane is private and transitional; user services are
+    /// The control lane is private; user services are
     /// reached by opening lanes on the returned [`ConnectionHandle`].
     pub async fn establish_connection(self) -> Result<ConnectionHandle, ConnectionError>
     where

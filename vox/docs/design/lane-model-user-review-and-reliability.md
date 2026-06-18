@@ -2,6 +2,11 @@
 
 Status: obsolete brainstorm archive, not spec.
 
+Vocabulary warning: this archive intentionally contains pre-cleanup names such
+as root sessions, `ConnectionId`, `SessionHandle`, and virtual connections while
+describing the model that was removed. Do not copy its historical terminology
+into current spec, code, tests, or examples.
+
 This note predates the narrowed direction in
 `docs/design/operations-observability-and-progress.md`: Vox core currently
 specifies request scopes and raw request-scoped channels only. Retry, resume,

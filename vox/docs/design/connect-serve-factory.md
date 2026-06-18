@@ -9,6 +9,9 @@ terminology is not the target API. Current normative wording belongs in
 `docs/content/spec/conn.md` and `docs/content/spec/rpc.md`; the active design
 sketch is `docs/design/rootless-connections-and-lanes.md`.
 
+Vocabulary warning: this archive intentionally contains pre-cleanup names. Do
+not copy its historical terminology into current spec, code, tests, or examples.
+
 Design notes for simplifying the public Rust API while preserving advanced
 connection features (service lanes, middleware, etc).
 

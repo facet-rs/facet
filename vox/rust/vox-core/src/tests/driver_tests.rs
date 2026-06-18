@@ -995,7 +995,7 @@ fn message_plan_from_identical_schemas_round_trips() {
 
     // Encode a Ping and decode it back through the program, borrowing via SelfRef.
     let msg = Message {
-        lane_id: vox_types::LaneId::ROOT,
+        lane_id: vox_types::LaneId::CONTROL,
         payload: MessagePayload::Ping(vox_types::Ping { nonce: 42 }),
     };
     let bytes = vox_phon::to_vec(&msg).expect("serialize message");
@@ -1005,7 +1005,7 @@ fn message_plan_from_identical_schemas_round_trips() {
     })
     .expect("should decode with identical-schema program");
     let decoded = decoded.get();
-    assert_eq!(decoded.lane_id, vox_types::LaneId::ROOT);
+    assert_eq!(decoded.lane_id, vox_types::LaneId::CONTROL);
     match &decoded.payload {
         MessagePayload::Ping(ping) => assert_eq!(ping.nonce, 42),
         other => panic!("expected Ping, got {other:?}"),
@@ -1019,9 +1019,9 @@ fn message_plan_from_identical_schemas_round_trips() {
 // r[verify lane.settings]
 // r[verify connection.message]
 // r[verify connection.message.lane-id]
-// r[verify lane.id.compat]
+// r[verify lane.id]
 // r[verify connection.model]
-// r[verify lane.control.compat]
+// r[verify lane.control]
 #[tokio::test]
 async fn call_through_phon_handshake_reaches_handler() {
     let (client_link, server_link) = memory_link_pair(64);
@@ -1042,7 +1042,7 @@ async fn call_through_phon_handshake_reaches_handler() {
 
     let _server_caller = server_result.expect("server establish failed");
     let caller = client_result.expect("client establish failed");
-    assert!(!caller.caller.debug_snapshot().lanes[0].lane_id.is_root());
+    assert!(!caller.caller.debug_snapshot().lanes[0].lane_id.is_control());
 
     let response = tokio::time::timeout(
         Duration::from_secs(1),
@@ -2173,7 +2173,6 @@ async fn service_lane_request_ids_use_connection_parity() {
 }
 
 // r[verify lane.close]
-// r[verify lane.control.compat]
 // r[verify lane.control]
 #[tokio::test]
 async fn close_control_lane_is_rejected() {
@@ -2199,7 +2198,7 @@ async fn close_control_lane_is_rejected() {
     let _server_caller_guard = server_task.await.expect("server setup failed");
 
     let result = connection_handle
-        .close_lane(vox_types::LaneId::ROOT, Default::default())
+        .close_lane(vox_types::LaneId::CONTROL, Default::default())
         .await;
     assert!(
         matches!(result, Err(ConnectionError::Protocol(ref msg)) if msg == "cannot close control lane"),

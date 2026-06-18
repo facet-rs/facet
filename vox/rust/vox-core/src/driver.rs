@@ -988,7 +988,7 @@ mod tests {
     async fn replenisher_batches_at_half_the_initial_window() {
         let (tx, mut rx) = vox_rt::sync::mpsc::unbounded_channel("test.replenisher");
         let replenisher = DriverChannelCreditReplenisher::new(
-            vox_types::LaneId::ROOT,
+            vox_types::LaneId::CONTROL,
             ChannelId(7),
             None,
             std::sync::Weak::new(),
@@ -1023,7 +1023,7 @@ mod tests {
     async fn replenisher_grants_one_by_one_for_single_credit_windows() {
         let (tx, mut rx) = vox_rt::sync::mpsc::unbounded_channel("test.replenisher.single");
         let replenisher = DriverChannelCreditReplenisher::new(
-            vox_types::LaneId::ROOT,
+            vox_types::LaneId::CONTROL,
             ChannelId(9),
             None,
             std::sync::Weak::new(),
