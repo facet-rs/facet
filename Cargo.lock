@@ -1145,6 +1145,7 @@ dependencies = [
  "camino",
  "datatest-stable",
  "facet",
+ "facet-error",
  "facet-reflect",
  "facet-toml",
  "facet-value",
