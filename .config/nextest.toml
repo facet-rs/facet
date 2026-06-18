@@ -9,6 +9,12 @@ command = 'scripts/setup-test-env.sh'
 [scripts.setup.set-env-windows]
 command = 'scripts/setup-test-env.cmd'
 
+[scripts.setup.vox-typescript-unix]
+command = 'scripts/setup-vox-typescript.sh'
+
+[scripts.setup.vox-typescript-windows]
+command = 'scripts/setup-vox-typescript.cmd'
+
 [profile.default]
 [[profile.default.scripts]]
 filter = 'all()'
@@ -19,6 +25,16 @@ setup = 'set-env-unix'
 filter = 'all()'
 platform = { host = "cfg(windows)" }
 setup = 'set-env-windows'
+
+[[profile.default.scripts]]
+filter = 'package(spec-tests)'
+platform = { host = "cfg(unix)" }
+setup = 'vox-typescript-unix'
+
+[[profile.default.scripts]]
+filter = 'package(spec-tests)'
+platform = { host = "cfg(windows)" }
+setup = 'vox-typescript-windows'
 
 [scripts.wrapper.valgrind]
 # Run tests under valgrind with leak checking

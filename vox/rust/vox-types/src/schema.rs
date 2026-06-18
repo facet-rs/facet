@@ -510,7 +510,7 @@ enum ExtractKey {
     AnonymousTupleArity(usize),
 }
 
-/// Convert a Vec<MixedSchema> (from extraction) into Vec<Schema> with
+/// Convert a `Vec<MixedSchema>` (from extraction) into `Vec<Schema>` with
 /// content-hashed TypeSchemaIds.
 ///
 /// Schemas must be in dependency order (dependencies before dependents).

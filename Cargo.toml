@@ -153,7 +153,6 @@ members = [
   "vox/rust/subject-rust",
   "vox/rust/vox-codegen",
   "vox/rust/vox-phon",
-  "vox/rust/facet-cbor",
   "vox/rust/wasm-browser-tests",
   "vox/rust/wasm-inprocess-tests",
   "vox/typescript/peer-server",

@@ -11,7 +11,7 @@ use tokio_tungstenite::tungstenite::protocol::Message as WsMessage;
 
 use vox_types::{Backing, Link, LinkRx, LinkTx};
 
-/// A [`Link`](vox_types::Link) over a WebSocket connection.
+/// A [`Link`] over a WebSocket connection.
 ///
 /// Wraps a [`WebSocketStream`] and sends each vox payload as a single
 /// binary WebSocket frame. The WebSocket protocol preserves message

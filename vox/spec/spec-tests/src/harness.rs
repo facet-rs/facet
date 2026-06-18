@@ -4623,9 +4623,9 @@ pub fn run_cross_language_scenario(
             return Ok(());
         }
 
+        let client_cmd = subject_cmd_for_language(client_spec.language);
         let (server_addr, mut server_child) = spawn_server_subject(server_spec).await?;
 
-        let client_cmd = subject_cmd_for_language(client_spec.language);
         let mut client_child = match spawn_subject_cmd_with_env(
             &client_cmd,
             &server_addr,

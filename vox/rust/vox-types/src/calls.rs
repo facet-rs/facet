@@ -219,7 +219,7 @@ pub trait ReplySink: MaybeSend + MaybeSync + 'static {
 /// Type-erased handler for incoming service calls.
 ///
 /// Implemented (by the macro-generated dispatch code) for server-side types.
-/// Takes a fully decoded [`RequestCall`](crate::RequestCall) — one wire-level
+/// Takes a fully decoded [`RequestCall`] — one wire-level
 /// request attempt already parsed from the connection — and a [`ReplySink`]
 /// through which the terminal response for that attempt is sent.
 ///
