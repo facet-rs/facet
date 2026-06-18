@@ -1,10 +1,16 @@
 [package]
 name = "phon-ir"
-version.workspace = true
+version = "0.2.0-rc.0"
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "The IR both phon backends run, the descriptor model, and thunk bindings — the shared vocabulary of execution."
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 phon-schema.workspace = true

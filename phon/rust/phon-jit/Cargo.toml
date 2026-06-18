@@ -1,10 +1,16 @@
 [package]
 name = "phon-jit"
-version.workspace = true
+version = "0.2.0-rc.0"
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "phon's optional copy-and-patch JIT: lowers the IR to machine code via rustc/LLVM stencils."
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 phon-ir.workspace = true

@@ -14,8 +14,9 @@ members = [
 [workspace.package]
 version = "0.2.0-rc.0"
 edition = "2024"
+rust-version = "1.92"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/bearcove/phon"
+repository = "https://github.com/facet-rs/facet"
 
 [workspace.dependencies]
 copypatch = { path = "copypatch", version = "0.2.0-rc.0" }
@@ -29,4 +30,7 @@ blake3 = "1.8"
 facet = "0.50.0-rc.0"
 facet-json = "0.50.0-rc.0"
 facet-value = "0.50.0-rc.0"
+object = "0.39"
 proptest = "1.11"
+tracing = { version = "0.1", default-features = false, features = ["std"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }

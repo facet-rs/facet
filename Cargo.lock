@@ -1125,8 +1125,6 @@ checksum = "980c2afde4af43d6a05c5be738f9eae595cff86dce1f38f88b95058a98c027f3"
 [[package]]
 name = "copypatch"
 version = "0.2.0-rc.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0ab1e265421aabf510f1bba62d4763bb289ffa2d4b7160cfbc522ffbf88223a"
 dependencies = [
  "libc",
  "object 0.39.1",
@@ -4629,8 +4627,6 @@ dependencies = [
 [[package]]
 name = "phon"
 version = "0.2.0-rc.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05d8793b1b5cbf59a3cfc4aeb2f91e4185ec7e312dc81588df47ce7af6a0f5dc"
 dependencies = [
  "facet",
  "facet-value",
@@ -4643,8 +4639,6 @@ dependencies = [
 [[package]]
 name = "phon-codegen"
 version = "0.2.0-rc.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48acb0ad312699bc1cd1eb47b73d497919022c5e7bd5a20db34fcf96725f00e9"
 dependencies = [
  "facet",
  "phon",
@@ -4652,21 +4646,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "phon-conformance"
+version = "0.2.0-rc.0"
+dependencies = [
+ "facet",
+ "facet-json",
+ "facet-value",
+ "phon-engine",
+ "phon-schema",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "phon-engine"
 version = "0.2.0-rc.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3680c6188f79a6e2383bfa30ba5e8ba607ecf93dd8d06b663c931a4e38642e0"
 dependencies = [
  "facet-value",
  "phon-ir",
  "phon-schema",
+ "proptest",
 ]
 
 [[package]]
 name = "phon-ir"
 version = "0.2.0-rc.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e5f17d081ab2b92b45c97e221a8b83d854ab1aeef5996ec5f41e0b0c7e7e7b8"
 dependencies = [
  "phon-schema",
 ]
@@ -4674,8 +4678,6 @@ dependencies = [
 [[package]]
 name = "phon-jit"
 version = "0.2.0-rc.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "245378b81f03900cf32f6f74e7d481c6e6695134843b2075b0e297c043acb255"
 dependencies = [
  "copypatch",
  "phon-ir",
@@ -4685,8 +4687,6 @@ dependencies = [
 [[package]]
 name = "phon-schema"
 version = "0.2.0-rc.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f8cbe35ada29454b29d608a27fe05935d6c1e0adf50354cc807f093a2b3318c"
 dependencies = [
  "blake3",
  "facet-value",

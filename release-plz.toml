@@ -347,6 +347,50 @@ version_group = "dibs"
 changelog_path = "dibs/CHANGELOG.md"
 
 # ============================================================================
+# Phon packages - coordinated from this monorepo, preserving their major line
+# ============================================================================
+
+[[package]]
+name = "copypatch"
+version_group = "phon"
+changelog_path = "phon/CHANGELOG.md"
+
+[[package]]
+name = "phon"
+version_group = "phon"
+changelog_path = "phon/CHANGELOG.md"
+
+[[package]]
+name = "phon-codegen"
+version_group = "phon"
+changelog_path = "phon/CHANGELOG.md"
+
+[[package]]
+name = "phon-conformance"
+version_group = "phon"
+changelog_path = "phon/CHANGELOG.md"
+
+[[package]]
+name = "phon-engine"
+version_group = "phon"
+changelog_path = "phon/CHANGELOG.md"
+
+[[package]]
+name = "phon-ir"
+version_group = "phon"
+changelog_path = "phon/CHANGELOG.md"
+
+[[package]]
+name = "phon-jit"
+version_group = "phon"
+changelog_path = "phon/CHANGELOG.md"
+
+[[package]]
+name = "phon-schema"
+version_group = "phon"
+changelog_path = "phon/CHANGELOG.md"
+
+# ============================================================================
 # Styx packages - coordinated from this monorepo, preserving their major line
 # ============================================================================
 

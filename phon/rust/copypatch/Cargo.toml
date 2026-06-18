@@ -1,14 +1,20 @@
 [package]
 name = "copypatch"
-version.workspace = true
+version = "0.2.0-rc.0"
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Reusable copy-and-patch JIT substrate: executable memory (W^X), AArch64 relocation patching, and build-time stencil extraction. Backend-agnostic — no IR, no schema."
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 # Only used by the build-time `extract` module (parsing the stencil object file).
-object = { version = "0.39", optional = true }
+object = { workspace = true, optional = true }
 
 [target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
 libc = "0.2"

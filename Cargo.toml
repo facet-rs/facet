@@ -119,6 +119,16 @@ members = [
   "examples/dibs-my-app-workspace/my-app-db",
   "examples/dibs-my-app-workspace/my-app-queries",
 
+  # Phon schema and typed codec
+  "phon/rust/copypatch",
+  "phon/rust/phon-schema",
+  "phon/rust/phon-ir",
+  "phon/rust/phon-engine",
+  "phon/rust/phon-jit",
+  "phon/rust/phon",
+  "phon/rust/phon-codegen",
+  "phon/rust/phon-conformance",
+
   # strongly-typed string IDs
   "strid",
   "strid-macros",
@@ -179,6 +189,13 @@ dibs-qgen = { path = "dibs-qgen", version = "0.2.0-rc.0" }
 dibs-query-schema = { path = "dibs-query-schema", version = "0.2.0-rc.0" }
 dibs-sql = { path = "dibs-sql", version = "0.2.0-rc.0" }
 dockside = { path = "dockside" }
+copypatch = { path = "phon/rust/copypatch", version = "0.2.0-rc.0" }
+phon = { path = "phon/rust/phon", version = "0.2.0-rc.0" }
+phon-codegen = { path = "phon/rust/phon-codegen", version = "0.2.0-rc.0" }
+phon-engine = { path = "phon/rust/phon-engine", version = "0.2.0-rc.0" }
+phon-ir = { path = "phon/rust/phon-ir", version = "0.2.0-rc.0" }
+phon-jit = { path = "phon/rust/phon-jit", version = "0.2.0-rc.0" }
+phon-schema = { path = "phon/rust/phon-schema", version = "0.2.0-rc.0" }
 serde_styx = { path = "serde_styx", version = "5.0.0-rc.0" }
 strid = { path = "strid", version = "11.0.0-rc.0" }
 strid-macros = { path = "strid-macros", version = "11.0.0-rc.0" }
@@ -235,6 +252,7 @@ log = { version = "^0.4.29", features = ["std"] }
 lz4_flex = "^0.11"
 memmap2 = "^0.9"
 owo-colors = "^4.2.3"
+object = "^0.39"
 parking_lot = "^0.12.4"
 postgres-types = "^0.2"
 proc-macro2 = "1"
@@ -364,6 +382,14 @@ dibs-qgen = { path = "dibs-qgen" }
 dibs-query-schema = { path = "dibs-query-schema" }
 dibs-runtime = { path = "dibs-runtime" }
 dibs-sql = { path = "dibs-sql" }
+copypatch = { path = "phon/rust/copypatch" }
+phon = { path = "phon/rust/phon" }
+phon-codegen = { path = "phon/rust/phon-codegen" }
+phon-conformance = { path = "phon/rust/phon-conformance" }
+phon-engine = { path = "phon/rust/phon-engine" }
+phon-ir = { path = "phon/rust/phon-ir" }
+phon-jit = { path = "phon/rust/phon-jit" }
+phon-schema = { path = "phon/rust/phon-schema" }
 rusqlite-facet = { path = "rusqlite-facet" }
 rediff = { path = "rediff" }
 picante = { path = "picante" }

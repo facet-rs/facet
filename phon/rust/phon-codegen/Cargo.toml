@@ -1,10 +1,16 @@
 [package]
 name = "phon-codegen"
-version.workspace = true
+version = "0.2.0-rc.0"
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "The phon codegen tool: reads Rust types (facet) or schema bundles, emits target-language source plus schema-bytes constants."
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 phon.workspace = true

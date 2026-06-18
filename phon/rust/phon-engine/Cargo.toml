@@ -1,10 +1,16 @@
 [package]
 name = "phon-engine"
-version.workspace = true
+version = "0.2.0-rc.0"
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "phon's backend-blind baseline: compact codec, compatibility planning, and the IR interpreter."
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 phon-schema.workspace = true

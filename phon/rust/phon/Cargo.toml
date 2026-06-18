@@ -1,10 +1,16 @@
 [package]
 name = "phon"
-version.workspace = true
+version = "0.2.0-rc.0"
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "The phon front door: facet-derived schemas and descriptors, typed encode/decode, optional JIT."
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
 default = []

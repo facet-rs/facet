@@ -21,7 +21,7 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::sync::{LazyLock, RwLock};
+use std::sync::{Arc, LazyLock, RwLock};
 
 use facet::{
     Def, DefaultSource, EnumRepr, EnumType, Facet, KnownPointer, ListDef, MapDef, OpaqueAdapterDef,
@@ -1969,34 +1969,35 @@ fn opaque_descriptor(shape: &'static Shape) -> Result<Descriptor, DeriveError> {
 /// Per-inner-shape cache of the lowered encode program. The encode thunk runs on
 /// every send, so resolving the inner shape (a full `of_shape` walk + lowering) is
 /// done once per distinct inner type and reused. Keyed by the inner `&'static
-/// Shape` pointer; the program is leaked to a `'static` reference (bounded by the
-/// number of distinct inner types ever sent).
+/// Shape` pointer.
 ///
-/// A cached [`MemProgram`] carries thunk `ctx` pointers (all `&'static` references —
+/// A cached [`Lowered`] carries thunk `ctx` pointers (all `&'static` references —
 /// the adapter / list / option / map defs — cast to `*const ()`) and `extern "C"`
 /// fn pointers: morally `Send + Sync`, but the raw-pointer representation loses the
-/// auto-trait. The wrapper re-asserts it — a built program is immutable and only
+/// auto-trait. The wrapper re-asserts it: a built program is immutable and only
 /// ever read.
-struct ProgramCache(RwLock<HashMap<usize, &'static Lowered>>);
+struct CachedLowered(Lowered);
 // Safety: cached programs are immutable after build; their thunk pointers are
 // `&'static` / stateless, sound to read from and move between any threads.
-unsafe impl Sync for ProgramCache {}
-unsafe impl Send for ProgramCache {}
+unsafe impl Sync for CachedLowered {}
+unsafe impl Send for CachedLowered {}
+
+struct ProgramCache(RwLock<HashMap<usize, Arc<CachedLowered>>>);
 
 static INNER_PROGRAMS: LazyLock<ProgramCache> =
     LazyLock::new(|| ProgramCache(RwLock::new(HashMap::new())));
 
 /// The lowered phon encode program for an opaque field's inner `shape`, built once
 /// and cached. A racing build is harmless — the program is deterministic, so a
-/// double-build just leaks one extra program.
+/// double-build just drops the extra program.
 ///
 /// # Panics
 /// If the inner type is not phon-derivable or cannot be lowered: a programming error
 /// (the inner type of an opaque field must be a phon type).
-fn inner_program(shape: &'static Shape) -> &'static Lowered {
+fn inner_program(shape: &'static Shape) -> Arc<CachedLowered> {
     let key = core::ptr::from_ref(shape) as usize;
     if let Some(p) = INNER_PROGRAMS.0.read().unwrap().get(&key) {
-        return p;
+        return Arc::clone(p);
     }
     let derived = of_shape(shape).unwrap_or_else(|e| {
         panic!(
@@ -2012,13 +2013,15 @@ fn inner_program(shape: &'static Shape) -> &'static Lowered {
                 shape.type_identifier
             )
         });
-    let leaked: &'static Lowered = Box::leak(Box::new(program));
-    INNER_PROGRAMS
-        .0
-        .write()
-        .unwrap()
-        .entry(key)
-        .or_insert(leaked)
+    let program = Arc::new(CachedLowered(program));
+    Arc::clone(
+        INNER_PROGRAMS
+            .0
+            .write()
+            .unwrap()
+            .entry(key)
+            .or_insert(program),
+    )
 }
 
 /// [`OpaqueThunks::encode`]: map the opaque field to its inner `(ptr, shape)` via the
@@ -2048,7 +2051,7 @@ unsafe extern "C" fn opaque_encode(ctx: *const (), field: *const u8, out: *mut V
     let program = inner_program(shape);
     // Safety: `ptr` points at an initialized value of `shape`, which `program` was
     // lowered to encode.
-    let bytes = unsafe { typed::encode_with(program, ptr.as_byte_ptr()) };
+    let bytes = unsafe { typed::encode_with(&program.0, ptr.as_byte_ptr()) };
     // Safety: `out` is a live `Vec<u8>`.
     unsafe { (*out).extend_from_slice(&bytes) };
 }

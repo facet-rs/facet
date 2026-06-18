@@ -1,10 +1,16 @@
 [package]
 name = "phon-schema"
-version.workspace = true
+version = "0.2.0-rc.0"
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "phon's wire contract: schema model, schema identity, Value, and the self-describing codec."
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 blake3.workspace = true
