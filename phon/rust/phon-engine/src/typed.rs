@@ -899,7 +899,7 @@ fn lower_decode_payload(
 
 /// Translate a writer struct-variant payload against the reader's variant record
 /// access (matching by name, defaulting reader-only fields), at base-relative
-/// offsets. Mirrors [`lower_decode_struct`] but the reader names come straight from
+/// offsets. Mirrors `lower_decode_struct` but the reader names come straight from
 /// the reader schema payload field list (aligned with the variant's fields).
 fn lower_decode_variant_struct(
     w_fields: &[Field],
@@ -1276,7 +1276,7 @@ fn width_mask(width: usize) -> u64 {
     }
 }
 
-/// [`ByteValidator`] for `String` byte runs: the bytes must be valid UTF-8
+/// `ByteValidator` for `String` byte runs: the bytes must be valid UTF-8
 /// (`r[validate.text]`). Both the interpreter and the JIT call this.
 ///
 /// # Safety
@@ -1288,11 +1288,11 @@ unsafe extern "C" fn validate_utf8(ptr: *const u8, len: usize) -> bool {
     core::str::from_utf8(bytes).is_ok()
 }
 
-/// [`ByteValidator`] for byte runs with no content constraint — `Vec<u8>` and
+/// `ByteValidator` for byte runs with no content constraint — `Vec<u8>` and
 /// bulk `Vec<scalar>` runs accept any bytes.
 ///
 /// # Safety
-/// Reads nothing; the signature matches [`ByteValidator`].
+/// Reads nothing; the signature matches `ByteValidator`.
 unsafe extern "C" fn validate_any(_ptr: *const u8, _len: usize) -> bool {
     true
 }

@@ -2162,7 +2162,7 @@ fn field_default(f: &'static facet::Field) -> Option<FieldDefault> {
     }
 }
 
-/// [`DefaultThunk`] for `DefaultSource::FromTrait`: `ctx` is the field's
+/// `DefaultThunk` for `DefaultSource::FromTrait`: `ctx` is the field's
 /// `&'static Shape`; write its type's `Default` value at `slot`.
 ///
 /// # Safety
@@ -2177,7 +2177,7 @@ unsafe extern "C" fn default_from_shape(ctx: *const (), slot: *mut u8) {
         .expect("reader-only field marked #[facet(default)] has no default_in_place");
 }
 
-/// [`DefaultThunk`] for `DefaultSource::Custom`: `ctx` is the custom
+/// `DefaultThunk` for `DefaultSource::Custom`: `ctx` is the custom
 /// [`DefaultInPlaceFn`](facet::DefaultInPlaceFn) pointer; call it to write the
 /// custom default at `slot`.
 ///
