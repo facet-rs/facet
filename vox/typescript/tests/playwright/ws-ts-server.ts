@@ -1,0 +1,402 @@
+import { WebSocketServer, type RawData, type WebSocket } from "ws";
+import {
+  accept,
+  ConnectionError,
+  type ConnectionHandle,
+  Driver,
+  type Lane,
+  type Link,
+  type Rx,
+  type Tx,
+} from "@bearcove/vox-core";
+import type {
+  Canvas,
+  Color,
+  Config,
+  EcosystemBridgePayload,
+  GnarlyPayload,
+  Tree,
+  LookupError,
+  MathError,
+  Measurement,
+  Message,
+  Person,
+  Point,
+  Profile,
+  Record,
+  Rectangle,
+  Shape,
+  Status,
+  Tag,
+  TaggedPoint,
+  TestbedHandler,
+} from "@bearcove/vox-generated/testbed.generated.ts";
+import { TestbedDispatcher } from "@bearcove/vox-generated/testbed.generated.ts";
+
+class NodeWsLink implements Link {
+  lastReceived: Uint8Array | undefined;
+  private pendingMessages: Uint8Array[] = [];
+  private waitingResolve: ((payload: Uint8Array | null) => void) | null = null;
+  private closed = false;
+  private readonly ws: WebSocket;
+
+  constructor(ws: WebSocket) {
+    this.ws = ws;
+    ws.on("message", (data: RawData) => {
+      const payload = rawDataToUint8Array(data);
+      this.lastReceived = payload;
+      if (this.waitingResolve) {
+        const resolve = this.waitingResolve;
+        this.waitingResolve = null;
+        resolve(payload);
+      } else {
+        this.pendingMessages.push(payload);
+      }
+    });
+
+    ws.on("close", () => {
+      this.closed = true;
+      const resolve = this.waitingResolve;
+      this.waitingResolve = null;
+      resolve?.(null);
+    });
+
+    ws.on("error", () => {
+      this.closed = true;
+      const resolve = this.waitingResolve;
+      this.waitingResolve = null;
+      resolve?.(null);
+    });
+  }
+
+  async send(payload: Uint8Array): Promise<void> {
+    if (this.closed || this.ws.readyState !== this.ws.OPEN) {
+      throw new Error("WebSocket not open");
+    }
+    await new Promise<void>((resolve, reject) => {
+      this.ws.send(payload, (error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+  }
+
+  recv(): Promise<Uint8Array | null> {
+    if (this.pendingMessages.length > 0) {
+      return Promise.resolve(this.pendingMessages.shift()!);
+    }
+    if (this.closed) {
+      return Promise.resolve(null);
+    }
+    return new Promise((resolve) => {
+      this.waitingResolve = resolve;
+    });
+  }
+
+  close(): void {
+    this.closed = true;
+    this.ws.close();
+  }
+
+  isClosed(): boolean {
+    return this.closed;
+  }
+}
+
+function rawDataToUint8Array(data: RawData): Uint8Array {
+  if (data instanceof Uint8Array) {
+    return data;
+  }
+  if (data instanceof ArrayBuffer) {
+    return new Uint8Array(data);
+  }
+  if (Array.isArray(data)) {
+    const joined = Buffer.concat(data.map((part) => Buffer.from(part)));
+    return new Uint8Array(joined.buffer, joined.byteOffset, joined.byteLength);
+  }
+  const buffer = Buffer.from(data);
+  return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+}
+
+class TestbedService implements TestbedHandler {
+  private async streamValues(count: number, output: Tx<number>): Promise<void> {
+    for (let i = 0; i < count; i++) {
+      await output.send(i);
+    }
+    output.close();
+  }
+
+  async echo(message: string): Promise<string> {
+    return message;
+  }
+
+  reverse(message: string): string {
+    return Array.from(message).toReversed().join("");
+  }
+
+  divide(
+    dividend: bigint,
+    divisor: bigint,
+  ): { ok: true; value: bigint } | { ok: false; error: MathError } {
+    if (divisor === 0n) {
+      return { ok: false, error: { tag: "DivisionByZero" } };
+    }
+    return { ok: true, value: dividend / divisor };
+  }
+
+  lookup(id: number): { ok: true; value: Person } | { ok: false; error: LookupError } {
+    switch (id) {
+      case 1:
+        return { ok: true, value: { name: "Alice", age: 30, email: "alice@example.com" } };
+      case 2:
+        return { ok: true, value: { name: "Bob", age: 25, email: null } };
+      case 3:
+        return { ok: true, value: { name: "Charlie", age: 35, email: "charlie@example.com" } };
+      default:
+        return { ok: false, error: { tag: "NotFound" } };
+    }
+  }
+
+  async sum(numbers: Rx<number>): Promise<bigint> {
+    let total = 0n;
+    for await (const n of numbers) {
+      total += BigInt(n);
+    }
+    return total;
+  }
+
+  async generate(count: number, output: Tx<number>): Promise<void> {
+    await this.streamValues(count, output);
+  }
+
+  async transform(input: Rx<string>, output: Tx<string>): Promise<void> {
+    for await (const s of input) {
+      await output.send(s);
+    }
+    output.close();
+  }
+
+  echoPoint(point: Point): Point {
+    return point;
+  }
+
+  createPerson(name: string, age: number, email: string | null): Person {
+    return { name, age, email };
+  }
+
+  rectangleArea(rect: Rectangle): number {
+    const width = Math.abs(rect.bottom_right.x - rect.top_left.x);
+    const height = Math.abs(rect.bottom_right.y - rect.top_left.y);
+    return width * height;
+  }
+
+  parseColor(name: string): Color | null {
+    switch (name.toLowerCase()) {
+      case "red":
+        return { tag: "Red" };
+      case "green":
+        return { tag: "Green" };
+      case "blue":
+        return { tag: "Blue" };
+      default:
+        return null;
+    }
+  }
+
+  shapeArea(shape: Shape): number {
+    switch (shape.tag) {
+      case "Circle":
+        return Math.PI * shape.radius * shape.radius;
+      case "Rectangle":
+        return shape.width * shape.height;
+      case "Point":
+        return 0;
+    }
+  }
+
+  createCanvas(name: string, shapes: Shape[], background: Color): Canvas {
+    return { name, shapes, background };
+  }
+
+  processMessage(msg: Message): Message {
+    switch (msg.tag) {
+      case "Text":
+        return { tag: "Text", value: `processed: ${msg.value}` };
+      case "Number":
+        return { tag: "Number", value: msg.value * 2n };
+      case "Data":
+        return { tag: "Data", value: msg.value.toReversed() };
+    }
+  }
+
+  getPoints(count: number): Point[] {
+    const points: Point[] = [];
+    for (let i = 0; i < count; i++) {
+      points.push({ x: i, y: i * 2 });
+    }
+    return points;
+  }
+
+  swapPair(pair: [number, string]): [string, number] {
+    return [pair[1], pair[0]];
+  }
+
+  echoProfile(profile: Profile): Profile {
+    return profile;
+  }
+
+  echoRecord(record: Record): Record {
+    return record;
+  }
+
+  echoStatus(status: Status): Status {
+    return status;
+  }
+
+  echoTag(tag: Tag): Tag {
+    return tag;
+  }
+
+  echoMeasurement(m: Measurement): Measurement {
+    return m;
+  }
+
+  echoConfig(c: Config): Config {
+    return c;
+  }
+
+  echoGnarly(payload: GnarlyPayload): GnarlyPayload {
+    return payload;
+  }
+
+  echoTree(tree: Tree): Tree {
+    return tree;
+  }
+
+  echoEcosystemBridge(payload: EcosystemBridgePayload): EcosystemBridgePayload {
+    return payload;
+  }
+
+  echoBytes(data: Uint8Array): Uint8Array {
+    return data;
+  }
+
+  echoBool(b: boolean): boolean {
+    return b;
+  }
+
+  echoU64(n: bigint): bigint {
+    return n;
+  }
+
+  echoOptionString(s: string | null): string | null {
+    return s;
+  }
+
+  async sumLarge(numbers: Rx<number>): Promise<bigint> {
+    let total = 0n;
+    for await (const n of numbers) {
+      total += BigInt(n);
+    }
+    return total;
+  }
+
+  async generateLarge(count: number, output: Tx<number>): Promise<void> {
+    for (let i = 0; i < count; i++) {
+      await output.send(i);
+    }
+    output.close();
+  }
+
+  allColors(): Color[] {
+    return [{ tag: "Red" }, { tag: "Green" }, { tag: "Blue" }];
+  }
+
+  describePoint(label: string, x: number, y: number, active: boolean): TaggedPoint {
+    return { label, x, y, active };
+  }
+
+  echoShape(shape: Shape): Shape {
+    return shape;
+  }
+
+  echoStatusV1(status: Status): Status {
+    return status;
+  }
+
+  echoTagV1(tag: Tag): Tag {
+    return tag;
+  }
+}
+
+export interface TsWsServerHandle {
+  close(): Promise<void>;
+}
+
+export async function startTsWsServer(port: number): Promise<TsWsServerHandle> {
+  const wss = new WebSocketServer({ host: "127.0.0.1", port });
+  const activeConnections = new Set<ConnectionHandle>();
+  const activeDrivers = new Set<Promise<void>>();
+
+  const dispatcher = new TestbedDispatcher(new TestbedService());
+  const driveLane = (lane: Lane) => {
+    const driver = new Driver(lane, dispatcher);
+    const run = driver.run().catch((error) => {
+      if (!(error instanceof ConnectionError)) {
+        throw error;
+      }
+    }).finally(() => {
+      activeDrivers.delete(run);
+    });
+    activeDrivers.add(run);
+  };
+
+  wss.on("connection", (socket) => {
+    const link = new NodeWsLink(socket);
+    void accept(link, {
+      onLane: (_request, pending) => {
+        void pending.accept().then(driveLane).catch((error) => {
+          console.error("[ts-ws-server] lane accept error:", error);
+        });
+      },
+    }).then((connection) => {
+      const handle = connection.handle();
+      activeConnections.add(handle);
+      void connection.closed().finally(() => {
+        activeConnections.delete(handle);
+      });
+    }).catch((error) => {
+      console.error("[ts-ws-server] connection error:", error);
+      link.close();
+    });
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    wss.once("listening", () => resolve());
+    wss.once("error", (error) => reject(error));
+  });
+
+  return {
+    async close(): Promise<void> {
+      for (const handle of activeConnections) {
+        handle.shutdown();
+      }
+      for (const client of wss.clients) {
+        client.close();
+      }
+      await new Promise<void>((resolve, reject) => {
+        wss.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      });
+      await Promise.allSettled([...activeDrivers]);
+    },
+  };
+}

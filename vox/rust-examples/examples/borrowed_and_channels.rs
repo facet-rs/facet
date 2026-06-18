@@ -1,0 +1,178 @@
+use std::convert::Infallible;
+
+use eyre::{Result, WrapErr, eyre};
+use vox::transport::tcp::StreamLink;
+use vox::{Call, Rx, Tx, channel};
+
+#[vox::service]
+trait WordLab {
+    // Borrowed arg.
+    async fn is_short(&self, word: &str) -> bool;
+
+    // Borrowed return.
+    async fn classify(&self, word: String) -> &'vox str;
+
+    // Borrowed arg + bidirectional channels.
+    async fn transform(&self, prefix: &str, input: Rx<String>, output: Tx<String>) -> u32;
+}
+
+#[derive(Clone)]
+struct WordLabService;
+
+impl WordLab for WordLabService {
+    async fn is_short(&self, word: &str) -> bool {
+        word.len() <= 4
+    }
+
+    async fn classify<'vox>(&self, call: impl Call<'vox, &'vox str, Infallible>, word: String) {
+        let label = if word.len() <= 4 { "short" } else { "long" };
+        call.ok(label).await;
+    }
+
+    async fn transform(&self, prefix: &str, mut input: Rx<String>, output: Tx<String>) -> u32 {
+        let mut count = 0;
+        while let Ok(Some(item)) = input.recv().await {
+            let item = item.get();
+            if output
+                .send(format!("{prefix}:{}", item.as_str()))
+                .await
+                .is_err()
+            {
+                break;
+            }
+            count += 1;
+        }
+        let _ = output.close(Default::default()).await;
+        count
+    }
+}
+
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<()> {
+    tracing_subscriber::fmt::init();
+    println!("[demo] binding TCP listener");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .wrap_err("binding TCP listener")?;
+    let addr = listener.local_addr().wrap_err("reading listener addr")?;
+    println!("[demo] listening on {addr}");
+    let (server_ready_tx, server_ready_rx) =
+        tokio::sync::oneshot::channel::<vox::ConnectionHandle>();
+
+    let server_task = tokio::spawn(async move {
+        println!("[server] waiting for client");
+        let (socket, _) = listener.accept().await.expect("accept");
+        println!("[server] client connected; establishing connection");
+        let server_connection = vox::acceptor_on(StreamLink::tcp(socket))
+            .on_lane(WordLabDispatcher::new(WordLabService))
+            .establish_connection()
+            .await
+            .expect("server establish");
+        let _ = server_ready_tx.send(server_connection.clone());
+        server_connection.closed().await;
+    });
+
+    println!("[client] connecting");
+    let socket = tokio::net::TcpStream::connect(addr)
+        .await
+        .wrap_err("connecting client socket")?;
+    let connection = vox::initiator_on(StreamLink::tcp(socket))
+        .establish_connection()
+        .await
+        .map_err(|e| eyre!("failed to establish initiator connection: {e:?}"))?;
+    println!("[client] connection established");
+    let server_connection = server_ready_rx
+        .await
+        .map_err(|_| eyre!("server task ended before signaling readiness"))?;
+    let client: WordLabClient = connection
+        .open_lane()
+        .await
+        .map_err(|e| eyre!("open WordLab lane failed: {e:?}"))?;
+    println!("[client] WordLab lane open");
+
+    println!("[client] calling is_short");
+    assert!(
+        client
+            .is_short("pear")
+            .await
+            .map_err(|e| eyre!("is_short(\"pear\") failed: {e:?}"))?
+    );
+    assert!(
+        !client
+            .is_short("watermelon")
+            .await
+            .map_err(|e| eyre!("is_short(\"watermelon\") failed: {e:?}"))?
+    );
+    println!("[client] is_short checks passed");
+
+    println!("[client] calling classify");
+    let short = client
+        .classify("pear".to_string())
+        .await
+        .map_err(|e| eyre!("classify(\"pear\") failed: {e:?}"))?;
+    let long = client
+        .classify("watermelon".to_string())
+        .await
+        .map_err(|e| eyre!("classify(\"watermelon\") failed: {e:?}"))?;
+    let short = short.get();
+    let long = long.get();
+    assert_eq!(*short, "short");
+    assert_eq!(*long, "long");
+    println!("[client] classify returned short={} long={}", *short, *long);
+
+    let (input_tx, input_rx) = channel::<String>();
+    let (output_tx, mut output_rx) = channel::<String>();
+    println!("[client] created transform channels");
+
+    let recv_task = tokio::spawn(async move {
+        let mut got = Vec::new();
+        while let Some(item) = output_rx
+            .recv()
+            .await
+            .wrap_err("receiving from output_rx")?
+        {
+            let item = item.get();
+            println!("[client/recv] <- {}", item.as_str());
+            got.push(item.to_string());
+        }
+        Ok::<_, eyre::Report>(got)
+    });
+
+    let send_task = tokio::spawn(async move {
+        for word in ["one", "two", "three"] {
+            println!("[client/send] -> {word}");
+            input_tx
+                .send(word.to_string())
+                .await
+                .expect("send to input");
+        }
+        println!("[client/send] closing input");
+        input_tx
+            .close(Default::default())
+            .await
+            .expect("close input channel");
+    });
+
+    println!("[client] calling transform");
+    let count = client
+        .transform("item", input_rx, output_tx)
+        .await
+        .map_err(|e| eyre!("transform(...) failed: {e:?}"))?;
+    assert_eq!(count, 3);
+    println!("[client] transform returned count={count}");
+    send_task.await.wrap_err("joining send_task")?;
+
+    let got = recv_task.await.wrap_err("joining recv_task")??;
+    assert_eq!(got, vec!["item:one", "item:two", "item:three"]);
+    println!("[client] output stream complete: {got:?}");
+
+    println!("[client] shutting down connection");
+    connection.shutdown().expect("connection shutdown");
+    server_connection
+        .shutdown()
+        .expect("server connection shutdown");
+    server_task.await.wrap_err("joining server_task")?;
+    println!("[demo] borrowed_and_channels: complete");
+
+    Ok(())
+}

@@ -1,0 +1,153 @@
+[workspace]
+resolver = "2"
+members = [
+  "rust-examples",
+  "xtask",
+  "spec/spec-proto",
+  "spec/spec-tests",
+  "rust/vox-types",
+  "rust/vox-rt",
+  "rust/vox-rt-macros",
+  "rust/vox-schema",
+  "rust/vox-core",
+  "rust/vox-stream",
+  "rust/vox-websocket",
+  "rust/vox-inprocess",
+  "rust/vox-local",
+  "rust/vox-fdpass",
+  "rust/vox-ffi",
+  "rust/ur-taking-me-with-you",
+  "rust/vox-macros-parse",
+  "rust/vox-macros-core",
+  "rust/vox-macros",
+  "rust/vox",
+  "rust/subject-rust",
+  "rust/vox-codegen",
+  "rust/vox-phon",
+  "rust/wasm-browser-tests",
+  "rust/wasm-inprocess-tests",
+  "typescript/peer-server",
+]
+exclude = ["fuzz"]
+
+[workspace.package]
+version = "0.10.0-rc.0"
+edition = "2024"
+rust-version = "1.91"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/bearcove/vox"
+homepage = "https://github.com/bearcove/vox"
+documentation = "https://docs.rs/vox"
+keywords = ["rpc", "ipc", "serde", "networking"]
+categories = ["network-programming", "asynchronous"]
+
+[workspace.dependencies]
+# Internal crates
+vox = { path = "rust/vox", version = "0.10.0-rc.0" }
+vox-types = { path = "rust/vox-types", version = "0.10.0-rc.0" }
+vox-rt = { path = "rust/vox-rt", version = "0.10.0-rc.0" }
+vox-rt-macros = { path = "rust/vox-rt-macros", version = "0.10.0-rc.0" }
+vox-schema = { path = "rust/vox-schema", version = "0.10.0-rc.0" }
+vox-macros-parse = { path = "rust/vox-macros-parse", version = "0.10.0-rc.0" }
+vox-macros-core = { path = "rust/vox-macros-core", version = "0.10.0-rc.0" }
+vox-service-macros = { path = "rust/vox-macros", version = "0.10.0-rc.0" }
+vox-core = { path = "rust/vox-core", version = "0.10.0-rc.0" }
+vox-stream = { path = "rust/vox-stream", version = "0.10.0-rc.0" }
+vox-fdpass = { path = "rust/vox-fdpass", version = "0.10.0-rc.0" }
+vox-codegen = { path = "rust/vox-codegen", version = "0.10.0-rc.0" }
+vox-websocket = { path = "rust/vox-websocket", version = "0.10.0-rc.0" }
+vox-inprocess = { path = "rust/vox-inprocess", version = "0.10.0-rc.0" }
+vox-local = { path = "rust/vox-local", version = "0.10.0-rc.0" }
+vox-ffi = { path = "rust/vox-ffi", version = "0.10.0-rc.0" }
+subject-rust = { path = "rust/subject-rust", version = "0.2.2" }
+spec-proto = { path = "spec/spec-proto", version = "0.2.2" }
+vox-phon = { path = "rust/vox-phon", version = "0.10.0-rc.0" }
+
+phon = "0.2.0-rc.0"
+phon-engine = "0.2.0-rc.0"
+phon-ir = "0.2.0-rc.0"
+phon-schema = "0.2.0-rc.0"
+phon-jit = "0.2.0-rc.0"
+phon-codegen = "0.2.0-rc.0"
+
+bitflags = "2.11.0"
+structstruck = "0.5.1"
+bytes = "1"
+blake3 = "1.8"
+heck = "0.5"
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }
+tokio = { version = "1", features = ["sync", "rt", "time", "macros", "io-util"] }
+parking_lot = "0.12"
+wasmtimer = { version = "0.4", default-features = false }
+tokio-tungstenite = "0.29"
+tokio-rustls = "0.26"
+rustls = "0.23"
+rustls-pemfile = "2"
+libc = "0.2.180"
+tempfile = "3.23"
+xshell = "0.2"
+passfd = "0.1"
+
+# facet ecosystem
+facet = { version = "0.50.0-rc.0", features = ["camino", "reflect"] }
+facet-core = { version = "0.50.0-rc.0" }
+facet-path = { version = "0.50.0-rc.0" }
+facet-reflect = { version = "0.50.0-rc.0" }
+facet-pretty = { version = "0.50.0-rc.0", default-features = false }
+facet-json = { version = "0.50.0-rc.0" }
+facet-value = { version = "0.50.0-rc.0" }
+facet-testhelpers = { version = "0.50.0-rc.0" }
+
+# Futures utilities
+futures-channel = "0.3"
+futures-util = "0.3"
+
+# WASM support
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = "0.3"
+
+# Tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+indexmap = "2"
+smallvec = "1.15.1"
+getrandom = { version = "0.4", features = ["wasm_js"] }
+zerocopy = { version = "0.8", features = ["derive"] }
+
+figue = "5.0.0-rc.0"
+prettyplease = "0.2"
+insta = "1"
+unsynn = "0.3"
+windows-sys = "0.61"
+eyre = "0.6"
+
+[patch.crates-io]
+facet = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-core = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-error = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-macro-parse = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-macro-types = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-macros = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-macros-impl = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-path = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-pretty = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-reflect = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-solver = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-testhelpers = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-testhelpers-macros = { git = "https://github.com/facet-rs/facet", branch = "main" }
+
+[profile.release]
+debug = 1
+
+[profile.bench]
+debug = 1
+
+[profile.samply]
+inherits = "release"
+debug = true

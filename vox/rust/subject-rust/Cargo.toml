@@ -1,0 +1,31 @@
+[package]
+name = "subject-rust"
+version = "0.2.2"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Rust subject binary for the compliance suite"
+
+[lib]
+name = "subject_rust"
+path = "src/lib.rs"
+crate-type = ["rlib", "cdylib"]
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+vox = { workspace = true }
+vox-core = { workspace = true }
+vox-local.workspace = true
+vox-stream = { workspace = true }
+vox-ffi = { workspace = true }
+vox-types = { workspace = true }
+spec-proto.workspace = true
+facet-value.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "net"] }
+vox-rt = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

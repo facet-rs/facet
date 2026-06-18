@@ -1,0 +1,40 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["unicorn", "typescript", "oxc", "import"],
+  "categories": {
+    "correctness": "warn",
+    "suspicious": "warn",
+    "pedantic": "off"
+  },
+  "rules": {
+    "no-debugger": "warn",
+    "no-unused-vars": "warn",
+    "no-constant-condition": "warn",
+    "typescript/no-floating-promises": "warn",
+    "typescript/await-thenable": "warn",
+    "typescript/no-misused-promises": "warn"
+  },
+  "settings": {
+    "react": {
+      "version": null
+    },
+    "jsdoc": {
+      "ignorePrivate": true,
+      "ignoreInternal": true
+    }
+  },
+  "env": {
+    "builtin": true
+  },
+  "globals": {},
+  "ignorePatterns": [
+    "node_modules",
+    "dist",
+    "build",
+    "target",
+    ".git",
+    "**/*.min.js",
+    "**/*.min.css",
+    "**/generated/**"
+  ]
+}

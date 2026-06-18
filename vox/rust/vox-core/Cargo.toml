@@ -1,0 +1,47 @@
+[package]
+name = "vox-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+homepage.workspace = true
+documentation.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Core implementations for Vox connections, lanes, drivers, and links"
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[features]
+default = []
+diagnostics = []
+
+[dependencies]
+vox-types.workspace = true
+facet.workspace = true
+facet-core.workspace = true
+facet-reflect.workspace = true
+vox-phon.workspace = true
+vox-rt.workspace = true
+tracing.workspace = true
+smallvec.workspace = true
+getrandom.workspace = true
+zerocopy.workspace = true
+futures-util.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tempfile.workspace = true
+facet-testhelpers.workspace = true
+tracing-subscriber = { workspace = true }

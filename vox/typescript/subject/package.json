@@ -1,0 +1,20 @@
+{
+  "name": "@bearcove/vox-subject",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "tsgo --noEmit"
+  },
+  "dependencies": {
+    "@bearcove/phon-engine": "0.2.0-rc.0",
+    "@bearcove/phon-schema": "0.2.0-rc.0",
+    "@bearcove/vox-core": "workspace:*",
+    "@bearcove/vox-generated": "workspace:*",
+    "@bearcove/vox-tcp": "workspace:*",
+    "@bearcove/vox-ws": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.0"
+  }
+}

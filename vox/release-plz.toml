@@ -1,0 +1,91 @@
+[workspace]
+changelog_update = true
+semver_check = true
+git_release_enable = true
+git_release_type = "auto"
+release_always = false
+
+[[package]]
+name = "vox"
+version_group = "vox"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "vox-codegen"
+version_group = "vox"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "vox-core"
+version_group = "vox"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "vox-fdpass"
+version_group = "vox"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "vox-ffi"
+version_group = "vox"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "vox-inprocess"
+version_group = "vox"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "vox-local"
+version_group = "vox"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "vox-macros-core"
+version_group = "vox"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "vox-macros-parse"
+version_group = "vox"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "vox-phon"
+version_group = "vox"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "vox-rt"
+version_group = "vox"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "vox-rt-macros"
+version_group = "vox"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "vox-schema"
+version_group = "vox"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "vox-service-macros"
+version_group = "vox"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "vox-stream"
+version_group = "vox"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "vox-types"
+version_group = "vox"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "vox-websocket"
+version_group = "vox"
+changelog_path = "CHANGELOG.md"

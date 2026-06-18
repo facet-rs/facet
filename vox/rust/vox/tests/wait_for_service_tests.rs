@@ -1,0 +1,152 @@
+//! Tests for ConnectBuilder::wait_for_service initial-connect waiting.
+
+use std::time::Duration;
+use vox_core::ConnectionError;
+
+#[vox::service]
+trait Echo {
+    async fn echo(&self, value: u32) -> u32;
+}
+
+#[derive(Clone)]
+struct EchoService;
+
+impl Echo for EchoService {
+    async fn echo(&self, value: u32) -> u32 {
+        value
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn wait_for_service_retries_until_service_appears() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let sock_path = dir.path().join("echo.sock");
+    let addr = format!("local://{}", sock_path.display());
+
+    // Socket does not exist yet. Server starts after a short delay.
+    let server = {
+        let addr = addr.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            vox::serve(&addr, EchoDispatcher::new(EchoService))
+                .await
+                .expect("serve");
+        })
+    };
+
+    let client: EchoClient = vox::connect_lane(&addr)
+        .connect_timeout(Duration::from_millis(100))
+        .wait_for_service(Duration::from_secs(5))
+        .await
+        .expect("should connect once service starts");
+
+    let result = client.echo(42).await.expect("echo");
+    assert_eq!(result, 42);
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn wait_for_service_times_out_when_service_never_starts() {
+    // Bind to get a free port then drop the listener so nothing is listening.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("local_addr");
+    drop(listener);
+
+    let result = vox::connect_lane::<EchoClient>(format!("tcp://{addr}"))
+        .connect_timeout(Duration::from_millis(50))
+        .wait_for_service(Duration::from_millis(200))
+        .establish()
+        .await;
+
+    let err = match result {
+        Err(e) => e,
+        Ok(_) => panic!("expected failure when service never starts"),
+    };
+    assert!(
+        matches!(
+            err,
+            ConnectionError::Io(_) | ConnectionError::ConnectTimeout
+        ),
+        "error should be a transient connect failure (Io or ConnectTimeout), got: {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn wait_for_service_deadline_caps_individual_attempt() {
+    // Verifies that a single slow attempt cannot exceed the waiting timeout.
+    // connect_timeout (5s) is much larger than wait_for_service (200ms).
+    // Without the fix, a single attempt would block for up to 5s, violating
+    // the 200ms budget. With the fix, the attempt is capped by remaining budget.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("local_addr");
+
+    // Accept connections but never respond — causes connect_timeout to fire.
+    let server = tokio::spawn(async move {
+        loop {
+            let _ = listener.accept().await;
+            // hold the socket open without doing anything
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        }
+    });
+
+    let start = std::time::Instant::now();
+    let result = vox::connect_lane::<EchoClient>(format!("tcp://{addr}"))
+        .connect_timeout(Duration::from_secs(5)) // much larger than wait_for_service
+        .wait_for_service(Duration::from_millis(200))
+        .establish()
+        .await;
+    let elapsed = start.elapsed();
+    server.abort();
+
+    assert!(result.is_err(), "should fail");
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "waiting timeout must bound individual attempts; elapsed: {elapsed:?}"
+    );
+}
+
+#[tokio::test]
+async fn wait_for_service_fails_immediately_on_protocol_error() {
+    // Server that immediately closes the connection without speaking vox.
+    // This causes ConnectionError::Protocol (link closed during transport prologue),
+    // which is terminal for this peer and must not consume the full wait_for_service timeout.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("local_addr");
+
+    let server = tokio::spawn(async move {
+        loop {
+            let (socket, _) = listener.accept().await.expect("accept");
+            drop(socket);
+        }
+    });
+
+    let start = std::time::Instant::now();
+    let result = vox::connect_lane::<EchoClient>(format!("tcp://{addr}"))
+        .connect_timeout(Duration::from_millis(100))
+        .wait_for_service(Duration::from_secs(10)) // long timeout — should NOT be consumed
+        .establish()
+        .await;
+    let elapsed = start.elapsed();
+    server.abort();
+
+    let err = match result {
+        Err(e) => e,
+        Ok(_) => panic!("should fail with protocol error"),
+    };
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "terminal connection error should fail fast, not wait the full timeout; elapsed: {elapsed:?}"
+    );
+    assert!(
+        matches!(err, ConnectionError::Protocol(_)),
+        "expected ConnectionError::Protocol for peer that closed connection, got: {err:?}"
+    );
+}

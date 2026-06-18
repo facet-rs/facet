@@ -1,0 +1,16 @@
+{
+  "name": "@bearcove/vox-playwright-tests",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@bearcove/vox-core": "workspace:*",
+    "@bearcove/vox-generated": "workspace:*",
+    "@playwright/test": "^1",
+    "@types/ws": "^8.18.1",
+    "ws": "^8.19.0"
+  }
+}

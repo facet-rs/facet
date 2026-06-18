@@ -1,0 +1,36 @@
+[package]
+name = "ur-taking-me-with-you"
+version = "8.0.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+homepage.workspace = true
+documentation.workspace = true
+description = "Ensure child processes die when their parent dies"
+keywords = ["process", "child", "parent", "death", "cleanup"]
+categories = ["os", "development-tools"]
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[features]
+tokio = ["dep:tokio"]
+
+[dependencies]
+tokio = { workspace = true, features = ["process"], optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = { workspace = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { workspace = true, features = [
+  "Win32_Foundation",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+] }

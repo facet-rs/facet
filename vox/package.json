@@ -1,0 +1,20 @@
+{
+  "name": "@bearcove/vox-typescript",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "pnpm --filter './typescript/packages/*' run build",
+    "check": "pnpm -r run check && pnpm run check:ts-boundaries",
+    "check:ts-boundaries": "node scripts/check-ts-package-boundaries.mjs",
+    "test": "pnpm -r run test",
+    "lint": "oxlint typescript"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.0",
+    "@typescript/native-preview": "7.0.0-dev.20260519.1",
+    "oxlint": "^1.60.0",
+    "tsdown": "^0.22.0",
+    "typescript": "^6.0.0"
+  },
+  "version": "0.0.0"
+}

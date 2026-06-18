@@ -1,0 +1,37 @@
+[package]
+name = "vox-stream"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+homepage.workspace = true
+documentation.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Byte-stream transport (TCP, Unix, stdio) for vox — length-prefix framing over AsyncRead/AsyncWrite"
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[features]
+default = []
+diagnostics = []
+
+[dependencies]
+vox-rt.workspace = true
+vox-core.workspace = true
+vox-types.workspace = true
+tracing.workspace = true
+tokio = { workspace = true, features = ["net", "io-util", "io-std", "rt", "sync"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+vox-fdpass.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+vox-phon = { path = "../vox-phon" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

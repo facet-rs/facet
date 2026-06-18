@@ -1,0 +1,25 @@
+[package]
+name = "peer-server"
+version = "0.2.2"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Rust WebSocket server for testing TypeScript clients"
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[[bin]]
+name = "ws-peer-server"
+path = "src/main.rs"
+
+[dependencies]
+vox.workspace = true
+vox-core.workspace = true
+vox-types.workspace = true
+vox-websocket.workspace = true
+spec-proto.workspace = true
+subject-rust.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "macros"] }

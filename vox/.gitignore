@@ -1,0 +1,68 @@
+# samply
+profile.json.gz
+profile*.json.gz
+profile*.json.syms.json
+target/
+.handoffs/
+fuzz/**/.sand
+fuzz/**/in/
+fuzz/**/out/
+fuzz/**/findings/
+fuzz/**/target/
+fuzz/**/.cur_input
+fuzz/**/afl-out/
+fuzz/**/afl-tmp/
+
+# Node.js / Playwright
+node_modules/
+demos/browser-tests-client/test-results/
+examples/browser_ws/playwright-report/
+.cache
+.dodeca.db
+
+# TypeScript
+typescript/dist/
+typescript/packages/*/dist/
+typescript/tests/*/dist/
+typescript/playwright-report/
+typescript/test-results/
+typescript/**/playwright-report/
+typescript/**/test-results/
+
+# Go
+go/**/subject-go
+
+# Swift
+/.build/
+/.swiftpm/
+/Package.resolved
+swift/.build/
+swift/.swiftpm/
+swift/**/.build/
+swift/**/.swiftpm/
+.DS_Store
+
+# Java
+java/**/out/
+
+# Claude Code local settings
+.claude/settings.local.json
+.claude/settings.json
+.tracey/
+*.sqlite*
+
+# Coverage artifacts
+.coverage/
+*.profraw
+.ship/
+scripts/__pycache__/
+rust-examples/bench_blocks_report.html
+rust-examples/bench_gnarly_report.html
+build/
+
+dhat-heap.json
+
+*.data
+*.nperf
+
+wasm/tests/playwright/test-results/

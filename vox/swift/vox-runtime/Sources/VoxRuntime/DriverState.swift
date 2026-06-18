@@ -1,0 +1,402 @@
+import Foundation
+
+struct PendingTimeoutContext: Sendable {
+    let requestId: UInt64
+    let timeout: TimeInterval
+}
+
+/// Actor that holds mutable driver state to avoid NSLock in async contexts.
+actor DriverState {
+    private let retainFinalizedRequests = true
+
+    enum AddInFlightResult: Sendable, Equatable {
+        case inserted
+        case duplicate
+        case limitExceeded(limit: UInt32, inFlight: Int)
+    }
+
+    private struct FinalizedRequest: Sendable {
+        let reason: String
+        let atUptimeNs: UInt64
+        let laneId: UInt64?
+        let channels: [UInt64]
+    }
+
+    struct PendingCall: Sendable {
+        let request: DriverQueuedCall
+        let responseTx: @Sendable (Result<[UInt8], ConnectionError>) -> Void
+        var timeoutTask: Task<Void, Never>?
+    }
+
+    var pendingResponses: [UInt64: PendingCall] = [:]
+    var inFlightRequests: Set<UInt64> = []
+    var inFlightResponseContext: [UInt64: InFlightResponseContext] = [:]
+    private var finalizedRequests: [UInt64: FinalizedRequest] = [:]
+    var isClosed = false
+
+    func addPendingResponse(
+        _ requestId: UInt64,
+        request: DriverQueuedCall,
+        _ handler: @escaping @Sendable (Result<[UInt8], ConnectionError>) -> Void,
+        timeoutTask: Task<Void, Never>?
+    ) -> Bool {
+        guard !isClosed else {
+            return false
+        }
+        pendingResponses[requestId] = PendingCall(
+            request: request,
+            responseTx: handler,
+            timeoutTask: timeoutTask
+        )
+        return true
+    }
+
+    func claimPendingResponse(_ requestId: UInt64, reason: String) -> PendingCall? {
+        guard let pending = pendingResponses.removeValue(forKey: requestId) else {
+            return nil
+        }
+        markFinalizedRequest(
+            requestId,
+            reason: reason,
+            laneId: pending.request.laneId,
+            channels: pending.request.channels
+        )
+        return pending
+    }
+
+    func claimPendingResponses(laneId: UInt64, reason: String) -> [UInt64: PendingCall] {
+        let requestIds = pendingResponses.compactMap { requestId, pending in
+            pending.request.laneId == laneId ? requestId : nil
+        }
+        var claimed: [UInt64: PendingCall] = [:]
+        for requestId in requestIds {
+            guard let pending = pendingResponses.removeValue(forKey: requestId) else {
+                continue
+            }
+            claimed[requestId] = pending
+            markFinalizedRequest(
+                requestId,
+                reason: reason,
+                laneId: pending.request.laneId,
+                channels: pending.request.channels
+            )
+        }
+        return claimed
+    }
+
+    func markFinalizedRequest(
+        _ requestId: UInt64,
+        reason: String,
+        laneId: UInt64? = nil,
+        channels: [UInt64] = []
+    ) {
+        guard retainFinalizedRequests else {
+            return
+        }
+        let now = DispatchTime.now().uptimeNanoseconds
+        finalizedRequests[requestId] = FinalizedRequest(
+            reason: reason,
+            atUptimeNs: now,
+            laneId: laneId,
+            channels: channels
+        )
+        pruneFinalizedRequests(now: now)
+    }
+
+    func takeFinalizedRequest(_ requestId: UInt64) -> (reason: String, ageMs: UInt64)? {
+        guard retainFinalizedRequests else {
+            return nil
+        }
+        let now = DispatchTime.now().uptimeNanoseconds
+        pruneFinalizedRequests(now: now)
+        guard let finalized = finalizedRequests.removeValue(forKey: requestId) else {
+            return nil
+        }
+        let ageNs = now >= finalized.atUptimeNs ? now - finalized.atUptimeNs : 0
+        return (reason: finalized.reason, ageMs: ageNs / 1_000_000)
+    }
+
+    func contextSummary(requestId: UInt64?) -> String {
+        let pendingCount = pendingResponses.count
+        let inFlightCount = inFlightRequests.count
+        let pendingHasRequest = requestId.map { pendingResponses[$0] != nil } ?? false
+        let inFlightHasRequest = requestId.map { inFlightRequests.contains($0) } ?? false
+        return
+            "pending_count=\(pendingCount) in_flight_count=\(inFlightCount) "
+            + "pending_has_request=\(pendingHasRequest) in_flight_has_request=\(inFlightHasRequest)"
+    }
+
+    private func pruneFinalizedRequests(now: UInt64) {
+        let keepNs: UInt64 = 120 * 1_000_000_000
+        finalizedRequests = finalizedRequests.filter { _, finalized in
+            now >= finalized.atUptimeNs && (now - finalized.atUptimeNs) <= keepNs
+        }
+    }
+
+    func replacePendingTimeoutTask(
+        _ requestId: UInt64,
+        timeoutTask: Task<Void, Never>
+    ) -> (installed: Bool, previous: Task<Void, Never>?) {
+        guard var pending = pendingResponses[requestId] else {
+            return (false, nil)
+        }
+        let previous = pending.timeoutTask
+        pending.timeoutTask = timeoutTask
+        pendingResponses[requestId] = pending
+        return (true, previous)
+    }
+
+    // r[impl rpc.timeout.idle-progress]
+    func pendingTimeoutContext(_ requestId: UInt64) -> PendingTimeoutContext? {
+        guard let pending = pendingResponses[requestId],
+            let timeout = pending.request.timeout
+        else {
+            return nil
+        }
+        return PendingTimeoutContext(
+            requestId: requestId,
+            timeout: timeout
+        )
+    }
+
+    // r[impl rpc.timeout.idle-progress]
+    func pendingTimeoutContexts(
+        laneId: UInt64,
+        channelId: UInt64
+    ) -> [PendingTimeoutContext] {
+        pendingResponses.compactMap { requestId, pending in
+            guard pending.request.laneId == laneId,
+                pending.request.channels.contains(channelId),
+                let timeout = pending.request.timeout
+            else {
+                return nil
+            }
+            return PendingTimeoutContext(
+                requestId: requestId,
+                timeout: timeout
+            )
+        }
+    }
+
+    // r[impl rpc.request.scope]
+    func addInFlight(
+        _ requestId: UInt64,
+        laneId: UInt64,
+        responseMetadata: Metadata,
+        channels: [UInt64],
+        localMaxConcurrentRequests: UInt32
+    ) -> AddInFlightResult {
+        guard !inFlightRequests.contains(requestId) else {
+            return .duplicate
+        }
+
+        let inFlightOnLane = inFlightResponseContext.values.lazy.filter {
+            $0.laneId == laneId
+        }.count
+        if UInt64(inFlightOnLane) >= UInt64(localMaxConcurrentRequests) {
+            return .limitExceeded(
+                limit: localMaxConcurrentRequests,
+                inFlight: inFlightOnLane
+            )
+        }
+
+        inFlightRequests.insert(requestId)
+        inFlightResponseContext[requestId] = InFlightResponseContext(
+            laneId: laneId,
+            responseMetadata: responseMetadata,
+            channels: channels
+        )
+        return .inserted
+    }
+
+    // r[impl rpc.request.scope.terminal]
+    func removeInFlight(_ requestId: UInt64) -> (
+        removed: Bool,
+        laneId: UInt64,
+        responseMetadata: Metadata,
+        channels: [UInt64]
+    ) {
+        let removed = inFlightRequests.remove(requestId) != nil
+        let context = inFlightResponseContext.removeValue(forKey: requestId)
+        return (
+            removed,
+            context?.laneId ?? 0,
+            context?.responseMetadata ?? .null,
+            context?.channels ?? []
+        )
+    }
+
+    func claimAllPendingResponses(reason: String) -> [UInt64: PendingCall] {
+        isClosed = true
+        let responses = pendingResponses
+        pendingResponses.removeAll()
+        inFlightRequests.removeAll()
+        inFlightResponseContext.removeAll()
+        for requestId in responses.keys {
+            guard let pending = responses[requestId] else {
+                continue
+            }
+            markFinalizedRequest(
+                requestId,
+                reason: reason,
+                laneId: pending.request.laneId,
+                channels: pending.request.channels
+            )
+        }
+        return responses
+    }
+
+    func isConnectionClosed() -> Bool {
+        isClosed
+    }
+
+    // r[impl rpc.debug.snapshot]
+    func debugSnapshot() -> VoxDriverStateDebugSnapshot {
+        let pending = pendingResponses.map { requestId, pending in
+            VoxRequestScopeDebugSnapshot(
+                requestId: requestId,
+                laneId: pending.request.laneId,
+                state: .waitingForResponse,
+                channelIds: pending.request.channels
+            )
+        }
+        let inFlight = inFlightResponseContext.map { requestId, context in
+            VoxRequestScopeDebugSnapshot(
+                requestId: requestId,
+                laneId: context.laneId,
+                state: .handlerRunning,
+                channelIds: context.channels
+            )
+        }
+        let finalized = finalizedRequests.map { requestId, finalized in
+            VoxRequestScopeDebugSnapshot(
+                requestId: requestId,
+                laneId: finalized.laneId,
+                state: Self.debugState(forFinalizedReason: finalized.reason),
+                channelIds: finalized.channels
+            )
+        }
+        return VoxDriverStateDebugSnapshot(
+            isClosed: isClosed,
+            requestScopes: (pending + inFlight + finalized).sorted { $0.requestId < $1.requestId }
+        )
+    }
+
+    private static func debugState(forFinalizedReason reason: String) -> VoxRequestScopeDebugState {
+        switch reason {
+        case "response":
+            return .succeeded
+        case "timeout":
+            return .timedOut
+        case "connection-closed":
+            return .connectionLost
+        case "conduit-send-failed":
+            return .failed
+        default:
+            return .failed
+        }
+    }
+}
+
+/// Actor for service-lane state.
+actor LaneState {
+    struct LaneRecord: Sendable {
+        let dispatcher: any ServiceDispatcher
+        let localSettings: ConnectionSettings
+        let channelRegistry: ChannelRegistry
+        let laneGrant: LaneGrant
+    }
+
+    private var nextLaneId: UInt64
+    private var lanes: [UInt64: LaneRecord] = [:]
+    private var pendingOutbound: [UInt64: PendingOutboundLane] = [:]
+
+    init(role: Role) {
+        nextLaneId = firstId(for: role)
+    }
+
+    // r[impl lane.open.wire]
+    // r[impl lane.request-channel-parity]
+    func allocateLaneId() -> UInt64 {
+        let id = nextLaneId
+        nextLaneId += 2
+        return id
+    }
+
+    func contains(_ laneId: UInt64) -> Bool {
+        lanes[laneId] != nil || pendingOutbound[laneId] != nil
+    }
+
+    func addLane(
+        _ laneId: UInt64,
+        dispatcher: any ServiceDispatcher,
+        localSettings: ConnectionSettings,
+        channelRegistry: ChannelRegistry,
+        laneGrant: LaneGrant = .empty
+    ) {
+        lanes[laneId] = LaneRecord(
+            dispatcher: dispatcher,
+            localSettings: localSettings,
+            channelRegistry: channelRegistry,
+            laneGrant: laneGrant
+        )
+    }
+
+    @discardableResult
+    func removeLane(_ laneId: UInt64) -> LaneRecord? {
+        lanes.removeValue(forKey: laneId)
+    }
+
+    func lane(for laneId: UInt64) -> LaneRecord? {
+        lanes[laneId]
+    }
+
+    func isEmpty() -> Bool {
+        lanes.isEmpty && pendingOutbound.isEmpty
+    }
+
+    func drainLanes() -> [(UInt64, LaneRecord)] {
+        let drained = Array(lanes)
+        lanes.removeAll()
+        return drained
+    }
+
+    func addPendingOutbound(_ laneId: UInt64, pending: PendingOutboundLane) {
+        pendingOutbound[laneId] = pending
+    }
+
+    func takePendingOutbound(_ laneId: UInt64) -> PendingOutboundLane? {
+        pendingOutbound.removeValue(forKey: laneId)
+    }
+
+    // r[impl rpc.debug.snapshot]
+    func debugSnapshot() async -> [VoxLaneDebugSnapshot] {
+        let open = await lanes.sorted { $0.key < $1.key }.asyncMap { laneId, record in
+            VoxLaneDebugSnapshot(
+                laneId: laneId,
+                isPendingOpen: false,
+                channels: await record.channelRegistry.debugSnapshot(laneId: laneId)
+            )
+        }
+        let pending = pendingOutbound.keys.sorted().map { laneId in
+            VoxLaneDebugSnapshot(
+                laneId: laneId,
+                isPendingOpen: true
+            )
+        }
+        return open + pending
+    }
+}
+
+private extension Array {
+    func asyncMap<T>(
+        _ transform: (Element) async -> T
+    ) async -> [T] {
+        var result: [T] = []
+        result.reserveCapacity(count)
+        for element in self {
+            result.append(await transform(element))
+        }
+        return result
+    }
+}

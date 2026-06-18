@@ -1,0 +1,84 @@
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+
+const projectRoot = new URL("../../../", import.meta.url).pathname;
+
+const wasmTargets = [
+  {
+    name: "browser-wasm",
+    crateDir: join(projectRoot, "rust/wasm-browser-tests"),
+    crateArg: "rust/wasm-browser-tests",
+    outDirArg: "../../wasm/tests/browser-wasm/pkg",
+    outputFile: join(projectRoot, "wasm/tests/browser-wasm/pkg/wasm_browser_tests.js"),
+  },
+  {
+    name: "browser-inprocess",
+    crateDir: join(projectRoot, "rust/wasm-inprocess-tests"),
+    crateArg: "rust/wasm-inprocess-tests",
+    outDirArg: "../../wasm/tests/browser-inprocess/pkg",
+    outputFile: join(projectRoot, "wasm/tests/browser-inprocess/pkg/wasm_inprocess_tests.js"),
+  },
+];
+
+function wasmPackCommand() {
+  const candidates = [
+    process.env.CARGO_HOME ? join(process.env.CARGO_HOME, "bin", "wasm-pack") : null,
+    join(homedir(), ".cargo", "bin", "wasm-pack"),
+    "wasm-pack",
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate === null) {
+      continue;
+    }
+    if (candidate === "wasm-pack" || existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return "wasm-pack";
+}
+
+function buildTarget(target) {
+  console.log(`[playwright] building ${target.name} wasm fixture with wasm-pack`);
+  const wasmPack = wasmPackCommand();
+  const result = spawnSync(
+    wasmPack,
+    ["build", "--dev", "--no-opt", "--target", "web", target.crateArg, "--out-dir", target.outDirArg],
+    {
+      cwd: projectRoot,
+      env: {
+        ...process.env,
+        CARGO_PROFILE_DEV_DEBUG: process.env.CARGO_PROFILE_DEV_DEBUG ?? "false",
+        CARGO_PROFILE_DEV_OPT_LEVEL: process.env.CARGO_PROFILE_DEV_OPT_LEVEL ?? "1",
+      },
+      stdio: "inherit",
+    },
+  );
+
+  if (result.error) {
+    throw new Error(`failed to launch ${wasmPack} for ${target.name}: ${result.error.message}`);
+  }
+
+  if (result.status !== 0) {
+    throw new Error(`wasm-pack build failed for ${target.name} with exit code ${result.status}`);
+  }
+}
+
+export default async function globalSetup() {
+  if (process.env.VOX_SKIP_WASM_PACK_BUILD === "1") {
+    for (const target of wasmTargets) {
+      if (!existsSync(target.outputFile)) {
+        throw new Error(`missing prebuilt wasm fixture for ${target.name}: ${target.outputFile}`);
+      }
+      console.log(`[playwright] using prebuilt ${target.name} wasm fixture`);
+    }
+    return;
+  }
+
+  for (const target of wasmTargets) {
+    buildTarget(target);
+  }
+}

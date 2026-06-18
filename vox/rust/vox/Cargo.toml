@@ -1,0 +1,60 @@
+[package]
+name = "vox"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Core Vox library crate"
+readme = "README.md"
+homepage.workspace = true
+documentation.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[features]
+default = ["runtime", "transport-tcp", "transport-local"]
+runtime = ["dep:vox-core"]
+transport-tcp = ["dep:vox-stream"]
+transport-local = ["dep:vox-stream"]
+transport-ffi = ["dep:vox-ffi"]
+transport-websocket = ["dep:vox-websocket"]
+transport-websocket-tls = [
+  "transport-websocket",
+  "dep:tokio-rustls",
+  "dep:rustls",
+  "dep:rustls-pemfile",
+]
+transport-all = ["transport-tcp", "transport-local", "transport-websocket"]
+
+[dependencies]
+vox-types.workspace = true
+vox-phon.workspace = true
+vox-service-macros.workspace = true
+vox-core = { workspace = true, optional = true }
+vox-websocket = { workspace = true, optional = true }
+facet.workspace = true
+facet-pretty.workspace = true
+facet-reflect.workspace = true
+vox-rt.workspace = true
+tracing.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio.workspace = true
+vox-stream = { workspace = true, optional = true }
+vox-ffi = { workspace = true, optional = true }
+tokio-rustls = { workspace = true, optional = true }
+rustls = { workspace = true, optional = true }
+rustls-pemfile = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net"] }
+vox-core = { path = "../vox-core" }
+vox-ffi = { path = "../vox-ffi" }
+tempfile.workspace = true
+tracing-subscriber.workspace = true

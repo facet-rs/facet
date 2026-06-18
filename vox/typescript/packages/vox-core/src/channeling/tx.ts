@@ -1,0 +1,351 @@
+// Tx channel handle - caller sends data to callee.
+
+import { type ChannelId, ChannelError } from "./types.ts";
+import {
+  OutgoingSender,
+  ChannelRegistry,
+  type OutgoingCreditController,
+  type OutgoingTrySendDetail,
+} from "./registry.ts";
+import { type TaskSender } from "./task.ts";
+
+// Forward declaration for pair reference
+import type { Rx } from "./rx.ts";
+
+/**
+ * Sender abstraction for Tx channels.
+ *
+ * Supports two modes:
+ * - Client-side: uses OutgoingSender (buffered channel to drain task)
+ * - Server-side: uses TaskSender (direct to connection driver)
+ */
+type TxSender =
+  | { mode: "client"; sender: OutgoingSender }
+  | { mode: "server"; channelId: ChannelId; taskSender: TaskSender; credit: OutgoingCreditController };
+
+export type TrySendResult<T> =
+  | { kind: "sent" }
+  | { kind: "full"; value: T }
+  | { kind: "closed"; value: T };
+
+export type TrySendDetailedResult<T> =
+  | { kind: "sent"; detail: "sent" }
+  | { kind: "full"; detail: "unbound" | "credit_exhausted" | "runtime_queue_full"; value: T }
+  | { kind: "closed"; detail: "closed"; value: T };
+
+/**
+ * Tx channel handle - caller sends data to callee.
+ *
+ * r[impl rpc.channel]
+ * r[impl rpc.channel.direction]
+ *
+ * # Two modes of operation
+ *
+ * - **Unbound**: Created via `channel<T>()`, no channel ID yet.
+ *   Must be bound before use by passing the paired Rx to a method.
+ * - **Server side**: Uses TaskSender to send Data/Close directly to driver.
+ *   Created via `createServerTx()` in generated dispatch code.
+ *
+ * @template T - The type of values being sent (needs a serializer).
+ */
+export class Tx<T> {
+  private closed = false;
+  private _channelId: ChannelId | undefined;
+  private sender: TxSender | undefined;
+  private serialize: ((value: T) => Uint8Array) | undefined;
+
+  /** Reference to the paired Rx (set by channel<T>()). */
+  _pair: Rx<T> | undefined;
+
+  /** Whether this Tx has been consumed (bound to a call). */
+  private _consumed = false;
+
+  /** Create an unbound Tx (for use with channel<T>()). */
+  constructor();
+  /** Create a server-side Tx with a TaskSender. */
+  constructor(
+    channelId: ChannelId,
+    taskSender: TaskSender,
+    credit: OutgoingCreditController,
+    serialize: (value: T) => Uint8Array,
+  );
+  constructor(
+    channelId?: ChannelId,
+    taskSender?: TaskSender,
+    credit?: OutgoingCreditController,
+    serialize?: (value: T) => Uint8Array,
+  ) {
+    if (
+      channelId !== undefined &&
+      taskSender !== undefined &&
+      credit !== undefined &&
+      serialize !== undefined
+    ) {
+      // Server-side constructor
+      this._channelId = channelId;
+      this.sender = {
+        mode: "server",
+        channelId: channelId,
+        taskSender: taskSender,
+        credit,
+      };
+      this.serialize = serialize;
+      this._consumed = true; // Server-side Tx is immediately bound
+    }
+    // Otherwise: unbound Tx, all fields stay undefined
+  }
+
+  /** Get the channel ID. Throws if not bound. */
+  get channelId(): ChannelId {
+    if (this._channelId === undefined) {
+      throw ChannelError.notBound("Tx");
+    }
+    return this._channelId;
+  }
+
+  /** Check if this Tx is bound to a channel. */
+  get isBound(): boolean {
+    return this._channelId !== undefined;
+  }
+
+  /** Check if this Tx has been consumed. */
+  get isConsumed(): boolean {
+    return this._consumed;
+  }
+
+  /**
+   * Bind this Tx to a channel ID and registry for SENDING.
+   *
+   * Called by the runtime binder when this Tx's paired Rx is passed to a method
+   * (schema Rx = client sends, server receives).
+   *
+   * @param channelId - The allocated channel ID
+   * @param registry - The channel registry to register with
+   * @param serialize - Function to serialize values
+   */
+  bind(
+    channelId: ChannelId,
+    registry: ChannelRegistry,
+    serialize: (value: T) => Uint8Array,
+    initialCredit: number,
+  ): void {
+    this.attachOutgoingBinding(channelId, registry, serialize, initialCredit, false);
+  }
+
+  /**
+   * Set just the channel ID without registering for sending.
+   *
+   * Used when this Tx is passed as an argument to a method
+   * (schema Tx = server sends, client receives).
+   * The client doesn't send on this channel - it just needs the ID for encoding.
+   *
+   * @param channelId - The allocated channel ID
+   */
+  setChannelIdOnly(channelId: ChannelId): void {
+    this.attachChannelIdOnly(channelId, false);
+  }
+
+  rebind(
+    channelId: ChannelId,
+    registry: ChannelRegistry,
+    serialize: (value: T) => Uint8Array,
+    initialCredit: number,
+  ): void {
+    this.attachOutgoingBinding(channelId, registry, serialize, initialCredit, true);
+  }
+
+  rebindChannelIdOnly(channelId: ChannelId): void {
+    this.attachChannelIdOnly(channelId, true);
+  }
+
+  /**
+   * Send a value on this channel.
+   *
+   * r[impl rpc.channel.item]
+   * r[impl rpc.flow-control.credit]
+   * r[impl rpc.channel.pair.tx-read]
+   *
+   * @throws If the Tx is not bound yet
+   */
+  async send(value: T): Promise<void> {
+    if (!this.isBound || this.sender === undefined || this.serialize === undefined) {
+      throw ChannelError.notBound("Tx");
+    }
+
+    if (this.closed) {
+      throw ChannelError.closed();
+    }
+
+    let bytes: Uint8Array;
+    try {
+      bytes = this.serialize(value);
+    } catch (e) {
+      throw ChannelError.serialize(e);
+    }
+
+    if (this.sender.mode === "client") {
+      await this.sender.sender.sendData(bytes);
+    } else {
+      // Server-side: send directly via task channel
+      await this.sender.credit.consume();
+      this.sender.taskSender({
+        kind: "data",
+        channelId: this.sender.channelId,
+        payload: bytes,
+      });
+    }
+  }
+
+  // r[impl rpc.flow-control.credit.try-send]
+  trySend(value: T): TrySendResult<T> {
+    const outcome = this.trySendDetailed(value);
+    if (outcome.kind === "sent") {
+      return { kind: "sent" };
+    }
+    return outcome.kind === "closed"
+      ? { kind: "closed", value: outcome.value }
+      : { kind: "full", value: outcome.value };
+  }
+
+  // r[impl rpc.observability.channel.try-send-detail]
+  trySendDetailed(value: T): TrySendDetailedResult<T> {
+    if (!this.isBound || this.sender === undefined || this.serialize === undefined) {
+      return { kind: "full", detail: "unbound", value };
+    }
+
+    if (this.closed) {
+      return { kind: "closed", detail: "closed", value };
+    }
+
+    let bytes: Uint8Array;
+    try {
+      bytes = this.serialize(value);
+    } catch (e) {
+      throw ChannelError.serialize(e);
+    }
+
+    if (this.sender.mode === "client") {
+      const outcome = this.sender.sender.trySendDataDetailed(bytes);
+      if (outcome === "sent") {
+        return { kind: "sent", detail: "sent" };
+      }
+      return detailToTrySendResult(outcome, value);
+    }
+
+    const credit = this.sender.credit.tryConsume();
+    if (credit === "consumed") {
+      this.sender.taskSender({
+        kind: "data",
+        channelId: this.sender.channelId,
+        payload: bytes,
+      });
+      return { kind: "sent", detail: "sent" };
+    }
+    return detailToTrySendResult(
+      credit === "closed" ? "closed" : "credit_exhausted",
+      value,
+    );
+  }
+
+  /**
+   * Close this channel.
+   *
+   * r[impl rpc.channel.lifecycle]
+   * r[impl rpc.channel.close]
+   */
+  close(): void {
+    if (this.closed) return;
+    this.closed = true;
+
+    if (this.sender === undefined) {
+      // Not bound yet, nothing to close
+      return;
+    }
+
+    if (this.sender.mode === "client") {
+      this.sender.sender.sendClose();
+    } else {
+      this.sender.credit.close();
+      // Server-side: send Close via task channel
+      this.sender.taskSender({
+        kind: "close",
+        channelId: this.sender.channelId,
+      });
+    }
+  }
+
+  finishCallBinding(): void {
+    if (this.closed) return;
+    this.closed = true;
+    if (this.sender?.mode === "client") {
+      this.sender.sender.terminate();
+    } else {
+      this.sender?.credit.close();
+    }
+  }
+
+  private attachOutgoingBinding(
+    channelId: ChannelId,
+    registry: ChannelRegistry,
+    serialize: (value: T) => Uint8Array,
+    initialCredit: number,
+    allowRebind: boolean,
+  ): void {
+    if (this._consumed && !allowRebind) {
+      throw ChannelError.alreadyConsumed("Tx");
+    }
+    this._channelId = channelId;
+    const outgoing = registry.registerOutgoing(channelId, initialCredit);
+    this.sender = { mode: "client", sender: outgoing };
+    this.serialize = serialize;
+    this._consumed = true;
+    this.closed = false;
+  }
+
+  private attachChannelIdOnly(channelId: ChannelId, allowRebind: boolean): void {
+    if (this._consumed && !allowRebind) {
+      throw ChannelError.alreadyConsumed("Tx");
+    }
+    this._channelId = channelId;
+    this._consumed = true;
+  }
+}
+
+function detailToTrySendResult<T>(
+  detail: Exclude<OutgoingTrySendDetail, "sent">,
+  value: T,
+): TrySendDetailedResult<T> {
+  if (detail === "closed") {
+    return { kind: "closed", detail, value };
+  }
+  return { kind: "full", detail, value };
+}
+
+// Note: Symbol.dispose support for using-declarations would be nice but requires esnext target.
+// For now, users should call close() explicitly or use try/finally.
+
+/**
+ * Create a server-side Tx channel that sends directly via the task channel.
+ *
+ * Used by generated dispatch code to hydrate Tx arguments.
+ * When the handler calls tx.send(), Data messages go directly to the driver.
+ * When the handler is done and calls tx.close(), a Close message is sent.
+ *
+ * @param channelId - The channel ID from the wire (allocated by caller)
+ * @param taskSender - Callback to send TaskMessage to driver
+ * @param serialize - Function to serialize values to bytes
+ */
+export function createServerTx<T>(
+  channelId: ChannelId,
+  taskSender: TaskSender,
+  registry: ChannelRegistry,
+  initialCredit: number,
+  serialize: (value: T) => Uint8Array,
+): Tx<T> {
+  return new Tx(
+    channelId,
+    taskSender,
+    registry.registerServerOutgoing(channelId, initialCredit),
+    serialize,
+  );
+}

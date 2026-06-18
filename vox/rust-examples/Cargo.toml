@@ -1,0 +1,16 @@
+[package]
+name = "rust-examples"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+publish = false
+
+[dependencies]
+eyre.workspace = true
+vox = { workspace = true, features = ["transport-tcp", "transport-local", "transport-websocket"] }
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt", "net", "time"] }
+tracing-subscriber.workspace = true
