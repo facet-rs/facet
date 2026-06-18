@@ -1,5 +1,5 @@
 ---
-source: crates/figue/src/schema/tests.rs
+source: figue/src/schema/tests.rs
 expression: stripped
 ---
 Error: config field `skipped` is skipped but has no default value
@@ -7,7 +7,7 @@ Error: config field `skipped` is skipped but has no default value
    │
  2 │ struct ArgsWithSkippedNonDefaultConfigField {
    │        ──────────────────┬─────────────────  
-   │                          ╰─────────────────── defined at crates/figue/src/schema/tests.rs:435
+   │                          ╰─────────────────── defined at figue/src/schema/tests.rs:435
    │                          │                   
    │                          ╰─────────────────── config field `skipped` is skipped but has no default value
    │ 

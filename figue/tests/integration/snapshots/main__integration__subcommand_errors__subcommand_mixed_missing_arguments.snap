@@ -1,6 +1,6 @@
 ---
-source: crates/figue/tests/integration/subcommand_errors.rs
-expression: "strip_ansi_escapes :: strip_str(& err.to_string())"
+source: figue/tests/integration/subcommand_errors.rs
+expression: "$crate :: common :: strip_ansi(& err.to_string())"
 ---
 main deploy
 
@@ -12,7 +12,7 @@ ARGUMENTS:
             Environment to deploy to
 
 OPTIONS:
-        --region <STRING>
+        --region <STRING> [Required]
             Deployment region (required)
         --version <STRING>
             Optional version tag
