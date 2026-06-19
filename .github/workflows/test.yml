@@ -299,6 +299,10 @@ jobs:
         with:
           tool: cargo-nextest
 
+      - name: Build Rust subject
+        shell: bash
+        run: cargo build -p subject-rust
+
       - name: ✨ Run nextest tests (Windows)
         shell: bash
         env:
