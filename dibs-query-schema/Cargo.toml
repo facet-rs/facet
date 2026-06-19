@@ -1,6 +1,6 @@
 [package]
 name = "dibs-query-schema"
-version = "0.2.0-rc.0"
+version = "0.2.0-rc.1"
 edition = "2024"
 rust-version.workspace = true
 description = "Facet types for the dibs query DSL schema"
@@ -12,7 +12,7 @@ license = "MIT OR Apache-2.0"
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-dibs-sql = { version = "0.2.0-rc.0", path = "../dibs-sql" }
+dibs-sql = { version = "0.2.0-rc.1", path = "../dibs-sql" }
 facet = { workspace = true, features = ["indexmap"] }
 facet-reflect.workspace = true
 facet-styx.workspace = true

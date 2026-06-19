@@ -12,24 +12,24 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.0-rc.0"
+version = "0.2.0-rc.1"
 edition = "2024"
 rust-version = "1.92"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/facet-rs/facet"
 
 [workspace.dependencies]
-copypatch = { path = "copypatch", version = "0.2.0-rc.0" }
-phon = { path = "phon", version = "0.2.0-rc.0" }
-phon-schema = { path = "phon-schema", version = "0.2.0-rc.0" }
-phon-ir = { path = "phon-ir", version = "0.2.0-rc.0" }
-phon-engine = { path = "phon-engine", version = "0.2.0-rc.0" }
-phon-jit = { path = "phon-jit", version = "0.2.0-rc.0" }
+copypatch = { path = "copypatch", version = "0.2.0-rc.1" }
+phon = { path = "phon", version = "0.2.0-rc.1" }
+phon-schema = { path = "phon-schema", version = "0.2.0-rc.1" }
+phon-ir = { path = "phon-ir", version = "0.2.0-rc.1" }
+phon-engine = { path = "phon-engine", version = "0.2.0-rc.1" }
+phon-jit = { path = "phon-jit", version = "0.2.0-rc.1" }
 
 blake3 = "1.8"
-facet = "0.50.0-rc.0"
-facet-json = "0.50.0-rc.0"
-facet-value = "0.50.0-rc.0"
+facet = "0.50.0-rc.1"
+facet-json = "0.50.0-rc.1"
+facet-value = "0.50.0-rc.1"
 object = "0.39"
 proptest = "1.11"
 tracing = { version = "0.1", default-features = false, features = ["std"] }

@@ -175,7 +175,7 @@ exclude = [
 resolver = "3"
 
 [workspace.package]
-version = "0.10.0-rc.0"
+version = "0.10.0-rc.1"
 edition = "2024"
 rust-version = "1.92"
 license = "MIT OR Apache-2.0"
@@ -186,84 +186,84 @@ keywords = ["rpc", "ipc", "networking", "facet"]
 categories = ["network-programming", "asynchronous"]
 
 [workspace.dependencies]
-facet = { path = "facet", version = "0.50.0-rc.0" }
+facet = { path = "facet", version = "0.50.0-rc.1" }
 facet-core = { path = "facet-core" }
-facet-default = { path = "facet-default", version = "0.50.0-rc.0" }
-facet-dessert = { path = "facet-dessert", version = "0.50.0-rc.0" }
-facet-dom = { path = "facet-dom", version = "0.50.0-rc.0" }
-facet-error = { path = "facet-error", version = "0.50.0-rc.0" }
-facet-format = { path = "facet-format", version = "0.50.0-rc.0" }
+facet-default = { path = "facet-default", version = "0.50.0-rc.1" }
+facet-dessert = { path = "facet-dessert", version = "0.50.0-rc.1" }
+facet-dom = { path = "facet-dom", version = "0.50.0-rc.1" }
+facet-error = { path = "facet-error", version = "0.50.0-rc.1" }
+facet-format = { path = "facet-format", version = "0.50.0-rc.1" }
 facet-format-suite = { path = "facet-format-suite", version = "0.50.0-rc.0" }
-facet-json = { path = "facet-json", version = "0.50.0-rc.0" }
+facet-json = { path = "facet-json", version = "0.50.0-rc.1" }
 facet-json-classics = { path = "facet-json-classics", version = "0.50.0-rc.0" }
-facet-msgpack = { path = "facet-msgpack", version = "0.50.0-rc.0" }
-facet-path = { path = "facet-path", version = "0.50.0-rc.0" }
-facet-postcard = { path = "facet-postcard", version = "0.50.0-rc.0" }
+facet-msgpack = { path = "facet-msgpack", version = "0.50.0-rc.1" }
+facet-path = { path = "facet-path", version = "0.50.0-rc.1" }
+facet-postcard = { path = "facet-postcard", version = "0.50.0-rc.1" }
 facet-pretty = { path = "facet-pretty" }
-facet-reflect = { path = "facet-reflect", version = "0.50.0-rc.0" }
-facet-singularize = { path = "facet-singularize", version = "0.50.0-rc.0" }
-facet-solver = { path = "facet-solver", version = "0.50.0-rc.0" }
-facet-testhelpers = { path = "facet-testhelpers", version = "0.50.0-rc.0" }
-facet-tokio-postgres = { path = "facet-tokio-postgres", version = "0.50.0-rc.0" }
-facet-toml = { path = "facet-toml", version = "0.50.0-rc.0" }
-facet-xml = { path = "facet-xml", version = "0.50.0-rc.0" }
-facet-urlencoded = { path = "facet-urlencoded", version = "0.50.0-rc.0" }
-facet-value = { path = "facet-value", version = "0.50.0-rc.0" }
-facet-yaml = { path = "facet-yaml", version = "0.50.0-rc.0" }
-figue = { path = "figue", version = "5.0.0-rc.0" }
-figue-attrs = { path = "figue-attrs", version = "5.0.0-rc.0" }
-facet-styx = { path = "facet-styx", version = "5.0.0-rc.0" }
-picante-macros = { path = "picante-macros", version = "3.0.0-rc.0" }
-dibs = { path = "dibs", version = "0.2.0-rc.0" }
-dibs-config = { path = "dibs-config", version = "0.2.0-rc.0" }
-dibs-db-schema = { path = "dibs-db-schema", version = "0.2.0-rc.0" }
-dibs-jsonb = { path = "dibs-jsonb", version = "0.2.0-rc.0" }
-dibs-macros = { path = "dibs-macros", version = "0.2.0-rc.0" }
-dibs-proto = { path = "dibs-proto", version = "0.2.0-rc.0" }
-dibs-qgen = { path = "dibs-qgen", version = "0.2.0-rc.0" }
-dibs-query-schema = { path = "dibs-query-schema", version = "0.2.0-rc.0" }
-dibs-sql = { path = "dibs-sql", version = "0.2.0-rc.0" }
+facet-reflect = { path = "facet-reflect", version = "0.50.0-rc.1" }
+facet-singularize = { path = "facet-singularize", version = "0.50.0-rc.1" }
+facet-solver = { path = "facet-solver", version = "0.50.0-rc.1" }
+facet-testhelpers = { path = "facet-testhelpers", version = "0.50.0-rc.1" }
+facet-tokio-postgres = { path = "facet-tokio-postgres", version = "0.50.0-rc.1" }
+facet-toml = { path = "facet-toml", version = "0.50.0-rc.1" }
+facet-xml = { path = "facet-xml", version = "0.50.0-rc.1" }
+facet-urlencoded = { path = "facet-urlencoded", version = "0.50.0-rc.1" }
+facet-value = { path = "facet-value", version = "0.50.0-rc.1" }
+facet-yaml = { path = "facet-yaml", version = "0.50.0-rc.1" }
+figue = { path = "figue", version = "5.0.0-rc.1" }
+figue-attrs = { path = "figue-attrs", version = "5.0.0-rc.1" }
+facet-styx = { path = "facet-styx", version = "5.0.0-rc.1" }
+picante-macros = { path = "picante-macros", version = "3.0.0-rc.1" }
+dibs = { path = "dibs", version = "0.2.0-rc.1" }
+dibs-config = { path = "dibs-config", version = "0.2.0-rc.1" }
+dibs-db-schema = { path = "dibs-db-schema", version = "0.2.0-rc.1" }
+dibs-jsonb = { path = "dibs-jsonb", version = "0.2.0-rc.1" }
+dibs-macros = { path = "dibs-macros", version = "0.2.0-rc.1" }
+dibs-proto = { path = "dibs-proto", version = "0.2.0-rc.1" }
+dibs-qgen = { path = "dibs-qgen", version = "0.2.0-rc.1" }
+dibs-query-schema = { path = "dibs-query-schema", version = "0.2.0-rc.1" }
+dibs-sql = { path = "dibs-sql", version = "0.2.0-rc.1" }
 dockside = { path = "dockside" }
-copypatch = { path = "phon/rust/copypatch", version = "0.2.0-rc.0" }
-phon = { path = "phon/rust/phon", version = "0.2.0-rc.0" }
-phon-engine = { path = "phon/rust/phon-engine", version = "0.2.0-rc.0" }
-phon-ir = { path = "phon/rust/phon-ir", version = "0.2.0-rc.0" }
-phon-jit = { path = "phon/rust/phon-jit", version = "0.2.0-rc.0" }
-phon-schema = { path = "phon/rust/phon-schema", version = "0.2.0-rc.0" }
-phon-codegen = { path = "phon/rust/phon-codegen", version = "0.2.0-rc.0" }
+copypatch = { path = "phon/rust/copypatch", version = "0.2.0-rc.1" }
+phon = { path = "phon/rust/phon", version = "0.2.0-rc.1" }
+phon-engine = { path = "phon/rust/phon-engine", version = "0.2.0-rc.1" }
+phon-ir = { path = "phon/rust/phon-ir", version = "0.2.0-rc.1" }
+phon-jit = { path = "phon/rust/phon-jit", version = "0.2.0-rc.1" }
+phon-schema = { path = "phon/rust/phon-schema", version = "0.2.0-rc.1" }
+phon-codegen = { path = "phon/rust/phon-codegen", version = "0.2.0-rc.1" }
 spec-proto = { path = "vox/spec/spec-proto", version = "0.2.2" }
 subject-rust = { path = "vox/rust/subject-rust", version = "0.2.2" }
-vox = { path = "vox/rust/vox", version = "0.10.0-rc.0" }
-vox-codegen = { path = "vox/rust/vox-codegen", version = "0.10.0-rc.0" }
-vox-core = { path = "vox/rust/vox-core", version = "0.10.0-rc.0" }
-vox-fdpass = { path = "vox/rust/vox-fdpass", version = "0.10.0-rc.0" }
-vox-ffi = { path = "vox/rust/vox-ffi", version = "0.10.0-rc.0" }
-vox-inprocess = { path = "vox/rust/vox-inprocess", version = "0.10.0-rc.0" }
-vox-macros-core = { path = "vox/rust/vox-macros-core", version = "0.10.0-rc.0" }
-vox-macros-parse = { path = "vox/rust/vox-macros-parse", version = "0.10.0-rc.0" }
-vox-phon = { path = "vox/rust/vox-phon", version = "0.10.0-rc.0" }
-vox-rt = { path = "vox/rust/vox-rt", version = "0.10.0-rc.0" }
-vox-rt-macros = { path = "vox/rust/vox-rt-macros", version = "0.10.0-rc.0" }
-vox-schema = { path = "vox/rust/vox-schema", version = "0.10.0-rc.0" }
-vox-service-macros = { path = "vox/rust/vox-macros", version = "0.10.0-rc.0" }
-vox-stream = { path = "vox/rust/vox-stream", version = "0.10.0-rc.0" }
-vox-types = { path = "vox/rust/vox-types", version = "0.10.0-rc.0" }
-vox-websocket = { path = "vox/rust/vox-websocket", version = "0.10.0-rc.0" }
-serde_styx = { path = "serde_styx", version = "5.0.0-rc.0" }
-strid = { path = "strid", version = "11.0.0-rc.0" }
-strid-macros = { path = "strid-macros", version = "11.0.0-rc.0" }
-styx-cst = { path = "styx-cst", version = "5.0.0-rc.0" }
-styx-embed = { path = "styx-embed", version = "5.0.0-rc.0" }
-styx-embed-macros = { path = "styx-embed-macros", version = "5.0.0-rc.0" }
-styx-format = { path = "styx-format", version = "5.0.0-rc.0" }
-styx-gen-go = { path = "styx-gen-go", version = "5.0.0-rc.0" }
-styx-lsp = { path = "styx-lsp", version = "5.0.0-rc.0" }
-styx-lsp-ext = { path = "styx-lsp-ext", version = "5.0.0-rc.0" }
-styx-lsp-test-schema = { path = "styx-lsp-test-schema", version = "5.0.0-rc.0" }
-styx-parse = { path = "styx-parse", version = "5.0.0-rc.0" }
-styx-testhelpers = { path = "styx-testhelpers", version = "5.0.0-rc.0" }
-styx-tokenizer = { path = "styx-tokenizer", version = "5.0.0-rc.0" }
-styx-tree = { path = "styx-tree", version = "5.0.0-rc.0" }
+vox = { path = "vox/rust/vox", version = "0.10.0-rc.1" }
+vox-codegen = { path = "vox/rust/vox-codegen", version = "0.10.0-rc.1" }
+vox-core = { path = "vox/rust/vox-core", version = "0.10.0-rc.1" }
+vox-fdpass = { path = "vox/rust/vox-fdpass", version = "0.10.0-rc.1" }
+vox-ffi = { path = "vox/rust/vox-ffi", version = "0.10.0-rc.1" }
+vox-inprocess = { path = "vox/rust/vox-inprocess", version = "0.10.0-rc.1" }
+vox-macros-core = { path = "vox/rust/vox-macros-core", version = "0.10.0-rc.1" }
+vox-macros-parse = { path = "vox/rust/vox-macros-parse", version = "0.10.0-rc.1" }
+vox-phon = { path = "vox/rust/vox-phon", version = "0.10.0-rc.1" }
+vox-rt = { path = "vox/rust/vox-rt", version = "0.10.0-rc.1" }
+vox-rt-macros = { path = "vox/rust/vox-rt-macros", version = "0.10.0-rc.1" }
+vox-schema = { path = "vox/rust/vox-schema", version = "0.10.0-rc.1" }
+vox-service-macros = { path = "vox/rust/vox-macros", version = "0.10.0-rc.1" }
+vox-stream = { path = "vox/rust/vox-stream", version = "0.10.0-rc.1" }
+vox-types = { path = "vox/rust/vox-types", version = "0.10.0-rc.1" }
+vox-websocket = { path = "vox/rust/vox-websocket", version = "0.10.0-rc.1" }
+serde_styx = { path = "serde_styx", version = "5.0.0-rc.1" }
+strid = { path = "strid", version = "11.0.0-rc.1" }
+strid-macros = { path = "strid-macros", version = "11.0.0-rc.1" }
+styx-cst = { path = "styx-cst", version = "5.0.0-rc.1" }
+styx-embed = { path = "styx-embed", version = "5.0.0-rc.1" }
+styx-embed-macros = { path = "styx-embed-macros", version = "5.0.0-rc.1" }
+styx-format = { path = "styx-format", version = "5.0.0-rc.1" }
+styx-gen-go = { path = "styx-gen-go", version = "5.0.0-rc.1" }
+styx-lsp = { path = "styx-lsp", version = "5.0.0-rc.1" }
+styx-lsp-ext = { path = "styx-lsp-ext", version = "5.0.0-rc.1" }
+styx-lsp-test-schema = { path = "styx-lsp-test-schema", version = "5.0.0-rc.1" }
+styx-parse = { path = "styx-parse", version = "5.0.0-rc.1" }
+styx-testhelpers = { path = "styx-testhelpers", version = "5.0.0-rc.1" }
+styx-tokenizer = { path = "styx-tokenizer", version = "5.0.0-rc.1" }
+styx-tree = { path = "styx-tree", version = "5.0.0-rc.1" }
 arborium = { version = "^2.4.5", default-features = false, features = ["lang-json", "lang-rust"] }
 arborium-highlight = "^2.4.5"
 arborium-theme = "^2.4.5"

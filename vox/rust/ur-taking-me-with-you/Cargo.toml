@@ -1,6 +1,6 @@
 [package]
 name = "ur-taking-me-with-you"
-version = "8.0.0"
+version = "8.0.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

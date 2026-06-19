@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [5.0.0-rc.0](https://github.com/bearcove/styx/compare/styx-parse-v4.0.0...styx-parse-v5.0.0-rc.0) - 2026-06-10
+## [5.0.0-rc.1](https://github.com/bearcove/styx/compare/styx-parse-v4.0.0...styx-parse-v5.0.0-rc.1) - 2026-06-10
 
 ### Other
 

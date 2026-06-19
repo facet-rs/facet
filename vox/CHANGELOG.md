@@ -4,7 +4,7 @@ All notable changes to Vox are documented here.
 
 ## [Unreleased]
 
-## [0.10.0-rc.0] - 2026-06-18
+## [0.10.0-rc.1] - 2026-06-18
 
 ### Other
 
