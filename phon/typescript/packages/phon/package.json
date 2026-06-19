@@ -36,8 +36,8 @@
   },
   "license": "MIT OR Apache-2.0",
   "description": "The phon front door for TypeScript: the typed encode/decode API over codegen-emitted accessors.",
-  "repository": "https://github.com/bearcove/phon",
-  "homepage": "https://github.com/bearcove/phon",
+  "repository": "https://github.com/facet-rs/facet",
+  "homepage": "https://github.com/facet-rs/facet",
   "keywords": [
     "phon",
     "serialization",

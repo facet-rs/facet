@@ -35,8 +35,8 @@
   },
   "license": "MIT OR Apache-2.0",
   "description": "Wire message codecs and helpers for Vox",
-  "repository": "https://github.com/bearcove/vox",
-  "homepage": "https://github.com/bearcove/vox",
+  "repository": "https://github.com/facet-rs/facet",
+  "homepage": "https://github.com/facet-rs/facet",
   "keywords": [
     "vox",
     "ipc",
