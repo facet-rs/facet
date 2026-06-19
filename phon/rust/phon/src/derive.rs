@@ -24,9 +24,9 @@ use std::fmt;
 use std::sync::{Arc, LazyLock, RwLock};
 
 use facet::{
-    Def, DefaultSource, EnumRepr, EnumType, Facet, KnownPointer, ListDef, MapDef, OpaqueAdapterDef,
-    OpaqueDeserialize, OpaqueSerialize, OptionDef, PointerDef, PtrConst, PtrMut, PtrUninit,
-    ResultDef, ScalarType, SetDef, Shape, StructKind, Type, UserType,
+    ArrayDef, Def, DefaultSource, EnumRepr, EnumType, Facet, KnownPointer, ListDef, MapDef,
+    OpaqueAdapterDef, OpaqueDeserialize, OpaqueSerialize, OptionDef, PointerDef, PtrConst, PtrMut,
+    PtrUninit, ResultDef, ScalarType, SetDef, Shape, StructKind, Type, UserType,
 };
 use phon_engine::{Registry, typed};
 use phon_ir::{
@@ -194,6 +194,8 @@ pub fn of_shape(shape: &'static Shape) -> Result<Derived, DeriveError> {
         b.intern_result(rd, shape)?
     } else if let Some(ld) = list_def(shape) {
         b.intern_list(ld)?
+    } else if let Some(ad) = array_def(shape) {
+        b.intern_array(ad)?
     } else if let Some(opt) = option_def(shape) {
         b.intern_option(opt)?
     } else if let Some(sd) = set_def(shape) {
@@ -204,7 +206,7 @@ pub fn of_shape(shape: &'static Shape) -> Result<Derived, DeriveError> {
         b.intern_enum(shape, et)?
     } else {
         return Err(DeriveError::Unsupported(
-            "derive root must be a struct, enum, Result, list, set, option, map, or fixed scalar so far",
+            "derive root must be a struct, enum, Result, list, array, set, option, map, or fixed scalar so far",
         ));
     };
     let by_shape = b.by_shape;
@@ -328,6 +330,9 @@ impl Builder {
         } else if let Some(list_def) = list_def(shape) {
             let key = self.intern_list(list_def)?;
             Ok(SchemaRef::concrete(SchemaId(key as u64)))
+        } else if let Some(array_def) = array_def(shape) {
+            let key = self.intern_array(array_def)?;
+            Ok(SchemaRef::concrete(SchemaId(key as u64)))
         } else if let Some(set_def) = set_def(shape) {
             let key = self.intern_set(set_def)?;
             Ok(SchemaRef::concrete(SchemaId(key as u64)))
@@ -345,7 +350,7 @@ impl Builder {
             Ok(SchemaRef::concrete(SchemaId(key as u64)))
         } else {
             Err(DeriveError::Unsupported(
-                "derive: only structs, lists, options, maps, results, enums, and fixed scalars so far",
+                "derive: only structs, lists, arrays, options, maps, results, enums, and fixed scalars so far",
             ))
         }
     }
@@ -366,6 +371,28 @@ impl Builder {
             id: SchemaId(key as u64),
             type_params: Vec::new(),
             kind: SchemaKind::List { element },
+        });
+        Ok(key)
+    }
+
+    /// Intern a fixed-size array schema (e.g. `[T; N]`), returning its provisional
+    /// key. Interned by the `ArrayDef` pointer so repeated `[T; N]` occurrences
+    /// share one schema.
+    fn intern_array(&mut self, array_def: &'static ArrayDef) -> Result<usize, DeriveError> {
+        let ptr = core::ptr::from_ref(array_def) as usize;
+        if let Some(&k) = self.by_shape.get(&ptr) {
+            return Ok(k);
+        }
+        let element = self.ref_of(array_def.t())?;
+        let key = self.protos.len();
+        self.by_shape.insert(ptr, key);
+        self.protos.push(Schema {
+            id: SchemaId(key as u64),
+            type_params: Vec::new(),
+            kind: SchemaKind::Array {
+                element,
+                dimensions: vec![array_def.n as u64],
+            },
         });
         Ok(key)
     }
@@ -685,6 +712,24 @@ fn build_descriptor(
         };
         return Ok(rec.exit(real, desc));
     }
+    if let Some(array_def) = array_def(shape) {
+        let real = real_ids[by_shape[&(core::ptr::from_ref(array_def) as usize)]];
+        let layout = Layout { size, align };
+        if let Some(d) = rec.enter(real, layout) {
+            return Ok(d);
+        }
+        let element = build_descriptor(array_def.t(), by_shape, real_ids, rec)?;
+        let desc = Descriptor {
+            schema: SchemaRef::concrete(real),
+            layout,
+            access: Access::Array {
+                stride: element.layout.size,
+                count: array_def.n,
+                element: Box::new(element),
+            },
+        };
+        return Ok(rec.exit(real, desc));
+    }
     if let Some(set_def) = set_def(shape) {
         let real = real_ids[by_shape[&(core::ptr::from_ref(set_def) as usize)]];
         let layout = Layout { size, align };
@@ -851,6 +896,14 @@ fn layout_of(shape: &Shape) -> Result<(usize, usize), DeriveError> {
 fn list_def(shape: &'static Shape) -> Option<&'static ListDef> {
     match &shape.def {
         Def::List(list_def) => Some(list_def),
+        _ => None,
+    }
+}
+
+/// The `&'static ArrayDef` behind a fixed-array shape (`[T; N]`), or `None`.
+fn array_def(shape: &'static Shape) -> Option<&'static ArrayDef> {
+    match &shape.def {
+        Def::Array(array_def) => Some(array_def),
         _ => None,
     }
 }
@@ -2417,6 +2470,91 @@ mod tests {
     struct Holder {
         items: Vec<u32>,
         tag: u32,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct ArrayHolder {
+        items: [u32; 3],
+        tag: u8,
+    }
+
+    #[test]
+    fn fixed_array_field_derives_as_array_schema() {
+        let d = of::<ArrayHolder>().unwrap();
+        let root = d
+            .schemas
+            .iter()
+            .find(|schema| schema.id == d.root)
+            .expect("root schema should be emitted");
+        let SchemaKind::Struct { fields, .. } = &root.kind else {
+            panic!("ArrayHolder must derive as a struct schema, got {root:?}");
+        };
+        let items = fields
+            .iter()
+            .find(|field| field.name == "items")
+            .expect("items field should be present");
+        let SchemaRef::Concrete { id, args } = &items.schema else {
+            panic!("items field should reference a concrete array schema");
+        };
+        assert!(args.is_empty());
+        let array_schema = d
+            .schemas
+            .iter()
+            .find(|schema| schema.id == *id)
+            .expect("array schema should be emitted");
+        let SchemaKind::Array {
+            element,
+            dimensions,
+        } = &array_schema.kind
+        else {
+            panic!("items field must derive as SchemaKind::Array, got {array_schema:?}");
+        };
+        assert_eq!(element, &SchemaRef::concrete(primitive_id(Primitive::U32)));
+        assert_eq!(dimensions, &[3]);
+    }
+
+    #[test]
+    fn derived_fixed_array_field_typed_matches_dynamic_and_roundtrips() {
+        let d = of::<ArrayHolder>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+
+        let h = ArrayHolder {
+            items: [7, 11, 13],
+            tag: 0x55,
+        };
+        let typed_bytes = unsafe {
+            typed::encode(
+                core::ptr::from_ref(&h).cast::<u8>(),
+                &d.descriptor,
+                &d.descriptor_blocks,
+                &reg,
+            )
+        }
+        .unwrap();
+
+        let mut arr = VArray::new();
+        for &v in &h.items {
+            arr.push(Value::from(v));
+        }
+        let mut obj = VObject::new();
+        obj.insert(VString::new("items"), Value::from(arr));
+        obj.insert(VString::new("tag"), Value::from(h.tag));
+        let dyn_bytes = compact::to_bytes(&obj.into(), d.root, &reg).unwrap();
+        assert_eq!(typed_bytes, dyn_bytes);
+
+        let mut slot = std::mem::MaybeUninit::<ArrayHolder>::uninit();
+        unsafe {
+            typed::decode(
+                &typed_bytes,
+                &d.descriptor,
+                &d.descriptor_blocks,
+                &reg,
+                slot.as_mut_ptr().cast::<u8>(),
+            )
+        }
+        .unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back, h);
     }
 
     #[test]
