@@ -17,6 +17,7 @@ tarpaulin-report.html
 # The monorepo has a single Rust workspace lockfile at the repository root.
 **/Cargo.lock
 !/Cargo.lock
+!vox/fuzz/vox-afl/Cargo.lock
 
 **/node_modules/
 
