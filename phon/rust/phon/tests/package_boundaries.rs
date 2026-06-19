@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-const WORKSPACE: &str = include_str!("../../Cargo.toml");
+const WORKSPACE: &str = include_str!("../../../../Cargo.toml");
 const PHON_SCHEMA: &str = include_str!("../../phon-schema/Cargo.toml");
 const PHON_IR: &str = include_str!("../../phon-ir/Cargo.toml");
 const PHON_ENGINE: &str = include_str!("../../phon-engine/Cargo.toml");
@@ -11,7 +11,13 @@ const PHON: &str = include_str!("../Cargo.toml");
 #[test]
 fn rust_workspace_keeps_contract_engine_jit_and_binding_packages_split() {
     let members = workspace_members(WORKSPACE);
-    for member in ["phon-schema", "phon-ir", "phon-engine", "phon-jit", "phon"] {
+    for member in [
+        "phon/rust/phon-schema",
+        "phon/rust/phon-ir",
+        "phon/rust/phon-engine",
+        "phon/rust/phon-jit",
+        "phon/rust/phon",
+    ] {
         assert!(
             members.contains(member),
             "workspace members missing {member}: {members:?}"
