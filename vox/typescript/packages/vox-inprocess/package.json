@@ -22,7 +22,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
   "dependencies": {
     "@bearcove/vox-core": "workspace:*"
@@ -41,5 +42,6 @@
     "typescript",
     "wasm",
     "in-process"
-  ]
+  ],
+  "readme": "README.md"
 }

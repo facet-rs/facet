@@ -18,4 +18,4 @@ Wire-format types and codecs for the Vox protocol in TypeScript.
 - `@bearcove/vox-core` for runtime behavior on decoded messages
 - Transport packages that carry encoded wire frames
 
-Part of the Vox workspace: <https://github.com/bearcove/vox>
+Part of the Facet workspace: <https://github.com/facet-rs/facet>
