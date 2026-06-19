@@ -1,6 +1,6 @@
 [package]
 name = "styx-gen-go"
-version = "5.0.0-rc.0"
+version = "5.0.0-rc.1"
 edition.workspace = true
 rust-version.workspace = true
 description = "Go code generator for Styx schemas"
