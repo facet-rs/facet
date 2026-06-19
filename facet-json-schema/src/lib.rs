@@ -393,13 +393,20 @@ impl SchemaContext {
             }
             StructKind::TupleStruct if fields.len() == 1 => {
                 // Newtype - serialize as the inner type
-                self.schema_for_shape(fields[0].shape.get())
+                // If the field has a proxy, the proxy type's shape takes precedence
+                let field = &fields[0];
+                let field_shape = field.proxy_shape().unwrap_or_else(|| field.shape.get());
+                self.schema_for_shape(field_shape)
             }
             StructKind::TupleStruct | StructKind::Tuple => {
                 // Tuple struct as array - collect items for prefixItems
                 let _items: Vec<JsonSchema> = fields
                     .iter()
-                    .map(|f| self.schema_for_shape(f.shape.get()))
+                    .map(|f| {
+                        // If the field has a proxy, the proxy type's shape takes precedence
+                        let field_shape = f.proxy_shape().unwrap_or_else(|| f.shape.get());
+                        self.schema_for_shape(field_shape)
+                    })
                     .collect();
 
                 // TODO: Use prefixItems for proper tuple schema (JSON Schema 2020-12)
@@ -423,7 +430,11 @@ impl SchemaContext {
                     }
 
                     let field_name = field.effective_name();
-                    let mut field_schema = self.schema_for_shape(field.shape.get());
+
+                    // If the field has a proxy, the proxy type's shape takes precedence
+                    // for JSON Schema generation (the proxy determines the wire format).
+                    let field_shape = field.proxy_shape().unwrap_or_else(|| field.shape.get());
+                    let mut field_schema = self.schema_for_shape(field_shape);
 
                     // Use field-level doc comments instead of type-level
                     let field_description = if field.doc.is_empty() {
@@ -434,7 +445,7 @@ impl SchemaContext {
                     field_schema.description = field_description;
 
                     // Check if field is required (not Option and no default)
-                    let is_option = matches!(field.shape.get().def, Def::Option(_));
+                    let is_option = matches!(field_shape.def, Def::Option(_));
                     let has_default = field.default.is_some();
 
                     if !is_option && !has_default {
@@ -508,11 +519,12 @@ impl SchemaContext {
                         }
                         StructKind::TupleStruct if v.data.fields.len() == 1 => {
                             // Newtype variant: { "VariantName": <inner> }
+                            // If the field has a proxy, the proxy type's shape takes precedence
+                            let field = &v.data.fields[0];
+                            let field_shape =
+                                field.proxy_shape().unwrap_or_else(|| field.shape.get());
                             let mut props = BTreeMap::new();
-                            props.insert(
-                                variant_name.clone(),
-                                self.schema_for_shape(v.data.fields[0].shape.get()),
-                            );
+                            props.insert(variant_name.clone(), self.schema_for_shape(field_shape));
                             JsonSchema {
                                 type_: Some(SchemaType::Object.into()),
                                 properties: Some(props),
@@ -701,6 +713,67 @@ mod tests {
                 assert!(matches!(types.as_slice(), [SchemaType::Integer]));
             }
             other => panic!("expected integer type array, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_field_proxy_consulted_for_json_schema() {
+        use facet::Facet;
+
+        // Your domain type
+        #[derive(Facet)]
+        struct CustomId(u64);
+
+        // Proxy: serialize as a string with "ID-" prefix
+        #[derive(Facet)]
+        #[facet(transparent)]
+        struct CustomIdProxy(String);
+
+        impl TryFrom<CustomIdProxy> for CustomId {
+            type Error = &'static str;
+            fn try_from(proxy: CustomIdProxy) -> Result<Self, Self::Error> {
+                let num = proxy
+                    .0
+                    .strip_prefix("ID-")
+                    .ok_or("missing ID- prefix")?
+                    .parse()
+                    .map_err(|_| "invalid number")?;
+                Ok(CustomId(num))
+            }
+        }
+
+        impl TryFrom<&CustomId> for CustomIdProxy {
+            type Error = std::convert::Infallible;
+            fn try_from(id: &CustomId) -> Result<Self, Self::Error> {
+                Ok(CustomIdProxy(format!("ID-{}", id.0)))
+            }
+        }
+
+        #[derive(Facet)]
+        struct Record {
+            #[facet(proxy = CustomIdProxy)]
+            custom_id: CustomId,
+        }
+
+        let schema = to_schema::<Record>();
+        insta::assert_snapshot!(schema);
+
+        let schema = schema_for::<Record>();
+
+        // The field should be a string thanks to the proxy
+        let custom_id = schema.properties.as_ref().and_then(|p| p.get("custom_id"));
+
+        assert!(
+            custom_id.is_some(),
+            "expected a 'custom_id' property in the schema"
+        );
+
+        let custom_id = custom_id.unwrap();
+        match &custom_id.type_ {
+            Some(SchemaTypes::Single(SchemaType::String)) => { /* ok */ }
+            other => {
+                panic!("expected custom_id to be `{{'type': 'string'}}` via proxy, got {other:?}");
+            }
         }
     }
 }
