@@ -243,6 +243,18 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
         (Access::Set(set), Resolved::Composite(SchemaKind::Set { .. })) => {
             lower_set(set, reg, base, out)
         }
+        // r[impl ir.memory] — [T; N]: fixed-shape inline elements with no length prefix.
+        (
+            Access::Array {
+                element,
+                count,
+                stride,
+            },
+            Resolved::Composite(SchemaKind::Array { dimensions, .. }),
+        ) => {
+            require_fixed_array_count(*count, &dimensions)?;
+            lower_fixed_array(element, *count, *stride, reg, base, out)
+        }
         // r[impl ir.memory] — String/Bytes: a bulk contiguous byte run.
         (
             Access::Sequence(seq),
@@ -537,6 +549,29 @@ fn lower_decode_node(
             require_reader_set(&reader.schema, reg)?;
             lower_decode_set(&we, set, reg, base, out)
         }
+        // Fixed array ⋈ fixed array: dimensions match exactly; translate each element.
+        (
+            Access::Array {
+                element,
+                count,
+                stride,
+            },
+            Resolved::Composite(SchemaKind::Array {
+                element: we,
+                dimensions: wd,
+            }),
+        ) => {
+            let Resolved::Composite(SchemaKind::Array { dimensions: rd, .. }) =
+                compact::resolve(reg, &reader.schema)?
+            else {
+                return Err(incompatible("schema kinds differ"));
+            };
+            if wd != rd {
+                return Err(incompatible("array dimensions differ"));
+            }
+            require_fixed_array_count(*count, &wd)?;
+            lower_decode_fixed_array(&we, element, *count, *stride, reg, base, out)
+        }
         // String/Bytes ⋈ String/Bytes: a bulk byte run (no element translation).
         (
             Access::Sequence(seq),
@@ -687,6 +722,62 @@ fn lower_decode_sequence(
         })));
     }
     Ok(())
+}
+
+fn lower_fixed_array(
+    element: &Descriptor,
+    count: usize,
+    stride: usize,
+    reg: &Registry,
+    base: usize,
+    out: &mut MemProgram,
+) -> Result<()> {
+    for i in 0..count {
+        lower_node(element, reg, array_element_offset(base, i, stride)?, out)?;
+    }
+    Ok(())
+}
+
+fn lower_decode_fixed_array(
+    writer_element: &SchemaRef,
+    element: &Descriptor,
+    count: usize,
+    stride: usize,
+    reg: &Registry,
+    base: usize,
+    out: &mut MemProgram,
+) -> Result<()> {
+    for i in 0..count {
+        lower_decode_node(
+            writer_element,
+            element,
+            reg,
+            array_element_offset(base, i, stride)?,
+            out,
+        )?;
+    }
+    Ok(())
+}
+
+fn array_element_offset(base: usize, index: usize, stride: usize) -> Result<usize> {
+    let rel = index
+        .checked_mul(stride)
+        .ok_or(CompactError::Malformed("array element offset overflow"))?;
+    base.checked_add(rel)
+        .ok_or(CompactError::Malformed("array element offset overflow"))
+}
+
+fn require_fixed_array_count(count: usize, dimensions: &[u64]) -> Result<()> {
+    let schema_count = compact::product(dimensions)?;
+    let descriptor_count = u64::try_from(count)
+        .map_err(|_| CompactError::Malformed("descriptor array length overflows u64"))?;
+    if schema_count == descriptor_count {
+        Ok(())
+    } else {
+        Err(CompactError::Malformed(
+            "descriptor/schema array length mismatch",
+        ))
+    }
 }
 
 fn lower_set(set: &SetAccess, reg: &Registry, base: usize, out: &mut MemProgram) -> Result<()> {
