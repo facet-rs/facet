@@ -732,6 +732,26 @@ fn lower_fixed_array(
     base: usize,
     out: &mut MemProgram,
 ) -> Result<()> {
+    let mut element_ops = Vec::new();
+    lower_node(element, reg, 0, &mut element_ops)?;
+    let element_ops = fuse(element_ops);
+    if let [
+        MemOp::Scalar {
+            offset: 0,
+            size,
+            align,
+        },
+    ] = element_ops.as_slice()
+        && *size == stride
+        && stride.is_multiple_of(*align)
+    {
+        out.push(MemOp::Scalar {
+            offset: base,
+            size: fixed_array_copy_size(count, stride)?,
+            align: *align,
+        });
+        return Ok(());
+    }
     for i in 0..count {
         lower_node(element, reg, array_element_offset(base, i, stride)?, out)?;
     }
@@ -747,6 +767,26 @@ fn lower_decode_fixed_array(
     base: usize,
     out: &mut MemProgram,
 ) -> Result<()> {
+    let mut element_ops = Vec::new();
+    lower_decode_node(writer_element, element, reg, 0, &mut element_ops)?;
+    let element_ops = fuse(element_ops);
+    if let [
+        MemOp::Scalar {
+            offset: 0,
+            size,
+            align,
+        },
+    ] = element_ops.as_slice()
+        && *size == stride
+        && stride.is_multiple_of(*align)
+    {
+        out.push(MemOp::Scalar {
+            offset: base,
+            size: fixed_array_copy_size(count, stride)?,
+            align: *align,
+        });
+        return Ok(());
+    }
     for i in 0..count {
         lower_decode_node(
             writer_element,
@@ -757,6 +797,12 @@ fn lower_decode_fixed_array(
         )?;
     }
     Ok(())
+}
+
+fn fixed_array_copy_size(count: usize, stride: usize) -> Result<usize> {
+    count
+        .checked_mul(stride)
+        .ok_or(CompactError::Malformed("array bulk copy size overflow"))
 }
 
 fn array_element_offset(base: usize, index: usize, stride: usize) -> Result<usize> {

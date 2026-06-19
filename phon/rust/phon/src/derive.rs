@@ -2287,6 +2287,7 @@ mod tests {
     use facet::Facet;
     use facet_value::{VArray, VObject, VString, Value};
     use phon_engine::{Registry, compact, typed};
+    use phon_ir::ir::MemOp;
 
     // repr(Rust): the compiler may reorder these in memory, so the descriptor's
     // offsets (from facet) are not the schema/wire order. The cross-check below
@@ -2478,6 +2479,11 @@ mod tests {
         tag: u8,
     }
 
+    #[derive(Facet, Debug, PartialEq)]
+    struct ArrayOnly {
+        items: [u32; 3],
+    }
+
     #[test]
     fn fixed_array_field_derives_as_array_schema() {
         let d = of::<ArrayHolder>().unwrap();
@@ -2555,6 +2561,59 @@ mod tests {
         .unwrap();
         let back = unsafe { slot.assume_init() };
         assert_eq!(back, h);
+    }
+
+    #[test]
+    fn derived_fixed_array_of_scalars_lowers_to_one_bulk_copy() {
+        let d = of::<ArrayOnly>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+        let lowered = typed::lower_typed(&d.descriptor, &d.descriptor_blocks, &reg).unwrap();
+
+        assert!(lowered.blocks.is_empty());
+        assert_eq!(lowered.program.len(), 1);
+        assert!(matches!(
+            lowered.program.as_slice(),
+            [MemOp::Scalar {
+                offset: 0,
+                size: 12,
+                align: 4,
+            }]
+        ));
+    }
+
+    #[test]
+    // r[verify exec.jit-optional]
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    fn derived_fixed_array_jit_matches_interpreter_and_roundtrips() {
+        use phon_jit::native::{NativeDecode, NativeEncode};
+
+        let d = of::<ArrayOnly>().unwrap();
+        let reg = Registry::new(d.schemas.clone());
+        let lowered = typed::lower_typed(&d.descriptor, &d.descriptor_blocks, &reg).unwrap();
+        assert!(lowered.blocks.is_empty());
+        assert!(matches!(
+            lowered.program.as_slice(),
+            [MemOp::Scalar {
+                offset: 0,
+                size: 12,
+                align: 4,
+            }]
+        ));
+
+        let value = ArrayOnly { items: [7, 11, 13] };
+        let base = core::ptr::from_ref(&value).cast::<u8>();
+        let interp_bytes =
+            unsafe { typed::encode(base, &d.descriptor, &d.descriptor_blocks, &reg) }.unwrap();
+        let jit_bytes = unsafe { NativeEncode::compile_lowered(&lowered).run(base) };
+        assert_eq!(jit_bytes, interp_bytes);
+
+        let mut slot = std::mem::MaybeUninit::<ArrayOnly>::uninit();
+        unsafe {
+            NativeDecode::compile_lowered(&lowered).run(&jit_bytes, slot.as_mut_ptr().cast::<u8>())
+        }
+        .unwrap();
+        let back = unsafe { slot.assume_init() };
+        assert_eq!(back, value);
     }
 
     #[test]
