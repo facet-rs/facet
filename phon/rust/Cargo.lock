@@ -97,7 +97,7 @@ checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 
 [[package]]
 name = "copypatch"
-version = "0.2.0-rc.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "libc",
  "object",
@@ -457,7 +457,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "phon"
-version = "0.2.0-rc.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "facet",
  "facet-value",
@@ -469,7 +469,7 @@ dependencies = [
 
 [[package]]
 name = "phon-codegen"
-version = "0.2.0-rc.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "facet",
  "phon",
@@ -478,7 +478,7 @@ dependencies = [
 
 [[package]]
 name = "phon-conformance"
-version = "0.2.0-rc.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "facet",
  "facet-json",
@@ -491,7 +491,7 @@ dependencies = [
 
 [[package]]
 name = "phon-engine"
-version = "0.2.0-rc.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "facet-value",
  "phon-ir",
@@ -501,14 +501,14 @@ dependencies = [
 
 [[package]]
 name = "phon-ir"
-version = "0.2.0-rc.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "phon-schema",
 ]
 
 [[package]]
 name = "phon-jit"
-version = "0.2.0-rc.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "copypatch",
  "phon-ir",
@@ -517,7 +517,7 @@ dependencies = [
 
 [[package]]
 name = "phon-schema"
-version = "0.2.0-rc.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "blake3",
  "facet-value",

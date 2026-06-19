@@ -27,9 +27,9 @@ phon-engine = { path = "phon-engine", version = "0.2.0-rc.1" }
 phon-jit = { path = "phon-jit", version = "0.2.0-rc.1" }
 
 blake3 = "1.8"
-facet = "0.50.0-rc.1"
-facet-json = "0.50.0-rc.1"
-facet-value = "0.50.0-rc.1"
+facet = "0.50.0-rc.0"
+facet-json = "0.50.0-rc.0"
+facet-value = "0.50.0-rc.0"
 object = "0.39"
 proptest = "1.11"
 tracing = { version = "0.1", default-features = false, features = ["std"] }
