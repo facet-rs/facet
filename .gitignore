@@ -14,9 +14,13 @@ tarpaulin-report.html
 *.sw[op]
 .handoffs
 
-# The monorepo has a single Rust workspace lockfile at the repository root.
+# The monorepo workspace uses the root lockfile. Standalone Cargo
+# workspaces that are intentionally outside it keep their own lockfiles.
 **/Cargo.lock
 !/Cargo.lock
+!facet-postcard/fuzz-afl/Cargo.lock
+!facet-reflect/fuzz/Cargo.lock
+!tools/styx-webmd/Cargo.lock
 !vox/fuzz/vox-afl/Cargo.lock
 
 **/node_modules/
