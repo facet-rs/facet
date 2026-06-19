@@ -29,7 +29,6 @@ jobs:
         with:
           command: release
         env:
-          CARGO: ${{ github.workspace }}/scripts/release-plz-cargo.sh
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}
 
@@ -55,5 +54,4 @@ jobs:
         with:
           command: release-pr
         env:
-          CARGO: ${{ github.workspace }}/scripts/release-plz-cargo.sh
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
