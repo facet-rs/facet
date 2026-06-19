@@ -18,4 +18,4 @@ Core TypeScript runtime abstractions for Vox connections, calls, and channeling.
 - `@bearcove/phon-engine` / `@bearcove/phon-schema` for serialization
 - `@bearcove/vox-tcp` and `@bearcove/vox-ws` for concrete transports
 
-Part of the Vox workspace: <https://github.com/bearcove/vox>
+Part of the Facet workspace: <https://github.com/facet-rs/facet>

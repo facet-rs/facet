@@ -17,4 +17,4 @@ WebSocket transport binding for Vox in TypeScript.
 - `@bearcove/vox-tcp` where shared transport logic is reused
 - `@bearcove/vox-wire` for protocol message payloads
 
-Part of the Vox workspace: <https://github.com/bearcove/vox>
+Part of the Facet workspace: <https://github.com/facet-rs/facet>
