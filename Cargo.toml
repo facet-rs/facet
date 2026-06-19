@@ -187,7 +187,7 @@ categories = ["network-programming", "asynchronous"]
 
 [workspace.dependencies]
 facet = { path = "facet", version = "0.50.0-rc.1" }
-facet-core = { path = "facet-core" }
+facet-core = { path = "facet-core", version = "0.50.0-rc.1" }
 facet-default = { path = "facet-default", version = "0.50.0-rc.1" }
 facet-dessert = { path = "facet-dessert", version = "0.50.0-rc.1" }
 facet-dom = { path = "facet-dom", version = "0.50.0-rc.1" }
@@ -199,7 +199,7 @@ facet-json-classics = { path = "facet-json-classics", version = "0.50.0-rc.0" }
 facet-msgpack = { path = "facet-msgpack", version = "0.50.0-rc.1" }
 facet-path = { path = "facet-path", version = "0.50.0-rc.1" }
 facet-postcard = { path = "facet-postcard", version = "0.50.0-rc.1" }
-facet-pretty = { path = "facet-pretty" }
+facet-pretty = { path = "facet-pretty", version = "0.50.0-rc.1" }
 facet-reflect = { path = "facet-reflect", version = "0.50.0-rc.1" }
 facet-singularize = { path = "facet-singularize", version = "0.50.0-rc.1" }
 facet-solver = { path = "facet-solver", version = "0.50.0-rc.1" }
