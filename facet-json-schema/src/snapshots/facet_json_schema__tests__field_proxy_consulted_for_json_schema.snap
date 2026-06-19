@@ -1,0 +1,17 @@
+---
+source: facet-json-schema/src/lib.rs
+expression: schema
+---
+{
+  "type": "object",
+  "properties": {
+    "custom_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "custom_id"
+  ],
+  "additionalProperties": false,
+  "title": "Record"
+}
