@@ -27,12 +27,12 @@ platform = { host = "cfg(windows)" }
 setup = 'set-env-windows'
 
 [[profile.default.scripts]]
-filter = 'package(spec-tests)'
+filter = 'package(spec-tests) & test(typescript)'
 platform = { host = "cfg(unix)" }
 setup = 'vox-typescript-unix'
 
 [[profile.default.scripts]]
-filter = 'package(spec-tests)'
+filter = 'package(spec-tests) & test(typescript)'
 platform = { host = "cfg(windows)" }
 setup = 'vox-typescript-windows'
 
