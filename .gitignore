@@ -14,6 +14,10 @@ tarpaulin-report.html
 *.sw[op]
 .handoffs
 
+# The monorepo has a single Rust workspace lockfile at the repository root.
+**/Cargo.lock
+!/Cargo.lock
+
 **/node_modules/
 
 # Profiling
