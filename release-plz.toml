@@ -489,15 +489,6 @@ version_group = "ur-taking-me-with-you"
 changelog_path = "vox/rust/ur-taking-me-with-you/CHANGELOG.md"
 
 # ============================================================================
-# facet-cbor - coordinated from this monorepo, preserving its version line
-# ============================================================================
-
-[[package]]
-name = "facet-cbor"
-version_group = "facet-cbor"
-changelog_path = "vox/rust/facet-cbor/CHANGELOG.md"
-
-# ============================================================================
 # Styx packages - coordinated from this monorepo, preserving their major line
 # ============================================================================
 
