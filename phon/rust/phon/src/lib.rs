@@ -26,9 +26,9 @@ pub mod api {
 
     use facet::Facet;
     use phon_engine::{CompactError, Registry, typed};
-    use phon_ir::Lowered;
     #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
     use phon_ir::MemOp;
+    use phon_ir::{Lowered, LoweredMemProgramStats, lowered_mem_program_stats};
     use phon_schema::DecodeError;
 
     use crate::derive::{self, DeriveError};
@@ -93,6 +93,41 @@ pub mod api {
     pub struct JitFallbackReport {
         pub decode: Vec<JitFallbackRecord>,
         pub encode: Vec<JitFallbackRecord>,
+    }
+
+    /// Shape and code-layout counts for a compiled native JIT program.
+    #[non_exhaustive]
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub struct NativeJitStats {
+        pub chain_count: usize,
+        pub stencil_count: usize,
+        pub prog_slot_count: usize,
+        pub scalar_run_count: usize,
+        pub scalar_run_segment_count: usize,
+    }
+
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    impl From<phon_jit::native::NativeProgramStats> for NativeJitStats {
+        fn from(value: phon_jit::native::NativeProgramStats) -> Self {
+            Self {
+                chain_count: value.chain_count,
+                stencil_count: value.stencil_count,
+                prog_slot_count: value.prog_slot_count,
+                scalar_run_count: value.scalar_run_count,
+                scalar_run_segment_count: value.scalar_run_segment_count,
+            }
+        }
+    }
+
+    /// Lowered shape plus optional native JIT code-layout stats for a codec.
+    ///
+    /// This is diagnostics only. It does not change encode/decode dispatch.
+    #[non_exhaustive]
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct JitShapeReport {
+        pub lowered: LoweredMemProgramStats,
+        pub decode_native: Option<NativeJitStats>,
+        pub encode_native: Option<NativeJitStats>,
     }
 
     /// One fallback record scoped to a Vox method root.
@@ -274,6 +309,30 @@ pub mod api {
             #[cfg(not(all(feature = "jit", target_os = "macos", target_arch = "aarch64")))]
             {
                 report
+            }
+        }
+
+        /// Report the lowered IR shape and, when compiled, the native JIT shape.
+        ///
+        /// This is strict diagnostics only. It does not change whether encode or
+        /// decode run with the native JIT or the interpreter.
+        pub fn jit_shape_report(&self) -> JitShapeReport {
+            let lowered = lowered_mem_program_stats(&self.lowered);
+            #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+            {
+                JitShapeReport {
+                    lowered,
+                    decode_native: self.native_decode.as_ref().map(|jit| jit.stats().into()),
+                    encode_native: self.native_encode.as_ref().map(|jit| jit.stats().into()),
+                }
+            }
+            #[cfg(not(all(feature = "jit", target_os = "macos", target_arch = "aarch64")))]
+            {
+                JitShapeReport {
+                    lowered,
+                    decode_native: None,
+                    encode_native: None,
+                }
             }
         }
 
@@ -586,16 +645,29 @@ mod tests {
     #[test]
     fn api_roundtrips_and_reports_supported_backend() {
         let codec = api::Codec::<ApiMsg>::new().unwrap();
+        let shape = codec.jit_shape_report();
+        assert_eq!(shape.lowered.block_count, 0);
+        assert!(shape.lowered.total.op_count > 0);
         #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
         {
             assert!(codec.decode_uses_native_jit());
             assert!(codec.encode_uses_native_jit());
             assert!(codec.jit_fallback_report().is_empty());
+            let decode_native = shape.decode_native.expect("native decode stats");
+            let encode_native = shape.encode_native.expect("native encode stats");
+            assert!(decode_native.chain_count > 0);
+            assert!(decode_native.stencil_count >= shape.lowered.total.op_count);
+            assert!(decode_native.prog_slot_count > 0);
+            assert!(encode_native.chain_count > 0);
+            assert!(encode_native.stencil_count >= shape.lowered.total.op_count);
+            assert!(encode_native.prog_slot_count > 0);
         }
         #[cfg(not(all(feature = "jit", target_os = "macos", target_arch = "aarch64")))]
         {
             assert!(!codec.decode_uses_native_jit());
             assert!(!codec.encode_uses_native_jit());
+            assert!(shape.decode_native.is_none());
+            assert!(shape.encode_native.is_none());
             let report = codec.jit_fallback_report();
             assert!(!report.decode.is_empty());
             assert!(!report.encode.is_empty());

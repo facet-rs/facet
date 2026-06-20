@@ -940,6 +940,154 @@ pub fn element_min_wire<BlockId>(element: &[MemOp<BlockId>]) -> usize {
     usize::from(!zero_sized)
 }
 
+/// Shape-only counts for a typed memory program.
+///
+/// Nested inline programs are counted once, as shape, not multiplied by runtime
+/// sequence/map/set lengths. [`MemOp::CallBlock`] is counted as a call op; block
+/// bodies are counted by [`lowered_mem_program_stats`].
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MemProgramStats {
+    pub op_count: usize,
+    pub scalar_op_count: usize,
+    pub scalar_run_count: usize,
+    pub scalar_run_segment_count: usize,
+    pub native_int_count: usize,
+    pub sequence_count: usize,
+    pub set_count: usize,
+    pub bytes_count: usize,
+    pub borrow_count: usize,
+    pub option_count: usize,
+    pub enum_count: usize,
+    pub enum_variant_count: usize,
+    pub map_count: usize,
+    pub dynamic_count: usize,
+    pub result_count: usize,
+    pub pointer_count: usize,
+    pub skip_wire_count: usize,
+    pub default_count: usize,
+    pub opaque_count: usize,
+    pub call_block_count: usize,
+}
+
+impl MemProgramStats {
+    fn add(&mut self, other: Self) {
+        self.op_count += other.op_count;
+        self.scalar_op_count += other.scalar_op_count;
+        self.scalar_run_count += other.scalar_run_count;
+        self.scalar_run_segment_count += other.scalar_run_segment_count;
+        self.native_int_count += other.native_int_count;
+        self.sequence_count += other.sequence_count;
+        self.set_count += other.set_count;
+        self.bytes_count += other.bytes_count;
+        self.borrow_count += other.borrow_count;
+        self.option_count += other.option_count;
+        self.enum_count += other.enum_count;
+        self.enum_variant_count += other.enum_variant_count;
+        self.map_count += other.map_count;
+        self.dynamic_count += other.dynamic_count;
+        self.result_count += other.result_count;
+        self.pointer_count += other.pointer_count;
+        self.skip_wire_count += other.skip_wire_count;
+        self.default_count += other.default_count;
+        self.opaque_count += other.opaque_count;
+        self.call_block_count += other.call_block_count;
+    }
+}
+
+/// Shape-only counts for a lowered typed memory program with recursive blocks.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LoweredMemProgramStats {
+    pub root: MemProgramStats,
+    pub blocks: MemProgramStats,
+    pub total: MemProgramStats,
+    pub block_count: usize,
+}
+
+/// Count the typed memory IR shape for one program.
+#[must_use]
+pub fn mem_program_stats<BlockId>(program: &[MemOp<BlockId>]) -> MemProgramStats {
+    let mut stats = MemProgramStats::default();
+    add_mem_program_stats(program, &mut stats);
+    stats
+}
+
+/// Count the typed memory IR shape for a lowered program and its block table.
+#[must_use]
+pub fn lowered_mem_program_stats<BlockId>(
+    lowered: &crate::Lowered<BlockId, MemOp<BlockId>>,
+) -> LoweredMemProgramStats {
+    let root = mem_program_stats(&lowered.program);
+    let mut blocks = MemProgramStats::default();
+    for block in lowered.blocks.values() {
+        blocks.add(mem_program_stats(block));
+    }
+    let mut total = root;
+    total.add(blocks);
+
+    LoweredMemProgramStats {
+        root,
+        blocks,
+        total,
+        block_count: lowered.blocks.len(),
+    }
+}
+
+fn add_mem_program_stats<BlockId>(program: &[MemOp<BlockId>], stats: &mut MemProgramStats) {
+    for op in program {
+        stats.op_count += 1;
+        match op {
+            MemOp::Scalar { .. } => stats.scalar_op_count += 1,
+            MemOp::ScalarRun(run) => {
+                stats.scalar_run_count += 1;
+                stats.scalar_run_segment_count += run.segments.len();
+            }
+            MemOp::NativeInt { .. } => stats.native_int_count += 1,
+            MemOp::Sequence(seq) => {
+                stats.sequence_count += 1;
+                add_mem_program_stats(&seq.element, stats);
+            }
+            MemOp::Set(set) => {
+                stats.set_count += 1;
+                add_mem_program_stats(&set.element, stats);
+            }
+            MemOp::Bytes(_) => stats.bytes_count += 1,
+            MemOp::Borrow(_) => stats.borrow_count += 1,
+            MemOp::Option(option) => {
+                stats.option_count += 1;
+                add_mem_program_stats(&option.some, stats);
+            }
+            MemOp::Enum(en) => {
+                stats.enum_count += 1;
+                stats.enum_variant_count += en.variants.len();
+                for variant in &en.variants {
+                    add_mem_program_stats(&variant.payload, stats);
+                }
+            }
+            MemOp::Map(map) => {
+                stats.map_count += 1;
+                add_mem_program_stats(&map.key, stats);
+                add_mem_program_stats(&map.value, stats);
+            }
+            MemOp::Dynamic { .. } => stats.dynamic_count += 1,
+            MemOp::Result(result) => {
+                stats.result_count += 1;
+                add_mem_program_stats(&result.ok, stats);
+                add_mem_program_stats(&result.err, stats);
+            }
+            MemOp::Pointer(pointer) => {
+                stats.pointer_count += 1;
+                add_mem_program_stats(&pointer.pointee, stats);
+            }
+            MemOp::SkipWire(_) => stats.skip_wire_count += 1,
+            MemOp::Default(_) => stats.default_count += 1,
+            MemOp::Opaque(_) => stats.opaque_count += 1,
+            MemOp::CallBlock { .. } => stats.call_block_count += 1,
+        }
+    }
+}
+
 /// Return the scalar alignment when an element program can be represented as one
 /// contiguous byte run inside a sequence or fixed array.
 #[must_use]
@@ -1298,6 +1446,88 @@ mod tests {
             }]),
             1
         );
+    }
+
+    #[test]
+    fn mem_program_stats_count_inline_shapes_and_lowered_blocks() {
+        let program = vec![
+            MemOp::<u8>::Scalar {
+                offset: 0,
+                size: 4,
+                align: 4,
+            },
+            MemOp::ScalarRun(Box::new(ScalarRunOp {
+                segments: vec![
+                    ScalarSegment {
+                        offset: 8,
+                        size: 2,
+                        align: 2,
+                    },
+                    ScalarSegment {
+                        offset: 12,
+                        size: 4,
+                        align: 4,
+                    },
+                ],
+            })),
+            MemOp::Enum(Box::new(EnumOp {
+                tag_offset: 16,
+                tag_width: 4,
+                variants: vec![
+                    EnumVariantOp {
+                        wire_index: 0,
+                        selector: 0,
+                        payload: vec![MemOp::Dynamic { field_offset: 24 }],
+                    },
+                    EnumVariantOp {
+                        wire_index: 1,
+                        selector: 1,
+                        payload: vec![MemOp::NativeInt {
+                            offset: 32,
+                            mem_size: 8,
+                            signed: false,
+                        }],
+                    },
+                ],
+                writer_only: vec![9],
+            })),
+            MemOp::CallBlock {
+                schema: 7,
+                offset: 40,
+            },
+        ];
+
+        let stats = mem_program_stats(&program);
+        assert_eq!(stats.op_count, 6);
+        assert_eq!(stats.scalar_op_count, 1);
+        assert_eq!(stats.scalar_run_count, 1);
+        assert_eq!(stats.scalar_run_segment_count, 2);
+        assert_eq!(stats.enum_count, 1);
+        assert_eq!(stats.enum_variant_count, 2);
+        assert_eq!(stats.dynamic_count, 1);
+        assert_eq!(stats.native_int_count, 1);
+        assert_eq!(stats.call_block_count, 1);
+
+        let mut lowered = crate::Lowered::new(program);
+        lowered.blocks.insert(
+            7,
+            vec![
+                MemOp::Scalar {
+                    offset: 0,
+                    size: 1,
+                    align: 1,
+                },
+                MemOp::SkipWire(Box::new(SkipOp::Scalar { size: 4, align: 4 })),
+            ],
+        );
+
+        let lowered_stats = lowered_mem_program_stats(&lowered);
+        assert_eq!(lowered_stats.block_count, 1);
+        assert_eq!(lowered_stats.root.op_count, 6);
+        assert_eq!(lowered_stats.blocks.op_count, 2);
+        assert_eq!(lowered_stats.blocks.skip_wire_count, 1);
+        assert_eq!(lowered_stats.total.op_count, 8);
+        assert_eq!(lowered_stats.total.scalar_op_count, 2);
     }
 
     #[test]

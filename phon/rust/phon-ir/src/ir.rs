@@ -29,10 +29,11 @@
 use phon_schema::bytes::{Reader, skip_pad};
 use phon_schema::{DecodeError, Primitive, SchemaId, SchemaRef};
 pub use weavy::mem::{
-    BorrowOp, BorrowThunks, ByteValidator, BytesOp, DefaultOp, DefaultThunk, LoweringError,
-    MapThunks, OpaqueOp, OpaqueThunks, OptionThunks, PointerThunks, ResultThunks, ScalarRunOp,
-    ScalarSegment, SeqThunks, SetThunks, SkipOp, element_min_wire, group_record_scalars,
-    lower_fixed_array, lower_record_fields, owned_sequence_op, set_op,
+    BorrowOp, BorrowThunks, ByteValidator, BytesOp, DefaultOp, DefaultThunk,
+    LoweredMemProgramStats, LoweringError, MapThunks, MemProgramStats, OpaqueOp, OpaqueThunks,
+    OptionThunks, PointerThunks, ResultThunks, ScalarRunOp, ScalarSegment, SeqThunks, SetThunks,
+    SkipOp, element_min_wire, group_record_scalars, lower_fixed_array, lower_record_fields,
+    lowered_mem_program_stats, mem_program_stats, owned_sequence_op, set_op,
 };
 
 /// A lowered decode program: a straight run of [`Op`]s executed start to finish.
