@@ -132,6 +132,18 @@ fn point_vm(bencher: Bencher) {
     });
 }
 
+/// VM path with explicit plan reuse
+#[divan::bench]
+fn point_reused_vm_plan(bencher: Bencher) {
+    let json = POINT_JSON;
+    let plan = facet_json::JsonVmPlan::<Point>::build().unwrap();
+
+    bencher.bench(|| {
+        let result: Point = black_box(plan.from_str(black_box(json)).unwrap());
+        black_box(result)
+    });
+}
+
 // =============================================================================
 // Benchmarks - Person (medium)
 // =============================================================================
@@ -176,6 +188,18 @@ fn person_vm(bencher: Bencher) {
     });
 }
 
+/// VM path with explicit plan reuse
+#[divan::bench]
+fn person_reused_vm_plan(bencher: Bencher) {
+    let json = PERSON_JSON;
+    let plan = facet_json::JsonVmPlan::<Person>::build().unwrap();
+
+    bencher.bench(|| {
+        let result: Person = black_box(plan.from_str(black_box(json)).unwrap());
+        black_box(result)
+    });
+}
+
 // =============================================================================
 // Benchmarks - Company (complex)
 // =============================================================================
@@ -216,6 +240,18 @@ fn company_vm(bencher: Bencher) {
     let json = COMPANY_JSON;
     bencher.bench(|| {
         let result: Company = black_box(facet_json::from_str_vm(black_box(json)).unwrap());
+        black_box(result)
+    });
+}
+
+/// VM path with explicit plan reuse
+#[divan::bench]
+fn company_reused_vm_plan(bencher: Bencher) {
+    let json = COMPANY_JSON;
+    let plan = facet_json::JsonVmPlan::<Company>::build().unwrap();
+
+    bencher.bench(|| {
+        let result: Company = black_box(plan.from_str(black_box(json)).unwrap());
         black_box(result)
     });
 }
@@ -265,6 +301,20 @@ fn batch_1000_vm(bencher: Bencher) {
     bencher.bench(|| {
         for _ in 0..1000 {
             let result: Person = facet_json::from_str_vm(black_box(json)).unwrap();
+            black_box(result);
+        }
+    });
+}
+
+/// 1000 deserializations reusing the same VM plan
+#[divan::bench]
+fn batch_1000_reused_vm_plan(bencher: Bencher) {
+    let json = PERSON_JSON;
+    let plan = facet_json::JsonVmPlan::<Person>::build().unwrap();
+
+    bencher.bench(|| {
+        for _ in 0..1000 {
+            let result: Person = plan.from_str(black_box(json)).unwrap();
             black_box(result);
         }
     });

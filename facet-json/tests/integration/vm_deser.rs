@@ -67,6 +67,17 @@ fn vm_deserializes_simple_struct_like_default_path() {
 }
 
 #[test]
+fn reusable_vm_plan_deserializes_like_default_path() {
+    let json = r#"{"name":"Ada","age":37}"#;
+    let plan = facet_json::JsonVmPlan::<Person>::build().unwrap();
+
+    let default: Person = facet_json::from_str(json).unwrap();
+    let vm = plan.from_str(json).unwrap();
+
+    assert_eq!(vm, default);
+}
+
+#[test]
 fn vm_deserializes_lists_and_options_like_default_path() {
     let json = r#"{"title":"run","scores":[1,2,3,5],"active":true}"#;
 

@@ -1,14 +1,20 @@
 extern crate alloc;
 
 use alloc::{borrow::Cow, format, string::ToString, vec, vec::Vec};
-use core::mem;
+use core::{marker::PhantomData, mem};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex, OnceLock},
+};
 
-use facet_core::{Facet, ScalarType};
+use facet_core::{Facet, ScalarType, Shape};
 use facet_format::{
     ContainerKind, DeserializeError, DeserializeErrorKind, FormatParser, ParseEvent,
     ParseEventKind, ScalarValue, SpanGuard,
 };
-use facet_reflect::{HeapValue, Partial, ReflectError, ReflectErrorKind, Span, TypePlan};
+use facet_reflect::{
+    HeapValue, Partial, ReflectError, ReflectErrorKind, Span, TypePlan, TypePlanCore,
+};
 
 use crate::{
     JsonParser,
@@ -76,7 +82,7 @@ pub fn from_str_vm<T>(input: &str) -> Result<T, DeserializeError>
 where
     T: Facet<'static>,
 {
-    from_str_vm_with_stats(input).map(|(value, _)| value)
+    JsonVmPlan::<T>::build()?.from_str(input)
 }
 
 /// Deserialize a value from JSON bytes through the experimental VM path.
@@ -85,7 +91,7 @@ pub fn from_slice_vm<T>(input: &[u8]) -> Result<T, DeserializeError>
 where
     T: Facet<'static>,
 {
-    from_slice_vm_with_stats(input).map(|(value, _)| value)
+    JsonVmPlan::<T>::build()?.from_slice(input)
 }
 
 /// Deserialize a value from a JSON string through the experimental VM path and return VM stats.
@@ -94,8 +100,7 @@ pub fn from_str_vm_with_stats<T>(input: &str) -> Result<(T, JsonVmStats), Deseri
 where
     T: Facet<'static>,
 {
-    let mut parser = JsonParser::<true>::new(input.as_bytes());
-    deserialize_owned_with_vm::<T, true>(&mut parser)
+    JsonVmPlan::<T>::build()?.from_str_with_stats(input)
 }
 
 /// Deserialize a value from JSON bytes through the experimental VM path and return VM stats.
@@ -104,21 +109,75 @@ pub fn from_slice_vm_with_stats<T>(input: &[u8]) -> Result<(T, JsonVmStats), Des
 where
     T: Facet<'static>,
 {
-    let mut parser = JsonParser::<false>::new(input);
-    deserialize_owned_with_vm::<T, false>(&mut parser)
+    JsonVmPlan::<T>::build()?.from_slice_with_stats(input)
+}
+
+/// Reusable lowered JSON VM deserialization plan.
+#[doc(hidden)]
+pub struct JsonVmPlan<T: ?Sized> {
+    inner: Arc<JsonVmPlanInner>,
+    _marker: PhantomData<fn() -> T>,
+}
+
+impl<T: ?Sized> Clone for JsonVmPlan<T> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<T> JsonVmPlan<T>
+where
+    T: Facet<'static>,
+{
+    /// Build or reuse the lowered VM deserialization plan for `T`.
+    #[doc(hidden)]
+    pub fn build() -> Result<Self, DeserializeError> {
+        cached_vm_plan::<T>()
+    }
+
+    /// Deserialize a JSON string through this plan.
+    #[doc(hidden)]
+    pub fn from_str(&self, input: &str) -> Result<T, DeserializeError> {
+        self.from_str_with_stats(input).map(|(value, _)| value)
+    }
+
+    /// Deserialize JSON bytes through this plan.
+    #[doc(hidden)]
+    pub fn from_slice(&self, input: &[u8]) -> Result<T, DeserializeError> {
+        self.from_slice_with_stats(input).map(|(value, _)| value)
+    }
+
+    /// Deserialize a JSON string through this plan and return VM stats.
+    #[doc(hidden)]
+    pub fn from_str_with_stats(&self, input: &str) -> Result<(T, JsonVmStats), DeserializeError> {
+        let mut parser = JsonParser::<true>::new(input.as_bytes());
+        deserialize_owned_with_vm::<T, true>(&mut parser, &self.inner)
+    }
+
+    /// Deserialize JSON bytes through this plan and return VM stats.
+    #[doc(hidden)]
+    pub fn from_slice_with_stats(
+        &self,
+        input: &[u8],
+    ) -> Result<(T, JsonVmStats), DeserializeError> {
+        let mut parser = JsonParser::<false>::new(input);
+        deserialize_owned_with_vm::<T, false>(&mut parser, &self.inner)
+    }
 }
 
 fn deserialize_owned_with_vm<T, const TRUSTED_UTF8: bool>(
     parser: &mut JsonParser<'_, TRUSTED_UTF8>,
+    plan: &JsonVmPlanInner,
 ) -> Result<(T, JsonVmStats), DeserializeError>
 where
     T: Facet<'static>,
 {
-    let plan = TypePlan::<T>::build()?.core();
-    let lowered = lower_type_plan(&plan).map_err(lower_error)?;
-    let partial = Partial::alloc_owned_with_plan(plan)?;
+    let partial = Partial::alloc_owned_with_plan(Arc::clone(&plan.type_plan))?;
 
-    let mut vm = JsonVm::new(parser, &lowered);
+    let mut vm = JsonVm::new(parser, plan.lowered.as_ref());
 
     // SAFETY: owned deserialization does not borrow from the JSON input.
     #[allow(unsafe_code)]
@@ -138,6 +197,42 @@ where
         unsafe { mem::transmute::<HeapValue<'_, false>, HeapValue<'static, false>>(heap_value) };
 
     Ok((heap_value.materialize::<T>()?, stats))
+}
+
+struct JsonVmPlanInner {
+    type_plan: Arc<TypePlanCore>,
+    lowered: Arc<JsonLowered>,
+}
+
+fn vm_plan_cache() -> &'static Mutex<HashMap<&'static Shape, Arc<JsonVmPlanInner>>> {
+    static PLAN_CACHE: OnceLock<Mutex<HashMap<&'static Shape, Arc<JsonVmPlanInner>>>> =
+        OnceLock::new();
+    PLAN_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn cached_vm_plan<T>() -> Result<JsonVmPlan<T>, DeserializeError>
+where
+    T: Facet<'static>,
+{
+    let mut guard = vm_plan_cache()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+
+    if let Some(plan) = guard.get(&T::SHAPE) {
+        return Ok(JsonVmPlan {
+            inner: Arc::clone(plan),
+            _marker: PhantomData,
+        });
+    }
+
+    let type_plan = TypePlan::<T>::build()?.core();
+    let lowered = Arc::new(lower_type_plan(&type_plan).map_err(lower_error)?);
+    let plan = Arc::new(JsonVmPlanInner { type_plan, lowered });
+    guard.insert(T::SHAPE, Arc::clone(&plan));
+    Ok(JsonVmPlan {
+        inner: plan,
+        _marker: PhantomData,
+    })
 }
 
 struct JsonVm<'parser, 'input, 'program, const TRUSTED_UTF8: bool> {
