@@ -347,6 +347,15 @@ version_group = "dibs"
 changelog_path = "dibs/CHANGELOG.md"
 
 # ============================================================================
+# Shared lowered-program substrate
+# ============================================================================
+
+[[package]]
+name = "weavy"
+version_group = "weavy"
+changelog_path = "CHANGELOG.md"
+
+# ============================================================================
 # Phon packages - coordinated from this monorepo, preserving their major line
 # ============================================================================
 
