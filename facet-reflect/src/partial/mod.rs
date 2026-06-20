@@ -154,7 +154,10 @@ mod arena;
 mod iset;
 mod rope;
 pub(crate) mod typeplan;
-pub use typeplan::{DeserStrategy, NodeId, TypePlan, TypePlanCore};
+pub use typeplan::{
+    DeserStrategy, EnumPlan, FieldDefault, FieldPlan, FillRule, NodeId, StructPlan, TypePlan,
+    TypePlanCore, TypePlanNode, TypePlanNodeKind, VariantPlanMeta,
+};
 
 mod partial_api;
 
@@ -172,7 +175,7 @@ use facet_core::{
 };
 use iset::ISet;
 use rope::ListRope;
-use typeplan::{FieldDefault, FieldInitPlan, FillRule};
+use typeplan::FieldInitPlan;
 
 /// State of a partial value
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
