@@ -26,8 +26,10 @@ use std::alloc;
 use std::collections::{BTreeMap, HashMap};
 
 use phon_ir::ir::{
-    BorrowOp, BytesOp, DefaultOp, EnumOp, EnumVariantOp, Lowered, MapOp, MemOp, MemProgram,
-    OpaqueOp, OptionOp, PointerOp, ResultOp, SeqOp, SetOp, SkipOp, fuse,
+    BorrowOp, BytesOp, DefaultOp, EnumOp, EnumVariantOp, Lowered, LoweringError, MapOp, MemOp,
+    MemProgram, OpaqueOp, OptionOp, PointerOp, ResultOp, SkipOp, fuse,
+    lower_fixed_array as lower_fixed_array_elements, lower_record_fields, owned_sequence_op,
+    set_op,
 };
 use phon_ir::{
     Access, Construct, Descriptor, EnumAccess, MapStorage, Presence, RecordAccess, ResultAccess,
@@ -43,6 +45,19 @@ use crate::compact::{self, CompactError, Registry, Resolved, alignment, pad_to, 
 use crate::compat::{self, FieldMatch, VariantMatch, incompatible};
 
 type Result<T> = core::result::Result<T, CompactError>;
+
+impl From<LoweringError> for CompactError {
+    fn from(error: LoweringError) -> Self {
+        match error {
+            LoweringError::ArrayBulkCopySizeOverflow => {
+                CompactError::Malformed("array bulk copy size overflow")
+            }
+            LoweringError::ArrayElementOffsetOverflow => {
+                CompactError::Malformed("array element offset overflow")
+            }
+        }
+    }
+}
 
 /// The wire (and, for our targets, in-memory) size of a fixed-width scalar, or
 /// `None` for the variable-length and uninhabited primitives, which need
@@ -74,18 +89,6 @@ fn fixed_size(p: Primitive) -> Option<usize> {
 /// # Errors
 /// [`CompactError`] if a referenced schema is missing, the descriptor and schema
 /// disagree, or a kind this first cut does not handle is reached.
-/// The minimum wire bytes one owned-sequence element occupies, for the
-/// length-vs-remaining guard (`r[validate.lengths]`). `0` when the element is
-/// zero-sized (an empty / all-ZST struct encodes to nothing, so the count is
-/// unbounded by the buffer and a fixed cap applies in `read_len` / the JIT
-/// stencil); `1` otherwise. An empty program is vacuously zero-sized.
-fn elem_min_wire(element: &MemProgram) -> usize {
-    let zero_sized = element
-        .iter()
-        .all(|op| matches!(op, MemOp::Scalar { size: 0, .. }));
-    usize::from(!zero_sized)
-}
-
 // r[impl ir.memory]
 // r[impl descriptors.fact-driven]
 pub fn lower(descriptor: &Descriptor, reg: &Registry) -> Result<MemProgram> {
@@ -190,12 +193,9 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
                     return Err(CompactError::Unsupported("typed: thunk construction"));
                 }
             }
-            // Splice each field in wire order, folding its memory offset into the
-            // base. A field's own descriptor carries its schema and layout.
-            for fa in &ra.fields {
-                lower_node(&fa.descriptor, reg, base + fa.offset, out)?;
-            }
-            Ok(())
+            lower_record_fields(&ra.fields, base, out, |field, field_base, out| {
+                lower_node(field, reg, field_base, out)
+            })
         }
         // r[impl ir.memory]
         (Access::Sequence(seq), Resolved::Composite(SchemaKind::List { .. })) => {
@@ -209,35 +209,18 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
             let elem_align = seq.element.layout.align;
             let mut element = Vec::new();
             lower_node(&seq.element, reg, 0, &mut element)?;
-            let element = fuse(element);
             // Bulk-copy lowering: an element that is a single scalar covering its
             // whole size, with no inter-element wire padding, decodes/encodes as
             // ONE block copy — `Vec<u32>`, `Vec<f64>`, `Vec<u8>`, flat `repr(C)`
             // structs. Anything with structure stays a per-element sequence.
-            let bulk = matches!(
-                element.as_slice(),
-                [MemOp::Scalar { offset: 0, size, align }]
-                    if *size == stride && stride.is_multiple_of(*align)
-            );
-            if bulk {
-                out.push(MemOp::Bytes(Box::new(BytesOp {
-                    field_offset: base,
-                    stride,
-                    elem_align,
-                    validate: validate_any,
-                    thunks: *thunks,
-                })));
-            } else {
-                let min_wire = elem_min_wire(&element);
-                out.push(MemOp::Sequence(Box::new(SeqOp {
-                    field_offset: base,
-                    element,
-                    stride,
-                    elem_align,
-                    min_wire,
-                    thunks: *thunks,
-                })));
-            }
+            out.push(owned_sequence_op(
+                base,
+                element,
+                stride,
+                elem_align,
+                validate_any,
+                *thunks,
+            ));
             Ok(())
         }
         (Access::Set(set), Resolved::Composite(SchemaKind::Set { .. })) => {
@@ -322,9 +305,12 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
                 // The variant's fields live at base-relative offsets that already
                 // account for the discriminant (per facet); lower them as a record.
                 let mut payload = Vec::new();
-                for f in &va.payload.fields {
-                    lower_node(&f.descriptor, reg, base + f.offset, &mut payload)?;
-                }
+                lower_record_fields(
+                    &va.payload.fields,
+                    base,
+                    &mut payload,
+                    |field, field_base, out| lower_node(field, reg, field_base, out),
+                )?;
                 variants.push(EnumVariantOp {
                     wire_index: va.index,
                     selector: va.selector,
@@ -696,31 +682,14 @@ fn lower_decode_sequence(
     let elem_align = seq.element.layout.align;
     let mut element = Vec::new();
     lower_decode_node(writer_element, &seq.element, reg, 0, &mut element)?;
-    let element = fuse(element);
-    let bulk = matches!(
-        element.as_slice(),
-        [MemOp::Scalar { offset: 0, size, align }]
-            if *size == stride && stride.is_multiple_of(*align)
-    );
-    if bulk {
-        out.push(MemOp::Bytes(Box::new(BytesOp {
-            field_offset: base,
-            stride,
-            elem_align,
-            validate: validate_any,
-            thunks: *thunks,
-        })));
-    } else {
-        let min_wire = elem_min_wire(&element);
-        out.push(MemOp::Sequence(Box::new(SeqOp {
-            field_offset: base,
-            element,
-            stride,
-            elem_align,
-            min_wire,
-            thunks: *thunks,
-        })));
-    }
+    out.push(owned_sequence_op(
+        base,
+        element,
+        stride,
+        elem_align,
+        validate_any,
+        *thunks,
+    ));
     Ok(())
 }
 
@@ -732,30 +701,9 @@ fn lower_fixed_array(
     base: usize,
     out: &mut MemProgram,
 ) -> Result<()> {
-    let mut element_ops = Vec::new();
-    lower_node(element, reg, 0, &mut element_ops)?;
-    let element_ops = fuse(element_ops);
-    if let [
-        MemOp::Scalar {
-            offset: 0,
-            size,
-            align,
-        },
-    ] = element_ops.as_slice()
-        && *size == stride
-        && stride.is_multiple_of(*align)
-    {
-        out.push(MemOp::Scalar {
-            offset: base,
-            size: fixed_array_copy_size(count, stride)?,
-            align: *align,
-        });
-        return Ok(());
-    }
-    for i in 0..count {
-        lower_node(element, reg, array_element_offset(base, i, stride)?, out)?;
-    }
-    Ok(())
+    lower_fixed_array_elements(count, stride, base, out, |element_base, out| {
+        lower_node(element, reg, element_base, out)
+    })
 }
 
 fn lower_decode_fixed_array(
@@ -767,50 +715,9 @@ fn lower_decode_fixed_array(
     base: usize,
     out: &mut MemProgram,
 ) -> Result<()> {
-    let mut element_ops = Vec::new();
-    lower_decode_node(writer_element, element, reg, 0, &mut element_ops)?;
-    let element_ops = fuse(element_ops);
-    if let [
-        MemOp::Scalar {
-            offset: 0,
-            size,
-            align,
-        },
-    ] = element_ops.as_slice()
-        && *size == stride
-        && stride.is_multiple_of(*align)
-    {
-        out.push(MemOp::Scalar {
-            offset: base,
-            size: fixed_array_copy_size(count, stride)?,
-            align: *align,
-        });
-        return Ok(());
-    }
-    for i in 0..count {
-        lower_decode_node(
-            writer_element,
-            element,
-            reg,
-            array_element_offset(base, i, stride)?,
-            out,
-        )?;
-    }
-    Ok(())
-}
-
-fn fixed_array_copy_size(count: usize, stride: usize) -> Result<usize> {
-    count
-        .checked_mul(stride)
-        .ok_or(CompactError::Malformed("array bulk copy size overflow"))
-}
-
-fn array_element_offset(base: usize, index: usize, stride: usize) -> Result<usize> {
-    let rel = index
-        .checked_mul(stride)
-        .ok_or(CompactError::Malformed("array element offset overflow"))?;
-    base.checked_add(rel)
-        .ok_or(CompactError::Malformed("array element offset overflow"))
+    lower_fixed_array_elements(count, stride, base, out, |element_base, out| {
+        lower_decode_node(writer_element, element, reg, element_base, out)
+    })
 }
 
 fn require_fixed_array_count(count: usize, dimensions: &[u64]) -> Result<()> {
@@ -830,16 +737,13 @@ fn lower_set(set: &SetAccess, reg: &Registry, base: usize, out: &mut MemProgram)
     let SetStorage::Vtable(thunks) = &set.storage;
     let mut element = Vec::new();
     lower_node(&set.element, reg, 0, &mut element)?;
-    let element = fuse(element);
-    let min_wire = elem_min_wire(&element);
-    out.push(MemOp::Set(Box::new(SetOp {
-        field_offset: base,
+    out.push(set_op(
+        base,
         element,
-        elem_size: set.element.layout.size,
-        elem_align: set.element.layout.align,
-        min_wire,
-        thunks: *thunks,
-    })));
+        set.element.layout.size,
+        set.element.layout.align,
+        *thunks,
+    ));
     Ok(())
 }
 
@@ -853,16 +757,13 @@ fn lower_decode_set(
     let SetStorage::Vtable(thunks) = &set.storage;
     let mut element = Vec::new();
     lower_decode_node(writer_element, &set.element, reg, 0, &mut element)?;
-    let element = fuse(element);
-    let min_wire = elem_min_wire(&element);
-    out.push(MemOp::Set(Box::new(SetOp {
-        field_offset: base,
+    out.push(set_op(
+        base,
         element,
-        elem_size: set.element.layout.size,
-        elem_align: set.element.layout.align,
-        min_wire,
-        thunks: *thunks,
-    })));
+        set.element.layout.size,
+        set.element.layout.align,
+        *thunks,
+    ));
     Ok(())
 }
 

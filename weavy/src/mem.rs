@@ -706,6 +706,168 @@ pub struct OpaqueOp {
     pub thunks: OpaqueThunks,
 }
 
+/// Errors from shape-only lowering helpers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LoweringError {
+    /// A fixed-array bulk copy would overflow `usize`.
+    ArrayBulkCopySizeOverflow,
+    /// A fixed-array element's base-relative offset would overflow `usize`.
+    ArrayElementOffsetOverflow,
+}
+
+/// The minimum wire bytes one owned-container element occupies.
+///
+/// A program made entirely of zero-sized scalar copies occupies no wire bytes,
+/// so length guards must use a fixed cap instead of deriving a cap from the
+/// reader's remaining byte count. Every other element occupies at least one byte.
+#[must_use]
+pub fn element_min_wire<BlockId>(element: &[MemOp<BlockId>]) -> usize {
+    let zero_sized = element
+        .iter()
+        .all(|op| matches!(op, MemOp::Scalar { size: 0, .. }));
+    usize::from(!zero_sized)
+}
+
+/// Return the scalar alignment when an element program can be represented as one
+/// contiguous byte run inside a sequence or fixed array.
+#[must_use]
+pub fn bulk_scalar_align<BlockId>(element: &[MemOp<BlockId>], stride: usize) -> Option<usize> {
+    match element {
+        [
+            MemOp::Scalar {
+                offset: 0,
+                size,
+                align,
+            },
+        ] if *size == stride && *align != 0 && stride.is_multiple_of(*align) => Some(*align),
+        _ => None,
+    }
+}
+
+/// Build an owned-sequence op, using a bulk byte run when the lowered element is
+/// one scalar covering the full stride.
+#[must_use]
+pub fn owned_sequence_op<BlockId>(
+    field_offset: usize,
+    element: MemProgram<BlockId>,
+    stride: usize,
+    elem_align: usize,
+    validate: ByteValidator,
+    thunks: SeqThunks,
+) -> MemOp<BlockId> {
+    let element = fuse(element);
+    if bulk_scalar_align(&element, stride).is_some() {
+        MemOp::Bytes(Box::new(BytesOp {
+            field_offset,
+            stride,
+            elem_align,
+            validate,
+            thunks,
+        }))
+    } else {
+        let min_wire = element_min_wire(&element);
+        MemOp::Sequence(Box::new(SeqOp {
+            field_offset,
+            element,
+            stride,
+            elem_align,
+            min_wire,
+            thunks,
+        }))
+    }
+}
+
+/// Build a set op from a pre-lowered element program.
+#[must_use]
+pub fn set_op<BlockId>(
+    field_offset: usize,
+    element: MemProgram<BlockId>,
+    elem_size: usize,
+    elem_align: usize,
+    thunks: SetThunks,
+) -> MemOp<BlockId> {
+    let element = fuse(element);
+    let min_wire = element_min_wire(&element);
+    MemOp::Set(Box::new(SetOp {
+        field_offset,
+        element,
+        elem_size,
+        elem_align,
+        min_wire,
+        thunks,
+    }))
+}
+
+/// Lower each record field at `base + field.offset`.
+pub fn lower_record_fields<SchemaRef, BlockId, Error>(
+    fields: &[FieldAccess<SchemaRef>],
+    base: usize,
+    out: &mut MemProgram<BlockId>,
+    mut lower_field: impl FnMut(
+        &Descriptor<SchemaRef>,
+        usize,
+        &mut MemProgram<BlockId>,
+    ) -> Result<(), Error>,
+) -> Result<(), Error> {
+    for field in fields {
+        lower_field(&field.descriptor, base + field.offset, out)?;
+    }
+    Ok(())
+}
+
+/// Lower a fixed-size inline array, collapsing it to one scalar copy when a
+/// single element is itself a full-stride scalar byte run.
+pub fn lower_fixed_array<BlockId, Error>(
+    count: usize,
+    stride: usize,
+    base: usize,
+    out: &mut MemProgram<BlockId>,
+    mut lower_element: impl FnMut(usize, &mut MemProgram<BlockId>) -> Result<(), Error>,
+) -> Result<(), Error>
+where
+    Error: From<LoweringError>,
+{
+    let mut element_ops = Vec::new();
+    lower_element(0, &mut element_ops)?;
+    let element_ops = fuse(element_ops);
+
+    if let Some(align) = bulk_scalar_align(&element_ops, stride) {
+        out.push(MemOp::Scalar {
+            offset: base,
+            size: fixed_array_copy_size(count, stride).map_err(Error::from)?,
+            align,
+        });
+        return Ok(());
+    }
+
+    for index in 0..count {
+        let offset = array_element_offset(base, index, stride).map_err(Error::from)?;
+        lower_element(offset, out)?;
+    }
+
+    Ok(())
+}
+
+/// Total byte count for a collapsed fixed-array copy.
+pub fn fixed_array_copy_size(count: usize, stride: usize) -> Result<usize, LoweringError> {
+    count
+        .checked_mul(stride)
+        .ok_or(LoweringError::ArrayBulkCopySizeOverflow)
+}
+
+/// Base-relative offset for one fixed-array element.
+pub fn array_element_offset(
+    base: usize,
+    index: usize,
+    stride: usize,
+) -> Result<usize, LoweringError> {
+    let rel = index
+        .checked_mul(stride)
+        .ok_or(LoweringError::ArrayElementOffsetOverflow)?;
+    base.checked_add(rel)
+        .ok_or(LoweringError::ArrayElementOffsetOverflow)
+}
+
 /// Coalesce adjacent scalar copies that are contiguous in both wire and memory.
 // r[impl ir.inlining]
 #[must_use]
@@ -775,4 +937,116 @@ pub fn fuse<BlockId>(program: MemProgram<BlockId>) -> MemProgram<BlockId> {
     }
 
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn element_min_wire_distinguishes_zero_sized_programs() {
+        assert_eq!(element_min_wire::<()>(&[]), 0);
+        assert_eq!(
+            element_min_wire(&[MemOp::<()>::Scalar {
+                offset: 0,
+                size: 0,
+                align: 1,
+            }]),
+            0
+        );
+        assert_eq!(
+            element_min_wire(&[MemOp::<()>::Scalar {
+                offset: 0,
+                size: 4,
+                align: 4,
+            }]),
+            1
+        );
+    }
+
+    #[test]
+    fn bulk_scalar_align_requires_one_full_stride_scalar() {
+        let scalar = [MemOp::<()>::Scalar {
+            offset: 0,
+            size: 8,
+            align: 4,
+        }];
+        assert_eq!(bulk_scalar_align(&scalar, 8), Some(4));
+
+        let partial = [MemOp::<()>::Scalar {
+            offset: 0,
+            size: 4,
+            align: 4,
+        }];
+        assert_eq!(bulk_scalar_align(&partial, 8), None);
+
+        let shifted = [MemOp::<()>::Scalar {
+            offset: 4,
+            size: 4,
+            align: 4,
+        }];
+        assert_eq!(bulk_scalar_align(&shifted, 4), None);
+    }
+
+    #[test]
+    fn fixed_array_lowering_collapses_full_stride_scalar_elements() {
+        let mut out = Vec::new();
+        lower_fixed_array::<(), LoweringError>(3, 4, 16, &mut out, |base, out| {
+            out.push(MemOp::Scalar {
+                offset: base,
+                size: 4,
+                align: 4,
+            });
+            Ok(())
+        })
+        .unwrap();
+
+        match out.as_slice() {
+            [
+                MemOp::Scalar {
+                    offset,
+                    size,
+                    align,
+                },
+            ] => {
+                assert_eq!((*offset, *size, *align), (16, 12, 4));
+            }
+            other => panic!("expected one collapsed scalar op, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fixed_array_lowering_replays_structured_elements_at_checked_offsets() {
+        let mut out = Vec::new();
+        lower_fixed_array::<(), LoweringError>(2, 8, 16, &mut out, |base, out| {
+            out.push(MemOp::Scalar {
+                offset: base + 4,
+                size: 4,
+                align: 4,
+            });
+            Ok(())
+        })
+        .unwrap();
+
+        let offsets: Vec<_> = out
+            .iter()
+            .map(|op| match op {
+                MemOp::Scalar { offset, .. } => *offset,
+                other => panic!("unexpected op {other:?}"),
+            })
+            .collect();
+        assert_eq!(offsets, [20, 28]);
+    }
+
+    #[test]
+    fn fixed_array_offset_helpers_report_overflow() {
+        assert_eq!(
+            fixed_array_copy_size(usize::MAX, 2),
+            Err(LoweringError::ArrayBulkCopySizeOverflow)
+        );
+        assert_eq!(
+            array_element_offset(usize::MAX - 1, 1, 2),
+            Err(LoweringError::ArrayElementOffsetOverflow)
+        );
+    }
 }
