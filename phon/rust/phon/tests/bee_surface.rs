@@ -1,5 +1,5 @@
 use facet::Facet;
-use phon::api::{Codec, MethodJitFallbackReport};
+use phon::api::{Codec, MethodJitShapeReport};
 
 #[derive(Debug, Clone, Facet)]
 struct RepoFile {
@@ -195,22 +195,31 @@ struct ImeContextLostArgs {
     had_marked_text: bool,
 }
 
-fn report_for<'facet, T>(method: &str, phase: &str) -> MethodJitFallbackReport
-where
-    T: Facet<'facet>,
-{
-    Codec::<T>::new()
-        .expect("Bee surface shape should lower")
-        .jit_fallback_report()
-        .scoped(method, phase)
-}
-
 #[track_caller]
-fn audit<'facet, T>(method: &str, phase: &str)
+fn audit<'facet, T>(method: &str, phase: &str) -> MethodJitShapeReport
 where
     T: Facet<'facet>,
 {
-    let report = report_for::<T>(method, phase);
+    let codec = Codec::<T>::new().expect("Bee surface shape should lower");
+    let shape = codec.jit_shape_report().scoped(method, phase);
+    assert_eq!(shape.records.len(), 1);
+    let shape_record = &shape.records[0];
+    assert_eq!(shape_record.method, method);
+    assert_eq!(shape_record.phase, phase);
+
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    {
+        assert!(shape_record.decode_native.is_some());
+        assert!(shape_record.encode_native.is_some());
+    }
+
+    #[cfg(not(all(feature = "jit", target_os = "macos", target_arch = "aarch64")))]
+    {
+        assert!(shape_record.decode_native.is_none());
+        assert!(shape_record.encode_native.is_none());
+    }
+
+    let report = codec.jit_fallback_report().scoped(method, phase);
     for record in &report.records {
         assert_eq!(record.method, method);
         assert_eq!(record.phase, phase);
@@ -227,6 +236,39 @@ where
 
     #[cfg(not(all(feature = "jit", target_os = "macos", target_arch = "aarch64")))]
     assert!(!report.is_empty());
+
+    shape
+}
+
+#[track_caller]
+fn assert_surface_shape_summary(report: &MethodJitShapeReport) {
+    assert!(!report.is_empty());
+    let summary = report.summary();
+    assert_eq!(summary.root_count, report.records.len());
+    assert!(summary.lowered.total.op_count > 0);
+    assert!(summary.lowered.total.scalar_op_count > 0);
+
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    {
+        assert_eq!(summary.decode_native_count, summary.root_count);
+        assert_eq!(summary.encode_native_count, summary.root_count);
+        assert!(summary.decode_native.stencil_count >= summary.lowered.total.op_count);
+        assert!(summary.encode_native.stencil_count >= summary.lowered.total.op_count);
+    }
+
+    #[cfg(not(all(feature = "jit", target_os = "macos", target_arch = "aarch64")))]
+    {
+        assert_eq!(summary.decode_native_count, 0);
+        assert_eq!(summary.encode_native_count, 0);
+    }
+}
+
+macro_rules! audit_roots {
+    ($($ty:ty, $method:literal, $phase:literal;)+) => {{
+        let mut surface = MethodJitShapeReport::default();
+        $(surface.extend(audit::<$ty>($method, $phase));)+
+        surface
+    }};
 }
 
 #[test]
@@ -258,69 +300,56 @@ fn bee_engine_roots_are_auditable() {
         4
     );
 
-    audit::<ModelArgs>("requiredDownloads", "args");
-    audit::<Vec<RepoDownload>>("requiredDownloads", "response");
-
-    audit::<LoadEngineArgs>("loadEngine", "args");
-    audit::<Result<bool, BeeError>>("loadEngine", "response");
-
-    audit::<CreateSessionArgs>("createSession", "args");
-    audit::<Result<String, BeeError>>("createSession", "response");
-
-    audit::<FeedArgs>("feed", "args");
-    audit::<Result<Option<FeedResult>, BeeError>>("feed", "response");
-
-    audit::<FinishSessionArgs>("finishSession", "args");
-    audit::<Result<FeedResult, BeeError>>("finishSession", "response");
-
-    audit::<SetLanguageArgs>("setLanguage", "args");
-    audit::<Result<bool, BeeError>>("setLanguage", "response");
-
-    audit::<TranscribeSamplesArgs>("transcribeSamples", "args");
-    audit::<Result<String, BeeError>>("transcribeSamples", "response");
-
-    audit::<EmptyArgs>("getStats", "args");
-    audit::<EngineStats>("getStats", "response");
-
-    audit::<CorrectLoadArgs>("correctLoad", "args");
-    audit::<Result<bool, BeeError>>("correctLoad", "response");
-
-    audit::<CorrectTeachArgs>("correctTeach", "args");
-    audit::<Result<bool, BeeError>>("correctTeach", "response");
-
-    audit::<EmptyArgs>("correctSave", "args");
-    audit::<Result<bool, BeeError>>("correctSave", "response");
+    let surface = audit_roots! {
+        ModelArgs, "requiredDownloads", "args";
+        Vec<RepoDownload>, "requiredDownloads", "response";
+        LoadEngineArgs, "loadEngine", "args";
+        Result<bool, BeeError>, "loadEngine", "response";
+        CreateSessionArgs, "createSession", "args";
+        Result<String, BeeError>, "createSession", "response";
+        FeedArgs, "feed", "args";
+        Result<Option<FeedResult>, BeeError>, "feed", "response";
+        FinishSessionArgs, "finishSession", "args";
+        Result<FeedResult, BeeError>, "finishSession", "response";
+        SetLanguageArgs, "setLanguage", "args";
+        Result<bool, BeeError>, "setLanguage", "response";
+        TranscribeSamplesArgs, "transcribeSamples", "args";
+        Result<String, BeeError>, "transcribeSamples", "response";
+        EmptyArgs, "getStats", "args";
+        EngineStats, "getStats", "response";
+        CorrectLoadArgs, "correctLoad", "args";
+        Result<bool, BeeError>, "correctLoad", "response";
+        CorrectTeachArgs, "correctTeach", "args";
+        Result<bool, BeeError>, "correctTeach", "response";
+        EmptyArgs, "correctSave", "args";
+        Result<bool, BeeError>, "correctSave", "response";
+    };
+    assert_surface_shape_summary(&surface);
 }
 
 #[test]
 fn bee_ime_roots_are_auditable() {
-    audit::<SetMarkedTextArgs>("setMarkedText", "args");
-    audit::<bool>("setMarkedText", "response");
-
-    audit::<SetPhaseArgs>("setPhase", "args");
-    audit::<bool>("setPhase", "response");
-
-    audit::<CommitTextArgs>("commitText", "args");
-    audit::<bool>("commitText", "response");
-
-    audit::<AdvanceTranscriptArgs>("advanceTranscript", "args");
-    audit::<bool>("advanceTranscript", "response");
-
-    audit::<EmptyArgs>("stopDictating", "args");
-    audit::<bool>("stopDictating", "response");
-
-    audit::<EmptyArgs>("imeHello", "args");
-    audit::<String>("imeHello", "response");
-
-    audit::<EmptyArgs>("imeAttach", "args");
-    audit::<bool>("imeAttach", "response");
-
-    audit::<EmptyArgs>("imeActivationRevoked", "args");
-    audit::<bool>("imeActivationRevoked", "response");
-
-    audit::<ImeContextLostArgs>("imeContextLost", "args");
-    audit::<bool>("imeContextLost", "response");
-
-    audit::<ImeKeyEventArgs>("imeKeyEvent", "args");
-    audit::<bool>("imeKeyEvent", "response");
+    let surface = audit_roots! {
+        SetMarkedTextArgs, "setMarkedText", "args";
+        bool, "setMarkedText", "response";
+        SetPhaseArgs, "setPhase", "args";
+        bool, "setPhase", "response";
+        CommitTextArgs, "commitText", "args";
+        bool, "commitText", "response";
+        AdvanceTranscriptArgs, "advanceTranscript", "args";
+        bool, "advanceTranscript", "response";
+        EmptyArgs, "stopDictating", "args";
+        bool, "stopDictating", "response";
+        EmptyArgs, "imeHello", "args";
+        String, "imeHello", "response";
+        EmptyArgs, "imeAttach", "args";
+        bool, "imeAttach", "response";
+        EmptyArgs, "imeActivationRevoked", "args";
+        bool, "imeActivationRevoked", "response";
+        ImeContextLostArgs, "imeContextLost", "args";
+        bool, "imeContextLost", "response";
+        ImeKeyEventArgs, "imeKeyEvent", "args";
+        bool, "imeKeyEvent", "response";
+    };
+    assert_surface_shape_summary(&surface);
 }

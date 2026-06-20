@@ -106,6 +106,17 @@ pub mod api {
         pub scalar_run_segment_count: usize,
     }
 
+    impl NativeJitStats {
+        /// Add another native program counter into this one.
+        pub fn accumulate(&mut self, other: Self) {
+            self.chain_count += other.chain_count;
+            self.stencil_count += other.stencil_count;
+            self.prog_slot_count += other.prog_slot_count;
+            self.scalar_run_count += other.scalar_run_count;
+            self.scalar_run_segment_count += other.scalar_run_segment_count;
+        }
+    }
+
     #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
     impl From<phon_jit::native::NativeProgramStats> for NativeJitStats {
         fn from(value: phon_jit::native::NativeProgramStats) -> Self {
@@ -130,6 +141,34 @@ pub mod api {
         pub encode_native: Option<NativeJitStats>,
     }
 
+    /// One shape record scoped to a Vox method root.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct MethodJitShapeRecord {
+        pub method: String,
+        pub phase: String,
+        pub lowered: LoweredMemProgramStats,
+        pub decode_native: Option<NativeJitStats>,
+        pub encode_native: Option<NativeJitStats>,
+    }
+
+    /// Aggregated shape totals for a method-scoped surface report.
+    #[non_exhaustive]
+    #[derive(Clone, Debug, Default, PartialEq, Eq)]
+    pub struct MethodJitShapeSummary {
+        pub root_count: usize,
+        pub lowered: LoweredMemProgramStats,
+        pub decode_native: NativeJitStats,
+        pub encode_native: NativeJitStats,
+        pub decode_native_count: usize,
+        pub encode_native_count: usize,
+    }
+
+    /// Method-scoped shape report for service-surface audits.
+    #[derive(Clone, Debug, Default, PartialEq, Eq)]
+    pub struct MethodJitShapeReport {
+        pub records: Vec<MethodJitShapeRecord>,
+    }
+
     /// One fallback record scoped to a Vox method root.
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub struct MethodJitFallbackRecord {
@@ -149,6 +188,65 @@ pub mod api {
     impl MethodJitFallbackReport {
         pub fn is_empty(&self) -> bool {
             self.records.is_empty()
+        }
+    }
+
+    impl MethodJitShapeReport {
+        pub fn is_empty(&self) -> bool {
+            self.records.is_empty()
+        }
+
+        pub fn extend(&mut self, other: Self) {
+            self.records.extend(other.records);
+        }
+
+        pub fn summary(&self) -> MethodJitShapeSummary {
+            let mut summary = MethodJitShapeSummary {
+                root_count: self.records.len(),
+                ..MethodJitShapeSummary::default()
+            };
+            for record in &self.records {
+                summary.lowered.accumulate(record.lowered);
+                if let Some(decode_native) = record.decode_native {
+                    summary.decode_native.accumulate(decode_native);
+                    summary.decode_native_count += 1;
+                }
+                if let Some(encode_native) = record.encode_native {
+                    summary.encode_native.accumulate(encode_native);
+                    summary.encode_native_count += 1;
+                }
+            }
+            summary
+        }
+    }
+
+    impl JitShapeReport {
+        pub fn new(
+            lowered: LoweredMemProgramStats,
+            decode_native: Option<NativeJitStats>,
+            encode_native: Option<NativeJitStats>,
+        ) -> Self {
+            Self {
+                lowered,
+                decode_native,
+                encode_native,
+            }
+        }
+
+        pub fn scoped(
+            self,
+            method: impl Into<String>,
+            phase: impl Into<String>,
+        ) -> MethodJitShapeReport {
+            MethodJitShapeReport {
+                records: vec![MethodJitShapeRecord {
+                    method: method.into(),
+                    phase: phase.into(),
+                    lowered: self.lowered,
+                    decode_native: self.decode_native,
+                    encode_native: self.encode_native,
+                }],
+            }
         }
     }
 
