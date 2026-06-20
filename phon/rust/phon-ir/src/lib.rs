@@ -4,7 +4,9 @@
 //! and the JIT (in `phon-jit`) both consume it. Defining the IR here, up front,
 //! is what makes the JIT a second consumer of something that exists from the
 //! first commit rather than a retrofit. This crate is binding-free: it never
-//! touches facet or any reflection (`r[crates.engine-is-binding-free]`).
+//! touches facet or any reflection (`r[crates.engine-is-binding-free]`). Its
+//! op-agnostic program/block carrier lives in `weavy`, shared with other
+//! lowered-plan consumers.
 //!
 //! Spec: `docs/content/spec.md` — "The descriptor model" and "The intermediate
 //! representation".

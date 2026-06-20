@@ -2104,6 +2104,7 @@ dependencies = [
  "stacker",
  "tendril",
  "tracing",
+ "weavy",
  "zmij",
 ]
 
@@ -4550,6 +4551,7 @@ name = "phon-ir"
 version = "0.2.0-rc.1"
 dependencies = [
  "phon-schema",
+ "weavy",
 ]
 
 [[package]]
@@ -7847,6 +7849,10 @@ dependencies = [
  "js-sys",
  "wasm-bindgen",
 ]
+
+[[package]]
+name = "weavy"
+version = "0.1.0"
 
 [[package]]
 name = "web-sys"
