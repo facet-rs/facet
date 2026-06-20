@@ -15,9 +15,10 @@
 pub mod descriptor;
 
 pub use descriptor::{
-    Access, Construct, Descriptor, EnumAccess, FieldAccess, FieldDefault, Layout, MapAccess,
-    MapStorage, OptionAccess, PointerAccess, Presence, RecordAccess, ResultAccess, SequenceAccess,
-    SequenceStorage, SetAccess, SetStorage, Tag, TensorAccess, Thunk, VariantAccess,
+    Access, ByteOwner, ByteRange, Construct, Descriptor, EnumAccess, FieldAccess, FieldDefault,
+    Layout, MapAccess, MapStorage, OptionAccess, PointerAccess, Presence, RecordAccess,
+    RecordByteOwnership, ResultAccess, SequenceAccess, SequenceStorage, SetAccess, SetStorage, Tag,
+    TensorAccess, Thunk, VariantAccess,
 };
 
 pub mod ir;

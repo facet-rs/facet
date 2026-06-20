@@ -2101,7 +2101,7 @@ mod tests {
     use super::*;
     use core::mem::{MaybeUninit, align_of, offset_of, size_of};
     use facet_value::{VArray, Value};
-    use phon_ir::{FieldAccess, Layout, SeqThunks, SequenceAccess};
+    use phon_ir::{FieldAccess, Layout, RecordByteOwnership, SeqThunks, SequenceAccess};
     use phon_schema::bytes::{write_i64, write_u64};
     use phon_schema::{Schema, SchemaId, SchemaRef, primitive_id};
 
@@ -2183,39 +2183,43 @@ mod tests {
     }
 
     fn narrow_native_int_descriptor(schema: SchemaId) -> Descriptor {
+        let layout = Layout {
+            size: size_of::<NarrowNativeInts>(),
+            align: align_of::<NarrowNativeInts>(),
+        };
+        let fields = vec![
+            FieldAccess {
+                offset: offset_of!(NarrowNativeInts, count),
+                descriptor: Descriptor {
+                    schema: SchemaRef::concrete(primitive_id(Primitive::U64)),
+                    layout: Layout {
+                        size: size_of::<u32>(),
+                        align: align_of::<u32>(),
+                    },
+                    access: Access::Scalar,
+                },
+                default: None,
+            },
+            FieldAccess {
+                offset: offset_of!(NarrowNativeInts, delta),
+                descriptor: Descriptor {
+                    schema: SchemaRef::concrete(primitive_id(Primitive::I64)),
+                    layout: Layout {
+                        size: size_of::<i32>(),
+                        align: align_of::<i32>(),
+                    },
+                    access: Access::Scalar,
+                },
+                default: None,
+            },
+        ];
+        let byte_ownership = RecordByteOwnership::from_record_layout(layout, &fields);
         Descriptor {
             schema: SchemaRef::concrete(schema),
-            layout: Layout {
-                size: size_of::<NarrowNativeInts>(),
-                align: align_of::<NarrowNativeInts>(),
-            },
+            layout,
             access: Access::Record(RecordAccess {
-                fields: vec![
-                    FieldAccess {
-                        offset: offset_of!(NarrowNativeInts, count),
-                        descriptor: Descriptor {
-                            schema: SchemaRef::concrete(primitive_id(Primitive::U64)),
-                            layout: Layout {
-                                size: size_of::<u32>(),
-                                align: align_of::<u32>(),
-                            },
-                            access: Access::Scalar,
-                        },
-                        default: None,
-                    },
-                    FieldAccess {
-                        offset: offset_of!(NarrowNativeInts, delta),
-                        descriptor: Descriptor {
-                            schema: SchemaRef::concrete(primitive_id(Primitive::I64)),
-                            layout: Layout {
-                                size: size_of::<i32>(),
-                                align: align_of::<i32>(),
-                            },
-                            access: Access::Scalar,
-                        },
-                        default: None,
-                    },
-                ],
+                fields,
+                byte_ownership,
                 construct: Construct::InPlace,
             }),
         }
