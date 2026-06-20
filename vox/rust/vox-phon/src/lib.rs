@@ -17,12 +17,15 @@ use std::{
 };
 
 use facet::{Facet, PtrConst, Shape};
-pub use phon::api::{JitFallbackRecord, JitFallbackReport, MethodJitFallbackReport};
+pub use phon::api::{
+    JitFallbackRecord, JitFallbackReport, JitShapeReport, MethodJitFallbackReport,
+    MethodJitShapeRecord, MethodJitShapeReport, MethodJitShapeSummary, NativeJitStats,
+};
 use phon::derive::{Derived, of_shape};
 use phon_engine::{Registry, typed};
-use phon_ir::Lowered;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 use phon_ir::MemOp;
+use phon_ir::{Lowered, lowered_mem_program_stats};
 use vox_rt::sync::SyncMutex;
 
 pub mod schema;
@@ -190,6 +193,27 @@ impl TypedProgram {
             report
         }
     }
+
+    fn jit_shape_report(&self) -> JitShapeReport {
+        let lowered = lowered_mem_program_stats(&self.lowered);
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        {
+            JitShapeReport::new(
+                lowered,
+                self.native_decode
+                    .as_ref()
+                    .map(|native| native.0.stats().into()),
+                self.native_encode
+                    .as_ref()
+                    .map(|native| native.0.stats().into()),
+            )
+        }
+
+        #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+        {
+            JitShapeReport::new(lowered, None, None)
+        }
+    }
 }
 
 // The lowered program and native executors are immutable after construction, and
@@ -323,6 +347,15 @@ pub fn jit_fallback_report_for_shape(shape: &'static Shape) -> Result<JitFallbac
     Ok(typed_program_for_shape(shape)?.jit_fallback_report())
 }
 
+/// Report lowered shape and native-JIT code-layout counts for a shape-erased
+/// generated bridge root.
+///
+/// # Errors
+/// [`Error`] if `shape` cannot be lowered to a phon schema.
+pub fn jit_shape_report_for_shape(shape: &'static Shape) -> Result<JitShapeReport, Error> {
+    Ok(typed_program_for_shape(shape)?.jit_shape_report())
+}
+
 /// Report native-JIT fallback diagnostics scoped to a generated Vox method root.
 ///
 /// # Errors
@@ -333,6 +366,18 @@ pub fn method_jit_fallback_report_for_shape(
     phase: impl Into<String>,
 ) -> Result<MethodJitFallbackReport, Error> {
     Ok(jit_fallback_report_for_shape(shape)?.scoped(method, phase))
+}
+
+/// Report shape and native-JIT code-layout counts scoped to a generated Vox method root.
+///
+/// # Errors
+/// [`Error`] if `shape` cannot be lowered to a phon schema.
+pub fn method_jit_shape_report_for_shape(
+    shape: &'static Shape,
+    method: impl Into<String>,
+    phase: impl Into<String>,
+) -> Result<MethodJitShapeReport, Error> {
+    Ok(jit_shape_report_for_shape(shape)?.scoped(method, phase))
 }
 
 /// Decode `T` from phon-compact bytes, BORROWING from `bytes`: `&str`,
@@ -498,6 +543,51 @@ mod tests {
                     assert_eq!(record.path, "$");
                 }
             }
+        }
+    }
+
+    #[test]
+    fn vox_wire_shapes_expose_method_scoped_shape_reports() {
+        let mut surface = MethodJitShapeReport::default();
+        for (name, shape) in [
+            ("Message", Message::SHAPE),
+            ("MessagePayload", MessagePayload::SHAPE),
+            ("RequestCall", RequestCall::SHAPE),
+            ("RequestMessage", RequestMessage::SHAPE),
+            ("SchemaMessage", SchemaMessage::SHAPE),
+            ("Payload", Payload::SHAPE),
+            ("DodecaParseResult", DodecaParseResult::SHAPE),
+        ] {
+            let report =
+                method_jit_shape_report_for_shape(shape, name, "wire").unwrap_or_else(|err| {
+                    panic!("failed to build JIT shape report for {name}: {err}");
+                });
+            assert_eq!(report.records.len(), 1);
+            let record = &report.records[0];
+            assert_eq!(record.method, name);
+            assert_eq!(record.phase, "wire");
+            if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+                assert!(record.decode_native.is_some(), "{name} decode stats");
+                assert!(record.encode_native.is_some(), "{name} encode stats");
+            } else {
+                assert!(record.decode_native.is_none(), "{name} decode stats");
+                assert!(record.encode_native.is_none(), "{name} encode stats");
+            }
+            surface.extend(report);
+        }
+
+        let summary = surface.summary();
+        assert_eq!(summary.root_count, surface.records.len());
+        assert!(summary.lowered.total.op_count > 0);
+        assert!(summary.lowered.total.scalar_op_count > 0);
+        if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+            assert_eq!(summary.decode_native_count, summary.root_count);
+            assert_eq!(summary.encode_native_count, summary.root_count);
+            assert!(summary.decode_native.stencil_count >= summary.lowered.total.op_count);
+            assert!(summary.encode_native.stencil_count >= summary.lowered.total.op_count);
+        } else {
+            assert_eq!(summary.decode_native_count, 0);
+            assert_eq!(summary.encode_native_count, 0);
         }
     }
 

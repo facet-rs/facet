@@ -971,7 +971,8 @@ pub struct MemProgramStats {
 }
 
 impl MemProgramStats {
-    fn add(&mut self, other: Self) {
+    /// Add another shape counter into this one.
+    pub fn accumulate(&mut self, other: Self) {
         self.op_count += other.op_count;
         self.scalar_op_count += other.scalar_op_count;
         self.scalar_run_count += other.scalar_run_count;
@@ -1005,6 +1006,16 @@ pub struct LoweredMemProgramStats {
     pub block_count: usize,
 }
 
+impl LoweredMemProgramStats {
+    /// Add another lowered-program shape counter into this one.
+    pub fn accumulate(&mut self, other: Self) {
+        self.root.accumulate(other.root);
+        self.blocks.accumulate(other.blocks);
+        self.total.accumulate(other.total);
+        self.block_count += other.block_count;
+    }
+}
+
 /// Count the typed memory IR shape for one program.
 #[must_use]
 pub fn mem_program_stats<BlockId>(program: &[MemOp<BlockId>]) -> MemProgramStats {
@@ -1021,10 +1032,10 @@ pub fn lowered_mem_program_stats<BlockId>(
     let root = mem_program_stats(&lowered.program);
     let mut blocks = MemProgramStats::default();
     for block in lowered.blocks.values() {
-        blocks.add(mem_program_stats(block));
+        blocks.accumulate(mem_program_stats(block));
     }
     let mut total = root;
-    total.add(blocks);
+    total.accumulate(blocks);
 
     LoweredMemProgramStats {
         root,
