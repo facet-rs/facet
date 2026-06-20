@@ -1,4 +1,5 @@
 use facet::Facet;
+use facet_format::DeserializeErrorKind;
 
 #[derive(Debug, Facet, PartialEq, Eq)]
 struct Person {
@@ -122,4 +123,16 @@ fn vm_skips_unknown_fields_when_the_type_allows_it() {
             age: 37
         }
     );
+}
+
+#[test]
+fn vm_rejects_duplicate_struct_fields() {
+    let json = r#"{"name":"Ada","name":"Lovelace","age":37}"#;
+
+    let err = facet_json::from_str_vm::<Person>(json).unwrap_err();
+
+    assert!(matches!(
+        err.kind,
+        DeserializeErrorKind::DuplicateField { ref field, .. } if field.as_ref() == "name"
+    ));
 }

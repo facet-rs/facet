@@ -146,8 +146,46 @@ pub enum JsonBytes {
 pub struct JsonStruct {
     /// Expected fields in lowered planning order.
     pub fields: Vec<JsonField>,
+    /// Lookup table from accepted JSON field names to field indexes.
+    pub lookup: JsonFieldLookup,
     /// Unknown-field behavior for this object.
     pub unknown_fields: UnknownFields,
+}
+
+/// Fast lookup from a JSON object key to a field index.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum JsonFieldLookup {
+    /// For small structs, linear scan over name/index pairs is cache-friendly.
+    Small(Vec<JsonFieldLookupEntry>),
+    /// For larger structs, dispatch through sorted first-byte-prefix buckets.
+    PrefixBuckets {
+        /// Number of leading bytes used to compute each prefix.
+        prefix_len: usize,
+        /// Lookup entries grouped by bucket.
+        entries: Vec<JsonFieldLookupEntry>,
+        /// Sorted bucket metadata.
+        buckets: Vec<JsonFieldBucket>,
+    },
+}
+
+/// One accepted field name in a JSON field lookup table.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct JsonFieldLookupEntry {
+    /// Primary field name or alias.
+    pub name: &'static str,
+    /// Lowered field index.
+    pub index: usize,
+}
+
+/// One prefix bucket in a JSON field lookup table.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct JsonFieldBucket {
+    /// Little-endian prefix of the leading `prefix_len` bytes.
+    pub prefix: u64,
+    /// First entry for this bucket in `JsonFieldLookup::PrefixBuckets::entries`.
+    pub start: usize,
+    /// Number of entries in this bucket.
+    pub len: usize,
 }
 
 /// One named JSON field.
@@ -187,6 +225,103 @@ pub enum MissingField {
     Default,
     /// Leave unset because the reflected type can complete it.
     Omit,
+}
+
+const FIELD_LOOKUP_THRESHOLD: usize = 8;
+
+impl JsonFieldLookup {
+    /// Build a JSON field lookup from lowered field metadata.
+    #[must_use]
+    pub fn from_fields(fields: &[JsonField]) -> Self {
+        let mut entries = Vec::with_capacity(fields.len().saturating_mul(2));
+        for (index, field) in fields.iter().enumerate() {
+            entries.push(JsonFieldLookupEntry {
+                name: field.name,
+                index,
+            });
+            if let Some(alias) = field.alias {
+                entries.push(JsonFieldLookupEntry { name: alias, index });
+            }
+        }
+
+        if entries.len() <= FIELD_LOOKUP_THRESHOLD {
+            return Self::Small(entries);
+        }
+
+        let prefix_len = choose_field_prefix_len(&entries);
+        entries.sort_by_key(|entry| compute_field_prefix(entry.name, prefix_len));
+
+        let mut buckets = Vec::new();
+        let mut start = 0;
+        while start < entries.len() {
+            let prefix = compute_field_prefix(entries[start].name, prefix_len);
+            let mut end = start + 1;
+            while end < entries.len()
+                && compute_field_prefix(entries[end].name, prefix_len) == prefix
+            {
+                end += 1;
+            }
+            buckets.push(JsonFieldBucket {
+                prefix,
+                start,
+                len: end - start,
+            });
+            start = end;
+        }
+
+        Self::PrefixBuckets {
+            prefix_len,
+            entries,
+            buckets,
+        }
+    }
+
+    /// Find a lowered field index by JSON object key.
+    #[inline]
+    #[must_use]
+    pub fn find(&self, name: &str) -> Option<usize> {
+        match self {
+            Self::Small(entries) => entries
+                .iter()
+                .find(|entry| entry.name == name)
+                .map(|entry| entry.index),
+            Self::PrefixBuckets {
+                prefix_len,
+                entries,
+                buckets,
+            } => {
+                let prefix = compute_field_prefix(name, *prefix_len);
+                let bucket_idx = buckets
+                    .binary_search_by_key(&prefix, |bucket| bucket.prefix)
+                    .ok()?;
+                let bucket = buckets[bucket_idx];
+                entries[bucket.start..bucket.start + bucket.len]
+                    .iter()
+                    .find(|entry| entry.name == name)
+                    .map(|entry| entry.index)
+            }
+        }
+    }
+}
+
+fn choose_field_prefix_len(entries: &[JsonFieldLookupEntry]) -> usize {
+    let long_key_count = entries.iter().filter(|entry| entry.name.len() >= 8).count();
+    if long_key_count > entries.len() / 2 {
+        8
+    } else {
+        4
+    }
+}
+
+#[inline]
+fn compute_field_prefix(name: &str, prefix_len: usize) -> u64 {
+    name.as_bytes()
+        .iter()
+        .take(prefix_len)
+        .enumerate()
+        .fold(0, |prefix, (index, byte)| {
+            prefix | ((*byte as u64) << (index * 8))
+        })
 }
 
 /// Enum representation used by JSON deserialization.
@@ -494,11 +629,13 @@ impl Lowerer<'_> {
         } else {
             UnknownFields::Ignore
         };
+        let fields = fields
+            .iter()
+            .map(|field| self.lower_field(field))
+            .collect::<LowerResult<Vec<_>>>()?;
         Ok(JsonStruct {
-            fields: fields
-                .iter()
-                .map(|field| self.lower_field(field))
-                .collect::<LowerResult<_>>()?,
+            lookup: JsonFieldLookup::from_fields(&fields),
+            fields,
             unknown_fields,
         })
     }
@@ -598,6 +735,19 @@ mod tests {
         next: Option<Box<Node>>,
     }
 
+    #[derive(facet::Facet)]
+    struct Wide {
+        account_id: u32,
+        billing_id: u32,
+        customer_id: u32,
+        delivery_id: u32,
+        employee_id: u32,
+        fixture_id: u32,
+        gateway_id: u32,
+        hardware_id: u32,
+        invoice_id: u32,
+    }
+
     #[test]
     fn lowers_struct_fields_from_type_plan() {
         let core = facet_reflect::TypePlan::<Person>::build().unwrap().core();
@@ -613,6 +763,22 @@ mod tests {
         assert_eq!(plan.fields[0].missing, MissingField::Required);
         assert_eq!(plan.fields[1].name, "age");
         assert!(lowered.blocks.is_empty());
+    }
+
+    #[test]
+    fn lowers_large_struct_with_prefix_field_lookup() {
+        let core = facet_reflect::TypePlan::<Wide>::build().unwrap().core();
+        let lowered = lower_type_plan(&core).unwrap();
+
+        let [JsonOp::EnterShape { .. }, JsonOp::Struct(plan)] = lowered.program.as_slice() else {
+            panic!("expected enter-shape plus struct op");
+        };
+
+        assert!(matches!(plan.lookup, JsonFieldLookup::PrefixBuckets { .. }));
+        for (idx, field) in plan.fields.iter().enumerate() {
+            assert_eq!(plan.lookup.find(field.name), Some(idx));
+        }
+        assert_eq!(plan.lookup.find("missing_id"), None);
     }
 
     #[test]
