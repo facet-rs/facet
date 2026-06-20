@@ -21,14 +21,14 @@ fn main() {
 // =============================================================================
 
 /// Simple flat struct - baseline
-#[derive(Debug, Facet)]
+#[derive(Debug, Facet, serde::Deserialize)]
 struct Point {
     x: i32,
     y: i32,
 }
 
 /// Medium complexity with nested types
-#[derive(Debug, Facet)]
+#[derive(Debug, Facet, serde::Deserialize)]
 struct Person {
     name: String,
     age: u32,
@@ -37,14 +37,14 @@ struct Person {
 }
 
 /// Complex nested struct
-#[derive(Debug, Facet)]
+#[derive(Debug, Facet, serde::Deserialize)]
 struct Company {
     name: String,
     employees: Vec<Employee>,
     headquarters: Address,
 }
 
-#[derive(Debug, Facet)]
+#[derive(Debug, Facet, serde::Deserialize)]
 struct Employee {
     id: u64,
     name: String,
@@ -52,7 +52,7 @@ struct Employee {
     salary: f64,
 }
 
-#[derive(Debug, Facet)]
+#[derive(Debug, Facet, serde::Deserialize)]
 struct Address {
     street: String,
     city: String,
@@ -144,6 +144,16 @@ fn point_reused_vm_plan(bencher: Bencher) {
     });
 }
 
+/// serde_json path
+#[divan::bench]
+fn point_serde_json(bencher: Bencher) {
+    let json = POINT_JSON;
+    bencher.bench(|| {
+        let result: Point = black_box(serde_json::from_str(black_box(json)).unwrap());
+        black_box(result)
+    });
+}
+
 // =============================================================================
 // Benchmarks - Person (medium)
 // =============================================================================
@@ -200,6 +210,16 @@ fn person_reused_vm_plan(bencher: Bencher) {
     });
 }
 
+/// serde_json path
+#[divan::bench]
+fn person_serde_json(bencher: Bencher) {
+    let json = PERSON_JSON;
+    bencher.bench(|| {
+        let result: Person = black_box(serde_json::from_str(black_box(json)).unwrap());
+        black_box(result)
+    });
+}
+
 // =============================================================================
 // Benchmarks - Company (complex)
 // =============================================================================
@@ -252,6 +272,16 @@ fn company_reused_vm_plan(bencher: Bencher) {
 
     bencher.bench(|| {
         let result: Company = black_box(plan.from_str(black_box(json)).unwrap());
+        black_box(result)
+    });
+}
+
+/// serde_json path
+#[divan::bench]
+fn company_serde_json(bencher: Bencher) {
+    let json = COMPANY_JSON;
+    bencher.bench(|| {
+        let result: Company = black_box(serde_json::from_str(black_box(json)).unwrap());
         black_box(result)
     });
 }
@@ -315,6 +345,19 @@ fn batch_1000_reused_vm_plan(bencher: Bencher) {
     bencher.bench(|| {
         for _ in 0..1000 {
             let result: Person = plan.from_str(black_box(json)).unwrap();
+            black_box(result);
+        }
+    });
+}
+
+/// 1000 deserializations through serde_json
+#[divan::bench]
+fn batch_1000_serde_json(bencher: Bencher) {
+    let json = PERSON_JSON;
+
+    bencher.bench(|| {
+        for _ in 0..1000 {
+            let result: Person = serde_json::from_str(black_box(json)).unwrap();
             black_box(result);
         }
     });
