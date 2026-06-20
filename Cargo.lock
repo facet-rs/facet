@@ -2101,6 +2101,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smol_str",
+ "stacker",
  "tendril",
  "tracing",
  "zmij",

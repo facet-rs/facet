@@ -138,20 +138,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         trace!(?strategy, "deserialize_into: using precomputed strategy");
 
         match strategy {
-            Some(DeserStrategy::ContainerProxy) => {
-                // Container-level proxy - the type itself has #[facet(proxy = X)]
-                let format_ns = self.parser.format_namespace();
-                let (wip, _) =
-                    wip.begin_custom_deserialization_from_shape_with_format(format_ns)?;
-                Ok(wip.with(|w| self.deserialize_into(w, meta))?.end()?)
-            }
+            Some(DeserStrategy::ContainerProxy) => self.deserialize_container_proxy(wip, meta),
 
-            Some(DeserStrategy::FieldProxy) => {
-                // Field-level proxy - the field has #[facet(proxy = X)]
-                let format_ns = self.parser.format_namespace();
-                let wip = wip.begin_custom_deserialization_with_format(format_ns)?;
-                Ok(wip.with(|w| self.deserialize_into(w, meta))?.end()?)
-            }
+            Some(DeserStrategy::FieldProxy) => self.deserialize_field_proxy(wip, meta),
 
             Some(DeserStrategy::Pointer { .. }) => {
                 trace!("deserialize_into: dispatching to deserialize_pointer");
@@ -160,10 +149,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
             Some(DeserStrategy::TransparentConvert { .. }) => {
                 trace!("deserialize_into: dispatching via begin_inner (transparent convert)");
-                Ok(wip
-                    .begin_inner()?
-                    .with(|w| self.deserialize_into(w, meta))?
-                    .end()?)
+                self.deserialize_transparent_convert(wip, meta)
             }
 
             Some(DeserStrategy::Scalar {
@@ -243,107 +229,164 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 unreachable!("deser_strategy() should resolve BackRef to target strategy")
             }
 
-            Some(DeserStrategy::Opaque) => {
-                if let Some(adapter) = shape.opaque_adapter {
-                    let trailing_opaque = wip
-                        .nearest_field()
-                        .is_some_and(|f| f.has_builtin_attr("trailing"));
+            Some(DeserStrategy::Opaque) => self.deserialize_opaque(wip),
 
-                    if self.is_non_self_describing() {
-                        let handled = if trailing_opaque {
-                            self.parser.hint_remaining_byte_sequence()
-                        } else {
-                            self.parser.hint_byte_sequence()
-                        };
-                        if !handled {
-                            self.parser.hint_scalar_type(ScalarTypeHint::Bytes);
-                        }
-                    }
+            Some(DeserStrategy::OpaquePointer) => self.unsupported_opaque_pointer(shape),
 
-                    let expected = if trailing_opaque {
-                        "remaining bytes for trailing opaque adapter"
-                    } else {
-                        "bytes for opaque adapter"
-                    };
-                    let event = self.expect_event(expected)?;
-                    let input = match event.kind {
-                        ParseEventKind::Scalar(ScalarValue::Bytes(bytes)) => {
-                            if BORROW {
-                                match bytes {
-                                    Cow::Borrowed(b) => OpaqueDeserialize::Borrowed(b),
-                                    Cow::Owned(v) => OpaqueDeserialize::Owned(v),
-                                }
-                            } else {
-                                OpaqueDeserialize::Owned(bytes.into_owned())
-                            }
-                        }
-                        _ => {
-                            return Err(self.mk_err(
-                                &wip,
-                                DeserializeErrorKind::UnexpectedToken {
-                                    expected,
-                                    got: event.kind_name().into(),
-                                },
-                            ));
-                        }
-                    };
+            // A deserialization strategy variant added since this match was written.
+            Some(_) => self.unsupported_strategy(shape),
 
-                    let adapter = *adapter;
-                    #[allow(unsafe_code)]
-                    let wip = unsafe {
-                        wip.set_from_function(move |target| {
-                            match (adapter.deserialize)(input, target) {
-                                Ok(_) => Ok(()),
-                                Err(message) => Err(ReflectErrorKind::OperationFailedOwned {
-                                    shape,
-                                    operation: format!(
-                                        "opaque adapter deserialize failed: {message}"
-                                    ),
-                                }),
-                            }
-                        })?
-                    };
-                    Ok(wip)
-                } else {
-                    Err(DeserializeErrorKind::Unsupported {
-                        message: format!(
-                            "cannot deserialize opaque type {} - add a proxy or opaque adapter",
-                            shape
-                        )
-                        .into(),
-                    }
-                    .with_span(self.last_span))
-                }
-            }
+            None => self.missing_strategy(shape),
+        }
+    }
 
-            Some(DeserStrategy::OpaquePointer) => Err(DeserializeErrorKind::Unsupported {
+    #[inline(never)]
+    fn deserialize_container_proxy(
+        &mut self,
+        wip: Partial<'input, BORROW>,
+        meta: MetaSource<'input>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        let format_ns = self.parser.format_namespace();
+        let (wip, _) = wip.begin_custom_deserialization_from_shape_with_format(format_ns)?;
+        Ok(wip.with(|w| self.deserialize_into(w, meta))?.end()?)
+    }
+
+    #[inline(never)]
+    fn deserialize_field_proxy(
+        &mut self,
+        wip: Partial<'input, BORROW>,
+        meta: MetaSource<'input>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        let format_ns = self.parser.format_namespace();
+        let wip = wip.begin_custom_deserialization_with_format(format_ns)?;
+        Ok(wip.with(|w| self.deserialize_into(w, meta))?.end()?)
+    }
+
+    #[inline(never)]
+    fn deserialize_transparent_convert(
+        &mut self,
+        wip: Partial<'input, BORROW>,
+        meta: MetaSource<'input>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        Ok(wip
+            .begin_inner()?
+            .with(|w| self.deserialize_into(w, meta))?
+            .end()?)
+    }
+
+    #[inline(never)]
+    fn deserialize_opaque(
+        &mut self,
+        wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        let shape = wip.shape();
+        let Some(adapter) = shape.opaque_adapter else {
+            return Err(DeserializeErrorKind::Unsupported {
                 message: format!(
-                    "cannot deserialize opaque type {} - add a proxy to make it deserializable",
+                    "cannot deserialize opaque type {} - add a proxy or opaque adapter",
                     shape
                 )
                 .into(),
             }
-            .with_span(self.last_span)),
+            .with_span(self.last_span));
+        };
 
-            // A deserialization strategy variant added since this match was written.
-            Some(_) => Err(DeserializeErrorKind::Unsupported {
-                message: format!("unsupported deserialization strategy for {:?}", shape.def).into(),
-            }
-            .with_span(self.last_span)),
+        let trailing_opaque = wip
+            .nearest_field()
+            .is_some_and(|f| f.has_builtin_attr("trailing"));
 
-            None => {
-                // This should not happen - TypePlan::build errors at allocation time for
-                // unsupported types. If we get here, something went wrong with plan tracking.
-                Err(DeserializeErrorKind::Unsupported {
-                    message: format!(
-                        "missing deserialization strategy for shape: {:?} (TypePlan bug)",
-                        shape.def
-                    )
-                    .into(),
-                }
-                .with_span(self.last_span))
+        if self.is_non_self_describing() {
+            let handled = if trailing_opaque {
+                self.parser.hint_remaining_byte_sequence()
+            } else {
+                self.parser.hint_byte_sequence()
+            };
+            if !handled {
+                self.parser.hint_scalar_type(ScalarTypeHint::Bytes);
             }
         }
+
+        let expected = if trailing_opaque {
+            "remaining bytes for trailing opaque adapter"
+        } else {
+            "bytes for opaque adapter"
+        };
+        let event = self.expect_event(expected)?;
+        let input = match event.kind {
+            ParseEventKind::Scalar(ScalarValue::Bytes(bytes)) => {
+                if BORROW {
+                    match bytes {
+                        Cow::Borrowed(b) => OpaqueDeserialize::Borrowed(b),
+                        Cow::Owned(v) => OpaqueDeserialize::Owned(v),
+                    }
+                } else {
+                    OpaqueDeserialize::Owned(bytes.into_owned())
+                }
+            }
+            _ => {
+                return Err(self.mk_err(
+                    &wip,
+                    DeserializeErrorKind::UnexpectedToken {
+                        expected,
+                        got: event.kind_name().into(),
+                    },
+                ));
+            }
+        };
+
+        let adapter = *adapter;
+        #[allow(unsafe_code)]
+        let wip = unsafe {
+            wip.set_from_function(move |target| match (adapter.deserialize)(input, target) {
+                Ok(_) => Ok(()),
+                Err(message) => Err(ReflectErrorKind::OperationFailedOwned {
+                    shape,
+                    operation: format!("opaque adapter deserialize failed: {message}"),
+                }),
+            })?
+        };
+        Ok(wip)
+    }
+
+    #[inline(never)]
+    fn unsupported_opaque_pointer(
+        &self,
+        shape: &'static Shape,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        Err(DeserializeErrorKind::Unsupported {
+            message: format!(
+                "cannot deserialize opaque type {} - add a proxy to make it deserializable",
+                shape
+            )
+            .into(),
+        }
+        .with_span(self.last_span))
+    }
+
+    #[inline(never)]
+    fn unsupported_strategy(
+        &self,
+        shape: &'static Shape,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        Err(DeserializeErrorKind::Unsupported {
+            message: format!("unsupported deserialization strategy for {:?}", shape.def).into(),
+        }
+        .with_span(self.last_span))
+    }
+
+    #[inline(never)]
+    fn missing_strategy(
+        &self,
+        shape: &'static Shape,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        Err(DeserializeErrorKind::Unsupported {
+            message: format!(
+                "missing deserialization strategy for shape: {:?} (TypePlan bug)",
+                shape.def
+            )
+            .into(),
+        }
+        .with_span(self.last_span))
     }
 
     /// Deserialize a metadata container (like `Spanned<T>`, `Documented<T>`).
