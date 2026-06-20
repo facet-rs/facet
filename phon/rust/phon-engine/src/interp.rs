@@ -14,12 +14,14 @@
 //!
 //! Spec: `r[exec.interpreter-baseline]`, `r[ir.total]`.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use facet_value::{VArray, VObject, VString, Value};
 use phon_ir::ir::{Op, Program, ValueProgram};
+use phon_schema::SchemaId;
 use phon_schema::bytes::Reader;
 use phon_schema::{DecodeError, read_value};
+use weavy::{Control, RunError, Step};
 
 use crate::compact::{self, CompactError, Registry};
 
@@ -49,145 +51,327 @@ fn run_program(
     program: &Program,
     bytes: &[u8],
     reg: &Registry,
-    blocks: &std::collections::BTreeMap<phon_schema::SchemaId, Program>,
+    blocks: &BTreeMap<SchemaId, Program>,
 ) -> Result<Value> {
-    let mut r = Reader::new(bytes);
-    let mut stack: Vec<Value> = Vec::new();
-    exec_ops(program, &mut r, reg, blocks, &mut stack)?;
-    if r.remaining() != 0 {
+    let mut interp = Interp {
+        reader: Reader::new(bytes),
+        reg,
+        stack: Vec::new(),
+    };
+    weavy::run_program(program, blocks, &mut interp).map_err(|err| match err {
+        RunError::Step(err) => err,
+        RunError::MissingBlock(_) => {
+            CompactError::Decode(DecodeError::Malformed("missing recursion block"))
+        }
+    })?;
+    if interp.reader.remaining() != 0 {
         return Err(CompactError::Decode(DecodeError::TrailingBytes(
-            r.remaining(),
+            interp.reader.remaining(),
         )));
     }
-    stack
+    interp
+        .stack
         .pop()
         .ok_or(CompactError::Decode(DecodeError::Malformed(
             "program produced no value",
         )))
 }
 
-fn exec_ops(
-    ops: &[Op],
-    r: &mut Reader,
-    reg: &Registry,
-    blocks: &std::collections::BTreeMap<phon_schema::SchemaId, Program>,
-    stack: &mut Vec<Value>,
-) -> Result<()> {
-    for op in ops {
-        exec_op(op, r, reg, blocks, stack)?;
-    }
-    Ok(())
+struct Interp<'bytes, 'reg> {
+    reader: Reader<'bytes>,
+    reg: &'reg Registry,
+    stack: Vec<Value>,
 }
 
-fn exec_op(
-    op: &Op,
-    r: &mut Reader,
-    reg: &Registry,
-    blocks: &std::collections::BTreeMap<phon_schema::SchemaId, Program>,
-    stack: &mut Vec<Value>,
-) -> Result<()> {
-    match op {
-        Op::Scalar(p) => stack.push(compact::decode_primitive(r, *p)?),
-        Op::Dynamic => stack.push(read_value(r)?),
-        Op::CallBlock { schema } => {
-            let block = blocks
-                .get(schema)
-                .ok_or(CompactError::Decode(DecodeError::Malformed(
-                    "missing recursion block",
-                )))?;
-            exec_ops(block, r, reg, blocks, stack)?;
-        }
-        Op::Null => stack.push(Value::NULL),
-        Op::Skip(writer_ref) => {
-            // Walk the writer-only field by its own schema and drop it.
-            compact::decode_ref(r, writer_ref, reg, 0)?;
-        }
-        Op::Object { keys } => {
-            let vals = stack.split_off(stack.len() - keys.len());
-            let mut obj = VObject::new();
-            for (k, v) in keys.iter().zip(vals) {
-                obj.insert(VString::new(k), v);
+enum Continuation<'program> {
+    Seq {
+        remaining: usize,
+        set: bool,
+        body: &'program Program,
+        values: VArray,
+        seen: Option<HashSet<Value>>,
+    },
+    FixedArray {
+        remaining: u64,
+        body: &'program Program,
+        values: VArray,
+    },
+    MapKey {
+        remaining: usize,
+        key: &'program Program,
+        value: &'program Program,
+        object: VObject,
+    },
+    MapValue {
+        remaining: usize,
+        key: &'program Program,
+        value: &'program Program,
+        object: VObject,
+        pending_key: VString,
+    },
+    EnumPayload {
+        reader_name: &'program str,
+    },
+}
+
+impl<'program> Step<'program, SchemaId, Op> for Interp<'_, '_> {
+    type Error = CompactError;
+    type Continuation = Continuation<'program>;
+
+    fn step(
+        &mut self,
+        op: &'program Op,
+    ) -> Result<Control<'program, SchemaId, Op, Self::Continuation>> {
+        Ok(match op {
+            Op::Scalar(p) => {
+                self.stack
+                    .push(compact::decode_primitive(&mut self.reader, *p)?);
+                Control::Continue
             }
-            stack.push(obj.into());
-        }
-        Op::Array { count } => {
-            let vals = stack.split_off(stack.len() - count);
-            let mut arr = VArray::new();
-            for v in vals {
-                arr.push(v);
+            Op::Dynamic => {
+                self.stack.push(read_value(&mut self.reader)?);
+                Control::Continue
             }
-            stack.push(arr.into());
-        }
-        Op::Seq {
-            set,
-            min_wire,
-            body,
-        } => {
-            let n = r.read_len(*min_wire)?;
-            let mut arr = VArray::new();
-            let mut seen = if *set { Some(HashSet::new()) } else { None };
-            for _ in 0..n {
-                exec_ops(body, r, reg, blocks, stack)?;
-                let v = stack.pop().expect("seq body nets one value");
+            Op::CallBlock { schema } => Control::CallBlock(*schema),
+            Op::Null => {
+                self.stack.push(Value::NULL);
+                Control::Continue
+            }
+            Op::Skip(writer_ref) => {
+                // Walk the writer-only field by its own schema and drop it.
+                compact::decode_ref(&mut self.reader, writer_ref, self.reg, 0)?;
+                Control::Continue
+            }
+            Op::Object { keys } => {
+                let vals = self.stack.split_off(self.stack.len() - keys.len());
+                let mut obj = VObject::new();
+                for (k, v) in keys.iter().zip(vals) {
+                    obj.insert(VString::new(k), v);
+                }
+                self.stack.push(obj.into());
+                Control::Continue
+            }
+            Op::Array { count } => {
+                let vals = self.stack.split_off(self.stack.len() - count);
+                let mut arr = VArray::new();
+                for v in vals {
+                    arr.push(v);
+                }
+                self.stack.push(arr.into());
+                Control::Continue
+            }
+            Op::Seq {
+                set,
+                min_wire,
+                body,
+            } => {
+                let remaining = self.reader.read_len(*min_wire)?;
+                let continuation = Continuation::Seq {
+                    remaining,
+                    set: *set,
+                    body,
+                    values: VArray::new(),
+                    seen: if *set { Some(HashSet::new()) } else { None },
+                };
+                self.call_repeated(body, continuation, remaining)
+            }
+            Op::Map { key, value } => {
+                let remaining = self.reader.read_len(1)?;
+                let continuation = Continuation::MapKey {
+                    remaining,
+                    key,
+                    value,
+                    object: VObject::new(),
+                };
+                self.call_repeated(key, continuation, remaining)
+            }
+            Op::FixedArray {
+                dimensions,
+                min_wire,
+                body,
+            } => {
+                let count = compact::product(dimensions)?;
+                compact::check_fixed_count(count, *min_wire, self.reader.remaining())?;
+                let continuation = Continuation::FixedArray {
+                    remaining: count,
+                    body,
+                    values: VArray::new(),
+                };
+                self.call_repeated(body, continuation, count)
+            }
+            Op::Option { some } => match self.reader.read_u8()? {
+                0 => {
+                    self.stack.push(Value::NULL);
+                    Control::Continue
+                }
+                1 => Control::CallProgram(some),
+                b => return Err(CompactError::Decode(DecodeError::InvalidBool(b))),
+            },
+            Op::Enum { arms } => {
+                let idx = self.reader.read_u32()?;
+                let arm = arms
+                    .iter()
+                    .find(|a| a.writer_index == idx)
+                    .ok_or(CompactError::WriterOnlyVariant(idx))?;
+                Control::CallProgramThen(
+                    &arm.payload,
+                    Continuation::EnumPayload {
+                        reader_name: &arm.reader_name,
+                    },
+                )
+            }
+        })
+    }
+
+    fn after_return(
+        &mut self,
+        continuation: Self::Continuation,
+    ) -> Result<Control<'program, SchemaId, Op, Self::Continuation>> {
+        match continuation {
+            Continuation::Seq {
+                mut remaining,
+                set,
+                body,
+                mut values,
+                mut seen,
+            } => {
+                let v = self.pop_value("seq body produced no value")?;
                 if let Some(s) = &mut seen
                     && !s.insert(v.clone())
                 {
                     return Err(CompactError::Decode(DecodeError::DuplicateElement));
                 }
-                arr.push(v);
+                values.push(v);
+                remaining -= 1;
+                if remaining == 0 {
+                    self.stack.push(values.into());
+                    Ok(Control::Continue)
+                } else {
+                    Ok(Control::CallProgramThen(
+                        body,
+                        Continuation::Seq {
+                            remaining,
+                            set,
+                            body,
+                            values,
+                            seen,
+                        },
+                    ))
+                }
             }
-            stack.push(arr.into());
-        }
-        Op::Map { key, value } => {
-            let n = r.read_len(1)?;
-            let mut obj = VObject::new();
-            for _ in 0..n {
-                exec_ops(key, r, reg, blocks, stack)?;
-                let k = stack.pop().expect("map key nets one value");
-                exec_ops(value, r, reg, blocks, stack)?;
-                let v = stack.pop().expect("map value nets one value");
+            Continuation::FixedArray {
+                mut remaining,
+                body,
+                mut values,
+            } => {
+                values.push(self.pop_value("array body produced no value")?);
+                remaining -= 1;
+                if remaining == 0 {
+                    self.stack.push(values.into());
+                    Ok(Control::Continue)
+                } else {
+                    Ok(Control::CallProgramThen(
+                        body,
+                        Continuation::FixedArray {
+                            remaining,
+                            body,
+                            values,
+                        },
+                    ))
+                }
+            }
+            Continuation::MapKey {
+                remaining,
+                key,
+                value,
+                object,
+            } => {
+                let k = self.pop_value("map key produced no value")?;
                 let ks = k
                     .as_string()
                     .ok_or(CompactError::Unsupported("map with non-string keys"))?;
-                if obj.insert(VString::new(ks.as_str()), v).is_some() {
+                Ok(Control::CallProgramThen(
+                    value,
+                    Continuation::MapValue {
+                        remaining,
+                        key,
+                        value,
+                        object,
+                        pending_key: VString::new(ks.as_str()),
+                    },
+                ))
+            }
+            Continuation::MapValue {
+                mut remaining,
+                key,
+                value,
+                mut object,
+                pending_key,
+            } => {
+                let v = self.pop_value("map value produced no value")?;
+                if object.insert(pending_key, v).is_some() {
                     return Err(CompactError::Decode(DecodeError::DuplicateKey));
                 }
+                remaining -= 1;
+                if remaining == 0 {
+                    self.stack.push(object.into());
+                    Ok(Control::Continue)
+                } else {
+                    Ok(Control::CallProgramThen(
+                        key,
+                        Continuation::MapKey {
+                            remaining,
+                            key,
+                            value,
+                            object,
+                        },
+                    ))
+                }
             }
-            stack.push(obj.into());
-        }
-        Op::FixedArray {
-            dimensions,
-            min_wire,
-            body,
-        } => {
-            let count = compact::product(dimensions)?;
-            compact::check_fixed_count(count, *min_wire, r.remaining())?;
-            let mut arr = VArray::new();
-            for _ in 0..count {
-                exec_ops(body, r, reg, blocks, stack)?;
-                arr.push(stack.pop().expect("array body nets one value"));
+            Continuation::EnumPayload { reader_name } => {
+                let payload = self.pop_value("variant payload produced no value")?;
+                let mut obj = VObject::new();
+                obj.insert(VString::new(reader_name), payload);
+                self.stack.push(obj.into());
+                Ok(Control::Continue)
             }
-            stack.push(arr.into());
-        }
-        Op::Option { some } => match r.read_u8()? {
-            0 => stack.push(Value::NULL),
-            1 => exec_ops(some, r, reg, blocks, stack)?,
-            b => return Err(CompactError::Decode(DecodeError::InvalidBool(b))),
-        },
-        Op::Enum { arms } => {
-            let idx = r.read_u32()?;
-            let arm = arms
-                .iter()
-                .find(|a| a.writer_index == idx)
-                .ok_or(CompactError::WriterOnlyVariant(idx))?;
-            exec_ops(&arm.payload, r, reg, blocks, stack)?;
-            let payload = stack.pop().expect("variant payload nets one value");
-            let mut obj = VObject::new();
-            obj.insert(VString::new(&arm.reader_name), payload);
-            stack.push(obj.into());
         }
     }
-    Ok(())
+}
+
+impl Interp<'_, '_> {
+    fn pop_value(&mut self, message: &'static str) -> Result<Value> {
+        self.stack
+            .pop()
+            .ok_or(CompactError::Decode(DecodeError::Malformed(message)))
+    }
+
+    fn call_repeated<'program, N>(
+        &mut self,
+        body: &'program Program,
+        continuation: Continuation<'program>,
+        remaining: N,
+    ) -> Control<'program, SchemaId, Op, Continuation<'program>>
+    where
+        N: PartialEq + From<u8>,
+    {
+        if remaining == N::from(0) {
+            match continuation {
+                Continuation::Seq { values, .. } | Continuation::FixedArray { values, .. } => {
+                    self.stack.push(values.into());
+                }
+                Continuation::MapKey { object, .. } => {
+                    self.stack.push(object.into());
+                }
+                Continuation::MapValue { .. } | Continuation::EnumPayload { .. } => {
+                    unreachable!("value-producing continuations cannot start empty")
+                }
+            }
+            Control::Continue
+        } else {
+            Control::CallProgramThen(body, continuation)
+        }
+    }
 }
 
 #[cfg(test)]

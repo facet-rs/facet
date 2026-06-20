@@ -4543,6 +4543,7 @@ dependencies = [
  "phon-ir",
  "phon-schema",
  "proptest",
+ "weavy",
 ]
 
 [[package]]

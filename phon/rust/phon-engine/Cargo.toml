@@ -16,6 +16,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 phon-schema.workspace = true
 phon-ir.workspace = true
 facet-value.workspace = true
+weavy.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
