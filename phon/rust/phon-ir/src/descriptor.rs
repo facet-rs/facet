@@ -22,7 +22,8 @@
 use phon_schema::SchemaRef;
 
 pub use weavy::mem::{
-    Construct, FieldDefault, Layout, MapStorage, Presence, SequenceStorage, SetStorage, Tag, Thunk,
+    ByteOwner, ByteRange, Construct, FieldDefault, Layout, MapStorage, Presence,
+    RecordByteOwnership, SequenceStorage, SetStorage, Tag, Thunk,
 };
 
 /// A node of the PHON descriptor tree.

@@ -32,8 +32,9 @@ use phon_engine::{Registry, typed};
 use phon_ir::{
     Access, BorrowThunks, Construct, Descriptor, EnumAccess, FieldAccess, FieldDefault, Layout,
     Lowered, MapAccess, MapStorage, MapThunks, OpaqueThunks, OptionAccess, OptionThunks,
-    PointerAccess, PointerThunks, Presence, RecordAccess, ResultAccess, ResultThunks, SeqThunks,
-    SequenceAccess, SequenceStorage, SetAccess, SetStorage, SetThunks, Tag, VariantAccess,
+    PointerAccess, PointerThunks, Presence, RecordAccess, RecordByteOwnership, ResultAccess,
+    ResultThunks, SeqThunks, SequenceAccess, SequenceStorage, SetAccess, SetStorage, SetThunks,
+    Tag, VariantAccess,
 };
 use phon_schema::{
     Field, Primitive, Schema, SchemaId, SchemaKind, SchemaRef, Variant, VariantPayload,
@@ -828,6 +829,7 @@ fn build_descriptor(
                 // else the variant position (which is the implicit discriminant).
                 selector: v.discriminant.unwrap_or(i as i64) as u64,
                 payload: RecordAccess {
+                    byte_ownership: RecordByteOwnership::fields_only(&fields),
                     fields,
                     construct: Construct::InPlace,
                 },
@@ -862,6 +864,7 @@ fn build_descriptor(
         schema: SchemaRef::concrete(real),
         layout,
         access: Access::Record(RecordAccess {
+            byte_ownership: RecordByteOwnership::from_record_layout(layout, &accesses),
             fields: accesses,
             construct: Construct::InPlace,
         }),
@@ -2287,6 +2290,7 @@ mod tests {
     use facet::Facet;
     use facet_value::{VArray, VObject, VString, Value};
     use phon_engine::{Registry, compact, typed};
+    use phon_ir::ByteOwner;
     use phon_ir::ir::MemOp;
 
     // repr(Rust): the compiler may reorder these in memory, so the descriptor's
@@ -2362,6 +2366,48 @@ mod tests {
             )),
             "anonymous tuples must not be emitted as numeric-field structs"
         );
+    }
+
+    #[test]
+    // r[verify descriptors.fact-driven]
+    fn derived_record_descriptor_carries_explicit_padding() {
+        let d = of::<Pt>().unwrap();
+        let Access::Record(record) = &d.descriptor.access else {
+            panic!("Pt should derive as a record descriptor");
+        };
+
+        let field_bytes: usize = record
+            .byte_ownership
+            .ranges
+            .iter()
+            .filter_map(|range| match range.owner {
+                ByteOwner::Field(_) => Some(range.len),
+                ByteOwner::Padding | ByteOwner::Unknown => None,
+            })
+            .sum();
+        let padding_bytes: usize = record
+            .byte_ownership
+            .ranges
+            .iter()
+            .filter_map(|range| match range.owner {
+                ByteOwner::Padding => Some(range.len),
+                ByteOwner::Field(_) | ByteOwner::Unknown => None,
+            })
+            .sum();
+        let mut field_indices: Vec<_> = record
+            .byte_ownership
+            .ranges
+            .iter()
+            .filter_map(|range| match range.owner {
+                ByteOwner::Field(index) => Some(index),
+                ByteOwner::Padding | ByteOwner::Unknown => None,
+            })
+            .collect();
+        field_indices.sort_unstable();
+
+        assert_eq!(field_indices, [0, 1, 2, 3]);
+        assert!(padding_bytes > 0);
+        assert_eq!(field_bytes + padding_bytes, std::mem::size_of::<Pt>());
     }
 
     #[test]

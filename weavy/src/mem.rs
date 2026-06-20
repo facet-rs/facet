@@ -270,6 +270,12 @@ pub enum Access<SchemaRef> {
 #[derive(Clone, Debug)]
 pub struct RecordAccess<SchemaRef> {
     pub fields: Vec<FieldAccess<SchemaRef>>,
+    /// Explicit byte ownership for bytes this record descriptor can prove.
+    ///
+    /// Optimizers may only treat a gap as padding when it appears here as
+    /// [`ByteOwner::Padding`]. Missing bytes, unknown ranges, and layout facts not
+    /// represented here are barriers.
+    pub byte_ownership: RecordByteOwnership,
     pub construct: Construct,
 }
 
@@ -290,6 +296,149 @@ pub struct FieldDefault {
     pub ctx: *const (),
     /// Initialize the uninitialized field at `slot` to its default.
     pub thunk: DefaultThunk,
+}
+
+/// Proven byte ownership for a record-shaped descriptor.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RecordByteOwnership {
+    pub ranges: Vec<ByteRange>,
+}
+
+impl RecordByteOwnership {
+    /// No usable byte-ownership proof.
+    #[must_use]
+    pub fn unknown(layout_size: usize) -> Self {
+        if layout_size == 0 {
+            Self::default()
+        } else {
+            Self {
+                ranges: vec![ByteRange {
+                    offset: 0,
+                    len: layout_size,
+                    owner: ByteOwner::Unknown,
+                }],
+            }
+        }
+    }
+
+    /// Mark only field byte ranges. Gaps remain unrepresented and therefore
+    /// unknown to consumers.
+    #[must_use]
+    pub fn fields_only<SchemaRef>(fields: &[FieldAccess<SchemaRef>]) -> Self {
+        let Some(fields) = sorted_field_ranges(fields) else {
+            return Self::default();
+        };
+        Self {
+            ranges: fields
+                .into_iter()
+                .map(|field| ByteRange {
+                    offset: field.offset,
+                    len: field.len,
+                    owner: ByteOwner::Field(field.index),
+                })
+                .collect(),
+        }
+    }
+
+    /// Derive field and padding ranges for a plain record whose full layout is
+    /// known. Any overlap, out-of-bounds field, or arithmetic overflow falls back
+    /// to one unknown range for the whole layout.
+    #[must_use]
+    pub fn from_record_layout<SchemaRef>(
+        layout: Layout,
+        fields: &[FieldAccess<SchemaRef>],
+    ) -> Self {
+        let Some(fields) = sorted_field_ranges(fields) else {
+            return Self::unknown(layout.size);
+        };
+        let Some(last_end) = fields
+            .last()
+            .map_or(Some(0), |field| field.offset.checked_add(field.len))
+        else {
+            return Self::unknown(layout.size);
+        };
+        if last_end > layout.size {
+            return Self::unknown(layout.size);
+        }
+
+        let mut ranges = Vec::with_capacity(fields.len().saturating_mul(2).saturating_add(1));
+        let mut cursor = 0usize;
+        for field in fields {
+            if cursor < field.offset {
+                ranges.push(ByteRange {
+                    offset: cursor,
+                    len: field.offset - cursor,
+                    owner: ByteOwner::Padding,
+                });
+            }
+            if field.len != 0 {
+                ranges.push(ByteRange {
+                    offset: field.offset,
+                    len: field.len,
+                    owner: ByteOwner::Field(field.index),
+                });
+            }
+            cursor = field.offset + field.len;
+        }
+        if cursor < layout.size {
+            ranges.push(ByteRange {
+                offset: cursor,
+                len: layout.size - cursor,
+                owner: ByteOwner::Padding,
+            });
+        }
+        Self { ranges }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ByteRange {
+    pub offset: usize,
+    pub len: usize,
+    pub owner: ByteOwner,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ByteOwner {
+    Field(usize),
+    Padding,
+    Unknown,
+}
+
+#[derive(Clone, Copy)]
+struct FieldByteRange {
+    index: usize,
+    offset: usize,
+    len: usize,
+}
+
+fn sorted_field_ranges<SchemaRef>(
+    fields: &[FieldAccess<SchemaRef>],
+) -> Option<Vec<FieldByteRange>> {
+    let mut ranges = Vec::with_capacity(fields.len());
+    for (index, field) in fields.iter().enumerate() {
+        let len = field.descriptor.layout.size;
+        let end = field.offset.checked_add(len)?;
+        if len != 0 {
+            ranges.push(FieldByteRange {
+                index,
+                offset: field.offset,
+                len,
+            });
+        } else if end < field.offset {
+            return None;
+        }
+    }
+    ranges.sort_by_key(|range| (range.offset, range.index));
+
+    let mut prev_end = 0usize;
+    for range in &ranges {
+        if range.offset < prev_end {
+            return None;
+        }
+        prev_end = range.offset.checked_add(range.len)?;
+    }
+    Some(ranges)
 }
 
 /// How a record is built on decode.
@@ -943,6 +1092,18 @@ pub fn fuse<BlockId>(program: MemProgram<BlockId>) -> MemProgram<BlockId> {
 mod tests {
     use super::*;
 
+    fn field(offset: usize, size: usize) -> FieldAccess<()> {
+        FieldAccess {
+            offset,
+            descriptor: Descriptor {
+                schema: (),
+                layout: Layout { size, align: 1 },
+                access: Access::Scalar,
+            },
+            default: None,
+        }
+    }
+
     #[test]
     fn element_min_wire_distinguishes_zero_sized_programs() {
         assert_eq!(element_min_wire::<()>(&[]), 0);
@@ -1047,6 +1208,76 @@ mod tests {
         assert_eq!(
             array_element_offset(usize::MAX - 1, 1, 2),
             Err(LoweringError::ArrayElementOffsetOverflow)
+        );
+    }
+
+    #[test]
+    fn record_byte_ownership_marks_internal_and_tail_padding() {
+        let fields = [field(0, 4), field(8, 2)];
+        let ownership =
+            RecordByteOwnership::from_record_layout(Layout { size: 12, align: 4 }, &fields);
+
+        assert_eq!(
+            ownership.ranges,
+            [
+                ByteRange {
+                    offset: 0,
+                    len: 4,
+                    owner: ByteOwner::Field(0),
+                },
+                ByteRange {
+                    offset: 4,
+                    len: 4,
+                    owner: ByteOwner::Padding,
+                },
+                ByteRange {
+                    offset: 8,
+                    len: 2,
+                    owner: ByteOwner::Field(1),
+                },
+                ByteRange {
+                    offset: 10,
+                    len: 2,
+                    owner: ByteOwner::Padding,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn record_field_ranges_do_not_turn_gaps_into_padding() {
+        let fields = [field(0, 4), field(8, 2)];
+        let ownership = RecordByteOwnership::fields_only(&fields);
+
+        assert_eq!(
+            ownership.ranges,
+            [
+                ByteRange {
+                    offset: 0,
+                    len: 4,
+                    owner: ByteOwner::Field(0),
+                },
+                ByteRange {
+                    offset: 8,
+                    len: 2,
+                    owner: ByteOwner::Field(1),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn record_byte_ownership_falls_back_to_unknown_for_bad_ranges() {
+        let overlapping = [field(0, 8), field(4, 4)];
+        let out_of_bounds = [field(8, 8)];
+
+        assert_eq!(
+            RecordByteOwnership::from_record_layout(Layout { size: 12, align: 4 }, &overlapping),
+            RecordByteOwnership::unknown(12)
+        );
+        assert_eq!(
+            RecordByteOwnership::from_record_layout(Layout { size: 12, align: 4 }, &out_of_bounds),
+            RecordByteOwnership::unknown(12)
         );
     }
 }
