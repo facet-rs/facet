@@ -237,6 +237,7 @@ fn native_encode_supported(lowered: &Lowered) -> bool {
 fn decode_program_supported(program: &[MemOp]) -> bool {
     program.iter().all(|op| match op {
         MemOp::Scalar { .. }
+        | MemOp::ScalarRun(_)
         | MemOp::Bytes(_)
         | MemOp::Borrow(_)
         | MemOp::Default(_)
@@ -259,7 +260,7 @@ fn decode_program_supported(program: &[MemOp]) -> bool {
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 fn encode_program_supported(program: &[MemOp]) -> bool {
     program.iter().all(|op| match op {
-        MemOp::Scalar { .. } | MemOp::Bytes(_) | MemOp::Borrow(_) => true,
+        MemOp::Scalar { .. } | MemOp::ScalarRun(_) | MemOp::Bytes(_) | MemOp::Borrow(_) => true,
         MemOp::NativeInt { .. } => false,
         MemOp::Sequence(s) => encode_program_supported(&s.element),
         MemOp::Set(s) => encode_program_supported(&s.element),

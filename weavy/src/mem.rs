@@ -389,6 +389,41 @@ impl RecordByteOwnership {
         }
         Self { ranges }
     }
+
+    /// Whether every byte in `offset..offset + len` is explicitly known padding.
+    ///
+    /// Missing ranges, unknown ranges, field ranges, and overflow are all barriers.
+    #[must_use]
+    pub fn is_padding_range(&self, offset: usize, len: usize) -> bool {
+        if len == 0 {
+            return true;
+        }
+        let Some(end) = offset.checked_add(len) else {
+            return false;
+        };
+        let mut cursor = offset;
+
+        for range in &self.ranges {
+            let Some(range_end) = range.offset.checked_add(range.len) else {
+                return false;
+            };
+            if range_end <= cursor {
+                continue;
+            }
+            if range.offset > cursor {
+                return false;
+            }
+            if range.owner != ByteOwner::Padding {
+                return false;
+            }
+            cursor = range_end.min(end);
+            if cursor == end {
+                return true;
+            }
+        }
+
+        false
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -623,6 +658,12 @@ pub enum MemOp<BlockId> {
         size: usize,
         align: usize,
     },
+    /// Copy several scalar segments in one grouped op.
+    ///
+    /// Each segment keeps its own wire alignment. Memory bytes between segments
+    /// are not read or written; this is only equivalent to the scalar stream when
+    /// those gaps are known padding or when the segments are contiguous.
+    ScalarRun(Box<ScalarRunOp>),
     /// A native-sized integer (`usize`/`isize`) whose wire primitive is fixed-width
     /// (`u64`/`i64`) on every platform.
     NativeInt {
@@ -658,6 +699,26 @@ pub enum MemOp<BlockId> {
     Opaque(Box<OpaqueOp>),
     /// A call into a recursive block program, run at `base + offset`.
     CallBlock { schema: BlockId, offset: usize },
+}
+
+/// One scalar segment inside a grouped scalar run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScalarSegment {
+    pub offset: usize,
+    pub size: usize,
+    pub align: usize,
+}
+
+impl ScalarSegment {
+    fn end(self) -> Option<usize> {
+        self.offset.checked_add(self.size)
+    }
+}
+
+/// A scalar run preserving per-segment wire alignment.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScalarRunOp {
+    pub segments: Vec<ScalarSegment>,
 }
 
 /// A pre-built wire skeleton of a writer value, advancing the cursor only.
@@ -871,9 +932,11 @@ pub enum LoweringError {
 /// reader's remaining byte count. Every other element occupies at least one byte.
 #[must_use]
 pub fn element_min_wire<BlockId>(element: &[MemOp<BlockId>]) -> usize {
-    let zero_sized = element
-        .iter()
-        .all(|op| matches!(op, MemOp::Scalar { size: 0, .. }));
+    let zero_sized = element.iter().all(|op| match op {
+        MemOp::Scalar { size: 0, .. } => true,
+        MemOp::ScalarRun(run) => run.segments.iter().all(|segment| segment.size == 0),
+        _ => false,
+    });
     usize::from(!zero_sized)
 }
 
@@ -891,6 +954,38 @@ pub fn bulk_scalar_align<BlockId>(element: &[MemOp<BlockId>], stride: usize) -> 
         ] if *size == stride && *align != 0 && stride.is_multiple_of(*align) => Some(*align),
         _ => None,
     }
+}
+
+/// Group adjacent scalar ops inside one record when memory gaps are proven padding.
+///
+/// The optimizer is intentionally record-local: byte ownership is record-relative,
+/// and after flattening there is no way to distinguish padding from arbitrary
+/// untouched memory. A `ScalarRun` keeps each segment's wire alignment, so this
+/// does not change compact-wire padding behavior.
+#[must_use]
+pub fn group_record_scalars<BlockId>(
+    program: MemProgram<BlockId>,
+    ownership: &RecordByteOwnership,
+    record_base: usize,
+) -> MemProgram<BlockId> {
+    let mut out = Vec::with_capacity(program.len());
+    let mut run = Vec::new();
+
+    for op in program {
+        if let Some(segments) = scalar_segments(&op) {
+            if run_can_append(&run, &segments, ownership, record_base) {
+                run.extend(segments);
+            } else {
+                flush_scalar_run(&mut out, &mut run);
+                run.extend(segments);
+            }
+        } else {
+            flush_scalar_run(&mut out, &mut run);
+            out.push(op);
+        }
+    }
+    flush_scalar_run(&mut out, &mut run);
+    out
 }
 
 /// Build an owned-sequence op, using a bulk byte run when the lowered element is
@@ -945,6 +1040,82 @@ pub fn set_op<BlockId>(
         min_wire,
         thunks,
     }))
+}
+
+fn scalar_segments<BlockId>(op: &MemOp<BlockId>) -> Option<Vec<ScalarSegment>> {
+    match op {
+        MemOp::Scalar {
+            offset,
+            size,
+            align,
+        } => Some(vec![ScalarSegment {
+            offset: *offset,
+            size: *size,
+            align: *align,
+        }]),
+        MemOp::ScalarRun(run) => Some(run.segments.clone()),
+        _ => None,
+    }
+}
+
+fn run_can_append(
+    run: &[ScalarSegment],
+    next: &[ScalarSegment],
+    ownership: &RecordByteOwnership,
+    record_base: usize,
+) -> bool {
+    let (Some(last), Some(first)) = (run.last(), next.first()) else {
+        return true;
+    };
+    let Some(last_end) = last.end() else {
+        return false;
+    };
+    if first.offset < last_end {
+        return false;
+    }
+    if first.offset == last_end {
+        return true;
+    }
+    absolute_gap_is_padding(ownership, record_base, last_end, first.offset)
+}
+
+fn absolute_gap_is_padding(
+    ownership: &RecordByteOwnership,
+    record_base: usize,
+    start: usize,
+    end: usize,
+) -> bool {
+    let Some(rel_start) = start.checked_sub(record_base) else {
+        return false;
+    };
+    let Some(rel_end) = end.checked_sub(record_base) else {
+        return false;
+    };
+    if rel_end < rel_start {
+        return false;
+    }
+    ownership.is_padding_range(rel_start, rel_end - rel_start)
+}
+
+fn flush_scalar_run<BlockId>(out: &mut MemProgram<BlockId>, run: &mut Vec<ScalarSegment>) {
+    match run.len() {
+        0 => {}
+        1 => {
+            let segment = run[0];
+            out.push(MemOp::Scalar {
+                offset: segment.offset,
+                size: segment.size,
+                align: segment.align,
+            });
+        }
+        _ => {
+            out.push(MemOp::ScalarRun(Box::new(ScalarRunOp {
+                segments: core::mem::take(run),
+            })));
+            return;
+        }
+    }
+    run.clear();
 }
 
 /// Lower each record field at `base + field.offset`.
@@ -1049,6 +1220,10 @@ pub fn fuse<BlockId>(program: MemProgram<BlockId>) -> MemProgram<BlockId> {
                     });
                 }
                 wire_pos = wire_pos.map(|p| p + pad.unwrap_or(0) + size);
+            }
+            run @ MemOp::ScalarRun(_) => {
+                out.push(run);
+                wire_pos = None;
             }
             MemOp::NativeInt {
                 offset,
@@ -1279,5 +1454,111 @@ mod tests {
             RecordByteOwnership::from_record_layout(Layout { size: 12, align: 4 }, &out_of_bounds),
             RecordByteOwnership::unknown(12)
         );
+    }
+
+    #[test]
+    fn record_byte_ownership_answers_padding_ranges() {
+        let fields = [field(0, 4), field(8, 2)];
+        let ownership =
+            RecordByteOwnership::from_record_layout(Layout { size: 12, align: 4 }, &fields);
+
+        assert!(ownership.is_padding_range(4, 4));
+        assert!(ownership.is_padding_range(10, 2));
+        assert!(!ownership.is_padding_range(2, 4));
+        assert!(!ownership.is_padding_range(12, 1));
+    }
+
+    #[test]
+    fn record_scalar_grouping_crosses_explicit_padding() {
+        let fields = [field(0, 4), field(8, 2)];
+        let ownership =
+            RecordByteOwnership::from_record_layout(Layout { size: 12, align: 4 }, &fields);
+        let program = vec![
+            MemOp::<()>::Scalar {
+                offset: 16,
+                size: 4,
+                align: 4,
+            },
+            MemOp::Scalar {
+                offset: 24,
+                size: 2,
+                align: 2,
+            },
+        ];
+
+        let grouped = group_record_scalars(program, &ownership, 16);
+
+        match grouped.as_slice() {
+            [MemOp::ScalarRun(run)] => assert_eq!(
+                run.segments,
+                [
+                    ScalarSegment {
+                        offset: 16,
+                        size: 4,
+                        align: 4,
+                    },
+                    ScalarSegment {
+                        offset: 24,
+                        size: 2,
+                        align: 2,
+                    },
+                ]
+            ),
+            other => panic!("expected one scalar run, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn record_scalar_grouping_crosses_contiguous_wire_padding() {
+        let fields = [field(0, 4), field(4, 8)];
+        let ownership =
+            RecordByteOwnership::from_record_layout(Layout { size: 12, align: 8 }, &fields);
+        let program = vec![
+            MemOp::<()>::Scalar {
+                offset: 0,
+                size: 4,
+                align: 4,
+            },
+            MemOp::Scalar {
+                offset: 4,
+                size: 8,
+                align: 8,
+            },
+        ];
+
+        let grouped = group_record_scalars(program, &ownership, 0);
+
+        match grouped.as_slice() {
+            [MemOp::ScalarRun(run)] => assert_eq!(run.segments.len(), 2),
+            other => panic!("expected one scalar run, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn record_scalar_grouping_does_not_cross_unknown_gap() {
+        let fields = [field(0, 4), field(8, 2)];
+        let ownership = RecordByteOwnership::fields_only(&fields);
+        let program = vec![
+            MemOp::<()>::Scalar {
+                offset: 0,
+                size: 4,
+                align: 4,
+            },
+            MemOp::Scalar {
+                offset: 8,
+                size: 2,
+                align: 2,
+            },
+        ];
+
+        let grouped = group_record_scalars(program, &ownership, 0);
+
+        assert!(matches!(
+            grouped.as_slice(),
+            [
+                MemOp::Scalar { offset: 0, .. },
+                MemOp::Scalar { offset: 8, .. }
+            ]
+        ));
     }
 }

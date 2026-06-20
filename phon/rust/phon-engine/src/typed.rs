@@ -27,7 +27,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use phon_ir::ir::{
     BorrowOp, BytesOp, DefaultOp, EnumOp, EnumVariantOp, Lowered, LoweringError, MapOp, MemOp,
-    MemProgram, OpaqueOp, OptionOp, PointerOp, ResultOp, SkipOp, fuse,
+    MemProgram, OpaqueOp, OptionOp, PointerOp, ResultOp, SkipOp, fuse, group_record_scalars,
     lower_fixed_array as lower_fixed_array_elements, lower_record_fields, owned_sequence_op,
     set_op,
 };
@@ -193,9 +193,12 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
                     return Err(CompactError::Unsupported("typed: thunk construction"));
                 }
             }
-            lower_record_fields(&ra.fields, base, out, |field, field_base, out| {
+            let mut record = Vec::new();
+            lower_record_fields(&ra.fields, base, &mut record, |field, field_base, out| {
                 lower_node(field, reg, field_base, out)
-            })
+            })?;
+            out.extend(group_record_scalars(fuse(record), &ra.byte_ownership, base));
+            Ok(())
         }
         // r[impl ir.memory]
         (Access::Sequence(seq), Resolved::Composite(SchemaKind::List { .. })) => {
@@ -314,7 +317,7 @@ fn lower_node(d: &Descriptor, reg: &Registry, base: usize, out: &mut MemProgram)
                 variants.push(EnumVariantOp {
                     wire_index: va.index,
                     selector: va.selector,
-                    payload: fuse(payload),
+                    payload: group_record_scalars(fuse(payload), &va.payload.byte_ownership, base),
                 });
             }
             out.push(MemOp::Enum(Box::new(EnumOp {
@@ -1378,6 +1381,16 @@ unsafe fn encode_program(
                 let src = unsafe { core::slice::from_raw_parts(base.add(*offset), *size) };
                 out.extend_from_slice(src);
             }
+            MemOp::ScalarRun(run) => {
+                for segment in &run.segments {
+                    pad_to(out, segment.align);
+                    // Safety: the value is valid for reads over this field's bytes.
+                    let src = unsafe {
+                        core::slice::from_raw_parts(base.add(segment.offset), segment.size)
+                    };
+                    out.extend_from_slice(src);
+                }
+            }
             MemOp::NativeInt {
                 offset,
                 mem_size,
@@ -1631,6 +1644,21 @@ unsafe fn decode_program(
                 // Safety: `base` is valid for writes over this field's bytes, and
                 // the wire bytes equal the in-memory bytes for a fixed scalar.
                 unsafe { core::ptr::copy_nonoverlapping(src.as_ptr(), base.add(*offset), *size) };
+            }
+            MemOp::ScalarRun(run) => {
+                for segment in &run.segments {
+                    skip_pad(r, segment.align)?;
+                    let src = r.read_slice(segment.size)?;
+                    // Safety: forwarded from the grouped scalar op: each segment
+                    // writes within a fixed scalar field, and gaps are untouched.
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(
+                            src.as_ptr(),
+                            base.add(segment.offset),
+                            segment.size,
+                        )
+                    };
+                }
             }
             MemOp::NativeInt {
                 offset,
@@ -2160,6 +2188,13 @@ mod tests {
         delta: i32,
     }
 
+    #[repr(C)]
+    #[derive(Debug, PartialEq)]
+    struct PaddedScalars {
+        a: u32,
+        b: u64,
+    }
+
     fn narrow_native_int_schema(schema: SchemaId) -> Schema {
         Schema {
             id: schema,
@@ -2207,6 +2242,71 @@ mod tests {
                     layout: Layout {
                         size: size_of::<i32>(),
                         align: align_of::<i32>(),
+                    },
+                    access: Access::Scalar,
+                },
+                default: None,
+            },
+        ];
+        let byte_ownership = RecordByteOwnership::from_record_layout(layout, &fields);
+        Descriptor {
+            schema: SchemaRef::concrete(schema),
+            layout,
+            access: Access::Record(RecordAccess {
+                fields,
+                byte_ownership,
+                construct: Construct::InPlace,
+            }),
+        }
+    }
+
+    fn padded_scalars_schema(schema: SchemaId) -> Schema {
+        Schema {
+            id: schema,
+            type_params: Vec::new(),
+            kind: SchemaKind::Struct {
+                name: "PaddedScalars".to_string(),
+                fields: vec![
+                    Field {
+                        name: "a".to_string(),
+                        schema: SchemaRef::concrete(primitive_id(Primitive::U32)),
+                        required: true,
+                    },
+                    Field {
+                        name: "b".to_string(),
+                        schema: SchemaRef::concrete(primitive_id(Primitive::U64)),
+                        required: true,
+                    },
+                ],
+            },
+        }
+    }
+
+    fn padded_scalars_descriptor(schema: SchemaId) -> Descriptor {
+        let layout = Layout {
+            size: size_of::<PaddedScalars>(),
+            align: align_of::<PaddedScalars>(),
+        };
+        let fields = vec![
+            FieldAccess {
+                offset: offset_of!(PaddedScalars, a),
+                descriptor: Descriptor {
+                    schema: SchemaRef::concrete(primitive_id(Primitive::U32)),
+                    layout: Layout {
+                        size: size_of::<u32>(),
+                        align: align_of::<u32>(),
+                    },
+                    access: Access::Scalar,
+                },
+                default: None,
+            },
+            FieldAccess {
+                offset: offset_of!(PaddedScalars, b),
+                descriptor: Descriptor {
+                    schema: SchemaRef::concrete(primitive_id(Primitive::U64)),
+                    layout: Layout {
+                        size: size_of::<u64>(),
+                        align: align_of::<u64>(),
                     },
                     access: Access::Scalar,
                 },
@@ -2276,6 +2376,60 @@ mod tests {
         .unwrap();
         let back = unsafe { slot.assume_init() };
         assert_eq!(back, values.to_vec());
+    }
+
+    #[test]
+    fn padded_record_lowers_to_scalar_run_and_roundtrips() {
+        let schema = SchemaId(1);
+        let reg = Registry::new([padded_scalars_schema(schema)]);
+        let desc = padded_scalars_descriptor(schema);
+        let no_blocks = HashMap::new();
+        let lowered = lower_typed(&desc, &no_blocks, &reg).unwrap();
+
+        match lowered.program.as_slice() {
+            [MemOp::ScalarRun(run)] => {
+                assert_eq!(run.segments.len(), 2);
+                assert_eq!(
+                    (
+                        run.segments[0].offset,
+                        run.segments[0].size,
+                        run.segments[0].align
+                    ),
+                    (
+                        offset_of!(PaddedScalars, a),
+                        size_of::<u32>(),
+                        align_of::<u32>()
+                    )
+                );
+                assert_eq!(
+                    (
+                        run.segments[1].offset,
+                        run.segments[1].size,
+                        run.segments[1].align
+                    ),
+                    (
+                        offset_of!(PaddedScalars, b),
+                        size_of::<u64>(),
+                        align_of::<u64>()
+                    )
+                );
+            }
+            other => panic!("expected one grouped scalar run, got {other:?}"),
+        }
+
+        let value = PaddedScalars {
+            a: 0x1122_3344,
+            b: 0xAABB_CCDD_EEFF_0011,
+        };
+        let bytes = unsafe { encode_with(&lowered, core::ptr::from_ref(&value).cast::<u8>()) };
+        let mut expected = value.a.to_le_bytes().to_vec();
+        expected.extend_from_slice(&[0; 4]);
+        expected.extend_from_slice(&value.b.to_le_bytes());
+        assert_eq!(bytes, expected);
+
+        let mut slot = MaybeUninit::<PaddedScalars>::uninit();
+        unsafe { decode_with(&lowered, &bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        assert_eq!(unsafe { slot.assume_init() }, value);
     }
 
     #[test]

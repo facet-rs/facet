@@ -33,6 +33,10 @@ enum DecodeStep {
         stencil: unsafe fn(&mut DecodeCtx, &Imm) -> Result<(), DecodeError>,
         imm: Imm,
     },
+    ScalarRun {
+        stencil: unsafe fn(&mut DecodeCtx, &Imm) -> Result<(), DecodeError>,
+        imms: Vec<Imm>,
+    },
     Pointer {
         field_offset: usize,
         pointee_size: usize,
@@ -57,6 +61,11 @@ enum EncodeStep {
     Scalar {
         stencil: unsafe fn(&mut EncodeCtx, &Imm),
         imm: Imm,
+    },
+    /// Several fixed scalar segments, each retaining its own wire alignment.
+    ScalarRun {
+        stencil: unsafe fn(&mut EncodeCtx, &Imm),
+        imms: Vec<Imm>,
     },
     /// An owned sequence: write its `u32` count, then encode each element with the
     /// element sub-program at `data + i*stride`.
@@ -89,6 +98,14 @@ pub fn compile_decode(program: &MemProgram) -> CompiledDecode {
             } => DecodeStep::Scalar {
                 stencil: stencil::scalar_decode,
                 imm: [*offset, *size, *align],
+            },
+            MemOp::ScalarRun(run) => DecodeStep::ScalarRun {
+                stencil: stencil::scalar_decode,
+                imms: run
+                    .segments
+                    .iter()
+                    .map(|segment| [segment.offset, segment.size, segment.align])
+                    .collect(),
             },
             MemOp::NativeInt { .. } => {
                 panic!("phon-jit: native-sized integer casts are interpreter-only for now")
@@ -136,6 +153,14 @@ pub fn compile_encode(program: &MemProgram) -> CompiledEncode {
             } => EncodeStep::Scalar {
                 stencil: stencil::scalar_encode,
                 imm: [*offset, *size, *align],
+            },
+            MemOp::ScalarRun(run) => EncodeStep::ScalarRun {
+                stencil: stencil::scalar_encode,
+                imms: run
+                    .segments
+                    .iter()
+                    .map(|segment| [segment.offset, segment.size, segment.align])
+                    .collect(),
             },
             MemOp::NativeInt { .. } => {
                 panic!("phon-jit: native-sized integer casts are interpreter-only for now")
@@ -204,6 +229,13 @@ impl DecodeStep {
             DecodeStep::Scalar { stencil, imm } => {
                 // Safety: forwarded; the scalar op writes within the current base.
                 unsafe { (stencil)(ctx, imm) }
+            }
+            DecodeStep::ScalarRun { stencil, imms } => {
+                for imm in imms {
+                    // Safety: forwarded; every segment writes within a scalar field.
+                    unsafe { (stencil)(ctx, imm)? };
+                }
+                Ok(())
             }
             DecodeStep::Pointer {
                 field_offset,
@@ -280,6 +312,17 @@ impl CompiledEncode {
                     unsafe { (stencil)(&mut ctx, imm) };
                     *out = ctx.out;
                 }
+                EncodeStep::ScalarRun { stencil, imms } => {
+                    let mut ctx = EncodeCtx {
+                        out: core::mem::take(out),
+                        base,
+                    };
+                    for imm in imms {
+                        // Safety: forwarded; every segment reads within a scalar field.
+                        unsafe { (stencil)(&mut ctx, imm) };
+                    }
+                    *out = ctx.out;
+                }
                 EncodeStep::Sequence {
                     field_offset,
                     stride,
@@ -342,7 +385,7 @@ fn free_scratch(buf: *mut u8, layout: Option<std::alloc::Layout>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phon_ir::ir::{MemOp, PointerOp};
+    use phon_ir::ir::{MemOp, PointerOp, ScalarRunOp, ScalarSegment};
 
     // A two-field value in memory: u32 at offset 0, u64 at offset 8. On the wire,
     // compact alignment puts the u32 first, pads to 8, then the u64.
@@ -381,6 +424,43 @@ mod tests {
         let mut out = Mem([0; 16]);
         unsafe { dec.run(&bytes, out.0.as_mut_ptr()) }.unwrap();
         assert_eq!(out.0, mem.0);
+    }
+
+    #[test]
+    fn scalar_run_keeps_per_segment_wire_padding() {
+        let program: MemProgram = vec![MemOp::ScalarRun(Box::new(ScalarRunOp {
+            segments: vec![
+                ScalarSegment {
+                    offset: 0,
+                    size: 4,
+                    align: 4,
+                },
+                ScalarSegment {
+                    offset: 8,
+                    size: 8,
+                    align: 8,
+                },
+            ],
+        }))];
+        let enc = compile_encode(&program);
+        let dec = compile_decode(&program);
+
+        let mut mem = Mem([0; 16]);
+        mem.0[0..4].copy_from_slice(&0x1122_3344u32.to_le_bytes());
+        mem.0[4..8].copy_from_slice(&[0xAA, 0xBB, 0xCC, 0xDD]);
+        mem.0[8..16].copy_from_slice(&0xAABB_CCDD_EEFF_0011u64.to_le_bytes());
+
+        let bytes = unsafe { enc.run(mem.0.as_ptr()) };
+        assert_eq!(bytes.len(), 16);
+        assert_eq!(&bytes[0..4], &0x1122_3344u32.to_le_bytes());
+        assert_eq!(&bytes[4..8], &[0, 0, 0, 0]);
+        assert_eq!(&bytes[8..16], &0xAABB_CCDD_EEFF_0011u64.to_le_bytes());
+
+        let mut out = Mem([0xEE; 16]);
+        unsafe { dec.run(&bytes, out.0.as_mut_ptr()) }.unwrap();
+        assert_eq!(&out.0[0..4], &mem.0[0..4]);
+        assert_eq!(&out.0[4..8], &[0xEE; 4]);
+        assert_eq!(&out.0[8..16], &mem.0[8..16]);
     }
 
     #[test]

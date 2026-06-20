@@ -459,6 +459,27 @@ struct Chain {
     prog_index: usize,
 }
 
+fn expand_scalar_runs(program: &MemProgram) -> Option<MemProgram> {
+    if !program.iter().any(|op| matches!(op, MemOp::ScalarRun(_))) {
+        return None;
+    }
+
+    let mut out = Vec::with_capacity(program.len());
+    for op in program {
+        match op {
+            MemOp::ScalarRun(run) => {
+                out.extend(run.segments.iter().map(|segment| MemOp::Scalar {
+                    offset: segment.offset,
+                    size: segment.size,
+                    align: segment.align,
+                }));
+            }
+            other => out.push(other.clone()),
+        }
+    }
+    Some(out)
+}
+
 /// A sequence's prog slot to fill once chains are laid out and the `ExecBuf`
 /// exists: write `&seq_infos[seqinfo]` into `progs[prog_index][slot]`.
 struct SeqFixup {
@@ -736,6 +757,8 @@ impl Compiler {
     /// continuations patched to chain to the next op (the last to `done`).
     /// Recurses into sequence elements, which become their own chains.
     fn compile_chain(&mut self, program: &MemProgram) -> Chain {
+        let expanded = expand_scalar_runs(program);
+        let program = expanded.as_ref().unwrap_or(program);
         let entry = self.code.len();
         let prog_index = self.progs.len();
         self.progs.push(Vec::new());
@@ -756,6 +779,9 @@ impl Compiler {
                     p.push(*offset as u64);
                     p.push(*size as u64);
                     p.push(*align as u64);
+                }
+                MemOp::ScalarRun(_) => {
+                    unreachable!("scalar runs are expanded before native lowering")
                 }
                 MemOp::NativeInt { .. } => {
                     panic!("phon-jit: native-sized integer casts are interpreter-only for now")
@@ -1086,6 +1112,9 @@ impl Compiler {
             let next = starts.get(i + 1).copied().unwrap_or(done_start);
             let relocs = match &program[i] {
                 MemOp::Scalar { .. } => SCALAR_CONT,
+                MemOp::ScalarRun(_) => {
+                    unreachable!("scalar runs are expanded before native lowering")
+                }
                 MemOp::NativeInt { .. } => {
                     panic!("phon-jit: native-sized integer casts are interpreter-only for now")
                 }
@@ -1998,6 +2027,8 @@ impl EncCompiler {
     /// `done`, with continuations patched to chain to the next op (the last to
     /// `done`). Recurses into sequence elements, which become their own chains.
     fn compile_chain(&mut self, program: &MemProgram) -> Chain {
+        let expanded = expand_scalar_runs(program);
+        let program = expanded.as_ref().unwrap_or(program);
         let entry = self.code.len();
         let prog_index = self.progs.len();
         self.progs.push(Vec::new());
@@ -2016,6 +2047,9 @@ impl EncCompiler {
                     p.push(*offset as u64);
                     p.push(*size as u64);
                     p.push(*align as u64);
+                }
+                MemOp::ScalarRun(_) => {
+                    unreachable!("scalar runs are expanded before native lowering")
                 }
                 MemOp::NativeInt { .. } => {
                     panic!("phon-jit: native-sized integer casts are interpreter-only for now")
@@ -2282,6 +2316,9 @@ impl EncCompiler {
             let next = starts.get(i + 1).copied().unwrap_or(done_start);
             let relocs = match &program[i] {
                 MemOp::Scalar { .. } => SCALAR_ENC_CONT,
+                MemOp::ScalarRun(_) => {
+                    unreachable!("scalar runs are expanded before native lowering")
+                }
                 MemOp::NativeInt { .. } => {
                     panic!("phon-jit: native-sized integer casts are interpreter-only for now")
                 }
@@ -2677,6 +2714,7 @@ impl NativeEncode {
 mod tests {
     use super::*;
     use crate::lower::compile_decode;
+    use phon_ir::ir::{ScalarRunOp, ScalarSegment};
 
     #[test]
     fn runs_compiler_emitted_machine_code() {
@@ -3061,6 +3099,42 @@ mod tests {
         assert_eq!(&got[0..4], &0x1122_3344u32.to_le_bytes());
         assert_eq!(&got[4..8], &[0, 0, 0, 0]);
         assert_eq!(&got[8..16], &0xAABB_CCDD_EEFF_0011u64.to_le_bytes());
+    }
+
+    #[test]
+    fn jit_scalar_run_matches_threaded() {
+        let program: MemProgram = vec![MemOp::ScalarRun(Box::new(ScalarRunOp {
+            segments: vec![
+                ScalarSegment {
+                    offset: 0,
+                    size: 4,
+                    align: 4,
+                },
+                ScalarSegment {
+                    offset: 8,
+                    size: 8,
+                    align: 8,
+                },
+            ],
+        }))];
+        #[repr(C, align(8))]
+        struct Mem([u8; 16]);
+        let mut mem = Mem([0; 16]);
+        mem.0[0..4].copy_from_slice(&0x1122_3344u32.to_le_bytes());
+        mem.0[4..8].copy_from_slice(&[0xAA, 0xBB, 0xCC, 0xDD]);
+        mem.0[8..16].copy_from_slice(&0xAABB_CCDD_EEFF_0011u64.to_le_bytes());
+
+        let expected = unsafe { compile_encode(&program).run(mem.0.as_ptr()) };
+        let got = unsafe { NativeEncode::compile(&program).run(mem.0.as_ptr()) };
+        assert_eq!(got, expected);
+        assert_eq!(&got[4..8], &[0, 0, 0, 0]);
+
+        let dec = NativeDecode::compile(&program);
+        let mut out = Mem([0xEE; 16]);
+        unsafe { dec.run(&got, out.0.as_mut_ptr()) }.unwrap();
+        assert_eq!(&out.0[0..4], &mem.0[0..4]);
+        assert_eq!(&out.0[4..8], &[0xEE; 4]);
+        assert_eq!(&out.0[8..16], &mem.0[8..16]);
     }
 
     /// A wider scalar program (every fixed width, reordered offsets), encoded and
