@@ -1,5 +1,4 @@
 use std::cell::RefCell;
-use std::convert::Infallible;
 
 use facet::Facet;
 
@@ -19,21 +18,17 @@ struct StackProbe;
 #[facet(transparent)]
 struct StackProbeProxy(u8);
 
-impl TryFrom<&StackProbe> for StackProbeProxy {
-    type Error = Infallible;
-
-    fn try_from(_: &StackProbe) -> Result<Self, Self::Error> {
+impl From<&StackProbe> for StackProbeProxy {
+    fn from(_: &StackProbe) -> Self {
         record_stack_sample();
-        Ok(Self(0))
+        Self(0)
     }
 }
 
-impl TryFrom<StackProbeProxy> for StackProbe {
-    type Error = Infallible;
-
-    fn try_from(_: StackProbeProxy) -> Result<Self, Self::Error> {
+impl From<StackProbeProxy> for StackProbe {
+    fn from(_: StackProbeProxy) -> Self {
         record_stack_sample();
-        Ok(Self)
+        Self
     }
 }
 
@@ -73,7 +68,7 @@ struct StackUsage {
 }
 
 thread_local! {
-    static STACK_MEASUREMENT: RefCell<Option<StackMeasurement>> = RefCell::new(None);
+    static STACK_MEASUREMENT: RefCell<Option<StackMeasurement>> = const { RefCell::new(None) };
 }
 
 fn record_stack_sample() {
