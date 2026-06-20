@@ -26,8 +26,6 @@
 //!
 //! Spec: "The intermediate representation" (`r[ir.*]`).
 
-use std::collections::BTreeMap;
-
 use phon_schema::bytes::{Reader, skip_pad};
 use phon_schema::{DecodeError, Primitive, SchemaId, SchemaRef};
 
@@ -36,15 +34,11 @@ use phon_schema::{DecodeError, Primitive, SchemaId, SchemaRef};
 /// fixed-array element) are themselves `Program`s — recursion appears only at
 /// genuine data-directed control flow, never within a fixed-shape run. A struct
 /// of structs of scalars lowers to a single branch-free `Program`.
-pub type Program = Vec<Op>;
+pub type Program = weavy::Program<Op>;
 
 /// A lowered dynamic-value decode program plus callable blocks for recursive
 /// reader schemas. Non-recursive plans have an empty `blocks` map.
-#[derive(Clone, Debug, Default)]
-pub struct ValueProgram {
-    pub program: Program,
-    pub blocks: BTreeMap<SchemaId, Program>,
-}
+pub type ValueProgram = weavy::Lowered<SchemaId, Op>;
 
 /// One lowered decode step. Each reads from the wire and adjusts the
 /// interpreter's value stack; the documented net stack effect of a *complete*
@@ -128,17 +122,13 @@ pub struct EnumArm {
 /// describes taken to its limit. Owned sequences, options, and enums (which
 /// allocate or branch at run time) extend this later.
 // r[impl ir.one-vocabulary]
-pub type MemProgram = Vec<MemOp>;
+pub type MemProgram = weavy::Program<MemOp>;
 
 /// A lowered typed program: the root op stream plus the per-schema block programs
 /// that [`MemOp::CallBlock`] calls into. For a non-recursive type `blocks` is empty
 /// and `program` is the familiar flat op stream; a recursive type lowers each of its
 /// cyclic schemas to a block here, so `program` (and every block) stays finite.
-#[derive(Clone, Debug, Default)]
-pub struct Lowered {
-    pub program: MemProgram,
-    pub blocks: std::collections::BTreeMap<SchemaId, MemProgram>,
-}
+pub type Lowered = weavy::Lowered<SchemaId, MemOp>;
 
 /// One typed step. The base pointer is supplied at run time; `offset` is relative
 /// to it.

@@ -120,6 +120,7 @@ members = [
   "examples/dibs-my-app-workspace/my-app-queries",
 
   # Phon schema and typed codec
+  "weavy",
   "phon/rust/copypatch",
   "phon/rust/phon-schema",
   "phon/rust/phon-ir",
@@ -225,6 +226,7 @@ dibs-query-schema = { path = "dibs-query-schema", version = "0.2.0-rc.1" }
 dibs-sql = { path = "dibs-sql", version = "0.2.0-rc.1" }
 dockside = { path = "dockside" }
 copypatch = { path = "phon/rust/copypatch", version = "0.2.0-rc.1" }
+weavy = { path = "weavy", version = "0.1.0" }
 phon = { path = "phon/rust/phon", version = "0.2.0-rc.1" }
 phon-engine = { path = "phon/rust/phon-engine", version = "0.2.0-rc.1" }
 phon-ir = { path = "phon/rust/phon-ir", version = "0.2.0-rc.1" }
@@ -448,6 +450,7 @@ dibs-query-schema = { path = "dibs-query-schema" }
 dibs-runtime = { path = "dibs-runtime" }
 dibs-sql = { path = "dibs-sql" }
 copypatch = { path = "phon/rust/copypatch" }
+weavy = { path = "weavy" }
 phon = { path = "phon/rust/phon" }
 phon-codegen = { path = "phon/rust/phon-codegen" }
 phon-conformance = { path = "phon/rust/phon-conformance" }

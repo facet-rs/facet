@@ -51,6 +51,9 @@ mod raw_json;
 mod scanner;
 mod serializer;
 
+#[doc(hidden)]
+pub mod bytecode;
+
 #[cfg(feature = "axum")]
 mod axum;
 

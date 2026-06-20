@@ -88,7 +88,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     }
 
     #[inline(never)]
-    fn deserialize_into_inner(
+    pub(crate) fn deserialize_into_inner(
         &mut self,
         wip: Partial<'input, BORROW>,
         meta: MetaSource<'input>,
@@ -672,7 +672,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             // Some(value)
             wip = wip
                 .begin_some()?
-                .with(|w| self.deserialize_into(w, MetaSource::FromEvents))?
+                .with(|w| self.deserialize_into_inner(w, MetaSource::FromEvents))?
                 .end()?;
         }
         Ok(wip)

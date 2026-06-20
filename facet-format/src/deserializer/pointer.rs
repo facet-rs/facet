@@ -92,7 +92,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             let _guard = SpanGuard::new(self.last_span);
             wip = wip
                 .begin_inner()?
-                .with(|w| self.deserialize_into(w, meta))?
+                .with(|w| self.deserialize_into_inner(w, meta))?
                 .end()?;
             return Ok(wip);
         }
@@ -249,7 +249,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 // List items get fresh metadata from events
                 wip = wip
                     .begin_list_item()?
-                    .with(|w| self.deserialize_into(w, MetaSource::FromEvents))?
+                    .with(|w| self.deserialize_into_inner(w, MetaSource::FromEvents))?
                     .end()?;
             }
 
@@ -259,7 +259,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             // DON'T call end() again - the caller (deserialize_struct) will do that
         } else {
             // Regular smart pointer with sized pointee - pass through the metadata
-            wip = wip.with(|w| self.deserialize_into(w, meta))?.end()?;
+            wip = wip.with(|w| self.deserialize_into_inner(w, meta))?.end()?;
         }
 
         Ok(wip)
