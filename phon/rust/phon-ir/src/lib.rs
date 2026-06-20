@@ -25,9 +25,10 @@ pub mod ir;
 
 pub use ir::{
     BorrowOp, BorrowThunks, ByteValidator, BytesOp, DefaultOp, DefaultThunk, EnumArm, EnumOp,
-    EnumVariantOp, Lowered, MapOp, MapThunks, MemOp, MemProgram, Op, OpaqueOp, OpaqueThunks,
-    OptionOp, OptionThunks, PointerOp, PointerThunks, Program, ResultOp, ResultThunks, ScalarRunOp,
-    ScalarSegment, SeqOp, SeqThunks, SetOp, SetThunks, SkipOp, ValueProgram,
+    EnumVariantOp, Lowered, LoweredMemProgramStats, MapOp, MapThunks, MemOp, MemProgram,
+    MemProgramStats, Op, OpaqueOp, OpaqueThunks, OptionOp, OptionThunks, PointerOp, PointerThunks,
+    Program, ResultOp, ResultThunks, ScalarRunOp, ScalarSegment, SeqOp, SeqThunks, SetOp,
+    SetThunks, SkipOp, ValueProgram, lowered_mem_program_stats, mem_program_stats,
 };
 
 /// Thunk bindings: resolving thunk names to process-local function pointers

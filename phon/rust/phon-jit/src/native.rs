@@ -397,12 +397,26 @@ unsafe extern "C" fn jit_read_value(
     }
 }
 
+/// Shape and code-layout counts for a compiled native copy-and-patch program.
+///
+/// `stencil_count` includes the terminal `done` stencil emitted for each chain.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NativeProgramStats {
+    pub chain_count: usize,
+    pub stencil_count: usize,
+    pub prog_slot_count: usize,
+    pub scalar_run_count: usize,
+    pub scalar_run_segment_count: usize,
+}
+
 /// A JIT-compiled decoder for a [`MemProgram`]: a `MAP_JIT` page of copied
 /// stencils with their continuations patched to chain, ending at `done`. Scalars
 /// chain straight through; an owned sequence runs its element body as a
 /// separately compiled chain it calls once per element (`r[ir.stencils]`).
 pub struct NativeDecode {
     buf: ExecBuf,
+    stencil_count: usize,
     /// Index into `progs` of the top-level chain's immediate stream.
     entry_prog: usize,
     /// Every chain's immediate stream: `[offset, size, align]` triples for
@@ -726,6 +740,7 @@ struct EnumInfoBuild {
 struct Compiler {
     code: Vec<u8>,
     progs: Vec<Vec<u64>>,
+    stencil_count: usize,
     scalar_run_segments: Vec<Vec<ScalarRunSegmentInfo>>,
     scalar_run_fixups: Vec<ScalarRunFixup>,
     seq_infos: Vec<SeqInfoBuild>,
@@ -1133,6 +1148,7 @@ impl Compiler {
         }
         let done_start = self.code.len();
         self.code.extend_from_slice(DONE);
+        self.stencil_count += program.len() + 1;
 
         // Patch every op's continuation branches to the following op (last ->
         // `done`). Scalar and sequence stencils both reach the next op through a
@@ -1192,6 +1208,7 @@ impl NativeDecode {
         let mut c = Compiler {
             code: Vec::new(),
             progs: Vec::new(),
+            stencil_count: 0,
             scalar_run_segments: Vec::new(),
             scalar_run_fixups: Vec::new(),
             seq_infos: Vec::new(),
@@ -1448,6 +1465,7 @@ impl NativeDecode {
 
         let mut nd = NativeDecode {
             buf,
+            stencil_count: c.stencil_count,
             entry_prog: top.prog_index,
             progs,
             scalar_run_infos,
@@ -1625,6 +1643,18 @@ impl NativeDecode {
         }
 
         nd
+    }
+
+    /// Return shape and code-layout counts for this compiled decoder.
+    #[must_use]
+    pub fn stats(&self) -> NativeProgramStats {
+        NativeProgramStats {
+            chain_count: self.progs.len(),
+            stencil_count: self.stencil_count,
+            prog_slot_count: self.progs.iter().map(Vec::len).sum(),
+            scalar_run_count: self.scalar_run_infos.len(),
+            scalar_run_segment_count: self.scalar_run_segments.iter().map(Vec::len).sum(),
+        }
     }
 
     /// Decode `bytes` into the value at `base`, rejecting trailing bytes.
@@ -1912,6 +1942,7 @@ unsafe extern "C" fn jit_write_value(value: *const u8, out: *mut Vec<u8>) {
 /// runs its element body as a separately compiled chain it calls once per element.
 pub struct NativeEncode {
     buf: ExecBuf,
+    stencil_count: usize,
     /// Index into `progs` of the top-level chain's immediate stream.
     entry_prog: usize,
     /// Every chain's immediate stream: `[offset, size, align]` triples for
@@ -2059,6 +2090,7 @@ struct EncEnumInfoBuild {
 struct EncCompiler {
     code: Vec<u8>,
     progs: Vec<Vec<u64>>,
+    stencil_count: usize,
     scalar_run_segments: Vec<Vec<ScalarRunSegmentInfo>>,
     scalar_run_fixups: Vec<ScalarRunFixup>,
     seq_infos: Vec<EncSeqInfoBuild>,
@@ -2392,6 +2424,7 @@ impl EncCompiler {
         }
         let done_start = self.code.len();
         self.code.extend_from_slice(DONE_ENC);
+        self.stencil_count += program.len() + 1;
 
         for (i, &op_start) in starts.iter().enumerate() {
             let next = starts.get(i + 1).copied().unwrap_or(done_start);
@@ -2448,6 +2481,7 @@ impl NativeEncode {
         let mut c = EncCompiler {
             code: Vec::new(),
             progs: Vec::new(),
+            stencil_count: 0,
             scalar_run_segments: Vec::new(),
             scalar_run_fixups: Vec::new(),
             seq_infos: Vec::new(),
@@ -2651,6 +2685,7 @@ impl NativeEncode {
 
         let mut ne = NativeEncode {
             buf,
+            stencil_count: c.stencil_count,
             entry_prog: top.prog_index,
             progs,
             scalar_run_infos,
@@ -2783,6 +2818,18 @@ impl NativeEncode {
         }
 
         ne
+    }
+
+    /// Return shape and code-layout counts for this compiled encoder.
+    #[must_use]
+    pub fn stats(&self) -> NativeProgramStats {
+        NativeProgramStats {
+            chain_count: self.progs.len(),
+            stencil_count: self.stencil_count,
+            prog_slot_count: self.progs.iter().map(Vec::len).sum(),
+            scalar_run_count: self.scalar_run_infos.len(),
+            scalar_run_segment_count: self.scalar_run_segments.iter().map(Vec::len).sum(),
+        }
     }
 
     /// Encode the value at `base` into compact bytes.
@@ -3235,13 +3282,23 @@ mod tests {
 
         let expected = unsafe { compile_encode(&program).run(mem.0.as_ptr()) };
         let enc = NativeEncode::compile(&program);
-        assert_eq!(enc.progs[enc.entry_prog].len(), 1);
+        let enc_stats = enc.stats();
+        assert_eq!(enc_stats.chain_count, 1);
+        assert_eq!(enc_stats.stencil_count, 2);
+        assert_eq!(enc_stats.prog_slot_count, 1);
+        assert_eq!(enc_stats.scalar_run_count, 1);
+        assert_eq!(enc_stats.scalar_run_segment_count, 2);
         let got = unsafe { enc.run(mem.0.as_ptr()) };
         assert_eq!(got, expected);
         assert_eq!(&got[4..8], &[0, 0, 0, 0]);
 
         let dec = NativeDecode::compile(&program);
-        assert_eq!(dec.progs[dec.entry_prog].len(), 1);
+        let dec_stats = dec.stats();
+        assert_eq!(dec_stats.chain_count, 1);
+        assert_eq!(dec_stats.stencil_count, 2);
+        assert_eq!(dec_stats.prog_slot_count, 1);
+        assert_eq!(dec_stats.scalar_run_count, 1);
+        assert_eq!(dec_stats.scalar_run_segment_count, 2);
         let mut out = Mem([0xEE; 16]);
         unsafe { dec.run(&got, out.0.as_mut_ptr()) }.unwrap();
         assert_eq!(&out.0[0..4], &mem.0[0..4]);
