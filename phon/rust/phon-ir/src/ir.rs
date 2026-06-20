@@ -29,8 +29,8 @@
 use phon_schema::bytes::{Reader, skip_pad};
 use phon_schema::{DecodeError, Primitive, SchemaId, SchemaRef};
 pub use weavy::mem::{
-    BorrowThunks, ByteValidator, DefaultOp, DefaultThunk, MapThunks, OpaqueThunks, OptionThunks,
-    PointerThunks, ResultThunks, SeqThunks, SetThunks,
+    BorrowOp, BorrowThunks, ByteValidator, BytesOp, DefaultOp, DefaultThunk, MapThunks, OpaqueOp,
+    OpaqueThunks, OptionThunks, PointerThunks, ResultThunks, SeqThunks, SetThunks, SkipOp,
 };
 
 /// A lowered decode program: a straight run of [`Op`]s executed start to finish.
@@ -114,177 +114,27 @@ pub struct EnumArm {
 }
 
 /// A lowered *typed* program: the memory side of the IR. Where [`Program`] builds
-/// a dynamic `facet_value::Value` on a stack, a `MemProgram` moves bytes
-/// between the wire and a value's in-memory layout, at offsets the descriptor
-/// supplies (`r[ir.memory]`). The same op stream is consumed by encode and decode;
-/// direction is selected by the executor, and decode-only compat ops simply never
-/// appear in encode programs.
-///
-/// In this first cut — fixed scalars and in-place records — a whole nested
-/// `repr(Rust)` struct dissolves into a flat run of [`MemOp::Scalar`] copies at
-/// folded, base-relative offsets: no branches, the splicing `r[ir.inlining]`
-/// describes taken to its limit. Owned sequences, options, and enums (which
-/// allocate or branch at run time) extend this later.
+/// a dynamic `facet_value::Value` on a stack, a `MemProgram` moves bytes between
+/// the wire and a value's in-memory layout, at offsets the descriptor supplies
+/// (`r[ir.memory]`).
 // r[impl ir.one-vocabulary]
-pub type MemProgram = weavy::Program<MemOp>;
+pub type MemProgram = weavy::mem::MemProgram<SchemaId>;
 
-/// A lowered typed program: the root op stream plus the per-schema block programs
-/// that [`MemOp::CallBlock`] calls into. For a non-recursive type `blocks` is empty
-/// and `program` is the familiar flat op stream; a recursive type lowers each of its
-/// cyclic schemas to a block here, so `program` (and every block) stays finite.
+/// One typed memory step for Phon schemas.
+pub type MemOp = weavy::mem::MemOp<SchemaId>;
+
+/// A lowered typed program: the root op stream plus the per-schema block
+/// programs that [`MemOp::CallBlock`] calls into.
 pub type Lowered = weavy::Lowered<SchemaId, MemOp>;
 
-/// One typed step. The base pointer is supplied at run time; `offset` is relative
-/// to it.
-#[derive(Clone, Debug)]
-pub enum MemOp {
-    /// Copy a run of `size` bytes between memory at `offset` and the wire, which
-    /// is first padded to `align` (`r[compact.alignment]`). A single scalar, or a
-    /// fused run of adjacent scalars (see [`fuse`]). Encode reads memory and
-    /// writes the wire; decode reads the wire and writes memory. Sound only where
-    /// host byte order equals the wire's (little-endian), which every phon target
-    /// is.
-    Scalar {
-        offset: usize,
-        size: usize,
-        align: usize,
-    },
-    /// A Rust native-sized integer (`usize`/`isize`) whose wire primitive is
-    /// fixed-width (`u64`/`i64`) on every platform. On 64-bit little-endian
-    /// targets this can lower to [`Self::Scalar`]; this op exists for narrower hosts,
-    /// where correctness requires widening/narrowing instead of an 8-byte copy.
-    NativeInt {
-        offset: usize,
-        mem_size: usize,
-        signed: bool,
-    },
-    /// An owned, contiguous sequence (`Vec<T>`) at `field_offset`: a `u32` count
-    /// then `count` elements, each decoded by the element's own program. Decode
-    /// initializes the sequence and fills it; encode reads its length and
-    /// elements. See [`SeqOp`]. Used when the element has structure; a run of
-    /// trivially-copyable elements uses [`Bytes`](MemOp::Bytes) instead.
-    Sequence(Box<SeqOp>),
-    /// An owned set (`HashSet<T>`, `BTreeSet<T>`, …) at `field_offset`: a `u32`
-    /// element count then element values. Encode iterates the set; decode
-    /// initializes it and inserts each decoded element, rejecting duplicates. See
-    /// [`SetOp`].
-    Set(Box<SetOp>),
-    /// A bulk contiguous run of trivially-copyable elements — `String`, `Vec<u8>`,
-    /// or (via bulk-copy lowering) `Vec<u32>`/`Vec<f64>`/… : a `u32` element count
-    /// then `count * stride` contiguous bytes moved in **one block**, no per-element
-    /// loop. Decode optionally validates the bytes as UTF-8 (for `String`). See
-    /// [`BytesOp`].
-    Bytes(Box<BytesOp>),
-    /// A BORROWED, zero-copy contiguous byte run — `&str` or `&[u8]` — at
-    /// `field_offset`. The wire form is IDENTICAL to [`Bytes`](MemOp::Bytes) (a
-    /// `u32` element count then `count * stride` contiguous bytes), so a borrowed
-    /// peer interoperates byte-for-byte with an owned peer. Where decode of an owned
-    /// run allocates and bulk-copies, decode of a borrowed run writes a fat pointer
-    /// straight INTO the reader's input buffer — no allocation, no copy. The decoded
-    /// `&str`/`&[u8]` borrows the input; the caller must keep the input bytes alive
-    /// as long as the decoded value (the standard zero-copy contract). The fat
-    /// pointer is never written at a fixed offset (the `&str`/`&[T]` layout is
-    /// unspecified) — a [`BorrowThunks`] construct thunk builds it where the type is
-    /// concrete. See [`BorrowOp`].
-    Borrow(Box<BorrowOp>),
-    /// An `Option<T>` at `field_offset`: a `u8` presence byte (`0` none / `1` some),
-    /// then — only when some — the inner `T` decoded by its own program. The first
-    /// *data-directed* op: the branch is taken on a value read at run time, not
-    /// resolved at lowering. See [`OptionOp`].
-    Option(Box<OptionOp>),
-    /// A `#[repr(uN/iN)]` enum: a `u32` wire variant index then the active variant's
-    /// payload. Encode reads the in-memory discriminant (at `tag_offset`, `tag_width`
-    /// bytes) to pick the variant; decode reads the wire index, writes the
-    /// discriminant, then runs the variant's payload program. Data-directed: the
-    /// active arm is chosen at run time. See [`EnumOp`].
-    Enum(Box<EnumOp>),
-    /// An owned map (`BTreeMap<K, V>`, `HashMap<K, V>`, …) at `field_offset`: a
-    /// `u32` entry count then, per entry, the key decoded by its own program then
-    /// the value decoded by its own program. Data-directed: the count drives a
-    /// run-time loop. Encode reads the entry count and iterates the entries through
-    /// a stateful iterator; decode initializes the map with capacity, then for each
-    /// entry decodes a key+value into engine scratch and inserts (moving both in).
-    /// See [`MapOp`].
-    Map(Box<MapOp>),
-    /// A self-describing dynamic `Value` at `field_offset`: encoded/decoded by the
-    /// self-describing value codec (`write_value`/`read_value`), self-delimiting on
-    /// the wire (no length prefix). The in-memory field IS a `phon_schema::Value`
-    /// (a concrete type, not facet-bound), so the engine reads/writes it directly at
-    /// the offset. Used for open-ended payloads like metadata.
-    Dynamic { field_offset: usize },
-    /// A `Result<T, E>` at `field_offset`: a `u32` wire variant index then the
-    /// active arm's payload — IDENTICAL wire to a two-variant `#[repr(int)]` enum
-    /// (`Ok` and `Err`). But `Result`'s in-memory layout is `repr(Rust)`
-    /// (unspecified), so the engine never reads a discriminant or a payload offset:
-    /// it drives presence and construction through the [`ResultThunks`] vtable
-    /// (`is_ok` / `get_ok` / `get_err` / `init_ok` / `init_err`), exactly as
-    /// [`Option`](MemOp::Option) does for one arm. Data-directed. See [`ResultOp`].
-    Result(Box<ResultOp>),
-    /// An owned pointer (`Box<T>`, `Rc<T>`, `Arc<T>`) at `field_offset`: the wire
-    /// shape is exactly the pointee `T`, while the memory side is an owning pointer
-    /// handle. Encode borrows the pointee through a thunk and runs the pointee
-    /// program there; decode fills a scratch `T` then moves it into the owning
-    /// pointer through a construction thunk. See [`PointerOp`].
-    Pointer(Box<PointerOp>),
-    /// A writer-only value present on the wire but absent from the reader: consume
-    /// its wire bytes and write NOTHING to memory (`r[compat.skip-writer-only]`).
-    /// Decode-only — it advances the cursor by a pre-built wire skeleton (see
-    /// [`SkipOp`]) without touching the reader value. Net memory effect: none.
-    SkipWire(Box<SkipOp>),
-    /// A reader-only field absent from the writer: write its default into memory at
-    /// `offset` with NO wire read (`r[compat.reader-only-fields]`). Decode-only.
-    /// See [`DefaultOp`].
-    Default(Box<DefaultOp>),
-    /// An opaque field (`#[facet(opaque = ...)]`) at `field_offset`: a `u32` byte
-    /// length then that many bytes of an inner encoding the engine never interprets.
-    /// On the wire it is IDENTICAL to a `Primitive::Bytes` run (a `u32` count + raw
-    /// bytes), so a cross-impl peer reads it as opaque bytes. Encode reserves the
-    /// `u32`, calls the [`OpaqueThunks`] encode thunk to append the inner bytes, then
-    /// backpatches the length (newly possible because phon is fixed-width, not
-    /// varints). Decode reads the length, borrows the span from the input, and hands
-    /// it to the decode thunk — zero-copy, the inner schema unknown. See [`OpaqueOp`].
-    Opaque(Box<OpaqueOp>),
-    /// A call into a recursive schema's block program, run at `base + offset` (the
-    /// recursive value sits at `offset` from the enclosing base — a struct field, or
-    /// `0` for a sequence element / option payload / map value reached at its own
-    /// base). This is how a recursive type stays finite: the cyclic schema is lowered
-    /// once into a block (resolved from the [`Lowered::blocks`] registry by `schema`,
-    /// with offsets relative to the recursive value's start), and every reference to it
-    /// is a `CallBlock` rather than an inlined subtree. Encode and decode both recurse
-    /// into the block. (`r[ir.recursion]`)
-    CallBlock { schema: SchemaId, offset: usize },
-}
-
-/// A pre-built wire skeleton of a writer value, advancing the cursor only — never
-/// reading or writing the reader's memory. Built once at lowering from the writer
-/// schema (see `skip_op`), run by the decode interpreter to consume a writer-only
-/// field's bytes (`r[compat.skip-writer-only]`).
-#[derive(Clone, Debug)]
-pub enum SkipOp {
-    /// A fixed scalar: pad the cursor to `align`, then advance `size` bytes.
-    Scalar { size: usize, align: usize },
-    /// A bulk byte run (`String`, `Vec<scalar>`): read a `u32` count, pad to
-    /// `elem_align`, then advance `count * stride` bytes.
-    Bytes { stride: usize, elem_align: usize },
-    /// An owned sequence of structured elements (`Vec<struct>`): read a `u32` count,
-    /// then skip the element `count` times.
-    Seq(Box<SkipOp>),
-    /// An `Option<T>`: read a `u8` presence byte; on `1` skip the inner, on `0`
-    /// nothing, any other byte is a decode error.
-    Option(Box<SkipOp>),
-    /// A `#[repr(int)]` enum: read a `u32` writer variant index, then skip that
-    /// variant's field-skips. An index matching no entry is a decode error.
-    Enum(Vec<(u32, Vec<SkipOp>)>),
-    /// An owned map: read a `u32` entry count, then skip key then value `count`
-    /// times.
-    Map(Box<SkipOp>, Box<SkipOp>),
-    /// A struct or tuple: skip each field in wire order.
-    Struct(Vec<SkipOp>),
-    /// A self-describing dynamic `Value`: read one value and discard it (the
-    /// self-describing codec is self-delimiting, so this consumes exactly the
-    /// value's bytes).
-    Dynamic,
-}
+pub type SeqOp = weavy::mem::SeqOp<SchemaId>;
+pub type SetOp = weavy::mem::SetOp<SchemaId>;
+pub type OptionOp = weavy::mem::OptionOp<SchemaId>;
+pub type EnumOp = weavy::mem::EnumOp<SchemaId>;
+pub type EnumVariantOp = weavy::mem::EnumVariantOp<SchemaId>;
+pub type MapOp = weavy::mem::MapOp<SchemaId>;
+pub type ResultOp = weavy::mem::ResultOp<SchemaId>;
+pub type PointerOp = weavy::mem::PointerOp<SchemaId>;
 
 /// Advance the reader past one writer value described by `op`, writing nothing to
 /// memory. The wire-shape mirror of the decode cursor moves, sharing the
@@ -356,319 +206,15 @@ pub fn skip(r: &mut Reader, op: &SkipOp) -> Result<(), DecodeError> {
             }
             Ok(())
         }
-        // The self-describing codec is self-delimiting: decode one value (consuming
-        // exactly its bytes) and discard it.
+        // The self-describing codec is self-delimiting: decode one value
+        // (consuming exactly its bytes) and discard it.
         SkipOp::Dynamic => phon_schema::read_value(r).map(|_| ()),
     }
 }
 
-/// An owned-sequence op's payload (boxed in [`MemOp::Sequence`] to keep `MemOp`
-/// small).
-#[derive(Clone, Debug)]
-pub struct SeqOp {
-    /// Where the sequence handle (e.g. the `Vec`) lives, relative to the base.
-    pub field_offset: usize,
-    /// How to encode/decode one element, run at each element slot (offsets
-    /// relative to the element).
-    pub element: MemProgram,
-    /// Bytes between consecutive elements in the sequence's contiguous storage
-    /// (the element type's size).
-    pub stride: usize,
-    /// Alignment of the element type — the engine allocates the element buffer
-    /// itself with this layout, then hands it to `from_raw_parts`.
-    pub elem_align: usize,
-    /// Minimum wire bytes one element occupies (for length-vs-remaining checks,
-    /// `r[validate.lengths]`).
-    pub min_wire: usize,
-    /// Type-erased operations on the sequence handle (front-door bound).
-    pub thunks: SeqThunks,
-}
-
-/// An owned-set op's payload (boxed in [`MemOp::Set`] to keep `MemOp` small).
-#[derive(Clone, Debug)]
-pub struct SetOp {
-    /// Where the set handle lives, relative to the base.
-    pub field_offset: usize,
-    /// How to encode/decode one element (offsets relative to the element value).
-    pub element: MemProgram,
-    /// Element size for decode scratch allocation.
-    pub elem_size: usize,
-    /// Element alignment for decode scratch allocation.
-    pub elem_align: usize,
-    /// Minimum wire bytes one element occupies (for length-vs-remaining checks,
-    /// `r[validate.lengths]`).
-    pub min_wire: usize,
-    /// Type-erased operations on the set handle (front-door bound).
-    pub thunks: SetThunks,
-}
-
-/// A bulk byte-run op's payload (boxed in [`MemOp::Bytes`]). The wire form is a
-/// `u32` element count then `count * stride` contiguous bytes — one block copy in
-/// each direction, no per-element loop. `String` and `Vec<u8>` use `stride == 1`;
-/// `Vec<scalar>` uses the element size.
-#[derive(Clone, Debug)]
-pub struct BytesOp {
-    /// Where the owned handle (the `String`/`Vec`) lives, relative to the base.
-    pub field_offset: usize,
-    /// Bytes per element: 1 for `String`/`Vec<u8>`, the element size otherwise.
-    pub stride: usize,
-    /// Alignment of the contiguous element buffer.
-    pub elem_align: usize,
-    /// Validate the contiguous bytes on decode before adopting them. `String` runs
-    /// check UTF-8; `Vec` runs accept anything. See [`ByteValidator`].
-    pub validate: ByteValidator,
-    /// Type-erased handle operations (`from_raw_parts` adopts the buffer; `len`
-    /// returns the element count; `data` points at the contiguous bytes).
-    pub thunks: SeqThunks,
-}
-
-/// A borrowed, zero-copy byte-run op's payload (boxed in [`MemOp::Borrow`]). The
-/// wire form is a `u32` element count then `count * stride` contiguous bytes —
-/// IDENTICAL to [`BytesOp`] — but decode writes a fat pointer into the input
-/// buffer rather than allocating and copying. `&str` and `&[u8]` use `stride == 1`
-/// and `elem_align == 1`.
-#[derive(Clone, Debug)]
-pub struct BorrowOp {
-    /// Where the borrowed handle (the `&str`/`&[u8]` fat pointer) lives, relative
-    /// to the base.
-    pub field_offset: usize,
-    /// Bytes per element: 1 for `&str`/`&[u8]`.
-    pub stride: usize,
-    /// Alignment of the borrowed run on the wire (1 for `&str`/`&[u8]`).
-    pub elem_align: usize,
-    /// Type-erased construct/read operations on the borrowed handle (front-door
-    /// bound).
-    pub thunks: BorrowThunks,
-}
-
-/// An optional op's payload (boxed in [`MemOp::Option`]). The wire form is a `u8`
-/// presence byte then, only when present, the inner value. The engine never
-/// assumes the in-memory `Option<T>` layout (a repr(Rust) niche or tag); it reads
-/// and builds presence through the [`OptionThunks`] vtable.
-#[derive(Clone, Debug)]
-pub struct OptionOp {
-    /// Where the `Option<T>` handle lives, relative to the base.
-    pub field_offset: usize,
-    /// How to encode/decode the inner `T`, run at the inner value (offsets relative
-    /// to the inner start).
-    pub some: MemProgram,
-    /// The inner `T`'s size and alignment — the engine allocates a scratch buffer
-    /// of this layout on decode, fills it with the inner program, then moves it into
-    /// the `Option` via `init_some`.
-    pub inner_size: usize,
-    /// Alignment of the inner `T` (for the decode scratch buffer).
-    pub inner_align: usize,
-    /// Type-erased presence operations on the `Option` handle (front-door bound).
-    pub thunks: OptionThunks,
-}
-
-/// A `#[repr(int)]` enum op's payload (boxed in [`MemOp::Enum`]). The wire form is
-/// a `u32` variant index then the active variant's fields. In memory the
-/// discriminant lives at `tag_offset` (base-relative), `tag_width` bytes wide; the
-/// variant's fields live at their own base-relative offsets (already past the
-/// discriminant, per facet). Only `#[repr(uN/iN)]` enums lower here — a default
-/// `repr(Rust)` enum has an unspecified discriminant layout.
-#[derive(Clone, Debug)]
-pub struct EnumOp {
-    /// Where the in-memory discriminant lives, relative to the base.
-    pub tag_offset: usize,
-    /// The discriminant's width in bytes (1/2/4/8), from the `#[repr(int)]` type.
-    pub tag_width: usize,
-    /// The variants, each with its wire index, in-memory discriminant, and payload
-    /// program. Looked up by wire index on decode, by discriminant on encode.
-    pub variants: Vec<EnumVariantOp>,
-    /// Writer variant indices that exist in the *writer* schema but have no reader
-    /// counterpart (the decode-compat path only — empty for a single-schema lower).
-    /// Receiving one of these on the wire is a writer-only-variant decode error
-    /// (`r[compat.enum]`), distinct from a wholly out-of-range index.
-    pub writer_only: Vec<u32>,
-}
-
-/// One enum variant in a [`MemOp::Enum`].
-#[derive(Clone, Debug)]
-pub struct EnumVariantOp {
-    /// The `u32` written to / read from the wire to identify this variant.
-    pub wire_index: u32,
-    /// The in-memory discriminant value (its low `tag_width` bytes) identifying
-    /// this variant — `i64`-derived, stored as `u64` for width-masked comparison.
-    pub selector: u64,
-    /// The variant's payload fields, with base-relative offsets, in wire order.
-    pub payload: MemProgram,
-}
-
-/// An owned-map op's payload (boxed in [`MemOp::Map`]). The wire form is a `u32`
-/// entry count then, per entry, the key value then the value value (each by its
-/// own sub-program). The engine never assumes the map's in-memory layout: it
-/// reads length, iterates entries, initializes with capacity, and inserts through
-/// the [`MapThunks`] vtable. Mirrors [`OptionOp`] with a key+value sub-program, a
-/// stateful encode iterator, and init+insert on decode.
-#[derive(Clone, Debug)]
-pub struct MapOp {
-    /// Where the map handle lives, relative to the base.
-    pub field_offset: usize,
-    /// How to encode/decode one key (offsets relative to the key value).
-    pub key: MemProgram,
-    /// How to encode/decode one value (offsets relative to the value value).
-    pub value: MemProgram,
-    /// The key type's size and alignment — the engine allocates a scratch buffer of
-    /// this layout on decode, fills it with the key program, then moves it into the
-    /// map via `insert`.
-    pub key_size: usize,
-    /// Alignment of the key type (for the decode scratch buffer).
-    pub key_align: usize,
-    /// The value type's size and alignment (decode scratch buffer).
-    pub value_size: usize,
-    /// Alignment of the value type (for the decode scratch buffer).
-    pub value_align: usize,
-    /// Type-erased operations on the map handle (front-door bound).
-    pub thunks: MapThunks,
-}
-
-/// A `Result<T, E>` op's payload (boxed in [`MemOp::Result`]). The wire form is a
-/// `u32` variant index (`ok_wire_index` for `Ok`, `err_wire_index` for `Err`) then
-/// that arm's payload. The engine never assumes the in-memory `Result` layout; it
-/// reads which arm is active and builds it through the [`ResultThunks`] vtable,
-/// mirroring [`OptionOp`] but with two value-carrying arms.
-#[derive(Clone, Debug)]
-pub struct ResultOp {
-    /// Where the `Result<T, E>` handle lives, relative to the base.
-    pub field_offset: usize,
-    /// How to encode/decode the `Ok` payload `T` (offsets relative to its start).
-    pub ok: MemProgram,
-    /// The `Ok` payload's size and alignment — the engine allocates a decode
-    /// scratch buffer of this layout, fills it with `ok`, then moves it in via
-    /// `init_ok`.
-    pub ok_size: usize,
-    /// Alignment of the `Ok` payload (for the decode scratch buffer).
-    pub ok_align: usize,
-    /// The `u32` written to / read from the wire identifying the `Ok` arm (`0` for a
-    /// single-schema lower; the writer schema's `Ok` index on the compat path).
-    pub ok_wire_index: u32,
-    /// How to encode/decode the `Err` payload `E` (offsets relative to its start).
-    pub err: MemProgram,
-    /// The `Err` payload's size and alignment (decode scratch buffer).
-    pub err_size: usize,
-    /// Alignment of the `Err` payload (for the decode scratch buffer).
-    pub err_align: usize,
-    /// The `u32` identifying the `Err` arm (`1` for a single-schema lower).
-    pub err_wire_index: u32,
-    /// Type-erased presence/construction operations on the `Result` (front-door bound).
-    pub thunks: ResultThunks,
-}
-
-/// An owned-pointer op's payload (boxed in [`MemOp::Pointer`]). The wire form is
-/// the pointee value itself; the owning pointer is local memory detail.
-// r[impl descriptors.thunk-binding]
-#[derive(Clone, Debug)]
-pub struct PointerOp {
-    /// Where the pointer handle lives, relative to the base.
-    pub field_offset: usize,
-    /// How to encode/decode the pointee `T`, run at the pointee value.
-    pub pointee: MemProgram,
-    /// The pointee's size and alignment for decode scratch allocation.
-    pub pointee_size: usize,
-    pub pointee_align: usize,
-    /// Type-erased borrow/construct operations on the owning pointer.
-    pub thunks: PointerThunks,
-}
-
-/// An opaque-field op's payload (boxed in [`MemOp::Opaque`]). The wire form is a
-/// `u32` byte length then that many inner bytes — IDENTICAL to a `Primitive::Bytes`
-/// run, so a peer that does not know the inner type reads it as opaque bytes. The
-/// engine frames it (reserve the `u32`, backpatch after sub-encoding); the
-/// [`OpaqueThunks`] fill (encode) or consume (decode) the inner span.
-#[derive(Clone, Debug)]
-pub struct OpaqueOp {
-    /// Where the opaque field (e.g. a `Payload` enum) lives, relative to the base.
-    pub field_offset: usize,
-    /// Type-erased encode/decode of the inner value (front-door bound).
-    pub thunks: OpaqueThunks,
-}
-
-/// Coalesce adjacent scalar copies that are contiguous in *both* the wire and
-/// memory into one larger copy — the specialization the IR exists for. A flat
-/// struct whose wire layout matches its memory layout collapses to a single
-/// `memcpy`; a `repr(Rust)` struct collapses to a copy per contiguous run.
-///
-/// Two consecutive ops fuse when the second needs no wire padding after the first
-/// (wire-contiguous) and its memory offset continues the first's (mem-contiguous).
-/// The fused op keeps the run's starting alignment; the bytes it produces are
-/// identical, so this is transparent to correctness — only faster.
-///
-/// Spec: `r[ir.inlining]` (the lowering-time coalescing it describes).
+/// Coalesce adjacent scalar copies that are contiguous in both wire and memory.
 // r[impl ir.inlining]
 #[must_use]
 pub fn fuse(program: MemProgram) -> MemProgram {
-    let mut out: MemProgram = Vec::with_capacity(program.len());
-    // `None` once a variable-length op (a sequence) makes the static wire
-    // position unknown; scalars after that can't be proven contiguous, so they
-    // aren't fused (their padding is still handled at run time).
-    let mut wire_pos: Option<usize> = Some(0);
-    for op in program {
-        match op {
-            MemOp::Scalar {
-                offset,
-                size,
-                align,
-            } => {
-                let pad = wire_pos.map(|p| align.wrapping_sub(p & (align - 1)) & (align - 1));
-                let fuses = pad == Some(0)
-                    && matches!(
-                        out.last(),
-                        Some(MemOp::Scalar { offset: po, size: ps, .. }) if po + ps == offset
-                    );
-                if fuses {
-                    if let Some(MemOp::Scalar { size: ps, .. }) = out.last_mut() {
-                        *ps += size;
-                    }
-                } else {
-                    out.push(MemOp::Scalar {
-                        offset,
-                        size,
-                        align,
-                    });
-                }
-                wire_pos = wire_pos.map(|p| p + pad.unwrap_or(0) + size);
-            }
-            MemOp::NativeInt {
-                offset,
-                mem_size,
-                signed,
-            } => {
-                let align = 8usize;
-                let size = 8usize;
-                let pad = wire_pos.map(|p| align.wrapping_sub(p & (align - 1)) & (align - 1));
-                out.push(MemOp::NativeInt {
-                    offset,
-                    mem_size,
-                    signed,
-                });
-                wire_pos = wire_pos.map(|p| p + pad.unwrap_or(0) + size);
-            }
-            // Variable-length / data-directed ops make the static wire position
-            // unknown after them. `SkipWire` consumes opaque writer bytes, so it
-            // too poisons the static position.
-            seq @ (MemOp::Sequence(_)
-            | MemOp::Set(_)
-            | MemOp::Bytes(_)
-            | MemOp::Borrow(_)
-            | MemOp::Option(_)
-            | MemOp::Enum(_)
-            | MemOp::Map(_)
-            | MemOp::Result(_)
-            | MemOp::Pointer(_)
-            | MemOp::Dynamic { .. }
-            | MemOp::Opaque(_)
-            | MemOp::CallBlock { .. }
-            | MemOp::SkipWire(_)) => {
-                out.push(seq);
-                wire_pos = None;
-            }
-            // A reader-only default reads no wire bytes, so it leaves the static
-            // wire position untouched; it is not a scalar, so it breaks a fuse run
-            // (a scalar after it cannot fuse with one before it). Just push it.
-            def @ MemOp::Default(_) => out.push(def),
-        }
-    }
-    out
+    weavy::mem::fuse(program)
 }
