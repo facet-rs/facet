@@ -31,6 +31,7 @@ mod opaque_proxy_struct;
 mod option_enum_test;
 mod out_of_order;
 mod raw_json;
+mod recursive_stack;
 mod rename;
 mod smolstr_flatten_map;
 mod string_like_map_keys;
