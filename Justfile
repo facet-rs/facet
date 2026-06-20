@@ -63,7 +63,7 @@ test-i686:
     cargo nextest run --target i686-unknown-linux-gnu --tests --lib < /dev/null
 
 valgrind *args:
-    cargo nextest run --profile valgrind --features jit {{ args }}
+    cargo nextest run --profile valgrind {{ args }}
 
 asan *args:
     CARGO_TARGET_DIR=target/asan RUSTFLAGS="-Z sanitizer=address" \
@@ -117,9 +117,9 @@ miri *args:
 miri-json *args:
     #!/usr/bin/env -S bash -euo pipefail
     source miri-env.sh
-    # Exclude jit tests (Cranelift) and tendril tests (integer-to-pointer casts)
+    # Exclude tendril tests (integer-to-pointer casts)
     cd ../facet-format
-    cargo miri nextest run --target-dir target/miri -p facet-json -E 'not test(/jit/) and not test(/tendril/)' {{ args }}
+    cargo miri nextest run --target-dir target/miri -p facet-json -E 'not test(/tendril/)' {{ args }}
 
 miri-ci *args:
     #!/usr/bin/env -S bash -euxo pipefail

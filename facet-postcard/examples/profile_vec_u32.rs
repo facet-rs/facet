@@ -25,7 +25,7 @@ fn main() {
 
     match which {
         "facet" => {
-            eprintln!("Running facet JIT for {} iterations", iterations);
+            eprintln!("Running facet postcard for {} iterations", iterations);
             for _ in 0..iterations {
                 let _: Vec<u32> = std::hint::black_box(
                     facet_postcard::from_slice(std::hint::black_box(&encoded)).unwrap(),

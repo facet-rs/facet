@@ -1,6 +1,6 @@
-//! Postcard parser implementing FormatParser and FormatJitParser.
+//! Postcard parser implementing FormatParser.
 //!
-//! Postcard is NOT a self-describing format, but Tier-0 deserialization is supported
+//! Postcard is NOT a self-describing format, but deserialization is supported
 //! via the `hint_struct_fields` mechanism. The driver tells the parser how many fields
 //! to expect, and the parser emits `OrderedField` events accordingly.
 
@@ -78,10 +78,10 @@ enum ParserState {
     },
 }
 
-/// Postcard parser for Tier-0 and Tier-2 deserialization.
+/// Postcard parser for deserialization.
 ///
-/// For Tier-0, the parser relies on `hint_struct_fields` to know how many fields
-/// to expect in structs. Sequences are length-prefixed in the wire format.
+/// The parser relies on `hint_struct_fields` to know how many fields to expect
+/// in structs. Sequences are length-prefixed in the wire format.
 pub struct PostcardParser<'de> {
     input: &'de [u8],
     pos: usize,

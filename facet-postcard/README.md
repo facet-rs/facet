@@ -9,7 +9,7 @@
 
     This region was generated from Rust documentation comments by `cargo-reedme` using this command:
 
-        cargo +nightly reedme --workspace
+        cargo +nightly reedme --package facet-postcard
 
     for more info: https://github.com/nik-rev/cargo-reedme
 
@@ -53,10 +53,7 @@ let result: Vec<bool> = from_slice(bytes).unwrap();
 assert_eq!(result, vec![true, false, true]);
 ```
 
-Both functions automatically select the best deserialization tier:
-- **Tier-2 (Format JIT)**: Fastest path for compatible types (primitives, structs, vecs, simple enums)
-- **Tier-0 (Reflection)**: Fallback for all other types (nested enums, complex types)
-
-This ensures all `Facet` types can be deserialized.
+Deserialization is driven by `facet-format` over the postcard parser, so all
+supported `Facet` shapes use the same parser/deserializer path.
 
 <!-- cargo-reedme: end -->

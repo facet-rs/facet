@@ -9,7 +9,7 @@
 
     This region was generated from Rust documentation comments by `cargo-reedme` using this command:
 
-        cargo +nightly reedme --workspace
+        cargo +nightly reedme --package facet-msgpack
 
     for more info: https://github.com/nik-rev/cargo-reedme
 
@@ -55,7 +55,7 @@ assert_eq!(point.x, 10);
 assert_eq!(point.y, 20);
 ```
 
-Both functions use Tier-2 JIT for compatible types (when the `jit` feature is enabled),
-with automatic fallback to Tier-0 reflection for all other types.
+Deserialization is driven by `facet-format` over the MessagePack parser, so
+all supported `Facet` shapes use the same parser/deserializer path.
 
 <!-- cargo-reedme: end -->

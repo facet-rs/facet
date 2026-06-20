@@ -6,7 +6,7 @@ DIVAN_MIN_TIME, no piping into tail). Median is what we track.
 
 ## 2e70ea22 — pre-resolved conduit Tx/Rx + leaked descriptors
 
-Branch: cranelift. Just landed: pre-resolved encoders/decoders in
+Branch: native-jit spike. Just landed: pre-resolved encoders/decoders in
 BareConduit, plus the latent CalibrationRegistry UAF fix
 (descriptors leaked at register-time so JIT-embedded `*const` stays valid).
 
@@ -55,7 +55,7 @@ registration path, and shrinking per-request alloc to one `Box` + one
 
 ## 4edda21c — args_have_channels cached + JIT cache simplified + IR fallback
 
-Branch: cranelift. Three landed:
+Branch: native-jit spike. Three landed:
 
 - `MethodDescriptor::args_have_channels` precomputed once per method
   (was: `shape_contains_channel` walk per in-flight request).

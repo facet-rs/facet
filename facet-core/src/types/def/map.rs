@@ -72,7 +72,7 @@ pub type MapGetValuePtrFn = unsafe extern "C" fn(map: PtrConst, key: PtrConst) -
 
 /// Build a map from a contiguous slice of (K, V) pairs.
 ///
-/// This is an optimization for JIT deserialization that avoids per-entry vtable
+/// This is an optimization for bulk deserialization that avoids per-entry vtable
 /// calls and rehashing by building the map with known capacity in one shot.
 ///
 /// # Safety
@@ -107,13 +107,13 @@ vtable_def! {
         /// Virtual table for map iterator operations
         pub iter_vtable: IterVTable<(PtrConst, PtrConst)>,
 
-        /// cf. [`MapFromPairSliceFn`] - optional optimization for JIT
+        /// cf. [`MapFromPairSliceFn`] - optional bulk-construction optimization
         pub from_pair_slice: Option<MapFromPairSliceFn>,
 
-        /// Size of (K, V) tuple in bytes (for JIT buffer allocation)
+        /// Size of (K, V) tuple in bytes for temporary pair buffers.
         pub pair_stride: usize,
 
-        /// Offset of V within (K, V) tuple (for JIT value placement)
+        /// Offset of V within (K, V) tuple for temporary pair buffers.
         pub value_offset_in_pair: usize,
     }
 }

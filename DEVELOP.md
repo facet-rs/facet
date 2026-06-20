@@ -55,7 +55,7 @@ If a README includes `cargo-reedme` markers, edit `src/lib.rs` docs and regenera
 - `facet-core`: defines the `Facet` trait and shape model — an unsafe boundary.
 - `facet-reflect`: safe reflection/build/peek/poke built on top of `Shape`.
 - `facet-format`: shared format core used by `facet-json`, `facet-yaml`, `facet-toml`, etc. (large blast radius).
-- JIT deserialization lives in `facet-format` behind the `jit` feature; see `.claude/skills/jit-overview/SKILL.md` for orientation.
+- `weavy`: shared bytecode-plan pieces extracted from Phon for format-owned VMs.
 
 ## Metrics
 

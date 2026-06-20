@@ -1,4 +1,4 @@
-//! Error types for postcard Tier-2 JIT parsing and serialization.
+//! Error types for postcard parsing and serialization.
 
 extern crate alloc;
 
@@ -10,7 +10,7 @@ use core::fmt;
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct PostcardError {
-    /// Error code from JIT
+    /// Format-specific error code.
     pub code: i32,
     /// Position in input where error occurred
     pub pos: usize,
@@ -73,7 +73,7 @@ impl PostcardError {
 
 impl std::error::Error for PostcardError {}
 
-/// Postcard JIT error codes.
+/// Postcard parser error codes.
 pub mod codes {
     /// Unexpected end of input
     pub const UNEXPECTED_EOF: i32 = -100;
@@ -95,12 +95,12 @@ pub mod codes {
     pub const UNEXPECTED_END_OF_INPUT: i32 = -108;
     /// Collection length exceeds configured safety limit
     pub const COLLECTION_TOO_LARGE: i32 = -109;
-    /// Unsupported operation (triggers fallback)
+    /// Unsupported operation.
     pub const UNSUPPORTED: i32 = -1;
 }
 
 impl PostcardError {
-    /// Create an error from a JIT error code and position.
+    /// Create an error from a parser error code and position.
     pub fn from_code(code: i32, pos: usize) -> Self {
         let message = match code {
             codes::UNEXPECTED_EOF => "unexpected end of input".to_string(),

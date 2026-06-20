@@ -38,8 +38,8 @@
 //! assert_eq!(point.y, 20);
 //! ```
 //!
-//! Both functions use Tier-2 JIT for compatible types (when the `jit` feature is enabled),
-//! with automatic fallback to Tier-0 reflection for all other types.
+//! Deserialization is driven by `facet-format` over the MessagePack parser, so
+//! all supported `Facet` shapes use the same parser/deserializer path.
 
 // Note: unsafe code is used for lifetime transmutes in from_slice_into
 // when BORROW=false, mirroring the approach used in facet-json.
