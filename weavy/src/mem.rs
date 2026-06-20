@@ -209,3 +209,322 @@ pub struct OpaqueThunks {
     pub decode:
         unsafe extern "C" fn(ctx: *const (), bytes: *const u8, len: usize, slot: *mut u8) -> bool,
 }
+
+/// A typed memory program whose block calls use caller-defined block ids.
+// r[impl ir.one-vocabulary]
+pub type MemProgram<BlockId> = crate::Program<MemOp<BlockId>>;
+
+/// One typed-memory step. The base pointer is supplied at run time; `offset`
+/// fields are relative to it.
+#[derive(Clone, Debug)]
+pub enum MemOp<BlockId> {
+    /// Copy a run of `size` bytes between memory at `offset` and the wire, which
+    /// is first padded to `align`. A single scalar, or a fused run of adjacent
+    /// scalars.
+    Scalar {
+        offset: usize,
+        size: usize,
+        align: usize,
+    },
+    /// A native-sized integer (`usize`/`isize`) whose wire primitive is fixed-width
+    /// (`u64`/`i64`) on every platform.
+    NativeInt {
+        offset: usize,
+        mem_size: usize,
+        signed: bool,
+    },
+    /// An owned, contiguous sequence.
+    Sequence(Box<SeqOp<BlockId>>),
+    /// An owned set.
+    Set(Box<SetOp<BlockId>>),
+    /// A bulk contiguous run of trivially-copyable elements.
+    Bytes(Box<BytesOp>),
+    /// A borrowed, zero-copy contiguous byte run.
+    Borrow(Box<BorrowOp>),
+    /// An `Option<T>` handle.
+    Option(Box<OptionOp<BlockId>>),
+    /// A `#[repr(uN/iN)]` enum.
+    Enum(Box<EnumOp<BlockId>>),
+    /// An owned map.
+    Map(Box<MapOp<BlockId>>),
+    /// A self-describing dynamic value at `field_offset`.
+    Dynamic { field_offset: usize },
+    /// A `Result<T, E>` handle.
+    Result(Box<ResultOp<BlockId>>),
+    /// An owned pointer.
+    Pointer(Box<PointerOp<BlockId>>),
+    /// A writer-only value present on the wire but absent from the reader.
+    SkipWire(Box<SkipOp>),
+    /// A reader-only field absent from the writer.
+    Default(Box<DefaultOp>),
+    /// An opaque field whose inner encoding is delegated to caller-supplied thunks.
+    Opaque(Box<OpaqueOp>),
+    /// A call into a recursive block program, run at `base + offset`.
+    CallBlock { schema: BlockId, offset: usize },
+}
+
+/// A pre-built wire skeleton of a writer value, advancing the cursor only.
+#[derive(Clone, Debug)]
+pub enum SkipOp {
+    /// A fixed scalar: pad the cursor to `align`, then advance `size` bytes.
+    Scalar { size: usize, align: usize },
+    /// A bulk byte run: read a `u32` count, pad to `elem_align`, then advance
+    /// `count * stride` bytes.
+    Bytes { stride: usize, elem_align: usize },
+    /// An owned sequence of structured elements.
+    Seq(Box<SkipOp>),
+    /// An `Option<T>`: read a presence byte, then skip the inner when present.
+    Option(Box<SkipOp>),
+    /// A `#[repr(int)]` enum: read a writer variant index, then skip that
+    /// variant's field skips.
+    Enum(Vec<(u32, Vec<SkipOp>)>),
+    /// An owned map: read an entry count, then skip key then value for each entry.
+    Map(Box<SkipOp>, Box<SkipOp>),
+    /// A struct or tuple: skip each field in wire order.
+    Struct(Vec<SkipOp>),
+    /// A self-describing dynamic value.
+    Dynamic,
+}
+
+/// An owned-sequence op's payload.
+#[derive(Clone, Debug)]
+pub struct SeqOp<BlockId> {
+    /// Where the sequence handle lives, relative to the base.
+    pub field_offset: usize,
+    /// How to encode/decode one element, run at each element slot.
+    pub element: MemProgram<BlockId>,
+    /// Bytes between consecutive elements in contiguous storage.
+    pub stride: usize,
+    /// Alignment of the element type.
+    pub elem_align: usize,
+    /// Minimum wire bytes one element occupies.
+    pub min_wire: usize,
+    /// Type-erased operations on the sequence handle.
+    pub thunks: SeqThunks,
+}
+
+/// An owned-set op's payload.
+#[derive(Clone, Debug)]
+pub struct SetOp<BlockId> {
+    /// Where the set handle lives, relative to the base.
+    pub field_offset: usize,
+    /// How to encode/decode one element.
+    pub element: MemProgram<BlockId>,
+    /// Element size for decode scratch allocation.
+    pub elem_size: usize,
+    /// Element alignment for decode scratch allocation.
+    pub elem_align: usize,
+    /// Minimum wire bytes one element occupies.
+    pub min_wire: usize,
+    /// Type-erased operations on the set handle.
+    pub thunks: SetThunks,
+}
+
+/// A bulk byte-run op's payload.
+#[derive(Clone, Debug)]
+pub struct BytesOp {
+    /// Where the owned handle lives, relative to the base.
+    pub field_offset: usize,
+    /// Bytes per element.
+    pub stride: usize,
+    /// Alignment of the contiguous element buffer.
+    pub elem_align: usize,
+    /// Validate the contiguous bytes on decode before adopting them.
+    pub validate: ByteValidator,
+    /// Type-erased handle operations.
+    pub thunks: SeqThunks,
+}
+
+/// A borrowed, zero-copy byte-run op's payload.
+#[derive(Clone, Debug)]
+pub struct BorrowOp {
+    /// Where the borrowed handle lives, relative to the base.
+    pub field_offset: usize,
+    /// Bytes per element.
+    pub stride: usize,
+    /// Alignment of the borrowed run on the wire.
+    pub elem_align: usize,
+    /// Type-erased construct/read operations on the borrowed handle.
+    pub thunks: BorrowThunks,
+}
+
+/// An optional op's payload.
+#[derive(Clone, Debug)]
+pub struct OptionOp<BlockId> {
+    /// Where the `Option<T>` handle lives, relative to the base.
+    pub field_offset: usize,
+    /// How to encode/decode the inner `T`.
+    pub some: MemProgram<BlockId>,
+    /// The inner `T`'s size.
+    pub inner_size: usize,
+    /// The inner `T`'s alignment.
+    pub inner_align: usize,
+    /// Type-erased presence operations on the `Option` handle.
+    pub thunks: OptionThunks,
+}
+
+/// A `#[repr(int)]` enum op's payload.
+#[derive(Clone, Debug)]
+pub struct EnumOp<BlockId> {
+    /// Where the in-memory discriminant lives, relative to the base.
+    pub tag_offset: usize,
+    /// The discriminant's width in bytes.
+    pub tag_width: usize,
+    /// The variants, each with its wire index, in-memory discriminant, and payload
+    /// program.
+    pub variants: Vec<EnumVariantOp<BlockId>>,
+    /// Writer variant indices with no reader counterpart.
+    pub writer_only: Vec<u32>,
+}
+
+/// One enum variant in a [`MemOp::Enum`].
+#[derive(Clone, Debug)]
+pub struct EnumVariantOp<BlockId> {
+    /// The `u32` written to / read from the wire to identify this variant.
+    pub wire_index: u32,
+    /// The in-memory discriminant value identifying this variant.
+    pub selector: u64,
+    /// The variant's payload fields, with base-relative offsets, in wire order.
+    pub payload: MemProgram<BlockId>,
+}
+
+/// An owned-map op's payload.
+#[derive(Clone, Debug)]
+pub struct MapOp<BlockId> {
+    /// Where the map handle lives, relative to the base.
+    pub field_offset: usize,
+    /// How to encode/decode one key.
+    pub key: MemProgram<BlockId>,
+    /// How to encode/decode one value.
+    pub value: MemProgram<BlockId>,
+    /// The key type's size.
+    pub key_size: usize,
+    /// The key type's alignment.
+    pub key_align: usize,
+    /// The value type's size.
+    pub value_size: usize,
+    /// The value type's alignment.
+    pub value_align: usize,
+    /// Type-erased operations on the map handle.
+    pub thunks: MapThunks,
+}
+
+/// A `Result<T, E>` op's payload.
+#[derive(Clone, Debug)]
+pub struct ResultOp<BlockId> {
+    /// Where the `Result<T, E>` handle lives, relative to the base.
+    pub field_offset: usize,
+    /// How to encode/decode the `Ok` payload.
+    pub ok: MemProgram<BlockId>,
+    /// The `Ok` payload's size.
+    pub ok_size: usize,
+    /// The `Ok` payload's alignment.
+    pub ok_align: usize,
+    /// The wire index identifying the `Ok` arm.
+    pub ok_wire_index: u32,
+    /// How to encode/decode the `Err` payload.
+    pub err: MemProgram<BlockId>,
+    /// The `Err` payload's size.
+    pub err_size: usize,
+    /// The `Err` payload's alignment.
+    pub err_align: usize,
+    /// The wire index identifying the `Err` arm.
+    pub err_wire_index: u32,
+    /// Type-erased presence/construction operations on the `Result`.
+    pub thunks: ResultThunks,
+}
+
+/// An owned-pointer op's payload.
+#[derive(Clone, Debug)]
+pub struct PointerOp<BlockId> {
+    /// Where the pointer handle lives, relative to the base.
+    pub field_offset: usize,
+    /// How to encode/decode the pointee `T`.
+    pub pointee: MemProgram<BlockId>,
+    /// The pointee's size for decode scratch allocation.
+    pub pointee_size: usize,
+    /// The pointee's alignment for decode scratch allocation.
+    pub pointee_align: usize,
+    /// Type-erased borrow/construct operations on the owning pointer.
+    pub thunks: PointerThunks,
+}
+
+/// An opaque-field op's payload.
+#[derive(Clone, Debug)]
+pub struct OpaqueOp {
+    /// Where the opaque field lives, relative to the base.
+    pub field_offset: usize,
+    /// Type-erased encode/decode of the inner value.
+    pub thunks: OpaqueThunks,
+}
+
+/// Coalesce adjacent scalar copies that are contiguous in both wire and memory.
+// r[impl ir.inlining]
+#[must_use]
+pub fn fuse<BlockId>(program: MemProgram<BlockId>) -> MemProgram<BlockId> {
+    let mut out: MemProgram<BlockId> = Vec::with_capacity(program.len());
+    let mut wire_pos: Option<usize> = Some(0);
+
+    for op in program {
+        match op {
+            MemOp::Scalar {
+                offset,
+                size,
+                align,
+            } => {
+                let pad = wire_pos.map(|p| align.wrapping_sub(p & (align - 1)) & (align - 1));
+                let fuses = pad == Some(0)
+                    && matches!(
+                        out.last(),
+                        Some(MemOp::Scalar { offset: po, size: ps, .. }) if po + ps == offset
+                    );
+                if fuses {
+                    if let Some(MemOp::Scalar { size: ps, .. }) = out.last_mut() {
+                        *ps += size;
+                    }
+                } else {
+                    out.push(MemOp::Scalar {
+                        offset,
+                        size,
+                        align,
+                    });
+                }
+                wire_pos = wire_pos.map(|p| p + pad.unwrap_or(0) + size);
+            }
+            MemOp::NativeInt {
+                offset,
+                mem_size,
+                signed,
+            } => {
+                let align = 8usize;
+                let size = 8usize;
+                let pad = wire_pos.map(|p| align.wrapping_sub(p & (align - 1)) & (align - 1));
+                out.push(MemOp::NativeInt {
+                    offset,
+                    mem_size,
+                    signed,
+                });
+                wire_pos = wire_pos.map(|p| p + pad.unwrap_or(0) + size);
+            }
+            seq @ (MemOp::Sequence(_)
+            | MemOp::Set(_)
+            | MemOp::Bytes(_)
+            | MemOp::Borrow(_)
+            | MemOp::Option(_)
+            | MemOp::Enum(_)
+            | MemOp::Map(_)
+            | MemOp::Result(_)
+            | MemOp::Pointer(_)
+            | MemOp::Dynamic { .. }
+            | MemOp::Opaque(_)
+            | MemOp::CallBlock { .. }
+            | MemOp::SkipWire(_)) => {
+                out.push(seq);
+                wire_pos = None;
+            }
+            def @ MemOp::Default(_) => out.push(def),
+        }
+    }
+
+    out
+}
