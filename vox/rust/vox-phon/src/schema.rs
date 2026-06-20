@@ -318,6 +318,7 @@ fn native_decode_supported(lowered: &Lowered) -> bool {
 fn decode_program_supported(program: &[MemOp]) -> bool {
     program.iter().all(|op| match op {
         MemOp::Scalar { .. }
+        | MemOp::ScalarRun(_)
         | MemOp::Bytes(_)
         | MemOp::Borrow(_)
         | MemOp::Default(_)
