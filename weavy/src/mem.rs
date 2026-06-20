@@ -210,6 +210,254 @@ pub struct OpaqueThunks {
         unsafe extern "C" fn(ctx: *const (), bytes: *const u8, len: usize, slot: *mut u8) -> bool,
 }
 
+/// A caller-local descriptor tree: schema identity, process-local memory layout,
+/// and the access strategy for reading or constructing the value.
+#[derive(Clone, Debug)]
+pub struct Descriptor<SchemaRef> {
+    /// The caller's schema reference for this value.
+    pub schema: SchemaRef,
+    /// Process-local size and alignment.
+    pub layout: Layout,
+    /// How to read and construct this value.
+    pub access: Access<SchemaRef>,
+}
+
+/// Process-local size and alignment, in bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Layout {
+    pub size: usize,
+    pub align: usize,
+}
+
+/// How a value's bytes are read and constructed.
+#[derive(Clone, Debug)]
+pub enum Access<SchemaRef> {
+    /// A fixed-width scalar whose in-memory bytes equal its wire bytes.
+    Scalar,
+    /// A struct or tuple: fields at fixed offsets.
+    Record(RecordAccess<SchemaRef>),
+    /// A sum type: an active variant chosen by a tag, with a payload per variant.
+    Enum(EnumAccess<SchemaRef>),
+    /// none / some.
+    Option(OptionAccess<SchemaRef>),
+    /// A fixed-shape array: `count` elements inline, `stride` apart.
+    Array {
+        element: Box<Descriptor<SchemaRef>>,
+        count: usize,
+        stride: usize,
+    },
+    /// A runtime-shape tensor.
+    Tensor(TensorAccess<SchemaRef>),
+    /// A dynamic homogeneous sequence or byte sequence.
+    Sequence(SequenceAccess<SchemaRef>),
+    /// A set stored behind caller-provided thunks.
+    Set(SetAccess<SchemaRef>),
+    /// Key / value pairs.
+    Map(MapAccess<SchemaRef>),
+    /// A result-like two-armed sum whose local layout is thunk-driven.
+    Result(ResultAccess<SchemaRef>),
+    /// An owning pointer whose wire shape is its pointee.
+    Pointer(PointerAccess<SchemaRef>),
+    /// A dynamic self-describing value owned by the caller.
+    Dynamic,
+    /// An opaque value whose inner encoding is delegated to caller thunks.
+    Opaque(OpaqueThunks),
+    /// A back-edge to a recursive schema block.
+    Recurse,
+}
+
+/// A struct or tuple: its fields at offsets, with how to construct it.
+#[derive(Clone, Debug)]
+pub struct RecordAccess<SchemaRef> {
+    pub fields: Vec<FieldAccess<SchemaRef>>,
+    pub construct: Construct,
+}
+
+/// One field: its byte offset within the record, and its descriptor.
+#[derive(Clone, Debug)]
+pub struct FieldAccess<SchemaRef> {
+    pub offset: usize,
+    pub descriptor: Descriptor<SchemaRef>,
+    /// How to write this field's default in place when a reader-only field is
+    /// absent from the wire.
+    pub default: Option<FieldDefault>,
+}
+
+/// A field's bound default-in-place operation.
+#[derive(Clone, Copy, Debug)]
+pub struct FieldDefault {
+    /// Opaque per-field context the front door binds.
+    pub ctx: *const (),
+    /// Initialize the uninitialized field at `slot` to its default.
+    pub thunk: DefaultThunk,
+}
+
+/// How a record is built on decode.
+#[derive(Clone, Debug)]
+pub enum Construct {
+    /// Decode writes each field into its offset in uninitialized storage.
+    InPlace,
+    /// Decode fills a scratch buffer, then a thunk builds the real value from it.
+    Thunk(Thunk),
+}
+
+/// A sum type: a tag selecting the active variant, and the per-variant payloads.
+#[derive(Clone, Debug)]
+pub struct EnumAccess<SchemaRef> {
+    pub tag: Tag,
+    pub variants: Vec<VariantAccess<SchemaRef>>,
+}
+
+/// How the active variant is read and set.
+#[derive(Clone, Debug)]
+pub enum Tag {
+    /// An integer discriminant `width` bytes wide at `offset`.
+    Direct { offset: usize, width: usize },
+    /// A niche where the discriminating region overlaps payload bytes.
+    Niche { offset: usize, width: usize },
+    /// Caller-defined tag operations.
+    Thunk { read: Thunk, write: Thunk },
+}
+
+/// One variant: its schema index, local tag selector, and payload fields.
+#[derive(Clone, Debug)]
+pub struct VariantAccess<SchemaRef> {
+    pub index: u32,
+    pub selector: u64,
+    pub payload: RecordAccess<SchemaRef>,
+}
+
+/// An optional value: how presence is read/written, and the some-payload.
+#[derive(Clone, Debug)]
+pub struct OptionAccess<SchemaRef> {
+    pub presence: Presence,
+    pub some: Box<Descriptor<SchemaRef>>,
+}
+
+/// How none-vs-some is encoded in memory.
+#[derive(Clone, Debug)]
+pub enum Presence {
+    /// A dedicated tag region.
+    Tag {
+        offset: usize,
+        width: usize,
+        none_value: u64,
+    },
+    /// The some-payload's own bytes encode none at a pattern.
+    Niche {
+        offset: usize,
+        width: usize,
+        none_pattern: Vec<u8>,
+    },
+    /// Caller-defined presence operations.
+    Thunk {
+        is_some: Thunk,
+        set_none: Thunk,
+        set_some: Thunk,
+    },
+    /// Front-door-bound presence via an option vtable.
+    Vtable(OptionThunks),
+}
+
+/// A dynamic homogeneous sequence or byte sequence: its element and storage.
+#[derive(Clone, Debug)]
+pub struct SequenceAccess<SchemaRef> {
+    pub element: Box<Descriptor<SchemaRef>>,
+    pub storage: SequenceStorage,
+}
+
+/// A set: its element descriptor and storage strategy.
+#[derive(Clone, Debug)]
+pub struct SetAccess<SchemaRef> {
+    pub element: Box<Descriptor<SchemaRef>>,
+    pub storage: SetStorage,
+}
+
+/// How a set's elements are read and constructed in memory.
+#[derive(Clone, Debug)]
+pub enum SetStorage {
+    /// Front-door-bound set operations.
+    Vtable(SetThunks),
+}
+
+/// How a sequence's elements are stored in memory.
+#[derive(Clone, Debug)]
+pub enum SequenceStorage {
+    /// Owned contiguous run with explicit local handle offsets.
+    Owned {
+        ptr_offset: usize,
+        len_offset: usize,
+        cap_offset: Option<usize>,
+        allocate: Thunk,
+    },
+    /// Borrowed contiguous run with explicit local handle offsets.
+    Borrowed {
+        ptr_offset: usize,
+        len_offset: usize,
+    },
+    /// Non-flat storage through caller-provided operations.
+    Thunk { len: Thunk, get: Thunk, push: Thunk },
+    /// An owned contiguous sequence reached through front-door-bound thunks.
+    Vtable(SeqThunks),
+    /// A borrowed, zero-copy contiguous byte run reached through bound thunks.
+    BorrowedVtable(BorrowThunks),
+}
+
+/// A result-like value: ok/err payload descriptors and local operations.
+#[derive(Clone, Debug)]
+pub struct ResultAccess<SchemaRef> {
+    pub ok: Box<Descriptor<SchemaRef>>,
+    pub err: Box<Descriptor<SchemaRef>>,
+    pub thunks: ResultThunks,
+}
+
+/// An owning pointer: its pointee descriptor and local operations.
+#[derive(Clone, Debug)]
+pub struct PointerAccess<SchemaRef> {
+    pub pointee: Box<Descriptor<SchemaRef>>,
+    pub thunks: PointerThunks,
+}
+
+/// Key/value pairs: the key and value descriptors and how the map is stored.
+#[derive(Clone, Debug)]
+pub struct MapAccess<SchemaRef> {
+    pub key: Box<Descriptor<SchemaRef>>,
+    pub value: Box<Descriptor<SchemaRef>>,
+    pub storage: MapStorage,
+}
+
+/// How a map's entries are read and constructed in memory.
+#[derive(Clone, Debug)]
+pub enum MapStorage {
+    /// Named same-language thunks.
+    Thunk {
+        len: Thunk,
+        iterate: Thunk,
+        insert: Thunk,
+    },
+    /// Front-door-bound map operations.
+    Vtable(MapThunks),
+}
+
+/// A runtime-shape tensor.
+#[derive(Clone, Debug)]
+pub struct TensorAccess<SchemaRef> {
+    pub element: Box<Descriptor<SchemaRef>>,
+    /// Encode: read the dimension sizes.
+    pub shape: Thunk,
+    /// The flat row-major elements.
+    pub data: SequenceStorage,
+    /// Decode: give the filled flat data its shape.
+    pub reshape: Thunk,
+}
+
+/// A named function the implementation provides.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Thunk {
+    /// Resolved to a function pointer by the binding.
+    pub name: String,
+}
+
 /// A typed memory program whose block calls use caller-defined block ids.
 // r[impl ir.one-vocabulary]
 pub type MemProgram<BlockId> = crate::Program<MemOp<BlockId>>;

@@ -1,10 +1,10 @@
 //! Shared lowered-program substrate for interpreters and copy-and-patch backends.
 //!
-//! `weavy` deliberately knows nothing about schemas, parsers, memory layouts, or
-//! value models. A caller brings its own op enum and semantics; `weavy` provides
-//! the common carrier: flat programs, named blocks for recursive plans, and a
-//! small call-stack runner that keeps program execution out of the Rust call
-//! stack. Native copy-and-patch backends can use the same program/block shape.
+//! `weavy` stays format-agnostic: callers bring schema identities, parsers, and
+//! value models. The crate provides the shared carrier for lowered programs
+//! (flat programs, named blocks, and a small call-stack runner), plus the generic
+//! typed-memory descriptor/op vocabulary in [`mem`]. Native copy-and-patch
+//! backends can use the same program/block shape.
 
 pub mod mem;
 
