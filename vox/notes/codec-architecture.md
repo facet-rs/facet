@@ -18,7 +18,7 @@ that describes:
 - the layout of nested types, recursively
 
 Each backend's codegen reads that data and **emits direct byte writes**
-for its own values. The Rust JIT emits Cranelift code that stores into
+for its own values. The Rust JIT emits native code that stores into
 Rust memory. The Swift JIT (when it exists) emits whatever Swift's
 equivalent mechanism is, against Swift memory. Neither one calls a
 helper function to "init an Ok variant" or "write a discriminant" on the
@@ -257,7 +257,7 @@ That's two `mov`s for `Result<u64, ()>`. No `call_indirect`, no
    then emit each field's decode at the field's calibrated `offset`.
 
 Same shape on the Rust side and the Swift side. The Rust JIT emits this
-as Cranelift; the Swift backend emits its Swift equivalent. Neither one
+as native codegen; the Swift backend emits its Swift equivalent. Neither one
 calls into the other for the work.
 
 ## What crosses FFI
@@ -356,7 +356,7 @@ These keep being tempting; they are wrong:
 ## Scope: Swift first, Rust later
 
 The Rust JIT works today and has a meaningful test suite covering it.
-Refactoring its IR (`vox-postcard::ir`) and Cranelift codegen to drop
+Refactoring its IR (`vox-postcard::ir`) and native codegen to drop
 the helper-call ops in favor of layout-driven ops is a substantial
 undertaking — touching ~10k lines, several dozen tests, and the
 `facet`-coupled lowering — and there's no reason to do it before the
@@ -422,7 +422,7 @@ The next steps, in order:
 4. Same for Swift.
 5. Replace the helper-call IR ops (`DecodeOption`, `DecodeResult`,
    `DecodeResultInit`, `EncodeOption`, `EncodeResult`) with one
-   `DecodeEnum` / `EncodeEnum` driven by the new layout. Cranelift
+   `DecodeEnum` / `EncodeEnum` driven by the new layout. Native codegen
    codegen emits the patterns directly; the special-cased ops go
    away.
 6. Same exercise for structs (calibrate offsets, emit field stores)

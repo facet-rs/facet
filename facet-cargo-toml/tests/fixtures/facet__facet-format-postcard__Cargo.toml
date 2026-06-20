@@ -5,8 +5,8 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Postcard binary format for facet using the Tier-2 JIT architecture"
-keywords = ["postcard", "binary", "serialization", "facet", "jit"]
+description = "Postcard binary format for facet"
+keywords = ["postcard", "binary", "serialization", "facet"]
 categories = ["encoding", "parsing"]
 homepage = "https://facet.rs"
 
@@ -22,7 +22,7 @@ miette = { workspace = true }
 
 [dev-dependencies]
 divan = { workspace = true }
-facet-format = { path = "../facet-format", version = "0.33.0", features = ["jit"] }
+facet-format = { path = "../facet-format", version = "0.33.0" }
 postcard = { version = "1", features = ["alloc"] }
 serde = { workspace = true, features = ["derive"] }
 serde_bytes = "0.11"
@@ -33,4 +33,3 @@ harness = false
 
 [features]
 default = []
-jit = ["facet-format/jit"]

@@ -2234,7 +2234,6 @@ dependencies = [
  "serde_json",
  "smartstring",
  "time",
- "tracing",
  "ulid",
  "uuid",
 ]

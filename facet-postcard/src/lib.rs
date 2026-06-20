@@ -36,11 +36,8 @@
 //! assert_eq!(result, vec![true, false, true]);
 //! ```
 //!
-//! Both functions automatically select the best deserialization tier:
-//! - **Tier-2 (Format JIT)**: Fastest path for compatible types (primitives, structs, vecs, simple enums)
-//! - **Tier-0 (Reflection)**: Fallback for all other types (nested enums, complex types)
-//!
-//! This ensures all `Facet` types can be deserialized.
+//! Deserialization is driven by `facet-format` over the postcard parser, so all
+//! supported `Facet` shapes use the same parser/deserializer path.
 
 // Note: unsafe code is used for lifetime transmutes in from_slice_into
 // when BORROW=false, mirroring the approach used in facet-json.
@@ -73,7 +70,7 @@ pub use facet_format::DeserializeError;
 /// Default maximum number of elements allowed in a decoded collection.
 ///
 /// This limit applies to postcard length-prefixed collections (lists, maps,
-/// dynamic arrays/objects) and is enforced in both Tier-0 and Tier-2 JIT paths.
+/// dynamic arrays/objects) and is enforced by the postcard parser.
 pub const DEFAULT_MAX_COLLECTION_ELEMENTS: u64 = 1 << 24; // 16,777,216
 
 /// Deserialization safety/configuration options.

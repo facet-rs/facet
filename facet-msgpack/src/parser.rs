@@ -1,7 +1,6 @@
 //! MsgPack parser implementing FormatParser.
 //!
-//! This implements full FormatParser support for MsgPack deserialization,
-//! with Tier-2 JIT support for compatible types.
+//! This implements full FormatParser support for MsgPack deserialization.
 
 extern crate alloc;
 
@@ -49,8 +48,6 @@ const MSGPACK_FIXSTR_MAX: u8 = 0xbf;
 const MSGPACK_NEGFIXINT_MIN: u8 = 0xe0;
 
 /// MsgPack parser for deserialization.
-///
-/// Supports both Tier-0 (FormatParser) and Tier-2 (JIT) modes.
 pub struct MsgPackParser<'de> {
     input: &'de [u8],
     pos: usize,

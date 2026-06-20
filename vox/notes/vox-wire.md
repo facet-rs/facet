@@ -96,7 +96,7 @@ remote-only fields that detonate.
 
 Why skip is hard to JIT today: skipping a *postcard* value means
 recursively parsing it, because varint lengths are unknowable ahead
-of time. Emitting that recursive walk as Cranelift IR is essentially
+of time. Emitting that recursive walk as native code is essentially
 reimplementing the interpreter inside codegen, so it was punted — a
 reasonable punt, with an invisible cost.
 
@@ -217,7 +217,7 @@ what that happens to be at the identity end of the range.
 There are three decode engines today, gated by `CodecMode` in
 `vox-jit/src/lib.rs:281` (`try_decode_owned`):
 
-- **Jit** — `plan → IR → Cranelift → machine code`. Native default.
+- **Jit** — `plan → IR → native machine code`. Native default.
 - **Interp** — `from_slice_ir`, `plan → IR → interpreted`. Shares
   lowering with the JIT.
 - **Reflect** — `from_slice_with_plan`
@@ -226,7 +226,7 @@ There are three decode engines today, gated by `CodecMode` in
 
 The IR *type* lives in `vox-postcard/src/ir.rs`, but the lowering and
 `from_slice_ir` live in `vox-jit`, which does not build for wasm
-(Cranelift). So **wasm cannot reach the IR at all** — its decode path
+native codegen. So **wasm cannot reach the IR at all** — its decode path
 runs `from_slice_with_plan`, the reflective walker. Native and wasm
 run different implementations of the same wire semantics, which can
 silently diverge. Encode has the same split (`serialize.rs`
@@ -237,7 +237,7 @@ Target for `vox-wire`:
 1. **One IR.** Move IR lowering and the IR interpreter out of
    `vox-jit` into the format crate so they build for wasm.
 2. **Two executors of that IR.** The portable IR interpreter (wasm,
-   plus native's can't-compile fallback) and the Cranelift JIT
+   plus native's can't-compile fallback) and the native JIT
    (native accelerator). Same lowering, same semantics, everywhere.
 3. **Demote the reflective `from_slice_with_plan` to a CI-only
    oracle.** It is valuable *as* an oracle precisely because it does

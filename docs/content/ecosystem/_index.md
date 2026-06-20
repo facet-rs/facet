@@ -35,11 +35,11 @@ call `to_string` / `from_str`.
 
 | Crate | What it does | Source |
 |-------|--------------|--------|
-| [`facet-json`](https://docs.rs/facet-json) | JSON, with a tiered JIT deserializer. The flagship — [start here](@/guide/json.md). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-json) |
+| [`facet-json`](https://docs.rs/facet-json) | JSON serialization and deserialization. The flagship — [start here](@/guide/json.md). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-json) |
 | [`facet-toml`](https://docs.rs/facet-toml) | TOML serialization and deserialization. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-toml) |
 | [`facet-yaml`](https://docs.rs/facet-yaml) | YAML serialization and deserialization. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-yaml) |
 | [`facet-msgpack`](https://docs.rs/facet-msgpack) | MessagePack binary format. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-msgpack) |
-| [`facet-postcard`](https://docs.rs/facet-postcard) | Postcard binary format, with tiered JIT deserialization. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-postcard) |
+| [`facet-postcard`](https://docs.rs/facet-postcard) | Postcard binary format. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-postcard) |
 | [`facet-csv`](https://docs.rs/facet-csv) | CSV serialization. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-csv) |
 | [`facet-asn1`](https://docs.rs/facet-asn1) | ASN.1 DER/BER serialization and deserialization. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-asn1) |
 | [`facet-xdr`](https://docs.rs/facet-xdr) | XDR binary format serialization. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-xdr) |

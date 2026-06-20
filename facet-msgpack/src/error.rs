@@ -1,4 +1,4 @@
-//! Error types for MsgPack Tier-2 JIT parsing.
+//! Error types for MsgPack parsing.
 
 use core::fmt;
 
@@ -6,7 +6,7 @@ use core::fmt;
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct MsgPackError {
-    /// Error code from JIT
+    /// Format-specific error code.
     pub code: i32,
     /// Position in input where error occurred
     pub pos: usize,
@@ -22,7 +22,7 @@ impl fmt::Display for MsgPackError {
 
 impl std::error::Error for MsgPackError {}
 
-/// MsgPack JIT error codes.
+/// MsgPack parser error codes.
 pub mod codes {
     /// Unexpected end of input
     pub const UNEXPECTED_EOF: i32 = -100;
@@ -40,12 +40,12 @@ pub mod codes {
     pub const COUNT_OVERFLOW: i32 = -106;
     /// Sequence underflow (decrement when remaining is 0)
     pub const SEQ_UNDERFLOW: i32 = -107;
-    /// Unsupported operation (triggers fallback)
+    /// Unsupported operation.
     pub const UNSUPPORTED: i32 = -1;
 }
 
 impl MsgPackError {
-    /// Create an error from a JIT error code and position.
+    /// Create an error from a parser error code and position.
     pub fn from_code(code: i32, pos: usize) -> Self {
         let message = match code {
             codes::UNEXPECTED_EOF => "unexpected end of input".to_string(),

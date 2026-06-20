@@ -41,7 +41,7 @@ by an `xchg` + `inc` on a thread-local slot.
 
 In the `try_decode_owned` body the `xorps + movups` zeroing of the on-stack
 `DecodeCtx` has 2796 samples — i.e. allocating zeroed stack space dwarfs the
-JIT'd work. Cranelift writes results back to a `MaybeUninit<T>` and we then
+JIT'd work. The compiled decoder writes results back to a `MaybeUninit<T>` and we then
 read them out with two `movups` — those reads stall on store-to-load
 forwarding (16444 samples on one `movups xmm1, [rsp + 0x158]` in the
 pre-resolved-path bench, where it dominates the loop). That STLF stall is

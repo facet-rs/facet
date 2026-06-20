@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Postcard binary format for facet with Tier-0 and Tier-2 JIT deserialization"
+description = "Postcard binary format for facet"
 keywords = ["postcard", "binary", "serialization", "facet"]
 categories = ["encoding", "parsing"]
 homepage = "https://facet.rs"
@@ -21,7 +21,6 @@ facet-format = { path = "../facet-format", version = "0.50.0-rc.1" }
 facet-path = { workspace = true, features = ["alloc"] }
 facet-reflect = { workspace = true }
 facet-value = { workspace = true }
-tracing = { workspace = true }
 
 # Axum integration (optional)
 axum-core = { version = "0.5", default-features = false, optional = true }

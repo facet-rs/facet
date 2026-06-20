@@ -12,7 +12,7 @@
 //! buys.
 //!
 //! Measures phon's interpreter and copy-and-patch JIT for both encode and decode,
-//! to hold against vox-jit (Cranelift) and vox-postcard (reflective) run from
+//! to hold against vox native-JIT and vox-postcard reflective runs from
 //! vox-bench on the same payload.
 //!
 //! Run: `cargo run -p phon --release --features jit --example gnarly_bench`
