@@ -73,7 +73,8 @@ pub use serializer::{
 };
 #[doc(hidden)]
 pub use vm::{
-    JsonVmStats, from_slice_vm, from_slice_vm_with_stats, from_str_vm, from_str_vm_with_stats,
+    JsonVmPlan, JsonVmStats, from_slice_vm, from_slice_vm_with_stats, from_str_vm,
+    from_str_vm_with_stats,
 };
 
 // Re-export DeserializeError for convenience
