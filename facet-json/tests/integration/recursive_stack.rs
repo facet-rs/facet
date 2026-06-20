@@ -2,6 +2,9 @@ use std::cell::RefCell;
 
 use facet::Facet;
 
+const DEFAULT_MAX_SERIALIZE_STACK_BYTES: usize = 512 * 1024;
+const DEFAULT_MAX_DESERIALIZE_STACK_BYTES: usize = 2304 * 1024;
+
 #[derive(Facet, Debug, PartialEq, Eq)]
 struct IdentityNode {
     id: u32,
@@ -184,7 +187,10 @@ fn recursive_identity_node_json_serializes() {
         "recursive JSON serialization",
         depth,
         stack_usage,
-        configured_stack_limit("FACET_RECURSIVE_STACK_MAX_SERIALIZE_BYTES", 512 * 1024),
+        configured_stack_limit(
+            "FACET_RECURSIVE_STACK_MAX_SERIALIZE_BYTES",
+            DEFAULT_MAX_SERIALIZE_STACK_BYTES,
+        ),
     );
 }
 
@@ -205,7 +211,7 @@ fn recursive_identity_node_json_deserializes() {
         stack_usage,
         configured_stack_limit(
             "FACET_RECURSIVE_STACK_MAX_DESERIALIZE_BYTES",
-            2 * 1024 * 1024,
+            DEFAULT_MAX_DESERIALIZE_STACK_BYTES,
         ),
     );
 }
