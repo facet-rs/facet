@@ -742,10 +742,9 @@ mod tests {
             }
         }
 
-        impl TryFrom<&CustomId> for CustomIdProxy {
-            type Error = std::convert::Infallible;
-            fn try_from(id: &CustomId) -> Result<Self, Self::Error> {
-                Ok(CustomIdProxy(format!("ID-{}", id.0)))
+        impl From<&CustomId> for CustomIdProxy {
+            fn from(id: &CustomId) -> Self {
+                CustomIdProxy(format!("ID-{}", id.0))
             }
         }
 
