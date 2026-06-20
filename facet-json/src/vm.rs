@@ -141,20 +141,24 @@ where
     /// Deserialize a JSON string through this plan.
     #[doc(hidden)]
     pub fn from_str(&self, input: &str) -> Result<T, DeserializeError> {
-        self.from_str_with_stats(input).map(|(value, _)| value)
+        let mut parser = JsonParser::<true>::new(input.as_bytes());
+        deserialize_owned_with_vm::<T, true, false>(&mut parser, &self.inner)
+            .map(|(value, _)| value)
     }
 
     /// Deserialize JSON bytes through this plan.
     #[doc(hidden)]
     pub fn from_slice(&self, input: &[u8]) -> Result<T, DeserializeError> {
-        self.from_slice_with_stats(input).map(|(value, _)| value)
+        let mut parser = JsonParser::<false>::new(input);
+        deserialize_owned_with_vm::<T, false, false>(&mut parser, &self.inner)
+            .map(|(value, _)| value)
     }
 
     /// Deserialize a JSON string through this plan and return VM stats.
     #[doc(hidden)]
     pub fn from_str_with_stats(&self, input: &str) -> Result<(T, JsonVmStats), DeserializeError> {
         let mut parser = JsonParser::<true>::new(input.as_bytes());
-        deserialize_owned_with_vm::<T, true>(&mut parser, &self.inner)
+        deserialize_owned_with_vm::<T, true, true>(&mut parser, &self.inner)
     }
 
     /// Deserialize JSON bytes through this plan and return VM stats.
@@ -164,11 +168,11 @@ where
         input: &[u8],
     ) -> Result<(T, JsonVmStats), DeserializeError> {
         let mut parser = JsonParser::<false>::new(input);
-        deserialize_owned_with_vm::<T, false>(&mut parser, &self.inner)
+        deserialize_owned_with_vm::<T, false, true>(&mut parser, &self.inner)
     }
 }
 
-fn deserialize_owned_with_vm<T, const TRUSTED_UTF8: bool>(
+fn deserialize_owned_with_vm<T, const TRUSTED_UTF8: bool, const COLLECT_STATS: bool>(
     parser: &mut JsonParser<'_, TRUSTED_UTF8>,
     plan: &JsonVmPlanInner,
 ) -> Result<(T, JsonVmStats), DeserializeError>
@@ -177,7 +181,7 @@ where
 {
     let partial = Partial::alloc_owned_with_plan(Arc::clone(&plan.type_plan))?;
 
-    let mut vm = JsonVm::new(parser, plan.lowered.as_ref());
+    let mut vm = JsonVm::<TRUSTED_UTF8, COLLECT_STATS>::new(parser, plan.lowered.as_ref());
 
     // SAFETY: owned deserialization does not borrow from the JSON input.
     #[allow(unsafe_code)]
@@ -235,15 +239,15 @@ where
     })
 }
 
-struct JsonVm<'parser, 'input, 'program, const TRUSTED_UTF8: bool> {
+struct JsonVm<'parser, 'input, 'program, const TRUSTED_UTF8: bool, const COLLECT_STATS: bool> {
     parser: &'parser mut JsonParser<'input, TRUSTED_UTF8>,
     lowered: &'program JsonLowered,
     last_span: Span,
     stats: JsonVmStats,
 }
 
-impl<'parser, 'input, 'program, const TRUSTED_UTF8: bool>
-    JsonVm<'parser, 'input, 'program, TRUSTED_UTF8>
+impl<'parser, 'input, 'program, const TRUSTED_UTF8: bool, const COLLECT_STATS: bool>
+    JsonVm<'parser, 'input, 'program, TRUSTED_UTF8, COLLECT_STATS>
 {
     fn new(
         parser: &'parser mut JsonParser<'input, TRUSTED_UTF8>,
@@ -267,7 +271,9 @@ impl<'parser, 'input, 'program, const TRUSTED_UTF8: bool>
         }];
 
         while let Some(frame) = frames.pop() {
-            self.stats.record(frames.len() + 1, partial.frame_count());
+            if COLLECT_STATS {
+                self.stats.record(frames.len() + 1, partial.frame_count());
+            }
             match frame {
                 VmFrame::Program { program, pc } => {
                     if pc >= program.len() {
@@ -340,7 +346,7 @@ impl<'parser, 'input, 'program, const TRUSTED_UTF8: bool>
                     ParseEventKind::StructStart(ContainerKind::Object) => {
                         frames.push(VmFrame::Struct {
                             plan,
-                            seen: vec![false; plan.fields.len()],
+                            seen: SeenFields::new(plan.fields.len()),
                         });
                     }
                     _ => return Err(self.unexpected_event(&event, "object")),
@@ -422,7 +428,7 @@ impl<'parser, 'input, 'program, const TRUSTED_UTF8: bool>
         mut partial: Partial<'input, false>,
         frames: &mut Vec<VmFrame<'program>>,
         plan: &'program JsonStruct,
-        mut seen: Vec<bool>,
+        mut seen: SeenFields,
     ) -> Result<Partial<'input, false>, DeserializeError> {
         let event = self.next_event("field key or object end")?;
         match event.kind {
@@ -442,14 +448,13 @@ impl<'parser, 'input, 'program, const TRUSTED_UTF8: bool>
                 if field.flattened {
                     return Err(self.unsupported("VM flattened struct field"));
                 }
-                if seen[idx] {
+                if seen.mark(idx) {
                     return Err(DeserializeErrorKind::DuplicateField {
                         field: Cow::Owned(name.to_string()),
                         first_span: None,
                     }
                     .with_span(event.span));
                 }
-                seen[idx] = true;
                 partial = self.begin_nth_field(partial, idx)?;
                 frames.push(VmFrame::Struct { plan, seen });
                 frames.push(VmFrame::EndCurrent);
@@ -468,7 +473,7 @@ impl<'parser, 'input, 'program, const TRUSTED_UTF8: bool>
         partial: Partial<'input, false>,
         frames: &mut Vec<VmFrame<'program>>,
         plan: &'program JsonStruct,
-        seen: Vec<bool>,
+        seen: SeenFields,
         name: &str,
     ) -> Result<Partial<'input, false>, DeserializeError> {
         match plan.unknown_fields {
@@ -817,7 +822,7 @@ enum VmFrame<'program> {
     EndCurrent,
     Struct {
         plan: &'program JsonStruct,
-        seen: Vec<bool>,
+        seen: SeenFields,
     },
     List {
         element: &'program JsonProgram,
@@ -828,10 +833,41 @@ fn find_field<'program>(
     plan: &'program JsonStruct,
     name: &str,
 ) -> Option<(usize, &'program JsonField)> {
-    plan.fields
-        .iter()
-        .enumerate()
-        .find(|(_, field)| field.name == name || field.alias == Some(name))
+    let idx = plan.lookup.find(name)?;
+    let field = &plan.fields[idx];
+    Some((idx, field))
+}
+
+#[derive(Debug)]
+enum SeenFields {
+    Bits(u64),
+    Many(Vec<bool>),
+}
+
+impl SeenFields {
+    fn new(field_count: usize) -> Self {
+        if field_count <= u64::BITS as usize {
+            Self::Bits(0)
+        } else {
+            Self::Many(vec![false; field_count])
+        }
+    }
+
+    fn mark(&mut self, idx: usize) -> bool {
+        match self {
+            Self::Bits(bits) => {
+                let bit = 1_u64 << idx;
+                let was_seen = *bits & bit != 0;
+                *bits |= bit;
+                was_seen
+            }
+            Self::Many(seen) => {
+                let was_seen = seen[idx];
+                seen[idx] = true;
+                was_seen
+            }
+        }
+    }
 }
 
 fn lower_error(error: LowerError) -> DeserializeError {
