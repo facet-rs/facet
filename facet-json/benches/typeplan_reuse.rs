@@ -122,6 +122,16 @@ fn point_reused_typeplan(bencher: Bencher) {
     });
 }
 
+/// VM path, including TypePlan build and lowering
+#[divan::bench]
+fn point_vm(bencher: Bencher) {
+    let json = POINT_JSON;
+    bencher.bench(|| {
+        let result: Point = black_box(facet_json::from_str_vm(black_box(json)).unwrap());
+        black_box(result)
+    });
+}
+
 // =============================================================================
 // Benchmarks - Person (medium)
 // =============================================================================
@@ -152,6 +162,16 @@ fn person_reused_typeplan(bencher: Bencher) {
             .deserialize_into(partial, MetaSource::FromEvents)
             .unwrap();
         let result: Person = partial.build().unwrap().materialize().unwrap();
+        black_box(result)
+    });
+}
+
+/// VM path, including TypePlan build and lowering
+#[divan::bench]
+fn person_vm(bencher: Bencher) {
+    let json = PERSON_JSON;
+    bencher.bench(|| {
+        let result: Person = black_box(facet_json::from_str_vm(black_box(json)).unwrap());
         black_box(result)
     });
 }
@@ -190,6 +210,16 @@ fn company_reused_typeplan(bencher: Bencher) {
     });
 }
 
+/// VM path, including TypePlan build and lowering
+#[divan::bench]
+fn company_vm(bencher: Bencher) {
+    let json = COMPANY_JSON;
+    bencher.bench(|| {
+        let result: Company = black_box(facet_json::from_str_vm(black_box(json)).unwrap());
+        black_box(result)
+    });
+}
+
 // =============================================================================
 // Batch benchmarks - 1000 iterations to amplify TypePlan overhead
 // =============================================================================
@@ -223,6 +253,18 @@ fn batch_1000_reused_typeplan(bencher: Bencher) {
                 .deserialize_into(partial, MetaSource::FromEvents)
                 .unwrap();
             let result: Person = partial.build().unwrap().materialize().unwrap();
+            black_box(result);
+        }
+    });
+}
+
+/// 1000 deserializations through the VM path
+#[divan::bench]
+fn batch_1000_vm(bencher: Bencher) {
+    let json = PERSON_JSON;
+    bencher.bench(|| {
+        for _ in 0..1000 {
+            let result: Person = facet_json::from_str_vm(black_box(json)).unwrap();
             black_box(result);
         }
     });
