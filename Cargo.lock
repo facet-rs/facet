@@ -2085,6 +2085,7 @@ dependencies = [
  "divan",
  "facet",
  "facet-core",
+ "facet-dessert",
  "facet-format",
  "facet-format-suite",
  "facet-json-classics",
