@@ -59,6 +59,22 @@ pub struct Ctx {
     pub dealloc: unsafe extern "C" fn(ptr: *mut u8, size: usize, align: usize),
 }
 
+/// One fixed scalar segment in a scalar run.
+#[repr(C)]
+pub struct ScalarRunSegmentInfo {
+    pub offset: usize,
+    pub size: usize,
+    pub align: usize,
+}
+
+/// A grouped fixed-scalar run, reached through a `*const ScalarRunInfo` slot in
+/// the prog stream.
+#[repr(C)]
+pub struct ScalarRunInfo {
+    pub segments: *const ScalarRunSegmentInfo,
+    pub segment_count: usize,
+}
+
 /// A sequence op's immediates, reached through a `*const SeqInfo` slot in
 /// `Ctx.prog`. The element body is the chain entered at `element_entry`, driven
 /// by the triples at `element_prog`.
@@ -435,6 +451,56 @@ pub unsafe extern "C" fn phon_stencil_scalar(cx: *mut Ctx) {
     phon_cont(cx);
 }
 
+/// Decode a grouped run of fixed-width scalars into disjoint memory segments,
+/// then continue. Each segment keeps its own wire alignment, so padding between
+/// adjacent fields remains wire padding rather than copied memory.
+#[no_mangle]
+pub unsafe extern "C" fn phon_stencil_scalar_run(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let info = &*(*c.prog as *const ScalarRunInfo);
+    c.prog = c.prog.add(1);
+
+    let mut segment_index = 0;
+    while segment_index < info.segment_count {
+        let segment = &*info.segments.add(segment_index);
+
+        let pos = (c.wire as usize) - (c.wire_start as usize);
+        let pad = segment.align.wrapping_sub(pos & (segment.align - 1)) & (segment.align - 1);
+        let src = c.wire.add(pad);
+
+        if (src as usize).wrapping_add(segment.size) > c.wire_end as usize {
+            c.status = 1;
+            return;
+        }
+
+        let dst = c.base.add(segment.offset);
+        let mut i = 0;
+        while segment.size - i >= 8 {
+            core::ptr::copy_nonoverlapping(src.add(i), dst.add(i), 8);
+            i += 8;
+        }
+        if segment.size - i >= 4 {
+            core::ptr::copy_nonoverlapping(src.add(i), dst.add(i), 4);
+            i += 4;
+        }
+        if segment.size - i >= 2 {
+            core::ptr::copy_nonoverlapping(src.add(i), dst.add(i), 2);
+            i += 2;
+        }
+        if segment.size - i >= 1 {
+            core::ptr::copy_nonoverlapping(src.add(i), dst.add(i), 1);
+        }
+
+        c.wire = src.add(segment.size);
+        segment_index += 1;
+    }
+
+    #[cfg(tailcall)]
+    become phon_cont(cx);
+    #[cfg(not(tailcall))]
+    phon_cont(cx);
+}
+
 /// Decode an owned sequence into `base + field_offset`, then continue.
 ///
 /// Reads a `u32` count (bounds-checked like `read_len`), allocates a
@@ -466,7 +532,11 @@ pub unsafe extern "C" fn phon_stencil_sequence(cx: *mut Ctx) {
     // count unbounded by the buffer, so a fixed cap applies — mirroring
     // `Reader::read_len`'s `ZST_COUNT_CAP` (1 << 24).
     let remaining = (c.wire_end as usize) - (c.wire as usize);
-    let max = if info.min_wire == 0 { 1usize << 24 } else { remaining / info.min_wire };
+    let max = if info.min_wire == 0 {
+        1usize << 24
+    } else {
+        remaining / info.min_wire
+    };
     if count > max {
         c.status = 1;
         return;
@@ -1712,6 +1782,60 @@ pub unsafe extern "C" fn phon_stencil_scalar_enc(cx: *mut EncCtx) {
     phon_econt(cx);
 }
 
+/// Encode a grouped run of fixed-width scalars, then continue. Each segment
+/// keeps its own wire alignment, and only the field bytes are read from memory.
+#[no_mangle]
+pub unsafe extern "C" fn phon_stencil_scalar_run_enc(cx: *mut EncCtx) {
+    let c = &mut *cx;
+    let info = &*(*c.prog as *const ScalarRunInfo);
+    c.prog = c.prog.add(1);
+
+    let mut segment_index = 0;
+    while segment_index < info.segment_count {
+        let segment = &*info.segments.add(segment_index);
+
+        let pad = segment.align.wrapping_sub(c.out_pos & (segment.align - 1)) & (segment.align - 1);
+        let need = c.out_pos + pad + segment.size;
+        if need > c.out_cap {
+            (c.grow)(cx, need);
+        }
+
+        let mut dst = c.out_ptr.add(c.out_pos);
+        let mut k = 0;
+        while k < pad {
+            core::ptr::write_volatile(dst, 0u8);
+            dst = dst.add(1);
+            k += 1;
+        }
+
+        let src = c.base.add(segment.offset);
+        let mut i = 0;
+        while segment.size - i >= 8 {
+            core::ptr::copy_nonoverlapping(src.add(i), dst.add(i), 8);
+            i += 8;
+        }
+        if segment.size - i >= 4 {
+            core::ptr::copy_nonoverlapping(src.add(i), dst.add(i), 4);
+            i += 4;
+        }
+        if segment.size - i >= 2 {
+            core::ptr::copy_nonoverlapping(src.add(i), dst.add(i), 2);
+            i += 2;
+        }
+        if segment.size - i >= 1 {
+            core::ptr::copy_nonoverlapping(src.add(i), dst.add(i), 1);
+        }
+
+        c.out_pos += pad + segment.size;
+        segment_index += 1;
+    }
+
+    #[cfg(tailcall)]
+    become phon_econt(cx);
+    #[cfg(not(tailcall))]
+    phon_econt(cx);
+}
+
 /// Encode an owned sequence from `base + field_offset`, then continue.
 ///
 /// Reads the element count via the `len` thunk, writes it as a `u32` (no
@@ -1780,7 +1904,8 @@ pub unsafe extern "C" fn phon_stencil_bytes_enc(cx: *mut EncCtx) {
     // Write the u32 count (no alignment padding, like `write_u32`), then pad
     // before element bytes only when there is at least one element.
     let pad = if count > 0 {
-        info.elem_align.wrapping_sub((c.out_pos + 4) & (info.elem_align - 1))
+        info.elem_align
+            .wrapping_sub((c.out_pos + 4) & (info.elem_align - 1))
             & (info.elem_align - 1)
     } else {
         0
@@ -2175,7 +2300,11 @@ pub unsafe extern "C" fn phon_stencil_enum_enc(cx: *mut EncCtx) {
         disc |= (core::ptr::read_volatile(src.add(r)) as u64) << (r * 8);
         r += 1;
     }
-    let mask = if info.tag_width >= 8 { u64::MAX } else { (1u64 << (info.tag_width * 8)) - 1 };
+    let mask = if info.tag_width >= 8 {
+        u64::MAX
+    } else {
+        (1u64 << (info.tag_width * 8)) - 1
+    };
 
     // Linear search for the matching variant (a plain loop — branches within the
     // stencil, no relocation).

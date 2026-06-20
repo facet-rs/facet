@@ -35,8 +35,9 @@ use crate::stencils::{
     MAP_CONT, MAP_ENC, MAP_ENC_CONT, OPAQUE, OPAQUE_CONT, OPAQUE_ENC, OPAQUE_ENC_CONT, OPTION,
     OPTION_CONT, OPTION_ENC, OPTION_ENC_CONT, POINTER, POINTER_CONT, POINTER_ENC, POINTER_ENC_CONT,
     RESULT, RESULT_CONT, RESULT_ENC, RESULT_ENC_CONT, SCALAR, SCALAR_CONT, SCALAR_ENC,
-    SCALAR_ENC_CONT, SEQUENCE, SEQUENCE_CONT, SEQUENCE_ENC, SEQUENCE_ENC_CONT, SET, SET_CONT,
-    SET_ENC, SET_ENC_CONT, SKIPWIRE, SKIPWIRE_CONT,
+    SCALAR_ENC_CONT, SCALAR_RUN, SCALAR_RUN_CONT, SCALAR_RUN_ENC, SCALAR_RUN_ENC_CONT, SEQUENCE,
+    SEQUENCE_CONT, SEQUENCE_ENC, SEQUENCE_ENC_CONT, SET, SET_CONT, SET_ENC, SET_ENC_CONT, SKIPWIRE,
+    SKIPWIRE_CONT,
 };
 
 /// Load the smoke stencil into JIT memory and run it: `x * 3 + 1`, computed by
@@ -67,6 +68,23 @@ struct Ctx {
     error: *mut (),
     alloc: unsafe extern "C" fn(usize, usize) -> *mut u8,
     dealloc: unsafe extern "C" fn(*mut u8, usize, usize),
+}
+
+/// One scalar segment in a grouped run, matching `ScalarRunSegmentInfo` in
+/// `stencils/stencils.rs` byte for byte.
+#[repr(C)]
+struct ScalarRunSegmentInfo {
+    offset: usize,
+    size: usize,
+    align: usize,
+}
+
+/// A grouped scalar run, matching `ScalarRunInfo` in `stencils/stencils.rs` byte
+/// for byte. Reached through a `*const ScalarRunInfo` slot in the prog stream.
+#[repr(C)]
+struct ScalarRunInfo {
+    segments: *const ScalarRunSegmentInfo,
+    segment_count: usize,
 }
 
 /// A sequence op's immediates, matching `SeqInfo` in `stencils/stencils.rs` byte
@@ -391,6 +409,13 @@ pub struct NativeDecode {
     /// scalars and a `*const SeqInfo` slot per sequence. Boxed so the addresses
     /// the stencils read (and the pointers stored in `seq_infos`) stay stable.
     progs: Vec<Vec<u64>>,
+    /// One per scalar-run op: the immediates the scalar-run stencil reads through
+    /// its prog slot. Same stability contract as `seq_infos`.
+    scalar_run_infos: Vec<ScalarRunInfo>,
+    /// One segment table per scalar-run op. Each inner `Vec`'s heap buffer is
+    /// stable, so the `*const ScalarRunSegmentInfo` in `scalar_run_infos` stays
+    /// valid.
+    scalar_run_segments: Vec<Vec<ScalarRunSegmentInfo>>,
     /// One per sequence op: the immediates the sequence stencil reads through its
     /// prog slot. The `Vec`'s heap buffer is stable — built once with exact
     /// capacity, never re-grown, and a `Vec` move leaves the heap in place — so
@@ -459,25 +484,11 @@ struct Chain {
     prog_index: usize,
 }
 
-fn expand_scalar_runs(program: &MemProgram) -> Option<MemProgram> {
-    if !program.iter().any(|op| matches!(op, MemOp::ScalarRun(_))) {
-        return None;
-    }
-
-    let mut out = Vec::with_capacity(program.len());
-    for op in program {
-        match op {
-            MemOp::ScalarRun(run) => {
-                out.extend(run.segments.iter().map(|segment| MemOp::Scalar {
-                    offset: segment.offset,
-                    size: segment.size,
-                    align: segment.align,
-                }));
-            }
-            other => out.push(other.clone()),
-        }
-    }
-    Some(out)
+/// A scalar-run prog slot to fill once `scalar_run_infos` is in its final home.
+struct ScalarRunFixup {
+    prog_index: usize,
+    slot: usize,
+    runinfo: usize,
 }
 
 /// A sequence's prog slot to fill once chains are laid out and the `ExecBuf`
@@ -715,6 +726,8 @@ struct EnumInfoBuild {
 struct Compiler {
     code: Vec<u8>,
     progs: Vec<Vec<u64>>,
+    scalar_run_segments: Vec<Vec<ScalarRunSegmentInfo>>,
+    scalar_run_fixups: Vec<ScalarRunFixup>,
     seq_infos: Vec<SeqInfoBuild>,
     fixups: Vec<SeqFixup>,
     /// Built directly (no `ExecBuf`-relative fields): one per bulk byte-run op.
@@ -757,8 +770,6 @@ impl Compiler {
     /// continuations patched to chain to the next op (the last to `done`).
     /// Recurses into sequence elements, which become their own chains.
     fn compile_chain(&mut self, program: &MemProgram) -> Chain {
-        let expanded = expand_scalar_runs(program);
-        let program = expanded.as_ref().unwrap_or(program);
         let entry = self.code.len();
         let prog_index = self.progs.len();
         self.progs.push(Vec::new());
@@ -780,8 +791,26 @@ impl Compiler {
                     p.push(*size as u64);
                     p.push(*align as u64);
                 }
-                MemOp::ScalarRun(_) => {
-                    unreachable!("scalar runs are expanded before native lowering")
+                MemOp::ScalarRun(run) => {
+                    self.code.extend_from_slice(SCALAR_RUN);
+                    let slot = self.progs[prog_index].len();
+                    self.progs[prog_index].push(0);
+                    let runinfo = self.scalar_run_segments.len();
+                    self.scalar_run_segments.push(
+                        run.segments
+                            .iter()
+                            .map(|segment| ScalarRunSegmentInfo {
+                                offset: segment.offset,
+                                size: segment.size,
+                                align: segment.align,
+                            })
+                            .collect(),
+                    );
+                    self.scalar_run_fixups.push(ScalarRunFixup {
+                        prog_index,
+                        slot,
+                        runinfo,
+                    });
                 }
                 MemOp::NativeInt { .. } => {
                     panic!("phon-jit: native-sized integer casts are interpreter-only for now")
@@ -1112,9 +1141,7 @@ impl Compiler {
             let next = starts.get(i + 1).copied().unwrap_or(done_start);
             let relocs = match &program[i] {
                 MemOp::Scalar { .. } => SCALAR_CONT,
-                MemOp::ScalarRun(_) => {
-                    unreachable!("scalar runs are expanded before native lowering")
-                }
+                MemOp::ScalarRun(_) => SCALAR_RUN_CONT,
                 MemOp::NativeInt { .. } => {
                     panic!("phon-jit: native-sized integer casts are interpreter-only for now")
                 }
@@ -1165,6 +1192,8 @@ impl NativeDecode {
         let mut c = Compiler {
             code: Vec::new(),
             progs: Vec::new(),
+            scalar_run_segments: Vec::new(),
+            scalar_run_fixups: Vec::new(),
             seq_infos: Vec::new(),
             fixups: Vec::new(),
             bytes_infos: Vec::new(),
@@ -1209,6 +1238,15 @@ impl NativeDecode {
         // Box each chain's prog stream so its address is stable (the prog
         // pointers in `seq_infos` and the entry pointer alias into these).
         let progs = c.progs;
+
+        let mut scalar_run_infos: Vec<ScalarRunInfo> =
+            Vec::with_capacity(c.scalar_run_segments.len());
+        for segments in &c.scalar_run_segments {
+            scalar_run_infos.push(ScalarRunInfo {
+                segments: core::ptr::null(),
+                segment_count: segments.len(),
+            });
+        }
 
         // Materialize the `SeqInfo`s now that the code base is known. Reserve the
         // exact capacity so the `Vec` is never re-grown: its heap buffer (and thus
@@ -1412,6 +1450,8 @@ impl NativeDecode {
             buf,
             entry_prog: top.prog_index,
             progs,
+            scalar_run_infos,
+            scalar_run_segments: c.scalar_run_segments,
             seq_infos,
             // Move the byte-run infos into their final home; they carry no
             // `ExecBuf`-relative fields, so no further binding is needed.
@@ -1446,6 +1486,23 @@ impl NativeDecode {
             .collect();
         for (info, &ptr) in nd.skip_infos.iter_mut().zip(skip_op_ptrs.iter()) {
             info.skip_op = ptr;
+        }
+
+        let scalar_segment_ptrs: Vec<*const ScalarRunSegmentInfo> = nd
+            .scalar_run_segments
+            .iter()
+            .map(|segments| segments.as_ptr())
+            .collect();
+        for (info, &ptr) in nd
+            .scalar_run_infos
+            .iter_mut()
+            .zip(scalar_segment_ptrs.iter())
+        {
+            info.segments = ptr;
+        }
+        for f in &c.scalar_run_fixups {
+            let ptr: *const ScalarRunInfo = &nd.scalar_run_infos[f.runinfo];
+            nd.progs[f.prog_index][f.slot] = ptr as u64;
         }
 
         // Now that `nd.progs` is in its final home, bind the prog pointers: each
@@ -1860,6 +1917,12 @@ pub struct NativeEncode {
     /// Every chain's immediate stream: `[offset, size, align]` triples for
     /// scalars and a `*const EncSeqInfo` slot per sequence.
     progs: Vec<Vec<u64>>,
+    /// One per scalar-run op: the immediates the scalar-run stencil reads through
+    /// its prog slot. Same stability contract as `seq_infos`.
+    scalar_run_infos: Vec<ScalarRunInfo>,
+    /// One segment table per scalar-run op. Each inner `Vec`'s heap buffer is
+    /// stable for the matching `ScalarRunInfo`.
+    scalar_run_segments: Vec<Vec<ScalarRunSegmentInfo>>,
     /// One per sequence op: the immediates the sequence stencil reads through its
     /// prog slot. Built once with exact capacity, never re-grown, so the
     /// `*const EncSeqInfo` the prog stream holds stays valid.
@@ -1996,6 +2059,8 @@ struct EncEnumInfoBuild {
 struct EncCompiler {
     code: Vec<u8>,
     progs: Vec<Vec<u64>>,
+    scalar_run_segments: Vec<Vec<ScalarRunSegmentInfo>>,
+    scalar_run_fixups: Vec<ScalarRunFixup>,
     seq_infos: Vec<EncSeqInfoBuild>,
     fixups: Vec<SeqFixup>,
     /// Built directly (no `ExecBuf`-relative fields): one per bulk byte-run op.
@@ -2027,8 +2092,6 @@ impl EncCompiler {
     /// `done`, with continuations patched to chain to the next op (the last to
     /// `done`). Recurses into sequence elements, which become their own chains.
     fn compile_chain(&mut self, program: &MemProgram) -> Chain {
-        let expanded = expand_scalar_runs(program);
-        let program = expanded.as_ref().unwrap_or(program);
         let entry = self.code.len();
         let prog_index = self.progs.len();
         self.progs.push(Vec::new());
@@ -2048,8 +2111,26 @@ impl EncCompiler {
                     p.push(*size as u64);
                     p.push(*align as u64);
                 }
-                MemOp::ScalarRun(_) => {
-                    unreachable!("scalar runs are expanded before native lowering")
+                MemOp::ScalarRun(run) => {
+                    self.code.extend_from_slice(SCALAR_RUN_ENC);
+                    let slot = self.progs[prog_index].len();
+                    self.progs[prog_index].push(0);
+                    let runinfo = self.scalar_run_segments.len();
+                    self.scalar_run_segments.push(
+                        run.segments
+                            .iter()
+                            .map(|segment| ScalarRunSegmentInfo {
+                                offset: segment.offset,
+                                size: segment.size,
+                                align: segment.align,
+                            })
+                            .collect(),
+                    );
+                    self.scalar_run_fixups.push(ScalarRunFixup {
+                        prog_index,
+                        slot,
+                        runinfo,
+                    });
                 }
                 MemOp::NativeInt { .. } => {
                     panic!("phon-jit: native-sized integer casts are interpreter-only for now")
@@ -2316,9 +2397,7 @@ impl EncCompiler {
             let next = starts.get(i + 1).copied().unwrap_or(done_start);
             let relocs = match &program[i] {
                 MemOp::Scalar { .. } => SCALAR_ENC_CONT,
-                MemOp::ScalarRun(_) => {
-                    unreachable!("scalar runs are expanded before native lowering")
-                }
+                MemOp::ScalarRun(_) => SCALAR_RUN_ENC_CONT,
                 MemOp::NativeInt { .. } => {
                     panic!("phon-jit: native-sized integer casts are interpreter-only for now")
                 }
@@ -2369,6 +2448,8 @@ impl NativeEncode {
         let mut c = EncCompiler {
             code: Vec::new(),
             progs: Vec::new(),
+            scalar_run_segments: Vec::new(),
+            scalar_run_fixups: Vec::new(),
             seq_infos: Vec::new(),
             fixups: Vec::new(),
             bytes_infos: Vec::new(),
@@ -2402,6 +2483,15 @@ impl NativeEncode {
         let buf = ExecBuf::new(&c.code);
         let base = buf.as_ptr();
         let progs = c.progs;
+
+        let mut scalar_run_infos: Vec<ScalarRunInfo> =
+            Vec::with_capacity(c.scalar_run_segments.len());
+        for segments in &c.scalar_run_segments {
+            scalar_run_infos.push(ScalarRunInfo {
+                segments: core::ptr::null(),
+                segment_count: segments.len(),
+            });
+        }
 
         let mut seq_infos: Vec<EncSeqInfo> = Vec::with_capacity(c.seq_infos.len());
         for b in &c.seq_infos {
@@ -2563,6 +2653,8 @@ impl NativeEncode {
             buf,
             entry_prog: top.prog_index,
             progs,
+            scalar_run_infos,
+            scalar_run_segments: c.scalar_run_segments,
             seq_infos,
             // Move the byte-run infos into their final home; no further binding.
             bytes_infos: c.bytes_infos,
@@ -2578,6 +2670,23 @@ impl NativeEncode {
             enum_variants,
             last_size: AtomicUsize::new(0),
         };
+
+        let scalar_segment_ptrs: Vec<*const ScalarRunSegmentInfo> = ne
+            .scalar_run_segments
+            .iter()
+            .map(|segments| segments.as_ptr())
+            .collect();
+        for (info, &ptr) in ne
+            .scalar_run_infos
+            .iter_mut()
+            .zip(scalar_segment_ptrs.iter())
+        {
+            info.segments = ptr;
+        }
+        for f in &c.scalar_run_fixups {
+            let ptr: *const ScalarRunInfo = &ne.scalar_run_infos[f.runinfo];
+            ne.progs[f.prog_index][f.slot] = ptr as u64;
+        }
 
         for (b, info) in c.seq_infos.iter().zip(ne.seq_infos.iter_mut()) {
             info.element_prog = ne.progs[b.element_prog_index].as_ptr();
@@ -3125,11 +3234,14 @@ mod tests {
         mem.0[8..16].copy_from_slice(&0xAABB_CCDD_EEFF_0011u64.to_le_bytes());
 
         let expected = unsafe { compile_encode(&program).run(mem.0.as_ptr()) };
-        let got = unsafe { NativeEncode::compile(&program).run(mem.0.as_ptr()) };
+        let enc = NativeEncode::compile(&program);
+        assert_eq!(enc.progs[enc.entry_prog].len(), 1);
+        let got = unsafe { enc.run(mem.0.as_ptr()) };
         assert_eq!(got, expected);
         assert_eq!(&got[4..8], &[0, 0, 0, 0]);
 
         let dec = NativeDecode::compile(&program);
+        assert_eq!(dec.progs[dec.entry_prog].len(), 1);
         let mut out = Mem([0xEE; 16]);
         unsafe { dec.run(&got, out.0.as_mut_ptr()) }.unwrap();
         assert_eq!(&out.0[0..4], &mem.0[0..4]);

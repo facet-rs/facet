@@ -24,6 +24,7 @@ use copypatch::extract::{Stencil, compile_object, extract_stencil, nightly_avail
 const SYMBOLS: &[&str] = &[
     "phon_stencil_smoke",
     "phon_stencil_scalar",
+    "phon_stencil_scalar_run",
     "phon_stencil_sequence",
     "phon_stencil_bytes",
     "phon_stencil_borrow",
@@ -40,6 +41,7 @@ const SYMBOLS: &[&str] = &[
     "phon_stencil_skipwire",
     "phon_stencil_done",
     "phon_stencil_scalar_enc",
+    "phon_stencil_scalar_run_enc",
     "phon_stencil_sequence_enc",
     "phon_stencil_bytes_enc",
     "phon_stencil_option_enc",
@@ -109,6 +111,7 @@ fn emit_arm64_macos(out: &Path, generated: &Path) {
     // `phon_econt`. Each is the sole patched relocation in its stencil.
     let smoke = get("phon_stencil_smoke", "phon_cont");
     let scalar = get("phon_stencil_scalar", "phon_cont");
+    let scalar_run = get("phon_stencil_scalar_run", "phon_cont");
     let sequence = get("phon_stencil_sequence", "phon_cont");
     let bytes_dec = get("phon_stencil_bytes", "phon_cont");
     let borrow = get("phon_stencil_borrow", "phon_cont");
@@ -125,6 +128,7 @@ fn emit_arm64_macos(out: &Path, generated: &Path) {
     let skipwire = get("phon_stencil_skipwire", "phon_cont");
     let done = get("phon_stencil_done", "phon_cont");
     let scalar_enc = get("phon_stencil_scalar_enc", "phon_econt");
+    let scalar_run_enc = get("phon_stencil_scalar_run_enc", "phon_econt");
     let sequence_enc = get("phon_stencil_sequence_enc", "phon_econt");
     let bytes_enc = get("phon_stencil_bytes_enc", "phon_econt");
     let option_enc = get("phon_stencil_option_enc", "phon_econt");
@@ -160,6 +164,13 @@ fn emit_arm64_macos(out: &Path, generated: &Path) {
         &scalar,
     );
     emit_cont(&mut s, "SCALAR_CONT", "SCALAR", &scalar);
+    emit(
+        &mut s,
+        "SCALAR_RUN",
+        "`phon_stencil_scalar_run`: decode one grouped fixed-scalar run, continue.",
+        &scalar_run,
+    );
+    emit_cont(&mut s, "SCALAR_RUN_CONT", "SCALAR_RUN", &scalar_run);
     emit(
         &mut s,
         "SEQUENCE",
@@ -266,6 +277,18 @@ fn emit_arm64_macos(out: &Path, generated: &Path) {
         &scalar_enc,
     );
     emit_cont(&mut s, "SCALAR_ENC_CONT", "SCALAR_ENC", &scalar_enc);
+    emit(
+        &mut s,
+        "SCALAR_RUN_ENC",
+        "`phon_stencil_scalar_run_enc`: encode one grouped fixed-scalar run, continue.",
+        &scalar_run_enc,
+    );
+    emit_cont(
+        &mut s,
+        "SCALAR_RUN_ENC_CONT",
+        "SCALAR_RUN_ENC",
+        &scalar_run_enc,
+    );
     emit(
         &mut s,
         "SEQUENCE_ENC",
