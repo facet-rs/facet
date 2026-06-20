@@ -16,8 +16,7 @@
 //! Spec: "The descriptor model" (`r[descriptors.*]`).
 
 use phon_schema::SchemaRef;
-
-use crate::ir::{
+use weavy::mem::{
     BorrowThunks, DefaultThunk, MapThunks, OpaqueThunks, OptionThunks, PointerThunks, ResultThunks,
     SeqThunks, SetThunks,
 };

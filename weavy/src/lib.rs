@@ -6,6 +6,8 @@
 //! small call-stack runner that keeps program execution out of the Rust call
 //! stack. Native copy-and-patch backends can use the same program/block shape.
 
+pub mod mem;
+
 use std::collections::BTreeMap;
 
 /// A flat lowered program for an op vocabulary supplied by the caller.
