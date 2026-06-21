@@ -555,10 +555,6 @@ impl<'parser, 'de, 'program, const TRUSTED_UTF8: bool>
             .next_event()?
             .ok_or_else(|| vm_error(None, DeserializeErrorKind::UnexpectedEof { expected }))
     }
-
-    fn peek_event(&mut self) -> Result<Option<ParseEvent<'de>>, DeserializeError> {
-        Ok(self.parser.peek_event()?)
-    }
 }
 
 impl<const TRUSTED_UTF8: bool> Drop for JsonInterp<'_, '_, '_, TRUSTED_UTF8> {
@@ -696,17 +692,11 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                 some_program,
                 inner_layout,
             } => {
-                match self.peek_event()? {
-                    Some(event)
-                        if matches!(event.kind, ParseEventKind::Scalar(ScalarValue::Null)) =>
-                    {
-                        let _ = self.next_event("null")?;
-                        unsafe {
-                            (option.vtable.init_none)(self.base);
-                        }
-                        return Ok(Control::Continue);
+                if self.parser.consume_null_if_next()? {
+                    unsafe {
+                        (option.vtable.init_none)(self.base);
                     }
-                    _ => {}
+                    return Ok(Control::Continue);
                 }
 
                 let scratch = self.scratch.reserve(*inner_layout);
@@ -757,12 +747,8 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                 element_layout,
                 loop_id,
             } => {
-                match self.peek_event()? {
-                    Some(event) if matches!(event.kind, ParseEventKind::SequenceEnd) => {
-                        let _ = self.next_event("array end")?;
-                        return Ok(Control::Continue);
-                    }
-                    _ => {}
+                if self.parser.consume_sequence_end_if_next()? {
+                    return Ok(Control::Continue);
                 }
 
                 let scratch = self.scratch.reserve(*element_layout);

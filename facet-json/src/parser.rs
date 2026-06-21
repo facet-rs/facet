@@ -677,6 +677,127 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
     fn current_offset(&self) -> usize {
         self.state.scanner_pos
     }
+
+    pub(crate) fn consume_null_if_next(&mut self) -> Result<bool, ParseError> {
+        if let Some(event) = self.state.event_peek.as_ref() {
+            if matches!(event.kind, ParseEventKind::Scalar(ScalarValue::Null)) {
+                self.state.event_peek = None;
+                self.state.peek_start_offset = None;
+                return Ok(true);
+            }
+            return Ok(false);
+        }
+
+        match self.determine_action() {
+            NextAction::ObjectValue | NextAction::ArrayValue | NextAction::RootValue => {
+                if !self.next_significant_is(b'n')? {
+                    return Ok(false);
+                }
+                self.consume_null_token()
+            }
+            NextAction::ArrayComma => {
+                let Some((comma_pos, b',')) = self.peek_significant_byte()? else {
+                    return Ok(false);
+                };
+                if !self.significant_after_is(comma_pos + 1, b'n')? {
+                    return Ok(false);
+                }
+
+                self.consume_comma_token()?;
+                if let Some(ContextState::Array(state)) = self.state.stack.last_mut() {
+                    *state = ArrayState::ValueOrEnd;
+                }
+                self.consume_null_token()
+            }
+            _ => Ok(false),
+        }
+    }
+
+    pub(crate) fn consume_sequence_end_if_next(&mut self) -> Result<bool, ParseError> {
+        if let Some(event) = self.state.event_peek.as_ref() {
+            if matches!(event.kind, ParseEventKind::SequenceEnd) {
+                self.state.event_peek = None;
+                self.state.peek_start_offset = None;
+                return Ok(true);
+            }
+            return Ok(false);
+        }
+
+        match self.determine_action() {
+            NextAction::ArrayValue => {
+                if !self.next_significant_is(b']')? {
+                    return Ok(false);
+                }
+                self.consume_array_end_token()
+            }
+            NextAction::ArrayComma => match self.peek_significant_byte()? {
+                Some((_, b']')) => self.consume_array_end_token(),
+                Some((comma_pos, b',')) if self.significant_after_is(comma_pos + 1, b']')? => {
+                    self.consume_comma_token()?;
+                    if let Some(ContextState::Array(state)) = self.state.stack.last_mut() {
+                        *state = ArrayState::ValueOrEnd;
+                    }
+                    self.consume_array_end_token()
+                }
+                _ => Ok(false),
+            },
+            _ => Ok(false),
+        }
+    }
+
+    fn next_significant_is(&self, expected: u8) -> Result<bool, ParseError> {
+        Ok(matches!(
+            self.peek_significant_byte()?,
+            Some((_, byte)) if byte == expected
+        ))
+    }
+
+    fn significant_after_is(&self, pos: usize, expected: u8) -> Result<bool, ParseError> {
+        Ok(matches!(
+            self.scanner
+                .peek_significant_byte_from(self.input, pos)
+                .map_err(scan_error_to_parse_error)?,
+            Some((_, byte)) if byte == expected
+        ))
+    }
+
+    fn peek_significant_byte(&self) -> Result<Option<(usize, u8)>, ParseError> {
+        self.scanner
+            .peek_significant_byte(self.input)
+            .map_err(scan_error_to_parse_error)
+    }
+
+    fn consume_comma_token(&mut self) -> Result<(), ParseError> {
+        let token = self.consume_token()?;
+        if matches!(token.kind, TokenKind::Comma) {
+            return Ok(());
+        }
+        Err(self.unexpected(&token, "','"))
+    }
+
+    fn consume_null_token(&mut self) -> Result<bool, ParseError> {
+        let token = self.consume_token()?;
+        match token.kind {
+            TokenKind::Null => {
+                self.state.root_started = true;
+                self.finish_value_in_parent();
+                Ok(true)
+            }
+            _ => Err(self.unexpected(&token, "null")),
+        }
+    }
+
+    fn consume_array_end_token(&mut self) -> Result<bool, ParseError> {
+        let token = self.consume_token()?;
+        match token.kind {
+            TokenKind::ArrayEnd => {
+                self.state.stack.pop();
+                self.finish_value_in_parent();
+                Ok(true)
+            }
+            _ => Err(self.unexpected(&token, "']'")),
+        }
+    }
 }
 
 impl<'de, const TRUSTED_UTF8: bool> FormatParser<'de> for JsonParser<'de, TRUSTED_UTF8> {
