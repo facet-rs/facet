@@ -20,7 +20,7 @@ use facet_format::{
 };
 use facet_reflect::Span;
 use weavy::mem::runtime::{HandleGuard, InitializedLedger, ScratchSession, ScratchSlot};
-use weavy::{Control, Lowered, Program, RunError, RunStats, Step};
+use weavy::{BlockRef, Control, DenseLowered, Lowered, Program, RunError, RunStats, Step};
 
 use crate::JsonParser;
 
@@ -32,6 +32,9 @@ enum JsonBlockId {
 }
 
 type BlockId = JsonBlockId;
+type ExecBlock = BlockRef;
+type SymbolicOp = JsonOp<BlockId>;
+type ExecOp = JsonOp<ExecBlock>;
 
 /// Deserialize a value from a JSON string through the opt-in Weavy runner.
 pub fn from_str_weavy<T>(input: &str) -> Result<T, DeserializeError>
@@ -75,7 +78,7 @@ where
 /// new VM backend and lets callers separate typed-shape lowering from repeated
 /// input decoding.
 pub struct JsonWeavyPlan<T> {
-    lowered: Lowered<BlockId, JsonOp>,
+    lowered: DenseLowered<ExecOp>,
     _marker: PhantomData<fn() -> T>,
 }
 
@@ -85,8 +88,9 @@ where
 {
     /// Lower `T::SHAPE` into the JSON-specific Weavy bytecode.
     pub fn build() -> Result<Self, DeserializeError> {
+        let symbolic = Lowering::new().lower(T::SHAPE)?;
         Ok(Self {
-            lowered: Lowering::new().lower(T::SHAPE)?,
+            lowered: resolve_json_lowered(symbolic)?,
             _marker: PhantomData,
         })
     }
@@ -122,7 +126,7 @@ where
         let mut slot = MaybeUninit::<T>::uninit();
         let root = PtrUninit::from_maybe_uninit(&mut slot);
         let mut interp = JsonInterp::new(parser, root);
-        let stats = match weavy::run_with_stats(&self.lowered, &mut interp) {
+        let stats = match weavy::run_dense_with_stats(&self.lowered, &mut interp) {
             Ok(stats) => stats,
             Err(err) => return Err(run_error(err)),
         };
@@ -138,7 +142,7 @@ where
         let mut slot = MaybeUninit::<T>::uninit();
         let root = PtrUninit::from_maybe_uninit(&mut slot);
         let mut interp = JsonInterp::new(parser, root);
-        if let Err(err) = weavy::run(&self.lowered, &mut interp) {
+        if let Err(err) = weavy::run_dense(&self.lowered, &mut interp) {
             return Err(run_error(err));
         }
         interp.finish_success();
@@ -147,7 +151,7 @@ where
     }
 }
 
-fn run_error(err: RunError<BlockId, DeserializeError>) -> DeserializeError {
+fn run_error(err: RunError<ExecBlock, DeserializeError>) -> DeserializeError {
     match err {
         RunError::Step(err) => err,
         RunError::MissingBlock(block) => vm_error(
@@ -160,52 +164,52 @@ fn run_error(err: RunError<BlockId, DeserializeError>) -> DeserializeError {
 }
 
 #[derive(Clone, Debug)]
-enum JsonOp {
-    CallBlock(BlockId),
+enum JsonOp<Block> {
+    CallBlock(Block),
     ReadScalar {
         shape: &'static Shape,
         scalar: ScalarType,
     },
     ReadStruct {
         shape: &'static Shape,
-        fields: Box<[FieldPlan]>,
-        loop_id: BlockId,
+        fields: Box<[FieldPlan<Block>]>,
+        loop_id: Block,
     },
     StructNext {
         shape: &'static Shape,
-        fields: Box<[FieldPlan]>,
-        loop_id: BlockId,
+        fields: Box<[FieldPlan<Block>]>,
+        loop_id: Block,
     },
     ReadOption {
         option: OptionDef,
-        some_program: Program<JsonOp>,
+        some_program: Program<JsonOp<Block>>,
         inner_layout: Layout,
     },
     ReadList {
         list_shape: &'static Shape,
         list: ListDef,
-        loop_id: BlockId,
+        loop_id: Block,
     },
     ListNext {
         list: ListDef,
-        element_program: Program<JsonOp>,
+        element_program: Program<JsonOp<Block>>,
         element_layout: Layout,
-        loop_id: BlockId,
+        loop_id: Block,
     },
     ReadPointer {
         pointer: PointerDef,
-        pointee_program: Program<JsonOp>,
+        pointee_program: Program<JsonOp<Block>>,
         pointee_layout: Layout,
     },
 }
 
 #[derive(Clone, Debug)]
-struct FieldPlan {
+struct FieldPlan<Block> {
     name: &'static str,
     alias: Option<&'static str>,
     offset: usize,
     shape: &'static Shape,
-    program: Program<JsonOp>,
+    program: Program<JsonOp<Block>>,
     missing: MissingField,
 }
 
@@ -218,7 +222,7 @@ enum MissingField {
 }
 
 struct Lowering {
-    lowered: Lowered<BlockId, JsonOp>,
+    lowered: Lowered<BlockId, SymbolicOp>,
     in_progress: Vec<&'static Shape>,
 }
 
@@ -233,13 +237,25 @@ impl Lowering {
         }
     }
 
-    fn lower(mut self, root: &'static Shape) -> Result<Lowered<BlockId, JsonOp>, DeserializeError> {
+    fn lower(
+        mut self,
+        root: &'static Shape,
+    ) -> Result<Lowered<BlockId, SymbolicOp>, DeserializeError> {
+        let root_id = JsonBlockId::Shape(root);
         self.lower_shape(root)?;
-        self.lowered.program = vec![JsonOp::CallBlock(JsonBlockId::Shape(root))];
+        self.lowered.program = self
+            .lowered
+            .blocks
+            .get(&root_id)
+            .expect("root shape was lowered into a block")
+            .clone();
         Ok(self.lowered)
     }
 
-    fn lower_shape(&mut self, shape: &'static Shape) -> Result<Program<JsonOp>, DeserializeError> {
+    fn lower_shape(
+        &mut self,
+        shape: &'static Shape,
+    ) -> Result<Program<SymbolicOp>, DeserializeError> {
         let block_id = JsonBlockId::Shape(shape);
         if self.lowered.blocks.contains_key(&block_id) || self.in_progress.contains(&shape) {
             return Ok(vec![JsonOp::CallBlock(block_id)]);
@@ -255,7 +271,7 @@ impl Lowering {
     fn lower_shape_body(
         &mut self,
         shape: &'static Shape,
-    ) -> Result<Program<JsonOp>, DeserializeError> {
+    ) -> Result<Program<SymbolicOp>, DeserializeError> {
         if let Some(scalar) = ScalarType::try_from_shape(shape) {
             return Ok(vec![JsonOp::ReadScalar { shape, scalar }]);
         }
@@ -351,6 +367,128 @@ impl Lowering {
     }
 }
 
+fn resolve_json_lowered(
+    symbolic: Lowered<BlockId, SymbolicOp>,
+) -> Result<DenseLowered<ExecOp>, DeserializeError> {
+    let refs = symbolic.block_refs();
+    let program = resolve_json_program(symbolic.program, &refs)?;
+    let mut blocks = Vec::with_capacity(symbolic.blocks.len());
+    for (_, block) in symbolic.blocks {
+        blocks.push(resolve_json_program(block, &refs)?);
+    }
+    Ok(DenseLowered::new(program, blocks))
+}
+
+fn resolve_json_program(
+    program: Program<SymbolicOp>,
+    refs: &BTreeMap<BlockId, ExecBlock>,
+) -> Result<Program<ExecOp>, DeserializeError> {
+    program
+        .into_iter()
+        .map(|op| resolve_json_op(op, refs))
+        .collect()
+}
+
+fn resolve_json_op(
+    op: SymbolicOp,
+    refs: &BTreeMap<BlockId, ExecBlock>,
+) -> Result<ExecOp, DeserializeError> {
+    Ok(match op {
+        JsonOp::CallBlock(block) => JsonOp::CallBlock(resolve_block_ref(block, refs)?),
+        JsonOp::ReadScalar { shape, scalar } => JsonOp::ReadScalar { shape, scalar },
+        JsonOp::ReadStruct {
+            shape,
+            fields,
+            loop_id,
+        } => JsonOp::ReadStruct {
+            shape,
+            fields: resolve_field_plans(fields, refs)?,
+            loop_id: resolve_block_ref(loop_id, refs)?,
+        },
+        JsonOp::StructNext {
+            shape,
+            fields,
+            loop_id,
+        } => JsonOp::StructNext {
+            shape,
+            fields: resolve_field_plans(fields, refs)?,
+            loop_id: resolve_block_ref(loop_id, refs)?,
+        },
+        JsonOp::ReadOption {
+            option,
+            some_program,
+            inner_layout,
+        } => JsonOp::ReadOption {
+            option,
+            some_program: resolve_json_program(some_program, refs)?,
+            inner_layout,
+        },
+        JsonOp::ReadList {
+            list_shape,
+            list,
+            loop_id,
+        } => JsonOp::ReadList {
+            list_shape,
+            list,
+            loop_id: resolve_block_ref(loop_id, refs)?,
+        },
+        JsonOp::ListNext {
+            list,
+            element_program,
+            element_layout,
+            loop_id,
+        } => JsonOp::ListNext {
+            list,
+            element_program: resolve_json_program(element_program, refs)?,
+            element_layout,
+            loop_id: resolve_block_ref(loop_id, refs)?,
+        },
+        JsonOp::ReadPointer {
+            pointer,
+            pointee_program,
+            pointee_layout,
+        } => JsonOp::ReadPointer {
+            pointer,
+            pointee_program: resolve_json_program(pointee_program, refs)?,
+            pointee_layout,
+        },
+    })
+}
+
+fn resolve_field_plans(
+    fields: Box<[FieldPlan<BlockId>]>,
+    refs: &BTreeMap<BlockId, ExecBlock>,
+) -> Result<Box<[FieldPlan<ExecBlock>]>, DeserializeError> {
+    fields
+        .into_vec()
+        .into_iter()
+        .map(|field| {
+            Ok(FieldPlan {
+                name: field.name,
+                alias: field.alias,
+                offset: field.offset,
+                shape: field.shape,
+                program: resolve_json_program(field.program, refs)?,
+                missing: field.missing,
+            })
+        })
+        .collect()
+}
+
+fn resolve_block_ref(
+    block: BlockId,
+    refs: &BTreeMap<BlockId, ExecBlock>,
+) -> Result<ExecBlock, DeserializeError> {
+    refs.get(&block).copied().ok_or_else(|| {
+        vm_error(
+            None,
+            DeserializeErrorKind::Unsupported {
+                message: format!("missing Weavy block {block:?}").into(),
+            },
+        )
+    })
+}
+
 fn missing_field_action(field: &Field, container_has_default: bool) -> MissingField {
     match field.default {
         Some(DefaultSource::Custom(default)) => MissingField::DefaultCustom(default),
@@ -435,7 +573,7 @@ impl<const TRUSTED_UTF8: bool> Drop for JsonInterp<'_, '_, '_, TRUSTED_UTF8> {
     }
 }
 
-impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, BlockId, JsonOp>
+impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock, ExecOp>
     for JsonInterp<'parser, 'de, 'program, TRUSTED_UTF8>
 {
     type Error = DeserializeError;
@@ -443,8 +581,8 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, BlockId, J
 
     fn step(
         &mut self,
-        op: &'program JsonOp,
-    ) -> Result<Control<'program, BlockId, JsonOp, Self::Continuation>, Self::Error> {
+        op: &'program ExecOp,
+    ) -> Result<Control<'program, ExecBlock, ExecOp, Self::Continuation>, Self::Error> {
         match op {
             JsonOp::CallBlock(shape) => Ok(Control::CallBlock(*shape)),
             JsonOp::ReadScalar { shape, scalar } => {
@@ -667,7 +805,7 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, BlockId, J
     fn after_return(
         &mut self,
         continuation: Self::Continuation,
-    ) -> Result<Control<'program, BlockId, JsonOp, Self::Continuation>, Self::Error> {
+    ) -> Result<Control<'program, ExecBlock, ExecOp, Self::Continuation>, Self::Error> {
         match continuation {
             Continuation::FinishStruct => {
                 let frame = self
@@ -762,7 +900,7 @@ enum Continuation {
         index: usize,
         span: Span,
         old_base: PtrUninit,
-        loop_id: BlockId,
+        loop_id: ExecBlock,
     },
     OptionSome {
         option: OptionDef,
@@ -775,7 +913,7 @@ enum Continuation {
         list: ListDef,
         old_base: PtrUninit,
         scratch: ScratchSlot,
-        loop_id: BlockId,
+        loop_id: ExecBlock,
     },
     Pointer {
         pointer: PointerDef,
@@ -788,12 +926,16 @@ enum Continuation {
 struct StructFrame<'program> {
     shape: &'static Shape,
     base: PtrUninit,
-    fields: &'program [FieldPlan],
+    fields: &'program [FieldPlan<ExecBlock>],
     seen: InitializedLedger<Span>,
 }
 
 impl<'program> StructFrame<'program> {
-    fn new(shape: &'static Shape, base: PtrUninit, fields: &'program [FieldPlan]) -> Self {
+    fn new(
+        shape: &'static Shape,
+        base: PtrUninit,
+        fields: &'program [FieldPlan<ExecBlock>],
+    ) -> Self {
         Self {
             shape,
             base,
