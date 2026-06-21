@@ -145,7 +145,7 @@ fn configured_depth() -> u32 {
     std::env::var("FACET_RECURSIVE_STACK_DEPTH")
         .ok()
         .and_then(|value| value.parse::<u32>().ok())
-        .unwrap_or(23)
+        .unwrap_or(12)
 }
 
 fn configured_stack_limit(name: &str, default: usize) -> usize {
