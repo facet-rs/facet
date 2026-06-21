@@ -180,6 +180,7 @@ enum JsonOp<Block> {
     ReadOption {
         option: OptionDef,
         some_program: Program<JsonOp<Block>>,
+        some_scalar: Option<ScalarType>,
         inner_layout: Layout,
     },
     ReadList {
@@ -286,9 +287,11 @@ impl Lowering {
             Def::Option(option) => {
                 let inner_layout = sized_layout(option.t())?;
                 let some_program = self.lower_shape(option.t())?;
+                let some_scalar = ScalarType::try_from_shape(option.t());
                 Ok(vec![JsonOp::ReadOption {
                     option,
                     some_program,
+                    some_scalar,
                     inner_layout,
                 }])
             }
@@ -417,10 +420,12 @@ fn resolve_json_op(
         JsonOp::ReadOption {
             option,
             some_program,
+            some_scalar,
             inner_layout,
         } => JsonOp::ReadOption {
             option,
             some_program: resolve_json_program(some_program, refs)?,
+            some_scalar,
             inner_layout,
         },
         JsonOp::ReadList {
@@ -699,6 +704,7 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
             JsonOp::ReadOption {
                 option,
                 some_program,
+                some_scalar,
                 inner_layout,
             } => {
                 if self.parser.consume_null_if_next()? {
@@ -709,6 +715,22 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                 }
 
                 let scratch = self.scratch.reserve(*inner_layout);
+                if let Some(scalar) = some_scalar {
+                    let (value, span) = self.parser.read_scalar_token()?;
+                    unsafe {
+                        write_scalar(
+                            option.t(),
+                            *scalar,
+                            scratch_ptr_uninit(&scratch),
+                            value,
+                            span,
+                        )?;
+                        (option.vtable.init_some)(self.base, scratch_ptr_mut(&scratch));
+                    }
+                    self.scratch.release(scratch);
+                    return Ok(Control::Continue);
+                }
+
                 let old_base = self.base;
                 self.base = scratch_ptr_uninit(&scratch);
                 Ok(call_program_or_block_then(
