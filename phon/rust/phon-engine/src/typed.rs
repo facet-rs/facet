@@ -24,10 +24,11 @@
 
 use std::alloc;
 use std::collections::{BTreeMap, HashMap};
+use std::convert::Infallible;
 
 use phon_ir::ir::{
     BorrowOp, BytesOp, DefaultOp, EnumOp, EnumVariantOp, Lowered, LoweringError, MapOp, MemOp,
-    MemProgram, OpaqueOp, OptionOp, PointerOp, ResultOp, SkipOp, fuse, group_record_scalars,
+    MemProgram, OpaqueOp, OptionOp, PointerOp, ResultOp, SetOp, SkipOp, fuse, group_record_scalars,
     lower_fixed_array as lower_fixed_array_elements, lower_record_fields, owned_sequence_op,
     set_op,
 };
@@ -40,6 +41,7 @@ use phon_schema::{
     DecodeError, Field, Primitive, SchemaId, SchemaKind, SchemaRef, Value, Variant, VariantPayload,
     read_value, write_value,
 };
+use weavy::{Control, RunError, RunStats, Step};
 
 use crate::compact::{self, CompactError, Registry, Resolved, alignment, pad_to, skip_pad};
 use crate::compat::{self, FieldMatch, VariantMatch, incompatible};
@@ -1350,204 +1352,294 @@ unsafe extern "C" fn validate_any(_ptr: *const u8, _len: usize) -> bool {
 #[must_use]
 pub unsafe fn encode_with(lowered: &Lowered, base: *const u8) -> Vec<u8> {
     let mut out = Vec::new();
-    // Safety: forwarded from this function's contract.
-    unsafe { encode_program(&lowered.program, base, &mut out, &lowered.blocks) };
+    let mut interp = EncodeInterp {
+        base,
+        out: &mut out,
+    };
+    match weavy::run_program(&lowered.program, &lowered.blocks, &mut interp) {
+        Ok(()) => {}
+        Err(RunError::MissingBlock(_)) => panic!("CallBlock references a lowered recursion block"),
+        Err(RunError::Step(err)) => match err {},
+    }
     out
 }
 
-unsafe fn encode_program(
-    program: &MemProgram,
+/// Encoded bytes plus the generic Weavy runner counters that produced them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EncodeReport {
+    pub bytes: Vec<u8>,
+    pub stats: RunStats,
+}
+
+/// Encode the value at `base` and return generic Weavy runner counters.
+///
+/// # Safety
+/// As [`encode_with`].
+#[must_use]
+pub unsafe fn encode_with_stats(lowered: &Lowered, base: *const u8) -> EncodeReport {
+    let mut bytes = Vec::new();
+    let mut interp = EncodeInterp {
+        base,
+        out: &mut bytes,
+    };
+    let stats = match weavy::run_program_with_stats(&lowered.program, &lowered.blocks, &mut interp)
+    {
+        Ok(stats) => stats,
+        Err(RunError::MissingBlock(_)) => panic!("CallBlock references a lowered recursion block"),
+        Err(RunError::Step(err)) => match err {},
+    };
+    EncodeReport { bytes, stats }
+}
+
+struct EncodeInterp<'out> {
     base: *const u8,
-    out: &mut Vec<u8>,
-    blocks: &BTreeMap<SchemaId, MemProgram>,
-) {
-    for op in program {
-        match op {
+    out: &'out mut Vec<u8>,
+}
+
+enum EncodeContinuation<'program> {
+    RestoreBase {
+        previous_base: *const u8,
+    },
+    Sequence {
+        previous_base: *const u8,
+        element: &'program MemProgram,
+        data: *const u8,
+        stride: usize,
+        next_index: usize,
+        len: usize,
+    },
+    Set {
+        previous_base: *const u8,
+        element: &'program MemProgram,
+        iter: *mut (),
+        thunks: phon_ir::SetThunks,
+    },
+    MapKey {
+        previous_base: *const u8,
+        map: &'program MapOp,
+        iter: *mut (),
+        value: *const u8,
+    },
+    MapValue {
+        previous_base: *const u8,
+        map: &'program MapOp,
+        iter: *mut (),
+    },
+}
+
+impl<'program> Step<'program, SchemaId, MemOp> for EncodeInterp<'_> {
+    type Error = Infallible;
+    type Continuation = EncodeContinuation<'program>;
+
+    fn step(
+        &mut self,
+        op: &'program MemOp,
+    ) -> core::result::Result<Control<'program, SchemaId, MemOp, Self::Continuation>, Self::Error>
+    {
+        Ok(match op {
             // A recursive back-edge: run the callee schema's block at `base + offset`.
             MemOp::CallBlock { schema, offset } => {
-                let block = blocks
-                    .get(schema)
-                    .expect("CallBlock references a lowered recursion block");
                 // Safety: the recursive value lives at `base + offset`.
-                unsafe { encode_program(block, base.add(*offset), out, blocks) };
+                let previous_base = self.base;
+                self.base = unsafe { self.base.add(*offset) };
+                Control::CallBlockThen(*schema, EncodeContinuation::RestoreBase { previous_base })
             }
             MemOp::Scalar {
                 offset,
                 size,
                 align,
             } => {
-                pad_to(out, *align);
+                pad_to(self.out, *align);
                 // Safety: the value is valid for reads over this field's bytes.
-                let src = unsafe { core::slice::from_raw_parts(base.add(*offset), *size) };
-                out.extend_from_slice(src);
+                let src = unsafe { core::slice::from_raw_parts(self.base.add(*offset), *size) };
+                self.out.extend_from_slice(src);
+                Control::Continue
             }
             MemOp::ScalarRun(run) => {
                 for segment in &run.segments {
-                    pad_to(out, segment.align);
+                    pad_to(self.out, segment.align);
                     // Safety: the value is valid for reads over this field's bytes.
                     let src = unsafe {
-                        core::slice::from_raw_parts(base.add(segment.offset), segment.size)
+                        core::slice::from_raw_parts(self.base.add(segment.offset), segment.size)
                     };
-                    out.extend_from_slice(src);
+                    self.out.extend_from_slice(src);
                 }
+                Control::Continue
             }
             MemOp::NativeInt {
                 offset,
                 mem_size,
                 signed,
             } => {
-                pad_to(out, 8);
+                pad_to(self.out, 8);
                 // Safety: the native integer field is readable over `mem_size` bytes.
-                let raw = unsafe { read_uint(base.add(*offset), *mem_size) };
+                let raw = unsafe { read_uint(self.base.add(*offset), *mem_size) };
                 if *signed {
-                    out.extend_from_slice(&sign_extend(raw, *mem_size).to_le_bytes());
+                    self.out
+                        .extend_from_slice(&sign_extend(raw, *mem_size).to_le_bytes());
                 } else {
-                    out.extend_from_slice(&raw.to_le_bytes());
+                    self.out.extend_from_slice(&raw.to_le_bytes());
                 }
+                Control::Continue
             }
             MemOp::Sequence(s) => {
                 // Safety: the sequence handle lives at `field_offset`.
-                let list = unsafe { base.add(s.field_offset) };
+                let list = unsafe { self.base.add(s.field_offset) };
                 let n = unsafe { (s.thunks.len)(s.thunks.ctx, list) };
-                write_u32(out, n as u32);
+                write_u32(self.out, n as u32);
                 let data = unsafe { (s.thunks.data)(s.thunks.ctx, list) };
-                for i in 0..n {
-                    // Safety: element `i` lives at `data + i*stride`.
-                    unsafe { encode_program(&s.element, data.add(i * s.stride), out, blocks) };
+                if n == 0 {
+                    Control::Continue
+                } else {
+                    let previous_base = self.base;
+                    self.base = data;
+                    Control::CallProgramThen(
+                        &s.element,
+                        EncodeContinuation::Sequence {
+                            previous_base,
+                            element: &s.element,
+                            data,
+                            stride: s.stride,
+                            next_index: 1,
+                            len: n,
+                        },
+                    )
                 }
             }
             MemOp::Set(s) => {
                 // Safety: the set handle lives at `field_offset`.
-                let set = unsafe { base.add(s.field_offset) };
+                let set = unsafe { self.base.add(s.field_offset) };
                 let n = unsafe { (s.thunks.len)(s.thunks.ctx, set) };
-                write_u32(out, n as u32);
+                write_u32(self.out, n as u32);
                 let it = unsafe { (s.thunks.iter_init)(s.thunks.ctx, set) };
-                loop {
-                    let mut value: *const u8 = core::ptr::null();
-                    // Safety: `it` is a live iterator; the out-param is valid.
-                    if !unsafe { (s.thunks.iter_next)(s.thunks.ctx, it, &mut value) } {
-                        break;
-                    }
-                    // Safety: `value` borrows the current set element.
-                    unsafe { encode_program(&s.element, value, out, blocks) };
-                }
-                // Safety: `it` was built by `iter_init` and is freed exactly once.
-                unsafe { (s.thunks.iter_dealloc)(s.thunks.ctx, it) };
+                self.call_next_set(self.base, &s.element, it, s.thunks)
             }
             MemOp::Bytes(b) => {
                 // Safety: the handle lives at field_offset; one bulk read of its
                 // contiguous `count * stride` bytes.
-                let list = unsafe { base.add(b.field_offset) };
+                let list = unsafe { self.base.add(b.field_offset) };
                 let count = unsafe { (b.thunks.len)(b.thunks.ctx, list) };
-                write_u32(out, count as u32);
+                write_u32(self.out, count as u32);
                 // Alignment pads BEFORE an element's bytes; an empty run has no
                 // elements, so it writes no padding (`r[compact.alignment]`).
                 if count > 0 {
-                    pad_to(out, b.elem_align);
+                    pad_to(self.out, b.elem_align);
                 }
                 let data = unsafe { (b.thunks.data)(b.thunks.ctx, list) };
                 let src = unsafe { core::slice::from_raw_parts(data, count * b.stride) };
-                out.extend_from_slice(src);
+                self.out.extend_from_slice(src);
+                Control::Continue
             }
             // Encode of a borrowed leaf is byte-identical to the owned bulk run: the
             // `&str`/`&[u8]` reads its length and contiguous bytes through the borrow
             // thunks and writes them as a `u32` count + `count * stride` bytes.
             MemOp::Borrow(b) => {
                 // Safety: the borrowed handle (fat pointer) lives at field_offset.
-                let field = unsafe { base.add(b.field_offset) };
+                let field = unsafe { self.base.add(b.field_offset) };
                 let count = unsafe { (b.thunks.len)(b.thunks.ctx, field) };
-                write_u32(out, count as u32);
+                write_u32(self.out, count as u32);
                 // Alignment pads BEFORE an element's bytes; an empty run has no
                 // elements, so it writes no padding (`r[compact.alignment]`).
                 if count > 0 {
-                    pad_to(out, b.elem_align);
+                    pad_to(self.out, b.elem_align);
                 }
                 let data = unsafe { (b.thunks.data)(b.thunks.ctx, field) };
                 let src = unsafe { core::slice::from_raw_parts(data, count * b.stride) };
-                out.extend_from_slice(src);
+                self.out.extend_from_slice(src);
+                Control::Continue
             }
             MemOp::Option(o) => {
                 // Safety: the option handle lives at field_offset.
-                let option = unsafe { base.add(o.field_offset) };
+                let option = unsafe { self.base.add(o.field_offset) };
                 if unsafe { (o.thunks.is_some)(o.thunks.ctx, option) } {
-                    write_u8(out, 1);
+                    write_u8(self.out, 1);
                     // Safety: present, so `get_value` returns a valid inner pointer.
                     let inner = unsafe { (o.thunks.get_value)(o.thunks.ctx, option) };
-                    unsafe { encode_program(&o.some, inner, out, blocks) };
+                    let previous_base = self.base;
+                    self.base = inner;
+                    Control::CallProgramThen(
+                        &o.some,
+                        EncodeContinuation::RestoreBase { previous_base },
+                    )
                 } else {
-                    write_u8(out, 0);
+                    write_u8(self.out, 0);
+                    Control::Continue
                 }
             }
             MemOp::Enum(e) => {
                 // Read the in-memory discriminant to pick the active variant.
                 // Safety: the discriminant lives at base + tag_offset, tag_width wide.
-                let disc = unsafe { read_uint(base.add(e.tag_offset), e.tag_width) };
+                let disc = unsafe { read_uint(self.base.add(e.tag_offset), e.tag_width) };
                 let mask = width_mask(e.tag_width);
                 let variant = e
                     .variants
                     .iter()
                     .find(|v| (v.selector & mask) == (disc & mask))
                     .expect("enum discriminant matches no modelled variant (invalid value)");
-                write_u32(out, variant.wire_index);
+                write_u32(self.out, variant.wire_index);
                 // The payload fields live at base-relative offsets (same base).
-                unsafe { encode_program(&variant.payload, base, out, blocks) };
+                Control::CallProgram(&variant.payload)
             }
             MemOp::Map(m) => {
                 // Safety: the map handle lives at field_offset.
-                let map = unsafe { base.add(m.field_offset) };
+                let map = unsafe { self.base.add(m.field_offset) };
                 let n = unsafe { (m.thunks.len)(m.thunks.ctx, map) };
-                write_u32(out, n as u32);
+                write_u32(self.out, n as u32);
                 // Drive a stateful iterator over the entries, encoding each
                 // (key, value) pair in turn.
                 let it = unsafe { (m.thunks.iter_init)(m.thunks.ctx, map) };
-                loop {
-                    let mut k: *const u8 = core::ptr::null();
-                    let mut v: *const u8 = core::ptr::null();
-                    // Safety: `it` is a live iterator; the out-params are valid.
-                    if !unsafe { (m.thunks.iter_next)(m.thunks.ctx, it, &mut k, &mut v) } {
-                        break;
-                    }
-                    // Safety: `k`/`v` borrow the current entry's key/value.
-                    unsafe { encode_program(&m.key, k, out, blocks) };
-                    unsafe { encode_program(&m.value, v, out, blocks) };
-                }
-                // Safety: `it` was built by `iter_init` and is freed exactly once.
-                unsafe { (m.thunks.iter_dealloc)(m.thunks.ctx, it) };
+                self.call_next_map(self.base, m, it)
             }
             // r[impl ir.memory] — a self-describing dynamic `Value`: write it through
             // the self-describing codec (self-delimiting; no length prefix).
             MemOp::Dynamic { field_offset } => {
                 // Safety: the field at `field_offset` is an initialized `Value`.
-                let v = unsafe { &*base.add(*field_offset).cast::<Value>() };
-                write_value(out, v)
+                let v = unsafe { &*self.base.add(*field_offset).cast::<Value>() };
+                write_value(self.out, v)
                     .expect("dynamic value is encodable by the self-describing codec");
+                Control::Continue
             }
             // r[impl ir.memory] — Result<T, E>: read which arm is active via the
             // vtable, write its wire index, then encode that arm's payload at the
             // pointer the getter returns (the repr(Rust) layout is never assumed).
             MemOp::Result(rs) => {
                 // Safety: the result handle lives at field_offset.
-                let result = unsafe { base.add(rs.field_offset) };
+                let result = unsafe { self.base.add(rs.field_offset) };
                 if unsafe { (rs.thunks.is_ok)(rs.thunks.ctx, result) } {
-                    write_u32(out, rs.ok_wire_index);
+                    write_u32(self.out, rs.ok_wire_index);
                     // Safety: Ok, so `get_ok` returns a valid inner pointer.
                     let ok = unsafe { (rs.thunks.get_ok)(rs.thunks.ctx, result) };
-                    unsafe { encode_program(&rs.ok, ok, out, blocks) };
+                    let previous_base = self.base;
+                    self.base = ok;
+                    Control::CallProgramThen(
+                        &rs.ok,
+                        EncodeContinuation::RestoreBase { previous_base },
+                    )
                 } else {
-                    write_u32(out, rs.err_wire_index);
+                    write_u32(self.out, rs.err_wire_index);
                     // Safety: Err, so `get_err` returns a valid inner pointer.
                     let err = unsafe { (rs.thunks.get_err)(rs.thunks.ctx, result) };
-                    unsafe { encode_program(&rs.err, err, out, blocks) };
+                    let previous_base = self.base;
+                    self.base = err;
+                    Control::CallProgramThen(
+                        &rs.err,
+                        EncodeContinuation::RestoreBase { previous_base },
+                    )
                 }
             }
             // r[impl descriptors.thunk-binding]
             MemOp::Pointer(p) => {
                 // Safety: the owning pointer handle lives at field_offset.
-                let pointer = unsafe { base.add(p.field_offset) };
+                let pointer = unsafe { self.base.add(p.field_offset) };
                 // Safety: `borrow` returns a valid pointee pointer for initialized
                 // strong pointers such as Box/Rc/Arc.
                 let pointee = unsafe { (p.thunks.borrow)(p.thunks.ctx, pointer) };
-                unsafe { encode_program(&p.pointee, pointee, out, blocks) };
+                let previous_base = self.base;
+                self.base = pointee;
+                Control::CallProgramThen(
+                    &p.pointee,
+                    EncodeContinuation::RestoreBase { previous_base },
+                )
             }
             // r[impl ir.memory] — opaque field: reserve a `u32`
             // length (align 1 — wire-identical to a `Primitive::Bytes` run, so no
@@ -1555,21 +1647,146 @@ unsafe fn encode_program(
             // length. The backpatch is what fixed-width (non-varint) framing buys.
             MemOp::Opaque(o) => {
                 // Safety: the opaque field lives at `field_offset`.
-                let field = unsafe { base.add(o.field_offset) };
-                let len_pos = out.len();
-                write_u32(out, 0); // length placeholder, backpatched below
-                let start = out.len();
+                let field = unsafe { self.base.add(o.field_offset) };
+                let len_pos = self.out.len();
+                write_u32(self.out, 0); // length placeholder, backpatched below
+                let start = self.out.len();
                 // Safety: `field` points at the opaque field; the thunk appends the
                 // inner value's encoded bytes to `out`.
-                unsafe { (o.thunks.encode)(o.thunks.ctx, field, core::ptr::from_mut(out)) };
-                let inner_len = (out.len() - start) as u32;
-                out[len_pos..len_pos + 4].copy_from_slice(&inner_len.to_le_bytes());
+                unsafe { (o.thunks.encode)(o.thunks.ctx, field, core::ptr::from_mut(self.out)) };
+                let inner_len = (self.out.len() - start) as u32;
+                self.out[len_pos..len_pos + 4].copy_from_slice(&inner_len.to_le_bytes());
+                Control::Continue
             }
             // Compat-only decode ops never appear in an encode program (encode is
             // single-schema: `lower`, not `lower_decode`).
             MemOp::SkipWire(_) | MemOp::Default(_) => {
                 unreachable!("typed encode never emits compat skip/default ops")
             }
+        })
+    }
+
+    fn after_return(
+        &mut self,
+        continuation: Self::Continuation,
+    ) -> core::result::Result<Control<'program, SchemaId, MemOp, Self::Continuation>, Self::Error>
+    {
+        Ok(match continuation {
+            EncodeContinuation::RestoreBase { previous_base } => {
+                self.base = previous_base;
+                Control::Continue
+            }
+            EncodeContinuation::Sequence {
+                previous_base,
+                element,
+                data,
+                stride,
+                next_index,
+                len,
+            } => {
+                if next_index == len {
+                    self.base = previous_base;
+                    Control::Continue
+                } else {
+                    self.base = unsafe { data.add(next_index * stride) };
+                    Control::CallProgramThen(
+                        element,
+                        EncodeContinuation::Sequence {
+                            previous_base,
+                            element,
+                            data,
+                            stride,
+                            next_index: next_index + 1,
+                            len,
+                        },
+                    )
+                }
+            }
+            EncodeContinuation::Set {
+                previous_base,
+                element,
+                iter,
+                thunks,
+            } => self.call_next_set(previous_base, element, iter, thunks),
+            EncodeContinuation::MapKey {
+                previous_base,
+                map,
+                iter,
+                value,
+            } => {
+                self.base = value;
+                Control::CallProgramThen(
+                    &map.value,
+                    EncodeContinuation::MapValue {
+                        previous_base,
+                        map,
+                        iter,
+                    },
+                )
+            }
+            EncodeContinuation::MapValue {
+                previous_base,
+                map,
+                iter,
+            } => self.call_next_map(previous_base, map, iter),
+        })
+    }
+}
+
+impl EncodeInterp<'_> {
+    fn call_next_set<'program>(
+        &mut self,
+        previous_base: *const u8,
+        element: &'program MemProgram,
+        iter: *mut (),
+        thunks: phon_ir::SetThunks,
+    ) -> Control<'program, SchemaId, MemOp, EncodeContinuation<'program>> {
+        let mut value: *const u8 = core::ptr::null();
+        // Safety: `iter` is a live iterator; the out-param is valid.
+        if unsafe { (thunks.iter_next)(thunks.ctx, iter, &mut value) } {
+            self.base = value;
+            Control::CallProgramThen(
+                element,
+                EncodeContinuation::Set {
+                    previous_base,
+                    element,
+                    iter,
+                    thunks,
+                },
+            )
+        } else {
+            // Safety: `iter` was built by `iter_init` and is freed exactly once.
+            unsafe { (thunks.iter_dealloc)(thunks.ctx, iter) };
+            self.base = previous_base;
+            Control::Continue
+        }
+    }
+
+    fn call_next_map<'program>(
+        &mut self,
+        previous_base: *const u8,
+        map: &'program MapOp,
+        iter: *mut (),
+    ) -> Control<'program, SchemaId, MemOp, EncodeContinuation<'program>> {
+        let mut key: *const u8 = core::ptr::null();
+        let mut value: *const u8 = core::ptr::null();
+        // Safety: `iter` is a live iterator; the out-params are valid.
+        if unsafe { (map.thunks.iter_next)(map.thunks.ctx, iter, &mut key, &mut value) } {
+            self.base = key;
+            Control::CallProgramThen(
+                &map.key,
+                EncodeContinuation::MapKey {
+                    previous_base,
+                    map,
+                    iter,
+                    value,
+                },
+            )
+        } else {
+            // Safety: `iter` was built by `iter_init` and is freed exactly once.
+            unsafe { (map.thunks.iter_dealloc)(map.thunks.ctx, iter) };
+            self.base = previous_base;
+            Control::Continue
         }
     }
 }
@@ -1607,67 +1824,229 @@ pub unsafe fn encode(
 /// # Errors
 /// [`CompactError`] for malformed or trailing input.
 pub unsafe fn decode_with(lowered: &Lowered, bytes: &[u8], base: *mut u8) -> Result<()> {
-    let mut r = Reader::new(bytes);
-    // Safety: forwarded from this function's contract.
-    unsafe { decode_program(&lowered.program, &mut r, base, &lowered.blocks)? };
-    if r.remaining() != 0 {
+    let mut interp = DecodeInterp {
+        reader: Reader::new(bytes),
+        base,
+    };
+    match weavy::run_program(&lowered.program, &lowered.blocks, &mut interp) {
+        Ok(()) => {}
+        Err(RunError::Step(err)) => return Err(err),
+        Err(RunError::MissingBlock(_)) => {
+            panic!("CallBlock references a lowered recursion block")
+        }
+    }
+    if interp.reader.remaining() != 0 {
         return Err(CompactError::Decode(DecodeError::TrailingBytes(
-            r.remaining(),
+            interp.reader.remaining(),
         )));
     }
     Ok(())
 }
 
-unsafe fn decode_program(
-    program: &MemProgram,
-    r: &mut Reader,
+/// Decode compact `bytes` into `base` and return generic Weavy runner counters.
+///
+/// # Safety
+/// As [`decode_with`].
+///
+/// # Errors
+/// [`CompactError`] for malformed or trailing input.
+pub unsafe fn decode_with_stats(
+    lowered: &Lowered,
+    bytes: &[u8],
     base: *mut u8,
-    blocks: &BTreeMap<SchemaId, MemProgram>,
-) -> Result<()> {
-    for op in program {
-        match op {
+) -> Result<RunStats> {
+    let mut interp = DecodeInterp {
+        reader: Reader::new(bytes),
+        base,
+    };
+    let stats = match weavy::run_program_with_stats(&lowered.program, &lowered.blocks, &mut interp)
+    {
+        Ok(stats) => stats,
+        Err(RunError::Step(err)) => return Err(err),
+        Err(RunError::MissingBlock(_)) => {
+            panic!("CallBlock references a lowered recursion block")
+        }
+    };
+    if interp.reader.remaining() != 0 {
+        return Err(CompactError::Decode(DecodeError::TrailingBytes(
+            interp.reader.remaining(),
+        )));
+    }
+    Ok(stats)
+}
+
+struct DecodeInterp<'bytes> {
+    reader: Reader<'bytes>,
+    base: *mut u8,
+}
+
+struct Scratch {
+    ptr: *mut u8,
+    layout: Option<alloc::Layout>,
+}
+
+impl Scratch {
+    fn new(size: usize, align: usize) -> Result<Self> {
+        let (ptr, layout) = alloc_scratch(size, align)?;
+        Ok(Self { ptr, layout })
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        free_scratch(self.ptr, self.layout);
+        self.layout = None;
+    }
+}
+
+struct SequenceBuffer {
+    ptr: *mut u8,
+    cap: usize,
+    stride: usize,
+    layout: Option<alloc::Layout>,
+}
+
+impl SequenceBuffer {
+    fn new(count: usize, stride: usize, elem_align: usize) -> Result<Self> {
+        if count == 0 || stride == 0 {
+            Ok(Self {
+                ptr: elem_align as *mut u8,
+                cap: count,
+                stride,
+                layout: None,
+            })
+        } else {
+            let layout =
+                alloc::Layout::from_size_align(count * stride, elem_align).map_err(|_| {
+                    CompactError::Decode(DecodeError::Malformed("sequence layout overflow"))
+                })?;
+            // Safety: layout has non-zero size (count > 0 and stride > 0).
+            let ptr = unsafe { alloc::alloc(layout) };
+            if ptr.is_null() {
+                alloc::handle_alloc_error(layout);
+            }
+            Ok(Self {
+                ptr,
+                cap: count,
+                stride,
+                layout: Some(layout),
+            })
+        }
+    }
+
+    fn adopt(&mut self) {
+        self.layout = None;
+    }
+}
+
+impl Drop for SequenceBuffer {
+    fn drop(&mut self) {
+        if let Some(layout) = self.layout.take() {
+            // Safety: `ptr` was allocated with this layout and has not been adopted.
+            unsafe { alloc::dealloc(self.ptr, layout) };
+        }
+    }
+}
+
+enum DecodeContinuation<'program> {
+    RestoreBase {
+        previous_base: *mut u8,
+    },
+    Sequence {
+        previous_base: *mut u8,
+        element: &'program MemProgram,
+        buffer: SequenceBuffer,
+        next_index: usize,
+        count: usize,
+        list: *mut u8,
+        thunks: phon_ir::SeqThunks,
+    },
+    SetElement {
+        previous_base: *mut u8,
+        set: &'program SetOp,
+        set_ptr: *mut u8,
+        remaining_after_current: usize,
+        scratch: Scratch,
+    },
+    MapKey {
+        previous_base: *mut u8,
+        map: &'program MapOp,
+        map_ptr: *mut u8,
+        total: usize,
+        remaining: usize,
+        key_scratch: Scratch,
+        value_scratch: Scratch,
+    },
+    MapValue {
+        previous_base: *mut u8,
+        map: &'program MapOp,
+        map_ptr: *mut u8,
+        total: usize,
+        remaining: usize,
+        key_scratch: Scratch,
+        value_scratch: Scratch,
+    },
+    Init {
+        previous_base: *mut u8,
+        target: InitTarget,
+        scratch: Scratch,
+    },
+}
+
+impl<'program> Step<'program, SchemaId, MemOp> for DecodeInterp<'_> {
+    type Error = CompactError;
+    type Continuation = DecodeContinuation<'program>;
+
+    fn step(
+        &mut self,
+        op: &'program MemOp,
+    ) -> Result<Control<'program, SchemaId, MemOp, Self::Continuation>> {
+        Ok(match op {
             // A recursive back-edge: run the callee schema's block at `base + offset`.
             MemOp::CallBlock { schema, offset } => {
-                let block = blocks
-                    .get(schema)
-                    .expect("CallBlock references a lowered recursion block");
                 // Safety: the recursive value lives at `base + offset`.
-                unsafe { decode_program(block, r, base.add(*offset), blocks)? };
+                let previous_base = self.base;
+                self.base = unsafe { self.base.add(*offset) };
+                Control::CallBlockThen(*schema, DecodeContinuation::RestoreBase { previous_base })
             }
             MemOp::Scalar {
                 offset,
                 size,
                 align,
             } => {
-                skip_pad(r, *align)?;
-                let src = r.read_slice(*size)?;
+                skip_pad(&mut self.reader, *align)?;
+                let src = self.reader.read_slice(*size)?;
                 // Safety: `base` is valid for writes over this field's bytes, and
                 // the wire bytes equal the in-memory bytes for a fixed scalar.
-                unsafe { core::ptr::copy_nonoverlapping(src.as_ptr(), base.add(*offset), *size) };
+                unsafe {
+                    core::ptr::copy_nonoverlapping(src.as_ptr(), self.base.add(*offset), *size)
+                };
+                Control::Continue
             }
             MemOp::ScalarRun(run) => {
                 for segment in &run.segments {
-                    skip_pad(r, segment.align)?;
-                    let src = r.read_slice(segment.size)?;
+                    skip_pad(&mut self.reader, segment.align)?;
+                    let src = self.reader.read_slice(segment.size)?;
                     // Safety: forwarded from the grouped scalar op: each segment
                     // writes within a fixed scalar field, and gaps are untouched.
                     unsafe {
                         core::ptr::copy_nonoverlapping(
                             src.as_ptr(),
-                            base.add(segment.offset),
+                            self.base.add(segment.offset),
                             segment.size,
                         )
                     };
                 }
+                Control::Continue
             }
             MemOp::NativeInt {
                 offset,
                 mem_size,
                 signed,
             } => {
-                skip_pad(r, 8)?;
+                skip_pad(&mut self.reader, 8)?;
                 if *signed {
-                    let value = r.read_i64()?;
+                    let value = self.reader.read_i64()?;
                     if !signed_fits_width(value, *mem_size) {
                         return Err(DecodeError::Malformed(
                             "native-sized signed integer out of range",
@@ -1675,9 +2054,9 @@ unsafe fn decode_program(
                         .into());
                     }
                     // Safety: `base + offset` is writable for the native integer field.
-                    unsafe { write_uint(base.add(*offset), *mem_size, value as u64) };
+                    unsafe { write_uint(self.base.add(*offset), *mem_size, value as u64) };
                 } else {
-                    let value = r.read_u64()?;
+                    let value = self.reader.read_u64()?;
                     if *mem_size < 8 && value > width_mask(*mem_size) {
                         return Err(DecodeError::Malformed(
                             "native-sized unsigned integer out of range",
@@ -1685,91 +2064,56 @@ unsafe fn decode_program(
                         .into());
                     }
                     // Safety: `base + offset` is writable for the native integer field.
-                    unsafe { write_uint(base.add(*offset), *mem_size, value) };
+                    unsafe { write_uint(self.base.add(*offset), *mem_size, value) };
                 }
+                Control::Continue
             }
             MemOp::Sequence(s) => {
-                let count = r.read_len(s.min_wire)?;
-                // Engine owns the element buffer: allocate it, fill it directly,
-                // then hand it to the sequence with `from_raw_parts`.
-                // A zero total byte size — an empty sequence, OR any number of
-                // zero-sized elements (`stride == 0`) — must not reach the
-                // allocator: a zero-size `Layout` is UB to allocate. Use a
-                // dangling-but-aligned pointer, exactly as `Vec` does for ZSTs;
-                // `from_raw_parts` then adopts `count` elements over no bytes
-                // (`size_of::<T>() * cap == 0` matches the empty allocation).
-                let (buffer, cap) = if count == 0 || s.stride == 0 {
-                    (s.elem_align as *mut u8, count)
+                let count = self.reader.read_len(s.min_wire)?;
+                let mut buffer = SequenceBuffer::new(count, s.stride, s.elem_align)?;
+                // Safety: the handle lives at `field_offset`.
+                let list = unsafe { self.base.add(s.field_offset) };
+                if count == 0 {
+                    unsafe {
+                        (s.thunks.from_raw_parts)(s.thunks.ctx, list, buffer.ptr, count, buffer.cap)
+                    };
+                    buffer.adopt();
+                    Control::Continue
                 } else {
-                    let layout = alloc::Layout::from_size_align(count * s.stride, s.elem_align)
-                        .map_err(|_| {
-                            CompactError::Decode(DecodeError::Malformed("sequence layout overflow"))
-                        })?;
-                    // Safety: layout has non-zero size (count > 0 and stride > 0).
-                    let buf = unsafe { alloc::alloc(layout) };
-                    if buf.is_null() {
-                        alloc::handle_alloc_error(layout);
-                    }
-                    (buf, count)
-                };
-                for i in 0..count {
-                    // Safety: element `i` occupies `buffer + i*stride`. For a ZST
-                    // (`stride == 0`) every element shares the dangling pointer and
-                    // `.add(0)` is sound (provenance is only required for non-zero
-                    // offsets); the element program touches no buffer bytes.
-                    if let Err(e) =
-                        unsafe { decode_program(&s.element, r, buffer.add(i * s.stride), blocks) }
-                    {
-                        // Free the buffer on a mid-fill failure (elements are
-                        // assumed trivially droppable for now). Only a real,
-                        // non-zero-size allocation needs freeing.
-                        if cap != 0 && s.stride != 0 {
-                            let layout =
-                                alloc::Layout::from_size_align(cap * s.stride, s.elem_align)
-                                    .unwrap();
-                            unsafe { alloc::dealloc(buffer, layout) };
-                        }
-                        return Err(e);
-                    }
+                    let previous_base = self.base;
+                    self.base = buffer.ptr;
+                    Control::CallProgramThen(
+                        &s.element,
+                        DecodeContinuation::Sequence {
+                            previous_base,
+                            element: &s.element,
+                            buffer,
+                            next_index: 1,
+                            count,
+                            list,
+                            thunks: s.thunks,
+                        },
+                    )
                 }
-                // Safety: the handle lives at `field_offset`; the buffer holds
-                // `count` initialized elements allocated with the element layout.
-                let list = unsafe { base.add(s.field_offset) };
-                unsafe { (s.thunks.from_raw_parts)(s.thunks.ctx, list, buffer, count, cap) };
             }
             MemOp::Set(s) => {
-                let count = r.read_len(s.min_wire)?;
+                let count = self.reader.read_len(s.min_wire)?;
                 // Safety: the set handle lives at field_offset.
-                let set = unsafe { base.add(s.field_offset) };
+                let set = unsafe { self.base.add(s.field_offset) };
                 // Initialize the (uninitialized) set with room for `count` entries.
                 // NOTE: a decode error after this point leaks the partial set — the
                 // same trivially-droppable limitation as sequences/options/maps.
                 unsafe { (s.thunks.init_with_capacity)(s.thunks.ctx, set, count) };
-                for _ in 0..count {
-                    let (scratch, layout) = alloc_scratch(s.elem_size, s.elem_align)?;
-                    // Safety: scratch is elem_size bytes at elem_align.
-                    if let Err(e) = unsafe { decode_program(&s.element, r, scratch, blocks) } {
-                        free_scratch(scratch, layout);
-                        return Err(e);
-                    }
-                    // Safety: scratch holds an initialized element; `insert` moves it
-                    // into the set and tells us whether it was unique.
-                    let inserted = unsafe { (s.thunks.insert)(s.thunks.ctx, set, scratch) };
-                    free_scratch(scratch, layout);
-                    if !inserted {
-                        // r[impl validate.uniqueness]
-                        return Err(CompactError::Decode(DecodeError::DuplicateElement));
-                    }
-                }
+                self.decode_next_set_element(self.base, s, set, count)?
             }
             MemOp::Bytes(b) => {
-                let count = r.read_len(b.stride.max(1))?;
+                let count = self.reader.read_len(b.stride.max(1))?;
                 // Symmetric with encode: only an empty run skips no padding.
                 if count > 0 {
-                    skip_pad(r, b.elem_align)?;
+                    skip_pad(&mut self.reader, b.elem_align)?;
                 }
                 let total = count * b.stride;
-                let src = r.read_slice(total)?;
+                let src = self.reader.read_slice(total)?;
                 // r[impl validate.text] — validate the run before adopting it
                 // (UTF-8 for `String`, a no-op for `Vec`). The JIT calls the very
                 // same thunk, so both engines share one validation path.
@@ -1796,8 +2140,9 @@ unsafe fn decode_program(
                 };
                 // Safety: the handle lives at field_offset; `from_raw_parts` adopts
                 // the `count`-element buffer.
-                let list = unsafe { base.add(b.field_offset) };
+                let list = unsafe { self.base.add(b.field_offset) };
                 unsafe { (b.thunks.from_raw_parts)(b.thunks.ctx, list, buffer, count, cap) };
+                Control::Continue
             }
             // r[impl ir.memory] — BORROWED, zero-copy `&str`/`&[u8]`: same wire as
             // `Bytes`, but write a fat pointer INTO the input `bytes` — NO alloc, NO
@@ -1805,68 +2150,52 @@ unsafe fn decode_program(
             // the caller must keep `bytes` alive as long as the decoded value (the
             // standard zero-copy contract, documented on `decode_with`'s `Safety`).
             MemOp::Borrow(b) => {
-                let count = r.read_len(b.stride.max(1))?;
+                let count = self.reader.read_len(b.stride.max(1))?;
                 // Symmetric with encode: only an empty run skips no padding.
                 if count > 0 {
-                    skip_pad(r, b.elem_align)?;
+                    skip_pad(&mut self.reader, b.elem_align)?;
                 }
                 let total = count * b.stride;
                 // `src` is a slice INTO the input `bytes` (no copy): the borrowed
                 // value will point at exactly these bytes.
-                let src = r.read_slice(total)?;
+                let src = self.reader.read_slice(total)?;
                 // Safety: the borrowed handle lives at field_offset; the construct
                 // thunk builds the `&str`/`&[u8]` fat pointer there, pointing into the
                 // input. Returns false on invalid content (e.g. non-UTF-8 `&str`).
-                let field = unsafe { base.add(b.field_offset) };
+                let field = unsafe { self.base.add(b.field_offset) };
                 if !unsafe { (b.thunks.set_borrowed)(b.thunks.ctx, field, src.as_ptr(), count) } {
                     return Err(CompactError::Decode(DecodeError::InvalidUtf8));
                 }
+                Control::Continue
             }
             MemOp::Option(o) => {
                 // Safety: the option handle lives at field_offset.
-                let option = unsafe { base.add(o.field_offset) };
-                match r.read_u8()? {
-                    0 => unsafe { (o.thunks.init_none)(o.thunks.ctx, option) },
+                let option = unsafe { self.base.add(o.field_offset) };
+                match self.reader.read_u8()? {
+                    0 => {
+                        unsafe { (o.thunks.init_none)(o.thunks.ctx, option) };
+                        Control::Continue
+                    }
                     1 => {
                         // Decode the inner into an engine-owned scratch buffer, then
                         // move it into the Option (init_some does a ptr::read) and
                         // free the scratch WITHOUT dropping (ownership transferred).
-                        let (scratch, layout) = if o.inner_size == 0 {
-                            (o.inner_align as *mut u8, None)
-                        } else {
-                            let layout =
-                                alloc::Layout::from_size_align(o.inner_size, o.inner_align)
-                                    .map_err(|_| {
-                                        CompactError::Decode(DecodeError::Malformed(
-                                            "option inner layout overflow",
-                                        ))
-                                    })?;
-                            // Safety: inner_size > 0.
-                            let buf = unsafe { alloc::alloc(layout) };
-                            if buf.is_null() {
-                                alloc::handle_alloc_error(layout);
-                            }
-                            (buf, Some(layout))
-                        };
-                        // Safety: scratch is inner_size bytes at inner_align.
-                        if let Err(e) = unsafe { decode_program(&o.some, r, scratch, blocks) } {
-                            if let Some(layout) = layout {
-                                unsafe { alloc::dealloc(scratch, layout) };
-                            }
-                            return Err(e);
-                        }
-                        // Safety: scratch holds the initialized inner; init_some moves
-                        // it into the option.
-                        unsafe { (o.thunks.init_some)(o.thunks.ctx, option, scratch) };
-                        if let Some(layout) = layout {
-                            unsafe { alloc::dealloc(scratch, layout) };
-                        }
+                        self.decode_into_via_init(
+                            &o.some,
+                            o.inner_size,
+                            o.inner_align,
+                            InitTarget {
+                                ctx: o.thunks.ctx,
+                                handle: option,
+                                init: o.thunks.init_some,
+                            },
+                        )?
                     }
                     b => return Err(CompactError::Decode(DecodeError::InvalidBool(b))),
                 }
             }
             MemOp::Enum(e) => {
-                let wire_index = r.read_u32()?;
+                let wire_index = self.reader.read_u32()?;
                 let variant = match e.variants.iter().find(|v| v.wire_index == wire_index) {
                     Some(v) => v,
                     None if e.writer_only.contains(&wire_index) => {
@@ -1879,66 +2208,28 @@ unsafe fn decode_program(
                 // Write the in-memory discriminant, then decode the payload fields
                 // (disjoint memory: the discriminant precedes every field).
                 // Safety: the discriminant lives at base + tag_offset, tag_width wide.
-                unsafe { write_uint(base.add(e.tag_offset), e.tag_width, variant.selector) };
+                unsafe { write_uint(self.base.add(e.tag_offset), e.tag_width, variant.selector) };
                 // Safety: payload fields write within the enum's storage at base.
-                unsafe { decode_program(&variant.payload, r, base, blocks)? };
+                Control::CallProgram(&variant.payload)
             }
             MemOp::Map(m) => {
-                let n = r.read_len(1)?;
+                let n = self.reader.read_len(1)?;
                 // Safety: the map handle lives at field_offset.
-                let map = unsafe { base.add(m.field_offset) };
+                let map = unsafe { self.base.add(m.field_offset) };
                 // Initialize the (uninitialized) map with room for `n` entries.
                 // NOTE: a decode error after this point leaks the partial map — the
                 // same trivially-droppable limitation as sequences/options.
                 unsafe { (m.thunks.init_with_capacity)(m.thunks.ctx, map, n) };
-                for _ in 0..n {
-                    // Engine-owned scratch for the key and value: decode each in
-                    // place, then `insert` moves both out (ptr::read), so we free the
-                    // scratch WITHOUT dropping. A zero-size element needs no alloc — a
-                    // dangling-but-aligned pointer suffices.
-                    let (key_scratch, key_layout) = alloc_scratch(m.key_size, m.key_align)?;
-                    let (value_scratch, value_layout) =
-                        match alloc_scratch(m.value_size, m.value_align) {
-                            Ok(s) => s,
-                            Err(e) => {
-                                free_scratch(key_scratch, key_layout);
-                                return Err(e);
-                            }
-                        };
-                    // Safety: key_scratch is key_size bytes at key_align.
-                    if let Err(e) = unsafe { decode_program(&m.key, r, key_scratch, blocks) } {
-                        free_scratch(key_scratch, key_layout);
-                        free_scratch(value_scratch, value_layout);
-                        return Err(e);
-                    }
-                    // Safety: value_scratch is value_size bytes at value_align.
-                    if let Err(e) = unsafe { decode_program(&m.value, r, value_scratch, blocks) } {
-                        free_scratch(key_scratch, key_layout);
-                        free_scratch(value_scratch, value_layout);
-                        return Err(e);
-                    }
-                    // Safety: both scratch buffers hold initialized values; `insert`
-                    // moves them into the map.
-                    unsafe {
-                        (m.thunks.insert)(m.thunks.ctx, map, key_scratch, value_scratch);
-                    }
-                    // The key and value were moved into the map; free without dropping.
-                    free_scratch(key_scratch, key_layout);
-                    free_scratch(value_scratch, value_layout);
-                }
-                // A repeated key collapses two entries into one — reject it, matching
-                // the dynamic codec's duplicate-key rejection (the oracle).
-                if unsafe { (m.thunks.len)(m.thunks.ctx, map) } != n {
-                    return Err(CompactError::Decode(DecodeError::DuplicateKey));
-                }
+                self.decode_next_map_entry(self.base, m, map, n, n)?
             }
             // r[impl ir.memory] — a self-describing dynamic `Value`: decode one value
             // (self-delimiting) and write it into the field.
             MemOp::Dynamic { field_offset } => {
-                let v = read_value(r)?;
+                let v = read_value(&mut self.reader)?;
                 // Safety: `base + field_offset` is uninitialized `Value` storage; we
                 // move the decoded value in.
-                unsafe { core::ptr::write(base.add(*field_offset).cast::<Value>(), v) };
+                unsafe { core::ptr::write(self.base.add(*field_offset).cast::<Value>(), v) };
+                Control::Continue
             }
             // r[impl ir.memory] — Result<T, E>: read the u32 wire index, decode the
             // matching arm's payload into an engine scratch buffer, then move it into
@@ -1946,76 +2237,61 @@ unsafe fn decode_program(
             // the vtable, mirroring the Option some-arm). An index matching neither
             // arm is a decode error.
             MemOp::Result(rs) => {
-                let idx = r.read_u32()?;
+                let idx = self.reader.read_u32()?;
                 // Safety: the result handle lives at field_offset.
-                let result = unsafe { base.add(rs.field_offset) };
+                let result = unsafe { self.base.add(rs.field_offset) };
                 if idx == rs.ok_wire_index {
-                    // Safety: `result` is uninitialized Result storage; `init_ok`
-                    // moves the decoded Ok payload in.
-                    unsafe {
-                        decode_into_via_init(
-                            &rs.ok,
-                            rs.ok_size,
-                            rs.ok_align,
-                            r,
-                            InitTarget {
-                                ctx: rs.thunks.ctx,
-                                handle: result,
-                                init: rs.thunks.init_ok,
-                            },
-                            blocks,
-                        )?
-                    };
+                    self.decode_into_via_init(
+                        &rs.ok,
+                        rs.ok_size,
+                        rs.ok_align,
+                        InitTarget {
+                            ctx: rs.thunks.ctx,
+                            handle: result,
+                            init: rs.thunks.init_ok,
+                        },
+                    )?
                 } else if idx == rs.err_wire_index {
-                    // Safety: as above, `init_err` moves the decoded Err payload in.
-                    unsafe {
-                        decode_into_via_init(
-                            &rs.err,
-                            rs.err_size,
-                            rs.err_align,
-                            r,
-                            InitTarget {
-                                ctx: rs.thunks.ctx,
-                                handle: result,
-                                init: rs.thunks.init_err,
-                            },
-                            blocks,
-                        )?
-                    };
+                    self.decode_into_via_init(
+                        &rs.err,
+                        rs.err_size,
+                        rs.err_align,
+                        InitTarget {
+                            ctx: rs.thunks.ctx,
+                            handle: result,
+                            init: rs.thunks.init_err,
+                        },
+                    )?
                 } else {
                     return Err(CompactError::BadVariantIndex(idx));
                 }
             }
             // r[impl descriptors.thunk-binding]
-            MemOp::Pointer(p) => {
-                // Safety: the pointer handle lives at field_offset and is
-                // uninitialized; `init` moves the scratch-decoded pointee into it.
-                unsafe {
-                    decode_into_via_init(
-                        &p.pointee,
-                        p.pointee_size,
-                        p.pointee_align,
-                        r,
-                        InitTarget {
-                            ctx: p.thunks.ctx,
-                            handle: base.add(p.field_offset),
-                            init: p.thunks.init,
-                        },
-                        blocks,
-                    )?
-                };
-            }
+            MemOp::Pointer(p) => self.decode_into_via_init(
+                &p.pointee,
+                p.pointee_size,
+                p.pointee_align,
+                InitTarget {
+                    ctx: p.thunks.ctx,
+                    handle: unsafe { self.base.add(p.field_offset) },
+                    init: p.thunks.init,
+                },
+            )?,
             // r[impl compat.skip-writer-only] — consume a writer-only value's wire
             // bytes; write nothing to memory. The walker lives in `phon-ir` next to
             // `SkipOp`, shared with the JIT so both decode engines skip identically.
-            MemOp::SkipWire(s) => phon_ir::ir::skip(r, s)?,
+            MemOp::SkipWire(s) => {
+                phon_ir::ir::skip(&mut self.reader, s)?;
+                Control::Continue
+            }
             // r[impl compat.reader-only-fields]
             // r[impl compat.defaults-are-reader-side]
             // Write a reader-only field's default in place; read no wire.
             MemOp::Default(d) => {
                 // Safety: `base + offset` is uninitialized storage of the reader
                 // field's type; the bound thunk initializes it.
-                unsafe { (d.default)(d.ctx, base.add(d.offset)) };
+                unsafe { (d.default)(d.ctx, self.base.add(d.offset)) };
+                Control::Continue
             }
             // r[impl ir.memory] — opaque field: read the `u32`
             // length (bounds-checked), borrow the inner span from the input, and hand
@@ -2023,21 +2299,222 @@ unsafe fn decode_program(
             // so the caller must keep the input alive as long as it (the contract on
             // `decode_with`). The inner schema is never known here.
             MemOp::Opaque(o) => {
-                let len = r.read_len(1)?;
-                let span = r.read_slice(len)?;
+                let len = self.reader.read_len(1)?;
+                let span = self.reader.read_slice(len)?;
                 // Safety: the opaque field lives at `field_offset`; the decode thunk
                 // builds it from the borrowed span. `false` ⇒ the adapter rejected it,
                 // leaving `slot` uninitialized.
-                let slot = unsafe { base.add(o.field_offset) };
+                let slot = unsafe { self.base.add(o.field_offset) };
                 if !unsafe { (o.thunks.decode)(o.thunks.ctx, span.as_ptr(), len, slot) } {
                     return Err(CompactError::Decode(DecodeError::Malformed(
                         "opaque adapter rejected input",
                     )));
                 }
+                Control::Continue
+            }
+        })
+    }
+
+    fn after_return(
+        &mut self,
+        continuation: Self::Continuation,
+    ) -> Result<Control<'program, SchemaId, MemOp, Self::Continuation>> {
+        match continuation {
+            DecodeContinuation::RestoreBase { previous_base } => {
+                self.base = previous_base;
+                Ok(Control::Continue)
+            }
+            DecodeContinuation::Sequence {
+                previous_base,
+                element,
+                mut buffer,
+                next_index,
+                count,
+                list,
+                thunks,
+            } => {
+                if next_index == count {
+                    unsafe {
+                        (thunks.from_raw_parts)(thunks.ctx, list, buffer.ptr, count, buffer.cap)
+                    };
+                    buffer.adopt();
+                    self.base = previous_base;
+                    Ok(Control::Continue)
+                } else {
+                    self.base = unsafe { buffer.ptr.add(next_index * buffer.stride) };
+                    Ok(Control::CallProgramThen(
+                        element,
+                        DecodeContinuation::Sequence {
+                            previous_base,
+                            element,
+                            buffer,
+                            next_index: next_index + 1,
+                            count,
+                            list,
+                            thunks,
+                        },
+                    ))
+                }
+            }
+            DecodeContinuation::SetElement {
+                previous_base,
+                set,
+                set_ptr,
+                remaining_after_current,
+                scratch,
+            } => {
+                // Safety: scratch holds an initialized element; `insert` moves it
+                // into the set and tells us whether it was unique.
+                let inserted = unsafe { (set.thunks.insert)(set.thunks.ctx, set_ptr, scratch.ptr) };
+                drop(scratch);
+                if !inserted {
+                    return Err(CompactError::Decode(DecodeError::DuplicateElement));
+                }
+                self.decode_next_set_element(previous_base, set, set_ptr, remaining_after_current)
+            }
+            DecodeContinuation::MapKey {
+                previous_base,
+                map,
+                map_ptr,
+                total,
+                remaining,
+                key_scratch,
+                value_scratch,
+            } => {
+                self.base = value_scratch.ptr;
+                Ok(Control::CallProgramThen(
+                    &map.value,
+                    DecodeContinuation::MapValue {
+                        previous_base,
+                        map,
+                        map_ptr,
+                        total,
+                        remaining,
+                        key_scratch,
+                        value_scratch,
+                    },
+                ))
+            }
+            DecodeContinuation::MapValue {
+                previous_base,
+                map,
+                map_ptr,
+                total,
+                remaining,
+                key_scratch,
+                value_scratch,
+            } => {
+                unsafe {
+                    (map.thunks.insert)(
+                        map.thunks.ctx,
+                        map_ptr,
+                        key_scratch.ptr,
+                        value_scratch.ptr,
+                    );
+                }
+                drop(key_scratch);
+                drop(value_scratch);
+                let remaining = remaining - 1;
+                if remaining == 0 {
+                    if unsafe { (map.thunks.len)(map.thunks.ctx, map_ptr) } != total {
+                        return Err(CompactError::Decode(DecodeError::DuplicateKey));
+                    }
+                    self.base = previous_base;
+                    Ok(Control::Continue)
+                } else {
+                    self.decode_next_map_entry(previous_base, map, map_ptr, total, remaining)
+                }
+            }
+            DecodeContinuation::Init {
+                previous_base,
+                target,
+                scratch,
+            } => {
+                unsafe { (target.init)(target.ctx, target.handle, scratch.ptr) };
+                drop(scratch);
+                self.base = previous_base;
+                Ok(Control::Continue)
             }
         }
     }
-    Ok(())
+}
+
+impl DecodeInterp<'_> {
+    fn decode_next_set_element<'program>(
+        &mut self,
+        previous_base: *mut u8,
+        set: &'program SetOp,
+        set_ptr: *mut u8,
+        remaining: usize,
+    ) -> Result<Control<'program, SchemaId, MemOp, DecodeContinuation<'program>>> {
+        if remaining == 0 {
+            self.base = previous_base;
+            return Ok(Control::Continue);
+        }
+
+        let scratch = Scratch::new(set.elem_size, set.elem_align)?;
+        self.base = scratch.ptr;
+        Ok(Control::CallProgramThen(
+            &set.element,
+            DecodeContinuation::SetElement {
+                previous_base,
+                set,
+                set_ptr,
+                remaining_after_current: remaining - 1,
+                scratch,
+            },
+        ))
+    }
+
+    fn decode_next_map_entry<'program>(
+        &mut self,
+        previous_base: *mut u8,
+        map: &'program MapOp,
+        map_ptr: *mut u8,
+        total: usize,
+        remaining: usize,
+    ) -> Result<Control<'program, SchemaId, MemOp, DecodeContinuation<'program>>> {
+        if remaining == 0 {
+            self.base = previous_base;
+            return Ok(Control::Continue);
+        }
+
+        let key_scratch = Scratch::new(map.key_size, map.key_align)?;
+        let value_scratch = Scratch::new(map.value_size, map.value_align)?;
+        self.base = key_scratch.ptr;
+        Ok(Control::CallProgramThen(
+            &map.key,
+            DecodeContinuation::MapKey {
+                previous_base,
+                map,
+                map_ptr,
+                total,
+                remaining,
+                key_scratch,
+                value_scratch,
+            },
+        ))
+    }
+
+    fn decode_into_via_init<'program>(
+        &mut self,
+        program: &'program MemProgram,
+        size: usize,
+        align: usize,
+        target: InitTarget,
+    ) -> Result<Control<'program, SchemaId, MemOp, DecodeContinuation<'program>>> {
+        let scratch = Scratch::new(size, align)?;
+        let previous_base = self.base;
+        self.base = scratch.ptr;
+        Ok(Control::CallProgramThen(
+            program,
+            DecodeContinuation::Init {
+                previous_base,
+                target,
+                scratch,
+            },
+        ))
+    }
 }
 
 /// Allocate an engine-owned scratch buffer of `size`/`align` for a decoded
@@ -2074,35 +2551,6 @@ struct InitTarget {
     ctx: *const (),
     handle: *mut u8,
     init: unsafe extern "C" fn(ctx: *const (), handle: *mut u8, value: *mut u8),
-}
-
-/// Decode one `program`'s value of `size`/`align` into an engine-owned scratch
-/// buffer, then move it into `handle` via the `init` thunk (which `ptr::read`s the
-/// scratch), freeing the scratch WITHOUT dropping. The construction half of a
-/// [`MemOp::Result`] arm (and the same shape as the Option some-arm); `init` is
-/// `init_ok` or `init_err`.
-///
-/// # Safety
-/// `handle` must be uninitialized storage for the containing type; `program` must
-/// match the arm payload of `size`/`align`; `ctx`/`init` are the bound result thunks.
-unsafe fn decode_into_via_init(
-    program: &MemProgram,
-    size: usize,
-    align: usize,
-    r: &mut Reader,
-    target: InitTarget,
-    blocks: &BTreeMap<SchemaId, MemProgram>,
-) -> Result<()> {
-    let (scratch, layout) = alloc_scratch(size, align)?;
-    // Safety: scratch is `size` bytes at `align`.
-    if let Err(e) = unsafe { decode_program(program, r, scratch, blocks) } {
-        free_scratch(scratch, layout);
-        return Err(e);
-    }
-    // Safety: scratch holds the initialized arm payload; `init` moves it into `handle`.
-    unsafe { (target.init)(target.ctx, target.handle, scratch) };
-    free_scratch(scratch, layout);
-    Ok(())
 }
 
 /// Lower `descriptor` and decode `bytes` into the value at `base` in one step.
@@ -2421,14 +2869,21 @@ mod tests {
             a: 0x1122_3344,
             b: 0xAABB_CCDD_EEFF_0011,
         };
-        let bytes = unsafe { encode_with(&lowered, core::ptr::from_ref(&value).cast::<u8>()) };
+        let encode_report =
+            unsafe { encode_with_stats(&lowered, core::ptr::from_ref(&value).cast::<u8>()) };
+        let bytes = encode_report.bytes;
+        assert_eq!(encode_report.stats.step_count, 1);
+        assert_eq!(encode_report.stats.max_frame_depth, 1);
         let mut expected = value.a.to_le_bytes().to_vec();
         expected.extend_from_slice(&[0; 4]);
         expected.extend_from_slice(&value.b.to_le_bytes());
         assert_eq!(bytes, expected);
 
         let mut slot = MaybeUninit::<PaddedScalars>::uninit();
-        unsafe { decode_with(&lowered, &bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        let decode_stats =
+            unsafe { decode_with_stats(&lowered, &bytes, slot.as_mut_ptr().cast::<u8>()) }.unwrap();
+        assert_eq!(decode_stats.step_count, 1);
+        assert_eq!(decode_stats.max_frame_depth, 1);
         assert_eq!(unsafe { slot.assume_init() }, value);
     }
 
