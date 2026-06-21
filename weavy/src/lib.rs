@@ -9,6 +9,7 @@
 pub mod mem;
 
 use std::collections::BTreeMap;
+use std::mem::MaybeUninit;
 
 /// A flat lowered program for an op vocabulary supplied by the caller.
 pub type Program<Op> = Vec<Op>;
@@ -153,6 +154,130 @@ struct Frame<'program, Op, Continuation> {
     ip: usize,
     continuation: Option<Continuation>,
 }
+
+impl<Op, Continuation> Frame<'_, Op, Continuation> {
+    #[inline(always)]
+    fn is_finished(&self) -> bool {
+        self.ip >= self.program.len()
+    }
+}
+
+const INLINE_FRAME_CAP: usize = 16;
+
+struct FrameStack<'program, Op, Continuation> {
+    inline: [MaybeUninit<Frame<'program, Op, Continuation>>; INLINE_FRAME_CAP],
+    inline_len: usize,
+    heap: Option<Vec<Frame<'program, Op, Continuation>>>,
+}
+
+impl<'program, Op, Continuation> FrameStack<'program, Op, Continuation> {
+    fn new() -> Self {
+        Self {
+            inline: std::array::from_fn(|_| MaybeUninit::uninit()),
+            inline_len: 0,
+            heap: None,
+        }
+    }
+
+    #[inline(always)]
+    fn len(&self) -> usize {
+        match &self.heap {
+            Some(heap) => heap.len(),
+            None => self.inline_len,
+        }
+    }
+
+    #[inline(always)]
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    #[inline(always)]
+    fn push(&mut self, frame: Frame<'program, Op, Continuation>) {
+        if let Some(heap) = self.heap.as_mut() {
+            heap.push(frame);
+            return;
+        }
+
+        if self.inline_len < INLINE_FRAME_CAP {
+            self.inline[self.inline_len].write(frame);
+            self.inline_len += 1;
+            return;
+        }
+
+        let mut heap = Vec::with_capacity(INLINE_FRAME_CAP * 2);
+        for index in 0..self.inline_len {
+            // SAFETY: every slot below `inline_len` has been initialized by
+            // `push`, and we set `inline_len` to zero after moving them out.
+            let frame = unsafe { self.inline[index].assume_init_read() };
+            heap.push(frame);
+        }
+        self.inline_len = 0;
+        heap.push(frame);
+        self.heap = Some(heap);
+    }
+
+    #[inline(always)]
+    fn pop(&mut self) -> Option<Frame<'program, Op, Continuation>> {
+        if let Some(heap) = self.heap.as_mut() {
+            return heap.pop();
+        }
+
+        if self.inline_len == 0 {
+            return None;
+        }
+
+        self.inline_len -= 1;
+        // SAFETY: the decremented slot was initialized, and reducing
+        // `inline_len` makes this read remove ownership from the inline stack.
+        Some(unsafe { self.inline[self.inline_len].assume_init_read() })
+    }
+
+    #[inline(always)]
+    fn last(&self) -> Option<&Frame<'program, Op, Continuation>> {
+        if let Some(heap) = self.heap.as_ref() {
+            return heap.last();
+        }
+
+        if self.inline_len == 0 {
+            return None;
+        }
+
+        // SAFETY: `inline_len > 0`, so the last slot is initialized and remains
+        // owned by the stack for the returned borrow.
+        Some(unsafe { self.inline[self.inline_len - 1].assume_init_ref() })
+    }
+
+    #[inline(always)]
+    fn last_mut(&mut self) -> Option<&mut Frame<'program, Op, Continuation>> {
+        if let Some(heap) = self.heap.as_mut() {
+            return heap.last_mut();
+        }
+
+        if self.inline_len == 0 {
+            return None;
+        }
+
+        // SAFETY: `inline_len > 0`, so the last slot is initialized and remains
+        // exclusively borrowed through `&mut self`.
+        Some(unsafe { self.inline[self.inline_len - 1].assume_init_mut() })
+    }
+}
+
+impl<Op, Continuation> Drop for FrameStack<'_, Op, Continuation> {
+    fn drop(&mut self) {
+        if self.heap.is_some() {
+            return;
+        }
+
+        while self.pop().is_some() {}
+    }
+}
+
+type StepOutcome<'program, BlockId, Op, Continuation> =
+    Option<(Control<'program, BlockId, Op, Continuation>, bool)>;
+type StepCurrentResult<'program, BlockId, Op, Continuation, Error> =
+    Result<StepOutcome<'program, BlockId, Op, Continuation>, RunError<BlockId, Error>>;
 
 /// Opt-in execution counters for the generic lowered-program runner.
 ///
@@ -394,6 +519,7 @@ where
     Ok(stats)
 }
 
+#[inline(always)]
 fn run_program_accounted<'program, BlockId, Op, S, A, Blocks>(
     program: &'program [Op],
     blocks: &'program Blocks,
@@ -406,7 +532,7 @@ where
     A: Accounting,
     Blocks: BlockTable<'program, BlockId, Op> + ?Sized,
 {
-    let mut frames = Vec::with_capacity(16);
+    let mut frames = FrameStack::new();
     frames.push(Frame {
         program,
         ip: 0,
@@ -414,22 +540,55 @@ where
     });
     accounting.frame_pushed(frames.len());
 
-    while let Some(frame) = frames.last_mut() {
-        if let Some(op) = frame.program.get(frame.ip) {
-            frame.ip += 1;
-            accounting.step();
-            let control = stepper.step(op).map_err(RunError::Step)?;
-            apply_control(control, &mut frames, blocks, stepper, accounting)?;
-        } else {
+    while !frames.is_empty() {
+        let Some((control, current_finished)) =
+            step_current_frame(&mut frames, stepper, accounting)?
+        else {
             finish_frame(&mut frames, blocks, stepper, accounting)?;
-        }
+            continue;
+        };
+        apply_control_after_current_op(
+            control,
+            current_finished,
+            &mut frames,
+            blocks,
+            stepper,
+            accounting,
+        )?;
     }
 
     Ok(())
 }
 
+#[inline(always)]
+fn step_current_frame<'program, BlockId, Op, S, A>(
+    frames: &mut FrameStack<'program, Op, S::Continuation>,
+    stepper: &mut S,
+    accounting: &mut A,
+) -> StepCurrentResult<'program, BlockId, Op, S::Continuation, S::Error>
+where
+    S: Step<'program, BlockId, Op>,
+    A: Accounting,
+{
+    let frame = frames
+        .last_mut()
+        .expect("step_current_frame requires a live frame");
+    if frame.ip >= frame.program.len() {
+        return Ok(None);
+    }
+
+    // SAFETY: The branch above proves that `ip` is in bounds.
+    let op = unsafe { frame.program.get_unchecked(frame.ip) };
+    frame.ip += 1;
+    let current_finished = frame.is_finished();
+    accounting.step();
+    let control = stepper.step(op).map_err(RunError::Step)?;
+    Ok(Some((control, current_finished)))
+}
+
+#[inline(always)]
 fn finish_frame<'program, BlockId, Op, S, A, Blocks>(
-    frames: &mut Vec<Frame<'program, Op, S::Continuation>>,
+    frames: &mut FrameStack<'program, Op, S::Continuation>,
     blocks: &'program Blocks,
     stepper: &mut S,
     accounting: &mut A,
@@ -445,14 +604,70 @@ where
     if let Some(continuation) = continuation {
         accounting.continuation_resumed();
         let control = stepper.after_return(continuation).map_err(RunError::Step)?;
-        apply_control(control, frames, blocks, stepper, accounting)?;
+        let current_finished = frames.last().is_some_and(Frame::is_finished);
+        apply_control_after_current_op(
+            control,
+            current_finished,
+            frames,
+            blocks,
+            stepper,
+            accounting,
+        )?;
     }
     Ok(())
 }
 
+#[inline(always)]
+fn replace_current_frame<'program, Op, Continuation>(
+    frames: &mut FrameStack<'program, Op, Continuation>,
+    program: &'program [Op],
+) {
+    let current = frames
+        .last_mut()
+        .expect("tail call replacement requires a current frame");
+    debug_assert!(current.is_finished());
+    current.program = program;
+    current.ip = 0;
+}
+
+#[inline(always)]
+fn apply_control_after_current_op<'program, BlockId, Op, S, A, Blocks>(
+    control: Control<'program, BlockId, Op, S::Continuation>,
+    current_finished: bool,
+    frames: &mut FrameStack<'program, Op, S::Continuation>,
+    blocks: &'program Blocks,
+    stepper: &mut S,
+    accounting: &mut A,
+) -> Result<(), RunError<BlockId, S::Error>>
+where
+    BlockId: Clone + Ord,
+    S: Step<'program, BlockId, Op>,
+    A: Accounting,
+    Blocks: BlockTable<'program, BlockId, Op> + ?Sized,
+{
+    match control {
+        Control::Continue => Ok(()),
+        Control::CallProgram(program) if current_finished => {
+            accounting.inline_call();
+            replace_current_frame(frames, program);
+            Ok(())
+        }
+        Control::CallBlock(block) if current_finished => {
+            let program = blocks
+                .get_block(&block)
+                .ok_or_else(|| RunError::MissingBlock(block.clone()))?;
+            accounting.block_call();
+            replace_current_frame(frames, program);
+            Ok(())
+        }
+        control => apply_control(control, frames, blocks, stepper, accounting),
+    }
+}
+
+#[inline(always)]
 fn apply_control<'program, BlockId, Op, S, A, Blocks>(
     control: Control<'program, BlockId, Op, S::Continuation>,
-    frames: &mut Vec<Frame<'program, Op, S::Continuation>>,
+    frames: &mut FrameStack<'program, Op, S::Continuation>,
     blocks: &'program Blocks,
     stepper: &mut S,
     accounting: &mut A,
@@ -469,12 +684,16 @@ where
             Control::Continue => {}
             Control::CallProgram(program) => {
                 accounting.inline_call();
-                frames.push(Frame {
-                    program,
-                    ip: 0,
-                    continuation: None,
-                });
-                accounting.frame_pushed(frames.len());
+                if frames.last().is_some_and(Frame::is_finished) {
+                    replace_current_frame(frames, program);
+                } else {
+                    frames.push(Frame {
+                        program,
+                        ip: 0,
+                        continuation: None,
+                    });
+                    accounting.frame_pushed(frames.len());
+                }
             }
             Control::CallProgramThen(program, continuation) => {
                 accounting.inline_call();
@@ -490,12 +709,16 @@ where
                     .get_block(&block)
                     .ok_or_else(|| RunError::MissingBlock(block.clone()))?;
                 accounting.block_call();
-                frames.push(Frame {
-                    program,
-                    ip: 0,
-                    continuation: None,
-                });
-                accounting.frame_pushed(frames.len());
+                if frames.last().is_some_and(Frame::is_finished) {
+                    replace_current_frame(frames, program);
+                } else {
+                    frames.push(Frame {
+                        program,
+                        ip: 0,
+                        continuation: None,
+                    });
+                    accounting.frame_pushed(frames.len());
+                }
             }
             Control::CallBlockThen(block, continuation) => {
                 let program = blocks
@@ -688,6 +911,53 @@ mod tests {
         let err = run_dense(&lowered, &mut eval).unwrap_err();
 
         assert_eq!(err, RunError::MissingBlock(BlockRef::new(2)));
+    }
+
+    #[test]
+    fn tail_calls_reuse_the_current_runner_frame() {
+        let lowered = Lowered {
+            program: vec![Op::Call(7)],
+            blocks: BTreeMap::from([
+                (7, vec![Op::Call(8)]),
+                (8, vec![Op::Nested(vec![Op::Push(1)])]),
+            ]),
+        };
+        let mut eval = Eval { seen: Vec::new() };
+
+        let stats = run_with_stats(&lowered, &mut eval).unwrap();
+
+        assert_eq!(eval.seen, vec![1]);
+        assert_eq!(
+            stats,
+            RunStats {
+                step_count: 4,
+                inline_call_count: 1,
+                block_call_count: 2,
+                return_count: 1,
+                continuation_resume_count: 0,
+                max_frame_depth: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn runner_frame_stack_spills_for_deep_non_tail_calls() {
+        let mut program = vec![Op::Push(99)];
+        for depth in 0..=INLINE_FRAME_CAP {
+            program = vec![Op::NestedThen(program, depth as u32)];
+        }
+        let lowered = Lowered {
+            program,
+            blocks: BTreeMap::new(),
+        };
+        let mut eval = Eval { seen: Vec::new() };
+
+        let stats = run_with_stats(&lowered, &mut eval).unwrap();
+
+        let mut expected = vec![99];
+        expected.extend((0..=INLINE_FRAME_CAP).map(|depth| depth as u32));
+        assert_eq!(eval.seen, expected);
+        assert_eq!(stats.max_frame_depth, INLINE_FRAME_CAP + 2);
     }
 
     #[test]
