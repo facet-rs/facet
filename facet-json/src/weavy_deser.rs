@@ -175,7 +175,6 @@ enum JsonOp<Block> {
     },
     StructNext {
         shape: &'static Shape,
-        fields: Box<[FieldPlan<Block>]>,
         loop_id: Block,
     },
     ReadOption {
@@ -359,11 +358,7 @@ impl Lowering {
                     }
                     let fields = fields.into_boxed_slice();
                     let loop_id = JsonBlockId::StructLoop(shape);
-                    let loop_program = vec![JsonOp::StructNext {
-                        shape,
-                        fields: fields.clone(),
-                        loop_id,
-                    }];
+                    let loop_program = vec![JsonOp::StructNext { shape, loop_id }];
                     self.lowered.blocks.insert(loop_id, loop_program);
                     Ok(vec![JsonOp::ReadStruct {
                         shape,
@@ -415,13 +410,8 @@ fn resolve_json_op(
             fields: resolve_field_plans(fields, refs)?,
             loop_id: resolve_block_ref(loop_id, refs)?,
         },
-        JsonOp::StructNext {
+        JsonOp::StructNext { shape, loop_id } => JsonOp::StructNext {
             shape,
-            fields,
-            loop_id,
-        } => JsonOp::StructNext {
-            shape,
-            fields: resolve_field_plans(fields, refs)?,
             loop_id: resolve_block_ref(loop_id, refs)?,
         },
         JsonOp::ReadOption {
@@ -639,76 +629,68 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                     .push(StructFrame::new(shape, self.base, fields));
                 Ok(Control::CallBlockThen(*loop_id, Continuation::FinishStruct))
             }
-            JsonOp::StructNext {
-                shape,
-                fields,
-                loop_id,
-            } => match self.parser.next_object_field_or_end()? {
-                JsonObjectStep::End => Ok(Control::Continue),
-                JsonObjectStep::Field { key, span } => {
-                    let mut matched = None;
-                    for (index, field) in fields.iter().enumerate() {
-                        if field.matches_key(&key) {
-                            matched = Some((index, field));
-                            break;
-                        }
-                    }
+            JsonOp::StructNext { shape, loop_id } => {
+                match self.parser.next_object_field_or_end()? {
+                    JsonObjectStep::End => Ok(Control::Continue),
+                    JsonObjectStep::Field { key, span } => {
+                        let frame = self
+                            .structs
+                            .last()
+                            .expect("struct frame is present while matching fields");
+                        let matched = frame.match_field(&key);
 
-                    let Some((index, field)) = matched else {
-                        if shape.has_deny_unknown_fields_attr() {
+                        let Some((index, field)) = matched else {
+                            if shape.has_deny_unknown_fields_attr() {
+                                return Err(vm_error(
+                                    Some(span),
+                                    DeserializeErrorKind::UnknownField {
+                                        field: key.as_str().to_owned().into(),
+                                        suggestion: None,
+                                    },
+                                ));
+                            }
+                            self.parser.skip_value()?;
+                            return Ok(Control::CallBlock(*loop_id));
+                        };
+
+                        if let Some(first_span) = frame.seen.get(index).copied() {
                             return Err(vm_error(
                                 Some(span),
-                                DeserializeErrorKind::UnknownField {
-                                    field: key.as_str().to_owned().into(),
-                                    suggestion: None,
+                                DeserializeErrorKind::DuplicateField {
+                                    field: field.name.into(),
+                                    first_span: Some(first_span),
                                 },
                             ));
                         }
-                        self.parser.skip_value()?;
-                        return Ok(Control::CallBlock(*loop_id));
-                    };
 
-                    let frame = self
-                        .structs
-                        .last()
-                        .expect("struct frame is present while decoding fields");
-                    if let Some(first_span) = frame.seen.get(index).copied() {
-                        return Err(vm_error(
-                            Some(span),
-                            DeserializeErrorKind::DuplicateField {
-                                field: field.name.into(),
-                                first_span: Some(first_span),
-                            },
-                        ));
-                    }
-
-                    if let Some(scalar) = field.scalar {
-                        let field_ptr = unsafe { frame.base.field_uninit(field.offset) };
-                        let (value, value_span) = self.parser.read_scalar_token()?;
-                        unsafe {
-                            write_scalar(field.shape, scalar, field_ptr, value, value_span)?;
+                        if let Some(scalar) = field.scalar {
+                            let field_ptr = unsafe { frame.base.field_uninit(field.offset) };
+                            let (value, value_span) = self.parser.read_scalar_token()?;
+                            unsafe {
+                                write_scalar(field.shape, scalar, field_ptr, value, value_span)?;
+                            }
+                            let frame = self
+                                .structs
+                                .last_mut()
+                                .expect("struct frame is present while decoding scalar field");
+                            frame.mark_seen(index, span);
+                            return Ok(Control::CallBlock(*loop_id));
                         }
-                        let frame = self
-                            .structs
-                            .last_mut()
-                            .expect("struct frame is present while decoding scalar field");
-                        frame.seen.mark(index, span);
-                        return Ok(Control::CallBlock(*loop_id));
-                    }
 
-                    let old_base = self.base;
-                    self.base = unsafe { frame.base.field_uninit(field.offset) };
-                    Ok(call_program_or_block_then(
-                        &field.program,
-                        Continuation::FieldDone {
-                            index,
-                            span,
-                            old_base,
-                            loop_id: *loop_id,
-                        },
-                    ))
+                        let old_base = self.base;
+                        self.base = unsafe { frame.base.field_uninit(field.offset) };
+                        Ok(call_program_or_block_then(
+                            &field.program,
+                            Continuation::FieldDone {
+                                index,
+                                span,
+                                old_base,
+                                loop_id: *loop_id,
+                            },
+                        ))
+                    }
                 }
-            },
+            }
             JsonOp::ReadOption {
                 option,
                 some_program,
@@ -845,7 +827,7 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                     .structs
                     .last_mut()
                     .expect("struct frame is present after field program");
-                frame.seen.mark(index, span);
+                frame.mark_seen(index, span);
                 self.base = old_base;
                 Ok(Control::CallBlock(loop_id))
             }
@@ -956,6 +938,7 @@ struct StructFrame<'program> {
     base: PtrUninit,
     fields: &'program [FieldPlan<ExecBlock>],
     seen: InitializedLedger<Span>,
+    next_field: usize,
 }
 
 impl<'program> StructFrame<'program> {
@@ -969,6 +952,40 @@ impl<'program> StructFrame<'program> {
             base,
             fields,
             seen: InitializedLedger::new(fields.len()),
+            next_field: 0,
+        }
+    }
+
+    fn match_field(
+        &self,
+        key: &JsonFieldKey<'_>,
+    ) -> Option<(usize, &'program FieldPlan<ExecBlock>)> {
+        if let Some(field) = self.fields.get(self.next_field)
+            && field.matches_key(key)
+        {
+            return Some((self.next_field, field));
+        }
+
+        self.fields
+            .iter()
+            .enumerate()
+            .find(|(_, field)| field.matches_key(key))
+    }
+
+    fn mark_seen(&mut self, index: usize, span: Span) {
+        self.seen.mark(index, span);
+        if index == self.next_field {
+            self.advance_next_field();
+        }
+    }
+
+    fn advance_next_field(&mut self) {
+        while self
+            .fields
+            .get(self.next_field)
+            .is_some_and(|_| self.seen.is_initialized(self.next_field))
+        {
+            self.next_field += 1;
         }
     }
 
