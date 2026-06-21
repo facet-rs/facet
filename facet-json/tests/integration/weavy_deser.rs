@@ -1,4 +1,5 @@
 use facet::Facet;
+use facet_format::DeserializeErrorKind;
 
 #[derive(Facet, Debug, PartialEq)]
 struct Point {
@@ -60,6 +61,15 @@ fn weavy_plan_can_be_reused() {
     let second = plan.from_str(r#"{"x":3,"y":4}"#).unwrap();
     assert_eq!(first, Point { x: 1, y: 2 });
     assert_eq!(second, Point { x: 3, y: 4 });
+}
+
+#[test]
+fn weavy_rejects_duplicate_field_after_ordered_match() {
+    let err = facet_json::from_str_weavy::<Point>(r#"{"x":1,"y":2,"x":3}"#).unwrap_err();
+    assert!(matches!(
+        err.kind,
+        DeserializeErrorKind::DuplicateField { ref field, .. } if field == "x"
+    ));
 }
 
 #[test]
