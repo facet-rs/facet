@@ -150,4 +150,34 @@ fn weavy_stats_keep_scalar_fields_and_lists_in_loop() {
     )
     .unwrap();
     assert_eq!(stats.inline_call_count, 0, "{stats:?}");
+
+    let (_, short_list): (Person, _) = facet_json::from_str_weavy_with_stats(
+        r#"{"name":"Ada","age":37,"favorite":null,"scores":[1]}"#,
+    )
+    .unwrap();
+    let (_, long_list): (Person, _) = facet_json::from_str_weavy_with_stats(
+        r#"{"name":"Ada","age":37,"favorite":null,"scores":[1,2,3,4,5]}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        short_list.block_call_count, long_list.block_call_count,
+        "{short_list:?} {long_list:?}"
+    );
+    assert_eq!(
+        short_list.step_count, long_list.step_count,
+        "{short_list:?} {long_list:?}"
+    );
+
+    let (_, short_option_list): (MaybeScores, _) =
+        facet_json::from_str_weavy_with_stats(r#"{"scores":[1]}"#).unwrap();
+    let (_, long_option_list): (MaybeScores, _) =
+        facet_json::from_str_weavy_with_stats(r#"{"scores":[1,null,2,null,3]}"#).unwrap();
+    assert_eq!(
+        short_option_list.block_call_count, long_option_list.block_call_count,
+        "{short_option_list:?} {long_option_list:?}"
+    );
+    assert_eq!(
+        short_option_list.step_count, long_option_list.step_count,
+        "{short_option_list:?} {long_option_list:?}"
+    );
 }
