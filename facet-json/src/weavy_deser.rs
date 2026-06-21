@@ -14,15 +14,13 @@ use facet_core::{
     Def, DefaultInPlaceFn, DefaultSource, Facet, Field, ListDef, OptionDef, PointerDef, PtrMut,
     PtrUninit, ScalarType, Shape, StructKind, Type, UserType,
 };
-use facet_format::{
-    ContainerKind, DeserializeError, DeserializeErrorKind, FieldKey, FormatParser, ParseEvent,
-    ParseEventKind, ScalarValue,
-};
+use facet_format::{DeserializeError, DeserializeErrorKind, FormatParser, ScalarValue};
 use facet_reflect::Span;
 use weavy::mem::runtime::{HandleGuard, InitializedLedger, ScratchSession, ScratchSlot};
 use weavy::{BlockRef, Control, DenseLowered, Lowered, Program, RunError, RunStats, Step};
 
 use crate::JsonParser;
+use crate::parser::JsonObjectStep;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum JsonBlockId {
@@ -549,12 +547,6 @@ impl<'parser, 'de, 'program, const TRUSTED_UTF8: bool>
     fn finish_success(&mut self) {
         self.success = true;
     }
-
-    fn next_event(&mut self, expected: &'static str) -> Result<ParseEvent<'de>, DeserializeError> {
-        self.parser
-            .next_event()?
-            .ok_or_else(|| vm_error(None, DeserializeErrorKind::UnexpectedEof { expected }))
-    }
 }
 
 impl<const TRUSTED_UTF8: bool> Drop for JsonInterp<'_, '_, '_, TRUSTED_UTF8> {
@@ -582,20 +574,9 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
         match op {
             JsonOp::CallBlock(shape) => Ok(Control::CallBlock(*shape)),
             JsonOp::ReadScalar { shape, scalar } => {
-                let event = self.next_event("scalar")?;
-                match event.kind {
-                    ParseEventKind::Scalar(value) => unsafe {
-                        write_scalar(shape, *scalar, self.base, value, event.span)?;
-                    },
-                    other => {
-                        return Err(vm_error(
-                            Some(event.span),
-                            DeserializeErrorKind::UnexpectedToken {
-                                got: other.kind_name().into(),
-                                expected: "scalar",
-                            },
-                        ));
-                    }
+                let (value, span) = self.parser.read_scalar_value()?;
+                unsafe {
+                    write_scalar(shape, *scalar, self.base, value, span)?;
                 }
                 Ok(Control::Continue)
             }
@@ -604,20 +585,7 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                 fields,
                 loop_id,
             } => {
-                let event = self.next_event("object")?;
-                if !matches!(
-                    event.kind,
-                    ParseEventKind::StructStart(ContainerKind::Object)
-                ) {
-                    return Err(vm_error(
-                        Some(event.span),
-                        DeserializeErrorKind::UnexpectedToken {
-                            got: event.kind.kind_name().into(),
-                            expected: "object",
-                        },
-                    ));
-                }
-
+                self.parser.consume_object_start()?;
                 self.structs
                     .push(StructFrame::new(shape, self.base, fields));
                 Ok(Control::CallBlockThen(*loop_id, Continuation::FinishStruct))
@@ -626,67 +594,53 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                 shape,
                 fields,
                 loop_id,
-            } => {
-                let event = self.next_event("field key or object end")?;
-                match event.kind {
-                    ParseEventKind::StructEnd => Ok(Control::Continue),
-                    ParseEventKind::FieldKey(key) => {
-                        let Some(field_name) = field_key_name(&key) else {
-                            self.parser.skip_value()?;
-                            return Ok(Control::CallBlock(*loop_id));
-                        };
-
-                        let Some((index, field)) = fields.iter().enumerate().find(|(_, field)| {
-                            field.name == field_name || field.alias == Some(field_name)
-                        }) else {
-                            if shape.has_deny_unknown_fields_attr() {
-                                return Err(vm_error(
-                                    Some(event.span),
-                                    DeserializeErrorKind::UnknownField {
-                                        field: field_name.to_owned().into(),
-                                        suggestion: None,
-                                    },
-                                ));
-                            }
-                            self.parser.skip_value()?;
-                            return Ok(Control::CallBlock(*loop_id));
-                        };
-
-                        let frame = self
-                            .structs
-                            .last()
-                            .expect("struct frame is present while decoding fields");
-                        if let Some(first_span) = frame.seen.get(index).copied() {
+            } => match self.parser.next_object_field_or_end()? {
+                JsonObjectStep::End => Ok(Control::Continue),
+                JsonObjectStep::Field { name, span } => {
+                    let field_name = name.as_ref();
+                    let Some((index, field)) = fields.iter().enumerate().find(|(_, field)| {
+                        field.name == field_name || field.alias == Some(field_name)
+                    }) else {
+                        if shape.has_deny_unknown_fields_attr() {
                             return Err(vm_error(
-                                Some(event.span),
-                                DeserializeErrorKind::DuplicateField {
-                                    field: field.name.into(),
-                                    first_span: Some(first_span),
+                                Some(span),
+                                DeserializeErrorKind::UnknownField {
+                                    field: field_name.to_owned().into(),
+                                    suggestion: None,
                                 },
                             ));
                         }
+                        self.parser.skip_value()?;
+                        return Ok(Control::CallBlock(*loop_id));
+                    };
 
-                        let old_base = self.base;
-                        self.base = unsafe { frame.base.field_uninit(field.offset) };
-                        Ok(Control::CallProgramThen(
-                            &field.program,
-                            Continuation::FieldDone {
-                                index,
-                                span: event.span,
-                                old_base,
-                                loop_id: *loop_id,
+                    let frame = self
+                        .structs
+                        .last()
+                        .expect("struct frame is present while decoding fields");
+                    if let Some(first_span) = frame.seen.get(index).copied() {
+                        return Err(vm_error(
+                            Some(span),
+                            DeserializeErrorKind::DuplicateField {
+                                field: field.name.into(),
+                                first_span: Some(first_span),
                             },
-                        ))
+                        ));
                     }
-                    other => Err(vm_error(
-                        Some(event.span),
-                        DeserializeErrorKind::UnexpectedToken {
-                            got: other.kind_name().into(),
-                            expected: "field key or object end",
+
+                    let old_base = self.base;
+                    self.base = unsafe { frame.base.field_uninit(field.offset) };
+                    Ok(Control::CallProgramThen(
+                        &field.program,
+                        Continuation::FieldDone {
+                            index,
+                            span,
+                            old_base,
+                            loop_id: *loop_id,
                         },
-                    )),
+                    ))
                 }
-            }
+            },
             JsonOp::ReadOption {
                 option,
                 some_program,
@@ -717,19 +671,7 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                 list,
                 loop_id,
             } => {
-                let event = self.next_event("array")?;
-                if !matches!(
-                    event.kind,
-                    ParseEventKind::SequenceStart(ContainerKind::Array)
-                ) {
-                    return Err(vm_error(
-                        Some(event.span),
-                        DeserializeErrorKind::UnexpectedToken {
-                            got: event.kind.kind_name().into(),
-                            expected: "array",
-                        },
-                    ));
-                }
+                self.parser.consume_array_start()?;
                 let init = list
                     .init_in_place_with_capacity()
                     .ok_or_else(|| unsupported(list_shape, "list initialization"))?;
@@ -1221,10 +1163,6 @@ where
         other => return Err(type_mismatch_name(span, target, other.kind_name())),
     };
     T::try_from(value).map_err(|_| number_out_of_range(span, value.to_string(), target))
-}
-
-fn field_key_name<'a>(key: &'a FieldKey<'_>) -> Option<&'a str> {
-    key.name().map(|name| name.as_ref())
 }
 
 fn vm_error(span: Option<Span>, kind: DeserializeErrorKind) -> DeserializeError {

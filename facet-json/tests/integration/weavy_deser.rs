@@ -20,6 +20,11 @@ struct MaybeScores {
 }
 
 #[derive(Facet, Debug, PartialEq)]
+struct PointList {
+    points: Vec<Point>,
+}
+
+#[derive(Facet, Debug, PartialEq)]
 struct Node {
     id: u32,
     child: Option<Box<Node>>,
@@ -60,6 +65,13 @@ fn weavy_deserializes_options_and_lists() {
 fn weavy_deserializes_null_options_inside_lists() {
     let got: MaybeScores = facet_json::from_str_weavy(r#"{"scores":[1,null,2,null]}"#).unwrap();
     assert_eq!(got.scores, vec![Some(1), None, Some(2), None]);
+}
+
+#[test]
+fn weavy_deserializes_structs_inside_lists() {
+    let got: PointList =
+        facet_json::from_str_weavy(r#"{"points":[{"x":1,"y":2},{"x":3,"y":4}]}"#).unwrap();
+    assert_eq!(got.points, vec![Point { x: 1, y: 2 }, Point { x: 3, y: 4 }]);
 }
 
 #[test]
