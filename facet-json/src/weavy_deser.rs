@@ -213,6 +213,12 @@ struct FieldPlan<Block> {
     missing: MissingField,
 }
 
+impl<Block> FieldPlan<Block> {
+    fn matches_name(&self, name: &str) -> bool {
+        self.name == name || self.alias == Some(name)
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 enum MissingField {
     Required,
@@ -532,8 +538,8 @@ fn unsupported(shape: &'static Shape, what: &'static str) -> DeserializeError {
 struct JsonInterp<'parser, 'de, 'program, const TRUSTED_UTF8: bool> {
     parser: &'parser mut JsonParser<'de, TRUSTED_UTF8>,
     base: PtrUninit,
-    structs: Vec<StructFrame<'program>>,
-    lists: Vec<HandleGuard>,
+    structs: InlineStack<StructFrame<'program>>,
+    lists: InlineStack<HandleGuard>,
     scratch: ScratchSession,
     success: bool,
 }
@@ -545,8 +551,8 @@ impl<'parser, 'de, 'program, const TRUSTED_UTF8: bool>
         Self {
             parser,
             base,
-            structs: Vec::new(),
-            lists: Vec::new(),
+            structs: InlineStack::new(),
+            lists: InlineStack::new(),
             scratch: ScratchSession::new(),
             success: false,
         }
@@ -554,6 +560,40 @@ impl<'parser, 'de, 'program, const TRUSTED_UTF8: bool>
 
     fn finish_success(&mut self) {
         self.success = true;
+    }
+}
+
+struct InlineStack<T> {
+    first: Option<T>,
+    rest: Vec<T>,
+}
+
+impl<T> InlineStack<T> {
+    fn new() -> Self {
+        Self {
+            first: None,
+            rest: Vec::new(),
+        }
+    }
+
+    fn push(&mut self, value: T) {
+        if self.first.is_none() {
+            self.first = Some(value);
+        } else {
+            self.rest.push(value);
+        }
+    }
+
+    fn pop(&mut self) -> Option<T> {
+        self.rest.pop().or_else(|| self.first.take())
+    }
+
+    fn last(&self) -> Option<&T> {
+        self.rest.last().or(self.first.as_ref())
+    }
+
+    fn last_mut(&mut self) -> Option<&mut T> {
+        self.rest.last_mut().or(self.first.as_mut())
     }
 }
 
@@ -606,9 +646,11 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                 JsonObjectStep::End => Ok(Control::Continue),
                 JsonObjectStep::Field { name, span } => {
                     let field_name = name.as_ref();
-                    let Some((index, field)) = fields.iter().enumerate().find(|(_, field)| {
-                        field.name == field_name || field.alias == Some(field_name)
-                    }) else {
+                    let Some((index, field)) = fields
+                        .iter()
+                        .enumerate()
+                        .find(|(_, field)| field.matches_name(field_name))
+                    else {
                         if shape.has_deny_unknown_fields_attr() {
                             return Err(vm_error(
                                 Some(span),
