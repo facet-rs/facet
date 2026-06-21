@@ -8,10 +8,7 @@ use std::{
 };
 
 use facet_core::{Facet, ScalarType, Shape};
-use facet_format::{
-    ContainerKind, DeserializeError, DeserializeErrorKind, FormatParser, ParseEvent,
-    ParseEventKind, ScalarValue, SpanGuard,
-};
+use facet_format::{DeserializeError, DeserializeErrorKind, FormatParser, ScalarValue, SpanGuard};
 use facet_reflect::{
     HeapValue, Partial, ReflectError, ReflectErrorKind, Span, TypePlan, TypePlanCore,
 };
@@ -23,6 +20,7 @@ use crate::{
         JsonScalar, JsonString, JsonStringRole, JsonStruct, LowerError, UnknownFields,
         lower_type_plan,
     },
+    parser::{JsonArrayStep, JsonObjectStep, JsonValueStart},
 };
 
 /// Runtime counters from the experimental JSON VM path.
@@ -242,6 +240,7 @@ where
 struct JsonVm<'parser, 'input, 'program, const TRUSTED_UTF8: bool, const COLLECT_STATS: bool> {
     parser: &'parser mut JsonParser<'input, TRUSTED_UTF8>,
     lowered: &'program JsonLowered,
+    pending_value: Option<JsonValueStart<'input>>,
     last_span: Span,
     stats: JsonVmStats,
 }
@@ -256,6 +255,7 @@ impl<'parser, 'input, 'program, const TRUSTED_UTF8: bool, const COLLECT_STATS: b
         Self {
             parser,
             lowered,
+            pending_value: None,
             last_span: Span::new(0, 0),
             stats: JsonVmStats::default(),
         }
@@ -334,17 +334,14 @@ impl<'parser, 'input, 'program, const TRUSTED_UTF8: bool, const COLLECT_STATS: b
                 self.check_enter_shape(&partial, shape)?;
             }
             JsonOp::Null => {
-                let event = self.next_event("null")?;
-                let ParseEventKind::Scalar(ScalarValue::Null) = event.kind else {
-                    return Err(self.unexpected_event(&event, "null"));
+                let value = self.next_value_start("null")?;
+                let JsonValueStart::Scalar(ScalarValue::Null, _) = value else {
+                    return Err(self.unexpected_value(&value, "null"));
                 };
                 partial = self.set_default(partial)?;
             }
             JsonOp::Scalar(policy) => {
-                let event = self.next_event("scalar")?;
-                let ParseEventKind::Scalar(scalar) = event.kind else {
-                    return Err(self.unexpected_event(&event, "scalar"));
-                };
+                let scalar = self.next_scalar("scalar")?;
                 partial = self.set_scalar(partial, scalar, *policy)?;
             }
             JsonOp::String(policy) => {
@@ -358,18 +355,13 @@ impl<'parser, 'input, 'program, const TRUSTED_UTF8: bool, const COLLECT_STATS: b
             }
             JsonOp::RawJson => return Err(self.unsupported("VM raw JSON capture")),
             JsonOp::Struct(plan) => {
-                let event = self.next_event("object")?;
-                match event.kind {
-                    ParseEventKind::StructStart(ContainerKind::Object) => {
-                        push_continuation(frames, continuation);
-                        frames.push(VmFrame::Struct {
-                            plan,
-                            seen: SeenFields::new(plan.fields.len()),
-                        });
-                        return Ok((partial, ProgramControl::Suspend));
-                    }
-                    _ => return Err(self.unexpected_event(&event, "object")),
-                }
+                self.expect_object_start("object")?;
+                push_continuation(frames, continuation);
+                frames.push(VmFrame::Struct {
+                    plan,
+                    seen: SeenFields::new(plan.fields.len()),
+                });
+                return Ok((partial, ProgramControl::Suspend));
             }
             JsonOp::Tuple { .. } => return Err(self.unsupported("VM tuple deserialization")),
             JsonOp::List {
@@ -379,28 +371,23 @@ impl<'parser, 'input, 'program, const TRUSTED_UTF8: bool, const COLLECT_STATS: b
                 if *byte_optimized {
                     return Err(self.unsupported("VM byte-optimized list deserialization"));
                 }
-                let event = self.next_event("array")?;
-                match event.kind {
-                    ParseEventKind::SequenceStart(ContainerKind::Array) => {
-                        partial = self.init_list(partial)?;
-                        push_continuation(frames, continuation);
-                        frames.push(VmFrame::List { element });
-                        return Ok((partial, ProgramControl::Suspend));
-                    }
-                    _ => return Err(self.unexpected_event(&event, "array")),
-                }
+                self.expect_array_start("array")?;
+                partial = self.init_list(partial)?;
+                push_continuation(frames, continuation);
+                frames.push(VmFrame::List { element });
+                return Ok((partial, ProgramControl::Suspend));
             }
             JsonOp::Array { .. } => return Err(self.unsupported("VM array deserialization")),
             JsonOp::Map { .. } => return Err(self.unsupported("VM map deserialization")),
             JsonOp::Set { .. } => return Err(self.unsupported("VM set deserialization")),
             JsonOp::Option { some } => {
-                let event = self.peek_event("option value")?;
-                match event.kind {
-                    ParseEventKind::Scalar(ScalarValue::Null) => {
-                        let _ = self.next_event("null")?;
+                let value = self.next_value_start("option value")?;
+                match value {
+                    JsonValueStart::Scalar(ScalarValue::Null, _) => {
                         partial = self.set_default(partial)?;
                     }
-                    _ => {
+                    value => {
+                        self.pending_value = Some(value);
                         partial = self.begin_some(partial)?;
                         push_continuation(frames, continuation);
                         frames.push(VmFrame::EndCurrent);
@@ -458,13 +445,13 @@ impl<'parser, 'input, 'program, const TRUSTED_UTF8: bool, const COLLECT_STATS: b
         plan: &'program JsonStruct,
         mut seen: SeenFields,
     ) -> Result<Partial<'input, false>, DeserializeError> {
-        let event = self.next_event("field key or object end")?;
-        match event.kind {
-            ParseEventKind::StructEnd => Ok(partial),
-            ParseEventKind::FieldKey(ref key) => {
-                let Some(name) = key.name() else {
-                    return Err(self.unexpected_event(&event, "named field key"));
-                };
+        let step = self.parser.next_object_key_or_end()?;
+        self.last_span = match &step {
+            JsonObjectStep::End(span) | JsonObjectStep::Key { span, .. } => *span,
+        };
+        match step {
+            JsonObjectStep::End(_) => Ok(partial),
+            JsonObjectStep::Key { name, .. } => {
                 let Some((idx, field)) = find_field(plan, name.as_ref()) else {
                     return self.handle_unknown_field(partial, frames, plan, seen, name.as_ref());
                 };
@@ -481,9 +468,16 @@ impl<'parser, 'input, 'program, const TRUSTED_UTF8: bool, const COLLECT_STATS: b
                         field: Cow::Owned(name.to_string()),
                         first_span: None,
                     }
-                    .with_span(event.span));
+                    .with_span(self.last_span));
                 }
                 partial = self.begin_nth_field(partial, idx)?;
+                if can_inline_field_program(&field.value) {
+                    partial = self.run_program(partial, frames, &field.value, 0)?;
+                    self.record_step(frames.len() + 1, partial.frame_count());
+                    partial = self.end(partial)?;
+                    frames.push(VmFrame::Struct { plan, seen });
+                    return Ok(partial);
+                }
                 frames.push(VmFrame::Struct { plan, seen });
                 frames.push(VmFrame::EndCurrent);
                 frames.push(VmFrame::Program {
@@ -492,7 +486,6 @@ impl<'parser, 'input, 'program, const TRUSTED_UTF8: bool, const COLLECT_STATS: b
                 });
                 Ok(partial)
             }
-            _ => Err(self.unexpected_event(&event, "field key or object end")),
         }
     }
 
@@ -525,13 +518,15 @@ impl<'parser, 'input, 'program, const TRUSTED_UTF8: bool, const COLLECT_STATS: b
         frames: &mut Vec<VmFrame<'program>>,
         element: &'program JsonProgram,
     ) -> Result<Partial<'input, false>, DeserializeError> {
-        let event = self.peek_event("array element or array end")?;
-        match event.kind {
-            ParseEventKind::SequenceEnd => {
-                let _ = self.next_event("array end")?;
+        let step = self.parser.next_array_value_or_end()?;
+        match step {
+            JsonArrayStep::End(span) => {
+                self.last_span = span;
                 Ok(partial)
             }
-            _ => {
+            JsonArrayStep::Value(value) => {
+                self.last_span = value.span();
+                self.pending_value = Some(value);
                 partial = self.begin_list_item(partial)?;
                 frames.push(VmFrame::List { element });
                 frames.push(VmFrame::EndCurrent);
@@ -584,9 +579,9 @@ impl<'parser, 'input, 'program, const TRUSTED_UTF8: bool, const COLLECT_STATS: b
         if policy.role != JsonStringRole::Value {
             return Err(self.unsupported("VM non-value string deserialization"));
         }
-        let event = self.next_event("string")?;
-        let ParseEventKind::Scalar(ScalarValue::Str(s)) = event.kind else {
-            return Err(self.unexpected_event(&event, "string"));
+        let value = self.next_value_start("string")?;
+        let JsonValueStart::Scalar(ScalarValue::Str(s), _) = value else {
+            return Err(self.unexpected_value(&value, "string"));
         };
         self.set_string(partial, s)
     }
@@ -687,29 +682,45 @@ impl<'parser, 'input, 'program, const TRUSTED_UTF8: bool, const COLLECT_STATS: b
         Ok(())
     }
 
-    fn next_event(
+    fn next_value_start(
         &mut self,
         expected: &'static str,
-    ) -> Result<ParseEvent<'input>, DeserializeError> {
-        match self.parser.next_event()? {
-            Some(event) => {
-                self.last_span = event.span;
-                Ok(event)
+    ) -> Result<JsonValueStart<'input>, DeserializeError> {
+        if let Some(value) = self.pending_value.take() {
+            self.last_span = value.span();
+            return Ok(value);
+        }
+
+        match self.parser.next_value_start()? {
+            Some(value) => {
+                self.last_span = value.span();
+                Ok(value)
             }
             None => Err(DeserializeErrorKind::UnexpectedEof { expected }.with_span(self.last_span)),
         }
     }
 
-    fn peek_event(
+    fn next_scalar(
         &mut self,
         expected: &'static str,
-    ) -> Result<ParseEvent<'input>, DeserializeError> {
-        match self.parser.peek_event()? {
-            Some(event) => {
-                self.last_span = event.span;
-                Ok(event)
-            }
-            None => Err(DeserializeErrorKind::UnexpectedEof { expected }.with_span(self.last_span)),
+    ) -> Result<ScalarValue<'input>, DeserializeError> {
+        match self.next_value_start(expected)? {
+            JsonValueStart::Scalar(scalar, _) => Ok(scalar),
+            value => Err(self.unexpected_value(&value, expected)),
+        }
+    }
+
+    fn expect_object_start(&mut self, expected: &'static str) -> Result<(), DeserializeError> {
+        match self.next_value_start(expected)? {
+            JsonValueStart::Object(_) => Ok(()),
+            value => Err(self.unexpected_value(&value, expected)),
+        }
+    }
+
+    fn expect_array_start(&mut self, expected: &'static str) -> Result<(), DeserializeError> {
+        match self.next_value_start(expected)? {
+            JsonValueStart::Array(_) => Ok(()),
+            value => Err(self.unexpected_value(&value, expected)),
         }
     }
 
@@ -837,12 +848,21 @@ impl<'parser, 'input, 'program, const TRUSTED_UTF8: bool, const COLLECT_STATS: b
         }
     }
 
-    fn unexpected_event(&self, event: &ParseEvent<'_>, expected: &'static str) -> DeserializeError {
+    fn unexpected_value(
+        &self,
+        value: &JsonValueStart<'_>,
+        expected: &'static str,
+    ) -> DeserializeError {
+        let got = match value {
+            JsonValueStart::Object(_) => "object",
+            JsonValueStart::Array(_) => "array",
+            JsonValueStart::Scalar(scalar, _) => scalar.kind_name(),
+        };
         DeserializeErrorKind::UnexpectedToken {
-            got: Cow::Borrowed(event.kind.kind_name()),
+            got: Cow::Borrowed(got),
             expected,
         }
-        .with_span(event.span)
+        .with_span(value.span())
     }
 
     fn unsupported(&self, message: &'static str) -> DeserializeError {
@@ -899,6 +919,15 @@ fn push_continuation<'program>(
     if let Some((program, pc)) = continuation {
         frames.push(VmFrame::Program { program, pc });
     }
+}
+
+fn can_inline_field_program(program: &JsonProgram) -> bool {
+    program.iter().all(|op| {
+        matches!(
+            op,
+            JsonOp::EnterShape { .. } | JsonOp::Null | JsonOp::Scalar(_) | JsonOp::String(_)
+        )
+    })
 }
 
 fn find_field<'program>(
