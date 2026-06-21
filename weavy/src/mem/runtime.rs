@@ -5,8 +5,10 @@
 //! values live there and which thunks move those values into final handles.
 
 use std::alloc::{self, Layout};
+use std::array;
 use std::error::Error;
 use std::fmt;
+use std::mem::MaybeUninit;
 
 /// Allocation/layout failures for raw typed-memory runtime buffers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -305,45 +307,170 @@ impl Drop for HandleGuard {
 }
 
 /// Bookkeeping for initialized child slots.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct InitializedLedger<Mark> {
-    marks: Vec<Option<Mark>>,
+pub struct InitializedLedger<Mark, const INLINE: usize = 8> {
+    storage: LedgerStorage<Mark, INLINE>,
 }
 
-impl<Mark> InitializedLedger<Mark> {
+enum LedgerStorage<Mark, const INLINE: usize> {
+    Inline {
+        len: usize,
+        initialized: u64,
+        marks: [MaybeUninit<Mark>; INLINE],
+    },
+    Heap(Vec<Option<Mark>>),
+}
+
+impl<Mark, const INLINE: usize> InitializedLedger<Mark, INLINE> {
     /// Create a ledger with `len` uninitialized slots.
     #[must_use]
     pub fn new(len: usize) -> Self {
-        Self {
-            marks: (0..len).map(|_| None).collect(),
+        let storage = if len <= INLINE && len <= u64::BITS as usize {
+            LedgerStorage::Inline {
+                len,
+                initialized: 0,
+                marks: array::from_fn(|_| MaybeUninit::uninit()),
+            }
+        } else {
+            LedgerStorage::Heap((0..len).map(|_| None).collect())
+        };
+        Self { storage }
+    }
+
+    fn len(&self) -> usize {
+        match &self.storage {
+            LedgerStorage::Inline { len, .. } => *len,
+            LedgerStorage::Heap(marks) => marks.len(),
         }
     }
 
     /// Return whether `index` is initialized.
     #[must_use]
     pub fn is_initialized(&self, index: usize) -> bool {
-        self.marks[index].is_some()
+        match &self.storage {
+            LedgerStorage::Inline {
+                len, initialized, ..
+            } => {
+                assert!(index < *len, "ledger index out of bounds");
+                (*initialized & initialized_bit(index)) != 0
+            }
+            LedgerStorage::Heap(marks) => marks[index].is_some(),
+        }
     }
 
     /// Return the mark for `index` when initialized.
     #[must_use]
     pub fn get(&self, index: usize) -> Option<&Mark> {
-        self.marks[index].as_ref()
+        match &self.storage {
+            LedgerStorage::Inline {
+                len,
+                initialized,
+                marks,
+            } => {
+                assert!(index < *len, "ledger index out of bounds");
+                ((*initialized & initialized_bit(index)) != 0)
+                    .then(|| unsafe { marks[index].assume_init_ref() })
+            }
+            LedgerStorage::Heap(marks) => marks[index].as_ref(),
+        }
     }
 
     /// Mark `index` initialized.
     pub fn mark(&mut self, index: usize, mark: Mark) {
-        self.marks[index] = Some(mark);
+        match &mut self.storage {
+            LedgerStorage::Inline {
+                len,
+                initialized,
+                marks,
+            } => {
+                assert!(index < *len, "ledger index out of bounds");
+                let bit = initialized_bit(index);
+                if (*initialized & bit) != 0 {
+                    unsafe {
+                        marks[index].assume_init_drop();
+                    }
+                }
+                marks[index].write(mark);
+                *initialized |= bit;
+            }
+            LedgerStorage::Heap(marks) => {
+                marks[index] = Some(mark);
+            }
+        }
     }
 
     /// Initialized slots in reverse index order.
     pub fn iter_initialized_rev(&self) -> impl Iterator<Item = (usize, &Mark)> {
-        self.marks
-            .iter()
-            .enumerate()
+        (0..self.len())
             .rev()
-            .filter_map(|(index, mark)| mark.as_ref().map(|mark| (index, mark)))
+            .filter_map(|index| self.get(index).map(|mark| (index, mark)))
     }
+}
+
+impl<Mark: Clone, const INLINE: usize> Clone for InitializedLedger<Mark, INLINE> {
+    fn clone(&self) -> Self {
+        Self {
+            storage: self.storage.clone(),
+        }
+    }
+}
+
+impl<Mark: fmt::Debug, const INLINE: usize> fmt::Debug for InitializedLedger<Mark, INLINE> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_map().entries(self.iter_initialized_rev()).finish()
+    }
+}
+
+impl<Mark: PartialEq, const INLINE: usize> PartialEq for InitializedLedger<Mark, INLINE> {
+    fn eq(&self, other: &Self) -> bool {
+        self.len() == other.len()
+            && (0..self.len()).all(|index| self.get(index) == other.get(index))
+    }
+}
+
+impl<Mark: Eq, const INLINE: usize> Eq for InitializedLedger<Mark, INLINE> {}
+
+impl<Mark: Clone, const INLINE: usize> Clone for LedgerStorage<Mark, INLINE> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Inline {
+                len,
+                initialized,
+                marks,
+            } => {
+                let mut cloned = InitializedLedger::<Mark, INLINE>::new(*len);
+                for (index, mark) in marks.iter().enumerate().take(*len) {
+                    if (*initialized & initialized_bit(index)) != 0 {
+                        cloned.mark(index, unsafe { mark.assume_init_ref() }.clone());
+                    }
+                }
+                cloned.storage
+            }
+            Self::Heap(marks) => Self::Heap(marks.clone()),
+        }
+    }
+}
+
+impl<Mark, const INLINE: usize> Drop for LedgerStorage<Mark, INLINE> {
+    fn drop(&mut self) {
+        if let Self::Inline {
+            len,
+            initialized,
+            marks,
+        } = self
+        {
+            for (index, mark) in marks.iter_mut().enumerate().take(*len) {
+                if (*initialized & initialized_bit(index)) != 0 {
+                    unsafe {
+                        mark.assume_init_drop();
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn initialized_bit(index: usize) -> u64 {
+    1u64 << index
 }
 
 /// Neutral "initialize handle from scratch value" target.
@@ -389,6 +516,14 @@ fn layout_fits(buffer: Layout, requested: Layout) -> bool {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct CountedDrop<'a>(&'a AtomicUsize);
+
+    impl Drop for CountedDrop<'_> {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
 
     unsafe fn count_drop(ctx: *const (), _ptr: *mut u8) {
         let drops = unsafe { &*(ctx as *const AtomicUsize) };
@@ -456,7 +591,7 @@ mod tests {
 
     #[test]
     fn initialized_ledger_reports_reverse_order() {
-        let mut ledger = InitializedLedger::new(4);
+        let mut ledger: InitializedLedger<&str> = InitializedLedger::new(4);
         assert!(!ledger.is_initialized(2));
         ledger.mark(1, "one");
         ledger.mark(3, "three");
@@ -467,5 +602,33 @@ mod tests {
             .map(|(index, mark)| (index, *mark))
             .collect::<Vec<_>>();
         assert_eq!(initialized, vec![(3, "three"), (1, "one")]);
+    }
+
+    #[test]
+    fn initialized_ledger_drops_replaced_and_live_inline_marks() {
+        let drops = AtomicUsize::new(0);
+        {
+            let mut ledger: InitializedLedger<CountedDrop<'_>> = InitializedLedger::new(1);
+            ledger.mark(0, CountedDrop(&drops));
+            assert_eq!(drops.load(Ordering::SeqCst), 0);
+
+            ledger.mark(0, CountedDrop(&drops));
+            assert_eq!(drops.load(Ordering::SeqCst), 1);
+        }
+        assert_eq!(drops.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn initialized_ledger_reports_reverse_order_from_heap_storage() {
+        let mut ledger: InitializedLedger<&str, 2> = InitializedLedger::new(4);
+        ledger.mark(0, "zero");
+        ledger.mark(2, "two");
+
+        assert_eq!(ledger.get(2), Some(&"two"));
+        let initialized = ledger
+            .iter_initialized_rev()
+            .map(|(index, mark)| (index, *mark))
+            .collect::<Vec<_>>();
+        assert_eq!(initialized, vec![(2, "two"), (0, "zero")]);
     }
 }
