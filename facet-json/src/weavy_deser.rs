@@ -739,9 +739,9 @@ impl<const TRUSTED_UTF8: bool> Drop for JsonInterp<'_, '_, '_, TRUSTED_UTF8> {
             return;
         }
 
-        while self.lists.pop().is_some() {}
-
         while self.structs.pop().is_some() {}
+
+        while self.lists.pop().is_some() {}
     }
 }
 

@@ -45,6 +45,17 @@ struct DroppyList {
 }
 
 #[derive(Facet, Debug, PartialEq)]
+struct DroppyPair {
+    item: Droppy,
+    tail: u8,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct DroppyPairList {
+    items: Vec<DroppyPair>,
+}
+
+#[derive(Facet, Debug, PartialEq)]
 struct Node {
     id: u32,
     child: Option<Box<Node>>,
@@ -127,6 +138,18 @@ fn weavy_drops_direct_list_elements_after_later_element_error() {
     facet_json::from_str_weavy::<DroppyList>(r#"{"items":[{"value":1},{"value":"nope"}]}"#)
         .unwrap_err();
     assert_eq!(DROPPED_LIST_ELEMENTS.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn weavy_drops_partial_direct_list_struct_element_before_list_buffer() {
+    DROPPED_LIST_ELEMENTS.store(0, Ordering::SeqCst);
+
+    facet_json::from_str_weavy::<DroppyPairList>(
+        r#"{"items":[{"item":{"value":1},"tail":2},{"item":{"value":3},"tail":"nope"}]}"#,
+    )
+    .unwrap_err();
+
+    assert_eq!(DROPPED_LIST_ELEMENTS.load(Ordering::SeqCst), 2);
 }
 
 #[test]
