@@ -30,10 +30,27 @@ struct Node {
     child: Option<Box<Node>>,
 }
 
+#[derive(Facet, Debug, PartialEq)]
+struct EscapedFieldName {
+    quoted_key: u8,
+}
+
 #[test]
 fn weavy_deserializes_named_struct_scalars() {
     let point: Point = facet_json::from_str_weavy(r#"{"y":20,"x":10}"#).unwrap();
     assert_eq!(point, Point { x: 10, y: 20 });
+}
+
+#[test]
+fn weavy_deserializes_escaped_field_names() {
+    let expected = EscapedFieldName { quoted_key: 7 };
+    let json = r#"{"quoted\u005fkey":7}"#;
+
+    let from_str: EscapedFieldName = facet_json::from_str_weavy(json).unwrap();
+    let from_slice: EscapedFieldName = facet_json::from_slice_weavy(json.as_bytes()).unwrap();
+
+    assert_eq!(from_str, expected);
+    assert_eq!(from_slice, expected);
 }
 
 #[test]
