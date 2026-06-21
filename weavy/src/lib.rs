@@ -13,6 +13,28 @@ use std::collections::BTreeMap;
 /// A flat lowered program for an op vocabulary supplied by the caller.
 pub type Program<Op> = Vec<Op>;
 
+/// Dense index for a callable lowered block.
+///
+/// This is the executable counterpart to caller-defined symbolic block ids. A
+/// plan can keep symbolic ids while lowering and diagnostics are useful, then
+/// resolve them once into dense block refs before running hot interpreter paths.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BlockRef(usize);
+
+impl BlockRef {
+    /// Build a dense block ref from a block-table index.
+    #[must_use]
+    pub fn new(index: usize) -> Self {
+        Self(index)
+    }
+
+    /// Return this ref's block-table index.
+    #[must_use]
+    pub fn index(self) -> usize {
+        self.0
+    }
+}
+
 /// A root program plus named block programs.
 ///
 /// Recursive shapes are represented by block calls instead of by infinitely
@@ -34,6 +56,46 @@ impl<BlockId, Op> Lowered<BlockId, Op> {
             program,
             blocks: BTreeMap::new(),
         }
+    }
+}
+
+impl<BlockId, Op> Lowered<BlockId, Op>
+where
+    BlockId: Clone + Ord,
+{
+    /// Return the dense executable block refs for this lowered block table.
+    ///
+    /// The returned map follows the same sorted order as [`BTreeMap`], so callers
+    /// can consume `self.blocks` in key order and rewrite symbolic block ids to
+    /// matching [`BlockRef`] values.
+    #[must_use]
+    pub fn block_refs(&self) -> BTreeMap<BlockId, BlockRef> {
+        self.blocks
+            .keys()
+            .cloned()
+            .enumerate()
+            .map(|(index, block)| (block, BlockRef::new(index)))
+            .collect()
+    }
+}
+
+/// A root program plus dense block programs.
+///
+/// Unlike [`Lowered`], this form has no runtime symbolic lookup table. Block
+/// calls use [`BlockRef`] and dispatch by indexing into `blocks`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DenseLowered<Op> {
+    /// Entry program.
+    pub program: Program<Op>,
+    /// Callable block programs, addressed by [`BlockRef`].
+    pub blocks: Vec<Program<Op>>,
+}
+
+impl<Op> DenseLowered<Op> {
+    /// Build a dense lowered program.
+    #[must_use]
+    pub fn new(program: Program<Op>, blocks: Vec<Program<Op>>) -> Self {
+        Self { program, blocks }
     }
 }
 
@@ -203,6 +265,25 @@ impl Accounting for RunStats {
     }
 }
 
+trait BlockTable<'program, BlockId, Op> {
+    fn get_block(&'program self, block: &BlockId) -> Option<&'program [Op]>;
+}
+
+impl<'program, BlockId, Op> BlockTable<'program, BlockId, Op> for BTreeMap<BlockId, Program<Op>>
+where
+    BlockId: Ord,
+{
+    fn get_block(&'program self, block: &BlockId) -> Option<&'program [Op]> {
+        self.get(block).map(Vec::as_slice)
+    }
+}
+
+impl<'program, Op> BlockTable<'program, BlockRef, Op> for [Program<Op>] {
+    fn get_block(&'program self, block: &BlockRef) -> Option<&'program [Op]> {
+        self.get(block.index()).map(Vec::as_slice)
+    }
+}
+
 /// Run a lowered program through caller-supplied op semantics.
 ///
 /// The runner maintains its own program stack. Calling a block or inline program
@@ -235,6 +316,28 @@ where
     run_program_with_stats(&lowered.program, &lowered.blocks, stepper)
 }
 
+/// Run a dense lowered program through caller-supplied op semantics.
+pub fn run_dense<'program, Op, S>(
+    lowered: &'program DenseLowered<Op>,
+    stepper: &mut S,
+) -> Result<(), RunError<BlockRef, S::Error>>
+where
+    S: Step<'program, BlockRef, Op>,
+{
+    run_dense_program(&lowered.program, &lowered.blocks, stepper)
+}
+
+/// Run a dense lowered program and return opt-in execution counters.
+pub fn run_dense_with_stats<'program, Op, S>(
+    lowered: &'program DenseLowered<Op>,
+    stepper: &mut S,
+) -> Result<RunStats, RunError<BlockRef, S::Error>>
+where
+    S: Step<'program, BlockRef, Op>,
+{
+    run_dense_program_with_stats(&lowered.program, &lowered.blocks, stepper)
+}
+
 /// Run a program with an explicit block table.
 pub fn run_program<'program, BlockId, Op, S>(
     program: &'program [Op],
@@ -264,9 +367,36 @@ where
     Ok(stats)
 }
 
-fn run_program_accounted<'program, BlockId, Op, S, A>(
+/// Run a dense program with an explicit dense block table.
+pub fn run_dense_program<'program, Op, S>(
     program: &'program [Op],
-    blocks: &'program BTreeMap<BlockId, Program<Op>>,
+    blocks: &'program [Program<Op>],
+    stepper: &mut S,
+) -> Result<(), RunError<BlockRef, S::Error>>
+where
+    S: Step<'program, BlockRef, Op>,
+{
+    let mut accounting = NoAccounting;
+    run_program_accounted(program, blocks, stepper, &mut accounting)
+}
+
+/// Run a dense program with an explicit dense block table and return counters.
+pub fn run_dense_program_with_stats<'program, Op, S>(
+    program: &'program [Op],
+    blocks: &'program [Program<Op>],
+    stepper: &mut S,
+) -> Result<RunStats, RunError<BlockRef, S::Error>>
+where
+    S: Step<'program, BlockRef, Op>,
+{
+    let mut stats = RunStats::default();
+    run_program_accounted(program, blocks, stepper, &mut stats)?;
+    Ok(stats)
+}
+
+fn run_program_accounted<'program, BlockId, Op, S, A, Blocks>(
+    program: &'program [Op],
+    blocks: &'program Blocks,
     stepper: &mut S,
     accounting: &mut A,
 ) -> Result<(), RunError<BlockId, S::Error>>
@@ -274,6 +404,7 @@ where
     BlockId: Clone + Ord,
     S: Step<'program, BlockId, Op>,
     A: Accounting,
+    Blocks: BlockTable<'program, BlockId, Op> + ?Sized,
 {
     let mut frames = Vec::with_capacity(16);
     frames.push(Frame {
@@ -297,9 +428,9 @@ where
     Ok(())
 }
 
-fn finish_frame<'program, BlockId, Op, S, A>(
+fn finish_frame<'program, BlockId, Op, S, A, Blocks>(
     frames: &mut Vec<Frame<'program, Op, S::Continuation>>,
-    blocks: &'program BTreeMap<BlockId, Program<Op>>,
+    blocks: &'program Blocks,
     stepper: &mut S,
     accounting: &mut A,
 ) -> Result<(), RunError<BlockId, S::Error>>
@@ -307,6 +438,7 @@ where
     BlockId: Clone + Ord,
     S: Step<'program, BlockId, Op>,
     A: Accounting,
+    Blocks: BlockTable<'program, BlockId, Op> + ?Sized,
 {
     let continuation = frames.pop().and_then(|frame| frame.continuation);
     accounting.returned();
@@ -318,10 +450,10 @@ where
     Ok(())
 }
 
-fn apply_control<'program, BlockId, Op, S, A>(
+fn apply_control<'program, BlockId, Op, S, A, Blocks>(
     control: Control<'program, BlockId, Op, S::Continuation>,
     frames: &mut Vec<Frame<'program, Op, S::Continuation>>,
-    blocks: &'program BTreeMap<BlockId, Program<Op>>,
+    blocks: &'program Blocks,
     stepper: &mut S,
     accounting: &mut A,
 ) -> Result<(), RunError<BlockId, S::Error>>
@@ -329,6 +461,7 @@ where
     BlockId: Clone + Ord,
     S: Step<'program, BlockId, Op>,
     A: Accounting,
+    Blocks: BlockTable<'program, BlockId, Op> + ?Sized,
 {
     let mut control = control;
     loop {
@@ -354,7 +487,7 @@ where
             }
             Control::CallBlock(block) => {
                 let program = blocks
-                    .get(&block)
+                    .get_block(&block)
                     .ok_or_else(|| RunError::MissingBlock(block.clone()))?;
                 accounting.block_call();
                 frames.push(Frame {
@@ -366,7 +499,7 @@ where
             }
             Control::CallBlockThen(block, continuation) => {
                 let program = blocks
-                    .get(&block)
+                    .get_block(&block)
                     .ok_or_else(|| RunError::MissingBlock(block.clone()))?;
                 accounting.block_call();
                 frames.push(Frame {
@@ -408,6 +541,10 @@ mod tests {
         seen: Vec<u32>,
     }
 
+    struct DenseEval {
+        seen: Vec<u32>,
+    }
+
     impl<'program> Step<'program, u32, Op> for Eval {
         type Error = ();
         type Continuation = u32;
@@ -433,6 +570,38 @@ mod tests {
             &mut self,
             tag: Self::Continuation,
         ) -> Result<Control<'program, u32, Op, Self::Continuation>, Self::Error> {
+            self.seen.push(tag);
+            Ok(Control::Continue)
+        }
+    }
+
+    impl<'program> Step<'program, BlockRef, Op> for DenseEval {
+        type Error = ();
+        type Continuation = u32;
+
+        fn step(
+            &mut self,
+            op: &'program Op,
+        ) -> Result<Control<'program, BlockRef, Op, Self::Continuation>, Self::Error> {
+            Ok(match op {
+                Op::Push(n) => {
+                    self.seen.push(*n);
+                    Control::Continue
+                }
+                Op::Call(block) => Control::CallBlock(BlockRef::new(*block as usize)),
+                Op::CallThen(block, tag) => {
+                    Control::CallBlockThen(BlockRef::new(*block as usize), *tag)
+                }
+                Op::Nested(program) => Control::CallProgram(program),
+                Op::NestedThen(program, tag) => Control::CallProgramThen(program, *tag),
+                Op::Stop => Control::Return,
+            })
+        }
+
+        fn after_return(
+            &mut self,
+            tag: Self::Continuation,
+        ) -> Result<Control<'program, BlockRef, Op, Self::Continuation>, Self::Error> {
             self.seen.push(tag);
             Ok(Control::Continue)
         }
@@ -483,6 +652,42 @@ mod tests {
                 max_frame_depth: 2,
             }
         );
+    }
+
+    #[test]
+    fn block_refs_match_lowered_block_order() {
+        let lowered = Lowered {
+            program: vec![Op::Call(10)],
+            blocks: BTreeMap::from([(10, vec![Op::Push(1)]), (20, vec![Op::Push(2)])]),
+        };
+
+        let refs = lowered.block_refs();
+
+        assert_eq!(refs[&10], BlockRef::new(0));
+        assert_eq!(refs[&20], BlockRef::new(1));
+    }
+
+    #[test]
+    fn run_dense_dispatches_block_refs_by_index() {
+        let lowered = DenseLowered::new(
+            vec![Op::Push(1), Op::Call(1), Op::Push(4)],
+            vec![vec![Op::Push(99)], vec![Op::Push(2), Op::Push(3)]],
+        );
+        let mut eval = DenseEval { seen: Vec::new() };
+
+        run_dense(&lowered, &mut eval).unwrap();
+
+        assert_eq!(eval.seen, vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn run_dense_reports_missing_block_ref() {
+        let lowered = DenseLowered::new(vec![Op::Call(2)], vec![vec![Op::Push(1)]]);
+        let mut eval = DenseEval { seen: Vec::new() };
+
+        let err = run_dense(&lowered, &mut eval).unwrap_err();
+
+        assert_eq!(err, RunError::MissingBlock(BlockRef::new(2)));
     }
 
     #[test]
