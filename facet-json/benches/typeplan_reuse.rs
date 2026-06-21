@@ -122,48 +122,22 @@ fn point_reused_typeplan(bencher: Bencher) {
     });
 }
 
-/// VM path, including TypePlan build and lowering
-#[divan::bench]
-fn point_vm(bencher: Bencher) {
-    let json = POINT_JSON;
-    bencher.bench(|| {
-        let result: Point = black_box(facet_json::from_str_vm(black_box(json)).unwrap());
-        black_box(result)
-    });
-}
-
-/// VM path with explicit plan reuse
-#[divan::bench]
-fn point_reused_vm_plan(bencher: Bencher) {
-    let json = POINT_JSON;
-    let plan = facet_json::JsonVmPlan::<Point>::build().unwrap();
-
-    bencher.bench(|| {
-        let result: Point = black_box(plan.from_str(black_box(json)).unwrap());
-        black_box(result)
-    });
-}
-
-/// VM path with explicit plan reuse and runtime stats collection
-#[divan::bench]
-fn point_reused_vm_plan_with_stats(bencher: Bencher) {
-    let json = POINT_JSON;
-    let plan = facet_json::JsonVmPlan::<Point>::build().unwrap();
-
-    bencher.bench(|| {
-        let (result, stats): (Point, _) =
-            black_box(plan.from_str_with_stats(black_box(json)).unwrap());
-        black_box(stats);
-        black_box(result)
-    });
-}
-
 /// serde_json path
 #[divan::bench]
 fn point_serde_json(bencher: Bencher) {
     let json = POINT_JSON;
     bencher.bench(|| {
         let result: Point = black_box(serde_json::from_str(black_box(json)).unwrap());
+        black_box(result)
+    });
+}
+
+/// serde_json path from bytes
+#[divan::bench]
+fn point_serde_json_from_slice(bencher: Bencher) {
+    let json = POINT_JSON.as_bytes();
+    bencher.bench(|| {
+        let result: Point = black_box(serde_json::from_slice(black_box(json)).unwrap());
         black_box(result)
     });
 }
@@ -202,48 +176,22 @@ fn person_reused_typeplan(bencher: Bencher) {
     });
 }
 
-/// VM path, including TypePlan build and lowering
-#[divan::bench]
-fn person_vm(bencher: Bencher) {
-    let json = PERSON_JSON;
-    bencher.bench(|| {
-        let result: Person = black_box(facet_json::from_str_vm(black_box(json)).unwrap());
-        black_box(result)
-    });
-}
-
-/// VM path with explicit plan reuse
-#[divan::bench]
-fn person_reused_vm_plan(bencher: Bencher) {
-    let json = PERSON_JSON;
-    let plan = facet_json::JsonVmPlan::<Person>::build().unwrap();
-
-    bencher.bench(|| {
-        let result: Person = black_box(plan.from_str(black_box(json)).unwrap());
-        black_box(result)
-    });
-}
-
-/// VM path with explicit plan reuse and runtime stats collection
-#[divan::bench]
-fn person_reused_vm_plan_with_stats(bencher: Bencher) {
-    let json = PERSON_JSON;
-    let plan = facet_json::JsonVmPlan::<Person>::build().unwrap();
-
-    bencher.bench(|| {
-        let (result, stats): (Person, _) =
-            black_box(plan.from_str_with_stats(black_box(json)).unwrap());
-        black_box(stats);
-        black_box(result)
-    });
-}
-
 /// serde_json path
 #[divan::bench]
 fn person_serde_json(bencher: Bencher) {
     let json = PERSON_JSON;
     bencher.bench(|| {
         let result: Person = black_box(serde_json::from_str(black_box(json)).unwrap());
+        black_box(result)
+    });
+}
+
+/// serde_json path from bytes
+#[divan::bench]
+fn person_serde_json_from_slice(bencher: Bencher) {
+    let json = PERSON_JSON.as_bytes();
+    bencher.bench(|| {
+        let result: Person = black_box(serde_json::from_slice(black_box(json)).unwrap());
         black_box(result)
     });
 }
@@ -282,48 +230,22 @@ fn company_reused_typeplan(bencher: Bencher) {
     });
 }
 
-/// VM path, including TypePlan build and lowering
-#[divan::bench]
-fn company_vm(bencher: Bencher) {
-    let json = COMPANY_JSON;
-    bencher.bench(|| {
-        let result: Company = black_box(facet_json::from_str_vm(black_box(json)).unwrap());
-        black_box(result)
-    });
-}
-
-/// VM path with explicit plan reuse
-#[divan::bench]
-fn company_reused_vm_plan(bencher: Bencher) {
-    let json = COMPANY_JSON;
-    let plan = facet_json::JsonVmPlan::<Company>::build().unwrap();
-
-    bencher.bench(|| {
-        let result: Company = black_box(plan.from_str(black_box(json)).unwrap());
-        black_box(result)
-    });
-}
-
-/// VM path with explicit plan reuse and runtime stats collection
-#[divan::bench]
-fn company_reused_vm_plan_with_stats(bencher: Bencher) {
-    let json = COMPANY_JSON;
-    let plan = facet_json::JsonVmPlan::<Company>::build().unwrap();
-
-    bencher.bench(|| {
-        let (result, stats): (Company, _) =
-            black_box(plan.from_str_with_stats(black_box(json)).unwrap());
-        black_box(stats);
-        black_box(result)
-    });
-}
-
 /// serde_json path
 #[divan::bench]
 fn company_serde_json(bencher: Bencher) {
     let json = COMPANY_JSON;
     bencher.bench(|| {
         let result: Company = black_box(serde_json::from_str(black_box(json)).unwrap());
+        black_box(result)
+    });
+}
+
+/// serde_json path from bytes
+#[divan::bench]
+fn company_serde_json_from_slice(bencher: Bencher) {
+    let json = COMPANY_JSON.as_bytes();
+    bencher.bench(|| {
+        let result: Company = black_box(serde_json::from_slice(black_box(json)).unwrap());
         black_box(result)
     });
 }
@@ -366,47 +288,6 @@ fn batch_1000_reused_typeplan(bencher: Bencher) {
     });
 }
 
-/// 1000 deserializations through the VM path
-#[divan::bench]
-fn batch_1000_vm(bencher: Bencher) {
-    let json = PERSON_JSON;
-    bencher.bench(|| {
-        for _ in 0..1000 {
-            let result: Person = facet_json::from_str_vm(black_box(json)).unwrap();
-            black_box(result);
-        }
-    });
-}
-
-/// 1000 deserializations reusing the same VM plan
-#[divan::bench]
-fn batch_1000_reused_vm_plan(bencher: Bencher) {
-    let json = PERSON_JSON;
-    let plan = facet_json::JsonVmPlan::<Person>::build().unwrap();
-
-    bencher.bench(|| {
-        for _ in 0..1000 {
-            let result: Person = plan.from_str(black_box(json)).unwrap();
-            black_box(result);
-        }
-    });
-}
-
-/// 1000 deserializations reusing the same VM plan with runtime stats collection
-#[divan::bench]
-fn batch_1000_reused_vm_plan_with_stats(bencher: Bencher) {
-    let json = PERSON_JSON;
-    let plan = facet_json::JsonVmPlan::<Person>::build().unwrap();
-
-    bencher.bench(|| {
-        for _ in 0..1000 {
-            let (result, stats): (Person, _) = plan.from_str_with_stats(black_box(json)).unwrap();
-            black_box(stats);
-            black_box(result);
-        }
-    });
-}
-
 /// 1000 deserializations through serde_json
 #[divan::bench]
 fn batch_1000_serde_json(bencher: Bencher) {
@@ -415,6 +296,19 @@ fn batch_1000_serde_json(bencher: Bencher) {
     bencher.bench(|| {
         for _ in 0..1000 {
             let result: Person = serde_json::from_str(black_box(json)).unwrap();
+            black_box(result);
+        }
+    });
+}
+
+/// 1000 deserializations through serde_json from bytes
+#[divan::bench]
+fn batch_1000_serde_json_from_slice(bencher: Bencher) {
+    let json = PERSON_JSON.as_bytes();
+
+    bencher.bench(|| {
+        for _ in 0..1000 {
+            let result: Person = serde_json::from_slice(black_box(json)).unwrap();
             black_box(result);
         }
     });

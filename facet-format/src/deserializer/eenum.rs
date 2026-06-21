@@ -1480,17 +1480,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         &mut self,
         wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
-        #[cfg(feature = "stacker")]
-        {
-            stacker::maybe_grow(1024 * 1024, 8 * 1024 * 1024, || {
-                self.deserialize_enum_variant_content_inner(wip)
-            })
-        }
-
-        #[cfg(not(feature = "stacker"))]
-        {
-            self.deserialize_enum_variant_content_inner(wip)
-        }
+        self.deserialize_enum_variant_content_inner(wip)
     }
 
     #[inline(never)]

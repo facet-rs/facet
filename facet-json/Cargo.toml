@@ -21,11 +21,8 @@ facet = { workspace = true }
 itoa = { version = "1", optional = true }
 zmij = { version = "1", optional = true }
 facet-core = { workspace = true }
-facet-dessert = { workspace = true }
 facet-format = { path = "../facet-format", version = "0.50.0-rc.1", default-features = false }
 facet-reflect = { workspace = true }
-stacker = { version = "0.1.24", default-features = false, optional = true }
-weavy = { workspace = true }
 
 # Tracing (optional - compiles to nothing when disabled)
 tracing = { workspace = true, optional = true }
@@ -92,10 +89,9 @@ default = []
 fast = ["lexical-parse", "dep:itoa", "dep:zmij"]
 lexical-parse = ["dep:lexical-parse-float", "dep:lexical-parse-integer"]
 std = []
-ci = ["stacker"] # CI feature enables stack growth for deep deserialization tests
+ci = []
 net = ["facet-format/net", "facet-core/net"]
 tracing = ["dep:tracing", "facet-format/tracing", "facet-reflect/tracing"]
-stacker = ["facet-format/stacker", "dep:stacker"]
 
 # Axum HTTP integration
 axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util", "dep:mime"]
