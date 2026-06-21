@@ -5,6 +5,8 @@
 //! constructing `Vec`/map/set handles, reading `Option`/`Result` presence,
 //! validating string bytes, and delegating opaque payloads.
 
+pub mod runtime;
+
 /// A type-erased "write this field's default in place" operation, supplied by
 /// the front door for a reader-only field that can be filled locally.
 ///

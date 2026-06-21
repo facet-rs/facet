@@ -19,6 +19,7 @@ use facet_format::{
     ParseEventKind, ScalarValue,
 };
 use facet_reflect::Span;
+use weavy::mem::runtime::{HandleGuard, InitializedLedger, RawScratch};
 use weavy::{Control, Lowered, Program, RunError, RunStats, Step};
 
 use crate::JsonParser;
@@ -375,7 +376,7 @@ struct JsonInterp<'parser, 'de, 'program, const TRUSTED_UTF8: bool> {
     parser: &'parser mut JsonParser<'de, TRUSTED_UTF8>,
     base: PtrUninit,
     structs: Vec<StructFrame<'program>>,
-    lists: Vec<ListFrame>,
+    lists: Vec<HandleGuard>,
     success: bool,
 }
 
@@ -413,11 +414,7 @@ impl<const TRUSTED_UTF8: bool> Drop for JsonInterp<'_, '_, '_, TRUSTED_UTF8> {
             return;
         }
 
-        while let Some(list) = self.lists.pop() {
-            unsafe {
-                let _ = list.shape.call_drop_in_place(list.ptr);
-            }
-        }
+        while self.lists.pop().is_some() {}
 
         while self.structs.pop().is_some() {}
     }
@@ -510,7 +507,7 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, BlockId, J
                             .structs
                             .last()
                             .expect("struct frame is present while decoding fields");
-                        if let Some(first_span) = frame.seen[index] {
+                        if let Some(first_span) = frame.seen.get(index).copied() {
                             return Err(vm_error(
                                 Some(event.span),
                                 DeserializeErrorKind::DuplicateField {
@@ -559,9 +556,9 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, BlockId, J
                     _ => {}
                 }
 
-                let scratch = Scratch::alloc(option.t(), *inner_layout)?;
+                let scratch = Scratch::alloc(option.t(), *inner_layout);
                 let old_base = self.base;
-                self.base = scratch.ptr;
+                self.base = scratch.ptr_uninit();
                 Ok(Control::CallProgramThen(
                     some_program,
                     Continuation::OptionSome {
@@ -594,10 +591,11 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, BlockId, J
                     .init_in_place_with_capacity()
                     .ok_or_else(|| unsupported(list_shape, "list initialization"))?;
                 let list_ptr = unsafe { init(self.base, 0) };
-                self.lists.push(ListFrame {
-                    shape: list_shape,
-                    ptr: list_ptr,
-                });
+                self.lists.push(HandleGuard::new(
+                    list_ptr.as_mut_byte_ptr(),
+                    *list_shape as *const Shape as *const (),
+                    drop_shape_value,
+                ));
                 Ok(Control::CallBlockThen(*loop_id, Continuation::FinishList))
             }
             JsonOp::ListNext {
@@ -614,9 +612,9 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, BlockId, J
                     _ => {}
                 }
 
-                let scratch = Scratch::alloc(list.t(), *element_layout)?;
+                let scratch = Scratch::alloc(list.t(), *element_layout);
                 let old_base = self.base;
-                self.base = scratch.ptr;
+                self.base = scratch.ptr_uninit();
                 Ok(Control::CallProgramThen(
                     element_program,
                     Continuation::ListElement {
@@ -635,9 +633,9 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, BlockId, J
                 let pointee = pointer
                     .pointee()
                     .ok_or_else(|| unsupported_shape_message("opaque pointer"))?;
-                let scratch = Scratch::alloc(pointee, *pointee_layout)?;
+                let scratch = Scratch::alloc(pointee, *pointee_layout);
                 let old_base = self.base;
-                self.base = scratch.ptr;
+                self.base = scratch.ptr_uninit();
                 Ok(Control::CallProgramThen(
                     pointee_program,
                     Continuation::Pointer {
@@ -676,7 +674,7 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, BlockId, J
                     .structs
                     .last_mut()
                     .expect("struct frame is present after field program");
-                frame.seen[index] = Some(span);
+                frame.seen.mark(index, span);
                 self.base = old_base;
                 Ok(Control::CallBlock(loop_id))
             }
@@ -694,7 +692,11 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, BlockId, J
                 Ok(Control::Continue)
             }
             Continuation::FinishList => {
-                self.lists.pop();
+                let mut list = self
+                    .lists
+                    .pop()
+                    .expect("list frame is present after list program");
+                list.disarm();
                 Ok(Control::Continue)
             }
             Continuation::ListElement {
@@ -707,12 +709,12 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, BlockId, J
                     .lists
                     .last()
                     .expect("list frame is present after element program")
-                    .ptr;
+                    .ptr();
                 let push = list
                     .push()
                     .ok_or_else(|| unsupported(list.t(), "list push"))?;
                 unsafe {
-                    push(list_ptr, scratch.ptr_mut());
+                    push(PtrMut::new(list_ptr), scratch.ptr_mut());
                 }
                 scratch.dealloc_uninit();
                 self.base = old_base;
@@ -772,7 +774,7 @@ struct StructFrame<'program> {
     shape: &'static Shape,
     base: PtrUninit,
     fields: &'program [FieldPlan],
-    seen: Vec<Option<Span>>,
+    seen: InitializedLedger<Span>,
 }
 
 impl<'program> StructFrame<'program> {
@@ -781,13 +783,13 @@ impl<'program> StructFrame<'program> {
             shape,
             base,
             fields,
-            seen: vec![None; fields.len()],
+            seen: InitializedLedger::new(fields.len()),
         }
     }
 
     unsafe fn fill_missing_fields(mut self) -> Result<(), DeserializeError> {
         for (index, field) in self.fields.iter().enumerate() {
-            if self.seen[index].is_some() {
+            if self.seen.is_initialized(index) {
                 continue;
             }
 
@@ -806,11 +808,11 @@ impl<'program> StructFrame<'program> {
                     unsafe {
                         default(field_ptr);
                     }
-                    self.seen[index] = Some(Span { offset: 0, len: 0 });
+                    self.seen.mark(index, Span { offset: 0, len: 0 });
                 }
                 MissingField::DefaultTrait { explicit } => {
                     if unsafe { field.shape.call_default_in_place(field_ptr) }.is_some() {
-                        self.seen[index] = Some(Span { offset: 0, len: 0 });
+                        self.seen.mark(index, Span { offset: 0, len: 0 });
                     } else if explicit {
                         return Err(vm_error(
                             None,
@@ -836,7 +838,7 @@ impl<'program> StructFrame<'program> {
                     unsafe {
                         (option.vtable.init_none)(field_ptr);
                     }
-                    self.seen[index] = Some(Span { offset: 0, len: 0 });
+                    self.seen.mark(index, Span { offset: 0, len: 0 });
                 }
             }
         }
@@ -845,10 +847,8 @@ impl<'program> StructFrame<'program> {
     }
 
     unsafe fn drop_initialized_fields(&self) {
-        for (index, field) in self.fields.iter().enumerate().rev() {
-            if self.seen[index].is_none() {
-                continue;
-            }
+        for (index, _) in self.seen.iter_initialized_rev() {
+            let field = &self.fields[index];
             let ptr = unsafe { self.base.field_init(field.offset) };
             unsafe {
                 let _ = field.shape.call_drop_in_place(ptr);
@@ -865,58 +865,34 @@ impl Drop for StructFrame<'_> {
     }
 }
 
-#[derive(Clone, Copy)]
-struct ListFrame {
-    shape: &'static Shape,
-    ptr: PtrMut,
+unsafe fn drop_shape_value(ctx: *const (), ptr: *mut u8) {
+    let shape = unsafe { &*(ctx as *const Shape) };
+    unsafe {
+        let _ = shape.call_drop_in_place(PtrMut::new(ptr));
+    }
 }
 
 struct Scratch {
-    shape: &'static Shape,
-    ptr: PtrUninit,
-    active: bool,
+    raw: RawScratch,
 }
 
 impl Scratch {
-    fn alloc(shape: &'static Shape, layout: Layout) -> Result<Self, DeserializeError> {
-        let ptr = if layout.size() == 0 {
-            core::ptr::null_mut::<u8>().wrapping_add(layout.align())
-        } else {
-            let ptr = unsafe { alloc::alloc::alloc(layout) };
-            if ptr.is_null() {
-                alloc::alloc::handle_alloc_error(layout);
-            }
-            ptr
-        };
-        Ok(Self {
-            shape,
-            ptr: PtrUninit::new(ptr),
-            active: true,
-        })
+    fn alloc(_shape: &'static Shape, layout: Layout) -> Self {
+        Self {
+            raw: RawScratch::from_layout(layout),
+        }
+    }
+
+    fn ptr_uninit(&self) -> PtrUninit {
+        PtrUninit::new(self.raw.ptr())
     }
 
     unsafe fn ptr_mut(&self) -> PtrMut {
-        unsafe { self.ptr.assume_init() }
+        unsafe { self.ptr_uninit().assume_init() }
     }
 
     fn dealloc_uninit(&mut self) {
-        if !self.active {
-            return;
-        }
-        unsafe {
-            let _ = self.shape.deallocate_uninit(self.ptr);
-        }
-        self.active = false;
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        if self.active {
-            unsafe {
-                let _ = self.shape.deallocate_uninit(self.ptr);
-            }
-        }
+        self.raw.dealloc_uninit();
     }
 }
 

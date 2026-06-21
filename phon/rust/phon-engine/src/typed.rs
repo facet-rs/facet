@@ -41,6 +41,7 @@ use phon_schema::{
     DecodeError, Field, Primitive, SchemaId, SchemaKind, SchemaRef, Value, Variant, VariantPayload,
     read_value, write_value,
 };
+use weavy::mem::runtime::{InitTarget, RawAllocError, RawArrayBuffer, RawScratch};
 use weavy::{Control, RunError, RunStats, Step};
 
 use crate::compact::{self, CompactError, Registry, Resolved, alignment, pad_to, skip_pad};
@@ -1880,74 +1881,6 @@ struct DecodeInterp<'bytes> {
     base: *mut u8,
 }
 
-struct Scratch {
-    ptr: *mut u8,
-    layout: Option<alloc::Layout>,
-}
-
-impl Scratch {
-    fn new(size: usize, align: usize) -> Result<Self> {
-        let (ptr, layout) = alloc_scratch(size, align)?;
-        Ok(Self { ptr, layout })
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        free_scratch(self.ptr, self.layout);
-        self.layout = None;
-    }
-}
-
-struct SequenceBuffer {
-    ptr: *mut u8,
-    cap: usize,
-    stride: usize,
-    layout: Option<alloc::Layout>,
-}
-
-impl SequenceBuffer {
-    fn new(count: usize, stride: usize, elem_align: usize) -> Result<Self> {
-        if count == 0 || stride == 0 {
-            Ok(Self {
-                ptr: elem_align as *mut u8,
-                cap: count,
-                stride,
-                layout: None,
-            })
-        } else {
-            let layout =
-                alloc::Layout::from_size_align(count * stride, elem_align).map_err(|_| {
-                    CompactError::Decode(DecodeError::Malformed("sequence layout overflow"))
-                })?;
-            // Safety: layout has non-zero size (count > 0 and stride > 0).
-            let ptr = unsafe { alloc::alloc(layout) };
-            if ptr.is_null() {
-                alloc::handle_alloc_error(layout);
-            }
-            Ok(Self {
-                ptr,
-                cap: count,
-                stride,
-                layout: Some(layout),
-            })
-        }
-    }
-
-    fn adopt(&mut self) {
-        self.layout = None;
-    }
-}
-
-impl Drop for SequenceBuffer {
-    fn drop(&mut self) {
-        if let Some(layout) = self.layout.take() {
-            // Safety: `ptr` was allocated with this layout and has not been adopted.
-            unsafe { alloc::dealloc(self.ptr, layout) };
-        }
-    }
-}
-
 enum DecodeContinuation<'program> {
     RestoreBase {
         previous_base: *mut u8,
@@ -1955,7 +1888,7 @@ enum DecodeContinuation<'program> {
     Sequence {
         previous_base: *mut u8,
         element: &'program MemProgram,
-        buffer: SequenceBuffer,
+        buffer: RawArrayBuffer,
         next_index: usize,
         count: usize,
         list: *mut u8,
@@ -1966,7 +1899,7 @@ enum DecodeContinuation<'program> {
         set: &'program SetOp,
         set_ptr: *mut u8,
         remaining_after_current: usize,
-        scratch: Scratch,
+        scratch: RawScratch,
     },
     MapKey {
         previous_base: *mut u8,
@@ -1974,8 +1907,8 @@ enum DecodeContinuation<'program> {
         map_ptr: *mut u8,
         total: usize,
         remaining: usize,
-        key_scratch: Scratch,
-        value_scratch: Scratch,
+        key_scratch: RawScratch,
+        value_scratch: RawScratch,
     },
     MapValue {
         previous_base: *mut u8,
@@ -1983,13 +1916,13 @@ enum DecodeContinuation<'program> {
         map_ptr: *mut u8,
         total: usize,
         remaining: usize,
-        key_scratch: Scratch,
-        value_scratch: Scratch,
+        key_scratch: RawScratch,
+        value_scratch: RawScratch,
     },
     Init {
         previous_base: *mut u8,
         target: InitTarget,
-        scratch: Scratch,
+        scratch: RawScratch,
     },
 }
 
@@ -2070,18 +2003,24 @@ impl<'program> Step<'program, SchemaId, MemOp> for DecodeInterp<'_> {
             }
             MemOp::Sequence(s) => {
                 let count = self.reader.read_len(s.min_wire)?;
-                let mut buffer = SequenceBuffer::new(count, s.stride, s.elem_align)?;
+                let mut buffer = alloc_sequence_buffer(count, s.stride, s.elem_align)?;
                 // Safety: the handle lives at `field_offset`.
                 let list = unsafe { self.base.add(s.field_offset) };
                 if count == 0 {
                     unsafe {
-                        (s.thunks.from_raw_parts)(s.thunks.ctx, list, buffer.ptr, count, buffer.cap)
+                        (s.thunks.from_raw_parts)(
+                            s.thunks.ctx,
+                            list,
+                            buffer.ptr(),
+                            count,
+                            buffer.cap(),
+                        )
                     };
                     buffer.adopt();
                     Control::Continue
                 } else {
                     let previous_base = self.base;
-                    self.base = buffer.ptr;
+                    self.base = buffer.ptr();
                     Control::CallProgramThen(
                         &s.element,
                         DecodeContinuation::Sequence {
@@ -2335,13 +2274,13 @@ impl<'program> Step<'program, SchemaId, MemOp> for DecodeInterp<'_> {
             } => {
                 if next_index == count {
                     unsafe {
-                        (thunks.from_raw_parts)(thunks.ctx, list, buffer.ptr, count, buffer.cap)
+                        (thunks.from_raw_parts)(thunks.ctx, list, buffer.ptr(), count, buffer.cap())
                     };
                     buffer.adopt();
                     self.base = previous_base;
                     Ok(Control::Continue)
                 } else {
-                    self.base = unsafe { buffer.ptr.add(next_index * buffer.stride) };
+                    self.base = unsafe { buffer.slot_unchecked(next_index) };
                     Ok(Control::CallProgramThen(
                         element,
                         DecodeContinuation::Sequence {
@@ -2365,7 +2304,8 @@ impl<'program> Step<'program, SchemaId, MemOp> for DecodeInterp<'_> {
             } => {
                 // Safety: scratch holds an initialized element; `insert` moves it
                 // into the set and tells us whether it was unique.
-                let inserted = unsafe { (set.thunks.insert)(set.thunks.ctx, set_ptr, scratch.ptr) };
+                let inserted =
+                    unsafe { (set.thunks.insert)(set.thunks.ctx, set_ptr, scratch.ptr()) };
                 drop(scratch);
                 if !inserted {
                     return Err(CompactError::Decode(DecodeError::DuplicateElement));
@@ -2381,7 +2321,7 @@ impl<'program> Step<'program, SchemaId, MemOp> for DecodeInterp<'_> {
                 key_scratch,
                 value_scratch,
             } => {
-                self.base = value_scratch.ptr;
+                self.base = value_scratch.ptr();
                 Ok(Control::CallProgramThen(
                     &map.value,
                     DecodeContinuation::MapValue {
@@ -2408,8 +2348,8 @@ impl<'program> Step<'program, SchemaId, MemOp> for DecodeInterp<'_> {
                     (map.thunks.insert)(
                         map.thunks.ctx,
                         map_ptr,
-                        key_scratch.ptr,
-                        value_scratch.ptr,
+                        key_scratch.ptr(),
+                        value_scratch.ptr(),
                     );
                 }
                 drop(key_scratch);
@@ -2430,7 +2370,7 @@ impl<'program> Step<'program, SchemaId, MemOp> for DecodeInterp<'_> {
                 target,
                 scratch,
             } => {
-                unsafe { (target.init)(target.ctx, target.handle, scratch.ptr) };
+                unsafe { target.initialize(scratch.ptr()) };
                 drop(scratch);
                 self.base = previous_base;
                 Ok(Control::Continue)
@@ -2452,8 +2392,8 @@ impl DecodeInterp<'_> {
             return Ok(Control::Continue);
         }
 
-        let scratch = Scratch::new(set.elem_size, set.elem_align)?;
-        self.base = scratch.ptr;
+        let scratch = alloc_scratch(set.elem_size, set.elem_align)?;
+        self.base = scratch.ptr();
         Ok(Control::CallProgramThen(
             &set.element,
             DecodeContinuation::SetElement {
@@ -2479,9 +2419,9 @@ impl DecodeInterp<'_> {
             return Ok(Control::Continue);
         }
 
-        let key_scratch = Scratch::new(map.key_size, map.key_align)?;
-        let value_scratch = Scratch::new(map.value_size, map.value_align)?;
-        self.base = key_scratch.ptr;
+        let key_scratch = alloc_scratch(map.key_size, map.key_align)?;
+        let value_scratch = alloc_scratch(map.value_size, map.value_align)?;
+        self.base = key_scratch.ptr();
         Ok(Control::CallProgramThen(
             &map.key,
             DecodeContinuation::MapKey {
@@ -2503,9 +2443,9 @@ impl DecodeInterp<'_> {
         align: usize,
         target: InitTarget,
     ) -> Result<Control<'program, SchemaId, MemOp, DecodeContinuation<'program>>> {
-        let scratch = Scratch::new(size, align)?;
+        let scratch = alloc_scratch(size, align)?;
         let previous_base = self.base;
-        self.base = scratch.ptr;
+        self.base = scratch.ptr();
         Ok(Control::CallProgramThen(
             program,
             DecodeContinuation::Init {
@@ -2517,40 +2457,28 @@ impl DecodeInterp<'_> {
     }
 }
 
-/// Allocate an engine-owned scratch buffer of `size`/`align` for a decoded
-/// key/value before it is moved into a map. A zero-size element needs no
-/// allocation: a dangling-but-aligned pointer suffices (and `free_scratch` then
-/// does nothing for it).
-fn alloc_scratch(size: usize, align: usize) -> Result<(*mut u8, Option<alloc::Layout>)> {
-    if size == 0 {
-        Ok((align as *mut u8, None))
-    } else {
-        let layout = alloc::Layout::from_size_align(size, align).map_err(|_| {
-            CompactError::Decode(DecodeError::Malformed("map scratch layout overflow"))
-        })?;
-        // Safety: size > 0.
-        let buf = unsafe { alloc::alloc(layout) };
-        if buf.is_null() {
-            alloc::handle_alloc_error(layout);
+fn alloc_scratch(size: usize, align: usize) -> Result<RawScratch> {
+    RawScratch::new(size, align).map_err(scratch_alloc_error)
+}
+
+fn alloc_sequence_buffer(count: usize, stride: usize, elem_align: usize) -> Result<RawArrayBuffer> {
+    RawArrayBuffer::new(count, stride, elem_align).map_err(sequence_alloc_error)
+}
+
+fn scratch_alloc_error(error: RawAllocError) -> CompactError {
+    match error {
+        RawAllocError::InvalidLayout { .. } | RawAllocError::SizeOverflow { .. } => {
+            CompactError::Decode(DecodeError::Malformed("scratch layout overflow"))
         }
-        Ok((buf, Some(layout)))
     }
 }
 
-/// Free a scratch buffer from [`alloc_scratch`] WITHOUT dropping its contents
-/// (ownership was moved into the map by `insert`). A `None` layout is a zero-size
-/// dangling pointer that was never allocated.
-fn free_scratch(buf: *mut u8, layout: Option<alloc::Layout>) {
-    if let Some(layout) = layout {
-        // Safety: `buf` was allocated by `alloc_scratch` with this exact layout.
-        unsafe { alloc::dealloc(buf, layout) };
+fn sequence_alloc_error(error: RawAllocError) -> CompactError {
+    match error {
+        RawAllocError::InvalidLayout { .. } | RawAllocError::SizeOverflow { .. } => {
+            CompactError::Decode(DecodeError::Malformed("sequence layout overflow"))
+        }
     }
-}
-
-struct InitTarget {
-    ctx: *const (),
-    handle: *mut u8,
-    init: unsafe extern "C" fn(ctx: *const (), handle: *mut u8, value: *mut u8),
 }
 
 /// Lower `descriptor` and decode `bytes` into the value at `base` in one step.
