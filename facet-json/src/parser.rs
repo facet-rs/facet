@@ -83,6 +83,14 @@ pub(crate) enum JsonObjectStep<'de> {
     End,
 }
 
+pub(crate) enum JsonSequenceScalarStep<'de> {
+    Value {
+        value: JsonScalarToken<'de>,
+        span: Span,
+    },
+    End,
+}
+
 pub(crate) enum JsonFieldKey<'de> {
     Borrowed(&'de str),
     Decoded(Cow<'de, str>),
@@ -1000,6 +1008,95 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
         }
     }
 
+    pub(crate) fn next_sequence_scalar_or_end(
+        &mut self,
+    ) -> Result<JsonSequenceScalarStep<'de>, ParseError> {
+        if self.state.event_peek.is_some() {
+            if self.consume_sequence_end_if_next()? {
+                return Ok(JsonSequenceScalarStep::End);
+            }
+            let (value, span) = self.read_scalar_token()?;
+            return Ok(JsonSequenceScalarStep::Value { value, span });
+        }
+
+        match self.determine_action() {
+            NextAction::ArrayValue => {
+                let token = self.consume_spanned_token()?;
+                let span = token.span;
+                match token.token {
+                    ScanToken::ArrayEnd => {
+                        self.state.stack.pop();
+                        self.finish_value_in_parent();
+                        Ok(JsonSequenceScalarStep::End)
+                    }
+                    ScanToken::Eof => Err(ParseError::new(
+                        span,
+                        DeserializeErrorKind::UnexpectedEof {
+                            expected: "scalar or ']'",
+                        },
+                    )),
+                    _ => {
+                        let (value, span) = self.finish_scalar_token(token, "scalar or ']'")?;
+                        Ok(JsonSequenceScalarStep::Value { value, span })
+                    }
+                }
+            }
+            NextAction::ArrayComma => {
+                let token = self.consume_spanned_token()?;
+                let span = token.span;
+                match token.token {
+                    ScanToken::Comma => {
+                        if let Some(ContextState::Array(state)) = self.state.stack.last_mut() {
+                            *state = ArrayState::ValueOrEnd;
+                        }
+                        let token = self.consume_spanned_token()?;
+                        let span = token.span;
+                        match token.token {
+                            ScanToken::ArrayEnd => {
+                                self.state.stack.pop();
+                                self.finish_value_in_parent();
+                                Ok(JsonSequenceScalarStep::End)
+                            }
+                            ScanToken::Eof => Err(ParseError::new(
+                                span,
+                                DeserializeErrorKind::UnexpectedEof {
+                                    expected: "scalar or ']'",
+                                },
+                            )),
+                            _ => {
+                                let (value, span) =
+                                    self.finish_scalar_token(token, "scalar or ']'")?;
+                                Ok(JsonSequenceScalarStep::Value { value, span })
+                            }
+                        }
+                    }
+                    ScanToken::ArrayEnd => {
+                        self.state.stack.pop();
+                        self.finish_value_in_parent();
+                        Ok(JsonSequenceScalarStep::End)
+                    }
+                    ScanToken::Eof => Err(ParseError::new(
+                        span,
+                        DeserializeErrorKind::UnexpectedEof {
+                            expected: "',' or ']'",
+                        },
+                    )),
+                    _ => Err(self.unexpected_scan_token(&token, "',' or ']'")),
+                }
+            }
+            NextAction::RootFinished => Err(ParseError::new(
+                Span::new(self.current_offset(), 0),
+                DeserializeErrorKind::UnexpectedEof {
+                    expected: "scalar or ']'",
+                },
+            )),
+            _ => {
+                let token = self.consume_spanned_token()?;
+                Err(self.unexpected_scan_token(&token, "scalar or ']'"))
+            }
+        }
+    }
+
     fn next_significant_is(&self, expected: u8) -> Result<bool, ParseError> {
         Ok(matches!(
             self.peek_significant_byte()?,
@@ -1030,8 +1127,11 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
         Err(self.unexpected(&token, "','"))
     }
 
-    fn consume_scalar_token(&mut self) -> Result<(JsonScalarToken<'de>, Span), ParseError> {
-        let token = self.consume_spanned_token()?;
+    fn scalar_from_token(
+        &self,
+        token: scanner::SpannedToken,
+        expected: &'static str,
+    ) -> Result<(JsonScalarToken<'de>, Span), ParseError> {
         let span = token.span;
         let value = match token.token {
             ScanToken::Null => JsonScalarToken::Null,
@@ -1054,14 +1154,33 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
             | ScanToken::ArrayStart
             | ScanToken::ArrayEnd
             | ScanToken::Colon
-            | ScanToken::Comma
-            | ScanToken::Eof => return Err(self.unexpected_scan_token(&token, "scalar")),
+            | ScanToken::Comma => return Err(self.unexpected_scan_token(&token, expected)),
+            ScanToken::Eof => {
+                return Err(ParseError::new(
+                    span,
+                    DeserializeErrorKind::UnexpectedEof { expected },
+                ));
+            }
             ScanToken::NeedMore { .. } => unreachable!("handled by consume_spanned_token"),
         };
+        Ok((value, span))
+    }
+
+    fn finish_scalar_token(
+        &mut self,
+        token: scanner::SpannedToken,
+        expected: &'static str,
+    ) -> Result<(JsonScalarToken<'de>, Span), ParseError> {
+        let scalar = self.scalar_from_token(token, expected)?;
 
         self.state.root_started = true;
         self.finish_value_in_parent();
-        Ok((value, span))
+        Ok(scalar)
+    }
+
+    fn consume_scalar_token(&mut self) -> Result<(JsonScalarToken<'de>, Span), ParseError> {
+        let token = self.consume_spanned_token()?;
+        self.finish_scalar_token(token, "scalar")
     }
 
     fn consume_null_token(&mut self) -> Result<bool, ParseError> {

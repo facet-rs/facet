@@ -22,7 +22,7 @@ use weavy::mem::runtime::{
 use weavy::{BlockRef, Control, DenseLowered, Lowered, Program, RunError, RunStats, Step};
 
 use crate::JsonParser;
-use crate::parser::{JsonFieldKey, JsonObjectStep, JsonScalarToken};
+use crate::parser::{JsonFieldKey, JsonObjectStep, JsonScalarToken, JsonSequenceScalarStep};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum JsonBlockId {
@@ -925,13 +925,13 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                 element_layout,
                 loop_id,
             } => loop {
-                if self.parser.consume_sequence_end_if_next()? {
-                    return Ok(Control::Continue);
-                }
-
                 if let Some(scalar) = element_scalar {
+                    let (value, span) = match self.parser.next_sequence_scalar_or_end()? {
+                        JsonSequenceScalarStep::End => return Ok(Control::Continue),
+                        JsonSequenceScalarStep::Value { value, span } => (value, span),
+                    };
+
                     if let Some(slot) = self.direct_list_slot()? {
-                        let (value, span) = self.parser.read_scalar_token()?;
                         unsafe {
                             write_scalar(list.t(), *scalar, slot, value, span)?;
                             self.mark_direct_list_slot_initialized();
@@ -940,7 +940,6 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                     }
 
                     let scratch = self.scratch.reserve(*element_layout);
-                    let (value, span) = self.parser.read_scalar_token()?;
                     unsafe {
                         write_scalar(list.t(), *scalar, scratch_ptr_uninit(&scratch), value, span)?;
                     }
@@ -950,15 +949,19 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                 }
 
                 if let Some(option_scalar) = element_option_scalar {
+                    let step = self.parser.next_sequence_scalar_or_end()?;
+                    let JsonSequenceScalarStep::Value { value, span } = step else {
+                        return Ok(Control::Continue);
+                    };
+
                     if let Some(slot) = self.direct_list_slot()? {
-                        if self.parser.consume_null_if_next()? {
+                        if matches!(&value, JsonScalarToken::Null) {
                             unsafe {
                                 (option_scalar.option.vtable.init_none)(slot);
                                 self.mark_direct_list_slot_initialized();
                             }
                         } else {
                             let inner = self.scratch.reserve(option_scalar.inner_layout);
-                            let (value, span) = self.parser.read_scalar_token()?;
                             unsafe {
                                 write_scalar(
                                     option_scalar.option.t(),
@@ -979,13 +982,12 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                     }
 
                     let scratch = self.scratch.reserve(*element_layout);
-                    if self.parser.consume_null_if_next()? {
+                    if matches!(&value, JsonScalarToken::Null) {
                         unsafe {
                             (option_scalar.option.vtable.init_none)(scratch_ptr_uninit(&scratch));
                         }
                     } else {
                         let inner = self.scratch.reserve(option_scalar.inner_layout);
-                        let (value, span) = self.parser.read_scalar_token()?;
                         unsafe {
                             write_scalar(
                                 option_scalar.option.t(),
@@ -1004,6 +1006,10 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                     self.push_list_element(*list, &scratch)?;
                     self.scratch.release(scratch);
                     continue;
+                }
+
+                if self.parser.consume_sequence_end_if_next()? {
+                    return Ok(Control::Continue);
                 }
 
                 if let Some(slot) = self.direct_list_slot()? {
