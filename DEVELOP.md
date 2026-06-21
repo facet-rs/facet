@@ -14,7 +14,8 @@ The `Justfile` is the source of truth for local/CI commands. Start with:
 
 - `just` (lists tasks)
 - `just test <nextest args>` (wraps `cargo nextest run <filters>`)
-- `just clippy` / `just clippy-all`
+- `just clippy` / `just clippy-all` (default workspace members)
+- `just clippy-workspace` / `just clippy-workspace-all` (all workspace members)
 - `just docs` / `just doc-tests`
 - `just nostd` (catches accidental `std` usage in core crates)
 
