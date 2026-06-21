@@ -50,6 +50,7 @@ mod parser;
 mod raw_json;
 mod scanner;
 mod serializer;
+mod weavy_deser;
 
 #[cfg(feature = "axum")]
 mod axum;
@@ -66,6 +67,10 @@ pub use serializer::{
     peek_to_writer_std_pretty, peek_to_writer_std_with_options, to_string, to_string_pretty,
     to_string_with_options, to_vec, to_vec_pretty, to_vec_with_options, to_writer_std,
     to_writer_std_pretty, to_writer_std_with_options,
+};
+pub use weavy_deser::{
+    JsonWeavyPlan, from_slice_weavy, from_slice_weavy_with_stats, from_str_weavy,
+    from_str_weavy_with_stats,
 };
 
 // Re-export DeserializeError for convenience

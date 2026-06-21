@@ -2159,6 +2159,7 @@ dependencies = [
  "stacker",
  "tendril",
  "tracing",
+ "weavy",
  "zmij",
 ]
 

@@ -37,3 +37,4 @@ mod smolstr_flatten_map;
 mod string_like_map_keys;
 mod tagging;
 mod tendril;
+mod weavy_deser;

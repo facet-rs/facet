@@ -122,6 +122,18 @@ fn point_reused_typeplan(bencher: Bencher) {
     });
 }
 
+/// Reuse Weavy JSON plan across iterations
+#[divan::bench]
+fn point_weavy_reused_plan(bencher: Bencher) {
+    let json = POINT_JSON;
+    let plan = facet_json::JsonWeavyPlan::<Point>::build().unwrap();
+
+    bencher.bench(|| {
+        let result: Point = black_box(plan.from_str(black_box(json)).unwrap());
+        black_box(result)
+    });
+}
+
 /// serde_json path
 #[divan::bench]
 fn point_serde_json(bencher: Bencher) {
@@ -172,6 +184,18 @@ fn person_reused_typeplan(bencher: Bencher) {
             .deserialize_into(partial, MetaSource::FromEvents)
             .unwrap();
         let result: Person = partial.build().unwrap().materialize().unwrap();
+        black_box(result)
+    });
+}
+
+/// Reuse Weavy JSON plan across iterations
+#[divan::bench]
+fn person_weavy_reused_plan(bencher: Bencher) {
+    let json = PERSON_JSON;
+    let plan = facet_json::JsonWeavyPlan::<Person>::build().unwrap();
+
+    bencher.bench(|| {
+        let result: Person = black_box(plan.from_str(black_box(json)).unwrap());
         black_box(result)
     });
 }
@@ -230,6 +254,18 @@ fn company_reused_typeplan(bencher: Bencher) {
     });
 }
 
+/// Reuse Weavy JSON plan across iterations
+#[divan::bench]
+fn company_weavy_reused_plan(bencher: Bencher) {
+    let json = COMPANY_JSON;
+    let plan = facet_json::JsonWeavyPlan::<Company>::build().unwrap();
+
+    bencher.bench(|| {
+        let result: Company = black_box(plan.from_str(black_box(json)).unwrap());
+        black_box(result)
+    });
+}
+
 /// serde_json path
 #[divan::bench]
 fn company_serde_json(bencher: Bencher) {
@@ -283,6 +319,20 @@ fn batch_1000_reused_typeplan(bencher: Bencher) {
                 .deserialize_into(partial, MetaSource::FromEvents)
                 .unwrap();
             let result: Person = partial.build().unwrap().materialize().unwrap();
+            black_box(result);
+        }
+    });
+}
+
+/// 1000 deserializations through a reused Weavy JSON plan
+#[divan::bench]
+fn batch_1000_weavy_reused_plan(bencher: Bencher) {
+    let json = PERSON_JSON;
+    let plan = facet_json::JsonWeavyPlan::<Person>::build().unwrap();
+
+    bencher.bench(|| {
+        for _ in 0..1000 {
+            let result: Person = plan.from_str(black_box(json)).unwrap();
             black_box(result);
         }
     });
