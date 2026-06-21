@@ -192,6 +192,7 @@ enum JsonOp<Block> {
         list: ListDef,
         element_program: Program<JsonOp<Block>>,
         element_scalar: Option<ScalarType>,
+        element_option_scalar: Option<ListOptionScalar>,
         element_layout: Layout,
         loop_id: Block,
     },
@@ -211,6 +212,13 @@ struct FieldPlan<Block> {
     program: Program<JsonOp<Block>>,
     scalar: Option<ScalarType>,
     missing: MissingField,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ListOptionScalar {
+    option: OptionDef,
+    scalar: ScalarType,
+    inner_layout: Layout,
 }
 
 impl<Block> FieldPlan<Block> {
@@ -302,11 +310,13 @@ impl Lowering {
                 let element_layout = sized_layout(list.t())?;
                 let element_program = self.lower_shape(list.t())?;
                 let element_scalar = ScalarType::try_from_shape(list.t());
+                let element_option_scalar = list_option_scalar(list.t())?;
                 let loop_id = JsonBlockId::ListLoop(shape);
                 let loop_program = vec![JsonOp::ListNext {
                     list,
                     element_program: element_program.clone(),
                     element_scalar,
+                    element_option_scalar,
                     element_layout,
                     loop_id,
                 }];
@@ -441,12 +451,14 @@ fn resolve_json_op(
             list,
             element_program,
             element_scalar,
+            element_option_scalar,
             element_layout,
             loop_id,
         } => JsonOp::ListNext {
             list,
             element_program: resolve_json_program(element_program, refs)?,
             element_scalar,
+            element_option_scalar,
             element_layout,
             loop_id: resolve_block_ref(loop_id, refs)?,
         },
@@ -514,6 +526,20 @@ fn missing_field_action(field: &Field, container_has_default: bool) -> MissingFi
     }
 }
 
+fn list_option_scalar(shape: &'static Shape) -> Result<Option<ListOptionScalar>, DeserializeError> {
+    let Def::Option(option) = shape.def else {
+        return Ok(None);
+    };
+    let Some(scalar) = ScalarType::try_from_shape(option.t()) else {
+        return Ok(None);
+    };
+    Ok(Some(ListOptionScalar {
+        option,
+        scalar,
+        inner_layout: sized_layout(option.t())?,
+    }))
+}
+
 fn sized_layout(shape: &'static Shape) -> Result<Layout, DeserializeError> {
     shape
         .layout
@@ -556,6 +582,25 @@ impl<'parser, 'de, 'program, const TRUSTED_UTF8: bool>
 
     fn finish_success(&mut self) {
         self.success = true;
+    }
+
+    fn push_list_element(
+        &mut self,
+        list: ListDef,
+        scratch: &ScratchSlot,
+    ) -> Result<(), DeserializeError> {
+        let list_ptr = self
+            .lists
+            .last()
+            .expect("list frame is present while pushing element")
+            .ptr();
+        let push = list
+            .push()
+            .ok_or_else(|| unsupported(list.t(), "list push"))?;
+        unsafe {
+            push(PtrMut::new(list_ptr), scratch_ptr_mut(scratch));
+        }
+        Ok(())
     }
 }
 
@@ -764,9 +809,10 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                 list,
                 element_program,
                 element_scalar,
+                element_option_scalar,
                 element_layout,
                 loop_id,
-            } => {
+            } => loop {
                 if self.parser.consume_sequence_end_if_next()? {
                     return Ok(Control::Continue);
                 }
@@ -777,25 +823,44 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                     unsafe {
                         write_scalar(list.t(), *scalar, scratch_ptr_uninit(&scratch), value, span)?;
                     }
-                    let list_ptr = self
-                        .lists
-                        .last()
-                        .expect("list frame is present while decoding scalar element")
-                        .ptr();
-                    let push = list
-                        .push()
-                        .ok_or_else(|| unsupported(list.t(), "list push"))?;
-                    unsafe {
-                        push(PtrMut::new(list_ptr), scratch_ptr_mut(&scratch));
-                    }
+                    self.push_list_element(*list, &scratch)?;
                     self.scratch.release(scratch);
-                    return Ok(Control::CallBlock(*loop_id));
+                    continue;
+                }
+
+                if let Some(option_scalar) = element_option_scalar {
+                    let scratch = self.scratch.reserve(*element_layout);
+                    if self.parser.consume_null_if_next()? {
+                        unsafe {
+                            (option_scalar.option.vtable.init_none)(scratch_ptr_uninit(&scratch));
+                        }
+                    } else {
+                        let inner = self.scratch.reserve(option_scalar.inner_layout);
+                        let (value, span) = self.parser.read_scalar_token()?;
+                        unsafe {
+                            write_scalar(
+                                option_scalar.option.t(),
+                                option_scalar.scalar,
+                                scratch_ptr_uninit(&inner),
+                                value,
+                                span,
+                            )?;
+                            (option_scalar.option.vtable.init_some)(
+                                scratch_ptr_uninit(&scratch),
+                                scratch_ptr_mut(&inner),
+                            );
+                        }
+                        self.scratch.release(inner);
+                    }
+                    self.push_list_element(*list, &scratch)?;
+                    self.scratch.release(scratch);
+                    continue;
                 }
 
                 let scratch = self.scratch.reserve(*element_layout);
                 let old_base = self.base;
                 self.base = scratch_ptr_uninit(&scratch);
-                Ok(call_program_or_block_then(
+                return Ok(call_program_or_block_then(
                     element_program,
                     Continuation::ListElement {
                         list: *list,
@@ -803,8 +868,8 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                         scratch,
                         loop_id: *loop_id,
                     },
-                ))
-            }
+                ));
+            },
             JsonOp::ReadPointer {
                 pointer,
                 pointee_program,
@@ -885,17 +950,7 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                 scratch,
                 loop_id,
             } => {
-                let list_ptr = self
-                    .lists
-                    .last()
-                    .expect("list frame is present after element program")
-                    .ptr();
-                let push = list
-                    .push()
-                    .ok_or_else(|| unsupported(list.t(), "list push"))?;
-                unsafe {
-                    push(PtrMut::new(list_ptr), scratch_ptr_mut(&scratch));
-                }
+                self.push_list_element(list, &scratch)?;
                 self.scratch.release(scratch);
                 self.base = old_base;
                 Ok(Control::CallBlock(loop_id))
