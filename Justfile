@@ -50,9 +50,15 @@ clippy-ci:
     cargo clippy --workspace --all-features --all-targets --keep-going -- -D warnings --allow deprecated
 
 clippy-all:
-    cargo clippy --workspace --all-targets --all-features -- -D warnings
+    cargo clippy --all-targets --all-features -- -D warnings
 
 clippy:
+    cargo clippy --all-targets -- -D warnings
+
+clippy-workspace-all:
+    cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+clippy-workspace:
     cargo clippy --workspace --all-targets -- -D warnings
 
 test *args:

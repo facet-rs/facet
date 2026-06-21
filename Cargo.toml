@@ -167,6 +167,90 @@ members = [
   "facet-showcase",
 
 ]
+
+# Keep root-level cargo commands focused on the Facet surface and the active
+# Weavy/Phon extraction work. Use `--workspace` for full monorepo checks.
+default-members = [
+  # core
+  "facet-core",
+  "facet",
+
+  # derive macro
+  "facet-macros-impl",
+  "facet-macros",
+
+  # macro ecosystem (plugin support)
+  "facet-macro-types",
+  "facet-macro-parse",
+
+  # derive plugins
+  "facet-error",
+  "facet-default",
+
+  # reflection and solver
+  "facet-reflect",
+  "facet-solver",
+
+  # test helpers
+  "facet-testhelpers",
+  "facet-testhelpers-macros",
+  "facet-testattrs",
+
+  # pretty printing
+  "facet-pretty",
+
+  # misc.
+  "facet-urlencoded",
+  "facet-axum",
+
+  # formats, dynamic values, and schema/codegen
+  "facet-dessert",
+  "facet-format",
+  "facet-json",
+  "facet-json-classics",
+  "facet-postcard",
+  "facet-msgpack",
+  "facet-toml",
+  "facet-yaml",
+  "facet-format-suite",
+  "facet-asn1",
+  "facet-csv",
+  "facet-xdr",
+  "facet-json-schema",
+  "facet-typescript",
+  "facet-python",
+  "facet-lua",
+  "facet-value",
+  "facet-zod",
+
+  # XML, DOM, and SVG
+  "facet-singularize",
+  "facet-dom",
+  "facet-xml",
+  "facet-xml-node",
+  "facet-atom",
+  "facet-svg",
+
+  # utilities
+  "facet-path",
+  "facet-validate",
+  "facet-cargo-toml",
+  "rusqlite-facet",
+  "rediff",
+  "figue",
+  "figue-attrs",
+
+  # Phon schema and typed codec
+  "weavy",
+  "phon/rust/copypatch",
+  "phon/rust/phon-schema",
+  "phon/rust/phon-ir",
+  "phon/rust/phon-engine",
+  "phon/rust/phon-jit",
+  "phon/rust/phon",
+  "phon/rust/phon-codegen",
+  "phon/rust/phon-conformance",
+]
 exclude = [
   # tools/ has its own workspace
   "tools",
