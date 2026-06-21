@@ -78,6 +78,11 @@ impl JsonValueStart<'_> {
     }
 }
 
+pub(crate) enum JsonObjectStep<'de> {
+    Field { name: Cow<'de, str>, span: Span },
+    End,
+}
+
 /// Mutable parser state that can be saved and restored.
 #[derive(Clone)]
 struct ParserState<'de> {
@@ -678,6 +683,126 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
         self.state.scanner_pos
     }
 
+    pub(crate) fn read_scalar_value(&mut self) -> Result<(ScalarValue<'de>, Span), ParseError> {
+        match self.consume_value_start("scalar")? {
+            JsonValueStart::Scalar(value, span) => Ok((value, span)),
+            value => Err(unexpected_value_start(value, "scalar")),
+        }
+    }
+
+    pub(crate) fn consume_object_start(&mut self) -> Result<Span, ParseError> {
+        match self.consume_value_start("object")? {
+            JsonValueStart::Object(span) => Ok(span),
+            value => Err(unexpected_value_start(value, "object")),
+        }
+    }
+
+    pub(crate) fn consume_array_start(&mut self) -> Result<Span, ParseError> {
+        match self.consume_value_start("array")? {
+            JsonValueStart::Array(span) => Ok(span),
+            value => Err(unexpected_value_start(value, "array")),
+        }
+    }
+
+    pub(crate) fn next_object_field_or_end(&mut self) -> Result<JsonObjectStep<'de>, ParseError> {
+        if let Some(event) = self.state.event_peek.take() {
+            self.state.peek_start_offset = None;
+            return match event.kind {
+                ParseEventKind::StructEnd => Ok(JsonObjectStep::End),
+                ParseEventKind::FieldKey(key) => {
+                    let Some(name) = key.name() else {
+                        return Err(ParseError::new(
+                            event.span,
+                            DeserializeErrorKind::InvalidValue {
+                                message: "JSON object field is missing a name".into(),
+                            },
+                        ));
+                    };
+                    Ok(JsonObjectStep::Field {
+                        name: name.clone(),
+                        span: event.span,
+                    })
+                }
+                other => Err(ParseError::new(
+                    event.span,
+                    DeserializeErrorKind::UnexpectedToken {
+                        got: other.kind_name().into(),
+                        expected: "field key or object end",
+                    },
+                )),
+            };
+        }
+
+        loop {
+            match self.determine_action() {
+                NextAction::ObjectKey => {
+                    let token = self.consume_token()?;
+                    let span = token.span;
+                    match token.kind {
+                        TokenKind::ObjectEnd => {
+                            self.state.stack.pop();
+                            self.finish_value_in_parent();
+                            return Ok(JsonObjectStep::End);
+                        }
+                        TokenKind::String(name) => {
+                            self.expect_colon_token()?;
+                            if let Some(ContextState::Object(state)) = self.state.stack.last_mut() {
+                                *state = ObjectState::Value;
+                            }
+                            return Ok(JsonObjectStep::Field { name, span });
+                        }
+                        TokenKind::Eof => {
+                            return Err(ParseError::new(
+                                span,
+                                DeserializeErrorKind::UnexpectedEof {
+                                    expected: "field name or '}'",
+                                },
+                            ));
+                        }
+                        _ => return Err(self.unexpected(&token, "field name or '}'")),
+                    }
+                }
+                NextAction::ObjectComma => {
+                    let token = self.consume_token()?;
+                    let span = token.span;
+                    match token.kind {
+                        TokenKind::Comma => {
+                            if let Some(ContextState::Object(state)) = self.state.stack.last_mut() {
+                                *state = ObjectState::KeyOrEnd;
+                            }
+                        }
+                        TokenKind::ObjectEnd => {
+                            self.state.stack.pop();
+                            self.finish_value_in_parent();
+                            return Ok(JsonObjectStep::End);
+                        }
+                        TokenKind::Eof => {
+                            return Err(ParseError::new(
+                                span,
+                                DeserializeErrorKind::UnexpectedEof {
+                                    expected: "',' or '}'",
+                                },
+                            ));
+                        }
+                        _ => return Err(self.unexpected(&token, "',' or '}'")),
+                    }
+                }
+                NextAction::RootFinished => {
+                    return Err(ParseError::new(
+                        Span::new(self.current_offset(), 0),
+                        DeserializeErrorKind::UnexpectedEof {
+                            expected: "field key or object end",
+                        },
+                    ));
+                }
+                _ => {
+                    let token = self.consume_token()?;
+                    return Err(self.unexpected(&token, "field key or object end"));
+                }
+            }
+        }
+    }
+
     pub(crate) fn consume_null_if_next(&mut self) -> Result<bool, ParseError> {
         if let Some(event) = self.state.event_peek.as_ref() {
             if matches!(event.kind, ParseEventKind::Scalar(ScalarValue::Null)) {
@@ -798,6 +923,67 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
             _ => Err(self.unexpected(&token, "']'")),
         }
     }
+
+    fn consume_value_start(
+        &mut self,
+        expected: &'static str,
+    ) -> Result<JsonValueStart<'de>, ParseError> {
+        if let Some(event) = self.state.event_peek.take() {
+            self.state.peek_start_offset = None;
+            return match event.kind {
+                ParseEventKind::StructStart(ContainerKind::Object) => {
+                    Ok(JsonValueStart::Object(event.span))
+                }
+                ParseEventKind::SequenceStart(ContainerKind::Array) => {
+                    Ok(JsonValueStart::Array(event.span))
+                }
+                ParseEventKind::Scalar(value) => Ok(JsonValueStart::Scalar(value, event.span)),
+                other => Err(ParseError::new(
+                    event.span,
+                    DeserializeErrorKind::UnexpectedToken {
+                        got: other.kind_name().into(),
+                        expected,
+                    },
+                )),
+            };
+        }
+
+        match self.determine_action() {
+            NextAction::ObjectValue | NextAction::ArrayValue | NextAction::RootValue => {
+                self.parse_direct_value_start_with_token(None)
+            }
+            NextAction::ArrayComma => {
+                self.consume_comma_token()?;
+                if let Some(ContextState::Array(state)) = self.state.stack.last_mut() {
+                    *state = ArrayState::ValueOrEnd;
+                }
+                self.parse_direct_value_start_with_token(None)
+            }
+            NextAction::RootFinished => Err(ParseError::new(
+                Span::new(self.current_offset(), 0),
+                DeserializeErrorKind::UnexpectedEof { expected },
+            )),
+            _ => {
+                let token = self.consume_token()?;
+                Err(self.unexpected(&token, expected))
+            }
+        }
+    }
+}
+
+fn unexpected_value_start(value: JsonValueStart<'_>, expected: &'static str) -> ParseError {
+    let (got, span) = match value {
+        JsonValueStart::Object(span) => ("object", span),
+        JsonValueStart::Array(span) => ("array", span),
+        JsonValueStart::Scalar(value, span) => (value.kind_name(), span),
+    };
+    ParseError::new(
+        span,
+        DeserializeErrorKind::UnexpectedToken {
+            got: got.into(),
+            expected,
+        },
+    )
 }
 
 impl<'de, const TRUSTED_UTF8: bool> FormatParser<'de> for JsonParser<'de, TRUSTED_UTF8> {
