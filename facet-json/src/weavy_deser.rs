@@ -20,7 +20,7 @@ use weavy::mem::runtime::{HandleGuard, InitializedLedger, ScratchSession, Scratc
 use weavy::{BlockRef, Control, DenseLowered, Lowered, Program, RunError, RunStats, Step};
 
 use crate::JsonParser;
-use crate::parser::{JsonObjectStep, JsonScalarToken};
+use crate::parser::{JsonFieldKey, JsonObjectStep, JsonScalarToken};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum JsonBlockId {
@@ -214,8 +214,9 @@ struct FieldPlan<Block> {
 }
 
 impl<Block> FieldPlan<Block> {
-    fn matches_name(&self, name: &str) -> bool {
-        self.name == name || self.alias == Some(name)
+    fn matches_key(&self, key: &JsonFieldKey<'_>) -> bool {
+        let key = key.as_str();
+        self.name == key || self.alias == Some(key)
     }
 }
 
@@ -644,18 +645,21 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                 loop_id,
             } => match self.parser.next_object_field_or_end()? {
                 JsonObjectStep::End => Ok(Control::Continue),
-                JsonObjectStep::Field { name, span } => {
-                    let field_name = name.as_ref();
-                    let Some((index, field)) = fields
-                        .iter()
-                        .enumerate()
-                        .find(|(_, field)| field.matches_name(field_name))
-                    else {
+                JsonObjectStep::Field { key, span } => {
+                    let mut matched = None;
+                    for (index, field) in fields.iter().enumerate() {
+                        if field.matches_key(&key) {
+                            matched = Some((index, field));
+                            break;
+                        }
+                    }
+
+                    let Some((index, field)) = matched else {
                         if shape.has_deny_unknown_fields_attr() {
                             return Err(vm_error(
                                 Some(span),
                                 DeserializeErrorKind::UnknownField {
-                                    field: field_name.to_owned().into(),
+                                    field: key.as_str().to_owned().into(),
                                     suggestion: None,
                                 },
                             ));

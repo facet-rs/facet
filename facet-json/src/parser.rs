@@ -79,8 +79,22 @@ impl JsonValueStart<'_> {
 }
 
 pub(crate) enum JsonObjectStep<'de> {
-    Field { name: Cow<'de, str>, span: Span },
+    Field { key: JsonFieldKey<'de>, span: Span },
     End,
+}
+
+pub(crate) enum JsonFieldKey<'de> {
+    Borrowed(&'de str),
+    Decoded(Cow<'de, str>),
+}
+
+impl JsonFieldKey<'_> {
+    pub(crate) fn as_str(&self) -> &str {
+        match self {
+            Self::Borrowed(value) => value,
+            Self::Decoded(value) => value.as_ref(),
+        }
+    }
 }
 
 pub(crate) enum JsonScalarToken<'de> {
@@ -326,16 +340,8 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
         span: Span,
     ) -> Result<Cow<'de, str>, ParseError> {
         if !has_escapes {
-            if TRUSTED_UTF8 {
-                // SAFETY: Caller guarantees input is valid UTF-8
-                unsafe { scanner::decode_string_borrowed_unchecked(self.input, start, end) }
-                    .map(Cow::Borrowed)
-                    .ok_or_else(|| invalid_utf8_parse_error(span))
-            } else {
-                scanner::decode_string_borrowed(self.input, start, end)
-                    .map(Cow::Borrowed)
-                    .ok_or_else(|| invalid_utf8_parse_error(span))
-            }
+            self.borrow_string_no_escapes(start, end, span)
+                .map(Cow::Borrowed)
         } else if TRUSTED_UTF8 {
             // SAFETY: Caller guarantees input is valid UTF-8
             Ok(Cow::Owned(
@@ -347,6 +353,40 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                 scanner::decode_string_owned(self.input, start, end)
                     .map_err(scan_error_to_parse_error)?,
             ))
+        }
+    }
+
+    #[inline]
+    fn borrow_string_no_escapes(
+        &self,
+        start: usize,
+        end: usize,
+        span: Span,
+    ) -> Result<&'de str, ParseError> {
+        let slice = &self.input[start..end];
+        if TRUSTED_UTF8 {
+            // SAFETY: The input came from &str, and the scanner already reported
+            // this token as a string without escapes.
+            Ok(unsafe { core::str::from_utf8_unchecked(slice) })
+        } else {
+            core::str::from_utf8(slice).map_err(|_| invalid_utf8_parse_error(span))
+        }
+    }
+
+    #[inline]
+    fn decode_field_key(
+        &self,
+        start: usize,
+        end: usize,
+        has_escapes: bool,
+        span: Span,
+    ) -> Result<JsonFieldKey<'de>, ParseError> {
+        if !has_escapes {
+            self.borrow_string_no_escapes(start, end, span)
+                .map(JsonFieldKey::Borrowed)
+        } else {
+            self.decode_string(start, end, has_escapes, span)
+                .map(JsonFieldKey::Decoded)
         }
     }
 
@@ -804,7 +844,7 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                         ));
                     };
                     Ok(JsonObjectStep::Field {
-                        name: name.clone(),
+                        key: JsonFieldKey::Decoded(name.clone()),
                         span: event.span,
                     })
                 }
@@ -821,22 +861,27 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
         loop {
             match self.determine_action() {
                 NextAction::ObjectKey => {
-                    let token = self.consume_token()?;
+                    let token = self.consume_spanned_token()?;
                     let span = token.span;
-                    match token.kind {
-                        TokenKind::ObjectEnd => {
+                    match token.token {
+                        ScanToken::ObjectEnd => {
                             self.state.stack.pop();
                             self.finish_value_in_parent();
                             return Ok(JsonObjectStep::End);
                         }
-                        TokenKind::String(name) => {
+                        ScanToken::String {
+                            start,
+                            end,
+                            has_escapes,
+                        } => {
+                            let key = self.decode_field_key(start, end, has_escapes, span)?;
                             self.expect_colon_token()?;
                             if let Some(ContextState::Object(state)) = self.state.stack.last_mut() {
                                 *state = ObjectState::Value;
                             }
-                            return Ok(JsonObjectStep::Field { name, span });
+                            return Ok(JsonObjectStep::Field { key, span });
                         }
-                        TokenKind::Eof => {
+                        ScanToken::Eof => {
                             return Err(ParseError::new(
                                 span,
                                 DeserializeErrorKind::UnexpectedEof {
@@ -844,24 +889,24 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                                 },
                             ));
                         }
-                        _ => return Err(self.unexpected(&token, "field name or '}'")),
+                        _ => return Err(self.unexpected_scan_token(&token, "field name or '}'")),
                     }
                 }
                 NextAction::ObjectComma => {
-                    let token = self.consume_token()?;
+                    let token = self.consume_spanned_token()?;
                     let span = token.span;
-                    match token.kind {
-                        TokenKind::Comma => {
+                    match token.token {
+                        ScanToken::Comma => {
                             if let Some(ContextState::Object(state)) = self.state.stack.last_mut() {
                                 *state = ObjectState::KeyOrEnd;
                             }
                         }
-                        TokenKind::ObjectEnd => {
+                        ScanToken::ObjectEnd => {
                             self.state.stack.pop();
                             self.finish_value_in_parent();
                             return Ok(JsonObjectStep::End);
                         }
-                        TokenKind::Eof => {
+                        ScanToken::Eof => {
                             return Err(ParseError::new(
                                 span,
                                 DeserializeErrorKind::UnexpectedEof {
@@ -869,7 +914,7 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                                 },
                             ));
                         }
-                        _ => return Err(self.unexpected(&token, "',' or '}'")),
+                        _ => return Err(self.unexpected_scan_token(&token, "',' or '}'")),
                     }
                 }
                 NextAction::RootFinished => {
@@ -881,8 +926,8 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                     ));
                 }
                 _ => {
-                    let token = self.consume_token()?;
-                    return Err(self.unexpected(&token, "field key or object end"));
+                    let token = self.consume_spanned_token()?;
+                    return Err(self.unexpected_scan_token(&token, "field key or object end"));
                 }
             }
         }
