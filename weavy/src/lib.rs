@@ -275,11 +275,12 @@ where
     S: Step<'program, BlockId, Op>,
     A: Accounting,
 {
-    let mut frames = vec![Frame {
+    let mut frames = Vec::with_capacity(16);
+    frames.push(Frame {
         program,
         ip: 0,
         continuation: None,
-    }];
+    });
     accounting.frame_pushed(frames.len());
 
     while let Some(frame) = frames.last_mut() {

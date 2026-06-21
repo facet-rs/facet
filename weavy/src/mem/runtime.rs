@@ -83,6 +83,90 @@ impl Drop for RawScratch {
     }
 }
 
+/// Reusable scratch storage for one interpreter run.
+///
+/// A session keeps raw buffers around after a moved-out child value is released,
+/// so repeated list elements or option/pointer payloads can reuse memory instead
+/// of allocating for every child decode. Dropping the session frees all buffers
+/// without dropping values.
+#[derive(Debug, Default)]
+pub struct ScratchSession {
+    buffers: Vec<ScratchBuffer>,
+}
+
+#[derive(Debug)]
+struct ScratchBuffer {
+    ptr: *mut u8,
+    layout: Layout,
+    active: bool,
+}
+
+/// A checked-out scratch slot from [`ScratchSession`].
+#[derive(Debug)]
+pub struct ScratchSlot {
+    index: usize,
+    ptr: *mut u8,
+}
+
+impl ScratchSession {
+    /// Create an empty scratch session.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Reserve scratch storage for `layout`.
+    pub fn reserve(&mut self, layout: Layout) -> ScratchSlot {
+        if let Some((index, buffer)) = self
+            .buffers
+            .iter_mut()
+            .enumerate()
+            .find(|(_, buffer)| !buffer.active && layout_fits(buffer.layout, layout))
+        {
+            buffer.active = true;
+            return ScratchSlot {
+                index,
+                ptr: buffer.ptr,
+            };
+        }
+
+        let ptr = allocate_or_dangling(layout);
+        let index = self.buffers.len();
+        self.buffers.push(ScratchBuffer {
+            ptr,
+            layout,
+            active: true,
+        });
+        ScratchSlot { index, ptr }
+    }
+
+    /// Release a moved-out scratch slot for reuse.
+    pub fn release(&mut self, slot: ScratchSlot) {
+        let buffer = &mut self.buffers[slot.index];
+        debug_assert!(buffer.active, "scratch slot released twice");
+        debug_assert_eq!(buffer.ptr, slot.ptr, "scratch slot pointer mismatch");
+        buffer.active = false;
+    }
+}
+
+impl ScratchSlot {
+    /// The raw storage pointer for this slot.
+    #[must_use]
+    pub fn ptr(&self) -> *mut u8 {
+        self.ptr
+    }
+}
+
+impl Drop for ScratchSession {
+    fn drop(&mut self) {
+        for buffer in self.buffers.drain(..) {
+            if buffer.layout.size() != 0 {
+                unsafe { alloc::dealloc(buffer.ptr, buffer.layout) };
+            }
+        }
+    }
+}
+
 /// Engine-owned raw contiguous storage for a sequence of elements.
 ///
 /// Dropping frees only the raw allocation. Call [`adopt`](Self::adopt) after a
@@ -297,6 +381,10 @@ fn allocate_or_dangling(layout: Layout) -> *mut u8 {
     }
 }
 
+fn layout_fits(buffer: Layout, requested: Layout) -> bool {
+    buffer.size() >= requested.size() && buffer.align() >= requested.align()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -313,6 +401,28 @@ mod tests {
         assert_eq!(scratch.ptr() as usize, 8);
         scratch.dealloc_uninit();
         scratch.dealloc_uninit();
+    }
+
+    #[test]
+    fn scratch_session_reuses_released_slots() {
+        let mut session = ScratchSession::new();
+        let first = session.reserve(Layout::from_size_align(16, 8).unwrap());
+        let first_ptr = first.ptr();
+        session.release(first);
+
+        let second = session.reserve(Layout::from_size_align(8, 4).unwrap());
+        assert_eq!(second.ptr(), first_ptr);
+        session.release(second);
+    }
+
+    #[test]
+    fn scratch_session_keeps_active_slots_distinct() {
+        let mut session = ScratchSession::new();
+        let first = session.reserve(Layout::from_size_align(16, 8).unwrap());
+        let second = session.reserve(Layout::from_size_align(16, 8).unwrap());
+        assert_ne!(second.ptr(), first.ptr());
+        session.release(second);
+        session.release(first);
     }
 
     #[test]
