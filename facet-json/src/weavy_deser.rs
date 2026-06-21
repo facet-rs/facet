@@ -22,7 +22,10 @@ use weavy::mem::runtime::{
 use weavy::{BlockRef, Control, DenseLowered, Lowered, Program, RunError, RunStats, Step};
 
 use crate::JsonParser;
-use crate::parser::{JsonFieldKey, JsonObjectStep, JsonScalarToken, JsonSequenceScalarStep};
+use crate::parser::{
+    JsonFieldKey, JsonObjectStep, JsonScalarInput, JsonScalarToken, JsonSequenceScalarStep,
+};
+use crate::scanner::{ParsedNumber, SpannedToken, Token as ScanToken};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum JsonBlockId {
@@ -758,9 +761,9 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
         match op {
             JsonOp::CallBlock(shape) => Ok(Control::CallBlock(*shape)),
             JsonOp::ReadScalar { shape, scalar } => {
-                let (value, span) = self.parser.read_scalar_token()?;
+                let value = self.parser.read_scalar_input()?;
                 unsafe {
-                    write_scalar(shape, *scalar, self.base, value, span)?;
+                    write_scalar_input(self.parser, shape, *scalar, self.base, value)?;
                 }
                 Ok(Control::Continue)
             }
@@ -815,9 +818,15 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
 
                         if let Some(scalar) = field.scalar {
                             let field_ptr = unsafe { frame.base.field_uninit(field.offset) };
-                            let (value, value_span) = self.parser.read_scalar_token()?;
+                            let value = self.parser.read_scalar_input()?;
                             unsafe {
-                                write_scalar(field.shape, scalar, field_ptr, value, value_span)?;
+                                write_scalar_input(
+                                    self.parser,
+                                    field.shape,
+                                    scalar,
+                                    field_ptr,
+                                    value,
+                                )?;
                             }
                             let frame = self
                                 .structs
@@ -856,14 +865,14 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
 
                 let scratch = self.scratch.reserve(*inner_layout);
                 if let Some(scalar) = some_scalar {
-                    let (value, span) = self.parser.read_scalar_token()?;
+                    let value = self.parser.read_scalar_input()?;
                     unsafe {
-                        write_scalar(
+                        write_scalar_input(
+                            self.parser,
                             option.t(),
                             *scalar,
                             scratch_ptr_uninit(&scratch),
                             value,
-                            span,
                         )?;
                         (option.vtable.init_some)(self.base, scratch_ptr_mut(&scratch));
                     }
@@ -926,14 +935,14 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                 loop_id,
             } => loop {
                 if let Some(scalar) = element_scalar {
-                    let (value, span) = match self.parser.next_sequence_scalar_or_end()? {
+                    let value = match self.parser.next_sequence_scalar_or_end()? {
                         JsonSequenceScalarStep::End => return Ok(Control::Continue),
-                        JsonSequenceScalarStep::Value { value, span } => (value, span),
+                        JsonSequenceScalarStep::Value { value } => value,
                     };
 
                     if let Some(slot) = self.direct_list_slot()? {
                         unsafe {
-                            write_scalar(list.t(), *scalar, slot, value, span)?;
+                            write_scalar_input(self.parser, list.t(), *scalar, slot, value)?;
                             self.mark_direct_list_slot_initialized();
                         }
                         continue;
@@ -941,7 +950,13 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
 
                     let scratch = self.scratch.reserve(*element_layout);
                     unsafe {
-                        write_scalar(list.t(), *scalar, scratch_ptr_uninit(&scratch), value, span)?;
+                        write_scalar_input(
+                            self.parser,
+                            list.t(),
+                            *scalar,
+                            scratch_ptr_uninit(&scratch),
+                            value,
+                        )?;
                     }
                     self.push_list_element(*list, &scratch)?;
                     self.scratch.release(scratch);
@@ -950,12 +965,12 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
 
                 if let Some(option_scalar) = element_option_scalar {
                     let step = self.parser.next_sequence_scalar_or_end()?;
-                    let JsonSequenceScalarStep::Value { value, span } = step else {
+                    let JsonSequenceScalarStep::Value { value } = step else {
                         return Ok(Control::Continue);
                     };
 
                     if let Some(slot) = self.direct_list_slot()? {
-                        if matches!(&value, JsonScalarToken::Null) {
+                        if value.is_null() {
                             unsafe {
                                 (option_scalar.option.vtable.init_none)(slot);
                                 self.mark_direct_list_slot_initialized();
@@ -963,12 +978,12 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                         } else {
                             let inner = self.scratch.reserve(option_scalar.inner_layout);
                             unsafe {
-                                write_scalar(
+                                write_scalar_input(
+                                    self.parser,
                                     option_scalar.option.t(),
                                     option_scalar.scalar,
                                     scratch_ptr_uninit(&inner),
                                     value,
-                                    span,
                                 )?;
                                 (option_scalar.option.vtable.init_some)(
                                     slot,
@@ -982,19 +997,19 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                     }
 
                     let scratch = self.scratch.reserve(*element_layout);
-                    if matches!(&value, JsonScalarToken::Null) {
+                    if value.is_null() {
                         unsafe {
                             (option_scalar.option.vtable.init_none)(scratch_ptr_uninit(&scratch));
                         }
                     } else {
                         let inner = self.scratch.reserve(option_scalar.inner_layout);
                         unsafe {
-                            write_scalar(
+                            write_scalar_input(
+                                self.parser,
                                 option_scalar.option.t(),
                                 option_scalar.scalar,
                                 scratch_ptr_uninit(&inner),
                                 value,
-                                span,
                             )?;
                             (option_scalar.option.vtable.init_some)(
                                 scratch_ptr_uninit(&scratch),
@@ -1354,6 +1369,182 @@ unsafe fn scratch_ptr_mut(scratch: &ScratchSlot) -> PtrMut {
     unsafe { scratch_ptr_uninit(scratch).assume_init() }
 }
 
+unsafe fn write_scalar_input<const TRUSTED_UTF8: bool>(
+    parser: &JsonParser<'_, TRUSTED_UTF8>,
+    shape: &'static Shape,
+    scalar: ScalarType,
+    dst: PtrUninit,
+    value: JsonScalarInput<'_>,
+) -> Result<(), DeserializeError> {
+    match value {
+        JsonScalarInput::Raw(token) => unsafe {
+            write_scalar_raw(parser, shape, scalar, dst, token)
+        },
+        JsonScalarInput::Materialized(value, span) => unsafe {
+            write_scalar(shape, scalar, dst, value, span)
+        },
+    }
+}
+
+unsafe fn write_scalar_raw<const TRUSTED_UTF8: bool>(
+    parser: &JsonParser<'_, TRUSTED_UTF8>,
+    shape: &'static Shape,
+    scalar: ScalarType,
+    dst: PtrUninit,
+    token: SpannedToken,
+) -> Result<(), DeserializeError> {
+    let span = token.span;
+    match scalar {
+        ScalarType::Unit => match token.token {
+            ScanToken::Null => unsafe {
+                dst.put(());
+            },
+            other => return Err(type_mismatch(span, shape, raw_token_kind_name(&other))),
+        },
+        ScalarType::Bool => match token.token {
+            ScanToken::True => unsafe {
+                dst.put(true);
+            },
+            ScanToken::False => unsafe {
+                dst.put(false);
+            },
+            other => return Err(type_mismatch(span, shape, raw_token_kind_name(&other))),
+        },
+        ScalarType::Char => {
+            let value = raw_string(parser, token, shape)?;
+            let mut chars = value.chars();
+            let Some(ch) = chars.next() else {
+                return Err(invalid_value(span, "empty string is not a char"));
+            };
+            if chars.next().is_some() {
+                return Err(invalid_value(span, "string has more than one char"));
+            }
+            unsafe {
+                dst.put(ch);
+            }
+        }
+        ScalarType::String => {
+            let value = raw_string(parser, token, shape)?;
+            unsafe {
+                dst.put(value.into_owned());
+            }
+        }
+        ScalarType::CowStr => {
+            let value = raw_string(parser, token, shape)?;
+            unsafe {
+                dst.put::<Cow<'static, str>>(Cow::Owned(value.into_owned()));
+            }
+        }
+        ScalarType::Str => {
+            return Err(vm_error(
+                Some(span),
+                DeserializeErrorKind::CannotBorrow {
+                    reason: "Weavy JSON owned deserializer does not support borrowed str yet"
+                        .into(),
+                },
+            ));
+        }
+        ScalarType::F32 => unsafe {
+            dst.put(raw_to_f64(parser, token, span, shape)? as f32);
+        },
+        ScalarType::F64 => unsafe {
+            dst.put(raw_to_f64(parser, token, span, shape)?);
+        },
+        ScalarType::U8 => unsafe {
+            dst.put(raw_into_unsigned::<u8, TRUSTED_UTF8>(
+                parser, token, span, "u8",
+            )?);
+        },
+        ScalarType::U16 => unsafe {
+            dst.put(raw_into_unsigned::<u16, TRUSTED_UTF8>(
+                parser, token, span, "u16",
+            )?);
+        },
+        ScalarType::U32 => unsafe {
+            dst.put(raw_into_unsigned::<u32, TRUSTED_UTF8>(
+                parser, token, span, "u32",
+            )?);
+        },
+        ScalarType::U64 => unsafe {
+            dst.put(raw_into_unsigned::<u64, TRUSTED_UTF8>(
+                parser, token, span, "u64",
+            )?);
+        },
+        ScalarType::U128 => unsafe {
+            dst.put(raw_into_unsigned::<u128, TRUSTED_UTF8>(
+                parser, token, span, "u128",
+            )?);
+        },
+        ScalarType::USize => unsafe {
+            dst.put(raw_into_unsigned::<usize, TRUSTED_UTF8>(
+                parser, token, span, "usize",
+            )?);
+        },
+        ScalarType::I8 => unsafe {
+            dst.put(raw_into_signed::<i8, TRUSTED_UTF8>(
+                parser, token, span, "i8",
+            )?);
+        },
+        ScalarType::I16 => unsafe {
+            dst.put(raw_into_signed::<i16, TRUSTED_UTF8>(
+                parser, token, span, "i16",
+            )?);
+        },
+        ScalarType::I32 => unsafe {
+            dst.put(raw_into_signed::<i32, TRUSTED_UTF8>(
+                parser, token, span, "i32",
+            )?);
+        },
+        ScalarType::I64 => unsafe {
+            dst.put(raw_into_signed::<i64, TRUSTED_UTF8>(
+                parser, token, span, "i64",
+            )?);
+        },
+        ScalarType::I128 => unsafe {
+            dst.put(raw_into_signed::<i128, TRUSTED_UTF8>(
+                parser, token, span, "i128",
+            )?);
+        },
+        ScalarType::ISize => unsafe {
+            dst.put(raw_into_signed::<isize, TRUSTED_UTF8>(
+                parser, token, span, "isize",
+            )?);
+        },
+        ScalarType::ConstTypeId => {
+            return Err(vm_error(
+                Some(span),
+                DeserializeErrorKind::Unsupported {
+                    message: "Weavy JSON deserializer does not support ConstTypeId yet".into(),
+                },
+            ));
+        }
+        #[cfg(feature = "net")]
+        ScalarType::SocketAddr
+        | ScalarType::IpAddr
+        | ScalarType::Ipv4Addr
+        | ScalarType::Ipv6Addr => {
+            let value = raw_string(parser, token, shape)?;
+            match unsafe { shape.call_parse(value.as_ref(), dst) } {
+                Some(Ok(())) => {}
+                Some(Err(err)) => return Err(invalid_value(span, format!("{err}"))),
+                None => return Err(unsupported(shape, "parsed scalar")),
+            }
+        }
+        _ => {
+            return Err(vm_error(
+                Some(span),
+                DeserializeErrorKind::Unsupported {
+                    message: format!(
+                        "Weavy JSON deserializer does not yet support scalar {scalar:?}"
+                    )
+                    .into(),
+                },
+            ));
+        }
+    }
+    Ok(())
+}
+
 unsafe fn write_scalar(
     shape: &'static Shape,
     scalar: ScalarType,
@@ -1489,6 +1680,178 @@ unsafe fn write_scalar(
         }
     }
     Ok(())
+}
+
+fn raw_token_kind_name(token: &ScanToken) -> &'static str {
+    match token {
+        ScanToken::Null => "null",
+        ScanToken::True | ScanToken::False => "bool",
+        ScanToken::String { .. } => "string",
+        ScanToken::Number { hint, .. } => match hint {
+            crate::scanner::NumberHint::Unsigned => "u64",
+            crate::scanner::NumberHint::Signed => "i64",
+            crate::scanner::NumberHint::Float => "f64",
+        },
+        ScanToken::ObjectStart => "object start",
+        ScanToken::ObjectEnd => "object end",
+        ScanToken::ArrayStart => "array start",
+        ScanToken::ArrayEnd => "array end",
+        ScanToken::Colon => "colon",
+        ScanToken::Comma => "comma",
+        ScanToken::Eof => "eof",
+        ScanToken::NeedMore { .. } => "incomplete token",
+    }
+}
+
+fn parsed_number_kind_name(value: &ParsedNumber) -> &'static str {
+    match value {
+        ParsedNumber::U64(_) => "u64",
+        ParsedNumber::I64(_) => "i64",
+        ParsedNumber::U128(_) => "u128",
+        ParsedNumber::I128(_) => "i128",
+        ParsedNumber::F64(_) => "f64",
+    }
+}
+
+fn raw_string<'de, const TRUSTED_UTF8: bool>(
+    parser: &JsonParser<'de, TRUSTED_UTF8>,
+    token: SpannedToken,
+    shape: &'static Shape,
+) -> Result<Cow<'de, str>, DeserializeError> {
+    let span = token.span;
+    match token.token {
+        ScanToken::String {
+            start,
+            end,
+            has_escapes,
+        } => Ok(parser.decode_string(start, end, has_escapes, span)?),
+        other => Err(type_mismatch(span, shape, raw_token_kind_name(&other))),
+    }
+}
+
+fn raw_to_f64<const TRUSTED_UTF8: bool>(
+    parser: &JsonParser<'_, TRUSTED_UTF8>,
+    token: SpannedToken,
+    span: Span,
+    shape: &'static Shape,
+) -> Result<f64, DeserializeError> {
+    match token.token {
+        ScanToken::Number { start, end, hint } => {
+            let number = parser.parse_number(start, end, hint)?;
+            match number {
+                ParsedNumber::F64(value) => Ok(value),
+                ParsedNumber::I64(value) => Ok(value as f64),
+                ParsedNumber::U64(value) => Ok(value as f64),
+                ParsedNumber::I128(value) => Ok(value as f64),
+                ParsedNumber::U128(value) => Ok(value as f64),
+            }
+        }
+        ScanToken::String {
+            start,
+            end,
+            has_escapes,
+        } => {
+            let value = parser.decode_string(start, end, has_escapes, span)?;
+            value
+                .parse::<f64>()
+                .map_err(|_| type_mismatch(span, shape, "string"))
+        }
+        other => Err(type_mismatch(span, shape, raw_token_kind_name(&other))),
+    }
+}
+
+fn raw_into_unsigned<T, const TRUSTED_UTF8: bool>(
+    parser: &JsonParser<'_, TRUSTED_UTF8>,
+    token: SpannedToken,
+    span: Span,
+    target: &'static str,
+) -> Result<T, DeserializeError>
+where
+    T: TryFrom<u128>,
+{
+    let value = match token.token {
+        ScanToken::Number { start, end, hint } => {
+            let number = parser.parse_number(start, end, hint)?;
+            match number {
+                ParsedNumber::U64(value) => value as u128,
+                ParsedNumber::U128(value) => value,
+                ParsedNumber::I64(value) if value >= 0 => value as u128,
+                ParsedNumber::I128(value) if value >= 0 => value as u128,
+                other => {
+                    return Err(type_mismatch_name(
+                        span,
+                        target,
+                        parsed_number_kind_name(&other),
+                    ));
+                }
+            }
+        }
+        ScanToken::String {
+            start,
+            end,
+            has_escapes,
+        } => {
+            let value = parser.decode_string(start, end, has_escapes, span)?;
+            value
+                .parse::<u128>()
+                .map_err(|_| number_out_of_range(span, value.into_owned(), target))?
+        }
+        other => {
+            return Err(type_mismatch_name(
+                span,
+                target,
+                raw_token_kind_name(&other),
+            ));
+        }
+    };
+    T::try_from(value).map_err(|_| number_out_of_range(span, value.to_string(), target))
+}
+
+fn raw_into_signed<T, const TRUSTED_UTF8: bool>(
+    parser: &JsonParser<'_, TRUSTED_UTF8>,
+    token: SpannedToken,
+    span: Span,
+    target: &'static str,
+) -> Result<T, DeserializeError>
+where
+    T: TryFrom<i128>,
+{
+    let value = match token.token {
+        ScanToken::Number { start, end, hint } => {
+            let number = parser.parse_number(start, end, hint)?;
+            match number {
+                ParsedNumber::I64(value) => value as i128,
+                ParsedNumber::I128(value) => value,
+                ParsedNumber::U64(value) => value as i128,
+                ParsedNumber::U128(value) if value <= i128::MAX as u128 => value as i128,
+                other => {
+                    return Err(type_mismatch_name(
+                        span,
+                        target,
+                        parsed_number_kind_name(&other),
+                    ));
+                }
+            }
+        }
+        ScanToken::String {
+            start,
+            end,
+            has_escapes,
+        } => {
+            let value = parser.decode_string(start, end, has_escapes, span)?;
+            value
+                .parse::<i128>()
+                .map_err(|_| number_out_of_range(span, value.into_owned(), target))?
+        }
+        other => {
+            return Err(type_mismatch_name(
+                span,
+                target,
+                raw_token_kind_name(&other),
+            ));
+        }
+    };
+    T::try_from(value).map_err(|_| number_out_of_range(span, value.to_string(), target))
 }
 
 fn scalar_to_f64(

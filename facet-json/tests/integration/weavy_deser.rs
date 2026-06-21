@@ -119,6 +119,17 @@ fn weavy_deserializes_options_and_lists() {
 }
 
 #[test]
+fn weavy_deserializes_numeric_strings_on_raw_scalar_path() {
+    let person: Person = facet_json::from_str_weavy(
+        r#"{"name":"Ada","age":"37","favorite":null,"scores":["1","2","3"]}"#,
+    )
+    .unwrap();
+
+    assert_eq!(person.age, 37);
+    assert_eq!(person.scores, vec![1, 2, 3]);
+}
+
+#[test]
 fn weavy_deserializes_null_options_inside_lists() {
     let got: MaybeScores = facet_json::from_str_weavy(r#"{"scores":[1,null,2,null]}"#).unwrap();
     assert_eq!(got.scores, vec![Some(1), None, Some(2), None]);
