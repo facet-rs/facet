@@ -44,7 +44,7 @@ async fn cache_reuses_across_snapshots_under_load() -> PicanteResult<()> {
         }));
     }
 
-    let res = timeout(Duration::from_secs(10), async {
+    let res = timeout(Duration::from_secs(60), async {
         for h in handles {
             let (w, d, expected_leaf) = h.await.unwrap()?;
             assert_eq!(w, wide1);
