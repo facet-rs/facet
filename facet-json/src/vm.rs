@@ -265,33 +265,27 @@ impl<'parser, 'input, 'program, const TRUSTED_UTF8: bool, const COLLECT_STATS: b
         &mut self,
         mut partial: Partial<'input, false>,
     ) -> Result<Partial<'input, false>, DeserializeError> {
-        let mut frames = vec![VmFrame::Program {
+        let mut frames = Vec::with_capacity(16);
+        frames.push(VmFrame::Program {
             program: &self.lowered.program,
             pc: 0,
-        }];
+        });
 
         while let Some(frame) = frames.pop() {
-            if COLLECT_STATS {
-                self.stats.record(frames.len() + 1, partial.frame_count());
-            }
             match frame {
                 VmFrame::Program { program, pc } => {
-                    if pc >= program.len() {
-                        continue;
-                    }
-                    frames.push(VmFrame::Program {
-                        program,
-                        pc: pc + 1,
-                    });
-                    partial = self.execute_op(partial, &mut frames, &program[pc])?;
+                    partial = self.run_program(partial, &mut frames, program, pc)?;
                 }
                 VmFrame::EndCurrent => {
+                    self.record_step(frames.len() + 1, partial.frame_count());
                     partial = self.end(partial)?;
                 }
                 VmFrame::Struct { plan, seen } => {
+                    self.record_step(frames.len() + 1, partial.frame_count());
                     partial = self.step_struct(partial, &mut frames, plan, seen)?;
                 }
                 VmFrame::List { element } => {
+                    self.record_step(frames.len() + 1, partial.frame_count());
                     partial = self.step_list(partial, &mut frames, element)?;
                 }
             }
@@ -300,21 +294,44 @@ impl<'parser, 'input, 'program, const TRUSTED_UTF8: bool, const COLLECT_STATS: b
         Ok(partial)
     }
 
+    fn run_program(
+        &mut self,
+        mut partial: Partial<'input, false>,
+        frames: &mut Vec<VmFrame<'program>>,
+        program: &'program JsonProgram,
+        mut pc: usize,
+    ) -> Result<Partial<'input, false>, DeserializeError> {
+        while let Some(op) = program.get(pc) {
+            self.record_step(frames.len() + 1, partial.frame_count());
+            pc += 1;
+            let continuation = (pc < program.len()).then_some((program, pc));
+            let (next_partial, control) = self.execute_op(partial, frames, op, continuation)?;
+            partial = next_partial;
+            match control {
+                ProgramControl::Continue => {}
+                ProgramControl::Suspend | ProgramControl::Stop => return Ok(partial),
+            }
+        }
+
+        Ok(partial)
+    }
+
+    fn record_step(&mut self, vm_frames: usize, partial_frames: usize) {
+        if COLLECT_STATS {
+            self.stats.record(vm_frames, partial_frames);
+        }
+    }
+
     fn execute_op(
         &mut self,
         mut partial: Partial<'input, false>,
         frames: &mut Vec<VmFrame<'program>>,
         op: &'program JsonOp,
-    ) -> Result<Partial<'input, false>, DeserializeError> {
+        continuation: ProgramContinuation<'program>,
+    ) -> Result<(Partial<'input, false>, ProgramControl), DeserializeError> {
         match op {
             JsonOp::EnterShape { shape } => {
-                if partial.shape() != *shape {
-                    return Err(DeserializeErrorKind::TypeMismatch {
-                        expected: shape,
-                        got: Cow::Owned(format!("VM partial shape {}", partial.shape())),
-                    }
-                    .with_span(self.last_span));
-                }
+                self.check_enter_shape(&partial, shape)?;
             }
             JsonOp::Null => {
                 let event = self.next_event("null")?;
@@ -344,10 +361,12 @@ impl<'parser, 'input, 'program, const TRUSTED_UTF8: bool, const COLLECT_STATS: b
                 let event = self.next_event("object")?;
                 match event.kind {
                     ParseEventKind::StructStart(ContainerKind::Object) => {
+                        push_continuation(frames, continuation);
                         frames.push(VmFrame::Struct {
                             plan,
                             seen: SeenFields::new(plan.fields.len()),
                         });
+                        return Ok((partial, ProgramControl::Suspend));
                     }
                     _ => return Err(self.unexpected_event(&event, "object")),
                 }
@@ -364,7 +383,9 @@ impl<'parser, 'input, 'program, const TRUSTED_UTF8: bool, const COLLECT_STATS: b
                 match event.kind {
                     ParseEventKind::SequenceStart(ContainerKind::Array) => {
                         partial = self.init_list(partial)?;
+                        push_continuation(frames, continuation);
                         frames.push(VmFrame::List { element });
+                        return Ok((partial, ProgramControl::Suspend));
                     }
                     _ => return Err(self.unexpected_event(&event, "array")),
                 }
@@ -381,26 +402,31 @@ impl<'parser, 'input, 'program, const TRUSTED_UTF8: bool, const COLLECT_STATS: b
                     }
                     _ => {
                         partial = self.begin_some(partial)?;
+                        push_continuation(frames, continuation);
                         frames.push(VmFrame::EndCurrent);
                         frames.push(VmFrame::Program {
                             program: some,
                             pc: 0,
                         });
+                        return Ok((partial, ProgramControl::Suspend));
                     }
                 }
             }
             JsonOp::Result { .. } => return Err(self.unsupported("VM result deserialization")),
             JsonOp::Enum(en) => return Err(self.unsupported_enum(en)),
             JsonOp::Pointer { pointee } => {
-                partial = self.begin_pointer(partial, frames, pointee)?;
+                partial = self.begin_pointer(partial, frames, pointee, continuation)?;
+                return Ok((partial, ProgramControl::Suspend));
             }
             JsonOp::Transparent { inner } => {
                 partial = self.begin_inner(partial)?;
+                push_continuation(frames, continuation);
                 frames.push(VmFrame::EndCurrent);
                 frames.push(VmFrame::Program {
                     program: inner,
                     pc: 0,
                 });
+                return Ok((partial, ProgramControl::Suspend));
             }
             JsonOp::Proxy { .. } => return Err(self.unsupported("VM proxy deserialization")),
             JsonOp::OpaquePointer => return Err(self.unsupported("VM opaque pointer")),
@@ -415,12 +441,14 @@ impl<'parser, 'input, 'program, const TRUSTED_UTF8: bool, const COLLECT_STATS: b
                         self.unsupported_owned(format!("VM missing recursive block {block_id:?}"))
                     );
                 };
+                push_continuation(frames, continuation);
                 frames.push(VmFrame::Program { program, pc: 0 });
+                return Ok((partial, ProgramControl::Suspend));
             }
-            JsonOp::Return => {}
+            JsonOp::Return => return Ok((partial, ProgramControl::Stop)),
         }
 
-        Ok(partial)
+        Ok((partial, ProgramControl::Continue))
     }
 
     fn step_struct(
@@ -521,6 +549,7 @@ impl<'parser, 'input, 'program, const TRUSTED_UTF8: bool, const COLLECT_STATS: b
         partial: Partial<'input, false>,
         frames: &mut Vec<VmFrame<'program>>,
         pointee: &'program JsonProgram,
+        continuation: ProgramContinuation<'program>,
     ) -> Result<Partial<'input, false>, DeserializeError> {
         let (partial, action) =
             facet_dessert::begin_pointer(partial).map_err(|e| self.dessert_error(e))?;
@@ -532,6 +561,7 @@ impl<'parser, 'input, 'program, const TRUSTED_UTF8: bool, const COLLECT_STATS: b
                 Err(self.unsupported("VM smart-pointer slice deserialization"))
             }
             facet_dessert::PointerAction::SizedPointee => {
+                push_continuation(frames, continuation);
                 frames.push(VmFrame::EndCurrent);
                 frames.push(VmFrame::Program {
                     program: pointee,
@@ -565,9 +595,9 @@ impl<'parser, 'input, 'program, const TRUSTED_UTF8: bool, const COLLECT_STATS: b
         &mut self,
         mut partial: Partial<'input, false>,
         scalar: ScalarValue<'input>,
-        _policy: JsonScalar,
+        policy: JsonScalar,
     ) -> Result<Partial<'input, false>, DeserializeError> {
-        let scalar_type = partial.shape().scalar_type();
+        let scalar_type = policy.ty;
         match scalar {
             ScalarValue::Unit | ScalarValue::Null => self.set_default(partial),
             ScalarValue::Bool(value) => self.set(partial, value),
@@ -621,7 +651,7 @@ impl<'parser, 'input, 'program, const TRUSTED_UTF8: bool, const COLLECT_STATS: b
             ScalarValue::F64(value) => match scalar_type {
                 Some(ScalarType::F32) => self.set(partial, value as f32),
                 Some(ScalarType::F64) => self.set(partial, value),
-                _ if partial.shape().vtable.has_parse() => {
+                _ if policy.from_str => {
                     partial = self.parse_from_str(partial, &value.to_string())?;
                     Ok(partial)
                 }
@@ -631,6 +661,30 @@ impl<'parser, 'input, 'program, const TRUSTED_UTF8: bool, const COLLECT_STATS: b
             ScalarValue::Bytes(value) => self.set_bytes(partial, value),
             _ => Err(self.unsupported("VM unknown scalar value")),
         }
+    }
+
+    #[inline]
+    fn check_enter_shape(
+        &self,
+        partial: &Partial<'input, false>,
+        expected: &'static Shape,
+    ) -> Result<(), DeserializeError> {
+        #[cfg(debug_assertions)]
+        {
+            if partial.shape() != expected {
+                return Err(DeserializeErrorKind::TypeMismatch {
+                    expected,
+                    got: Cow::Owned(format!("VM partial shape {}", partial.shape())),
+                }
+                .with_span(self.last_span));
+            }
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            let _ = partial;
+            let _ = expected;
+        }
+        Ok(())
     }
 
     fn next_event(
@@ -827,6 +881,24 @@ enum VmFrame<'program> {
     List {
         element: &'program JsonProgram,
     },
+}
+
+type ProgramContinuation<'program> = Option<(&'program JsonProgram, usize)>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProgramControl {
+    Continue,
+    Suspend,
+    Stop,
+}
+
+fn push_continuation<'program>(
+    frames: &mut Vec<VmFrame<'program>>,
+    continuation: ProgramContinuation<'program>,
+) {
+    if let Some((program, pc)) = continuation {
+        frames.push(VmFrame::Program { program, pc });
+    }
 }
 
 fn find_field<'program>(
