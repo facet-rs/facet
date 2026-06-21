@@ -111,3 +111,16 @@ fn weavy_stats_report_block_calls_for_recursive_shape() {
     assert!(stats.block_call_count >= 3, "{stats:?}");
     assert!(stats.max_frame_depth >= 2, "{stats:?}");
 }
+
+#[test]
+fn weavy_stats_keep_scalar_fields_and_lists_in_loop() {
+    let (_, point_stats): (Point, _) =
+        facet_json::from_str_weavy_with_stats(r#"{"x":10,"y":20}"#).unwrap();
+    assert_eq!(point_stats.inline_call_count, 0, "{point_stats:?}");
+
+    let (_, stats): (Person, _) = facet_json::from_str_weavy_with_stats(
+        r#"{"name":"Ada","age":37,"favorite":null,"scores":[1,2,3]}"#,
+    )
+    .unwrap();
+    assert_eq!(stats.inline_call_count, 0, "{stats:?}");
+}

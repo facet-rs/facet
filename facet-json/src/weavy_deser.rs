@@ -191,6 +191,7 @@ enum JsonOp<Block> {
     ListNext {
         list: ListDef,
         element_program: Program<JsonOp<Block>>,
+        element_scalar: Option<ScalarType>,
         element_layout: Layout,
         loop_id: Block,
     },
@@ -208,6 +209,7 @@ struct FieldPlan<Block> {
     offset: usize,
     shape: &'static Shape,
     program: Program<JsonOp<Block>>,
+    scalar: Option<ScalarType>,
     missing: MissingField,
 }
 
@@ -290,10 +292,12 @@ impl Lowering {
                 }
                 let element_layout = sized_layout(list.t())?;
                 let element_program = self.lower_shape(list.t())?;
+                let element_scalar = ScalarType::try_from_shape(list.t());
                 let loop_id = JsonBlockId::ListLoop(shape);
                 let loop_program = vec![JsonOp::ListNext {
                     list,
                     element_program: element_program.clone(),
+                    element_scalar,
                     element_layout,
                     loop_id,
                 }];
@@ -342,6 +346,7 @@ impl Lowering {
                             offset: field.offset,
                             shape: field_shape,
                             program,
+                            scalar: ScalarType::try_from_shape(field_shape),
                             missing: missing_field_action(field, container_has_default),
                         });
                     }
@@ -433,11 +438,13 @@ fn resolve_json_op(
         JsonOp::ListNext {
             list,
             element_program,
+            element_scalar,
             element_layout,
             loop_id,
         } => JsonOp::ListNext {
             list,
             element_program: resolve_json_program(element_program, refs)?,
+            element_scalar,
             element_layout,
             loop_id: resolve_block_ref(loop_id, refs)?,
         },
@@ -467,6 +474,7 @@ fn resolve_field_plans(
                 offset: field.offset,
                 shape: field.shape,
                 program: resolve_json_program(field.program, refs)?,
+                scalar: field.scalar,
                 missing: field.missing,
             })
         })
@@ -628,9 +636,23 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                         ));
                     }
 
+                    if let Some(scalar) = field.scalar {
+                        let field_ptr = unsafe { frame.base.field_uninit(field.offset) };
+                        let (value, value_span) = self.parser.read_scalar_value()?;
+                        unsafe {
+                            write_scalar(field.shape, scalar, field_ptr, value, value_span)?;
+                        }
+                        let frame = self
+                            .structs
+                            .last_mut()
+                            .expect("struct frame is present while decoding scalar field");
+                        frame.seen.mark(index, span);
+                        return Ok(Control::CallBlock(*loop_id));
+                    }
+
                     let old_base = self.base;
                     self.base = unsafe { frame.base.field_uninit(field.offset) };
-                    Ok(Control::CallProgramThen(
+                    Ok(call_program_or_block_then(
                         &field.program,
                         Continuation::FieldDone {
                             index,
@@ -656,7 +678,7 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                 let scratch = self.scratch.reserve(*inner_layout);
                 let old_base = self.base;
                 self.base = scratch_ptr_uninit(&scratch);
-                Ok(Control::CallProgramThen(
+                Ok(call_program_or_block_then(
                     some_program,
                     Continuation::OptionSome {
                         option: *option,
@@ -686,6 +708,7 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
             JsonOp::ListNext {
                 list,
                 element_program,
+                element_scalar,
                 element_layout,
                 loop_id,
             } => {
@@ -693,10 +716,31 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                     return Ok(Control::Continue);
                 }
 
+                if let Some(scalar) = element_scalar {
+                    let scratch = self.scratch.reserve(*element_layout);
+                    let (value, span) = self.parser.read_scalar_value()?;
+                    unsafe {
+                        write_scalar(list.t(), *scalar, scratch_ptr_uninit(&scratch), value, span)?;
+                    }
+                    let list_ptr = self
+                        .lists
+                        .last()
+                        .expect("list frame is present while decoding scalar element")
+                        .ptr();
+                    let push = list
+                        .push()
+                        .ok_or_else(|| unsupported(list.t(), "list push"))?;
+                    unsafe {
+                        push(PtrMut::new(list_ptr), scratch_ptr_mut(&scratch));
+                    }
+                    self.scratch.release(scratch);
+                    return Ok(Control::CallBlock(*loop_id));
+                }
+
                 let scratch = self.scratch.reserve(*element_layout);
                 let old_base = self.base;
                 self.base = scratch_ptr_uninit(&scratch);
-                Ok(Control::CallProgramThen(
+                Ok(call_program_or_block_then(
                     element_program,
                     Continuation::ListElement {
                         list: *list,
@@ -717,7 +761,7 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                 let scratch = self.scratch.reserve(*pointee_layout);
                 let old_base = self.base;
                 self.base = scratch_ptr_uninit(&scratch);
-                Ok(Control::CallProgramThen(
+                Ok(call_program_or_block_then(
                     pointee_program,
                     Continuation::Pointer {
                         pointer: *pointer,
@@ -819,6 +863,16 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                 Ok(Control::Continue)
             }
         }
+    }
+}
+
+fn call_program_or_block_then<'program>(
+    program: &'program [ExecOp],
+    continuation: Continuation,
+) -> Control<'program, ExecBlock, ExecOp, Continuation> {
+    match program {
+        [JsonOp::CallBlock(block)] => Control::CallBlockThen(*block, continuation),
+        _ => Control::CallProgramThen(program, continuation),
     }
 }
 
