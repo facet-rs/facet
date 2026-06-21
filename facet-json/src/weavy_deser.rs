@@ -19,7 +19,7 @@ use facet_format::{
     ParseEventKind, ScalarValue,
 };
 use facet_reflect::Span;
-use weavy::mem::runtime::{HandleGuard, InitializedLedger, RawScratch};
+use weavy::mem::runtime::{HandleGuard, InitializedLedger, ScratchSession, ScratchSlot};
 use weavy::{Control, Lowered, Program, RunError, RunStats, Step};
 
 use crate::JsonParser;
@@ -38,8 +38,7 @@ pub fn from_str_weavy<T>(input: &str) -> Result<T, DeserializeError>
 where
     T: Facet<'static>,
 {
-    let (value, _) = from_str_weavy_with_stats(input)?;
-    Ok(value)
+    JsonWeavyPlan::<T>::build()?.from_str(input)
 }
 
 /// Deserialize a value from JSON bytes through the opt-in Weavy runner.
@@ -47,8 +46,7 @@ pub fn from_slice_weavy<T>(input: &[u8]) -> Result<T, DeserializeError>
 where
     T: Facet<'static>,
 {
-    let (value, _) = from_slice_weavy_with_stats(input)?;
-    Ok(value)
+    JsonWeavyPlan::<T>::build()?.from_slice(input)
 }
 
 /// Deserialize a value from a JSON string through the opt-in Weavy runner and
@@ -95,14 +93,14 @@ where
 
     /// Deserialize from a JSON string using this pre-lowered plan.
     pub fn from_str(&self, input: &str) -> Result<T, DeserializeError> {
-        let (value, _) = self.from_str_with_stats(input)?;
-        Ok(value)
+        let mut parser = JsonParser::<true>::new(input.as_bytes());
+        self.deserialize::<true>(&mut parser)
     }
 
     /// Deserialize from JSON bytes using this pre-lowered plan.
     pub fn from_slice(&self, input: &[u8]) -> Result<T, DeserializeError> {
-        let (value, _) = self.from_slice_with_stats(input)?;
-        Ok(value)
+        let mut parser = JsonParser::<false>::new(input);
+        self.deserialize::<false>(&mut parser)
     }
 
     /// Deserialize from a JSON string and return Weavy runner counters.
@@ -131,6 +129,21 @@ where
         interp.finish_success();
 
         Ok((unsafe { slot.assume_init() }, stats))
+    }
+
+    fn deserialize<const TRUSTED_UTF8: bool>(
+        &self,
+        parser: &mut JsonParser<'_, TRUSTED_UTF8>,
+    ) -> Result<T, DeserializeError> {
+        let mut slot = MaybeUninit::<T>::uninit();
+        let root = PtrUninit::from_maybe_uninit(&mut slot);
+        let mut interp = JsonInterp::new(parser, root);
+        if let Err(err) = weavy::run(&self.lowered, &mut interp) {
+            return Err(run_error(err));
+        }
+        interp.finish_success();
+
+        Ok(unsafe { slot.assume_init() })
     }
 }
 
@@ -377,6 +390,7 @@ struct JsonInterp<'parser, 'de, 'program, const TRUSTED_UTF8: bool> {
     base: PtrUninit,
     structs: Vec<StructFrame<'program>>,
     lists: Vec<HandleGuard>,
+    scratch: ScratchSession,
     success: bool,
 }
 
@@ -389,6 +403,7 @@ impl<'parser, 'de, 'program, const TRUSTED_UTF8: bool>
             base,
             structs: Vec::new(),
             lists: Vec::new(),
+            scratch: ScratchSession::new(),
             success: false,
         }
     }
@@ -556,9 +571,9 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, BlockId, J
                     _ => {}
                 }
 
-                let scratch = Scratch::alloc(option.t(), *inner_layout);
+                let scratch = self.scratch.reserve(*inner_layout);
                 let old_base = self.base;
-                self.base = scratch.ptr_uninit();
+                self.base = scratch_ptr_uninit(&scratch);
                 Ok(Control::CallProgramThen(
                     some_program,
                     Continuation::OptionSome {
@@ -612,9 +627,9 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, BlockId, J
                     _ => {}
                 }
 
-                let scratch = Scratch::alloc(list.t(), *element_layout);
+                let scratch = self.scratch.reserve(*element_layout);
                 let old_base = self.base;
-                self.base = scratch.ptr_uninit();
+                self.base = scratch_ptr_uninit(&scratch);
                 Ok(Control::CallProgramThen(
                     element_program,
                     Continuation::ListElement {
@@ -630,12 +645,12 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, BlockId, J
                 pointee_program,
                 pointee_layout,
             } => {
-                let pointee = pointer
+                pointer
                     .pointee()
                     .ok_or_else(|| unsupported_shape_message("opaque pointer"))?;
-                let scratch = Scratch::alloc(pointee, *pointee_layout);
+                let scratch = self.scratch.reserve(*pointee_layout);
                 let old_base = self.base;
-                self.base = scratch.ptr_uninit();
+                self.base = scratch_ptr_uninit(&scratch);
                 Ok(Control::CallProgramThen(
                     pointee_program,
                     Continuation::Pointer {
@@ -682,12 +697,12 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, BlockId, J
                 option,
                 option_ptr,
                 old_base,
-                mut scratch,
+                scratch,
             } => {
                 unsafe {
-                    (option.vtable.init_some)(option_ptr, scratch.ptr_mut());
+                    (option.vtable.init_some)(option_ptr, scratch_ptr_mut(&scratch));
                 }
-                scratch.dealloc_uninit();
+                self.scratch.release(scratch);
                 self.base = old_base;
                 Ok(Control::Continue)
             }
@@ -702,7 +717,7 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, BlockId, J
             Continuation::ListElement {
                 list,
                 old_base,
-                mut scratch,
+                scratch,
                 loop_id,
             } => {
                 let list_ptr = self
@@ -714,9 +729,9 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, BlockId, J
                     .push()
                     .ok_or_else(|| unsupported(list.t(), "list push"))?;
                 unsafe {
-                    push(PtrMut::new(list_ptr), scratch.ptr_mut());
+                    push(PtrMut::new(list_ptr), scratch_ptr_mut(&scratch));
                 }
-                scratch.dealloc_uninit();
+                self.scratch.release(scratch);
                 self.base = old_base;
                 Ok(Control::CallBlock(loop_id))
             }
@@ -724,16 +739,16 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, BlockId, J
                 pointer,
                 pointer_ptr,
                 old_base,
-                mut scratch,
+                scratch,
             } => {
                 let new_into = pointer
                     .vtable
                     .new_into_fn
                     .ok_or_else(|| unsupported_shape_message("pointer without new_into"))?;
                 unsafe {
-                    new_into(pointer_ptr, scratch.ptr_mut());
+                    new_into(pointer_ptr, scratch_ptr_mut(&scratch));
                 }
-                scratch.dealloc_uninit();
+                self.scratch.release(scratch);
                 self.base = old_base;
                 Ok(Control::Continue)
             }
@@ -753,20 +768,20 @@ enum Continuation {
         option: OptionDef,
         option_ptr: PtrUninit,
         old_base: PtrUninit,
-        scratch: Scratch,
+        scratch: ScratchSlot,
     },
     FinishList,
     ListElement {
         list: ListDef,
         old_base: PtrUninit,
-        scratch: Scratch,
+        scratch: ScratchSlot,
         loop_id: BlockId,
     },
     Pointer {
         pointer: PointerDef,
         pointer_ptr: PtrUninit,
         old_base: PtrUninit,
-        scratch: Scratch,
+        scratch: ScratchSlot,
     },
 }
 
@@ -872,28 +887,12 @@ unsafe fn drop_shape_value(ctx: *const (), ptr: *mut u8) {
     }
 }
 
-struct Scratch {
-    raw: RawScratch,
+fn scratch_ptr_uninit(scratch: &ScratchSlot) -> PtrUninit {
+    PtrUninit::new(scratch.ptr())
 }
 
-impl Scratch {
-    fn alloc(_shape: &'static Shape, layout: Layout) -> Self {
-        Self {
-            raw: RawScratch::from_layout(layout),
-        }
-    }
-
-    fn ptr_uninit(&self) -> PtrUninit {
-        PtrUninit::new(self.raw.ptr())
-    }
-
-    unsafe fn ptr_mut(&self) -> PtrMut {
-        unsafe { self.ptr_uninit().assume_init() }
-    }
-
-    fn dealloc_uninit(&mut self) {
-        self.raw.dealloc_uninit();
-    }
+unsafe fn scratch_ptr_mut(scratch: &ScratchSlot) -> PtrMut {
+    unsafe { scratch_ptr_uninit(scratch).assume_init() }
 }
 
 unsafe fn write_scalar(
