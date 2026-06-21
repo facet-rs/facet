@@ -1,0 +1,45 @@
+name: CodSpeed
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  merge_group:
+  workflow_dispatch:
+
+jobs:
+  benchmarks:
+    name: Run benchmarks
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Rust and cargo-codspeed
+        uses: moonrepo/setup-rust@v0
+        with:
+          channel: stable
+          cache-target: release
+          bins: cargo-codspeed
+
+      - name: Build benchmark targets
+        run: >
+          cargo codspeed build -p facet-json
+          --bench canada
+          --bench citm
+          --bench twitter
+          --bench typeplan_reuse
+
+      - name: Run benchmarks
+        uses: CodSpeedHQ/action@v4
+        with:
+          mode: simulation
+          run: >
+            cargo codspeed run -p facet-json
+            --bench canada
+            --bench citm
+            --bench twitter
+            --bench typeplan_reuse
