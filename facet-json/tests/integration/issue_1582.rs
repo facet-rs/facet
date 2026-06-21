@@ -80,7 +80,7 @@ fn deeply_nested_large_enum_chain_deserializes() {
     let depth = std::env::var("FACET_ISSUE_1582_DEPTH")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(if cfg!(feature = "stacker") { 16 } else { 12 });
+        .unwrap_or(12);
     let json = format!(r#"{{"root":{}}}"#, deep_payload(depth));
 
     let partial = Partial::alloc_owned::<Document>().expect("allocate partial");

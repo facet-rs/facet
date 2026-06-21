@@ -2042,7 +2042,6 @@ dependencies = [
  "facet-path",
  "facet-reflect",
  "facet-solver",
- "stacker",
  "tracing",
 ]
 
@@ -2085,7 +2084,6 @@ dependencies = [
  "divan",
  "facet",
  "facet-core",
- "facet-dessert",
  "facet-format",
  "facet-format-suite",
  "facet-json-classics",
@@ -2105,7 +2103,6 @@ dependencies = [
  "stacker",
  "tendril",
  "tracing",
- "weavy",
  "zmij",
 ]
 

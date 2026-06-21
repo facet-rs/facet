@@ -50,10 +50,6 @@ mod parser;
 mod raw_json;
 mod scanner;
 mod serializer;
-mod vm;
-
-#[doc(hidden)]
-pub mod bytecode;
 
 #[cfg(feature = "axum")]
 mod axum;
@@ -70,11 +66,6 @@ pub use serializer::{
     peek_to_writer_std_pretty, peek_to_writer_std_with_options, to_string, to_string_pretty,
     to_string_with_options, to_vec, to_vec_pretty, to_vec_with_options, to_writer_std,
     to_writer_std_pretty, to_writer_std_with_options,
-};
-#[doc(hidden)]
-pub use vm::{
-    JsonVmPlan, JsonVmStats, from_slice_vm, from_slice_vm_with_stats, from_str_vm,
-    from_str_vm_with_stats,
 };
 
 // Re-export DeserializeError for convenience

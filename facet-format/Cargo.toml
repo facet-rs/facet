@@ -18,7 +18,6 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 tracing = { version = "0.1", default-features = false, optional = true }
-stacker = { version = "0.1.24", default-features = false, optional = true }
 facet-core = { workspace = true }
 facet-dessert = { path = "../facet-dessert", version = "0.50.0-rc.1" }
 facet-path = { workspace = true }
@@ -33,8 +32,6 @@ ariadne = { version = "0.6", optional = true }
 [features]
 default = []
 alloc = []
-# Stack growth guards for deep recursive deserialization.
-stacker = ["dep:stacker"]
 # Enable logging via tracing
 tracing = ["dep:tracing"]
 # Network types (IpAddr, SocketAddr, etc.)
