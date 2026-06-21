@@ -109,6 +109,7 @@ pub type ScanResult = Result<SpannedToken, ScanError>;
 ///
 /// The scanner operates on a byte buffer and tracks position. For streaming,
 /// the buffer can be refilled when `Token::NeedMore` is returned.
+#[derive(Clone)]
 pub struct Scanner {
     /// Current position in the buffer
     pos: usize,
@@ -177,6 +178,29 @@ impl Scanner {
     #[allow(dead_code)]
     pub const fn set_pos(&mut self, pos: usize) {
         self.pos = pos;
+    }
+
+    /// Return the next non-whitespace/comment byte without changing scanner
+    /// state.
+    pub fn peek_significant_byte(&self, buf: &[u8]) -> Result<Option<(usize, u8)>, ScanError> {
+        self.peek_significant_byte_from(buf, self.pos)
+    }
+
+    /// Return the next non-whitespace/comment byte at or after `pos` without
+    /// changing scanner state.
+    pub fn peek_significant_byte_from(
+        &self,
+        buf: &[u8],
+        pos: usize,
+    ) -> Result<Option<(usize, u8)>, ScanError> {
+        let mut scanner = self.clone();
+        scanner.pos = pos;
+        scanner.state = ScanState::Ready;
+        scanner.skip_whitespace(buf)?;
+        Ok(buf
+            .get(scanner.pos)
+            .copied()
+            .map(|byte| (scanner.pos, byte)))
     }
 
     /// Finalize any pending token at true EOF.
