@@ -629,9 +629,9 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                     .push(StructFrame::new(shape, self.base, fields));
                 Ok(Control::CallBlockThen(*loop_id, Continuation::FinishStruct))
             }
-            JsonOp::StructNext { shape, loop_id } => {
+            JsonOp::StructNext { shape, loop_id } => loop {
                 match self.parser.next_object_field_or_end()? {
-                    JsonObjectStep::End => Ok(Control::Continue),
+                    JsonObjectStep::End => return Ok(Control::Continue),
                     JsonObjectStep::Field { key, span } => {
                         let frame = self
                             .structs
@@ -650,7 +650,7 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                                 ));
                             }
                             self.parser.skip_value()?;
-                            return Ok(Control::CallBlock(*loop_id));
+                            continue;
                         };
 
                         if let Some(first_span) = frame.seen.get(index).copied() {
@@ -674,12 +674,12 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                                 .last_mut()
                                 .expect("struct frame is present while decoding scalar field");
                             frame.mark_seen(index, span);
-                            return Ok(Control::CallBlock(*loop_id));
+                            continue;
                         }
 
                         let old_base = self.base;
                         self.base = unsafe { frame.base.field_uninit(field.offset) };
-                        Ok(call_program_or_block_then(
+                        return Ok(call_program_or_block_then(
                             &field.program,
                             Continuation::FieldDone {
                                 index,
@@ -687,10 +687,10 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                                 old_base,
                                 loop_id: *loop_id,
                             },
-                        ))
+                        ));
                     }
                 }
-            }
+            },
             JsonOp::ReadOption {
                 option,
                 some_program,
