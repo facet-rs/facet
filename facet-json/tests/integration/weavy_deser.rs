@@ -1,5 +1,8 @@
 use facet::Facet;
 use facet_format::DeserializeErrorKind;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static DROPPED_LIST_ELEMENTS: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Facet, Debug, PartialEq)]
 struct Point {
@@ -23,6 +26,22 @@ struct MaybeScores {
 #[derive(Facet, Debug, PartialEq)]
 struct PointList {
     points: Vec<Point>,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct Droppy {
+    value: u8,
+}
+
+impl Drop for Droppy {
+    fn drop(&mut self) {
+        DROPPED_LIST_ELEMENTS.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct DroppyList {
+    items: Vec<Droppy>,
 }
 
 #[derive(Facet, Debug, PartialEq)]
@@ -99,6 +118,15 @@ fn weavy_deserializes_structs_inside_lists() {
     let got: PointList =
         facet_json::from_str_weavy(r#"{"points":[{"x":1,"y":2},{"x":3,"y":4}]}"#).unwrap();
     assert_eq!(got.points, vec![Point { x: 1, y: 2 }, Point { x: 3, y: 4 }]);
+}
+
+#[test]
+fn weavy_drops_direct_list_elements_after_later_element_error() {
+    DROPPED_LIST_ELEMENTS.store(0, Ordering::SeqCst);
+
+    facet_json::from_str_weavy::<DroppyList>(r#"{"items":[{"value":1},{"value":"nope"}]}"#)
+        .unwrap_err();
+    assert_eq!(DROPPED_LIST_ELEMENTS.load(Ordering::SeqCst), 1);
 }
 
 #[test]

@@ -265,6 +265,149 @@ impl Drop for RawArrayBuffer {
 /// Caller-supplied drop hook for an initialized handle/value.
 pub type DropThunk = unsafe fn(ctx: *const (), ptr: *mut u8);
 
+/// Growable engine-owned raw storage for directly filling a sequence.
+///
+/// Callers reserve the next slot, initialize it, then mark it initialized. If
+/// decoding fails before adoption, dropping the builder calls the supplied drop
+/// thunk for initialized elements and frees the raw allocation. After a list
+/// handle adopts the buffer through a `from_raw_parts`-style thunk, call
+/// [`adopt`](Self::adopt) so the builder does not touch the values or buffer.
+#[derive(Debug)]
+pub struct RawArrayBuilder {
+    ptr: *mut u8,
+    len: usize,
+    cap: usize,
+    elem_layout: Layout,
+    allocation: Option<Layout>,
+    drop_ctx: *const (),
+    drop: DropThunk,
+}
+
+impl RawArrayBuilder {
+    /// Create an empty builder for elements with `elem_layout`.
+    #[must_use]
+    pub fn new(elem_layout: Layout, drop_ctx: *const (), drop: DropThunk) -> Self {
+        let empty = empty_array_layout(elem_layout.align());
+        Self {
+            ptr: allocate_or_dangling(empty),
+            len: 0,
+            cap: 0,
+            elem_layout,
+            allocation: None,
+            drop_ctx,
+            drop,
+        }
+    }
+
+    /// The start of the raw element storage.
+    #[must_use]
+    pub fn ptr(&self) -> *mut u8 {
+        self.ptr
+    }
+
+    /// Number of initialized elements.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Whether there are no initialized elements.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Number of element slots allocated.
+    #[must_use]
+    pub fn cap(&self) -> usize {
+        self.cap
+    }
+
+    /// Byte stride between elements.
+    #[must_use]
+    pub fn stride(&self) -> usize {
+        self.elem_layout.size()
+    }
+
+    /// Reserve and return the next uninitialized element slot.
+    pub fn next_uninit_slot(&mut self) -> Result<*mut u8, RawAllocError> {
+        let required = self.len.checked_add(1).ok_or(RawAllocError::SizeOverflow {
+            count: self.len,
+            stride: self.elem_layout.size(),
+        })?;
+        self.ensure_capacity(required)?;
+        Ok(unsafe { self.slot_unchecked(self.len) })
+    }
+
+    /// Mark the current next slot as initialized after the caller wrote it.
+    ///
+    /// # Safety
+    ///
+    /// The caller must have just initialized the slot returned by
+    /// [`next_uninit_slot`](Self::next_uninit_slot), and must call this at most
+    /// once per reserved slot.
+    pub unsafe fn mark_initialized(&mut self) {
+        debug_assert!(self.len < self.cap, "marking beyond reserved capacity");
+        self.len += 1;
+    }
+
+    /// Mark the allocation and initialized values as adopted by the caller.
+    pub fn adopt(&mut self) {
+        self.len = 0;
+        self.cap = 0;
+        self.allocation = None;
+    }
+
+    unsafe fn slot_unchecked(&self, index: usize) -> *mut u8 {
+        unsafe { self.ptr.add(index * self.elem_layout.size()) }
+    }
+
+    fn ensure_capacity(&mut self, required: usize) -> Result<(), RawAllocError> {
+        if required <= self.cap {
+            return Ok(());
+        }
+
+        let doubled = self.cap.checked_mul(2).ok_or(RawAllocError::SizeOverflow {
+            count: self.cap,
+            stride: self.elem_layout.size(),
+        })?;
+        let next_cap = required.max(doubled).max(4);
+        let new_layout = array_layout(next_cap, self.elem_layout)?;
+
+        if self.elem_layout.size() == 0 {
+            self.cap = next_cap;
+            return Ok(());
+        }
+
+        let new_ptr = if let Some(old_layout) = self.allocation {
+            unsafe { alloc::realloc(self.ptr, old_layout, new_layout.size()) }
+        } else {
+            unsafe { alloc::alloc(new_layout) }
+        };
+        if new_ptr.is_null() {
+            alloc::handle_alloc_error(new_layout);
+        }
+
+        self.ptr = new_ptr;
+        self.cap = next_cap;
+        self.allocation = Some(new_layout);
+        Ok(())
+    }
+}
+
+impl Drop for RawArrayBuilder {
+    fn drop(&mut self) {
+        for index in (0..self.len).rev() {
+            let slot = unsafe { self.slot_unchecked(index) };
+            unsafe { (self.drop)(self.drop_ctx, slot) };
+        }
+
+        if let Some(layout) = self.allocation.take() {
+            unsafe { alloc::dealloc(self.ptr, layout) };
+        }
+    }
+}
+
 /// Guard for an initialized handle that must be dropped unless disarmed.
 #[derive(Debug)]
 pub struct HandleGuard {
@@ -508,6 +651,32 @@ fn allocate_or_dangling(layout: Layout) -> *mut u8 {
     }
 }
 
+fn empty_array_layout(align: usize) -> Layout {
+    Layout::from_size_align(0, align).expect("alignment came from a valid element layout")
+}
+
+fn array_layout(count: usize, element: Layout) -> Result<Layout, RawAllocError> {
+    if count == 0 || element.size() == 0 {
+        return Layout::from_size_align(0, element.align()).map_err(|_| {
+            RawAllocError::InvalidLayout {
+                size: 0,
+                align: element.align(),
+            }
+        });
+    }
+
+    let size = count
+        .checked_mul(element.size())
+        .ok_or(RawAllocError::SizeOverflow {
+            count,
+            stride: element.size(),
+        })?;
+    Layout::from_size_align(size, element.align()).map_err(|_| RawAllocError::InvalidLayout {
+        size,
+        align: element.align(),
+    })
+}
+
 fn layout_fits(buffer: Layout, requested: Layout) -> bool {
     buffer.size() >= requested.size() && buffer.align() >= requested.align()
 }
@@ -515,6 +684,7 @@ fn layout_fits(buffer: Layout, requested: Layout) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ptr;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct CountedDrop<'a>(&'a AtomicUsize);
@@ -528,6 +698,13 @@ mod tests {
     unsafe fn count_drop(ctx: *const (), _ptr: *mut u8) {
         let drops = unsafe { &*(ctx as *const AtomicUsize) };
         drops.fetch_add(1, Ordering::SeqCst);
+    }
+
+    unsafe fn counted_drop_in_place(ctx: *const (), ptr: *mut u8) {
+        let _drops = unsafe { &*(ctx as *const AtomicUsize) };
+        unsafe {
+            ptr::drop_in_place(ptr.cast::<CountedDrop<'_>>());
+        }
     }
 
     #[test]
@@ -568,6 +745,75 @@ mod tests {
         assert!(buffer.slot(3).is_none());
         let base = buffer.ptr() as usize;
         assert_eq!(buffer.slot(2).unwrap() as usize, base + 8);
+    }
+
+    #[test]
+    fn raw_array_builder_grows_and_drops_initialized_elements() {
+        let drops = AtomicUsize::new(0);
+        let ctx = &drops as *const AtomicUsize as *const ();
+        {
+            let mut builder =
+                RawArrayBuilder::new(Layout::new::<CountedDrop<'_>>(), ctx, counted_drop_in_place);
+            for _ in 0..5 {
+                let slot = builder.next_uninit_slot().unwrap();
+                unsafe {
+                    slot.cast::<CountedDrop<'_>>().write(CountedDrop(&drops));
+                    builder.mark_initialized();
+                }
+            }
+            assert_eq!(builder.len(), 5);
+            assert!(builder.cap() >= 5);
+        }
+        assert_eq!(drops.load(Ordering::SeqCst), 5);
+    }
+
+    #[test]
+    fn raw_array_builder_adopt_disarms_values_and_allocation() {
+        let drops = AtomicUsize::new(0);
+        let ctx = &drops as *const AtomicUsize as *const ();
+        let element = Layout::new::<u64>();
+        let mut builder = RawArrayBuilder::new(element, ctx, count_drop);
+        let slot = builder.next_uninit_slot().unwrap();
+        unsafe {
+            slot.cast::<u64>().write(42);
+            builder.mark_initialized();
+        }
+        assert_eq!(builder.len(), 1);
+        let ptr = builder.ptr();
+        let cap = builder.cap();
+
+        builder.adopt();
+        drop(builder);
+
+        assert_eq!(drops.load(Ordering::SeqCst), 0);
+        unsafe {
+            alloc::dealloc(ptr, array_layout(cap, element).unwrap());
+        }
+    }
+
+    #[test]
+    fn raw_array_builder_handles_zero_sized_elements() {
+        let drops = AtomicUsize::new(0);
+        let ctx = &drops as *const AtomicUsize as *const ();
+        {
+            let mut builder = RawArrayBuilder::new(Layout::new::<()>(), ctx, count_drop);
+
+            let first = builder.next_uninit_slot().unwrap();
+            unsafe {
+                first.cast::<()>().write(());
+                builder.mark_initialized();
+            }
+            let second = builder.next_uninit_slot().unwrap();
+            unsafe {
+                second.cast::<()>().write(());
+                builder.mark_initialized();
+            }
+
+            assert_eq!(builder.len(), 2);
+            assert_eq!(builder.stride(), 0);
+            assert_eq!(first, second);
+        }
+        assert_eq!(drops.load(Ordering::SeqCst), 2);
     }
 
     #[test]

@@ -16,7 +16,9 @@ use facet_core::{
 };
 use facet_format::{DeserializeError, DeserializeErrorKind, FormatParser};
 use facet_reflect::Span;
-use weavy::mem::runtime::{HandleGuard, InitializedLedger, ScratchSession, ScratchSlot};
+use weavy::mem::runtime::{
+    HandleGuard, InitializedLedger, RawAllocError, RawArrayBuilder, ScratchSession, ScratchSlot,
+};
 use weavy::{BlockRef, Control, DenseLowered, Lowered, Program, RunError, RunStats, Step};
 
 use crate::JsonParser;
@@ -186,6 +188,7 @@ enum JsonOp<Block> {
     ReadList {
         list_shape: &'static Shape,
         list: ListDef,
+        element_layout: Layout,
         loop_id: Block,
     },
     ListNext {
@@ -304,8 +307,13 @@ impl Lowering {
                 }])
             }
             Def::List(list) => {
-                if list.init_in_place_with_capacity().is_none() || list.push().is_none() {
-                    return Err(unsupported(shape, "list initialization and push"));
+                if list.from_raw_parts().is_none()
+                    && (list.init_in_place_with_capacity().is_none() || list.push().is_none())
+                {
+                    return Err(unsupported(
+                        shape,
+                        "list from_raw_parts or initialization and push",
+                    ));
                 }
                 let element_layout = sized_layout(list.t())?;
                 let element_program = self.lower_shape(list.t())?;
@@ -324,6 +332,7 @@ impl Lowering {
                 Ok(vec![JsonOp::ReadList {
                     list_shape: shape,
                     list,
+                    element_layout,
                     loop_id,
                 }])
             }
@@ -441,10 +450,12 @@ fn resolve_json_op(
         JsonOp::ReadList {
             list_shape,
             list,
+            element_layout,
             loop_id,
         } => JsonOp::ReadList {
             list_shape,
             list,
+            element_layout,
             loop_id: resolve_block_ref(loop_id, refs)?,
         },
         JsonOp::ListNext {
@@ -557,11 +568,22 @@ fn unsupported(shape: &'static Shape, what: &'static str) -> DeserializeError {
     )
 }
 
+fn raw_alloc_error(error: RawAllocError) -> DeserializeError {
+    match error {
+        RawAllocError::InvalidLayout { .. } | RawAllocError::SizeOverflow { .. } => vm_error(
+            None,
+            DeserializeErrorKind::InvalidValue {
+                message: "raw list buffer layout overflow".into(),
+            },
+        ),
+    }
+}
+
 struct JsonInterp<'parser, 'de, 'program, const TRUSTED_UTF8: bool> {
     parser: &'parser mut JsonParser<'de, TRUSTED_UTF8>,
     base: PtrUninit,
     structs: InlineStack<StructFrame<'program>>,
-    lists: InlineStack<HandleGuard>,
+    lists: InlineStack<ListFrame>,
     scratch: ScratchSession,
     success: bool,
 }
@@ -589,11 +611,16 @@ impl<'parser, 'de, 'program, const TRUSTED_UTF8: bool>
         list: ListDef,
         scratch: &ScratchSlot,
     ) -> Result<(), DeserializeError> {
-        let list_ptr = self
+        let list_ptr = match self
             .lists
             .last()
             .expect("list frame is present while pushing element")
-            .ptr();
+        {
+            ListFrame::Push { guard } => guard.ptr(),
+            ListFrame::Adopt { .. } => {
+                unreachable!("direct-adopt lists do not push through ListDef")
+            }
+        };
         let push = list
             .push()
             .ok_or_else(|| unsupported(list.t(), "list push"))?;
@@ -601,6 +628,31 @@ impl<'parser, 'de, 'program, const TRUSTED_UTF8: bool>
             push(PtrMut::new(list_ptr), scratch_ptr_mut(scratch));
         }
         Ok(())
+    }
+
+    fn direct_list_slot(&mut self) -> Result<Option<PtrUninit>, DeserializeError> {
+        let frame = self
+            .lists
+            .last_mut()
+            .expect("list frame is present while decoding element");
+        let ListFrame::Adopt { builder, .. } = frame else {
+            return Ok(None);
+        };
+        let slot = builder.next_uninit_slot().map_err(raw_alloc_error)?;
+        Ok(Some(PtrUninit::new(slot)))
+    }
+
+    unsafe fn mark_direct_list_slot_initialized(&mut self) {
+        let frame = self
+            .lists
+            .last_mut()
+            .expect("list frame is present after direct element initialization");
+        let ListFrame::Adopt { builder, .. } = frame else {
+            unreachable!("only direct-adopt lists mark direct slots");
+        };
+        unsafe {
+            builder.mark_initialized();
+        }
     }
 }
 
@@ -635,6 +687,49 @@ impl<T> InlineStack<T> {
 
     fn last_mut(&mut self) -> Option<&mut T> {
         self.rest.last_mut().or(self.first.as_mut())
+    }
+}
+
+enum ListFrame {
+    Push {
+        guard: HandleGuard,
+    },
+    Adopt {
+        list_shape: &'static Shape,
+        list: ListDef,
+        list_ptr: PtrUninit,
+        builder: RawArrayBuilder,
+    },
+}
+
+impl ListFrame {
+    fn finish(self) -> Result<(), DeserializeError> {
+        match self {
+            Self::Push { mut guard } => {
+                guard.disarm();
+                Ok(())
+            }
+            Self::Adopt {
+                list_shape,
+                list,
+                list_ptr,
+                mut builder,
+            } => {
+                let from_raw_parts = list
+                    .from_raw_parts()
+                    .ok_or_else(|| unsupported(list_shape, "list from_raw_parts"))?;
+                unsafe {
+                    from_raw_parts(
+                        list_ptr,
+                        PtrMut::new(builder.ptr()),
+                        builder.len(),
+                        builder.cap(),
+                    );
+                }
+                builder.adopt();
+                Ok(())
+            }
+        }
     }
 }
 
@@ -791,18 +886,35 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
             JsonOp::ReadList {
                 list_shape,
                 list,
+                element_layout,
                 loop_id,
             } => {
                 self.parser.consume_array_start()?;
-                let init = list
-                    .init_in_place_with_capacity()
-                    .ok_or_else(|| unsupported(list_shape, "list initialization"))?;
-                let list_ptr = unsafe { init(self.base, 0) };
-                self.lists.push(HandleGuard::new(
-                    list_ptr.as_mut_byte_ptr(),
-                    *list_shape as *const Shape as *const (),
-                    drop_shape_value,
-                ));
+                if list.from_raw_parts().is_some() {
+                    let builder = RawArrayBuilder::new(
+                        *element_layout,
+                        list.t() as *const Shape as *const (),
+                        drop_shape_value,
+                    );
+                    self.lists.push(ListFrame::Adopt {
+                        list_shape,
+                        list: *list,
+                        list_ptr: self.base,
+                        builder,
+                    });
+                } else {
+                    let init = list
+                        .init_in_place_with_capacity()
+                        .ok_or_else(|| unsupported(list_shape, "list initialization"))?;
+                    let list_ptr = unsafe { init(self.base, 0) };
+                    self.lists.push(ListFrame::Push {
+                        guard: HandleGuard::new(
+                            list_ptr.as_mut_byte_ptr(),
+                            *list_shape as *const Shape as *const (),
+                            drop_shape_value,
+                        ),
+                    });
+                }
                 Ok(Control::CallBlockThen(*loop_id, Continuation::FinishList))
             }
             JsonOp::ListNext {
@@ -818,6 +930,15 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                 }
 
                 if let Some(scalar) = element_scalar {
+                    if let Some(slot) = self.direct_list_slot()? {
+                        let (value, span) = self.parser.read_scalar_token()?;
+                        unsafe {
+                            write_scalar(list.t(), *scalar, slot, value, span)?;
+                            self.mark_direct_list_slot_initialized();
+                        }
+                        continue;
+                    }
+
                     let scratch = self.scratch.reserve(*element_layout);
                     let (value, span) = self.parser.read_scalar_token()?;
                     unsafe {
@@ -829,6 +950,34 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                 }
 
                 if let Some(option_scalar) = element_option_scalar {
+                    if let Some(slot) = self.direct_list_slot()? {
+                        if self.parser.consume_null_if_next()? {
+                            unsafe {
+                                (option_scalar.option.vtable.init_none)(slot);
+                                self.mark_direct_list_slot_initialized();
+                            }
+                        } else {
+                            let inner = self.scratch.reserve(option_scalar.inner_layout);
+                            let (value, span) = self.parser.read_scalar_token()?;
+                            unsafe {
+                                write_scalar(
+                                    option_scalar.option.t(),
+                                    option_scalar.scalar,
+                                    scratch_ptr_uninit(&inner),
+                                    value,
+                                    span,
+                                )?;
+                                (option_scalar.option.vtable.init_some)(
+                                    slot,
+                                    scratch_ptr_mut(&inner),
+                                );
+                                self.mark_direct_list_slot_initialized();
+                            }
+                            self.scratch.release(inner);
+                        }
+                        continue;
+                    }
+
                     let scratch = self.scratch.reserve(*element_layout);
                     if self.parser.consume_null_if_next()? {
                         unsafe {
@@ -857,12 +1006,24 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                     continue;
                 }
 
+                if let Some(slot) = self.direct_list_slot()? {
+                    let old_base = self.base;
+                    self.base = slot;
+                    return Ok(call_program_or_block_then(
+                        element_program,
+                        Continuation::DirectListElement {
+                            old_base,
+                            loop_id: *loop_id,
+                        },
+                    ));
+                }
+
                 let scratch = self.scratch.reserve(*element_layout);
                 let old_base = self.base;
                 self.base = scratch_ptr_uninit(&scratch);
                 return Ok(call_program_or_block_then(
                     element_program,
-                    Continuation::ListElement {
+                    Continuation::PushedListElement {
                         list: *list,
                         old_base,
                         scratch,
@@ -937,14 +1098,14 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                 Ok(Control::Continue)
             }
             Continuation::FinishList => {
-                let mut list = self
+                let list = self
                     .lists
                     .pop()
                     .expect("list frame is present after list program");
-                list.disarm();
+                list.finish()?;
                 Ok(Control::Continue)
             }
-            Continuation::ListElement {
+            Continuation::PushedListElement {
                 list,
                 old_base,
                 scratch,
@@ -952,6 +1113,13 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
             } => {
                 self.push_list_element(list, &scratch)?;
                 self.scratch.release(scratch);
+                self.base = old_base;
+                Ok(Control::CallBlock(loop_id))
+            }
+            Continuation::DirectListElement { old_base, loop_id } => {
+                unsafe {
+                    self.mark_direct_list_slot_initialized();
+                }
                 self.base = old_base;
                 Ok(Control::CallBlock(loop_id))
             }
@@ -1001,10 +1169,14 @@ enum Continuation {
         scratch: ScratchSlot,
     },
     FinishList,
-    ListElement {
+    PushedListElement {
         list: ListDef,
         old_base: PtrUninit,
         scratch: ScratchSlot,
+        loop_id: ExecBlock,
+    },
+    DirectListElement {
+        old_base: PtrUninit,
         loop_id: ExecBlock,
     },
     Pointer {
