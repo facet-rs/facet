@@ -639,7 +639,7 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                             .expect("struct frame is present while matching fields");
                         let matched = frame.match_field(&key);
 
-                        let Some((index, field)) = matched else {
+                        let Some(matched) = matched else {
                             if shape.has_deny_unknown_fields_attr() {
                                 return Err(vm_error(
                                     Some(span),
@@ -652,8 +652,13 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                             self.parser.skip_value()?;
                             continue;
                         };
+                        let MatchedField {
+                            index,
+                            field,
+                            ordered,
+                        } = matched;
 
-                        if let Some(first_span) = frame.seen.get(index).copied() {
+                        if !ordered && let Some(first_span) = frame.seen.get(index).copied() {
                             return Err(vm_error(
                                 Some(span),
                                 DeserializeErrorKind::DuplicateField {
@@ -933,6 +938,12 @@ enum Continuation {
     },
 }
 
+struct MatchedField<'program> {
+    index: usize,
+    field: &'program FieldPlan<ExecBlock>,
+    ordered: bool,
+}
+
 struct StructFrame<'program> {
     shape: &'static Shape,
     base: PtrUninit,
@@ -956,20 +967,26 @@ impl<'program> StructFrame<'program> {
         }
     }
 
-    fn match_field(
-        &self,
-        key: &JsonFieldKey<'_>,
-    ) -> Option<(usize, &'program FieldPlan<ExecBlock>)> {
+    fn match_field(&self, key: &JsonFieldKey<'_>) -> Option<MatchedField<'program>> {
         if let Some(field) = self.fields.get(self.next_field)
             && field.matches_key(key)
         {
-            return Some((self.next_field, field));
+            return Some(MatchedField {
+                index: self.next_field,
+                field,
+                ordered: true,
+            });
         }
 
         self.fields
             .iter()
             .enumerate()
             .find(|(_, field)| field.matches_key(key))
+            .map(|(index, field)| MatchedField {
+                index,
+                field,
+                ordered: false,
+            })
     }
 
     fn mark_seen(&mut self, index: usize, span: Span) {
