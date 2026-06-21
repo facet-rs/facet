@@ -288,7 +288,7 @@ datatest-stable = "0.3"
 dashmap = "^6"
 deadpool-postgres = "^0.14"
 dirs = "^6"
-divan = "^0.1.21"
+divan = { package = "codspeed-divan-compat", version = "4.7.0" }
 dotenvy = "^0.15"
 eyre = "^0.6.12"
 futures = "^0.3"
