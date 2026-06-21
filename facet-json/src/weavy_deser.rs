@@ -14,13 +14,13 @@ use facet_core::{
     Def, DefaultInPlaceFn, DefaultSource, Facet, Field, ListDef, OptionDef, PointerDef, PtrMut,
     PtrUninit, ScalarType, Shape, StructKind, Type, UserType,
 };
-use facet_format::{DeserializeError, DeserializeErrorKind, FormatParser, ScalarValue};
+use facet_format::{DeserializeError, DeserializeErrorKind, FormatParser};
 use facet_reflect::Span;
 use weavy::mem::runtime::{HandleGuard, InitializedLedger, ScratchSession, ScratchSlot};
 use weavy::{BlockRef, Control, DenseLowered, Lowered, Program, RunError, RunStats, Step};
 
 use crate::JsonParser;
-use crate::parser::JsonObjectStep;
+use crate::parser::{JsonObjectStep, JsonScalarToken};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum JsonBlockId {
@@ -622,7 +622,7 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
         match op {
             JsonOp::CallBlock(shape) => Ok(Control::CallBlock(*shape)),
             JsonOp::ReadScalar { shape, scalar } => {
-                let (value, span) = self.parser.read_scalar_value()?;
+                let (value, span) = self.parser.read_scalar_token()?;
                 unsafe {
                     write_scalar(shape, *scalar, self.base, value, span)?;
                 }
@@ -680,7 +680,7 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
 
                     if let Some(scalar) = field.scalar {
                         let field_ptr = unsafe { frame.base.field_uninit(field.offset) };
-                        let (value, value_span) = self.parser.read_scalar_value()?;
+                        let (value, value_span) = self.parser.read_scalar_token()?;
                         unsafe {
                             write_scalar(field.shape, scalar, field_ptr, value, value_span)?;
                         }
@@ -760,7 +760,7 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
 
                 if let Some(scalar) = element_scalar {
                     let scratch = self.scratch.reserve(*element_layout);
-                    let (value, span) = self.parser.read_scalar_value()?;
+                    let (value, span) = self.parser.read_scalar_token()?;
                     unsafe {
                         write_scalar(list.t(), *scalar, scratch_ptr_uninit(&scratch), value, span)?;
                     }
@@ -1065,27 +1065,24 @@ unsafe fn write_scalar(
     shape: &'static Shape,
     scalar: ScalarType,
     dst: PtrUninit,
-    value: ScalarValue<'_>,
+    value: JsonScalarToken<'_>,
     span: Span,
 ) -> Result<(), DeserializeError> {
     match scalar {
         ScalarType::Unit => match value {
-            ScalarValue::Null | ScalarValue::Unit => {
+            JsonScalarToken::Null => {
                 unsafe { dst.put(()) };
             }
             other => return Err(type_mismatch(span, shape, other.kind_name())),
         },
         ScalarType::Bool => match value {
-            ScalarValue::Bool(value) => {
+            JsonScalarToken::Bool(value) => {
                 unsafe { dst.put(value) };
             }
             other => return Err(type_mismatch(span, shape, other.kind_name())),
         },
         ScalarType::Char => match value {
-            ScalarValue::Char(value) => {
-                unsafe { dst.put(value) };
-            }
-            ScalarValue::Str(value) => {
+            JsonScalarToken::Str(value) => {
                 let mut chars = value.chars();
                 let Some(ch) = chars.next() else {
                     return Err(invalid_value(span, "empty string is not a char"));
@@ -1099,14 +1096,14 @@ unsafe fn write_scalar(
         },
         ScalarType::String => {
             let string = match value {
-                ScalarValue::Str(value) => value.into_owned(),
+                JsonScalarToken::Str(value) => value.into_owned(),
                 other => return Err(type_mismatch(span, shape, other.kind_name())),
             };
             unsafe { dst.put(string) };
         }
         ScalarType::CowStr => {
             let string = match value {
-                ScalarValue::Str(value) => value.into_owned(),
+                JsonScalarToken::Str(value) => value.into_owned(),
                 other => return Err(type_mismatch(span, shape, other.kind_name())),
             };
             unsafe { dst.put::<Cow<'static, str>>(Cow::Owned(string)) };
@@ -1177,7 +1174,7 @@ unsafe fn write_scalar(
         | ScalarType::IpAddr
         | ScalarType::Ipv4Addr
         | ScalarType::Ipv6Addr => {
-            let ScalarValue::Str(value) = value else {
+            let JsonScalarToken::Str(value) = value else {
                 return Err(type_mismatch(span, shape, value.kind_name()));
             };
             match unsafe { shape.call_parse(value.as_ref(), dst) } {
@@ -1202,17 +1199,17 @@ unsafe fn write_scalar(
 }
 
 fn scalar_to_f64(
-    value: ScalarValue<'_>,
+    value: JsonScalarToken<'_>,
     span: Span,
     shape: &'static Shape,
 ) -> Result<f64, DeserializeError> {
     match value {
-        ScalarValue::F64(value) => Ok(value),
-        ScalarValue::I64(value) => Ok(value as f64),
-        ScalarValue::U64(value) => Ok(value as f64),
-        ScalarValue::I128(value) => Ok(value as f64),
-        ScalarValue::U128(value) => Ok(value as f64),
-        ScalarValue::Str(value) => value
+        JsonScalarToken::F64(value) => Ok(value),
+        JsonScalarToken::I64(value) => Ok(value as f64),
+        JsonScalarToken::U64(value) => Ok(value as f64),
+        JsonScalarToken::I128(value) => Ok(value as f64),
+        JsonScalarToken::U128(value) => Ok(value as f64),
+        JsonScalarToken::Str(value) => value
             .parse::<f64>()
             .map_err(|_| type_mismatch(span, shape, "string")),
         other => Err(type_mismatch(span, shape, other.kind_name())),
@@ -1220,7 +1217,7 @@ fn scalar_to_f64(
 }
 
 fn into_unsigned<T>(
-    value: ScalarValue<'_>,
+    value: JsonScalarToken<'_>,
     span: Span,
     target: &'static str,
 ) -> Result<T, DeserializeError>
@@ -1228,11 +1225,11 @@ where
     T: TryFrom<u128>,
 {
     let value = match value {
-        ScalarValue::U64(value) => value as u128,
-        ScalarValue::U128(value) => value,
-        ScalarValue::I64(value) if value >= 0 => value as u128,
-        ScalarValue::I128(value) if value >= 0 => value as u128,
-        ScalarValue::Str(value) => value
+        JsonScalarToken::U64(value) => value as u128,
+        JsonScalarToken::U128(value) => value,
+        JsonScalarToken::I64(value) if value >= 0 => value as u128,
+        JsonScalarToken::I128(value) if value >= 0 => value as u128,
+        JsonScalarToken::Str(value) => value
             .parse::<u128>()
             .map_err(|_| number_out_of_range(span, value.into_owned(), target))?,
         other => return Err(type_mismatch_name(span, target, other.kind_name())),
@@ -1241,7 +1238,7 @@ where
 }
 
 fn into_signed<T>(
-    value: ScalarValue<'_>,
+    value: JsonScalarToken<'_>,
     span: Span,
     target: &'static str,
 ) -> Result<T, DeserializeError>
@@ -1249,11 +1246,11 @@ where
     T: TryFrom<i128>,
 {
     let value = match value {
-        ScalarValue::I64(value) => value as i128,
-        ScalarValue::I128(value) => value,
-        ScalarValue::U64(value) => value as i128,
-        ScalarValue::U128(value) if value <= i128::MAX as u128 => value as i128,
-        ScalarValue::Str(value) => value
+        JsonScalarToken::I64(value) => value as i128,
+        JsonScalarToken::I128(value) => value,
+        JsonScalarToken::U64(value) => value as i128,
+        JsonScalarToken::U128(value) if value <= i128::MAX as u128 => value as i128,
+        JsonScalarToken::Str(value) => value
             .parse::<i128>()
             .map_err(|_| number_out_of_range(span, value.into_owned(), target))?,
         other => return Err(type_mismatch_name(span, target, other.kind_name())),
