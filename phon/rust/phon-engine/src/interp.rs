@@ -21,11 +21,21 @@ use phon_ir::ir::{Op, Program, ValueProgram};
 use phon_schema::SchemaId;
 use phon_schema::bytes::Reader;
 use phon_schema::{DecodeError, read_value};
-use weavy::{Control, RunError, Step};
+use weavy::{Control, RunError, RunStats, Step};
 
 use crate::compact::{self, CompactError, Registry};
 
 type Result<T> = core::result::Result<T, CompactError>;
+
+/// Decoded value plus the generic Weavy runner counters that produced it.
+///
+/// These counters are diagnostics only. The default [`run`] and [`run_lowered`]
+/// paths do not collect them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunReport {
+    pub value: Value,
+    pub stats: RunStats,
+}
 
 /// Run a lowered program against `bytes`, producing the decoded value and
 /// rejecting trailing bytes.
@@ -38,6 +48,14 @@ pub fn run(program: &Program, bytes: &[u8], reg: &Registry) -> Result<Value> {
     run_program(program, bytes, reg, &Default::default())
 }
 
+/// Run a lowered program and return generic Weavy runner counters.
+///
+/// # Errors
+/// [`CompactError`] for malformed input or a writer-only enum variant.
+pub fn run_with_stats(program: &Program, bytes: &[u8], reg: &Registry) -> Result<RunReport> {
+    run_program_with_stats(program, bytes, reg, &Default::default())
+}
+
 /// Run a lowered dynamic-value program with its recursive block registry.
 ///
 /// # Errors
@@ -45,6 +63,19 @@ pub fn run(program: &Program, bytes: &[u8], reg: &Registry) -> Result<Value> {
 /// writer-only enum variant.
 pub fn run_lowered(lowered: &ValueProgram, bytes: &[u8], reg: &Registry) -> Result<Value> {
     run_program(&lowered.program, bytes, reg, &lowered.blocks)
+}
+
+/// Run a lowered dynamic-value program and return generic Weavy runner counters.
+///
+/// # Errors
+/// [`CompactError`] for malformed input, missing recursion blocks, or a
+/// writer-only enum variant.
+pub fn run_lowered_with_stats(
+    lowered: &ValueProgram,
+    bytes: &[u8],
+    reg: &Registry,
+) -> Result<RunReport> {
+    run_program_with_stats(&lowered.program, bytes, reg, &lowered.blocks)
 }
 
 fn run_program(
@@ -64,6 +95,34 @@ fn run_program(
             CompactError::Decode(DecodeError::Malformed("missing recursion block"))
         }
     })?;
+    finish_interp(interp)
+}
+
+fn run_program_with_stats(
+    program: &Program,
+    bytes: &[u8],
+    reg: &Registry,
+    blocks: &BTreeMap<SchemaId, Program>,
+) -> Result<RunReport> {
+    let mut interp = Interp {
+        reader: Reader::new(bytes),
+        reg,
+        stack: Vec::new(),
+    };
+    let stats =
+        weavy::run_program_with_stats(program, blocks, &mut interp).map_err(|err| match err {
+            RunError::Step(err) => err,
+            RunError::MissingBlock(_) => {
+                CompactError::Decode(DecodeError::Malformed("missing recursion block"))
+            }
+        })?;
+    Ok(RunReport {
+        value: finish_interp(interp)?,
+        stats,
+    })
+}
+
+fn finish_interp(mut interp: Interp<'_, '_>) -> Result<Value> {
     if interp.reader.remaining() != 0 {
         return Err(CompactError::Decode(DecodeError::TrailingBytes(
             interp.reader.remaining(),
@@ -389,6 +448,22 @@ mod tests {
             type_params: Vec::new(),
             kind,
         }
+    }
+
+    #[test]
+    fn run_with_stats_reports_weavy_runner_counters() {
+        let reg = Registry::new([]);
+        let program = vec![Op::Scalar(Primitive::U8)];
+
+        let report = run_with_stats(&program, &[7], &reg).unwrap();
+
+        assert_eq!(report.value, Value::from(7u8));
+        assert_eq!(report.stats.step_count, 1);
+        assert_eq!(report.stats.inline_call_count, 0);
+        assert_eq!(report.stats.block_call_count, 0);
+        assert_eq!(report.stats.return_count, 1);
+        assert_eq!(report.stats.continuation_resume_count, 0);
+        assert_eq!(report.stats.max_frame_depth, 1);
     }
 
     /// Same-schema roundtrip (`writer == reader`): encode with the compact codec,
