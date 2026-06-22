@@ -1047,6 +1047,76 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
         }
     }
 
+    pub(crate) fn consume_object_start_fast(&mut self) -> Result<Span, ParseError> {
+        if self.state.event_peek.is_some() {
+            return self.consume_object_start();
+        }
+
+        match self.determine_action() {
+            NextAction::ObjectValue | NextAction::ArrayValue | NextAction::RootValue => {
+                self.consume_direct_object_start()
+            }
+            NextAction::ArrayComma => {
+                if self.consume_punctuation_token(b',')?.is_some() {
+                    if let Some(ContextState::Array(state)) = self.state.stack.last_mut() {
+                        *state = ArrayState::ValueOrEnd;
+                    }
+                    self.consume_direct_object_start()
+                } else {
+                    self.consume_object_start()
+                }
+            }
+            _ => self.consume_object_start(),
+        }
+    }
+
+    pub(crate) fn consume_array_start_fast(&mut self) -> Result<Span, ParseError> {
+        if self.state.event_peek.is_some() {
+            return self.consume_array_start();
+        }
+
+        match self.determine_action() {
+            NextAction::ObjectValue | NextAction::ArrayValue | NextAction::RootValue => {
+                self.consume_direct_array_start()
+            }
+            NextAction::ArrayComma => {
+                if self.consume_punctuation_token(b',')?.is_some() {
+                    if let Some(ContextState::Array(state)) = self.state.stack.last_mut() {
+                        *state = ArrayState::ValueOrEnd;
+                    }
+                    self.consume_direct_array_start()
+                } else {
+                    self.consume_array_start()
+                }
+            }
+            _ => self.consume_array_start(),
+        }
+    }
+
+    fn consume_direct_object_start(&mut self) -> Result<Span, ParseError> {
+        if let Some(span) = self.consume_punctuation_token(b'{')? {
+            self.state.root_started = true;
+            self.state
+                .stack
+                .push(ContextState::Object(ObjectState::KeyOrEnd));
+            Ok(span)
+        } else {
+            self.consume_object_start()
+        }
+    }
+
+    fn consume_direct_array_start(&mut self) -> Result<Span, ParseError> {
+        if let Some(span) = self.consume_punctuation_token(b'[')? {
+            self.state.root_started = true;
+            self.state
+                .stack
+                .push(ContextState::Array(ArrayState::ValueOrEnd));
+            Ok(span)
+        } else {
+            self.consume_array_start()
+        }
+    }
+
     pub(crate) fn next_object_key_or_end(&mut self) -> Result<JsonObjectKeyStep<'de>, ParseError> {
         if let Some(event) = self.state.event_peek.take() {
             self.state.peek_start_offset = None;
