@@ -4658,6 +4658,7 @@ dependencies = [
  "copypatch",
  "phon-ir",
  "phon-schema",
+ "weavy",
 ]
 
 [[package]]
@@ -7957,6 +7958,9 @@ dependencies = [
 [[package]]
 name = "weavy"
 version = "0.1.0"
+dependencies = [
+ "copypatch",
+]
 
 [[package]]
 name = "web-sys"

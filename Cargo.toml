@@ -122,7 +122,7 @@ members = [
 
   # Phon schema and typed codec
   "weavy",
-  "phon/rust/copypatch",
+  "copypatch",
   "phon/rust/phon-schema",
   "phon/rust/phon-ir",
   "phon/rust/phon-engine",
@@ -244,7 +244,7 @@ default-members = [
 
   # Phon schema and typed codec
   "weavy",
-  "phon/rust/copypatch",
+  "copypatch",
   "phon/rust/phon-schema",
   "phon/rust/phon-ir",
   "phon/rust/phon-engine",
@@ -311,7 +311,7 @@ dibs-qgen = { path = "dibs-qgen", version = "0.2.0-rc.1" }
 dibs-query-schema = { path = "dibs-query-schema", version = "0.2.0-rc.1" }
 dibs-sql = { path = "dibs-sql", version = "0.2.0-rc.1" }
 dockside = { path = "dockside" }
-copypatch = { path = "phon/rust/copypatch", version = "0.2.0-rc.1" }
+copypatch = { path = "copypatch", version = "0.2.0-rc.1" }
 weavy = { path = "weavy", version = "0.1.0" }
 phon = { path = "phon/rust/phon", version = "0.2.0-rc.1" }
 phon-engine = { path = "phon/rust/phon-engine", version = "0.2.0-rc.1" }
@@ -536,7 +536,7 @@ dibs-qgen = { path = "dibs-qgen" }
 dibs-query-schema = { path = "dibs-query-schema" }
 dibs-runtime = { path = "dibs-runtime" }
 dibs-sql = { path = "dibs-sql" }
-copypatch = { path = "phon/rust/copypatch" }
+copypatch = { path = "copypatch" }
 weavy = { path = "weavy" }
 phon = { path = "phon/rust/phon" }
 phon-codegen = { path = "phon/rust/phon-codegen" }

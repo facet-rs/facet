@@ -8,6 +8,9 @@
 
 pub mod mem;
 
+#[cfg(feature = "jit")]
+pub mod jit;
+
 use std::collections::BTreeMap;
 use std::mem::MaybeUninit;
 

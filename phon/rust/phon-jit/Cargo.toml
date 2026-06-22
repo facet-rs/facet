@@ -15,9 +15,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [dependencies]
 phon-ir.workspace = true
 phon-schema.workspace = true
-# The backend-agnostic copy-and-patch substrate: executable memory + relocation
-# patching (ExecBuf, patch_branch26).
-copypatch.workspace = true
+weavy = { workspace = true, features = ["jit"] }
 
 [build-dependencies]
 # Build-time stencil extraction (compile_object, extract_stencil).

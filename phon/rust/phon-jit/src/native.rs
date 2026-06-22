@@ -22,11 +22,7 @@ use phon_ir::ir::{Lowered, MemOp, MemProgram, SkipOp};
 use phon_schema::bytes::Reader;
 use phon_schema::{DecodeError, SchemaId, Value, read_value, write_value};
 
-// The backend-agnostic copy-and-patch substrate lives in `copypatch`: executable
-// memory (MAP_JIT + W^X + i-cache) and AArch64 relocation patching. This crate
-// keeps only the phon-specific parts — the stencils, the per-op state, and the
-// IR -> stencil-chain compilation.
-use copypatch::{ExecBuf, patch_branch26};
+use weavy::jit::{Chain, ExecBuf, StencilLayout};
 
 use crate::stencils::{
     BORROW, BORROW_CONT, BYTES, BYTES_CONT, BYTES_ENC, BYTES_ENC_CONT, CALLBLOCK, CALLBLOCK_CONT,
@@ -490,14 +486,6 @@ pub struct NativeDecode {
     skip_ops: Vec<SkipOp>,
 }
 
-/// A compiled element chain: where its first stencil begins in `code`, and which
-/// `progs` entry feeds it.
-#[derive(Clone, Copy)]
-struct Chain {
-    entry: usize,
-    prog_index: usize,
-}
-
 /// A scalar-run prog slot to fill once `scalar_run_infos` is in its final home.
 struct ScalarRunFixup {
     prog_index: usize,
@@ -738,9 +726,7 @@ struct EnumInfoBuild {
 /// the program is walked. Two passes: lay everything out (this struct), then bind
 /// the `ExecBuf`-relative pointers ([`NativeDecode::compile`]).
 struct Compiler {
-    code: Vec<u8>,
-    progs: Vec<Vec<u64>>,
-    stencil_count: usize,
+    layout: StencilLayout,
     scalar_run_segments: Vec<Vec<ScalarRunSegmentInfo>>,
     scalar_run_fixups: Vec<ScalarRunFixup>,
     seq_infos: Vec<SeqInfoBuild>,
@@ -785,31 +771,29 @@ impl Compiler {
     /// continuations patched to chain to the next op (the last to `done`).
     /// Recurses into sequence elements, which become their own chains.
     fn compile_chain(&mut self, program: &MemProgram) -> Chain {
-        let entry = self.code.len();
-        let prog_index = self.progs.len();
-        self.progs.push(Vec::new());
+        let chain = self.layout.start_chain();
+        let prog_index = chain.prog_index;
 
         // First emit each op's stencil copy and its immediates, recording where
         // each begins so continuations can be patched once `done` is placed.
         let mut starts = Vec::with_capacity(program.len());
         for op in program {
-            starts.push(self.code.len());
+            starts.push(self.layout.code_len());
             match op {
                 MemOp::Scalar {
                     offset,
                     size,
                     align,
                 } => {
-                    self.code.extend_from_slice(SCALAR);
-                    let p = &mut self.progs[prog_index];
+                    self.layout.emit_stencil(SCALAR);
+                    let p = self.layout.prog_mut(prog_index);
                     p.push(*offset as u64);
                     p.push(*size as u64);
                     p.push(*align as u64);
                 }
                 MemOp::ScalarRun(run) => {
-                    self.code.extend_from_slice(SCALAR_RUN);
-                    let slot = self.progs[prog_index].len();
-                    self.progs[prog_index].push(0);
+                    self.layout.emit_stencil(SCALAR_RUN);
+                    let slot = self.layout.reserve_prog_slot(prog_index).slot;
                     let runinfo = self.scalar_run_segments.len();
                     self.scalar_run_segments.push(
                         run.segments
@@ -831,9 +815,8 @@ impl Compiler {
                     panic!("phon-jit: native-sized integer casts are interpreter-only for now")
                 }
                 MemOp::Pointer(p) => {
-                    self.code.extend_from_slice(POINTER);
-                    let slot = self.progs[prog_index].len();
-                    self.progs[prog_index].push(0);
+                    self.layout.emit_stencil(POINTER);
+                    let slot = self.layout.reserve_prog_slot(prog_index).slot;
                     let pointee = self.compile_chain(&p.pointee);
                     let pointerinfo = self.pointer_infos.len();
                     self.pointer_infos.push(PointerInfoBuild {
@@ -852,11 +835,10 @@ impl Compiler {
                     });
                 }
                 MemOp::Sequence(s) => {
-                    self.code.extend_from_slice(SEQUENCE);
+                    self.layout.emit_stencil(SEQUENCE);
                     // The sequence reads one prog slot: a `*const SeqInfo` filled
                     // in pass 2. Reserve it and record the fixup now.
-                    let slot = self.progs[prog_index].len();
-                    self.progs[prog_index].push(0);
+                    let slot = self.layout.reserve_prog_slot(prog_index).slot;
                     // Compile the element body as its own chain.
                     let elem = self.compile_chain(&s.element);
                     let seqinfo = self.seq_infos.len();
@@ -877,9 +859,8 @@ impl Compiler {
                     });
                 }
                 MemOp::Set(s) => {
-                    self.code.extend_from_slice(SET);
-                    let slot = self.progs[prog_index].len();
-                    self.progs[prog_index].push(0);
+                    self.layout.emit_stencil(SET);
+                    let slot = self.layout.reserve_prog_slot(prog_index).slot;
                     let element = self.compile_chain(&s.element);
                     let setinfo = self.set_infos.len();
                     self.set_infos.push(SetInfoBuild {
@@ -900,11 +881,10 @@ impl Compiler {
                     });
                 }
                 MemOp::Bytes(b) => {
-                    self.code.extend_from_slice(BYTES);
+                    self.layout.emit_stencil(BYTES);
                     // The bytes stencil reads one prog slot: a `*const BytesInfo`
                     // filled in pass 2. Reserve it and record the fixup now.
-                    let slot = self.progs[prog_index].len();
-                    self.progs[prog_index].push(0);
+                    let slot = self.layout.reserve_prog_slot(prog_index).slot;
                     let bytesinfo = self.bytes_infos.len();
                     self.bytes_infos.push(BytesInfo {
                         field_offset: b.field_offset,
@@ -923,13 +903,12 @@ impl Compiler {
                     });
                 }
                 MemOp::Borrow(b) => {
-                    self.code.extend_from_slice(BORROW);
+                    self.layout.emit_stencil(BORROW);
                     // The borrow stencil reads one prog slot: a `*const BorrowInfo`
                     // filled in pass 2. Reserve it and record the fixup now. No
                     // `ExecBuf`-relative fields (the fat pointer is built into the
                     // input by an indirect thunk, no sub-chain), so build it now.
-                    let slot = self.progs[prog_index].len();
-                    self.progs[prog_index].push(0);
+                    let slot = self.layout.reserve_prog_slot(prog_index).slot;
                     let borrowinfo = self.borrow_infos.len();
                     self.borrow_infos.push(BorrowInfo {
                         field_offset: b.field_offset,
@@ -945,11 +924,10 @@ impl Compiler {
                     });
                 }
                 MemOp::Option(o) => {
-                    self.code.extend_from_slice(OPTION);
+                    self.layout.emit_stencil(OPTION);
                     // The option stencil reads one prog slot: a `*const OptInfo`
                     // filled in pass 2. Reserve it and record the fixup now.
-                    let slot = self.progs[prog_index].len();
-                    self.progs[prog_index].push(0);
+                    let slot = self.layout.reserve_prog_slot(prog_index).slot;
                     // Compile the some-body as its own chain.
                     let some = self.compile_chain(&o.some);
                     let optinfo = self.opt_infos.len();
@@ -970,11 +948,10 @@ impl Compiler {
                     });
                 }
                 MemOp::Result(r) => {
-                    self.code.extend_from_slice(RESULT);
+                    self.layout.emit_stencil(RESULT);
                     // The result stencil reads one prog slot: a `*const ResultInfo`
                     // filled in pass 2. Reserve it and record the fixup now.
-                    let slot = self.progs[prog_index].len();
-                    self.progs[prog_index].push(0);
+                    let slot = self.layout.reserve_prog_slot(prog_index).slot;
                     // Compile each arm body as its own chain.
                     let ok = self.compile_chain(&r.ok);
                     let err = self.compile_chain(&r.err);
@@ -1002,9 +979,8 @@ impl Compiler {
                     });
                 }
                 MemOp::Opaque(o) => {
-                    self.code.extend_from_slice(OPAQUE);
-                    let slot = self.progs[prog_index].len();
-                    self.progs[prog_index].push(0);
+                    self.layout.emit_stencil(OPAQUE);
+                    let slot = self.layout.reserve_prog_slot(prog_index).slot;
                     let opaqueinfo = self.opaque_infos.len();
                     self.opaque_infos.push(OpaqueInfo {
                         field_offset: o.field_offset,
@@ -1018,9 +994,8 @@ impl Compiler {
                     });
                 }
                 MemOp::Dynamic { field_offset } => {
-                    self.code.extend_from_slice(DYNAMIC);
-                    let slot = self.progs[prog_index].len();
-                    self.progs[prog_index].push(0);
+                    self.layout.emit_stencil(DYNAMIC);
+                    let slot = self.layout.reserve_prog_slot(prog_index).slot;
                     let dynamicinfo = self.dynamic_infos.len();
                     self.dynamic_infos.push(DynamicInfo {
                         field_offset: *field_offset,
@@ -1033,9 +1008,8 @@ impl Compiler {
                     });
                 }
                 MemOp::CallBlock { schema, offset } => {
-                    self.code.extend_from_slice(CALLBLOCK);
-                    let slot = self.progs[prog_index].len();
-                    self.progs[prog_index].push(0);
+                    self.layout.emit_stencil(CALLBLOCK);
+                    let slot = self.layout.reserve_prog_slot(prog_index).slot;
                     let callinfo = self.callblock_infos.len();
                     self.callblock_infos.push(CallBlockInfoBuild {
                         offset: *offset,
@@ -1048,11 +1022,10 @@ impl Compiler {
                     });
                 }
                 MemOp::Enum(e) => {
-                    self.code.extend_from_slice(ENUM);
+                    self.layout.emit_stencil(ENUM);
                     // The enum stencil reads one prog slot: a `*const EnumInfo`
                     // filled in pass 2. Reserve it and record the fixup now.
-                    let slot = self.progs[prog_index].len();
-                    self.progs[prog_index].push(0);
+                    let slot = self.layout.reserve_prog_slot(prog_index).slot;
                     // Compile each variant's payload as its own chain.
                     let mut variants = Vec::with_capacity(e.variants.len());
                     for v in &e.variants {
@@ -1078,11 +1051,10 @@ impl Compiler {
                     });
                 }
                 MemOp::Default(d) => {
-                    self.code.extend_from_slice(DEFAULT);
+                    self.layout.emit_stencil(DEFAULT);
                     // The default stencil reads one prog slot: a `*const DefaultInfo`
                     // filled in pass 2. Reserve it and record the fixup now.
-                    let slot = self.progs[prog_index].len();
-                    self.progs[prog_index].push(0);
+                    let slot = self.layout.reserve_prog_slot(prog_index).slot;
                     let defaultinfo = self.default_infos.len();
                     // No `ExecBuf`-relative fields: the default is written by an
                     // indirect thunk call (no wire, no sub-chain), so build it now.
@@ -1098,13 +1070,12 @@ impl Compiler {
                     });
                 }
                 MemOp::SkipWire(s) => {
-                    self.code.extend_from_slice(SKIPWIRE);
+                    self.layout.emit_stencil(SKIPWIRE);
                     // The skipwire stencil reads one prog slot: a `*const SkipInfo`
                     // filled in pass 2 (its `skip_op` pointer is bound once the
                     // owned `SkipOp` clone is in its final home). Reserve the slot
                     // and clone the tree now.
-                    let slot = self.progs[prog_index].len();
-                    self.progs[prog_index].push(0);
+                    let slot = self.layout.reserve_prog_slot(prog_index).slot;
                     let skipinfo = self.skip_ops.len();
                     self.skip_ops.push((**s).clone());
                     self.skip_fixups.push(SkipFixup {
@@ -1114,11 +1085,10 @@ impl Compiler {
                     });
                 }
                 MemOp::Map(m) => {
-                    self.code.extend_from_slice(MAP);
+                    self.layout.emit_stencil(MAP);
                     // The map stencil reads one prog slot: a `*const MapInfo`
                     // filled in pass 2. Reserve it and record the fixup now.
-                    let slot = self.progs[prog_index].len();
-                    self.progs[prog_index].push(0);
+                    let slot = self.layout.reserve_prog_slot(prog_index).slot;
                     // Compile the key and value sub-bodies as their own chains.
                     let key = self.compile_chain(&m.key);
                     let value = self.compile_chain(&m.value);
@@ -1146,9 +1116,8 @@ impl Compiler {
                 }
             }
         }
-        let done_start = self.code.len();
-        self.code.extend_from_slice(DONE);
-        self.stencil_count += program.len() + 1;
+        let done_start = self.layout.code_len();
+        self.layout.emit_stencil(DONE);
 
         // Patch every op's continuation branches to the following op (last ->
         // `done`). Scalar and sequence stencils both reach the next op through a
@@ -1177,11 +1146,11 @@ impl Compiler {
                 MemOp::Map(_) => MAP_CONT,
             };
             for &rel in relocs {
-                patch_branch26(&mut self.code, op_start + rel, next);
+                self.layout.patch_branch26(op_start + rel, next);
             }
         }
 
-        Chain { entry, prog_index }
+        chain
     }
 }
 
@@ -1206,9 +1175,7 @@ impl NativeDecode {
         blocks: &BTreeMap<SchemaId, MemProgram>,
     ) -> NativeDecode {
         let mut c = Compiler {
-            code: Vec::new(),
-            progs: Vec::new(),
-            stencil_count: 0,
+            layout: StencilLayout::new(),
             scalar_run_segments: Vec::new(),
             scalar_run_fixups: Vec::new(),
             seq_infos: Vec::new(),
@@ -1247,14 +1214,13 @@ impl NativeDecode {
             c.block_chains.insert(*schema, chain);
         }
 
+        let layout = std::mem::take(&mut c.layout);
+        let (code, progs, stencil_count) = layout.into_parts();
+
         // The code layout is final; make it executable. Pointers into it are now
         // stable for the lifetime of the `ExecBuf`.
-        let buf = ExecBuf::new(&c.code);
+        let buf = ExecBuf::new(&code);
         let base = buf.as_ptr();
-
-        // Box each chain's prog stream so its address is stable (the prog
-        // pointers in `seq_infos` and the entry pointer alias into these).
-        let progs = c.progs;
 
         let mut scalar_run_infos: Vec<ScalarRunInfo> =
             Vec::with_capacity(c.scalar_run_segments.len());
@@ -1465,7 +1431,7 @@ impl NativeDecode {
 
         let mut nd = NativeDecode {
             buf,
-            stencil_count: c.stencil_count,
+            stencil_count,
             entry_prog: top.prog_index,
             progs,
             scalar_run_infos,
@@ -2088,9 +2054,7 @@ struct EncEnumInfoBuild {
 /// metadata while the program is walked. Two passes, like the decode [`Compiler`]:
 /// lay everything out, then bind the `ExecBuf`-relative pointers.
 struct EncCompiler {
-    code: Vec<u8>,
-    progs: Vec<Vec<u64>>,
-    stencil_count: usize,
+    layout: StencilLayout,
     scalar_run_segments: Vec<Vec<ScalarRunSegmentInfo>>,
     scalar_run_fixups: Vec<ScalarRunFixup>,
     seq_infos: Vec<EncSeqInfoBuild>,
@@ -2124,29 +2088,27 @@ impl EncCompiler {
     /// `done`, with continuations patched to chain to the next op (the last to
     /// `done`). Recurses into sequence elements, which become their own chains.
     fn compile_chain(&mut self, program: &MemProgram) -> Chain {
-        let entry = self.code.len();
-        let prog_index = self.progs.len();
-        self.progs.push(Vec::new());
+        let chain = self.layout.start_chain();
+        let prog_index = chain.prog_index;
 
         let mut starts = Vec::with_capacity(program.len());
         for op in program {
-            starts.push(self.code.len());
+            starts.push(self.layout.code_len());
             match op {
                 MemOp::Scalar {
                     offset,
                     size,
                     align,
                 } => {
-                    self.code.extend_from_slice(SCALAR_ENC);
-                    let p = &mut self.progs[prog_index];
+                    self.layout.emit_stencil(SCALAR_ENC);
+                    let p = self.layout.prog_mut(prog_index);
                     p.push(*offset as u64);
                     p.push(*size as u64);
                     p.push(*align as u64);
                 }
                 MemOp::ScalarRun(run) => {
-                    self.code.extend_from_slice(SCALAR_RUN_ENC);
-                    let slot = self.progs[prog_index].len();
-                    self.progs[prog_index].push(0);
+                    self.layout.emit_stencil(SCALAR_RUN_ENC);
+                    let slot = self.layout.reserve_prog_slot(prog_index).slot;
                     let runinfo = self.scalar_run_segments.len();
                     self.scalar_run_segments.push(
                         run.segments
@@ -2168,9 +2130,8 @@ impl EncCompiler {
                     panic!("phon-jit: native-sized integer casts are interpreter-only for now")
                 }
                 MemOp::Pointer(p) => {
-                    self.code.extend_from_slice(POINTER_ENC);
-                    let slot = self.progs[prog_index].len();
-                    self.progs[prog_index].push(0);
+                    self.layout.emit_stencil(POINTER_ENC);
+                    let slot = self.layout.reserve_prog_slot(prog_index).slot;
                     let pointee = self.compile_chain(&p.pointee);
                     let pointerinfo = self.pointer_infos.len();
                     self.pointer_infos.push(EncPointerInfoBuild {
@@ -2187,9 +2148,8 @@ impl EncCompiler {
                     });
                 }
                 MemOp::Sequence(s) => {
-                    self.code.extend_from_slice(SEQUENCE_ENC);
-                    let slot = self.progs[prog_index].len();
-                    self.progs[prog_index].push(0);
+                    self.layout.emit_stencil(SEQUENCE_ENC);
+                    let slot = self.layout.reserve_prog_slot(prog_index).slot;
                     let elem = self.compile_chain(&s.element);
                     let seqinfo = self.seq_infos.len();
                     self.seq_infos.push(EncSeqInfoBuild {
@@ -2208,9 +2168,8 @@ impl EncCompiler {
                     });
                 }
                 MemOp::Set(s) => {
-                    self.code.extend_from_slice(SET_ENC);
-                    let slot = self.progs[prog_index].len();
-                    self.progs[prog_index].push(0);
+                    self.layout.emit_stencil(SET_ENC);
+                    let slot = self.layout.reserve_prog_slot(prog_index).slot;
                     let element = self.compile_chain(&s.element);
                     let setinfo = self.set_infos.len();
                     self.set_infos.push(EncSetInfoBuild {
@@ -2232,9 +2191,8 @@ impl EncCompiler {
                 MemOp::Bytes(b) => {
                     // Encode never validates — the in-memory `String`/`Vec` is
                     // already well-formed; we just copy its bytes out.
-                    self.code.extend_from_slice(BYTES_ENC);
-                    let slot = self.progs[prog_index].len();
-                    self.progs[prog_index].push(0);
+                    self.layout.emit_stencil(BYTES_ENC);
+                    let slot = self.layout.reserve_prog_slot(prog_index).slot;
                     let bytesinfo = self.bytes_infos.len();
                     self.bytes_infos.push(EncBytesInfo {
                         field_offset: b.field_offset,
@@ -2255,9 +2213,8 @@ impl EncCompiler {
                     // run: the same `BYTES_ENC` stencil reads the `&str`/`&[u8]`
                     // length + bytes through the borrow thunks (whose `len`/`data`
                     // share `SeqThunks`' signatures) and writes the wire run.
-                    self.code.extend_from_slice(BYTES_ENC);
-                    let slot = self.progs[prog_index].len();
-                    self.progs[prog_index].push(0);
+                    self.layout.emit_stencil(BYTES_ENC);
+                    let slot = self.layout.reserve_prog_slot(prog_index).slot;
                     let bytesinfo = self.bytes_infos.len();
                     self.bytes_infos.push(EncBytesInfo {
                         field_offset: b.field_offset,
@@ -2274,9 +2231,8 @@ impl EncCompiler {
                     });
                 }
                 MemOp::Option(o) => {
-                    self.code.extend_from_slice(OPTION_ENC);
-                    let slot = self.progs[prog_index].len();
-                    self.progs[prog_index].push(0);
+                    self.layout.emit_stencil(OPTION_ENC);
+                    let slot = self.layout.reserve_prog_slot(prog_index).slot;
                     let some = self.compile_chain(&o.some);
                     let optinfo = self.opt_infos.len();
                     self.opt_infos.push(EncOptInfoBuild {
@@ -2294,9 +2250,8 @@ impl EncCompiler {
                     });
                 }
                 MemOp::Result(r) => {
-                    self.code.extend_from_slice(RESULT_ENC);
-                    let slot = self.progs[prog_index].len();
-                    self.progs[prog_index].push(0);
+                    self.layout.emit_stencil(RESULT_ENC);
+                    let slot = self.layout.reserve_prog_slot(prog_index).slot;
                     let ok = self.compile_chain(&r.ok);
                     let err = self.compile_chain(&r.err);
                     let resultinfo = self.result_infos.len();
@@ -2320,9 +2275,8 @@ impl EncCompiler {
                     });
                 }
                 MemOp::Opaque(o) => {
-                    self.code.extend_from_slice(OPAQUE_ENC);
-                    let slot = self.progs[prog_index].len();
-                    self.progs[prog_index].push(0);
+                    self.layout.emit_stencil(OPAQUE_ENC);
+                    let slot = self.layout.reserve_prog_slot(prog_index).slot;
                     let opaqueinfo = self.opaque_infos.len();
                     self.opaque_infos.push(EncOpaqueInfo {
                         field_offset: o.field_offset,
@@ -2336,9 +2290,8 @@ impl EncCompiler {
                     });
                 }
                 MemOp::Dynamic { field_offset } => {
-                    self.code.extend_from_slice(DYNAMIC_ENC);
-                    let slot = self.progs[prog_index].len();
-                    self.progs[prog_index].push(0);
+                    self.layout.emit_stencil(DYNAMIC_ENC);
+                    let slot = self.layout.reserve_prog_slot(prog_index).slot;
                     let dynamicinfo = self.dynamic_infos.len();
                     self.dynamic_infos.push(EncDynamicInfo {
                         field_offset: *field_offset,
@@ -2351,9 +2304,8 @@ impl EncCompiler {
                     });
                 }
                 MemOp::CallBlock { schema, offset } => {
-                    self.code.extend_from_slice(CALLBLOCK_ENC);
-                    let slot = self.progs[prog_index].len();
-                    self.progs[prog_index].push(0);
+                    self.layout.emit_stencil(CALLBLOCK_ENC);
+                    let slot = self.layout.reserve_prog_slot(prog_index).slot;
                     let callinfo = self.callblock_infos.len();
                     self.callblock_infos.push(CallBlockInfoBuild {
                         offset: *offset,
@@ -2366,9 +2318,8 @@ impl EncCompiler {
                     });
                 }
                 MemOp::Enum(e) => {
-                    self.code.extend_from_slice(ENUM_ENC);
-                    let slot = self.progs[prog_index].len();
-                    self.progs[prog_index].push(0);
+                    self.layout.emit_stencil(ENUM_ENC);
+                    let slot = self.layout.reserve_prog_slot(prog_index).slot;
                     let mut variants = Vec::with_capacity(e.variants.len());
                     for v in &e.variants {
                         let payload = self.compile_chain(&v.payload);
@@ -2392,9 +2343,8 @@ impl EncCompiler {
                     });
                 }
                 MemOp::Map(m) => {
-                    self.code.extend_from_slice(MAP_ENC);
-                    let slot = self.progs[prog_index].len();
-                    self.progs[prog_index].push(0);
+                    self.layout.emit_stencil(MAP_ENC);
+                    let slot = self.layout.reserve_prog_slot(prog_index).slot;
                     // Compile the key and value sub-bodies as their own chains.
                     let key = self.compile_chain(&m.key);
                     let value = self.compile_chain(&m.value);
@@ -2422,9 +2372,8 @@ impl EncCompiler {
                 }
             }
         }
-        let done_start = self.code.len();
-        self.code.extend_from_slice(DONE_ENC);
-        self.stencil_count += program.len() + 1;
+        let done_start = self.layout.code_len();
+        self.layout.emit_stencil(DONE_ENC);
 
         for (i, &op_start) in starts.iter().enumerate() {
             let next = starts.get(i + 1).copied().unwrap_or(done_start);
@@ -2450,11 +2399,11 @@ impl EncCompiler {
                 }
             };
             for &rel in relocs {
-                patch_branch26(&mut self.code, op_start + rel, next);
+                self.layout.patch_branch26(op_start + rel, next);
             }
         }
 
-        Chain { entry, prog_index }
+        chain
     }
 }
 
@@ -2479,9 +2428,7 @@ impl NativeEncode {
         blocks: &BTreeMap<SchemaId, MemProgram>,
     ) -> NativeEncode {
         let mut c = EncCompiler {
-            code: Vec::new(),
-            progs: Vec::new(),
-            stencil_count: 0,
+            layout: StencilLayout::new(),
             scalar_run_segments: Vec::new(),
             scalar_run_fixups: Vec::new(),
             seq_infos: Vec::new(),
@@ -2514,9 +2461,10 @@ impl NativeEncode {
             c.block_chains.insert(*schema, chain);
         }
 
-        let buf = ExecBuf::new(&c.code);
+        let layout = std::mem::take(&mut c.layout);
+        let (code, progs, stencil_count) = layout.into_parts();
+        let buf = ExecBuf::new(&code);
         let base = buf.as_ptr();
-        let progs = c.progs;
 
         let mut scalar_run_infos: Vec<ScalarRunInfo> =
             Vec::with_capacity(c.scalar_run_segments.len());
@@ -2685,7 +2633,7 @@ impl NativeEncode {
 
         let mut ne = NativeEncode {
             buf,
-            stencil_count: c.stencil_count,
+            stencil_count,
             entry_prog: top.prog_index,
             progs,
             scalar_run_infos,
