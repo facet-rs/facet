@@ -657,6 +657,92 @@ impl<'parser, 'de, 'program, const TRUSTED_UTF8: bool>
             builder.mark_initialized();
         }
     }
+
+    fn list_next_scalar(
+        &mut self,
+        list: ListDef,
+        scalar: ScalarType,
+        element_layout: Layout,
+    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation>, DeserializeError> {
+        match scalar {
+            ScalarType::U8 => {
+                self.list_next_scalar_with(list, element_layout, write_u8_input::<TRUSTED_UTF8>)
+            }
+            ScalarType::U16 => {
+                self.list_next_scalar_with(list, element_layout, write_u16_input::<TRUSTED_UTF8>)
+            }
+            ScalarType::U32 => {
+                self.list_next_scalar_with(list, element_layout, write_u32_input::<TRUSTED_UTF8>)
+            }
+            ScalarType::U64 => {
+                self.list_next_scalar_with(list, element_layout, write_u64_input::<TRUSTED_UTF8>)
+            }
+            ScalarType::U128 => {
+                self.list_next_scalar_with(list, element_layout, write_u128_input::<TRUSTED_UTF8>)
+            }
+            ScalarType::USize => {
+                self.list_next_scalar_with(list, element_layout, write_usize_input::<TRUSTED_UTF8>)
+            }
+            ScalarType::I8 => {
+                self.list_next_scalar_with(list, element_layout, write_i8_input::<TRUSTED_UTF8>)
+            }
+            ScalarType::I16 => {
+                self.list_next_scalar_with(list, element_layout, write_i16_input::<TRUSTED_UTF8>)
+            }
+            ScalarType::I32 => {
+                self.list_next_scalar_with(list, element_layout, write_i32_input::<TRUSTED_UTF8>)
+            }
+            ScalarType::I64 => {
+                self.list_next_scalar_with(list, element_layout, write_i64_input::<TRUSTED_UTF8>)
+            }
+            ScalarType::I128 => {
+                self.list_next_scalar_with(list, element_layout, write_i128_input::<TRUSTED_UTF8>)
+            }
+            ScalarType::ISize => {
+                self.list_next_scalar_with(list, element_layout, write_isize_input::<TRUSTED_UTF8>)
+            }
+            _ => {
+                let shape = list.t();
+                self.list_next_scalar_with(list, element_layout, |parser, dst, value| unsafe {
+                    write_scalar_input(parser, shape, scalar, dst, value)
+                })
+            }
+        }
+    }
+
+    fn list_next_scalar_with<W>(
+        &mut self,
+        list: ListDef,
+        element_layout: Layout,
+        mut write: W,
+    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation>, DeserializeError>
+    where
+        W: FnMut(
+            &JsonParser<'de, TRUSTED_UTF8>,
+            PtrUninit,
+            JsonScalarInput<'de>,
+        ) -> Result<(), DeserializeError>,
+    {
+        loop {
+            let value = match self.parser.next_sequence_scalar_or_end()? {
+                JsonSequenceScalarStep::End => return Ok(Control::Continue),
+                JsonSequenceScalarStep::Value { value } => value,
+            };
+
+            if let Some(slot) = self.direct_list_slot()? {
+                write(self.parser, slot, value)?;
+                unsafe {
+                    self.mark_direct_list_slot_initialized();
+                }
+                continue;
+            }
+
+            let scratch = self.scratch.reserve(element_layout);
+            write(self.parser, scratch_ptr_uninit(&scratch), value)?;
+            self.push_list_element(list, &scratch)?;
+            self.scratch.release(scratch);
+        }
+    }
 }
 
 struct InlineStack<T> {
@@ -761,9 +847,9 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
         match op {
             JsonOp::CallBlock(shape) => Ok(Control::CallBlock(*shape)),
             JsonOp::ReadScalar { shape, scalar } => {
-                let value = self.parser.read_scalar_input()?;
+                let (value, span) = self.parser.read_scalar_token()?;
                 unsafe {
-                    write_scalar_input(self.parser, shape, *scalar, self.base, value)?;
+                    write_scalar(shape, *scalar, self.base, value, span)?;
                 }
                 Ok(Control::Continue)
             }
@@ -818,15 +904,9 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
 
                         if let Some(scalar) = field.scalar {
                             let field_ptr = unsafe { frame.base.field_uninit(field.offset) };
-                            let value = self.parser.read_scalar_input()?;
+                            let (value, value_span) = self.parser.read_scalar_token()?;
                             unsafe {
-                                write_scalar_input(
-                                    self.parser,
-                                    field.shape,
-                                    scalar,
-                                    field_ptr,
-                                    value,
-                                )?;
+                                write_scalar(field.shape, scalar, field_ptr, value, value_span)?;
                             }
                             let frame = self
                                 .structs
@@ -865,14 +945,14 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
 
                 let scratch = self.scratch.reserve(*inner_layout);
                 if let Some(scalar) = some_scalar {
-                    let value = self.parser.read_scalar_input()?;
+                    let (value, span) = self.parser.read_scalar_token()?;
                     unsafe {
-                        write_scalar_input(
-                            self.parser,
+                        write_scalar(
                             option.t(),
                             *scalar,
                             scratch_ptr_uninit(&scratch),
                             value,
+                            span,
                         )?;
                         (option.vtable.init_some)(self.base, scratch_ptr_mut(&scratch));
                     }
@@ -935,32 +1015,7 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                 loop_id,
             } => loop {
                 if let Some(scalar) = element_scalar {
-                    let value = match self.parser.next_sequence_scalar_or_end()? {
-                        JsonSequenceScalarStep::End => return Ok(Control::Continue),
-                        JsonSequenceScalarStep::Value { value } => value,
-                    };
-
-                    if let Some(slot) = self.direct_list_slot()? {
-                        unsafe {
-                            write_scalar_input(self.parser, list.t(), *scalar, slot, value)?;
-                            self.mark_direct_list_slot_initialized();
-                        }
-                        continue;
-                    }
-
-                    let scratch = self.scratch.reserve(*element_layout);
-                    unsafe {
-                        write_scalar_input(
-                            self.parser,
-                            list.t(),
-                            *scalar,
-                            scratch_ptr_uninit(&scratch),
-                            value,
-                        )?;
-                    }
-                    self.push_list_element(*list, &scratch)?;
-                    self.scratch.release(scratch);
-                    continue;
+                    return self.list_next_scalar(*list, *scalar, *element_layout);
                 }
 
                 if let Some(option_scalar) = element_option_scalar {
@@ -1368,6 +1423,68 @@ fn scratch_ptr_uninit(scratch: &ScratchSlot) -> PtrUninit {
 unsafe fn scratch_ptr_mut(scratch: &ScratchSlot) -> PtrMut {
     unsafe { scratch_ptr_uninit(scratch).assume_init() }
 }
+
+macro_rules! write_unsigned_input {
+    ($name:ident, $ty:ty, $target:literal) => {
+        fn $name<'de, const TRUSTED_UTF8: bool>(
+            parser: &JsonParser<'de, TRUSTED_UTF8>,
+            dst: PtrUninit,
+            value: JsonScalarInput<'de>,
+        ) -> Result<(), DeserializeError> {
+            let value = match value {
+                JsonScalarInput::Raw(token) => {
+                    let span = token.span;
+                    raw_into_unsigned::<$ty, TRUSTED_UTF8>(parser, token, span, $target)?
+                }
+                JsonScalarInput::Materialized(value, span) => {
+                    into_unsigned::<$ty>(value, span, $target)?
+                }
+            };
+            unsafe {
+                dst.put(value);
+            }
+            Ok(())
+        }
+    };
+}
+
+macro_rules! write_signed_input {
+    ($name:ident, $ty:ty, $target:literal) => {
+        fn $name<'de, const TRUSTED_UTF8: bool>(
+            parser: &JsonParser<'de, TRUSTED_UTF8>,
+            dst: PtrUninit,
+            value: JsonScalarInput<'de>,
+        ) -> Result<(), DeserializeError> {
+            let value = match value {
+                JsonScalarInput::Raw(token) => {
+                    let span = token.span;
+                    raw_into_signed::<$ty, TRUSTED_UTF8>(parser, token, span, $target)?
+                }
+                JsonScalarInput::Materialized(value, span) => {
+                    into_signed::<$ty>(value, span, $target)?
+                }
+            };
+            unsafe {
+                dst.put(value);
+            }
+            Ok(())
+        }
+    };
+}
+
+write_unsigned_input!(write_u8_input, u8, "u8");
+write_unsigned_input!(write_u16_input, u16, "u16");
+write_unsigned_input!(write_u32_input, u32, "u32");
+write_unsigned_input!(write_u64_input, u64, "u64");
+write_unsigned_input!(write_u128_input, u128, "u128");
+write_unsigned_input!(write_usize_input, usize, "usize");
+
+write_signed_input!(write_i8_input, i8, "i8");
+write_signed_input!(write_i16_input, i16, "i16");
+write_signed_input!(write_i32_input, i32, "i32");
+write_signed_input!(write_i64_input, i64, "i64");
+write_signed_input!(write_i128_input, i128, "i128");
+write_signed_input!(write_isize_input, isize, "isize");
 
 unsafe fn write_scalar_input<const TRUSTED_UTF8: bool>(
     parser: &JsonParser<'_, TRUSTED_UTF8>,
