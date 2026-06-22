@@ -433,6 +433,37 @@ mod tests {
     }
 
     #[test]
+    fn generated_swift_has_no_trailing_line_whitespace() {
+        let divide = method_descriptor::<(u64, u64), Result<u64, String>>(
+            "WhitespaceSvc",
+            "divide",
+            &["lhs", "rhs"],
+            &[None, None],
+            MethodDescriptorOptions {
+                response_wire_shape: <Result<u64, vox_types::VoxError<String>> as Facet>::SHAPE,
+                doc: None,
+            },
+        );
+        let methods = Box::leak(vec![divide].into_boxed_slice());
+        let service = ServiceDescriptor {
+            service_name: "WhitespaceSvc",
+            methods,
+            doc: None,
+        };
+
+        let generated = generate_service(&service);
+
+        for (line_idx, line) in generated.lines().enumerate() {
+            assert_eq!(
+                line.trim_end_matches([' ', '\t']),
+                line,
+                "generated Swift line {} has trailing whitespace: {line:?}",
+                line_idx + 1
+            );
+        }
+    }
+
+    #[test]
     // r[verify schema.errors.call-level.callee]
     // r[verify schema.errors.call-level.caller]
     // r[verify schema.errors.same-peer-terminal]

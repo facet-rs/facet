@@ -555,7 +555,7 @@ fn enum_access(
         let mut proj = format!("case .{case}({}): ", binds.join(", "));
         for (k, ty) in tys.iter().enumerate() {
             proj.push_str(&format!(
-                "scratch.advanced(by: {}).assumingMemoryBound(to: {}.self).initialize(to: f{k}); ",
+                "scratch.advanced(by: {}).assumingMemoryBound(to: {}.self).initialize(to: f{k});",
                 offset(k),
                 ty
             ));
@@ -565,7 +565,7 @@ fn enum_access(
         let mut des = format!("case {i}: ");
         for (k, ty) in tys.iter().enumerate() {
             des.push_str(&format!(
-                "scratch.advanced(by: {}).assumingMemoryBound(to: {}.self).deinitialize(count: 1); ",
+                "scratch.advanced(by: {}).assumingMemoryBound(to: {}.self).deinitialize(count: 1);",
                 offset(k),
                 ty
             ));
