@@ -78,8 +78,11 @@ impl JsonValueStart<'_> {
     }
 }
 
-pub(crate) enum JsonObjectStep<'de> {
-    Field { key: JsonFieldKey<'de>, span: Span },
+pub(crate) enum JsonObjectKeyStep<'de> {
+    Field {
+        key: JsonFieldKeyInput<'de>,
+        span: Span,
+    },
     End,
 }
 
@@ -114,6 +117,16 @@ impl JsonFieldKey<'_> {
             Self::Decoded(value) => value.as_ref(),
         }
     }
+}
+
+pub(crate) enum JsonFieldKeyInput<'de> {
+    Raw {
+        start: usize,
+        end: usize,
+        has_escapes: bool,
+        span: Span,
+    },
+    Materialized(JsonFieldKey<'de>),
 }
 
 pub(crate) enum JsonScalarToken<'de> {
@@ -406,6 +419,62 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
         } else {
             self.decode_string(start, end, has_escapes, span)
                 .map(JsonFieldKey::Decoded)
+        }
+    }
+
+    #[inline]
+    pub(crate) fn field_key_unescaped_bytes(&self, key: &JsonFieldKeyInput<'de>) -> Option<&[u8]> {
+        match key {
+            JsonFieldKeyInput::Raw {
+                start,
+                end,
+                has_escapes: false,
+                ..
+            } => Some(&self.input[*start..*end]),
+            JsonFieldKeyInput::Raw {
+                has_escapes: true, ..
+            }
+            | JsonFieldKeyInput::Materialized(_) => None,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn field_key_matches(
+        &self,
+        key: &JsonFieldKeyInput<'de>,
+        expected: &str,
+    ) -> Result<bool, ParseError> {
+        match key {
+            JsonFieldKeyInput::Raw {
+                start,
+                end,
+                has_escapes,
+                span,
+            } => {
+                if !has_escapes {
+                    Ok(&self.input[*start..*end] == expected.as_bytes())
+                } else {
+                    self.decode_string(*start, *end, *has_escapes, *span)
+                        .map(|decoded| decoded.as_ref() == expected)
+                }
+            }
+            JsonFieldKeyInput::Materialized(key) => Ok(key.as_str() == expected),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn materialize_field_key(
+        &self,
+        key: JsonFieldKeyInput<'de>,
+    ) -> Result<JsonFieldKey<'de>, ParseError> {
+        match key {
+            JsonFieldKeyInput::Raw {
+                start,
+                end,
+                has_escapes,
+                span,
+            } => self.decode_field_key(start, end, has_escapes, span),
+            JsonFieldKeyInput::Materialized(key) => Ok(key),
         }
     }
 
@@ -874,6 +943,10 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
         }
     }
 
+    pub(crate) fn read_current_scalar_input(&mut self) -> Result<JsonScalarInput<'de>, ParseError> {
+        self.consume_scalar_input()
+    }
+
     pub(crate) fn consume_object_start(&mut self) -> Result<Span, ParseError> {
         match self.consume_value_start("object")? {
             JsonValueStart::Object(span) => Ok(span),
@@ -888,11 +961,11 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
         }
     }
 
-    pub(crate) fn next_object_field_or_end(&mut self) -> Result<JsonObjectStep<'de>, ParseError> {
+    pub(crate) fn next_object_key_or_end(&mut self) -> Result<JsonObjectKeyStep<'de>, ParseError> {
         if let Some(event) = self.state.event_peek.take() {
             self.state.peek_start_offset = None;
             return match event.kind {
-                ParseEventKind::StructEnd => Ok(JsonObjectStep::End),
+                ParseEventKind::StructEnd => Ok(JsonObjectKeyStep::End),
                 ParseEventKind::FieldKey(key) => {
                     let Some(name) = key.name() else {
                         return Err(ParseError::new(
@@ -902,8 +975,8 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                             },
                         ));
                     };
-                    Ok(JsonObjectStep::Field {
-                        key: JsonFieldKey::Decoded(name.clone()),
+                    Ok(JsonObjectKeyStep::Field {
+                        key: JsonFieldKeyInput::Materialized(JsonFieldKey::Decoded(name.clone())),
                         span: event.span,
                     })
                 }
@@ -926,19 +999,26 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                         ScanToken::ObjectEnd => {
                             self.state.stack.pop();
                             self.finish_value_in_parent();
-                            return Ok(JsonObjectStep::End);
+                            return Ok(JsonObjectKeyStep::End);
                         }
                         ScanToken::String {
                             start,
                             end,
                             has_escapes,
                         } => {
-                            let key = self.decode_field_key(start, end, has_escapes, span)?;
                             self.expect_colon_token()?;
                             if let Some(ContextState::Object(state)) = self.state.stack.last_mut() {
                                 *state = ObjectState::Value;
                             }
-                            return Ok(JsonObjectStep::Field { key, span });
+                            return Ok(JsonObjectKeyStep::Field {
+                                key: JsonFieldKeyInput::Raw {
+                                    start,
+                                    end,
+                                    has_escapes,
+                                    span,
+                                },
+                                span,
+                            });
                         }
                         ScanToken::Eof => {
                             return Err(ParseError::new(
@@ -963,7 +1043,7 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                         ScanToken::ObjectEnd => {
                             self.state.stack.pop();
                             self.finish_value_in_parent();
-                            return Ok(JsonObjectStep::End);
+                            return Ok(JsonObjectKeyStep::End);
                         }
                         ScanToken::Eof => {
                             return Err(ParseError::new(

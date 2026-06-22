@@ -66,6 +66,24 @@ struct EscapedFieldName {
     quoted_key: u8,
 }
 
+#[derive(Facet, Debug, PartialEq)]
+struct AliasedName {
+    #[facet(alias = "old_name")]
+    new_name: String,
+    count: u8,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(deny_unknown_fields)]
+struct StrictPoint {
+    x: u8,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct LoosePoint {
+    x: u8,
+}
+
 #[test]
 fn weavy_deserializes_named_struct_scalars() {
     let point: Point = facet_json::from_str_weavy(r#"{"y":20,"x":10}"#).unwrap();
@@ -82,6 +100,34 @@ fn weavy_deserializes_escaped_field_names() {
 
     assert_eq!(from_str, expected);
     assert_eq!(from_slice, expected);
+}
+
+#[test]
+fn weavy_matches_alias_on_raw_field_key() {
+    let got: AliasedName = facet_json::from_str_weavy(r#"{"old_name":"value","count":5}"#).unwrap();
+
+    assert_eq!(
+        got,
+        AliasedName {
+            new_name: "value".to_owned(),
+            count: 5,
+        }
+    );
+}
+
+#[test]
+fn weavy_reports_unknown_field_after_raw_key_matching() {
+    let err = facet_json::from_str_weavy::<StrictPoint>(r#"{"x":1,"extra":2}"#).unwrap_err();
+    assert!(matches!(
+        err.kind,
+        DeserializeErrorKind::UnknownField { ref field, .. } if field == "extra"
+    ));
+}
+
+#[test]
+fn weavy_validates_skipped_unknown_raw_field_key_utf8() {
+    let err = facet_json::from_slice_weavy::<LoosePoint>(b"{\"x\":1,\"\xff\":2}").unwrap_err();
+    assert!(matches!(err.kind, DeserializeErrorKind::InvalidUtf8 { .. }));
 }
 
 #[test]
