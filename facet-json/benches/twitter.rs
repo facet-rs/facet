@@ -240,14 +240,14 @@ struct Size {
 // =============================================================================
 
 #[allow(dead_code)]
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Facet)]
 struct TwitterOwned {
     statuses: Vec<StatusOwned>,
     search_metadata: SearchMetadataOwned,
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Facet)]
 struct SearchMetadataOwned {
     completed_in: f64,
     max_id: u64,
@@ -261,7 +261,7 @@ struct SearchMetadataOwned {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Facet)]
 struct StatusOwned {
     metadata: MetadataOwned,
     created_at: String,
@@ -293,14 +293,14 @@ struct StatusOwned {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Facet)]
 struct MetadataOwned {
     result_type: String,
     iso_language_code: String,
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Facet)]
 struct UserOwned {
     id: u64,
     id_str: String,
@@ -346,7 +346,7 @@ struct UserOwned {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Facet)]
 struct UserEntitiesOwned {
     #[serde(default)]
     url: Option<EntityUrlOwned>,
@@ -354,19 +354,19 @@ struct UserEntitiesOwned {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Facet)]
 struct EntityUrlOwned {
     urls: Vec<UrlOwned>,
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Facet)]
 struct EntityDescriptionOwned {
     urls: Vec<UrlOwned>,
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Facet)]
 struct EntitiesOwned {
     hashtags: Vec<HashtagOwned>,
     symbols: Vec<SymbolOwned>,
@@ -377,14 +377,14 @@ struct EntitiesOwned {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Facet)]
 struct HashtagOwned {
     text: String,
     indices: Vec<u64>,
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Facet)]
 struct SymbolOwned {
     #[allow(dead_code)]
     text: String,
@@ -393,7 +393,7 @@ struct SymbolOwned {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Facet)]
 struct UrlOwned {
     url: String,
     expanded_url: String,
@@ -402,7 +402,7 @@ struct UrlOwned {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Facet)]
 struct UserMentionOwned {
     screen_name: String,
     name: String,
@@ -412,7 +412,7 @@ struct UserMentionOwned {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Facet)]
 struct MediaOwned {
     id: u64,
     id_str: String,
@@ -423,6 +423,7 @@ struct MediaOwned {
     display_url: String,
     expanded_url: String,
     #[serde(rename = "type")]
+    #[facet(rename = "type")]
     media_type: String,
     sizes: Sizes,
     #[serde(default)]
@@ -457,6 +458,17 @@ fn facet_json(bencher: Bencher) {
     let data = json_str();
     bencher.bench(|| {
         let result: Twitter = black_box(facet_json::from_str_borrowed(black_box(data)).unwrap());
+        black_box(result)
+    });
+}
+
+#[divan::bench]
+fn weavy_reused_plan(bencher: Bencher) {
+    let data = json_str();
+    let plan = facet_json::JsonWeavyPlan::<TwitterOwned>::build().unwrap();
+
+    bencher.bench(|| {
+        let result: TwitterOwned = black_box(plan.from_str(black_box(data)).unwrap());
         black_box(result)
     });
 }

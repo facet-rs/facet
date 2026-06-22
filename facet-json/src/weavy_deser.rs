@@ -182,6 +182,7 @@ enum JsonOp<Block> {
         shape: &'static Shape,
         loop_id: Block,
         raw_field_dispatch: bool,
+        tracking: StructTracking,
     },
     ReadOption {
         option: OptionDef,
@@ -475,10 +476,12 @@ impl Lowering {
                     let fields = fields.into_boxed_slice();
                     let loop_id = JsonBlockId::StructLoop(shape);
                     let raw_field_dispatch = should_use_raw_field_dispatch(shape, &fields);
+                    let tracking = StructTracking::for_len(fields.len());
                     let loop_program = vec![JsonOp::StructNext {
                         shape,
                         loop_id,
                         raw_field_dispatch,
+                        tracking,
                     }];
                     self.lowered.blocks.insert(loop_id, loop_program);
                     Ok(vec![JsonOp::ReadStruct {
@@ -535,10 +538,12 @@ fn resolve_json_op(
             shape,
             loop_id,
             raw_field_dispatch,
+            tracking,
         } => JsonOp::StructNext {
             shape,
             loop_id: resolve_block_ref(loop_id, refs)?,
             raw_field_dispatch,
+            tracking,
         },
         JsonOp::ReadOption {
             option,
@@ -699,7 +704,8 @@ fn raw_alloc_error(error: RawAllocError) -> DeserializeError {
 struct JsonInterp<'parser, 'de, 'program, const TRUSTED_UTF8: bool> {
     parser: &'parser mut JsonParser<'de, TRUSTED_UTF8>,
     base: PtrUninit,
-    structs: InlineStack<StructFrame<'program>>,
+    inline_structs: InlineStack<StructFrame<'program, InitializedLedger<Span>>>,
+    large_structs: Option<Box<LargeStructStack<'program>>>,
     lists: InlineStack<ListFrame>,
     scratch: ScratchSession,
     success: bool,
@@ -712,7 +718,8 @@ impl<'parser, 'de, 'program, const TRUSTED_UTF8: bool>
         Self {
             parser,
             base,
-            structs: InlineStack::new(),
+            inline_structs: InlineStack::new(),
+            large_structs: None,
             lists: InlineStack::new(),
             scratch: ScratchSession::new(),
             success: false,
@@ -721,6 +728,212 @@ impl<'parser, 'de, 'program, const TRUSTED_UTF8: bool>
 
     fn finish_success(&mut self) {
         self.success = true;
+    }
+
+    fn large_structs(&self) -> &LargeStructStack<'program> {
+        self.large_structs
+            .as_deref()
+            .expect("large struct stack is present")
+    }
+
+    fn large_structs_mut(&mut self) -> &mut LargeStructStack<'program> {
+        self.large_structs
+            .get_or_insert_with(|| Box::new(LargeStructStack::new()))
+    }
+
+    fn step_struct_next_inline(
+        &mut self,
+        shape: &'static Shape,
+        loop_id: ExecBlock,
+        raw_field_dispatch: bool,
+    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation>, DeserializeError> {
+        loop {
+            match self.parser.next_object_key_or_end()? {
+                JsonObjectKeyStep::End => return Ok(Control::Continue),
+                JsonObjectKeyStep::Field { mut key, span } => {
+                    let key_is_raw =
+                        raw_field_dispatch && matches!(key, JsonFieldKeyInput::Raw { .. });
+                    if !raw_field_dispatch {
+                        key = JsonFieldKeyInput::Materialized(
+                            self.parser.materialize_field_key(key)?,
+                        );
+                    }
+                    let matched = {
+                        let frame = self
+                            .inline_structs
+                            .last()
+                            .expect("inline struct frame is present while matching fields");
+                        frame.match_field_input(&*self.parser, &key)?
+                    };
+
+                    let Some(matched) = matched else {
+                        let key = self.parser.materialize_field_key(key)?;
+                        if shape.has_deny_unknown_fields_attr() {
+                            return Err(vm_error(
+                                Some(span),
+                                DeserializeErrorKind::UnknownField {
+                                    field: key.as_str().to_owned().into(),
+                                    suggestion: None,
+                                },
+                            ));
+                        }
+                        self.parser.skip_value()?;
+                        continue;
+                    };
+                    let MatchedField {
+                        index,
+                        field,
+                        ordered,
+                    } = matched;
+                    let frame = self
+                        .inline_structs
+                        .last()
+                        .expect("inline struct frame is present while decoding fields");
+
+                    if !ordered && let Some(first_span) = StructSeenStore::get(&frame.seen, index) {
+                        return Err(vm_error(
+                            Some(span),
+                            DeserializeErrorKind::DuplicateField {
+                                field: field.name.into(),
+                                first_span: Some(first_span),
+                            },
+                        ));
+                    }
+
+                    if let Some(scalar) = field.scalar {
+                        let field_ptr = unsafe { frame.base.field_uninit(field.offset) };
+                        if key_is_raw {
+                            let value = self.parser.read_current_scalar_input()?;
+                            unsafe {
+                                scalar.write_input(&*self.parser, field.shape, field_ptr, value)?;
+                            }
+                        } else {
+                            let (value, value_span) = self.parser.read_scalar_token()?;
+                            unsafe {
+                                scalar.write(field.shape, field_ptr, value, value_span)?;
+                            }
+                        }
+                        let frame = self
+                            .inline_structs
+                            .last_mut()
+                            .expect("inline struct frame is present while decoding scalar field");
+                        frame.mark_seen(index, span);
+                        continue;
+                    }
+
+                    let old_base = self.base;
+                    self.base = unsafe { frame.base.field_uninit(field.offset) };
+                    return Ok(call_program_or_block_then(
+                        &field.program,
+                        Continuation::FieldDone {
+                            tracking: StructTracking::Inline,
+                            index,
+                            span,
+                            old_base,
+                            loop_id,
+                        },
+                    ));
+                }
+            }
+        }
+    }
+
+    fn step_struct_next_large(
+        &mut self,
+        shape: &'static Shape,
+        loop_id: ExecBlock,
+        raw_field_dispatch: bool,
+        tracking: StructTracking,
+    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation>, DeserializeError> {
+        loop {
+            match self.parser.next_object_key_or_end()? {
+                JsonObjectKeyStep::End => return Ok(Control::Continue),
+                JsonObjectKeyStep::Field { mut key, span } => {
+                    let key_is_raw =
+                        raw_field_dispatch && matches!(key, JsonFieldKeyInput::Raw { .. });
+                    if !raw_field_dispatch {
+                        key = JsonFieldKeyInput::Materialized(
+                            self.parser.materialize_field_key(key)?,
+                        );
+                    }
+                    let matched = {
+                        let frame = self
+                            .large_structs()
+                            .last()
+                            .expect("large struct frame is present while matching fields");
+                        frame.match_field_input(&*self.parser, &key)?
+                    };
+
+                    let Some(matched) = matched else {
+                        let key = self.parser.materialize_field_key(key)?;
+                        if shape.has_deny_unknown_fields_attr() {
+                            return Err(vm_error(
+                                Some(span),
+                                DeserializeErrorKind::UnknownField {
+                                    field: key.as_str().to_owned().into(),
+                                    suggestion: None,
+                                },
+                            ));
+                        }
+                        self.parser.skip_value()?;
+                        continue;
+                    };
+                    let MatchedField {
+                        index,
+                        field,
+                        ordered,
+                    } = matched;
+                    let frame = self
+                        .large_structs()
+                        .last()
+                        .expect("large struct frame is present while decoding fields");
+
+                    if !ordered && let Some(first_span) = frame.seen_span(index) {
+                        return Err(vm_error(
+                            Some(span),
+                            DeserializeErrorKind::DuplicateField {
+                                field: field.name.into(),
+                                first_span: Some(first_span),
+                            },
+                        ));
+                    }
+
+                    if let Some(scalar) = field.scalar {
+                        let field_ptr = unsafe { frame.field_uninit(field.offset) };
+                        if key_is_raw {
+                            let value = self.parser.read_current_scalar_input()?;
+                            unsafe {
+                                scalar.write_input(&*self.parser, field.shape, field_ptr, value)?;
+                            }
+                        } else {
+                            let (value, value_span) = self.parser.read_scalar_token()?;
+                            unsafe {
+                                scalar.write(field.shape, field_ptr, value, value_span)?;
+                            }
+                        }
+                        let frame = self
+                            .large_structs_mut()
+                            .last_mut()
+                            .expect("large struct frame is present while decoding scalar field");
+                        frame.mark(index, span);
+                        continue;
+                    }
+
+                    let old_base = self.base;
+                    self.base = unsafe { frame.field_uninit(field.offset) };
+                    return Ok(call_program_or_block_then(
+                        &field.program,
+                        Continuation::FieldDone {
+                            tracking,
+                            index,
+                            span,
+                            old_base,
+                            loop_id,
+                        },
+                    ));
+                }
+            }
+        }
     }
 
     fn push_list_element(
@@ -942,7 +1155,10 @@ impl<const TRUSTED_UTF8: bool> Drop for JsonInterp<'_, '_, '_, TRUSTED_UTF8> {
             return;
         }
 
-        while self.structs.pop().is_some() {}
+        while self.inline_structs.pop().is_some() {}
+        if let Some(mut large_structs) = self.large_structs.take() {
+            while large_structs.pop().is_some() {}
+        }
 
         while self.lists.pop().is_some() {}
     }
@@ -973,105 +1189,32 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                 loop_id,
             } => {
                 self.parser.consume_object_start()?;
-                self.structs
-                    .push(StructFrame::new(shape, self.base, fields));
-                Ok(Control::CallBlockThen(*loop_id, Continuation::FinishStruct))
+                let tracking = StructTracking::for_len(fields.len());
+                let base = self.base;
+                match tracking {
+                    StructTracking::Inline => self
+                        .inline_structs
+                        .push(StructFrame::new(shape, base, fields)),
+                    StructTracking::Bitset | StructTracking::Heap => self
+                        .large_structs_mut()
+                        .push(LargeStructFrameSlot::new(shape, base, fields)),
+                }
+                Ok(Control::CallBlockThen(
+                    *loop_id,
+                    Continuation::FinishStruct { tracking },
+                ))
             }
             JsonOp::StructNext {
                 shape,
                 loop_id,
                 raw_field_dispatch,
-            } => loop {
-                match self.parser.next_object_key_or_end()? {
-                    JsonObjectKeyStep::End => return Ok(Control::Continue),
-                    JsonObjectKeyStep::Field { mut key, span } => {
-                        let key_is_raw =
-                            *raw_field_dispatch && matches!(key, JsonFieldKeyInput::Raw { .. });
-                        if !*raw_field_dispatch {
-                            key = JsonFieldKeyInput::Materialized(
-                                self.parser.materialize_field_key(key)?,
-                            );
-                        }
-                        let matched = {
-                            let frame = self
-                                .structs
-                                .last()
-                                .expect("struct frame is present while matching fields");
-                            frame.match_field_input(&*self.parser, &key)?
-                        };
-
-                        let Some(matched) = matched else {
-                            let key = self.parser.materialize_field_key(key)?;
-                            if shape.has_deny_unknown_fields_attr() {
-                                return Err(vm_error(
-                                    Some(span),
-                                    DeserializeErrorKind::UnknownField {
-                                        field: key.as_str().to_owned().into(),
-                                        suggestion: None,
-                                    },
-                                ));
-                            }
-                            self.parser.skip_value()?;
-                            continue;
-                        };
-                        let MatchedField {
-                            index,
-                            field,
-                            ordered,
-                        } = matched;
-                        let frame = self
-                            .structs
-                            .last()
-                            .expect("struct frame is present while decoding fields");
-
-                        if !ordered && let Some(first_span) = frame.seen.get(index).copied() {
-                            return Err(vm_error(
-                                Some(span),
-                                DeserializeErrorKind::DuplicateField {
-                                    field: field.name.into(),
-                                    first_span: Some(first_span),
-                                },
-                            ));
-                        }
-
-                        if let Some(scalar) = field.scalar {
-                            let field_ptr = unsafe { frame.base.field_uninit(field.offset) };
-                            if key_is_raw {
-                                let value = self.parser.read_current_scalar_input()?;
-                                unsafe {
-                                    scalar.write_input(
-                                        &*self.parser,
-                                        field.shape,
-                                        field_ptr,
-                                        value,
-                                    )?;
-                                }
-                            } else {
-                                let (value, value_span) = self.parser.read_scalar_token()?;
-                                unsafe {
-                                    scalar.write(field.shape, field_ptr, value, value_span)?;
-                                }
-                            }
-                            let frame = self
-                                .structs
-                                .last_mut()
-                                .expect("struct frame is present while decoding scalar field");
-                            frame.mark_seen(index, span);
-                            continue;
-                        }
-
-                        let old_base = self.base;
-                        self.base = unsafe { frame.base.field_uninit(field.offset) };
-                        return Ok(call_program_or_block_then(
-                            &field.program,
-                            Continuation::FieldDone {
-                                index,
-                                span,
-                                old_base,
-                                loop_id: *loop_id,
-                            },
-                        ));
-                    }
+                tracking,
+            } => match tracking {
+                StructTracking::Inline => {
+                    self.step_struct_next_inline(shape, *loop_id, *raw_field_dispatch)
+                }
+                StructTracking::Bitset | StructTracking::Heap => {
+                    self.step_struct_next_large(shape, *loop_id, *raw_field_dispatch, *tracking)
                 }
             },
             JsonOp::ReadOption {
@@ -1274,27 +1417,52 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
         continuation: Self::Continuation,
     ) -> Result<Control<'program, ExecBlock, ExecOp, Self::Continuation>, Self::Error> {
         match continuation {
-            Continuation::FinishStruct => {
-                let frame = self
-                    .structs
-                    .pop()
-                    .expect("struct frame is present after struct program");
-                unsafe {
-                    frame.fill_missing_fields()?;
+            Continuation::FinishStruct { tracking } => {
+                match tracking {
+                    StructTracking::Inline => {
+                        let frame = self
+                            .inline_structs
+                            .pop()
+                            .expect("inline struct frame is present after struct program");
+                        unsafe {
+                            frame.fill_missing_fields()?;
+                        }
+                    }
+                    StructTracking::Bitset | StructTracking::Heap => {
+                        let frame = self
+                            .large_structs_mut()
+                            .pop()
+                            .expect("large struct frame is present after struct program");
+                        unsafe {
+                            frame.fill_missing_fields()?;
+                        }
+                    }
                 }
                 Ok(Control::Continue)
             }
             Continuation::FieldDone {
+                tracking,
                 index,
                 span,
                 old_base,
                 loop_id,
             } => {
-                let frame = self
-                    .structs
-                    .last_mut()
-                    .expect("struct frame is present after field program");
-                frame.mark_seen(index, span);
+                match tracking {
+                    StructTracking::Inline => {
+                        let frame = self
+                            .inline_structs
+                            .last_mut()
+                            .expect("inline struct frame is present after field program");
+                        frame.mark_seen(index, span);
+                    }
+                    StructTracking::Bitset | StructTracking::Heap => {
+                        let frame = self
+                            .large_structs_mut()
+                            .last_mut()
+                            .expect("large struct frame is present after field program");
+                        frame.mark(index, span);
+                    }
+                }
                 self.base = old_base;
                 Ok(Control::CallBlock(loop_id))
             }
@@ -1369,8 +1537,11 @@ fn call_program_or_block_then<'program>(
 }
 
 enum Continuation {
-    FinishStruct,
+    FinishStruct {
+        tracking: StructTracking,
+    },
     FieldDone {
+        tracking: StructTracking,
         index: usize,
         span: Span,
         old_base: PtrUninit,
@@ -1407,15 +1578,213 @@ struct MatchedField<'program> {
     ordered: bool,
 }
 
-struct StructFrame<'program> {
+struct StructFrame<'program, Seen: StructSeenStore> {
     shape: &'static Shape,
     base: PtrUninit,
     fields: &'program [FieldPlan<ExecBlock>],
-    seen: InitializedLedger<Span>,
+    seen: Seen,
     next_field: usize,
 }
 
-impl<'program> StructFrame<'program> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StructTracking {
+    Inline,
+    Bitset,
+    Heap,
+}
+
+impl StructTracking {
+    fn for_len(len: usize) -> Self {
+        if len <= 8 {
+            Self::Inline
+        } else if len <= u64::BITS as usize {
+            Self::Bitset
+        } else {
+            Self::Heap
+        }
+    }
+}
+
+enum LargeStructFrameSlot<'program> {
+    Bitset(StructFrame<'program, BitsetStructSeen>),
+    Heap(StructFrame<'program, HeapStructSeen>),
+}
+
+struct LargeStructStack<'program> {
+    frames: Vec<LargeStructFrameSlot<'program>>,
+}
+
+impl<'program> LargeStructStack<'program> {
+    fn new() -> Self {
+        Self { frames: Vec::new() }
+    }
+
+    fn push(&mut self, frame: LargeStructFrameSlot<'program>) {
+        self.frames.push(frame);
+    }
+
+    fn pop(&mut self) -> Option<LargeStructFrameSlot<'program>> {
+        self.frames.pop()
+    }
+
+    fn last(&self) -> Option<&LargeStructFrameSlot<'program>> {
+        self.frames.last()
+    }
+
+    fn last_mut(&mut self) -> Option<&mut LargeStructFrameSlot<'program>> {
+        self.frames.last_mut()
+    }
+}
+
+struct BitsetStructSeen {
+    initialized: u64,
+    spans: Vec<Span>,
+}
+
+struct HeapStructSeen(Vec<Option<Span>>);
+
+trait StructSeenStore {
+    fn new(len: usize) -> Self;
+    fn is_initialized(&self, index: usize) -> bool;
+    fn get(&self, index: usize) -> Option<Span>;
+    fn mark(&mut self, index: usize, span: Span);
+}
+
+impl StructSeenStore for InitializedLedger<Span> {
+    #[inline]
+    fn new(len: usize) -> Self {
+        InitializedLedger::new(len)
+    }
+
+    #[inline(always)]
+    fn is_initialized(&self, index: usize) -> bool {
+        InitializedLedger::is_initialized(self, index)
+    }
+
+    #[inline(always)]
+    fn get(&self, index: usize) -> Option<Span> {
+        InitializedLedger::get(self, index).copied()
+    }
+
+    #[inline(always)]
+    fn mark(&mut self, index: usize, span: Span) {
+        InitializedLedger::mark(self, index, span);
+    }
+}
+
+impl StructSeenStore for BitsetStructSeen {
+    #[inline]
+    fn new(len: usize) -> Self {
+        Self {
+            initialized: 0,
+            spans: (0..len).map(|_| Span::default()).collect(),
+        }
+    }
+
+    #[inline(always)]
+    fn is_initialized(&self, index: usize) -> bool {
+        assert!(index < self.spans.len(), "struct field index out of bounds");
+        (self.initialized & struct_seen_bit(index)) != 0
+    }
+
+    #[inline(always)]
+    fn get(&self, index: usize) -> Option<Span> {
+        assert!(index < self.spans.len(), "struct field index out of bounds");
+        ((self.initialized & struct_seen_bit(index)) != 0).then_some(self.spans[index])
+    }
+
+    #[inline(always)]
+    fn mark(&mut self, index: usize, span: Span) {
+        assert!(index < self.spans.len(), "struct field index out of bounds");
+        self.spans[index] = span;
+        self.initialized |= struct_seen_bit(index);
+    }
+}
+
+impl StructSeenStore for HeapStructSeen {
+    #[inline]
+    fn new(len: usize) -> Self {
+        Self((0..len).map(|_| None).collect())
+    }
+
+    #[inline(always)]
+    fn is_initialized(&self, index: usize) -> bool {
+        self.0[index].is_some()
+    }
+
+    #[inline(always)]
+    fn get(&self, index: usize) -> Option<Span> {
+        self.0[index]
+    }
+
+    #[inline(always)]
+    fn mark(&mut self, index: usize, span: Span) {
+        self.0[index] = Some(span);
+    }
+}
+
+impl<'program> LargeStructFrameSlot<'program> {
+    fn new(
+        shape: &'static Shape,
+        base: PtrUninit,
+        fields: &'program [FieldPlan<ExecBlock>],
+    ) -> Self {
+        if fields.len() <= u64::BITS as usize {
+            Self::Bitset(StructFrame::new(shape, base, fields))
+        } else {
+            Self::Heap(StructFrame::new(shape, base, fields))
+        }
+    }
+
+    #[inline(always)]
+    fn match_field_input<'de, const TRUSTED_UTF8: bool>(
+        &self,
+        parser: &JsonParser<'de, TRUSTED_UTF8>,
+        key: &JsonFieldKeyInput<'de>,
+    ) -> Result<Option<MatchedField<'program>>, ParseError> {
+        match self {
+            Self::Bitset(frame) => frame.match_field_input(parser, key),
+            Self::Heap(frame) => frame.match_field_input(parser, key),
+        }
+    }
+
+    #[inline(always)]
+    fn seen_span(&self, index: usize) -> Option<Span> {
+        match self {
+            Self::Bitset(frame) => frame.seen.get(index),
+            Self::Heap(frame) => frame.seen.get(index),
+        }
+    }
+
+    #[inline(always)]
+    unsafe fn field_uninit(&self, offset: usize) -> PtrUninit {
+        match self {
+            Self::Bitset(frame) => unsafe { frame.base.field_uninit(offset) },
+            Self::Heap(frame) => unsafe { frame.base.field_uninit(offset) },
+        }
+    }
+
+    #[inline(always)]
+    fn mark(&mut self, index: usize, span: Span) {
+        match self {
+            Self::Bitset(frame) => frame.mark_seen(index, span),
+            Self::Heap(frame) => frame.mark_seen(index, span),
+        }
+    }
+
+    unsafe fn fill_missing_fields(self) -> Result<(), DeserializeError> {
+        match self {
+            Self::Bitset(frame) => unsafe { frame.fill_missing_fields() },
+            Self::Heap(frame) => unsafe { frame.fill_missing_fields() },
+        }
+    }
+}
+
+fn struct_seen_bit(index: usize) -> u64 {
+    1u64 << index
+}
+
+impl<'program, Seen: StructSeenStore> StructFrame<'program, Seen> {
     fn new(
         shape: &'static Shape,
         base: PtrUninit,
@@ -1425,7 +1794,7 @@ impl<'program> StructFrame<'program> {
             shape,
             base,
             fields,
-            seen: InitializedLedger::new(fields.len()),
+            seen: Seen::new(fields.len()),
             next_field: 0,
         }
     }
@@ -1491,6 +1860,7 @@ impl<'program> StructFrame<'program> {
             })
     }
 
+    #[inline(always)]
     fn mark_seen(&mut self, index: usize, span: Span) {
         self.seen.mark(index, span);
         if index == self.next_field {
@@ -1498,6 +1868,7 @@ impl<'program> StructFrame<'program> {
         }
     }
 
+    #[inline(always)]
     fn advance_next_field(&mut self) {
         while self
             .fields
@@ -1568,17 +1939,19 @@ impl<'program> StructFrame<'program> {
     }
 
     unsafe fn drop_initialized_fields(&self) {
-        for (index, _) in self.seen.iter_initialized_rev() {
-            let field = &self.fields[index];
-            let ptr = unsafe { self.base.field_init(field.offset) };
-            unsafe {
-                let _ = field.shape.call_drop_in_place(ptr);
+        for index in (0..self.fields.len()).rev() {
+            if self.seen.is_initialized(index) {
+                let field = &self.fields[index];
+                let ptr = unsafe { self.base.field_init(field.offset) };
+                unsafe {
+                    let _ = field.shape.call_drop_in_place(ptr);
+                }
             }
         }
     }
 }
 
-impl Drop for StructFrame<'_> {
+impl<Seen: StructSeenStore> Drop for StructFrame<'_, Seen> {
     fn drop(&mut self) {
         unsafe {
             self.drop_initialized_fields();
