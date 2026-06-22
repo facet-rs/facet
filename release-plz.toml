@@ -171,6 +171,11 @@ version_group = "facet"
 changelog_path = "CHANGELOG.md"
 
 [[package]]
+name = "facet-hash"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
 name = "facet-zod"
 version_group = "facet"
 changelog_path = "CHANGELOG.md"
