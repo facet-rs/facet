@@ -254,6 +254,16 @@ enum ContextState {
     Array(ArrayState),
 }
 
+struct OrderedI32ObjectProbeSave {
+    scanner: Scanner,
+    stack_len: usize,
+    stack_top: Option<ContextState>,
+    root_started: bool,
+    root_complete: bool,
+    last_token_start: usize,
+    scanner_pos: usize,
+}
+
 #[derive(Debug, Clone, Copy)]
 enum ObjectState {
     KeyOrEnd,
@@ -1435,6 +1445,112 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                 }
             }
         }
+    }
+
+    #[inline(never)]
+    pub(crate) fn try_consume_ordered_i32_object_fields(
+        &mut self,
+        expected: &[&str],
+        spans: &mut [Span],
+        values: &mut [i32],
+    ) -> Result<bool, ParseError> {
+        debug_assert_eq!(expected.len(), spans.len());
+        debug_assert_eq!(expected.len(), values.len());
+
+        if self.state.event_peek.is_some() {
+            return Ok(false);
+        }
+
+        let save = self.save_ordered_i32_object_probe();
+        let matched = self.try_consume_ordered_i32_object_fields_inner(expected, spans, values)?;
+        if !matched {
+            self.restore_ordered_i32_object_probe(save);
+        }
+        Ok(matched)
+    }
+
+    #[inline(never)]
+    fn save_ordered_i32_object_probe(&self) -> OrderedI32ObjectProbeSave {
+        OrderedI32ObjectProbeSave {
+            scanner: self.scanner.clone(),
+            stack_len: self.state.stack.len(),
+            stack_top: self.state.stack.last().cloned(),
+            root_started: self.state.root_started,
+            root_complete: self.state.root_complete,
+            last_token_start: self.state.last_token_start,
+            scanner_pos: self.state.scanner_pos,
+        }
+    }
+
+    #[cold]
+    fn restore_ordered_i32_object_probe(&mut self, save: OrderedI32ObjectProbeSave) {
+        self.scanner = save.scanner;
+        self.state.stack.truncate(save.stack_len);
+        if let Some(top) = save.stack_top {
+            if let Some(slot) = self.state.stack.last_mut() {
+                *slot = top;
+            } else {
+                self.state.stack.push(top);
+            }
+        }
+        self.state.root_started = save.root_started;
+        self.state.root_complete = save.root_complete;
+        self.state.last_token_start = save.last_token_start;
+        self.state.scanner_pos = save.scanner_pos;
+    }
+
+    #[inline(never)]
+    fn try_consume_ordered_i32_object_fields_inner(
+        &mut self,
+        expected: &[&str],
+        spans: &mut [Span],
+        values: &mut [i32],
+    ) -> Result<bool, ParseError> {
+        for (index, expected) in expected.iter().copied().enumerate() {
+            if index > 0 {
+                if self.determine_action() != NextAction::ObjectComma {
+                    return Ok(false);
+                }
+                if self.consume_punctuation_token(b',')?.is_none() {
+                    return Ok(false);
+                }
+                if let Some(ContextState::Object(state)) = self.state.stack.last_mut() {
+                    *state = ObjectState::KeyOrEnd;
+                } else {
+                    return Ok(false);
+                }
+            }
+
+            if self.determine_action() != NextAction::ObjectKey {
+                return Ok(false);
+            }
+
+            let Some(span) = self.try_consume_exact_string_token(expected)? else {
+                return Ok(false);
+            };
+            self.expect_colon_token()?;
+            if let Some(ContextState::Object(state)) = self.state.stack.last_mut() {
+                *state = ObjectState::Value;
+            } else {
+                return Ok(false);
+            }
+
+            let Some((_, value)) = self.try_consume_i32_number()? else {
+                return Ok(false);
+            };
+            spans[index] = span;
+            values[index] = value;
+        }
+
+        if self.determine_action() != NextAction::ObjectComma {
+            return Ok(false);
+        }
+        if self.consume_punctuation_token(b'}')?.is_none() {
+            return Ok(false);
+        }
+        self.state.stack.pop();
+        self.finish_value_in_parent();
+        Ok(true)
     }
 
     pub(crate) fn consume_null_if_next(&mut self) -> Result<bool, ParseError> {
