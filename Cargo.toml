@@ -68,6 +68,7 @@ members = [
   # utilities
   "facet-path",
   "facet-validate",
+  "facet-hash",
   "facet-cargo-toml",
   "rusqlite-facet",
   "rediff",
@@ -234,6 +235,7 @@ default-members = [
   # utilities
   "facet-path",
   "facet-validate",
+  "facet-hash",
   "facet-cargo-toml",
   "rusqlite-facet",
   "rediff",
@@ -279,6 +281,7 @@ facet-dom = { path = "facet-dom", version = "0.50.0-rc.1" }
 facet-error = { path = "facet-error", version = "0.50.0-rc.1" }
 facet-format = { path = "facet-format", version = "0.50.0-rc.1" }
 facet-format-suite = { path = "facet-format-suite", version = "0.50.0-rc.0" }
+facet-hash = { path = "facet-hash", version = "0.50.0-rc.1" }
 facet-json = { path = "facet-json", version = "0.50.0-rc.1" }
 facet-json-classics = { path = "facet-json-classics", version = "0.50.0-rc.0" }
 facet-msgpack = { path = "facet-msgpack", version = "0.50.0-rc.1" }
@@ -501,6 +504,7 @@ facet-dessert = { path = "facet-dessert" }
 facet-dom = { path = "facet-dom" }
 facet-format = { path = "facet-format" }
 facet-format-suite = { path = "facet-format-suite" }
+facet-hash = { path = "facet-hash" }
 facet-json = { path = "facet-json" }
 facet-json-classics = { path = "facet-json-classics" }
 facet-json-schema = { path = "facet-json-schema" }
