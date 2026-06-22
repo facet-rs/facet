@@ -87,6 +87,18 @@ pub(crate) enum JsonObjectKeyStep<'de> {
     End,
 }
 
+pub(crate) enum JsonObjectOrderedScalarStep<'de> {
+    Matched {
+        span: Span,
+        value: JsonScalarInput<'de>,
+    },
+    Field {
+        key: JsonFieldKeyInput<'de>,
+        span: Span,
+    },
+    End,
+}
+
 pub(crate) enum JsonSequenceScalarStep<'de> {
     Value { value: JsonScalarInput<'de> },
     End,
@@ -1096,6 +1108,118 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
         }
     }
 
+    pub(crate) fn next_ordered_object_scalar_or_key(
+        &mut self,
+        expected: &str,
+    ) -> Result<JsonObjectOrderedScalarStep<'de>, ParseError> {
+        if self.state.event_peek.is_some() {
+            return self.next_object_key_or_end().map(|step| match step {
+                JsonObjectKeyStep::Field { key, span } => {
+                    JsonObjectOrderedScalarStep::Field { key, span }
+                }
+                JsonObjectKeyStep::End => JsonObjectOrderedScalarStep::End,
+            });
+        }
+
+        loop {
+            match self.determine_action() {
+                NextAction::ObjectKey => {
+                    let token = self.consume_spanned_token()?;
+                    let span = token.span;
+                    match token.token {
+                        ScanToken::ObjectEnd => {
+                            self.state.stack.pop();
+                            self.finish_value_in_parent();
+                            return Ok(JsonObjectOrderedScalarStep::End);
+                        }
+                        ScanToken::String {
+                            start,
+                            end,
+                            has_escapes,
+                        } => {
+                            self.expect_colon_token()?;
+                            if let Some(ContextState::Object(state)) = self.state.stack.last_mut() {
+                                *state = ObjectState::Value;
+                            }
+                            if !has_escapes && &self.input[start..end] == expected.as_bytes() {
+                                let value = self.consume_scalar_input()?;
+                                return Ok(JsonObjectOrderedScalarStep::Matched { span, value });
+                            }
+                            return Ok(JsonObjectOrderedScalarStep::Field {
+                                key: JsonFieldKeyInput::Raw {
+                                    start,
+                                    end,
+                                    has_escapes,
+                                    span,
+                                },
+                                span,
+                            });
+                        }
+                        ScanToken::Eof => {
+                            return Err(ParseError::new(
+                                span,
+                                DeserializeErrorKind::UnexpectedEof {
+                                    expected: "field name or '}'",
+                                },
+                            ));
+                        }
+                        _ => return Err(self.unexpected_scan_token(&token, "field name or '}'")),
+                    }
+                }
+                NextAction::ObjectComma => {
+                    if self.consume_punctuation_token(b',')?.is_some() {
+                        if let Some(ContextState::Object(state)) = self.state.stack.last_mut() {
+                            *state = ObjectState::KeyOrEnd;
+                        }
+                        continue;
+                    }
+
+                    if self.consume_punctuation_token(b'}')?.is_some() {
+                        self.state.stack.pop();
+                        self.finish_value_in_parent();
+                        return Ok(JsonObjectOrderedScalarStep::End);
+                    }
+
+                    let token = self.consume_spanned_token()?;
+                    let span = token.span;
+                    match token.token {
+                        ScanToken::Comma => {
+                            if let Some(ContextState::Object(state)) = self.state.stack.last_mut() {
+                                *state = ObjectState::KeyOrEnd;
+                            }
+                        }
+                        ScanToken::ObjectEnd => {
+                            self.state.stack.pop();
+                            self.finish_value_in_parent();
+                            return Ok(JsonObjectOrderedScalarStep::End);
+                        }
+                        ScanToken::Eof => {
+                            return Err(ParseError::new(
+                                span,
+                                DeserializeErrorKind::UnexpectedEof {
+                                    expected: "',' or '}'",
+                                },
+                            ));
+                        }
+                        _ => return Err(self.unexpected_scan_token(&token, "',' or '}'")),
+                    }
+                }
+                NextAction::RootFinished => {
+                    return Err(ParseError::new(
+                        Span::new(self.current_offset(), 0),
+                        DeserializeErrorKind::UnexpectedEof {
+                            expected: "field key or object end",
+                        },
+                    ));
+                }
+                _ => {
+                    let token = self.consume_spanned_token()?;
+                    return Err(self.unexpected_scan_token(&token, "field key or object end"));
+                }
+            }
+        }
+    }
+
     pub(crate) fn consume_null_if_next(&mut self) -> Result<bool, ParseError> {
         if let Some(event) = self.state.event_peek.as_ref() {
             if matches!(event.kind, ParseEventKind::Scalar(ScalarValue::Null)) {
@@ -1159,6 +1283,32 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                 }
                 _ => Ok(false),
             },
+            _ => Ok(false),
+        }
+    }
+
+    pub(crate) fn consume_object_end_if_next(&mut self) -> Result<bool, ParseError> {
+        if let Some(event) = self.state.event_peek.as_ref() {
+            if matches!(event.kind, ParseEventKind::StructEnd) {
+                self.state.event_peek = None;
+                self.state.peek_start_offset = None;
+                return Ok(true);
+            }
+            return Ok(false);
+        }
+
+        match self.determine_action() {
+            NextAction::ObjectKey | NextAction::ObjectComma => {
+                if !self.next_significant_is(b'}')? {
+                    return Ok(false);
+                }
+                let Some(_) = self.consume_punctuation_token(b'}')? else {
+                    return Ok(false);
+                };
+                self.state.stack.pop();
+                self.finish_value_in_parent();
+                Ok(true)
+            }
             _ => Ok(false),
         }
     }
