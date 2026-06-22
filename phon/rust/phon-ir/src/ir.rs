@@ -29,11 +29,16 @@
 use phon_schema::bytes::{Reader, skip_pad};
 use phon_schema::{DecodeError, Primitive, SchemaId, SchemaRef};
 pub use weavy::mem::{
-    BorrowOp, BorrowThunks, ByteValidator, BytesOp, DefaultOp, DefaultThunk,
-    LoweredMemProgramStats, LoweringError, MapThunks, MemProgramStats, OpaqueOp, OpaqueThunks,
-    OptionThunks, PointerThunks, ResultThunks, ScalarRunOp, ScalarSegment, SeqThunks, SetThunks,
-    SkipOp, element_min_wire, group_record_scalars, lower_fixed_array, lower_record_fields,
-    lowered_mem_program_stats, mem_program_stats, owned_sequence_op, set_op,
+    BorrowOp, BorrowThunks, ByteValidator, BytesOp, CanonicalEnumOp, CanonicalEnumVariantOp,
+    CanonicalMapOp, CanonicalMemError, CanonicalMemLowered, CanonicalMemProgram, CanonicalOptionOp,
+    CanonicalPointerOp, CanonicalResultOp, CanonicalSeqOp, CanonicalSetOp, DefaultOp, DefaultThunk,
+    LoweredMemProgramStats, LoweringError, MapThunks, MemIntrinsic, MemProgramStats, OpaqueOp,
+    OpaqueThunks, OptionThunks, PointerThunks, ResultThunks, ScalarRunOp, ScalarSegment, SeqThunks,
+    SetThunks, SkipOp, canonical_mem_intrinsic_counts, canonical_mem_lowered,
+    canonical_mem_lowered_intrinsic_counts, canonical_mem_lowered_stats, canonical_mem_program,
+    canonical_mem_program_stats, element_min_wire, group_record_scalars, lower_fixed_array,
+    lower_record_fields, lowered_mem_program_stats, mem_lowered_from_canonical,
+    mem_program_from_canonical, mem_program_stats, owned_sequence_op, set_op,
 };
 
 /// A lowered decode program: a straight run of [`Op`]s executed start to finish.

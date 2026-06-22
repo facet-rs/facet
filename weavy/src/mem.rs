@@ -7,6 +7,12 @@
 
 pub mod runtime;
 
+use std::collections::BTreeMap;
+
+use crate::ir::{
+    ControlOp, IntrinsicDescriptor, IntrinsicOp, MemoryOp, WeavyLowered, WeavyOp, WeavyProgram,
+};
+
 /// A type-erased "write this field's default in place" operation, supplied by
 /// the front door for a reader-only field that can be filled locally.
 ///
@@ -918,6 +924,669 @@ pub struct OpaqueOp {
     pub thunks: OpaqueThunks,
 }
 
+/// A canonical typed-memory program carrying legacy memory-only intrinsics.
+pub type CanonicalMemProgram<BlockId> = WeavyProgram<BlockId, MemIntrinsic<BlockId>>;
+
+/// A canonical typed-memory lowered program carrying legacy memory-only intrinsics.
+pub type CanonicalMemLowered<BlockId> = WeavyLowered<BlockId, MemIntrinsic<BlockId>>;
+
+/// Canonical payload for an owned sequence intrinsic.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct CanonicalSeqOp<BlockId> {
+    /// Where the sequence handle lives, relative to the base.
+    pub field_offset: usize,
+    /// Canonical program for one element, run at each element slot.
+    pub element: CanonicalMemProgram<BlockId>,
+    /// Bytes between consecutive elements in contiguous storage.
+    pub stride: usize,
+    /// Alignment of the element type.
+    pub elem_align: usize,
+    /// Minimum wire bytes one element occupies.
+    pub min_wire: usize,
+    /// Type-erased operations on the sequence handle.
+    pub thunks: SeqThunks,
+}
+
+/// Canonical payload for an owned set intrinsic.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct CanonicalSetOp<BlockId> {
+    /// Where the set handle lives, relative to the base.
+    pub field_offset: usize,
+    /// Canonical program for one element.
+    pub element: CanonicalMemProgram<BlockId>,
+    /// Element size for decode scratch allocation.
+    pub elem_size: usize,
+    /// Element alignment for decode scratch allocation.
+    pub elem_align: usize,
+    /// Minimum wire bytes one element occupies.
+    pub min_wire: usize,
+    /// Type-erased operations on the set handle.
+    pub thunks: SetThunks,
+}
+
+/// Canonical payload for an option intrinsic.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct CanonicalOptionOp<BlockId> {
+    /// Where the option handle lives, relative to the base.
+    pub field_offset: usize,
+    /// Canonical program for the contained `Some` value.
+    pub some: CanonicalMemProgram<BlockId>,
+    /// The contained value's size.
+    pub inner_size: usize,
+    /// The contained value's alignment.
+    pub inner_align: usize,
+    /// Type-erased presence operations on the option handle.
+    pub thunks: OptionThunks,
+}
+
+/// Canonical payload for an enum intrinsic.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct CanonicalEnumOp<BlockId> {
+    /// Where the in-memory discriminant lives, relative to the base.
+    pub tag_offset: usize,
+    /// The discriminant's width in bytes.
+    pub tag_width: usize,
+    /// Variants with canonical payload programs.
+    pub variants: Vec<CanonicalEnumVariantOp<BlockId>>,
+    /// Writer variant indices with no reader counterpart.
+    pub writer_only: Vec<u32>,
+}
+
+/// One canonical enum variant payload.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct CanonicalEnumVariantOp<BlockId> {
+    /// The `u32` written to / read from the wire to identify this variant.
+    pub wire_index: u32,
+    /// The in-memory discriminant value identifying this variant.
+    pub selector: u64,
+    /// Canonical program for the variant payload fields.
+    pub payload: CanonicalMemProgram<BlockId>,
+}
+
+/// Canonical payload for a map intrinsic.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct CanonicalMapOp<BlockId> {
+    /// Where the map handle lives, relative to the base.
+    pub field_offset: usize,
+    /// Canonical program for one key.
+    pub key: CanonicalMemProgram<BlockId>,
+    /// Canonical program for one value.
+    pub value: CanonicalMemProgram<BlockId>,
+    /// The key type's size.
+    pub key_size: usize,
+    /// The key type's alignment.
+    pub key_align: usize,
+    /// The value type's size.
+    pub value_size: usize,
+    /// The value type's alignment.
+    pub value_align: usize,
+    /// Type-erased operations on the map handle.
+    pub thunks: MapThunks,
+}
+
+/// Canonical payload for a result intrinsic.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct CanonicalResultOp<BlockId> {
+    /// Where the result handle lives, relative to the base.
+    pub field_offset: usize,
+    /// Canonical program for the `Ok` payload.
+    pub ok: CanonicalMemProgram<BlockId>,
+    /// The `Ok` payload's size.
+    pub ok_size: usize,
+    /// The `Ok` payload's alignment.
+    pub ok_align: usize,
+    /// The wire index identifying the `Ok` arm.
+    pub ok_wire_index: u32,
+    /// Canonical program for the `Err` payload.
+    pub err: CanonicalMemProgram<BlockId>,
+    /// The `Err` payload's size.
+    pub err_size: usize,
+    /// The `Err` payload's alignment.
+    pub err_align: usize,
+    /// The wire index identifying the `Err` arm.
+    pub err_wire_index: u32,
+    /// Type-erased operations on the result handle.
+    pub thunks: ResultThunks,
+}
+
+/// Canonical payload for an owning pointer intrinsic.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct CanonicalPointerOp<BlockId> {
+    /// Where the pointer handle lives, relative to the base.
+    pub field_offset: usize,
+    /// Canonical program for the pointee.
+    pub pointee: CanonicalMemProgram<BlockId>,
+    /// The pointee's size for decode scratch allocation.
+    pub pointee_size: usize,
+    /// The pointee's alignment for decode scratch allocation.
+    pub pointee_align: usize,
+    /// Type-erased borrow/construct operations on the owning pointer.
+    pub thunks: PointerThunks,
+}
+
+/// Typed-memory operations that are not canonical scalar/call ops yet.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub enum MemIntrinsic<BlockId> {
+    NativeInt {
+        offset: usize,
+        mem_size: usize,
+        signed: bool,
+    },
+    Sequence(Box<CanonicalSeqOp<BlockId>>),
+    Set(Box<CanonicalSetOp<BlockId>>),
+    Bytes(Box<BytesOp>),
+    Borrow(Box<BorrowOp>),
+    Option(Box<CanonicalOptionOp<BlockId>>),
+    Enum(Box<CanonicalEnumOp<BlockId>>),
+    Map(Box<CanonicalMapOp<BlockId>>),
+    Dynamic {
+        field_offset: usize,
+    },
+    Result(Box<CanonicalResultOp<BlockId>>),
+    Pointer(Box<CanonicalPointerOp<BlockId>>),
+    SkipWire(Box<SkipOp>),
+    Default(Box<DefaultOp>),
+    Opaque(Box<OpaqueOp>),
+}
+
+impl<BlockId> IntrinsicOp for MemIntrinsic<BlockId> {
+    fn descriptor(&self) -> IntrinsicDescriptor {
+        let name = match self {
+            MemIntrinsic::NativeInt { .. } => "native_int",
+            MemIntrinsic::Sequence(_) => "sequence",
+            MemIntrinsic::Set(_) => "set",
+            MemIntrinsic::Bytes(_) => "bytes",
+            MemIntrinsic::Borrow(_) => "borrow",
+            MemIntrinsic::Option(_) => "option",
+            MemIntrinsic::Enum(_) => "enum",
+            MemIntrinsic::Map(_) => "map",
+            MemIntrinsic::Dynamic { .. } => "dynamic",
+            MemIntrinsic::Result(_) => "result",
+            MemIntrinsic::Pointer(_) => "pointer",
+            MemIntrinsic::SkipWire(_) => "skip_wire",
+            MemIntrinsic::Default(_) => "default",
+            MemIntrinsic::Opaque(_) => "opaque",
+        };
+        IntrinsicDescriptor {
+            dialect: "weavy.mem",
+            name,
+        }
+    }
+}
+
+/// Canonical-to-typed-memory conversion failure.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum CanonicalMemError {
+    /// Canonical `return` has no legacy [`MemOp`] equivalent.
+    Return,
+    /// Canonical zeroing is not represented by legacy [`MemOp`] yet.
+    Zero,
+    /// Canonical move is not represented by legacy [`MemOp`] yet.
+    Move,
+    /// Canonical drop is not represented by legacy [`MemOp`] yet.
+    Drop,
+    /// Canonical initialization is not represented by legacy [`MemOp`] yet.
+    Init,
+    /// Canonical aggregate bookkeeping is not represented by legacy [`MemOp`] yet.
+    Aggregate,
+}
+
+impl core::fmt::Display for CanonicalMemError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            CanonicalMemError::Return => write!(f, "canonical return has no MemOp equivalent"),
+            CanonicalMemError::Zero => write!(f, "canonical zero has no MemOp equivalent"),
+            CanonicalMemError::Move => write!(f, "canonical move has no MemOp equivalent"),
+            CanonicalMemError::Drop => write!(f, "canonical drop has no MemOp equivalent"),
+            CanonicalMemError::Init => write!(f, "canonical init has no MemOp equivalent"),
+            CanonicalMemError::Aggregate => {
+                write!(f, "canonical aggregate has no MemOp equivalent")
+            }
+        }
+    }
+}
+
+impl std::error::Error for CanonicalMemError {}
+
+/// Convert a legacy typed-memory program into canonical Weavy IR.
+#[must_use]
+pub fn canonical_mem_program<BlockId>(
+    program: MemProgram<BlockId>,
+) -> CanonicalMemProgram<BlockId> {
+    program.into_iter().map(canonical_mem_op).collect()
+}
+
+/// Convert a legacy typed-memory lowered program into canonical Weavy IR.
+#[must_use]
+pub fn canonical_mem_lowered<BlockId>(
+    lowered: crate::Lowered<BlockId, MemOp<BlockId>>,
+) -> CanonicalMemLowered<BlockId>
+where
+    BlockId: Ord,
+{
+    let program = canonical_mem_program(lowered.program);
+    let blocks = lowered
+        .blocks
+        .into_iter()
+        .map(|(id, block)| (id, canonical_mem_program(block)))
+        .collect();
+    crate::Lowered { program, blocks }
+}
+
+/// Convert a canonical typed-memory program back into legacy [`MemOp`] form.
+///
+/// This is the bridge current consumers use while interpreters and native
+/// backends still execute the legacy memory vocabulary.
+pub fn mem_program_from_canonical<BlockId>(
+    program: CanonicalMemProgram<BlockId>,
+) -> Result<MemProgram<BlockId>, CanonicalMemError> {
+    program.into_iter().map(mem_op_from_canonical).collect()
+}
+
+/// Convert a canonical typed-memory lowered program back into legacy [`MemOp`] form.
+pub fn mem_lowered_from_canonical<BlockId>(
+    lowered: CanonicalMemLowered<BlockId>,
+) -> Result<crate::Lowered<BlockId, MemOp<BlockId>>, CanonicalMemError>
+where
+    BlockId: Ord,
+{
+    let program = mem_program_from_canonical(lowered.program)?;
+    let blocks = lowered
+        .blocks
+        .into_iter()
+        .map(|(id, block)| Ok((id, mem_program_from_canonical(block)?)))
+        .collect::<Result<_, CanonicalMemError>>()?;
+    Ok(crate::Lowered { program, blocks })
+}
+
+/// Count a canonical typed-memory program, recursively entering mem intrinsics.
+#[must_use]
+pub fn canonical_mem_program_stats<BlockId>(
+    program: &[WeavyOp<BlockId, MemIntrinsic<BlockId>>],
+) -> crate::ir::ProgramStats {
+    let mut stats = crate::ir::program_stats(program);
+    for op in program {
+        if let WeavyOp::Intrinsic(intrinsic) = op {
+            add_canonical_mem_intrinsic_stats(intrinsic, &mut stats);
+        }
+    }
+    stats
+}
+
+/// Count a canonical typed-memory lowered program, recursively entering mem intrinsics.
+#[must_use]
+pub fn canonical_mem_lowered_stats<BlockId>(
+    lowered: &CanonicalMemLowered<BlockId>,
+) -> crate::ir::LoweredProgramStats
+where
+    BlockId: Ord,
+{
+    let root = canonical_mem_program_stats(&lowered.program);
+    let mut blocks = crate::ir::ProgramStats::default();
+    for block in lowered.blocks.values() {
+        blocks.accumulate(canonical_mem_program_stats(block));
+    }
+    let mut total = root;
+    total.accumulate(blocks);
+
+    crate::ir::LoweredProgramStats {
+        root,
+        blocks,
+        total,
+        block_count: lowered.blocks.len(),
+    }
+}
+
+/// Count mem intrinsic descriptors in a canonical program, including nested children.
+#[must_use]
+pub fn canonical_mem_intrinsic_counts<BlockId>(
+    program: &[WeavyOp<BlockId, MemIntrinsic<BlockId>>],
+) -> BTreeMap<IntrinsicDescriptor, usize> {
+    let mut counts = crate::ir::intrinsic_counts(program);
+    for op in program {
+        if let WeavyOp::Intrinsic(intrinsic) = op {
+            add_canonical_mem_intrinsic_counts(intrinsic, &mut counts);
+        }
+    }
+    counts
+}
+
+/// Count mem intrinsic descriptors in a canonical lowered program.
+#[must_use]
+pub fn canonical_mem_lowered_intrinsic_counts<BlockId>(
+    lowered: &CanonicalMemLowered<BlockId>,
+) -> BTreeMap<IntrinsicDescriptor, usize>
+where
+    BlockId: Ord,
+{
+    let mut counts = canonical_mem_intrinsic_counts(&lowered.program);
+    for block in lowered.blocks.values() {
+        for (descriptor, count) in canonical_mem_intrinsic_counts(block) {
+            *counts.entry(descriptor).or_default() += count;
+        }
+    }
+    counts
+}
+
+fn canonical_mem_op<BlockId>(op: MemOp<BlockId>) -> WeavyOp<BlockId, MemIntrinsic<BlockId>> {
+    match op {
+        MemOp::Scalar {
+            offset,
+            size,
+            align,
+        } => WeavyOp::Memory(MemoryOp::ScalarCopy {
+            offset,
+            size,
+            align,
+        }),
+        MemOp::ScalarRun(run) => WeavyOp::Memory(MemoryOp::ScalarRun {
+            segments: run.segments,
+        }),
+        MemOp::CallBlock { schema, offset } => WeavyOp::Control(ControlOp::CallBlock {
+            block: schema,
+            base_offset: offset,
+        }),
+        MemOp::NativeInt {
+            offset,
+            mem_size,
+            signed,
+        } => WeavyOp::Intrinsic(MemIntrinsic::NativeInt {
+            offset,
+            mem_size,
+            signed,
+        }),
+        MemOp::Sequence(op) => {
+            WeavyOp::Intrinsic(MemIntrinsic::Sequence(Box::new(CanonicalSeqOp {
+                field_offset: op.field_offset,
+                element: canonical_mem_program(op.element),
+                stride: op.stride,
+                elem_align: op.elem_align,
+                min_wire: op.min_wire,
+                thunks: op.thunks,
+            })))
+        }
+        MemOp::Set(op) => WeavyOp::Intrinsic(MemIntrinsic::Set(Box::new(CanonicalSetOp {
+            field_offset: op.field_offset,
+            element: canonical_mem_program(op.element),
+            elem_size: op.elem_size,
+            elem_align: op.elem_align,
+            min_wire: op.min_wire,
+            thunks: op.thunks,
+        }))),
+        MemOp::Bytes(op) => WeavyOp::Intrinsic(MemIntrinsic::Bytes(op)),
+        MemOp::Borrow(op) => WeavyOp::Intrinsic(MemIntrinsic::Borrow(op)),
+        MemOp::Option(op) => {
+            WeavyOp::Intrinsic(MemIntrinsic::Option(Box::new(CanonicalOptionOp {
+                field_offset: op.field_offset,
+                some: canonical_mem_program(op.some),
+                inner_size: op.inner_size,
+                inner_align: op.inner_align,
+                thunks: op.thunks,
+            })))
+        }
+        MemOp::Enum(op) => WeavyOp::Intrinsic(MemIntrinsic::Enum(Box::new(CanonicalEnumOp {
+            tag_offset: op.tag_offset,
+            tag_width: op.tag_width,
+            variants: op
+                .variants
+                .into_iter()
+                .map(|variant| CanonicalEnumVariantOp {
+                    wire_index: variant.wire_index,
+                    selector: variant.selector,
+                    payload: canonical_mem_program(variant.payload),
+                })
+                .collect(),
+            writer_only: op.writer_only,
+        }))),
+        MemOp::Map(op) => WeavyOp::Intrinsic(MemIntrinsic::Map(Box::new(CanonicalMapOp {
+            field_offset: op.field_offset,
+            key: canonical_mem_program(op.key),
+            value: canonical_mem_program(op.value),
+            key_size: op.key_size,
+            key_align: op.key_align,
+            value_size: op.value_size,
+            value_align: op.value_align,
+            thunks: op.thunks,
+        }))),
+        MemOp::Dynamic { field_offset } => {
+            WeavyOp::Intrinsic(MemIntrinsic::Dynamic { field_offset })
+        }
+        MemOp::Result(op) => {
+            WeavyOp::Intrinsic(MemIntrinsic::Result(Box::new(CanonicalResultOp {
+                field_offset: op.field_offset,
+                ok: canonical_mem_program(op.ok),
+                ok_size: op.ok_size,
+                ok_align: op.ok_align,
+                ok_wire_index: op.ok_wire_index,
+                err: canonical_mem_program(op.err),
+                err_size: op.err_size,
+                err_align: op.err_align,
+                err_wire_index: op.err_wire_index,
+                thunks: op.thunks,
+            })))
+        }
+        MemOp::Pointer(op) => {
+            WeavyOp::Intrinsic(MemIntrinsic::Pointer(Box::new(CanonicalPointerOp {
+                field_offset: op.field_offset,
+                pointee: canonical_mem_program(op.pointee),
+                pointee_size: op.pointee_size,
+                pointee_align: op.pointee_align,
+                thunks: op.thunks,
+            })))
+        }
+        MemOp::SkipWire(op) => WeavyOp::Intrinsic(MemIntrinsic::SkipWire(op)),
+        MemOp::Default(op) => WeavyOp::Intrinsic(MemIntrinsic::Default(op)),
+        MemOp::Opaque(op) => WeavyOp::Intrinsic(MemIntrinsic::Opaque(op)),
+    }
+}
+
+fn mem_op_from_canonical<BlockId>(
+    op: WeavyOp<BlockId, MemIntrinsic<BlockId>>,
+) -> Result<MemOp<BlockId>, CanonicalMemError> {
+    Ok(match op {
+        WeavyOp::Control(ControlOp::CallBlock { block, base_offset }) => MemOp::CallBlock {
+            schema: block,
+            offset: base_offset,
+        },
+        WeavyOp::Control(ControlOp::Return) => return Err(CanonicalMemError::Return),
+        WeavyOp::Memory(MemoryOp::ScalarCopy {
+            offset,
+            size,
+            align,
+        }) => MemOp::Scalar {
+            offset,
+            size,
+            align,
+        },
+        WeavyOp::Memory(MemoryOp::ScalarRun { segments }) => {
+            MemOp::ScalarRun(Box::new(ScalarRunOp { segments }))
+        }
+        WeavyOp::Memory(MemoryOp::Zero { .. }) => return Err(CanonicalMemError::Zero),
+        WeavyOp::Memory(MemoryOp::Move { .. }) => return Err(CanonicalMemError::Move),
+        WeavyOp::Memory(MemoryOp::Drop { .. }) => return Err(CanonicalMemError::Drop),
+        WeavyOp::Init(_) => return Err(CanonicalMemError::Init),
+        WeavyOp::Aggregate(_) => return Err(CanonicalMemError::Aggregate),
+        WeavyOp::Intrinsic(intrinsic) => return mem_op_from_intrinsic(intrinsic),
+    })
+}
+
+fn mem_op_from_intrinsic<BlockId>(
+    intrinsic: MemIntrinsic<BlockId>,
+) -> Result<MemOp<BlockId>, CanonicalMemError> {
+    Ok(match intrinsic {
+        MemIntrinsic::NativeInt {
+            offset,
+            mem_size,
+            signed,
+        } => MemOp::NativeInt {
+            offset,
+            mem_size,
+            signed,
+        },
+        MemIntrinsic::Sequence(op) => MemOp::Sequence(Box::new(SeqOp {
+            field_offset: op.field_offset,
+            element: mem_program_from_canonical(op.element)?,
+            stride: op.stride,
+            elem_align: op.elem_align,
+            min_wire: op.min_wire,
+            thunks: op.thunks,
+        })),
+        MemIntrinsic::Set(op) => MemOp::Set(Box::new(SetOp {
+            field_offset: op.field_offset,
+            element: mem_program_from_canonical(op.element)?,
+            elem_size: op.elem_size,
+            elem_align: op.elem_align,
+            min_wire: op.min_wire,
+            thunks: op.thunks,
+        })),
+        MemIntrinsic::Bytes(op) => MemOp::Bytes(op),
+        MemIntrinsic::Borrow(op) => MemOp::Borrow(op),
+        MemIntrinsic::Option(op) => MemOp::Option(Box::new(OptionOp {
+            field_offset: op.field_offset,
+            some: mem_program_from_canonical(op.some)?,
+            inner_size: op.inner_size,
+            inner_align: op.inner_align,
+            thunks: op.thunks,
+        })),
+        MemIntrinsic::Enum(op) => MemOp::Enum(Box::new(EnumOp {
+            tag_offset: op.tag_offset,
+            tag_width: op.tag_width,
+            variants: op
+                .variants
+                .into_iter()
+                .map(|variant| {
+                    Ok(EnumVariantOp {
+                        wire_index: variant.wire_index,
+                        selector: variant.selector,
+                        payload: mem_program_from_canonical(variant.payload)?,
+                    })
+                })
+                .collect::<Result<_, CanonicalMemError>>()?,
+            writer_only: op.writer_only,
+        })),
+        MemIntrinsic::Map(op) => MemOp::Map(Box::new(MapOp {
+            field_offset: op.field_offset,
+            key: mem_program_from_canonical(op.key)?,
+            value: mem_program_from_canonical(op.value)?,
+            key_size: op.key_size,
+            key_align: op.key_align,
+            value_size: op.value_size,
+            value_align: op.value_align,
+            thunks: op.thunks,
+        })),
+        MemIntrinsic::Dynamic { field_offset } => MemOp::Dynamic { field_offset },
+        MemIntrinsic::Result(op) => MemOp::Result(Box::new(ResultOp {
+            field_offset: op.field_offset,
+            ok: mem_program_from_canonical(op.ok)?,
+            ok_size: op.ok_size,
+            ok_align: op.ok_align,
+            ok_wire_index: op.ok_wire_index,
+            err: mem_program_from_canonical(op.err)?,
+            err_size: op.err_size,
+            err_align: op.err_align,
+            err_wire_index: op.err_wire_index,
+            thunks: op.thunks,
+        })),
+        MemIntrinsic::Pointer(op) => MemOp::Pointer(Box::new(PointerOp {
+            field_offset: op.field_offset,
+            pointee: mem_program_from_canonical(op.pointee)?,
+            pointee_size: op.pointee_size,
+            pointee_align: op.pointee_align,
+            thunks: op.thunks,
+        })),
+        MemIntrinsic::SkipWire(op) => MemOp::SkipWire(op),
+        MemIntrinsic::Default(op) => MemOp::Default(op),
+        MemIntrinsic::Opaque(op) => MemOp::Opaque(op),
+    })
+}
+
+fn add_canonical_mem_intrinsic_stats<BlockId>(
+    intrinsic: &MemIntrinsic<BlockId>,
+    stats: &mut crate::ir::ProgramStats,
+) {
+    match intrinsic {
+        MemIntrinsic::Sequence(op) => stats.accumulate(canonical_mem_program_stats(&op.element)),
+        MemIntrinsic::Set(op) => stats.accumulate(canonical_mem_program_stats(&op.element)),
+        MemIntrinsic::Option(op) => stats.accumulate(canonical_mem_program_stats(&op.some)),
+        MemIntrinsic::Enum(op) => {
+            for variant in &op.variants {
+                stats.accumulate(canonical_mem_program_stats(&variant.payload));
+            }
+        }
+        MemIntrinsic::Map(op) => {
+            stats.accumulate(canonical_mem_program_stats(&op.key));
+            stats.accumulate(canonical_mem_program_stats(&op.value));
+        }
+        MemIntrinsic::Result(op) => {
+            stats.accumulate(canonical_mem_program_stats(&op.ok));
+            stats.accumulate(canonical_mem_program_stats(&op.err));
+        }
+        MemIntrinsic::Pointer(op) => stats.accumulate(canonical_mem_program_stats(&op.pointee)),
+        MemIntrinsic::NativeInt { .. }
+        | MemIntrinsic::Bytes(_)
+        | MemIntrinsic::Borrow(_)
+        | MemIntrinsic::Dynamic { .. }
+        | MemIntrinsic::SkipWire(_)
+        | MemIntrinsic::Default(_)
+        | MemIntrinsic::Opaque(_) => {}
+    }
+}
+
+fn add_canonical_mem_intrinsic_counts<BlockId>(
+    intrinsic: &MemIntrinsic<BlockId>,
+    counts: &mut BTreeMap<IntrinsicDescriptor, usize>,
+) {
+    match intrinsic {
+        MemIntrinsic::Sequence(op) => {
+            add_canonical_mem_program_intrinsic_counts(&op.element, counts)
+        }
+        MemIntrinsic::Set(op) => add_canonical_mem_program_intrinsic_counts(&op.element, counts),
+        MemIntrinsic::Option(op) => add_canonical_mem_program_intrinsic_counts(&op.some, counts),
+        MemIntrinsic::Enum(op) => {
+            for variant in &op.variants {
+                add_canonical_mem_program_intrinsic_counts(&variant.payload, counts);
+            }
+        }
+        MemIntrinsic::Map(op) => {
+            add_canonical_mem_program_intrinsic_counts(&op.key, counts);
+            add_canonical_mem_program_intrinsic_counts(&op.value, counts);
+        }
+        MemIntrinsic::Result(op) => {
+            add_canonical_mem_program_intrinsic_counts(&op.ok, counts);
+            add_canonical_mem_program_intrinsic_counts(&op.err, counts);
+        }
+        MemIntrinsic::Pointer(op) => {
+            add_canonical_mem_program_intrinsic_counts(&op.pointee, counts)
+        }
+        MemIntrinsic::NativeInt { .. }
+        | MemIntrinsic::Bytes(_)
+        | MemIntrinsic::Borrow(_)
+        | MemIntrinsic::Dynamic { .. }
+        | MemIntrinsic::SkipWire(_)
+        | MemIntrinsic::Default(_)
+        | MemIntrinsic::Opaque(_) => {}
+    }
+}
+
+fn add_canonical_mem_program_intrinsic_counts<BlockId>(
+    program: &[WeavyOp<BlockId, MemIntrinsic<BlockId>>],
+    counts: &mut BTreeMap<IntrinsicDescriptor, usize>,
+) {
+    for (descriptor, count) in canonical_mem_intrinsic_counts(program) {
+        *counts.entry(descriptor).or_default() += count;
+    }
+}
+
 /// Errors from shape-only lowering helpers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LoweringError {
@@ -1428,6 +2097,28 @@ pub fn fuse<BlockId>(program: MemProgram<BlockId>) -> MemProgram<BlockId> {
 mod tests {
     use super::*;
 
+    unsafe extern "C" fn option_is_some(_ctx: *const (), _option: *const u8) -> bool {
+        false
+    }
+
+    unsafe extern "C" fn option_get_value(_ctx: *const (), _option: *const u8) -> *const u8 {
+        core::ptr::null()
+    }
+
+    unsafe extern "C" fn option_init_some(_ctx: *const (), _option: *mut u8, _value: *mut u8) {}
+
+    unsafe extern "C" fn option_init_none(_ctx: *const (), _option: *mut u8) {}
+
+    fn option_thunks() -> OptionThunks {
+        OptionThunks {
+            ctx: core::ptr::null(),
+            is_some: option_is_some,
+            get_value: option_get_value,
+            init_some: option_init_some,
+            init_none: option_init_none,
+        }
+    }
+
     fn field(offset: usize, size: usize) -> FieldAccess<()> {
         FieldAccess {
             offset,
@@ -1541,6 +2232,155 @@ mod tests {
         assert_eq!(lowered_stats.blocks.skip_wire_count, 1);
         assert_eq!(lowered_stats.total.op_count, 8);
         assert_eq!(lowered_stats.total.scalar_op_count, 2);
+    }
+
+    #[test]
+    fn canonical_mem_program_promotes_scalars_runs_and_block_calls() {
+        let program = vec![
+            MemOp::<u8>::Scalar {
+                offset: 0,
+                size: 4,
+                align: 4,
+            },
+            MemOp::ScalarRun(Box::new(ScalarRunOp {
+                segments: vec![
+                    ScalarSegment {
+                        offset: 8,
+                        size: 2,
+                        align: 2,
+                    },
+                    ScalarSegment {
+                        offset: 12,
+                        size: 4,
+                        align: 4,
+                    },
+                ],
+            })),
+            MemOp::NativeInt {
+                offset: 16,
+                mem_size: 8,
+                signed: true,
+            },
+            MemOp::CallBlock {
+                schema: 9,
+                offset: 24,
+            },
+        ];
+
+        let canonical = canonical_mem_program(program);
+        let stats = crate::ir::program_stats(&canonical);
+        assert_eq!(stats.op_count, 4);
+        assert_eq!(stats.memory_op_count, 2);
+        assert_eq!(stats.scalar_copy_count, 1);
+        assert_eq!(stats.scalar_run_count, 1);
+        assert_eq!(stats.scalar_run_segment_count, 2);
+        assert_eq!(stats.control_op_count, 1);
+        assert_eq!(stats.block_call_count, 1);
+        assert_eq!(stats.intrinsic_op_count, 1);
+
+        let counts = crate::ir::intrinsic_counts(&canonical);
+        assert_eq!(
+            counts.get(&crate::ir::IntrinsicDescriptor {
+                dialect: "weavy.mem",
+                name: "native_int",
+            }),
+            Some(&1)
+        );
+
+        let roundtripped = mem_program_from_canonical(canonical).unwrap();
+        match roundtripped.as_slice() {
+            [
+                MemOp::Scalar {
+                    offset,
+                    size,
+                    align,
+                },
+                MemOp::ScalarRun(run),
+                MemOp::NativeInt {
+                    offset: native_offset,
+                    mem_size,
+                    signed,
+                },
+                MemOp::CallBlock {
+                    schema,
+                    offset: block_offset,
+                },
+            ] => {
+                assert_eq!((*offset, *size, *align), (0, 4, 4));
+                assert_eq!(run.segments.len(), 2);
+                assert_eq!((*native_offset, *mem_size, *signed), (16, 8, true));
+                assert_eq!((*schema, *block_offset), (9, 24));
+            }
+            other => panic!("unexpected roundtrip shape: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn canonical_mem_program_rejects_non_legacy_ops() {
+        let program: CanonicalMemProgram<()> =
+            vec![crate::ir::WeavyOp::Memory(crate::ir::MemoryOp::Zero {
+                offset: 0,
+                size: 8,
+            })];
+        let err = mem_program_from_canonical(program).unwrap_err();
+
+        assert_eq!(err, CanonicalMemError::Zero);
+    }
+
+    #[test]
+    fn canonical_mem_stats_enter_nested_intrinsic_programs() {
+        let program = vec![MemOp::<u8>::Option(Box::new(OptionOp {
+            field_offset: 0,
+            some: vec![
+                MemOp::Scalar {
+                    offset: 4,
+                    size: 4,
+                    align: 4,
+                },
+                MemOp::NativeInt {
+                    offset: 8,
+                    mem_size: 8,
+                    signed: false,
+                },
+            ],
+            inner_size: 16,
+            inner_align: 8,
+            thunks: option_thunks(),
+        }))];
+
+        let canonical = canonical_mem_program(program);
+
+        let shallow = crate::ir::program_stats(&canonical);
+        assert_eq!(shallow.op_count, 1);
+        assert_eq!(shallow.intrinsic_op_count, 1);
+
+        let recursive = canonical_mem_program_stats(&canonical);
+        assert_eq!(recursive.op_count, 3);
+        assert_eq!(recursive.memory_op_count, 1);
+        assert_eq!(recursive.scalar_copy_count, 1);
+        assert_eq!(recursive.intrinsic_op_count, 2);
+
+        let counts = canonical_mem_intrinsic_counts(&canonical);
+        assert_eq!(
+            counts.get(&crate::ir::IntrinsicDescriptor {
+                dialect: "weavy.mem",
+                name: "option",
+            }),
+            Some(&1)
+        );
+        assert_eq!(
+            counts.get(&crate::ir::IntrinsicDescriptor {
+                dialect: "weavy.mem",
+                name: "native_int",
+            }),
+            Some(&1)
+        );
+
+        let roundtripped = mem_program_from_canonical(canonical).unwrap();
+        let stats = mem_program_stats(&roundtripped);
+        assert_eq!(stats.option_count, 1);
+        assert_eq!(stats.scalar_op_count, 1);
+        assert_eq!(stats.native_int_count, 1);
     }
 
     #[test]

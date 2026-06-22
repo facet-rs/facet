@@ -28,9 +28,10 @@ use std::convert::Infallible;
 
 use phon_ir::ir::{
     BorrowOp, BytesOp, DefaultOp, EnumOp, EnumVariantOp, Lowered, LoweringError, MapOp, MemOp,
-    MemProgram, OpaqueOp, OptionOp, PointerOp, ResultOp, SetOp, SkipOp, fuse, group_record_scalars,
-    lower_fixed_array as lower_fixed_array_elements, lower_record_fields, owned_sequence_op,
-    set_op,
+    MemProgram, OpaqueOp, OptionOp, PointerOp, ResultOp, SetOp, SkipOp, canonical_mem_lowered,
+    canonical_mem_program, fuse, group_record_scalars,
+    lower_fixed_array as lower_fixed_array_elements, lower_record_fields,
+    mem_lowered_from_canonical, mem_program_from_canonical, owned_sequence_op, set_op,
 };
 use phon_ir::{
     Access, Construct, Descriptor, EnumAccess, MapStorage, Presence, RecordAccess, ResultAccess,
@@ -99,7 +100,7 @@ pub fn lower(descriptor: &Descriptor, reg: &Registry) -> Result<MemProgram> {
     lower_node(descriptor, reg, 0, &mut out)?;
     // Coalesce contiguous scalar runs into single copies (e.g. a flat struct
     // whose wire and memory layouts match becomes one memcpy).
-    Ok(fuse(out))
+    Ok(mem_program_through_canonical(fuse(out)))
 }
 
 /// Lower a descriptor that may be recursive: the root program plus a block program per
@@ -123,10 +124,20 @@ pub fn lower_typed(
         lower_node(body, reg, 0, &mut ops)?;
         blocks.insert(*id, fuse(ops));
     }
-    Ok(Lowered {
+    Ok(lowered_through_canonical(Lowered {
         program: fuse(root),
         blocks,
-    })
+    }))
+}
+
+fn lowered_through_canonical(lowered: Lowered) -> Lowered {
+    mem_lowered_from_canonical(canonical_mem_lowered(lowered))
+        .expect("generated typed MemOp must round-trip through canonical Weavy IR")
+}
+
+fn mem_program_through_canonical(program: MemProgram) -> MemProgram {
+    mem_program_from_canonical(canonical_mem_program(program))
+        .expect("generated typed MemOp must round-trip through canonical Weavy IR")
 }
 
 // r[impl ir.inlining]
@@ -441,10 +452,10 @@ pub fn lower_decode(
         lower_decode_node(&SchemaRef::concrete(*id), body, reg, 0, &mut ops)?;
         blocks.insert(*id, fuse(ops));
     }
-    Ok(Lowered {
+    Ok(lowered_through_canonical(Lowered {
         program: fuse(out),
         blocks,
-    })
+    }))
 }
 
 /// Append the reader-memory ops for one (writer schema ⋈ reader descriptor) node,
@@ -2813,6 +2824,29 @@ mod tests {
         assert_eq!(decode_stats.step_count, 1);
         assert_eq!(decode_stats.max_frame_depth, 1);
         assert_eq!(unsafe { slot.assume_init() }, value);
+    }
+
+    #[test]
+    fn typed_lowering_roundtrips_through_canonical_weavy_ir() {
+        let schema = SchemaId(1);
+        let reg = Registry::new([padded_scalars_schema(schema)]);
+        let desc = padded_scalars_descriptor(schema);
+        let no_blocks = HashMap::new();
+        let lowered = lower_typed(&desc, &no_blocks, &reg).unwrap();
+
+        let canonical = canonical_mem_lowered(lowered.clone());
+        let canonical_stats = phon_ir::ir::canonical_mem_lowered_stats(&canonical);
+        assert_eq!(canonical_stats.total.op_count, 1);
+        assert_eq!(canonical_stats.total.memory_op_count, 1);
+        assert_eq!(canonical_stats.total.scalar_run_count, 1);
+        assert_eq!(canonical_stats.total.scalar_run_segment_count, 2);
+        assert_eq!(canonical_stats.total.intrinsic_op_count, 0);
+
+        let roundtripped = mem_lowered_from_canonical(canonical).unwrap();
+        assert_eq!(
+            phon_ir::ir::lowered_mem_program_stats(&roundtripped),
+            phon_ir::ir::lowered_mem_program_stats(&lowered)
+        );
     }
 
     #[test]
