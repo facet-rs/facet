@@ -127,7 +127,7 @@ pub enum JsonErrorKind {
     InvalidUtf8,
     /// Solver error (for flattened types)
     Solver(String),
-    /// I/O error (for streaming deserialization)
+    /// I/O error
     Io(String),
 }
 

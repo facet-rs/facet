@@ -2366,7 +2366,6 @@ fn raw_token_kind_name(token: &ScanToken) -> &'static str {
         ScanToken::Colon => "colon",
         ScanToken::Comma => "comma",
         ScanToken::Eof => "eof",
-        ScanToken::NeedMore { .. } => "incomplete token",
     }
 }
 
