@@ -171,7 +171,7 @@ enum JsonOp<Block> {
     CallBlock(Block),
     ReadScalar {
         shape: &'static Shape,
-        scalar: ScalarType,
+        scalar: ScalarPlan,
     },
     ReadStruct {
         shape: &'static Shape,
@@ -185,7 +185,7 @@ enum JsonOp<Block> {
     ReadOption {
         option: OptionDef,
         some_program: Program<JsonOp<Block>>,
-        some_scalar: Option<ScalarType>,
+        some_scalar: Option<ScalarPlan>,
         inner_layout: Layout,
     },
     ReadList {
@@ -216,8 +216,47 @@ struct FieldPlan<Block> {
     offset: usize,
     shape: &'static Shape,
     program: Program<JsonOp<Block>>,
-    scalar: Option<ScalarType>,
+    scalar: Option<ScalarPlan>,
     missing: MissingField,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ScalarPlan {
+    scalar: ScalarType,
+    write: Option<MaterializedScalarWriter>,
+}
+
+type MaterializedScalarWriter = for<'de> unsafe fn(
+    &'static Shape,
+    PtrUninit,
+    JsonScalarToken<'de>,
+    Span,
+) -> Result<(), DeserializeError>;
+
+impl ScalarPlan {
+    fn new(scalar: ScalarType) -> Self {
+        Self {
+            scalar,
+            write: materialized_scalar_writer(scalar),
+        }
+    }
+
+    unsafe fn write(
+        self,
+        shape: &'static Shape,
+        dst: PtrUninit,
+        value: JsonScalarToken<'_>,
+        span: Span,
+    ) -> Result<(), DeserializeError> {
+        if let Some(write) = self.write {
+            unsafe {
+                write(shape, dst, value, span)?;
+            }
+            return Ok(());
+        }
+
+        unsafe { write_scalar(shape, self.scalar, dst, value, span) }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -294,14 +333,17 @@ impl Lowering {
         shape: &'static Shape,
     ) -> Result<Program<SymbolicOp>, DeserializeError> {
         if let Some(scalar) = ScalarType::try_from_shape(shape) {
-            return Ok(vec![JsonOp::ReadScalar { shape, scalar }]);
+            return Ok(vec![JsonOp::ReadScalar {
+                shape,
+                scalar: ScalarPlan::new(scalar),
+            }]);
         }
 
         match shape.def {
             Def::Option(option) => {
                 let inner_layout = sized_layout(option.t())?;
                 let some_program = self.lower_shape(option.t())?;
-                let some_scalar = ScalarType::try_from_shape(option.t());
+                let some_scalar = ScalarType::try_from_shape(option.t()).map(ScalarPlan::new);
                 Ok(vec![JsonOp::ReadOption {
                     option,
                     some_program,
@@ -377,7 +419,7 @@ impl Lowering {
                             offset: field.offset,
                             shape: field_shape,
                             program,
-                            scalar: ScalarType::try_from_shape(field_shape),
+                            scalar: ScalarType::try_from_shape(field_shape).map(ScalarPlan::new),
                             missing: missing_field_action(field, container_has_default),
                         });
                     }
@@ -849,7 +891,7 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
             JsonOp::ReadScalar { shape, scalar } => {
                 let (value, span) = self.parser.read_scalar_token()?;
                 unsafe {
-                    write_scalar(shape, *scalar, self.base, value, span)?;
+                    scalar.write(shape, self.base, value, span)?;
                 }
                 Ok(Control::Continue)
             }
@@ -906,7 +948,7 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                             let field_ptr = unsafe { frame.base.field_uninit(field.offset) };
                             let (value, value_span) = self.parser.read_scalar_token()?;
                             unsafe {
-                                write_scalar(field.shape, scalar, field_ptr, value, value_span)?;
+                                scalar.write(field.shape, field_ptr, value, value_span)?;
                             }
                             let frame = self
                                 .structs
@@ -947,13 +989,7 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                 if let Some(scalar) = some_scalar {
                     let (value, span) = self.parser.read_scalar_token()?;
                     unsafe {
-                        write_scalar(
-                            option.t(),
-                            *scalar,
-                            scratch_ptr_uninit(&scratch),
-                            value,
-                            span,
-                        )?;
+                        scalar.write(option.t(), scratch_ptr_uninit(&scratch), value, span)?;
                         (option.vtable.init_some)(self.base, scratch_ptr_mut(&scratch));
                     }
                     self.scratch.release(scratch);
@@ -1485,6 +1521,202 @@ write_signed_input!(write_i32_input, i32, "i32");
 write_signed_input!(write_i64_input, i64, "i64");
 write_signed_input!(write_i128_input, i128, "i128");
 write_signed_input!(write_isize_input, isize, "isize");
+
+fn materialized_scalar_writer(scalar: ScalarType) -> Option<MaterializedScalarWriter> {
+    match scalar {
+        ScalarType::Unit => Some(write_unit_token),
+        ScalarType::Bool => Some(write_bool_token),
+        ScalarType::Char => Some(write_char_token),
+        ScalarType::String => Some(write_string_token),
+        ScalarType::CowStr => Some(write_cow_str_token),
+        ScalarType::Str => Some(write_borrowed_str_token),
+        ScalarType::F32 => Some(write_f32_token),
+        ScalarType::F64 => Some(write_f64_token),
+        ScalarType::U8 => Some(write_u8_token),
+        ScalarType::U16 => Some(write_u16_token),
+        ScalarType::U32 => Some(write_u32_token),
+        ScalarType::U64 => Some(write_u64_token),
+        ScalarType::U128 => Some(write_u128_token),
+        ScalarType::USize => Some(write_usize_token),
+        ScalarType::I8 => Some(write_i8_token),
+        ScalarType::I16 => Some(write_i16_token),
+        ScalarType::I32 => Some(write_i32_token),
+        ScalarType::I64 => Some(write_i64_token),
+        ScalarType::I128 => Some(write_i128_token),
+        ScalarType::ISize => Some(write_isize_token),
+        _ => None,
+    }
+}
+
+unsafe fn write_unit_token(
+    shape: &'static Shape,
+    dst: PtrUninit,
+    value: JsonScalarToken<'_>,
+    span: Span,
+) -> Result<(), DeserializeError> {
+    match value {
+        JsonScalarToken::Null => unsafe {
+            dst.put(());
+            Ok(())
+        },
+        other => Err(type_mismatch(span, shape, other.kind_name())),
+    }
+}
+
+unsafe fn write_bool_token(
+    shape: &'static Shape,
+    dst: PtrUninit,
+    value: JsonScalarToken<'_>,
+    span: Span,
+) -> Result<(), DeserializeError> {
+    match value {
+        JsonScalarToken::Bool(value) => unsafe {
+            dst.put(value);
+            Ok(())
+        },
+        other => Err(type_mismatch(span, shape, other.kind_name())),
+    }
+}
+
+unsafe fn write_char_token(
+    shape: &'static Shape,
+    dst: PtrUninit,
+    value: JsonScalarToken<'_>,
+    span: Span,
+) -> Result<(), DeserializeError> {
+    let JsonScalarToken::Str(value) = value else {
+        return Err(type_mismatch(span, shape, value.kind_name()));
+    };
+    let mut chars = value.chars();
+    let Some(ch) = chars.next() else {
+        return Err(invalid_value(span, "empty string is not a char"));
+    };
+    if chars.next().is_some() {
+        return Err(invalid_value(span, "string has more than one char"));
+    }
+    unsafe {
+        dst.put(ch);
+    }
+    Ok(())
+}
+
+unsafe fn write_string_token(
+    shape: &'static Shape,
+    dst: PtrUninit,
+    value: JsonScalarToken<'_>,
+    span: Span,
+) -> Result<(), DeserializeError> {
+    let JsonScalarToken::Str(value) = value else {
+        return Err(type_mismatch(span, shape, value.kind_name()));
+    };
+    unsafe {
+        dst.put(value.into_owned());
+    }
+    Ok(())
+}
+
+unsafe fn write_cow_str_token(
+    shape: &'static Shape,
+    dst: PtrUninit,
+    value: JsonScalarToken<'_>,
+    span: Span,
+) -> Result<(), DeserializeError> {
+    let JsonScalarToken::Str(value) = value else {
+        return Err(type_mismatch(span, shape, value.kind_name()));
+    };
+    unsafe {
+        dst.put::<Cow<'static, str>>(Cow::Owned(value.into_owned()));
+    }
+    Ok(())
+}
+
+unsafe fn write_borrowed_str_token(
+    _shape: &'static Shape,
+    _dst: PtrUninit,
+    _value: JsonScalarToken<'_>,
+    span: Span,
+) -> Result<(), DeserializeError> {
+    Err(vm_error(
+        Some(span),
+        DeserializeErrorKind::CannotBorrow {
+            reason: "Weavy JSON owned deserializer does not support borrowed str yet".into(),
+        },
+    ))
+}
+
+unsafe fn write_f32_token(
+    shape: &'static Shape,
+    dst: PtrUninit,
+    value: JsonScalarToken<'_>,
+    span: Span,
+) -> Result<(), DeserializeError> {
+    let value = scalar_to_f64(value, span, shape)?;
+    unsafe {
+        dst.put(value as f32);
+    }
+    Ok(())
+}
+
+unsafe fn write_f64_token(
+    shape: &'static Shape,
+    dst: PtrUninit,
+    value: JsonScalarToken<'_>,
+    span: Span,
+) -> Result<(), DeserializeError> {
+    let value = scalar_to_f64(value, span, shape)?;
+    unsafe {
+        dst.put(value);
+    }
+    Ok(())
+}
+
+macro_rules! write_unsigned_token {
+    ($name:ident, $ty:ty, $target:literal) => {
+        unsafe fn $name(
+            _shape: &'static Shape,
+            dst: PtrUninit,
+            value: JsonScalarToken<'_>,
+            span: Span,
+        ) -> Result<(), DeserializeError> {
+            let value = into_unsigned::<$ty>(value, span, $target)?;
+            unsafe {
+                dst.put(value);
+            }
+            Ok(())
+        }
+    };
+}
+
+macro_rules! write_signed_token {
+    ($name:ident, $ty:ty, $target:literal) => {
+        unsafe fn $name(
+            _shape: &'static Shape,
+            dst: PtrUninit,
+            value: JsonScalarToken<'_>,
+            span: Span,
+        ) -> Result<(), DeserializeError> {
+            let value = into_signed::<$ty>(value, span, $target)?;
+            unsafe {
+                dst.put(value);
+            }
+            Ok(())
+        }
+    };
+}
+
+write_unsigned_token!(write_u8_token, u8, "u8");
+write_unsigned_token!(write_u16_token, u16, "u16");
+write_unsigned_token!(write_u32_token, u32, "u32");
+write_unsigned_token!(write_u64_token, u64, "u64");
+write_unsigned_token!(write_u128_token, u128, "u128");
+write_unsigned_token!(write_usize_token, usize, "usize");
+
+write_signed_token!(write_i8_token, i8, "i8");
+write_signed_token!(write_i16_token, i16, "i16");
+write_signed_token!(write_i32_token, i32, "i32");
+write_signed_token!(write_i64_token, i64, "i64");
+write_signed_token!(write_i128_token, i128, "i128");
+write_signed_token!(write_isize_token, isize, "isize");
 
 unsafe fn write_scalar_input<const TRUSTED_UTF8: bool>(
     parser: &JsonParser<'_, TRUSTED_UTF8>,
