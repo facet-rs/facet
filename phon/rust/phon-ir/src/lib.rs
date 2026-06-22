@@ -24,11 +24,17 @@ pub use descriptor::{
 pub mod ir;
 
 pub use ir::{
-    BorrowOp, BorrowThunks, ByteValidator, BytesOp, DefaultOp, DefaultThunk, EnumArm, EnumOp,
-    EnumVariantOp, Lowered, LoweredMemProgramStats, MapOp, MapThunks, MemOp, MemProgram,
-    MemProgramStats, Op, OpaqueOp, OpaqueThunks, OptionOp, OptionThunks, PointerOp, PointerThunks,
-    Program, ResultOp, ResultThunks, ScalarRunOp, ScalarSegment, SeqOp, SeqThunks, SetOp,
-    SetThunks, SkipOp, ValueProgram, lowered_mem_program_stats, mem_program_stats,
+    BorrowOp, BorrowThunks, ByteValidator, BytesOp, CanonicalEnumOp, CanonicalEnumVariantOp,
+    CanonicalMapOp, CanonicalMemError, CanonicalMemLowered, CanonicalMemProgram, CanonicalOptionOp,
+    CanonicalPointerOp, CanonicalResultOp, CanonicalSeqOp, CanonicalSetOp, DefaultOp, DefaultThunk,
+    EnumArm, EnumOp, EnumVariantOp, Lowered, LoweredMemProgramStats, MapOp, MapThunks,
+    MemIntrinsic, MemOp, MemProgram, MemProgramStats, Op, OpaqueOp, OpaqueThunks, OptionOp,
+    OptionThunks, PointerOp, PointerThunks, Program, ResultOp, ResultThunks, ScalarRunOp,
+    ScalarSegment, SeqOp, SeqThunks, SetOp, SetThunks, SkipOp, ValueProgram,
+    canonical_mem_intrinsic_counts, canonical_mem_lowered, canonical_mem_lowered_intrinsic_counts,
+    canonical_mem_lowered_stats, canonical_mem_program, canonical_mem_program_stats,
+    lowered_mem_program_stats, mem_lowered_from_canonical, mem_program_from_canonical,
+    mem_program_stats,
 };
 
 /// Thunk bindings: resolving thunk names to process-local function pointers
