@@ -16,8 +16,8 @@
         {% endfor %}
 
         {# Then render subsections #}
-        {% for subsection_path in subsections %}
-            {% set subsection = get_section(path=subsection_path) %}
+        {% for subsection_obj in subsections %}
+            {% set subsection = get_section(path=subsection_obj.path) %}
         <li class="has-children">
             <a href="{{ subsection.permalink }}" {% if current_path is starting_with(subsection.path) %}class="active"{% endif %}>
                     {{ subsection.title or subsection.path }}
