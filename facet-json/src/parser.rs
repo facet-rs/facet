@@ -99,6 +99,34 @@ pub(crate) enum JsonObjectOrderedScalarStep<'de> {
     End,
 }
 
+pub(crate) enum JsonObjectOrderedI32Step<'de> {
+    Matched {
+        span: Span,
+        value: i32,
+    },
+    MatchedInput {
+        span: Span,
+        value: JsonScalarInput<'de>,
+    },
+    Field {
+        key: JsonFieldKeyInput<'de>,
+        span: Span,
+    },
+    End,
+}
+
+impl<'de> From<JsonObjectOrderedScalarStep<'de>> for JsonObjectOrderedI32Step<'de> {
+    fn from(step: JsonObjectOrderedScalarStep<'de>) -> Self {
+        match step {
+            JsonObjectOrderedScalarStep::Matched { span, value } => {
+                Self::MatchedInput { span, value }
+            }
+            JsonObjectOrderedScalarStep::Field { key, span } => Self::Field { key, span },
+            JsonObjectOrderedScalarStep::End => Self::End,
+        }
+    }
+}
+
 pub(crate) enum JsonSequenceScalarStep<'de> {
     Value { value: JsonScalarInput<'de> },
     End,
@@ -330,6 +358,41 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
         }
 
         Ok(span)
+    }
+
+    #[inline]
+    fn try_consume_exact_string_token(
+        &mut self,
+        expected: &str,
+    ) -> Result<Option<Span>, ParseError> {
+        let span = self
+            .scanner
+            .try_consume_exact_string(self.input, expected.as_bytes())
+            .map_err(scan_error_to_parse_error)?;
+
+        if let Some(span) = span {
+            self.state.last_token_start = span.offset as usize;
+            self.state.scanner_pos = self.scanner.pos();
+        }
+
+        Ok(span)
+    }
+
+    #[inline]
+    fn try_consume_i32_number(&mut self) -> Result<Option<(Span, i32)>, ParseError> {
+        let value = self
+            .scanner
+            .try_consume_i32_number(self.input)
+            .map_err(scan_error_to_parse_error)?;
+
+        if let Some((span, _)) = value {
+            self.state.last_token_start = span.offset as usize;
+            self.state.scanner_pos = self.scanner.pos();
+            self.state.root_started = true;
+            self.finish_value_in_parent();
+        }
+
+        Ok(value)
     }
 
     fn materialize_token_kind(
@@ -1080,6 +1143,90 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                             self.state.stack.pop();
                             self.finish_value_in_parent();
                             return Ok(JsonObjectKeyStep::End);
+                        }
+                        ScanToken::Eof => {
+                            return Err(ParseError::new(
+                                span,
+                                DeserializeErrorKind::UnexpectedEof {
+                                    expected: "',' or '}'",
+                                },
+                            ));
+                        }
+                        _ => return Err(self.unexpected_scan_token(&token, "',' or '}'")),
+                    }
+                }
+                NextAction::RootFinished => {
+                    return Err(ParseError::new(
+                        Span::new(self.current_offset(), 0),
+                        DeserializeErrorKind::UnexpectedEof {
+                            expected: "field key or object end",
+                        },
+                    ));
+                }
+                _ => {
+                    let token = self.consume_spanned_token()?;
+                    return Err(self.unexpected_scan_token(&token, "field key or object end"));
+                }
+            }
+        }
+    }
+
+    pub(crate) fn next_ordered_object_i32_or_key(
+        &mut self,
+        expected: &str,
+    ) -> Result<JsonObjectOrderedI32Step<'de>, ParseError> {
+        if self.state.event_peek.is_some() {
+            return self
+                .next_ordered_object_scalar_or_key(expected)
+                .map(Into::into);
+        }
+
+        loop {
+            match self.determine_action() {
+                NextAction::ObjectKey => {
+                    if let Some(span) = self.try_consume_exact_string_token(expected)? {
+                        self.expect_colon_token()?;
+                        if let Some(ContextState::Object(state)) = self.state.stack.last_mut() {
+                            *state = ObjectState::Value;
+                        }
+                        if let Some((_, value)) = self.try_consume_i32_number()? {
+                            return Ok(JsonObjectOrderedI32Step::Matched { span, value });
+                        }
+
+                        let value = self.consume_scalar_input()?;
+                        return Ok(JsonObjectOrderedI32Step::MatchedInput { span, value });
+                    }
+
+                    return self
+                        .next_ordered_object_scalar_or_key(expected)
+                        .map(Into::into);
+                }
+                NextAction::ObjectComma => {
+                    if self.consume_punctuation_token(b',')?.is_some() {
+                        if let Some(ContextState::Object(state)) = self.state.stack.last_mut() {
+                            *state = ObjectState::KeyOrEnd;
+                        }
+                        continue;
+                    }
+
+                    if self.consume_punctuation_token(b'}')?.is_some() {
+                        self.state.stack.pop();
+                        self.finish_value_in_parent();
+                        return Ok(JsonObjectOrderedI32Step::End);
+                    }
+
+                    let token = self.consume_spanned_token()?;
+                    let span = token.span;
+                    match token.token {
+                        ScanToken::Comma => {
+                            if let Some(ContextState::Object(state)) = self.state.stack.last_mut() {
+                                *state = ObjectState::KeyOrEnd;
+                            }
+                        }
+                        ScanToken::ObjectEnd => {
+                            self.state.stack.pop();
+                            self.finish_value_in_parent();
+                            return Ok(JsonObjectOrderedI32Step::End);
                         }
                         ScanToken::Eof => {
                             return Err(ParseError::new(
