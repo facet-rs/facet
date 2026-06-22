@@ -184,10 +184,12 @@ enum JsonOp<Block> {
     ReadScalarStruct {
         shape: &'static Shape,
         fields: Box<[ScalarFieldPlan]>,
+        dispatch: Option<RawFieldDispatch>,
     },
     ReadStruct {
         shape: &'static Shape,
         fields: Box<[FieldPlan<Block>]>,
+        dispatch: Option<RawFieldDispatch>,
         loop_id: Block,
     },
     StructNext {
@@ -370,6 +372,55 @@ struct ListOptionScalar {
     option: OptionDef,
     scalar: ScalarType,
     inner_layout: Layout,
+}
+
+const RAW_FIELD_DISPATCH_BUCKETS: usize = 64;
+
+#[derive(Clone, Debug)]
+struct RawFieldDispatch {
+    buckets: Box<[u64; RAW_FIELD_DISPATCH_BUCKETS]>,
+}
+
+impl RawFieldDispatch {
+    fn for_fields<Field: StructFieldPlan>(fields: &[Field]) -> Option<Self> {
+        if fields.len() <= TINY_SCALAR_STRUCT_MAX_FIELDS || fields.len() > u64::BITS as usize {
+            return None;
+        }
+
+        let mut buckets = Box::new([0; RAW_FIELD_DISPATCH_BUCKETS]);
+        for (index, field) in fields.iter().enumerate() {
+            Self::insert_key(&mut buckets, field.name().as_bytes(), index);
+            if let Some(alias) = field.alias() {
+                Self::insert_key(&mut buckets, alias.as_bytes(), index);
+            }
+        }
+        Some(Self { buckets })
+    }
+
+    #[inline]
+    fn insert_key(buckets: &mut [u64; RAW_FIELD_DISPATCH_BUCKETS], key: &[u8], index: usize) {
+        buckets[raw_field_bucket(key)] |= struct_seen_bit(index);
+    }
+
+    #[inline(always)]
+    fn candidates(&self, key: &[u8]) -> u64 {
+        self.buckets[raw_field_bucket(key)]
+    }
+}
+
+#[inline(always)]
+fn raw_field_bucket(key: &[u8]) -> usize {
+    (raw_field_hash(key) as usize) & (RAW_FIELD_DISPATCH_BUCKETS - 1)
+}
+
+#[inline(always)]
+fn raw_field_hash(key: &[u8]) -> u64 {
+    let mut hash = (key.len() as u64).wrapping_mul(0x9E37_79B1_85EB_CA87);
+    for &byte in key {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x1000_0000_01B3);
+    }
+    hash
 }
 
 trait StructFieldPlan {
@@ -613,9 +664,11 @@ impl Lowering {
                                 missing: missing_field_action(field, container_has_default),
                             });
                         }
+                        let dispatch = RawFieldDispatch::for_fields(&fields);
                         return Ok(vec![JsonOp::ReadScalarStruct {
                             shape,
                             fields: fields.into_boxed_slice(),
+                            dispatch,
                         }]);
                     }
 
@@ -637,6 +690,7 @@ impl Lowering {
                         });
                     }
                     let fields = fields.into_boxed_slice();
+                    let dispatch = RawFieldDispatch::for_fields(&fields);
                     let loop_id = JsonBlockId::StructLoop(shape);
                     let tracking = StructTracking::for_len(fields.len());
                     let loop_program = vec![JsonOp::StructNext {
@@ -649,6 +703,7 @@ impl Lowering {
                     Ok(vec![JsonOp::ReadStruct {
                         shape,
                         fields,
+                        dispatch,
                         loop_id,
                     }])
                 }
@@ -687,14 +742,24 @@ fn resolve_json_op(
     Ok(match op {
         JsonOp::CallBlock(block) => JsonOp::CallBlock(resolve_block_ref(block, refs)?),
         JsonOp::ReadScalar { shape, scalar } => JsonOp::ReadScalar { shape, scalar },
-        JsonOp::ReadScalarStruct { shape, fields } => JsonOp::ReadScalarStruct { shape, fields },
+        JsonOp::ReadScalarStruct {
+            shape,
+            fields,
+            dispatch,
+        } => JsonOp::ReadScalarStruct {
+            shape,
+            fields,
+            dispatch,
+        },
         JsonOp::ReadStruct {
             shape,
             fields,
+            dispatch,
             loop_id,
         } => JsonOp::ReadStruct {
             shape,
             fields: resolve_field_plans(fields, refs)?,
+            dispatch,
             loop_id: resolve_block_ref(loop_id, refs)?,
         },
         JsonOp::StructNext {
@@ -1228,6 +1293,7 @@ where
         &mut self,
         shape: &'static Shape,
         fields: &'program [ScalarFieldPlan],
+        dispatch: Option<&'program RawFieldDispatch>,
     ) -> Result<(), DeserializeError> {
         self.parser.consume_object_start_fast()?;
         let base = self.base;
@@ -1238,7 +1304,7 @@ where
         match StructTracking::for_len(fields.len()) {
             StructTracking::Inline => {
                 let mut frame = StructFrame::<ScalarFieldPlan, InitializedLedger<Span>>::new(
-                    shape, base, fields,
+                    shape, base, fields, dispatch,
                 );
                 self.read_scalar_struct_fields(shape, &mut frame)?;
                 unsafe {
@@ -1246,16 +1312,18 @@ where
                 }
             }
             StructTracking::Bitset => {
-                let mut frame =
-                    StructFrame::<ScalarFieldPlan, BitsetStructSeen>::new(shape, base, fields);
+                let mut frame = StructFrame::<ScalarFieldPlan, BitsetStructSeen>::new(
+                    shape, base, fields, dispatch,
+                );
                 self.read_scalar_struct_fields(shape, &mut frame)?;
                 unsafe {
                     frame.fill_missing_fields()?;
                 }
             }
             StructTracking::Heap => {
-                let mut frame =
-                    StructFrame::<ScalarFieldPlan, HeapStructSeen>::new(shape, base, fields);
+                let mut frame = StructFrame::<ScalarFieldPlan, HeapStructSeen>::new(
+                    shape, base, fields, dispatch,
+                );
                 self.read_scalar_struct_fields(shape, &mut frame)?;
                 unsafe {
                     frame.fill_missing_fields()?;
@@ -1652,25 +1720,33 @@ where
                 }
                 Ok(Control::Continue)
             }
-            JsonOp::ReadScalarStruct { shape, fields } => {
-                self.read_scalar_struct(shape, fields)?;
+            JsonOp::ReadScalarStruct {
+                shape,
+                fields,
+                dispatch,
+            } => {
+                self.read_scalar_struct(shape, fields, dispatch.as_ref())?;
                 Ok(Control::Continue)
             }
             JsonOp::ReadStruct {
                 shape,
                 fields,
+                dispatch,
                 loop_id,
             } => {
                 self.parser.consume_object_start_fast()?;
                 let tracking = StructTracking::for_len(fields.len());
                 let base = self.base;
                 match tracking {
-                    StructTracking::Inline => self
-                        .inline_structs
-                        .push(StructFrame::new(shape, base, fields)),
-                    StructTracking::Bitset | StructTracking::Heap => self
-                        .large_structs_mut()
-                        .push(LargeStructFrameSlot::new(shape, base, fields)),
+                    StructTracking::Inline => self.inline_structs.push(StructFrame::new(
+                        shape,
+                        base,
+                        fields,
+                        dispatch.as_ref(),
+                    )),
+                    StructTracking::Bitset | StructTracking::Heap => self.large_structs_mut().push(
+                        LargeStructFrameSlot::new(shape, base, fields, dispatch.as_ref()),
+                    ),
                 }
                 Ok(Control::CallBlockThen(
                     *loop_id,
@@ -2076,6 +2152,7 @@ struct StructFrame<'program, Field: StructFieldPlan, Seen: StructSeenStore> {
     shape: &'static Shape,
     base: PtrUninit,
     fields: &'program [Field],
+    dispatch: Option<&'program RawFieldDispatch>,
     seen: Seen,
     next_field: usize,
 }
@@ -2222,11 +2299,12 @@ impl<'program> LargeStructFrameSlot<'program> {
         shape: &'static Shape,
         base: PtrUninit,
         fields: &'program [FieldPlan<ExecBlock>],
+        dispatch: Option<&'program RawFieldDispatch>,
     ) -> Self {
         if fields.len() <= u64::BITS as usize {
-            Self::Bitset(StructFrame::new(shape, base, fields))
+            Self::Bitset(StructFrame::new(shape, base, fields, dispatch))
         } else {
-            Self::Heap(StructFrame::new(shape, base, fields))
+            Self::Heap(StructFrame::new(shape, base, fields, dispatch))
         }
     }
 
@@ -2478,11 +2556,17 @@ where
     Field: StructFieldPlan,
     Seen: StructSeenStore,
 {
-    fn new(shape: &'static Shape, base: PtrUninit, fields: &'program [Field]) -> Self {
+    fn new(
+        shape: &'static Shape,
+        base: PtrUninit,
+        fields: &'program [Field],
+        dispatch: Option<&'program RawFieldDispatch>,
+    ) -> Self {
         Self {
             shape,
             base,
             fields,
+            dispatch,
             seen: Seen::new(fields.len()),
             next_field: 0,
         }
@@ -2590,19 +2674,31 @@ where
             });
         }
 
-        self.fields
-            .iter()
-            .enumerate()
-            .find(|(_, field)| field.matches_key_bytes(key))
-            .map(|(index, field)| MatchedField {
-                index,
-                field,
-                ordered: false,
-            })
+        self.match_unordered_field_bytes(key)
     }
 
     #[inline]
     fn match_unordered_field_bytes(&self, key: &[u8]) -> Option<MatchedField<'program, Field>> {
+        if let Some(dispatch) = self.dispatch {
+            let mut candidates = dispatch.candidates(key);
+            while candidates != 0 {
+                let index = candidates.trailing_zeros() as usize;
+                candidates &= candidates - 1;
+                if index == self.next_field {
+                    continue;
+                }
+                let field = &self.fields[index];
+                if field.matches_key_bytes(key) {
+                    return Some(MatchedField {
+                        index,
+                        field,
+                        ordered: false,
+                    });
+                }
+            }
+            return None;
+        }
+
         self.fields
             .iter()
             .enumerate()
@@ -2715,6 +2811,10 @@ where
         &self,
         key: &[u8],
     ) -> Option<MatchedField<'program, ScalarFieldPlan>> {
+        if self.dispatch.is_some() {
+            return self.match_unordered_field_bytes(key);
+        }
+
         if key.len() != 1 {
             return self.match_unordered_field_bytes(key);
         }
