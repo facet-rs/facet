@@ -1272,6 +1272,10 @@ where
         fields: &'program [ScalarFieldPlan],
     ) -> Result<(), DeserializeError> {
         let mut frame = TinyScalarStructFrame::new(shape, base, fields);
+        if self.try_read_fused_tiny_i32_struct_fields(&mut frame)? {
+            core::mem::forget(frame);
+            return Ok(());
+        }
 
         loop {
             let Some(field) = frame.fields.get(frame.next_field).copied() else {
@@ -1327,6 +1331,36 @@ where
             }
         }
         Ok(())
+    }
+
+    fn try_read_fused_tiny_i32_struct_fields(
+        &mut self,
+        frame: &mut TinyScalarStructFrame<'program>,
+    ) -> Result<bool, DeserializeError> {
+        if !tiny_i32_struct_fields_are_fusible(frame.fields) {
+            return Ok(false);
+        }
+
+        let mut names = [""; TINY_SCALAR_STRUCT_MAX_FIELDS];
+        let mut spans = [Span { offset: 0, len: 0 }; TINY_SCALAR_STRUCT_MAX_FIELDS];
+        let mut values = [0i32; TINY_SCALAR_STRUCT_MAX_FIELDS];
+        for (index, field) in frame.fields.iter().enumerate() {
+            names[index] = field.name;
+        }
+
+        if !self.parser.try_consume_ordered_i32_object_fields(
+            &names[..frame.fields.len()],
+            &mut spans[..frame.fields.len()],
+            &mut values[..frame.fields.len()],
+        )? {
+            return Ok(false);
+        }
+
+        for index in 0..frame.fields.len() {
+            let field = frame.fields[index];
+            self.write_tiny_i32_struct_field(frame, index, field, spans[index], values[index]);
+        }
+        Ok(true)
     }
 
     fn read_tiny_scalar_struct_pending_field(
@@ -1427,7 +1461,11 @@ where
                         continue;
                     }
 
-                    let matched = frame.match_unordered_field_input(&*self.parser, &key)?;
+                    let matched = if let Some(key) = self.parser.field_key_unescaped_bytes(&key) {
+                        frame.match_unordered_scalar_field_bytes(key)
+                    } else {
+                        frame.match_unordered_field_input(&*self.parser, &key)?
+                    };
 
                     let Some(matched) = matched else {
                         let key = self.parser.materialize_field_key(key)?;
@@ -2014,6 +2052,16 @@ struct MatchedField<'program, Field> {
 }
 
 const TINY_SCALAR_STRUCT_MAX_FIELDS: usize = 3;
+
+fn tiny_i32_struct_fields_are_fusible(fields: &[ScalarFieldPlan]) -> bool {
+    !fields.is_empty()
+        && fields.len() <= TINY_SCALAR_STRUCT_MAX_FIELDS
+        && fields.iter().all(|field| {
+            field.alias.is_none()
+                && field.scalar.scalar == ScalarType::I32
+                && matches!(field.missing, MissingField::Required)
+        })
+}
 
 struct TinyScalarStructFrame<'program> {
     shape: &'static Shape,
@@ -2656,6 +2704,43 @@ where
             }
         }
     }
+}
+
+impl<'program, Seen> StructFrame<'program, ScalarFieldPlan, Seen>
+where
+    Seen: StructSeenStore,
+{
+    #[inline]
+    fn match_unordered_scalar_field_bytes(
+        &self,
+        key: &[u8],
+    ) -> Option<MatchedField<'program, ScalarFieldPlan>> {
+        if key.len() != 1 {
+            return self.match_unordered_field_bytes(key);
+        }
+
+        let key = key[0];
+        self.fields
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| *index != self.next_field)
+            .find(|(_, field)| scalar_field_matches_single_byte_key(field, key))
+            .map(|(index, field)| MatchedField {
+                index,
+                field,
+                ordered: false,
+            })
+    }
+}
+
+#[inline(always)]
+fn scalar_field_matches_single_byte_key(field: &ScalarFieldPlan, key: u8) -> bool {
+    let name = field.name.as_bytes();
+    (name.len() == 1 && name[0] == key)
+        || field.alias.is_some_and(|alias| {
+            let alias = alias.as_bytes();
+            alias.len() == 1 && alias[0] == key
+        })
 }
 
 impl<Field, Seen> Drop for StructFrame<'_, Field, Seen>
