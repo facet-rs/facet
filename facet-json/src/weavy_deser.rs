@@ -475,12 +475,11 @@ impl Lowering {
                     }
                     let fields = fields.into_boxed_slice();
                     let loop_id = JsonBlockId::StructLoop(shape);
-                    let raw_field_dispatch = should_use_raw_field_dispatch(shape, &fields);
                     let tracking = StructTracking::for_len(fields.len());
                     let loop_program = vec![JsonOp::StructNext {
                         shape,
                         loop_id,
-                        raw_field_dispatch,
+                        raw_field_dispatch: true,
                         tracking,
                     }];
                     self.lowered.blocks.insert(loop_id, loop_program);
@@ -627,19 +626,6 @@ fn resolve_block_ref(
             },
         )
     })
-}
-
-fn should_use_raw_field_dispatch<Block>(
-    shape: &'static Shape,
-    fields: &[FieldPlan<Block>],
-) -> bool {
-    let all_scalar = fields.iter().all(|field| field.scalar.is_some());
-    let size = shape
-        .layout
-        .sized_layout()
-        .map(|layout| layout.size())
-        .unwrap_or(usize::MAX);
-    !all_scalar || fields.len() > 2 || size > 16
 }
 
 fn missing_field_action(field: &Field, container_has_default: bool) -> MissingField {
