@@ -97,6 +97,35 @@ struct WideScalars {
     l: f64,
 }
 
+/// Scalar record with defaults, for missing-field synthesis.
+#[derive(Debug, Facet, serde::Deserialize)]
+struct DefaultScalars {
+    #[facet(default)]
+    #[serde(default)]
+    a: u8,
+    #[facet(default)]
+    #[serde(default)]
+    b: u16,
+    #[facet(default)]
+    #[serde(default)]
+    c: u32,
+    #[facet(default)]
+    #[serde(default)]
+    d: u64,
+    #[facet(default)]
+    #[serde(default)]
+    e: i8,
+    #[facet(default)]
+    #[serde(default)]
+    f: i16,
+    #[facet(default)]
+    #[serde(default)]
+    g: bool,
+    #[facet(default)]
+    #[serde(default)]
+    h: f64,
+}
+
 // =============================================================================
 // Test data
 // =============================================================================
@@ -149,6 +178,45 @@ const WIDE_SCALARS_JSON: &str = r#"{
     "j": -10,
     "k": true,
     "l": 11.5
+}"#;
+
+const WIDE_SCALARS_OUT_OF_ORDER_JSON: &str = r#"{
+    "l": 11.5,
+    "k": true,
+    "j": -10,
+    "i": 9,
+    "h": -8,
+    "g": -7,
+    "f": -6,
+    "e": -5,
+    "d": 4,
+    "c": 3,
+    "b": 2,
+    "a": 1
+}"#;
+
+const WIDE_SCALARS_SKIPPED_UNKNOWN_JSON: &str = r#"{
+    "a": 1,
+    "unknown_scalar": 12345,
+    "b": 2,
+    "unknown_array": [1, 2, 3, 4],
+    "c": 3,
+    "unknown_object": {"nested": true, "items": [1, 2, 3]},
+    "d": 4,
+    "e": -5,
+    "f": -6,
+    "g": -7,
+    "h": -8,
+    "i": 9,
+    "j": -10,
+    "k": true,
+    "l": 11.5
+}"#;
+
+const DEFAULT_SCALARS_MISSING_JSON: &str = r#"{
+    "a": 1,
+    "d": 4,
+    "h": 11.5
 }"#;
 
 fn bench_fresh_typeplan<T>(bencher: Bencher, json: &'static str)
@@ -471,6 +539,40 @@ fn wide_scalars_weavy_reused_plan(bencher: Bencher) {
 #[divan::bench]
 fn wide_scalars_serde_json(bencher: Bencher) {
     bench_serde_json::<WideScalars>(bencher, WIDE_SCALARS_JSON);
+}
+
+#[divan::bench]
+fn wide_scalars_out_of_order_weavy_reused_plan(bencher: Bencher) {
+    bench_weavy_reused_plan::<WideScalars>(bencher, WIDE_SCALARS_OUT_OF_ORDER_JSON);
+}
+
+#[divan::bench]
+fn wide_scalars_out_of_order_serde_json(bencher: Bencher) {
+    bench_serde_json::<WideScalars>(bencher, WIDE_SCALARS_OUT_OF_ORDER_JSON);
+}
+
+#[divan::bench]
+fn wide_scalars_skipped_unknown_weavy_reused_plan(bencher: Bencher) {
+    bench_weavy_reused_plan::<WideScalars>(bencher, WIDE_SCALARS_SKIPPED_UNKNOWN_JSON);
+}
+
+#[divan::bench]
+fn wide_scalars_skipped_unknown_serde_json(bencher: Bencher) {
+    bench_serde_json::<WideScalars>(bencher, WIDE_SCALARS_SKIPPED_UNKNOWN_JSON);
+}
+
+// =============================================================================
+// Benchmarks - Missing scalar fields with defaults
+// =============================================================================
+
+#[divan::bench]
+fn default_scalars_missing_weavy_reused_plan(bencher: Bencher) {
+    bench_weavy_reused_plan::<DefaultScalars>(bencher, DEFAULT_SCALARS_MISSING_JSON);
+}
+
+#[divan::bench]
+fn default_scalars_missing_serde_json(bencher: Bencher) {
+    bench_serde_json::<DefaultScalars>(bencher, DEFAULT_SCALARS_MISSING_JSON);
 }
 
 // =============================================================================
