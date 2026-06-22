@@ -8,7 +8,7 @@ extern crate alloc;
 
 use alloc::borrow::Cow;
 use alloc::boxed::Box;
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::alloc::Layout;
@@ -333,6 +333,7 @@ struct FieldPlan<Block> {
 struct Lowering {
     lowered: Lowered<BlockId, SymbolicOp>,
     in_progress: Vec<&'static Shape>,
+    needed_blocks: BTreeSet<BlockId>,
     mode: HashMode,
 }
 
@@ -344,25 +345,22 @@ impl Lowering {
                 blocks: BTreeMap::new(),
             },
             in_progress: Vec::new(),
+            needed_blocks: BTreeSet::new(),
             mode,
         }
     }
 
     fn lower(mut self, root: &'static Shape) -> Result<Lowered<BlockId, SymbolicOp>, HashError> {
-        let root_id = HashBlockId::Shape(root);
-        self.lower_shape(root)?;
-        self.lowered.program = self
-            .lowered
-            .blocks
-            .get(&root_id)
-            .expect("root shape was lowered into a block")
-            .clone();
+        self.lowered.program = self.lower_shape(root)?;
         Ok(self.lowered)
     }
 
     fn lower_shape(&mut self, shape: &'static Shape) -> Result<Program<SymbolicOp>, HashError> {
         let block_id = HashBlockId::Shape(shape);
         if self.lowered.blocks.contains_key(&block_id) || self.in_progress.contains(&shape) {
+            if self.in_progress.contains(&shape) {
+                self.needed_blocks.insert(block_id);
+            }
             return Ok(vec![WeavyOp::Control(ControlOp::CallBlock {
                 block: block_id,
                 base_offset: 0,
@@ -372,11 +370,10 @@ impl Lowering {
         self.in_progress.push(shape);
         let program = self.lower_shape_body(shape)?;
         self.in_progress.pop();
-        self.lowered.blocks.insert(block_id, program);
-        Ok(vec![WeavyOp::Control(ControlOp::CallBlock {
-            block: block_id,
-            base_offset: 0,
-        })])
+        if self.needed_blocks.remove(&block_id) {
+            self.lowered.blocks.insert(block_id, program.clone());
+        }
+        Ok(program)
     }
 
     fn lower_shape_body(
