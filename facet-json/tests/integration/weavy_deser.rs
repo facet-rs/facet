@@ -84,6 +84,22 @@ struct LoosePoint {
     x: u8,
 }
 
+#[derive(Facet, Debug, PartialEq)]
+struct WideScalarStruct {
+    a: u8,
+    b: u16,
+    c: u32,
+    d: u64,
+    e: i8,
+    f: i16,
+    g: i32,
+    h: i64,
+    i: usize,
+    j: isize,
+    k: bool,
+    l: f64,
+}
+
 #[test]
 fn weavy_deserializes_named_struct_scalars() {
     let point: Point = facet_json::from_str_weavy(r#"{"y":20,"x":10}"#).unwrap();
@@ -146,6 +162,32 @@ fn weavy_rejects_duplicate_field_after_ordered_match() {
         err.kind,
         DeserializeErrorKind::DuplicateField { ref field, .. } if field == "x"
     ));
+}
+
+#[test]
+fn weavy_deserializes_wide_scalar_struct() {
+    let got: WideScalarStruct = facet_json::from_str_weavy(
+        r#"{"a":1,"b":2,"c":3,"d":4,"e":-5,"f":-6,"g":-7,"h":-8,"i":9,"j":-10,"k":true,"l":11.5}"#,
+    )
+    .unwrap();
+
+    assert_eq!(
+        got,
+        WideScalarStruct {
+            a: 1,
+            b: 2,
+            c: 3,
+            d: 4,
+            e: -5,
+            f: -6,
+            g: -7,
+            h: -8,
+            i: 9,
+            j: -10,
+            k: true,
+            l: 11.5,
+        }
+    );
 }
 
 #[test]
