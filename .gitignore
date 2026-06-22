@@ -25,6 +25,11 @@ tarpaulin-report.html
 
 **/node_modules/
 
+# SwiftPM
+/.build/
+/.swiftpm/
+/Package.resolved
+
 # Profiling
 *.mm_profdata
 
