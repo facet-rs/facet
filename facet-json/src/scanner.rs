@@ -169,6 +169,23 @@ impl Scanner {
             .map(|byte| (scanner.pos, byte)))
     }
 
+    /// Consume one expected punctuation byte after whitespace/comments.
+    pub fn consume_punctuation(
+        &mut self,
+        buf: &[u8],
+        expected: u8,
+    ) -> Result<Option<Span>, ScanError> {
+        self.skip_whitespace(buf)?;
+
+        let start = self.pos;
+        if buf.get(self.pos) == Some(&expected) {
+            self.pos += 1;
+            Ok(Some(Span::new(start, 1)))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Scan the next token from the buffer.
     pub fn next_token(&mut self, buf: &[u8]) -> ScanResult {
         self.skip_whitespace(buf)?;

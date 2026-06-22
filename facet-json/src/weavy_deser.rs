@@ -9,6 +9,7 @@ use alloc::{
 use core::alloc::Layout;
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
+use core::str::FromStr;
 
 use facet_core::{
     Def, DefaultInPlaceFn, DefaultSource, Facet, Field, ListDef, OptionDef, PointerDef, PtrMut,
@@ -25,7 +26,7 @@ use crate::JsonParser;
 use crate::parser::{
     JsonFieldKeyInput, JsonObjectKeyStep, JsonScalarInput, JsonScalarToken, JsonSequenceScalarStep,
 };
-use crate::scanner::{ParsedNumber, SpannedToken, Token as ScanToken};
+use crate::scanner::{NumberHint, ParsedNumber, SpannedToken, Token as ScanToken};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum JsonBlockId {
@@ -2991,25 +2992,22 @@ fn raw_into_unsigned<T, const TRUSTED_UTF8: bool>(
     target: &'static str,
 ) -> Result<T, DeserializeError>
 where
+    T: FromStr,
     T: TryFrom<u128>,
 {
     let value = match token.token {
-        ScanToken::Number { start, end, hint } => {
-            let number = parser.parse_number(start, end, hint)?;
-            match number {
-                ParsedNumber::U64(value) => value as u128,
-                ParsedNumber::U128(value) => value,
-                ParsedNumber::I64(value) if value >= 0 => value as u128,
-                ParsedNumber::I128(value) if value >= 0 => value as u128,
-                other => {
-                    return Err(type_mismatch_name(
-                        span,
-                        target,
-                        parsed_number_kind_name(&other),
-                    ));
+        ScanToken::Number { start, end, hint } => match hint {
+            NumberHint::Unsigned => {
+                let text = parser.number_text(start, end, span)?;
+                if let Ok(value) = text.parse::<T>() {
+                    return Ok(value);
                 }
+                parsed_unsigned_number(parser, start, end, hint, span, target)?
             }
-        }
+            NumberHint::Signed | NumberHint::Float => {
+                parsed_unsigned_number(parser, start, end, hint, span, target)?
+            }
+        },
         ScanToken::String {
             start,
             end,
@@ -3038,25 +3036,20 @@ fn raw_into_signed<T, const TRUSTED_UTF8: bool>(
     target: &'static str,
 ) -> Result<T, DeserializeError>
 where
+    T: FromStr,
     T: TryFrom<i128>,
 {
     let value = match token.token {
-        ScanToken::Number { start, end, hint } => {
-            let number = parser.parse_number(start, end, hint)?;
-            match number {
-                ParsedNumber::I64(value) => value as i128,
-                ParsedNumber::I128(value) => value,
-                ParsedNumber::U64(value) => value as i128,
-                ParsedNumber::U128(value) if value <= i128::MAX as u128 => value as i128,
-                other => {
-                    return Err(type_mismatch_name(
-                        span,
-                        target,
-                        parsed_number_kind_name(&other),
-                    ));
+        ScanToken::Number { start, end, hint } => match hint {
+            NumberHint::Signed | NumberHint::Unsigned => {
+                let text = parser.number_text(start, end, span)?;
+                if let Ok(value) = text.parse::<T>() {
+                    return Ok(value);
                 }
+                parsed_signed_number(parser, start, end, hint, span, target)?
             }
-        }
+            NumberHint::Float => parsed_signed_number(parser, start, end, hint, span, target)?,
+        },
         ScanToken::String {
             start,
             end,
@@ -3076,6 +3069,50 @@ where
         }
     };
     T::try_from(value).map_err(|_| number_out_of_range(span, value.to_string(), target))
+}
+
+fn parsed_unsigned_number<const TRUSTED_UTF8: bool>(
+    parser: &JsonParser<'_, TRUSTED_UTF8>,
+    start: usize,
+    end: usize,
+    hint: NumberHint,
+    span: Span,
+    target: &'static str,
+) -> Result<u128, DeserializeError> {
+    let number = parser.parse_number(start, end, hint)?;
+    match number {
+        ParsedNumber::U64(value) => Ok(value as u128),
+        ParsedNumber::U128(value) => Ok(value),
+        ParsedNumber::I64(value) if value >= 0 => Ok(value as u128),
+        ParsedNumber::I128(value) if value >= 0 => Ok(value as u128),
+        other => Err(type_mismatch_name(
+            span,
+            target,
+            parsed_number_kind_name(&other),
+        )),
+    }
+}
+
+fn parsed_signed_number<const TRUSTED_UTF8: bool>(
+    parser: &JsonParser<'_, TRUSTED_UTF8>,
+    start: usize,
+    end: usize,
+    hint: NumberHint,
+    span: Span,
+    target: &'static str,
+) -> Result<i128, DeserializeError> {
+    let number = parser.parse_number(start, end, hint)?;
+    match number {
+        ParsedNumber::I64(value) => Ok(value as i128),
+        ParsedNumber::I128(value) => Ok(value),
+        ParsedNumber::U64(value) => Ok(value as i128),
+        ParsedNumber::U128(value) if value <= i128::MAX as u128 => Ok(value as i128),
+        other => Err(type_mismatch_name(
+            span,
+            target,
+            parsed_number_kind_name(&other),
+        )),
+    }
 }
 
 fn scalar_to_f64(

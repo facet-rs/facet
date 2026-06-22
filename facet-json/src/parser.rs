@@ -1,6 +1,7 @@
 extern crate alloc;
 
 use alloc::{borrow::Cow, collections::VecDeque, format, vec::Vec};
+use core::str;
 
 use facet_core::Facet as _;
 use facet_format::{
@@ -304,6 +305,21 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
         Ok(spanned)
     }
 
+    #[inline]
+    fn consume_punctuation_token(&mut self, byte: u8) -> Result<Option<Span>, ParseError> {
+        let span = self
+            .scanner
+            .consume_punctuation(self.input, byte)
+            .map_err(scan_error_to_parse_error)?;
+
+        if let Some(span) = span {
+            self.state.last_token_start = span.offset as usize;
+            self.state.scanner_pos = self.scanner.pos();
+        }
+
+        Ok(span)
+    }
+
     fn materialize_token_kind(
         &self,
         token: ScanToken,
@@ -352,6 +368,22 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
             scanner::parse_number(self.input, start, end, hint)
         }
         .map_err(scan_error_to_parse_error)
+    }
+
+    #[inline]
+    pub(crate) fn number_text(
+        &self,
+        start: usize,
+        end: usize,
+        span: Span,
+    ) -> Result<&'de str, ParseError> {
+        let slice = &self.input[start..end];
+        if TRUSTED_UTF8 {
+            // SAFETY: Input came from &str, so it is valid UTF-8.
+            Ok(unsafe { str::from_utf8_unchecked(slice) })
+        } else {
+            str::from_utf8(slice).map_err(|_| invalid_utf8_parse_error(span))
+        }
     }
 
     #[inline]
@@ -484,6 +516,10 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
     }
 
     fn expect_colon_token(&mut self) -> Result<(), ParseError> {
+        if self.consume_punctuation_token(b':')?.is_some() {
+            return Ok(());
+        }
+
         let token = self.consume_spanned_token()?;
         if !matches!(token.token, ScanToken::Colon) {
             return Err(self.unexpected_scan_token(&token, "':'"));
@@ -1007,6 +1043,19 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                     }
                 }
                 NextAction::ObjectComma => {
+                    if self.consume_punctuation_token(b',')?.is_some() {
+                        if let Some(ContextState::Object(state)) = self.state.stack.last_mut() {
+                            *state = ObjectState::KeyOrEnd;
+                        }
+                        continue;
+                    }
+
+                    if self.consume_punctuation_token(b'}')?.is_some() {
+                        self.state.stack.pop();
+                        self.finish_value_in_parent();
+                        return Ok(JsonObjectKeyStep::End);
+                    }
+
                     let token = self.consume_spanned_token()?;
                     let span = token.span;
                     match token.token {
