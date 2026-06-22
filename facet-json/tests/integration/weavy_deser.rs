@@ -100,6 +100,34 @@ struct WideScalarStruct {
     l: f64,
 }
 
+#[derive(Facet, Debug, PartialEq)]
+struct WideDefaultStruct {
+    #[facet(default)]
+    a: u8,
+    #[facet(default)]
+    b: u16,
+    #[facet(default)]
+    c: u32,
+    #[facet(default)]
+    d: u64,
+    #[facet(default)]
+    e: i8,
+    #[facet(default)]
+    f: i16,
+    #[facet(default)]
+    g: i32,
+    #[facet(default)]
+    h: i64,
+    #[facet(default)]
+    i: usize,
+    #[facet(default)]
+    j: isize,
+    #[facet(default)]
+    k: bool,
+    #[facet(default)]
+    l: f64,
+}
+
 #[test]
 fn weavy_deserializes_named_struct_scalars() {
     let point: Point = facet_json::from_str_weavy(r#"{"y":20,"x":10}"#).unwrap();
@@ -192,6 +220,81 @@ fn weavy_deserializes_wide_scalar_struct() {
             i: 9,
             j: -10,
             k: true,
+            l: 11.5,
+        }
+    );
+}
+
+#[test]
+fn weavy_deserializes_wide_scalar_struct_out_of_order() {
+    let got: WideScalarStruct = facet_json::from_str_weavy(
+        r#"{"l":11.5,"k":true,"j":-10,"i":9,"h":-8,"g":-7,"f":-6,"e":-5,"d":4,"c":3,"b":2,"a":1}"#,
+    )
+    .unwrap();
+
+    assert_eq!(
+        got,
+        WideScalarStruct {
+            a: 1,
+            b: 2,
+            c: 3,
+            d: 4,
+            e: -5,
+            f: -6,
+            g: -7,
+            h: -8,
+            i: 9,
+            j: -10,
+            k: true,
+            l: 11.5,
+        }
+    );
+}
+
+#[test]
+fn weavy_deserializes_wide_scalar_struct_with_skipped_unknown_fields() {
+    let got: WideScalarStruct = facet_json::from_str_weavy(
+        r#"{"a":1,"unknown_scalar":12345,"b":2,"unknown_array":[1,2,3],"c":3,"unknown_object":{"nested":true},"d":4,"e":-5,"f":-6,"g":-7,"h":-8,"i":9,"j":-10,"k":true,"l":11.5}"#,
+    )
+    .unwrap();
+
+    assert_eq!(
+        got,
+        WideScalarStruct {
+            a: 1,
+            b: 2,
+            c: 3,
+            d: 4,
+            e: -5,
+            f: -6,
+            g: -7,
+            h: -8,
+            i: 9,
+            j: -10,
+            k: true,
+            l: 11.5,
+        }
+    );
+}
+
+#[test]
+fn weavy_defaults_missing_wide_scalar_fields() {
+    let got: WideDefaultStruct = facet_json::from_str_weavy(r#"{"a":1,"d":4,"l":11.5}"#).unwrap();
+
+    assert_eq!(
+        got,
+        WideDefaultStruct {
+            a: 1,
+            b: 0,
+            c: 0,
+            d: 4,
+            e: 0,
+            f: 0,
+            g: 0,
+            h: 0,
+            i: 0,
+            j: 0,
+            k: false,
             l: 11.5,
         }
     );
