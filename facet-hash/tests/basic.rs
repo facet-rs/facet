@@ -46,6 +46,14 @@ struct ProgramKeyMap {
 }
 
 #[derive(Clone, Debug, Facet)]
+struct MixedScalarRuns {
+    a: u32,
+    point: Point,
+    b: u32,
+    c: u32,
+}
+
+#[derive(Clone, Debug, Facet)]
 struct Nested {
     people: Vec<Person>,
     points: [Point; 2],
@@ -192,6 +200,23 @@ fn maps_continue_after_program_key_and_scalar_value() {
         plan.hash64(&ProgramKeyMap { map: left_map }).unwrap(),
         plan.hash64(&ProgramKeyMap { map: right_map }).unwrap()
     );
+}
+
+#[test]
+fn struct_scalar_runs_resume_around_program_fields() {
+    let plan = HashPlan::<MixedScalarRuns>::build().unwrap();
+    let left = MixedScalarRuns {
+        a: 1,
+        point: Point { x: 2, y: 3 },
+        b: 4,
+        c: 5,
+    };
+    let right = MixedScalarRuns {
+        c: 6,
+        ..left.clone()
+    };
+
+    assert_ne!(plan.hash64(&left).unwrap(), plan.hash64(&right).unwrap());
 }
 
 #[test]
