@@ -2,8 +2,20 @@
 
 // Dodeca configuration for facet docs
 
-content docs/content
 output docs/public
+
+// Multiple sources: the facet docs at /, plus the standalone subsites each
+// mounted under their own prefix so their root-absolute links localize
+// (e.g. styx's /tools/cli -> /styx/tools/cli) and they get a source identity
+// for cross-links ([[styx:...]]). All share docs/templates (content_dir's
+// sibling `../templates`), since every source's content lives under docs/.
+
+sources (
+    { name facet,   mount /,        local docs/content }
+    { name styx,    mount /styx,    local docs/styx-content }
+    { name picante, mount /picante, local docs/picante-content }
+    { name dibs,    mount /dibs,    local docs/dibs-content }
+)
 
 // Link checking configuration
 
