@@ -180,13 +180,250 @@ pub struct IntrinsicDescriptor {
     pub name: &'static str,
 }
 
+/// A resource touched by an op effect.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum EffectResource {
+    /// A frontend input stream/cursor, such as `wire` or `json`.
+    Input(&'static str),
+    /// A frontend output sink, such as `wire`, `json`, or `hash`.
+    Sink(&'static str),
+    /// Interpreter/backend side state, such as aggregate trackers.
+    SideChannel(&'static str),
+}
+
+/// How an op touches a non-memory resource.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ResourceAccess {
+    /// Reads from the resource without necessarily consuming it.
+    Read,
+    /// Advances or consumes a cursor-like resource.
+    Advance,
+    /// Writes to the resource.
+    Write,
+}
+
+/// One non-memory resource touch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ResourceEffect {
+    /// Which resource is touched.
+    pub resource: EffectResource,
+    /// How the resource is touched.
+    pub access: ResourceAccess,
+}
+
+/// A typed-memory region relative to the current base pointer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MemoryRegion {
+    /// `None` when the op may touch a region the current IR cannot localize yet.
+    pub offset: Option<usize>,
+    /// `None` when the op may touch a dynamically-sized or opaque region.
+    pub size: Option<usize>,
+}
+
+impl MemoryRegion {
+    /// A known base-relative memory range.
+    #[must_use]
+    pub fn base_relative(offset: usize, size: usize) -> Self {
+        Self {
+            offset: Some(offset),
+            size: Some(size),
+        }
+    }
+
+    /// A known base-relative offset whose exact byte width is opaque.
+    #[must_use]
+    pub fn base_relative_unknown_size(offset: usize) -> Self {
+        Self {
+            offset: Some(offset),
+            size: None,
+        }
+    }
+
+    /// A known-width region whose base-relative offset is opaque.
+    #[must_use]
+    pub fn unknown_offset(size: usize) -> Self {
+        Self {
+            offset: None,
+            size: Some(size),
+        }
+    }
+
+    /// A region the current IR cannot localize.
+    #[must_use]
+    pub fn unknown() -> Self {
+        Self {
+            offset: None,
+            size: None,
+        }
+    }
+}
+
+/// How an op touches typed memory.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TypedMemoryAccess {
+    /// Reads an already-initialized value or bytes.
+    Read,
+    /// Initializes previously-uninitialized storage.
+    Initialize,
+    /// Writes storage that may already be initialized.
+    Overwrite,
+    /// Moves a value out of this region.
+    MoveFrom,
+    /// Moves a value into this region.
+    MoveInto,
+    /// Drops an initialized value.
+    Drop,
+}
+
+/// One typed-memory touch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TypedMemoryEffect {
+    /// Which typed-memory region is touched.
+    pub region: MemoryRegion,
+    /// How the region is touched.
+    pub access: TypedMemoryAccess,
+}
+
+/// Whether an op can be moved across neighboring effects.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum EffectOrdering {
+    /// The op has no sequencing constraint beyond memory/resource dependencies.
+    #[default]
+    Reorderable,
+    /// The op has stream/state order and may only be fused or moved by a pass
+    /// that explicitly understands that order.
+    Ordered,
+    /// The op is a hard scheduling barrier.
+    Barrier,
+}
+
+/// Conservative effect contract for one canonical op.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EffectContract {
+    /// Non-memory resources touched by this op.
+    pub resources: Vec<ResourceEffect>,
+    /// Typed-memory regions touched by this op.
+    pub typed_memory: Vec<TypedMemoryEffect>,
+    /// The op may return an error in the interpreter/backend.
+    pub may_fail: bool,
+    /// The op may allocate.
+    pub may_allocate: bool,
+    /// The op may call user or registry code.
+    pub calls_user_code: bool,
+    /// Scheduling constraint exposed to optimizer passes.
+    pub ordering: EffectOrdering,
+    /// The op's real effects are not fully visible yet.
+    pub opaque: bool,
+}
+
+impl EffectContract {
+    /// Build an empty, reorderable contract.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Build an explicit opaque barrier contract.
+    #[must_use]
+    pub fn opaque() -> Self {
+        Self::new().opaque_barrier()
+    }
+
+    /// Mark this op as reading a resource.
+    #[must_use]
+    pub fn read_resource(mut self, resource: EffectResource) -> Self {
+        self.resources.push(ResourceEffect {
+            resource,
+            access: ResourceAccess::Read,
+        });
+        self
+    }
+
+    /// Mark this op as advancing a cursor-like resource.
+    #[must_use]
+    pub fn advance_resource(mut self, resource: EffectResource) -> Self {
+        self.resources.push(ResourceEffect {
+            resource,
+            access: ResourceAccess::Advance,
+        });
+        self.ordered()
+    }
+
+    /// Mark this op as writing a resource.
+    #[must_use]
+    pub fn write_resource(mut self, resource: EffectResource) -> Self {
+        self.resources.push(ResourceEffect {
+            resource,
+            access: ResourceAccess::Write,
+        });
+        self.ordered()
+    }
+
+    /// Mark this op as touching typed memory.
+    #[must_use]
+    pub fn typed_memory(mut self, region: MemoryRegion, access: TypedMemoryAccess) -> Self {
+        self.typed_memory.push(TypedMemoryEffect { region, access });
+        self
+    }
+
+    /// Mark this op as fallible.
+    #[must_use]
+    pub fn may_fail(mut self) -> Self {
+        self.may_fail = true;
+        self
+    }
+
+    /// Mark this op as allocating.
+    #[must_use]
+    pub fn may_allocate(mut self) -> Self {
+        self.may_allocate = true;
+        self
+    }
+
+    /// Mark this op as calling user or registry code.
+    #[must_use]
+    pub fn calls_user_code(mut self) -> Self {
+        self.calls_user_code = true;
+        self.barrier()
+    }
+
+    /// Mark this op as order-sensitive.
+    #[must_use]
+    pub fn ordered(mut self) -> Self {
+        if matches!(self.ordering, EffectOrdering::Reorderable) {
+            self.ordering = EffectOrdering::Ordered;
+        }
+        self
+    }
+
+    /// Mark this op as a hard ordering barrier.
+    #[must_use]
+    pub fn barrier(mut self) -> Self {
+        self.ordering = EffectOrdering::Barrier;
+        self
+    }
+
+    /// Mark this op as an opaque hard barrier.
+    #[must_use]
+    pub fn opaque_barrier(mut self) -> Self {
+        self.opaque = true;
+        self.barrier()
+    }
+}
+
 /// Minimal intrinsic metadata hook.
-///
-/// Effect contracts are intentionally not modeled here yet; the next step is to
-/// grow this surface from names into explicit read/write/failure contracts.
 pub trait IntrinsicOp {
     /// Return this intrinsic's stable descriptor.
     fn descriptor(&self) -> IntrinsicDescriptor;
+
+    /// Return a conservative effect contract for this intrinsic.
+    fn effect(&self) -> EffectContract {
+        EffectContract::opaque()
+    }
 }
 
 /// Error while resolving symbolic canonical block ids into dense refs.
@@ -308,6 +545,74 @@ impl LoweredProgramStats {
     }
 }
 
+/// Effect counts for one canonical program.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EffectStats {
+    pub op_count: usize,
+    pub intrinsic_op_count: usize,
+    pub opaque_count: usize,
+    pub reorderable_count: usize,
+    pub ordered_count: usize,
+    pub barrier_count: usize,
+    pub input_read_count: usize,
+    pub input_advance_count: usize,
+    pub sink_write_count: usize,
+    pub side_channel_count: usize,
+    pub may_fail_count: usize,
+    pub may_allocate_count: usize,
+    pub calls_user_code_count: usize,
+    pub typed_memory_read_count: usize,
+    pub typed_memory_initialize_count: usize,
+    pub typed_memory_overwrite_count: usize,
+    pub typed_memory_move_count: usize,
+    pub typed_memory_drop_count: usize,
+}
+
+impl EffectStats {
+    /// Add another effect counter into this one.
+    pub fn accumulate(&mut self, other: Self) {
+        self.op_count += other.op_count;
+        self.intrinsic_op_count += other.intrinsic_op_count;
+        self.opaque_count += other.opaque_count;
+        self.reorderable_count += other.reorderable_count;
+        self.ordered_count += other.ordered_count;
+        self.barrier_count += other.barrier_count;
+        self.input_read_count += other.input_read_count;
+        self.input_advance_count += other.input_advance_count;
+        self.sink_write_count += other.sink_write_count;
+        self.side_channel_count += other.side_channel_count;
+        self.may_fail_count += other.may_fail_count;
+        self.may_allocate_count += other.may_allocate_count;
+        self.calls_user_code_count += other.calls_user_code_count;
+        self.typed_memory_read_count += other.typed_memory_read_count;
+        self.typed_memory_initialize_count += other.typed_memory_initialize_count;
+        self.typed_memory_overwrite_count += other.typed_memory_overwrite_count;
+        self.typed_memory_move_count += other.typed_memory_move_count;
+        self.typed_memory_drop_count += other.typed_memory_drop_count;
+    }
+}
+
+/// Effect counts for a canonical lowered program with block table.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LoweredEffectStats {
+    pub root: EffectStats,
+    pub blocks: EffectStats,
+    pub total: EffectStats,
+    pub block_count: usize,
+}
+
+impl LoweredEffectStats {
+    /// Add another lowered-program effect counter into this one.
+    pub fn accumulate(&mut self, other: Self) {
+        self.root.accumulate(other.root);
+        self.blocks.accumulate(other.blocks);
+        self.total.accumulate(other.total);
+        self.block_count += other.block_count;
+    }
+}
+
 /// Count the canonical IR shape for one program.
 #[must_use]
 pub fn program_stats<Block, Intrinsic>(program: &[WeavyOp<Block, Intrinsic>]) -> ProgramStats {
@@ -340,6 +645,57 @@ where
     }
 }
 
+/// Return the conservative effect contract for one canonical op.
+#[must_use]
+pub fn op_effect<Block, Intrinsic>(op: &WeavyOp<Block, Intrinsic>) -> EffectContract
+where
+    Intrinsic: IntrinsicOp,
+{
+    match op {
+        WeavyOp::Control(op) => control_effect(op),
+        WeavyOp::Memory(op) => memory_effect(op),
+        WeavyOp::Init(op) => init_effect(op),
+        WeavyOp::Aggregate(op) => aggregate_effect(op),
+        WeavyOp::Intrinsic(intrinsic) => intrinsic.effect(),
+    }
+}
+
+/// Count effect contracts for one canonical program.
+#[must_use]
+pub fn effect_stats<Block, Intrinsic>(program: &[WeavyOp<Block, Intrinsic>]) -> EffectStats
+where
+    Intrinsic: IntrinsicOp,
+{
+    let mut stats = EffectStats::default();
+    add_effect_stats(program, &mut stats);
+    stats
+}
+
+/// Count effect contracts for a canonical lowered program and its block table.
+#[must_use]
+pub fn lowered_effect_stats<Block, Intrinsic>(
+    lowered: &WeavyLowered<Block, Intrinsic>,
+) -> LoweredEffectStats
+where
+    Block: Ord,
+    Intrinsic: IntrinsicOp,
+{
+    let root = effect_stats(&lowered.program);
+    let mut blocks = EffectStats::default();
+    for block in lowered.blocks.values() {
+        blocks.accumulate(effect_stats(block));
+    }
+    let mut total = root;
+    total.accumulate(blocks);
+
+    LoweredEffectStats {
+        root,
+        blocks,
+        total,
+        block_count: lowered.blocks.len(),
+    }
+}
+
 fn add_program_stats<Block, Intrinsic>(
     program: &[WeavyOp<Block, Intrinsic>],
     stats: &mut ProgramStats,
@@ -354,6 +710,195 @@ fn add_program_stats<Block, Intrinsic>(
             WeavyOp::Intrinsic(_) => {
                 stats.intrinsic_op_count += 1;
             }
+        }
+    }
+}
+
+fn control_effect<Block>(op: &ControlOp<Block>) -> EffectContract {
+    match op {
+        ControlOp::CallBlock { .. } | ControlOp::Return => EffectContract::new().barrier(),
+    }
+}
+
+fn memory_effect(op: &MemoryOp) -> EffectContract {
+    match op {
+        MemoryOp::ScalarCopy {
+            offset,
+            size,
+            align: _,
+        } => scalar_effect(*offset, *size),
+        MemoryOp::ScalarRun { segments } => {
+            let mut effect = stream_copy_effect();
+            for segment in segments {
+                effect = effect
+                    .typed_memory(
+                        MemoryRegion::base_relative(segment.offset, segment.size),
+                        TypedMemoryAccess::Read,
+                    )
+                    .typed_memory(
+                        MemoryRegion::base_relative(segment.offset, segment.size),
+                        TypedMemoryAccess::Initialize,
+                    );
+            }
+            effect
+        }
+        MemoryOp::Zero { offset, size } => EffectContract::new().typed_memory(
+            MemoryRegion::base_relative(*offset, *size),
+            TypedMemoryAccess::Overwrite,
+        ),
+        MemoryOp::Move {
+            src_offset,
+            dst_offset,
+            size,
+            align: _,
+        } => EffectContract::new()
+            .typed_memory(
+                MemoryRegion::base_relative(*src_offset, *size),
+                TypedMemoryAccess::MoveFrom,
+            )
+            .typed_memory(
+                MemoryRegion::base_relative(*dst_offset, *size),
+                TypedMemoryAccess::MoveInto,
+            )
+            .ordered(),
+        MemoryOp::Drop { offset, layout } => EffectContract::new()
+            .typed_memory(
+                MemoryRegion::base_relative(*offset, layout.size),
+                TypedMemoryAccess::Drop,
+            )
+            .calls_user_code(),
+    }
+}
+
+fn scalar_effect(offset: usize, size: usize) -> EffectContract {
+    stream_copy_effect()
+        .typed_memory(
+            MemoryRegion::base_relative(offset, size),
+            TypedMemoryAccess::Read,
+        )
+        .typed_memory(
+            MemoryRegion::base_relative(offset, size),
+            TypedMemoryAccess::Initialize,
+        )
+}
+
+fn stream_copy_effect() -> EffectContract {
+    EffectContract::new()
+        .read_resource(EffectResource::Input("wire"))
+        .advance_resource(EffectResource::Input("wire"))
+        .write_resource(EffectResource::Sink("wire"))
+        .may_fail()
+}
+
+fn init_effect(op: &InitOp) -> EffectContract {
+    match op {
+        InitOp::Default { offset } | InitOp::OptionNone { offset } => EffectContract::new()
+            .typed_memory(
+                MemoryRegion::base_relative_unknown_size(*offset),
+                TypedMemoryAccess::Initialize,
+            )
+            .calls_user_code(),
+        InitOp::OptionSome { offset, inner } => EffectContract::new()
+            .typed_memory(
+                MemoryRegion::base_relative_unknown_size(*offset),
+                TypedMemoryAccess::Initialize,
+            )
+            .typed_memory(
+                MemoryRegion::unknown_offset(inner.size),
+                TypedMemoryAccess::MoveFrom,
+            )
+            .calls_user_code(),
+        InitOp::ListFromRawParts {
+            offset,
+            element: _,
+            len: _,
+            cap: _,
+        } => EffectContract::new()
+            .typed_memory(MemoryRegion::unknown(), TypedMemoryAccess::MoveFrom)
+            .typed_memory(
+                MemoryRegion::base_relative_unknown_size(*offset),
+                TypedMemoryAccess::Initialize,
+            )
+            .calls_user_code(),
+        InitOp::PointerFromScratch { offset, pointee: _ } => EffectContract::new()
+            .typed_memory(MemoryRegion::unknown(), TypedMemoryAccess::MoveFrom)
+            .typed_memory(
+                MemoryRegion::base_relative_unknown_size(*offset),
+                TypedMemoryAccess::Initialize,
+            )
+            .may_allocate()
+            .calls_user_code(),
+    }
+}
+
+fn aggregate_effect<Block>(op: &AggregateOp<Block>) -> EffectContract {
+    match op {
+        AggregateOp::BeginRecord { .. }
+        | AggregateOp::RecordField { .. }
+        | AggregateOp::BeginList { .. }
+        | AggregateOp::FinishList => EffectContract::new()
+            .write_resource(EffectResource::SideChannel("aggregate_state"))
+            .ordered(),
+        AggregateOp::FinishRecord => EffectContract::new()
+            .read_resource(EffectResource::SideChannel("aggregate_state"))
+            .may_fail()
+            .ordered(),
+    }
+}
+
+fn add_effect_stats<Block, Intrinsic>(
+    program: &[WeavyOp<Block, Intrinsic>],
+    stats: &mut EffectStats,
+) where
+    Intrinsic: IntrinsicOp,
+{
+    for op in program {
+        stats.op_count += 1;
+        if matches!(op, WeavyOp::Intrinsic(_)) {
+            stats.intrinsic_op_count += 1;
+        }
+        add_contract_stats(&op_effect(op), stats);
+    }
+}
+
+fn add_contract_stats(contract: &EffectContract, stats: &mut EffectStats) {
+    if contract.opaque {
+        stats.opaque_count += 1;
+    }
+    match contract.ordering {
+        EffectOrdering::Reorderable => stats.reorderable_count += 1,
+        EffectOrdering::Ordered => stats.ordered_count += 1,
+        EffectOrdering::Barrier => stats.barrier_count += 1,
+    }
+    if contract.may_fail {
+        stats.may_fail_count += 1;
+    }
+    if contract.may_allocate {
+        stats.may_allocate_count += 1;
+    }
+    if contract.calls_user_code {
+        stats.calls_user_code_count += 1;
+    }
+    for resource in &contract.resources {
+        match (resource.resource, resource.access) {
+            (EffectResource::Input(_), ResourceAccess::Read) => stats.input_read_count += 1,
+            (EffectResource::Input(_), ResourceAccess::Advance) => {
+                stats.input_advance_count += 1;
+            }
+            (EffectResource::Sink(_), ResourceAccess::Write) => stats.sink_write_count += 1,
+            (EffectResource::SideChannel(_), _) => stats.side_channel_count += 1,
+            _ => {}
+        }
+    }
+    for memory in &contract.typed_memory {
+        match memory.access {
+            TypedMemoryAccess::Read => stats.typed_memory_read_count += 1,
+            TypedMemoryAccess::Initialize => stats.typed_memory_initialize_count += 1,
+            TypedMemoryAccess::Overwrite => stats.typed_memory_overwrite_count += 1,
+            TypedMemoryAccess::MoveFrom | TypedMemoryAccess::MoveInto => {
+                stats.typed_memory_move_count += 1;
+            }
+            TypedMemoryAccess::Drop => stats.typed_memory_drop_count += 1,
         }
     }
 }
@@ -465,6 +1010,22 @@ mod tests {
                     dialect: "hash",
                     name: "feed_field",
                 },
+            }
+        }
+
+        fn effect(&self) -> EffectContract {
+            match self {
+                TestIntrinsic::ReadI32 => EffectContract::new()
+                    .read_resource(EffectResource::Input("json"))
+                    .advance_resource(EffectResource::Input("json"))
+                    .typed_memory(
+                        MemoryRegion::base_relative(0, 4),
+                        TypedMemoryAccess::Initialize,
+                    )
+                    .may_fail(),
+                TestIntrinsic::HashField => EffectContract::new()
+                    .typed_memory(MemoryRegion::base_relative(4, 8), TypedMemoryAccess::Read)
+                    .write_resource(EffectResource::Sink("hash")),
             }
         }
     }
@@ -643,5 +1204,66 @@ mod tests {
             }],
             1
         );
+    }
+
+    #[test]
+    fn canonical_effect_stats_count_builtin_effects() {
+        let program = vec![
+            WeavyOp::<(), TestIntrinsic>::Memory(MemoryOp::ScalarCopy {
+                offset: 0,
+                size: 4,
+                align: 4,
+            }),
+            WeavyOp::Memory(MemoryOp::Move {
+                src_offset: 8,
+                dst_offset: 16,
+                size: 8,
+                align: 8,
+            }),
+            WeavyOp::Memory(MemoryOp::Drop {
+                offset: 24,
+                layout: Layout { size: 16, align: 8 },
+            }),
+            WeavyOp::Control(ControlOp::CallBlock {
+                block: (),
+                base_offset: 0,
+            }),
+        ];
+
+        let stats = effect_stats(&program);
+
+        assert_eq!(stats.op_count, 4);
+        assert_eq!(stats.input_read_count, 1);
+        assert_eq!(stats.input_advance_count, 1);
+        assert_eq!(stats.sink_write_count, 1);
+        assert_eq!(stats.may_fail_count, 1);
+        assert_eq!(stats.calls_user_code_count, 1);
+        assert_eq!(stats.typed_memory_read_count, 1);
+        assert_eq!(stats.typed_memory_initialize_count, 1);
+        assert_eq!(stats.typed_memory_move_count, 2);
+        assert_eq!(stats.typed_memory_drop_count, 1);
+        assert_eq!(stats.ordered_count, 2);
+        assert_eq!(stats.barrier_count, 2);
+        assert_eq!(stats.opaque_count, 0);
+    }
+
+    #[test]
+    fn intrinsic_effect_stats_are_visible() {
+        let program = vec![
+            WeavyOp::<(), _>::Intrinsic(TestIntrinsic::ReadI32),
+            WeavyOp::Intrinsic(TestIntrinsic::HashField),
+        ];
+
+        let stats = effect_stats(&program);
+
+        assert_eq!(stats.op_count, 2);
+        assert_eq!(stats.intrinsic_op_count, 2);
+        assert_eq!(stats.input_read_count, 1);
+        assert_eq!(stats.input_advance_count, 1);
+        assert_eq!(stats.sink_write_count, 1);
+        assert_eq!(stats.may_fail_count, 1);
+        assert_eq!(stats.typed_memory_read_count, 1);
+        assert_eq!(stats.typed_memory_initialize_count, 1);
+        assert_eq!(stats.opaque_count, 0);
     }
 }
