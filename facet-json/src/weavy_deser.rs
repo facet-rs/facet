@@ -126,7 +126,10 @@ where
     fn deserialize_with_stats<const TRUSTED_UTF8: bool>(
         &self,
         parser: &mut JsonParser<'_, TRUSTED_UTF8>,
-    ) -> Result<(T, RunStats), DeserializeError> {
+    ) -> Result<(T, RunStats), DeserializeError>
+    where
+        for<'de> JsonParser<'de, TRUSTED_UTF8>: ScalarInputPreselected<'de, TRUSTED_UTF8>,
+    {
         let mut slot = MaybeUninit::<T>::uninit();
         let root = PtrUninit::from_maybe_uninit(&mut slot);
         let mut interp = JsonInterp::new(parser, root);
@@ -142,7 +145,10 @@ where
     fn deserialize<const TRUSTED_UTF8: bool>(
         &self,
         parser: &mut JsonParser<'_, TRUSTED_UTF8>,
-    ) -> Result<T, DeserializeError> {
+    ) -> Result<T, DeserializeError>
+    where
+        for<'de> JsonParser<'de, TRUSTED_UTF8>: ScalarInputPreselected<'de, TRUSTED_UTF8>,
+    {
         let mut slot = MaybeUninit::<T>::uninit();
         let root = PtrUninit::from_maybe_uninit(&mut slot);
         let mut interp = JsonInterp::new(parser, root);
@@ -176,7 +182,7 @@ enum JsonOp<Block> {
     },
     ReadScalarStruct {
         shape: &'static Shape,
-        fields: Box<[FieldPlan<Block>]>,
+        fields: Box<[ScalarFieldPlan]>,
     },
     ReadStruct {
         shape: &'static Shape,
@@ -233,11 +239,30 @@ struct ScalarPlan {
     write: Option<MaterializedScalarWriter>,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct ScalarFieldPlan {
+    name: &'static str,
+    alias: Option<&'static str>,
+    offset: usize,
+    shape: &'static Shape,
+    scalar: ScalarPlan,
+    input_trusted: Option<ScalarInputWriter<true>>,
+    input_checked: Option<ScalarInputWriter<false>>,
+    missing: MissingField,
+}
+
 type MaterializedScalarWriter = for<'de> unsafe fn(
     &'static Shape,
     PtrUninit,
     JsonScalarToken<'de>,
     Span,
+) -> Result<(), DeserializeError>;
+
+type ScalarInputWriter<const TRUSTED_UTF8: bool> = for<'de> fn(
+    &JsonParser<'de, TRUSTED_UTF8>,
+    &'static Shape,
+    PtrUninit,
+    JsonScalarInput<'de>,
 ) -> Result<(), DeserializeError>;
 
 impl ScalarPlan {
@@ -265,12 +290,12 @@ impl ScalarPlan {
         unsafe { write_scalar(shape, self.scalar, dst, value, span) }
     }
 
-    unsafe fn write_input<const TRUSTED_UTF8: bool>(
+    unsafe fn write_input<'de, const TRUSTED_UTF8: bool>(
         self,
-        parser: &JsonParser<'_, TRUSTED_UTF8>,
+        parser: &JsonParser<'de, TRUSTED_UTF8>,
         shape: &'static Shape,
         dst: PtrUninit,
-        value: JsonScalarInput<'_>,
+        value: JsonScalarInput<'de>,
     ) -> Result<(), DeserializeError> {
         match self.scalar {
             ScalarType::Unit => write_unit_input(parser, shape, dst, value),
@@ -298,6 +323,47 @@ impl ScalarPlan {
     }
 }
 
+trait ScalarInputPreselected<'de, const TRUSTED_UTF8: bool> {
+    fn write_scalar_input_preselected(
+        &self,
+        field: &ScalarFieldPlan,
+        dst: PtrUninit,
+        value: JsonScalarInput<'de>,
+    ) -> Result<(), DeserializeError>;
+}
+
+impl<'de> ScalarInputPreselected<'de, true> for JsonParser<'de, true> {
+    #[inline(always)]
+    fn write_scalar_input_preselected(
+        &self,
+        field: &ScalarFieldPlan,
+        dst: PtrUninit,
+        value: JsonScalarInput<'de>,
+    ) -> Result<(), DeserializeError> {
+        if let Some(write) = field.input_trusted {
+            return write(self, field.shape, dst, value);
+        }
+
+        unsafe { field.scalar.write_input(self, field.shape, dst, value) }
+    }
+}
+
+impl<'de> ScalarInputPreselected<'de, false> for JsonParser<'de, false> {
+    #[inline(always)]
+    fn write_scalar_input_preselected(
+        &self,
+        field: &ScalarFieldPlan,
+        dst: PtrUninit,
+        value: JsonScalarInput<'de>,
+    ) -> Result<(), DeserializeError> {
+        if let Some(write) = field.input_checked {
+            return write(self, field.shape, dst, value);
+        }
+
+        unsafe { field.scalar.write_input(self, field.shape, dst, value) }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 struct ListOptionScalar {
     option: OptionDef,
@@ -305,10 +371,16 @@ struct ListOptionScalar {
     inner_layout: Layout,
 }
 
-impl<Block> FieldPlan<Block> {
+trait StructFieldPlan {
+    fn name(&self) -> &'static str;
+    fn alias(&self) -> Option<&'static str>;
+    fn offset(&self) -> usize;
+    fn shape(&self) -> &'static Shape;
+    fn missing(&self) -> MissingField;
+
     #[inline]
     fn matches_key_bytes(&self, key: &[u8]) -> bool {
-        self.name.as_bytes() == key || self.alias.is_some_and(|alias| alias.as_bytes() == key)
+        self.name().as_bytes() == key || self.alias().is_some_and(|alias| alias.as_bytes() == key)
     }
 
     #[inline]
@@ -317,14 +389,68 @@ impl<Block> FieldPlan<Block> {
         parser: &JsonParser<'de, TRUSTED_UTF8>,
         key: &JsonFieldKeyInput<'de>,
     ) -> Result<bool, ParseError> {
-        if parser.field_key_matches(key, self.name)? {
+        if parser.field_key_matches(key, self.name())? {
             return Ok(true);
         }
 
-        match self.alias {
+        match self.alias() {
             Some(alias) => parser.field_key_matches(key, alias),
             None => Ok(false),
         }
+    }
+}
+
+impl<Block> StructFieldPlan for FieldPlan<Block> {
+    #[inline(always)]
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
+    #[inline(always)]
+    fn alias(&self) -> Option<&'static str> {
+        self.alias
+    }
+
+    #[inline(always)]
+    fn offset(&self) -> usize {
+        self.offset
+    }
+
+    #[inline(always)]
+    fn shape(&self) -> &'static Shape {
+        self.shape
+    }
+
+    #[inline(always)]
+    fn missing(&self) -> MissingField {
+        self.missing
+    }
+}
+
+impl StructFieldPlan for ScalarFieldPlan {
+    #[inline(always)]
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
+    #[inline(always)]
+    fn alias(&self) -> Option<&'static str> {
+        self.alias
+    }
+
+    #[inline(always)]
+    fn offset(&self) -> usize {
+        self.offset
+    }
+
+    #[inline(always)]
+    fn shape(&self) -> &'static Shape {
+        self.shape
+    }
+
+    #[inline(always)]
+    fn missing(&self) -> MissingField {
+        self.missing
     }
 }
 
@@ -461,6 +587,37 @@ impl Lowering {
                     }
 
                     let container_has_default = shape.has_default_attr();
+                    let all_scalar = struct_type
+                        .fields
+                        .iter()
+                        .all(|field| ScalarType::try_from_shape(field.shape()).is_some());
+
+                    if all_scalar {
+                        let mut fields = Vec::with_capacity(struct_type.fields.len());
+                        for field in struct_type.fields {
+                            if field.should_skip_deserializing() || field.is_flattened() {
+                                return Err(unsupported(shape, "skipped or flattened fields"));
+                            }
+                            let field_shape = field.shape();
+                            let scalar = ScalarType::try_from_shape(field_shape)
+                                .expect("scalar-only struct field has scalar type");
+                            fields.push(ScalarFieldPlan {
+                                name: field.effective_name(),
+                                alias: field.alias,
+                                offset: field.offset,
+                                shape: field_shape,
+                                scalar: ScalarPlan::new(scalar),
+                                input_trusted: scalar_input_writer::<true>(scalar),
+                                input_checked: scalar_input_writer::<false>(scalar),
+                                missing: missing_field_action(field, container_has_default),
+                            });
+                        }
+                        return Ok(vec![JsonOp::ReadScalarStruct {
+                            shape,
+                            fields: fields.into_boxed_slice(),
+                        }]);
+                    }
+
                     let mut fields = Vec::with_capacity(struct_type.fields.len());
                     for field in struct_type.fields {
                         if field.should_skip_deserializing() || field.is_flattened() {
@@ -479,10 +636,6 @@ impl Lowering {
                         });
                     }
                     let fields = fields.into_boxed_slice();
-                    if fields.iter().all(|field| field.scalar.is_some()) {
-                        return Ok(vec![JsonOp::ReadScalarStruct { shape, fields }]);
-                    }
-
                     let loop_id = JsonBlockId::StructLoop(shape);
                     let tracking = StructTracking::for_len(fields.len());
                     let loop_program = vec![JsonOp::StructNext {
@@ -533,10 +686,7 @@ fn resolve_json_op(
     Ok(match op {
         JsonOp::CallBlock(block) => JsonOp::CallBlock(resolve_block_ref(block, refs)?),
         JsonOp::ReadScalar { shape, scalar } => JsonOp::ReadScalar { shape, scalar },
-        JsonOp::ReadScalarStruct { shape, fields } => JsonOp::ReadScalarStruct {
-            shape,
-            fields: resolve_field_plans(fields, refs)?,
-        },
+        JsonOp::ReadScalarStruct { shape, fields } => JsonOp::ReadScalarStruct { shape, fields },
         JsonOp::ReadStruct {
             shape,
             fields,
@@ -703,7 +853,8 @@ fn raw_alloc_error(error: RawAllocError) -> DeserializeError {
 struct JsonInterp<'parser, 'de, 'program, const TRUSTED_UTF8: bool> {
     parser: &'parser mut JsonParser<'de, TRUSTED_UTF8>,
     base: PtrUninit,
-    inline_structs: InlineStack<StructFrame<'program, InitializedLedger<Span>>>,
+    inline_structs:
+        InlineStack<StructFrame<'program, FieldPlan<ExecBlock>, InitializedLedger<Span>>>,
     large_structs: Option<Box<LargeStructStack<'program>>>,
     lists: InlineStack<ListFrame>,
     scratch: ScratchSession,
@@ -712,6 +863,8 @@ struct JsonInterp<'parser, 'de, 'program, const TRUSTED_UTF8: bool> {
 
 impl<'parser, 'de, 'program, const TRUSTED_UTF8: bool>
     JsonInterp<'parser, 'de, 'program, TRUSTED_UTF8>
+where
+    JsonParser<'de, TRUSTED_UTF8>: ScalarInputPreselected<'de, TRUSTED_UTF8>,
 {
     fn new(parser: &'parser mut JsonParser<'de, TRUSTED_UTF8>, base: PtrUninit) -> Self {
         Self {
@@ -1073,27 +1226,31 @@ impl<'parser, 'de, 'program, const TRUSTED_UTF8: bool>
     fn read_scalar_struct(
         &mut self,
         shape: &'static Shape,
-        fields: &'program [FieldPlan<ExecBlock>],
+        fields: &'program [ScalarFieldPlan],
     ) -> Result<(), DeserializeError> {
         self.parser.consume_object_start()?;
         let base = self.base;
         match StructTracking::for_len(fields.len()) {
             StructTracking::Inline => {
-                let mut frame = StructFrame::<InitializedLedger<Span>>::new(shape, base, fields);
+                let mut frame = StructFrame::<ScalarFieldPlan, InitializedLedger<Span>>::new(
+                    shape, base, fields,
+                );
                 self.read_scalar_struct_fields(shape, &mut frame)?;
                 unsafe {
                     frame.fill_missing_fields()?;
                 }
             }
             StructTracking::Bitset => {
-                let mut frame = StructFrame::<BitsetStructSeen>::new(shape, base, fields);
+                let mut frame =
+                    StructFrame::<ScalarFieldPlan, BitsetStructSeen>::new(shape, base, fields);
                 self.read_scalar_struct_fields(shape, &mut frame)?;
                 unsafe {
                     frame.fill_missing_fields()?;
                 }
             }
             StructTracking::Heap => {
-                let mut frame = StructFrame::<HeapStructSeen>::new(shape, base, fields);
+                let mut frame =
+                    StructFrame::<ScalarFieldPlan, HeapStructSeen>::new(shape, base, fields);
                 self.read_scalar_struct_fields(shape, &mut frame)?;
                 unsafe {
                     frame.fill_missing_fields()?;
@@ -1106,7 +1263,7 @@ impl<'parser, 'de, 'program, const TRUSTED_UTF8: bool>
     fn read_scalar_struct_fields<Seen: StructSeenStore>(
         &mut self,
         shape: &'static Shape,
-        frame: &mut StructFrame<'program, Seen>,
+        frame: &mut StructFrame<'program, ScalarFieldPlan, Seen>,
     ) -> Result<(), DeserializeError> {
         loop {
             match self.parser.next_object_key_or_end()? {
@@ -1162,25 +1319,31 @@ impl<'parser, 'de, 'program, const TRUSTED_UTF8: bool>
     #[inline(always)]
     fn read_scalar_struct_field<Seen: StructSeenStore>(
         &mut self,
-        frame: &mut StructFrame<'program, Seen>,
+        frame: &mut StructFrame<'program, ScalarFieldPlan, Seen>,
         index: usize,
-        field: &'program FieldPlan<ExecBlock>,
+        field: &'program ScalarFieldPlan,
         key_is_raw: bool,
         span: Span,
     ) -> Result<(), DeserializeError> {
-        let scalar = field
-            .scalar
-            .expect("scalar-only struct contains only scalar field plans");
         let field_ptr = unsafe { frame.base.field_uninit(field.offset) };
         if key_is_raw {
             let value = self.parser.read_current_scalar_input()?;
             unsafe {
-                scalar.write_input(&*self.parser, field.shape, field_ptr, value)?;
+                if frame.fields.len() <= 3 {
+                    field
+                        .scalar
+                        .write_input(&*self.parser, field.shape, field_ptr, value)?;
+                } else {
+                    self.parser
+                        .write_scalar_input_preselected(field, field_ptr, value)?;
+                }
             }
         } else {
             let (value, value_span) = self.parser.read_scalar_token()?;
             unsafe {
-                scalar.write(field.shape, field_ptr, value, value_span)?;
+                field
+                    .scalar
+                    .write(field.shape, field_ptr, value, value_span)?;
             }
         }
         frame.mark_seen(index, span);
@@ -1282,6 +1445,8 @@ impl<const TRUSTED_UTF8: bool> Drop for JsonInterp<'_, '_, '_, TRUSTED_UTF8> {
 
 impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock, ExecOp>
     for JsonInterp<'parser, 'de, 'program, TRUSTED_UTF8>
+where
+    JsonParser<'de, TRUSTED_UTF8>: ScalarInputPreselected<'de, TRUSTED_UTF8>,
 {
     type Error = DeserializeError;
     type Continuation = Continuation;
@@ -1692,16 +1857,16 @@ enum Continuation {
     },
 }
 
-struct MatchedField<'program> {
+struct MatchedField<'program, Field> {
     index: usize,
-    field: &'program FieldPlan<ExecBlock>,
+    field: &'program Field,
     ordered: bool,
 }
 
-struct StructFrame<'program, Seen: StructSeenStore> {
+struct StructFrame<'program, Field: StructFieldPlan, Seen: StructSeenStore> {
     shape: &'static Shape,
     base: PtrUninit,
-    fields: &'program [FieldPlan<ExecBlock>],
+    fields: &'program [Field],
     seen: Seen,
     next_field: usize,
 }
@@ -1726,8 +1891,8 @@ impl StructTracking {
 }
 
 enum LargeStructFrameSlot<'program> {
-    Bitset(StructFrame<'program, BitsetStructSeen>),
-    Heap(StructFrame<'program, HeapStructSeen>),
+    Bitset(StructFrame<'program, FieldPlan<ExecBlock>, BitsetStructSeen>),
+    Heap(StructFrame<'program, FieldPlan<ExecBlock>, HeapStructSeen>),
 }
 
 struct LargeStructStack<'program> {
@@ -1861,7 +2026,7 @@ impl<'program> LargeStructFrameSlot<'program> {
         &self,
         parser: &JsonParser<'de, TRUSTED_UTF8>,
         key: &JsonFieldKeyInput<'de>,
-    ) -> Result<Option<MatchedField<'program>>, ParseError> {
+    ) -> Result<Option<MatchedField<'program, FieldPlan<ExecBlock>>>, ParseError> {
         match self {
             Self::Bitset(frame) => frame.match_field_input(parser, key),
             Self::Heap(frame) => frame.match_field_input(parser, key),
@@ -1904,12 +2069,12 @@ fn struct_seen_bit(index: usize) -> u64 {
     1u64 << index
 }
 
-impl<'program, Seen: StructSeenStore> StructFrame<'program, Seen> {
-    fn new(
-        shape: &'static Shape,
-        base: PtrUninit,
-        fields: &'program [FieldPlan<ExecBlock>],
-    ) -> Self {
+impl<'program, Field, Seen> StructFrame<'program, Field, Seen>
+where
+    Field: StructFieldPlan,
+    Seen: StructSeenStore,
+{
+    fn new(shape: &'static Shape, base: PtrUninit, fields: &'program [Field]) -> Self {
         Self {
             shape,
             base,
@@ -1923,7 +2088,7 @@ impl<'program, Seen: StructSeenStore> StructFrame<'program, Seen> {
         &self,
         parser: &JsonParser<'de, TRUSTED_UTF8>,
         key: &JsonFieldKeyInput<'de>,
-    ) -> Result<Option<MatchedField<'program>>, ParseError> {
+    ) -> Result<Option<MatchedField<'program, Field>>, ParseError> {
         if let Some(key) = parser.field_key_unescaped_bytes(key) {
             return Ok(self.match_field_bytes(key));
         }
@@ -1963,7 +2128,7 @@ impl<'program, Seen: StructSeenStore> StructFrame<'program, Seen> {
         &self,
         parser: &JsonParser<'de, TRUSTED_UTF8>,
         key: &JsonFieldKeyInput<'de>,
-    ) -> Result<Option<(usize, &'program FieldPlan<ExecBlock>)>, ParseError> {
+    ) -> Result<Option<(usize, &'program Field)>, ParseError> {
         let Some(field) = self.fields.get(self.next_field) else {
             return Ok(None);
         };
@@ -1984,7 +2149,7 @@ impl<'program, Seen: StructSeenStore> StructFrame<'program, Seen> {
         &self,
         parser: &JsonParser<'de, TRUSTED_UTF8>,
         key: &JsonFieldKeyInput<'de>,
-    ) -> Result<Option<MatchedField<'program>>, ParseError> {
+    ) -> Result<Option<MatchedField<'program, Field>>, ParseError> {
         if let Some(key) = parser.field_key_unescaped_bytes(key) {
             return Ok(self.match_unordered_field_bytes(key));
         }
@@ -2010,7 +2175,7 @@ impl<'program, Seen: StructSeenStore> StructFrame<'program, Seen> {
         Ok(matched)
     }
 
-    fn match_field_bytes(&self, key: &[u8]) -> Option<MatchedField<'program>> {
+    fn match_field_bytes(&self, key: &[u8]) -> Option<MatchedField<'program, Field>> {
         if let Some(field) = self.fields.get(self.next_field)
             && field.matches_key_bytes(key)
         {
@@ -2033,7 +2198,7 @@ impl<'program, Seen: StructSeenStore> StructFrame<'program, Seen> {
     }
 
     #[inline]
-    fn match_unordered_field_bytes(&self, key: &[u8]) -> Option<MatchedField<'program>> {
+    fn match_unordered_field_bytes(&self, key: &[u8]) -> Option<MatchedField<'program, Field>> {
         self.fields
             .iter()
             .enumerate()
@@ -2071,13 +2236,13 @@ impl<'program, Seen: StructSeenStore> StructFrame<'program, Seen> {
                 continue;
             }
 
-            let field_ptr = unsafe { self.base.field_uninit(field.offset) };
-            match field.missing {
+            let field_ptr = unsafe { self.base.field_uninit(field.offset()) };
+            match field.missing() {
                 MissingField::Required => {
                     return Err(vm_error(
                         None,
                         DeserializeErrorKind::MissingField {
-                            field: field.name,
+                            field: field.name(),
                             container_shape: self.shape,
                         },
                     ));
@@ -2089,7 +2254,7 @@ impl<'program, Seen: StructSeenStore> StructFrame<'program, Seen> {
                     self.seen.mark(index, Span { offset: 0, len: 0 });
                 }
                 MissingField::DefaultTrait { explicit } => {
-                    if unsafe { field.shape.call_default_in_place(field_ptr) }.is_some() {
+                    if unsafe { field.shape().call_default_in_place(field_ptr) }.is_some() {
                         self.seen.mark(index, Span { offset: 0, len: 0 });
                     } else if explicit {
                         return Err(vm_error(
@@ -2097,7 +2262,7 @@ impl<'program, Seen: StructSeenStore> StructFrame<'program, Seen> {
                             DeserializeErrorKind::Unsupported {
                                 message: format!(
                                     "field `{}` on {} has #[facet(default)] but no default_in_place",
-                                    field.name, self.shape
+                                    field.name(), self.shape
                                 )
                                 .into(),
                             },
@@ -2106,7 +2271,7 @@ impl<'program, Seen: StructSeenStore> StructFrame<'program, Seen> {
                         return Err(vm_error(
                             None,
                             DeserializeErrorKind::MissingField {
-                                field: field.name,
+                                field: field.name(),
                                 container_shape: self.shape,
                             },
                         ));
@@ -2128,16 +2293,20 @@ impl<'program, Seen: StructSeenStore> StructFrame<'program, Seen> {
         for index in (0..self.fields.len()).rev() {
             if self.seen.is_initialized(index) {
                 let field = &self.fields[index];
-                let ptr = unsafe { self.base.field_init(field.offset) };
+                let ptr = unsafe { self.base.field_init(field.offset()) };
                 unsafe {
-                    let _ = field.shape.call_drop_in_place(ptr);
+                    let _ = field.shape().call_drop_in_place(ptr);
                 }
             }
         }
     }
 }
 
-impl<Seen: StructSeenStore> Drop for StructFrame<'_, Seen> {
+impl<Field, Seen> Drop for StructFrame<'_, Field, Seen>
+where
+    Field: StructFieldPlan,
+    Seen: StructSeenStore,
+{
     fn drop(&mut self) {
         unsafe {
             self.drop_initialized_fields();
@@ -2160,11 +2329,11 @@ unsafe fn scratch_ptr_mut(scratch: &ScratchSlot) -> PtrMut {
     unsafe { scratch_ptr_uninit(scratch).assume_init() }
 }
 
-fn write_unit_input<const TRUSTED_UTF8: bool>(
-    _parser: &JsonParser<'_, TRUSTED_UTF8>,
+fn write_unit_input<'de, const TRUSTED_UTF8: bool>(
+    _parser: &JsonParser<'de, TRUSTED_UTF8>,
     shape: &'static Shape,
     dst: PtrUninit,
-    value: JsonScalarInput<'_>,
+    value: JsonScalarInput<'de>,
 ) -> Result<(), DeserializeError> {
     match value {
         JsonScalarInput::Raw(token) => match token.token {
@@ -2184,11 +2353,11 @@ fn write_unit_input<const TRUSTED_UTF8: bool>(
     }
 }
 
-fn write_bool_input<const TRUSTED_UTF8: bool>(
-    _parser: &JsonParser<'_, TRUSTED_UTF8>,
+fn write_bool_input<'de, const TRUSTED_UTF8: bool>(
+    _parser: &JsonParser<'de, TRUSTED_UTF8>,
     shape: &'static Shape,
     dst: PtrUninit,
-    value: JsonScalarInput<'_>,
+    value: JsonScalarInput<'de>,
 ) -> Result<(), DeserializeError> {
     match value {
         JsonScalarInput::Raw(token) => match token.token {
@@ -2212,11 +2381,11 @@ fn write_bool_input<const TRUSTED_UTF8: bool>(
     }
 }
 
-fn write_char_input<const TRUSTED_UTF8: bool>(
-    parser: &JsonParser<'_, TRUSTED_UTF8>,
+fn write_char_input<'de, const TRUSTED_UTF8: bool>(
+    parser: &JsonParser<'de, TRUSTED_UTF8>,
     shape: &'static Shape,
     dst: PtrUninit,
-    value: JsonScalarInput<'_>,
+    value: JsonScalarInput<'de>,
 ) -> Result<(), DeserializeError> {
     match value {
         JsonScalarInput::Raw(token) => {
@@ -2240,11 +2409,11 @@ fn write_char_input<const TRUSTED_UTF8: bool>(
     }
 }
 
-fn write_string_input<const TRUSTED_UTF8: bool>(
-    parser: &JsonParser<'_, TRUSTED_UTF8>,
+fn write_string_input<'de, const TRUSTED_UTF8: bool>(
+    parser: &JsonParser<'de, TRUSTED_UTF8>,
     shape: &'static Shape,
     dst: PtrUninit,
-    value: JsonScalarInput<'_>,
+    value: JsonScalarInput<'de>,
 ) -> Result<(), DeserializeError> {
     match value {
         JsonScalarInput::Raw(token) => {
@@ -2260,11 +2429,11 @@ fn write_string_input<const TRUSTED_UTF8: bool>(
     }
 }
 
-fn write_cow_str_input<const TRUSTED_UTF8: bool>(
-    parser: &JsonParser<'_, TRUSTED_UTF8>,
+fn write_cow_str_input<'de, const TRUSTED_UTF8: bool>(
+    parser: &JsonParser<'de, TRUSTED_UTF8>,
     shape: &'static Shape,
     dst: PtrUninit,
-    value: JsonScalarInput<'_>,
+    value: JsonScalarInput<'de>,
 ) -> Result<(), DeserializeError> {
     match value {
         JsonScalarInput::Raw(token) => {
@@ -2280,10 +2449,10 @@ fn write_cow_str_input<const TRUSTED_UTF8: bool>(
     }
 }
 
-fn write_borrowed_str_input<const TRUSTED_UTF8: bool>(
-    _parser: &JsonParser<'_, TRUSTED_UTF8>,
+fn write_borrowed_str_input<'de, const TRUSTED_UTF8: bool>(
+    _parser: &JsonParser<'de, TRUSTED_UTF8>,
     _dst: PtrUninit,
-    value: JsonScalarInput<'_>,
+    value: JsonScalarInput<'de>,
 ) -> Result<(), DeserializeError> {
     let span = match value {
         JsonScalarInput::Raw(token) => token.span,
@@ -2297,11 +2466,11 @@ fn write_borrowed_str_input<const TRUSTED_UTF8: bool>(
     ))
 }
 
-fn write_f32_input<const TRUSTED_UTF8: bool>(
-    parser: &JsonParser<'_, TRUSTED_UTF8>,
+fn write_f32_input<'de, const TRUSTED_UTF8: bool>(
+    parser: &JsonParser<'de, TRUSTED_UTF8>,
     shape: &'static Shape,
     dst: PtrUninit,
-    value: JsonScalarInput<'_>,
+    value: JsonScalarInput<'de>,
 ) -> Result<(), DeserializeError> {
     match value {
         JsonScalarInput::Raw(token) => {
@@ -2317,11 +2486,11 @@ fn write_f32_input<const TRUSTED_UTF8: bool>(
     }
 }
 
-fn write_f64_input<const TRUSTED_UTF8: bool>(
-    parser: &JsonParser<'_, TRUSTED_UTF8>,
+fn write_f64_input<'de, const TRUSTED_UTF8: bool>(
+    parser: &JsonParser<'de, TRUSTED_UTF8>,
     shape: &'static Shape,
     dst: PtrUninit,
-    value: JsonScalarInput<'_>,
+    value: JsonScalarInput<'de>,
 ) -> Result<(), DeserializeError> {
     match value {
         JsonScalarInput::Raw(token) => {
@@ -2398,6 +2567,70 @@ write_signed_input!(write_i32_input, i32, "i32");
 write_signed_input!(write_i64_input, i64, "i64");
 write_signed_input!(write_i128_input, i128, "i128");
 write_signed_input!(write_isize_input, isize, "isize");
+
+fn write_borrowed_str_input_shaped<'de, const TRUSTED_UTF8: bool>(
+    parser: &JsonParser<'de, TRUSTED_UTF8>,
+    _shape: &'static Shape,
+    dst: PtrUninit,
+    value: JsonScalarInput<'de>,
+) -> Result<(), DeserializeError> {
+    write_borrowed_str_input(parser, dst, value)
+}
+
+macro_rules! shaped_input_writer {
+    ($name:ident, $write:ident) => {
+        fn $name<'de, const TRUSTED_UTF8: bool>(
+            parser: &JsonParser<'de, TRUSTED_UTF8>,
+            _shape: &'static Shape,
+            dst: PtrUninit,
+            value: JsonScalarInput<'de>,
+        ) -> Result<(), DeserializeError> {
+            $write(parser, dst, value)
+        }
+    };
+}
+
+shaped_input_writer!(write_u8_input_shaped, write_u8_input);
+shaped_input_writer!(write_u16_input_shaped, write_u16_input);
+shaped_input_writer!(write_u32_input_shaped, write_u32_input);
+shaped_input_writer!(write_u64_input_shaped, write_u64_input);
+shaped_input_writer!(write_u128_input_shaped, write_u128_input);
+shaped_input_writer!(write_usize_input_shaped, write_usize_input);
+
+shaped_input_writer!(write_i8_input_shaped, write_i8_input);
+shaped_input_writer!(write_i16_input_shaped, write_i16_input);
+shaped_input_writer!(write_i32_input_shaped, write_i32_input);
+shaped_input_writer!(write_i64_input_shaped, write_i64_input);
+shaped_input_writer!(write_i128_input_shaped, write_i128_input);
+shaped_input_writer!(write_isize_input_shaped, write_isize_input);
+
+fn scalar_input_writer<const TRUSTED_UTF8: bool>(
+    scalar: ScalarType,
+) -> Option<ScalarInputWriter<TRUSTED_UTF8>> {
+    match scalar {
+        ScalarType::Unit => Some(write_unit_input::<TRUSTED_UTF8>),
+        ScalarType::Bool => Some(write_bool_input::<TRUSTED_UTF8>),
+        ScalarType::Char => Some(write_char_input::<TRUSTED_UTF8>),
+        ScalarType::String => Some(write_string_input::<TRUSTED_UTF8>),
+        ScalarType::CowStr => Some(write_cow_str_input::<TRUSTED_UTF8>),
+        ScalarType::Str => Some(write_borrowed_str_input_shaped::<TRUSTED_UTF8>),
+        ScalarType::F32 => Some(write_f32_input::<TRUSTED_UTF8>),
+        ScalarType::F64 => Some(write_f64_input::<TRUSTED_UTF8>),
+        ScalarType::U8 => Some(write_u8_input_shaped::<TRUSTED_UTF8>),
+        ScalarType::U16 => Some(write_u16_input_shaped::<TRUSTED_UTF8>),
+        ScalarType::U32 => Some(write_u32_input_shaped::<TRUSTED_UTF8>),
+        ScalarType::U64 => Some(write_u64_input_shaped::<TRUSTED_UTF8>),
+        ScalarType::U128 => Some(write_u128_input_shaped::<TRUSTED_UTF8>),
+        ScalarType::USize => Some(write_usize_input_shaped::<TRUSTED_UTF8>),
+        ScalarType::I8 => Some(write_i8_input_shaped::<TRUSTED_UTF8>),
+        ScalarType::I16 => Some(write_i16_input_shaped::<TRUSTED_UTF8>),
+        ScalarType::I32 => Some(write_i32_input_shaped::<TRUSTED_UTF8>),
+        ScalarType::I64 => Some(write_i64_input_shaped::<TRUSTED_UTF8>),
+        ScalarType::I128 => Some(write_i128_input_shaped::<TRUSTED_UTF8>),
+        ScalarType::ISize => Some(write_isize_input_shaped::<TRUSTED_UTF8>),
+        _ => None,
+    }
+}
 
 fn materialized_scalar_writer(scalar: ScalarType) -> Option<MaterializedScalarWriter> {
     match scalar {
