@@ -1,4 +1,5 @@
 use core::hash::Hasher;
+use std::collections::{BTreeMap, BTreeSet};
 
 use facet::Facet;
 use facet_hash::HashPlan;
@@ -21,6 +22,27 @@ struct Person {
 struct Floaty {
     x: f64,
     y: f32,
+}
+
+#[derive(Clone, Debug, Facet)]
+struct Scores {
+    values: Vec<i32>,
+}
+
+#[derive(Clone, Debug, Facet)]
+struct Collections {
+    set: BTreeSet<u32>,
+    map: BTreeMap<String, u16>,
+}
+
+#[derive(Clone, Debug, Facet, PartialEq, Eq, PartialOrd, Ord)]
+struct MapKey {
+    id: u32,
+}
+
+#[derive(Clone, Debug, Facet)]
+struct ProgramKeyMap {
+    map: BTreeMap<MapKey, u16>,
 }
 
 #[derive(Clone, Debug, Facet)]
@@ -109,6 +131,67 @@ fn repeated_hashing_reuses_the_same_plan() {
     let second = plan.hash64(&value).unwrap();
 
     assert_eq!(first, second);
+}
+
+#[test]
+fn scalar_struct_fields_hash_without_child_frames() {
+    let plan = HashPlan::<Point>::build().unwrap();
+    let value = Point { x: 10, y: -4 };
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+
+    let stats = plan.hash_with_stats(&value, &mut hasher).unwrap();
+
+    assert_eq!(stats.step_count, 1);
+    assert_eq!(stats.inline_call_count, 0);
+    assert_eq!(stats.continuation_resume_count, 0);
+    assert_eq!(stats.max_frame_depth, 1);
+}
+
+#[test]
+fn scalar_list_elements_hash_without_element_frames() {
+    let plan = HashPlan::<Scores>::build().unwrap();
+    let value = Scores {
+        values: vec![1, 1, 2, 3, 5, 8, 13],
+    };
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+
+    let stats = plan.hash_with_stats(&value, &mut hasher).unwrap();
+
+    assert_eq!(stats.step_count, 2);
+    assert_eq!(stats.inline_call_count, 1);
+    assert_eq!(stats.continuation_resume_count, 1);
+    assert_eq!(stats.max_frame_depth, 2);
+}
+
+#[test]
+fn hashes_scalar_sets_and_maps() {
+    let plan = HashPlan::<Collections>::build().unwrap();
+    let mut set = BTreeSet::new();
+    set.insert(1);
+    set.insert(2);
+    let mut map = BTreeMap::new();
+    map.insert("ada".to_owned(), 36);
+    map.insert("grace".to_owned(), 37);
+    let left = Collections { set, map };
+    let mut right = left.clone();
+    right.map.insert("grace".to_owned(), 38);
+
+    assert_ne!(plan.hash64(&left).unwrap(), plan.hash64(&right).unwrap());
+}
+
+#[test]
+fn maps_continue_after_program_key_and_scalar_value() {
+    let plan = HashPlan::<ProgramKeyMap>::build().unwrap();
+    let mut left_map = BTreeMap::new();
+    left_map.insert(MapKey { id: 1 }, 10);
+    left_map.insert(MapKey { id: 2 }, 20);
+    let mut right_map = left_map.clone();
+    right_map.insert(MapKey { id: 2 }, 21);
+
+    assert_ne!(
+        plan.hash64(&ProgramKeyMap { map: left_map }).unwrap(),
+        plan.hash64(&ProgramKeyMap { map: right_map }).unwrap()
+    );
 }
 
 #[test]
