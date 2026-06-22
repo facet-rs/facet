@@ -4,6 +4,12 @@ All notable changes to Vox are documented here.
 
 ## [Unreleased]
 
+## [0.10.0-rc.2](https://github.com/facet-rs/facet/compare/vox-codegen-v0.10.0-rc.1...vox-codegen-v0.10.0-rc.2) - 2026-06-22
+
+### Other
+
+- Fix Swift codegen trailing whitespace
+
 ## [0.10.0-rc.1] - 2026-06-18
 
 ### Other

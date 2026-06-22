@@ -1,6 +1,6 @@
 [package]
 name = "vox-codegen"
-version = "0.10.0-rc.1"
+version = "0.10.0-rc.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

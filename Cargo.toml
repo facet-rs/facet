@@ -322,7 +322,7 @@ phon-codegen = { path = "phon/rust/phon-codegen", version = "0.2.0-rc.1" }
 spec-proto = { path = "vox/spec/spec-proto", version = "0.2.2" }
 subject-rust = { path = "vox/rust/subject-rust", version = "0.2.2" }
 vox = { path = "vox/rust/vox", version = "0.10.0-rc.1" }
-vox-codegen = { path = "vox/rust/vox-codegen", version = "0.10.0-rc.1" }
+vox-codegen = { path = "vox/rust/vox-codegen", version = "0.10.0-rc.2" }
 vox-core = { path = "vox/rust/vox-core", version = "0.10.0-rc.1" }
 vox-fdpass = { path = "vox/rust/vox-fdpass", version = "0.10.0-rc.1" }
 vox-ffi = { path = "vox/rust/vox-ffi", version = "0.10.0-rc.1" }
