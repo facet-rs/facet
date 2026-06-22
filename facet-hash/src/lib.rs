@@ -200,42 +200,52 @@ enum HashIntrinsic<Block> {
     },
     Option {
         option: OptionDef,
-        some_program: Program<WeavyOp<Block, HashIntrinsic<Block>>>,
+        some: ChildPlan<Block>,
     },
     Result {
         result: ResultDef,
-        ok_program: Program<WeavyOp<Block, HashIntrinsic<Block>>>,
-        err_program: Program<WeavyOp<Block, HashIntrinsic<Block>>>,
+        ok: ChildPlan<Block>,
+        err: ChildPlan<Block>,
     },
     List {
         list_shape: &'static Shape,
         list: ListDef,
         element_layout: Layout,
-        element_program: Program<WeavyOp<Block, HashIntrinsic<Block>>>,
+        element: ChildPlan<Block>,
     },
     Array {
         array: ArrayDef,
         element_layout: Layout,
-        element_program: Program<WeavyOp<Block, HashIntrinsic<Block>>>,
+        element: ChildPlan<Block>,
     },
     Slice {
         slice: SliceDef,
         element_layout: Layout,
-        element_program: Program<WeavyOp<Block, HashIntrinsic<Block>>>,
+        element: ChildPlan<Block>,
     },
     Set {
         set: SetDef,
-        element_program: Program<WeavyOp<Block, HashIntrinsic<Block>>>,
+        element: ChildPlan<Block>,
     },
     Map {
         map: MapDef,
-        key_program: Program<WeavyOp<Block, HashIntrinsic<Block>>>,
-        value_program: Program<WeavyOp<Block, HashIntrinsic<Block>>>,
+        key: ChildPlan<Block>,
+        value: ChildPlan<Block>,
     },
     Pointer {
         pointer: PointerDef,
-        pointee_program: Program<WeavyOp<Block, HashIntrinsic<Block>>>,
+        pointee: ChildPlan<Block>,
     },
+}
+
+#[derive(Clone, Debug)]
+enum ChildPlan<Block> {
+    Scalar {
+        include_shape: bool,
+        shape: &'static Shape,
+        scalar: ScalarType,
+    },
+    Program(Program<WeavyOp<Block, HashIntrinsic<Block>>>),
 }
 
 impl<Block> IntrinsicOp for HashIntrinsic<Block> {
@@ -327,7 +337,7 @@ fn shape_memory_region(shape: &'static Shape) -> MemoryRegion {
 struct FieldPlan<Block> {
     name: &'static str,
     offset: usize,
-    program: Program<WeavyOp<Block, HashIntrinsic<Block>>>,
+    child: ChildPlan<Block>,
 }
 
 struct Lowering {
@@ -395,19 +405,16 @@ impl Lowering {
 
         match shape.def {
             Def::Option(option) => {
-                let some_program = self.lower_shape(option.t())?;
-                program.push(WeavyOp::Intrinsic(HashIntrinsic::Option {
-                    option,
-                    some_program,
-                }));
+                let some = self.lower_child(option.t())?;
+                program.push(WeavyOp::Intrinsic(HashIntrinsic::Option { option, some }));
             }
             Def::Result(result) => {
-                let ok_program = self.lower_shape(result.t())?;
-                let err_program = self.lower_shape(result.e())?;
+                let ok = self.lower_child(result.t())?;
+                let err = self.lower_child(result.e())?;
                 program.push(WeavyOp::Intrinsic(HashIntrinsic::Result {
                     result,
-                    ok_program,
-                    err_program,
+                    ok,
+                    err,
                 }));
             }
             Def::List(list) => {
@@ -415,53 +422,46 @@ impl Lowering {
                     return Err(unsupported(shape, "list as_ptr"));
                 }
                 let element_layout = sized_layout(list.t())?;
-                let element_program = self.lower_shape(list.t())?;
+                let element = self.lower_child(list.t())?;
                 program.push(WeavyOp::Intrinsic(HashIntrinsic::List {
                     list_shape: shape,
                     list,
                     element_layout,
-                    element_program,
+                    element,
                 }));
             }
             Def::Array(array) => {
                 let element_layout = sized_layout(array.t())?;
-                let element_program = self.lower_shape(array.t())?;
+                let element = self.lower_child(array.t())?;
                 program.push(WeavyOp::Intrinsic(HashIntrinsic::Array {
                     array,
                     element_layout,
-                    element_program,
+                    element,
                 }));
             }
             Def::Slice(slice) => {
                 let element_layout = sized_layout(slice.t())?;
-                let element_program = self.lower_shape(slice.t())?;
+                let element = self.lower_child(slice.t())?;
                 program.push(WeavyOp::Intrinsic(HashIntrinsic::Slice {
                     slice,
                     element_layout,
-                    element_program,
+                    element,
                 }));
             }
             Def::Set(set) => {
                 if set.vtable.iter_vtable.init_with_value.is_none() {
                     return Err(unsupported(shape, "set iterator init"));
                 }
-                let element_program = self.lower_shape(set.t())?;
-                program.push(WeavyOp::Intrinsic(HashIntrinsic::Set {
-                    set,
-                    element_program,
-                }));
+                let element = self.lower_child(set.t())?;
+                program.push(WeavyOp::Intrinsic(HashIntrinsic::Set { set, element }));
             }
             Def::Map(map) => {
                 if map.vtable.iter_vtable.init_with_value.is_none() {
                     return Err(unsupported(shape, "map iterator init"));
                 }
-                let key_program = self.lower_shape(map.k())?;
-                let value_program = self.lower_shape(map.v())?;
-                program.push(WeavyOp::Intrinsic(HashIntrinsic::Map {
-                    map,
-                    key_program,
-                    value_program,
-                }));
+                let key = self.lower_child(map.k())?;
+                let value = self.lower_child(map.v())?;
+                program.push(WeavyOp::Intrinsic(HashIntrinsic::Map { map, key, value }));
             }
             Def::Pointer(pointer) => {
                 let pointee = pointer
@@ -470,10 +470,10 @@ impl Lowering {
                 if pointer.vtable.borrow_fn.is_none() {
                     return Err(unsupported(shape, "pointer borrow"));
                 }
-                let pointee_program = self.lower_shape(pointee)?;
+                let pointee = self.lower_child(pointee)?;
                 program.push(WeavyOp::Intrinsic(HashIntrinsic::Pointer {
                     pointer,
-                    pointee_program,
+                    pointee,
                 }));
             }
             _ => match shape.ty {
@@ -486,7 +486,7 @@ impl Lowering {
                         fields.push(FieldPlan {
                             name: field.name,
                             offset: field.offset,
-                            program: self.lower_shape(field.shape())?,
+                            child: self.lower_child(field.shape())?,
                         });
                     }
                     program.push(WeavyOp::Intrinsic(HashIntrinsic::Struct {
@@ -503,6 +503,21 @@ impl Lowering {
         }
 
         Ok(program)
+    }
+
+    fn lower_child(&mut self, shape: &'static Shape) -> Result<ChildPlan<BlockId>, HashError> {
+        if let Some(scalar) = ScalarType::try_from_shape(shape) {
+            if !supported_scalar(scalar) {
+                return Err(unsupported(shape, "scalar"));
+            }
+            return Ok(ChildPlan::Scalar {
+                include_shape: self.mode == HashMode::Structural,
+                shape,
+                scalar,
+            });
+        }
+
+        Ok(ChildPlan::Program(self.lower_shape(shape)?))
     }
 }
 
@@ -566,74 +581,75 @@ fn resolve_hash_intrinsic(
             kind,
             fields: resolve_field_plans(fields, refs)?,
         },
-        HashIntrinsic::Option {
+        HashIntrinsic::Option { option, some } => HashIntrinsic::Option {
             option,
-            some_program,
-        } => HashIntrinsic::Option {
-            option,
-            some_program: resolve_hash_program(some_program, refs)?,
+            some: resolve_child_plan(some, refs)?,
         },
-        HashIntrinsic::Result {
+        HashIntrinsic::Result { result, ok, err } => HashIntrinsic::Result {
             result,
-            ok_program,
-            err_program,
-        } => HashIntrinsic::Result {
-            result,
-            ok_program: resolve_hash_program(ok_program, refs)?,
-            err_program: resolve_hash_program(err_program, refs)?,
+            ok: resolve_child_plan(ok, refs)?,
+            err: resolve_child_plan(err, refs)?,
         },
         HashIntrinsic::List {
             list_shape,
             list,
             element_layout,
-            element_program,
+            element,
         } => HashIntrinsic::List {
             list_shape,
             list,
             element_layout,
-            element_program: resolve_hash_program(element_program, refs)?,
+            element: resolve_child_plan(element, refs)?,
         },
         HashIntrinsic::Array {
             array,
             element_layout,
-            element_program,
+            element,
         } => HashIntrinsic::Array {
             array,
             element_layout,
-            element_program: resolve_hash_program(element_program, refs)?,
+            element: resolve_child_plan(element, refs)?,
         },
         HashIntrinsic::Slice {
             slice,
             element_layout,
-            element_program,
+            element,
         } => HashIntrinsic::Slice {
             slice,
             element_layout,
-            element_program: resolve_hash_program(element_program, refs)?,
+            element: resolve_child_plan(element, refs)?,
         },
-        HashIntrinsic::Set {
+        HashIntrinsic::Set { set, element } => HashIntrinsic::Set {
             set,
-            element_program,
-        } => HashIntrinsic::Set {
-            set,
-            element_program: resolve_hash_program(element_program, refs)?,
+            element: resolve_child_plan(element, refs)?,
         },
-        HashIntrinsic::Map {
+        HashIntrinsic::Map { map, key, value } => HashIntrinsic::Map {
             map,
-            key_program,
-            value_program,
-        } => HashIntrinsic::Map {
-            map,
-            key_program: resolve_hash_program(key_program, refs)?,
-            value_program: resolve_hash_program(value_program, refs)?,
+            key: resolve_child_plan(key, refs)?,
+            value: resolve_child_plan(value, refs)?,
         },
-        HashIntrinsic::Pointer {
+        HashIntrinsic::Pointer { pointer, pointee } => HashIntrinsic::Pointer {
             pointer,
-            pointee_program,
-        } => HashIntrinsic::Pointer {
-            pointer,
-            pointee_program: resolve_hash_program(pointee_program, refs)?,
+            pointee: resolve_child_plan(pointee, refs)?,
         },
+    })
+}
+
+fn resolve_child_plan(
+    child: ChildPlan<BlockId>,
+    refs: &BTreeMap<BlockId, ExecBlock>,
+) -> Result<ChildPlan<ExecBlock>, HashError> {
+    Ok(match child {
+        ChildPlan::Scalar {
+            include_shape,
+            shape,
+            scalar,
+        } => ChildPlan::Scalar {
+            include_shape,
+            shape,
+            scalar,
+        },
+        ChildPlan::Program(program) => ChildPlan::Program(resolve_hash_program(program, refs)?),
     })
 }
 
@@ -648,7 +664,7 @@ fn resolve_field_plans(
             Ok(FieldPlan {
                 name: field.name,
                 offset: field.offset,
-                program: resolve_hash_program(field.program, refs)?,
+                child: resolve_child_plan(field.child, refs)?,
             })
         })
         .collect()
@@ -687,47 +703,52 @@ fn add_hash_intrinsic_effect_stats(intrinsic: &HashIntrinsic<ExecBlock>, stats: 
         HashIntrinsic::Shape(_) | HashIntrinsic::Scalar { .. } => {}
         HashIntrinsic::Struct { fields, .. } => {
             for field in fields {
-                stats.accumulate(hash_program_effect_stats(&field.program));
+                stats.accumulate(hash_child_effect_stats(&field.child));
             }
         }
-        HashIntrinsic::Option { some_program, .. } => {
-            stats.accumulate(hash_program_effect_stats(some_program));
+        HashIntrinsic::Option { some, .. } => {
+            stats.accumulate(hash_child_effect_stats(some));
         }
-        HashIntrinsic::Result {
-            ok_program,
-            err_program,
-            ..
+        HashIntrinsic::Result { ok, err, .. } => {
+            stats.accumulate(hash_child_effect_stats(ok));
+            stats.accumulate(hash_child_effect_stats(err));
+        }
+        HashIntrinsic::List { element, .. }
+        | HashIntrinsic::Array { element, .. }
+        | HashIntrinsic::Slice { element, .. }
+        | HashIntrinsic::Set { element, .. } => {
+            stats.accumulate(hash_child_effect_stats(element));
+        }
+        HashIntrinsic::Map { key, value, .. } => {
+            stats.accumulate(hash_child_effect_stats(key));
+            stats.accumulate(hash_child_effect_stats(value));
+        }
+        HashIntrinsic::Pointer { pointee, .. } => {
+            stats.accumulate(hash_child_effect_stats(pointee));
+        }
+    }
+}
+
+fn hash_child_effect_stats(child: &ChildPlan<ExecBlock>) -> EffectStats {
+    match child {
+        ChildPlan::Scalar {
+            include_shape,
+            shape,
+            scalar,
         } => {
-            stats.accumulate(hash_program_effect_stats(ok_program));
-            stats.accumulate(hash_program_effect_stats(err_program));
+            let mut stats = EffectStats::default();
+            if *include_shape {
+                let shape_op: ExecOp = WeavyOp::Intrinsic(HashIntrinsic::Shape(shape));
+                stats.accumulate(weavy::ir::effect_stats(core::slice::from_ref(&shape_op)));
+            }
+            let scalar_op: ExecOp = WeavyOp::Intrinsic(HashIntrinsic::Scalar {
+                shape,
+                scalar: *scalar,
+            });
+            stats.accumulate(weavy::ir::effect_stats(core::slice::from_ref(&scalar_op)));
+            stats
         }
-        HashIntrinsic::List {
-            element_program, ..
-        }
-        | HashIntrinsic::Array {
-            element_program, ..
-        }
-        | HashIntrinsic::Slice {
-            element_program, ..
-        }
-        | HashIntrinsic::Set {
-            element_program, ..
-        } => {
-            stats.accumulate(hash_program_effect_stats(element_program));
-        }
-        HashIntrinsic::Map {
-            key_program,
-            value_program,
-            ..
-        } => {
-            stats.accumulate(hash_program_effect_stats(key_program));
-            stats.accumulate(hash_program_effect_stats(value_program));
-        }
-        HashIntrinsic::Pointer {
-            pointee_program, ..
-        } => {
-            stats.accumulate(hash_program_effect_stats(pointee_program));
-        }
+        ChildPlan::Program(program) => hash_program_effect_stats(program),
     }
 }
 
@@ -773,28 +794,28 @@ enum HashContinuation<'program> {
         len: usize,
         next_index: usize,
         stride: usize,
-        element_program: &'program [ExecOp],
+        element_program: &'program Program<ExecOp>,
     },
     Set {
         original_base: PtrConst,
         iter: PtrMut,
         set: SetDef,
-        element_program: &'program [ExecOp],
+        element: &'program ChildPlan<ExecBlock>,
     },
     MapAfterKey {
         original_base: PtrConst,
         iter: PtrMut,
         map: MapDef,
-        key_program: &'program [ExecOp],
-        value_program: &'program [ExecOp],
-        value: PtrConst,
+        key: &'program ChildPlan<ExecBlock>,
+        value_plan: &'program ChildPlan<ExecBlock>,
+        value_ptr: PtrConst,
     },
     MapAfterValue {
         original_base: PtrConst,
         iter: PtrMut,
         map: MapDef,
-        key_program: &'program [ExecOp],
-        value_program: &'program [ExecOp],
+        key: &'program ChildPlan<ExecBlock>,
+        value: &'program ChildPlan<ExecBlock>,
     },
 }
 
@@ -853,57 +874,38 @@ where
                 next_index,
                 stride,
                 element_program,
-            } => {
-                if next_index >= len {
-                    self.base = original_base;
-                    return Ok(Control::Continue);
-                }
-                self.base = unsafe { sequence_element(data, next_index, stride) };
-                Ok(Control::CallProgramThen(
-                    element_program,
-                    HashContinuation::Sequence {
-                        original_base,
-                        data,
-                        len,
-                        next_index: next_index + 1,
-                        stride,
-                        element_program,
-                    },
-                ))
-            }
+            } => self.call_next_sequence(
+                original_base,
+                data,
+                len,
+                next_index,
+                stride,
+                element_program,
+            ),
             HashContinuation::Set {
                 original_base,
                 iter,
                 set,
-                element_program,
-            } => self.call_next_set(original_base, iter, set, element_program),
+                element,
+            } => self.call_next_set(original_base, iter, set, element),
             HashContinuation::MapAfterKey {
                 original_base,
                 iter,
                 map,
-                key_program,
-                value_program,
-                value,
-            } => {
-                self.base = value;
-                Ok(Control::CallProgramThen(
-                    value_program,
-                    HashContinuation::MapAfterValue {
-                        original_base,
-                        iter,
-                        map,
-                        key_program,
-                        value_program,
-                    },
-                ))
-            }
+                key,
+                value_plan,
+                value_ptr,
+            } => match self.call_map_value(original_base, iter, map, key, value_plan, value_ptr)? {
+                Control::Continue => self.call_next_map(original_base, iter, map, key, value_plan),
+                control => Ok(control),
+            },
             HashContinuation::MapAfterValue {
                 original_base,
                 iter,
                 map,
-                key_program,
-                value_program,
-            } => self.call_next_map(original_base, iter, map, key_program, value_program),
+                key,
+                value,
+            } => self.call_next_map(original_base, iter, map, key, value),
         }
     }
 }
@@ -929,72 +931,34 @@ where
                 if *mode == HashMode::Structural {
                     (*kind as u8).hash(self.hasher);
                 }
-                if fields.is_empty() {
-                    return Ok(Control::Continue);
-                }
-                let original_base = self.base;
-                let field = &fields[0];
-                if *mode == HashMode::Structural {
-                    field.name.hash(self.hasher);
-                }
-                self.base = unsafe { original_base.field(field.offset) };
-                Ok(Control::CallProgramThen(
-                    &field.program,
-                    HashContinuation::StructFields {
-                        original_base,
-                        mode: *mode,
-                        fields,
-                        next_index: 1,
-                    },
-                ))
+                self.call_next_struct_field(self.base, *mode, fields, 0)
             }
-            HashIntrinsic::Option {
-                option,
-                some_program,
-            } => {
+            HashIntrinsic::Option { option, some } => {
                 if unsafe { (option.vtable.is_some)(self.base) } {
                     true.hash(self.hasher);
                     let value = unsafe { (option.vtable.get_value)(self.base) };
-                    let original_base = self.base;
-                    self.base = PtrConst::new_sized(value);
-                    Ok(Control::CallProgramThen(
-                        some_program,
-                        HashContinuation::RestoreBase(original_base),
-                    ))
+                    self.call_child(some, PtrConst::new_sized(value), self.base)
                 } else {
                     false.hash(self.hasher);
                     Ok(Control::Continue)
                 }
             }
-            HashIntrinsic::Result {
-                result,
-                ok_program,
-                err_program,
-            } => {
-                let original_base = self.base;
+            HashIntrinsic::Result { result, ok, err } => {
                 if unsafe { (result.vtable.is_ok)(self.base) } {
                     0u8.hash(self.hasher);
                     let value = unsafe { (result.vtable.get_ok)(self.base) };
-                    self.base = PtrConst::new_sized(value);
-                    Ok(Control::CallProgramThen(
-                        ok_program,
-                        HashContinuation::RestoreBase(original_base),
-                    ))
+                    self.call_child(ok, PtrConst::new_sized(value), self.base)
                 } else {
                     1u8.hash(self.hasher);
                     let value = unsafe { (result.vtable.get_err)(self.base) };
-                    self.base = PtrConst::new_sized(value);
-                    Ok(Control::CallProgramThen(
-                        err_program,
-                        HashContinuation::RestoreBase(original_base),
-                    ))
+                    self.call_child(err, PtrConst::new_sized(value), self.base)
                 }
             }
             HashIntrinsic::List {
                 list_shape,
                 list,
                 element_layout,
-                element_program,
+                element,
             } => {
                 let len = unsafe { (list.vtable.len)(self.base) };
                 len.hash(self.hasher);
@@ -1006,24 +970,24 @@ where
                     .as_ptr
                     .ok_or_else(|| unsupported(list_shape, "list as_ptr"))?;
                 let data = unsafe { as_ptr(self.base) };
-                self.call_sequence(data, len, element_layout.size(), element_program)
+                self.hash_or_call_sequence(data, len, element_layout.size(), element)
             }
             HashIntrinsic::Array {
                 array,
                 element_layout,
-                element_program,
+                element,
             } => {
                 array.n.hash(self.hasher);
                 if array.n == 0 {
                     return Ok(Control::Continue);
                 }
                 let data = unsafe { (array.vtable.as_ptr)(self.base) };
-                self.call_sequence(data, array.n, element_layout.size(), element_program)
+                self.hash_or_call_sequence(data, array.n, element_layout.size(), element)
             }
             HashIntrinsic::Slice {
                 slice,
                 element_layout,
-                element_program,
+                element,
             } => {
                 let len = unsafe { (slice.vtable.len)(self.base) };
                 len.hash(self.hasher);
@@ -1031,12 +995,9 @@ where
                     return Ok(Control::Continue);
                 }
                 let data = unsafe { (slice.vtable.as_ptr)(self.base) };
-                self.call_sequence(data, len, element_layout.size(), element_program)
+                self.hash_or_call_sequence(data, len, element_layout.size(), element)
             }
-            HashIntrinsic::Set {
-                set,
-                element_program,
-            } => {
+            HashIntrinsic::Set { set, element } => {
                 let len = unsafe { (set.vtable.len)(self.base) };
                 len.hash(self.hasher);
                 let iter_init = set
@@ -1045,13 +1006,9 @@ where
                     .init_with_value
                     .ok_or_else(|| unsupported(set.t(), "set iterator init"))?;
                 let iter = unsafe { iter_init(self.base) };
-                self.call_next_set(self.base, iter, *set, element_program)
+                self.call_next_set(self.base, iter, *set, element)
             }
-            HashIntrinsic::Map {
-                map,
-                key_program,
-                value_program,
-            } => {
+            HashIntrinsic::Map { map, key, value } => {
                 let len = unsafe { (map.vtable.len)(self.base) };
                 len.hash(self.hasher);
                 let iter_init = map
@@ -1060,44 +1017,94 @@ where
                     .init_with_value
                     .ok_or_else(|| unsupported(map.k(), "map iterator init"))?;
                 let iter = unsafe { iter_init(self.base) };
-                self.call_next_map(self.base, iter, *map, key_program, value_program)
+                self.call_next_map(self.base, iter, *map, key, value)
             }
-            HashIntrinsic::Pointer {
-                pointer,
-                pointee_program,
-            } => {
+            HashIntrinsic::Pointer { pointer, pointee } => {
                 let borrow = pointer.vtable.borrow_fn.ok_or_else(|| {
                     unsupported(
                         pointer.pointee().expect("lowering rejects opaque pointers"),
                         "pointer borrow",
                     )
                 })?;
-                let original_base = self.base;
-                self.base = unsafe { borrow(self.base) };
+                self.call_child(pointee, unsafe { borrow(self.base) }, self.base)
+            }
+        }
+    }
+
+    fn call_child(
+        &mut self,
+        child: &'program ChildPlan<ExecBlock>,
+        child_base: PtrConst,
+        original_base: PtrConst,
+    ) -> Result<Control<'program, ExecBlock, ExecOp, HashContinuation<'program>>, HashError> {
+        match child {
+            ChildPlan::Scalar {
+                include_shape,
+                shape,
+                scalar,
+            } => {
+                unsafe {
+                    hash_child_scalar(*include_shape, shape, *scalar, child_base, self.hasher)
+                };
+                Ok(Control::Continue)
+            }
+            ChildPlan::Program(program) => {
+                self.base = child_base;
                 Ok(Control::CallProgramThen(
-                    pointee_program,
+                    program,
                     HashContinuation::RestoreBase(original_base),
                 ))
             }
         }
     }
 
-    fn call_sequence(
+    fn hash_or_call_sequence(
         &mut self,
         data: PtrConst,
         len: usize,
         stride: usize,
-        element_program: &'program [ExecOp],
+        element: &'program ChildPlan<ExecBlock>,
     ) -> Result<Control<'program, ExecBlock, ExecOp, HashContinuation<'program>>, HashError> {
-        let original_base = self.base;
-        self.base = unsafe { sequence_element(data, 0, stride) };
+        match element {
+            ChildPlan::Scalar {
+                include_shape,
+                shape,
+                scalar,
+            } => {
+                for index in 0..len {
+                    let ptr = unsafe { sequence_element(data, index, stride) };
+                    unsafe { hash_child_scalar(*include_shape, shape, *scalar, ptr, self.hasher) };
+                }
+                Ok(Control::Continue)
+            }
+            ChildPlan::Program(program) => {
+                self.call_next_sequence(self.base, data, len, 0, stride, program)
+            }
+        }
+    }
+
+    fn call_next_sequence(
+        &mut self,
+        original_base: PtrConst,
+        data: PtrConst,
+        len: usize,
+        next_index: usize,
+        stride: usize,
+        element_program: &'program Program<ExecOp>,
+    ) -> Result<Control<'program, ExecBlock, ExecOp, HashContinuation<'program>>, HashError> {
+        if next_index >= len {
+            self.base = original_base;
+            return Ok(Control::Continue);
+        }
+
+        self.base = unsafe { sequence_element(data, next_index, stride) };
         Ok(Control::CallProgramThen(
             element_program,
             HashContinuation::Sequence {
                 original_base,
                 data,
                 len,
-                next_index: 1,
+                next_index: next_index + 1,
                 stride,
                 element_program,
             },
@@ -1111,25 +1118,41 @@ where
         fields: &'program [FieldPlan<ExecBlock>],
         next_index: usize,
     ) -> Result<Control<'program, ExecBlock, ExecOp, HashContinuation<'program>>, HashError> {
-        if next_index >= fields.len() {
-            self.base = original_base;
-            return Ok(Control::Continue);
+        let mut index = next_index;
+        while index < fields.len() {
+            let field = &fields[index];
+            if mode == HashMode::Structural {
+                field.name.hash(self.hasher);
+            }
+            let field_base = unsafe { original_base.field(field.offset) };
+            match &field.child {
+                ChildPlan::Scalar {
+                    include_shape,
+                    shape,
+                    scalar,
+                } => {
+                    unsafe {
+                        hash_child_scalar(*include_shape, shape, *scalar, field_base, self.hasher)
+                    };
+                    index += 1;
+                }
+                ChildPlan::Program(program) => {
+                    self.base = field_base;
+                    return Ok(Control::CallProgramThen(
+                        program,
+                        HashContinuation::StructFields {
+                            original_base,
+                            mode,
+                            fields,
+                            next_index: index + 1,
+                        },
+                    ));
+                }
+            }
         }
 
-        let field = &fields[next_index];
-        if mode == HashMode::Structural {
-            field.name.hash(self.hasher);
-        }
-        self.base = unsafe { original_base.field(field.offset) };
-        Ok(Control::CallProgramThen(
-            &field.program,
-            HashContinuation::StructFields {
-                original_base,
-                mode,
-                fields,
-                next_index: next_index + 1,
-            },
-        ))
+        self.base = original_base;
+        Ok(Control::Continue)
     }
 
     fn call_next_set(
@@ -1137,25 +1160,36 @@ where
         original_base: PtrConst,
         iter: PtrMut,
         set: SetDef,
-        element_program: &'program [ExecOp],
+        element: &'program ChildPlan<ExecBlock>,
     ) -> Result<Control<'program, ExecBlock, ExecOp, HashContinuation<'program>>, HashError> {
-        match unsafe { (set.vtable.iter_vtable.next)(iter) } {
-            Some(value) => {
-                self.base = value;
-                Ok(Control::CallProgramThen(
-                    element_program,
-                    HashContinuation::Set {
-                        original_base,
-                        iter,
-                        set,
-                        element_program,
+        loop {
+            match unsafe { (set.vtable.iter_vtable.next)(iter) } {
+                Some(value) => match element {
+                    ChildPlan::Scalar {
+                        include_shape,
+                        shape,
+                        scalar,
+                    } => unsafe {
+                        hash_child_scalar(*include_shape, shape, *scalar, value, self.hasher)
                     },
-                ))
-            }
-            None => {
-                unsafe { (set.vtable.iter_vtable.dealloc)(iter) };
-                self.base = original_base;
-                Ok(Control::Continue)
+                    ChildPlan::Program(program) => {
+                        self.base = value;
+                        return Ok(Control::CallProgramThen(
+                            program,
+                            HashContinuation::Set {
+                                original_base,
+                                iter,
+                                set,
+                                element,
+                            },
+                        ));
+                    }
+                },
+                None => {
+                    unsafe { (set.vtable.iter_vtable.dealloc)(iter) };
+                    self.base = original_base;
+                    return Ok(Control::Continue);
+                }
             }
         }
     }
@@ -1165,28 +1199,88 @@ where
         original_base: PtrConst,
         iter: PtrMut,
         map: MapDef,
-        key_program: &'program [ExecOp],
-        value_program: &'program [ExecOp],
+        key: &'program ChildPlan<ExecBlock>,
+        value: &'program ChildPlan<ExecBlock>,
     ) -> Result<Control<'program, ExecBlock, ExecOp, HashContinuation<'program>>, HashError> {
-        match unsafe { (map.vtable.iter_vtable.next)(iter) } {
-            Some((key, value)) => {
-                self.base = key;
+        loop {
+            match unsafe { (map.vtable.iter_vtable.next)(iter) } {
+                Some((key_ptr, value_ptr)) => match key {
+                    ChildPlan::Scalar {
+                        include_shape,
+                        shape,
+                        scalar,
+                    } => {
+                        unsafe {
+                            hash_child_scalar(*include_shape, shape, *scalar, key_ptr, self.hasher)
+                        };
+                        match self.call_map_value(
+                            original_base,
+                            iter,
+                            map,
+                            key,
+                            value,
+                            value_ptr,
+                        )? {
+                            Control::Continue => {}
+                            control => return Ok(control),
+                        }
+                    }
+                    ChildPlan::Program(program) => {
+                        self.base = key_ptr;
+                        return Ok(Control::CallProgramThen(
+                            program,
+                            HashContinuation::MapAfterKey {
+                                original_base,
+                                iter,
+                                map,
+                                key,
+                                value_plan: value,
+                                value_ptr,
+                            },
+                        ));
+                    }
+                },
+                None => {
+                    unsafe { (map.vtable.iter_vtable.dealloc)(iter) };
+                    self.base = original_base;
+                    return Ok(Control::Continue);
+                }
+            }
+        }
+    }
+
+    fn call_map_value(
+        &mut self,
+        original_base: PtrConst,
+        iter: PtrMut,
+        map: MapDef,
+        key: &'program ChildPlan<ExecBlock>,
+        value: &'program ChildPlan<ExecBlock>,
+        value_ptr: PtrConst,
+    ) -> Result<Control<'program, ExecBlock, ExecOp, HashContinuation<'program>>, HashError> {
+        match value {
+            ChildPlan::Scalar {
+                include_shape,
+                shape,
+                scalar,
+            } => {
+                unsafe {
+                    hash_child_scalar(*include_shape, shape, *scalar, value_ptr, self.hasher)
+                };
+                Ok(Control::Continue)
+            }
+            ChildPlan::Program(program) => {
+                self.base = value_ptr;
                 Ok(Control::CallProgramThen(
-                    key_program,
-                    HashContinuation::MapAfterKey {
+                    program,
+                    HashContinuation::MapAfterValue {
                         original_base,
                         iter,
                         map,
-                        key_program,
-                        value_program,
+                        key,
                         value,
                     },
                 ))
-            }
-            None => {
-                unsafe { (map.vtable.iter_vtable.dealloc)(iter) };
-                self.base = original_base;
-                Ok(Control::Continue)
             }
         }
     }
@@ -1194,6 +1288,21 @@ where
 
 unsafe fn sequence_element(data: PtrConst, index: usize, stride: usize) -> PtrConst {
     PtrConst::new_sized(unsafe { data.as_byte_ptr().add(index * stride) })
+}
+
+unsafe fn hash_child_scalar<H>(
+    include_shape: bool,
+    shape: &'static Shape,
+    scalar: ScalarType,
+    ptr: PtrConst,
+    hasher: &mut H,
+) where
+    H: Hasher,
+{
+    if include_shape {
+        shape.id.hash(hasher);
+    }
+    unsafe { hash_scalar(shape, scalar, ptr, hasher) };
 }
 
 unsafe fn hash_scalar<H>(shape: &'static Shape, scalar: ScalarType, ptr: PtrConst, hasher: &mut H)
