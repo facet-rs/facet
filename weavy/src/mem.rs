@@ -10,7 +10,8 @@ pub mod runtime;
 use std::collections::BTreeMap;
 
 use crate::ir::{
-    ControlOp, IntrinsicDescriptor, IntrinsicOp, MemoryOp, WeavyLowered, WeavyOp, WeavyProgram,
+    ControlOp, EffectContract, EffectResource, IntrinsicDescriptor, IntrinsicOp, MemoryOp,
+    MemoryRegion, TypedMemoryAccess, WeavyLowered, WeavyOp, WeavyProgram,
 };
 
 /// A type-erased "write this field's default in place" operation, supplied by
@@ -1121,6 +1122,147 @@ impl<BlockId> IntrinsicOp for MemIntrinsic<BlockId> {
             name,
         }
     }
+
+    fn effect(&self) -> EffectContract {
+        match self {
+            MemIntrinsic::NativeInt {
+                offset, mem_size, ..
+            } => stream_memory_effect(*offset, *mem_size),
+            MemIntrinsic::Sequence(op) => owned_container_effect(op.field_offset),
+            MemIntrinsic::Set(op) => owned_container_effect(op.field_offset),
+            MemIntrinsic::Bytes(op) => owned_container_effect(op.field_offset),
+            MemIntrinsic::Borrow(op) => borrowed_run_effect(op.field_offset),
+            MemIntrinsic::Option(op) => thunked_handle_effect(op.field_offset)
+                .typed_memory(
+                    MemoryRegion::unknown_offset(op.inner_size),
+                    TypedMemoryAccess::MoveFrom,
+                )
+                .may_fail(),
+            MemIntrinsic::Enum(op) => stream_memory_effect(op.tag_offset, op.tag_width).barrier(),
+            MemIntrinsic::Map(op) => owned_container_effect(op.field_offset)
+                .typed_memory(
+                    MemoryRegion::unknown_offset(op.key_size),
+                    TypedMemoryAccess::MoveFrom,
+                )
+                .typed_memory(
+                    MemoryRegion::unknown_offset(op.value_size),
+                    TypedMemoryAccess::MoveFrom,
+                ),
+            MemIntrinsic::Dynamic { field_offset } => EffectContract::opaque()
+                .read_resource(EffectResource::Input("wire"))
+                .advance_resource(EffectResource::Input("wire"))
+                .write_resource(EffectResource::Sink("wire"))
+                .typed_memory(
+                    MemoryRegion::base_relative_unknown_size(*field_offset),
+                    TypedMemoryAccess::Read,
+                )
+                .typed_memory(
+                    MemoryRegion::base_relative_unknown_size(*field_offset),
+                    TypedMemoryAccess::Initialize,
+                )
+                .may_fail()
+                .may_allocate()
+                .calls_user_code(),
+            MemIntrinsic::Result(op) => thunked_handle_effect(op.field_offset)
+                .typed_memory(
+                    MemoryRegion::unknown_offset(op.ok_size),
+                    TypedMemoryAccess::MoveFrom,
+                )
+                .typed_memory(
+                    MemoryRegion::unknown_offset(op.err_size),
+                    TypedMemoryAccess::MoveFrom,
+                )
+                .may_fail(),
+            MemIntrinsic::Pointer(op) => thunked_handle_effect(op.field_offset)
+                .typed_memory(
+                    MemoryRegion::unknown_offset(op.pointee_size),
+                    TypedMemoryAccess::MoveFrom,
+                )
+                .may_allocate()
+                .may_fail(),
+            MemIntrinsic::SkipWire(_) => EffectContract::new()
+                .read_resource(EffectResource::Input("wire"))
+                .advance_resource(EffectResource::Input("wire"))
+                .may_fail()
+                .ordered(),
+            MemIntrinsic::Default(op) => EffectContract::new()
+                .typed_memory(
+                    MemoryRegion::base_relative_unknown_size(op.offset),
+                    TypedMemoryAccess::Initialize,
+                )
+                .calls_user_code(),
+            MemIntrinsic::Opaque(op) => EffectContract::opaque()
+                .read_resource(EffectResource::Input("wire"))
+                .advance_resource(EffectResource::Input("wire"))
+                .write_resource(EffectResource::Sink("wire"))
+                .typed_memory(
+                    MemoryRegion::base_relative_unknown_size(op.field_offset),
+                    TypedMemoryAccess::Read,
+                )
+                .typed_memory(
+                    MemoryRegion::base_relative_unknown_size(op.field_offset),
+                    TypedMemoryAccess::Initialize,
+                )
+                .may_fail()
+                .may_allocate()
+                .calls_user_code(),
+        }
+    }
+}
+
+fn stream_memory_effect(offset: usize, size: usize) -> EffectContract {
+    EffectContract::new()
+        .read_resource(EffectResource::Input("wire"))
+        .advance_resource(EffectResource::Input("wire"))
+        .write_resource(EffectResource::Sink("wire"))
+        .typed_memory(
+            MemoryRegion::base_relative(offset, size),
+            TypedMemoryAccess::Read,
+        )
+        .typed_memory(
+            MemoryRegion::base_relative(offset, size),
+            TypedMemoryAccess::Initialize,
+        )
+        .may_fail()
+        .ordered()
+}
+
+fn thunked_handle_effect(field_offset: usize) -> EffectContract {
+    EffectContract::new()
+        .read_resource(EffectResource::Input("wire"))
+        .advance_resource(EffectResource::Input("wire"))
+        .write_resource(EffectResource::Sink("wire"))
+        .typed_memory(
+            MemoryRegion::base_relative_unknown_size(field_offset),
+            TypedMemoryAccess::Read,
+        )
+        .typed_memory(
+            MemoryRegion::base_relative_unknown_size(field_offset),
+            TypedMemoryAccess::Initialize,
+        )
+        .may_fail()
+        .calls_user_code()
+}
+
+fn owned_container_effect(field_offset: usize) -> EffectContract {
+    thunked_handle_effect(field_offset).may_allocate()
+}
+
+fn borrowed_run_effect(field_offset: usize) -> EffectContract {
+    EffectContract::new()
+        .read_resource(EffectResource::Input("wire"))
+        .advance_resource(EffectResource::Input("wire"))
+        .write_resource(EffectResource::Sink("wire"))
+        .typed_memory(
+            MemoryRegion::base_relative_unknown_size(field_offset),
+            TypedMemoryAccess::Read,
+        )
+        .typed_memory(
+            MemoryRegion::base_relative_unknown_size(field_offset),
+            TypedMemoryAccess::Initialize,
+        )
+        .may_fail()
+        .calls_user_code()
 }
 
 /// Canonical-to-typed-memory conversion failure.
@@ -1276,6 +1418,44 @@ where
         }
     }
     counts
+}
+
+/// Count canonical typed-memory effects, recursively entering mem intrinsics.
+#[must_use]
+pub fn canonical_mem_program_effect_stats<BlockId>(
+    program: &[WeavyOp<BlockId, MemIntrinsic<BlockId>>],
+) -> crate::ir::EffectStats {
+    let mut stats = crate::ir::effect_stats(program);
+    for op in program {
+        if let WeavyOp::Intrinsic(intrinsic) = op {
+            add_canonical_mem_intrinsic_effect_stats(intrinsic, &mut stats);
+        }
+    }
+    stats
+}
+
+/// Count canonical typed-memory effects in a lowered program.
+#[must_use]
+pub fn canonical_mem_lowered_effect_stats<BlockId>(
+    lowered: &CanonicalMemLowered<BlockId>,
+) -> crate::ir::LoweredEffectStats
+where
+    BlockId: Ord,
+{
+    let root = canonical_mem_program_effect_stats(&lowered.program);
+    let mut blocks = crate::ir::EffectStats::default();
+    for block in lowered.blocks.values() {
+        blocks.accumulate(canonical_mem_program_effect_stats(block));
+    }
+    let mut total = root;
+    total.accumulate(blocks);
+
+    crate::ir::LoweredEffectStats {
+        root,
+        blocks,
+        total,
+        block_count: lowered.blocks.len(),
+    }
 }
 
 fn canonical_mem_op<BlockId>(op: MemOp<BlockId>) -> WeavyOp<BlockId, MemIntrinsic<BlockId>> {
@@ -1567,6 +1747,42 @@ fn add_canonical_mem_intrinsic_counts<BlockId>(
         }
         MemIntrinsic::Pointer(op) => {
             add_canonical_mem_program_intrinsic_counts(&op.pointee, counts)
+        }
+        MemIntrinsic::NativeInt { .. }
+        | MemIntrinsic::Bytes(_)
+        | MemIntrinsic::Borrow(_)
+        | MemIntrinsic::Dynamic { .. }
+        | MemIntrinsic::SkipWire(_)
+        | MemIntrinsic::Default(_)
+        | MemIntrinsic::Opaque(_) => {}
+    }
+}
+
+fn add_canonical_mem_intrinsic_effect_stats<BlockId>(
+    intrinsic: &MemIntrinsic<BlockId>,
+    stats: &mut crate::ir::EffectStats,
+) {
+    match intrinsic {
+        MemIntrinsic::Sequence(op) => {
+            stats.accumulate(canonical_mem_program_effect_stats(&op.element))
+        }
+        MemIntrinsic::Set(op) => stats.accumulate(canonical_mem_program_effect_stats(&op.element)),
+        MemIntrinsic::Option(op) => stats.accumulate(canonical_mem_program_effect_stats(&op.some)),
+        MemIntrinsic::Enum(op) => {
+            for variant in &op.variants {
+                stats.accumulate(canonical_mem_program_effect_stats(&variant.payload));
+            }
+        }
+        MemIntrinsic::Map(op) => {
+            stats.accumulate(canonical_mem_program_effect_stats(&op.key));
+            stats.accumulate(canonical_mem_program_effect_stats(&op.value));
+        }
+        MemIntrinsic::Result(op) => {
+            stats.accumulate(canonical_mem_program_effect_stats(&op.ok));
+            stats.accumulate(canonical_mem_program_effect_stats(&op.err));
+        }
+        MemIntrinsic::Pointer(op) => {
+            stats.accumulate(canonical_mem_program_effect_stats(&op.pointee))
         }
         MemIntrinsic::NativeInt { .. }
         | MemIntrinsic::Bytes(_)
@@ -2381,6 +2597,54 @@ mod tests {
         assert_eq!(stats.option_count, 1);
         assert_eq!(stats.scalar_op_count, 1);
         assert_eq!(stats.native_int_count, 1);
+    }
+
+    #[test]
+    fn canonical_mem_effect_stats_enter_nested_intrinsic_programs() {
+        let program = vec![MemOp::<u8>::Option(Box::new(OptionOp {
+            field_offset: 4,
+            some: vec![MemOp::NativeInt {
+                offset: 8,
+                mem_size: 8,
+                signed: true,
+            }],
+            inner_size: 8,
+            inner_align: 8,
+            thunks: option_thunks(),
+        }))];
+
+        let canonical = canonical_mem_program(program);
+        let stats = canonical_mem_program_effect_stats(&canonical);
+
+        assert_eq!(stats.op_count, 2);
+        assert_eq!(stats.intrinsic_op_count, 2);
+        assert_eq!(stats.input_read_count, 2);
+        assert_eq!(stats.input_advance_count, 2);
+        assert_eq!(stats.sink_write_count, 2);
+        assert_eq!(stats.may_fail_count, 2);
+        assert_eq!(stats.calls_user_code_count, 1);
+        assert_eq!(stats.typed_memory_read_count, 2);
+        assert_eq!(stats.typed_memory_initialize_count, 2);
+        assert_eq!(stats.typed_memory_move_count, 1);
+        assert_eq!(stats.ordered_count, 1);
+        assert_eq!(stats.barrier_count, 1);
+        assert_eq!(stats.opaque_count, 0);
+    }
+
+    #[test]
+    fn canonical_mem_effect_stats_count_explicit_opaque_barriers() {
+        let program = vec![WeavyOp::<(), _>::Intrinsic(MemIntrinsic::Dynamic {
+            field_offset: 24,
+        })];
+
+        let stats = canonical_mem_program_effect_stats(&program);
+
+        assert_eq!(stats.op_count, 1);
+        assert_eq!(stats.intrinsic_op_count, 1);
+        assert_eq!(stats.opaque_count, 1);
+        assert_eq!(stats.barrier_count, 1);
+        assert_eq!(stats.may_allocate_count, 1);
+        assert_eq!(stats.calls_user_code_count, 1);
     }
 
     #[test]
