@@ -1229,7 +1229,7 @@ where
         shape: &'static Shape,
         fields: &'program [ScalarFieldPlan],
     ) -> Result<(), DeserializeError> {
-        self.parser.consume_object_start()?;
+        self.parser.consume_object_start_fast()?;
         let base = self.base;
         if fields.len() <= TINY_SCALAR_STRUCT_MAX_FIELDS {
             return self.read_tiny_scalar_struct_fields(shape, base, fields);
@@ -1623,7 +1623,7 @@ where
                 fields,
                 loop_id,
             } => {
-                self.parser.consume_object_start()?;
+                self.parser.consume_object_start_fast()?;
                 let tracking = StructTracking::for_len(fields.len());
                 let base = self.base;
                 match tracking {
@@ -1694,7 +1694,7 @@ where
                 element_layout,
                 loop_id,
             } => {
-                self.parser.consume_array_start()?;
+                self.parser.consume_array_start_fast()?;
                 if list.from_raw_parts().is_some() {
                     let builder = RawArrayBuilder::new(
                         *element_layout,
