@@ -53,6 +53,29 @@ struct Address {
     zip: String,
 }
 
+#[derive(Debug, Facet, Hash)]
+struct HashCompany {
+    name: String,
+    employees: Vec<HashEmployee>,
+    headquarters: HashAddress,
+}
+
+#[derive(Debug, Facet, Hash)]
+struct HashEmployee {
+    id: u64,
+    name: String,
+    department: String,
+    salary_cents: u64,
+}
+
+#[derive(Debug, Facet, Hash)]
+struct HashAddress {
+    street: String,
+    city: String,
+    country: String,
+    zip: String,
+}
+
 #[divan::bench]
 fn point_native_hash(bencher: Bencher<'_, '_>) {
     let value = Point { x: 123, y: -456 };
@@ -176,12 +199,72 @@ fn company_peek_structural_hash(bencher: Bencher<'_, '_>) {
     });
 }
 
+#[divan::bench]
+fn hash_company_native_hash(bencher: Bencher<'_, '_>) {
+    let value = hash_company();
+    bencher.bench_local(|| {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        black_box(&value).hash(&mut hasher);
+        black_box(hasher.finish())
+    });
+}
+
+#[divan::bench]
+fn hash_company_value_plan_reused(bencher: Bencher<'_, '_>) {
+    let plan = HashPlan::<HashCompany>::build().unwrap();
+    let value = hash_company();
+    bencher.bench_local(|| black_box(plan.hash64(black_box(&value)).unwrap()));
+}
+
+#[divan::bench]
+fn hash_company_structural_plan_reused(bencher: Bencher<'_, '_>) {
+    let plan = HashPlan::<HashCompany>::build_structural().unwrap();
+    let value = hash_company();
+    bencher.bench_local(|| black_box(plan.hash64(black_box(&value)).unwrap()));
+}
+
+#[divan::bench]
+fn hash_company_peek_structural_hash(bencher: Bencher<'_, '_>) {
+    let value = hash_company();
+    bencher.bench_local(|| {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        Peek::new(black_box(&value)).structural_hash(&mut hasher);
+        black_box(hasher.finish())
+    });
+}
+
 fn person() -> Person {
     Person {
         name: "Ada Lovelace".to_owned(),
         age: 36,
         email: Some("ada@example.test".to_owned()),
         scores: vec![1, 1, 2, 3, 5, 8, 13],
+    }
+}
+
+fn hash_company() -> HashCompany {
+    HashCompany {
+        name: "Analytical Engines Ltd".to_owned(),
+        employees: vec![
+            HashEmployee {
+                id: 1,
+                name: "Ada".to_owned(),
+                department: "math".to_owned(),
+                salary_cents: 12_345_675,
+            },
+            HashEmployee {
+                id: 2,
+                name: "Grace".to_owned(),
+                department: "compiler".to_owned(),
+                salary_cents: 23_456_725,
+            },
+        ],
+        headquarters: HashAddress {
+            street: "1 Difference Lane".to_owned(),
+            city: "London".to_owned(),
+            country: "UK".to_owned(),
+            zip: "N1".to_owned(),
+        },
     }
 }
 
