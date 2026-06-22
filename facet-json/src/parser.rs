@@ -293,18 +293,10 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
 
     #[inline]
     fn consume_spanned_token(&mut self) -> Result<scanner::SpannedToken, ParseError> {
-        let mut spanned = self
+        let spanned = self
             .scanner
             .next_token(self.input)
             .map_err(scan_error_to_parse_error)?;
-
-        // Handle NeedMore by finalizing - we have full input so this is true EOF
-        if matches!(spanned.token, ScanToken::NeedMore { .. }) {
-            spanned = self
-                .scanner
-                .finalize_at_eof(self.input)
-                .map_err(scan_error_to_parse_error)?;
-        }
 
         self.state.last_token_start = spanned.span.offset as usize;
         self.state.scanner_pos = self.scanner.pos();
@@ -343,7 +335,6 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                 }
             }
             ScanToken::Eof => TokenKind::Eof,
-            ScanToken::NeedMore { .. } => unreachable!("handled above"),
         };
         Ok(kind)
     }
@@ -643,14 +634,6 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                     DeserializeErrorKind::UnexpectedEof { expected: "value" },
                 ));
             }
-            ScanToken::NeedMore { .. } => {
-                return Err(ParseError::new(
-                    first.span,
-                    DeserializeErrorKind::UnexpectedEof {
-                        expected: "more data",
-                    },
-                ));
-            }
         }
 
         let end = self.scanner.pos();
@@ -697,14 +680,6 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                     return Err(ParseError::new(
                         spanned.span,
                         DeserializeErrorKind::UnexpectedEof { expected: "value" },
-                    ));
-                }
-                ScanToken::NeedMore { .. } => {
-                    return Err(ParseError::new(
-                        spanned.span,
-                        DeserializeErrorKind::UnexpectedEof {
-                            expected: "more data",
-                        },
                     ));
                 }
                 _ => {}
@@ -1279,7 +1254,6 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                 token.span,
                 DeserializeErrorKind::UnexpectedEof { expected },
             )),
-            ScanToken::NeedMore { .. } => unreachable!("handled by consume_spanned_token"),
         }
     }
 
@@ -1317,7 +1291,6 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                     DeserializeErrorKind::UnexpectedEof { expected },
                 ));
             }
-            ScanToken::NeedMore { .. } => unreachable!("handled by consume_spanned_token"),
         };
         Ok((value, span))
     }
@@ -1635,14 +1608,6 @@ impl<'de, const TRUSTED_UTF8: bool> FormatParser<'de> for JsonParser<'de, TRUSTE
                     return Err(ParseError::new(
                         first.span,
                         DeserializeErrorKind::UnexpectedEof { expected: "value" },
-                    ));
-                }
-                ScanToken::NeedMore { .. } => {
-                    return Err(ParseError::new(
-                        first.span,
-                        DeserializeErrorKind::UnexpectedEof {
-                            expected: "more data",
-                        },
                     ));
                 }
                 _ => {

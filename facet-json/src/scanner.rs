@@ -6,7 +6,6 @@
 //!
 //! This design enables:
 //! - Zero-copy borrowed strings (when no escapes)
-//! - Streaming from `std::io::Read` with buffer refills
 //! - Skipping values without allocation (RawJson, unknown fields)
 
 use core::str;
@@ -54,11 +53,6 @@ pub enum Token {
     },
     /// End of input reached
     Eof,
-    /// Buffer exhausted mid-token - need refill for streaming
-    NeedMore {
-        /// How many bytes were consumed before hitting the boundary
-        consumed: usize,
-    },
 }
 
 /// Hint about number format to guide parsing
@@ -107,37 +101,13 @@ pub type ScanResult = Result<SpannedToken, ScanError>;
 
 /// JSON scanner state machine.
 ///
-/// The scanner operates on a byte buffer and tracks position. For streaming,
-/// the buffer can be refilled when `Token::NeedMore` is returned.
+/// The scanner operates on a complete byte buffer and tracks position.
 #[derive(Clone)]
 pub struct Scanner {
     /// Current position in the buffer
     pos: usize,
-    /// State for resuming after NeedMore (for streaming)
-    state: ScanState,
     /// Whether to allow JSONC-style comments (`//` and `/* */`)
     allow_comments: bool,
-}
-
-/// Internal state for resuming mid-token after buffer refill
-#[derive(Debug, Clone, Default)]
-enum ScanState {
-    #[default]
-    Ready,
-    /// In the middle of scanning a string
-    InString {
-        start: usize,
-        has_escapes: bool,
-        escape_next: bool,
-    },
-    /// In the middle of scanning a number
-    InNumber { start: usize, hint: NumberHint },
-    /// In the middle of scanning a literal (true/false/null)
-    InLiteral {
-        start: usize,
-        expected: &'static [u8],
-        matched: usize,
-    },
 }
 
 impl Scanner {
@@ -145,7 +115,6 @@ impl Scanner {
     pub const fn new() -> Self {
         Self {
             pos: 0,
-            state: ScanState::Ready,
             allow_comments: false,
         }
     }
@@ -154,7 +123,6 @@ impl Scanner {
     pub const fn new_with_comments() -> Self {
         Self {
             pos: 0,
-            state: ScanState::Ready,
             allow_comments: true,
         }
     }
@@ -164,7 +132,6 @@ impl Scanner {
     pub const fn at_position(pos: usize) -> Self {
         Self {
             pos,
-            state: ScanState::Ready,
             allow_comments: false,
         }
     }
@@ -195,7 +162,6 @@ impl Scanner {
     ) -> Result<Option<(usize, u8)>, ScanError> {
         let mut scanner = self.clone();
         scanner.pos = pos;
-        scanner.state = ScanState::Ready;
         scanner.skip_whitespace(buf)?;
         Ok(buf
             .get(scanner.pos)
@@ -203,98 +169,8 @@ impl Scanner {
             .map(|byte| (scanner.pos, byte)))
     }
 
-    /// Finalize any pending token at true EOF.
-    ///
-    /// Call this when the scanner returned `NeedMore` but no more data is available.
-    /// Returns the completed token if one is pending (e.g., a number at EOF),
-    /// or an error if the token is incomplete (e.g., unterminated string).
-    pub fn finalize_at_eof(&mut self, buf: &[u8]) -> ScanResult {
-        match core::mem::take(&mut self.state) {
-            ScanState::Ready => {
-                // Nothing pending
-                Ok(SpannedToken {
-                    token: Token::Eof,
-                    span: Span::new(self.pos, 0),
-                })
-            }
-            ScanState::InNumber { start, hint } => {
-                // Number is complete at EOF (numbers don't need closing delimiter)
-                let end = self.pos;
-                if end == start || (end == start + 1 && buf.get(start) == Some(&b'-')) {
-                    return Err(ScanError {
-                        kind: ScanErrorKind::UnexpectedEof("in number"),
-                        span: Span::new(start, end - start),
-                    });
-                }
-                Ok(SpannedToken {
-                    token: Token::Number { start, end, hint },
-                    span: Span::new(start, end - start),
-                })
-            }
-            ScanState::InString { start, .. } => {
-                // Unterminated string
-                Err(ScanError {
-                    kind: ScanErrorKind::UnexpectedEof("in string"),
-                    span: Span::new(start, self.pos - start),
-                })
-            }
-            ScanState::InLiteral {
-                start,
-                expected,
-                matched,
-            } => {
-                // Check if the literal is complete
-                if matched == expected.len() {
-                    let token = match expected {
-                        b"true" => Token::True,
-                        b"false" => Token::False,
-                        b"null" => Token::Null,
-                        _ => unreachable!(),
-                    };
-                    Ok(SpannedToken {
-                        token,
-                        span: Span::new(start, expected.len()),
-                    })
-                } else {
-                    Err(ScanError {
-                        kind: ScanErrorKind::UnexpectedEof("in literal"),
-                        span: Span::new(start, self.pos - start),
-                    })
-                }
-            }
-        }
-    }
-
     /// Scan the next token from the buffer.
-    ///
-    /// Returns `Token::NeedMore` if the buffer is exhausted mid-token,
-    /// allowing the caller to refill and retry.
     pub fn next_token(&mut self, buf: &[u8]) -> ScanResult {
-        // Fast path: if state is Ready, skip the mem::take overhead
-        if !matches!(self.state, ScanState::Ready) {
-            // If we have pending state from a previous NeedMore, resume
-            match core::mem::take(&mut self.state) {
-                ScanState::Ready => unreachable!(),
-                ScanState::InString {
-                    start,
-                    has_escapes,
-                    escape_next,
-                } => {
-                    return self.resume_string(buf, start, has_escapes, escape_next);
-                }
-                ScanState::InNumber { start, hint } => {
-                    return self.resume_number(buf, start, hint);
-                }
-                ScanState::InLiteral {
-                    start,
-                    expected,
-                    matched,
-                } => {
-                    return self.resume_literal(buf, start, expected, matched);
-                }
-            }
-        }
-
         self.skip_whitespace(buf)?;
 
         let start = self.pos;
@@ -426,17 +302,6 @@ impl Scanner {
         self.scan_string_content(buf, start, content_start, false, false)
     }
 
-    fn resume_string(
-        &mut self,
-        buf: &[u8],
-        start: usize,
-        has_escapes: bool,
-        escape_next: bool,
-    ) -> ScanResult {
-        let content_start = start + 1; // After opening quote
-        self.scan_string_content(buf, start, content_start, has_escapes, escape_next)
-    }
-
     fn scan_string_content(
         &mut self,
         buf: &[u8],
@@ -484,14 +349,8 @@ impl Scanner {
                 if byte == b'u' {
                     // Check if we have 4 more bytes
                     if self.pos + 4 > buf.len() {
-                        // Need more data
-                        self.state = ScanState::InString {
-                            start,
-                            has_escapes: true,
-                            escape_next: false,
-                        };
-                        return Ok(SpannedToken {
-                            token: Token::NeedMore { consumed: start },
+                        return Err(ScanError {
+                            kind: ScanErrorKind::UnexpectedEof("in unicode escape"),
                             span: Span::new(start, self.pos - start),
                         });
                     }
@@ -503,14 +362,8 @@ impl Scanner {
                         && buf.get(self.pos + 1) == Some(&b'u')
                     {
                         if self.pos + 6 > buf.len() {
-                            // Need more data for second surrogate
-                            self.state = ScanState::InString {
-                                start,
-                                has_escapes: true,
-                                escape_next: false,
-                            };
-                            return Ok(SpannedToken {
-                                token: Token::NeedMore { consumed: start },
+                            return Err(ScanError {
+                                kind: ScanErrorKind::UnexpectedEof("in unicode escape"),
                                 span: Span::new(start, self.pos - start),
                             });
                         }
@@ -548,23 +401,10 @@ impl Scanner {
         }
 
         // Reached end of buffer without closing quote
-        if escape_next || self.pos > start {
-            // Mid-string, need more data
-            self.state = ScanState::InString {
-                start,
-                has_escapes,
-                escape_next,
-            };
-            Ok(SpannedToken {
-                token: Token::NeedMore { consumed: start },
-                span: Span::new(start, self.pos - start),
-            })
-        } else {
-            Err(ScanError {
-                kind: ScanErrorKind::UnexpectedEof("in string"),
-                span: Span::new(start, self.pos - start),
-            })
-        }
+        Err(ScanError {
+            kind: ScanErrorKind::UnexpectedEof("in string"),
+            span: Span::new(start, self.pos - start),
+        })
     }
 
     /// Scan a number, finding its boundaries and determining its type hint.
@@ -576,18 +416,6 @@ impl Scanner {
             self.pos += 1;
         }
 
-        self.scan_number_content(buf, start, hint)
-    }
-
-    fn resume_number(&mut self, buf: &[u8], start: usize, hint: NumberHint) -> ScanResult {
-        // Reset position to start of number and re-scan with the larger buffer.
-        // Needed since we might have stopped in an exponent. We also need to handle
-        // negative numbers by ignoring the leading - (can use the hint since it may have
-        // changed from the exponent)
-        self.pos = start;
-        if buf.get(self.pos) == Some(&b'-') {
-            self.pos += 1;
-        }
         self.scan_number_content(buf, start, hint)
     }
 
@@ -645,17 +473,6 @@ impl Scanner {
 
         self.pos = pos;
 
-        // Check if we're at end of buffer - might need more data
-        // Numbers end at whitespace, punctuation, or true EOF
-        if pos == buf.len() {
-            // At end of buffer - need more data to see terminator
-            self.state = ScanState::InNumber { start, hint };
-            return Ok(SpannedToken {
-                token: Token::NeedMore { consumed: start },
-                span: Span::new(start, pos - start),
-            });
-        }
-
         let end = pos;
 
         // Validate we actually parsed something
@@ -685,22 +502,6 @@ impl Scanner {
         self.scan_literal_content(buf, start, expected, 0, token)
     }
 
-    fn resume_literal(
-        &mut self,
-        buf: &[u8],
-        start: usize,
-        expected: &'static [u8],
-        matched: usize,
-    ) -> ScanResult {
-        let token = match expected {
-            b"true" => Token::True,
-            b"false" => Token::False,
-            b"null" => Token::Null,
-            _ => unreachable!(),
-        };
-        self.scan_literal_content(buf, start, expected, matched, token)
-    }
-
     fn scan_literal_content(
         &mut self,
         buf: &[u8],
@@ -722,14 +523,8 @@ impl Scanner {
                     });
                 }
                 None => {
-                    // Need more data
-                    self.state = ScanState::InLiteral {
-                        start,
-                        expected,
-                        matched,
-                    };
-                    return Ok(SpannedToken {
-                        token: Token::NeedMore { consumed: start },
+                    return Err(ScanError {
+                        kind: ScanErrorKind::UnexpectedEof("in literal"),
                         span: Span::new(start, self.pos - start),
                     });
                 }
@@ -1436,10 +1231,16 @@ mod tests {
             }
         ));
 
-        // Number at end of buffer returns NeedMore (streaming behavior)
+        // Number at end of buffer is complete in the complete-buffer parser.
         scanner.set_pos(0);
         let result = scanner.next_token(b"42").unwrap();
-        assert!(matches!(result.token, Token::NeedMore { .. }));
+        assert!(matches!(
+            result.token,
+            Token::Number {
+                hint: NumberHint::Unsigned,
+                ..
+            }
+        ));
     }
 
     #[test]
