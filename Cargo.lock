@@ -2132,6 +2132,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-hash"
+version = "0.50.0-rc.1"
+dependencies = [
+ "codspeed-divan-compat",
+ "facet",
+ "facet-core",
+ "facet-reflect",
+ "weavy",
+]
+
+[[package]]
 name = "facet-json"
 version = "0.50.0-rc.1"
 dependencies = [
