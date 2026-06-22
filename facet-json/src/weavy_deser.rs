@@ -173,6 +173,10 @@ enum JsonOp<Block> {
         shape: &'static Shape,
         scalar: ScalarPlan,
     },
+    ReadScalarStruct {
+        shape: &'static Shape,
+        fields: Box<[FieldPlan<Block>]>,
+    },
     ReadStruct {
         shape: &'static Shape,
         fields: Box<[FieldPlan<Block>]>,
@@ -474,6 +478,10 @@ impl Lowering {
                         });
                     }
                     let fields = fields.into_boxed_slice();
+                    if fields.iter().all(|field| field.scalar.is_some()) {
+                        return Ok(vec![JsonOp::ReadScalarStruct { shape, fields }]);
+                    }
+
                     let loop_id = JsonBlockId::StructLoop(shape);
                     let tracking = StructTracking::for_len(fields.len());
                     let loop_program = vec![JsonOp::StructNext {
@@ -524,6 +532,10 @@ fn resolve_json_op(
     Ok(match op {
         JsonOp::CallBlock(block) => JsonOp::CallBlock(resolve_block_ref(block, refs)?),
         JsonOp::ReadScalar { shape, scalar } => JsonOp::ReadScalar { shape, scalar },
+        JsonOp::ReadScalarStruct { shape, fields } => JsonOp::ReadScalarStruct {
+            shape,
+            fields: resolve_field_plans(fields, refs)?,
+        },
         JsonOp::ReadStruct {
             shape,
             fields,
@@ -1056,6 +1068,102 @@ impl<'parser, 'de, 'program, const TRUSTED_UTF8: bool>
             self.scratch.release(scratch);
         }
     }
+
+    fn read_scalar_struct(
+        &mut self,
+        shape: &'static Shape,
+        fields: &'program [FieldPlan<ExecBlock>],
+    ) -> Result<(), DeserializeError> {
+        self.parser.consume_object_start()?;
+        let base = self.base;
+        match StructTracking::for_len(fields.len()) {
+            StructTracking::Inline => {
+                let mut frame = StructFrame::<InitializedLedger<Span>>::new(shape, base, fields);
+                self.read_scalar_struct_fields(shape, &mut frame)?;
+                unsafe {
+                    frame.fill_missing_fields()?;
+                }
+            }
+            StructTracking::Bitset => {
+                let mut frame = StructFrame::<BitsetStructSeen>::new(shape, base, fields);
+                self.read_scalar_struct_fields(shape, &mut frame)?;
+                unsafe {
+                    frame.fill_missing_fields()?;
+                }
+            }
+            StructTracking::Heap => {
+                let mut frame = StructFrame::<HeapStructSeen>::new(shape, base, fields);
+                self.read_scalar_struct_fields(shape, &mut frame)?;
+                unsafe {
+                    frame.fill_missing_fields()?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn read_scalar_struct_fields<Seen: StructSeenStore>(
+        &mut self,
+        shape: &'static Shape,
+        frame: &mut StructFrame<'program, Seen>,
+    ) -> Result<(), DeserializeError> {
+        loop {
+            match self.parser.next_object_key_or_end()? {
+                JsonObjectKeyStep::End => return Ok(()),
+                JsonObjectKeyStep::Field { key, span } => {
+                    let key_is_raw = matches!(key, JsonFieldKeyInput::Raw { .. });
+                    let matched = frame.match_field_input(&*self.parser, &key)?;
+
+                    let Some(matched) = matched else {
+                        let key = self.parser.materialize_field_key(key)?;
+                        if shape.has_deny_unknown_fields_attr() {
+                            return Err(vm_error(
+                                Some(span),
+                                DeserializeErrorKind::UnknownField {
+                                    field: key.as_str().to_owned().into(),
+                                    suggestion: None,
+                                },
+                            ));
+                        }
+                        self.parser.skip_value()?;
+                        continue;
+                    };
+
+                    let MatchedField {
+                        index,
+                        field,
+                        ordered,
+                    } = matched;
+                    if !ordered && let Some(first_span) = frame.seen.get(index) {
+                        return Err(vm_error(
+                            Some(span),
+                            DeserializeErrorKind::DuplicateField {
+                                field: field.name.into(),
+                                first_span: Some(first_span),
+                            },
+                        ));
+                    }
+
+                    let scalar = field
+                        .scalar
+                        .expect("scalar-only struct contains only scalar field plans");
+                    let field_ptr = unsafe { frame.base.field_uninit(field.offset) };
+                    if key_is_raw {
+                        let value = self.parser.read_current_scalar_input()?;
+                        unsafe {
+                            scalar.write_input(&*self.parser, field.shape, field_ptr, value)?;
+                        }
+                    } else {
+                        let (value, value_span) = self.parser.read_scalar_token()?;
+                        unsafe {
+                            scalar.write(field.shape, field_ptr, value, value_span)?;
+                        }
+                    }
+                    frame.mark_seen(index, span);
+                }
+            }
+        }
+    }
 }
 
 struct InlineStack<T> {
@@ -1167,6 +1275,10 @@ impl<'program, 'parser, 'de, const TRUSTED_UTF8: bool> Step<'program, ExecBlock,
                 unsafe {
                     scalar.write(shape, self.base, value, span)?;
                 }
+                Ok(Control::Continue)
+            }
+            JsonOp::ReadScalarStruct { shape, fields } => {
+                self.read_scalar_struct(shape, fields)?;
                 Ok(Control::Continue)
             }
             JsonOp::ReadStruct {
