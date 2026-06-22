@@ -11,6 +11,7 @@ use facet::Facet;
 use facet_format::MetaSource;
 use facet_json::JsonParser;
 use facet_reflect::TypePlan;
+use serde::de::DeserializeOwned;
 
 fn main() {
     divan::main();
@@ -60,6 +61,42 @@ struct Address {
     zip: String,
 }
 
+/// Tiny float-heavy struct
+#[derive(Debug, Facet, serde::Deserialize)]
+struct FloatPoint {
+    x: f64,
+    y: f64,
+    z: f64,
+}
+
+/// Numeric arrays and mixed scalar values
+#[derive(Debug, Facet, serde::Deserialize)]
+struct SensorFrame {
+    id: u64,
+    temperature: f64,
+    pressure: f32,
+    samples: Vec<f64>,
+    deltas: Vec<i32>,
+    flags: Vec<bool>,
+}
+
+/// Wide scalar record, deliberately over the old 8-field inline ledger limit
+#[derive(Debug, Facet, serde::Deserialize)]
+struct WideScalars {
+    a: u8,
+    b: u16,
+    c: u32,
+    d: u64,
+    e: i8,
+    f: i16,
+    g: i32,
+    h: i64,
+    i: usize,
+    j: isize,
+    k: bool,
+    l: f64,
+}
+
 // =============================================================================
 // Test data
 // =============================================================================
@@ -87,6 +124,84 @@ const COMPANY_JSON: &str = r#"{
         "zip": "94102"
     }
 }"#;
+
+const FLOAT_POINT_JSON: &str = r#"{"x": 12.5, "y": -0.03125, "z": 9000.125}"#;
+
+const SENSOR_FRAME_JSON: &str = r#"{
+    "id": 9001,
+    "temperature": 21.75,
+    "pressure": 1013.25,
+    "samples": [0.5, 1.25, 2.5, 5.0, 10.0, 20.0, 40.0, 80.0],
+    "deltas": [-3, -1, 0, 1, 3, 5, 8, 13],
+    "flags": [true, false, true, true, false, false, true, false]
+}"#;
+
+const WIDE_SCALARS_JSON: &str = r#"{
+    "a": 1,
+    "b": 2,
+    "c": 3,
+    "d": 4,
+    "e": -5,
+    "f": -6,
+    "g": -7,
+    "h": -8,
+    "i": 9,
+    "j": -10,
+    "k": true,
+    "l": 11.5
+}"#;
+
+fn bench_fresh_typeplan<T>(bencher: Bencher, json: &'static str)
+where
+    T: Facet<'static>,
+{
+    bencher.bench(|| {
+        let result: T = black_box(facet_json::from_str(black_box(json)).unwrap());
+        black_box(result)
+    });
+}
+
+fn bench_reused_typeplan<T>(bencher: Bencher, json: &'static str)
+where
+    T: Facet<'static>,
+{
+    use facet_format::FormatDeserializer;
+
+    let plan = TypePlan::<T>::build().unwrap();
+
+    bencher.bench(|| {
+        let partial = plan.partial_owned().unwrap();
+        let mut parser = JsonParser::<true>::new(black_box(json.as_bytes()));
+        let mut de = FormatDeserializer::new_owned(&mut parser);
+        let partial = de
+            .deserialize_into(partial, MetaSource::FromEvents)
+            .unwrap();
+        let result: T = partial.build().unwrap().materialize().unwrap();
+        black_box(result)
+    });
+}
+
+fn bench_weavy_reused_plan<T>(bencher: Bencher, json: &'static str)
+where
+    T: Facet<'static>,
+{
+    let plan = facet_json::JsonWeavyPlan::<T>::build().unwrap();
+
+    bencher.bench(|| {
+        let result: T = black_box(plan.from_str(black_box(json)).unwrap());
+        black_box(result)
+    });
+}
+
+fn bench_serde_json<T>(bencher: Bencher, json: &'static str)
+where
+    T: DeserializeOwned,
+{
+    bencher.bench(|| {
+        let result: T = black_box(serde_json::from_str(black_box(json)).unwrap());
+        black_box(result)
+    });
+}
 
 // =============================================================================
 // Benchmarks - Point (simple)
@@ -284,6 +399,78 @@ fn company_serde_json_from_slice(bencher: Bencher) {
         let result: Company = black_box(serde_json::from_slice(black_box(json)).unwrap());
         black_box(result)
     });
+}
+
+// =============================================================================
+// Benchmarks - FloatPoint (float-heavy tiny struct)
+// =============================================================================
+
+#[divan::bench]
+fn float_point_fresh_typeplan(bencher: Bencher) {
+    bench_fresh_typeplan::<FloatPoint>(bencher, FLOAT_POINT_JSON);
+}
+
+#[divan::bench]
+fn float_point_reused_typeplan(bencher: Bencher) {
+    bench_reused_typeplan::<FloatPoint>(bencher, FLOAT_POINT_JSON);
+}
+
+#[divan::bench]
+fn float_point_weavy_reused_plan(bencher: Bencher) {
+    bench_weavy_reused_plan::<FloatPoint>(bencher, FLOAT_POINT_JSON);
+}
+
+#[divan::bench]
+fn float_point_serde_json(bencher: Bencher) {
+    bench_serde_json::<FloatPoint>(bencher, FLOAT_POINT_JSON);
+}
+
+// =============================================================================
+// Benchmarks - SensorFrame (numeric arrays)
+// =============================================================================
+
+#[divan::bench]
+fn sensor_frame_fresh_typeplan(bencher: Bencher) {
+    bench_fresh_typeplan::<SensorFrame>(bencher, SENSOR_FRAME_JSON);
+}
+
+#[divan::bench]
+fn sensor_frame_reused_typeplan(bencher: Bencher) {
+    bench_reused_typeplan::<SensorFrame>(bencher, SENSOR_FRAME_JSON);
+}
+
+#[divan::bench]
+fn sensor_frame_weavy_reused_plan(bencher: Bencher) {
+    bench_weavy_reused_plan::<SensorFrame>(bencher, SENSOR_FRAME_JSON);
+}
+
+#[divan::bench]
+fn sensor_frame_serde_json(bencher: Bencher) {
+    bench_serde_json::<SensorFrame>(bencher, SENSOR_FRAME_JSON);
+}
+
+// =============================================================================
+// Benchmarks - WideScalars (wide scalar record)
+// =============================================================================
+
+#[divan::bench]
+fn wide_scalars_fresh_typeplan(bencher: Bencher) {
+    bench_fresh_typeplan::<WideScalars>(bencher, WIDE_SCALARS_JSON);
+}
+
+#[divan::bench]
+fn wide_scalars_reused_typeplan(bencher: Bencher) {
+    bench_reused_typeplan::<WideScalars>(bencher, WIDE_SCALARS_JSON);
+}
+
+#[divan::bench]
+fn wide_scalars_weavy_reused_plan(bencher: Bencher) {
+    bench_weavy_reused_plan::<WideScalars>(bencher, WIDE_SCALARS_JSON);
+}
+
+#[divan::bench]
+fn wide_scalars_serde_json(bencher: Bencher) {
+    bench_serde_json::<WideScalars>(bencher, WIDE_SCALARS_JSON);
 }
 
 // =============================================================================
