@@ -604,6 +604,19 @@ pub struct LoweredEffectStats {
 }
 
 impl LoweredEffectStats {
+    /// Build lowered-program effect counters from already-counted root and block programs.
+    #[must_use]
+    pub fn new(root: EffectStats, blocks: EffectStats, block_count: usize) -> Self {
+        let mut total = root;
+        total.accumulate(blocks);
+        Self {
+            root,
+            blocks,
+            total,
+            block_count,
+        }
+    }
+
     /// Add another lowered-program effect counter into this one.
     pub fn accumulate(&mut self, other: Self) {
         self.root.accumulate(other.root);

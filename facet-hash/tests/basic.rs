@@ -189,6 +189,20 @@ fn plan_writes_through_supplied_hasher() {
 }
 
 #[test]
+fn plan_reports_canonical_effect_stats() {
+    let plan = HashPlan::<Nested>::build().unwrap();
+
+    let stats = plan.effect_stats();
+
+    assert!(stats.block_count > 0);
+    assert!(stats.total.intrinsic_op_count > 0);
+    assert!(stats.total.sink_write_count > 0);
+    assert!(stats.total.typed_memory_read_count > 0);
+    assert!(stats.total.barrier_count > 0);
+    assert_eq!(stats.total.opaque_count, 0);
+}
+
+#[test]
 fn unsupported_enums_fail_while_building() {
     #[derive(Debug, Facet)]
     #[repr(u8)]
