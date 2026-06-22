@@ -31,6 +31,12 @@ struct Nested {
     maybe: Result<Option<u16>, String>,
 }
 
+#[derive(Clone, Debug, Facet)]
+struct Node {
+    value: u32,
+    next: Option<Box<Node>>,
+}
+
 #[derive(Default)]
 struct RecordingHasher {
     bytes: Vec<u8>,
@@ -194,12 +200,31 @@ fn plan_reports_canonical_effect_stats() {
 
     let stats = plan.effect_stats();
 
-    assert!(stats.block_count > 0);
+    assert_eq!(stats.block_count, 0);
     assert!(stats.total.intrinsic_op_count > 0);
     assert!(stats.total.sink_write_count > 0);
     assert!(stats.total.typed_memory_read_count > 0);
     assert!(stats.total.barrier_count > 0);
     assert_eq!(stats.total.opaque_count, 0);
+}
+
+#[test]
+fn recursive_shapes_still_lower_blocks() {
+    let plan = HashPlan::<Node>::build().unwrap();
+    let short = Node {
+        value: 1,
+        next: None,
+    };
+    let long = Node {
+        value: 1,
+        next: Some(Box::new(Node {
+            value: 2,
+            next: None,
+        })),
+    };
+
+    assert!(plan.effect_stats().block_count > 0);
+    assert_ne!(plan.hash64(&short).unwrap(), plan.hash64(&long).unwrap());
 }
 
 #[test]
