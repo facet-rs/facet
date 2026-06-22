@@ -1112,7 +1112,14 @@ impl<'parser, 'de, 'program, const TRUSTED_UTF8: bool>
                 JsonObjectKeyStep::End => return Ok(()),
                 JsonObjectKeyStep::Field { key, span } => {
                     let key_is_raw = matches!(key, JsonFieldKeyInput::Raw { .. });
-                    let matched = frame.match_field_input(&*self.parser, &key)?;
+                    if let Some((index, field)) =
+                        frame.match_next_field_input(&*self.parser, &key)?
+                    {
+                        self.read_scalar_struct_field(frame, index, field, key_is_raw, span)?;
+                        continue;
+                    }
+
+                    let matched = frame.match_unordered_field_input(&*self.parser, &key)?;
 
                     let Some(matched) = matched else {
                         let key = self.parser.materialize_field_key(key)?;
@@ -1134,7 +1141,7 @@ impl<'parser, 'de, 'program, const TRUSTED_UTF8: bool>
                         field,
                         ordered,
                     } = matched;
-                    if !ordered && let Some(first_span) = frame.seen.get(index) {
+                    if let Some(first_span) = frame.seen.get(index) {
                         return Err(vm_error(
                             Some(span),
                             DeserializeErrorKind::DuplicateField {
@@ -1144,25 +1151,39 @@ impl<'parser, 'de, 'program, const TRUSTED_UTF8: bool>
                         ));
                     }
 
-                    let scalar = field
-                        .scalar
-                        .expect("scalar-only struct contains only scalar field plans");
-                    let field_ptr = unsafe { frame.base.field_uninit(field.offset) };
-                    if key_is_raw {
-                        let value = self.parser.read_current_scalar_input()?;
-                        unsafe {
-                            scalar.write_input(&*self.parser, field.shape, field_ptr, value)?;
-                        }
-                    } else {
-                        let (value, value_span) = self.parser.read_scalar_token()?;
-                        unsafe {
-                            scalar.write(field.shape, field_ptr, value, value_span)?;
-                        }
-                    }
-                    frame.mark_seen(index, span);
+                    debug_assert!(!ordered);
+                    self.read_scalar_struct_field(frame, index, field, key_is_raw, span)?;
                 }
             }
         }
+    }
+
+    #[inline(always)]
+    fn read_scalar_struct_field<Seen: StructSeenStore>(
+        &mut self,
+        frame: &mut StructFrame<'program, Seen>,
+        index: usize,
+        field: &'program FieldPlan<ExecBlock>,
+        key_is_raw: bool,
+        span: Span,
+    ) -> Result<(), DeserializeError> {
+        let scalar = field
+            .scalar
+            .expect("scalar-only struct contains only scalar field plans");
+        let field_ptr = unsafe { frame.base.field_uninit(field.offset) };
+        if key_is_raw {
+            let value = self.parser.read_current_scalar_input()?;
+            unsafe {
+                scalar.write_input(&*self.parser, field.shape, field_ptr, value)?;
+            }
+        } else {
+            let (value, value_span) = self.parser.read_scalar_token()?;
+            unsafe {
+                scalar.write(field.shape, field_ptr, value, value_span)?;
+            }
+        }
+        frame.mark_seen(index, span);
+        Ok(())
     }
 }
 
@@ -1936,6 +1957,58 @@ impl<'program, Seen: StructSeenStore> StructFrame<'program, Seen> {
         Ok(matched)
     }
 
+    #[inline(always)]
+    fn match_next_field_input<'de, const TRUSTED_UTF8: bool>(
+        &self,
+        parser: &JsonParser<'de, TRUSTED_UTF8>,
+        key: &JsonFieldKeyInput<'de>,
+    ) -> Result<Option<(usize, &'program FieldPlan<ExecBlock>)>, ParseError> {
+        let Some(field) = self.fields.get(self.next_field) else {
+            return Ok(None);
+        };
+        if let Some(key) = parser.field_key_unescaped_bytes(key) {
+            return Ok(field
+                .matches_key_bytes(key)
+                .then_some((self.next_field, field)));
+        }
+        if field.matches_key_input(parser, key)? {
+            Ok(Some((self.next_field, field)))
+        } else {
+            Ok(None)
+        }
+    }
+
+    #[inline]
+    fn match_unordered_field_input<'de, const TRUSTED_UTF8: bool>(
+        &self,
+        parser: &JsonParser<'de, TRUSTED_UTF8>,
+        key: &JsonFieldKeyInput<'de>,
+    ) -> Result<Option<MatchedField<'program>>, ParseError> {
+        if let Some(key) = parser.field_key_unescaped_bytes(key) {
+            return Ok(self.match_unordered_field_bytes(key));
+        }
+
+        let matched = self
+            .fields
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| *index != self.next_field)
+            .find_map(
+                |(index, field)| match field.matches_key_input(parser, key) {
+                    Ok(true) => Some(Ok(MatchedField {
+                        index,
+                        field,
+                        ordered: false,
+                    })),
+                    Ok(false) => None,
+                    Err(err) => Some(Err(err)),
+                },
+            )
+            .transpose()?;
+
+        Ok(matched)
+    }
+
     fn match_field_bytes(&self, key: &[u8]) -> Option<MatchedField<'program>> {
         if let Some(field) = self.fields.get(self.next_field)
             && field.matches_key_bytes(key)
@@ -1950,6 +2023,20 @@ impl<'program, Seen: StructSeenStore> StructFrame<'program, Seen> {
         self.fields
             .iter()
             .enumerate()
+            .find(|(_, field)| field.matches_key_bytes(key))
+            .map(|(index, field)| MatchedField {
+                index,
+                field,
+                ordered: false,
+            })
+    }
+
+    #[inline]
+    fn match_unordered_field_bytes(&self, key: &[u8]) -> Option<MatchedField<'program>> {
+        self.fields
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| *index != self.next_field)
             .find(|(_, field)| field.matches_key_bytes(key))
             .map(|(index, field)| MatchedField {
                 index,
