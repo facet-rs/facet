@@ -186,6 +186,96 @@ impl Scanner {
         }
     }
 
+    pub fn try_consume_exact_string(
+        &mut self,
+        buf: &[u8],
+        expected: &[u8],
+    ) -> Result<Option<Span>, ScanError> {
+        if expected.iter().any(|byte| matches!(*byte, b'"' | b'\\')) {
+            return Ok(None);
+        }
+
+        let original = self.pos;
+        self.skip_whitespace(buf)?;
+
+        let start = self.pos;
+        if buf.get(self.pos) != Some(&b'"') {
+            self.pos = original;
+            return Ok(None);
+        }
+        self.pos += 1;
+
+        let expected_end = self.pos + expected.len();
+        if buf.get(self.pos..expected_end) != Some(expected) {
+            self.pos = original;
+            return Ok(None);
+        }
+        self.pos = expected_end;
+
+        if buf.get(self.pos) != Some(&b'"') {
+            self.pos = original;
+            return Ok(None);
+        }
+        self.pos += 1;
+
+        Ok(Some(Span::new(start, self.pos - start)))
+    }
+
+    pub fn try_consume_i32_number(&mut self, buf: &[u8]) -> Result<Option<(Span, i32)>, ScanError> {
+        let original = self.pos;
+        self.skip_whitespace(buf)?;
+
+        let start = self.pos;
+        let Some(&first) = buf.get(self.pos) else {
+            self.pos = original;
+            return Ok(None);
+        };
+        let negative = first == b'-';
+        if negative {
+            self.pos += 1;
+        } else if !first.is_ascii_digit() {
+            self.pos = original;
+            return Ok(None);
+        }
+
+        let digits_start = self.pos;
+        let mut value = 0i64;
+        while let Some(&byte) = buf.get(self.pos) {
+            if !byte.is_ascii_digit() {
+                break;
+            }
+            value = match value
+                .checked_mul(10)
+                .and_then(|value| value.checked_add((byte - b'0') as i64))
+            {
+                Some(value) => value,
+                None => {
+                    self.pos = original;
+                    return Ok(None);
+                }
+            };
+            self.pos += 1;
+        }
+
+        if self.pos == digits_start {
+            self.pos = original;
+            return Ok(None);
+        }
+
+        if matches!(buf.get(self.pos), Some(b'.' | b'e' | b'E')) {
+            self.pos = original;
+            return Ok(None);
+        }
+
+        let value = if negative { -value } else { value };
+        let Ok(value) = i32::try_from(value) else {
+            self.pos = original;
+            return Ok(None);
+        };
+
+        Ok(Some((Span::new(start, self.pos - start), value)))
+    }
+
     /// Scan the next token from the buffer.
     pub fn next_token(&mut self, buf: &[u8]) -> ScanResult {
         self.skip_whitespace(buf)?;

@@ -24,8 +24,8 @@ use weavy::{BlockRef, Control, DenseLowered, Lowered, Program, RunError, RunStat
 
 use crate::JsonParser;
 use crate::parser::{
-    JsonFieldKeyInput, JsonObjectKeyStep, JsonObjectOrderedScalarStep, JsonScalarInput,
-    JsonScalarToken, JsonSequenceScalarStep,
+    JsonFieldKeyInput, JsonObjectKeyStep, JsonObjectOrderedI32Step, JsonObjectOrderedScalarStep,
+    JsonScalarInput, JsonScalarToken, JsonSequenceScalarStep,
 };
 use crate::scanner::{NumberHint, ParsedNumber, SpannedToken, Token as ScanToken};
 
@@ -1274,7 +1274,7 @@ where
         let mut frame = TinyScalarStructFrame::new(shape, base, fields);
 
         loop {
-            let Some(expected) = frame.fields.get(frame.next_field).map(|field| field.name) else {
+            let Some(field) = frame.fields.get(frame.next_field).copied() else {
                 if self.parser.consume_object_end_if_next()? {
                     break;
                 }
@@ -1286,12 +1286,31 @@ where
                 }
                 continue;
             };
+            let expected = field.name;
+
+            if field.scalar.scalar == ScalarType::I32 {
+                match self.parser.next_ordered_object_i32_or_key(expected)? {
+                    JsonObjectOrderedI32Step::End => break,
+                    JsonObjectOrderedI32Step::Matched { span, value } => {
+                        let index = frame.next_field;
+                        self.write_tiny_i32_struct_field(&mut frame, index, field, span, value);
+                    }
+                    JsonObjectOrderedI32Step::MatchedInput { span, value } => {
+                        let index = frame.next_field;
+                        let field = frame.fields[index];
+                        self.write_tiny_scalar_struct_field(&mut frame, index, field, span, value)?;
+                    }
+                    JsonObjectOrderedI32Step::Field { key, span } => {
+                        self.read_tiny_scalar_struct_pending_field(&mut frame, key, span)?;
+                    }
+                }
+                continue;
+            }
 
             match self.parser.next_ordered_object_scalar_or_key(expected)? {
                 JsonObjectOrderedScalarStep::End => break,
                 JsonObjectOrderedScalarStep::Matched { span, value } => {
                     let index = frame.next_field;
-                    let field = frame.fields[index];
                     self.write_tiny_scalar_struct_field(&mut frame, index, field, span, value)?;
                 }
                 JsonObjectOrderedScalarStep::Field { key, span } => {
@@ -1374,6 +1393,21 @@ where
         }
         frame.mark_seen(index, span);
         Ok(())
+    }
+
+    fn write_tiny_i32_struct_field(
+        &mut self,
+        frame: &mut TinyScalarStructFrame<'program>,
+        index: usize,
+        field: ScalarFieldPlan,
+        span: Span,
+        value: i32,
+    ) {
+        let field_ptr = unsafe { frame.base.field_uninit(field.offset) };
+        unsafe {
+            field_ptr.put(value);
+        }
+        frame.mark_seen(index, span);
     }
 
     fn read_scalar_struct_fields<Seen: StructSeenStore>(
