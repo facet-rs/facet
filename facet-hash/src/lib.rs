@@ -196,7 +196,7 @@ enum HashIntrinsic<Block> {
     Struct {
         mode: HashMode,
         kind: StructKind,
-        fields: Box<[FieldPlan<Block>]>,
+        fields: Box<[StructFieldPlan<Block>]>,
     },
     Option {
         option: OptionDef,
@@ -246,6 +246,21 @@ enum ChildPlan<Block> {
         scalar: ScalarType,
     },
     Program(Program<WeavyOp<Block, HashIntrinsic<Block>>>),
+}
+
+#[derive(Clone, Debug)]
+enum StructFieldPlan<Block> {
+    ScalarRun(Box<[ScalarFieldPlan]>),
+    Field(FieldPlan<Block>),
+}
+
+#[derive(Clone, Debug)]
+struct ScalarFieldPlan {
+    name: &'static str,
+    offset: usize,
+    include_shape: bool,
+    shape: &'static Shape,
+    scalar: ScalarType,
 }
 
 impl<Block> IntrinsicOp for HashIntrinsic<Block> {
@@ -479,16 +494,37 @@ impl Lowering {
             _ => match shape.ty {
                 Type::User(UserType::Struct(struct_type)) => {
                     let mut fields = Vec::with_capacity(struct_type.fields.len());
+                    let mut scalar_run = Vec::new();
                     for field in struct_type.fields {
                         if field.is_metadata() {
                             continue;
                         }
-                        fields.push(FieldPlan {
-                            name: field.name,
-                            offset: field.offset,
-                            child: self.lower_child(field.shape())?,
-                        });
+                        let child = self.lower_child(field.shape())?;
+                        match child {
+                            ChildPlan::Scalar {
+                                include_shape,
+                                shape,
+                                scalar,
+                            } => {
+                                scalar_run.push(ScalarFieldPlan {
+                                    name: field.name,
+                                    offset: field.offset,
+                                    include_shape,
+                                    shape,
+                                    scalar,
+                                });
+                            }
+                            ChildPlan::Program(_) => {
+                                flush_scalar_field_run(&mut fields, &mut scalar_run);
+                                fields.push(StructFieldPlan::Field(FieldPlan {
+                                    name: field.name,
+                                    offset: field.offset,
+                                    child,
+                                }));
+                            }
+                        }
                     }
+                    flush_scalar_field_run(&mut fields, &mut scalar_run);
                     program.push(WeavyOp::Intrinsic(HashIntrinsic::Struct {
                         mode: self.mode,
                         kind: struct_type.kind,
@@ -518,6 +554,17 @@ impl Lowering {
         }
 
         Ok(ChildPlan::Program(self.lower_shape(shape)?))
+    }
+}
+
+fn flush_scalar_field_run<Block>(
+    fields: &mut Vec<StructFieldPlan<Block>>,
+    scalar_run: &mut Vec<ScalarFieldPlan>,
+) {
+    if !scalar_run.is_empty() {
+        fields.push(StructFieldPlan::ScalarRun(
+            core::mem::take(scalar_run).into_boxed_slice(),
+        ));
     }
 }
 
@@ -579,7 +626,7 @@ fn resolve_hash_intrinsic(
         HashIntrinsic::Struct { mode, kind, fields } => HashIntrinsic::Struct {
             mode,
             kind,
-            fields: resolve_field_plans(fields, refs)?,
+            fields: resolve_struct_field_plans(fields, refs)?,
         },
         HashIntrinsic::Option { option, some } => HashIntrinsic::Option {
             option,
@@ -653,19 +700,20 @@ fn resolve_child_plan(
     })
 }
 
-fn resolve_field_plans(
-    fields: Box<[FieldPlan<BlockId>]>,
+fn resolve_struct_field_plans(
+    fields: Box<[StructFieldPlan<BlockId>]>,
     refs: &BTreeMap<BlockId, ExecBlock>,
-) -> Result<Box<[FieldPlan<ExecBlock>]>, HashError> {
+) -> Result<Box<[StructFieldPlan<ExecBlock>]>, HashError> {
     fields
         .into_vec()
         .into_iter()
-        .map(|field| {
-            Ok(FieldPlan {
+        .map(|field| match field {
+            StructFieldPlan::ScalarRun(run) => Ok(StructFieldPlan::ScalarRun(run)),
+            StructFieldPlan::Field(field) => Ok(StructFieldPlan::Field(FieldPlan {
                 name: field.name,
                 offset: field.offset,
                 child: resolve_child_plan(field.child, refs)?,
-            })
+            })),
         })
         .collect()
 }
@@ -703,7 +751,7 @@ fn add_hash_intrinsic_effect_stats(intrinsic: &HashIntrinsic<ExecBlock>, stats: 
         HashIntrinsic::Shape(_) | HashIntrinsic::Scalar { .. } => {}
         HashIntrinsic::Struct { fields, .. } => {
             for field in fields {
-                stats.accumulate(hash_child_effect_stats(&field.child));
+                stats.accumulate(hash_struct_field_effect_stats(field));
             }
         }
         HashIntrinsic::Option { some, .. } => {
@@ -729,25 +777,45 @@ fn add_hash_intrinsic_effect_stats(intrinsic: &HashIntrinsic<ExecBlock>, stats: 
     }
 }
 
+fn hash_struct_field_effect_stats(field: &StructFieldPlan<ExecBlock>) -> EffectStats {
+    match field {
+        StructFieldPlan::ScalarRun(run) => {
+            let mut stats = EffectStats::default();
+            for scalar in run {
+                stats.accumulate(hash_scalar_field_effect_stats(scalar));
+            }
+            stats
+        }
+        StructFieldPlan::Field(field) => hash_child_effect_stats(&field.child),
+    }
+}
+
+fn hash_scalar_field_effect_stats(field: &ScalarFieldPlan) -> EffectStats {
+    hash_scalar_child_effect_stats(field.include_shape, field.shape, field.scalar)
+}
+
+fn hash_scalar_child_effect_stats(
+    include_shape: bool,
+    shape: &'static Shape,
+    scalar: ScalarType,
+) -> EffectStats {
+    let mut stats = EffectStats::default();
+    if include_shape {
+        let shape_op: ExecOp = WeavyOp::Intrinsic(HashIntrinsic::Shape(shape));
+        stats.accumulate(weavy::ir::effect_stats(core::slice::from_ref(&shape_op)));
+    }
+    let scalar_op: ExecOp = WeavyOp::Intrinsic(HashIntrinsic::Scalar { shape, scalar });
+    stats.accumulate(weavy::ir::effect_stats(core::slice::from_ref(&scalar_op)));
+    stats
+}
+
 fn hash_child_effect_stats(child: &ChildPlan<ExecBlock>) -> EffectStats {
     match child {
         ChildPlan::Scalar {
             include_shape,
             shape,
             scalar,
-        } => {
-            let mut stats = EffectStats::default();
-            if *include_shape {
-                let shape_op: ExecOp = WeavyOp::Intrinsic(HashIntrinsic::Shape(shape));
-                stats.accumulate(weavy::ir::effect_stats(core::slice::from_ref(&shape_op)));
-            }
-            let scalar_op: ExecOp = WeavyOp::Intrinsic(HashIntrinsic::Scalar {
-                shape,
-                scalar: *scalar,
-            });
-            stats.accumulate(weavy::ir::effect_stats(core::slice::from_ref(&scalar_op)));
-            stats
-        }
+        } => hash_scalar_child_effect_stats(*include_shape, shape, *scalar),
         ChildPlan::Program(program) => hash_program_effect_stats(program),
     }
 }
@@ -785,7 +853,7 @@ enum HashContinuation<'program> {
     StructFields {
         original_base: PtrConst,
         mode: HashMode,
-        fields: &'program [FieldPlan<ExecBlock>],
+        fields: &'program [StructFieldPlan<ExecBlock>],
         next_index: usize,
     },
     Sequence {
@@ -1115,28 +1183,26 @@ where
         &mut self,
         original_base: PtrConst,
         mode: HashMode,
-        fields: &'program [FieldPlan<ExecBlock>],
+        fields: &'program [StructFieldPlan<ExecBlock>],
         next_index: usize,
     ) -> Result<Control<'program, ExecBlock, ExecOp, HashContinuation<'program>>, HashError> {
         let mut index = next_index;
         while index < fields.len() {
-            let field = &fields[index];
-            if mode == HashMode::Structural {
-                field.name.hash(self.hasher);
-            }
-            let field_base = unsafe { original_base.field(field.offset) };
-            match &field.child {
-                ChildPlan::Scalar {
-                    include_shape,
-                    shape,
-                    scalar,
-                } => {
-                    unsafe {
-                        hash_child_scalar(*include_shape, shape, *scalar, field_base, self.hasher)
-                    };
+            match &fields[index] {
+                StructFieldPlan::ScalarRun(run) => {
+                    unsafe { self.hash_scalar_field_run(original_base, mode, run) };
                     index += 1;
                 }
-                ChildPlan::Program(program) => {
+                StructFieldPlan::Field(field) => {
+                    if mode == HashMode::Structural {
+                        field.name.hash(self.hasher);
+                    }
+                    let field_base = unsafe { original_base.field(field.offset) };
+                    let ChildPlan::Program(program) = &field.child else {
+                        return Err(HashError::MalformedProgram {
+                            reason: "scalar struct fields must be lowered into scalar runs",
+                        });
+                    };
                     self.base = field_base;
                     return Ok(Control::CallProgramThen(
                         program,
@@ -1153,6 +1219,30 @@ where
 
         self.base = original_base;
         Ok(Control::Continue)
+    }
+
+    unsafe fn hash_scalar_field_run(
+        &mut self,
+        base: PtrConst,
+        mode: HashMode,
+        run: &[ScalarFieldPlan],
+    ) {
+        match mode {
+            HashMode::Value => {
+                for field in run {
+                    let field_base = unsafe { base.field(field.offset) };
+                    unsafe { hash_scalar(field.shape, field.scalar, field_base, self.hasher) };
+                }
+            }
+            HashMode::Structural => {
+                for field in run {
+                    field.name.hash(self.hasher);
+                    field.shape.id.hash(self.hasher);
+                    let field_base = unsafe { base.field(field.offset) };
+                    unsafe { hash_scalar(field.shape, field.scalar, field_base, self.hasher) };
+                }
+            }
+        }
     }
 
     fn call_next_set(
