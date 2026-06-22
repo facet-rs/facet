@@ -147,6 +147,13 @@ fn weavy_validates_skipped_unknown_raw_field_key_utf8() {
 }
 
 #[test]
+fn weavy_tiny_scalar_struct_skips_unknown_container_value() {
+    let got: LoosePoint =
+        facet_json::from_str_weavy(r#"{"x":1,"extra":{"nested":[true,false]}}"#).unwrap();
+    assert_eq!(got, LoosePoint { x: 1 });
+}
+
+#[test]
 fn weavy_plan_can_be_reused() {
     let plan = facet_json::JsonWeavyPlan::<Point>::build().unwrap();
     let first = plan.from_str(r#"{"x":1,"y":2}"#).unwrap();

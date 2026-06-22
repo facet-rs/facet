@@ -24,7 +24,8 @@ use weavy::{BlockRef, Control, DenseLowered, Lowered, Program, RunError, RunStat
 
 use crate::JsonParser;
 use crate::parser::{
-    JsonFieldKeyInput, JsonObjectKeyStep, JsonScalarInput, JsonScalarToken, JsonSequenceScalarStep,
+    JsonFieldKeyInput, JsonObjectKeyStep, JsonObjectOrderedScalarStep, JsonScalarInput,
+    JsonScalarToken, JsonSequenceScalarStep,
 };
 use crate::scanner::{NumberHint, ParsedNumber, SpannedToken, Token as ScanToken};
 
@@ -1230,6 +1231,10 @@ where
     ) -> Result<(), DeserializeError> {
         self.parser.consume_object_start()?;
         let base = self.base;
+        if fields.len() <= TINY_SCALAR_STRUCT_MAX_FIELDS {
+            return self.read_tiny_scalar_struct_fields(shape, base, fields);
+        }
+
         match StructTracking::for_len(fields.len()) {
             StructTracking::Inline => {
                 let mut frame = StructFrame::<ScalarFieldPlan, InitializedLedger<Span>>::new(
@@ -1257,6 +1262,117 @@ where
                 }
             }
         }
+        Ok(())
+    }
+
+    fn read_tiny_scalar_struct_fields(
+        &mut self,
+        shape: &'static Shape,
+        base: PtrUninit,
+        fields: &'program [ScalarFieldPlan],
+    ) -> Result<(), DeserializeError> {
+        let mut frame = TinyScalarStructFrame::new(shape, base, fields);
+
+        loop {
+            let Some(expected) = frame.fields.get(frame.next_field).map(|field| field.name) else {
+                if self.parser.consume_object_end_if_next()? {
+                    break;
+                }
+                match self.parser.next_object_key_or_end()? {
+                    JsonObjectKeyStep::End => break,
+                    JsonObjectKeyStep::Field { key, span } => {
+                        self.read_tiny_scalar_struct_pending_field(&mut frame, key, span)?;
+                    }
+                }
+                continue;
+            };
+
+            match self.parser.next_ordered_object_scalar_or_key(expected)? {
+                JsonObjectOrderedScalarStep::End => break,
+                JsonObjectOrderedScalarStep::Matched { span, value } => {
+                    let index = frame.next_field;
+                    let field = frame.fields[index];
+                    self.write_tiny_scalar_struct_field(&mut frame, index, field, span, value)?;
+                }
+                JsonObjectOrderedScalarStep::Field { key, span } => {
+                    self.read_tiny_scalar_struct_pending_field(&mut frame, key, span)?;
+                }
+            }
+        }
+
+        if frame.all_initialized() {
+            core::mem::forget(frame);
+        } else {
+            unsafe {
+                frame.fill_missing_fields()?;
+            }
+        }
+        Ok(())
+    }
+
+    fn read_tiny_scalar_struct_pending_field(
+        &mut self,
+        frame: &mut TinyScalarStructFrame<'program>,
+        key: JsonFieldKeyInput<'_>,
+        span: Span,
+    ) -> Result<(), DeserializeError> {
+        let key_is_raw = matches!(key, JsonFieldKeyInput::Raw { .. });
+        let matched =
+            if let Some((index, field)) = frame.match_next_field_input(&*self.parser, &key)? {
+                Some((index, field))
+            } else {
+                frame.match_unordered_field_input(&*self.parser, &key)?
+            };
+
+        let Some((index, field)) = matched else {
+            let key = self.parser.materialize_field_key(key)?;
+            if frame.shape.has_deny_unknown_fields_attr() {
+                return Err(vm_error(
+                    Some(span),
+                    DeserializeErrorKind::UnknownField {
+                        field: key.as_str().to_owned().into(),
+                        suggestion: None,
+                    },
+                ));
+            }
+            self.parser.skip_value()?;
+            return Ok(());
+        };
+
+        if let Some(first_span) = frame.seen_span(index) {
+            return Err(vm_error(
+                Some(span),
+                DeserializeErrorKind::DuplicateField {
+                    field: field.name.into(),
+                    first_span: Some(first_span),
+                },
+            ));
+        }
+
+        let value = if key_is_raw {
+            self.parser.read_current_scalar_input()?
+        } else {
+            let (value, value_span) = self.parser.read_scalar_token()?;
+            JsonScalarInput::Materialized(value, value_span)
+        };
+        self.write_tiny_scalar_struct_field(frame, index, field, span, value)
+    }
+
+    fn write_tiny_scalar_struct_field(
+        &mut self,
+        frame: &mut TinyScalarStructFrame<'program>,
+        index: usize,
+        field: ScalarFieldPlan,
+        span: Span,
+        value: JsonScalarInput<'_>,
+    ) -> Result<(), DeserializeError> {
+        let field_ptr = unsafe { frame.base.field_uninit(field.offset) };
+        unsafe {
+            field
+                .scalar
+                .write_input(&*self.parser, field.shape, field_ptr, value)?;
+        }
+        frame.mark_seen(index, span);
         Ok(())
     }
 
@@ -1863,6 +1979,17 @@ struct MatchedField<'program, Field> {
     ordered: bool,
 }
 
+const TINY_SCALAR_STRUCT_MAX_FIELDS: usize = 3;
+
+struct TinyScalarStructFrame<'program> {
+    shape: &'static Shape,
+    base: PtrUninit,
+    fields: &'program [ScalarFieldPlan],
+    initialized: u8,
+    spans: [Span; TINY_SCALAR_STRUCT_MAX_FIELDS],
+    next_field: usize,
+}
+
 struct StructFrame<'program, Field: StructFieldPlan, Seen: StructSeenStore> {
     shape: &'static Shape,
     base: PtrUninit,
@@ -2067,6 +2194,201 @@ impl<'program> LargeStructFrameSlot<'program> {
 
 fn struct_seen_bit(index: usize) -> u64 {
     1u64 << index
+}
+
+impl<'program> TinyScalarStructFrame<'program> {
+    fn new(shape: &'static Shape, base: PtrUninit, fields: &'program [ScalarFieldPlan]) -> Self {
+        debug_assert!(fields.len() <= TINY_SCALAR_STRUCT_MAX_FIELDS);
+        Self {
+            shape,
+            base,
+            fields,
+            initialized: 0,
+            spans: [Span { offset: 0, len: 0 }; TINY_SCALAR_STRUCT_MAX_FIELDS],
+            next_field: 0,
+        }
+    }
+
+    #[inline(always)]
+    fn is_initialized(&self, index: usize) -> bool {
+        debug_assert!(index < TINY_SCALAR_STRUCT_MAX_FIELDS);
+        (self.initialized & tiny_struct_seen_bit(index)) != 0
+    }
+
+    #[inline(always)]
+    fn seen_span(&self, index: usize) -> Option<Span> {
+        self.is_initialized(index).then_some(self.spans[index])
+    }
+
+    #[inline(always)]
+    fn all_initialized(&self) -> bool {
+        self.initialized == self.complete_mask()
+    }
+
+    #[inline(always)]
+    fn complete_mask(&self) -> u8 {
+        (1u8 << self.fields.len()) - 1
+    }
+
+    #[inline(always)]
+    fn mark_seen(&mut self, index: usize, span: Span) {
+        debug_assert!(index < self.fields.len());
+        self.spans[index] = span;
+        self.initialized |= tiny_struct_seen_bit(index);
+        if index == self.next_field {
+            self.advance_next_field();
+        }
+    }
+
+    #[inline(always)]
+    fn advance_next_field(&mut self) {
+        while self
+            .fields
+            .get(self.next_field)
+            .is_some_and(|_| self.is_initialized(self.next_field))
+        {
+            self.next_field += 1;
+        }
+    }
+
+    #[inline(always)]
+    fn match_next_field_input<'de, const TRUSTED_UTF8: bool>(
+        &self,
+        parser: &JsonParser<'de, TRUSTED_UTF8>,
+        key: &JsonFieldKeyInput<'de>,
+    ) -> Result<Option<(usize, ScalarFieldPlan)>, ParseError> {
+        let Some(field) = self.fields.get(self.next_field).copied() else {
+            return Ok(None);
+        };
+        if let Some(key) = parser.field_key_unescaped_bytes(key) {
+            return Ok(field
+                .matches_key_bytes(key)
+                .then_some((self.next_field, field)));
+        }
+        if field.matches_key_input(parser, key)? {
+            Ok(Some((self.next_field, field)))
+        } else {
+            Ok(None)
+        }
+    }
+
+    #[inline]
+    fn match_unordered_field_input<'de, const TRUSTED_UTF8: bool>(
+        &self,
+        parser: &JsonParser<'de, TRUSTED_UTF8>,
+        key: &JsonFieldKeyInput<'de>,
+    ) -> Result<Option<(usize, ScalarFieldPlan)>, ParseError> {
+        if let Some(key) = parser.field_key_unescaped_bytes(key) {
+            return Ok(self.match_unordered_field_bytes(key));
+        }
+
+        self.fields
+            .iter()
+            .copied()
+            .enumerate()
+            .filter(|(index, _)| *index != self.next_field)
+            .find_map(
+                |(index, field)| match field.matches_key_input(parser, key) {
+                    Ok(true) => Some(Ok((index, field))),
+                    Ok(false) => None,
+                    Err(err) => Some(Err(err)),
+                },
+            )
+            .transpose()
+    }
+
+    #[inline]
+    fn match_unordered_field_bytes(&self, key: &[u8]) -> Option<(usize, ScalarFieldPlan)> {
+        self.fields
+            .iter()
+            .copied()
+            .enumerate()
+            .filter(|(index, _)| *index != self.next_field)
+            .find(|(_, field)| field.matches_key_bytes(key))
+    }
+
+    unsafe fn fill_missing_fields(mut self) -> Result<(), DeserializeError> {
+        for (index, field) in self.fields.iter().copied().enumerate() {
+            if self.is_initialized(index) {
+                continue;
+            }
+
+            let field_ptr = unsafe { self.base.field_uninit(field.offset) };
+            match field.missing {
+                MissingField::Required => {
+                    return Err(vm_error(
+                        None,
+                        DeserializeErrorKind::MissingField {
+                            field: field.name,
+                            container_shape: self.shape,
+                        },
+                    ));
+                }
+                MissingField::DefaultCustom(default) => {
+                    unsafe {
+                        default(field_ptr);
+                    }
+                    self.mark_seen(index, Span { offset: 0, len: 0 });
+                }
+                MissingField::DefaultTrait { explicit } => {
+                    if unsafe { field.shape.call_default_in_place(field_ptr) }.is_some() {
+                        self.mark_seen(index, Span { offset: 0, len: 0 });
+                    } else if explicit {
+                        return Err(vm_error(
+                            None,
+                            DeserializeErrorKind::Unsupported {
+                                message: format!(
+                                    "field `{}` on {} has #[facet(default)] but no default_in_place",
+                                    field.name, self.shape
+                                )
+                                .into(),
+                            },
+                        ));
+                    } else {
+                        return Err(vm_error(
+                            None,
+                            DeserializeErrorKind::MissingField {
+                                field: field.name,
+                                container_shape: self.shape,
+                            },
+                        ));
+                    }
+                }
+                MissingField::OptionNone(option) => {
+                    unsafe {
+                        (option.vtable.init_none)(field_ptr);
+                    }
+                    self.mark_seen(index, Span { offset: 0, len: 0 });
+                }
+            }
+        }
+        core::mem::forget(self);
+        Ok(())
+    }
+
+    unsafe fn drop_initialized_fields(&self) {
+        for index in (0..self.fields.len()).rev() {
+            if self.is_initialized(index) {
+                let field = self.fields[index];
+                let ptr = unsafe { self.base.field_init(field.offset) };
+                unsafe {
+                    let _ = field.shape.call_drop_in_place(ptr);
+                }
+            }
+        }
+    }
+}
+
+impl Drop for TinyScalarStructFrame<'_> {
+    fn drop(&mut self) {
+        unsafe {
+            self.drop_initialized_fields();
+        }
+    }
+}
+
+fn tiny_struct_seen_bit(index: usize) -> u8 {
+    1u8 << index
 }
 
 impl<'program, Field, Seen> StructFrame<'program, Field, Seen>
@@ -2563,10 +2885,27 @@ write_unsigned_input!(write_usize_input, usize, "usize");
 
 write_signed_input!(write_i8_input, i8, "i8");
 write_signed_input!(write_i16_input, i16, "i16");
-write_signed_input!(write_i32_input, i32, "i32");
 write_signed_input!(write_i64_input, i64, "i64");
 write_signed_input!(write_i128_input, i128, "i128");
 write_signed_input!(write_isize_input, isize, "isize");
+
+fn write_i32_input<'de, const TRUSTED_UTF8: bool>(
+    parser: &JsonParser<'de, TRUSTED_UTF8>,
+    dst: PtrUninit,
+    value: JsonScalarInput<'de>,
+) -> Result<(), DeserializeError> {
+    let value = match value {
+        JsonScalarInput::Raw(token) => {
+            let span = token.span;
+            raw_into_i32::<TRUSTED_UTF8>(parser, token, span)?
+        }
+        JsonScalarInput::Materialized(value, span) => into_signed::<i32>(value, span, "i32")?,
+    };
+    unsafe {
+        dst.put(value);
+    }
+    Ok(())
+}
 
 fn write_borrowed_str_input_shaped<'de, const TRUSTED_UTF8: bool>(
     parser: &JsonParser<'de, TRUSTED_UTF8>,
@@ -3302,6 +3641,69 @@ where
         }
     };
     T::try_from(value).map_err(|_| number_out_of_range(span, value.to_string(), target))
+}
+
+fn raw_into_i32<const TRUSTED_UTF8: bool>(
+    parser: &JsonParser<'_, TRUSTED_UTF8>,
+    token: SpannedToken,
+    span: Span,
+) -> Result<i32, DeserializeError> {
+    match token.token {
+        ScanToken::Number { start, end, hint } => match hint {
+            NumberHint::Signed | NumberHint::Unsigned => {
+                let text = parser.number_text(start, end, span)?;
+                if let Some(value) = parse_i32_bytes(text.as_bytes()) {
+                    return Ok(value);
+                }
+                let value = parsed_signed_number(parser, start, end, hint, span, "i32")?;
+                i32::try_from(value)
+                    .map_err(|_| number_out_of_range(span, value.to_string(), "i32"))
+            }
+            NumberHint::Float => {
+                let value = parsed_signed_number(parser, start, end, hint, span, "i32")?;
+                i32::try_from(value)
+                    .map_err(|_| number_out_of_range(span, value.to_string(), "i32"))
+            }
+        },
+        ScanToken::String {
+            start,
+            end,
+            has_escapes,
+        } => {
+            let value = parser.decode_string(start, end, has_escapes, span)?;
+            value
+                .parse::<i32>()
+                .map_err(|_| number_out_of_range(span, value.into_owned(), "i32"))
+        }
+        other => Err(type_mismatch_name(span, "i32", raw_token_kind_name(&other))),
+    }
+}
+
+fn parse_i32_bytes(bytes: &[u8]) -> Option<i32> {
+    let (&first, rest) = bytes.split_first()?;
+    let (negative, digits) = if first == b'-' {
+        (true, rest)
+    } else {
+        (false, bytes)
+    };
+    if digits.is_empty() {
+        return None;
+    }
+
+    let mut value = 0i64;
+    for &byte in digits {
+        if !byte.is_ascii_digit() {
+            return None;
+        }
+        value = value.checked_mul(10)?.checked_add((byte - b'0') as i64)?;
+    }
+
+    if negative {
+        let value = -value;
+        i32::try_from(value).ok()
+    } else {
+        i32::try_from(value).ok()
+    }
 }
 
 fn parsed_unsigned_number<const TRUSTED_UTF8: bool>(
