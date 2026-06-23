@@ -88,6 +88,7 @@ harness = false
 [features]
 default = []
 fast = ["lexical-parse", "dep:itoa", "dep:zmij"]
+jit = ["weavy/jit"]
 lexical-parse = ["dep:lexical-parse-float", "dep:lexical-parse-integer"]
 std = []
 ci = []

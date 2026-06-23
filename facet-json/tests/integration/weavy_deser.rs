@@ -191,6 +191,52 @@ fn weavy_plan_can_be_reused() {
 }
 
 #[test]
+fn weavy_jit_plan_reports_interpreter_fallback_until_json_stencils_land() {
+    let plan = facet_json::JsonWeavyPlan::<Point>::build_jit().unwrap();
+
+    assert_eq!(
+        plan.execution_mode(),
+        facet_json::JsonWeavyExecutionMode::Jit
+    );
+    assert_eq!(
+        plan.active_backend(),
+        facet_json::JsonWeavyActiveBackend::Interpreter
+    );
+    assert_eq!(
+        facet_json::JsonWeavyPlan::<Point>::native_jit_available(),
+        cfg!(all(
+            feature = "jit",
+            target_os = "macos",
+            target_arch = "aarch64"
+        ))
+    );
+
+    let got = plan.from_str(r#"{"x":1,"y":2}"#).unwrap();
+    assert_eq!(got, Point { x: 1, y: 2 });
+
+    let report = plan.jit_fallback_report();
+    assert!(!report.is_empty(), "{report:?}");
+    assert_eq!(report.records[0].path, "$");
+    let expected_reason = if !cfg!(feature = "jit") {
+        "facet-json was built without its jit feature"
+    } else if !cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        "native JIT is not enabled for this build target"
+    } else {
+        "JSON native JIT stencils are not implemented yet"
+    };
+    assert_eq!(report.records[0].reason, expected_reason);
+}
+
+#[test]
+fn weavy_jit_helpers_deserialize_through_jit_requested_plan_slot() {
+    let from_str: Point = facet_json::from_str_weavy_jit(r#"{"x":1,"y":2}"#).unwrap();
+    let from_slice: Point = facet_json::from_slice_weavy_jit(br#"{"x":3,"y":4}"#).unwrap();
+
+    assert_eq!(from_str, Point { x: 1, y: 2 });
+    assert_eq!(from_slice, Point { x: 3, y: 4 });
+}
+
+#[test]
 fn weavy_rejects_duplicate_field_after_ordered_match() {
     let err = facet_json::from_str_weavy::<Point>(r#"{"x":1,"y":2,"x":3}"#).unwrap_err();
     assert!(matches!(
