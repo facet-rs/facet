@@ -71,12 +71,12 @@ An extension (e.g., the `dibs` CLI) can connect to the database, read the schema
 ## Transport
 
 > r[lsp-ext.transport]
-> Extensions communicate with the Styx LSP using [Roam](https://roam.bearcove.eu/),
+> Extensions communicate with the Styx LSP using [vox](/vox/),
 > a Rust-native bidirectional RPC protocol. The extension process is spawned and communicates
 > over standard input/output.
 
-> r[lsp-ext.transport.roam]
-> Roam uses Rust traits as the schema. All types implement [Facet](https://facet.rs/) for
+> r[lsp-ext.transport.vox]
+> vox uses Rust traits as the schema. All types implement [Facet](https://facet.rs/) for
 > serialization via facet-postcard. Both sides can call methods on each other.
 
 ## Service definitions
@@ -89,7 +89,7 @@ An extension (e.g., the `dibs` CLI) can connect to the database, read the schema
 
 ```rust
 use facet::Facet;
-use roam::service;
+use vox::service;
 
 /// Service implemented by LSP extensions.
 #[service]
@@ -146,7 +146,7 @@ pub trait StyxLspHost {
 ## Types
 
 > r[lsp-ext.types]
-> All types derive `Facet` for Roam serialization.
+> All types derive `Facet` for vox serialization.
 
 ### Initialization
 
@@ -377,7 +377,7 @@ pub struct SchemaInfo {
     pub uri: String,
 }
 
-/// Document tree value - opaque to Roam, interpreted by the extension.
+/// Document tree value - opaque to vox, interpreted by the extension.
 /// This is the Styx document parsed into a tree structure.
 pub type Value = facet_styx::Value;
 ```
@@ -444,7 +444,7 @@ pub type Value = facet_styx::Value;
 1. User opens `queries.styx` with `@schema {cli dibs, meta {lsp {launch "dibs lsp-extension"}}}`
 2. LSP detects extension, checks allowlist → "dibs" is allowed
 3. User types in `select {}`, triggers completion
-4. LSP spawns `dibs lsp-extension`, establishes Roam session
+4. LSP spawns `dibs lsp-extension`, establishes vox session
 5. LSP calls `initialize(InitializeParams {...})`
 6. Extension returns `InitializeResult { capabilities: [Completions, Hover, Diagnostics], ... }`
 7. LSP calls `completions(CompletionParams { path: ["AllProducts", "@query", "select"], ... })`
