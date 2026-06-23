@@ -1,147 +1,164 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{% block title %}{{ config.title }}{% endblock title %}</title>
-    <meta name="description" content="{{ config.description }}">
+    <title>{% block title %}{{ config.title }}{% endblock %}</title>
+    {% if config.description %}
+    <meta name="description" content="{{ config.description }}">{% endif %}
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Commissioner:wght@400..700&family=Datatype:wght@400;500;700&family=Outfit:wght@400..700&display=swap" rel="stylesheet">
+    <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Commissioner:wght@400..700&family=Datatype:wght@400;500;700&family=Outfit:wght@400..700&display=swap">
     <link rel="stylesheet" href="/main.css">
-    <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png">
-    <link rel="icon" type="image/x-icon" href="/favicon.ico">
-    <link rel="apple-touch-icon" href="/favicon.png">
-    {% block head %}{% endblock head %}
+    <link rel="icon" type="image/png" href="/favicon.png">
+    {% block head %}{% endblock %}
 </head>
-<body>
-    {# Which ecosystem site are we on? page/section permalink is the mounted
-       route (/styx/…, /picante/…); fall back to current_path for the facet root. #}
-    {% set here = current_path %}
-    {% if page is defined and page and page.permalink %}{% set here = page.permalink %}
-    {% elif section is defined and section and section.permalink %}{% set here = section.permalink %}{% endif %}
-    {% if here is starting_with("/styx") %}{% set eco = "styx" %}
-    {% elif here is starting_with("/picante") %}{% set eco = "picante" %}
-    {% elif here is starting_with("/dibs") %}{% set eco = "dibs" %}
-    {% else %}{% set eco = "facet" %}{% endif %}
-    <nav class="eco-bar" aria-label="facet ecosystem">
-        <span class="eco-bar-label">ecosystem</span>
-        <ul class="eco-bar-links">
-            <li><a href="/" data-x-site {% if eco == "facet" %}class="active"{% endif %}>Facet</a></li>
-            <li><a href="/styx" data-x-site {% if eco == "styx" %}class="active"{% endif %}>Styx</a></li>
-            <li><a href="/picante" data-x-site {% if eco == "picante" %}class="active"{% endif %}>Picante</a></li>
-            <li><a href="/dibs" data-x-site {% if eco == "dibs" %}class="active"{% endif %}>Dibs</a></li>
-        </ul>
-        <div id="search" class="eco-bar-search"></div>
-    </nav>
-    <input type="checkbox" id="nav-toggle" class="nav-toggle">
-    <nav class="site-nav">
-        <a href="{{ source.mount | default(value='/') }}" class="site-nav-brand">
-            <img src="/favicon.png" alt="" class="site-nav-logo">
-            <span>{{ source.name | default(value='facet') }}</span>
-        </a>
-        <label for="nav-toggle" class="site-nav-hamburger" aria-label="Toggle menu">
-            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">
-                <line x1="3" y1="6" x2="21" y2="6"></line>
-                <line x1="3" y1="12" x2="21" y2="12"></line>
-                <line x1="3" y1="18" x2="21" y2="18"></line>
-            </svg>
-        </label>
-        <div class="site-nav-links">
-            {# Per-site nav, derived from THIS source's own top-level sections
-               (source.root is the current mounted site's root, not the aggregate). #}
-            {% if source is defined and source.root %}
-            {% for sub in source.root.subsections | sort(attribute="weight") %}
-            {% set s = get_section(path=sub.path) %}
-            <a href="{{ s.permalink }}" {% if current_path is starting_with(s.path) %}class="active"{% endif %}>{{ s.title or sub.title }}</a>
-            {% endfor %}
-            {% endif %}
-        </div>
-        <a href="https://github.com/facet-rs/facet" class="site-nav-github" title="GitHub">
-            <svg viewBox="0 0 16 16" width="24" height="24" fill="currentColor">
-                <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
-            </svg>
-        </a>
-    </nav>
 
-    {% block body %}
-    <div class="container">
-        {% block content %}{% endblock content %}
+<body>
+    {% set here = current_path %}
+    {% set site = source.name | default(value="facet") %}
+
+    <header class="site-header">
+        <div class="site-header-inner">
+            <div class="header-lead">
+                <a class="brand" href="{{ source.mount | default(value='/') }}">
+                    <span class="brand-text"><strong>{{ site }}</strong></span>
+                </a>
+
+                {# Ecosystem switcher: cross-site nav. data-x-site keeps these
+                   site-absolute (mount-localization leaves them alone). #}
+                <nav class="eco-switch" aria-label="Ecosystem">
+                    <a href="/" data-x-site {% if site == "facet" %}class="is-active"{% endif %}>facet</a>
+                    <a href="/styx" data-x-site {% if site == "styx" %}class="is-active"{% endif %}>styx</a>
+                    <a href="/picante" data-x-site {% if site == "picante" %}class="is-active"{% endif %}>picante</a>
+                    <a href="/dibs" data-x-site {% if site == "dibs" %}class="is-active"{% endif %}>dibs</a>
+                </nav>
+            </div>
+
+            <div id="search" class="search-slot" aria-label="Search"></div>
+
+            <div class="page-actions">
+                {% block actions %}{% endblock %}
+                <a class="header-github" href="https://github.com/bearcove/{{ site }}" aria-label="GitHub" title="GitHub">
+                    <svg viewBox="0 0 16 16" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+                </a>
+                <label for="nav-toggle" class="nav-burger" aria-label="Toggle menu">
+                    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+                </label>
+            </div>
+        </div>
+    </header>
+
+    <input type="checkbox" id="nav-toggle" class="nav-toggle" hidden>
+    <div class="site-shell">
+        <aside class="sidebar" aria-label="{{ site }} sections">
+            <nav class="sidebar-nav">
+                {# Walk THIS source's own section tree (source.root), expanding the
+                   branch the current page lives in. #}
+                {% if source is defined and source.root %}
+                <a class="sidebar-home{% if here == source.root.path %} is-active{% endif %}" href="{{ source.mount | default(value='/') }}">{{ source.root.title or site }}</a>
+                {% for sec in source.root.subsections | sort(attribute="weight") %}
+                <section class="sidebar-section">
+                    <a class="sidebar-section-title{% if here == sec.path %} is-active{% endif %}" href="{{ sec.permalink }}">{{ sec.title }}</a>
+                    {% if here == sec.path or (sec.path ~ "/") in here %}
+                    {% set full = get_section(path=sec.path) %}
+                    {% if full and (full.pages or full.subsections) %}
+                    <ul>
+                        {% for p in full.pages | sort(attribute="weight") %}
+                        <li><a class="{% if here == p.path %}is-active{% endif %}" href="{{ p.permalink }}">{{ p.title }}</a></li>
+                        {% endfor %}
+                        {% for sub in full.subsections | sort(attribute="weight") %}
+                        <li class="sidebar-subsection">
+                            <a class="{% if here == sub.path %}is-active{% endif %}" href="{{ sub.permalink }}">{{ sub.title }}</a>
+                            {% if (sub.path ~ "/") in here %}
+                            {% set subfull = get_section(path=sub.path) %}
+                            {% if subfull and subfull.pages %}
+                            <ul>
+                                {% for p in subfull.pages | sort(attribute="weight") %}
+                                <li><a class="{% if here == p.path %}is-active{% endif %}" href="{{ p.permalink }}">{{ p.title }}</a></li>
+                                {% endfor %}
+                            </ul>
+                            {% endif %}
+                            {% endif %}
+                        </li>
+                        {% endfor %}
+                    </ul>
+                    {% endif %}
+                    {% endif %}
+                </section>
+                {% endfor %}
+                {% endif %}
+            </nav>
+        </aside>
+
+        <div class="content-column">
+            <main class="content">
+                {% block content %}{% endblock %}
+            </main>
+        </div>
+
+        {# On this page — the right-hand TOC. Pages and sections both expose `toc`. #}
+        {% set toc = [] %}
+        {% if page is defined and page and page.toc %}{% set toc = page.toc %}
+        {% elif section is defined and section and section.toc %}{% set toc = section.toc %}{% endif %}
+        {% if toc | length > 0 %}
+        <aside class="page-toc" aria-label="On this page">
+            <div class="page-toc-inner">
+                <p class="page-toc-title">On this page</p>
+                <ul>
+                    {% for h1 in toc %}{% if h1 %}
+                    <li>
+                        {% if h1.permalink %}<a href="{{ h1.permalink }}">{{ h1.title }}</a>{% else %}<span>{{ h1.title }}</span>{% endif %}
+                        {% if h1.children %}
+                        <ul>
+                            {% for h2 in h1.children %}{% if h2 and h2.permalink %}
+                            <li><a href="{{ h2.permalink }}">{{ h2.title }}</a></li>
+                            {% endif %}{% endfor %}
+                        </ul>
+                        {% endif %}
+                    </li>
+                    {% endif %}{% endfor %}
+                </ul>
+            </div>
+        </aside>
+        {% endif %}
     </div>
-    {% endblock body %}
+
+    <button class="to-top" type="button" aria-label="Back to top" title="Back to top" hidden>↑</button>
 
     <footer class="site-footer">
-        <div class="footer-content">
-            <div class="footer-section">
-                <h4>Documentation</h4>
-                <ul>
-                    <li><a href="/guide">Guide</a></li>
-                    <li><a href="/ecosystem">Ecosystem</a></li>
-                    <li><a href="/showcases">Showcases</a></li>
-                    <li><a href="/reference">Reference</a></li>
-                    <li><a href="/extend">Extend</a></li>
-                    <li><a href="/contribute">Contribute</a></li>
-                </ul>
-            </div>
-            <div class="footer-section">
-                <h4>Community</h4>
-                <ul>
-                    <li><a href="https://github.com/facet-rs/facet">GitHub</a></li>
-                    <li><a href="https://discord.gg/JhD7CwCJ8F">Discord</a></li>
-                    <li><a href="https://crates.io/crates/facet">crates.io</a></li>
-                    <li><a href="https://docs.rs/facet">docs.rs</a></li>
-                </ul>
-            </div>
-            <div class="footer-section footer-meta">
-                <p>Licensed under MIT/Apache-2.0</p>
-                {% if page is defined and page and page.last_updated %}
-                <p class="muted">Updated {{ page.last_updated }}</p>
-                {% endif %}
-            </div>
-        </div>
+        <a href="/">facet ecosystem</a>
+        <a href="https://github.com/bearcove/{{ site }}">{{ site }} on GitHub</a>
+        <a href="https://github.com/bearcove/dodeca">Built with Dodeca</a>
     </footer>
 
     <script>
-    document.addEventListener('DOMContentLoaded', () => {
-        // Build TOC from showcase scenario headers
-        const toc = document.querySelector('.toc ul');
-        const showcase = document.querySelector('.showcase');
-        if (toc && showcase && toc.children.length === 0) {
-            const headers = showcase.querySelectorAll('h3[id]');
-            headers.forEach((h3) => {
-                const li = document.createElement('li');
-                const a = document.createElement('a');
-                a.href = '#' + h3.id;
-                a.textContent = h3.textContent.replace(/^§/, '');
-                li.appendChild(a);
-                toc.appendChild(li);
-        });
-    }
-
-        // Mobile nested menu: add sidebar items to nav dropdown
-        const navMenu = document.querySelector('.site-nav-links');
-        const sidebar = document.querySelector('.sidebar');
-        if (navMenu && sidebar) {
-            const sidebarNav = sidebar.querySelector('nav');
-            if (sidebarNav) {
-                const sidebarClone = sidebarNav.cloneNode(true);
-                sidebarClone.classList.add('mobile-sidebar-nav');
-                navMenu.appendChild(sidebarClone);
-            }
-        }
-
-        // Toggle nested menus on mobile
-        document.querySelectorAll('.mobile-sidebar-nav > ul > li > a').forEach(link => {
-            link.addEventListener('click', (e) => {
-                const li = e.target.closest('li');
-                const subMenu = li.querySelector('ul');
-                if (subMenu) {
-                    e.preventDefault();
-                    li.classList.toggle('expanded');
-                }
+        (() => {
+            // Search placeholder + ⌘K / Ctrl-K focus.
+            const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+            if (!isMac) document.documentElement.style.setProperty("--kbd-hint", '"Ctrl K"');
+            const findInput = () => document.querySelector("#search .ds-input, #search input");
+            const setPlaceholder = () => { const i = findInput(); if (i) { i.placeholder = "Search"; return true; } return false; };
+            if (!setPlaceholder()) { const iv = setInterval(() => { if (setPlaceholder()) clearInterval(iv); }, 120); setTimeout(() => clearInterval(iv), 6000); }
+            document.addEventListener("keydown", (e) => {
+                const i = findInput(); if (!i) return;
+                if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) { e.preventDefault(); i.focus(); i.select(); }
+                else if (e.key === "Escape" && document.activeElement === i) { i.blur(); }
             });
-        });
-    });
+
+            // Back-to-top: show after scrolling a screenful; close the mobile menu on nav.
+            const toTop = document.querySelector(".to-top");
+            const onScroll = () => { if (toTop) toTop.hidden = window.scrollY < window.innerHeight * 0.6; };
+            window.addEventListener("scroll", onScroll, { passive: true }); onScroll();
+            toTop?.addEventListener("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
+            const navToggle = document.getElementById("nav-toggle");
+            document.querySelector(".sidebar")?.addEventListener("click", (e) => {
+                if (e.target.tagName === "A" && navToggle) navToggle.checked = false;
+            });
+        })();
     </script>
 </body>
+
 </html>

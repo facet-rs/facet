@@ -1,79 +1,18 @@
 {% extends "base.html" %}
-{% import "macros.html" as macros %}
 
-{% block title %}{{ page.title }} - {{ config.title }}{% endblock title %}
+{% block title %}{{ page.title }} - {{ config.title }}{% endblock %}
 
-{% block body %}
-{# Get the top-level section from ancestors #}
-{% if page.ancestors | length > 0 %}
-    {# ancestors[0] is the top-level section (root is excluded) #}
-    {% set root_section_path = page.ancestors[0].path %}
-    {% set root_section = get_section(path=root_section_path) %}
-    {% set has_sidebar = root_section.pages | length > 0 or root_section.subsections | length > 0 %}
-{% else %}
-    {% set has_sidebar = false %}
-{% endif %}
+{% block breadcrumb %}
+{% if section is defined and section %}<a href="{{ section.permalink }}">{{ section.title }}</a><span>›</span>{% endif %}<span>{{ page.title }}</span>
+{% endblock %}
 
-{% if has_sidebar %}
-<div class="docs-layout">
-    {{ macros::sidebar(root_section_path=root_section_path, current_path=page.path) }}
-
-    <main class="docs-content">
-        <article>
-            {# Breadcrumbs #}
-            <nav class="breadcrumbs" aria-label="Breadcrumb">
-                <ol>
-                    <li><a href="/">Home</a></li>
-                    {% if page.ancestors and page.ancestors | length > 0 %}
-                        {% for ancestor in page.ancestors %}
-                            {# ancestor is a dict with title/permalink/path #}
-                            {% if ancestor.path %}
-                                {% set section = get_section(path=ancestor.path) %}
-                                <li><a href="{{ section.permalink }}">{{ section.title or section.path }}</a></li>
-                            {% else %}
-                                <li><a href="{{ ancestor.permalink }}">{{ ancestor.title or ancestor.path }}</a></li>
-                            {% endif %}
-                        {% endfor %}
-                    {% endif %}
-                    <li aria-current="page">{{ page.title }}</li>
-                </ol>
-            </nav>
-
-            <h1 class="page-title">{{ page.title }}</h1>
-            {{ page.content | safe }}
-        </article>
-
-        {# Optional: page TOC on the right #}
-        {% if page.toc and page.toc | length > 0 %}
-        <aside class="page-toc">
-            <nav>
-                <h2>On this page</h2>
-                <ul>
-                {% for h1 in page.toc %}
-                    <li>
-                        {% if h1.permalink %}<a href="{{ h1.permalink }}">{{ h1.title }}</a>{% else %}<span>{{ h1.title }}</span>{% endif %}
-                        {% if h1.children %}
-                        <ul>
-                            {% for h2 in h1.children %}
-                            <li>{% if h2.permalink %}<a href="{{ h2.permalink }}">{{ h2.title }}</a>{% else %}<span>{{ h2.title }}</span>{% endif %}</li>
-                            {% endfor %}
-                        </ul>
-                        {% endif %}
-                    </li>
-                {% endfor %}
-                </ul>
-            </nav>
-        </aside>
-        {% endif %}
-    </main>
-</div>
-{% else %}
-{# Pages outside of Learn/Extend/Contribute get the simple layout #}
-<div class="container">
-    <main class="content">
-        <h1 class="page-title">{{ page.title }}</h1>
+{% block content %}
+<article class="doc">
+    <header class="doc-header">
+        <h1>{{ page.title }}</h1>
+    </header>
+    <div class="doc-body">
         {{ page.content | safe }}
-    </main>
-</div>
-{% endif %}
-{% endblock body %}
+    </div>
+</article>
+{% endblock %}
