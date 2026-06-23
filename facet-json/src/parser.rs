@@ -2474,6 +2474,77 @@ impl<'de> NativeOrderedRootCursor<'de> {
     }
 
     #[inline]
+    pub(crate) fn consume_bool(&mut self) -> Result<Option<bool>, ParseError> {
+        let value = self
+            .scanner
+            .try_consume_bool(self.input)
+            .map_err(scan_error_to_parse_error)?;
+        if let Some((span, value)) = value {
+            self.last_token_start = span.offset as usize;
+            return Ok(Some(value));
+        }
+        Ok(None)
+    }
+
+    #[inline]
+    pub(crate) fn consume_null(&mut self) -> Result<bool, ParseError> {
+        let span = self
+            .scanner
+            .try_consume_null(self.input)
+            .map_err(scan_error_to_parse_error)?;
+        if let Some(span) = span {
+            self.last_token_start = span.offset as usize;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    #[inline]
+    pub(crate) fn consume_unsigned_integer<T>(&mut self) -> Result<Option<T>, ParseError>
+    where
+        T: TryFrom<u128>,
+    {
+        let value = self
+            .scanner
+            .try_consume_unsigned_integer(self.input)
+            .map_err(scan_error_to_parse_error)?;
+        if let Some((span, value)) = value {
+            self.last_token_start = span.offset as usize;
+            return Ok(Some(value));
+        }
+        Ok(None)
+    }
+
+    #[inline]
+    pub(crate) fn consume_signed_integer<T>(&mut self) -> Result<Option<T>, ParseError>
+    where
+        T: TryFrom<i128>,
+    {
+        let value = self
+            .scanner
+            .try_consume_signed_integer(self.input)
+            .map_err(scan_error_to_parse_error)?;
+        if let Some((span, value)) = value {
+            self.last_token_start = span.offset as usize;
+            return Ok(Some(value));
+        }
+        Ok(None)
+    }
+
+    #[inline]
+    pub(crate) fn consume_f64_number(&mut self) -> Result<Option<f64>, ParseError> {
+        let value = self
+            .scanner
+            .try_consume_f64_number(self.input)
+            .map_err(scan_error_to_parse_error)?;
+        if let Some((span, value)) = value {
+            self.last_token_start = span.offset as usize;
+            return Ok(Some(value));
+        }
+        Ok(None)
+    }
+
+    #[inline]
     pub(crate) fn consume_scalar_token(
         &mut self,
         expected: &'static str,
