@@ -120,6 +120,109 @@ impl StencilLayout {
     }
 }
 
+/// Executable copied code plus stable side program streams.
+///
+/// The ABI is still owned by the caller: this only binds a finalized
+/// [`StencilLayout`] into native memory and keeps each chain's program stream in
+/// stable heap storage for stencils to read.
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+pub struct NativeProgram {
+    buf: ExecBuf,
+    progs: Vec<Vec<u64>>,
+    entry: Chain,
+    stencil_count: usize,
+}
+
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+impl NativeProgram {
+    /// Make a finalized stencil layout executable.
+    #[must_use]
+    pub fn new(layout: StencilLayout, entry: Chain) -> Self {
+        let (code, progs, stencil_count) = layout.into_parts();
+        Self {
+            buf: ExecBuf::new(&code),
+            progs,
+            entry,
+            stencil_count,
+        }
+    }
+
+    /// Return the executable code buffer's base pointer.
+    #[must_use]
+    pub fn code_ptr(&self) -> *const u8 {
+        self.buf.as_ptr()
+    }
+
+    /// Return this program's root chain as a function pointer.
+    ///
+    /// # Safety
+    /// The copied root code must use the caller's `extern "C" fn(*mut C)` ABI.
+    #[must_use]
+    pub unsafe fn entry_fn<C>(&self) -> unsafe extern "C" fn(*mut C) {
+        unsafe { self.chain_fn(self.entry.entry) }
+    }
+
+    /// Return an arbitrary chain entry as a function pointer.
+    ///
+    /// # Safety
+    /// `entry` must be a chain offset in this program, and that chain must use
+    /// the caller's `extern "C" fn(*mut C)` ABI.
+    #[must_use]
+    pub unsafe fn chain_fn<C>(&self, entry: usize) -> unsafe extern "C" fn(*mut C) {
+        unsafe {
+            core::mem::transmute::<*const u8, unsafe extern "C" fn(*mut C)>(
+                self.code_ptr().add(entry),
+            )
+        }
+    }
+
+    /// Return the root chain's program-stream index.
+    #[must_use]
+    pub fn entry_prog_index(&self) -> usize {
+        self.entry.prog_index
+    }
+
+    /// Return the root chain's program stream.
+    #[must_use]
+    pub fn entry_prog(&self) -> *const u64 {
+        self.prog_ptr(self.entry_prog_index())
+    }
+
+    /// Return one chain's program stream.
+    #[must_use]
+    pub fn prog_ptr(&self, prog_index: usize) -> *const u64 {
+        self.progs[prog_index].as_ptr()
+    }
+
+    /// Fill a previously reserved word in a program stream.
+    pub fn fill_prog_word(&mut self, prog_index: usize, slot: usize, value: u64) {
+        self.progs[prog_index][slot] = value;
+    }
+
+    /// Fill a previously reserved program-stream slot.
+    pub fn fill_prog_slot(&mut self, slot: ProgSlot, value: u64) {
+        self.fill_prog_word(slot.prog_index, slot.slot, value);
+    }
+
+    /// Number of callable chains.
+    #[must_use]
+    pub fn chain_count(&self) -> usize {
+        self.progs.len()
+    }
+
+    /// Number of copied stencils.
+    #[must_use]
+    pub fn stencil_count(&self) -> usize {
+        self.stencil_count
+    }
+
+    /// Total number of program-stream words.
+    #[must_use]
+    pub fn prog_slot_count(&self) -> usize {
+        self.progs.iter().map(Vec::len).sum()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::StencilLayout;
@@ -144,5 +247,29 @@ mod tests {
         assert_eq!(layout.code(), &[1, 2, 3, 4, 5, 6]);
         assert_eq!(layout.prog(root.prog_index), &[7, 11]);
         assert_eq!(layout.stencil_count(), 2);
+    }
+
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn native_program_owns_executable_code_and_program_slots() {
+        use super::NativeProgram;
+
+        let mut layout = StencilLayout::new();
+        let root = layout.start_chain();
+        layout.emit_stencil(&[0xc0, 0x03, 0x5f, 0xd6]);
+        layout.push_prog_word(root.prog_index, 7);
+        let slot = layout.reserve_prog_slot(root.prog_index);
+
+        let mut native = NativeProgram::new(layout, root);
+        native.fill_prog_slot(slot, 11);
+
+        assert_eq!(native.chain_count(), 1);
+        assert_eq!(native.stencil_count(), 1);
+        assert_eq!(native.prog_slot_count(), 2);
+        assert!(!native.entry_prog().is_null());
+
+        let entry = unsafe { native.entry_fn::<u8>() };
+        let mut ctx = 0u8;
+        unsafe { entry(&mut ctx) };
     }
 }
