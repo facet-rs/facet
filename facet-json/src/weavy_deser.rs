@@ -349,9 +349,14 @@ struct JsonNativeScalarStructInfo {
     shape: &'static Shape,
     ordered_names: Box<[&'static str]>,
     fields: Box<[ScalarFieldPlan]>,
+    cursor_readers: Box<[NativeCursorScalarReader]>,
     dispatch: Option<RawFieldDispatch>,
     ordered_probe_skip: AtomicU8,
 }
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+type NativeCursorScalarReader =
+    fn(&mut NativeOrderedRootCursor<'_>, PtrUninit) -> Result<bool, DeserializeError>;
 
 #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
 struct JsonNativeScalarStructListInfo {
@@ -446,11 +451,17 @@ impl JsonNativePlan {
             .map(|field| field.name)
             .collect::<Vec<_>>()
             .into_boxed_slice();
+        let cursor_readers = fields
+            .iter()
+            .map(|field| native_cursor_scalar_reader(field.scalar.scalar))
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
 
         Ok(JsonNativeScalarStructInfo {
             shape,
             ordered_names,
             fields,
+            cursor_readers,
             dispatch: dispatch.clone(),
             ordered_probe_skip: AtomicU8::new(0),
         })
@@ -958,7 +969,7 @@ impl JsonNativeState {
 
             let field = &info.fields[index];
             let field_ptr = unsafe { self.base.field_uninit(field.offset) };
-            if !Self::try_write_cursor_typed_scalar(cursor, field, field_ptr)? {
+            if !info.cursor_readers[index](cursor, field_ptr)? {
                 let token = cursor.consume_scalar_token("scalar")?;
                 parser.write_scalar_input_preselected(
                     field,
@@ -973,105 +984,6 @@ impl JsonNativeState {
             return Ok(false);
         }
         Ok(true)
-    }
-
-    #[inline]
-    fn try_write_cursor_typed_scalar(
-        cursor: &mut NativeOrderedRootCursor<'_>,
-        field: &ScalarFieldPlan,
-        dst: PtrUninit,
-    ) -> Result<bool, DeserializeError> {
-        match field.scalar.scalar {
-            ScalarType::Unit => {
-                if cursor.consume_null()? {
-                    unsafe {
-                        dst.put(());
-                    }
-                    Ok(true)
-                } else {
-                    Ok(false)
-                }
-            }
-            ScalarType::Bool => {
-                if let Some(value) = cursor.consume_bool()? {
-                    unsafe {
-                        dst.put(value);
-                    }
-                    Ok(true)
-                } else {
-                    Ok(false)
-                }
-            }
-            ScalarType::U8 => Self::try_write_cursor_unsigned::<u8>(cursor, dst),
-            ScalarType::U16 => Self::try_write_cursor_unsigned::<u16>(cursor, dst),
-            ScalarType::U32 => Self::try_write_cursor_unsigned::<u32>(cursor, dst),
-            ScalarType::U64 => Self::try_write_cursor_unsigned::<u64>(cursor, dst),
-            ScalarType::U128 => Self::try_write_cursor_unsigned::<u128>(cursor, dst),
-            ScalarType::USize => Self::try_write_cursor_unsigned::<usize>(cursor, dst),
-            ScalarType::I8 => Self::try_write_cursor_signed::<i8>(cursor, dst),
-            ScalarType::I16 => Self::try_write_cursor_signed::<i16>(cursor, dst),
-            ScalarType::I32 => Self::try_write_cursor_signed::<i32>(cursor, dst),
-            ScalarType::I64 => Self::try_write_cursor_signed::<i64>(cursor, dst),
-            ScalarType::I128 => Self::try_write_cursor_signed::<i128>(cursor, dst),
-            ScalarType::ISize => Self::try_write_cursor_signed::<isize>(cursor, dst),
-            ScalarType::F32 => {
-                if let Some(value) = cursor.consume_f64_number()? {
-                    unsafe {
-                        dst.put(value as f32);
-                    }
-                    Ok(true)
-                } else {
-                    Ok(false)
-                }
-            }
-            ScalarType::F64 => {
-                if let Some(value) = cursor.consume_f64_number()? {
-                    unsafe {
-                        dst.put(value);
-                    }
-                    Ok(true)
-                } else {
-                    Ok(false)
-                }
-            }
-            _ => Ok(false),
-        }
-    }
-
-    #[inline]
-    fn try_write_cursor_unsigned<T>(
-        cursor: &mut NativeOrderedRootCursor<'_>,
-        dst: PtrUninit,
-    ) -> Result<bool, DeserializeError>
-    where
-        T: TryFrom<u128>,
-    {
-        if let Some(value) = cursor.consume_unsigned_integer::<T>()? {
-            unsafe {
-                dst.put(value);
-            }
-            Ok(true)
-        } else {
-            Ok(false)
-        }
-    }
-
-    #[inline]
-    fn try_write_cursor_signed<T>(
-        cursor: &mut NativeOrderedRootCursor<'_>,
-        dst: PtrUninit,
-    ) -> Result<bool, DeserializeError>
-    where
-        T: TryFrom<i128>,
-    {
-        if let Some(value) = cursor.consume_signed_integer::<T>()? {
-            unsafe {
-                dst.put(value);
-            }
-            Ok(true)
-        } else {
-            Ok(false)
-        }
     }
 
     #[inline]
@@ -1168,6 +1080,133 @@ impl JsonNativeState {
         }
         interp.finish_success();
         Ok(())
+    }
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+fn native_cursor_scalar_reader(scalar: ScalarType) -> NativeCursorScalarReader {
+    match scalar {
+        ScalarType::Unit => read_native_cursor_unit,
+        ScalarType::Bool => read_native_cursor_bool,
+        ScalarType::U8 => read_native_cursor_unsigned::<u8>,
+        ScalarType::U16 => read_native_cursor_unsigned::<u16>,
+        ScalarType::U32 => read_native_cursor_unsigned::<u32>,
+        ScalarType::U64 => read_native_cursor_unsigned::<u64>,
+        ScalarType::U128 => read_native_cursor_unsigned::<u128>,
+        ScalarType::USize => read_native_cursor_unsigned::<usize>,
+        ScalarType::I8 => read_native_cursor_signed::<i8>,
+        ScalarType::I16 => read_native_cursor_signed::<i16>,
+        ScalarType::I32 => read_native_cursor_signed::<i32>,
+        ScalarType::I64 => read_native_cursor_signed::<i64>,
+        ScalarType::I128 => read_native_cursor_signed::<i128>,
+        ScalarType::ISize => read_native_cursor_signed::<isize>,
+        ScalarType::F32 => read_native_cursor_f32,
+        ScalarType::F64 => read_native_cursor_f64,
+        _ => read_native_cursor_raw,
+    }
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+fn read_native_cursor_raw(
+    _cursor: &mut NativeOrderedRootCursor<'_>,
+    _dst: PtrUninit,
+) -> Result<bool, DeserializeError> {
+    Ok(false)
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+fn read_native_cursor_unit(
+    cursor: &mut NativeOrderedRootCursor<'_>,
+    dst: PtrUninit,
+) -> Result<bool, DeserializeError> {
+    if cursor.consume_null()? {
+        unsafe {
+            dst.put(());
+        }
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+fn read_native_cursor_bool(
+    cursor: &mut NativeOrderedRootCursor<'_>,
+    dst: PtrUninit,
+) -> Result<bool, DeserializeError> {
+    if let Some(value) = cursor.consume_bool()? {
+        unsafe {
+            dst.put(value);
+        }
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+fn read_native_cursor_unsigned<T>(
+    cursor: &mut NativeOrderedRootCursor<'_>,
+    dst: PtrUninit,
+) -> Result<bool, DeserializeError>
+where
+    T: TryFrom<u128>,
+{
+    if let Some(value) = cursor.consume_unsigned_integer::<T>()? {
+        unsafe {
+            dst.put(value);
+        }
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+fn read_native_cursor_signed<T>(
+    cursor: &mut NativeOrderedRootCursor<'_>,
+    dst: PtrUninit,
+) -> Result<bool, DeserializeError>
+where
+    T: TryFrom<i128>,
+{
+    if let Some(value) = cursor.consume_signed_integer::<T>()? {
+        unsafe {
+            dst.put(value);
+        }
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+fn read_native_cursor_f32(
+    cursor: &mut NativeOrderedRootCursor<'_>,
+    dst: PtrUninit,
+) -> Result<bool, DeserializeError> {
+    if let Some(value) = cursor.consume_f64_number()? {
+        unsafe {
+            dst.put(value as f32);
+        }
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+fn read_native_cursor_f64(
+    cursor: &mut NativeOrderedRootCursor<'_>,
+    dst: PtrUninit,
+) -> Result<bool, DeserializeError> {
+    if let Some(value) = cursor.consume_f64_number()? {
+        unsafe {
+            dst.put(value);
+        }
+        Ok(true)
+    } else {
+        Ok(false)
     }
 }
 
