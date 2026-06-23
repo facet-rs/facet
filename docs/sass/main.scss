@@ -3,12 +3,28 @@
    Scope One (serif) headings, Source Sans 3 copy + chrome, Datatype code/data.
    One cold mint-green signal. No italics. No uppercase navigation. */
 
+/* Monospace: Iosevka (self-hosted), used for all code/data. */
+@font-face {
+  font-family: "Iosevka";
+  src: url("/fonts/IosevkaFtl-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Iosevka";
+  src: url("/fonts/IosevkaFtl-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   color-scheme: light dark;
 
   --font-display: "Outfit", ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-sans: "Commissioner", ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-mono: "Datatype", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --font-mono: "Iosevka", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
   --bg:        light-dark(#ffffff, #080c0b);
   --bg-raised: light-dark(#ffffff, #0c1210);
