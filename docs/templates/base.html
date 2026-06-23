@@ -34,10 +34,11 @@
                     </summary>
                     <div class="eco-menu-list" role="menu">
                         <p class="eco-menu-label">facet ecosystem</p>
-                        <a href="/" data-x-site role="menuitem" {% if site == "facet" %}class="is-active"{% endif %}>facet</a>
-                        <a href="/styx" data-x-site role="menuitem" {% if site == "styx" %}class="is-active"{% endif %}>styx</a>
-                        <a href="/picante" data-x-site role="menuitem" {% if site == "picante" %}class="is-active"{% endif %}>picante</a>
-                        <a href="/dibs" data-x-site role="menuitem" {% if site == "dibs" %}class="is-active"{% endif %}>dibs</a>
+                        {# Data-driven from the mounted sources (render.rs `sites`), so
+                           every subsite shows and the list grows as sources are added. #}
+                        {% for s in sites %}
+                        <a href="{{ s.mount }}" data-x-site role="menuitem" {% if s.active %}class="is-active"{% endif %}>{{ s.name }}</a>
+                        {% endfor %}
                     </div>
                 </details>
 
