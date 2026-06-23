@@ -22,7 +22,7 @@ use phon_ir::ir::{Lowered, MemOp, MemProgram, SkipOp};
 use phon_schema::bytes::Reader;
 use phon_schema::{DecodeError, SchemaId, Value, read_value, write_value};
 
-use weavy::jit::{Chain, ExecBuf, StencilLayout};
+use weavy::jit::{Chain, ExecBuf, NativeProgram, StencilLayout};
 
 use crate::stencils::{
     BORROW, BORROW_CONT, BYTES, BYTES_CONT, BYTES_ENC, BYTES_ENC_CONT, CALLBLOCK, CALLBLOCK_CONT,
@@ -411,14 +411,8 @@ pub struct NativeProgramStats {
 /// chain straight through; an owned sequence runs its element body as a
 /// separately compiled chain it calls once per element (`r[ir.stencils]`).
 pub struct NativeDecode {
-    buf: ExecBuf,
-    stencil_count: usize,
-    /// Index into `progs` of the top-level chain's immediate stream.
-    entry_prog: usize,
-    /// Every chain's immediate stream: `[offset, size, align]` triples for
-    /// scalars and a `*const SeqInfo` slot per sequence. Boxed so the addresses
-    /// the stencils read (and the pointers stored in `seq_infos`) stay stable.
-    progs: Vec<Vec<u64>>,
+    /// Executable copied stencils plus every chain's stable immediate stream.
+    native: NativeProgram,
     /// One per scalar-run op: the immediates the scalar-run stencil reads through
     /// its prog slot. Same stability contract as `seq_infos`.
     scalar_run_infos: Vec<ScalarRunInfo>,
@@ -1215,12 +1209,7 @@ impl NativeDecode {
         }
 
         let layout = std::mem::take(&mut c.layout);
-        let (code, progs, stencil_count) = layout.into_parts();
-
-        // The code layout is final; make it executable. Pointers into it are now
-        // stable for the lifetime of the `ExecBuf`.
-        let buf = ExecBuf::new(&code);
-        let base = buf.as_ptr();
+        let native = NativeProgram::new(layout, top);
 
         let mut scalar_run_infos: Vec<ScalarRunInfo> =
             Vec::with_capacity(c.scalar_run_segments.len());
@@ -1236,9 +1225,9 @@ impl NativeDecode {
         // each `&SeqInfo` the prog slots point at) then stays put.
         let mut seq_infos: Vec<SeqInfo> = Vec::with_capacity(c.seq_infos.len());
         for b in &c.seq_infos {
-            // The element chain entry is the stencil at `base + entry_offset`.
+            // The element chain entry is the stencil at `entry_offset`.
             let element_entry: unsafe extern "C" fn(*mut Ctx) =
-                unsafe { core::mem::transmute(base.add(b.element_entry_offset)) };
+                unsafe { native.chain_fn::<Ctx>(b.element_entry_offset) };
             seq_infos.push(SeqInfo {
                 field_offset: b.field_offset,
                 stride: b.stride,
@@ -1257,7 +1246,7 @@ impl NativeDecode {
         let mut opt_infos: Vec<OptInfo> = Vec::with_capacity(c.opt_infos.len());
         for b in &c.opt_infos {
             let some_entry: unsafe extern "C" fn(*mut Ctx) =
-                unsafe { core::mem::transmute(base.add(b.some_entry_offset)) };
+                unsafe { native.chain_fn::<Ctx>(b.some_entry_offset) };
             opt_infos.push(OptInfo {
                 field_offset: b.field_offset,
                 inner_size: b.inner_size,
@@ -1277,9 +1266,9 @@ impl NativeDecode {
         let mut result_infos: Vec<ResultInfo> = Vec::with_capacity(c.result_infos.len());
         for b in &c.result_infos {
             let ok_entry: unsafe extern "C" fn(*mut Ctx) =
-                unsafe { core::mem::transmute(base.add(b.ok_entry_offset)) };
+                unsafe { native.chain_fn::<Ctx>(b.ok_entry_offset) };
             let err_entry: unsafe extern "C" fn(*mut Ctx) =
-                unsafe { core::mem::transmute(base.add(b.err_entry_offset)) };
+                unsafe { native.chain_fn::<Ctx>(b.err_entry_offset) };
             result_infos.push(ResultInfo {
                 field_offset: b.field_offset,
                 ok_size: b.ok_size,
@@ -1304,7 +1293,7 @@ impl NativeDecode {
         let mut pointer_infos: Vec<PointerInfo> = Vec::with_capacity(c.pointer_infos.len());
         for b in &c.pointer_infos {
             let pointee_entry: unsafe extern "C" fn(*mut Ctx) =
-                unsafe { core::mem::transmute(base.add(b.pointee_entry_offset)) };
+                unsafe { native.chain_fn::<Ctx>(b.pointee_entry_offset) };
             pointer_infos.push(PointerInfo {
                 field_offset: b.field_offset,
                 pointee_size: b.pointee_size,
@@ -1326,7 +1315,7 @@ impl NativeDecode {
                 .get(&b.schema)
                 .expect("CallBlock references a lowered recursion block");
             let entry: unsafe extern "C" fn(*mut Ctx) =
-                unsafe { core::mem::transmute(base.add(chain.entry)) };
+                unsafe { native.chain_fn::<Ctx>(chain.entry) };
             callblock_infos.push(CallBlockInfo {
                 offset: b.offset,
                 entry,
@@ -1341,9 +1330,9 @@ impl NativeDecode {
         let mut map_infos: Vec<MapInfo> = Vec::with_capacity(c.map_infos.len());
         for b in &c.map_infos {
             let key_entry: unsafe extern "C" fn(*mut Ctx) =
-                unsafe { core::mem::transmute(base.add(b.key_entry_offset)) };
+                unsafe { native.chain_fn::<Ctx>(b.key_entry_offset) };
             let value_entry: unsafe extern "C" fn(*mut Ctx) =
-                unsafe { core::mem::transmute(base.add(b.value_entry_offset)) };
+                unsafe { native.chain_fn::<Ctx>(b.value_entry_offset) };
             map_infos.push(MapInfo {
                 field_offset: b.field_offset,
                 key_size: b.key_size,
@@ -1367,7 +1356,7 @@ impl NativeDecode {
         let mut set_infos: Vec<SetInfo> = Vec::with_capacity(c.set_infos.len());
         for b in &c.set_infos {
             let element_entry: unsafe extern "C" fn(*mut Ctx) =
-                unsafe { core::mem::transmute(base.add(b.element_entry_offset)) };
+                unsafe { native.chain_fn::<Ctx>(b.element_entry_offset) };
             set_infos.push(SetInfo {
                 field_offset: b.field_offset,
                 elem_size: b.elem_size,
@@ -1389,7 +1378,7 @@ impl NativeDecode {
             let mut variants: Vec<EnumVariantInfo> = Vec::with_capacity(e.variants.len());
             for v in &e.variants {
                 let payload_entry: unsafe extern "C" fn(*mut Ctx) =
-                    unsafe { core::mem::transmute(base.add(v.payload_entry_offset)) };
+                    unsafe { native.chain_fn::<Ctx>(v.payload_entry_offset) };
                 variants.push(EnumVariantInfo {
                     wire_index: v.wire_index,
                     selector: v.selector,
@@ -1430,10 +1419,7 @@ impl NativeDecode {
             .collect();
 
         let mut nd = NativeDecode {
-            buf,
-            stencil_count,
-            entry_prog: top.prog_index,
-            progs,
+            native,
             scalar_run_infos,
             scalar_run_segments: c.scalar_run_segments,
             seq_infos,
@@ -1486,63 +1472,63 @@ impl NativeDecode {
         }
         for f in &c.scalar_run_fixups {
             let ptr: *const ScalarRunInfo = &nd.scalar_run_infos[f.runinfo];
-            nd.progs[f.prog_index][f.slot] = ptr as u64;
+            nd.native.fill_prog_word(f.prog_index, f.slot, ptr as u64);
         }
 
-        // Now that `nd.progs` is in its final home, bind the prog pointers: each
+        // Now that `nd.native` is in its final home, bind the prog pointers: each
         // `SeqInfo.element_prog` to its element chain's stream, and each sequence
         // prog slot to its `SeqInfo`.
         for (b, info) in c.seq_infos.iter().zip(nd.seq_infos.iter_mut()) {
-            info.element_prog = nd.progs[b.element_prog_index].as_ptr();
+            info.element_prog = nd.native.prog_ptr(b.element_prog_index);
         }
         for f in &c.fixups {
             let ptr: *const SeqInfo = &nd.seq_infos[f.seqinfo];
-            nd.progs[f.prog_index][f.slot] = ptr as u64;
+            nd.native.fill_prog_word(f.prog_index, f.slot, ptr as u64);
         }
         // Bind each bulk byte-run's prog slot to its `BytesInfo` in `nd`.
         for f in &c.bytes_fixups {
             let ptr: *const BytesInfo = &nd.bytes_infos[f.bytesinfo];
-            nd.progs[f.prog_index][f.slot] = ptr as u64;
+            nd.native.fill_prog_word(f.prog_index, f.slot, ptr as u64);
         }
         // Bind each borrowed byte-run's prog slot to its `BorrowInfo` in `nd`.
         for f in &c.borrow_fixups {
             let ptr: *const BorrowInfo = &nd.borrow_infos[f.borrowinfo];
-            nd.progs[f.prog_index][f.slot] = ptr as u64;
+            nd.native.fill_prog_word(f.prog_index, f.slot, ptr as u64);
         }
         // Bind each option's some-body prog and its prog slot to the `OptInfo`.
         for (b, info) in c.opt_infos.iter().zip(nd.opt_infos.iter_mut()) {
-            info.some_prog = nd.progs[b.some_prog_index].as_ptr();
+            info.some_prog = nd.native.prog_ptr(b.some_prog_index);
         }
         for f in &c.opt_fixups {
             let ptr: *const OptInfo = &nd.opt_infos[f.optinfo];
-            nd.progs[f.prog_index][f.slot] = ptr as u64;
+            nd.native.fill_prog_word(f.prog_index, f.slot, ptr as u64);
         }
         // Bind each result's Ok/Err body progs and its prog slot to the `ResultInfo`.
         for (b, info) in c.result_infos.iter().zip(nd.result_infos.iter_mut()) {
-            info.ok_prog = nd.progs[b.ok_prog_index].as_ptr();
-            info.err_prog = nd.progs[b.err_prog_index].as_ptr();
+            info.ok_prog = nd.native.prog_ptr(b.ok_prog_index);
+            info.err_prog = nd.native.prog_ptr(b.err_prog_index);
         }
         for f in &c.result_fixups {
             let ptr: *const ResultInfo = &nd.result_infos[f.resultinfo];
-            nd.progs[f.prog_index][f.slot] = ptr as u64;
+            nd.native.fill_prog_word(f.prog_index, f.slot, ptr as u64);
         }
         // Bind each pointer's pointee prog and its prog slot to the `PointerInfo`.
         for (b, info) in c.pointer_infos.iter().zip(nd.pointer_infos.iter_mut()) {
-            info.pointee_prog = nd.progs[b.pointee_prog_index].as_ptr();
+            info.pointee_prog = nd.native.prog_ptr(b.pointee_prog_index);
         }
         for f in &c.pointer_fixups {
             let ptr: *const PointerInfo = &nd.pointer_infos[f.pointerinfo];
-            nd.progs[f.prog_index][f.slot] = ptr as u64;
+            nd.native.fill_prog_word(f.prog_index, f.slot, ptr as u64);
         }
         // Bind each opaque field's prog slot to its `OpaqueInfo`.
         for f in &c.opaque_fixups {
             let ptr: *const OpaqueInfo = &nd.opaque_infos[f.opaqueinfo];
-            nd.progs[f.prog_index][f.slot] = ptr as u64;
+            nd.native.fill_prog_word(f.prog_index, f.slot, ptr as u64);
         }
         // Bind each dynamic field's prog slot to its `DynamicInfo`.
         for f in &c.dynamic_fixups {
             let ptr: *const DynamicInfo = &nd.dynamic_infos[f.dynamicinfo];
-            nd.progs[f.prog_index][f.slot] = ptr as u64;
+            nd.native.fill_prog_word(f.prog_index, f.slot, ptr as u64);
         }
         // Bind each recursive call's target prog and prog slot.
         for (b, info) in c.callblock_infos.iter().zip(nd.callblock_infos.iter_mut()) {
@@ -1550,36 +1536,36 @@ impl NativeDecode {
                 .block_chains
                 .get(&b.schema)
                 .expect("CallBlock references a lowered recursion block");
-            info.prog = nd.progs[chain.prog_index].as_ptr();
+            info.prog = nd.native.prog_ptr(chain.prog_index);
         }
         for f in &c.callblock_fixups {
             let ptr: *const CallBlockInfo = &nd.callblock_infos[f.callinfo];
-            nd.progs[f.prog_index][f.slot] = ptr as u64;
+            nd.native.fill_prog_word(f.prog_index, f.slot, ptr as u64);
         }
         // Bind each map's key and value sub-chain progs, then its prog slot to the
         // `MapInfo` (the two sub-chains are bound like the sequence/option ones,
         // but there are two of them).
         for (b, info) in c.map_infos.iter().zip(nd.map_infos.iter_mut()) {
-            info.key_prog = nd.progs[b.key_prog_index].as_ptr();
-            info.value_prog = nd.progs[b.value_prog_index].as_ptr();
+            info.key_prog = nd.native.prog_ptr(b.key_prog_index);
+            info.value_prog = nd.native.prog_ptr(b.value_prog_index);
         }
         for f in &c.map_fixups {
             let ptr: *const MapInfo = &nd.map_infos[f.mapinfo];
-            nd.progs[f.prog_index][f.slot] = ptr as u64;
+            nd.native.fill_prog_word(f.prog_index, f.slot, ptr as u64);
         }
         // Bind each set's element sub-chain prog, then its prog slot to `SetInfo`.
         for (b, info) in c.set_infos.iter().zip(nd.set_infos.iter_mut()) {
-            info.element_prog = nd.progs[b.element_prog_index].as_ptr();
+            info.element_prog = nd.native.prog_ptr(b.element_prog_index);
         }
         for f in &c.set_fixups {
             let ptr: *const SetInfo = &nd.set_infos[f.setinfo];
-            nd.progs[f.prog_index][f.slot] = ptr as u64;
+            nd.native.fill_prog_word(f.prog_index, f.slot, ptr as u64);
         }
         // Bind each enum variant's payload prog, point each `EnumInfo` at its
         // (now stable) variant table, then fill each enum's prog slot.
         for (eb, variants) in c.enum_infos.iter().zip(nd.enum_variants.iter_mut()) {
             for (vb, vi) in eb.variants.iter().zip(variants.iter_mut()) {
-                vi.payload_prog = nd.progs[vb.payload_prog_index].as_ptr();
+                vi.payload_prog = nd.native.prog_ptr(vb.payload_prog_index);
             }
         }
         let variant_ptrs: Vec<*const EnumVariantInfo> =
@@ -1595,17 +1581,17 @@ impl NativeDecode {
         }
         for f in &c.enum_fixups {
             let ptr: *const EnumInfo = &nd.enum_infos[f.enuminfo];
-            nd.progs[f.prog_index][f.slot] = ptr as u64;
+            nd.native.fill_prog_word(f.prog_index, f.slot, ptr as u64);
         }
         // Bind each reader-only-default's prog slot to its `DefaultInfo` in `nd`.
         for f in &c.default_fixups {
             let ptr: *const DefaultInfo = &nd.default_infos[f.defaultinfo];
-            nd.progs[f.prog_index][f.slot] = ptr as u64;
+            nd.native.fill_prog_word(f.prog_index, f.slot, ptr as u64);
         }
         // Bind each writer-only-skip's prog slot to its `SkipInfo` in `nd`.
         for f in &c.skip_fixups {
             let ptr: *const SkipInfo = &nd.skip_infos[f.skipinfo];
-            nd.progs[f.prog_index][f.slot] = ptr as u64;
+            nd.native.fill_prog_word(f.prog_index, f.slot, ptr as u64);
         }
 
         nd
@@ -1615,9 +1601,9 @@ impl NativeDecode {
     #[must_use]
     pub fn stats(&self) -> NativeProgramStats {
         NativeProgramStats {
-            chain_count: self.progs.len(),
-            stencil_count: self.stencil_count,
-            prog_slot_count: self.progs.iter().map(Vec::len).sum(),
+            chain_count: self.native.chain_count(),
+            stencil_count: self.native.stencil_count(),
+            prog_slot_count: self.native.prog_slot_count(),
             scalar_run_count: self.scalar_run_infos.len(),
             scalar_run_segment_count: self.scalar_run_segments.iter().map(Vec::len).sum(),
         }
@@ -1639,15 +1625,15 @@ impl NativeDecode {
             wire_start: start,
             wire_end: unsafe { start.add(bytes.len()) },
             base,
-            prog: self.progs[self.entry_prog].as_ptr(),
+            prog: self.native.entry_prog(),
             status: 0,
             aux: 0,
             error: direct_error.as_mut_ptr().cast::<()>(),
             alloc: jit_alloc,
             dealloc: jit_dealloc,
         };
-        let entry: extern "C" fn(*mut Ctx) = unsafe { core::mem::transmute(self.buf.as_ptr()) };
-        entry(&mut ctx);
+        let entry = unsafe { self.native.entry_fn::<Ctx>() };
+        unsafe { entry(&mut ctx) };
 
         if ctx.status != 0 {
             // Map the stencils' status codes to precise `DecodeError`s.
@@ -1907,13 +1893,8 @@ unsafe extern "C" fn jit_write_value(value: *const u8, out: *mut Vec<u8>) {
 /// mirror of [`NativeDecode`] — scalars chain straight through; an owned sequence
 /// runs its element body as a separately compiled chain it calls once per element.
 pub struct NativeEncode {
-    buf: ExecBuf,
-    stencil_count: usize,
-    /// Index into `progs` of the top-level chain's immediate stream.
-    entry_prog: usize,
-    /// Every chain's immediate stream: `[offset, size, align]` triples for
-    /// scalars and a `*const EncSeqInfo` slot per sequence.
-    progs: Vec<Vec<u64>>,
+    /// Executable copied stencils plus every chain's stable immediate stream.
+    native: NativeProgram,
     /// One per scalar-run op: the immediates the scalar-run stencil reads through
     /// its prog slot. Same stability contract as `seq_infos`.
     scalar_run_infos: Vec<ScalarRunInfo>,
@@ -2462,9 +2443,7 @@ impl NativeEncode {
         }
 
         let layout = std::mem::take(&mut c.layout);
-        let (code, progs, stencil_count) = layout.into_parts();
-        let buf = ExecBuf::new(&code);
-        let base = buf.as_ptr();
+        let native = NativeProgram::new(layout, top);
 
         let mut scalar_run_infos: Vec<ScalarRunInfo> =
             Vec::with_capacity(c.scalar_run_segments.len());
@@ -2478,7 +2457,7 @@ impl NativeEncode {
         let mut seq_infos: Vec<EncSeqInfo> = Vec::with_capacity(c.seq_infos.len());
         for b in &c.seq_infos {
             let element_entry: unsafe extern "C" fn(*mut EncCtx) =
-                unsafe { core::mem::transmute(base.add(b.element_entry_offset)) };
+                unsafe { native.chain_fn::<EncCtx>(b.element_entry_offset) };
             seq_infos.push(EncSeqInfo {
                 field_offset: b.field_offset,
                 stride: b.stride,
@@ -2496,7 +2475,7 @@ impl NativeEncode {
         let mut opt_infos: Vec<EncOptInfo> = Vec::with_capacity(c.opt_infos.len());
         for b in &c.opt_infos {
             let some_entry: unsafe extern "C" fn(*mut EncCtx) =
-                unsafe { core::mem::transmute(base.add(b.some_entry_offset)) };
+                unsafe { native.chain_fn::<EncCtx>(b.some_entry_offset) };
             opt_infos.push(EncOptInfo {
                 field_offset: b.field_offset,
                 thunks_ctx: b.thunks_ctx,
@@ -2512,9 +2491,9 @@ impl NativeEncode {
         let mut result_infos: Vec<EncResultInfo> = Vec::with_capacity(c.result_infos.len());
         for b in &c.result_infos {
             let ok_entry: unsafe extern "C" fn(*mut EncCtx) =
-                unsafe { core::mem::transmute(base.add(b.ok_entry_offset)) };
+                unsafe { native.chain_fn::<EncCtx>(b.ok_entry_offset) };
             let err_entry: unsafe extern "C" fn(*mut EncCtx) =
-                unsafe { core::mem::transmute(base.add(b.err_entry_offset)) };
+                unsafe { native.chain_fn::<EncCtx>(b.err_entry_offset) };
             result_infos.push(EncResultInfo {
                 field_offset: b.field_offset,
                 ok_wire_index: b.ok_wire_index,
@@ -2535,7 +2514,7 @@ impl NativeEncode {
         let mut pointer_infos: Vec<EncPointerInfo> = Vec::with_capacity(c.pointer_infos.len());
         for b in &c.pointer_infos {
             let pointee_entry: unsafe extern "C" fn(*mut EncCtx) =
-                unsafe { core::mem::transmute(base.add(b.pointee_entry_offset)) };
+                unsafe { native.chain_fn::<EncCtx>(b.pointee_entry_offset) };
             pointer_infos.push(EncPointerInfo {
                 field_offset: b.field_offset,
                 thunks_ctx: b.thunks_ctx,
@@ -2555,7 +2534,7 @@ impl NativeEncode {
                 .get(&b.schema)
                 .expect("CallBlock references a lowered recursion block");
             let entry: unsafe extern "C" fn(*mut EncCtx) =
-                unsafe { core::mem::transmute(base.add(chain.entry)) };
+                unsafe { native.chain_fn::<EncCtx>(chain.entry) };
             callblock_infos.push(EncCallBlockInfo {
                 offset: b.offset,
                 entry,
@@ -2568,9 +2547,9 @@ impl NativeEncode {
         let mut map_infos: Vec<EncMapInfo> = Vec::with_capacity(c.map_infos.len());
         for b in &c.map_infos {
             let key_entry: unsafe extern "C" fn(*mut EncCtx) =
-                unsafe { core::mem::transmute(base.add(b.key_entry_offset)) };
+                unsafe { native.chain_fn::<EncCtx>(b.key_entry_offset) };
             let value_entry: unsafe extern "C" fn(*mut EncCtx) =
-                unsafe { core::mem::transmute(base.add(b.value_entry_offset)) };
+                unsafe { native.chain_fn::<EncCtx>(b.value_entry_offset) };
             map_infos.push(EncMapInfo {
                 field_offset: b.field_offset,
                 thunks_ctx: b.thunks_ctx,
@@ -2590,7 +2569,7 @@ impl NativeEncode {
         let mut set_infos: Vec<EncSetInfo> = Vec::with_capacity(c.set_infos.len());
         for b in &c.set_infos {
             let element_entry: unsafe extern "C" fn(*mut EncCtx) =
-                unsafe { core::mem::transmute(base.add(b.element_entry_offset)) };
+                unsafe { native.chain_fn::<EncCtx>(b.element_entry_offset) };
             set_infos.push(EncSetInfo {
                 field_offset: b.field_offset,
                 thunks_ctx: b.thunks_ctx,
@@ -2611,7 +2590,7 @@ impl NativeEncode {
             let mut variants: Vec<EncEnumVariantInfo> = Vec::with_capacity(e.variants.len());
             for v in &e.variants {
                 let payload_entry: unsafe extern "C" fn(*mut EncCtx) =
-                    unsafe { core::mem::transmute(base.add(v.payload_entry_offset)) };
+                    unsafe { native.chain_fn::<EncCtx>(v.payload_entry_offset) };
                 variants.push(EncEnumVariantInfo {
                     wire_index: v.wire_index,
                     selector: v.selector,
@@ -2632,10 +2611,7 @@ impl NativeEncode {
         }
 
         let mut ne = NativeEncode {
-            buf,
-            stencil_count,
-            entry_prog: top.prog_index,
-            progs,
+            native,
             scalar_run_infos,
             scalar_run_segments: c.scalar_run_segments,
             seq_infos,
@@ -2668,55 +2644,55 @@ impl NativeEncode {
         }
         for f in &c.scalar_run_fixups {
             let ptr: *const ScalarRunInfo = &ne.scalar_run_infos[f.runinfo];
-            ne.progs[f.prog_index][f.slot] = ptr as u64;
+            ne.native.fill_prog_word(f.prog_index, f.slot, ptr as u64);
         }
 
         for (b, info) in c.seq_infos.iter().zip(ne.seq_infos.iter_mut()) {
-            info.element_prog = ne.progs[b.element_prog_index].as_ptr();
+            info.element_prog = ne.native.prog_ptr(b.element_prog_index);
         }
         for f in &c.fixups {
             let ptr: *const EncSeqInfo = &ne.seq_infos[f.seqinfo];
-            ne.progs[f.prog_index][f.slot] = ptr as u64;
+            ne.native.fill_prog_word(f.prog_index, f.slot, ptr as u64);
         }
         // Bind each bulk byte-run's prog slot to its `EncBytesInfo` in `ne`.
         for f in &c.bytes_fixups {
             let ptr: *const EncBytesInfo = &ne.bytes_infos[f.bytesinfo];
-            ne.progs[f.prog_index][f.slot] = ptr as u64;
+            ne.native.fill_prog_word(f.prog_index, f.slot, ptr as u64);
         }
         // Bind each option's some-body prog and its prog slot to the `EncOptInfo`.
         for (b, info) in c.opt_infos.iter().zip(ne.opt_infos.iter_mut()) {
-            info.some_prog = ne.progs[b.some_prog_index].as_ptr();
+            info.some_prog = ne.native.prog_ptr(b.some_prog_index);
         }
         for f in &c.opt_fixups {
             let ptr: *const EncOptInfo = &ne.opt_infos[f.optinfo];
-            ne.progs[f.prog_index][f.slot] = ptr as u64;
+            ne.native.fill_prog_word(f.prog_index, f.slot, ptr as u64);
         }
         // Bind each result's Ok/Err arm progs and its prog slot to the `EncResultInfo`.
         for (b, info) in c.result_infos.iter().zip(ne.result_infos.iter_mut()) {
-            info.ok_prog = ne.progs[b.ok_prog_index].as_ptr();
-            info.err_prog = ne.progs[b.err_prog_index].as_ptr();
+            info.ok_prog = ne.native.prog_ptr(b.ok_prog_index);
+            info.err_prog = ne.native.prog_ptr(b.err_prog_index);
         }
         for f in &c.result_fixups {
             let ptr: *const EncResultInfo = &ne.result_infos[f.resultinfo];
-            ne.progs[f.prog_index][f.slot] = ptr as u64;
+            ne.native.fill_prog_word(f.prog_index, f.slot, ptr as u64);
         }
         // Bind each pointer's pointee prog and its prog slot to the `EncPointerInfo`.
         for (b, info) in c.pointer_infos.iter().zip(ne.pointer_infos.iter_mut()) {
-            info.pointee_prog = ne.progs[b.pointee_prog_index].as_ptr();
+            info.pointee_prog = ne.native.prog_ptr(b.pointee_prog_index);
         }
         for f in &c.pointer_fixups {
             let ptr: *const EncPointerInfo = &ne.pointer_infos[f.pointerinfo];
-            ne.progs[f.prog_index][f.slot] = ptr as u64;
+            ne.native.fill_prog_word(f.prog_index, f.slot, ptr as u64);
         }
         // Bind each opaque field's prog slot to the `EncOpaqueInfo`.
         for f in &c.opaque_fixups {
             let ptr: *const EncOpaqueInfo = &ne.opaque_infos[f.opaqueinfo];
-            ne.progs[f.prog_index][f.slot] = ptr as u64;
+            ne.native.fill_prog_word(f.prog_index, f.slot, ptr as u64);
         }
         // Bind each dynamic field's prog slot to the `EncDynamicInfo`.
         for f in &c.dynamic_fixups {
             let ptr: *const EncDynamicInfo = &ne.dynamic_infos[f.dynamicinfo];
-            ne.progs[f.prog_index][f.slot] = ptr as u64;
+            ne.native.fill_prog_word(f.prog_index, f.slot, ptr as u64);
         }
         // Bind each recursive call's target prog and prog slot.
         for (b, info) in c.callblock_infos.iter().zip(ne.callblock_infos.iter_mut()) {
@@ -2724,35 +2700,35 @@ impl NativeEncode {
                 .block_chains
                 .get(&b.schema)
                 .expect("CallBlock references a lowered recursion block");
-            info.prog = ne.progs[chain.prog_index].as_ptr();
+            info.prog = ne.native.prog_ptr(chain.prog_index);
         }
         for f in &c.callblock_fixups {
             let ptr: *const EncCallBlockInfo = &ne.callblock_infos[f.callinfo];
-            ne.progs[f.prog_index][f.slot] = ptr as u64;
+            ne.native.fill_prog_word(f.prog_index, f.slot, ptr as u64);
         }
         // Bind each map's key and value sub-chain progs, then its prog slot to the
         // `EncMapInfo` (two sub-chains, like the decode side).
         for (b, info) in c.map_infos.iter().zip(ne.map_infos.iter_mut()) {
-            info.key_prog = ne.progs[b.key_prog_index].as_ptr();
-            info.value_prog = ne.progs[b.value_prog_index].as_ptr();
+            info.key_prog = ne.native.prog_ptr(b.key_prog_index);
+            info.value_prog = ne.native.prog_ptr(b.value_prog_index);
         }
         for f in &c.map_fixups {
             let ptr: *const EncMapInfo = &ne.map_infos[f.mapinfo];
-            ne.progs[f.prog_index][f.slot] = ptr as u64;
+            ne.native.fill_prog_word(f.prog_index, f.slot, ptr as u64);
         }
         // Bind each set's element sub-chain prog, then its prog slot.
         for (b, info) in c.set_infos.iter().zip(ne.set_infos.iter_mut()) {
-            info.element_prog = ne.progs[b.element_prog_index].as_ptr();
+            info.element_prog = ne.native.prog_ptr(b.element_prog_index);
         }
         for f in &c.set_fixups {
             let ptr: *const EncSetInfo = &ne.set_infos[f.setinfo];
-            ne.progs[f.prog_index][f.slot] = ptr as u64;
+            ne.native.fill_prog_word(f.prog_index, f.slot, ptr as u64);
         }
         // Bind each enum variant's payload prog, point each `EncEnumInfo` at its
         // (now stable) variant table, then fill each enum's prog slot.
         for (eb, variants) in c.enum_infos.iter().zip(ne.enum_variants.iter_mut()) {
             for (vb, vi) in eb.variants.iter().zip(variants.iter_mut()) {
-                vi.payload_prog = ne.progs[vb.payload_prog_index].as_ptr();
+                vi.payload_prog = ne.native.prog_ptr(vb.payload_prog_index);
             }
         }
         let variant_ptrs: Vec<*const EncEnumVariantInfo> =
@@ -2762,7 +2738,7 @@ impl NativeEncode {
         }
         for f in &c.enum_fixups {
             let ptr: *const EncEnumInfo = &ne.enum_infos[f.enuminfo];
-            ne.progs[f.prog_index][f.slot] = ptr as u64;
+            ne.native.fill_prog_word(f.prog_index, f.slot, ptr as u64);
         }
 
         ne
@@ -2772,9 +2748,9 @@ impl NativeEncode {
     #[must_use]
     pub fn stats(&self) -> NativeProgramStats {
         NativeProgramStats {
-            chain_count: self.progs.len(),
-            stencil_count: self.stencil_count,
-            prog_slot_count: self.progs.iter().map(Vec::len).sum(),
+            chain_count: self.native.chain_count(),
+            stencil_count: self.native.stencil_count(),
+            prog_slot_count: self.native.prog_slot_count(),
             scalar_run_count: self.scalar_run_infos.len(),
             scalar_run_segment_count: self.scalar_run_segments.iter().map(Vec::len).sum(),
         }
@@ -2800,11 +2776,11 @@ impl NativeEncode {
             out_ptr: out.as_mut_ptr(),
             out_pos: 0,
             out_cap: out.capacity(),
-            prog: self.progs[self.entry_prog].as_ptr(),
+            prog: self.native.entry_prog(),
             grow: jit_grow,
         };
-        let entry: extern "C" fn(*mut EncCtx) = unsafe { core::mem::transmute(self.buf.as_ptr()) };
-        entry(&mut ctx);
+        let entry = unsafe { self.native.entry_fn::<EncCtx>() };
+        unsafe { entry(&mut ctx) };
 
         // Adopt the written bytes: the buffer holds `out_pos` initialized bytes
         // (the stencils only ever wrote within the capacity `jit_grow` ensured).
