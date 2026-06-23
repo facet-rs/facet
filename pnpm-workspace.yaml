@@ -8,3 +8,6 @@ packages:
   - "styx-wasm"
   - "playgrounds/monaco"
   - "playgrounds/codemirror"
+allowBuilds:
+  '@swc/core': true
+  esbuild: true
