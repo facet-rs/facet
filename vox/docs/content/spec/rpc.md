@@ -58,7 +58,7 @@ weight = 12
 > Changing argument types, return types, or the structure of types used in
 > method signatures may or may not be breaking, depending on whether the
 > phon compatibility decode plan can bridge the difference (see the
-> [schema exchange specification](../schemas/) for details on decode plans
+> [schema exchange specification](/vox/spec/schemas/) for details on decode plans
 > and compatibility rules).
 
 > r[rpc.handler]

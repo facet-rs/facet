@@ -19,7 +19,7 @@ cargo-reedme: info-end -->
 [![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-pretty/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
 [![crates.io](https://img.shields.io/crates/v/facet-pretty.svg)](https://crates.io/crates/facet-pretty)
 [![documentation](https://docs.rs/facet-pretty/badge.svg)](https://docs.rs/facet-pretty)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-pretty.svg)](./LICENSE)
+[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-pretty.svg)](https://github.com/facet-rs/facet/blob/main/LICENSE-MIT)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
 
 Provides pretty-printing capabilities for Facet types.

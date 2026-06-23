@@ -2,7 +2,7 @@
 
 [![crates.io](https://img.shields.io/crates/v/fable.svg)](https://crates.io/crates/fable)
 [![documentation](https://docs.rs/fable/badge.svg)](https://docs.rs/fable)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/fable.svg)](../../LICENSE-MIT)
+[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/fable.svg)](https://github.com/facet-rs/facet/blob/main/LICENSE-MIT)
 
 **fable** is a tiny typed language for inspecting and mutating
 [facet](https://facet.rs)-reflected Rust values, then lowering toward canonical
@@ -71,5 +71,5 @@ include `min`, `max`, `clamp`, `len`, `trim`, `contains`, `starts_with`, and
 
 ## License
 
-Licensed under either of [Apache License, Version 2.0](../../LICENSE-APACHE) or
-[MIT license](../../LICENSE-MIT) at your option.
+Licensed under either of [Apache License, Version 2.0](https://github.com/facet-rs/facet/blob/main/LICENSE-APACHE) or
+[MIT license](https://github.com/facet-rs/facet/blob/main/LICENSE-MIT) at your option.

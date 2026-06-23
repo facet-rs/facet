@@ -7,5 +7,5 @@ description = "Rust-native RPC protocol with cross-language codegen and multiple
 
 ## Dig deeper
 
-- The [specification](./spec/) — the protocol model, transport behavior, and compatibility guarantees.
-- The [ecosystem compatibility roadmap](./vox-ecosystem-compat-roadmap/) — the frozen Vox 1.0 Phon-backed migration gate.
+- The [specification](/vox/spec/) — the protocol model, transport behavior, and compatibility guarantees.
+- The [ecosystem compatibility roadmap](/vox/vox-ecosystem-compat-roadmap/) — the frozen Vox 1.0 Phon-backed migration gate.

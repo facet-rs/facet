@@ -177,7 +177,7 @@ just all
 
 ## Specification
 
-Read the [spec](docs/content/spec/_index.md) for the formal protocol definition.
+Read the [spec](https://github.com/facet-rs/facet/tree/main/vox/docs/content/spec) for the formal protocol definition.
 
 ## License
 
