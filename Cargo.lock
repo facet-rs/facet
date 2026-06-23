@@ -1325,6 +1325,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "cstree"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06cb7daab41fe0fd49e9482eb456fb6e49c2fb64843cd824721befeda0059264"
+dependencies = [
+ "cstree_derive",
+ "hashbrown 0.17.1",
+ "indexmap 2.14.0",
+ "parking_lot",
+ "rustc-hash 2.1.2",
+ "text-size",
+ "triomphe",
+]
+
+[[package]]
+name = "cstree_derive"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ef4cfdc000ad5eaafb304c599ab87894258acb2a508d2a805213322b18e3be3"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
+]
+
+[[package]]
 name = "ctutils"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1964,6 +1990,13 @@ checksum = "7cd915d99f24784cdc19fd37ef22b97e3ff0ae756c7e492e9fbfe897d61e2aec"
 dependencies = [
  "indenter",
  "once_cell",
+]
+
+[[package]]
+name = "fable"
+version = "0.1.0"
+dependencies = [
+ "cstree",
 ]
 
 [[package]]
@@ -7294,6 +7327,15 @@ version = "5.0.0-rc.1"
 dependencies = [
  "arborium-tree-sitter",
  "cc",
+]
+
+[[package]]
+name = "triomphe"
+version = "0.1.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd69c5aa8f924c7519d6372789a74eac5b94fb0f8fcf0d4a97eb0bfc3e785f39"
+dependencies = [
+ "stable_deref_trait",
 ]
 
 [[package]]
