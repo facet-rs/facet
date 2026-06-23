@@ -7,12 +7,19 @@ output docs/public
 // Multiple sources: the facet docs at /, plus the standalone subsites each
 // mounted under their own prefix so their root-absolute links localize
 // (e.g. styx's /tools/cli -> /styx/tools/cli) and they get a source identity
-// for cross-links ([[styx:...]]). All share docs/templates (content_dir's
-// sibling `../templates`), since every source's content lives under docs/.
+// for cross-links ([[styx:...]]).
+//
+// Each source's chrome is its OWN: templates / sass / static resolve to the
+// content dir's sibling `../{templates,sass,static}`. styx points at its real
+// project `styx-docs/` (its own templates incl. the codemirror/monaco/quiz
+// playgrounds), so it keeps its full identity. facet/picante/dibs all live
+// under docs/ and so share docs/templates as the uniform facet baseline.
+// The *only* uniformized layer across every site is the nav + search (woven
+// into each base template) so the sites are mutually discoverable.
 
 sources (
     { name facet,   mount /,        local docs/content }
-    { name styx,    mount /styx,    local docs/styx-content }
+    { name styx,    mount /styx,    local styx-docs/content }
     { name picante, mount /picante, local docs/picante-content }
     { name dibs,    mount /dibs,    local docs/dibs-content }
 )

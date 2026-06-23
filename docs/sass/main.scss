@@ -174,6 +174,12 @@ h6 {
   }
 }
 
+.site-nav-search {
+  width: 16rem;
+  max-width: 28vw;
+  margin-right: var(--spacing-md);
+}
+
 .site-nav-github {
   color: var(--text-muted);
   display: flex;
@@ -972,6 +978,10 @@ pre.term {
 
   .docs-content {
     padding: var(--spacing-md);
+  }
+
+  .site-nav-search {
+    display: none;
   }
 
   .site-nav-github {

@@ -51,11 +51,11 @@
                 <ul>
                 {% for h1 in page.toc %}
                     <li>
-                        <a href="{{ h1.permalink }}">{{ h1.title }}</a>
+                        {% if h1.permalink %}<a href="{{ h1.permalink }}">{{ h1.title }}</a>{% else %}<span>{{ h1.title }}</span>{% endif %}
                         {% if h1.children %}
                         <ul>
                             {% for h2 in h1.children %}
-                            <li><a href="{{ h2.permalink }}">{{ h2.title }}</a></li>
+                            <li>{% if h2.permalink %}<a href="{{ h2.permalink }}">{{ h2.title }}</a>{% else %}<span>{{ h2.title }}</span>{% endif %}</li>
                             {% endfor %}
                         </ul>
                         {% endif %}

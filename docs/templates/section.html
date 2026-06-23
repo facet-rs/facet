@@ -31,18 +31,18 @@
             <nav>
                 <h2>On this page</h2>
                 <ul>
-                {% for h1 in section.toc %}
+                {% for h1 in section.toc %}{% if h1 %}
                     <li>
-                        <a href="{{ h1.permalink }}">{{ h1.title }}</a>
+                        {% if h1.permalink %}<a href="{{ h1.permalink }}">{{ h1.title }}</a>{% else %}<span>{{ h1.title }}</span>{% endif %}
                         {% if h1.children %}
                         <ul>
-                            {% for h2 in h1.children %}
-                            <li><a href="{{ h2.permalink }}">{{ h2.title }}</a></li>
-                            {% endfor %}
+                            {% for h2 in h1.children %}{% if h2 %}
+                            <li>{% if h2.permalink %}<a href="{{ h2.permalink }}">{{ h2.title }}</a>{% else %}<span>{{ h2.title }}</span>{% endif %}</li>
+                            {% endif %}{% endfor %}
                         </ul>
                         {% endif %}
                     </li>
-                {% endfor %}
+                {% endif %}{% endfor %}
                 </ul>
             </nav>
         </aside>
