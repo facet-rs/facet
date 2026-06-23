@@ -100,5 +100,5 @@ The full surface — subcommands, completions, layering precedence — is on
 
 ## Related
 
-- [facet-default](/guide/facet-default/) — richer default values
+- [facet-default](/facet-default/guide/) — richer default values
 - [Ecosystem](/ecosystem/) — the rest of the constellation

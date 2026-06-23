@@ -82,6 +82,6 @@ is in the [Attributes reference](/reference/) and the
 ## Related
 
 - [Type Support](/guide/type-support/) — using `Uuid`, `DateTime`, paths, etc.
-- [facet-validate](/guide/facet-validate/) — reject bad data *during* parsing
+- [facet-validate](/facet-validate/guide/) — reject bad data *during* parsing
 - [Schema codegen](/guide/schema-codegen/) — generate TS/Zod/JSON Schema from the same type
 - [Ecosystem](/ecosystem/) — every other format crate
