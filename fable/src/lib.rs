@@ -49,6 +49,8 @@ pub enum SyntaxKind {
     IfKw,
     #[static_text("else")]
     ElseKw,
+    #[static_text("let")]
+    LetKw,
     #[static_text("and")]
     AndKw,
     #[static_text("or")]
@@ -101,6 +103,7 @@ pub enum SyntaxKind {
     Root,
     Block,
     AssignStmt,
+    LetStmt,
     ExprStmt,
     IfStmt,
     ElseClause,

@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
 use std::fmt;
 use std::marker::PhantomData;
 
@@ -35,7 +36,8 @@ where
         let root = ast::Root::cast(parsed.syntax().clone()).ok_or(FableError::MalformedSyntax {
             reason: "parse root was not a Fable root node",
         })?;
-        let program = Lowerer::new(T::SHAPE).lower_root(&root)?;
+        let mut lowerer = Lowerer::new(T::SHAPE);
+        let program = lowerer.lower_root(&root)?;
 
         Ok(Self {
             lowered: DenseLowered::new(program, Vec::new()),
@@ -46,14 +48,20 @@ where
     /// Run this plan against `value`.
     pub fn apply(&self, value: &mut T) -> Result<(), FableError> {
         let root = PtrMut::new_sized(value as *mut T);
-        let mut interp = FableInterp { root };
+        let mut interp = FableInterp {
+            root,
+            locals: LocalSlots::default(),
+        };
         weavy::run_dense(&self.lowered, &mut interp).map_err(run_error)
     }
 
     /// Run this plan and return Weavy execution counters.
     pub fn apply_with_stats(&self, value: &mut T) -> Result<RunStats, FableError> {
         let root = PtrMut::new_sized(value as *mut T);
-        let mut interp = FableInterp { root };
+        let mut interp = FableInterp {
+            root,
+            locals: LocalSlots::default(),
+        };
         weavy::run_dense_with_stats(&self.lowered, &mut interp).map_err(run_error)
     }
 }
@@ -109,6 +117,16 @@ pub enum FableError {
         expected: String,
         /// Actual expression type.
         actual: &'static str,
+    },
+    /// A local binding attempted to use a reserved name.
+    ReservedLocalName {
+        /// Reserved binding name.
+        name: String,
+    },
+    /// A local binding name was already used in this scope.
+    DuplicateLocal {
+        /// Duplicate binding name.
+        name: String,
     },
     /// A literal token could not be decoded.
     InvalidLiteral {
@@ -167,6 +185,15 @@ impl fmt::Display for FableError {
             FableError::TypeMismatch { expected, actual } => {
                 write!(f, "expected {expected}, found {actual}")
             }
+            FableError::ReservedLocalName { name } => {
+                write!(
+                    f,
+                    "{name} is reserved and cannot be used as a local binding"
+                )
+            }
+            FableError::DuplicateLocal { name } => {
+                write!(f, "local binding {name} is already defined in this scope")
+            }
             FableError::InvalidLiteral { literal, reason } => {
                 write!(f, "invalid Fable literal {literal:?}: {reason}")
             }
@@ -187,6 +214,10 @@ impl std::error::Error for FableError {}
 
 #[derive(Debug)]
 enum FableOp {
+    Let {
+        local: LocalRef,
+        value: ExprPlan,
+    },
     Assign {
         target: FieldPath,
         value: ExprPlan,
@@ -222,16 +253,43 @@ impl ExprPlan {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LocalRef {
+    Unit(usize),
+    Bool(usize),
+    Char(usize),
+    String(usize),
+    Signed(usize),
+    Unsigned(usize),
+    Float(usize),
+}
+
+impl LocalRef {
+    fn kind_name(self) -> &'static str {
+        match self {
+            LocalRef::Unit(_) => "unit",
+            LocalRef::Bool(_) => "bool",
+            LocalRef::Char(_) => "char",
+            LocalRef::String(_) => "string",
+            LocalRef::Signed(_) => "signed number",
+            LocalRef::Unsigned(_) => "unsigned number",
+            LocalRef::Float(_) => "float",
+        }
+    }
+}
+
 #[derive(Debug)]
 enum UnitExpr {
     Null,
     Read(FieldPath),
+    Local(LocalRef),
 }
 
 #[derive(Debug)]
 enum BoolExpr {
     Literal(bool),
     Read(FieldPath),
+    Local(LocalRef),
     Not(Box<BoolExpr>),
     And(Box<BoolExpr>, Box<BoolExpr>),
     Or(Box<BoolExpr>, Box<BoolExpr>),
@@ -255,12 +313,14 @@ enum CmpOp {
 #[derive(Debug)]
 enum CharExpr {
     Read(FieldPath),
+    Local(LocalRef),
 }
 
 #[derive(Debug)]
 enum StringExpr {
     Literal(String),
     Read(FieldPath),
+    Local(LocalRef),
     Add(Box<StringExpr>, Box<StringExpr>),
 }
 
@@ -274,6 +334,7 @@ enum NumberExpr {
 #[derive(Debug)]
 enum IntExpr {
     Read(FieldPath),
+    Local(LocalRef),
     Neg(Box<NumberExpr>),
     Add(Box<NumberExpr>, Box<NumberExpr>),
     Sub(Box<NumberExpr>, Box<NumberExpr>),
@@ -282,6 +343,7 @@ enum IntExpr {
 #[derive(Debug)]
 enum UIntExpr {
     Read(FieldPath),
+    Local(LocalRef),
     Literal(u128),
     Add(Box<UIntExpr>, Box<UIntExpr>),
 }
@@ -289,6 +351,7 @@ enum UIntExpr {
 #[derive(Debug)]
 enum FloatExpr {
     Read(FieldPath),
+    Local(LocalRef),
     Literal(f64),
     Neg(Box<NumberExpr>),
     Add(Box<NumberExpr>, Box<NumberExpr>),
@@ -323,34 +386,97 @@ struct FieldStep {
     offset: usize,
 }
 
+#[derive(Default)]
+struct LocalAllocator {
+    unit_count: usize,
+    bool_count: usize,
+    char_count: usize,
+    string_count: usize,
+    signed_count: usize,
+    unsigned_count: usize,
+    float_count: usize,
+}
+
+impl LocalAllocator {
+    fn allocate(&mut self, expr: &ExprPlan) -> LocalRef {
+        match expr {
+            ExprPlan::Unit(_) => {
+                let index = self.unit_count;
+                self.unit_count += 1;
+                LocalRef::Unit(index)
+            }
+            ExprPlan::Bool(_) => {
+                let index = self.bool_count;
+                self.bool_count += 1;
+                LocalRef::Bool(index)
+            }
+            ExprPlan::Char(_) => {
+                let index = self.char_count;
+                self.char_count += 1;
+                LocalRef::Char(index)
+            }
+            ExprPlan::String(_) => {
+                let index = self.string_count;
+                self.string_count += 1;
+                LocalRef::String(index)
+            }
+            ExprPlan::Number(NumberExpr::Signed(_)) => {
+                let index = self.signed_count;
+                self.signed_count += 1;
+                LocalRef::Signed(index)
+            }
+            ExprPlan::Number(NumberExpr::Unsigned(_)) => {
+                let index = self.unsigned_count;
+                self.unsigned_count += 1;
+                LocalRef::Unsigned(index)
+            }
+            ExprPlan::Number(NumberExpr::Float(_)) => {
+                let index = self.float_count;
+                self.float_count += 1;
+                LocalRef::Float(index)
+            }
+        }
+    }
+}
+
 struct Lowerer {
     root_shape: &'static Shape,
+    scopes: Vec<BTreeMap<String, LocalRef>>,
+    locals: LocalAllocator,
 }
 
 impl Lowerer {
     fn new(root_shape: &'static Shape) -> Self {
-        Self { root_shape }
+        Self {
+            root_shape,
+            scopes: vec![BTreeMap::new()],
+            locals: LocalAllocator::default(),
+        }
     }
 
-    fn lower_root(&self, root: &ast::Root) -> Result<Program<FableOp>, FableError> {
+    fn lower_root(&mut self, root: &ast::Root) -> Result<Program<FableOp>, FableError> {
         self.lower_statements(root.statements())
     }
 
-    fn lower_block(&self, block: &Block) -> Result<Program<FableOp>, FableError> {
-        self.lower_statements(block.statements())
+    fn lower_block(&mut self, block: &Block) -> Result<Program<FableOp>, FableError> {
+        self.scopes.push(BTreeMap::new());
+        let result = self.lower_statements(block.statements());
+        self.scopes.pop();
+        result
     }
 
     fn lower_statements(
-        &self,
+        &mut self,
         statements: impl IntoIterator<Item = Stmt>,
     ) -> Result<Program<FableOp>, FableError> {
-        statements
-            .into_iter()
-            .map(|stmt| self.lower_stmt(&stmt))
-            .collect()
+        let mut program = Vec::new();
+        for stmt in statements {
+            program.push(self.lower_stmt(&stmt)?);
+        }
+        Ok(program)
     }
 
-    fn lower_stmt(&self, stmt: &Stmt) -> Result<FableOp, FableError> {
+    fn lower_stmt(&mut self, stmt: &Stmt) -> Result<FableOp, FableError> {
         match stmt {
             Stmt::Assign(assign) => {
                 let target_expr = assign.target().ok_or(FableError::MalformedSyntax {
@@ -364,6 +490,17 @@ impl Lowerer {
                 validate_assignment(target.scalar, &value)?;
                 Ok(FableOp::Assign { target, value })
             }
+            Stmt::Let(let_stmt) => {
+                let name = let_stmt.name().ok_or(FableError::MalformedSyntax {
+                    reason: "let statement without binding name",
+                })?;
+                let value_expr = let_stmt.value().ok_or(FableError::MalformedSyntax {
+                    reason: "let statement without value expression",
+                })?;
+                let value = self.lower_expr(&value_expr)?;
+                let local = self.declare_local(name, &value)?;
+                Ok(FableOp::Let { local, value })
+            }
             Stmt::Expr(expr_stmt) => {
                 let expr = expr_stmt.expr().ok_or(FableError::MalformedSyntax {
                     reason: "expression statement without expression",
@@ -374,7 +511,7 @@ impl Lowerer {
         }
     }
 
-    fn lower_if(&self, if_stmt: &IfStmt) -> Result<FableOp, FableError> {
+    fn lower_if(&mut self, if_stmt: &IfStmt) -> Result<FableOp, FableError> {
         let condition = if_stmt.condition().ok_or(FableError::MalformedSyntax {
             reason: "if statement without condition",
         })?;
@@ -395,7 +532,7 @@ impl Lowerer {
         })
     }
 
-    fn lower_else(&self, else_clause: &ElseClause) -> Result<Program<FableOp>, FableError> {
+    fn lower_else(&mut self, else_clause: &ElseClause) -> Result<Program<FableOp>, FableError> {
         if let Some(if_stmt) = else_clause.if_stmt() {
             Ok(vec![self.lower_if(&if_stmt)?])
         } else if let Some(block) = else_clause.block() {
@@ -407,10 +544,19 @@ impl Lowerer {
         }
     }
 
-    fn lower_expr(&self, expr: &Expr) -> Result<ExprPlan, FableError> {
+    fn lower_expr(&mut self, expr: &Expr) -> Result<ExprPlan, FableError> {
         match expr {
             Expr::Literal(literal) => self.lower_literal(literal),
-            Expr::Var(_) | Expr::Field(_) => {
+            Expr::Var(var) => {
+                if let Some(name) = var.name()
+                    && let Some(local) = self.find_local(&name)
+                {
+                    return Ok(local_to_expr(local));
+                }
+                let path = self.lower_readable_path(expr)?;
+                path_to_expr(path)
+            }
+            Expr::Field(_) => {
                 let path = self.lower_readable_path(expr)?;
                 path_to_expr(path)
             }
@@ -462,7 +608,7 @@ impl Lowerer {
         Ok(expr)
     }
 
-    fn lower_unary(&self, unary: &UnaryExpr) -> Result<ExprPlan, FableError> {
+    fn lower_unary(&mut self, unary: &UnaryExpr) -> Result<ExprPlan, FableError> {
         let operand = unary.operand().ok_or(FableError::MalformedSyntax {
             reason: "unary expression without operand",
         })?;
@@ -485,7 +631,7 @@ impl Lowerer {
         }
     }
 
-    fn lower_binary(&self, binary: &BinaryExpr) -> Result<ExprPlan, FableError> {
+    fn lower_binary(&mut self, binary: &BinaryExpr) -> Result<ExprPlan, FableError> {
         let lhs = binary.lhs().ok_or(FableError::MalformedSyntax {
             reason: "binary expression without left operand",
         })?;
@@ -524,6 +670,14 @@ impl Lowerer {
     }
 
     fn lower_writable_path(&self, expr: &Expr) -> Result<FieldPath, FableError> {
+        if let Expr::Var(var) = expr
+            && let Some(name) = var.name()
+            && self.find_local(&name).is_some()
+        {
+            return Err(FableError::Unsupported {
+                feature: "assignment to let bindings".into(),
+            });
+        }
         let path = self.resolve_path(expr)?;
         ensure_writable(path.scalar)?;
         Ok(path)
@@ -567,6 +721,28 @@ impl Lowerer {
             scalar,
             steps: steps.into_boxed_slice(),
         })
+    }
+
+    fn declare_local(&mut self, name: String, expr: &ExprPlan) -> Result<LocalRef, FableError> {
+        if name == "root" {
+            return Err(FableError::ReservedLocalName { name });
+        }
+        let scope = self.scopes.last_mut().ok_or(FableError::MalformedProgram {
+            reason: "local scope stack was empty",
+        })?;
+        if scope.contains_key(&name) {
+            return Err(FableError::DuplicateLocal { name });
+        }
+        let local = self.locals.allocate(expr);
+        scope.insert(name, local);
+        Ok(local)
+    }
+
+    fn find_local(&self, name: &str) -> Option<LocalRef> {
+        self.scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name).copied())
     }
 }
 
@@ -664,6 +840,18 @@ fn expect_number_plan(expr: ExprPlan) -> Result<NumberExpr, FableError> {
     }
 }
 
+fn local_to_expr(local: LocalRef) -> ExprPlan {
+    match local {
+        LocalRef::Unit(_) => ExprPlan::Unit(UnitExpr::Local(local)),
+        LocalRef::Bool(_) => ExprPlan::Bool(BoolExpr::Local(local)),
+        LocalRef::Char(_) => ExprPlan::Char(CharExpr::Local(local)),
+        LocalRef::String(_) => ExprPlan::String(StringExpr::Local(local)),
+        LocalRef::Signed(_) => ExprPlan::Number(NumberExpr::Signed(IntExpr::Local(local))),
+        LocalRef::Unsigned(_) => ExprPlan::Number(NumberExpr::Unsigned(UIntExpr::Local(local))),
+        LocalRef::Float(_) => ExprPlan::Number(NumberExpr::Float(FloatExpr::Local(local))),
+    }
+}
+
 fn path_to_expr(path: FieldPath) -> Result<ExprPlan, FableError> {
     let expr = match path.scalar {
         ScalarType::Unit => ExprPlan::Unit(UnitExpr::Read(path)),
@@ -735,8 +923,20 @@ fn validate_assignment(scalar: ScalarType, expr: &ExprPlan) -> Result<(), FableE
     }
 }
 
+#[derive(Default)]
+struct LocalSlots {
+    units: Vec<bool>,
+    bools: Vec<Option<bool>>,
+    chars: Vec<Option<char>>,
+    strings: Vec<Option<String>>,
+    signed: Vec<Option<i128>>,
+    unsigned: Vec<Option<u128>>,
+    floats: Vec<Option<f64>>,
+}
+
 struct FableInterp {
     root: PtrMut,
+    locals: LocalSlots,
 }
 
 impl<'program> Step<'program, BlockRef, FableOp> for FableInterp {
@@ -748,6 +948,10 @@ impl<'program> Step<'program, BlockRef, FableOp> for FableInterp {
         op: &'program FableOp,
     ) -> Result<Control<'program, BlockRef, FableOp>, Self::Error> {
         match op {
+            FableOp::Let { local, value } => {
+                self.init_local(*local, value)?;
+                Ok(Control::Continue)
+            }
             FableOp::Assign { target, value } => {
                 let ptr = unsafe { target.ptr_mut(self.root) };
                 unsafe { self.write_scalar(target.scalar, ptr, value) }?;
@@ -779,6 +983,40 @@ impl<'program> Step<'program, BlockRef, FableOp> for FableInterp {
 }
 
 impl FableInterp {
+    fn init_local(&mut self, local: LocalRef, expr: &ExprPlan) -> Result<(), FableError> {
+        match local {
+            LocalRef::Unit(index) => {
+                self.eval_unit(expect_unit_expr(expr)?)?;
+                set_slot(&mut self.locals.units, index, true);
+            }
+            LocalRef::Bool(index) => {
+                let value = self.eval_bool(expect_bool_expr(expr)?)?;
+                set_slot(&mut self.locals.bools, index, Some(value));
+            }
+            LocalRef::Char(index) => {
+                let value = self.eval_char_assign(expr)?;
+                set_slot(&mut self.locals.chars, index, Some(value));
+            }
+            LocalRef::String(index) => {
+                let value = self.eval_string_assign(expr)?;
+                set_slot(&mut self.locals.strings, index, Some(value));
+            }
+            LocalRef::Signed(index) => {
+                let value = self.eval_number_as_i128(expect_number_expr(expr)?)?;
+                set_slot(&mut self.locals.signed, index, Some(value));
+            }
+            LocalRef::Unsigned(index) => {
+                let value = self.eval_number_as_u128(expect_number_expr(expr)?)?;
+                set_slot(&mut self.locals.unsigned, index, Some(value));
+            }
+            LocalRef::Float(index) => {
+                let value = self.eval_number_as_f64(expect_number_expr(expr)?)?;
+                set_slot(&mut self.locals.floats, index, Some(value));
+            }
+        }
+        Ok(())
+    }
+
     fn eval_expr(&self, expr: &ExprPlan) -> Result<(), FableError> {
         match expr {
             ExprPlan::Unit(expr) => self.eval_unit(expr),
@@ -796,6 +1034,7 @@ impl FableInterp {
                 let _ = unsafe { path.ptr_const(self.root.as_const()) };
                 Ok(())
             }
+            UnitExpr::Local(local) => self.local_unit(*local),
         }
     }
 
@@ -806,6 +1045,7 @@ impl FableInterp {
                 let ptr = unsafe { path.ptr_const(self.root.as_const()) };
                 Ok(*unsafe { ptr.get::<bool>() })
             }
+            BoolExpr::Local(local) => self.local_bool(*local),
             BoolExpr::Not(expr) => Ok(!self.eval_bool(expr)?),
             BoolExpr::And(lhs, rhs) => {
                 if !self.eval_bool(lhs)? {
@@ -839,6 +1079,7 @@ impl FableInterp {
                 let ptr = unsafe { path.ptr_const(self.root.as_const()) };
                 Ok(*unsafe { ptr.get::<char>() })
             }
+            CharExpr::Local(local) => self.local_char(*local),
         }
     }
 
@@ -849,6 +1090,7 @@ impl FableInterp {
                 let ptr = unsafe { path.ptr_const(self.root.as_const()) };
                 unsafe { self.read_string_path(path, ptr) }
             }
+            StringExpr::Local(local) => self.local_string(*local),
             StringExpr::Add(lhs, rhs) => {
                 let mut lhs = self.eval_string(lhs)?;
                 lhs.push_str(&self.eval_string(rhs)?);
@@ -890,6 +1132,7 @@ impl FableInterp {
                 let ptr = unsafe { path.ptr_const(self.root.as_const()) };
                 unsafe { self.read_signed_path(path.scalar, ptr) }
             }
+            IntExpr::Local(local) => self.local_i128(*local),
             IntExpr::Neg(expr) => {
                 let value = self.eval_number_as_i128(expr)?;
                 value
@@ -939,6 +1182,7 @@ impl FableInterp {
                 let ptr = unsafe { path.ptr_const(self.root.as_const()) };
                 unsafe { self.read_unsigned_path(path.scalar, ptr) }
             }
+            UIntExpr::Local(local) => self.local_u128(*local),
             UIntExpr::Add(lhs, rhs) => {
                 let lhs = self.eval_u128(lhs)?;
                 let rhs = self.eval_u128(rhs)?;
@@ -982,6 +1226,7 @@ impl FableInterp {
                     }),
                 }
             }
+            FloatExpr::Local(local) => self.local_f64(*local),
             FloatExpr::Neg(expr) => Ok(-self.eval_number_as_f64(expr)?),
             FloatExpr::Add(lhs, rhs) => {
                 Ok(self.eval_number_as_f64(lhs)? + self.eval_number_as_f64(rhs)?)
@@ -1195,6 +1440,104 @@ impl FableInterp {
             T::try_from(value).map_err(|_| number_out_of_range(target, value.to_string()))?;
         *unsafe { ptr.as_mut::<T>() } = converted;
         Ok(())
+    }
+
+    fn local_unit(&self, local: LocalRef) -> Result<(), FableError> {
+        let LocalRef::Unit(index) = local else {
+            return Err(local_kind_mismatch("unit", local));
+        };
+        if self.locals.units.get(index).copied().unwrap_or(false) {
+            Ok(())
+        } else {
+            Err(uninitialized_local())
+        }
+    }
+
+    fn local_bool(&self, local: LocalRef) -> Result<bool, FableError> {
+        let LocalRef::Bool(index) = local else {
+            return Err(local_kind_mismatch("bool", local));
+        };
+        self.locals
+            .bools
+            .get(index)
+            .and_then(|value| *value)
+            .ok_or_else(uninitialized_local)
+    }
+
+    fn local_char(&self, local: LocalRef) -> Result<char, FableError> {
+        let LocalRef::Char(index) = local else {
+            return Err(local_kind_mismatch("char", local));
+        };
+        self.locals
+            .chars
+            .get(index)
+            .and_then(|value| *value)
+            .ok_or_else(uninitialized_local)
+    }
+
+    fn local_string(&self, local: LocalRef) -> Result<String, FableError> {
+        let LocalRef::String(index) = local else {
+            return Err(local_kind_mismatch("string", local));
+        };
+        self.locals
+            .strings
+            .get(index)
+            .and_then(|value| value.as_ref())
+            .cloned()
+            .ok_or_else(uninitialized_local)
+    }
+
+    fn local_i128(&self, local: LocalRef) -> Result<i128, FableError> {
+        let LocalRef::Signed(index) = local else {
+            return Err(local_kind_mismatch("signed number", local));
+        };
+        self.locals
+            .signed
+            .get(index)
+            .and_then(|value| *value)
+            .ok_or_else(uninitialized_local)
+    }
+
+    fn local_u128(&self, local: LocalRef) -> Result<u128, FableError> {
+        let LocalRef::Unsigned(index) = local else {
+            return Err(local_kind_mismatch("unsigned number", local));
+        };
+        self.locals
+            .unsigned
+            .get(index)
+            .and_then(|value| *value)
+            .ok_or_else(uninitialized_local)
+    }
+
+    fn local_f64(&self, local: LocalRef) -> Result<f64, FableError> {
+        let LocalRef::Float(index) = local else {
+            return Err(local_kind_mismatch("float", local));
+        };
+        self.locals
+            .floats
+            .get(index)
+            .and_then(|value| *value)
+            .ok_or_else(uninitialized_local)
+    }
+}
+
+fn set_slot<T: Default>(slots: &mut Vec<T>, index: usize, value: T) {
+    if slots.len() <= index {
+        slots.resize_with(index + 1, T::default);
+    }
+    slots[index] = value;
+}
+
+fn local_kind_mismatch(expected: &'static str, actual: LocalRef) -> FableError {
+    FableError::TypeMismatch {
+        expected: expected.into(),
+        actual: actual.kind_name(),
+    }
+}
+
+fn uninitialized_local() -> FableError {
+    FableError::MalformedProgram {
+        reason: "local read before initialization",
     }
 }
 
@@ -1591,6 +1934,126 @@ mod tests {
         .unwrap();
 
         assert_eq!(value.user.name, "exact");
+    }
+
+    #[test]
+    fn applies_typed_scalar_let_bindings() {
+        let mut value = state();
+
+        apply(
+            &mut value,
+            r#"
+                let next_age = root.user.age + 1;
+                let next_visits = root.visits + 2;
+                let next_score = root.score + 0.5;
+                let label = root.user.name + " Lovelace";
+                let mark = root.marker;
+                let adult = next_age >= 18;
+
+                root.user.age = next_age;
+                root.visits = next_visits;
+                root.score = next_score;
+                root.user.name = label;
+                root.marker = mark;
+
+                if adult {
+                    root.user.active = true;
+                }
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(value.user.age, 18);
+        assert_eq!(value.visits, 3);
+        assert_eq!(value.score, 2.0);
+        assert_eq!(value.user.name, "Ada Lovelace");
+        assert_eq!(value.marker, 'a');
+        assert!(value.user.active);
+    }
+
+    #[test]
+    fn lets_are_block_scoped() {
+        let err = compile_err(
+            r#"
+                if true {
+                    let inside = 1;
+                }
+                root.user.age = inside;
+            "#,
+        );
+
+        assert!(matches!(
+            err,
+            FableError::ExpectedRoot {
+                found
+            } if found == "inside"
+        ));
+    }
+
+    #[test]
+    fn lets_can_shadow_outer_bindings_in_child_scopes() {
+        let mut value = state();
+
+        apply(
+            &mut value,
+            r#"
+                let label = "outer";
+                if true {
+                    let label = "inner";
+                    root.user.name = label;
+                }
+                root.user.name = root.user.name + " " + label;
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(value.user.name, "inner outer");
+    }
+
+    #[test]
+    fn reports_duplicate_local_in_same_scope() {
+        let err = compile_err(
+            r#"
+                let age = 1;
+                let age = 2;
+            "#,
+        );
+
+        assert!(matches!(
+            err,
+            FableError::DuplicateLocal {
+                name
+            } if name == "age"
+        ));
+    }
+
+    #[test]
+    fn reports_reserved_root_local_name() {
+        let err = compile_err("let root = 1");
+
+        assert!(matches!(
+            err,
+            FableError::ReservedLocalName {
+                name
+            } if name == "root"
+        ));
+    }
+
+    #[test]
+    fn rejects_assignment_to_let_bindings() {
+        let err = compile_err(
+            r#"
+                let age = 1;
+                age = 2;
+            "#,
+        );
+
+        assert!(matches!(
+            err,
+            FableError::Unsupported {
+                feature
+            } if feature == "assignment to let bindings"
+        ));
     }
 
     #[test]

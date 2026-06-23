@@ -51,6 +51,7 @@ fn expr_children(node: &ResolvedNode) -> impl Iterator<Item = Expr> + '_ {
 ast_node!(Root, SyntaxKind::Root);
 ast_node!(Block, SyntaxKind::Block);
 ast_node!(AssignStmt, SyntaxKind::AssignStmt);
+ast_node!(LetStmt, SyntaxKind::LetStmt);
 ast_node!(ExprStmt, SyntaxKind::ExprStmt);
 ast_node!(IfStmt, SyntaxKind::IfStmt);
 ast_node!(ElseClause, SyntaxKind::ElseClause);
@@ -69,6 +70,7 @@ ast_node!(ParenExpr, SyntaxKind::ParenExpr);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Stmt {
     Assign(AssignStmt),
+    Let(LetStmt),
     Expr(ExprStmt),
     If(IfStmt),
 }
@@ -77,6 +79,7 @@ impl Stmt {
     fn cast(node: ResolvedNode) -> Option<Self> {
         match node.kind() {
             SyntaxKind::AssignStmt => Some(Self::Assign(AssignStmt(node))),
+            SyntaxKind::LetStmt => Some(Self::Let(LetStmt(node))),
             SyntaxKind::ExprStmt => Some(Self::Expr(ExprStmt(node))),
             SyntaxKind::IfStmt => Some(Self::If(IfStmt(node))),
             _ => None,
@@ -88,6 +91,7 @@ impl Stmt {
     pub fn syntax(&self) -> &ResolvedNode {
         match self {
             Self::Assign(node) => node.syntax(),
+            Self::Let(node) => node.syntax(),
             Self::Expr(node) => node.syntax(),
             Self::If(node) => node.syntax(),
         }
@@ -167,6 +171,24 @@ impl AssignStmt {
     #[must_use]
     pub fn value(&self) -> Option<Expr> {
         expr_children(&self.0).nth(1)
+    }
+}
+
+impl LetStmt {
+    /// Binding name.
+    #[must_use]
+    pub fn name(&self) -> Option<String> {
+        self.0
+            .children_with_tokens()
+            .filter_map(|element| element.into_token())
+            .find(|token| token.kind() == Ident)
+            .map(|token| token.text().to_owned())
+    }
+
+    /// Initial value expression.
+    #[must_use]
+    pub fn value(&self) -> Option<Expr> {
+        expr_children(&self.0).next()
     }
 }
 
@@ -348,6 +370,19 @@ mod tests {
 
         assert!(matches!(assign.target(), Some(Expr::Field(_))));
         assert!(matches!(assign.value(), Some(Expr::Literal(_))));
+    }
+
+    #[test]
+    fn let_stmt_exposes_name_and_value() {
+        let parsed = parse("let next_age = root.user.age + 1");
+        assert!(parsed.errors().is_empty());
+        let root = Root::cast(parsed.syntax().clone()).unwrap();
+        let Stmt::Let(let_stmt) = root.statements().next().unwrap() else {
+            panic!("expected let statement");
+        };
+
+        assert_eq!(let_stmt.name().as_deref(), Some("next_age"));
+        assert!(matches!(let_stmt.value(), Some(Expr::Binary(_))));
     }
 
     #[test]
