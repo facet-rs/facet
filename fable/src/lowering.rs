@@ -3,13 +3,17 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::marker::PhantomData;
+use std::ptr::copy_nonoverlapping;
 
-use facet_core::{Def, Facet, PtrConst, PtrMut, ScalarType, Shape, StructKind, Type, UserType};
+use facet_core::{
+    Def, Facet, PtrConst, PtrMut, PtrUninit, ScalarType, Shape, StructKind, Type, UserType,
+};
 use weavy::{BlockRef, Control, DenseLowered, Program, RunError, RunStats, Step};
 
 use crate::SyntaxKind;
 use crate::ast::{
-    self, AstNode, BinaryExpr, Block, CallExpr, ElseClause, Expr, IfStmt, Stmt, UnaryExpr,
+    self, AstNode, BinaryExpr, Block, CallExpr, ElseClause, Expr, IfStmt, Stmt, StructLiteral,
+    UnaryExpr,
 };
 use crate::{ParseError, parse};
 
@@ -398,6 +402,28 @@ pub enum FableError {
         /// Missing field name.
         field: String,
     },
+    /// A named type was not visible from the root shape.
+    UnknownType {
+        /// Requested type name.
+        name: String,
+    },
+    /// A named type matched more than one shape visible from the root shape.
+    AmbiguousType {
+        /// Requested type name.
+        name: String,
+    },
+    /// A struct literal omitted a required field.
+    MissingStructField {
+        /// Shape being constructed.
+        shape: &'static Shape,
+        /// Missing field name.
+        field: String,
+    },
+    /// A struct literal tried to construct a non-POD type directly.
+    NonPodStructLiteral {
+        /// Shape being constructed.
+        shape: &'static Shape,
+    },
     /// An indexed path step was out of bounds at runtime.
     IndexOutOfBounds {
         /// Path prefix being indexed.
@@ -437,6 +463,11 @@ pub enum FableError {
     DuplicateLocal {
         /// Duplicate binding name.
         name: String,
+    },
+    /// A struct literal specified the same field more than once.
+    DuplicateStructField {
+        /// Duplicate field name.
+        field: String,
     },
     /// A literal token could not be decoded.
     InvalidLiteral {
@@ -492,6 +523,18 @@ impl fmt::Display for FableError {
             FableError::UnknownField { shape, field } => {
                 write!(f, "{shape} has no field named {field}")
             }
+            FableError::UnknownType { name } => {
+                write!(f, "Fable could not resolve type {name}")
+            }
+            FableError::AmbiguousType { name } => {
+                write!(f, "Fable type name {name} is ambiguous")
+            }
+            FableError::MissingStructField { shape, field } => {
+                write!(f, "{shape} literal is missing field {field}")
+            }
+            FableError::NonPodStructLiteral { shape } => {
+                write!(f, "{shape} is not POD and cannot be constructed by literal")
+            }
             FableError::IndexOutOfBounds { path, index, len } => {
                 write!(f, "{path} index {index} is out of bounds for length {len}")
             }
@@ -512,6 +555,9 @@ impl fmt::Display for FableError {
             }
             FableError::DuplicateLocal { name } => {
                 write!(f, "local binding {name} is already defined in this scope")
+            }
+            FableError::DuplicateStructField { field } => {
+                write!(f, "struct literal field {field} is already initialized")
             }
             FableError::InvalidLiteral { literal, reason } => {
                 write!(f, "invalid Fable literal {literal:?}: {reason}")
@@ -556,6 +602,7 @@ enum ExprPlan {
     Char(CharExpr),
     String(StringExpr),
     Number(NumberExpr),
+    Value(ValueExpr),
 }
 
 impl ExprPlan {
@@ -568,6 +615,7 @@ impl ExprPlan {
             ExprPlan::Number(NumberExpr::Signed(_)) => "signed number",
             ExprPlan::Number(NumberExpr::Unsigned(_)) => "unsigned number",
             ExprPlan::Number(NumberExpr::Float(_)) => "float",
+            ExprPlan::Value(_) => "typed value",
         }
     }
 }
@@ -581,6 +629,7 @@ enum LocalRef {
     Signed(usize),
     Unsigned(usize),
     Float(usize),
+    Value { index: usize, shape: &'static Shape },
 }
 
 impl LocalRef {
@@ -593,6 +642,7 @@ impl LocalRef {
             LocalRef::Signed(_) => "signed number",
             LocalRef::Unsigned(_) => "unsigned number",
             LocalRef::Float(_) => "float",
+            LocalRef::Value { .. } => "typed value",
         }
     }
 }
@@ -746,10 +796,50 @@ enum FloatExpr {
 }
 
 #[derive(Debug)]
+enum ValueExpr {
+    Struct(StructExpr),
+    Local(LocalRef),
+}
+
+#[derive(Debug)]
+struct StructExpr {
+    shape: &'static Shape,
+    fields: Box<[StructFieldInit]>,
+}
+
+#[derive(Debug)]
+struct StructFieldInit {
+    offset: usize,
+    shape: &'static Shape,
+    scalar: ScalarType,
+    value: ExprPlan,
+}
+
+impl ValueExpr {
+    fn shape(&self) -> &'static Shape {
+        match self {
+            Self::Struct(expr) => expr.shape,
+            Self::Local(LocalRef::Value { shape, .. }) => shape,
+            Self::Local(_) => unreachable!("value expression local must refer to a value slot"),
+        }
+    }
+
+    fn kind_name(&self) -> &'static str {
+        "typed value"
+    }
+}
+
+impl StructExpr {
+    fn kind_name(&self) -> &'static str {
+        "typed value"
+    }
+}
+
+#[derive(Debug)]
 struct FieldPath {
     source: Box<str>,
     shape: &'static Shape,
-    scalar: ScalarType,
+    scalar: Option<ScalarType>,
     steps: Box<[FieldStep]>,
 }
 
@@ -927,6 +1017,7 @@ struct LocalAllocator {
     signed_count: usize,
     unsigned_count: usize,
     float_count: usize,
+    value_count: usize,
 }
 
 impl LocalAllocator {
@@ -967,6 +1058,14 @@ impl LocalAllocator {
                 self.float_count += 1;
                 LocalRef::Float(index)
             }
+            ExprPlan::Value(expr) => {
+                let index = self.value_count;
+                self.value_count += 1;
+                LocalRef::Value {
+                    index,
+                    shape: expr.shape(),
+                }
+            }
         }
     }
 }
@@ -976,15 +1075,19 @@ struct Lowerer<'intrinsics> {
     intrinsics: &'intrinsics FableIntrinsics,
     scopes: Vec<BTreeMap<String, LocalRef>>,
     locals: LocalAllocator,
+    type_shapes: Vec<&'static Shape>,
 }
 
 impl<'intrinsics> Lowerer<'intrinsics> {
     fn new(root_shape: &'static Shape, intrinsics: &'intrinsics FableIntrinsics) -> Self {
+        let mut type_shapes = Vec::new();
+        collect_reachable_shapes(root_shape, &mut type_shapes);
         Self {
             root_shape,
             intrinsics,
             scopes: vec![BTreeMap::new()],
             locals: LocalAllocator::default(),
+            type_shapes,
         }
     }
 
@@ -1021,7 +1124,7 @@ impl<'intrinsics> Lowerer<'intrinsics> {
                 })?;
                 let target = self.lower_writable_path(&target_expr)?;
                 let value = self.lower_expr(&value_expr)?;
-                validate_assignment(target.scalar, &value)?;
+                validate_assignment(target.scalar, target.shape, &value)?;
                 Ok(FableOp::Assign { target, value })
             }
             Stmt::Let(let_stmt) => {
@@ -1106,8 +1209,93 @@ impl<'intrinsics> Lowerer<'intrinsics> {
                 let path = self.lower_readable_path(expr)?;
                 path_to_expr(path)
             }
+            Expr::StructLiteral(literal) => self.lower_struct_literal(literal),
             Expr::Call(call) => self.lower_call(call),
         }
+    }
+
+    fn lower_struct_literal(&mut self, literal: &StructLiteral) -> Result<ExprPlan, FableError> {
+        let type_name = literal.type_name().ok_or(FableError::MalformedSyntax {
+            reason: "struct literal without type name",
+        })?;
+        let shape = self.resolve_type_name(&type_name)?;
+        if !shape.is_pod() {
+            return Err(FableError::NonPodStructLiteral { shape });
+        }
+        let Type::User(UserType::Struct(struct_type)) = shape.ty else {
+            return Err(FableError::Unsupported {
+                feature: format!("struct literal for non-struct type {shape}"),
+            });
+        };
+        if struct_type.kind != StructKind::Struct {
+            return Err(FableError::Unsupported {
+                feature: format!("struct literal for {shape}"),
+            });
+        }
+
+        let mut supplied = BTreeMap::new();
+        for field in literal.fields() {
+            let name = field.name().ok_or(FableError::MalformedSyntax {
+                reason: "struct literal field without name",
+            })?;
+            if supplied.contains_key(&name) {
+                return Err(FableError::DuplicateStructField { field: name });
+            }
+            let value = field.value().ok_or(FableError::MalformedSyntax {
+                reason: "struct literal field without value",
+            })?;
+            supplied.insert(name, self.lower_expr(&value)?);
+        }
+
+        let mut fields = Vec::with_capacity(struct_type.fields.len());
+        for field in struct_type.fields {
+            let field_shape = field.shape.get();
+            let scalar =
+                ScalarType::try_from_shape(field_shape).ok_or_else(|| FableError::Unsupported {
+                    feature: format!("non-scalar POD literal field {}.{}", shape, field.name),
+                })?;
+            let Some(value) = supplied.remove(field.name) else {
+                return Err(FableError::MissingStructField {
+                    shape,
+                    field: field.name.to_owned(),
+                });
+            };
+            validate_assignment(Some(scalar), field_shape, &value)?;
+            fields.push(StructFieldInit {
+                offset: field.offset,
+                shape: field_shape,
+                scalar,
+                value,
+            });
+        }
+
+        if let Some((name, _)) = supplied.into_iter().next() {
+            return Err(FableError::UnknownField { shape, field: name });
+        }
+
+        Ok(ExprPlan::Value(ValueExpr::Struct(StructExpr {
+            shape,
+            fields: fields.into_boxed_slice(),
+        })))
+    }
+
+    fn resolve_type_name(&self, name: &str) -> Result<&'static Shape, FableError> {
+        let mut matches = self
+            .type_shapes
+            .iter()
+            .copied()
+            .filter(|shape| shape_name_matches(shape, name));
+        let Some(first) = matches.next() else {
+            return Err(FableError::UnknownType {
+                name: name.to_owned(),
+            });
+        };
+        if matches.next().is_some() {
+            return Err(FableError::AmbiguousType {
+                name: name.to_owned(),
+            });
+        }
+        Ok(first)
     }
 
     fn lower_literal(&self, literal: &ast::Literal) -> Result<ExprPlan, FableError> {
@@ -1250,13 +1438,24 @@ impl<'intrinsics> Lowerer<'intrinsics> {
             });
         }
         let path = self.resolve_path(expr)?;
-        ensure_writable(path.scalar)?;
+        if let Some(scalar) = path.scalar {
+            ensure_writable(scalar)?;
+        } else if !path.shape.is_pod() {
+            return Err(FableError::Unsupported {
+                feature: format!("writing non-POD path ending at {}", path.shape),
+            });
+        }
         Ok(path)
     }
 
     fn lower_readable_path(&self, expr: &Expr) -> Result<FieldPath, FableError> {
         let path = self.resolve_path(expr)?;
-        ensure_readable(path.scalar, path.shape)?;
+        let Some(scalar) = path.scalar else {
+            return Err(FableError::Unsupported {
+                feature: format!("reading non-scalar path ending at {}", path.shape),
+            });
+        };
+        ensure_readable(scalar, path.shape)?;
         Ok(path)
     }
 
@@ -1305,9 +1504,7 @@ impl<'intrinsics> Lowerer<'intrinsics> {
             }
         }
 
-        let scalar = ScalarType::try_from_shape(shape).ok_or_else(|| FableError::Unsupported {
-            feature: format!("non-scalar path ending at {shape}"),
-        })?;
+        let scalar = ScalarType::try_from_shape(shape);
         Ok(FieldPath {
             source: source.into_boxed_str(),
             shape,
@@ -1959,11 +2156,15 @@ fn local_to_expr(local: LocalRef) -> ExprPlan {
         LocalRef::Signed(_) => ExprPlan::Number(NumberExpr::Signed(IntExpr::Local(local))),
         LocalRef::Unsigned(_) => ExprPlan::Number(NumberExpr::Unsigned(UIntExpr::Local(local))),
         LocalRef::Float(_) => ExprPlan::Number(NumberExpr::Float(FloatExpr::Local(local))),
+        LocalRef::Value { .. } => ExprPlan::Value(ValueExpr::Local(local)),
     }
 }
 
 fn path_to_expr(path: FieldPath) -> Result<ExprPlan, FableError> {
-    let expr = match path.scalar {
+    let scalar = path.scalar.ok_or_else(|| FableError::Unsupported {
+        feature: format!("reading non-scalar path ending at {}", path.shape),
+    })?;
+    let expr = match scalar {
         ScalarType::Unit => ExprPlan::Unit(UnitExpr::Read(path)),
         ScalarType::Bool => ExprPlan::Bool(BoolExpr::Read(path)),
         ScalarType::Char => ExprPlan::Char(CharExpr::Read(path)),
@@ -1987,14 +2188,32 @@ fn path_to_expr(path: FieldPath) -> Result<ExprPlan, FableError> {
         | ScalarType::ISize => ExprPlan::Number(NumberExpr::Signed(IntExpr::Read(path))),
         _ => {
             return Err(FableError::Unsupported {
-                feature: format!("reading {:?}", path.scalar),
+                feature: format!("reading {scalar:?}"),
             });
         }
     };
     Ok(expr)
 }
 
-fn validate_assignment(scalar: ScalarType, expr: &ExprPlan) -> Result<(), FableError> {
+fn validate_assignment(
+    scalar: Option<ScalarType>,
+    shape: &'static Shape,
+    expr: &ExprPlan,
+) -> Result<(), FableError> {
+    let Some(scalar) = scalar else {
+        return match expr {
+            ExprPlan::Value(value) if value.shape() == shape => Ok(()),
+            ExprPlan::Value(value) => Err(FableError::TypeMismatch {
+                expected: format!("{shape}"),
+                actual: value.kind_name(),
+            }),
+            other => Err(FableError::TypeMismatch {
+                expected: format!("{shape}"),
+                actual: other.kind_name(),
+            }),
+        };
+    };
+
     let ok = match scalar {
         ScalarType::Unit => matches!(expr, ExprPlan::Unit(_)),
         ScalarType::Bool => matches!(expr, ExprPlan::Bool(_)),
@@ -2042,6 +2261,90 @@ struct LocalSlots {
     signed: Vec<Option<i128>>,
     unsigned: Vec<Option<u128>>,
     floats: Vec<Option<f64>>,
+    values: Vec<Option<OwnedValue>>,
+}
+
+struct OwnedValue {
+    shape: &'static Shape,
+    ptr: PtrMut,
+}
+
+impl OwnedValue {
+    unsafe fn move_into(self, dst: PtrMut) -> Result<(), FableError> {
+        let shape = self.shape;
+        let src = self.ptr;
+        let layout = shape
+            .layout
+            .sized_layout()
+            .map_err(|_| FableError::Unsupported {
+                feature: format!("moving unsized value {shape}"),
+            })?;
+        unsafe {
+            shape.call_drop_in_place(dst);
+            copy_nonoverlapping(src.as_byte_ptr(), dst.as_mut_byte_ptr(), layout.size());
+        }
+        let uninit = src.as_uninit();
+        std::mem::forget(self);
+        unsafe { shape.deallocate_uninit(uninit) }.map_err(|_| FableError::Unsupported {
+            feature: format!("deallocating unsized value {shape}"),
+        })
+    }
+}
+
+impl Drop for OwnedValue {
+    fn drop(&mut self) {
+        unsafe {
+            self.shape.call_drop_in_place(self.ptr);
+            let _ = self.shape.deallocate_mut(self.ptr);
+        }
+    }
+}
+
+struct StructInitGuard {
+    shape: &'static Shape,
+    ptr: PtrUninit,
+    initialized: Vec<StructInitializedField>,
+}
+
+struct StructInitializedField {
+    shape: &'static Shape,
+    offset: usize,
+}
+
+impl StructInitGuard {
+    fn new(shape: &'static Shape, ptr: PtrUninit) -> Self {
+        Self {
+            shape,
+            ptr,
+            initialized: Vec::new(),
+        }
+    }
+
+    fn mark_initialized(&mut self, field: &StructFieldInit) {
+        self.initialized.push(StructInitializedField {
+            shape: field.shape,
+            offset: field.offset,
+        });
+    }
+
+    unsafe fn finish(self) -> OwnedValue {
+        let ptr = unsafe { self.ptr.assume_init() };
+        let shape = self.shape;
+        std::mem::forget(self);
+        OwnedValue { shape, ptr }
+    }
+}
+
+impl Drop for StructInitGuard {
+    fn drop(&mut self) {
+        for field in self.initialized.iter().rev() {
+            let ptr = unsafe { self.ptr.field_init(field.offset) };
+            unsafe { field.shape.call_drop_in_place(ptr) };
+        }
+        unsafe {
+            let _ = self.shape.deallocate_uninit(self.ptr);
+        }
+    }
 }
 
 struct FableInterp {
@@ -2064,7 +2367,11 @@ impl<'program> Step<'program, BlockRef, FableOp> for FableInterp {
             }
             FableOp::Assign { target, value } => {
                 let ptr = target.ptr_mut(self.root)?;
-                unsafe { self.write_scalar(target.scalar, ptr, value) }?;
+                if let Some(scalar) = target.scalar {
+                    unsafe { self.write_scalar(scalar, ptr, value) }?;
+                } else {
+                    unsafe { self.write_value(target.shape, ptr, value) }?;
+                }
                 Ok(Control::Continue)
             }
             FableOp::Eval(expr) => {
@@ -2123,17 +2430,22 @@ impl FableInterp {
                 let value = self.eval_number_as_f64(expect_number_expr(expr)?)?;
                 set_slot(&mut self.locals.floats, index, Some(value));
             }
+            LocalRef::Value { index, shape } => {
+                let value = self.eval_value(shape, expect_value_expr(expr)?)?;
+                set_slot(&mut self.locals.values, index, Some(value));
+            }
         }
         Ok(())
     }
 
-    fn eval_expr(&self, expr: &ExprPlan) -> Result<(), FableError> {
+    fn eval_expr(&mut self, expr: &ExprPlan) -> Result<(), FableError> {
         match expr {
             ExprPlan::Unit(expr) => self.eval_unit(expr),
             ExprPlan::Bool(expr) => self.eval_bool(expr).map(drop),
             ExprPlan::Char(expr) => self.eval_char(expr).map(drop),
             ExprPlan::String(expr) => self.eval_string(expr).map(drop),
             ExprPlan::Number(expr) => self.eval_number_for_effect(expr),
+            ExprPlan::Value(expr) => self.eval_value_for_effect(expr),
         }
     }
 
@@ -2244,7 +2556,7 @@ impl FableInterp {
         Ok(FableField {
             path: &field.source,
             shape: field.shape,
-            scalar: field.scalar,
+            scalar: field_scalar(field)?,
             ptr: field.ptr_const(self.root.as_const())?,
         })
     }
@@ -2256,7 +2568,7 @@ impl FableInterp {
         Ok(FableFieldMut {
             path: &field.source,
             shape: field.shape,
-            scalar: field.scalar,
+            scalar: field_scalar(field)?,
             ptr: field.ptr_mut(self.root)?,
         })
     }
@@ -2266,7 +2578,8 @@ impl FableInterp {
         path: &FieldPath,
         ptr: PtrConst,
     ) -> Result<String, FableError> {
-        match path.scalar {
+        let scalar = field_scalar(path)?;
+        match scalar {
             ScalarType::Str if path.shape.is_type::<&'static str>() => {
                 Ok((*unsafe { ptr.get::<&'static str>() }).to_owned())
             }
@@ -2275,7 +2588,7 @@ impl FableInterp {
                 .clone()
                 .into_owned()),
             _ => Err(FableError::Unsupported {
-                feature: format!("reading {:?}", path.scalar),
+                feature: format!("reading {scalar:?}"),
             }),
         }
     }
@@ -2292,7 +2605,7 @@ impl FableInterp {
         match expr {
             IntExpr::Read(path) => {
                 let ptr = path.ptr_const(self.root.as_const())?;
-                unsafe { self.read_signed_path(path.scalar, ptr) }
+                unsafe { self.read_signed_path(field_scalar(path)?, ptr) }
             }
             IntExpr::Local(local) => self.local_i128(*local),
             IntExpr::HostUnary { function, value } => function(self.eval_number_as_i128(value)?),
@@ -2359,7 +2672,7 @@ impl FableInterp {
             UIntExpr::Literal(value) => Ok(*value),
             UIntExpr::Read(path) => {
                 let ptr = path.ptr_const(self.root.as_const())?;
-                unsafe { self.read_unsigned_path(path.scalar, ptr) }
+                unsafe { self.read_unsigned_path(field_scalar(path)?, ptr) }
             }
             UIntExpr::Local(local) => self.local_u128(*local),
             UIntExpr::HostUnary { function, value } => function(self.eval_number_as_u128(value)?),
@@ -2415,7 +2728,7 @@ impl FableInterp {
             FloatExpr::Literal(value) => Ok(*value),
             FloatExpr::Read(path) => {
                 let ptr = path.ptr_const(self.root.as_const())?;
-                match path.scalar {
+                match field_scalar(path)? {
                     ScalarType::F32 => Ok((*unsafe { ptr.get::<f32>() }).into()),
                     ScalarType::F64 => Ok(*unsafe { ptr.get::<f64>() }),
                     _ => Err(FableError::MalformedProgram {
@@ -2545,6 +2858,172 @@ impl FableInterp {
             }
             _ => Ok(false),
         }
+    }
+
+    unsafe fn write_value(
+        &mut self,
+        shape: &'static Shape,
+        ptr: PtrMut,
+        expr: &ExprPlan,
+    ) -> Result<(), FableError> {
+        let value = self.eval_value(shape, expect_value_expr(expr)?)?;
+        unsafe { value.move_into(ptr) }
+    }
+
+    fn eval_value(
+        &mut self,
+        shape: &'static Shape,
+        expr: &ValueExpr,
+    ) -> Result<OwnedValue, FableError> {
+        match expr {
+            ValueExpr::Struct(expr) => {
+                if expr.shape != shape {
+                    return Err(FableError::TypeMismatch {
+                        expected: format!("{shape}"),
+                        actual: expr.kind_name(),
+                    });
+                }
+                unsafe { self.init_struct_value(expr) }
+            }
+            ValueExpr::Local(local) => self.take_local_value(*local, shape),
+        }
+    }
+
+    fn eval_value_for_effect(&mut self, expr: &ValueExpr) -> Result<(), FableError> {
+        match expr {
+            ValueExpr::Struct(expr) => unsafe { self.init_struct_value(expr) }.map(drop),
+            ValueExpr::Local(local) => {
+                let LocalRef::Value { index, .. } = *local else {
+                    return Err(local_kind_mismatch("typed value", *local));
+                };
+                if self
+                    .locals
+                    .values
+                    .get(index)
+                    .and_then(Option::as_ref)
+                    .is_some()
+                {
+                    Ok(())
+                } else {
+                    Err(uninitialized_local())
+                }
+            }
+        }
+    }
+
+    unsafe fn init_struct_value(&self, expr: &StructExpr) -> Result<OwnedValue, FableError> {
+        let ptr = expr.shape.allocate().map_err(|_| FableError::Unsupported {
+            feature: format!("allocating unsized value {}", expr.shape),
+        })?;
+        let mut guard = StructInitGuard::new(expr.shape, ptr);
+        for field in expr.fields.iter() {
+            let field_ptr = unsafe { ptr.field_uninit(field.offset) };
+            unsafe { self.init_scalar(field.scalar, field_ptr, &field.value) }?;
+            guard.mark_initialized(field);
+        }
+        Ok(unsafe { guard.finish() })
+    }
+
+    fn take_local_value(
+        &mut self,
+        local: LocalRef,
+        expected_shape: &'static Shape,
+    ) -> Result<OwnedValue, FableError> {
+        let LocalRef::Value { index, shape } = local else {
+            return Err(local_kind_mismatch("typed value", local));
+        };
+        if shape != expected_shape {
+            return Err(FableError::TypeMismatch {
+                expected: format!("{expected_shape}"),
+                actual: "typed value",
+            });
+        }
+        let Some(slot) = self.locals.values.get_mut(index) else {
+            return Err(uninitialized_local());
+        };
+        slot.take().ok_or_else(uninitialized_local)
+    }
+
+    unsafe fn init_scalar(
+        &self,
+        scalar: ScalarType,
+        ptr: PtrUninit,
+        expr: &ExprPlan,
+    ) -> Result<(), FableError> {
+        match scalar {
+            ScalarType::Unit => {
+                self.eval_unit(expect_unit_expr(expr)?)?;
+                unsafe { ptr.put(()) };
+            }
+            ScalarType::Bool => {
+                unsafe { ptr.put(self.eval_bool(expect_bool_expr(expr)?)?) };
+            }
+            ScalarType::Char => {
+                unsafe { ptr.put(self.eval_char_assign(expr)?) };
+            }
+            ScalarType::String => {
+                unsafe { ptr.put(self.eval_string_assign(expr)?) };
+            }
+            ScalarType::CowStr => {
+                unsafe { ptr.put::<Cow<'static, str>>(Cow::Owned(self.eval_string_assign(expr)?)) };
+            }
+            ScalarType::F32 => {
+                unsafe { ptr.put(self.eval_number_as_f64(expect_number_expr(expr)?)? as f32) };
+            }
+            ScalarType::F64 => {
+                unsafe { ptr.put(self.eval_number_as_f64(expect_number_expr(expr)?)?) };
+            }
+            ScalarType::U8 => unsafe { self.init_unsigned::<u8>(ptr, scalar, expr) }?,
+            ScalarType::U16 => unsafe { self.init_unsigned::<u16>(ptr, scalar, expr) }?,
+            ScalarType::U32 => unsafe { self.init_unsigned::<u32>(ptr, scalar, expr) }?,
+            ScalarType::U64 => unsafe { self.init_unsigned::<u64>(ptr, scalar, expr) }?,
+            ScalarType::U128 => unsafe { self.init_unsigned::<u128>(ptr, scalar, expr) }?,
+            ScalarType::USize => unsafe { self.init_unsigned::<usize>(ptr, scalar, expr) }?,
+            ScalarType::I8 => unsafe { self.init_signed::<i8>(ptr, scalar, expr) }?,
+            ScalarType::I16 => unsafe { self.init_signed::<i16>(ptr, scalar, expr) }?,
+            ScalarType::I32 => unsafe { self.init_signed::<i32>(ptr, scalar, expr) }?,
+            ScalarType::I64 => unsafe { self.init_signed::<i64>(ptr, scalar, expr) }?,
+            ScalarType::I128 => unsafe { self.init_signed::<i128>(ptr, scalar, expr) }?,
+            ScalarType::ISize => unsafe { self.init_signed::<isize>(ptr, scalar, expr) }?,
+            _ => {
+                return Err(FableError::Unsupported {
+                    feature: format!("initializing {scalar:?}"),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    unsafe fn init_unsigned<T>(
+        &self,
+        ptr: PtrUninit,
+        target: ScalarType,
+        expr: &ExprPlan,
+    ) -> Result<(), FableError>
+    where
+        T: TryFrom<u128>,
+    {
+        let value = self.eval_number_as_u128(expect_number_expr(expr)?)?;
+        let converted =
+            T::try_from(value).map_err(|_| number_out_of_range(target, value.to_string()))?;
+        unsafe { ptr.put(converted) };
+        Ok(())
+    }
+
+    unsafe fn init_signed<T>(
+        &self,
+        ptr: PtrUninit,
+        target: ScalarType,
+        expr: &ExprPlan,
+    ) -> Result<(), FableError>
+    where
+        T: TryFrom<i128>,
+    {
+        let value = self.eval_number_as_i128(expect_number_expr(expr)?)?;
+        let converted =
+            T::try_from(value).map_err(|_| number_out_of_range(target, value.to_string()))?;
+        unsafe { ptr.put(converted) };
+        Ok(())
     }
 
     unsafe fn write_scalar(
@@ -2925,6 +3404,16 @@ fn expect_number_expr(expr: &ExprPlan) -> Result<&NumberExpr, FableError> {
     }
 }
 
+fn expect_value_expr(expr: &ExprPlan) -> Result<&ValueExpr, FableError> {
+    match expr {
+        ExprPlan::Value(expr) => Ok(expr),
+        other => Err(FableError::TypeMismatch {
+            expected: "typed value".into(),
+            actual: other.kind_name(),
+        }),
+    }
+}
+
 #[derive(Debug)]
 enum PathSegment {
     Name(String),
@@ -3037,6 +3526,38 @@ fn index_step(
             feature: format!("index access on {shape}"),
         }),
     }
+}
+
+fn collect_reachable_shapes(shape: &'static Shape, out: &mut Vec<&'static Shape>) {
+    if out.iter().any(|candidate| **candidate == *shape) {
+        return;
+    }
+    out.push(shape);
+
+    if let Type::User(UserType::Struct(struct_type)) = shape.ty {
+        for field in struct_type.fields {
+            collect_reachable_shapes(field.shape.get(), out);
+        }
+    }
+
+    match shape.def {
+        Def::List(def) => collect_reachable_shapes(def.t(), out),
+        Def::Array(def) => collect_reachable_shapes(def.t(), out),
+        Def::Slice(def) => collect_reachable_shapes(def.t(), out),
+        _ => {}
+    }
+
+    if let Some(inner) = shape.inner {
+        collect_reachable_shapes(inner, out);
+    }
+    if let Some(builder_shape) = shape.builder_shape {
+        collect_reachable_shapes(builder_shape, out);
+    }
+}
+
+fn shape_name_matches(shape: &'static Shape, name: &str) -> bool {
+    let displayed = format!("{}", shape.type_name());
+    displayed == name || displayed.rsplit("::").next() == Some(name)
 }
 
 fn element_stride(
@@ -3274,6 +3795,12 @@ fn index_out_of_bounds(path: &str, index: usize, len: usize) -> FableError {
     }
 }
 
+fn field_scalar(path: &FieldPath) -> Result<ScalarType, FableError> {
+    path.scalar.ok_or(FableError::MalformedProgram {
+        reason: "scalar operation referenced a non-scalar path",
+    })
+}
+
 fn invalid_call(function: &'static str, reason: &'static str) -> FableError {
     FableError::InvalidCall { function, reason }
 }
@@ -3377,6 +3904,13 @@ mod tests {
 
     use super::*;
 
+    #[derive(Debug, Facet, PartialEq, Clone, Copy)]
+    #[facet(pod)]
+    struct Point {
+        x: i32,
+        y: i32,
+    }
+
     #[derive(Debug, Facet, PartialEq)]
     struct User {
         name: String,
@@ -3389,6 +3923,7 @@ mod tests {
         user: User,
         users: Vec<User>,
         checkpoints: [i32; 3],
+        position: Point,
         visits: u32,
         score: f64,
         marker: char,
@@ -3415,6 +3950,7 @@ mod tests {
                 },
             ],
             checkpoints: [1, 2, 3],
+            position: Point { x: 4, y: 5 },
             visits: 1,
             score: 1.5,
             marker: 'a',
@@ -3573,6 +4109,107 @@ mod tests {
         assert_eq!(value.users[0].age, 33);
         assert_eq!(value.checkpoints, [1, 33, 3]);
         assert!(value.users[1].active);
+    }
+
+    #[test]
+    fn applies_pod_struct_literals_through_typed_locals() {
+        let mut value = state();
+
+        apply(
+            &mut value,
+            r#"
+                let next = Point {
+                    x: root.position.x + root.checkpoints[0],
+                    y: root.users[1].age,
+                };
+                root.position = next;
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(value.position, Point { x: 5, y: 30 });
+    }
+
+    #[test]
+    fn applies_pod_struct_literals_directly_to_paths() {
+        let mut value = state();
+
+        apply(
+            &mut value,
+            r#"
+                root.position = Point { x: 8, y: root.user.age + 1 };
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(value.position, Point { x: 8, y: 18 });
+    }
+
+    #[test]
+    fn rejects_reusing_moved_typed_locals() {
+        let mut value = state();
+
+        let err = apply(
+            &mut value,
+            r#"
+                let next = Point { x: 1, y: 2 };
+                root.position = next;
+                root.position = next;
+            "#,
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            err,
+            FableError::MalformedProgram {
+                reason: "local read before initialization",
+            }
+        ));
+    }
+
+    #[test]
+    fn rejects_non_pod_struct_literals() {
+        let err = compile_err(
+            r#"
+                let user = User {
+                    name: "Ada",
+                    age: 36,
+                    active: true,
+                };
+            "#,
+        );
+
+        assert!(matches!(
+            err,
+            FableError::NonPodStructLiteral {
+                shape
+            } if shape.type_name().to_string().ends_with("User")
+        ));
+    }
+
+    #[test]
+    fn reports_missing_pod_struct_literal_fields() {
+        let err = compile_err("let point = Point { x: 1 };");
+
+        assert!(matches!(
+            err,
+            FableError::MissingStructField {
+                field,
+                ..
+            } if field == "y"
+        ));
+    }
+
+    #[test]
+    fn reports_duplicate_pod_struct_literal_fields() {
+        let err = compile_err("let point = Point { x: 1, x: 2, y: 3 };");
+
+        assert!(matches!(
+            err,
+            FableError::DuplicateStructField {
+                field
+            } if field == "x"
+        ));
     }
 
     #[test]
