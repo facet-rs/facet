@@ -254,7 +254,7 @@ enum ContextState {
     Array(ArrayState),
 }
 
-struct OrderedObjectProbeSave {
+pub(crate) struct OrderedObjectProbeSave {
     scanner: Scanner,
     stack_len: usize,
     stack_top: Option<ContextState>,
@@ -1519,6 +1519,16 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
             self.restore_ordered_object_probe(save);
         }
         Ok(matched)
+    }
+
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    pub(crate) fn save_native_probe(&self) -> OrderedObjectProbeSave {
+        self.save_ordered_object_probe()
+    }
+
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    pub(crate) fn restore_native_probe(&mut self, save: OrderedObjectProbeSave) {
+        self.restore_ordered_object_probe(save);
     }
 
     #[inline(never)]

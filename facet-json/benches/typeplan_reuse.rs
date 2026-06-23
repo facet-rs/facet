@@ -131,6 +131,8 @@ struct DefaultScalars {
 // =============================================================================
 
 const POINT_JSON: &str = r#"{"x": 10, "y": 20}"#;
+const POINT_LIST_JSON: &str =
+    r#"[{"x":10,"y":20},{"x":30,"y":40},{"x":50,"y":60},{"x":70,"y":80}]"#;
 
 const PERSON_JSON: &str = r#"{
     "name": "Alice",
@@ -155,6 +157,12 @@ const COMPANY_JSON: &str = r#"{
 }"#;
 
 const FLOAT_POINT_JSON: &str = r#"{"x": 12.5, "y": -0.03125, "z": 9000.125}"#;
+const FLOAT_POINT_LIST_JSON: &str = r#"[
+    {"x": 12.5, "y": -0.03125, "z": 9000.125},
+    {"x": -4.25, "y": 2.5, "z": 0.125},
+    {"x": 100.0, "y": -200.5, "z": 300.75},
+    {"x": 0.0, "y": 1.0, "z": -1.0}
+]"#;
 
 const SENSOR_FRAME_JSON: &str = r#"{
     "id": 9001,
@@ -180,6 +188,12 @@ const WIDE_SCALARS_JSON: &str = r#"{
     "l": 11.5
 }"#;
 
+const WIDE_SCALARS_LIST_JSON: &str = r#"[
+    {"a":1,"b":2,"c":3,"d":4,"e":-5,"f":-6,"g":-7,"h":-8,"i":9,"j":-10,"k":true,"l":11.5},
+    {"a":12,"b":13,"c":14,"d":15,"e":-16,"f":-17,"g":-18,"h":-19,"i":20,"j":-21,"k":false,"l":22.5},
+    {"a":23,"b":24,"c":25,"d":26,"e":-27,"f":-28,"g":-29,"h":-30,"i":31,"j":-32,"k":true,"l":33.5}
+]"#;
+
 const WIDE_SCALARS_OUT_OF_ORDER_JSON: &str = r#"{
     "l": 11.5,
     "k": true,
@@ -194,6 +208,12 @@ const WIDE_SCALARS_OUT_OF_ORDER_JSON: &str = r#"{
     "b": 2,
     "a": 1
 }"#;
+
+const WIDE_SCALARS_LIST_OUT_OF_ORDER_JSON: &str = r#"[
+    {"a":1,"b":2,"c":3,"d":4,"e":-5,"f":-6,"g":-7,"h":-8,"i":9,"j":-10,"k":true,"l":11.5},
+    {"l":22.5,"k":false,"j":-21,"i":20,"h":-19,"g":-18,"f":-17,"e":-16,"d":15,"c":14,"b":13,"a":12},
+    {"a":23,"b":24,"c":25,"d":26,"e":-27,"f":-28,"g":-29,"h":-30,"i":31,"j":-32,"k":true,"l":33.5}
+]"#;
 
 const WIDE_SCALARS_SKIPPED_UNKNOWN_JSON: &str = r#"{
     "a": 1,
@@ -212,6 +232,12 @@ const WIDE_SCALARS_SKIPPED_UNKNOWN_JSON: &str = r#"{
     "k": true,
     "l": 11.5
 }"#;
+
+const WIDE_SCALARS_LIST_SKIPPED_UNKNOWN_JSON: &str = r#"[
+    {"a":1,"b":2,"c":3,"d":4,"e":-5,"f":-6,"g":-7,"h":-8,"i":9,"j":-10,"k":true,"l":11.5},
+    {"a":12,"unknown_scalar":12345,"b":13,"unknown_array":[1,2,3,4],"c":14,"unknown_object":{"nested":true,"items":[1,2,3]},"d":15,"e":-16,"f":-17,"g":-18,"h":-19,"i":20,"j":-21,"k":false,"l":22.5},
+    {"a":23,"b":24,"c":25,"d":26,"e":-27,"f":-28,"g":-29,"h":-30,"i":31,"j":-32,"k":true,"l":33.5}
+]"#;
 
 const DEFAULT_SCALARS_MISSING_JSON: &str = r#"{
     "a": 1,
@@ -359,6 +385,25 @@ fn point_serde_json_from_slice(bencher: Bencher) {
         let result: Point = black_box(serde_json::from_slice(black_box(json)).unwrap());
         black_box(result)
     });
+}
+
+// =============================================================================
+// Benchmarks - Vec<Point> (ordered scalar struct list)
+// =============================================================================
+
+#[divan::bench]
+fn point_list_weavy_reused_plan(bencher: Bencher) {
+    bench_weavy_reused_plan::<Vec<Point>>(bencher, POINT_LIST_JSON);
+}
+
+#[divan::bench]
+fn point_list_weavy_jit_reused_plan(bencher: Bencher) {
+    bench_weavy_jit_reused_plan::<Vec<Point>>(bencher, POINT_LIST_JSON);
+}
+
+#[divan::bench]
+fn point_list_serde_json(bencher: Bencher) {
+    bench_serde_json::<Vec<Point>>(bencher, POINT_LIST_JSON);
 }
 
 // =============================================================================
@@ -523,6 +568,25 @@ fn float_point_serde_json(bencher: Bencher) {
 }
 
 // =============================================================================
+// Benchmarks - Vec<FloatPoint> (float-heavy scalar struct list)
+// =============================================================================
+
+#[divan::bench]
+fn float_point_list_weavy_reused_plan(bencher: Bencher) {
+    bench_weavy_reused_plan::<Vec<FloatPoint>>(bencher, FLOAT_POINT_LIST_JSON);
+}
+
+#[divan::bench]
+fn float_point_list_weavy_jit_reused_plan(bencher: Bencher) {
+    bench_weavy_jit_reused_plan::<Vec<FloatPoint>>(bencher, FLOAT_POINT_LIST_JSON);
+}
+
+#[divan::bench]
+fn float_point_list_serde_json(bencher: Bencher) {
+    bench_serde_json::<Vec<FloatPoint>>(bencher, FLOAT_POINT_LIST_JSON);
+}
+
+// =============================================================================
 // Benchmarks - SensorFrame (numeric arrays)
 // =============================================================================
 
@@ -603,6 +667,58 @@ fn wide_scalars_skipped_unknown_weavy_jit_reused_plan(bencher: Bencher) {
 #[divan::bench]
 fn wide_scalars_skipped_unknown_serde_json(bencher: Bencher) {
     bench_serde_json::<WideScalars>(bencher, WIDE_SCALARS_SKIPPED_UNKNOWN_JSON);
+}
+
+// =============================================================================
+// Benchmarks - Vec<WideScalars> (wide scalar struct list)
+// =============================================================================
+
+#[divan::bench]
+fn wide_scalars_list_weavy_reused_plan(bencher: Bencher) {
+    bench_weavy_reused_plan::<Vec<WideScalars>>(bencher, WIDE_SCALARS_LIST_JSON);
+}
+
+#[divan::bench]
+fn wide_scalars_list_weavy_jit_reused_plan(bencher: Bencher) {
+    bench_weavy_jit_reused_plan::<Vec<WideScalars>>(bencher, WIDE_SCALARS_LIST_JSON);
+}
+
+#[divan::bench]
+fn wide_scalars_list_serde_json(bencher: Bencher) {
+    bench_serde_json::<Vec<WideScalars>>(bencher, WIDE_SCALARS_LIST_JSON);
+}
+
+#[divan::bench]
+fn wide_scalars_list_out_of_order_weavy_reused_plan(bencher: Bencher) {
+    bench_weavy_reused_plan::<Vec<WideScalars>>(bencher, WIDE_SCALARS_LIST_OUT_OF_ORDER_JSON);
+}
+
+#[divan::bench]
+fn wide_scalars_list_out_of_order_weavy_jit_reused_plan(bencher: Bencher) {
+    bench_weavy_jit_reused_plan::<Vec<WideScalars>>(bencher, WIDE_SCALARS_LIST_OUT_OF_ORDER_JSON);
+}
+
+#[divan::bench]
+fn wide_scalars_list_out_of_order_serde_json(bencher: Bencher) {
+    bench_serde_json::<Vec<WideScalars>>(bencher, WIDE_SCALARS_LIST_OUT_OF_ORDER_JSON);
+}
+
+#[divan::bench]
+fn wide_scalars_list_skipped_unknown_weavy_reused_plan(bencher: Bencher) {
+    bench_weavy_reused_plan::<Vec<WideScalars>>(bencher, WIDE_SCALARS_LIST_SKIPPED_UNKNOWN_JSON);
+}
+
+#[divan::bench]
+fn wide_scalars_list_skipped_unknown_weavy_jit_reused_plan(bencher: Bencher) {
+    bench_weavy_jit_reused_plan::<Vec<WideScalars>>(
+        bencher,
+        WIDE_SCALARS_LIST_SKIPPED_UNKNOWN_JSON,
+    );
+}
+
+#[divan::bench]
+fn wide_scalars_list_skipped_unknown_serde_json(bencher: Bencher) {
+    bench_serde_json::<Vec<WideScalars>>(bencher, WIDE_SCALARS_LIST_SKIPPED_UNKNOWN_JSON);
 }
 
 // =============================================================================

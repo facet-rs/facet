@@ -306,7 +306,7 @@ where
         if let Some(native) = &self.native
             && native.should_enter()
         {
-            native.run(parser, root)?;
+            native.run(parser, root, &self.lowered)?;
             return Ok(unsafe { slot.assume_init() });
         }
 
@@ -324,7 +324,7 @@ where
 struct JsonNativePlan {
     native: weavy::jit::NativeProgram,
     calls: Box<[weavy::jit::HostCallInfo]>,
-    scalar_structs: Box<[JsonNativeScalarStructInfo]>,
+    root: Box<JsonNativeRootInfo>,
 }
 
 #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
@@ -337,6 +337,12 @@ unsafe impl Send for JsonNativePlan {}
 unsafe impl Sync for JsonNativePlan {}
 
 #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+enum JsonNativeRootInfo {
+    ScalarStruct(JsonNativeScalarStructInfo),
+    ScalarStructList(JsonNativeScalarStructListInfo),
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
 struct JsonNativeScalarStructInfo {
     shape: &'static Shape,
     ordered_names: Box<[&'static str]>,
@@ -346,11 +352,20 @@ struct JsonNativeScalarStructInfo {
 }
 
 #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+struct JsonNativeScalarStructListInfo {
+    list_shape: &'static Shape,
+    list: ListDef,
+    element_layout: Layout,
+    element: JsonNativeScalarStructInfo,
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
 const ORDERED_PROBE_BACKOFF: u8 = u8::MAX;
 
 #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
 struct JsonNativeState {
     parser: *mut (),
+    lowered: *const DenseLowered<ExecOp>,
     trusted_utf8: bool,
     base: PtrUninit,
     error: Option<DeserializeError>,
@@ -359,18 +374,64 @@ struct JsonNativeState {
 #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
 impl JsonNativePlan {
     fn compile(lowered: &DenseLowered<ExecOp>) -> Result<Self, &'static str> {
-        let [
-            JsonOp::ReadScalarStruct {
-                shape,
-                fields,
-                dispatch,
-            },
-        ] = lowered.program.as_slice()
-        else {
-            return Err("JSON native JIT currently supports root scalar structs only");
+        let root = match lowered.program.as_slice() {
+            [
+                JsonOp::ReadScalarStruct {
+                    shape,
+                    fields,
+                    dispatch,
+                },
+            ] => JsonNativeRootInfo::ScalarStruct(Self::compile_scalar_struct_info(
+                shape, fields, dispatch,
+            )?),
+            [
+                JsonOp::ReadList {
+                    list_shape,
+                    list,
+                    element_layout,
+                    loop_id,
+                },
+            ] => JsonNativeRootInfo::ScalarStructList(Self::compile_scalar_struct_list_info(
+                lowered,
+                list_shape,
+                *list,
+                *element_layout,
+                *loop_id,
+            )?),
+            _ => {
+                return Err(
+                    "JSON native JIT currently supports root scalar structs or scalar struct lists only",
+                );
+            }
         };
+        let root = Box::new(root);
 
-        let fields = fields.clone();
+        let calls = vec![weavy::jit::HostCallInfo {
+            info: core::ptr::from_ref(&*root).cast(),
+            call: json_native_read_root,
+        }]
+        .into_boxed_slice();
+
+        let mut layout = weavy::jit::StencilLayout::new();
+        let root_chain = layout.start_chain();
+        let hostcall = layout.emit_hostcall(root_chain, core::ptr::from_ref(&calls[0]));
+        let done = layout.emit_done();
+        layout.patch_hostcall_continuation(hostcall, done);
+        let native = weavy::jit::NativeProgram::new(layout, root_chain);
+
+        Ok(Self {
+            native,
+            calls,
+            root,
+        })
+    }
+
+    fn compile_scalar_struct_info(
+        shape: &'static Shape,
+        fields: &[ScalarFieldPlan],
+        dispatch: &Option<RawFieldDispatch>,
+    ) -> Result<JsonNativeScalarStructInfo, &'static str> {
+        let fields = fields.to_vec().into_boxed_slice();
         if fields
             .iter()
             .any(|field| !matches!(field.missing, MissingField::Required))
@@ -383,50 +444,101 @@ impl JsonNativePlan {
             .map(|field| field.name)
             .collect::<Vec<_>>()
             .into_boxed_slice();
-        let scalar_structs = vec![JsonNativeScalarStructInfo {
+
+        Ok(JsonNativeScalarStructInfo {
             shape,
             ordered_names,
             fields,
             dispatch: dispatch.clone(),
             ordered_probe_skip: AtomicU8::new(0),
-        }]
-        .into_boxed_slice();
-        let calls = vec![weavy::jit::HostCallInfo {
-            info: core::ptr::from_ref(&scalar_structs[0]).cast(),
-            call: json_native_read_scalar_struct,
-        }]
-        .into_boxed_slice();
-
-        let mut layout = weavy::jit::StencilLayout::new();
-        let root = layout.start_chain();
-        let hostcall = layout.emit_hostcall(root, core::ptr::from_ref(&calls[0]));
-        let done = layout.emit_done();
-        layout.patch_hostcall_continuation(hostcall, done);
-        let native = weavy::jit::NativeProgram::new(layout, root);
-
-        Ok(Self {
-            native,
-            calls,
-            scalar_structs,
         })
     }
 
+    fn compile_scalar_struct_list_info(
+        lowered: &DenseLowered<ExecOp>,
+        list_shape: &'static Shape,
+        list: ListDef,
+        element_layout: Layout,
+        loop_id: ExecBlock,
+    ) -> Result<JsonNativeScalarStructListInfo, &'static str> {
+        if list.from_raw_parts().is_none() {
+            return Err(
+                "JSON native JIT currently supports raw-adoptable scalar struct lists only",
+            );
+        }
+
+        let loop_program = lowered
+            .blocks
+            .get(loop_id.index())
+            .ok_or("JSON native JIT root list loop block is missing")?;
+        let [
+            JsonOp::ListNext {
+                element_program,
+                element_scalar,
+                element_option_scalar,
+                ..
+            },
+        ] = loop_program.as_slice()
+        else {
+            return Err("JSON native JIT currently supports scalar struct list loops only");
+        };
+        if element_scalar.is_some() || element_option_scalar.is_some() {
+            return Err("JSON native JIT currently supports scalar struct list elements only");
+        }
+
+        let element = Self::compile_scalar_struct_program(lowered, element_program)?;
+
+        Ok(JsonNativeScalarStructListInfo {
+            list_shape,
+            list,
+            element_layout,
+            element,
+        })
+    }
+
+    fn compile_scalar_struct_program(
+        lowered: &DenseLowered<ExecOp>,
+        program: &[ExecOp],
+    ) -> Result<JsonNativeScalarStructInfo, &'static str> {
+        let program = match program {
+            [JsonOp::CallBlock(block)] => lowered
+                .blocks
+                .get(block.index())
+                .ok_or("JSON native JIT scalar struct element block is missing")?
+                .as_slice(),
+            program => program,
+        };
+
+        let [
+            JsonOp::ReadScalarStruct {
+                shape,
+                fields,
+                dispatch,
+            },
+        ] = program
+        else {
+            return Err("JSON native JIT currently supports scalar struct list elements only");
+        };
+
+        Self::compile_scalar_struct_info(shape, fields, dispatch)
+    }
+
     fn should_enter(&self) -> bool {
-        self.scalar_structs
-            .first()
-            .is_none_or(JsonNativeScalarStructInfo::should_enter_native)
+        self.root.should_enter_native()
     }
 
     fn run<const TRUSTED_UTF8: bool>(
         &self,
         parser: &mut JsonParser<'_, TRUSTED_UTF8>,
         base: PtrUninit,
+        lowered: &DenseLowered<ExecOp>,
     ) -> Result<(), DeserializeError>
     where
         for<'de> JsonParser<'de, TRUSTED_UTF8>: ScalarInputPreselected<'de, TRUSTED_UTF8>,
     {
         let mut state = JsonNativeState {
             parser: (parser as *mut JsonParser<'_, TRUSTED_UTF8>).cast(),
+            lowered: lowered as *const DenseLowered<ExecOp>,
             trusted_utf8: TRUSTED_UTF8,
             base,
             error: None,
@@ -440,7 +552,7 @@ impl JsonNativePlan {
             entry(&mut cx);
         }
 
-        let _ = (&self.calls, &self.scalar_structs);
+        let _ = (&self.calls, &self.root);
         match state.error {
             Some(error) => Err(error),
             None => Ok(()),
@@ -449,13 +561,13 @@ impl JsonNativePlan {
 }
 
 #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
-unsafe extern "C" fn json_native_read_scalar_struct(state: *mut (), info: *const ()) -> bool {
+unsafe extern "C" fn json_native_read_root(state: *mut (), info: *const ()) -> bool {
     let state = unsafe { &mut *state.cast::<JsonNativeState>() };
-    let info = unsafe { &*info.cast::<JsonNativeScalarStructInfo>() };
+    let info = unsafe { &*info.cast::<JsonNativeRootInfo>() };
     let result = if state.trusted_utf8 {
-        unsafe { state.read_scalar_struct::<true>(info) }
+        unsafe { state.read_root::<true>(info) }
     } else {
-        unsafe { state.read_scalar_struct::<false>(info) }
+        unsafe { state.read_root::<false>(info) }
     };
 
     match result {
@@ -469,6 +581,23 @@ unsafe extern "C" fn json_native_read_scalar_struct(state: *mut (), info: *const
 
 #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
 impl JsonNativeState {
+    unsafe fn read_root<const TRUSTED_UTF8: bool>(
+        &mut self,
+        info: &JsonNativeRootInfo,
+    ) -> Result<(), DeserializeError>
+    where
+        for<'de> JsonParser<'de, TRUSTED_UTF8>: ScalarInputPreselected<'de, TRUSTED_UTF8>,
+    {
+        match info {
+            JsonNativeRootInfo::ScalarStruct(info) => unsafe {
+                self.read_scalar_struct::<TRUSTED_UTF8>(info)
+            },
+            JsonNativeRootInfo::ScalarStructList(info) => unsafe {
+                self.read_scalar_struct_list::<TRUSTED_UTF8>(info)
+            },
+        }
+    }
+
     unsafe fn read_scalar_struct<const TRUSTED_UTF8: bool>(
         &mut self,
         info: &JsonNativeScalarStructInfo,
@@ -494,6 +623,79 @@ impl JsonNativeState {
         }
 
         self.read_scalar_struct_interpreted(parser, info)
+    }
+
+    unsafe fn read_scalar_struct_list<const TRUSTED_UTF8: bool>(
+        &mut self,
+        info: &JsonNativeScalarStructListInfo,
+    ) -> Result<(), DeserializeError>
+    where
+        for<'de> JsonParser<'de, TRUSTED_UTF8>: ScalarInputPreselected<'de, TRUSTED_UTF8>,
+    {
+        let parser = unsafe { &mut *self.parser.cast::<JsonParser<'_, TRUSTED_UTF8>>() };
+        let save = parser.save_native_probe();
+        parser.consume_array_start_fast()?;
+
+        let mut builder = RawArrayBuilder::new(
+            info.element_layout,
+            info.list.t() as *const Shape as *const (),
+            drop_shape_value,
+        );
+        loop {
+            if parser.consume_sequence_end_if_next()? {
+                self.adopt_native_list(info, &mut builder)?;
+                info.record_ordered_probe(true);
+                return Ok(());
+            }
+
+            let slot = builder.next_uninit_slot().map_err(raw_alloc_error)?;
+            let old_base = self.base;
+            self.base = PtrUninit::new(slot);
+            let matched = self
+                .try_read_ordered_i32_scalar_struct(parser, &info.element)
+                .and_then(|matched| {
+                    if matched {
+                        Ok(true)
+                    } else {
+                        self.try_read_ordered_scalar_struct(parser, &info.element)
+                    }
+                });
+            self.base = old_base;
+            let matched = matched?;
+
+            if matched {
+                unsafe {
+                    builder.mark_initialized();
+                }
+                continue;
+            }
+
+            info.record_ordered_probe(false);
+            drop(builder);
+            parser.restore_native_probe(save);
+            return self.read_interpreted(parser);
+        }
+    }
+
+    fn adopt_native_list(
+        &mut self,
+        info: &JsonNativeScalarStructListInfo,
+        builder: &mut RawArrayBuilder,
+    ) -> Result<(), DeserializeError> {
+        let from_raw_parts = info
+            .list
+            .from_raw_parts()
+            .ok_or_else(|| unsupported(info.list_shape, "list from_raw_parts"))?;
+        unsafe {
+            from_raw_parts(
+                self.base,
+                PtrMut::new(builder.ptr()),
+                builder.len(),
+                builder.cap(),
+            );
+        }
+        builder.adopt();
+        Ok(())
     }
 
     fn try_read_ordered_i32_scalar_struct<const TRUSTED_UTF8: bool>(
@@ -575,6 +777,32 @@ impl JsonNativeState {
         interp.finish_success();
         Ok(())
     }
+
+    fn read_interpreted<const TRUSTED_UTF8: bool>(
+        &mut self,
+        parser: &mut JsonParser<'_, TRUSTED_UTF8>,
+    ) -> Result<(), DeserializeError>
+    where
+        for<'de> JsonParser<'de, TRUSTED_UTF8>: ScalarInputPreselected<'de, TRUSTED_UTF8>,
+    {
+        let lowered = unsafe { &*self.lowered };
+        let mut interp = JsonInterp::new(parser, self.base);
+        if let Err(err) = weavy::run_dense(lowered, &mut interp) {
+            return Err(run_error(err));
+        }
+        interp.finish_success();
+        Ok(())
+    }
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+impl JsonNativeRootInfo {
+    fn should_enter_native(&self) -> bool {
+        match self {
+            Self::ScalarStruct(info) => info.should_enter_native(),
+            Self::ScalarStructList(info) => info.should_enter_native(),
+        }
+    }
 }
 
 #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
@@ -595,6 +823,17 @@ impl JsonNativeScalarStructInfo {
             if matched { 0 } else { ORDERED_PROBE_BACKOFF },
             Ordering::Relaxed,
         );
+    }
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+impl JsonNativeScalarStructListInfo {
+    fn should_enter_native(&self) -> bool {
+        self.element.should_enter_native()
+    }
+
+    fn record_ordered_probe(&self, matched: bool) {
+        self.element.record_ordered_probe(matched);
     }
 }
 
