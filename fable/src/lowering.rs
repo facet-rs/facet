@@ -38,6 +38,102 @@ pub type FableSignedUnary = fn(i128) -> Result<i128, FableError>;
 pub type FableUnsignedUnary = fn(u128) -> Result<u128, FableError>;
 /// Host function for `float -> float` intrinsics.
 pub type FableFloatUnary = fn(f64) -> Result<f64, FableError>;
+/// Host function for `field -> string` intrinsics.
+pub type FableFieldStringUnary = for<'field> fn(FableField<'field>) -> Result<String, FableError>;
+/// Host function for `field -> bool` intrinsics.
+pub type FableFieldBoolUnary = for<'field> fn(FableField<'field>) -> Result<bool, FableError>;
+
+/// Read-only handle passed to field-aware Fable host intrinsics.
+pub struct FableField<'field> {
+    path: &'field str,
+    shape: &'static Shape,
+    scalar: ScalarType,
+    ptr: PtrConst,
+}
+
+impl<'field> fmt::Debug for FableField<'field> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FableField")
+            .field("path", &self.path)
+            .field("shape", &self.shape)
+            .field("scalar", &self.scalar)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<'field> FableField<'field> {
+    /// Dot-separated field path, starting at `root`.
+    #[must_use]
+    pub fn path(&self) -> &'field str {
+        self.path
+    }
+
+    /// Reflected shape of the referenced field.
+    #[must_use]
+    pub fn shape(&self) -> &'static Shape {
+        self.shape
+    }
+
+    /// Scalar kind of the referenced field.
+    #[must_use]
+    pub fn scalar(&self) -> ScalarType {
+        self.scalar
+    }
+
+    /// Read the field as a bool.
+    pub fn read_bool(&self) -> Result<bool, FableError> {
+        match self.scalar {
+            ScalarType::Bool => Ok(*unsafe { self.ptr.get::<bool>() }),
+            _ => Err(FableError::TypeMismatch {
+                expected: "bool".into(),
+                actual: scalar_kind_name(self.scalar),
+            }),
+        }
+    }
+
+    /// Read the field as a char.
+    pub fn read_char(&self) -> Result<char, FableError> {
+        match self.scalar {
+            ScalarType::Char => Ok(*unsafe { self.ptr.get::<char>() }),
+            _ => Err(FableError::TypeMismatch {
+                expected: "char".into(),
+                actual: scalar_kind_name(self.scalar),
+            }),
+        }
+    }
+
+    /// Read the field as an owned string.
+    pub fn read_string(&self) -> Result<String, FableError> {
+        match self.scalar {
+            ScalarType::Str if self.shape.is_type::<&'static str>() => {
+                Ok((*unsafe { self.ptr.get::<&'static str>() }).to_owned())
+            }
+            ScalarType::String => Ok(unsafe { self.ptr.get::<String>() }.clone()),
+            ScalarType::CowStr => Ok(unsafe { self.ptr.get::<Cow<'static, str>>() }
+                .clone()
+                .into_owned()),
+            _ => Err(FableError::TypeMismatch {
+                expected: "string".into(),
+                actual: scalar_kind_name(self.scalar),
+            }),
+        }
+    }
+
+    /// Read the field as a signed integer.
+    pub fn read_i128(&self) -> Result<i128, FableError> {
+        read_signed_scalar(self.scalar, self.ptr)
+    }
+
+    /// Read the field as an unsigned integer.
+    pub fn read_u128(&self) -> Result<u128, FableError> {
+        read_unsigned_scalar(self.scalar, self.ptr)
+    }
+
+    /// Read the field as an f64.
+    pub fn read_f64(&self) -> Result<f64, FableError> {
+        read_float_scalar(self.scalar, self.ptr)
+    }
+}
 
 impl<T> FablePlan<T>
 where
@@ -349,6 +445,10 @@ enum BoolExpr {
     Literal(bool),
     Read(FieldPath),
     Local(LocalRef),
+    HostFieldPredicate {
+        function: FableFieldBoolUnary,
+        field: FieldPath,
+    },
     HostStringPredicate {
         function: FableStringBinaryPredicate,
         lhs: Box<StringExpr>,
@@ -397,6 +497,10 @@ enum StringExpr {
     Literal(String),
     Read(FieldPath),
     Local(LocalRef),
+    HostFieldString {
+        function: FableFieldStringUnary,
+        field: FieldPath,
+    },
     HostUnary {
         function: FableStringUnary,
         value: Box<StringExpr>,
@@ -475,6 +579,7 @@ enum FloatExpr {
 
 #[derive(Debug)]
 struct FieldPath {
+    source: Box<str>,
     shape: &'static Shape,
     scalar: ScalarType,
     steps: Box<[FieldStep]>,
@@ -788,17 +893,26 @@ impl<'intrinsics> Lowerer<'intrinsics> {
                     feature: format!("intrinsic {name}"),
                 })?;
 
-        let mut args = Vec::new();
+        let mut raw_args = Vec::new();
         if let Some(arg_list) = call.args() {
             for arg in arg_list.args() {
                 let expr = arg.expr().ok_or(FableError::MalformedSyntax {
                     reason: "argument without expression",
                 })?;
-                args.push(self.lower_expr(&expr)?);
+                raw_args.push(expr);
             }
         }
-        signature.validate_arity(args.len())?;
+        signature.validate_arity(raw_args.len())?;
 
+        let mut args = Vec::with_capacity(raw_args.len());
+        for expr in raw_args {
+            args.push(match signature.arg_kind {
+                IntrinsicArgKind::Expr => IntrinsicArgPlan::Expr(self.lower_expr(&expr)?),
+                IntrinsicArgKind::Field => {
+                    IntrinsicArgPlan::Field(self.lower_readable_path(&expr)?)
+                }
+            });
+        }
         lower_intrinsic(signature, args)
     }
 
@@ -832,6 +946,7 @@ impl<'intrinsics> Lowerer<'intrinsics> {
 
     fn resolve_path(&self, expr: &Expr) -> Result<FieldPath, FableError> {
         let names = collect_path(expr)?;
+        let source = names.join(".");
         let Some((first, fields)) = names.split_first() else {
             return Err(FableError::MalformedSyntax {
                 reason: "empty field path",
@@ -858,6 +973,7 @@ impl<'intrinsics> Lowerer<'intrinsics> {
             feature: format!("non-scalar path ending at {shape}"),
         })?;
         Ok(FieldPath {
+            source: source.into_boxed_str(),
             shape,
             scalar,
             steps: steps.into_boxed_slice(),
@@ -917,6 +1033,8 @@ enum Intrinsic {
     StartsWith,
     EndsWith,
     Trim,
+    FieldString(FableFieldStringUnary),
+    FieldBool(FableFieldBoolUnary),
     StringUnary(FableStringUnary),
     StringBinaryPredicate(FableStringBinaryPredicate),
     SignedUnary(FableSignedUnary),
@@ -929,6 +1047,7 @@ struct IntrinsicSignature {
     name: &'static str,
     intrinsic: Intrinsic,
     arity: usize,
+    arg_kind: IntrinsicArgKind,
 }
 
 impl IntrinsicSignature {
@@ -946,6 +1065,17 @@ enum NumericLane {
     Signed,
     Unsigned,
     Float,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum IntrinsicArgKind {
+    Expr,
+    Field,
+}
+
+enum IntrinsicArgPlan {
+    Expr(ExprPlan),
+    Field(FieldPath),
 }
 
 impl Default for FableIntrinsics {
@@ -984,7 +1114,12 @@ impl FableIntrinsics {
         name: &'static str,
         function: FableStringUnary,
     ) -> Result<&mut Self, FableError> {
-        self.insert(name, Intrinsic::StringUnary(function), 1)
+        self.insert(
+            name,
+            Intrinsic::StringUnary(function),
+            1,
+            IntrinsicArgKind::Expr,
+        )
     }
 
     /// Register a `(string, string) -> bool` host intrinsic.
@@ -993,7 +1128,12 @@ impl FableIntrinsics {
         name: &'static str,
         function: FableStringBinaryPredicate,
     ) -> Result<&mut Self, FableError> {
-        self.insert(name, Intrinsic::StringBinaryPredicate(function), 2)
+        self.insert(
+            name,
+            Intrinsic::StringBinaryPredicate(function),
+            2,
+            IntrinsicArgKind::Expr,
+        )
     }
 
     /// Register a `signed number -> signed number` host intrinsic.
@@ -1002,7 +1142,12 @@ impl FableIntrinsics {
         name: &'static str,
         function: FableSignedUnary,
     ) -> Result<&mut Self, FableError> {
-        self.insert(name, Intrinsic::SignedUnary(function), 1)
+        self.insert(
+            name,
+            Intrinsic::SignedUnary(function),
+            1,
+            IntrinsicArgKind::Expr,
+        )
     }
 
     /// Register an `unsigned number -> unsigned number` host intrinsic.
@@ -1011,7 +1156,12 @@ impl FableIntrinsics {
         name: &'static str,
         function: FableUnsignedUnary,
     ) -> Result<&mut Self, FableError> {
-        self.insert(name, Intrinsic::UnsignedUnary(function), 1)
+        self.insert(
+            name,
+            Intrinsic::UnsignedUnary(function),
+            1,
+            IntrinsicArgKind::Expr,
+        )
     }
 
     /// Register a `float -> float` host intrinsic.
@@ -1020,11 +1170,44 @@ impl FableIntrinsics {
         name: &'static str,
         function: FableFloatUnary,
     ) -> Result<&mut Self, FableError> {
-        self.insert(name, Intrinsic::FloatUnary(function), 1)
+        self.insert(
+            name,
+            Intrinsic::FloatUnary(function),
+            1,
+            IntrinsicArgKind::Expr,
+        )
+    }
+
+    /// Register a `field -> string` host intrinsic.
+    pub fn add_field_string_unary(
+        &mut self,
+        name: &'static str,
+        function: FableFieldStringUnary,
+    ) -> Result<&mut Self, FableError> {
+        self.insert(
+            name,
+            Intrinsic::FieldString(function),
+            1,
+            IntrinsicArgKind::Field,
+        )
+    }
+
+    /// Register a `field -> bool` host intrinsic.
+    pub fn add_field_bool_unary(
+        &mut self,
+        name: &'static str,
+        function: FableFieldBoolUnary,
+    ) -> Result<&mut Self, FableError> {
+        self.insert(
+            name,
+            Intrinsic::FieldBool(function),
+            1,
+            IntrinsicArgKind::Field,
+        )
     }
 
     fn add_builtin(&mut self, name: &'static str, intrinsic: Intrinsic, arity: usize) {
-        self.insert(name, intrinsic, arity)
+        self.insert(name, intrinsic, arity, IntrinsicArgKind::Expr)
             .expect("builtin Fable intrinsic metadata is valid");
     }
 
@@ -1033,6 +1216,7 @@ impl FableIntrinsics {
         name: &'static str,
         intrinsic: Intrinsic,
         arity: usize,
+        arg_kind: IntrinsicArgKind,
     ) -> Result<&mut Self, FableError> {
         validate_intrinsic_name(name)?;
         if self
@@ -1046,6 +1230,7 @@ impl FableIntrinsics {
             name,
             intrinsic,
             arity,
+            arg_kind,
         });
         Ok(self)
     }
@@ -1114,21 +1299,21 @@ fn sub_numbers(lhs: NumberExpr, rhs: NumberExpr) -> NumberExpr {
 
 fn lower_intrinsic(
     signature: IntrinsicSignature,
-    args: Vec<ExprPlan>,
+    args: Vec<IntrinsicArgPlan>,
 ) -> Result<ExprPlan, FableError> {
     let intrinsic = signature.intrinsic;
     match intrinsic {
         Intrinsic::Min | Intrinsic::Max | Intrinsic::Clamp => {
-            lower_numeric_intrinsic(signature.name, intrinsic, args)
+            lower_numeric_intrinsic(signature.name, intrinsic, expr_args(signature.name, args)?)
         }
         Intrinsic::Len => {
-            let string = only_string_arg("len", args)?;
+            let string = only_string_arg("len", expr_args(signature.name, args)?)?;
             Ok(ExprPlan::Number(NumberExpr::Unsigned(UIntExpr::StringLen(
                 Box::new(string),
             ))))
         }
         Intrinsic::Contains | Intrinsic::StartsWith | Intrinsic::EndsWith => {
-            let (lhs, rhs) = two_string_args(signature.name, args)?;
+            let (lhs, rhs) = two_string_args(signature.name, expr_args(signature.name, args)?)?;
             let expr = match intrinsic {
                 Intrinsic::Contains => BoolExpr::StringContains {
                     haystack: Box::new(lhs),
@@ -1147,18 +1332,32 @@ fn lower_intrinsic(
             Ok(ExprPlan::Bool(expr))
         }
         Intrinsic::Trim => {
-            let string = only_string_arg("trim", args)?;
+            let string = only_string_arg("trim", expr_args(signature.name, args)?)?;
             Ok(ExprPlan::String(StringExpr::Trim(Box::new(string))))
         }
+        Intrinsic::FieldString(function) => {
+            let field = only_field_arg(signature.name, args)?;
+            Ok(ExprPlan::String(StringExpr::HostFieldString {
+                function,
+                field,
+            }))
+        }
+        Intrinsic::FieldBool(function) => {
+            let field = only_field_arg(signature.name, args)?;
+            Ok(ExprPlan::Bool(BoolExpr::HostFieldPredicate {
+                function,
+                field,
+            }))
+        }
         Intrinsic::StringUnary(function) => {
-            let value = only_string_arg(signature.name, args)?;
+            let value = only_string_arg(signature.name, expr_args(signature.name, args)?)?;
             Ok(ExprPlan::String(StringExpr::HostUnary {
                 function,
                 value: Box::new(value),
             }))
         }
         Intrinsic::StringBinaryPredicate(function) => {
-            let (lhs, rhs) = two_string_args(signature.name, args)?;
+            let (lhs, rhs) = two_string_args(signature.name, expr_args(signature.name, args)?)?;
             Ok(ExprPlan::Bool(BoolExpr::HostStringPredicate {
                 function,
                 lhs: Box::new(lhs),
@@ -1166,14 +1365,14 @@ fn lower_intrinsic(
             }))
         }
         Intrinsic::SignedUnary(function) => {
-            let value = only_number_arg(signature.name, args)?;
+            let value = only_number_arg(signature.name, expr_args(signature.name, args)?)?;
             Ok(ExprPlan::Number(NumberExpr::Signed(IntExpr::HostUnary {
                 function,
                 value: Box::new(value),
             })))
         }
         Intrinsic::UnsignedUnary(function) => {
-            let value = only_number_arg(signature.name, args)?;
+            let value = only_number_arg(signature.name, expr_args(signature.name, args)?)?;
             Ok(ExprPlan::Number(NumberExpr::Unsigned(
                 UIntExpr::HostUnary {
                     function,
@@ -1182,13 +1381,27 @@ fn lower_intrinsic(
             )))
         }
         Intrinsic::FloatUnary(function) => {
-            let value = only_number_arg(signature.name, args)?;
+            let value = only_number_arg(signature.name, expr_args(signature.name, args)?)?;
             Ok(ExprPlan::Number(NumberExpr::Float(FloatExpr::HostUnary {
                 function,
                 value: Box::new(value),
             })))
         }
     }
+}
+
+fn expr_args(
+    function: &'static str,
+    args: Vec<IntrinsicArgPlan>,
+) -> Result<Vec<ExprPlan>, FableError> {
+    args.into_iter()
+        .map(|arg| match arg {
+            IntrinsicArgPlan::Expr(expr) => Ok(expr),
+            IntrinsicArgPlan::Field(_) => {
+                Err(invalid_call(function, "expected expression argument"))
+            }
+        })
+        .collect()
 }
 
 fn lower_numeric_intrinsic(
@@ -1262,6 +1475,19 @@ fn only_number_arg(function: &'static str, args: Vec<ExprPlan>) -> Result<Number
         .try_into()
         .map_err(|_| invalid_call(function, arity_reason(1)))?;
     expect_number_plan(arg)
+}
+
+fn only_field_arg(
+    function: &'static str,
+    args: Vec<IntrinsicArgPlan>,
+) -> Result<FieldPath, FableError> {
+    let [arg]: [IntrinsicArgPlan; 1] = args
+        .try_into()
+        .map_err(|_| invalid_call(function, arity_reason(1)))?;
+    match arg {
+        IntrinsicArgPlan::Field(field) => Ok(field),
+        IntrinsicArgPlan::Expr(_) => Err(invalid_call(function, "expected field argument")),
+    }
 }
 
 fn only_string_arg(function: &'static str, args: Vec<ExprPlan>) -> Result<StringExpr, FableError> {
@@ -1574,6 +1800,7 @@ impl FableInterp {
                 Ok(*unsafe { ptr.get::<bool>() })
             }
             BoolExpr::Local(local) => self.local_bool(*local),
+            BoolExpr::HostFieldPredicate { function, field } => function(self.field_ref(field)),
             BoolExpr::HostStringPredicate { function, lhs, rhs } => {
                 let lhs = self.eval_string(lhs)?;
                 let rhs = self.eval_string(rhs)?;
@@ -1639,6 +1866,7 @@ impl FableInterp {
                 unsafe { self.read_string_path(path, ptr) }
             }
             StringExpr::Local(local) => self.local_string(*local),
+            StringExpr::HostFieldString { function, field } => function(self.field_ref(field)),
             StringExpr::HostUnary { function, value } => {
                 let value = self.eval_string(value)?;
                 function(&value)
@@ -1649,6 +1877,15 @@ impl FableInterp {
                 lhs.push_str(&self.eval_string(rhs)?);
                 Ok(lhs)
             }
+        }
+    }
+
+    fn field_ref<'field>(&self, field: &'field FieldPath) -> FableField<'field> {
+        FableField {
+            path: &field.source,
+            shape: field.shape,
+            scalar: field.scalar,
+            ptr: unsafe { field.ptr_const(self.root.as_const()) },
         }
     }
 
@@ -2138,6 +2375,76 @@ fn local_kind_mismatch(expected: &'static str, actual: LocalRef) -> FableError {
 fn uninitialized_local() -> FableError {
     FableError::MalformedProgram {
         reason: "local read before initialization",
+    }
+}
+
+fn scalar_kind_name(scalar: ScalarType) -> &'static str {
+    match scalar {
+        ScalarType::Unit => "unit",
+        ScalarType::Bool => "bool",
+        ScalarType::Char => "char",
+        ScalarType::Str | ScalarType::String | ScalarType::CowStr => "string",
+        ScalarType::F32 | ScalarType::F64 => "float",
+        ScalarType::U8
+        | ScalarType::U16
+        | ScalarType::U32
+        | ScalarType::U64
+        | ScalarType::U128
+        | ScalarType::USize => "unsigned number",
+        ScalarType::I8
+        | ScalarType::I16
+        | ScalarType::I32
+        | ScalarType::I64
+        | ScalarType::I128
+        | ScalarType::ISize => "signed number",
+        _ => "unsupported scalar",
+    }
+}
+
+fn read_signed_scalar(scalar: ScalarType, ptr: PtrConst) -> Result<i128, FableError> {
+    let value = match scalar {
+        ScalarType::I8 => (*unsafe { ptr.get::<i8>() }).into(),
+        ScalarType::I16 => (*unsafe { ptr.get::<i16>() }).into(),
+        ScalarType::I32 => (*unsafe { ptr.get::<i32>() }).into(),
+        ScalarType::I64 => (*unsafe { ptr.get::<i64>() }).into(),
+        ScalarType::I128 => *unsafe { ptr.get::<i128>() },
+        ScalarType::ISize => (*unsafe { ptr.get::<isize>() }) as i128,
+        _ => {
+            return Err(FableError::TypeMismatch {
+                expected: "signed number".into(),
+                actual: scalar_kind_name(scalar),
+            });
+        }
+    };
+    Ok(value)
+}
+
+fn read_unsigned_scalar(scalar: ScalarType, ptr: PtrConst) -> Result<u128, FableError> {
+    let value = match scalar {
+        ScalarType::U8 => (*unsafe { ptr.get::<u8>() }).into(),
+        ScalarType::U16 => (*unsafe { ptr.get::<u16>() }).into(),
+        ScalarType::U32 => (*unsafe { ptr.get::<u32>() }).into(),
+        ScalarType::U64 => (*unsafe { ptr.get::<u64>() }).into(),
+        ScalarType::U128 => *unsafe { ptr.get::<u128>() },
+        ScalarType::USize => (*unsafe { ptr.get::<usize>() }) as u128,
+        _ => {
+            return Err(FableError::TypeMismatch {
+                expected: "unsigned number".into(),
+                actual: scalar_kind_name(scalar),
+            });
+        }
+    };
+    Ok(value)
+}
+
+fn read_float_scalar(scalar: ScalarType, ptr: PtrConst) -> Result<f64, FableError> {
+    match scalar {
+        ScalarType::F32 => Ok((*unsafe { ptr.get::<f32>() }).into()),
+        ScalarType::F64 => Ok(*unsafe { ptr.get::<f64>() }),
+        _ => Err(FableError::TypeMismatch {
+            expected: "float".into(),
+            actual: scalar_kind_name(scalar),
+        }),
     }
 }
 
@@ -2722,6 +3029,63 @@ mod tests {
     }
 
     #[test]
+    fn applies_field_host_intrinsics() {
+        let mut value = state();
+        let mut intrinsics = FableIntrinsics::standard();
+        intrinsics
+            .add_field_string_unary("describe_field", describe_field)
+            .unwrap();
+        intrinsics
+            .add_field_bool_unary("field_is_positive", field_is_positive)
+            .unwrap();
+
+        FablePlan::<State>::compile_with_intrinsics(
+            r#"
+                root.user.name = describe_field(root.user.age);
+                if field_is_positive(root.user.age) {
+                    root.user.active = true;
+                }
+            "#,
+            &intrinsics,
+        )
+        .unwrap()
+        .apply(&mut value)
+        .unwrap();
+
+        assert_eq!(value.user.name, "root.user.age=17");
+        assert!(value.user.active);
+    }
+
+    #[test]
+    fn reports_field_host_intrinsic_type_mismatches() {
+        let mut value = state();
+        let mut intrinsics = FableIntrinsics::standard();
+        intrinsics
+            .add_field_bool_unary("field_is_positive", field_is_positive)
+            .unwrap();
+
+        let err = FablePlan::<State>::compile_with_intrinsics(
+            r#"
+                if field_is_positive(root.user.name) {
+                    root.user.active = true;
+                }
+            "#,
+            &intrinsics,
+        )
+        .unwrap()
+        .apply(&mut value)
+        .unwrap_err();
+
+        assert!(matches!(
+            err,
+            FableError::TypeMismatch {
+                expected,
+                actual: "string",
+            } if expected == "signed number"
+        ));
+    }
+
+    #[test]
     fn apply_with_intrinsics_uses_custom_registry() {
         let mut value = state();
         let mut intrinsics = FableIntrinsics::empty();
@@ -2992,5 +3356,16 @@ mod tests {
 
     fn half(value: f64) -> Result<f64, FableError> {
         Ok(value / 2.0)
+    }
+
+    fn describe_field(field: FableField<'_>) -> Result<String, FableError> {
+        assert_eq!(field.path(), "root.user.age");
+        assert!(field.shape().is_type::<i32>());
+        assert_eq!(field.scalar(), ScalarType::I32);
+        Ok(format!("{}={}", field.path(), field.read_i128()?))
+    }
+
+    fn field_is_positive(field: FableField<'_>) -> Result<bool, FableError> {
+        Ok(field.read_i128()? > 0)
     }
 }
