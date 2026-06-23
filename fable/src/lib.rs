@@ -13,6 +13,9 @@ pub use parser::{Parse, ParseError, parse};
 
 pub mod ast;
 
+mod lowering;
+pub use lowering::{FableError, FablePlan, apply};
+
 /// A node in the resolved, text-bearing syntax tree.
 pub type ResolvedNode = cstree::syntax::ResolvedNode<SyntaxKind>;
 /// A token in the resolved, text-bearing syntax tree.

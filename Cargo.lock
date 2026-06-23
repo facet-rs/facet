@@ -1997,6 +1997,9 @@ name = "fable"
 version = "0.1.0"
 dependencies = [
  "cstree",
+ "facet",
+ "facet-core",
+ "weavy",
 ]
 
 [[package]]
