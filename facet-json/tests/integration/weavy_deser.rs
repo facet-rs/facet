@@ -257,12 +257,128 @@ fn weavy_jit_plan_reports_fallback_for_unsupported_root_shape() {
 }
 
 #[test]
+fn weavy_jit_plan_reports_fallback_for_defaulted_scalar_struct() {
+    let plan = facet_json::JsonWeavyPlan::<WideDefaultStruct>::build_jit().unwrap();
+
+    assert_eq!(
+        plan.active_backend(),
+        facet_json::JsonWeavyActiveBackend::Interpreter
+    );
+
+    let report = plan.jit_fallback_report();
+    assert!(!report.is_empty(), "{report:?}");
+    assert_eq!(report.records[0].path, "$");
+    let expected_reason = if !cfg!(feature = "jit") {
+        "facet-json was built without its jit feature"
+    } else if !cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        "native JIT is not enabled for this build target"
+    } else {
+        "JSON native JIT currently supports required scalar struct fields only"
+    };
+    assert_eq!(report.records[0].reason, expected_reason);
+}
+
+#[test]
 fn weavy_jit_helpers_deserialize_through_jit_requested_plan_slot() {
     let from_str: Point = facet_json::from_str_weavy_jit(r#"{"x":1,"y":2}"#).unwrap();
     let from_slice: Point = facet_json::from_slice_weavy_jit(br#"{"x":3,"y":4}"#).unwrap();
 
     assert_eq!(from_str, Point { x: 1, y: 2 });
     assert_eq!(from_slice, Point { x: 3, y: 4 });
+}
+
+#[test]
+fn weavy_jit_scalar_struct_handles_ordered_wide_scalars() {
+    let plan = facet_json::JsonWeavyPlan::<WideScalarStruct>::build_jit().unwrap();
+    let got = plan
+        .from_str(
+            r#"{"a":1,"b":2,"c":3,"d":4,"e":-5,"f":-6,"g":-7,"h":-8,"i":9,"j":-10,"k":true,"l":11.5}"#,
+        )
+        .unwrap();
+
+    assert_eq!(
+        got,
+        WideScalarStruct {
+            a: 1,
+            b: 2,
+            c: 3,
+            d: 4,
+            e: -5,
+            f: -6,
+            g: -7,
+            h: -8,
+            i: 9,
+            j: -10,
+            k: true,
+            l: 11.5,
+        }
+    );
+}
+
+#[test]
+fn weavy_jit_scalar_struct_falls_back_for_non_ordered_objects() {
+    let plan = facet_json::JsonWeavyPlan::<WideScalarStruct>::build_jit().unwrap();
+    let out_of_order = plan
+        .from_str(
+            r#"{"l":11.5,"k":true,"j":-10,"i":9,"h":-8,"g":-7,"f":-6,"e":-5,"d":4,"c":3,"b":2,"a":1}"#,
+        )
+        .unwrap();
+    let skipped_unknown = plan
+        .from_str(
+            r#"{"a":1,"unknown_scalar":12345,"b":2,"unknown_array":[1,2,3],"c":3,"unknown_object":{"nested":true},"d":4,"e":-5,"f":-6,"g":-7,"h":-8,"i":9,"j":-10,"k":true,"l":11.5}"#,
+        )
+        .unwrap();
+
+    let expected = WideScalarStruct {
+        a: 1,
+        b: 2,
+        c: 3,
+        d: 4,
+        e: -5,
+        f: -6,
+        g: -7,
+        h: -8,
+        i: 9,
+        j: -10,
+        k: true,
+        l: 11.5,
+    };
+    assert_eq!(out_of_order, expected);
+    assert_eq!(skipped_unknown, expected);
+}
+
+#[test]
+fn weavy_jit_scalar_struct_falls_back_for_missing_defaults_and_duplicates() {
+    let defaults = facet_json::JsonWeavyPlan::<WideDefaultStruct>::build_jit()
+        .unwrap()
+        .from_str(r#"{"a":1,"d":4,"l":11.5}"#)
+        .unwrap();
+    assert_eq!(
+        defaults,
+        WideDefaultStruct {
+            a: 1,
+            b: 0,
+            c: 0,
+            d: 4,
+            e: 0,
+            f: 0,
+            g: 0,
+            h: 0,
+            i: 0,
+            j: 0,
+            k: false,
+            l: 11.5,
+        }
+    );
+
+    let err = facet_json::JsonWeavyPlan::<Point>::build_jit()
+        .unwrap()
+        .from_str(r#"{"x":1,"y":2,"x":3}"#)
+        .unwrap_err();
+    assert!(matches!(
+        err.kind,
+        DeserializeErrorKind::DuplicateField { ref field, .. } if field == "x"
+    ));
 }
 
 #[test]
