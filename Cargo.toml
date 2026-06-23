@@ -69,6 +69,7 @@ members = [
   "facet-path",
   "facet-validate",
   "facet-hash",
+  "fable",
   "facet-cargo-toml",
   "rusqlite-facet",
   "rediff",
@@ -236,6 +237,7 @@ default-members = [
   "facet-path",
   "facet-validate",
   "facet-hash",
+  "fable",
   "facet-cargo-toml",
   "rusqlite-facet",
   "rediff",
@@ -312,6 +314,7 @@ dibs-query-schema = { path = "dibs-query-schema", version = "0.2.0-rc.1" }
 dibs-sql = { path = "dibs-sql", version = "0.2.0-rc.1" }
 dockside = { path = "dockside" }
 copypatch = { path = "copypatch", version = "0.2.0-rc.1" }
+cstree = { version = "0.14.0", features = ["derive"] }
 weavy = { path = "weavy", version = "0.1.0" }
 phon = { path = "phon/rust/phon", version = "0.2.0-rc.1" }
 phon-engine = { path = "phon/rust/phon-engine", version = "0.2.0-rc.1" }
@@ -504,6 +507,7 @@ facet-dom = { path = "facet-dom" }
 facet-format = { path = "facet-format" }
 facet-format-suite = { path = "facet-format-suite" }
 facet-hash = { path = "facet-hash" }
+fable = { path = "fable" }
 facet-json = { path = "facet-json" }
 facet-json-classics = { path = "facet-json-classics" }
 facet-json-schema = { path = "facet-json-schema" }

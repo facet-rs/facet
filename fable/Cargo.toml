@@ -1,0 +1,17 @@
+[package]
+name = "fable"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Tiny typed language over Facet-reflected Rust values, lowered toward Weavy IR."
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+cstree.workspace = true
