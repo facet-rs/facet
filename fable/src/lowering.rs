@@ -26,6 +26,16 @@ pub struct FablePlan<T> {
     _marker: PhantomData<fn() -> T>,
 }
 
+/// A reusable lowered Fable transform from `Input` to `Output`.
+///
+/// Transform plans expose a read-only `in` root and a read-write `out` root,
+/// which is the common shape for serialization/deserialization adapters and
+/// data-pipeline transforms.
+pub struct FableTransformPlan<Input, Output> {
+    plan: FableRootPlan,
+    _marker: PhantomData<fn(&Input) -> Output>,
+}
+
 /// A reusable lowered Fable program over explicitly named roots.
 ///
 /// This is the lower-level form used by transform/debug-shell style callers
@@ -164,6 +174,9 @@ struct RuntimeRoot {
     name: &'static str,
     ptr: RuntimeRootPtr,
 }
+
+const TRANSFORM_INPUT_ROOT: &str = "in";
+const TRANSFORM_OUTPUT_ROOT: &str = "out";
 
 /// Host-call registry used while lowering Fable calls.
 #[derive(Clone, Debug)]
@@ -466,6 +479,56 @@ where
     }
 }
 
+impl<Input, Output> FableTransformPlan<Input, Output>
+where
+    Input: Facet<'static>,
+    Output: Facet<'static>,
+{
+    /// Parse and lower Fable source as an `in` to `out` transform.
+    pub fn compile(src: &str) -> Result<Self, FableError> {
+        Self::compile_with_intrinsics(src, &FableIntrinsics::standard())
+    }
+
+    /// Parse and lower Fable source as an `in` to `out` transform with host intrinsics.
+    pub fn compile_with_intrinsics(
+        src: &str,
+        intrinsics: &FableIntrinsics,
+    ) -> Result<Self, FableError> {
+        let roots = [
+            FableRootSpec::read_only::<Input>(TRANSFORM_INPUT_ROOT),
+            FableRootSpec::read_write::<Output>(TRANSFORM_OUTPUT_ROOT),
+        ];
+        let plan = FableRootPlan::compile_with_intrinsics(src, &roots, intrinsics)?;
+
+        Ok(Self {
+            plan,
+            _marker: PhantomData,
+        })
+    }
+
+    /// Run this transform from `input` into `output`.
+    pub fn apply(&self, input: &Input, output: &mut Output) -> Result<(), FableError> {
+        let mut roots = [
+            FableRootValue::read_only(TRANSFORM_INPUT_ROOT, input),
+            FableRootValue::read_write(TRANSFORM_OUTPUT_ROOT, output),
+        ];
+        self.plan.apply(&mut roots)
+    }
+
+    /// Run this transform and return Weavy execution counters.
+    pub fn apply_with_stats(
+        &self,
+        input: &Input,
+        output: &mut Output,
+    ) -> Result<RunStats, FableError> {
+        let mut roots = [
+            FableRootValue::read_only(TRANSFORM_INPUT_ROOT, input),
+            FableRootValue::read_write(TRANSFORM_OUTPUT_ROOT, output),
+        ];
+        self.plan.apply_with_stats(&mut roots)
+    }
+}
+
 impl FableRootPlan {
     /// Parse and lower Fable source for an explicit root set.
     pub fn compile(src: &str, roots: &[FableRootSpec]) -> Result<Self, FableError> {
@@ -572,6 +635,34 @@ where
     T: Facet<'static>,
 {
     FablePlan::<T>::compile_with_intrinsics(src, intrinsics)?.apply(value)
+}
+
+/// Compile and immediately apply a Fable `in` to `out` transform.
+pub fn transform<Input, Output>(
+    input: &Input,
+    output: &mut Output,
+    src: &str,
+) -> Result<(), FableError>
+where
+    Input: Facet<'static>,
+    Output: Facet<'static>,
+{
+    FableTransformPlan::<Input, Output>::compile(src)?.apply(input, output)
+}
+
+/// Compile with explicit host intrinsics and immediately apply a Fable transform.
+pub fn transform_with_intrinsics<Input, Output>(
+    input: &Input,
+    output: &mut Output,
+    src: &str,
+    intrinsics: &FableIntrinsics,
+) -> Result<(), FableError>
+where
+    Input: Facet<'static>,
+    Output: Facet<'static>,
+{
+    FableTransformPlan::<Input, Output>::compile_with_intrinsics(src, intrinsics)?
+        .apply(input, output)
 }
 
 fn run_error(err: RunError<BlockRef, FableError>) -> FableError {
@@ -4430,6 +4521,86 @@ mod tests {
             }
         );
         assert!(stats.step_count >= 1);
+    }
+
+    #[test]
+    fn applies_typed_transform_plan() {
+        let plan = FableTransformPlan::<TransformInput, TransformOutput>::compile(
+            r#"
+                out.name = in.first_name + " " + in.last_name;
+                out.age = in.age;
+                out.adult = in.age >= 18;
+
+                if in.deleted {
+                    out.status = "archived";
+                } else {
+                    out.status = "active";
+                }
+            "#,
+        )
+        .unwrap();
+
+        let input = transform_input();
+        let mut output = transform_output();
+        let stats = plan.apply_with_stats(&input, &mut output).unwrap();
+
+        assert_eq!(
+            output,
+            TransformOutput {
+                name: "Ada Lovelace".into(),
+                age: 36,
+                status: "active".into(),
+                adult: true,
+            }
+        );
+        assert!(stats.step_count >= 1);
+    }
+
+    #[test]
+    fn applies_transform_helper_with_intrinsics() {
+        let input = transform_input();
+        let mut output = transform_output();
+        let mut intrinsics = FableIntrinsics::standard();
+        intrinsics.add_string_unary("scream", scream).unwrap();
+
+        transform_with_intrinsics(
+            &input,
+            &mut output,
+            r#"
+                out.name = scream(in.first_name);
+                out.age = in.age;
+                out.status = scream(in.last_name);
+                out.adult = in.age >= 18;
+            "#,
+            &intrinsics,
+        )
+        .unwrap();
+
+        assert_eq!(
+            output,
+            TransformOutput {
+                name: "ADA!".into(),
+                age: 36,
+                status: "LOVELACE!".into(),
+                adult: true,
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_writes_to_typed_transform_input() {
+        let err =
+            match FableTransformPlan::<TransformInput, TransformOutput>::compile("in.age = 1;") {
+                Ok(_) => panic!("expected Fable compilation to fail"),
+                Err(err) => err,
+            };
+
+        assert!(matches!(
+            err,
+            FableError::ReadOnlyRoot {
+                name
+            } if name == "in"
+        ));
     }
 
     #[test]
