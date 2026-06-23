@@ -14,15 +14,12 @@
 use std::path::Path;
 use std::process::Command;
 
-/// One extracted stencil: its machine code, and the offsets (relative to the
-/// stencil's start) of the `BRANCH26` continuation relocations to patch.
+/// One extracted stencil: its machine code, and the offsets of continuation
+/// relocations to patch, relative to the stencil's start.
 pub struct Stencil {
-    /// The stencil's machine-code bytes (a slice of `__text`).
+    /// The stencil's machine-code bytes.
     pub bytes: Vec<u8>,
-    /// Offsets within `bytes` of `BRANCH26` relocations targeting the
-    /// continuation symbol; the holes the JIT patches with [`patch_branch26`].
-    ///
-    /// [`patch_branch26`]: crate::patch_branch26
+    /// Offsets within `bytes` of relocations targeting the continuation symbol.
     pub cont_relocs: Vec<usize>,
 }
 
@@ -32,12 +29,10 @@ pub struct Stencil {
 /// (The conditional test itself stays internal to the stencil — a local branch,
 /// no relocation — so only the unconditional continuations need patching.)
 pub struct StencilN {
-    /// The stencil's machine-code bytes (a slice of `__text`).
+    /// The stencil's machine-code bytes.
     pub bytes: Vec<u8>,
-    /// `cont_relocs[i]` are the offsets within `bytes` of the `BRANCH26`
-    /// relocations targeting `cont_symbols[i]` (the holes the JIT patches with
-    /// [`patch_branch26`](crate::patch_branch26)), aligned to the `cont_symbols`
-    /// argument order.
+    /// `cont_relocs[i]` are the offsets within `bytes` of the relocations
+    /// targeting `cont_symbols[i]`, aligned to the `cont_symbols` argument order.
     pub cont_relocs: Vec<Vec<usize>>,
 }
 
@@ -78,6 +73,8 @@ pub fn compile_object(
         "-O",
         "-C",
         "panic=abort",
+        "-C",
+        "relocation-model=static",
         "--target",
         target,
     ]);
@@ -97,20 +94,20 @@ pub fn compile_object(
     }
 }
 
-/// Extract one stencil's bytes and continuation relocations from `obj`'s `__text`
+/// Extract one stencil's bytes and continuation relocations from `obj`'s text
 /// section by symbol name.
 ///
 /// `all_symbols` is every stencil symbol in the object (used to find where this
 /// stencil's code ends — the next symbol's address, or the section end).
 /// `cont_symbol` is the external continuation the stencil branches to; only its
-/// `BRANCH26` relocations are reported (the holes the JIT patches). Symbol names
-/// match with or without a leading underscore (Mach-O's C symbol mangling).
+/// relocations are reported. Symbol names match with or without a leading
+/// underscore (Mach-O's C symbol mangling).
 ///
 /// For a stencil with more than one successor (a conditional branch), use
 /// [`extract_stencil_n`].
 ///
 /// # Panics
-/// If the object can't be parsed, has no `__text`, or `symbol` is absent.
+/// If the object can't be parsed or `symbol` is absent.
 #[must_use]
 pub fn extract_stencil(
     obj: &[u8],
@@ -127,12 +124,12 @@ pub fn extract_stencil(
 
 /// Extract one stencil's bytes and its continuation relocations grouped by
 /// **several** continuation symbols (e.g. a conditional branch's `then`/`else`).
-/// `cont_relocs[i]` are the `BRANCH26` holes targeting `cont_symbols[i]`, aligned
-/// to argument order; a symbol with no relocations in the stencil yields an empty
+/// `cont_relocs[i]` are the holes targeting `cont_symbols[i]`, aligned to
+/// argument order; a symbol with no relocations in the stencil yields an empty
 /// inner vec. See [`extract_stencil`] for `all_symbols`/`symbol` semantics.
 ///
 /// # Panics
-/// If the object can't be parsed, has no `__text`, or `symbol` is absent.
+/// If the object can't be parsed or `symbol` is absent.
 #[must_use]
 pub fn extract_stencil_n(
     obj: &[u8],
@@ -143,38 +140,56 @@ pub fn extract_stencil_n(
     use object::{Object, ObjectSection, ObjectSymbol, RelocationTarget};
 
     let file = object::File::parse(obj).expect("parse object file");
-    let text = file
-        .sections()
-        .find(|s| s.name() == Ok("__text"))
-        .expect("no __text section");
-    let data = text.data().expect("read __text data");
-    let text_index = text.index();
-
-    let addr_of = |name: &str| -> u64 {
-        file.symbols()
-            .find(|s| {
-                s.section_index() == Some(text_index)
-                    && s.name().is_ok_and(|n| n == name || n == format!("_{name}"))
-            })
-            .unwrap_or_else(|| panic!("symbol {name} not found"))
-            .address()
+    let wanted = |symbol_name: &str, wanted: &str| {
+        symbol_name == wanted || symbol_name == format!("_{wanted}")
     };
 
-    let mut boundaries: Vec<u64> = all_symbols.iter().map(|s| addr_of(s)).collect();
-    boundaries.push(data.len() as u64);
+    let stencil_symbol = file
+        .symbols()
+        .find(|s| s.name().is_ok_and(|n| wanted(n, symbol)))
+        .unwrap_or_else(|| panic!("symbol {symbol} not found"));
+    let section_index = stencil_symbol
+        .section_index()
+        .unwrap_or_else(|| panic!("symbol {symbol} is not in a section"));
+    let text = file
+        .section_by_index(section_index)
+        .expect("read symbol section");
+    let data = text.data().expect("read text data");
+    let section_addr = text.address();
+
+    let addr_of_in_section = |name: &str| -> Option<u64> {
+        file.symbols()
+            .find(|s| {
+                s.section_index() == Some(section_index) && s.name().is_ok_and(|n| wanted(n, name))
+            })
+            .map(|s| s.address())
+    };
+
+    let mut boundaries: Vec<u64> = all_symbols
+        .iter()
+        .filter_map(|s| addr_of_in_section(s))
+        .collect();
+    boundaries.push(section_addr + data.len() as u64);
     boundaries.sort_unstable();
 
-    let start = addr_of(symbol);
+    let start = stencil_symbol.address();
     let end = *boundaries
         .iter()
         .find(|&&b| b > start)
         .expect("a boundary past the stencil");
 
-    let bytes = data[start as usize..end as usize].to_vec();
+    let start_offset = start
+        .checked_sub(section_addr)
+        .expect("symbol starts before its section");
+    let end_offset = end
+        .checked_sub(section_addr)
+        .expect("symbol ends before its section");
+
+    let bytes = data[start_offset as usize..end_offset as usize].to_vec();
 
     let mut cont_relocs: Vec<Vec<usize>> = vec![Vec::new(); cont_symbols.len()];
     for (offset, reloc) in text.relocations() {
-        if offset < start || offset >= end {
+        if offset < start_offset || offset >= end_offset {
             continue;
         }
         if let RelocationTarget::Symbol(idx) = reloc.target()
@@ -183,7 +198,7 @@ pub fn extract_stencil_n(
         {
             for (i, cont) in cont_symbols.iter().enumerate() {
                 if name == *cont || name == format!("_{cont}") {
-                    cont_relocs[i].push((offset - start) as usize);
+                    cont_relocs[i].push((offset - start_offset) as usize);
                 }
             }
         }
