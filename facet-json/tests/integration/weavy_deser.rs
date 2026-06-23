@@ -1,5 +1,6 @@
 use facet::Facet;
 use facet_format::DeserializeErrorKind;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static DROPPED_LIST_ELEMENTS: AtomicUsize = AtomicUsize::new(0);
@@ -33,6 +34,13 @@ struct MaybeScores {
 #[derive(Facet, Debug, PartialEq)]
 struct PointList {
     points: Vec<Point>,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct MapHolder {
+    names: HashMap<String, String>,
+    buckets: HashMap<String, Vec<u64>>,
+    points: HashMap<String, Point>,
 }
 
 #[derive(Facet, Debug, PartialEq)]
@@ -195,6 +203,26 @@ fn weavy_plan_can_be_reused() {
     let second = plan.from_str(r#"{"x":3,"y":4}"#).unwrap();
     assert_eq!(first, Point { x: 1, y: 2 });
     assert_eq!(second, Point { x: 3, y: 4 });
+}
+
+#[test]
+fn weavy_deserializes_hash_maps() {
+    let got: MapHolder = facet_json::from_str_weavy(
+        r#"{
+            "names":{"100":"main","200":"balcony","escaped\u005fkey":"decoded"},
+            "buckets":{"topic":[10,20,30],"empty":[]},
+            "points":{"origin":{"x":0,"y":0},"target":{"y":7,"x":5}}
+        }"#,
+    )
+    .unwrap();
+
+    assert_eq!(got.names["100"], "main");
+    assert_eq!(got.names["200"], "balcony");
+    assert_eq!(got.names["escaped_key"], "decoded");
+    assert_eq!(got.buckets["topic"], vec![10, 20, 30]);
+    assert_eq!(got.buckets["empty"], Vec::<u64>::new());
+    assert_eq!(got.points["origin"], Point { x: 0, y: 0 });
+    assert_eq!(got.points["target"], Point { x: 5, y: 7 });
 }
 
 fn native_jit_expected() -> bool {

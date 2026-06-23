@@ -20,8 +20,8 @@ use core::str::FromStr;
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use facet_core::{
-    Def, DefaultInPlaceFn, DefaultSource, Facet, Field, ListDef, OptionDef, PointerDef, PtrMut,
-    PtrUninit, ScalarType, Shape, StructKind, Type, UserType,
+    Def, DefaultInPlaceFn, DefaultSource, Facet, Field, ListDef, MapDef, OptionDef, PointerDef,
+    PtrMut, PtrUninit, ScalarType, Shape, StructKind, Type, UserType,
 };
 use facet_format::{DeserializeError, DeserializeErrorKind, FormatParser, ParseError};
 use facet_reflect::Span;
@@ -50,6 +50,7 @@ enum JsonBlockId {
     Shape(&'static Shape),
     StructLoop(&'static Shape),
     ListLoop(&'static Shape),
+    MapLoop(&'static Shape),
 }
 
 type BlockId = JsonBlockId;
@@ -1698,6 +1699,20 @@ enum JsonOp<Block> {
         element_layout: Layout,
         loop_id: Block,
     },
+    ReadMap {
+        map_shape: &'static Shape,
+        map: MapDef,
+        loop_id: Block,
+    },
+    MapNext {
+        map: MapDef,
+        key_scalar: ScalarType,
+        key_layout: Layout,
+        value_program: Program<JsonOp<Block>>,
+        value_scalar: Option<ScalarPlan>,
+        value_layout: Layout,
+        loop_id: Block,
+    },
     ReadPointer {
         pointer: PointerDef,
         pointee_program: Program<JsonOp<Block>>,
@@ -2094,6 +2109,35 @@ impl Lowering {
                     loop_id,
                 }])
             }
+            Def::Map(map) => {
+                let Some(key_scalar) = ScalarType::try_from_shape(map.k()) else {
+                    return Err(unsupported(shape, "scalar map key"));
+                };
+                if !matches!(key_scalar, ScalarType::String | ScalarType::CowStr) {
+                    return Err(unsupported(shape, "string map key"));
+                }
+
+                let key_layout = sized_layout(map.k())?;
+                let value_layout = sized_layout(map.v())?;
+                let value_program = self.lower_shape(map.v())?;
+                let value_scalar = ScalarType::try_from_shape(map.v()).map(ScalarPlan::new);
+                let loop_id = JsonBlockId::MapLoop(shape);
+                let loop_program = vec![JsonOp::MapNext {
+                    map,
+                    key_scalar,
+                    key_layout,
+                    value_program: value_program.clone(),
+                    value_scalar,
+                    value_layout,
+                    loop_id,
+                }];
+                self.lowered.blocks.insert(loop_id, loop_program);
+                Ok(vec![JsonOp::ReadMap {
+                    map_shape: shape,
+                    map,
+                    loop_id,
+                }])
+            }
             Def::Pointer(pointer) => {
                 let pointee = pointer
                     .pointee()
@@ -2290,6 +2334,32 @@ fn resolve_json_op(
             element_layout,
             loop_id: resolve_block_ref(loop_id, refs)?,
         },
+        JsonOp::ReadMap {
+            map_shape,
+            map,
+            loop_id,
+        } => JsonOp::ReadMap {
+            map_shape,
+            map,
+            loop_id: resolve_block_ref(loop_id, refs)?,
+        },
+        JsonOp::MapNext {
+            map,
+            key_scalar,
+            key_layout,
+            value_program,
+            value_scalar,
+            value_layout,
+            loop_id,
+        } => JsonOp::MapNext {
+            map,
+            key_scalar,
+            key_layout,
+            value_program: resolve_json_program(value_program, refs)?,
+            value_scalar,
+            value_layout,
+            loop_id: resolve_block_ref(loop_id, refs)?,
+        },
         JsonOp::ReadPointer {
             pointer,
             pointee_program,
@@ -2403,6 +2473,7 @@ struct JsonInterp<'parser, 'de, 'program, const TRUSTED_UTF8: bool> {
         InlineStack<StructFrame<'program, FieldPlan<ExecBlock>, InitializedLedger<Span>>>,
     large_structs: Option<Box<LargeStructStack<'program>>>,
     lists: InlineStack<ListFrame>,
+    maps: InlineStack<MapFrame>,
     scratch: ScratchSession,
     success: bool,
 }
@@ -2419,6 +2490,7 @@ where
             inline_structs: InlineStack::new(),
             large_structs: None,
             lists: InlineStack::new(),
+            maps: InlineStack::new(),
             scratch: ScratchSession::new(),
             success: false,
         }
@@ -2681,6 +2753,84 @@ where
         unsafe {
             builder.mark_initialized();
         }
+    }
+
+    fn insert_map_entry(
+        &mut self,
+        map: MapDef,
+        key_scalar: ScalarType,
+        key_layout: Layout,
+        key: String,
+        value_scratch: ScratchSlot,
+    ) -> Result<(), DeserializeError> {
+        let key_scratch = self.scratch.reserve(key_layout);
+        unsafe {
+            write_map_key(map.k(), key_scalar, scratch_ptr_uninit(&key_scratch), key)?;
+        }
+
+        let map_ptr = self
+            .maps
+            .last()
+            .expect("map frame is present while inserting entry")
+            .ptr();
+        unsafe {
+            (map.vtable.insert)(
+                PtrMut::new(map_ptr),
+                scratch_ptr_mut(&key_scratch),
+                scratch_ptr_mut(&value_scratch),
+            );
+        }
+        self.scratch.release(value_scratch);
+        self.scratch.release(key_scratch);
+        Ok(())
+    }
+
+    fn step_map_next(
+        &mut self,
+        plan: MapStepPlan<'program>,
+    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation>, DeserializeError> {
+        let key = match self.parser.next_object_key_or_end()? {
+            JsonObjectKeyStep::End => return Ok(Control::Continue),
+            JsonObjectKeyStep::Field { key, span: _ } => {
+                self.parser.materialize_field_key(key)?.as_str().to_owned()
+            }
+        };
+
+        let value_scratch = self.scratch.reserve(plan.value_layout);
+        if let Some(scalar) = plan.value_scalar {
+            let value = self.parser.read_current_scalar_input()?;
+            unsafe {
+                scalar.write_input(
+                    &*self.parser,
+                    plan.map.v(),
+                    scratch_ptr_uninit(&value_scratch),
+                    value,
+                )?;
+            }
+            self.insert_map_entry(
+                plan.map,
+                plan.key_scalar,
+                plan.key_layout,
+                key,
+                value_scratch,
+            )?;
+            return Ok(Control::CallBlock(plan.loop_id));
+        }
+
+        let old_base = self.base;
+        self.base = scratch_ptr_uninit(&value_scratch);
+        Ok(call_program_or_block_then(
+            plan.value_program,
+            Continuation::MapValueDone {
+                map: plan.map,
+                key_scalar: plan.key_scalar,
+                key_layout: plan.key_layout,
+                key,
+                value_scratch,
+                old_base,
+                loop_id: plan.loop_id,
+            },
+        ))
     }
 
     fn list_next_scalar(
@@ -3164,6 +3314,31 @@ impl ListFrame {
     }
 }
 
+#[derive(Clone, Copy)]
+struct MapStepPlan<'program> {
+    map: MapDef,
+    key_scalar: ScalarType,
+    key_layout: Layout,
+    value_program: &'program [ExecOp],
+    value_scalar: Option<ScalarPlan>,
+    value_layout: Layout,
+    loop_id: ExecBlock,
+}
+
+struct MapFrame {
+    guard: HandleGuard,
+}
+
+impl MapFrame {
+    fn ptr(&self) -> *mut u8 {
+        self.guard.ptr()
+    }
+
+    fn finish(mut self) {
+        self.guard.disarm();
+    }
+}
+
 impl<const TRUSTED_UTF8: bool> Drop for JsonInterp<'_, '_, '_, TRUSTED_UTF8> {
     fn drop(&mut self) {
         if self.success {
@@ -3175,6 +3350,7 @@ impl<const TRUSTED_UTF8: bool> Drop for JsonInterp<'_, '_, '_, TRUSTED_UTF8> {
             while large_structs.pop().is_some() {}
         }
 
+        while self.maps.pop().is_some() {}
         while self.lists.pop().is_some() {}
     }
 }
@@ -3417,6 +3593,39 @@ where
                     },
                 ));
             },
+            JsonOp::ReadMap {
+                map_shape,
+                map,
+                loop_id,
+            } => {
+                self.parser.consume_object_start_fast()?;
+                let map_ptr = unsafe { (map.vtable.init_in_place_with_capacity)(self.base, 0) };
+                self.maps.push(MapFrame {
+                    guard: HandleGuard::new(
+                        map_ptr.as_mut_byte_ptr(),
+                        *map_shape as *const Shape as *const (),
+                        drop_shape_value,
+                    ),
+                });
+                Ok(Control::CallBlockThen(*loop_id, Continuation::FinishMap))
+            }
+            JsonOp::MapNext {
+                map,
+                key_scalar,
+                key_layout,
+                value_program,
+                value_scalar,
+                value_layout,
+                loop_id,
+            } => self.step_map_next(MapStepPlan {
+                map: *map,
+                key_scalar: *key_scalar,
+                key_layout: *key_layout,
+                value_program,
+                value_scalar: *value_scalar,
+                value_layout: *value_layout,
+                loop_id: *loop_id,
+            }),
             JsonOp::ReadPointer {
                 pointer,
                 pointee_program,
@@ -3516,6 +3725,27 @@ where
                 list.finish()?;
                 Ok(Control::Continue)
             }
+            Continuation::FinishMap => {
+                let map = self
+                    .maps
+                    .pop()
+                    .expect("map frame is present after map program");
+                map.finish();
+                Ok(Control::Continue)
+            }
+            Continuation::MapValueDone {
+                map,
+                key_scalar,
+                key_layout,
+                key,
+                value_scratch,
+                old_base,
+                loop_id,
+            } => {
+                self.insert_map_entry(map, key_scalar, key_layout, key, value_scratch)?;
+                self.base = old_base;
+                Ok(Control::CallBlock(loop_id))
+            }
             Continuation::PushedListElement {
                 list,
                 old_base,
@@ -3583,6 +3813,16 @@ enum Continuation {
         scratch: ScratchSlot,
     },
     FinishList,
+    FinishMap,
+    MapValueDone {
+        map: MapDef,
+        key_scalar: ScalarType,
+        key_layout: Layout,
+        key: String,
+        value_scratch: ScratchSlot,
+        old_base: PtrUninit,
+        loop_id: ExecBlock,
+    },
     PushedListElement {
         list: ListDef,
         old_base: PtrUninit,
@@ -4366,6 +4606,29 @@ fn scratch_ptr_uninit(scratch: &ScratchSlot) -> PtrUninit {
 
 unsafe fn scratch_ptr_mut(scratch: &ScratchSlot) -> PtrMut {
     unsafe { scratch_ptr_uninit(scratch).assume_init() }
+}
+
+unsafe fn write_map_key(
+    shape: &'static Shape,
+    scalar: ScalarType,
+    dst: PtrUninit,
+    key: String,
+) -> Result<(), DeserializeError> {
+    match scalar {
+        ScalarType::String => {
+            unsafe {
+                dst.put(key);
+            }
+            Ok(())
+        }
+        ScalarType::CowStr => {
+            unsafe {
+                dst.put::<Cow<'static, str>>(Cow::Owned(key));
+            }
+            Ok(())
+        }
+        _ => Err(unsupported(shape, "string map key")),
+    }
 }
 
 fn write_unit_input<'de, const TRUSTED_UTF8: bool>(
