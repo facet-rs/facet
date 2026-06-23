@@ -191,8 +191,13 @@ fn weavy_plan_can_be_reused() {
 }
 
 #[test]
-fn weavy_jit_plan_reports_interpreter_fallback_until_json_stencils_land() {
+fn weavy_jit_plan_uses_native_for_root_scalar_struct_when_available() {
     let plan = facet_json::JsonWeavyPlan::<Point>::build_jit().unwrap();
+    let native_available = cfg!(all(
+        feature = "jit",
+        target_os = "macos",
+        target_arch = "aarch64"
+    ));
 
     assert_eq!(
         plan.execution_mode(),
@@ -200,19 +205,43 @@ fn weavy_jit_plan_reports_interpreter_fallback_until_json_stencils_land() {
     );
     assert_eq!(
         plan.active_backend(),
-        facet_json::JsonWeavyActiveBackend::Interpreter
+        if native_available {
+            facet_json::JsonWeavyActiveBackend::NativeJit
+        } else {
+            facet_json::JsonWeavyActiveBackend::Interpreter
+        }
     );
     assert_eq!(
         facet_json::JsonWeavyPlan::<Point>::native_jit_available(),
-        cfg!(all(
-            feature = "jit",
-            target_os = "macos",
-            target_arch = "aarch64"
-        ))
+        native_available
     );
 
     let got = plan.from_str(r#"{"x":1,"y":2}"#).unwrap();
     assert_eq!(got, Point { x: 1, y: 2 });
+
+    let report = plan.jit_fallback_report();
+    if native_available {
+        assert!(report.is_empty(), "{report:?}");
+    } else {
+        assert!(!report.is_empty(), "{report:?}");
+        assert_eq!(report.records[0].path, "$");
+        let expected_reason = if !cfg!(feature = "jit") {
+            "facet-json was built without its jit feature"
+        } else {
+            "native JIT is not enabled for this build target"
+        };
+        assert_eq!(report.records[0].reason, expected_reason);
+    }
+}
+
+#[test]
+fn weavy_jit_plan_reports_fallback_for_unsupported_root_shape() {
+    let plan = facet_json::JsonWeavyPlan::<PointList>::build_jit().unwrap();
+
+    assert_eq!(
+        plan.active_backend(),
+        facet_json::JsonWeavyActiveBackend::Interpreter
+    );
 
     let report = plan.jit_fallback_report();
     assert!(!report.is_empty(), "{report:?}");
@@ -222,7 +251,7 @@ fn weavy_jit_plan_reports_interpreter_fallback_until_json_stencils_land() {
     } else if !cfg!(all(target_os = "macos", target_arch = "aarch64")) {
         "native JIT is not enabled for this build target"
     } else {
-        "JSON native JIT stencils are not implemented yet"
+        "JSON native JIT currently supports root scalar structs only"
     };
     assert_eq!(report.records[0].reason, expected_reason);
 }

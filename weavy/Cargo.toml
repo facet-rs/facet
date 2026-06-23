@@ -16,6 +16,9 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [dependencies]
 copypatch = { workspace = true, optional = true }
 
+[build-dependencies]
+copypatch = { workspace = true, features = ["build"], optional = true }
+
 [features]
 default = []
 jit = ["dep:copypatch"]

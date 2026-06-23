@@ -9,9 +9,48 @@ pub use copypatch::patch_branch26;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 pub use copypatch::ExecBuf;
 
+/// Shared copy-and-patch stencil bytes extracted by Weavy's build script.
+///
+/// Consumers should prefer the typed helpers on [`StencilLayout`]; this module
+/// is public so backend-specific compilers can still compose lower-level layouts
+/// when needed.
+pub mod stencils {
+    include!(concat!(env!("OUT_DIR"), "/weavy_stencils.rs"));
+}
+
 /// Whether this build can allocate and run native copy-and-patch code.
 pub const NATIVE_COPY_PATCH_AVAILABLE: bool =
     cfg!(all(target_os = "macos", target_arch = "aarch64"));
+
+/// One consumer-supplied intrinsic in a shared Weavy host-call chain.
+#[repr(C)]
+pub struct HostCallInfo {
+    /// Consumer-owned immutable metadata for this intrinsic.
+    pub info: *const (),
+    /// Consumer-owned intrinsic body.
+    ///
+    /// Returning `false` stops the copied chain immediately; consumers keep their
+    /// exact error in their own state.
+    pub call: unsafe extern "C" fn(cx: *mut (), info: *const ()) -> bool,
+}
+
+/// Threaded context expected by the shared host-call stencil.
+#[repr(C)]
+pub struct HostCallCtx<C> {
+    /// Current program stream cursor.
+    pub prog: *const u64,
+    /// Consumer-owned execution state pointer.
+    pub inner: *mut C,
+}
+
+impl<C> HostCallCtx<C> {
+    /// Build a typed host-call context over a mutable consumer state.
+    #[must_use]
+    #[inline]
+    pub fn new(prog: *const u64, inner: &mut C) -> Self {
+        Self { prog, inner }
+    }
+}
 
 /// A copied stencil chain's entry point and associated program stream.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,6 +132,28 @@ impl StencilLayout {
     /// Fill a previously reserved program-stream word.
     pub fn fill_prog_slot(&mut self, slot: ProgSlot, value: u64) {
         self.progs[slot.prog_index][slot.slot] = value;
+    }
+
+    /// Append a shared host-call stencil to `chain`.
+    ///
+    /// The `info` pointer must remain valid for as long as the finalized native
+    /// program can run. Callers typically point this at an element in an owned
+    /// metadata vector held beside [`NativeProgram`].
+    pub fn emit_hostcall(&mut self, chain: Chain, info: *const HostCallInfo) -> usize {
+        self.push_prog_word(chain.prog_index, info as u64);
+        self.emit_stencil(stencils::HOSTCALL)
+    }
+
+    /// Append the shared terminal stencil.
+    pub fn emit_done(&mut self) -> usize {
+        self.emit_stencil(stencils::DONE)
+    }
+
+    /// Patch one shared host-call stencil's continuation to `target`.
+    pub fn patch_hostcall_continuation(&mut self, hostcall_start: usize, target: usize) {
+        for &rel in stencils::HOSTCALL_CONT {
+            self.patch_branch26(hostcall_start + rel, target);
+        }
     }
 
     /// Borrow a chain's program stream.
@@ -283,5 +344,47 @@ mod tests {
         let entry = unsafe { native.entry_fn::<u8>() };
         let mut ctx = 0u8;
         unsafe { entry(&mut ctx) };
+    }
+
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn shared_hostcall_stencil_runs_consumer_intrinsic() {
+        use super::{HostCallCtx, HostCallInfo, NativeProgram};
+
+        struct State {
+            value: u64,
+        }
+
+        struct Info {
+            add: u64,
+        }
+
+        unsafe extern "C" fn add(cx: *mut (), info: *const ()) -> bool {
+            let state = unsafe { &mut *cx.cast::<State>() };
+            let info = unsafe { &*info.cast::<Info>() };
+            state.value += info.add;
+            true
+        }
+
+        let infos = [Info { add: 41 }];
+        let calls = [HostCallInfo {
+            info: core::ptr::from_ref(&infos[0]).cast(),
+            call: add,
+        }];
+        let mut layout = StencilLayout::new();
+        let root = layout.start_chain();
+        let hostcall = layout.emit_hostcall(root, core::ptr::from_ref(&calls[0]));
+        let done = layout.emit_done();
+        layout.patch_hostcall_continuation(hostcall, done);
+
+        let native = NativeProgram::new(layout, root);
+        let mut state = State { value: 1 };
+        let mut cx = HostCallCtx::new(native.entry_prog(), &mut state);
+        let entry = unsafe { native.entry_fn::<HostCallCtx<State>>() };
+        unsafe {
+            entry(&mut cx);
+        }
+
+        assert_eq!(state.value, 42);
     }
 }
