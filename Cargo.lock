@@ -2168,6 +2168,7 @@ name = "facet-hash"
 version = "0.50.0-rc.1"
 dependencies = [
  "codspeed-divan-compat",
+ "copypatch",
  "facet",
  "facet-core",
  "facet-reflect",
