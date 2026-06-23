@@ -144,6 +144,7 @@ fn single_op(byte: u8) -> Option<SyntaxKind> {
     Some(match byte {
         b'.' => SyntaxKind::Dot,
         b',' => SyntaxKind::Comma,
+        b':' => SyntaxKind::Colon,
         b';' => SyntaxKind::Semicolon,
         b'(' => SyntaxKind::LParen,
         b')' => SyntaxKind::RParen,
@@ -216,6 +217,19 @@ mod tests {
             [
                 LetKw, Whitespace, Ident, Whitespace, Assign, Whitespace, Ident, Dot, Ident, Dot,
                 Ident, Whitespace, Plus, Whitespace, Int, Semicolon
+            ]
+        );
+    }
+
+    #[test]
+    fn lexes_struct_literals() {
+        use SyntaxKind::*;
+        assert_eq!(
+            kinds("let p = Point { x: 1, y: 2 };"),
+            [
+                LetKw, Whitespace, Ident, Whitespace, Assign, Whitespace, Ident, Whitespace,
+                LBrace, Whitespace, Ident, Colon, Whitespace, Int, Comma, Whitespace, Ident, Colon,
+                Whitespace, Int, Whitespace, RBrace, Semicolon
             ]
         );
     }

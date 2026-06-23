@@ -65,17 +65,28 @@ struct Parser<'src> {
 
 impl<'src> Parser<'src> {
     fn nth(&self, n: usize) -> Option<SyntaxKind> {
+        self.nth_token(n).map(|token| token.kind)
+    }
+
+    fn nth_token(&self, n: usize) -> Option<&Lexeme<'src>> {
         let mut seen = 0usize;
         for token in &self.tokens[self.pos..] {
             if token.kind.is_trivia() {
                 continue;
             }
             if seen == n {
-                return Some(token.kind);
+                return Some(token);
             }
             seen += 1;
         }
         None
+    }
+
+    fn at_type_name_ident(&self) -> bool {
+        self.nth_token(0)
+            .filter(|token| token.kind == Ident)
+            .and_then(|token| token.text.chars().next())
+            .is_some_and(char::is_uppercase)
     }
 
     fn at(&self, kind: SyntaxKind) -> bool {
@@ -335,6 +346,9 @@ impl<'src> Parser<'src> {
                 self.bump();
                 self.finish();
             }
+            Some(Ident) if self.nth(1) == Some(LBrace) && self.at_type_name_ident() => {
+                self.parse_struct_literal();
+            }
             Some(Ident) => {
                 self.start(VarRef);
                 self.bump();
@@ -349,6 +363,24 @@ impl<'src> Parser<'src> {
             }
             _ => self.error("expected an expression".into()),
         }
+    }
+
+    fn parse_struct_literal(&mut self) {
+        self.start(StructLiteral);
+        self.expect(Ident);
+        self.expect(LBrace);
+        while !self.at(RBrace) && !self.at_end() {
+            self.start(StructField);
+            self.expect(Ident);
+            self.expect(Colon);
+            self.parse_expr();
+            self.finish();
+            if !self.eat(Comma) {
+                break;
+            }
+        }
+        self.expect(RBrace);
+        self.finish();
     }
 }
 
@@ -403,6 +435,14 @@ if root.user.age >= 18 {
         let tree = tree("let next_age = root.user.age + 1; root.user.age = next_age");
         assert!(tree.contains("LetStmt"));
         assert!(tree.contains("AssignStmt"));
+        assert!(tree.contains("BinaryExpr"));
+    }
+
+    #[test]
+    fn parses_struct_literals() {
+        let tree = tree("let p = Point { x: root.user.age + 1, y: 2, }; root.position = p");
+        assert!(tree.contains("StructLiteral"));
+        assert!(tree.contains("StructField"));
         assert!(tree.contains("BinaryExpr"));
     }
 

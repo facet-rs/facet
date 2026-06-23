@@ -67,6 +67,8 @@ pub enum SyntaxKind {
     Dot,
     #[static_text(",")]
     Comma,
+    #[static_text(":")]
+    Colon,
     #[static_text(";")]
     Semicolon,
     #[static_text("(")]
@@ -117,6 +119,8 @@ pub enum SyntaxKind {
     VarRef,
     FieldExpr,
     IndexExpr,
+    StructLiteral,
+    StructField,
     CallExpr,
     ArgList,
     Arg,

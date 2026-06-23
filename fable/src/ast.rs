@@ -59,6 +59,8 @@ ast_node!(Literal, SyntaxKind::Literal);
 ast_node!(VarRef, SyntaxKind::VarRef);
 ast_node!(FieldExpr, SyntaxKind::FieldExpr);
 ast_node!(IndexExpr, SyntaxKind::IndexExpr);
+ast_node!(StructLiteral, SyntaxKind::StructLiteral);
+ast_node!(StructField, SyntaxKind::StructField);
 ast_node!(CallExpr, SyntaxKind::CallExpr);
 ast_node!(ArgList, SyntaxKind::ArgList);
 ast_node!(Arg, SyntaxKind::Arg);
@@ -105,6 +107,7 @@ pub enum Expr {
     Var(VarRef),
     Field(FieldExpr),
     Index(IndexExpr),
+    StructLiteral(StructLiteral),
     Call(CallExpr),
     Binary(BinaryExpr),
     Unary(UnaryExpr),
@@ -118,6 +121,7 @@ impl Expr {
             SyntaxKind::VarRef => Some(Self::Var(VarRef(node))),
             SyntaxKind::FieldExpr => Some(Self::Field(FieldExpr(node))),
             SyntaxKind::IndexExpr => Some(Self::Index(IndexExpr(node))),
+            SyntaxKind::StructLiteral => Some(Self::StructLiteral(StructLiteral(node))),
             SyntaxKind::CallExpr => Some(Self::Call(CallExpr(node))),
             SyntaxKind::BinaryExpr => Some(Self::Binary(BinaryExpr(node))),
             SyntaxKind::UnaryExpr => Some(Self::Unary(UnaryExpr(node))),
@@ -134,6 +138,7 @@ impl Expr {
             Self::Var(node) => node.syntax(),
             Self::Field(node) => node.syntax(),
             Self::Index(node) => node.syntax(),
+            Self::StructLiteral(node) => node.syntax(),
             Self::Call(node) => node.syntax(),
             Self::Binary(node) => node.syntax(),
             Self::Unary(node) => node.syntax(),
@@ -280,6 +285,41 @@ impl IndexExpr {
     #[must_use]
     pub fn index(&self) -> Option<Expr> {
         expr_children(&self.0).nth(1)
+    }
+}
+
+impl StructLiteral {
+    /// Type name before the literal body.
+    #[must_use]
+    pub fn type_name(&self) -> Option<String> {
+        self.0
+            .children_with_tokens()
+            .filter_map(|element| element.into_token())
+            .find(|token| token.kind() == Ident)
+            .map(|token| token.text().to_owned())
+    }
+
+    /// Field initializers.
+    pub fn fields(&self) -> impl Iterator<Item = StructField> + '_ {
+        typed_children(&self.0)
+    }
+}
+
+impl StructField {
+    /// Field name before the colon.
+    #[must_use]
+    pub fn name(&self) -> Option<String> {
+        self.0
+            .children_with_tokens()
+            .filter_map(|element| element.into_token())
+            .find(|token| token.kind() == Ident)
+            .map(|token| token.text().to_owned())
+    }
+
+    /// Field value expression.
+    #[must_use]
+    pub fn value(&self) -> Option<Expr> {
+        expr_children(&self.0).next()
     }
 }
 
