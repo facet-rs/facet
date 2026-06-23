@@ -22,12 +22,37 @@ pub struct FablePlan<T> {
     _marker: PhantomData<fn() -> T>,
 }
 
+/// Host-call registry used while lowering Fable calls.
+#[derive(Clone, Debug)]
+pub struct FableIntrinsics {
+    signatures: Vec<IntrinsicSignature>,
+}
+
+/// Host function for `string -> string` intrinsics.
+pub type FableStringUnary = fn(&str) -> Result<String, FableError>;
+/// Host function for `(string, string) -> bool` intrinsics.
+pub type FableStringBinaryPredicate = fn(&str, &str) -> Result<bool, FableError>;
+/// Host function for `signed number -> signed number` intrinsics.
+pub type FableSignedUnary = fn(i128) -> Result<i128, FableError>;
+/// Host function for `unsigned number -> unsigned number` intrinsics.
+pub type FableUnsignedUnary = fn(u128) -> Result<u128, FableError>;
+/// Host function for `float -> float` intrinsics.
+pub type FableFloatUnary = fn(f64) -> Result<f64, FableError>;
+
 impl<T> FablePlan<T>
 where
     T: Facet<'static>,
 {
     /// Parse and lower Fable source for values of type `T`.
     pub fn compile(src: &str) -> Result<Self, FableError> {
+        Self::compile_with_intrinsics(src, &FableIntrinsics::standard())
+    }
+
+    /// Parse and lower Fable source with an explicit host-call registry.
+    pub fn compile_with_intrinsics(
+        src: &str,
+        intrinsics: &FableIntrinsics,
+    ) -> Result<Self, FableError> {
         let parsed = parse(src);
         if !parsed.errors().is_empty() {
             return Err(FableError::Parse {
@@ -38,7 +63,7 @@ where
         let root = ast::Root::cast(parsed.syntax().clone()).ok_or(FableError::MalformedSyntax {
             reason: "parse root was not a Fable root node",
         })?;
-        let mut lowerer = Lowerer::new(T::SHAPE);
+        let mut lowerer = Lowerer::new(T::SHAPE, intrinsics);
         let program = lowerer.lower_root(&root)?;
 
         Ok(Self {
@@ -74,6 +99,18 @@ where
     T: Facet<'static>,
 {
     FablePlan::<T>::compile(src)?.apply(value)
+}
+
+/// Compile with explicit host intrinsics and immediately apply to `value`.
+pub fn apply_with_intrinsics<T>(
+    value: &mut T,
+    src: &str,
+    intrinsics: &FableIntrinsics,
+) -> Result<(), FableError>
+where
+    T: Facet<'static>,
+{
+    FablePlan::<T>::compile_with_intrinsics(src, intrinsics)?.apply(value)
 }
 
 fn run_error(err: RunError<BlockRef, FableError>) -> FableError {
@@ -124,6 +161,13 @@ pub enum FableError {
     InvalidCall {
         /// Intrinsic name.
         function: &'static str,
+        /// Reason it was rejected.
+        reason: &'static str,
+    },
+    /// A host intrinsic registration was invalid.
+    InvalidIntrinsic {
+        /// Intrinsic name.
+        name: &'static str,
         /// Reason it was rejected.
         reason: &'static str,
     },
@@ -196,6 +240,9 @@ impl fmt::Display for FableError {
             }
             FableError::InvalidCall { function, reason } => {
                 write!(f, "invalid call to {function}: {reason}")
+            }
+            FableError::InvalidIntrinsic { name, reason } => {
+                write!(f, "invalid intrinsic {name}: {reason}")
             }
             FableError::ReservedLocalName { name } => {
                 write!(
@@ -302,6 +349,11 @@ enum BoolExpr {
     Literal(bool),
     Read(FieldPath),
     Local(LocalRef),
+    HostStringPredicate {
+        function: FableStringBinaryPredicate,
+        lhs: Box<StringExpr>,
+        rhs: Box<StringExpr>,
+    },
     StringContains {
         haystack: Box<StringExpr>,
         needle: Box<StringExpr>,
@@ -345,6 +397,10 @@ enum StringExpr {
     Literal(String),
     Read(FieldPath),
     Local(LocalRef),
+    HostUnary {
+        function: FableStringUnary,
+        value: Box<StringExpr>,
+    },
     Trim(Box<StringExpr>),
     Add(Box<StringExpr>, Box<StringExpr>),
 }
@@ -360,6 +416,10 @@ enum NumberExpr {
 enum IntExpr {
     Read(FieldPath),
     Local(LocalRef),
+    HostUnary {
+        function: FableSignedUnary,
+        value: Box<NumberExpr>,
+    },
     Min(Box<NumberExpr>, Box<NumberExpr>),
     Max(Box<NumberExpr>, Box<NumberExpr>),
     Clamp {
@@ -377,6 +437,10 @@ enum UIntExpr {
     Read(FieldPath),
     Local(LocalRef),
     Literal(u128),
+    HostUnary {
+        function: FableUnsignedUnary,
+        value: Box<NumberExpr>,
+    },
     StringLen(Box<StringExpr>),
     Min(Box<UIntExpr>, Box<UIntExpr>),
     Max(Box<UIntExpr>, Box<UIntExpr>),
@@ -393,6 +457,10 @@ enum FloatExpr {
     Read(FieldPath),
     Local(LocalRef),
     Literal(f64),
+    HostUnary {
+        function: FableFloatUnary,
+        value: Box<NumberExpr>,
+    },
     Min(Box<NumberExpr>, Box<NumberExpr>),
     Max(Box<NumberExpr>, Box<NumberExpr>),
     Clamp {
@@ -486,16 +554,18 @@ impl LocalAllocator {
     }
 }
 
-struct Lowerer {
+struct Lowerer<'intrinsics> {
     root_shape: &'static Shape,
+    intrinsics: &'intrinsics FableIntrinsics,
     scopes: Vec<BTreeMap<String, LocalRef>>,
     locals: LocalAllocator,
 }
 
-impl Lowerer {
-    fn new(root_shape: &'static Shape) -> Self {
+impl<'intrinsics> Lowerer<'intrinsics> {
+    fn new(root_shape: &'static Shape, intrinsics: &'intrinsics FableIntrinsics) -> Self {
         Self {
             root_shape,
+            intrinsics,
             scopes: vec![BTreeMap::new()],
             locals: LocalAllocator::default(),
         }
@@ -711,9 +781,12 @@ impl Lowerer {
             reason: "call expression without callee",
         })?;
         let name = call_callee_name(&callee)?;
-        let signature = intrinsic_signature(&name).ok_or_else(|| FableError::Unsupported {
-            feature: format!("intrinsic {name}"),
-        })?;
+        let signature =
+            self.intrinsics
+                .signature(&name)
+                .ok_or_else(|| FableError::Unsupported {
+                    feature: format!("intrinsic {name}"),
+                })?;
 
         let mut args = Vec::new();
         if let Some(arg_list) = call.args() {
@@ -726,7 +799,7 @@ impl Lowerer {
         }
         signature.validate_arity(args.len())?;
 
-        lower_intrinsic(signature.intrinsic, args)
+        lower_intrinsic(signature, args)
     }
 
     fn lower_cmp(&self, op: CmpOp, lhs: ExprPlan, rhs: ExprPlan) -> Result<ExprPlan, FableError> {
@@ -834,7 +907,7 @@ enum BinaryOp {
     Sub,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 enum Intrinsic {
     Min,
     Max,
@@ -844,6 +917,11 @@ enum Intrinsic {
     StartsWith,
     EndsWith,
     Trim,
+    StringUnary(FableStringUnary),
+    StringBinaryPredicate(FableStringBinaryPredicate),
+    SignedUnary(FableSignedUnary),
+    UnsignedUnary(FableUnsignedUnary),
+    FloatUnary(FableFloatUnary),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -863,54 +941,121 @@ impl IntrinsicSignature {
     }
 }
 
-const INTRINSICS: &[IntrinsicSignature] = &[
-    IntrinsicSignature {
-        name: "min",
-        intrinsic: Intrinsic::Min,
-        arity: 2,
-    },
-    IntrinsicSignature {
-        name: "max",
-        intrinsic: Intrinsic::Max,
-        arity: 2,
-    },
-    IntrinsicSignature {
-        name: "clamp",
-        intrinsic: Intrinsic::Clamp,
-        arity: 3,
-    },
-    IntrinsicSignature {
-        name: "len",
-        intrinsic: Intrinsic::Len,
-        arity: 1,
-    },
-    IntrinsicSignature {
-        name: "contains",
-        intrinsic: Intrinsic::Contains,
-        arity: 2,
-    },
-    IntrinsicSignature {
-        name: "starts_with",
-        intrinsic: Intrinsic::StartsWith,
-        arity: 2,
-    },
-    IntrinsicSignature {
-        name: "ends_with",
-        intrinsic: Intrinsic::EndsWith,
-        arity: 2,
-    },
-    IntrinsicSignature {
-        name: "trim",
-        intrinsic: Intrinsic::Trim,
-        arity: 1,
-    },
-];
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NumericLane {
     Signed,
     Unsigned,
     Float,
+}
+
+impl Default for FableIntrinsics {
+    fn default() -> Self {
+        Self::standard()
+    }
+}
+
+impl FableIntrinsics {
+    /// Return a registry with Fable's builtin intrinsics.
+    #[must_use]
+    pub fn standard() -> Self {
+        let mut intrinsics = Self::empty();
+        intrinsics.add_builtin("min", Intrinsic::Min, 2);
+        intrinsics.add_builtin("max", Intrinsic::Max, 2);
+        intrinsics.add_builtin("clamp", Intrinsic::Clamp, 3);
+        intrinsics.add_builtin("len", Intrinsic::Len, 1);
+        intrinsics.add_builtin("contains", Intrinsic::Contains, 2);
+        intrinsics.add_builtin("starts_with", Intrinsic::StartsWith, 2);
+        intrinsics.add_builtin("ends_with", Intrinsic::EndsWith, 2);
+        intrinsics.add_builtin("trim", Intrinsic::Trim, 1);
+        intrinsics
+    }
+
+    /// Return an empty registry with no builtin intrinsics.
+    #[must_use]
+    pub fn empty() -> Self {
+        Self {
+            signatures: Vec::new(),
+        }
+    }
+
+    /// Register a `string -> string` host intrinsic.
+    pub fn add_string_unary(
+        &mut self,
+        name: &'static str,
+        function: FableStringUnary,
+    ) -> Result<&mut Self, FableError> {
+        self.insert(name, Intrinsic::StringUnary(function), 1)
+    }
+
+    /// Register a `(string, string) -> bool` host intrinsic.
+    pub fn add_string_binary_predicate(
+        &mut self,
+        name: &'static str,
+        function: FableStringBinaryPredicate,
+    ) -> Result<&mut Self, FableError> {
+        self.insert(name, Intrinsic::StringBinaryPredicate(function), 2)
+    }
+
+    /// Register a `signed number -> signed number` host intrinsic.
+    pub fn add_signed_unary(
+        &mut self,
+        name: &'static str,
+        function: FableSignedUnary,
+    ) -> Result<&mut Self, FableError> {
+        self.insert(name, Intrinsic::SignedUnary(function), 1)
+    }
+
+    /// Register an `unsigned number -> unsigned number` host intrinsic.
+    pub fn add_unsigned_unary(
+        &mut self,
+        name: &'static str,
+        function: FableUnsignedUnary,
+    ) -> Result<&mut Self, FableError> {
+        self.insert(name, Intrinsic::UnsignedUnary(function), 1)
+    }
+
+    /// Register a `float -> float` host intrinsic.
+    pub fn add_float_unary(
+        &mut self,
+        name: &'static str,
+        function: FableFloatUnary,
+    ) -> Result<&mut Self, FableError> {
+        self.insert(name, Intrinsic::FloatUnary(function), 1)
+    }
+
+    fn add_builtin(&mut self, name: &'static str, intrinsic: Intrinsic, arity: usize) {
+        self.insert(name, intrinsic, arity)
+            .expect("builtin Fable intrinsic metadata is valid");
+    }
+
+    fn insert(
+        &mut self,
+        name: &'static str,
+        intrinsic: Intrinsic,
+        arity: usize,
+    ) -> Result<&mut Self, FableError> {
+        validate_intrinsic_name(name)?;
+        if self
+            .signatures
+            .iter()
+            .any(|signature| signature.name == name)
+        {
+            return Err(invalid_intrinsic(name, "duplicate intrinsic name"));
+        }
+        self.signatures.push(IntrinsicSignature {
+            name,
+            intrinsic,
+            arity,
+        });
+        Ok(self)
+    }
+
+    fn signature(&self, name: &str) -> Option<IntrinsicSignature> {
+        self.signatures
+            .iter()
+            .find(|signature| signature.name == name)
+            .copied()
+    }
 }
 
 fn lower_add(lhs: ExprPlan, rhs: ExprPlan) -> Result<ExprPlan, FableError> {
@@ -967,10 +1112,14 @@ fn sub_numbers(lhs: NumberExpr, rhs: NumberExpr) -> NumberExpr {
     }
 }
 
-fn lower_intrinsic(intrinsic: Intrinsic, args: Vec<ExprPlan>) -> Result<ExprPlan, FableError> {
+fn lower_intrinsic(
+    signature: IntrinsicSignature,
+    args: Vec<ExprPlan>,
+) -> Result<ExprPlan, FableError> {
+    let intrinsic = signature.intrinsic;
     match intrinsic {
         Intrinsic::Min | Intrinsic::Max | Intrinsic::Clamp => {
-            lower_numeric_intrinsic(intrinsic, args)
+            lower_numeric_intrinsic(signature.name, intrinsic, args)
         }
         Intrinsic::Len => {
             let string = only_string_arg("len", args)?;
@@ -979,7 +1128,7 @@ fn lower_intrinsic(intrinsic: Intrinsic, args: Vec<ExprPlan>) -> Result<ExprPlan
             ))))
         }
         Intrinsic::Contains | Intrinsic::StartsWith | Intrinsic::EndsWith => {
-            let (lhs, rhs) = two_string_args(intrinsic.name(), args)?;
+            let (lhs, rhs) = two_string_args(signature.name, args)?;
             let expr = match intrinsic {
                 Intrinsic::Contains => BoolExpr::StringContains {
                     haystack: Box::new(lhs),
@@ -1001,14 +1150,52 @@ fn lower_intrinsic(intrinsic: Intrinsic, args: Vec<ExprPlan>) -> Result<ExprPlan
             let string = only_string_arg("trim", args)?;
             Ok(ExprPlan::String(StringExpr::Trim(Box::new(string))))
         }
+        Intrinsic::StringUnary(function) => {
+            let value = only_string_arg(signature.name, args)?;
+            Ok(ExprPlan::String(StringExpr::HostUnary {
+                function,
+                value: Box::new(value),
+            }))
+        }
+        Intrinsic::StringBinaryPredicate(function) => {
+            let (lhs, rhs) = two_string_args(signature.name, args)?;
+            Ok(ExprPlan::Bool(BoolExpr::HostStringPredicate {
+                function,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            }))
+        }
+        Intrinsic::SignedUnary(function) => {
+            let value = only_number_arg(signature.name, args)?;
+            Ok(ExprPlan::Number(NumberExpr::Signed(IntExpr::HostUnary {
+                function,
+                value: Box::new(value),
+            })))
+        }
+        Intrinsic::UnsignedUnary(function) => {
+            let value = only_number_arg(signature.name, args)?;
+            Ok(ExprPlan::Number(NumberExpr::Unsigned(
+                UIntExpr::HostUnary {
+                    function,
+                    value: Box::new(value),
+                },
+            )))
+        }
+        Intrinsic::FloatUnary(function) => {
+            let value = only_number_arg(signature.name, args)?;
+            Ok(ExprPlan::Number(NumberExpr::Float(FloatExpr::HostUnary {
+                function,
+                value: Box::new(value),
+            })))
+        }
     }
 }
 
 fn lower_numeric_intrinsic(
+    function: &'static str,
     intrinsic: Intrinsic,
     args: Vec<ExprPlan>,
 ) -> Result<ExprPlan, FableError> {
-    let function = intrinsic.name();
     let numbers = args
         .into_iter()
         .map(expect_number_plan)
@@ -1068,6 +1255,13 @@ fn lower_numeric_intrinsic(
         }
         _ => unreachable!("numeric intrinsic branch only receives numeric intrinsics"),
     }
+}
+
+fn only_number_arg(function: &'static str, args: Vec<ExprPlan>) -> Result<NumberExpr, FableError> {
+    let [arg]: [ExprPlan; 1] = args
+        .try_into()
+        .map_err(|_| invalid_call(function, arity_reason(1)))?;
+    expect_number_plan(arg)
 }
 
 fn only_string_arg(function: &'static str, args: Vec<ExprPlan>) -> Result<StringExpr, FableError> {
@@ -1133,13 +1327,6 @@ fn numeric_lane(args: &[NumberExpr]) -> NumericLane {
     }
 }
 
-fn intrinsic_signature(name: &str) -> Option<IntrinsicSignature> {
-    INTRINSICS
-        .iter()
-        .find(|signature| signature.name == name)
-        .copied()
-}
-
 fn call_callee_name(callee: &Expr) -> Result<String, FableError> {
     let Expr::Var(var) = callee else {
         return Err(FableError::Unsupported {
@@ -1149,21 +1336,6 @@ fn call_callee_name(callee: &Expr) -> Result<String, FableError> {
     var.name().ok_or(FableError::MalformedSyntax {
         reason: "callee without identifier",
     })
-}
-
-impl Intrinsic {
-    fn name(self) -> &'static str {
-        match self {
-            Intrinsic::Min => "min",
-            Intrinsic::Max => "max",
-            Intrinsic::Clamp => "clamp",
-            Intrinsic::Len => "len",
-            Intrinsic::Contains => "contains",
-            Intrinsic::StartsWith => "starts_with",
-            Intrinsic::EndsWith => "ends_with",
-            Intrinsic::Trim => "trim",
-        }
-    }
 }
 
 fn expect_bool_plan(expr: ExprPlan) -> Result<BoolExpr, FableError> {
@@ -1402,6 +1574,11 @@ impl FableInterp {
                 Ok(*unsafe { ptr.get::<bool>() })
             }
             BoolExpr::Local(local) => self.local_bool(*local),
+            BoolExpr::HostStringPredicate { function, lhs, rhs } => {
+                let lhs = self.eval_string(lhs)?;
+                let rhs = self.eval_string(rhs)?;
+                function(&lhs, &rhs)
+            }
             BoolExpr::StringContains { haystack, needle } => {
                 let haystack = self.eval_string(haystack)?;
                 let needle = self.eval_string(needle)?;
@@ -1462,6 +1639,10 @@ impl FableInterp {
                 unsafe { self.read_string_path(path, ptr) }
             }
             StringExpr::Local(local) => self.local_string(*local),
+            StringExpr::HostUnary { function, value } => {
+                let value = self.eval_string(value)?;
+                function(&value)
+            }
             StringExpr::Trim(expr) => Ok(self.eval_string(expr)?.trim().to_owned()),
             StringExpr::Add(lhs, rhs) => {
                 let mut lhs = self.eval_string(lhs)?;
@@ -1505,6 +1686,7 @@ impl FableInterp {
                 unsafe { self.read_signed_path(path.scalar, ptr) }
             }
             IntExpr::Local(local) => self.local_i128(*local),
+            IntExpr::HostUnary { function, value } => function(self.eval_number_as_i128(value)?),
             IntExpr::Min(lhs, rhs) => {
                 let lhs = self.eval_number_as_i128(lhs)?;
                 let rhs = self.eval_number_as_i128(rhs)?;
@@ -1571,6 +1753,7 @@ impl FableInterp {
                 unsafe { self.read_unsigned_path(path.scalar, ptr) }
             }
             UIntExpr::Local(local) => self.local_u128(*local),
+            UIntExpr::HostUnary { function, value } => function(self.eval_number_as_u128(value)?),
             UIntExpr::StringLen(expr) => Ok(self.eval_string(expr)?.len() as u128),
             UIntExpr::Min(lhs, rhs) => {
                 let lhs = self.eval_u128(lhs)?;
@@ -1632,6 +1815,7 @@ impl FableInterp {
                 }
             }
             FloatExpr::Local(local) => self.local_f64(*local),
+            FloatExpr::HostUnary { function, value } => function(self.eval_number_as_f64(value)?),
             FloatExpr::Min(lhs, rhs) => {
                 min_f64(self.eval_number_as_f64(lhs)?, self.eval_number_as_f64(rhs)?)
             }
@@ -2242,6 +2426,30 @@ fn invalid_call(function: &'static str, reason: &'static str) -> FableError {
     FableError::InvalidCall { function, reason }
 }
 
+fn invalid_intrinsic(name: &'static str, reason: &'static str) -> FableError {
+    FableError::InvalidIntrinsic { name, reason }
+}
+
+fn validate_intrinsic_name(name: &'static str) -> Result<(), FableError> {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return Err(invalid_intrinsic(name, "empty intrinsic name"));
+    };
+    if first != '_' && !first.is_ascii_alphabetic() {
+        return Err(invalid_intrinsic(
+            name,
+            "intrinsic name must start with '_' or an ASCII letter",
+        ));
+    }
+    if chars.any(|ch| ch != '_' && !ch.is_ascii_alphanumeric()) {
+        return Err(invalid_intrinsic(
+            name,
+            "intrinsic name must contain only '_' and ASCII alphanumeric characters",
+        ));
+    }
+    Ok(())
+}
+
 fn arity_reason(expected: usize) -> &'static str {
     match expected {
         1 => "expected 1 argument",
@@ -2476,6 +2684,111 @@ mod tests {
     }
 
     #[test]
+    fn applies_custom_host_intrinsics() {
+        let mut value = state();
+        let mut intrinsics = FableIntrinsics::standard();
+        intrinsics.add_string_unary("scream", scream).unwrap();
+        intrinsics
+            .add_string_binary_predicate("contains_ci", contains_ci)
+            .unwrap();
+        intrinsics.add_signed_unary("plus_ten", plus_ten).unwrap();
+        intrinsics
+            .add_unsigned_unary("cap_seven", cap_seven)
+            .unwrap();
+        intrinsics.add_float_unary("half", half).unwrap();
+
+        FablePlan::<State>::compile_with_intrinsics(
+            r#"
+                let name = scream(root.user.name);
+                root.user.name = name;
+                root.user.age = plus_ten(root.user.age);
+                root.visits = cap_seven(root.visits + 20);
+                root.score = half(root.score);
+                if contains_ci(root.user.name, "ada!") {
+                    root.user.active = true;
+                }
+            "#,
+            &intrinsics,
+        )
+        .unwrap()
+        .apply(&mut value)
+        .unwrap();
+
+        assert_eq!(value.user.name, "ADA!");
+        assert_eq!(value.user.age, 27);
+        assert_eq!(value.visits, 7);
+        assert_eq!(value.score, 0.75);
+        assert!(value.user.active);
+    }
+
+    #[test]
+    fn apply_with_intrinsics_uses_custom_registry() {
+        let mut value = state();
+        let mut intrinsics = FableIntrinsics::empty();
+        intrinsics.add_string_unary("scream", scream).unwrap();
+
+        apply_with_intrinsics(
+            &mut value,
+            r#"
+                root.user.name = scream(root.user.name);
+            "#,
+            &intrinsics,
+        )
+        .unwrap();
+
+        assert_eq!(value.user.name, "ADA!");
+    }
+
+    #[test]
+    fn empty_intrinsic_registry_excludes_builtins() {
+        let err = match FablePlan::<State>::compile_with_intrinsics(
+            "root.user.name = trim(root.user.name)",
+            &FableIntrinsics::empty(),
+        ) {
+            Ok(_) => panic!("expected Fable compilation to fail"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(
+            err,
+            FableError::Unsupported {
+                feature
+            } if feature == "intrinsic trim"
+        ));
+    }
+
+    #[test]
+    fn reports_duplicate_host_intrinsics() {
+        let mut intrinsics = FableIntrinsics::empty();
+        intrinsics.add_string_unary("scream", scream).unwrap();
+        let err = intrinsics.add_string_unary("scream", scream).unwrap_err();
+
+        assert!(matches!(
+            err,
+            FableError::InvalidIntrinsic {
+                name: "scream",
+                reason: "duplicate intrinsic name",
+            }
+        ));
+    }
+
+    #[test]
+    fn reports_invalid_host_intrinsic_names() {
+        let mut intrinsics = FableIntrinsics::empty();
+        let err = intrinsics
+            .add_string_unary("not-valid", scream)
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            FableError::InvalidIntrinsic {
+                name: "not-valid",
+                reason: "intrinsic name must contain only '_' and ASCII alphanumeric characters",
+            }
+        ));
+    }
+
+    #[test]
     fn reports_unknown_intrinsic_calls() {
         let err = compile_err("root.user.age = nope(root.user.age)");
 
@@ -2655,5 +2968,29 @@ mod tests {
             Ok(_) => panic!("expected Fable compilation to fail"),
             Err(err) => err,
         }
+    }
+
+    fn scream(value: &str) -> Result<String, FableError> {
+        Ok(format!("{}!", value.to_ascii_uppercase()))
+    }
+
+    fn contains_ci(haystack: &str, needle: &str) -> Result<bool, FableError> {
+        Ok(haystack
+            .to_ascii_lowercase()
+            .contains(&needle.to_ascii_lowercase()))
+    }
+
+    fn plus_ten(value: i128) -> Result<i128, FableError> {
+        value
+            .checked_add(10)
+            .ok_or_else(|| number_out_of_range(ScalarType::I128, format!("{value} + 10")))
+    }
+
+    fn cap_seven(value: u128) -> Result<u128, FableError> {
+        Ok(value.min(7))
+    }
+
+    fn half(value: f64) -> Result<f64, FableError> {
+        Ok(value / 2.0)
     }
 }
