@@ -163,9 +163,21 @@ impl<'src> Parser<'src> {
     fn parse_stmt(&mut self) {
         if self.at(IfKw) {
             self.parse_if_stmt();
+        } else if self.at(LetKw) {
+            self.parse_let_stmt();
         } else {
             self.parse_assignment_or_expr_stmt();
         }
+    }
+
+    fn parse_let_stmt(&mut self) {
+        self.start(LetStmt);
+        self.expect(LetKw);
+        self.expect(Ident);
+        self.expect(Assign);
+        self.parse_expr();
+        self.eat(Semicolon);
+        self.finish();
     }
 
     fn parse_if_stmt(&mut self) {
@@ -384,6 +396,14 @@ if root.user.age >= 18 {
         assert!(tree.contains("CallExpr"));
         assert!(tree.contains("IndexExpr"));
         assert!(tree.contains("ArgList"));
+    }
+
+    #[test]
+    fn parses_let_bindings() {
+        let tree = tree("let next_age = root.user.age + 1; root.user.age = next_age");
+        assert!(tree.contains("LetStmt"));
+        assert!(tree.contains("AssignStmt"));
+        assert!(tree.contains("BinaryExpr"));
     }
 
     #[test]

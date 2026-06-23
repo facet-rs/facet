@@ -164,6 +164,7 @@ fn keyword_or_ident(word: &str) -> SyntaxKind {
     match word {
         "if" => SyntaxKind::IfKw,
         "else" => SyntaxKind::ElseKw,
+        "let" => SyntaxKind::LetKw,
         "and" => SyntaxKind::AndKw,
         "or" => SyntaxKind::OrKw,
         "not" => SyntaxKind::NotKw,
@@ -203,6 +204,18 @@ mod tests {
             kinds(r#"root.user.name = "Ada";"#),
             [
                 Ident, Dot, Ident, Dot, Ident, Whitespace, Assign, Whitespace, Str, Semicolon
+            ]
+        );
+    }
+
+    #[test]
+    fn lexes_let_binding() {
+        use SyntaxKind::*;
+        assert_eq!(
+            kinds("let age = root.user.age + 1;"),
+            [
+                LetKw, Whitespace, Ident, Whitespace, Assign, Whitespace, Ident, Dot, Ident, Dot,
+                Ident, Whitespace, Plus, Whitespace, Int, Semicolon
             ]
         );
     }
