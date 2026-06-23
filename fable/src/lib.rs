@@ -14,7 +14,10 @@ pub use parser::{Parse, ParseError, parse};
 pub mod ast;
 
 mod lowering;
-pub use lowering::{FableError, FablePlan, apply};
+pub use lowering::{
+    FableError, FableFloatUnary, FableIntrinsics, FablePlan, FableSignedUnary,
+    FableStringBinaryPredicate, FableStringUnary, FableUnsignedUnary, apply, apply_with_intrinsics,
+};
 
 /// A node in the resolved, text-bearing syntax tree.
 pub type ResolvedNode = cstree::syntax::ResolvedNode<SyntaxKind>;
