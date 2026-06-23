@@ -1,6 +1,6 @@
 +++
-title = "Custom defaults (facet-default)"
-weight = 8
+title = "Custom defaults"
+weight = 1
 insert_anchor_links = "heading"
 +++
 
@@ -75,4 +75,4 @@ fill in whatever the user didn't supply.
 
 ## Related
 
-- [Ecosystem](@/ecosystem/_index.md) — other derive plugins (`facet-error`, `facet-validate`)
+- [Ecosystem](/ecosystem/) — other derive plugins (`facet-error`, `facet-validate`)

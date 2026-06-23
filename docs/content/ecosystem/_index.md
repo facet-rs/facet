@@ -79,9 +79,9 @@ Day-to-day ergonomics: better output, better errors, less boilerplate.
 |-------|--------------|--------|
 | [`facet-pretty`](https://docs.rs/facet-pretty) | Colored, structured pretty-printing with sensitive-field redaction. [Guide](/facet-pretty/guide/). | [facet-rs/facet](https://github.com/facet-rs/facet) |
 | [`rediff`](https://docs.rs/rediff) | Structural diff and pretty assertions for any `Facet` type — no `PartialEq` required. | [bearcove/rediff](https://github.com/bearcove/rediff) |
-| [`facet-default`](https://docs.rs/facet-default) | Derive `Default` with per-field custom defaults. [Guide](@/guide/facet-default.md). | [facet-rs/facet](https://github.com/facet-rs/facet) |
-| [`facet-error`](https://docs.rs/facet-error) | A `thiserror` replacement — derive `Error` from doc comments. [Guide](@/guide/facet-error.md). | [facet-rs/facet](https://github.com/facet-rs/facet) |
-| [`facet-validate`](https://docs.rs/facet-validate) | Validation attributes checked during deserialization. [Guide](@/guide/facet-validate.md). | [facet-rs/facet](https://github.com/facet-rs/facet) |
+| [`facet-default`](https://docs.rs/facet-default) | Derive `Default` with per-field custom defaults. [Guide](/facet-default/guide/). | [facet-rs/facet](https://github.com/facet-rs/facet) |
+| [`facet-error`](https://docs.rs/facet-error) | A `thiserror` replacement — derive `Error` from doc comments. [Guide](/facet-error/guide/). | [facet-rs/facet](https://github.com/facet-rs/facet) |
+| [`facet-validate`](https://docs.rs/facet-validate) | Validation attributes checked during deserialization. [Guide](/facet-validate/guide/). | [facet-rs/facet](https://github.com/facet-rs/facet) |
 
 ## Configuration & CLI
 

@@ -33,6 +33,9 @@ sources (
     { name rusqlite-facet,   mount /rusqlite-facet,   local rusqlite-facet/docs/content }
     { name facet-json,       mount /facet-json,       local facet-json/docs/content }
     { name facet-pretty,     mount /facet-pretty,     local facet-pretty/docs/content }
+    { name facet-default,    mount /facet-default,    local facet-default/docs/content }
+    { name facet-error,      mount /facet-error,      local facet-error/docs/content }
+    { name facet-validate,   mount /facet-validate,   local facet-validate/docs/content }
 )
 
 // Link checking configuration

@@ -1,6 +1,6 @@
 +++
-title = "Validation (facet-validate)"
-weight = 10
+title = "Validation"
+weight = 1
 insert_anchor_links = "heading"
 +++
 
@@ -74,4 +74,4 @@ type — the type system and the validator together keep bad data out.
 ## Related
 
 - [JSON](/facet-json/guide/) — the parse path validation plugs into
-- [Ecosystem](@/ecosystem/_index.md) — other derive plugins
+- [Ecosystem](/ecosystem/) — other derive plugins

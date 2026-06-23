@@ -14,9 +14,9 @@ New here? Start with [Getting Started](@/guide/getting-started.md), then [Why fa
 - [JSON](/facet-json/guide/) — serialize and deserialize with span-aware errors
 - [CLI & config](/figue/guide/) — typed args, env vars, and config files with figue
 - [Pretty-printing](/facet-pretty/guide/) — readable, redacted, colored output
-- [Custom defaults](@/guide/facet-default.md) — per-field defaults with `facet-default`
-- [Error types](@/guide/facet-error.md) — `thiserror`-style errors from doc comments
-- [Validation](@/guide/facet-validate.md) — reject bad data during deserialization
+- [Custom defaults](/facet-default/guide/) — per-field defaults with `facet-default`
+- [Error types](/facet-error/guide/) — `thiserror`-style errors from doc comments
+- [Validation](/facet-validate/guide/) — reject bad data during deserialization
 - [Schema & code generation](@/guide/schema-codegen.md) — TypeScript, Zod, JSON Schema
 - [Type Support](@/guide/type-support.md) — third-party types that already implement `Facet`
 

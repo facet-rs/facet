@@ -1,6 +1,6 @@
 +++
-title = "Error types (facet-error)"
-weight = 9
+title = "Error types"
+weight = 1
 insert_anchor_links = "heading"
 +++
 
@@ -73,5 +73,5 @@ structured logging and RPC.
 
 ## Related
 
-- [Ecosystem](@/ecosystem/_index.md) — derive plugins overview
+- [Ecosystem](/ecosystem/) — derive plugins overview
 - [Pretty-printing](/facet-pretty/guide/) — render errors with context
