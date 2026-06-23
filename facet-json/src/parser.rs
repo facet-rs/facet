@@ -1470,6 +1470,7 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
     }
 
     #[inline(never)]
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
     pub(crate) fn try_consume_ordered_i32_object(
         &mut self,
         expected: &[&str],
@@ -1492,6 +1493,7 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
         Ok(matched)
     }
 
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
     pub(crate) fn try_consume_ordered_scalar_object_with<E, W>(
         &mut self,
         expected: &[&str],
@@ -1614,6 +1616,7 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
     }
 
     #[inline(never)]
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
     fn try_consume_ordered_scalar_object_inner<E, W>(
         &mut self,
         expected: &[&str],
