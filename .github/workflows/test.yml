@@ -213,6 +213,7 @@ jobs:
       contents: read
     env:
       CARGO_HTTP_MULTIPLEXING: "false"
+      CARGO_HTTP_TIMEOUT: "120"
       CARGO_NET_RETRY: "10"
     steps:
       - uses: actions/checkout@v6
