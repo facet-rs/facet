@@ -23,17 +23,26 @@
     <header class="site-header">
         <div class="site-header-inner">
             <div class="header-lead">
-                <a class="brand" href="{{ source.mount | default(value='/') }}">
-                    <span class="brand-text"><strong>{{ site }}</strong></span>
-                </a>
-
-                {# Ecosystem switcher: cross-site nav. data-x-site keeps these
+                {# Project switcher — a dropdown so it scales as the ecosystem
+                   grows (fable, weavy, …). The trigger is the current project;
+                   the menu lists them all. data-x-site keeps the links
                    site-absolute (mount-localization leaves them alone). #}
-                <nav class="eco-switch" aria-label="Ecosystem">
-                    <a href="/" data-x-site {% if site == "facet" %}class="is-active"{% endif %}>facet</a>
-                    <a href="/styx" data-x-site {% if site == "styx" %}class="is-active"{% endif %}>styx</a>
-                    <a href="/picante" data-x-site {% if site == "picante" %}class="is-active"{% endif %}>picante</a>
-                    <a href="/dibs" data-x-site {% if site == "dibs" %}class="is-active"{% endif %}>dibs</a>
+                <details class="eco-menu">
+                    <summary class="brand" aria-label="Switch project" title="Switch project">
+                        <span class="brand-text"><strong>{{ site }}</strong></span>
+                        <svg class="eco-caret" viewBox="0 0 10 6" width="10" height="6" aria-hidden="true"><path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+                    </summary>
+                    <div class="eco-menu-list" role="menu">
+                        <p class="eco-menu-label">facet ecosystem</p>
+                        <a href="/" data-x-site role="menuitem" {% if site == "facet" %}class="is-active"{% endif %}>facet</a>
+                        <a href="/styx" data-x-site role="menuitem" {% if site == "styx" %}class="is-active"{% endif %}>styx</a>
+                        <a href="/picante" data-x-site role="menuitem" {% if site == "picante" %}class="is-active"{% endif %}>picante</a>
+                        <a href="/dibs" data-x-site role="menuitem" {% if site == "dibs" %}class="is-active"{% endif %}>dibs</a>
+                    </div>
+                </details>
+
+                <nav class="breadcrumbs" aria-label="Breadcrumb">
+                    {% block breadcrumb %}{% endblock %}
                 </nav>
             </div>
 
@@ -41,7 +50,8 @@
 
             <div class="page-actions">
                 {% block actions %}{% endblock %}
-                <a class="header-github" href="https://github.com/bearcove/{{ site }}" aria-label="GitHub" title="GitHub">
+                {% set gh = "https://github.com/facet-rs/facet" if site == "facet" else "https://github.com/bearcove/" ~ site %}
+                <a class="header-github" href="{{ gh }}" aria-label="GitHub" title="GitHub">
                     <svg viewBox="0 0 16 16" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
                 </a>
                 <label for="nav-toggle" class="nav-burger" aria-label="Toggle menu">
@@ -100,9 +110,11 @@
         </div>
 
         {# On this page — the right-hand TOC. Pages and sections both expose `toc`. #}
+        {# A page shows its OWN toc (never the parent section's); a section shows
+           its toc. #}
         {% set toc = [] %}
-        {% if page is defined and page and page.toc %}{% set toc = page.toc %}
-        {% elif section is defined and section and section.toc %}{% set toc = section.toc %}{% endif %}
+        {% if page is defined and page %}{% set toc = page.toc | default(value=[]) %}
+        {% elif section is defined and section %}{% set toc = section.toc | default(value=[]) %}{% endif %}
         {% if toc | length > 0 %}
         <aside class="page-toc" aria-label="On this page">
             <div class="page-toc-inner">
@@ -130,7 +142,7 @@
 
     <footer class="site-footer">
         <a href="/">facet ecosystem</a>
-        <a href="https://github.com/bearcove/{{ site }}">{{ site }} on GitHub</a>
+        <a href="{{ gh }}">{{ site }} on GitHub</a>
         <a href="https://github.com/bearcove/dodeca">Built with Dodeca</a>
     </footer>
 
@@ -156,6 +168,15 @@
             const navToggle = document.getElementById("nav-toggle");
             document.querySelector(".sidebar")?.addEventListener("click", (e) => {
                 if (e.target.tagName === "A" && navToggle) navToggle.checked = false;
+            });
+
+            // Close the project dropdown on an outside click or Escape.
+            const ecoMenu = document.querySelector(".eco-menu");
+            document.addEventListener("click", (e) => {
+                if (ecoMenu && ecoMenu.open && !ecoMenu.contains(e.target)) ecoMenu.open = false;
+            });
+            document.addEventListener("keydown", (e) => {
+                if (e.key === "Escape" && ecoMenu && ecoMenu.open) ecoMenu.open = false;
             });
         })();
     </script>

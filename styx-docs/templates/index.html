@@ -2,8 +2,14 @@
 
 {% block title %}{{ section.title | default(value=config.title) }}{% endblock title %}
 
-{% block body %}
-<main class="hero">
-    {{ section.content | safe }}
-</main>
-{% endblock body %}
+{% block content %}
+<article class="doc doc-home">
+    <header class="doc-header">
+        <h1>{{ section.title }}</h1>
+        {% if section.description %}<p class="lede">{{ section.description }}</p>{% endif %}
+    </header>
+    <div class="doc-body">
+        {{ section.content | safe }}
+    </div>
+</article>
+{% endblock content %}

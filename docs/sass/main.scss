@@ -855,27 +855,58 @@ hr {
    facet ecosystem additions (multi-site chrome on the labs base)
    ============================================================ */
 
-/* ecosystem switcher (cross-site nav, in the header lead) */
-.eco-switch {
-  display: flex;
-  align-items: center;
-  gap: 0.1rem;
-  padding-left: 0.85rem;
-  margin-left: 0.35rem;
-  border-left: 1px solid var(--rule-strong);
+/* ecosystem switcher — a dropdown (scales as projects grow) */
+.eco-menu {
+  position: relative;
+  flex: 0 0 auto;
+}
+.eco-menu > summary.brand {
+  list-style: none;
+  cursor: pointer;
+  gap: 0.45rem;
+  padding: 0.25rem 0.5rem 0.25rem 0.15rem;
+  border-radius: 6px;
+  &::-webkit-details-marker { display: none; }
+  &:hover { background: var(--bg-subtle); }
+}
+.eco-caret { color: var(--ink-soft); transition: transform 0.15s ease; }
+.eco-menu[open] > summary .eco-caret { transform: rotate(180deg); }
+
+.eco-menu-list {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  left: 0;
+  z-index: 40;
+  min-width: 12rem;
+  padding: 0.4rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--rule-strong);
+  border-radius: 9px;
+  box-shadow: 0 16px 44px color-mix(in srgb, var(--bg-sunken) 70%, transparent);
+  display: grid;
+  gap: 0.05rem;
 
   a {
-    color: var(--ink-muted);
+    display: block;
+    color: var(--ink-2);
     text-decoration: none;
-    font-size: 0.85rem;
-    font-weight: 600;
-    padding: 0.2rem 0.5rem;
-    border-radius: 5px;
-    line-height: 1;
+    font-size: 0.9rem;
+    font-weight: 500;
+    padding: 0.4rem 0.6rem;
+    border-radius: 6px;
 
-    &:hover { color: var(--ink); background: var(--bg-subtle); }
-    &.is-active { color: var(--signal); }
+    &:hover { background: var(--bg-subtle); color: var(--ink); }
+    &.is-active { color: var(--signal); font-weight: 600; }
   }
+}
+.eco-menu-label {
+  font-family: var(--font-display);
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-soft);
+  padding: 0.2rem 0.6rem 0.4rem;
 }
 
 .header-github {
@@ -943,8 +974,7 @@ hr {
   .nav-burger { display: inline-flex; }
   .page-toc { display: none; }
   .site-shell { grid-template-columns: 1fr; }
-  .eco-switch { padding-left: 0.5rem; margin-left: 0.25rem; gap: 0; }
-  .eco-switch a { padding: 0.2rem 0.35rem; font-size: 0.8rem; }
+  .eco-menu-list { min-width: 11rem; }
 
   .sidebar {
     position: static;
