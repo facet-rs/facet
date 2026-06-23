@@ -28,6 +28,9 @@ sources (
     { name fable,   mount /fable,   local fable/docs/content }
     { name weavy,   mount /weavy,   local weavy/docs/content }
     { name vox,     mount /vox,     local vox/docs/content }
+    { name facet-axum,       mount /facet-axum,       local facet-axum/docs/content }
+    { name facet-cargo-toml, mount /facet-cargo-toml, local facet-cargo-toml/docs/content }
+    { name rusqlite-facet,   mount /rusqlite-facet,   local rusqlite-facet/docs/content }
 )
 
 // Link checking configuration

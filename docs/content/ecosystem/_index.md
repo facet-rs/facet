@@ -87,17 +87,17 @@ Day-to-day ergonomics: better output, better errors, less boilerplate.
 
 | Crate | What it does | Source |
 |-------|--------------|--------|
-| [`figue`](https://docs.rs/figue) | Type-safe CLI args, environment variables, and config files in one layered model. [Guide](@/ecosystem/figue/_index.md). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/figue) |
+| [`figue`](https://docs.rs/figue) | Type-safe CLI args, environment variables, and config files in one layered model. [Guide](/figue). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/figue) |
 | [`facet-styx`](https://docs.rs/facet-styx) | Styx serialization and deserialization for Facet types. [Guide](@/styx/_index.md). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-styx) |
 | [`styx-cli`](https://docs.rs/styx-cli) | Validation, formatting, schema generation, and language server tooling for Styx. [Guide](@/styx/tools/cli.md). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/styx-cli) |
-| [`facet-cargo-toml`](https://docs.rs/facet-cargo-toml) | A fully-typed `Cargo.toml` / `Cargo.lock` parser. [Guide](@/ecosystem/facet-cargo-toml/_index.md). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-cargo-toml) |
+| [`facet-cargo-toml`](https://docs.rs/facet-cargo-toml) | A fully-typed `Cargo.toml` / `Cargo.lock` parser. [Guide](/facet-cargo-toml). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-cargo-toml) |
 | [`rediff`](https://docs.rs/rediff) | Structural diffs and assertions for Facet values. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/rediff) |
 
 ## Database
 
 | Crate | What it does | Source |
 |-------|--------------|--------|
-| [`rusqlite-facet`](https://docs.rs/rusqlite-facet) | Bind query parameters and map SQLite rows using Facet reflection. [Guide](@/ecosystem/rusqlite-facet/_index.md). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/rusqlite-facet) |
+| [`rusqlite-facet`](https://docs.rs/rusqlite-facet) | Bind query parameters and map SQLite rows using Facet reflection. [Guide](/rusqlite-facet). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/rusqlite-facet) |
 
 ## Runtime & incremental computation
 
@@ -109,7 +109,7 @@ Day-to-day ergonomics: better output, better errors, less boilerplate.
 
 | Crate | What it does | Source |
 |-------|--------------|--------|
-| [`facet-axum`](https://docs.rs/facet-axum) | [axum](https://docs.rs/axum) extractors and responses backed by facet instead of serde. [Guide](@/ecosystem/facet-axum/_index.md). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-axum) |
+| [`facet-axum`](https://docs.rs/facet-axum) | [axum](https://docs.rs/axum) extractors and responses backed by facet instead of serde. [Guide](/facet-axum). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-axum) |
 | [`facet-egui`](https://docs.rs/facet-egui) | An [egui](https://www.egui.rs) inspector/editor widget for any `Facet` type — live, type-driven UI straight from a `Shape`. *Community-maintained.* | [Erik1000/facet-egui](https://github.com/Erik1000/facet-egui) |
 
 ## Building blocks
@@ -121,7 +121,7 @@ Lower-level pieces you'll meet when writing your own format crate or tooling.
 | [`facet-value`](https://docs.rs/facet-value) | A memory-efficient dynamic value type — JSON-like data plus bytes. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-value) |
 | [`facet-solver`](https://docs.rs/facet-solver) | Constraint solver that resolves type shapes from field names. | [facet-rs/facet](https://github.com/facet-rs/facet) |
 | [`facet-path`](https://docs.rs/facet-path) | Path tracking for navigating nested `Facet` structures. | [facet-rs/facet](https://github.com/facet-rs/facet) |
-| [`strid`](https://docs.rs/strid) | Strongly-typed string identifiers with Facet integration. [Guide](@/ecosystem/strid/_index.md). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/strid) |
+| [`strid`](https://docs.rs/strid) | Strongly-typed string identifiers with Facet integration. [Guide](/strid). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/strid) |
 
 Writing a new format crate? The [Extend](@/extend/_index.md) section walks
 through `Peek`, `Partial`, and the format-crate architecture.

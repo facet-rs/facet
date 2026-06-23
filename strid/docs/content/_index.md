@@ -1,42 +1,45 @@
 +++
 title = "strid"
-description = "Strongly-typed strings with less boilerplate — a facet-aware fork of aliri_braid."
+weight = 20
 insert_anchor_links = "heading"
 +++
 
-**strid** (string id) makes it painless to create strongly-typed wrappers around
-string values, so you use them the right way every time. It's a fork of
-[aliri_braid](https://github.com/neoeinstein/aliri_braid) brought up to Rust
-edition 2024 with [facet](https://crates.io/crates/facet) support.
+`strid` makes strongly-typed string identifiers cheap to define and use. It is
+a Facet-adjacent building block for APIs that should not pass unrelated string
+values through the same type.
 
-Attach `#[braid]` to a struct and the macro wraps a string and generates the
-borrowed form of the strong type:
+The `#[braid]` macro generates an owned string wrapper plus its borrowed form:
 
 ```rust
 use strid::braid;
 
 #[braid]
 pub struct DatabaseName;
+
+fn use_database(name: &DatabaseNameRef) {
+    println!("{}", name.as_str());
+}
 ```
 
-Custom string types are supported too, as long as they implement the expected
-traits:
+## Crates
 
-```rust
-use strid::braid;
-use compact_str::CompactString as String;
+| Crate | What it does |
+|-------|--------------|
+| [`strid`](https://docs.rs/strid) | Public macro entry point and generated string wrapper support. |
+| [`strid-macros`](https://docs.rs/strid-macros) | Procedural macro implementation for `strid`. |
+| [`strid-examples`](https://docs.rs/strid-examples) | Published examples for custom string storage, validation, and normalization. |
 
-#[braid]
-pub struct UserId;
-```
+## Facet integration
 
-Once created, strids pass around as strongly-typed, immutable strings — or untyped
-for stringly-typed interfaces:
+`strid` re-exports `facet` and can generate Facet implementations for strongly
+typed string wrappers, including wrappers backed by string-like crates such as
+`bytestring`, `compact_str`, and `smartstring` when the corresponding Facet
+support is enabled.
 
-```rust
-let owned = DatabaseName::new(String::from("mongo"));
-borrow_strong_string(&owned);   // &DatabaseNameRef
-take_raw_string(owned.take());  // String
-```
+## Source
 
-[Source on GitHub](https://github.com/bearcove/strid) · [docs.rs](https://docs.rs/strid)
+`strid` now lives in the Facet monorepo:
+
+- [`strid`](https://github.com/facet-rs/facet/tree/main/strid)
+- [`strid-macros`](https://github.com/facet-rs/facet/tree/main/strid-macros)
+- [`strid-examples`](https://github.com/facet-rs/facet/tree/main/strid-examples)
