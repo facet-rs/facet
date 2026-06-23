@@ -3,10 +3,9 @@ title = "vox"
 description = "Rust-native RPC protocol with cross-language codegen and multiple transport backends."
 +++
 
-vox is a Rust-native RPC protocol designed for bidirectional, multiplexed communication.
+*:include(path="vox/README.md", strip_readme=true)*
 
-Define services in Rust traits and generate clients/servers for other languages.
+## Dig deeper
 
-Read the [specification](./spec/) for the protocol model, transport behavior, and compatibility guarantees.
-
-The [ecosystem compatibility roadmap](./vox-ecosystem-compat-roadmap/) defines the frozen Vox 1.0 Phon-backed migration gate.
+- The [specification](./spec/) — the protocol model, transport behavior, and compatibility guarantees.
+- The [ecosystem compatibility roadmap](./vox-ecosystem-compat-roadmap/) — the frozen Vox 1.0 Phon-backed migration gate.
