@@ -23,6 +23,10 @@ export default defineConfig({
   assetsInclude: ["**/*.wasm"],
   build: {
     manifest: true,
+    // The playgrounds use modern JS (WASM, top-level await); don't down-level to
+    // vite's default es2020 baseline — esbuild can't lower some destructuring
+    // there, and we ship to evergreen browsers anyway.
+    target: "esnext",
     rollupOptions: {
       input: {
         // Only quiz is bundled; Monaco and CodeMirror playgrounds load from esm.sh

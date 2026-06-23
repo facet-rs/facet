@@ -9,7 +9,7 @@
   "dependencies": {
     "@bearcove/styx": "workspace:*",
     "@bearcove/styx-webmd": "workspace:*",
-    "@sveltejs/vite-plugin-svelte": "^6.2.4",
+    "@sveltejs/vite-plugin-svelte": "^7.1.2",
     "svelte": "^5.47.0",
     "vite-plugin-top-level-await": "^1.6.0",
     "vite-plugin-wasm": "^3.5.0"
