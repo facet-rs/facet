@@ -8,7 +8,9 @@ use facet_core::{Facet, PtrConst, PtrMut, ScalarType, Shape, StructKind, Type, U
 use weavy::{BlockRef, Control, DenseLowered, Program, RunError, RunStats, Step};
 
 use crate::SyntaxKind;
-use crate::ast::{self, AstNode, BinaryExpr, Block, ElseClause, Expr, IfStmt, Stmt, UnaryExpr};
+use crate::ast::{
+    self, AstNode, BinaryExpr, Block, CallExpr, ElseClause, Expr, IfStmt, Stmt, UnaryExpr,
+};
 use crate::{ParseError, parse};
 
 /// A reusable lowered Fable program for `T`.
@@ -118,6 +120,13 @@ pub enum FableError {
         /// Actual expression type.
         actual: &'static str,
     },
+    /// An intrinsic call was malformed.
+    InvalidCall {
+        /// Intrinsic name.
+        function: &'static str,
+        /// Reason it was rejected.
+        reason: &'static str,
+    },
     /// A local binding attempted to use a reserved name.
     ReservedLocalName {
         /// Reserved binding name.
@@ -184,6 +193,9 @@ impl fmt::Display for FableError {
             }
             FableError::TypeMismatch { expected, actual } => {
                 write!(f, "expected {expected}, found {actual}")
+            }
+            FableError::InvalidCall { function, reason } => {
+                write!(f, "invalid call to {function}: {reason}")
             }
             FableError::ReservedLocalName { name } => {
                 write!(
@@ -290,6 +302,18 @@ enum BoolExpr {
     Literal(bool),
     Read(FieldPath),
     Local(LocalRef),
+    StringContains {
+        haystack: Box<StringExpr>,
+        needle: Box<StringExpr>,
+    },
+    StringStartsWith {
+        haystack: Box<StringExpr>,
+        prefix: Box<StringExpr>,
+    },
+    StringEndsWith {
+        haystack: Box<StringExpr>,
+        suffix: Box<StringExpr>,
+    },
     Not(Box<BoolExpr>),
     And(Box<BoolExpr>, Box<BoolExpr>),
     Or(Box<BoolExpr>, Box<BoolExpr>),
@@ -321,6 +345,7 @@ enum StringExpr {
     Literal(String),
     Read(FieldPath),
     Local(LocalRef),
+    Trim(Box<StringExpr>),
     Add(Box<StringExpr>, Box<StringExpr>),
 }
 
@@ -335,6 +360,13 @@ enum NumberExpr {
 enum IntExpr {
     Read(FieldPath),
     Local(LocalRef),
+    Min(Box<NumberExpr>, Box<NumberExpr>),
+    Max(Box<NumberExpr>, Box<NumberExpr>),
+    Clamp {
+        value: Box<NumberExpr>,
+        min: Box<NumberExpr>,
+        max: Box<NumberExpr>,
+    },
     Neg(Box<NumberExpr>),
     Add(Box<NumberExpr>, Box<NumberExpr>),
     Sub(Box<NumberExpr>, Box<NumberExpr>),
@@ -345,6 +377,14 @@ enum UIntExpr {
     Read(FieldPath),
     Local(LocalRef),
     Literal(u128),
+    StringLen(Box<StringExpr>),
+    Min(Box<UIntExpr>, Box<UIntExpr>),
+    Max(Box<UIntExpr>, Box<UIntExpr>),
+    Clamp {
+        value: Box<UIntExpr>,
+        min: Box<UIntExpr>,
+        max: Box<UIntExpr>,
+    },
     Add(Box<UIntExpr>, Box<UIntExpr>),
 }
 
@@ -353,6 +393,13 @@ enum FloatExpr {
     Read(FieldPath),
     Local(LocalRef),
     Literal(f64),
+    Min(Box<NumberExpr>, Box<NumberExpr>),
+    Max(Box<NumberExpr>, Box<NumberExpr>),
+    Clamp {
+        value: Box<NumberExpr>,
+        min: Box<NumberExpr>,
+        max: Box<NumberExpr>,
+    },
     Neg(Box<NumberExpr>),
     Add(Box<NumberExpr>, Box<NumberExpr>),
     Sub(Box<NumberExpr>, Box<NumberExpr>),
@@ -571,9 +618,7 @@ impl Lowerer {
             Expr::Index(_) => Err(FableError::Unsupported {
                 feature: "index expressions".into(),
             }),
-            Expr::Call(_) => Err(FableError::Unsupported {
-                feature: "call expressions".into(),
-            }),
+            Expr::Call(call) => self.lower_call(call),
         }
     }
 
@@ -659,6 +704,29 @@ impl Lowerer {
             BinaryOp::Add => lower_add(lhs, rhs),
             BinaryOp::Sub => lower_sub(lhs, rhs),
         }
+    }
+
+    fn lower_call(&mut self, call: &CallExpr) -> Result<ExprPlan, FableError> {
+        let callee = call.callee().ok_or(FableError::MalformedSyntax {
+            reason: "call expression without callee",
+        })?;
+        let name = call_callee_name(&callee)?;
+        let signature = intrinsic_signature(&name).ok_or_else(|| FableError::Unsupported {
+            feature: format!("intrinsic {name}"),
+        })?;
+
+        let mut args = Vec::new();
+        if let Some(arg_list) = call.args() {
+            for arg in arg_list.args() {
+                let expr = arg.expr().ok_or(FableError::MalformedSyntax {
+                    reason: "argument without expression",
+                })?;
+                args.push(self.lower_expr(&expr)?);
+            }
+        }
+        signature.validate_arity(args.len())?;
+
+        lower_intrinsic(signature.intrinsic, args)
     }
 
     fn lower_cmp(&self, op: CmpOp, lhs: ExprPlan, rhs: ExprPlan) -> Result<ExprPlan, FableError> {
@@ -766,6 +834,85 @@ enum BinaryOp {
     Sub,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Intrinsic {
+    Min,
+    Max,
+    Clamp,
+    Len,
+    Contains,
+    StartsWith,
+    EndsWith,
+    Trim,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct IntrinsicSignature {
+    name: &'static str,
+    intrinsic: Intrinsic,
+    arity: usize,
+}
+
+impl IntrinsicSignature {
+    fn validate_arity(self, actual: usize) -> Result<(), FableError> {
+        if actual == self.arity {
+            Ok(())
+        } else {
+            Err(invalid_call(self.name, arity_reason(self.arity)))
+        }
+    }
+}
+
+const INTRINSICS: &[IntrinsicSignature] = &[
+    IntrinsicSignature {
+        name: "min",
+        intrinsic: Intrinsic::Min,
+        arity: 2,
+    },
+    IntrinsicSignature {
+        name: "max",
+        intrinsic: Intrinsic::Max,
+        arity: 2,
+    },
+    IntrinsicSignature {
+        name: "clamp",
+        intrinsic: Intrinsic::Clamp,
+        arity: 3,
+    },
+    IntrinsicSignature {
+        name: "len",
+        intrinsic: Intrinsic::Len,
+        arity: 1,
+    },
+    IntrinsicSignature {
+        name: "contains",
+        intrinsic: Intrinsic::Contains,
+        arity: 2,
+    },
+    IntrinsicSignature {
+        name: "starts_with",
+        intrinsic: Intrinsic::StartsWith,
+        arity: 2,
+    },
+    IntrinsicSignature {
+        name: "ends_with",
+        intrinsic: Intrinsic::EndsWith,
+        arity: 2,
+    },
+    IntrinsicSignature {
+        name: "trim",
+        intrinsic: Intrinsic::Trim,
+        arity: 1,
+    },
+];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NumericLane {
+    Signed,
+    Unsigned,
+    Float,
+}
+
 fn lower_add(lhs: ExprPlan, rhs: ExprPlan) -> Result<ExprPlan, FableError> {
     match (lhs, rhs) {
         (ExprPlan::String(lhs), ExprPlan::String(rhs)) => Ok(ExprPlan::String(StringExpr::Add(
@@ -820,11 +967,220 @@ fn sub_numbers(lhs: NumberExpr, rhs: NumberExpr) -> NumberExpr {
     }
 }
 
+fn lower_intrinsic(intrinsic: Intrinsic, args: Vec<ExprPlan>) -> Result<ExprPlan, FableError> {
+    match intrinsic {
+        Intrinsic::Min | Intrinsic::Max | Intrinsic::Clamp => {
+            lower_numeric_intrinsic(intrinsic, args)
+        }
+        Intrinsic::Len => {
+            let string = only_string_arg("len", args)?;
+            Ok(ExprPlan::Number(NumberExpr::Unsigned(UIntExpr::StringLen(
+                Box::new(string),
+            ))))
+        }
+        Intrinsic::Contains | Intrinsic::StartsWith | Intrinsic::EndsWith => {
+            let (lhs, rhs) = two_string_args(intrinsic.name(), args)?;
+            let expr = match intrinsic {
+                Intrinsic::Contains => BoolExpr::StringContains {
+                    haystack: Box::new(lhs),
+                    needle: Box::new(rhs),
+                },
+                Intrinsic::StartsWith => BoolExpr::StringStartsWith {
+                    haystack: Box::new(lhs),
+                    prefix: Box::new(rhs),
+                },
+                Intrinsic::EndsWith => BoolExpr::StringEndsWith {
+                    haystack: Box::new(lhs),
+                    suffix: Box::new(rhs),
+                },
+                _ => unreachable!("string predicate branch only receives string predicates"),
+            };
+            Ok(ExprPlan::Bool(expr))
+        }
+        Intrinsic::Trim => {
+            let string = only_string_arg("trim", args)?;
+            Ok(ExprPlan::String(StringExpr::Trim(Box::new(string))))
+        }
+    }
+}
+
+fn lower_numeric_intrinsic(
+    intrinsic: Intrinsic,
+    args: Vec<ExprPlan>,
+) -> Result<ExprPlan, FableError> {
+    let function = intrinsic.name();
+    let numbers = args
+        .into_iter()
+        .map(expect_number_plan)
+        .collect::<Result<Vec<_>, _>>()?;
+    let lane = numeric_lane(&numbers);
+
+    match intrinsic {
+        Intrinsic::Min => {
+            let (lhs, rhs) = two_numbers(function, numbers)?;
+            Ok(ExprPlan::Number(match lane {
+                NumericLane::Signed => {
+                    NumberExpr::Signed(IntExpr::Min(Box::new(lhs), Box::new(rhs)))
+                }
+                NumericLane::Unsigned => NumberExpr::Unsigned(UIntExpr::Min(
+                    Box::new(expect_unsigned_number(function, lhs)?),
+                    Box::new(expect_unsigned_number(function, rhs)?),
+                )),
+                NumericLane::Float => {
+                    NumberExpr::Float(FloatExpr::Min(Box::new(lhs), Box::new(rhs)))
+                }
+            }))
+        }
+        Intrinsic::Max => {
+            let (lhs, rhs) = two_numbers(function, numbers)?;
+            Ok(ExprPlan::Number(match lane {
+                NumericLane::Signed => {
+                    NumberExpr::Signed(IntExpr::Max(Box::new(lhs), Box::new(rhs)))
+                }
+                NumericLane::Unsigned => NumberExpr::Unsigned(UIntExpr::Max(
+                    Box::new(expect_unsigned_number(function, lhs)?),
+                    Box::new(expect_unsigned_number(function, rhs)?),
+                )),
+                NumericLane::Float => {
+                    NumberExpr::Float(FloatExpr::Max(Box::new(lhs), Box::new(rhs)))
+                }
+            }))
+        }
+        Intrinsic::Clamp => {
+            let (value, min, max) = three_numbers(function, numbers)?;
+            Ok(ExprPlan::Number(match lane {
+                NumericLane::Signed => NumberExpr::Signed(IntExpr::Clamp {
+                    value: Box::new(value),
+                    min: Box::new(min),
+                    max: Box::new(max),
+                }),
+                NumericLane::Unsigned => NumberExpr::Unsigned(UIntExpr::Clamp {
+                    value: Box::new(expect_unsigned_number(function, value)?),
+                    min: Box::new(expect_unsigned_number(function, min)?),
+                    max: Box::new(expect_unsigned_number(function, max)?),
+                }),
+                NumericLane::Float => NumberExpr::Float(FloatExpr::Clamp {
+                    value: Box::new(value),
+                    min: Box::new(min),
+                    max: Box::new(max),
+                }),
+            }))
+        }
+        _ => unreachable!("numeric intrinsic branch only receives numeric intrinsics"),
+    }
+}
+
+fn only_string_arg(function: &'static str, args: Vec<ExprPlan>) -> Result<StringExpr, FableError> {
+    let [arg]: [ExprPlan; 1] = args
+        .try_into()
+        .map_err(|_| invalid_call(function, arity_reason(1)))?;
+    expect_string_plan(arg)
+}
+
+fn two_string_args(
+    function: &'static str,
+    args: Vec<ExprPlan>,
+) -> Result<(StringExpr, StringExpr), FableError> {
+    let [lhs, rhs]: [ExprPlan; 2] = args
+        .try_into()
+        .map_err(|_| invalid_call(function, arity_reason(2)))?;
+    Ok((expect_string_plan(lhs)?, expect_string_plan(rhs)?))
+}
+
+fn two_numbers(
+    function: &'static str,
+    args: Vec<NumberExpr>,
+) -> Result<(NumberExpr, NumberExpr), FableError> {
+    let [lhs, rhs]: [NumberExpr; 2] = args
+        .try_into()
+        .map_err(|_| invalid_call(function, arity_reason(2)))?;
+    Ok((lhs, rhs))
+}
+
+fn three_numbers(
+    function: &'static str,
+    args: Vec<NumberExpr>,
+) -> Result<(NumberExpr, NumberExpr, NumberExpr), FableError> {
+    let [value, min, max]: [NumberExpr; 3] = args
+        .try_into()
+        .map_err(|_| invalid_call(function, arity_reason(3)))?;
+    Ok((value, min, max))
+}
+
+fn expect_unsigned_number(
+    function: &'static str,
+    number: NumberExpr,
+) -> Result<UIntExpr, FableError> {
+    match number {
+        NumberExpr::Unsigned(expr) => Ok(expr),
+        _ => Err(invalid_call(
+            function,
+            "unsigned numeric lane contained a non-unsigned argument",
+        )),
+    }
+}
+
+fn numeric_lane(args: &[NumberExpr]) -> NumericLane {
+    if args.iter().any(|arg| matches!(arg, NumberExpr::Float(_))) {
+        NumericLane::Float
+    } else if args
+        .iter()
+        .all(|arg| matches!(arg, NumberExpr::Unsigned(_)))
+    {
+        NumericLane::Unsigned
+    } else {
+        NumericLane::Signed
+    }
+}
+
+fn intrinsic_signature(name: &str) -> Option<IntrinsicSignature> {
+    INTRINSICS
+        .iter()
+        .find(|signature| signature.name == name)
+        .copied()
+}
+
+fn call_callee_name(callee: &Expr) -> Result<String, FableError> {
+    let Expr::Var(var) = callee else {
+        return Err(FableError::Unsupported {
+            feature: "non-identifier callees".into(),
+        });
+    };
+    var.name().ok_or(FableError::MalformedSyntax {
+        reason: "callee without identifier",
+    })
+}
+
+impl Intrinsic {
+    fn name(self) -> &'static str {
+        match self {
+            Intrinsic::Min => "min",
+            Intrinsic::Max => "max",
+            Intrinsic::Clamp => "clamp",
+            Intrinsic::Len => "len",
+            Intrinsic::Contains => "contains",
+            Intrinsic::StartsWith => "starts_with",
+            Intrinsic::EndsWith => "ends_with",
+            Intrinsic::Trim => "trim",
+        }
+    }
+}
+
 fn expect_bool_plan(expr: ExprPlan) -> Result<BoolExpr, FableError> {
     match expr {
         ExprPlan::Bool(expr) => Ok(expr),
         other => Err(FableError::TypeMismatch {
             expected: "bool".into(),
+            actual: other.kind_name(),
+        }),
+    }
+}
+
+fn expect_string_plan(expr: ExprPlan) -> Result<StringExpr, FableError> {
+    match expr {
+        ExprPlan::String(expr) => Ok(expr),
+        other => Err(FableError::TypeMismatch {
+            expected: "string".into(),
             actual: other.kind_name(),
         }),
     }
@@ -1046,6 +1402,21 @@ impl FableInterp {
                 Ok(*unsafe { ptr.get::<bool>() })
             }
             BoolExpr::Local(local) => self.local_bool(*local),
+            BoolExpr::StringContains { haystack, needle } => {
+                let haystack = self.eval_string(haystack)?;
+                let needle = self.eval_string(needle)?;
+                Ok(haystack.contains(&needle))
+            }
+            BoolExpr::StringStartsWith { haystack, prefix } => {
+                let haystack = self.eval_string(haystack)?;
+                let prefix = self.eval_string(prefix)?;
+                Ok(haystack.starts_with(&prefix))
+            }
+            BoolExpr::StringEndsWith { haystack, suffix } => {
+                let haystack = self.eval_string(haystack)?;
+                let suffix = self.eval_string(suffix)?;
+                Ok(haystack.ends_with(&suffix))
+            }
             BoolExpr::Not(expr) => Ok(!self.eval_bool(expr)?),
             BoolExpr::And(lhs, rhs) => {
                 if !self.eval_bool(lhs)? {
@@ -1091,6 +1462,7 @@ impl FableInterp {
                 unsafe { self.read_string_path(path, ptr) }
             }
             StringExpr::Local(local) => self.local_string(*local),
+            StringExpr::Trim(expr) => Ok(self.eval_string(expr)?.trim().to_owned()),
             StringExpr::Add(lhs, rhs) => {
                 let mut lhs = self.eval_string(lhs)?;
                 lhs.push_str(&self.eval_string(rhs)?);
@@ -1133,6 +1505,22 @@ impl FableInterp {
                 unsafe { self.read_signed_path(path.scalar, ptr) }
             }
             IntExpr::Local(local) => self.local_i128(*local),
+            IntExpr::Min(lhs, rhs) => {
+                let lhs = self.eval_number_as_i128(lhs)?;
+                let rhs = self.eval_number_as_i128(rhs)?;
+                Ok(lhs.min(rhs))
+            }
+            IntExpr::Max(lhs, rhs) => {
+                let lhs = self.eval_number_as_i128(lhs)?;
+                let rhs = self.eval_number_as_i128(rhs)?;
+                Ok(lhs.max(rhs))
+            }
+            IntExpr::Clamp { value, min, max } => {
+                let value = self.eval_number_as_i128(value)?;
+                let min = self.eval_number_as_i128(min)?;
+                let max = self.eval_number_as_i128(max)?;
+                clamp_i128(value, min, max)
+            }
             IntExpr::Neg(expr) => {
                 let value = self.eval_number_as_i128(expr)?;
                 value
@@ -1183,6 +1571,23 @@ impl FableInterp {
                 unsafe { self.read_unsigned_path(path.scalar, ptr) }
             }
             UIntExpr::Local(local) => self.local_u128(*local),
+            UIntExpr::StringLen(expr) => Ok(self.eval_string(expr)?.len() as u128),
+            UIntExpr::Min(lhs, rhs) => {
+                let lhs = self.eval_u128(lhs)?;
+                let rhs = self.eval_u128(rhs)?;
+                Ok(lhs.min(rhs))
+            }
+            UIntExpr::Max(lhs, rhs) => {
+                let lhs = self.eval_u128(lhs)?;
+                let rhs = self.eval_u128(rhs)?;
+                Ok(lhs.max(rhs))
+            }
+            UIntExpr::Clamp { value, min, max } => {
+                let value = self.eval_u128(value)?;
+                let min = self.eval_u128(min)?;
+                let max = self.eval_u128(max)?;
+                clamp_u128(value, min, max)
+            }
             UIntExpr::Add(lhs, rhs) => {
                 let lhs = self.eval_u128(lhs)?;
                 let rhs = self.eval_u128(rhs)?;
@@ -1227,6 +1632,17 @@ impl FableInterp {
                 }
             }
             FloatExpr::Local(local) => self.local_f64(*local),
+            FloatExpr::Min(lhs, rhs) => {
+                min_f64(self.eval_number_as_f64(lhs)?, self.eval_number_as_f64(rhs)?)
+            }
+            FloatExpr::Max(lhs, rhs) => {
+                max_f64(self.eval_number_as_f64(lhs)?, self.eval_number_as_f64(rhs)?)
+            }
+            FloatExpr::Clamp { value, min, max } => clamp_f64(
+                self.eval_number_as_f64(value)?,
+                self.eval_number_as_f64(min)?,
+                self.eval_number_as_f64(max)?,
+            ),
             FloatExpr::Neg(expr) => Ok(-self.eval_number_as_f64(expr)?),
             FloatExpr::Add(lhs, rhs) => {
                 Ok(self.eval_number_as_f64(lhs)? + self.eval_number_as_f64(rhs)?)
@@ -1752,6 +2168,50 @@ fn compare_f64(lhs: f64, rhs: f64) -> Result<Ordering, FableError> {
         })
 }
 
+fn min_f64(lhs: f64, rhs: f64) -> Result<f64, FableError> {
+    Ok(match compare_f64(lhs, rhs)? {
+        Ordering::Less | Ordering::Equal => lhs,
+        Ordering::Greater => rhs,
+    })
+}
+
+fn max_f64(lhs: f64, rhs: f64) -> Result<f64, FableError> {
+    Ok(match compare_f64(lhs, rhs)? {
+        Ordering::Less => rhs,
+        Ordering::Equal | Ordering::Greater => lhs,
+    })
+}
+
+fn clamp_i128(value: i128, min: i128, max: i128) -> Result<i128, FableError> {
+    if min > max {
+        return Err(invalid_call(
+            "clamp",
+            "minimum bound is greater than maximum bound",
+        ));
+    }
+    Ok(value.clamp(min, max))
+}
+
+fn clamp_u128(value: u128, min: u128, max: u128) -> Result<u128, FableError> {
+    if min > max {
+        return Err(invalid_call(
+            "clamp",
+            "minimum bound is greater than maximum bound",
+        ));
+    }
+    Ok(value.clamp(min, max))
+}
+
+fn clamp_f64(value: f64, min: f64, max: f64) -> Result<f64, FableError> {
+    if compare_f64(min, max)? == Ordering::Greater {
+        return Err(invalid_call(
+            "clamp",
+            "minimum bound is greater than maximum bound",
+        ));
+    }
+    max_f64(min_f64(value, max)?, min)
+}
+
 fn expect_single_char(value: String) -> Result<char, FableError> {
     let mut chars = value.chars();
     let Some(ch) = chars.next() else {
@@ -1776,6 +2236,19 @@ fn string_is_char(value: &str, ch: char) -> bool {
 
 fn number_out_of_range(target: ScalarType, value: String) -> FableError {
     FableError::NumberOutOfRange { target, value }
+}
+
+fn invalid_call(function: &'static str, reason: &'static str) -> FableError {
+    FableError::InvalidCall { function, reason }
+}
+
+fn arity_reason(expected: usize) -> &'static str {
+    match expected {
+        1 => "expected 1 argument",
+        2 => "expected 2 arguments",
+        3 => "expected 3 arguments",
+        _ => "unexpected argument count",
+    }
 }
 
 fn binary_actual(lhs: &'static str, rhs: &'static str) -> &'static str {
@@ -1969,6 +2442,89 @@ mod tests {
         assert_eq!(value.user.name, "Ada Lovelace");
         assert_eq!(value.marker, 'a');
         assert!(value.user.active);
+    }
+
+    #[test]
+    fn applies_typed_intrinsic_calls() {
+        let mut value = state();
+
+        apply(
+            &mut value,
+            r#"
+                let trimmed = trim("  Ada  ");
+                let size = len(trimmed);
+                let adult_age = clamp(max(root.user.age, 18), 0, 130);
+                let bounded_score = min(max(root.score, 2.0), 3.0);
+
+                root.user.name = trimmed;
+                root.visits = max(size, 4);
+                root.user.age = adult_age;
+                root.score = bounded_score;
+
+                if contains(root.user.name, "da") and starts_with(root.user.name, "A") and ends_with(root.user.name, "a") {
+                    root.user.active = true;
+                }
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(value.user.name, "Ada");
+        assert_eq!(value.visits, 4);
+        assert_eq!(value.user.age, 18);
+        assert_eq!(value.score, 2.0);
+        assert!(value.user.active);
+    }
+
+    #[test]
+    fn reports_unknown_intrinsic_calls() {
+        let err = compile_err("root.user.age = nope(root.user.age)");
+
+        assert!(matches!(
+            err,
+            FableError::Unsupported {
+                feature
+            } if feature == "intrinsic nope"
+        ));
+    }
+
+    #[test]
+    fn reports_intrinsic_arity_errors() {
+        let err = compile_err("root.user.age = clamp(root.user.age, 0)");
+
+        assert!(matches!(
+            err,
+            FableError::InvalidCall {
+                function: "clamp",
+                reason: "expected 3 arguments",
+            }
+        ));
+    }
+
+    #[test]
+    fn reports_intrinsic_type_mismatches() {
+        let err = compile_err("root.user.age = len(root.user.age)");
+
+        assert!(matches!(
+            err,
+            FableError::TypeMismatch {
+                expected,
+                actual: "signed number",
+            } if expected == "string"
+        ));
+    }
+
+    #[test]
+    fn reports_invalid_runtime_intrinsic_calls() {
+        let mut value = state();
+        let err = apply(&mut value, "root.user.age = clamp(root.user.age, 10, 0)").unwrap_err();
+
+        assert!(matches!(
+            err,
+            FableError::InvalidCall {
+                function: "clamp",
+                reason: "minimum bound is greater than maximum bound",
+            }
+        ));
     }
 
     #[test]
