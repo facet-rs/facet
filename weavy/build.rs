@@ -17,8 +17,8 @@ fn main() {
         let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
         let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
 
-        if target_os == "macos" && target_arch == "aarch64" {
-            emit_arm64_macos(&out, &generated);
+        if native_copy_patch_target(&target_os, &target_arch) {
+            emit_native(&out, &generated);
         } else {
             emit_empty(&generated);
         }
@@ -37,7 +37,15 @@ fn emit_empty(generated: &Path) {
 }
 
 #[cfg(feature = "jit")]
-fn emit_arm64_macos(out: &Path, generated: &Path) {
+fn native_copy_patch_target(target_os: &str, target_arch: &str) -> bool {
+    matches!(
+        (target_os, target_arch),
+        ("macos", "aarch64") | ("linux", "x86_64")
+    )
+}
+
+#[cfg(feature = "jit")]
+fn emit_native(out: &Path, generated: &Path) {
     println!("cargo:rerun-if-changed=stencils/hostcall.rs");
     println!("cargo:rerun-if-changed=build.rs");
 
@@ -79,7 +87,7 @@ fn emit(out: &mut String, name: &str, doc: &str, stencil: &Stencil) {
 #[cfg(feature = "jit")]
 fn emit_cont(out: &mut String, name: &str, of: &str, stencil: &Stencil) {
     out.push_str(&format!(
-        "/// Byte offsets within `{of}` of the continuation `BRANCH26` relocations to patch.\n\
+        "/// Byte offsets within `{of}` of the continuation relocations to patch.\n\
          pub const {name}: &[usize] = &{:?};\n",
         stencil.cont_relocs
     ));

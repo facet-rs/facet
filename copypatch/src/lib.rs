@@ -7,8 +7,10 @@
 //!
 //! - `ExecBuf` — allocate executable memory, copy machine code in, satisfy the
 //!   platform's write-xor-execute and instruction-cache rules, and free it on
-//!   drop. (Apple Silicon / `MAP_JIT` today; other backends slot in here.)
+//!   drop.
 //! - [`patch_branch26`] — patch an AArch64 `B`/`BL` (`BRANCH26`) immediate so a
+//!   copied stencil's continuation branch targets the next stencil.
+//! - [`patch_x86_rel32`] — patch an x86/x86_64 `rel32` branch immediate so a
 //!   copied stencil's continuation branch targets the next stencil.
 //! - the `extract` module (the `build` feature) — at *build* time, compile a stencil
 //!   source file with rustc (`--emit=obj`) and pull each stencil's bytes and its
@@ -20,13 +22,19 @@
 //! runs and patches bytes — it never encodes an instruction or interprets a
 //! schema.
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(any(
+    all(target_os = "macos", target_arch = "aarch64"),
+    all(target_os = "linux", target_arch = "x86_64")
+))]
 mod exec;
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(any(
+    all(target_os = "macos", target_arch = "aarch64"),
+    all(target_os = "linux", target_arch = "x86_64")
+))]
 pub use exec::ExecBuf;
 
 mod patch;
-pub use patch::patch_branch26;
+pub use patch::{patch_branch26, patch_x86_rel32};
 
 #[cfg(feature = "build")]
 pub mod extract;

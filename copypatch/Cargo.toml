@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Reusable copy-and-patch JIT substrate: executable memory (W^X), AArch64 relocation patching, and build-time stencil extraction. Backend-agnostic — no IR, no schema."
+description = "Reusable copy-and-patch JIT substrate: executable memory (W^X), relocation patching, and build-time stencil extraction. Backend-agnostic — no IR, no schema."
 
 [package.metadata]
 
@@ -16,7 +16,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 # Only used by the build-time `extract` module (parsing the stencil object file).
 object = { workspace = true, optional = true }
 
-[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
+[target.'cfg(any(all(target_os = "macos", target_arch = "aarch64"), all(target_os = "linux", target_arch = "x86_64")))'.dependencies]
 libc = "0.2"
 
 [features]

@@ -1,11 +1,12 @@
 //! AArch64 relocation patching.
 //!
 //! A copy-and-patch stencil leaves its continuation as a relocation: a `B`/`BL`
-//! whose 26-bit immediate is a hole. After copying stencils into one buffer, the
-//! caller patches each hole so the branch targets the next stencil. Both `site`
-//! and `target` are byte offsets within that buffer; since the branch is
-//! PC-relative the in-buffer delta equals the in-memory delta, so patching before
-//! copying into executable memory is sound.
+//! whose 26-bit immediate is a hole, or an x86/x86-64 branch whose `rel32`
+//! immediate is a hole. After copying stencils into one buffer, the caller
+//! patches each hole so the branch targets the next stencil. Both `site` and
+//! `target` are byte offsets within that buffer; since the branch is PC-relative
+//! the in-buffer delta equals the in-memory delta, so patching before copying
+//! into executable memory is sound.
 
 /// Patch an AArch64 `B`/`BL` (`BRANCH26`) at `site` in `code` so it targets byte
 /// offset `target` within the same buffer.
@@ -20,4 +21,28 @@ pub fn patch_branch26(code: &mut [u8], site: usize, target: usize) {
     let imm26 = (delta as u32) & 0x03FF_FFFF;
     let patched = (instr & 0xFC00_0000) | imm26;
     code[site..site + 4].copy_from_slice(&patched.to_le_bytes());
+}
+
+/// Patch an x86/x86-64 `rel32` immediate at `site` in `code` so it targets byte
+/// offset `target` within the same buffer.
+///
+/// The relocation site is the first byte of the 4-byte immediate, not the branch
+/// opcode. `target - (site + 4)` must fit in `i32`; stencils copied into a single
+/// buffer keep that range small.
+pub fn patch_x86_rel32(code: &mut [u8], site: usize, target: usize) {
+    let delta = target as isize - (site as isize + 4);
+    let delta = i32::try_from(delta).expect("x86 rel32 continuation out of range");
+    code[site..site + 4].copy_from_slice(&delta.to_le_bytes());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn x86_rel32_patches_relative_to_next_instruction() {
+        let mut code = [0_u8; 16];
+        patch_x86_rel32(&mut code, 5, 13);
+        assert_eq!(i32::from_le_bytes(code[5..9].try_into().unwrap()), 4);
+    }
 }

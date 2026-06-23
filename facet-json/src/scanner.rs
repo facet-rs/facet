@@ -322,7 +322,13 @@ impl Scanner {
         Ok(Some(span))
     }
 
-    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(all(
+        feature = "jit",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )
+    ))]
     #[inline]
     pub fn try_consume_array_object_start(
         &mut self,
@@ -407,7 +413,13 @@ impl Scanner {
         Ok(Some((Span::new(start, self.pos - start), value)))
     }
 
-    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(all(
+        feature = "jit",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )
+    ))]
     #[inline]
     pub fn try_consume_bool(&mut self, buf: &[u8]) -> Result<Option<(Span, bool)>, ScanError> {
         let original = self.pos;
@@ -427,7 +439,13 @@ impl Scanner {
         Ok(None)
     }
 
-    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(all(
+        feature = "jit",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )
+    ))]
     #[inline]
     pub fn try_consume_null(&mut self, buf: &[u8]) -> Result<Option<Span>, ScanError> {
         let original = self.pos;
@@ -443,7 +461,13 @@ impl Scanner {
         Ok(None)
     }
 
-    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(all(
+        feature = "jit",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )
+    ))]
     #[inline]
     pub fn try_consume_unsigned_integer<T>(
         &mut self,
@@ -496,7 +520,13 @@ impl Scanner {
         Ok(Some((Span::new(start, self.pos - start), value)))
     }
 
-    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(all(
+        feature = "jit",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )
+    ))]
     #[inline]
     pub fn try_consume_signed_integer<T>(
         &mut self,
@@ -566,7 +596,13 @@ impl Scanner {
         Ok(Some((Span::new(start, self.pos - start), value)))
     }
 
-    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(all(
+        feature = "jit",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )
+    ))]
     #[inline]
     pub fn try_consume_f64_number(&mut self, buf: &[u8]) -> Result<Option<(Span, f64)>, ScanError> {
         let original = self.pos;

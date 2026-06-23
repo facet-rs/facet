@@ -264,7 +264,13 @@ pub(crate) struct OrderedObjectProbeSave {
     scanner_pos: usize,
 }
 
-#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
 pub(crate) struct NativeOrderedRootCursor<'de> {
     input: &'de [u8],
     scanner: Scanner,
@@ -1123,7 +1129,13 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
         }
     }
 
-    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(all(
+        feature = "jit",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )
+    ))]
     pub(crate) fn consume_array_object_start_fast(&mut self) -> Result<Span, ParseError> {
         if self.state.event_peek.is_some() {
             return self.consume_object_start();
@@ -1163,7 +1175,13 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
         }
     }
 
-    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(all(
+        feature = "jit",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )
+    ))]
     fn consume_direct_array_object_start(
         &mut self,
         require_comma: bool,
@@ -1561,7 +1579,13 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
     }
 
     #[inline]
-    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(all(
+        feature = "jit",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )
+    ))]
     pub(crate) fn try_consume_ordered_i32_object_with<E, W>(
         &mut self,
         expected: &[&str],
@@ -1585,7 +1609,13 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
     }
 
     #[inline]
-    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(all(
+        feature = "jit",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )
+    ))]
     pub(crate) fn try_consume_ordered_scalar_object_with<E, W>(
         &mut self,
         expected: &[&str],
@@ -1613,17 +1643,35 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
         Ok(matched)
     }
 
-    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(all(
+        feature = "jit",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )
+    ))]
     pub(crate) fn save_native_probe(&self) -> OrderedObjectProbeSave {
         self.save_ordered_object_probe()
     }
 
-    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(all(
+        feature = "jit",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )
+    ))]
     pub(crate) fn restore_native_probe(&mut self, save: OrderedObjectProbeSave) {
         self.restore_ordered_object_probe(save);
     }
 
-    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(all(
+        feature = "jit",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )
+    ))]
     pub(crate) fn native_ordered_root_cursor(&self) -> Option<NativeOrderedRootCursor<'de>> {
         if self.state.event_peek.is_some()
             || !self.state.stack.is_empty()
@@ -1640,7 +1688,13 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
         })
     }
 
-    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(all(
+        feature = "jit",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )
+    ))]
     pub(crate) fn commit_native_ordered_root(&mut self, cursor: NativeOrderedRootCursor<'de>) {
         self.scanner = cursor.scanner;
         self.state.stack.clear();
@@ -1734,7 +1788,13 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
     }
 
     #[inline]
-    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(all(
+        feature = "jit",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )
+    ))]
     fn try_consume_ordered_scalar_object_inner<E, W>(
         &mut self,
         expected: &[&str],
@@ -2411,7 +2471,13 @@ impl<'de, const TRUSTED_UTF8: bool> FormatParser<'de> for JsonParser<'de, TRUSTE
     }
 }
 
-#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
 impl<'de> NativeOrderedRootCursor<'de> {
     #[inline]
     pub(crate) fn consume_root_object_start(&mut self) -> Result<bool, ParseError> {

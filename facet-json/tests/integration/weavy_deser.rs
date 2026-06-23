@@ -190,14 +190,20 @@ fn weavy_plan_can_be_reused() {
     assert_eq!(second, Point { x: 3, y: 4 });
 }
 
+fn native_jit_expected() -> bool {
+    cfg!(all(
+        feature = "jit",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )
+    ))
+}
+
 #[test]
 fn weavy_jit_plan_uses_native_for_root_scalar_struct_when_available() {
     let plan = facet_json::JsonWeavyPlan::<Point>::build_jit().unwrap();
-    let native_available = cfg!(all(
-        feature = "jit",
-        target_os = "macos",
-        target_arch = "aarch64"
-    ));
+    let native_available = native_jit_expected();
 
     assert_eq!(
         plan.execution_mode(),
@@ -248,7 +254,7 @@ fn weavy_jit_plan_reports_fallback_for_unsupported_root_shape() {
     assert_eq!(report.records[0].path, "$");
     let expected_reason = if !cfg!(feature = "jit") {
         "facet-json was built without its jit feature"
-    } else if !cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+    } else if !native_jit_expected() {
         "native JIT is not enabled for this build target"
     } else {
         "JSON native JIT currently supports root scalar structs or scalar struct lists only"
@@ -270,7 +276,7 @@ fn weavy_jit_plan_reports_fallback_for_defaulted_scalar_struct() {
     assert_eq!(report.records[0].path, "$");
     let expected_reason = if !cfg!(feature = "jit") {
         "facet-json was built without its jit feature"
-    } else if !cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+    } else if !native_jit_expected() {
         "native JIT is not enabled for this build target"
     } else {
         "JSON native JIT currently supports required scalar struct fields only"
@@ -297,11 +303,7 @@ fn weavy_jit_ordered_scalar_struct_replays_after_i32_cursor_mismatch() {
 fn weavy_jit_plan_uses_native_for_root_scalar_struct_list_when_available() {
     let plan = facet_json::JsonWeavyPlan::<Vec<Point>>::build_jit().unwrap();
     let report = plan.jit_fallback_report();
-    let native_available = cfg!(all(
-        feature = "jit",
-        target_os = "macos",
-        target_arch = "aarch64"
-    ));
+    let native_available = native_jit_expected();
 
     assert_eq!(
         plan.active_backend(),

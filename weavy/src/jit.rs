@@ -4,9 +4,12 @@
 //! functions, state ABI, host calls, and lowering policy; Weavy only exposes the
 //! neutral mechanics that multiple backends need.
 
-pub use copypatch::patch_branch26;
+pub use copypatch::{patch_branch26, patch_x86_rel32};
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(any(
+    all(target_os = "macos", target_arch = "aarch64"),
+    all(target_os = "linux", target_arch = "x86_64")
+))]
 pub use copypatch::ExecBuf;
 
 /// Shared copy-and-patch stencil bytes extracted by Weavy's build script.
@@ -19,8 +22,10 @@ pub mod stencils {
 }
 
 /// Whether this build can allocate and run native copy-and-patch code.
-pub const NATIVE_COPY_PATCH_AVAILABLE: bool =
-    cfg!(all(target_os = "macos", target_arch = "aarch64"));
+pub const NATIVE_COPY_PATCH_AVAILABLE: bool = cfg!(any(
+    all(target_os = "macos", target_arch = "aarch64"),
+    all(target_os = "linux", target_arch = "x86_64")
+));
 
 /// One consumer-supplied intrinsic in a shared Weavy host-call chain.
 #[repr(C)]
@@ -112,6 +117,28 @@ impl StencilLayout {
         patch_branch26(&mut self.code, site, target);
     }
 
+    /// Patch an x86/x86-64 `rel32` continuation relocation to another offset.
+    pub fn patch_x86_rel32(&mut self, site: usize, target: usize) {
+        patch_x86_rel32(&mut self.code, site, target);
+    }
+
+    /// Patch one continuation relocation to another offset in this layout.
+    pub fn patch_continuation(&mut self, site: usize, target: usize) {
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        {
+            return self.patch_branch26(site, target);
+        }
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        {
+            return self.patch_x86_rel32(site, target);
+        }
+        #[allow(unreachable_code)]
+        {
+            let _ = (site, target);
+            panic!("native copy-and-patch is not available for this target");
+        }
+    }
+
     /// Append one word to a chain's program stream.
     pub fn push_prog_word(&mut self, prog_index: usize, value: u64) {
         self.progs[prog_index].push(value);
@@ -152,7 +179,7 @@ impl StencilLayout {
     /// Patch one shared host-call stencil's continuation to `target`.
     pub fn patch_hostcall_continuation(&mut self, hostcall_start: usize, target: usize) {
         for &rel in stencils::HOSTCALL_CONT {
-            self.patch_branch26(hostcall_start + rel, target);
+            self.patch_continuation(hostcall_start + rel, target);
         }
     }
 
@@ -186,7 +213,10 @@ impl StencilLayout {
 /// The ABI is still owned by the caller: this only binds a finalized
 /// [`StencilLayout`] into native memory and keeps each chain's program stream in
 /// stable heap storage for stencils to read.
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(any(
+    all(target_os = "macos", target_arch = "aarch64"),
+    all(target_os = "linux", target_arch = "x86_64")
+))]
 pub struct NativeProgram {
     buf: ExecBuf,
     progs: Vec<Vec<u64>>,
@@ -194,7 +224,10 @@ pub struct NativeProgram {
     stencil_count: usize,
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(any(
+    all(target_os = "macos", target_arch = "aarch64"),
+    all(target_os = "linux", target_arch = "x86_64")
+))]
 impl NativeProgram {
     /// Make a finalized stencil layout executable.
     #[must_use]
@@ -322,14 +355,32 @@ mod tests {
         assert_eq!(layout.stencil_count(), 2);
     }
 
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    ))]
+    fn ret_stencil() -> &'static [u8] {
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        {
+            &[0xc0, 0x03, 0x5f, 0xd6]
+        }
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        {
+            &[0xc3]
+        }
+    }
+
+    #[cfg(any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    ))]
     #[test]
     fn native_program_owns_executable_code_and_program_slots() {
         use super::NativeProgram;
 
         let mut layout = StencilLayout::new();
         let root = layout.start_chain();
-        layout.emit_stencil(&[0xc0, 0x03, 0x5f, 0xd6]);
+        layout.emit_stencil(ret_stencil());
         layout.push_prog_word(root.prog_index, 7);
         let slot = layout.reserve_prog_slot(root.prog_index);
 
@@ -346,7 +397,10 @@ mod tests {
         unsafe { entry(&mut ctx) };
     }
 
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    ))]
     #[test]
     fn shared_hostcall_stencil_runs_consumer_intrinsic() {
         use super::{HostCallCtx, HostCallInfo, NativeProgram};
