@@ -2528,6 +2528,27 @@ impl<'de> NativeOrderedRootCursor<'de> {
     }
 
     #[inline]
+    pub(crate) fn consume_ordered_f64_field(
+        &mut self,
+        expected: &str,
+        require_comma: bool,
+    ) -> Result<Option<f64>, ParseError> {
+        let [expected] = expected.as_bytes() else {
+            return Ok(None);
+        };
+        let value = self
+            .scanner
+            .try_consume_one_byte_field_name_colon_f64(self.input, *expected, require_comma)
+            .map_err(scan_error_to_parse_error)?;
+
+        if let Some((span, value)) = value {
+            self.last_token_start = span.offset as usize;
+            return Ok(Some(value));
+        }
+        Ok(None)
+    }
+
+    #[inline]
     pub(crate) fn consume_i32(&mut self) -> Result<Option<(Span, i32)>, ParseError> {
         let value = self
             .scanner
